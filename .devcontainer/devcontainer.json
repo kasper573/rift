@@ -11,7 +11,7 @@
   // The host display, so `cargo run -p client` opens its window from inside the container.
   "mounts": [
     "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind",
-    "source=${localEnv:XAUTHORITY},target=/home/dev/.Xauthority,type=bind,readonly"
+    "source=${localEnv:XAUTHORITY:/dev/null},target=/home/dev/.Xauthority,type=bind,readonly"
   ],
   "containerEnv": { "DISPLAY": "${localEnv:DISPLAY}" },
   "runArgs": [
@@ -19,7 +19,7 @@
     "--network-alias=dev",
     "--sysctl=net.ipv4.ip_unprivileged_port_start=0"
   ],
-  "initializeCommand": "docker network inspect rift >/dev/null 2>&1 || docker network create rift",
+  "initializeCommand": "mkdir -p /tmp/.X11-unix; docker network inspect rift >/dev/null 2>&1 || docker network create rift",
   // The inner socat re-resolves reverse-proxy per connection, surviving proxy recreations.
   "postStartCommand": "nohup socat TCP-LISTEN:443,fork,reuseaddr,bind=127.0.0.1 EXEC:'socat STDIO TCP\\:reverse-proxy\\:443' >/dev/null 2>&1 &",
   "customizations": {
