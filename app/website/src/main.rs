@@ -29,7 +29,7 @@ pub struct App {
 #[tokio::main]
 async fn main() {
     let app = Arc::new(App::from_env());
-    let port = std::env::var("MP_WEBSITE_PORT").unwrap_or_else(|_| "80".to_owned());
+    let port = std::env::var("RIFT_WEBSITE_PORT").unwrap_or_else(|_| "80".to_owned());
     // Game artifacts change with every deploy: no-cache makes clients revalidate (ServeFile
     // answers conditional requests with 304s) instead of trusting a freshness window.
     let artifacts = axum::Router::new()
@@ -64,12 +64,12 @@ impl App {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| panic!("{name} must be set"))
         };
-        let authority = var("MP_WEBSITE_AUTH__AUTHORITY");
-        let audience = var("MP_WEBSITE_AUTH__AUDIENCE");
+        let authority = var("RIFT_WEBSITE_AUTH__AUTHORITY");
+        let audience = var("RIFT_WEBSITE_AUTH__AUDIENCE");
         let mut verifier = auth::Verifier::new(
             &authority,
             &audience,
-            &var("MP_WEBSITE_AUTH__JWKS_URI"),
+            &var("RIFT_WEBSITE_AUTH__JWKS_URI"),
             false,
         );
         match verifier.warm() {
@@ -77,11 +77,11 @@ impl App {
             Err(error) => println!("auth ready, issuer {authority} (jwks warm-up failed: {error})"),
         }
         App {
-            redirect_uri: var("MP_WEBSITE_AUTH__REDIRECT_URI"),
-            token_uri: var("MP_WEBSITE_AUTH__TOKEN_URI"),
-            game_server_url: var("MP_WEBSITE_GAME_SERVER_URL"),
-            wasm_path: var("MP_GAME_CLIENT_WASM"),
-            bundle_path: var("MP_MQ_JS_BUNDLE"),
+            redirect_uri: var("RIFT_WEBSITE_AUTH__REDIRECT_URI"),
+            token_uri: var("RIFT_WEBSITE_AUTH__TOKEN_URI"),
+            game_server_url: var("RIFT_WEBSITE_GAME_SERVER_URL"),
+            wasm_path: var("RIFT_GAME_CLIENT_WASM"),
+            bundle_path: var("RIFT_MQ_JS_BUNDLE"),
             authority,
             audience,
             verifier: Mutex::new(verifier),

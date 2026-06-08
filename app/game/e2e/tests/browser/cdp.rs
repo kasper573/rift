@@ -92,9 +92,9 @@ pub struct Cdp {
     events: VecDeque<Value>,
 }
 
-/// Phase tracing for debugging harness hangs: set `MP_E2E_TRACE=1`.
+/// Phase tracing for debugging harness hangs: set `RIFT_E2E_TRACE=1`.
 pub fn trace(message: &str) {
-    if std::env::var_os("MP_E2E_TRACE").is_some() {
+    if std::env::var_os("RIFT_E2E_TRACE").is_some() {
         eprintln!("[e2e] {message}");
     }
 }
@@ -327,7 +327,7 @@ mod tempdir {
     }
     impl TempDir {
         pub fn new() -> TempDir {
-            let path = std::env::temp_dir().join(format!(
+            let path = std::env::terift_dir().join(format!(
                 "rift-e2e-chrome-{}-{:x}",
                 std::process::id(),
                 std::time::SystemTime::now()

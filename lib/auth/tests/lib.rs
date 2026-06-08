@@ -37,8 +37,8 @@ mqYhto8p0xXRMXr98VUzQw==
 
 const TEST_KEY_N: &str = "i2vy8AHl_q0pVrzA6xa4uoBvMa8-j5YpmimBhLT3Zl6dHcqk5MJgphFtKCOtch6Ic80r-uX-ZqcYuMLuUp4vGjL-WXMNsog7gLqDGa_HjwYca2JgcwSqNp5qd8a4BFa7hZt_D8EGrkEB-bCR6AGqBQkcFZH_88pLuqaOS74Nfjj69VVACODkQI_bzfqqbSILM4hDNns_eqk4x0KZ6_XzD9Mn5uEHgBh37OJqRe7WO26NDCFiZXa83OtDr_lJ6aaz46IQ7KMyzOBjSaQgapX97MrK4Vs7So1b59sAZ9xjXDDPrSxyuGCtPSSUM3vuVaqBfD_JWS2uJmEXdIqLLWfj-Q";
 const TEST_KID: &str = "test-key";
-const ISSUER: &str = "https://auth.example.test/realms/mp";
-const AUDIENCE: &str = "mp";
+const ISSUER: &str = "https://auth.example.test/realms/rift";
+const AUDIENCE: &str = "rift";
 
 /// Serve the JWK set over HTTP for a fixed number of requests; returns the JWKS URI.
 fn serve_jwks(requests: usize) -> String {
@@ -61,7 +61,7 @@ fn serve_jwks(requests: usize) -> String {
             let _ = stream.write_all(response.as_bytes());
         }
     });
-    format!("http://127.0.0.1:{port}/realms/mp/protocol/openid-connect/certs")
+    format!("http://127.0.0.1:{port}/realms/rift/protocol/openid-connect/certs")
 }
 
 fn now() -> u64 {
@@ -117,7 +117,7 @@ fn rejects_wrong_issuer() {
     let jwks_uri = serve_jwks(1);
     let mut verifier = Verifier::new(ISSUER, AUDIENCE, &jwks_uri, false);
     let mut claims = valid_claims();
-    claims["iss"] = "https://evil.example/realms/mp".into();
+    claims["iss"] = "https://evil.example/realms/rift".into();
     assert!(verifier.verify(&sign_token(claims)).is_err());
 }
 

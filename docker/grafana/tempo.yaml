@@ -26,7 +26,7 @@ metrics_generator:
   registry:
     external_labels:
       source: "tempo"
-      cluster: "mp"
+      cluster: "rift"
   storage:
     path: "/tmp/tempo/generator/wal"
     remote_write:

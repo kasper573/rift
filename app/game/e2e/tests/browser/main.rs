@@ -51,7 +51,7 @@ fn a_visitor_can_register_sign_in_and_play() {
     flow::fill(&page, "password-confirm", stage::PASSWORD);
     page.eval("document.querySelector('form').submit()");
 
-    flow::wait_for(&page, "location.host.startsWith('mp.')");
+    flow::wait_for(&page, "location.host.startsWith('rift.')");
     flow::wait_for(
         &page,
         &format!("document.body.innerText.includes('{user}')"),

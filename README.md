@@ -14,7 +14,7 @@ I'm doing this project for fun and to teach myself more about multiplayer game d
 
 - Open the devcontainer in vscode or via devcontainer CLI.
 - Run `cargo x dev`
-- Visit `https://mp.localhost` in your browser
+- Visit `https://rift.localhost` in your browser
 
 ## Production deployment
 

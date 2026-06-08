@@ -4,10 +4,10 @@ use rift::TcpCluster;
 use world::{TICK_HZ, features, spawn_zone, zones};
 
 fn main() -> std::io::Result<()> {
-    let address = std::env::var("MP_GAME_SERVER_PORT")
+    let address = std::env::var("RIFT_GAME_SERVER_PORT")
         .map(|port| {
             let hostname =
-                std::env::var("MP_GAME_SERVER_HOSTNAME").unwrap_or_else(|_| "0.0.0.0".to_owned());
+                std::env::var("RIFT_GAME_SERVER_HOSTNAME").unwrap_or_else(|_| "0.0.0.0".to_owned());
             format!("{hostname}:{port}")
         })
         .ok()
@@ -32,14 +32,14 @@ fn main() -> std::io::Result<()> {
     }
 }
 
-/// Keycloak verification configured through `MP_GAME_SERVER_AUTH__*`; without an issuer the
+/// Keycloak verification configured through `RIFT_GAME_SERVER_AUTH__*`; without an issuer the
 /// server runs open (plain local development).
 fn authenticator_from_env() -> Option<rift::Authenticator> {
     let var = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
-    let issuer = var("MP_GAME_SERVER_AUTH__ISSUER")?;
-    let audience = var("MP_GAME_SERVER_AUTH__AUDIENCE")?;
-    let jwks_uri = var("MP_GAME_SERVER_AUTH__JWKS_URI")?;
-    let allow_bypass = var("MP_GAME_SERVER_AUTH__ALLOW_BYPASS_USERS")
+    let issuer = var("RIFT_GAME_SERVER_AUTH__ISSUER")?;
+    let audience = var("RIFT_GAME_SERVER_AUTH__AUDIENCE")?;
+    let jwks_uri = var("RIFT_GAME_SERVER_AUTH__JWKS_URI")?;
+    let allow_bypass = var("RIFT_GAME_SERVER_AUTH__ALLOW_BYPASS_USERS")
         .is_some_and(|value| value.eq_ignore_ascii_case("true"));
 
     let mut verifier = auth::Verifier::new(&issuer, &audience, &jwks_uri, allow_bypass);

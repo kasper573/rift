@@ -1,13 +1,3 @@
-//! World benchmarks mirroring mp/integrations/world/scripts (perf, packets, bounds).
-//! Run: `cargo run --release --example bench -p world`
-//!
-//! Apples-to-apples with the mp world benchmarks:
-//! - 20 Hz tick, NPC counts [25, 100, 200], players as immortal observers (like mp's
-//!   `Number.MAX_SAFE_INTEGER` health), sampled after a warmup.
-//! - Scenarios span congestion (all entities in one area) and scatter (spread across many areas).
-//! - One "tick" = `cluster.tick`: every shard advances (in parallel once the load warrants it) and
-//!   encodes its replication, mirroring mp's `server.tick` which also encodes.
-
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -44,7 +34,7 @@ unsafe impl GlobalAlloc for Counting {
 const SEED: u64 = 0x1234_5678_9abc_def0;
 const TICK_HZ: f64 = 20.0;
 const WARMUP: u32 = 120;
-const SIM_TICKS: u32 = 200; // 10 s @ 20 Hz, matching mp's SIMULATION_SECONDS.
+const SIM_TICKS: u32 = 200; // 10 s @ 20 Hz
 const NPC_SCENARIOS: [usize; 3] = [25, 100, 200];
 // How many areas the sim world has; scatter scenarios spread entities across all of them.
 const MAX_AREAS: usize = 16;

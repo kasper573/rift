@@ -272,7 +272,7 @@ fn seeded_host(authenticated: bool) -> (TcpCluster, rift::Entity) {
     (host, entity)
 }
 
-fn pump_until(host: &mut TcpCluster, link: &mut Link, ready: impl Fn(&Link) -> bool) -> bool {
+fn purift_until(host: &mut TcpCluster, link: &mut Link, ready: impl Fn(&Link) -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
         host.poll();
@@ -291,7 +291,7 @@ fn full_stack_over_tcp() {
     let (mut host, entity) = seeded_host(false);
     let addr = host.local_addr().to_string();
     let mut link = Link::tcp(&addr, "").expect("connect");
-    let replicated = pump_until(&mut host, &mut link, |link| {
+    let replicated = purift_until(&mut host, &mut link, |link| {
         link.client.world.get::<Pos>(entity) == Some(Pos { x: 3.0, y: 7.0 })
     });
     assert!(replicated, "entity never replicated over tcp");
@@ -302,7 +302,7 @@ fn tcp_auth_accepts_valid_token_and_exposes_session() {
     let (mut host, entity) = seeded_host(true);
     let addr = host.local_addr().to_string();
     let mut link = Link::tcp(&addr, "good:kasper").expect("connect");
-    let replicated = pump_until(&mut host, &mut link, |link| {
+    let replicated = purift_until(&mut host, &mut link, |link| {
         link.client.world.get::<Pos>(entity).is_some()
     });
     assert!(replicated, "authenticated client never got a snapshot");
@@ -323,7 +323,7 @@ fn tcp_auth_rejects_invalid_token() {
     let (mut host, entity) = seeded_host(true);
     let addr = host.local_addr().to_string();
     let mut link = Link::tcp(&addr, "wrong").expect("connect");
-    let replicated = pump_until(&mut host, &mut link, |link| {
+    let replicated = purift_until(&mut host, &mut link, |link| {
         link.client.world.get::<Pos>(entity).is_some() || link.status() == LinkStatus::Closed
     });
     assert!(replicated, "rejected client neither replicated nor closed");

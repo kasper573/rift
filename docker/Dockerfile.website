@@ -15,6 +15,6 @@ RUN --mount=type=cache,id=rustup-website,target=/usr/local/rustup \
 FROM alpine:3.21
 COPY --from=builder /usr/local/bin/website /usr/local/bin/website
 COPY --from=builder /game/ /game/
-ENV MP_GAME_CLIENT_WASM=/game/client.wasm
-ENV MP_MQ_JS_BUNDLE=/game/mq_js_bundle.js
+ENV RIFT_GAME_CLIENT_WASM=/game/client.wasm
+ENV RIFT_MQ_JS_BUNDLE=/game/mq_js_bundle.js
 ENTRYPOINT ["website"]

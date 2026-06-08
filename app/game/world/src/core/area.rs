@@ -321,8 +321,7 @@ fn tile_sfx(map: &tiled::Map, tilesets: &tiled::Tilesets) -> Vec<Option<SfxId>> 
     sfx
 }
 
-/// A tile object blocks every cell it covers by at least this fraction (mp's
-/// WalkableChecker.obscuringCutoff — the two engines must agree on walkability).
+/// A tile object blocks every cell it covers by at least this fraction
 const OBSCURING_CUTOFF: f32 = 0.4;
 
 fn build_grid(

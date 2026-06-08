@@ -1,6 +1,6 @@
 {
 	order rate_limit before basicauth
-    email admin@{$MP_DOMAIN}
+    email admin@{$RIFT_DOMAIN}
 }
 
 (common_rate_limit) {
@@ -18,7 +18,7 @@
         method OPTIONS
     }
     header {
-        Access-Control-Allow-Origin "https://{$MP_WEBSITE_DOMAIN}"
+        Access-Control-Allow-Origin "https://{$RIFT_WEBSITE_DOMAIN}"
         Access-Control-Allow-Methods "GET, POST, HEAD, OPTIONS"
         Access-Control-Allow-Headers "Content-Type, Authorization"
         Access-Control-Allow-Credentials true
@@ -26,27 +26,27 @@
     respond @options 204
 }
 
-grafana.{$MP_DOMAIN} {
+grafana.{$RIFT_DOMAIN} {
     reverse_proxy {$GRAFANA_TARGET}
 }
 
-auth.{$MP_DOMAIN} {
+auth.{$RIFT_DOMAIN} {
     tracing {
         span keycloak
     }
     reverse_proxy {$KEYCLOAK_TARGET}
 }
 
-{$MP_WEBSITE_DOMAIN} {
+{$RIFT_WEBSITE_DOMAIN} {
     import common_rate_limit
-    reverse_proxy {$MP_WEBSITE_PROXY_HOST}
+    reverse_proxy {$RIFT_WEBSITE_PROXY_HOST}
 }
 
-{$MP_GAME_SERVER_DOMAIN} {
+{$RIFT_GAME_SERVER_DOMAIN} {
     import common_rate_limit
     tracing {
-        span mp_game_server
+        span rift_game_server
     }
-    reverse_proxy {$MP_GAME_SERVER_PROXY_HOST}
+    reverse_proxy {$RIFT_GAME_SERVER_PROXY_HOST}
     import common_cors
 }

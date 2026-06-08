@@ -19,30 +19,30 @@ x-logging: &logging
     tag: "{{.ImageName}}|{{.Name}}|{{.ImageFullID}}|{{.FullID}}"
 
 services:
-  mp-website:
+  rift-website:
     env_file: *env_files
     logging: *logging
     build:
       dockerfile: ./docker/Dockerfile.website
       context: ..
-    image: ${DOCKER_REGISTRY_URL:-mp}/mp-website:${DOCKER_IMAGE_VERSION:-latest}
+    image: ${DOCKER_REGISTRY_URL:-rift}/rift-website:${DOCKER_IMAGE_VERSION:-latest}
     restart: always
     profiles: ["prod", "test"]
     depends_on:
-      - mp-game-server
+      - rift-game-server
 
-  mp-game-server:
+  rift-game-server:
     env_file: *env_files
     logging: *logging
     build:
       dockerfile: ./docker/Dockerfile.game-server
       context: ..
-    image: ${DOCKER_REGISTRY_URL:-mp}/mp-game-server:${DOCKER_IMAGE_VERSION:-latest}
+    image: ${DOCKER_REGISTRY_URL:-rift}/rift-game-server:${DOCKER_IMAGE_VERSION:-latest}
     restart: always
     profiles: ["prod", "test"]
     healthcheck:
       test:
-        ["CMD-SHELL", "wget -qO- http://127.0.0.1:$$MP_GAME_SERVER_PORT/health"]
+        ["CMD-SHELL", "wget -qO- http://127.0.0.1:$$RIFT_GAME_SERVER_PORT/health"]
       interval: 3s
       timeout: 5s
       retries: 20
@@ -56,7 +56,7 @@ services:
     build:
       dockerfile: ./Dockerfile.keycloak
       context: .
-    image: ${DOCKER_REGISTRY_URL:-mp}/mp-keycloak:${DOCKER_IMAGE_VERSION:-latest}
+    image: ${DOCKER_REGISTRY_URL:-rift}/rift-keycloak:${DOCKER_IMAGE_VERSION:-latest}
     command: start --optimized --import-realm
     volumes:
       - ./keycloak/import:/opt/keycloak/data/import
@@ -171,7 +171,7 @@ services:
       dockerfile: ./Dockerfile.reverse-proxy
       context: .
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile"]
-    image: ${DOCKER_REGISTRY_URL:-mp}/mp-reverse-proxy:${DOCKER_IMAGE_VERSION:-latest}
+    image: ${DOCKER_REGISTRY_URL:-rift}/rift-reverse-proxy:${DOCKER_IMAGE_VERSION:-latest}
     restart: unless-stopped
     ports:
       - "80:80"

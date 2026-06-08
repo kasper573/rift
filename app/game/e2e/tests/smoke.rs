@@ -36,7 +36,7 @@ fn the_game_server_is_healthy_through_the_proxy() {
 
 #[test]
 fn the_game_server_exposes_metrics_inside_the_stack() {
-    let target = required_env("MP_GAME_SERVER_PROXY_HOST");
+    let target = required_env("RIFT_GAME_SERVER_PROXY_HOST");
     let metrics = get(&format!("http://{target}/metrics"));
     assert!(
         metrics.contains("rift_ticks_total"),
@@ -46,7 +46,7 @@ fn the_game_server_exposes_metrics_inside_the_stack() {
 
 #[test]
 fn the_keycloak_realm_is_up() {
-    let realm = required_env("MP_AUTH__AUDIENCE");
+    let realm = required_env("RIFT_AUTH__AUDIENCE");
     let config = get(&format!(
         "https://auth.{}/realms/{realm}/.well-known/openid-configuration",
         domain()
@@ -63,7 +63,7 @@ fn grafana_is_up() {
 }
 
 fn domain() -> String {
-    required_env("MP_DOMAIN")
+    required_env("RIFT_DOMAIN")
 }
 
 fn required_env(name: &str) -> String {

@@ -1,9 +1,9 @@
-prometheus.scrape "mp_game_server" {
+prometheus.scrape "rift_game_server" {
 	targets = [{
-		__address__ = env("MP_GAME_SERVER_PROXY_HOST"),
+		__address__ = env("RIFT_GAME_SERVER_PROXY_HOST"),
 	}]
 	forward_to      = [prometheus.remote_write.default.receiver]
-	job_name        = "mp_game_server"
+	job_name        = "rift_game_server"
 	scrape_interval = env("PROMETHEUS_SCRAPE_INTERVAL")
 	scrape_timeout  = env("PROMETHEUS_SCRAPE_TIMEOUT")
 }

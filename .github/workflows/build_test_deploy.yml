@@ -23,8 +23,8 @@ jobs:
           password: ${{ env.DOCKER_PASSWORD }}
       - uses: devcontainers/ci@v0.3
         with:
-          imageName: ${{ env.DOCKER_REGISTRY_URL }}/mp-devcontainer
-          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/mp-devcontainer
+          imageName: ${{ env.DOCKER_REGISTRY_URL }}/rift-devcontainer
+          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/rift-devcontainer
           push: always
           runCmd: cargo --version
 
@@ -47,7 +47,7 @@ jobs:
           key: check-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
       - uses: devcontainers/ci@v0.3
         with:
-          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/mp-devcontainer
+          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/rift-devcontainer
           push: never
           runCmd: cargo x check
 
@@ -70,7 +70,7 @@ jobs:
           key: test-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
       - uses: devcontainers/ci@v0.3
         with:
-          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/mp-devcontainer
+          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/rift-devcontainer
           push: never
           runCmd: cargo test --workspace
 
@@ -93,7 +93,7 @@ jobs:
           key: wasm-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
       - uses: devcontainers/ci@v0.3
         with:
-          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/mp-devcontainer
+          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/rift-devcontainer
           push: never
           runCmd: cargo x wasm
 
@@ -142,7 +142,7 @@ jobs:
       - name: Smoke test through the reverse proxy
         uses: devcontainers/ci@v0.3
         with:
-          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/mp-devcontainer
+          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/rift-devcontainer
           push: never
           runCmd: cargo x smoke
 
@@ -195,7 +195,7 @@ jobs:
             echo "COMPOSE_ENV=prod" > .env
             echo "DOCKER_REGISTRY_URL=\"${{ env.DOCKER_REGISTRY_URL }}\"" >> .env
             echo "DOCKER_IMAGE_VERSION=\"${{ env.DOCKER_IMAGE_VERSION }}\"" >> .env
-            echo "MP_DOMAIN=\"${{ vars.MP_DOMAIN }}\"" >> .env
+            echo "RIFT_DOMAIN=\"${{ vars.RIFT_DOMAIN }}\"" >> .env
             echo "KC_ADMIN_USERNAME=\"${{ secrets.KC_ADMIN_USERNAME }}\"" >> .env
             echo "KC_ADMIN_PASSWORD=\"${{ secrets.KC_ADMIN_PASSWORD }}\"" >> .env
 

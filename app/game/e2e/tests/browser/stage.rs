@@ -26,13 +26,13 @@ pub struct BrowserStage {
 
 impl BrowserStage {
     pub fn connect() -> BrowserStage {
-        let domain = required_env("MP_DOMAIN");
+        let domain = required_env("RIFT_DOMAIN");
         let site = format!("https://{domain}");
         let auth = format!("https://auth.{domain}");
         crate::cdp::trace("keycloak admin sign-in");
         let keycloak = Keycloak::connect(
             &auth,
-            &required_env("MP_AUTH__AUDIENCE"),
+            &required_env("RIFT_AUTH__AUDIENCE"),
             &required_env("KC_BOOTSTRAP_ADMIN_USERNAME"),
             &required_env("KC_BOOTSTRAP_ADMIN_PASSWORD"),
         );
@@ -65,7 +65,7 @@ impl BrowserStage {
         flow::fill(&page, "username", username);
         flow::fill(&page, "password", PASSWORD);
         page.eval("document.getElementById('kc-login').click()");
-        flow::wait_for(&page, "location.host.startsWith('mp.')");
+        flow::wait_for(&page, "location.host.startsWith('rift.')");
         flow::wait_for(
             &page,
             &format!("document.body.innerText.includes('{username}')"),
