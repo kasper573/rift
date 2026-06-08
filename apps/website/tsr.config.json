@@ -1,7 +1,0 @@
-{
-  "target": "react",
-  "routeFilePrefix": "~",
-  "routesDirectory": "src/routes",
-  "generatedRouteTree": "src/integrations/router/routeTree.gen.ts",
-  "autoCodeSplitting": true
-}

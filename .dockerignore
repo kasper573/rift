@@ -1,0 +1,6 @@
+.git
+.github
+.claude
+target
+docker/.env*
+*.md

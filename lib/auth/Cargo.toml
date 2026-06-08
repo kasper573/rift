@@ -1,0 +1,10 @@
+[package]
+name = "auth"
+version.workspace = true
+edition.workspace = true
+description = "OpenID Connect access-token verification against a remote JWK set (e.g. Keycloak)."
+
+[dependencies]
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+serde_json.workspace = true
+ureq = { workspace = true }

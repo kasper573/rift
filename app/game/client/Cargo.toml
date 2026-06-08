@@ -1,0 +1,21 @@
+[package]
+name = "client"
+version.workspace = true
+edition.workspace = true
+description = "Playable MMORPG client: a macroquad-free software renderer over the replicated `world` (also the browser e2e's geometry source), shipped as a thin macroquad binary."
+
+[dependencies]
+world = { path = "../world" }
+actor = { path = "../../../lib/actor" }
+image = { path = "../../../lib/image" }
+tiled = { path = "../../../lib/tiled" }
+rift = { path = "../../../lib/rift", default-features = false }
+macroquad = { version = "0.4" }
+
+# Native audio backend (kira). Excluded from the wasm build, which uses the Web Audio plugin in
+# js/rift_audio.js instead — so kira's wasm limitations never apply.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+kira = "0.12"
+
+[dev-dependencies]
+rift = { path = "../../../lib/rift" }

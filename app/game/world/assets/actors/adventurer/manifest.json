@@ -1,0 +1,67 @@
+{
+	"frame": { "w": 48, "h": 64 },
+	"hitbox": [1, 2],
+	"actions": {
+		"idle": {
+			"base": { "file": "idle/normal.png" },
+			"dir": {
+				"s": { "y": 0 },
+				"sw": { "y": 64 },
+				"nw": { "y": 128 },
+				"n": { "y": 192 },
+				"ne": { "y": 256 },
+				"se": { "y": 320 }
+			}
+		},
+		"walk": {
+			"base": { "file": "walk/normal.png", "cues": { "steps": [1, 5] } },
+			"dir": {
+				"s": { "y": 0 },
+				"sw": { "y": 64 },
+				"nw": { "y": 128 },
+				"n": { "y": 192 },
+				"ne": { "y": 256 },
+				"se": { "y": 320 }
+			}
+		},
+		"run": {
+			"base": { "file": "run/normal.png", "cues": { "steps": [1, 5] } },
+			"dir": {
+				"s": { "y": 0 },
+				"sw": { "y": 64 },
+				"nw": { "y": 128 },
+				"n": { "y": 192 },
+				"ne": { "y": 256 },
+				"se": { "y": 320 }
+			}
+		},
+		"attack": {
+			"base": { 
+				"file": "attack/spear.png", 
+				"cues": { "apex": [5] },
+				"sfx": [{ "id": "slash03", "frame": 5 }] 
+			},
+			"dir": {
+				"s": { "y": 0 },
+				"sw": { "y": 64 },
+				"nw": { "y": 128 },
+				"n": { "y": 192 },
+				"ne": { "y": 256 },
+				"se": { "y": 320 },
+				"e": { "y": 384 },
+				"w": { "y": 448 }
+			}
+		},
+		"death": {
+			"base": { "file": "death/normal.png" },
+			"dir": {
+				"s": { "y": 0 },
+				"sw": { "y": 64 },
+				"nw": { "y": 128 },
+				"n": { "y": 192 },
+				"ne": { "y": 256 },
+				"se": { "y": 320 }
+			}
+		}
+	}
+}

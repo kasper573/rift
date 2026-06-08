@@ -1,0 +1,130 @@
+:root {
+  --background: #101418;
+  --surface: #1a2026;
+  --surface-hover: #232b33;
+  --border: #2c3640;
+  --text: #e6edf3;
+  --text-subtle: #8d99a6;
+  --primary: #3b82f6;
+  --primary-hover: #60a5fa;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+nav {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+nav a {
+  color: var(--text-subtle);
+}
+
+nav a:hover,
+nav a[data-status="active"] {
+  color: var(--text);
+}
+
+nav .right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+main {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+button {
+  display: inline-block;
+  padding: 10px 24px;
+  border-radius: 6px;
+  border: none;
+  background: var(--primary);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--primary-hover);
+}
+
+button.subtle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-subtle);
+  padding: 6px 14px;
+  font-size: 14px;
+}
+
+button.subtle:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.hero {
+  position: absolute;
+  top: 128px;
+  left: 0;
+  right: 0;
+  text-align: center;
+}
+
+.hero h1 {
+  font-size: 64px;
+  margin: 0 0 24px;
+}
+
+.centered {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+#glcanvas {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: block;
+  outline: none;
+  background: #000;
+}
+
+.user-name {
+  color: var(--text-subtle);
+}

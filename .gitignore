@@ -1,36 +1,4 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-node_modules
-.pnp
-.pnp.js
-
-# build tools
-out/
-dist
-.vite
-.cache/
-test-results
-*.timestamp*
-**/undefined/**
-.cache-loader
-*.tsbuildinfo
-.tanstack
-
-# misc
-.DS_Store
-*.pem
-.devmode.json
-tsconfig.vitest-temp.json
-tsconfig.tmp.json
+/target
+**/*.rs.bk
+Cargo.lock.bak
 .claude
-*.gen.*
-
-# Local files for common editors
-.idea
-#.vscode
-
-# Disallow non-pnpm lockfiles
-yarn.lock
-package-lock.json
-

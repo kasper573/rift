@@ -1,3 +1,11 @@
+# The project name predates the repo rename; it keeps existing volume names (prod data) valid.
+name: docker
+
+networks:
+  default:
+    name: rift
+    external: true
+
 x-env-files: &env_files
   - path: .env
     required: false
@@ -10,102 +18,36 @@ x-logging: &logging
     # Used by alloy to produce labels for Loki
     tag: "{{.ImageName}}|{{.Name}}|{{.ImageFullID}}|{{.FullID}}"
 
-x-game-service: &game_service
-  env_file: *env_files
-  logging: *logging
-  build:
-    dockerfile: ./docker/Dockerfile.mp-node-app
-    args:
-      APP_NAME: game-service
-    context: ..
-  image: ${DOCKER_REGISTRY_URL:-mp}/mp-game-service:${DOCKER_IMAGE_VERSION:-latest}
-  restart: always
-  profiles: ["prod", "test"]
-  depends_on:
-    mp-api:
-      condition: service_healthy
-    mp-migrations:
-      condition: service_completed_successfully
-
 services:
   mp-website:
     env_file: *env_files
     logging: *logging
     build:
-      dockerfile: ./docker/Dockerfile.mp-website
+      dockerfile: ./docker/Dockerfile.website
       context: ..
     image: ${DOCKER_REGISTRY_URL:-mp}/mp-website:${DOCKER_IMAGE_VERSION:-latest}
     restart: always
     profiles: ["prod", "test"]
     depends_on:
-      - mp-api
-      - mp-gateway
+      - mp-game-server
 
-  mp-game-service-forest:
-    <<: *game_service
-    environment:
-      MP_GAME_SERVICE_AREA_ID: forest
-
-  mp-game-service-island:
-    <<: *game_service
-    environment:
-      MP_GAME_SERVICE_AREA_ID: island
-
-  mp-api:
+  mp-game-server:
     env_file: *env_files
     logging: *logging
     build:
-      dockerfile: ./docker/Dockerfile.mp-node-app
-      args:
-        APP_NAME: api-service
+      dockerfile: ./docker/Dockerfile.game-server
       context: ..
-    image: ${DOCKER_REGISTRY_URL:-mp}/mp-api:${DOCKER_IMAGE_VERSION:-latest}
+    image: ${DOCKER_REGISTRY_URL:-mp}/mp-game-server:${DOCKER_IMAGE_VERSION:-latest}
     restart: always
     profiles: ["prod", "test"]
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:$$MP_API_PORT/health"]
+      test:
+        ["CMD-SHELL", "wget -qO- http://127.0.0.1:$$MP_GAME_SERVER_PORT/health"]
       interval: 3s
       timeout: 5s
       retries: 20
     depends_on:
-      mp-migrations:
-        condition: service_completed_successfully
       keycloak-healthcheck:
-        condition: service_healthy
-
-  mp-gateway:
-    env_file: *env_files
-    logging: *logging
-    build:
-      dockerfile: ./docker/Dockerfile.mp-node-app
-      args:
-        APP_NAME: gateway
-      context: ..
-    image: ${DOCKER_REGISTRY_URL:-mp}/mp-gateway:${DOCKER_IMAGE_VERSION:-latest}
-    restart: always
-    profiles: ["prod", "test"]
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:$$MP_GATEWAY_PORT/health"]
-      interval: 3s
-      timeout: 5s
-      retries: 20
-    depends_on:
-      mp-migrations:
-        condition: service_completed_successfully
-      keycloak-healthcheck:
-        condition: service_healthy
-
-  mp-migrations:
-    env_file: *env_files
-    logging: *logging
-    build:
-      dockerfile: ./docker/Dockerfile.mp-migrations
-      context: ..
-    image: ${DOCKER_REGISTRY_URL:-mp}/mp-migrations:${DOCKER_IMAGE_VERSION:-latest}
-    profiles: ["prod", "test"]
-    restart: "no"
-    depends_on:
-      postgres:
         condition: service_healthy
 
   keycloak:
@@ -122,27 +64,14 @@ services:
       postgres:
         condition: service_healthy
 
-  keycloak-provision:
-    env_file: *env_files
-    logging: *logging
-    build:
-      dockerfile: ./docker/Dockerfile.keycloak-provision
-      context: ..
-    image: ${DOCKER_REGISTRY_URL:-mp}/keycloak-provision:${DOCKER_IMAGE_VERSION:-latest}
-    profiles: ["prod", "test"]
-    restart: "no"
-    depends_on:
-      keycloak-healthcheck:
-        condition: service_healthy
-
-  # the keycloak image dosen't have curl so we healthcheck it externally
+  # the keycloak image doesn't have curl so we healthcheck it externally
   keycloak-healthcheck:
     env_file: *env_files
     logging: *logging
     image: curlimages/curl
     command: ["sh", "-c", "sleep infinity"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://keycloak:9000/health/live"]
+      test: ["CMD-SHELL", "curl -fsS http://$$KEYCLOAK_MGMT_TARGET/health/live"]
       interval: 3s
       timeout: 5s
       retries: 20
@@ -154,20 +83,14 @@ services:
     restart: always
     volumes:
       - ./postgres-init.sh:/docker-entrypoint-initdb.d/postgres-init.sh
-      - /var/lib/postgresql/data:/var/lib/postgresql/data
+      # A named volume (not a host bind) so each stack owns its data and `down -v` resets it.
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test:
         ["CMD-SHELL", "pg_isready -d $$POSTGRES_INFRA_DB -U $$POSTGRES_USER"]
       interval: 10s
       timeout: 5s
       retries: 5
-
-  redis:
-    env_file: *env_files
-    logging: *logging
-    image: redis:7.4.1
-    restart: always
-    command: redis-server --notify-keyspace-events Ex
 
   mimir:
     env_file: *env_files
@@ -177,10 +100,6 @@ services:
       - ./grafana/mimir.yaml:/etc/mimir/config.yaml
       - mimir-data:/data
     entrypoint: ["/bin/mimir", "-config.file=/etc/mimir/config.yaml"]
-
-  pushgateway:
-    image: prom/pushgateway:v1.11.1
-    container_name: pushgateway
 
   tempo:
     env_file: *env_files
@@ -225,15 +144,6 @@ services:
     logging: *logging
     image: prom/node-exporter:v1.8.2
 
-  redis_exporter:
-    env_file: *env_files
-    logging: *logging
-    image: oliver006/redis_exporter:v1.80.1
-    environment:
-      REDIS_ADDR: redis://redis:6379
-    depends_on:
-      - redis
-
   postgres_exporter:
     env_file: *env_files
     logging: *logging
@@ -272,19 +182,6 @@ services:
       - reverse-proxy-data:/data
       - reverse-proxy-config:/config
 
-  file-server:
-    env_file: *env_files
-    environment:
-      OTEL_SERVICE_NAME: file-server
-    logging: *logging
-    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile"]
-    image: caddy:2.8.4
-    volumes:
-      - ./file-server/Caddyfile:/etc/caddy/Caddyfile
-      - ./file-server/public:/srv/mp-public
-      - file-server-data:/data
-      - file-server-config:/config
-
   postfix:
     env_file: *env_files
     logging: *logging
@@ -295,7 +192,6 @@ volumes:
   grafana-data:
   loki-data:
   mimir-data:
+  postgres-data:
   reverse-proxy-data:
   reverse-proxy-config:
-  file-server-data:
-  file-server-config:

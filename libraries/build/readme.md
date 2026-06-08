@@ -1,3 +1,0 @@
-# build
-
-Reusable build configuration

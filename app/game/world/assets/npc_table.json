@@ -1,0 +1,72 @@
+[
+	{
+		"id": "orc",
+		"display_name": "Orc",
+		"model": "orc",
+		"tint": "#ffffffff",
+		"ai": "defensive",
+		"health": 25,
+		"damage": 3,
+		"attack_speed": 1.0,
+		"attack_delay": 400,
+		"range": 1.0,
+		"speed": 1.0,
+		"aggro": 7.0
+	},
+	{
+		"id": "orc_chief",
+		"display_name": "Orc Chief",
+		"model": "orc",
+		"tint": "#ffb070ff",
+		"ai": "protective",
+		"health": 60,
+		"damage": 6,
+		"attack_speed": 0.8,
+		"attack_delay": 600,
+		"range": 1.2,
+		"speed": 1.2,
+		"aggro": 9.0
+	},
+	{
+		"id": "skeleton",
+		"display_name": "Skeleton",
+		"model": "skeleton",
+		"tint": "#ffffffff",
+		"ai": "aggressive",
+		"health": 18,
+		"damage": 3,
+		"attack_speed": 1.0,
+		"attack_delay": 400,
+		"range": 1.0,
+		"speed": 1.0,
+		"aggro": 8.0
+	},
+	{
+		"id": "bat",
+		"display_name": "Bat",
+		"model": "bat",
+		"tint": "#ffffffff",
+		"ai": "pacifist",
+		"health": 8,
+		"damage": 1,
+		"attack_speed": 1.5,
+		"attack_delay": 300,
+		"range": 1.0,
+		"speed": 1.25,
+		"aggro": 5.0
+	},
+	{
+		"id": "vampire_bat",
+		"display_name": "Vampire Bat",
+		"model": "bat",
+		"tint": "#ff7788ff",
+		"ai": "aggressive",
+		"health": 12,
+		"damage": 2,
+		"attack_speed": 2.0,
+		"attack_delay": 200,
+		"range": 1.0,
+		"speed": 1.5,
+		"aggro": 8.0
+	}
+]

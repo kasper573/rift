@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = [
+    "lib/rift",
+    "lib/rift/derive",
+    "lib/math",
+    "lib/tiled",
+    "lib/nav",
+    "lib/image",
+    "lib/actor",
+    "lib/auth",
+    "app/game/world",
+    "app/game/server",
+    "app/game/client",
+    "app/game/e2e",
+    "app/website",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+askama = "0.14"
+axum = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tower-http = { version = "0.6", features = ["fs", "set-header"] }
+tungstenite = "0.29"
+ureq = { version = "3", default-features = false }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# The dev loop's profile: optimized enough to playtest, but spared release's deploy-grade
+# costs (thin LTO + a single codegen unit) and rebuilt incrementally on every save.
+[profile.dev-serve]
+inherits = "release"
+lto = "off"
+codegen-units = 16
+incremental = true
+opt-level = 2

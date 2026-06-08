@@ -7,23 +7,95 @@ env:
   DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
   DOCKER_REGISTRY_URL: ghcr.io/${{ github.repository_owner }}
   DOCKER_IMAGE_VERSION: ${{ github.sha }}
-  BUILD_VERSION: ${{ github.sha }}
 
 jobs:
-  conventions:
+  devcontainer:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/workflows/composites/install_node_things/
-      - run: pnpm lint
-      - run: pnpm format
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+      - uses: devcontainers/ci@v0.3
+        with:
+          imageName: ${{ env.DOCKER_REGISTRY_URL }}/mp-devcontainer
+          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/mp-devcontainer
+          push: always
+          runCmd: cargo --version
+
+  conventions:
+    needs: [devcontainer]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+      - uses: actions/cache@v4
+        with:
+          path: target
+          key: check-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - uses: devcontainers/ci@v0.3
+        with:
+          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/mp-devcontainer
+          push: never
+          runCmd: cargo x check
 
   test-unit:
+    needs: [devcontainer]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/workflows/composites/install_node_things/
-      - run: pnpm test
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+      - uses: actions/cache@v4
+        with:
+          path: target
+          key: test-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - uses: devcontainers/ci@v0.3
+        with:
+          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/mp-devcontainer
+          push: never
+          runCmd: cargo test --workspace
+
+  build-wasm:
+    needs: [devcontainer]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+      - uses: actions/cache@v4
+        with:
+          path: target
+          key: wasm-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - uses: devcontainers/ci@v0.3
+        with:
+          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/mp-devcontainer
+          push: never
+          runCmd: cargo x wasm
 
   build:
     runs-on: ubuntu-latest
@@ -44,76 +116,53 @@ jobs:
           password: ${{ env.DOCKER_PASSWORD }}
 
       - name: Build docker images
-        run: cd docker && ./dockerctl.sh prod build
+        run: cargo x compose prod build
 
       - name: Push docker images
-        run: cd docker && ./dockerctl.sh prod push
+        run: cargo x compose prod push
 
-  test-e2e:
-    needs: [build]
+  test-smoke:
+    needs: [build, devcontainer]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
-      - name: Install node dependencies
-        uses: ./.github/workflows/composites/install_node_things/
-      - name: Install playwright dependencies
-        run: pnpm -F e2e exec playwright install --with-deps
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+
       - name: Start application
-        run: cd ./docker && ./dockerctl.sh test up --no-build -d
-      - name: Run end-to-end tests
-        run: pnpm -F @mp/e2e start
+        run: cargo x up test --no-build
+
+      - name: Smoke test through the reverse proxy
+        uses: devcontainers/ci@v0.3
+        with:
+          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/mp-devcontainer
+          push: never
+          runCmd: cargo x smoke
+
       - name: Dump docker logs
         if: always()
         run: |
-          mkdir -p e2e-test-docker-logs
+          mkdir -p smoke-test-docker-logs
           for container in $(docker ps -aq); do
             name=$(docker inspect --format='{{.Name}}' "$container" | sed 's|/||g')
-            docker logs "$container" &> "e2e-test-docker-logs/${name}.log"
+            docker logs "$container" &> "smoke-test-docker-logs/${name}.log"
           done
       - name: Save docker logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-test-docker-logs
-          path: e2e-test-docker-logs/
-      - name: Save playwright artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: playwright
-          path: ./apps/e2e/.playwright/
-          include-hidden-files: true
-
-  test-load:
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install node dependencies
-        uses: ./.github/workflows/composites/install_node_things/
-      - name: Start application
-        run: cd ./docker && ./dockerctl.sh test up --no-build -d
-      - name: Typecheck load test
-        run: pnpm -F loadtest build
-      - name: Run load tests
-        run: pnpm -F loadtest start:test --verbose --gc 100 --timeout 30 --ef
-      - name: Dump docker logs
-        if: always()
-        run: |
-          mkdir -p load-test-docker-logs
-          for container in $(docker ps -aq); do
-            name=$(docker inspect --format='{{.Name}}' "$container" | sed 's|/||g')
-            docker logs "$container" &> "load-test-docker-logs/${name}.log"
-          done
-      - name: Save docker logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: load-test-docker-logs
-          path: load-test-docker-logs/
+          name: smoke-test-docker-logs
+          path: smoke-test-docker-logs/
 
   deploy:
-    needs: [build]
+    needs: [build, test-unit, test-smoke]
     if: github.ref_name == 'main'
     runs-on: ubuntu-latest
     steps:
@@ -142,20 +191,20 @@ jobs:
             set -euo pipefail
             cd ~/docker
 
-            # Set production host env vars
-            echo "DOCKER_REGISTRY_URL=\"${{ env.DOCKER_REGISTRY_URL }}\"" > .env
+            # Set production host env vars; compose reads .env for interpolation and layering.
+            echo "COMPOSE_ENV=prod" > .env
+            echo "DOCKER_REGISTRY_URL=\"${{ env.DOCKER_REGISTRY_URL }}\"" >> .env
             echo "DOCKER_IMAGE_VERSION=\"${{ env.DOCKER_IMAGE_VERSION }}\"" >> .env
-            echo "MP_BUILD_VERSION=\"${{ env.BUILD_VERSION }}\"" >> .env
             echo "MP_DOMAIN=\"${{ vars.MP_DOMAIN }}\"" >> .env
             echo "KC_ADMIN_USERNAME=\"${{ secrets.KC_ADMIN_USERNAME }}\"" >> .env
             echo "KC_ADMIN_PASSWORD=\"${{ secrets.KC_ADMIN_PASSWORD }}\"" >> .env
-            echo "MP_GATEWAY_GAME_SERVICE_SECRET=\"$(openssl rand -hex 32)\"" >> .env
 
             echo ${{ env.DOCKER_PASSWORD }} | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
-            ./dockerctl.sh prod pull
-            ./dockerctl.sh prod down
+            docker network inspect rift >/dev/null 2>&1 || docker network create rift
+            docker compose --profile prod pull
+            docker compose --profile prod down
 
-            if ! ./dockerctl.sh prod up -d --remove-orphans --no-build; then
+            if ! docker compose --profile prod up -d --remove-orphans --no-build; then
               echo "🚨 docker-compose up failed — gathering all container logs"
               mkdir -p logs
               for id in $(docker ps -aq); do

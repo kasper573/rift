@@ -1,36 +1,16 @@
-prometheus.scrape "mp_api" {
+prometheus.scrape "mp_game_server" {
 	targets = [{
-		__address__ = env("MP_API_PROXY_HOST"),
+		__address__ = env("MP_GAME_SERVER_PROXY_HOST"),
 	}]
 	forward_to      = [prometheus.remote_write.default.receiver]
-	job_name        = "mp_api"
-	scrape_interval = env("PROMETHEUS_SCRAPE_INTERVAL")
-	scrape_timeout  = env("PROMETHEUS_SCRAPE_TIMEOUT")
-}
-
-prometheus.scrape "mp_gateway" {
-	targets = [{
-		__address__ = env("MP_GATEWAY_PROXY_HOST"),
-	}]
-	forward_to      = [prometheus.remote_write.default.receiver]
-	job_name        = "mp_gateway"
-	scrape_interval = env("PROMETHEUS_SCRAPE_INTERVAL")
-	scrape_timeout  = env("PROMETHEUS_SCRAPE_TIMEOUT")
-}
-
-prometheus.scrape "pushgateway" {
-	targets = [{
-		__address__ = "pushgateway:9091",
-	}]
-	forward_to      = [prometheus.remote_write.default.receiver]
-	job_name        = "pushgateway"
+	job_name        = "mp_game_server"
 	scrape_interval = env("PROMETHEUS_SCRAPE_INTERVAL")
 	scrape_timeout  = env("PROMETHEUS_SCRAPE_TIMEOUT")
 }
 
 prometheus.scrape "node_exporter" {
 	targets = [{
-		__address__ = "node_exporter:9100",
+		__address__ = env("NODE_EXPORTER_TARGET"),
 	}]
 	forward_to      = [prometheus.remote_write.default.receiver]
 	job_name        = "node_exporter"
@@ -40,7 +20,7 @@ prometheus.scrape "node_exporter" {
 
 prometheus.scrape "postgres_exporter" {
 	targets = [{
-		__address__ = "postgres_exporter:9187",
+		__address__ = env("POSTGRES_EXPORTER_TARGET"),
 	}]
 	forward_to      = [prometheus.remote_write.default.receiver]
 	job_name        = "postgres_exporter"
@@ -48,19 +28,9 @@ prometheus.scrape "postgres_exporter" {
 	scrape_timeout  = env("PROMETHEUS_SCRAPE_TIMEOUT")
 }
 
-prometheus.scrape "redis_exporter" {
-	targets = [{
-		__address__ = "redis_exporter:9121",
-	}]
-	forward_to      = [prometheus.remote_write.default.receiver]
-	job_name        = "redis_exporter"
-	scrape_interval = env("PROMETHEUS_SCRAPE_INTERVAL")
-	scrape_timeout  = env("PROMETHEUS_SCRAPE_TIMEOUT")
-}
-
 prometheus.scrape "keycloak" {
 	targets = [{
-		__address__ = "keycloak:9000",
+		__address__ = env("KEYCLOAK_MGMT_TARGET"),
 	}]
 	forward_to      = [prometheus.remote_write.default.receiver]
 	job_name        = "keycloak"
@@ -71,7 +41,7 @@ prometheus.scrape "keycloak" {
 prometheus.remote_write "default" {
 	endpoint {
 		name = "mimir"
-		url  = "http://mimir:9009/api/v1/push"
+		url  = env("MIMIR_BASE") + "/api/v1/push"
 
 		queue_config { }
 
@@ -153,64 +123,11 @@ loki.source.file "containers" {
 
 loki.write "default" {
 	endpoint {
-		url = "http://loki:3100/loki/api/v1/push"
+		url = env("LOKI_BASE") + "/loki/api/v1/push"
 	}
 	external_labels = {}
 }
 
-loki.process "mp_website" {
-	forward_to = [loki.write.default.receiver]
-
-	stage.logfmt {
-		mapping = {"kind" = "", "service_name" = "", "app" = ""}
-	}
-
-	stage.labels {
-		values = {
-			"kind"          = "kind",
-			"service_name"  = "service_name",
-			"app"           = "app",
-			"user_id"       = "user_id",
-			"user_username" = "user_username",
-		}
-	}
-}
-
 logging {
 	level = "info"
-}
-
-faro.receiver "mp_website" {
-	extra_log_labels = {
-		app  = "mp-website",
-		kind = "",
-	}
-
-	server {
-		listen_address           = "0.0.0.0"
-		listen_port              = "18273"
-		cors_allowed_origins     = [env("FARO_RECEIVER_CORS_ALLOWED_ORIGIN")]
-		max_allowed_payload_size = "10MiB"
-
-		rate_limiting {
-			rate = 50
-		}
-	}
-
-	sourcemaps { }
-
-	output {
-		logs   = [loki.process.mp_website.receiver]
-		traces = [otelcol.exporter.otlp.default.input]
-	}
-}
-
-otelcol.exporter.otlp "default" {
-	client {
-		endpoint = env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
-
-		tls {
-			insecure = true
-		}
-	}
 }

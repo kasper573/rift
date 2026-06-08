@@ -1,0 +1,11 @@
+[package]
+name = "image"
+version.workspace = true
+edition.workspace = true
+description = "RGBA image primitives — PNG decode/encode, header probing, blitting, pixelation — encapsulating the third-party codec so the rest of the repo never depends on it directly."
+
+[dependencies]
+# The image type is plain RGBA bytes; PNG is the only codec concern.
+png = "0.17"
+# Region is the shared Rect, over integer atlas pixels.
+math = { path = "../math" }

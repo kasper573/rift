@@ -1,0 +1,12 @@
+[package]
+name = "actor"
+version.workspace = true
+edition.workspace = true
+description = "Opinionated 8-direction actor sprites: manifest-driven loading from arbitrary file layouts, homogenized in-memory atlases, frame animation. Render-backend agnostic."
+
+[dependencies]
+# serde_json reads the sprite manifests.
+image = { path = "../image" }
+math = { path = "../math" }
+serde.workspace = true
+serde_json.workspace = true

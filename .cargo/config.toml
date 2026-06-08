@@ -1,0 +1,9 @@
+# Browser builds: JS-provided externs (miniquad's platform hooks, the rift-ws bridge) resolve as
+# wasm imports filled in by the page at load time.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=--import-undefined"]
+
+[alias]
+# The browser build of the game client; the website serves the artifact via MP_GAME_CLIENT_WASM.
+wasm = "build --release --package client --target wasm32-unknown-unknown"
+x = "run --quiet -p xtask --"

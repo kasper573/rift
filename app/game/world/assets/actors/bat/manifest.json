@@ -1,0 +1,60 @@
+{
+	"frame": { "w": 32, "h": 32 },
+	"hitbox": [1, 1],
+	"actions": {
+		"idle": {
+			"base": { "frames": 8 },
+			"dir": {
+				"s": { "file": "front.png" },
+				"n": { "file": "back.png" },
+				"e": { "file": "right.png" },
+				"w": { "file": "right.png", "flip": true }
+			}
+		},
+		"run": {
+			"base": { "y": 32, "frames": 4 },
+			"dir": {
+				"s": { "file": "front.png" },
+				"n": { "file": "back.png" },
+				"e": { "file": "right.png" },
+				"w": { "file": "right.png", "flip": true }
+			}
+		},
+		"walk": {
+			"base": { "y": 64, "frames": 4 },
+			"dir": {
+				"s": { "file": "front.png" },
+				"n": { "file": "back.png" },
+				"e": { "file": "right.png" },
+				"w": { "file": "right.png", "flip": true }
+			}
+		},
+		"attack": {
+			"base": { 
+				"y": 128, 
+				"frames": 8, 
+				"cues": { "apex": [4] }, 
+				"sfx": [{ "id": "bite01", "frame": 4 }] 
+			},
+			"dir": {
+				"s": { "file": "front.png" },
+				"n": { "file": "back.png" },
+				"e": { "file": "right.png" },
+				"w": { "file": "right.png", "flip": true }
+			}
+		},
+		"death": {
+			"base": { 
+				"y": 256, 
+				"frames": 5, 
+				"sfx": [{ "id": "death01", "frame": 0 }] 
+			},
+			"dir": {
+				"s": { "file": "front.png", "frames": 11 },
+				"n": { "file": "back.png" },
+				"e": { "file": "right.png" },
+				"w": { "file": "right.png", "flip": true }
+			}
+		}
+	}
+}

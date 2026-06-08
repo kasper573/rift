@@ -1,6 +1,0 @@
-{
-  "extends": "@mp/tsconfig/node.json",
-  "compilerOptions": {
-    "lib": ["ESNext", "DOM"]
-  }
-}

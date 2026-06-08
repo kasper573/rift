@@ -1,0 +1,15 @@
+[package]
+name = "rift"
+version.workspace = true
+edition.workspace = true
+description = "Minimal general-purpose server-authoritative ECS replication. The core (ECS, codec, replication, client link) is std-only and portable; the `host` feature adds the server transport (TCP/WebSocket/HTTP)."
+
+[features]
+default = ["host"]
+host = ["dep:httparse", "dep:percent-encoding", "dep:tungstenite"]
+
+[dependencies]
+rift_derive = { path = "derive" }
+httparse = { version = "1.10.1", optional = true }
+percent-encoding = { version = "2.3.2", optional = true }
+tungstenite = { workspace = true, optional = true }

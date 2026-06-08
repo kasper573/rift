@@ -1,1 +1,0 @@
-ALTER TABLE "character" ADD CONSTRAINT "character_name_unique" UNIQUE("name");

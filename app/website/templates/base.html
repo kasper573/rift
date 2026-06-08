@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MP</title>
+    <link rel="stylesheet" href="/site.css">
+  </head>
+  <body>
+    <nav>
+      <a href="/"{% if nav.path == "/" %} data-status="active"{% endif %}>Home</a>
+      <a href="/play"{% if nav.path == "/play" %} data-status="active"{% endif %}>Play</a>
+      {% if nav.can_spectate %}
+        <a href="/spectate"{% if nav.path == "/spectate" %} data-status="active"{% endif %}>Spectate</a>
+      {% endif %}
+      <div class="right">
+        {% if let Some(user) = nav.user %}
+          <a class="user-name" href="{{ nav.account_url }}">{{ user }}</a>
+          <form method="get" action="/auth/sign-out">
+            <button class="subtle">Sign out</button>
+          </form>
+        {% else %}
+          <form method="get" action="/auth/sign-in">
+            <input type="hidden" name="return" value="{{ nav.path }}">
+            <button class="subtle">Sign in</button>
+          </form>
+        {% endif %}
+      </div>
+    </nav>
+    <main>{% block content %}{% endblock %}</main>
+  </body>
+</html>

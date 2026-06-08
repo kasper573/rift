@@ -1,0 +1,18 @@
+[
+	{ "npc": "orc", "type": "xp", "amount": 12 },
+	{ "npc": "orc", "type": "item", "item": "health_potion", "amount": 1 },
+	{ "npc": "orc", "type": "item", "item": "orc_tusk", "amount": 1, "chance": 50 },
+	{ "npc": "orc_chief", "type": "xp", "amount": 40 },
+	{ "npc": "orc_chief", "type": "item", "item": "greater_health_potion", "amount": 1, "chance": 75 },
+	{ "npc": "orc_chief", "type": "item", "item": "orc_tusk", "amount": 2 },
+	{ "npc": "orc_chief", "type": "item", "item": "tribal_helmet", "amount": 1, "chance": 10 },
+	{ "npc": "skeleton", "type": "xp", "amount": 10 },
+	{ "npc": "skeleton", "type": "item", "item": "bone", "amount": 2, "chance": 80 },
+	{ "npc": "skeleton", "type": "item", "item": "rusty_sword", "amount": 1, "chance": 15 },
+	{ "npc": "skeleton", "type": "item", "item": "bone_shield", "amount": 1, "chance": 2.5 },
+	{ "npc": "bat", "type": "xp", "amount": 4 },
+	{ "npc": "bat", "type": "item", "item": "bat_wing", "amount": 1, "chance": 65 },
+	{ "npc": "vampire_bat", "type": "xp", "amount": 8 },
+	{ "npc": "vampire_bat", "type": "item", "item": "bat_wing", "amount": 2, "chance": 65 },
+	{ "npc": "vampire_bat", "type": "item", "item": "health_potion", "amount": 1, "chance": 25 }
+]

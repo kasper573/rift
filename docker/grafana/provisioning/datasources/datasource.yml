@@ -10,7 +10,7 @@ datasources:
     type: "prometheus"
     access: "proxy"
     orgId: 1
-    url: "http://mimir:9009/prometheus"
+    url: "$MIMIR_BASE/prometheus"
     basicAuth: false
     isDefault: false
     version: 1
@@ -25,7 +25,7 @@ datasources:
     type: "tempo"
     access: "proxy"
     orgId: 1
-    url: "http://tempo:3200"
+    url: "$TEMPO_QUERY"
     basicAuth: false
     isDefault: false
     version: 1
@@ -45,7 +45,7 @@ datasources:
     type: "loki"
     access: "proxy"
     orgId: 1
-    url: "http://loki:3100"
+    url: "$LOKI_BASE"
     basicAuth: false
     isDefault: false
     version: 1

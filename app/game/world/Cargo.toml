@@ -1,0 +1,17 @@
+[package]
+name = "world"
+version.workspace = true
+edition.workspace = true
+description = "The MMORPG game library: wire protocol, content tables, and world simulation (NPC AI, combat, movement, portals) — organized by domain. The server and client are thin composition roots over this."
+
+[dependencies]
+rift = { path = "../../../lib/rift", default-features = false }
+math = { path = "../../../lib/math" }
+tiled = { path = "../../../lib/tiled" }
+nav = { path = "../../../lib/nav" }
+actor = { path = "../../../lib/actor" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

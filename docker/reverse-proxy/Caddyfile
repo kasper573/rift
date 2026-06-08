@@ -27,27 +27,14 @@
 }
 
 grafana.{$MP_DOMAIN} {
-    reverse_proxy http://grafana:3000
+    reverse_proxy {$GRAFANA_TARGET}
 }
 
 auth.{$MP_DOMAIN} {
     tracing {
         span keycloak
     }
-    reverse_proxy keycloak:8080
-}
-
-faro.{$MP_DOMAIN} {
-    reverse_proxy alloy:18273
-}
-
-{$MP_FILE_SERVER_DOMAIN} {
-    import common_rate_limit
-    tracing {
-        span file_server
-    }
-    reverse_proxy file-server:80
-    import common_cors
+    reverse_proxy {$KEYCLOAK_TARGET}
 }
 
 {$MP_WEBSITE_DOMAIN} {
@@ -55,20 +42,11 @@ faro.{$MP_DOMAIN} {
     reverse_proxy {$MP_WEBSITE_PROXY_HOST}
 }
 
-{$MP_API_DOMAIN} {
+{$MP_GAME_SERVER_DOMAIN} {
     import common_rate_limit
     tracing {
-        span mp_api
+        span mp_game_server
     }
-    reverse_proxy {$MP_API_PROXY_HOST}
-    import common_cors
-}
-
-{$MP_GATEWAY_DOMAIN} {
-    import common_rate_limit
-    tracing {
-        span mp_gateway
-    }
-    reverse_proxy {$MP_GATEWAY_PROXY_HOST}
+    reverse_proxy {$MP_GAME_SERVER_PROXY_HOST}
     import common_cors
 }

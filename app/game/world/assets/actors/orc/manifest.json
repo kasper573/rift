@@ -1,0 +1,60 @@
+{
+	"frame": { "w": 48, "h": 48 },
+	"hitbox": [1, 1.5],
+	"actions": {
+		"idle": {
+			"base": { "frames": 8 },
+			"dir": {
+				"s": { "file": "front.png" },
+				"n": { "file": "back.png" },
+				"e": { "file": "right.png" },
+				"w": { "file": "right.png", "flip": true }
+			}
+		},
+		"run": {
+			"base": { "y": 48, "frames": 6, "cues": { "steps": [0, 3] } },
+			"dir": {
+				"s": { "file": "front.png" },
+				"n": { "file": "back.png" },
+				"e": { "file": "right.png" },
+				"w": { "file": "right.png", "flip": true }
+			}
+		},
+		"walk": {
+			"base": { "y": 96, "frames": 10, "cues": { "steps": [0, 5] } },
+			"dir": {
+				"s": { "file": "front.png" },
+				"n": { "file": "back.png" },
+				"e": { "file": "right.png" },
+				"w": { "file": "right.png", "flip": true }
+			}
+		},
+		"attack": {
+			"base": { 
+				"y": 288, 
+				"frames": 16, 
+				"cues": { "apex": [8] }, 
+				"sfx": [{ "id": "slash01", "frame": 8 }] 
+			},
+			"dir": {
+				"s": { "file": "front.png" },
+				"n": { "file": "back.png" },
+				"e": { "file": "right.png" },
+				"w": { "file": "right.png", "flip": true }
+			}
+		},
+		"death": {
+			"base": { 
+				"y": 240, 
+				"frames": 6, 
+				"sfx": [{ "id": "death01", "frame": 0 }] 
+			},
+			"dir": {
+				"s": { "file": "front.png" },
+				"n": { "file": "back.png" },
+				"e": { "file": "right.png" },
+				"w": { "file": "right.png", "flip": true }
+			}
+		}
+	}
+}

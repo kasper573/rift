@@ -1,0 +1,13 @@
+FROM rust:1-alpine AS builder
+RUN apk add --no-cache musl-dev
+WORKDIR /workdir
+COPY . .
+RUN --mount=type=cache,id=rustup-server,target=/usr/local/rustup \
+    --mount=type=cache,id=cargo-registry-server,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cargo-target-server,target=/workdir/target \
+    cargo build --release -p server \
+    && cp target/release/server /usr/local/bin/game-server
+
+FROM alpine:3.21
+COPY --from=builder /usr/local/bin/game-server /usr/local/bin/game-server
+ENTRYPOINT ["game-server"]

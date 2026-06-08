@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block content %}
+<canvas id="glcanvas" tabindex="1"></canvas>
+{# The bundle's quad_net plugin assigns `register_plugin` undeclared, which the bundle's own
+   "use strict" forbids — predeclare the global it expects. #}
+<script>var register_plugin</script>
+<script src="/mq_js_bundle.js"></script>
+<script>load("/game.wasm")</script>
+{% endblock %}

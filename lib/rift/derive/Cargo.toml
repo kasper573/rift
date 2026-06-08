@@ -1,0 +1,8 @@
+[package]
+name = "rift_derive"
+version.workspace = true
+edition.workspace = true
+description = "The derive macro behind rift::Wire — std-only."
+
+[lib]
+proc-macro = true
