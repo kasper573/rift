@@ -1,6 +1,11 @@
 name: Test, Build, Deploy
 on:
   push:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   DOCKER_REGISTRY: ghcr.io
   DOCKER_USERNAME: ${{ github.repository_owner }}
@@ -36,20 +41,10 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: ./.github/actions/devcontainer-run
         with:
-          registry: ${{ env.DOCKER_REGISTRY }}
-          username: ${{ env.DOCKER_USERNAME }}
-          password: ${{ env.DOCKER_PASSWORD }}
-      - uses: actions/cache@v4
-        with:
-          path: target
-          key: check-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-      - uses: devcontainers/ci@v0.3
-        with:
-          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/rift-devcontainer
-          push: never
-          runCmd: cargo x check
+          run: cargo x check
+          cache-key: check
 
   test-unit:
     needs: [devcontainer]
@@ -59,20 +54,10 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: ./.github/actions/devcontainer-run
         with:
-          registry: ${{ env.DOCKER_REGISTRY }}
-          username: ${{ env.DOCKER_USERNAME }}
-          password: ${{ env.DOCKER_PASSWORD }}
-      - uses: actions/cache@v4
-        with:
-          path: target
-          key: test-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-      - uses: devcontainers/ci@v0.3
-        with:
-          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/rift-devcontainer
-          push: never
-          runCmd: cargo test --workspace
+          run: cargo test --workspace
+          cache-key: test
 
   build-wasm:
     needs: [devcontainer]
@@ -82,42 +67,28 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: ./.github/actions/devcontainer-run
         with:
-          registry: ${{ env.DOCKER_REGISTRY }}
-          username: ${{ env.DOCKER_USERNAME }}
-          password: ${{ env.DOCKER_PASSWORD }}
-      - uses: actions/cache@v4
-        with:
-          path: target
-          key: wasm-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-      - uses: devcontainers/ci@v0.3
-        with:
-          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/rift-devcontainer
-          push: never
-          runCmd: cargo x wasm
+          run: cargo x wasm
+          cache-key: wasm
 
   build:
+    needs: [conventions, test-unit, build-wasm]
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
       packages: write
       id-token: write
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Log in with Docker
         uses: docker/login-action@v3
         with:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
-
       - name: Build docker images
         run: cargo x compose prod build
-
       - name: Push docker images
         run: cargo x compose prod push
 
@@ -129,23 +100,19 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@v4
-
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
-
       - name: Start application
         run: cargo x up test --no-build
-
-      - name: Smoke test through the reverse proxy
+      - name: Smoke test
         uses: devcontainers/ci@v0.3
         with:
           cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/rift-devcontainer
           push: never
           runCmd: cargo x smoke
-
       - name: Dump docker logs
         if: always()
         run: |

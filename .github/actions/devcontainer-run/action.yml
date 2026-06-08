@@ -1,0 +1,30 @@
+name: Run in devcontainer
+description: Log in to GHCR, restore the Rust target cache, and run a command inside the prebuilt devcontainer.
+
+inputs:
+  run:
+    description: Command to run inside the devcontainer.
+    required: true
+  cache-key:
+    description: Prefix for the target/ cache key.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ github.token }}
+    - uses: actions/cache@v4
+      with:
+        path: target
+        key: ${{ inputs.cache-key }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+        restore-keys: |
+          ${{ inputs.cache-key }}-
+    - uses: devcontainers/ci@v0.3
+      with:
+        cacheFrom: ghcr.io/${{ github.repository_owner }}/rift-devcontainer
+        push: never
+        runCmd: ${{ inputs.run }}
