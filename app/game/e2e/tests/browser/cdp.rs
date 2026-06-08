@@ -327,7 +327,7 @@ mod tempdir {
     }
     impl TempDir {
         pub fn new() -> TempDir {
-            let path = std::env::terift_dir().join(format!(
+            let path = std::env::temp_dir().join(format!(
                 "rift-e2e-chrome-{}-{:x}",
                 std::process::id(),
                 std::time::SystemTime::now()
