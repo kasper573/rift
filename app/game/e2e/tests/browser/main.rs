@@ -1,26 +1,14 @@
-//! Needs the docker test stack and Chrome: run with `cargo x e2e`, which derives the stack
-//! settings from the docker env files. `CHROME` overrides the browser binary.
+//! The browser suite only covers the seams the in-process `standalone` suite cannot reach: the
+//! real wasm client, canvas input, Keycloak sign-in, and the WebSocket transport through the
+//! reverse proxy. Every game-logic contract lives in `standalone.rs`. Run with `cargo x e2e`.
 
 mod cdp;
 mod flow;
 mod keycloak;
 mod stage;
 
-use e2e::scenarios;
 use stage::BrowserStage;
 use world::SPECTATE_ROLE;
-use world::core::math::{Pos, Tiles};
-
-macro_rules! bind {
-    ($group:ident: $($name:ident $(($($arg:expr),*))?),* $(,)?) => {$(
-        #[test]
-        fn $name() {
-            scenarios::$name(&mut BrowserStage::connect() $($(, $arg)*)?);
-        }
-    )*};
-}
-
-e2e::for_each_scenario!(bind);
 
 #[test]
 fn a_visitor_can_register_sign_in_and_play() {

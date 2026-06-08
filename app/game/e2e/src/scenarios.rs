@@ -618,19 +618,27 @@ pub fn consuming_a_potion_heals_and_destroys_it(stage: &mut dyn Stage) {
     assert!(hurt, "hostile npcs should wear the player into the window");
 
     let before_len = a.view().me().map_or(0, |me| me.inventory.len());
-    let at_use = a.view().me().and_then(|me| me.health).unwrap_or(0.0);
+    // The consume destroys the item and applies its heal in one server tick, so they land in
+    // the same snapshot. Comparing health across that single tick isolates the heal from the
+    // hits still landing each tick — sampling once before a multi-tick loop would let
+    // accumulated damage mask the heal.
+    let mut prev = a.view().me().and_then(|me| me.health).unwrap_or(0.0);
+    let mut healed = false;
     let consumed = eventually(stage, 10.0, || {
         a.use_item(slot);
-        a.view()
-            .me()
-            .is_some_and(|me| me.inventory.len() < before_len)
+        let Some(me) = a.view().me().cloned() else {
+            return false;
+        };
+        let health = me.health.unwrap_or(0.0);
+        if me.inventory.len() < before_len {
+            healed = health > prev;
+            return true;
+        }
+        prev = health;
+        false
     });
     assert!(consumed, "using a consumable destroys the instance");
-    let after = a.view().me().and_then(|me| me.health).unwrap_or(0.0);
-    assert!(
-        after > at_use,
-        "the potion should heal ({at_use} -> {after})",
-    );
+    assert!(healed, "the potion should heal");
 }
 
 pub fn inventories_are_private(stage: &mut dyn Stage) {

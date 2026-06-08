@@ -259,17 +259,6 @@ impl Page {
         }
     }
 
-    pub fn press_key(&self, code: &str, key: &str) {
-        let mut cdp = self.cdp.borrow_mut();
-        for kind in ["keyDown", "keyUp"] {
-            cdp.call(
-                Some(&self.session),
-                "Input.dispatchKeyEvent",
-                json!({ "type": kind, "code": code, "key": key }),
-            );
-        }
-    }
-
     pub fn received_frames(&self) -> Vec<Vec<u8>> {
         let mut cdp = self.cdp.borrow_mut();
         cdp.pump();
