@@ -1,4 +1,4 @@
-name: Test, Build, Deploy
+name: CI
 on:
   push:
 
@@ -33,7 +33,7 @@ jobs:
           push: always
           runCmd: cargo --version
 
-  conventions:
+  check:
     needs: [devcontainer]
     runs-on: ubuntu-latest
     permissions:
@@ -46,7 +46,7 @@ jobs:
           run: cargo x check
           cache-key: check
 
-  test-unit:
+  test:
     needs: [devcontainer]
     runs-on: ubuntu-latest
     permissions:
@@ -59,7 +59,7 @@ jobs:
           run: cargo test --workspace
           cache-key: test
 
-  build-wasm:
+  wasm:
     needs: [devcontainer]
     runs-on: ubuntu-latest
     permissions:
@@ -73,7 +73,7 @@ jobs:
           cache-key: wasm
 
   build:
-    needs: [conventions, test-unit, build-wasm]
+    needs: [check, test, wasm]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -81,8 +81,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      - name: Log in with Docker
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ env.DOCKER_USERNAME }}
@@ -92,8 +91,8 @@ jobs:
       - name: Push docker images
         run: cargo x compose prod push
 
-  test-smoke:
-    needs: [build, devcontainer]
+  e2e:
+    needs: [build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -105,31 +104,29 @@ jobs:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
-      - name: Start application
-        run: cargo x up test --no-build
-      - name: Smoke test
-        uses: devcontainers/ci@v0.3
+      - uses: browser-actions/setup-chrome@v1
+        id: chrome
         with:
-          cacheFrom: ${{ env.DOCKER_REGISTRY_URL }}/rift-devcontainer
-          push: never
-          runCmd: cargo x smoke
-      - name: Dump docker logs
+          chrome-version: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e
+      - name: Run e2e suite
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: cargo x e2e --no-build
+      - name: Collect docker logs
         if: always()
-        run: |
-          mkdir -p smoke-test-docker-logs
-          for container in $(docker ps -aq); do
-            name=$(docker inspect --format='{{.Name}}' "$container" | sed 's|/||g')
-            docker logs "$container" &> "smoke-test-docker-logs/${name}.log"
-          done
+        run: cargo x logs e2e-docker-logs
       - name: Save docker logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-test-docker-logs
-          path: smoke-test-docker-logs/
+          name: e2e-docker-logs
+          path: e2e-docker-logs/
 
   deploy:
-    needs: [build, test-unit, test-smoke]
+    needs: [build, e2e]
     if: github.ref_name == 'main'
     runs-on: ubuntu-latest
     steps:

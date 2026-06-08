@@ -11,16 +11,11 @@ name = "browser"
 path = "tests/browser/main.rs"
 required-features = ["stack"]
 
-[[test]]
-name = "smoke"
-required-features = ["stack"]
-
 [dependencies]
 rift = { path = "../../../lib/rift" }
 world = { path = "../world" }
 
 [dev-dependencies]
-client = { path = "../client" }
 serde_json.workspace = true
 tungstenite.workspace = true
 ureq = { workspace = true, features = ["rustls", "json"] }

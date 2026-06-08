@@ -1,9 +1,8 @@
 FROM rust:1-bookworm
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends chromium socat libasound2-dev \
+    && apt-get install -y --no-install-recommends socat libasound2-dev \
     && rm -rf /var/lib/apt/lists/*
-ENV CHROME=/usr/bin/chromium
 
 COPY rust-toolchain.toml /tmp/toolchain/rust-toolchain.toml
 RUN cd /tmp/toolchain && rustup show && rm -r /tmp/toolchain

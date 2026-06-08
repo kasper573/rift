@@ -14,11 +14,11 @@ fn main() {
         Some(("wasm", [])) => wasm(),
         Some(("dev", [])) => dev(),
         Some(("dev-serve", [])) => dev_serve(),
-        Some(("e2e", filter)) => e2e(filter),
-        Some(("smoke", [])) => smoke(),
+        Some(("e2e", args)) => e2e(args),
         Some(("up", [env_name, extra @ ..])) => up(env_name, extra),
         Some(("down", [env_name])) => compose(env_name, &["down".to_owned()]),
         Some(("compose", [env_name, rest @ ..])) => compose(env_name, rest),
+        Some(("logs", [dir])) => logs(dir),
         _ => usage(),
     }
 }
@@ -31,11 +31,13 @@ fn usage() {
   wasm                     the browser build of the game client, staged into target/game-client/
   dev                      the dev environment: compose stack + website + game server,
                            rebuilding and restarting them as sources change
-  e2e [filter]             the browser e2e game suite against the docker test stack (brings it up)
-  smoke                    smoke checks against the running docker test stack
+  e2e [--no-build] [filter]
+                           the browser e2e game suite against the docker test stack (brings it up);
+                           --no-build reuses already-built images instead of rebuilding
   up <env> [args...]       bring up the <env> compose stack (dev|test|prod)
   down <env>               tear down the <env> compose stack
-  compose <env> <args...>  run docker compose with the <env> profile and env files"
+  compose <env> <args...>  run docker compose with the <env> profile and env files
+  logs <dir>               write each container's logs into <dir>, one file per container"
     );
     exit(1);
 }
@@ -115,17 +117,21 @@ fn join(children: Vec<Child>) {
     }
 }
 
-fn e2e(filter: &[String]) {
-    // Always rebuild: a stale image would silently test the previous build.
-    up("test", &["--build".to_owned()]);
-    let mut args = vec!["--test", "browser"];
-    args.extend(filter.iter().map(String::as_str));
-    args.extend(["--", "--test-threads=1"]);
-    stack_test(&args);
-}
-
-fn smoke() {
-    stack_test(&["--test", "smoke"]);
+// A local run rebuilds so it tests fresh code; CI passes --no-build to reuse the images its
+// build stage already pushed.
+fn e2e(args: &[String]) {
+    let (build, filter) = match args.split_first() {
+        Some((flag, rest)) if flag == "--no-build" => (false, rest),
+        _ => (true, args),
+    };
+    up(
+        "test",
+        &[if build { "--build" } else { "--no-build" }.to_owned()],
+    );
+    let mut test_args = vec!["--test", "browser"];
+    test_args.extend(filter.iter().map(String::as_str));
+    test_args.extend(["--", "--test-threads=1"]);
+    stack_test(&test_args);
 }
 
 fn up(env_name: &str, extra: &[String]) {
@@ -144,6 +150,26 @@ fn compose(env_name: &str, args: &[String]) {
         env_name,
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
     );
+}
+
+fn logs(dir: &str) {
+    let dir = Path::new(dir);
+    fs::create_dir_all(dir).unwrap_or_else(|error| die(&format!("{}: {error}", dir.display())));
+    let ids = capture(Command::new("docker").args(["ps", "-aq"]));
+    for id in ids.split_whitespace() {
+        let name = capture(Command::new("docker").args(["inspect", "--format", "{{.Name}}", id]));
+        let path = dir.join(format!("{}.log", name.trim().trim_start_matches('/')));
+        let out = fs::File::create(&path)
+            .unwrap_or_else(|error| die(&format!("{}: {error}", path.display())));
+        let err = out
+            .try_clone()
+            .unwrap_or_else(|error| die(&format!("{}: {error}", path.display())));
+        let _ = Command::new("docker")
+            .args(["logs", id])
+            .stdout(out)
+            .stderr(err)
+            .status();
+    }
 }
 
 fn compose_str(env_name: &str, args: &[&str]) {
@@ -314,6 +340,13 @@ fn run(command: &mut Command) {
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
+}
+
+fn capture(command: &mut Command) -> String {
+    let output = command
+        .output()
+        .unwrap_or_else(|error| die(&format!("{command:?}: {error}")));
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 fn spawn(command: &mut Command) -> Child {
