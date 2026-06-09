@@ -13,6 +13,7 @@ fn main() {
         Some(("check", [])) => check(),
         Some(("wasm", [])) => wasm(),
         Some(("package", [])) => package(),
+        Some(("images", [])) => images(),
         Some(("dev", [])) => dev(),
         Some(("dev-serve", [])) => dev_serve(),
         Some(("e2e", args)) => e2e(args),
@@ -32,6 +33,8 @@ fn usage() {
   wasm                     the browser build of the game client, staged into target/game-client/
   package                  compile the release artifacts (wasm client + native binaries) and stage
                            them into docker/stage/ for the website and game-server images
+  images                   build the docker images; with INFRA_TAG set, the rarely-changing
+                           keycloak/reverse-proxy images are pulled by that tag (built+pushed on miss)
   dev                      the dev environment: compose stack + website + game server,
                            rebuilding and restarting them as sources change
   e2e [--no-build] [filter]
@@ -188,6 +191,33 @@ fn compose(env_name: &str, args: &[String]) {
         env_name,
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
     );
+}
+
+// keycloak and reverse-proxy depend only on their own Dockerfiles, so CI tags them by a hash of
+// those (INFRA_TAG) and reuses the pushed image across runs instead of rebuilding kc.sh/xcaddy.
+fn images() {
+    match env::var("INFRA_TAG").ok().filter(|tag| !tag.is_empty()) {
+        Some(tag) => {
+            let registry = env::var("DOCKER_REGISTRY_URL").unwrap_or_else(|_| "rift".to_owned());
+            let version = env::var("DOCKER_IMAGE_VERSION").unwrap_or_else(|_| "latest".to_owned());
+            for (service, image) in [
+                ("keycloak", "rift-keycloak"),
+                ("reverse-proxy", "rift-reverse-proxy"),
+            ] {
+                let cached = format!("{registry}/{image}:{tag}");
+                let current = format!("{registry}/{image}:{version}");
+                if try_run(Command::new("docker").args(["pull", cached.as_str()])) {
+                    run(Command::new("docker").args(["tag", cached.as_str(), current.as_str()]));
+                } else {
+                    compose_str("prod", &["build", service]);
+                    run(Command::new("docker").args(["tag", current.as_str(), cached.as_str()]));
+                    run(Command::new("docker").args(["push", cached.as_str()]));
+                }
+            }
+        }
+        None => compose_str("prod", &["build", "keycloak", "reverse-proxy"]),
+    }
+    compose_str("prod", &["build", "rift-website", "rift-game-server"]);
 }
 
 fn logs(dir: &str) {
@@ -378,6 +408,13 @@ fn run(command: &mut Command) {
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
+}
+
+fn try_run(command: &mut Command) -> bool {
+    command
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn capture(command: &mut Command) -> String {

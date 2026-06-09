@@ -43,7 +43,9 @@ jobs:
       - name: Build release artifacts
         run: cargo x package
       - name: Build docker images
-        run: cargo x compose prod build
+        env:
+          INFRA_TAG: infra-${{ hashFiles('docker/Dockerfile.keycloak', 'docker/Dockerfile.reverse-proxy') }}
+        run: cargo x images
       - name: E2E tests
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}
