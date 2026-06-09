@@ -40,6 +40,8 @@ jobs:
         run: cargo x check
       - name: Unit tests
         run: cargo test --workspace
+      - name: Build release artifacts
+        run: cargo x package
       - name: Build docker images
         run: cargo x compose prod build
       - name: E2E tests

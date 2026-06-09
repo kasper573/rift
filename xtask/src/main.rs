@@ -12,6 +12,7 @@ fn main() {
     match args.split_first().map(|(cmd, rest)| (cmd.as_str(), rest)) {
         Some(("check", [])) => check(),
         Some(("wasm", [])) => wasm(),
+        Some(("package", [])) => package(),
         Some(("dev", [])) => dev(),
         Some(("dev-serve", [])) => dev_serve(),
         Some(("e2e", args)) => e2e(args),
@@ -29,6 +30,8 @@ fn usage() {
 
   check                    formatting and lints
   wasm                     the browser build of the game client, staged into target/game-client/
+  package                  compile the release artifacts (wasm client + native binaries) and stage
+                           them into docker/stage/ for the website and game-server images
   dev                      the dev environment: compose stack + website + game server,
                            rebuilding and restarting them as sources change
   e2e [--no-build] [filter]
@@ -61,6 +64,38 @@ const DEV_WASM_TARGET_DIR: &str = "target/wasm-dev";
 fn wasm() {
     run(Command::new("cargo").arg("wasm"));
     stage_game_client("target/wasm32-unknown-unknown/release/client.wasm");
+}
+
+// The alpine images run a fully static binary, so the host cross-compiles it (musl is C-dep free
+// for these crates) and the cache persists it across CI runs — an in-Docker build cannot.
+const MUSL_TARGET: &str = "x86_64-unknown-linux-musl";
+
+fn package() {
+    wasm();
+    run(Command::new("cargo").args([
+        "build",
+        "--release",
+        "--target",
+        MUSL_TARGET,
+        "-p",
+        "website",
+        "-p",
+        "server",
+    ]));
+    let stage = Path::new("docker/stage");
+    fs::create_dir_all(stage.join("game"))
+        .unwrap_or_else(|error| die(&format!("{}: {error}", stage.display())));
+    let release = format!("target/{MUSL_TARGET}/release");
+    copy(format!("{release}/website"), &stage.join("website"));
+    copy(format!("{release}/server"), &stage.join("game-server"));
+    copy(
+        "target/game-client/client.wasm",
+        &stage.join("game/client.wasm"),
+    );
+    copy(
+        "target/game-client/mq_js_bundle.js",
+        &stage.join("game/mq_js_bundle.js"),
+    );
 }
 
 fn dev() {
@@ -117,13 +152,16 @@ fn join(children: Vec<Child>) {
     }
 }
 
-// A local run rebuilds so it tests fresh code; CI passes --no-build to reuse the images its
-// build stage already pushed.
+// A local run packages and rebuilds so it tests fresh code; CI passes --no-build to reuse the
+// images its build stage already produced.
 fn e2e(args: &[String]) {
     let (build, filter) = match args.split_first() {
         Some((flag, rest)) if flag == "--no-build" => (false, rest),
         _ => (true, args),
     };
+    if build {
+        package();
+    }
     up(
         "test",
         &[if build { "--build" } else { "--no-build" }.to_owned()],
