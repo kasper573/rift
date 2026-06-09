@@ -36,20 +36,20 @@ jobs:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
-      - name: Lint
+      - name: Conventions
         run: cargo x check
-      - name: Test
+      - name: Unit tests
         run: cargo test --workspace
       - name: Build docker images
         run: cargo x compose prod build
-      - name: End-to-end suite
+      - name: E2E tests
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}
         run: cargo x e2e --no-build
-      - name: Collect docker logs
+      - name: Collect e2e test logs
         if: failure()
         run: cargo x logs e2e-docker-logs
-      - name: Save docker logs
+      - name: Save e2e test logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
