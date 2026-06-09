@@ -35,6 +35,10 @@ jobs:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
+      - name: Start keycloak (overlaps its boot with the build)
+        env:
+          INFRA_TAG: infra-${{ hashFiles('docker/Dockerfile.keycloak', 'docker/Dockerfile.reverse-proxy') }}
+        run: cargo x prewarm
       - name: Conventions
         run: cargo x check
       - name: Unit tests

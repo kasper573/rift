@@ -14,6 +14,7 @@ fn main() {
         Some(("wasm", [])) => wasm(),
         Some(("package", [])) => package(),
         Some(("images", [])) => images(),
+        Some(("prewarm", [])) => prewarm(),
         Some(("dev", [])) => dev(),
         Some(("dev-serve", [])) => dev_serve(),
         Some(("e2e", args)) => e2e(args),
@@ -35,6 +36,8 @@ fn usage() {
                            them into docker/stage/ for the website and game-server images
   images                   build the docker images; with INFRA_TAG set, the rarely-changing
                            keycloak/reverse-proxy images are pulled by that tag (built+pushed on miss)
+  prewarm                  pull the infra images and start keycloak early so the e2e suite does
+                           not wait on its boot
   dev                      the dev environment: compose stack + website + game server,
                            rebuilding and restarting them as sources change
   e2e [--no-build] [filter]
@@ -214,9 +217,31 @@ fn compose(env_name: &str, args: &[String]) {
     );
 }
 
+fn images() {
+    pull_infra();
+    compose_str("prod", &["build", "rift-website", "rift-game-server"]);
+}
+
+// keycloak boots slowly (~30s); starting it now overlaps that with the rust build steps so the
+// e2e suite finds it already healthy instead of waiting.
+fn prewarm() {
+    pull_infra();
+    compose_str(
+        "test",
+        &[
+            "up",
+            "-d",
+            "--no-build",
+            "postgres",
+            "keycloak",
+            "keycloak-healthcheck",
+        ],
+    );
+}
+
 // keycloak and reverse-proxy depend only on their own Dockerfiles, so CI tags them by a hash of
 // those (INFRA_TAG) and reuses the pushed image across runs instead of rebuilding kc.sh/xcaddy.
-fn images() {
+fn pull_infra() {
     match env::var("INFRA_TAG").ok().filter(|tag| !tag.is_empty()) {
         Some(tag) => {
             let registry = env::var("DOCKER_REGISTRY_URL").unwrap_or_else(|_| "rift".to_owned());
@@ -238,7 +263,6 @@ fn images() {
         }
         None => compose_str("prod", &["build", "keycloak", "reverse-proxy"]),
     }
-    compose_str("prod", &["build", "rift-website", "rift-game-server"]);
 }
 
 fn logs(dir: &str) {
