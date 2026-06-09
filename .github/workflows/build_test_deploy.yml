@@ -15,7 +15,8 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Pinned to match the image base (ubuntu:24.04) so host-built glibc binaries run in the images.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
