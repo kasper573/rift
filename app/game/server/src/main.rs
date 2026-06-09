@@ -1,4 +1,4 @@
-// ci-probe 4
+// ci-probe 5
 use std::time::{Duration, Instant};
 
 use rift::TcpCluster;
