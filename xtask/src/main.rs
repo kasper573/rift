@@ -84,26 +84,15 @@ fn wasm() {
     stage_game_client("target/wasm32-unknown-unknown/release/client.wasm");
 }
 
-// The alpine images run a fully static binary, so the host cross-compiles it (musl is C-dep free
-// for these crates) and the cache persists it across CI runs — an in-Docker build cannot.
-const MUSL_TARGET: &str = "x86_64-unknown-linux-musl";
-
+// Built for the host target (glibc) rather than cross-compiled to musl: the rust cache persists
+// the host target's dependencies across CI runs reliably, the musl one it does not.
 fn package() {
     wasm();
-    run(Command::new("cargo").args([
-        "build",
-        "--release",
-        "--target",
-        MUSL_TARGET,
-        "-p",
-        "website",
-        "-p",
-        "server",
-    ]));
+    run(Command::new("cargo").args(["build", "--release", "-p", "website", "-p", "server"]));
     let stage = Path::new("docker/stage");
     fs::create_dir_all(stage.join("game"))
         .unwrap_or_else(|error| die(&format!("{}: {error}", stage.display())));
-    let release = format!("target/{MUSL_TARGET}/release");
+    let release = "target/release";
     copy(format!("{release}/website"), &stage.join("website"));
     copy(format!("{release}/server"), &stage.join("game-server"));
     copy(
