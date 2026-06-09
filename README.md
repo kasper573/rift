@@ -1,6 +1,6 @@
 # rift
 
-An online rpg built in rust.
+An online RPG built in rust.
 
 I'm doing this project for fun and to teach myself more about multiplayer game development and web development infrastructure.
 
