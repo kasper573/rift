@@ -26,10 +26,6 @@ services:
       dockerfile: ./docker/Dockerfile
       context: ..
       target: website
-      cache_from:
-        - type=gha,scope=rift-builder
-      cache_to:
-        - type=gha,scope=rift-builder,mode=max
     image: ${DOCKER_REGISTRY_URL:-rift}/rift-website:${DOCKER_IMAGE_VERSION:-latest}
     restart: always
     profiles: ["prod", "test"]
@@ -43,8 +39,6 @@ services:
       dockerfile: ./docker/Dockerfile
       context: ..
       target: game-server
-      cache_from:
-        - type=gha,scope=rift-builder
     image: ${DOCKER_REGISTRY_URL:-rift}/rift-game-server:${DOCKER_IMAGE_VERSION:-latest}
     restart: always
     profiles: ["prod", "test"]

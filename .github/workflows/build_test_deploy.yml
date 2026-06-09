@@ -36,9 +36,6 @@ jobs:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
-      # A docker-container builder is required to export the image build's dependency cache (the
-      # cache_to: type=gha in docker-compose.yaml) across runs.
-      - uses: docker/setup-buildx-action@v3
       - name: Conventions
         run: cargo x check
       - name: Unit tests
