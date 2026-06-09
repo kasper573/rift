@@ -50,10 +50,25 @@ fn usage() {
 
 fn check() {
     run(Command::new("cargo").args(["fmt", "--check"]));
+    // The client ships as wasm, so it is linted for that target; the rest of the workspace is
+    // linted natively, which keeps the client's native-only deps (ALSA) out of CI.
     run(Command::new("cargo").args([
         "clippy",
+        "--workspace",
+        "--exclude",
+        "client",
         "--all-targets",
         "--all-features",
+        "--",
+        "-D",
+        "warnings",
+    ]));
+    run(Command::new("cargo").args([
+        "clippy",
+        "-p",
+        "client",
+        "--target",
+        "wasm32-unknown-unknown",
         "--",
         "-D",
         "warnings",
@@ -75,9 +90,12 @@ const MUSL_TARGET: &str = "x86_64-unknown-linux-musl";
 
 fn package() {
     wasm();
+    // dev-serve (no LTO, parallel codegen) keeps the image build fast; the deployed binary is
+    // playtest-grade rather than release-LTO. Switch to --release for deploy-grade optimization.
     run(Command::new("cargo").args([
         "build",
-        "--release",
+        "--profile",
+        "dev-serve",
         "--target",
         MUSL_TARGET,
         "-p",
@@ -88,7 +106,7 @@ fn package() {
     let stage = Path::new("docker/stage");
     fs::create_dir_all(stage.join("game"))
         .unwrap_or_else(|error| die(&format!("{}: {error}", stage.display())));
-    let release = format!("target/{MUSL_TARGET}/release");
+    let release = format!("target/{MUSL_TARGET}/dev-serve");
     copy(format!("{release}/website"), &stage.join("website"));
     copy(format!("{release}/server"), &stage.join("game-server"));
     copy(
@@ -155,6 +173,16 @@ fn join(children: Vec<Child>) {
     }
 }
 
+const E2E_SERVICES: &[&str] = &[
+    "reverse-proxy",
+    "rift-website",
+    "rift-game-server",
+    "keycloak",
+    "keycloak-healthcheck",
+    "postgres",
+    "postfix",
+];
+
 // A local run packages and rebuilds so it tests fresh code; CI passes --no-build to reuse the
 // images its build stage already produced.
 fn e2e(args: &[String]) {
@@ -165,10 +193,17 @@ fn e2e(args: &[String]) {
     if build {
         package();
     }
-    up(
+    let build_flag = if build { "--build" } else { "--no-build" };
+    // Re-pin the proxy to this env: compose does not recreate on env-file value changes.
+    compose_str(
         "test",
-        &[if build { "--build" } else { "--no-build" }.to_owned()],
+        &["up", "-d", "--force-recreate", build_flag, "reverse-proxy"],
     );
+    // The browser suite only exercises the app, auth, and proxy — bringing up the observability
+    // stack would just cost CI a pile of image pulls and startups for nothing.
+    let mut up_args = vec!["up", "-d", "--wait", build_flag];
+    up_args.extend_from_slice(E2E_SERVICES);
+    compose_str("test", &up_args);
     let mut test_args = vec!["--test", "browser"];
     test_args.extend(filter.iter().map(String::as_str));
     test_args.extend(["--", "--test-threads=1"]);

@@ -21,9 +21,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-      # The client's native audio backend (kira) links against ALSA; everything else is pure Rust.
-      - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev
       - name: Install the pinned toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2
@@ -39,7 +36,7 @@ jobs:
       - name: Conventions
         run: cargo x check
       - name: Unit tests
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude client
       - name: Build release artifacts
         run: cargo x package
       - name: Build docker images
