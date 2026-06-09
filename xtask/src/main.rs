@@ -12,6 +12,9 @@ fn main() {
     match args.split_first().map(|(cmd, rest)| (cmd.as_str(), rest)) {
         Some(("check", [])) => check(),
         Some(("wasm", [])) => wasm(),
+        Some(("package", [])) => package(),
+        Some(("images", [])) => images(),
+        Some(("prewarm", [])) => prewarm(),
         Some(("dev", [])) => dev(),
         Some(("dev-serve", [])) => dev_serve(),
         Some(("e2e", args)) => e2e(args),
@@ -29,6 +32,12 @@ fn usage() {
 
   check                    formatting and lints
   wasm                     the browser build of the game client, staged into target/game-client/
+  package                  compile the release artifacts (wasm client + native binaries) and stage
+                           them into docker/stage/ for the website and game-server images
+  images                   build the docker images; with INFRA_TAG set, the rarely-changing
+                           keycloak/reverse-proxy images are pulled by that tag (built+pushed on miss)
+  prewarm                  pull the infra images and start keycloak early so the e2e suite does
+                           not wait on its boot
   dev                      the dev environment: compose stack + website + game server,
                            rebuilding and restarting them as sources change
   e2e [--no-build] [filter]
@@ -44,10 +53,25 @@ fn usage() {
 
 fn check() {
     run(Command::new("cargo").args(["fmt", "--check"]));
+    // The client ships as wasm, so it is linted for that target; the rest of the workspace is
+    // linted natively, which keeps the client's native-only deps (ALSA) out of CI.
     run(Command::new("cargo").args([
         "clippy",
+        "--workspace",
+        "--exclude",
+        "client",
         "--all-targets",
         "--all-features",
+        "--",
+        "-D",
+        "warnings",
+    ]));
+    run(Command::new("cargo").args([
+        "clippy",
+        "-p",
+        "client",
+        "--target",
+        "wasm32-unknown-unknown",
         "--",
         "-D",
         "warnings",
@@ -61,6 +85,27 @@ const DEV_WASM_TARGET_DIR: &str = "target/wasm-dev";
 fn wasm() {
     run(Command::new("cargo").arg("wasm"));
     stage_game_client("target/wasm32-unknown-unknown/release/client.wasm");
+}
+
+// Built for the host target (glibc) rather than cross-compiled to musl: the rust cache persists
+// the host target's dependencies across CI runs reliably, the musl one it does not.
+fn package() {
+    wasm();
+    run(Command::new("cargo").args(["build", "--release", "-p", "website", "-p", "server"]));
+    let stage = Path::new("docker/stage");
+    fs::create_dir_all(stage.join("game"))
+        .unwrap_or_else(|error| die(&format!("{}: {error}", stage.display())));
+    let release = "target/release";
+    copy(format!("{release}/website"), &stage.join("website"));
+    copy(format!("{release}/server"), &stage.join("game-server"));
+    copy(
+        "target/game-client/client.wasm",
+        &stage.join("game/client.wasm"),
+    );
+    copy(
+        "target/game-client/mq_js_bundle.js",
+        &stage.join("game/mq_js_bundle.js"),
+    );
 }
 
 fn dev() {
@@ -117,17 +162,37 @@ fn join(children: Vec<Child>) {
     }
 }
 
-// A local run rebuilds so it tests fresh code; CI passes --no-build to reuse the images its
-// build stage already pushed.
+const E2E_SERVICES: &[&str] = &[
+    "reverse-proxy",
+    "rift-website",
+    "rift-game-server",
+    "keycloak",
+    "keycloak-healthcheck",
+    "postgres",
+    "postfix",
+];
+
+// A local run packages and rebuilds so it tests fresh code; CI passes --no-build to reuse the
+// images its build stage already produced.
 fn e2e(args: &[String]) {
     let (build, filter) = match args.split_first() {
         Some((flag, rest)) if flag == "--no-build" => (false, rest),
         _ => (true, args),
     };
-    up(
+    if build {
+        package();
+    }
+    let build_flag = if build { "--build" } else { "--no-build" };
+    // Re-pin the proxy to this env: compose does not recreate on env-file value changes.
+    compose_str(
         "test",
-        &[if build { "--build" } else { "--no-build" }.to_owned()],
+        &["up", "-d", "--force-recreate", build_flag, "reverse-proxy"],
     );
+    // The browser suite only exercises the app, auth, and proxy — bringing up the observability
+    // stack would just cost CI a pile of image pulls and startups for nothing.
+    let mut up_args = vec!["up", "-d", "--wait", build_flag];
+    up_args.extend_from_slice(E2E_SERVICES);
+    compose_str("test", &up_args);
     let mut test_args = vec!["--test", "browser"];
     test_args.extend(filter.iter().map(String::as_str));
     test_args.extend(["--", "--test-threads=1"]);
@@ -150,6 +215,54 @@ fn compose(env_name: &str, args: &[String]) {
         env_name,
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
     );
+}
+
+fn images() {
+    pull_infra();
+    compose_str("prod", &["build", "rift-website", "rift-game-server"]);
+}
+
+// keycloak boots slowly (~30s); starting it now overlaps that with the rust build steps so the
+// e2e suite finds it already healthy instead of waiting.
+fn prewarm() {
+    pull_infra();
+    compose_str(
+        "test",
+        &[
+            "up",
+            "-d",
+            "--no-build",
+            "postgres",
+            "keycloak",
+            "keycloak-healthcheck",
+        ],
+    );
+}
+
+// keycloak and reverse-proxy depend only on their own Dockerfiles, so CI tags them by a hash of
+// those (INFRA_TAG) and reuses the pushed image across runs instead of rebuilding kc.sh/xcaddy.
+fn pull_infra() {
+    match env::var("INFRA_TAG").ok().filter(|tag| !tag.is_empty()) {
+        Some(tag) => {
+            let registry = env::var("DOCKER_REGISTRY_URL").unwrap_or_else(|_| "rift".to_owned());
+            let version = env::var("DOCKER_IMAGE_VERSION").unwrap_or_else(|_| "latest".to_owned());
+            for (service, image) in [
+                ("keycloak", "rift-keycloak"),
+                ("reverse-proxy", "rift-reverse-proxy"),
+            ] {
+                let cached = format!("{registry}/{image}:{tag}");
+                let current = format!("{registry}/{image}:{version}");
+                if try_run(Command::new("docker").args(["pull", cached.as_str()])) {
+                    run(Command::new("docker").args(["tag", cached.as_str(), current.as_str()]));
+                } else {
+                    compose_str("prod", &["build", service]);
+                    run(Command::new("docker").args(["tag", current.as_str(), cached.as_str()]));
+                    run(Command::new("docker").args(["push", cached.as_str()]));
+                }
+            }
+        }
+        None => compose_str("prod", &["build", "keycloak", "reverse-proxy"]),
+    }
 }
 
 fn logs(dir: &str) {
@@ -340,6 +453,13 @@ fn run(command: &mut Command) {
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
+}
+
+fn try_run(command: &mut Command) -> bool {
+    command
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn capture(command: &mut Command) -> String {

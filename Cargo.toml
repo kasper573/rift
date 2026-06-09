@@ -32,9 +32,10 @@ tower-http = { version = "0.6", features = ["fs", "set-header"] }
 tungstenite = "0.29"
 ureq = { version = "3", default-features = false }
 
+# LTO + a single codegen unit were traded away to keep CI/image builds fast (and cacheable);
+# re-enable them for deploy-grade optimization once runtime performance matters.
 [profile.release]
-lto = "thin"
-codegen-units = 1
+lto = false
 
 # The dev loop's profile: optimized enough to playtest, but spared release's deploy-grade
 # costs (thin LTO + a single codegen unit) and rebuilt incrementally on every save.

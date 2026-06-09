@@ -15,18 +15,18 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Pinned to match the image base (ubuntu:24.04) so host-built glibc binaries run in the images.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
-      # The client's native audio backend (kira) links against ALSA; everything else is pure Rust.
-      - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev
       - name: Install the pinned toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: glibc-release
       - uses: browser-actions/setup-chrome@v1
         id: chrome
         with:
@@ -36,12 +36,20 @@ jobs:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
+      - name: Start keycloak in the background (overlaps its pull+boot with the build)
+        env:
+          INFRA_TAG: infra-${{ hashFiles('docker/Dockerfile.keycloak', 'docker/Dockerfile.reverse-proxy') }}
+        run: nohup cargo x prewarm > /tmp/prewarm.log 2>&1 &
       - name: Conventions
         run: cargo x check
       - name: Unit tests
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude client
+      - name: Build release artifacts
+        run: cargo x package
       - name: Build docker images
-        run: cargo x compose prod build
+        env:
+          INFRA_TAG: infra-${{ hashFiles('docker/Dockerfile.keycloak', 'docker/Dockerfile.reverse-proxy') }}
+        run: cargo x images
       - name: E2E tests
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}

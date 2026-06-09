@@ -1,4 +1,5 @@
 /target
+/docker/stage
 **/*.rs.bk
 Cargo.lock.bak
 .claude
