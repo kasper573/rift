@@ -23,8 +23,9 @@ services:
     env_file: *env_files
     logging: *logging
     build:
-      dockerfile: ./docker/Dockerfile.website
+      dockerfile: ./docker/Dockerfile
       context: ..
+      target: website
     image: ${DOCKER_REGISTRY_URL:-rift}/rift-website:${DOCKER_IMAGE_VERSION:-latest}
     restart: always
     profiles: ["prod", "test"]
@@ -35,8 +36,9 @@ services:
     env_file: *env_files
     logging: *logging
     build:
-      dockerfile: ./docker/Dockerfile.game-server
+      dockerfile: ./docker/Dockerfile
       context: ..
+      target: game-server
     image: ${DOCKER_REGISTRY_URL:-rift}/rift-game-server:${DOCKER_IMAGE_VERSION:-latest}
     restart: always
     profiles: ["prod", "test"]
