@@ -24,6 +24,8 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: glibc-release
       - uses: browser-actions/setup-chrome@v1
         id: chrome
         with:
