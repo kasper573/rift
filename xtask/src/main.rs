@@ -90,12 +90,9 @@ const MUSL_TARGET: &str = "x86_64-unknown-linux-musl";
 
 fn package() {
     wasm();
-    // dev-serve (no LTO, parallel codegen) keeps the image build fast; the deployed binary is
-    // playtest-grade rather than release-LTO. Switch to --release for deploy-grade optimization.
     run(Command::new("cargo").args([
         "build",
-        "--profile",
-        "dev-serve",
+        "--release",
         "--target",
         MUSL_TARGET,
         "-p",
@@ -106,7 +103,7 @@ fn package() {
     let stage = Path::new("docker/stage");
     fs::create_dir_all(stage.join("game"))
         .unwrap_or_else(|error| die(&format!("{}: {error}", stage.display())));
-    let release = format!("target/{MUSL_TARGET}/dev-serve");
+    let release = format!("target/{MUSL_TARGET}/release");
     copy(format!("{release}/website"), &stage.join("website"));
     copy(format!("{release}/server"), &stage.join("game-server"));
     copy(

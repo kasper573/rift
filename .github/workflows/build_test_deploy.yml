@@ -19,21 +19,11 @@ jobs:
     permissions:
       contents: read
       packages: write
-    env:
-      # sccache caches each crate's compilation across runs (target-agnostic), which Swatinem's
-      # target cache does not do reliably for the cross-compiled musl artifacts.
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
-      # sccache cannot cache incremental builds, and dev-serve enables incremental.
-      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: rustup show
-      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2
-        with:
-          cache-targets: false
       - uses: browser-actions/setup-chrome@v1
         id: chrome
         with:
