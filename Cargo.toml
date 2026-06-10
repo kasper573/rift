@@ -22,7 +22,7 @@ envy = "0.4"
 metrics-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
 tower-http = { version = "0.6", features = ["fs", "set-header"] }
 tungstenite = "0.29"
 ureq = { version = "3", default-features = false }
@@ -31,3 +31,6 @@ ureq = { version = "3", default-features = false }
 # re-enable them for deploy-grade optimization once runtime performance matters.
 [profile.release]
 lto = false
+# Serves the dev loop's rebuilds; CI is unaffected (rust-cache pins CARGO_INCREMENTAL=0, which
+# takes precedence over this setting).
+incremental = true

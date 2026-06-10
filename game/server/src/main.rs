@@ -161,6 +161,14 @@ async fn serve(address: String, net: Net) {
         .await
         .unwrap_or_else(|error| panic!("cannot bind {address}: {error}"));
     println!("mmo server listening on {address}");
+    // Sessions are transient and nothing persists, so SIGTERM (docker stop, deploys) exits
+    // immediately instead of draining the long-lived WebSockets.
+    tokio::spawn(async {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("sigterm handler installs");
+        sigterm.recv().await;
+        std::process::exit(0);
+    });
     axum::serve(listener, app).await.expect("axum serves");
 }
 

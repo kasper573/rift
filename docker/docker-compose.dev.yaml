@@ -1,0 +1,18 @@
+# Dev-loop override (applied by `just dev`): the first-party services run binaries bind-mounted
+# from the host's target/ instead of baked image layers, so a rebuild needs only a container
+# restart — and a rebuilt client.wasm is served on the next request with no restart at all.
+# The mounts are directories, not files: cargo writes new inodes on relink, and a single-file
+# bind mount would keep serving the old one.
+services:
+  rift-game-server:
+    volumes:
+      - ../target/release:/artifacts:ro
+    entrypoint: ["/artifacts/server"]
+
+  rift-website:
+    volumes:
+      - ../target/release:/artifacts:ro
+      - ../target/wasm32-unknown-unknown/release:/artifacts-wasm:ro
+    entrypoint: ["/artifacts/website"]
+    environment:
+      RIFT_WEBSITE_WASM: /artifacts-wasm/client.wasm

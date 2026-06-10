@@ -81,7 +81,15 @@ async fn main() {
         .await
         .unwrap_or_else(|error| panic!("could not bind 0.0.0.0:{port}: {error}"));
     println!("website listening on 0.0.0.0:{port}");
-    axum::serve(listener, router).await.expect("serve");
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async {
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("sigterm handler installs");
+            sigterm.recv().await;
+        })
+        .await
+        .expect("serve");
 }
 
 impl App {
