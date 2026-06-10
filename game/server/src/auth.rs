@@ -22,7 +22,13 @@ pub struct Verifier {
     allow_bypass: bool,
     agent: ureq::Agent,
     keys: Option<JwkSet>,
-    last_fetch: Option<Instant>,
+    last_fetch: Fetch,
+}
+
+enum Fetch {
+    Never,
+    Failed(Instant),
+    Succeeded(Instant),
 }
 
 impl Verifier {
@@ -37,13 +43,22 @@ impl Verifier {
             allow_bypass,
             agent: ureq::Agent::new_with_config(config),
             keys: None,
-            last_fetch: None,
+            last_fetch: Fetch::Never,
         }
     }
 
     /// Failure is not fatal: verification refetches on demand.
     pub fn warm(&mut self) -> Result<(), String> {
         self.fetch()
+    }
+
+    /// Whether tokens can be verified right now; fetches the keys if they are missing. Lets a
+    /// health endpoint hold a freshly started server out of rotation until auth works.
+    pub fn ready(&mut self) -> bool {
+        if self.keys.is_none() && self.cooldown_passed() {
+            let _ = self.fetch();
+        }
+        self.keys.is_some()
     }
 
     pub fn verify(&mut self, token: &str) -> Result<Claims, String> {
@@ -114,13 +129,26 @@ impl Verifier {
         DecodingKey::from_jwk(jwk).map_err(|error| error.to_string())
     }
 
+    /// Unknown-key refetches are rate-limited to keep bad tokens from hammering the issuer, but
+    /// a failed fetch retries quickly: a brief issuer outage must not lock players out after it.
     fn cooldown_passed(&self) -> bool {
-        const COOLDOWN: Duration = Duration::from_secs(30);
-        self.last_fetch.is_none_or(|at| at.elapsed() >= COOLDOWN)
+        match self.last_fetch {
+            Fetch::Never => true,
+            Fetch::Failed(at) => at.elapsed() >= Duration::from_secs(1),
+            Fetch::Succeeded(at) => at.elapsed() >= Duration::from_secs(30),
+        }
     }
 
     fn fetch(&mut self) -> Result<(), String> {
-        self.last_fetch = Some(Instant::now());
+        let result = self.try_fetch();
+        self.last_fetch = match result {
+            Ok(()) => Fetch::Succeeded(Instant::now()),
+            Err(_) => Fetch::Failed(Instant::now()),
+        };
+        result
+    }
+
+    fn try_fetch(&mut self) -> Result<(), String> {
         let mut response = self
             .agent
             .get(&self.jwks_uri)

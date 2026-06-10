@@ -154,7 +154,7 @@ struct Net {
 async fn serve(address: String, net: Net) {
     let app = axum::Router::new()
         .route("/ws", get(upgrade))
-        .route("/health", get(|| async { "ok" }))
+        .route("/health", get(health))
         .route("/metrics", get(scrape))
         .with_state(net);
     let listener = tokio::net::TcpListener::bind(&address)
@@ -175,6 +175,20 @@ async fn serve(address: String, net: Net) {
 async fn scrape(State(net): State<Net>) -> String {
     metrics_process::Collector::default().collect();
     net.prometheus.render()
+}
+
+/// Healthy means players can actually connect: a server that cannot verify tokens yet (issuer
+/// still booting next to it) stays out of rotation instead of answering upgrades with 401s.
+async fn health(State(net): State<Net>) -> Response {
+    let ready = match &net.verifier {
+        Some(verifier) => verifier.lock().expect("verifier lock").ready(),
+        None => true,
+    };
+    if ready {
+        "ok".into_response()
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "auth keys unavailable").into_response()
+    }
 }
 
 async fn upgrade(
