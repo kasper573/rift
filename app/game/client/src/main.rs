@@ -31,7 +31,7 @@ async fn main() {
     let mut announced = false;
     let mut clock = 0.0f32;
     let mut ui = Ui::new();
-    let mut view = WorldView::new();
+    let mut view = render::WorldView::new();
     let mut audio = audio::Audio::load(world::features::sfx::sfx_table());
     let sfx_index: HashMap<&'static SfxId, usize> = world::features::sfx::sfx_table()
         .iter()
@@ -409,49 +409,17 @@ fn window_conf() -> Conf {
 
         platform: macroquad::miniquad::conf::Platform {
             swap_interval: Some(0),
+            // Render targets need glReadBuffer, which the web shim only has on a WebGL2 context.
+            webgl_version: macroquad::miniquad::conf::WebGLVersion::WebGL2,
             ..Default::default()
         },
         ..Default::default()
     }
 }
 
-/// The frame pipeline's reused buffers: one RGBA frame and one GPU texture for its upload.
-struct WorldView {
-    animator: render::Animator,
-    frame: image::Image,
-    texture: Texture2D,
-}
-
-impl WorldView {
-    fn new() -> WorldView {
-        let frame = image::Image::new(VIEW.x.0 as u32, VIEW.y.0 as u32);
-        let texture = Texture2D::from_rgba8(VIEW.x.0 as u16, VIEW.y.0 as u16, &frame.rgba);
-        texture.set_filter(FilterMode::Nearest);
-        WorldView {
-            animator: render::Animator::default(),
-            frame,
-            texture,
-        }
-    }
-}
-
-fn draw_world(client: &MmoClient, clock: f32, screen: Screen, view: &mut WorldView) {
+fn draw_world(client: &MmoClient, clock: f32, screen: Screen, view: &mut render::WorldView) {
     let scene = render::build_scene(client, clock, &mut view.animator);
-    render::rasterize(&scene, &mut view.frame);
-    view.texture
-        .update_from_bytes(view.frame.width, view.frame.height, &view.frame.rgba);
-    clear_background(BLACK);
-    let dest = VIEW.scale(screen.scale);
-    draw_texture_ex(
-        &view.texture,
-        screen.offset.x.0,
-        screen.offset.y.0,
-        WHITE,
-        DrawTextureParams {
-            dest_size: Some(vec2(dest.x.0, dest.y.0)),
-            ..Default::default()
-        },
-    );
+    render::present(&scene, view, screen.scale, screen.offset);
 }
 
 /// Walkability overlays for the current area: the `-` key cycles through the modes.

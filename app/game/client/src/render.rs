@@ -1,10 +1,10 @@
-//! Software-rasterizes the replicated world into an RGBA frame: macroquad-free, shared by
-//! the game binary and the browser e2e (which derives click coordinates from this geometry).
+//! Renders the replicated world with macroquad into a fixed-size pixel view, then presents it
+//! integer-scaled and letterboxed; the geometry helpers double as the input mapping.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use image::{Image, Region};
+use macroquad::prelude::*;
 use world::Entity;
 use world::core::actors::ActorModelId;
 use world::core::area::AreaId;
@@ -136,13 +136,68 @@ pub fn build_scene(client: &MmoClient, time: f32, animator: &mut Animator) -> Sc
     }
 }
 
-/// Renders the scene into `frame`, reusing its allocation across frames.
-pub fn rasterize(scene: &Scene, frame: &mut Image) {
-    if (frame.width, frame.height) != (VIEW.x.0 as u32, VIEW.y.0 as u32) {
-        *frame = Image::new(VIEW.x.0 as u32, VIEW.y.0 as u32);
-    } else {
-        frame.rgba.fill(0);
+/// The view's drawing state, reused across frames: the offscreen pixel target the world renders
+/// into, the GPU textures of every atlas, and the death tint.
+pub struct WorldView {
+    pub animator: Animator,
+    target: RenderTarget,
+    textures: Textures,
+    dead_tint: Material,
+}
+
+impl WorldView {
+    pub fn new() -> WorldView {
+        let target = render_target(VIEW.x.0 as u32, VIEW.y.0 as u32);
+        target.texture.set_filter(FilterMode::Nearest);
+        WorldView {
+            animator: Animator::default(),
+            target,
+            textures: Textures::default(),
+            dead_tint: dead_tint_material(),
+        }
     }
+}
+
+impl Default for WorldView {
+    fn default() -> WorldView {
+        WorldView::new()
+    }
+}
+
+/// Renders the scene into the view's pixel target, then presents it onto the screen at the
+/// letterboxed integer scale; dead scenes pass through the red death tint.
+pub fn present(scene: &Scene, view: &mut WorldView, scale: f32, offset: Pos<Pixels>) {
+    let mut camera =
+        Camera2D::from_display_rect(macroquad::math::Rect::new(0.0, 0.0, VIEW.x.0, VIEW.y.0));
+    camera.render_target = Some(view.target.clone());
+    set_camera(&camera);
+    clear_background(Color::from_rgba(0, 0, 0, 0));
+    draw_scene(scene, &mut view.textures);
+    set_default_camera();
+
+    clear_background(BLACK);
+    if scene.dead {
+        gl_use_material(&view.dead_tint);
+    }
+    let dest = VIEW.scale(scale);
+    draw_texture_ex(
+        &view.target.texture,
+        offset.x.0,
+        offset.y.0,
+        WHITE,
+        DrawTextureParams {
+            dest_size: Some(vec2(dest.x.0, dest.y.0)),
+            // The render-target camera writes rows bottom-up; presenting flips them back.
+            flip_y: true,
+            ..Default::default()
+        },
+    );
+    if scene.dead {
+        gl_use_default_material();
+    }
+}
+
+fn draw_scene(scene: &Scene, textures: &mut Textures) {
     let Some(camera) = scene.camera else {
         return;
     };
@@ -163,10 +218,7 @@ pub fn rasterize(scene: &Scene, frame: &mut Image) {
                     continue;
                 }
                 let raw = tiles.at(tx, ty);
-                if let Some((image, region, flip)) = area.tilesets.resolve(raw, scene.time) {
-                    let dst = to_frame(camera, Pos::new(Tiles(tx as f32), Tiles(ty as f32)));
-                    image::blit(frame, image, region, dst, TILE_SIZE, 0xFFFF_FFFF, flip);
-                }
+                draw_map_tile(textures, area, raw, scene.time, camera, tx, ty);
             }
         }
     }
@@ -181,29 +233,16 @@ pub fn rasterize(scene: &Scene, frame: &mut Image) {
         {
             continue;
         }
-        if let Some((image, region, flip)) = area.tilesets.resolve(gid, scene.time) {
-            draws.push((
-                bottom_y,
-                Draw::Tile {
-                    image,
-                    region,
-                    top_left: Pos::new(at.x, Tiles(bottom_y - 1.0)),
-                    flip,
-                },
-            ));
-        }
-    }
-    for actor in &scene.actors {
         draws.push((
-            actor.pos.y.0,
-            Draw::Actor {
-                region: actor.region,
-                pos: actor.pos,
-                tint: actor.tint,
-                model: actor.model,
-                health: actor.health,
+            bottom_y,
+            Draw::Tile {
+                gid,
+                top_left: Pos::new(at.x, Tiles(bottom_y - 1.0)),
             },
         ));
+    }
+    for (index, actor) in scene.actors.iter().enumerate() {
+        draws.push((actor.pos.y.0, Draw::Actor { index }));
     }
     for (index, group) in area.groups.iter().enumerate() {
         if group.z >= (min_y - 2) as f32 && group.z <= (max_y + 2) as f32 {
@@ -214,48 +253,36 @@ pub fn rasterize(scene: &Scene, frame: &mut Image) {
 
     let mut bars: Vec<(Pos<Pixels>, f32)> = Vec::new();
     for (_, draw) in &draws {
-        match draw {
-            Draw::Tile {
-                image,
-                region,
-                top_left,
-                flip,
-            } => {
-                let dst = to_frame(camera, *top_left);
-                image::blit(frame, image, *region, dst, TILE_SIZE, 0xFFFF_FFFF, *flip);
+        match *draw {
+            Draw::Tile { gid, top_left } => {
+                if let Some((image, region, flip)) = area.tilesets.resolve(gid, scene.time) {
+                    let dst = to_frame(camera, top_left);
+                    textures.draw(image, region, dst, TILE_SIZE, WHITE, flip);
+                }
             }
-            Draw::Actor {
-                region,
-                pos,
-                tint,
-                model,
-                health,
-            } => {
-                let center = to_frame_f(camera, *pos);
+            Draw::Actor { index } => {
+                let actor = &scene.actors[index];
+                let center = to_frame_f(camera, actor.pos);
                 let anchor = Pos::new(
-                    Pixels((region.size.x.0 / 2.0).round()),
-                    Pixels((region.size.y.0 * 2.0 / 3.0).round()),
+                    Pixels((actor.region.size.x.0 / 2.0).round()),
+                    Pixels((actor.region.size.y.0 * 2.0 / 3.0).round()),
                 );
                 let dst = center.map(f32::round) - anchor;
-                image::blit(
-                    frame,
-                    self::model(*model).image(),
-                    *region,
+                textures.draw(
+                    model(actor.model).image(),
+                    actor.region,
                     dst,
-                    region.size,
-                    tint.0,
+                    actor.region.size,
+                    rgba_color(actor.tint),
                     (false, false),
                 );
-                if let Some(fraction) = health {
-                    bars.push((center, *fraction));
+                if let Some(fraction) = actor.health {
+                    bars.push((center, fraction));
                 }
             }
             Draw::Group { group } => {
-                for &(tx, ty, raw) in &area.groups[*group].tiles {
-                    if let Some((image, region, flip)) = area.tilesets.resolve(raw, scene.time) {
-                        let dst = to_frame(camera, Pos::new(Tiles(tx as f32), Tiles(ty as f32)));
-                        image::blit(frame, image, region, dst, TILE_SIZE, 0xFFFF_FFFF, flip);
-                    }
+                for &(tx, ty, raw) in &area.groups[group].tiles {
+                    draw_map_tile(textures, area, raw, scene.time, camera, tx, ty);
                 }
             }
         }
@@ -264,11 +291,7 @@ pub fn rasterize(scene: &Scene, frame: &mut Image) {
     // Health bars are a HUD element: drawn after every world layer so an actor or object in front
     // (a higher z) can never hide them.
     for (center, fraction) in bars {
-        health_bar(frame, center, fraction);
-    }
-
-    if scene.dead {
-        tint_dead(frame);
+        health_bar(center, fraction);
     }
 }
 
@@ -282,30 +305,77 @@ pub fn frame_to_world(camera: Camera, frame: Pos<Pixels>) -> Pos<Tiles> {
 
 struct ActorDraw {
     pos: Pos<Tiles>,
-    region: Region,
+    region: image::Region,
     tint: Rgba,
     model: ActorModelId,
     health: Option<f32>,
 }
 
 enum Draw {
-    Tile {
-        image: &'static Image,
-        region: Region,
-        top_left: Pos<Tiles>,
-        flip: (bool, bool),
-    },
-    Actor {
-        region: Region,
-        pos: Pos<Tiles>,
-        tint: Rgba,
-        model: ActorModelId,
-        health: Option<f32>,
-    },
+    Tile { gid: u32, top_left: Pos<Tiles> },
+    Actor { index: usize },
+    Group { group: usize },
+}
 
-    Group {
-        group: usize,
-    },
+/// GPU textures by source atlas, uploaded on first use.
+#[derive(Default)]
+struct Textures {
+    cache: HashMap<usize, Texture2D>,
+}
+
+impl Textures {
+    fn draw(
+        &mut self,
+        image: &'static image::Image,
+        region: image::Region,
+        dst: Pos<Pixels>,
+        dst_size: Size<Pixels>,
+        tint: Color,
+        flip: (bool, bool),
+    ) {
+        let texture = self
+            .cache
+            .entry(image as *const image::Image as usize)
+            .or_insert_with(|| {
+                let texture =
+                    Texture2D::from_rgba8(image.width as u16, image.height as u16, &image.rgba);
+                texture.set_filter(FilterMode::Nearest);
+                texture
+            });
+        draw_texture_ex(
+            texture,
+            dst.x.0,
+            dst.y.0,
+            tint,
+            DrawTextureParams {
+                dest_size: Some(vec2(dst_size.x.0, dst_size.y.0)),
+                source: Some(macroquad::math::Rect::new(
+                    region.pos.x.0,
+                    region.pos.y.0,
+                    region.size.x.0,
+                    region.size.y.0,
+                )),
+                flip_x: flip.0,
+                flip_y: flip.1,
+                ..Default::default()
+            },
+        );
+    }
+}
+
+fn draw_map_tile(
+    textures: &mut Textures,
+    area: &'static area::Area,
+    raw: u32,
+    time: f32,
+    camera: Camera,
+    tx: i32,
+    ty: i32,
+) {
+    if let Some((image, region, flip)) = area.tilesets.resolve(raw, time) {
+        let dst = to_frame(camera, Pos::new(Tiles(tx as f32), Tiles(ty as f32)));
+        textures.draw(image, region, dst, TILE_SIZE, WHITE, flip);
+    }
 }
 
 const BAR_SIZE: Size<Pixels> = Size::new(Pixels(20.0), Pixels(4.0));
@@ -313,18 +383,33 @@ const BAR_BORDER: u32 = 0x140A_28FF;
 const BAR_BG: u32 = 0x2A1C_5CFF;
 const BAR_FILL: u32 = 0x00FF_00FF;
 
-fn health_bar(frame: &mut Image, center: Pos<Pixels>, fraction: f32) {
+fn health_bar(center: Pos<Pixels>, fraction: f32) {
     let top_left = center.map(f32::round) + Pos::new(Pixels(-BAR_SIZE.x.0 / 2.0), Pixels(3.0));
-    image::fill(frame, top_left, BAR_SIZE, BAR_BORDER);
+    fill(top_left, BAR_SIZE, BAR_BORDER);
     let inner = top_left + Pos::splat(Pixels(1.0));
     let inner_size = BAR_SIZE - Size::splat(Pixels(2.0));
-    image::fill(frame, inner, inner_size, BAR_BG);
-    image::fill(
-        frame,
+    fill(inner, inner_size, BAR_BG);
+    fill(
         inner,
-        Size::new(Pixels(inner_size.x.0 * fraction), inner_size.y),
+        Size::new(Pixels((inner_size.x.0 * fraction).floor()), inner_size.y),
         BAR_FILL,
     );
+}
+
+fn fill(top_left: Pos<Pixels>, size: Size<Pixels>, rgba: u32) {
+    let [r, g, b, a] = rgba.to_be_bytes();
+    draw_rectangle(
+        top_left.x.0,
+        top_left.y.0,
+        size.x.0,
+        size.y.0,
+        Color::from_rgba(r, g, b, a),
+    );
+}
+
+fn rgba_color(tint: Rgba) -> Color {
+    let [r, g, b, a] = tint.0.to_be_bytes();
+    Color::from_rgba(r, g, b, a)
 }
 
 fn model(index: ActorModelId) -> &'static actor::ActorModel {
@@ -339,10 +424,34 @@ fn snap(tiles: f32) -> f32 {
     (tiles * TILE_SIZE.x.0).round() / TILE_SIZE.x.0
 }
 
-fn tint_dead(frame: &mut Image) {
-    for pixel in frame.rgba.chunks_mut(4) {
-        pixel[0] = (pixel[0] as u32 + 160).min(255) as u8;
-        pixel[1] /= 3;
-        pixel[2] /= 3;
-    }
+// The software renderer shifted dead frames toward red exactly this way; the shader keeps the
+// look: additive red, green and blue at a third.
+fn dead_tint_material() -> Material {
+    load_material(
+        ShaderSource::Glsl {
+            vertex: DEAD_VERTEX,
+            fragment: DEAD_FRAGMENT,
+        },
+        MaterialParams::default(),
+    )
+    .expect("dead-tint shader compiles")
 }
+
+const DEAD_VERTEX: &str = r#"#version 100
+attribute vec3 position;
+attribute vec2 texcoord;
+varying lowp vec2 uv;
+uniform mat4 Model;
+uniform mat4 Projection;
+void main() {
+    gl_Position = Projection * Model * vec4(position, 1);
+    uv = texcoord;
+}"#;
+
+const DEAD_FRAGMENT: &str = r#"#version 100
+varying lowp vec2 uv;
+uniform sampler2D Texture;
+void main() {
+    lowp vec4 c = texture2D(Texture, uv);
+    gl_FragColor = vec4(min(c.r + 160.0 / 255.0, 1.0), c.g / 3.0, c.b / 3.0, c.a);
+}"#;
