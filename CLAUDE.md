@@ -1,24 +1,8 @@
 # CLAUDE.md
 
-## Mission: tersify
-
-Shrink this repo to the minimum first-party code that produces an identical player experience.
-
-- INVARIANT: player-identical experience — gameplay, graphics, audio, feel, and perceptible
-  performance (load times, framerate, latency). Unsure if something is player-perceivable? It is.
-- End state: exactly four first-party crates — `game/server`, `game/client`, `game/world`,
-  `website` — plus assets (convert freely), a terse E2E suite, and minimal infra config.
-- Caddy, Keycloak, and the LGTM stack stay (reconfigure freely).
-- Everything an established, actively maintained crate can do, that crate does. Only genuine
-  game logic and content earns a place here. Prefer one ecosystem's idiomatic companions.
-- Metaprogramming lives inside Rust: macros fine; zero build.rs, zero codegen scripts.
-- Depend, don't vendor.
-- Verification is E2E plus real play, nothing else. Delete internal unit/integration tests.
-- Strangle, don't big-bang: E2E green before every commit; commit messages name what was
-  deleted and the first-party LOC delta (tokei, excluding assets).
-
 ## General
 
+- Terseness above all: This repo should contain only our business logic. Anything else should be outsourced to well established crates or services. Ie. we don't want to build an ECS, a graphics engine, a ui framework, a tiling engine, audio engine, etc. We want to build a game, and the code in this repo should reflect that.
 - Correctness & clarity comes before performance.
 - Tests assert on contracts, never implementation details.
 - No mitigation fixes or hacks. Refactoring is encouraged: Don't hunt symptoms, fix root causes.
