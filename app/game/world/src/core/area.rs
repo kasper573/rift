@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-use actor::SfxId;
+use crate::core::actors::SfxId;
 use rift::Wire;
 use serde::{Deserialize, Deserializer};
 

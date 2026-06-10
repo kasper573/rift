@@ -7,7 +7,6 @@ members = [
     "lib/tiled",
     "lib/nav",
     "lib/image",
-    "lib/actor",
     "lib/auth",
     "app/game/world",
     "app/game/server",

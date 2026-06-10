@@ -10,7 +10,6 @@ rift = { path = "../../../lib/rift", default-features = false }
 math = { path = "../../../lib/math" }
 tiled = { path = "../../../lib/tiled" }
 nav = { path = "../../../lib/nav" }
-actor = { path = "../../../lib/actor" }
 serde.workspace = true
 serde_json.workspace = true
 

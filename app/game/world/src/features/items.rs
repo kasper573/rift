@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use actor::SfxId;
+use crate::core::actors::SfxId;
 use rift::{Builder, Ctx, Entity, Wire};
 use serde::{Deserialize, Deserializer};
 

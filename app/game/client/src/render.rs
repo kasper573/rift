@@ -8,7 +8,7 @@ use macroquad::prelude::*;
 use world::Entity;
 use world::core::actors::ActorModelId;
 use world::core::area::AreaId;
-use world::core::math::{Pixels, Pos, Size, Tiles};
+use world::core::math::{Pixels, Pos, Rect, Size, Tiles};
 use world::core::protocol::Rgba;
 use world::core::protocol::{Actor, Position, Vitals, action_name};
 use world::core::session::MmoClient;
@@ -73,7 +73,7 @@ pub fn camera_for(at: Pos<Tiles>, area: AreaId) -> Option<Camera> {
 /// Anchors each entity's animation to the moment its replicated action last changed, so
 /// [`ActorModel::frame`] receives time-into-action rather than the global clock.
 ///
-/// [`ActorModel::frame`]: actor::ActorModel::frame
+/// [`ActorModel::frame`]: actors::ActorModel::frame
 #[derive(Default)]
 pub struct Animator {
     pub anchors: HashMap<Entity, (u8, f32)>,
@@ -268,8 +268,8 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
                     Pixels((actor.region.size.y.0 * 2.0 / 3.0).round()),
                 );
                 let dst = center.map(f32::round) - anchor;
-                textures.draw(
-                    model(actor.model).image(),
+                textures.draw_png(
+                    model(actor.model).sheet(),
                     actor.region,
                     dst,
                     actor.region.size,
@@ -305,7 +305,7 @@ pub fn frame_to_world(camera: Camera, frame: Pos<Pixels>) -> Pos<Tiles> {
 
 struct ActorDraw {
     pos: Pos<Tiles>,
-    region: image::Region,
+    region: Rect<Pixels>,
     tint: Rgba,
     model: ActorModelId,
     health: Option<f32>,
@@ -327,7 +327,7 @@ impl Textures {
     fn draw(
         &mut self,
         image: &'static image::Image,
-        region: image::Region,
+        region: Rect<Pixels>,
         dst: Pos<Pixels>,
         dst_size: Size<Pixels>,
         tint: Color,
@@ -341,26 +341,59 @@ impl Textures {
                     Texture2D::from_rgba8(image.width as u16, image.height as u16, &image.rgba);
                 texture.set_filter(FilterMode::Nearest);
                 texture
-            });
-        draw_texture_ex(
-            texture,
-            dst.x.0,
-            dst.y.0,
-            tint,
-            DrawTextureParams {
-                dest_size: Some(vec2(dst_size.x.0, dst_size.y.0)),
-                source: Some(macroquad::math::Rect::new(
-                    region.pos.x.0,
-                    region.pos.y.0,
-                    region.size.x.0,
-                    region.size.y.0,
-                )),
-                flip_x: flip.0,
-                flip_y: flip.1,
-                ..Default::default()
-            },
-        );
+            })
+            .clone();
+        draw_region(&texture, region, dst, dst_size, tint, flip);
     }
+
+    fn draw_png(
+        &mut self,
+        png: &'static [u8],
+        region: Rect<Pixels>,
+        dst: Pos<Pixels>,
+        dst_size: Size<Pixels>,
+        tint: Color,
+        flip: (bool, bool),
+    ) {
+        let texture = self
+            .cache
+            .entry(png.as_ptr() as usize)
+            .or_insert_with(|| {
+                let texture = Texture2D::from_file_with_format(png, Some(ImageFormat::Png));
+                texture.set_filter(FilterMode::Nearest);
+                texture
+            })
+            .clone();
+        draw_region(&texture, region, dst, dst_size, tint, flip);
+    }
+}
+
+fn draw_region(
+    texture: &Texture2D,
+    region: Rect<Pixels>,
+    dst: Pos<Pixels>,
+    dst_size: Size<Pixels>,
+    tint: Color,
+    flip: (bool, bool),
+) {
+    draw_texture_ex(
+        texture,
+        dst.x.0,
+        dst.y.0,
+        tint,
+        DrawTextureParams {
+            dest_size: Some(vec2(dst_size.x.0, dst_size.y.0)),
+            source: Some(macroquad::math::Rect::new(
+                region.pos.x.0,
+                region.pos.y.0,
+                region.size.x.0,
+                region.size.y.0,
+            )),
+            flip_x: flip.0,
+            flip_y: flip.1,
+            ..Default::default()
+        },
+    );
 }
 
 fn draw_map_tile(
@@ -412,7 +445,7 @@ fn rgba_color(tint: Rgba) -> Color {
     Color::from_rgba(r, g, b, a)
 }
 
-fn model(index: ActorModelId) -> &'static actor::ActorModel {
+fn model(index: ActorModelId) -> &'static actors::ActorModel {
     &actors::models()[index.0 as usize]
 }
 

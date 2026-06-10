@@ -208,7 +208,7 @@ fn stats(world: &World, entity: Entity) -> Stats {
 
 /// The attack animation's native timing for this attacker's model and facing — the same
 /// manifest the client animates from, so the felt hit and the applied hit coincide.
-fn attack_timing(world: &World, entity: Entity, dir: u8) -> actor::Timing {
+fn attack_timing(world: &World, entity: Entity, dir: u8) -> crate::core::actors::Timing {
     let model = world
         .get::<protocol::Actor>(entity)
         .map_or(ActorModelId(0), |a| a.model);

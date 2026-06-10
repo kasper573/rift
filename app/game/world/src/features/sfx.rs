@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use actor::SfxId;
+use crate::core::actors::SfxId;
 use serde::Deserialize;
 
 use crate::core::actors;

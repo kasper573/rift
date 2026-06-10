@@ -1,8 +1,8 @@
-use actor::SfxId;
 use client::render::{self, INV_GRID, INV_PAD, INV_SLOT, TILE_SIZE, VIEW};
 use client::sfx::SfxTracker;
 use macroquad::prelude::*;
 use std::collections::HashMap;
+use world::core::actors::SfxId;
 use world::core::math::{Pixels, Pos, Rect, Size, Tiles};
 use world::core::protocol::is_dead;
 use world::core::{area, assets};
@@ -128,9 +128,9 @@ impl Ui {
         Ui {
             icons: world::features::items::items()
                 .iter()
-                .map(|item| texture(&image::decode_png(item.icon.0)))
+                .map(|item| texture_png(item.icon.0))
                 .collect(),
-            highlight: texture(&load_png("icons/crosshairs/white/crosshair026.png")),
+            highlight: texture_png(png_bytes("icons/crosshairs/white/crosshair026.png")),
             inventory_scroll: 0,
             last_inventory_click: None,
             debug: DebugMode::None,
@@ -187,10 +187,10 @@ struct Cursors {
 impl Cursors {
     fn load() -> Cursors {
         Cursors {
-            default: texture(&load_png("icons/cursors/pointer003.png")),
-            attack: texture(&load_png("icons/cursors/swords002.png")),
-            movable: texture(&load_png("icons/cursors/pointer010.png")),
-            movable_held: texture(&load_png("icons/cursors/pointer011.png")),
+            default: texture_png(png_bytes("icons/cursors/pointer003.png")),
+            attack: texture_png(png_bytes("icons/cursors/swords002.png")),
+            movable: texture_png(png_bytes("icons/cursors/pointer010.png")),
+            movable_held: texture_png(png_bytes("icons/cursors/pointer011.png")),
         }
     }
 
@@ -587,13 +587,12 @@ fn watched_name(client: &MmoClient, id: ClientId) -> String {
         .unwrap_or_else(|| format!("player {}", id.0))
 }
 
-fn load_png(path: &str) -> image::Image {
-    let png = assets::bytes(path).unwrap_or_else(|| panic!("missing embedded asset {path}"));
-    image::decode_png(png)
+fn png_bytes(path: &str) -> &'static [u8] {
+    assets::bytes(path).unwrap_or_else(|| panic!("missing embedded asset {path}"))
 }
 
-fn texture(image: &image::Image) -> Texture2D {
-    let texture = Texture2D::from_rgba8(image.width as u16, image.height as u16, &image.rgba);
+fn texture_png(png: &[u8]) -> Texture2D {
+    let texture = Texture2D::from_file_with_format(png, Some(ImageFormat::Png));
     texture.set_filter(FilterMode::Nearest);
     texture
 }

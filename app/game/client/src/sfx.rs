@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use actor::SfxId;
 use rift::World;
 use world::Entity;
 use world::core::actors;
+use world::core::actors::SfxId;
 use world::core::area::Area;
 use world::core::math::{Pos, Tiles};
 use world::core::protocol::{Actor, action_name, position};
@@ -66,7 +66,7 @@ impl SfxTracker {
                 }
             }
             if let Some(area) = area
-                && model.cue_crossed(action, actor.dir, "steps", prev, now, rate)
+                && model.steps_crossed(action, actor.dir, prev, now, rate)
                 && let Some(id) =
                     area.tile_sfx_at(source.x.0.floor() as i32, source.y.0.floor() as i32)
             {

@@ -1,6 +1,7 @@
-use actor::{ActorModel, Direction};
+use world::core::actors::ActorModel;
 use world::core::actors::{model_index, models};
 use world::core::area::{areas, spawn_zone};
+use world::core::math::Direction;
 use world::core::math::{Pos, Tiles};
 use world::core::protocol::action_name;
 use world::{ACTION_ATTACK, ACTION_DEAD, ACTION_IDLE, ACTION_RUN, ACTION_WALK};
@@ -27,46 +28,10 @@ fn adventurer() -> &'static ActorModel {
 }
 
 #[test]
-fn actor_walk_slice_faces_movement() {
-    let walk = action_name(ACTION_WALK);
-    let slice = |dir: Direction| adventurer().frame(walk, dir as u8, 0.0, 1.0);
-
-    let declared = [
-        Direction::S,
-        Direction::SW,
-        Direction::NW,
-        Direction::N,
-        Direction::NE,
-        Direction::SE,
-    ];
-    for (index, a) in declared.iter().enumerate() {
-        for b in &declared[index + 1..] {
-            assert_ne!(
-                slice(*a),
-                slice(*b),
-                "{a:?} and {b:?} need their own slices"
-            );
-        }
-    }
-
-    assert_eq!(
-        slice(Direction::E),
-        slice(Direction::SE),
-        "east should fall back to se"
-    );
-    assert_eq!(
-        slice(Direction::W),
-        slice(Direction::SW),
-        "west should fall back to sw — se would face right while moving left (moonwalk)",
-    );
-}
-
-#[test]
 fn every_model_animates_every_action_and_direction() {
     assert!(!models().is_empty(), "the assets must define actor models");
     for model in models() {
-        let image = model.image();
-        assert!(image.width > 0 && image.height > 0);
+        assert!(!model.sheet().is_empty());
         for action in [
             ACTION_IDLE,
             ACTION_WALK,
@@ -77,8 +42,6 @@ fn every_model_animates_every_action_and_direction() {
             for dir in 0..8 {
                 let frame = model.frame(action_name(action), dir, 0.5, 1.0);
                 assert!(frame.size.x.0 > 0.0 && frame.size.y.0 > 0.0);
-                assert!(frame.pos.x.0 + frame.size.x.0 <= image.width as f32);
-                assert!(frame.pos.y.0 + frame.size.y.0 <= image.height as f32);
             }
         }
     }

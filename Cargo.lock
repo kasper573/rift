@@ -3,16 +3,6 @@
 version = 4
 
 [[package]]
-name = "actor"
-version = "0.1.0"
-dependencies = [
- "image 0.1.0",
- "math",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -280,7 +270,6 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 name = "client"
 version = "0.1.0"
 dependencies = [
- "actor",
  "image 0.1.0",
  "kira",
  "macroquad",
@@ -3060,7 +3049,6 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 name = "world"
 version = "0.1.0"
 dependencies = [
- "actor",
  "include_dir",
  "math",
  "nav",
