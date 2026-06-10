@@ -3,7 +3,7 @@
 //! traffic to assert on what the player's client actually received. Runs against the docker
 //! test stack: `docker compose -f docker/docker-compose.yaml --profile test up -d --build --wait`.
 
-mod cdp;
+mod chrome;
 mod flow;
 mod keycloak;
 mod stage;

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::cdp::Page;
+use crate::chrome::Page;
 
 pub fn wait(seconds: f32, mut ready: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_secs_f32(seconds);

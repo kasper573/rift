@@ -13,12 +13,14 @@ I'm doing this project for fun and to teach myself more about multiplayer game d
 ### Before each development session
 
 - Open the devcontainer in vscode or via devcontainer CLI.
-- Build the artifacts and start the stack:
+- Start the watch loop:
 
   ```sh
-  cargo build --release -p website -p server && cargo wasm
-  docker compose -f docker/docker-compose.yaml --profile test up -d --build --wait
+  just dev
   ```
+
+  Every save rebuilds the artifacts and redeploys what changed; `just stack` runs a
+  single cycle instead.
 
 - Visit `https://rift.localhost` in your browser
 

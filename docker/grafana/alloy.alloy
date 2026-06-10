@@ -8,6 +8,16 @@ prometheus.scrape "rift_game_server" {
 	scrape_timeout  = env("PROMETHEUS_SCRAPE_TIMEOUT")
 }
 
+prometheus.scrape "rift_website" {
+	targets = [{
+		__address__ = env("RIFT_WEBSITE_PROXY_HOST"),
+	}]
+	forward_to      = [prometheus.remote_write.default.receiver]
+	job_name        = "rift_website"
+	scrape_interval = env("PROMETHEUS_SCRAPE_INTERVAL")
+	scrape_timeout  = env("PROMETHEUS_SCRAPE_TIMEOUT")
+}
+
 prometheus.scrape "node_exporter" {
 	targets = [{
 		__address__ = env("NODE_EXPORTER_TARGET"),

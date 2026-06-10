@@ -6,7 +6,10 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum_extra::extract::cookie::CookieJar;
+use axum_prometheus::PrometheusMetricLayer;
+use openidconnect::RedirectUrl;
 use openidconnect::url::Url;
+use serde::Deserialize;
 use tower_http::services::ServeFile;
 use tower_http::set_header::SetResponseHeaderLayer;
 
@@ -15,26 +18,47 @@ mod auth;
 /// Must match the realm role the game server checks (world::SPECTATE_ROLE).
 const SPECTATE_ROLE: &str = "spectate";
 
+/// The `RIFT_WEBSITE_*` environment; auth additionally reads the shared `RIFT_AUTH_*` block.
+#[derive(Deserialize)]
+struct Config {
+    #[serde(default = "default_port")]
+    port: u16,
+    game_server_url: Url,
+    redirect_uri: RedirectUrl,
+    wasm: String,
+    js_bundle: String,
+}
+
+fn default_port() -> u16 {
+    80
+}
+
 pub struct App {
     pub auth: auth::Auth,
     pub game_server_url: Url,
-    pub wasm_path: String,
-    pub bundle_path: String,
 }
 
 #[tokio::main]
 async fn main() {
-    let app = Arc::new(App::from_env().await);
-    let port = std::env::var("RIFT_WEBSITE_PORT").unwrap_or_else(|_| "80".to_owned());
+    let config: Config = envy::prefixed("RIFT_WEBSITE_")
+        .from_env()
+        .expect("RIFT_WEBSITE_* environment");
+    let (track, prometheus) = PrometheusMetricLayer::pair();
+    metrics_process::Collector::default().describe();
     // Game artifacts change with every deploy: no-cache makes clients revalidate (ServeFile
     // answers conditional requests with 304s) instead of trusting a freshness window.
     let artifacts = axum::Router::new()
-        .route_service("/game.wasm", ServeFile::new(&app.wasm_path))
-        .route_service("/mq_js_bundle.js", ServeFile::new(&app.bundle_path))
+        .route_service("/game.wasm", ServeFile::new(&config.wasm))
+        .route_service("/mq_js_bundle.js", ServeFile::new(&config.js_bundle))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-cache"),
         ));
+    let port = config.port;
+    let app = Arc::new(App {
+        auth: auth::Auth::from_env(config.redirect_uri).await,
+        game_server_url: config.game_server_url,
+    });
     let router = axum::Router::new()
         .route("/", get(landing))
         .route("/play", get(play))
@@ -44,6 +68,14 @@ async fn main() {
         .route("/auth-callback", get(auth::callback))
         .route("/site.css", get(css))
         .merge(artifacts)
+        .layer(track)
+        .route(
+            "/metrics",
+            get(move || async move {
+                metrics_process::Collector::default().collect();
+                prometheus.render()
+            }),
+        )
         .with_state(app);
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
         .await
@@ -53,22 +85,6 @@ async fn main() {
 }
 
 impl App {
-    async fn from_env() -> App {
-        let var = |name: &str| {
-            std::env::var(name)
-                .ok()
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| panic!("{name} must be set"))
-        };
-        App {
-            game_server_url: Url::parse(&var("RIFT_WEBSITE_GAME_SERVER_URL"))
-                .expect("game server url"),
-            wasm_path: var("RIFT_GAME_CLIENT_WASM"),
-            bundle_path: var("RIFT_MQ_JS_BUNDLE"),
-            auth: auth::Auth::from_env(var).await,
-        }
-    }
-
     async fn nav(&self, jar: &CookieJar, path: &str) -> Nav {
         let identity = auth::identity(self, jar).await;
         Nav {

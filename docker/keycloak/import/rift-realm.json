@@ -1,6 +1,6 @@
 {
   "id": "024a6c08-e66b-4433-8686-f58644f3bbc3",
-  "realm": "${RIFT_AUTH__AUDIENCE}",
+  "realm": "${RIFT_AUTH_AUDIENCE}",
   "notBefore": 0,
   "defaultSignatureAlgorithm": "RS256",
   "revokeRefreshToken": false,
@@ -541,13 +541,13 @@
       "clientId": "account",
       "name": "${client_account}",
       "rootUrl": "${authBaseUrl}",
-      "baseUrl": "/realms/${RIFT_AUTH__AUDIENCE}/account/",
+      "baseUrl": "/realms/${RIFT_AUTH_AUDIENCE}/account/",
       "surrogateAuthRequired": false,
       "enabled": true,
       "alwaysDisplayInConsole": false,
       "clientAuthenticatorType": "client-secret",
       "redirectUris": [
-        "/realms/${RIFT_AUTH__AUDIENCE}/account/*"
+        "/realms/${RIFT_AUTH_AUDIENCE}/account/*"
       ],
       "webOrigins": [],
       "notBefore": 0,
@@ -588,13 +588,13 @@
       "clientId": "account-console",
       "name": "${client_account-console}",
       "rootUrl": "${authBaseUrl}",
-      "baseUrl": "/realms/${RIFT_AUTH__AUDIENCE}/account/",
+      "baseUrl": "/realms/${RIFT_AUTH_AUDIENCE}/account/",
       "surrogateAuthRequired": false,
       "enabled": true,
       "alwaysDisplayInConsole": false,
       "clientAuthenticatorType": "client-secret",
       "redirectUris": [
-        "/realms/${RIFT_AUTH__AUDIENCE}/account/*"
+        "/realms/${RIFT_AUTH_AUDIENCE}/account/*"
       ],
       "webOrigins": [],
       "notBefore": 0,
@@ -730,8 +730,8 @@
     },
     {
       "id": "824b20eb-5841-4c4b-ae47-2e0a17268f68",
-      "clientId": "${RIFT_AUTH__AUDIENCE}",
-      "name": "${RIFT_AUTH__AUDIENCE}",
+      "clientId": "${RIFT_AUTH_AUDIENCE}",
+      "name": "${RIFT_AUTH_AUDIENCE}",
       "description": "",
       "rootUrl": "${KC_HOSTNAME}",
       "adminUrl": "${KC_HOSTNAME}",
@@ -889,13 +889,13 @@
       "clientId": "security-admin-console",
       "name": "${client_security-admin-console}",
       "rootUrl": "${authAdminUrl}",
-      "baseUrl": "/admin/${RIFT_AUTH__AUDIENCE}/console/",
+      "baseUrl": "/admin/${RIFT_AUTH_AUDIENCE}/console/",
       "surrogateAuthRequired": false,
       "enabled": true,
       "alwaysDisplayInConsole": false,
       "clientAuthenticatorType": "client-secret",
       "redirectUris": [
-        "/admin/${RIFT_AUTH__AUDIENCE}/console/*"
+        "/admin/${RIFT_AUTH_AUDIENCE}/console/*"
       ],
       "webOrigins": [
         "+"

@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use crate::cdp::{Browser, Page};
+use crate::chrome::{Browser, Page};
 use crate::flow;
 use crate::keycloak::Keycloak;
 
@@ -68,9 +68,9 @@ impl BrowserStage {
     pub fn connect() -> BrowserStage {
         let site = format!("https://{DOMAIN}");
         let auth = format!("https://auth.{DOMAIN}");
-        crate::cdp::trace("keycloak admin sign-in");
+        crate::chrome::trace("keycloak admin sign-in");
         let keycloak = Keycloak::connect(&auth, REALM, KC_ADMIN_USERNAME, KC_ADMIN_PASSWORD);
-        crate::cdp::trace("keycloak ready");
+        crate::chrome::trace("keycloak ready");
         BrowserStage {
             browser: Browser::launch(),
             keycloak,
@@ -86,7 +86,7 @@ impl BrowserStage {
     pub fn user(&mut self, roles: &[&str]) -> String {
         self.users += 1;
         let username = format!("e2e-{}-{}", self.run, self.users);
-        crate::cdp::trace(&format!("create user {username} roles {roles:?}"));
+        crate::chrome::trace(&format!("create user {username} roles {roles:?}"));
         self.keycloak.create_user(&username, PASSWORD, roles);
         username
     }
@@ -108,6 +108,6 @@ impl BrowserStage {
     }
 
     pub fn site_page(&self, path: &str) -> Page {
-        Page::open(&self.browser.cdp, &format!("{}{path}", self.site))
+        self.browser.open(&format!("{}{path}", self.site))
     }
 }

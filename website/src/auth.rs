@@ -165,24 +165,36 @@ pub struct Auth {
     http: reqwest::Client,
 }
 
+/// The `RIFT_AUTH_*` environment, shared with the game server's token verifier.
+#[derive(Deserialize)]
+struct AuthConfig {
+    issuer: IssuerUrl,
+    audience: ClientId,
+    jwks_uri: JsonWebKeySetUrl,
+    token_uri: TokenUrl,
+}
+
 impl Auth {
-    pub async fn from_env(var: impl Fn(&str) -> String) -> Auth {
-        let issuer = IssuerUrl::new(var("RIFT_WEBSITE_AUTH__AUTHORITY")).expect("issuer url");
-        let redirect =
-            RedirectUrl::new(var("RIFT_WEBSITE_AUTH__REDIRECT_URI")).expect("redirect url");
+    pub async fn from_env(redirect: RedirectUrl) -> Auth {
+        let config: AuthConfig = envy::prefixed("RIFT_AUTH_")
+            .from_env()
+            .expect("RIFT_AUTH_* environment");
         let post_logout = PostLogoutRedirectUrl::new(redirect.url().origin().ascii_serialization())
             .expect("post-logout url");
         let auth = Auth {
-            client_id: ClientId::new(var("RIFT_WEBSITE_AUTH__AUDIENCE")),
-            auth_url: AuthUrl::new(format!("{}/protocol/openid-connect/auth", issuer.as_str()))
-                .expect("auth url"),
-            token_url: TokenUrl::new(var("RIFT_WEBSITE_AUTH__TOKEN_URI")).expect("token url"),
+            client_id: config.audience,
+            auth_url: AuthUrl::new(format!(
+                "{}/protocol/openid-connect/auth",
+                config.issuer.as_str()
+            ))
+            .expect("auth url"),
+            token_url: config.token_uri,
             end_session_url: EndSessionUrl::new(format!(
                 "{}/protocol/openid-connect/logout",
-                issuer.as_str()
+                config.issuer.as_str()
             ))
             .expect("end-session url"),
-            jwks_url: JsonWebKeySetUrl::new(var("RIFT_WEBSITE_AUTH__JWKS_URI")).expect("jwks url"),
+            jwks_url: config.jwks_uri,
             jwks: RwLock::new(CoreJsonWebKeySet::new(Vec::new())),
             last_jwks_fetch: Mutex::new(None),
             // The token endpoint must answer directly: following a redirect could leak the code.
@@ -191,7 +203,7 @@ impl Auth {
                 .timeout(Duration::from_secs(5))
                 .build()
                 .expect("http client"),
-            issuer,
+            issuer: config.issuer,
             redirect,
             post_logout,
         };

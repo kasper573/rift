@@ -12,4 +12,8 @@ RUN cd /tmp/toolchain && rustup show && rm -r /tmp/toolchain \
 # Login shells reset PATH via /etc/profile, hiding the image's cargo location.
 RUN echo 'export PATH=/usr/local/cargo/bin:$PATH' > /etc/profile.d/cargo.sh
 
+# The dev loop: `just dev` (see Justfile).
+RUN cargo install --locked just watchexec-cli \
+    && chmod -R a+w "$CARGO_HOME"
+
 RUN useradd -m dev

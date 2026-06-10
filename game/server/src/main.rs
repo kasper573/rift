@@ -19,22 +19,31 @@ use world::{ClientId, ConnectedClient, Entity, Identity, ServerMessages, TICK_HZ
 
 const MAX_MESSAGE_SIZE: usize = 64 * 1024;
 
+/// The `RIFT_GAME_SERVER_*` environment; without a port the address falls back to the first
+/// argument, then [`world::DEFAULT_ADDRESS`].
+#[derive(serde::Deserialize)]
+struct Config {
+    hostname: Option<String>,
+    port: Option<u16>,
+    #[serde(default)]
+    auth_bypass: bool,
+}
+
 fn main() {
     world::validate();
-    let address = std::env::var("RIFT_GAME_SERVER_PORT")
-        .map(|port| {
-            let hostname =
-                std::env::var("RIFT_GAME_SERVER_HOSTNAME").unwrap_or_else(|_| "0.0.0.0".to_owned());
-            format!("{hostname}:{port}")
-        })
-        .ok()
+    let config: Config = envy::prefixed("RIFT_GAME_SERVER_")
+        .from_env()
+        .expect("RIFT_GAME_SERVER_* environment");
+    let address = config
+        .port
+        .map(|port| format!("{}:{port}", config.hostname.as_deref().unwrap_or("0.0.0.0")))
         .or_else(|| std::env::args().nth(1))
         .unwrap_or_else(|| world::DEFAULT_ADDRESS.to_owned());
 
     let (events_tx, events) = mpsc::channel();
     let net = Net {
         events: events_tx,
-        verifier: verifier_from_env(),
+        verifier: verifier(config.auth_bypass),
         prometheus: metrics_recorder(),
     };
     std::thread::spawn(move || serve(address, net));
@@ -241,20 +250,28 @@ fn metrics_recorder() -> metrics_exporter_prometheus::PrometheusHandle {
         .expect("prometheus recorder installs")
 }
 
-/// Keycloak verification configured through `RIFT_GAME_SERVER_AUTH__*`; without an issuer the
+/// Keycloak verification configured through the shared `RIFT_AUTH_*` block; without it the
 /// server runs open (plain local development).
-fn verifier_from_env() -> Option<std::sync::Arc<std::sync::Mutex<auth::Verifier>>> {
-    let var = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
-    let issuer = var("RIFT_GAME_SERVER_AUTH__ISSUER")?;
-    let audience = var("RIFT_GAME_SERVER_AUTH__AUDIENCE")?;
-    let jwks_uri = var("RIFT_GAME_SERVER_AUTH__JWKS_URI")?;
-    let allow_bypass = var("RIFT_GAME_SERVER_AUTH__ALLOW_BYPASS_USERS")
-        .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-
-    let mut verifier = auth::Verifier::new(&issuer, &audience, &jwks_uri, allow_bypass);
+fn verifier(allow_bypass: bool) -> Option<std::sync::Arc<std::sync::Mutex<auth::Verifier>>> {
+    #[derive(serde::Deserialize)]
+    struct AuthConfig {
+        issuer: String,
+        audience: String,
+        jwks_uri: String,
+    }
+    let config: AuthConfig = envy::prefixed("RIFT_AUTH_").from_env().ok()?;
+    let mut verifier = auth::Verifier::new(
+        &config.issuer,
+        &config.audience,
+        &config.jwks_uri,
+        allow_bypass,
+    );
     match verifier.warm() {
-        Ok(()) => println!("auth enabled, issuer {issuer}"),
-        Err(error) => println!("auth enabled, issuer {issuer} (jwks warm-up failed: {error})"),
+        Ok(()) => println!("auth enabled, issuer {}", config.issuer),
+        Err(error) => println!(
+            "auth enabled, issuer {} (jwks warm-up failed: {error})",
+            config.issuer
+        ),
     }
     Some(std::sync::Arc::new(std::sync::Mutex::new(verifier)))
 }

@@ -16,8 +16,8 @@ FROM ubuntu:24.04 AS website
 COPY target/release/website /usr/local/bin/website
 COPY target/wasm32-unknown-unknown/release/client.wasm /game/client.wasm
 COPY --from=game-client-bundle /bundle/mq_js_bundle.js /game/mq_js_bundle.js
-ENV RIFT_GAME_CLIENT_WASM=/game/client.wasm
-ENV RIFT_MQ_JS_BUNDLE=/game/mq_js_bundle.js
+ENV RIFT_WEBSITE_WASM=/game/client.wasm
+ENV RIFT_WEBSITE_JS_BUNDLE=/game/mq_js_bundle.js
 ENTRYPOINT ["website"]
 
 FROM ubuntu:24.04 AS game-server
