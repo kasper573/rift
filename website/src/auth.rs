@@ -16,7 +16,7 @@ use openidconnect::core::{
 };
 use openidconnect::{
     AdditionalClaims, AuthUrl, AuthorizationCode, Client, ClientId, CsrfToken, EndSessionUrl,
-    EndpointNotSet, EndpointSet, IdToken, IdTokenClaims, IdTokenVerifier, IssuerUrl,
+    EndpointNotSet, EndpointSet, IdToken, IdTokenClaims, IdTokenVerifier, IssuerUrl, NonceVerifier,
     JsonWebKeySetUrl, LogoutRequest, Nonce, OAuth2TokenResponse, PkceCodeChallenge,
     PkceCodeVerifier, PostLogoutRedirectUrl, RedirectUrl, Scope, TokenResponse, TokenUrl, reqwest,
 };
@@ -35,14 +35,7 @@ pub struct Identity {
 pub async fn identity(app: &App, jar: &CookieJar) -> Option<Identity> {
     let token = jar.get("token")?.value().to_owned();
     let id_token: RiftIdToken = jar.get("idt")?.value().parse().ok()?;
-    let claims = match app.auth.verified_claims(&id_token) {
-        Some(claims) => claims,
-        // An unknown signing key may be a rotated one: refetch the set and retry once.
-        None => {
-            app.auth.refresh_jwks(true).await?;
-            app.auth.verified_claims(&id_token)?
-        }
-    };
+    let claims = app.auth.verified_claims(&id_token, accept_nonce).await?;
     let name = claims
         .preferred_username()
         .map(|username| username.to_string())
@@ -120,19 +113,24 @@ pub async fn callback(
     else {
         return home();
     };
-    let Some(id_token) = tokens.id_token() else {
+    let Some(id_token) = tokens.id_token().map(ToString::to_string) else {
         return home();
     };
-    if id_token
-        .claims(&client.id_token_verifier(), &Nonce::new(nonce))
-        .is_err()
+    let Ok(parsed) = id_token.parse::<RiftIdToken>() else {
+        return home();
+    };
+    if app
+        .auth
+        .verified_claims(&parsed, &Nonce::new(nonce))
+        .await
+        .is_none()
     {
         return home();
     }
 
     let jar = jar
         .add(cookie("token", tokens.access_token().secret()))
-        .add(cookie("idt", &id_token.to_string()))
+        .add(cookie("idt", &id_token))
         .remove(Cookie::build(("oidc", "")).path("/"));
     (jar, Redirect::to(&return_path)).into_response()
 }
@@ -198,7 +196,7 @@ impl Auth {
             post_logout,
         };
         // Failure is not fatal: verification refetches on demand.
-        match auth.refresh_jwks(false).await {
+        match auth.refresh_jwks().await {
             Some(()) => println!("auth ready, issuer {}", auth.issuer.as_str()),
             None => println!(
                 "auth ready, issuer {} (jwks warm-up failed)",
@@ -226,20 +224,36 @@ impl Auth {
         .set_redirect_uri(self.redirect.clone())
     }
 
-    fn verified_claims(&self, id_token: &RiftIdToken) -> Option<RiftClaims> {
+    /// Verifies the ID token against the cached realm keys, refetching them on a miss: the
+    /// cache starts empty when the website boots before Keycloak, and key rotation stales it.
+    async fn verified_claims<N: NonceVerifier + Copy>(
+        &self,
+        id_token: &RiftIdToken,
+        nonce: N,
+    ) -> Option<RiftClaims> {
+        if let Some(claims) = self.try_claims(id_token, nonce) {
+            return Some(claims);
+        }
+        self.refresh_jwks().await?;
+        self.try_claims(id_token, nonce)
+    }
+
+    fn try_claims<N: NonceVerifier>(&self, id_token: &RiftIdToken, nonce: N) -> Option<RiftClaims> {
         let jwks = self.jwks.read().ok()?.clone();
         let verifier =
             IdTokenVerifier::new_public_client(self.client_id.clone(), self.issuer.clone(), jwks);
-        // The nonce was consumed when the sign-in verified it; later requests accept any.
-        id_token.claims(&verifier, accept_nonce).ok().cloned()
+        id_token.claims(&verifier, nonce).ok().cloned()
     }
 
-    /// Refreshes the cached JWKS; rate-limited by a cooldown when retrying after an unknown key.
-    async fn refresh_jwks(&self, cooldown: bool) -> Option<()> {
+    /// Refreshes the cached realm keys. While a recent fetch already provided keys the refresh
+    /// is skipped, so requests bearing garbage tokens cannot hammer Keycloak; an empty cache
+    /// always fetches.
+    async fn refresh_jwks(&self) -> Option<()> {
         const COOLDOWN: Duration = Duration::from_secs(30);
         {
             let mut last = self.last_jwks_fetch.lock().ok()?;
-            if cooldown && last.is_some_and(|at| at.elapsed() < COOLDOWN) {
+            let warm = !self.jwks.read().ok()?.keys().is_empty();
+            if warm && last.is_some_and(|at| at.elapsed() < COOLDOWN) {
                 return None;
             }
             *last = Some(Instant::now());
@@ -281,6 +295,7 @@ type RiftClaims = IdTokenClaims<RealmClaims, CoreGenderClaim>;
 type RiftClient =
     CoreClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
 
+// The nonce is consumed when the sign-in callback verifies it; later requests accept any.
 fn accept_nonce(_: Option<&Nonce>) -> Result<(), String> {
     Ok(())
 }
