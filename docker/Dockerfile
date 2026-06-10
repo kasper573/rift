@@ -4,7 +4,7 @@
 FROM alpine:3.21 AS game-client-bundle
 WORKDIR /bundle
 COPY Cargo.lock .
-COPY app/game/client/js/ js/
+COPY game/client/js/ js/
 RUN version=$(grep -A1 '^name = "macroquad"$' Cargo.lock | tail -1 | cut -d'"' -f2) \
  && wget -qO- "https://static.crates.io/crates/macroquad/macroquad-${version}.crate" | tar xz \
  && awk 1 "macroquad-${version}/js/mq_js_bundle.js" js/rift_ws.js js/rift_audio.js > mq_js_bundle.js
