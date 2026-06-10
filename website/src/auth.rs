@@ -16,8 +16,8 @@ use openidconnect::core::{
 };
 use openidconnect::{
     AdditionalClaims, AuthUrl, AuthorizationCode, Client, ClientId, CsrfToken, EndSessionUrl,
-    EndpointNotSet, EndpointSet, IdToken, IdTokenClaims, IdTokenVerifier, IssuerUrl, NonceVerifier,
-    JsonWebKeySetUrl, LogoutRequest, Nonce, OAuth2TokenResponse, PkceCodeChallenge,
+    EndpointNotSet, EndpointSet, IdToken, IdTokenClaims, IdTokenVerifier, IssuerUrl,
+    JsonWebKeySetUrl, LogoutRequest, Nonce, NonceVerifier, OAuth2TokenResponse, PkceCodeChallenge,
     PkceCodeVerifier, PostLogoutRedirectUrl, RedirectUrl, Scope, TokenResponse, TokenUrl, reqwest,
 };
 use serde::{Deserialize, Serialize};
