@@ -4,7 +4,7 @@ use bevy_replicon::prelude::FromClient;
 use bevy_time::Time;
 
 use crate::core::area::{self, AreaId};
-use crate::core::math::{Direction, Pos, Tiles, TilesPerSec};
+use crate::core::math::{CellPos, Direction, Offset, Pos, Tiles, TilesPerSec};
 use crate::core::protocol::{
     ACTION_RUN, ACTION_WALK, AreaTag, MoveRequest, MoveToPortal, Position, is_dead, position,
     set_facing,
@@ -14,15 +14,12 @@ use crate::features::player::sender_player;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cell {
-    pub pos: Pos<i32>,
+    pub pos: CellPos,
 }
 
 impl Cell {
     fn center(&self) -> Pos<Tiles> {
-        Pos::new(
-            Tiles(self.pos.x as f32 + 0.5),
-            Tiles(self.pos.y as f32 + 0.5),
-        )
+        Pos::new(self.pos.x as f32 + 0.5, self.pos.y as f32 + 0.5)
     }
 }
 
@@ -90,7 +87,7 @@ pub fn halt(world: &mut World, entity: Entity) {
         // A mid-step stop can land a hair short of the center; snap exactly onto the tile.
         if let Some(at) = position(world, entity) {
             world.entity_mut(entity).insert(Position {
-                pos: at.map(|t| t.floor() + 0.5),
+                pos: Pos::new(at.x.floor() + 0.5, at.y.floor() + 0.5),
             });
         }
         world.entity_mut(entity).remove::<Path>();
@@ -101,7 +98,7 @@ pub fn halt(world: &mut World, entity: Entity) {
 
 /// Whether `entity` is on a tile center on both axes (within a hair), i.e. not mid-step.
 pub fn on_tile(world: &World, entity: Entity) -> bool {
-    position(world, entity).is_some_and(|p| centered(p.x.0) && centered(p.y.0))
+    position(world, entity).is_some_and(|p| centered(p.x) && centered(p.y))
 }
 
 fn retarget(
@@ -158,7 +155,7 @@ pub fn advance(world: &mut World) {
             continue;
         };
         let mut remaining = speed * dt;
-        let mut heading: Option<Pos<Tiles>> = None;
+        let mut heading: Option<Offset<Tiles>> = None;
         while remaining > 1e-6 {
             let target = match tiles.first() {
                 Some(cell) => cell.center(),
@@ -177,7 +174,7 @@ pub fn advance(world: &mut World) {
                 heading = Some(step);
                 tiles.remove(0);
             } else {
-                at = at + step.normalized().scale(remaining);
+                at += step.normalize() * remaining;
                 heading = Some(step);
                 remaining = 0.0;
             }
@@ -189,7 +186,7 @@ pub fn advance(world: &mut World) {
         {
             set_facing(
                 &mut actor,
-                Direction::from_vec(step.x.0, step.y.0) as u8,
+                Direction::from_vec(step.x, step.y) as u8,
                 if speed >= 2.0 {
                     ACTION_RUN
                 } else {
@@ -220,7 +217,7 @@ fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<Cell
     Some(
         path.into_iter()
             .map(|p| Cell {
-                pos: Pos::new(p.x.0 as i32, p.y.0 as i32),
+                pos: CellPos::new(p.x as i32, p.y as i32),
             })
             .collect(),
     )
@@ -246,7 +243,7 @@ fn cross_portal(world: &mut World, entity: Entity) {
             tag.area = dest_area;
         }
         if let Some(mut p) = world.get_mut::<Position>(entity) {
-            p.pos = dest.map(|t| t + 0.5);
+            p.pos = Pos::new(dest.x + 0.5, dest.y + 0.5);
         }
         world.entity_mut(entity).remove::<DesiredPortal>();
         forget(world, entity);

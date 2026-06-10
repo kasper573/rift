@@ -8,7 +8,7 @@ use tiled::{LayerType, PropertyValue};
 
 use crate::core::actors::SfxId;
 use crate::core::assets;
-use crate::core::math::{Pixels, Pos, Rect, Size, Tiles, Tiling};
+use crate::core::math::{CellPos, Pixels, Pos, Rect, Size, Tiles, Tiling};
 use crate::core::nav;
 use crate::core::table;
 
@@ -298,7 +298,7 @@ fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {
         Pixels(map.tile_width as f32),
         Pixels(map.tile_height as f32),
     );
-    let size = Size::new(Tiles(map.width as f32), Tiles(map.height as f32));
+    let size = Size::new(map.width as f32, map.height as f32);
 
     let mut tiles = TileTable::default();
     let mut layers = Vec::new();
@@ -332,7 +332,7 @@ fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {
             }
             LayerType::Objects(object_layer) => {
                 for object in object_layer.objects() {
-                    let pos = Pos::new(Pixels(object.x), Pixels(object.y));
+                    let pos = Pos::new(object.x, object.y);
                     if let Some(object_tile) = object.get_tile() {
                         let data = object.tile_data().expect("tile object has tile data");
                         let tileset = object_tile.get_tileset();
@@ -346,7 +346,7 @@ fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {
                         if obscuring {
                             let object_size = shape_size(&object.shape);
                             obscuring_rects.push(tiling.rect(Rect::new(
-                                Pos::new(pos.x, pos.y - object_size.y),
+                                Pos::new(pos.x, pos.y - object_size.height),
                                 object_size,
                             )));
                         }
@@ -375,9 +375,7 @@ fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {
     let spawn = start.unwrap_or_else(|| panic!("map '{name}' must place a start object"));
     let grid = build_grid(size, &layers, &tiles, &obscuring_rects);
     let walkable_nodes = (0..map.height as i32)
-        .flat_map(|y| {
-            (0..map.width as i32).map(move |x| Pos::new(Tiles(x as f32), Tiles(y as f32)))
-        })
+        .flat_map(|y| (0..map.width as i32).map(move |x| Pos::new(x as f32, y as f32)))
         .filter(|&p| grid.walkable(p))
         .collect();
     let (groups, grouped_cells) = compute_groups(&layers, &tiles);
@@ -386,8 +384,8 @@ fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {
     Area {
         id,
         name: name.to_owned(),
-        width: size.x,
-        height: size.y,
+        width: Tiles(size.width),
+        height: Tiles(size.height),
         grid,
         tile_sfx,
         spawn,
@@ -477,19 +475,10 @@ fn tile_def(tileset: &tiled::Tileset, id: u32) -> TileDef {
         let columns = tileset.columns.max(1);
         Rect::new(
             Pos::new(
-                Pixels(
-                    (tileset.margin + (id % columns) * (tileset.tile_width + tileset.spacing))
-                        as f32,
-                ),
-                Pixels(
-                    (tileset.margin + (id / columns) * (tileset.tile_height + tileset.spacing))
-                        as f32,
-                ),
+                (tileset.margin + (id % columns) * (tileset.tile_width + tileset.spacing)) as f32,
+                (tileset.margin + (id / columns) * (tileset.tile_height + tileset.spacing)) as f32,
             ),
-            Size::new(
-                Pixels(tileset.tile_width as f32),
-                Pixels(tileset.tile_height as f32),
-            ),
+            Size::new(tileset.tile_width as f32, tileset.tile_height as f32),
         )
     };
 
@@ -512,10 +501,8 @@ fn tile_def(tileset: &tiled::Tileset, id: u32) -> TileDef {
 fn shape_size(shape: &tiled::ObjectShape) -> Size<Pixels> {
     match shape {
         tiled::ObjectShape::Rect { width, height }
-        | tiled::ObjectShape::Ellipse { width, height } => {
-            Size::new(Pixels(*width), Pixels(*height))
-        }
-        _ => Size::splat(Pixels(0.0)),
+        | tiled::ObjectShape::Ellipse { width, height } => Size::new(*width, *height),
+        _ => Size::splat(0.0),
     }
 }
 
@@ -540,7 +527,7 @@ fn portal(
     Portal {
         rect: tiling.rect(Rect::new(pos, shape_size(shape))),
         dest_area,
-        dest: Pos::new(Tiles(coord()), Tiles(coord())),
+        dest: Pos::new(coord(), coord()),
     }
 }
 
@@ -587,7 +574,7 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TileTable) -> (Vec<Group>, Has
 
 // Per-cell footstep sfx, flattened row-major; the topmost tile layer that declares one wins.
 fn tile_sfx(size: Size<Tiles>, layers: &[RenderLayer], tiles: &TileTable) -> Vec<Option<SfxId>> {
-    let (width, height) = (size.x.0 as i32, size.y.0 as i32);
+    let (width, height) = (size.width as i32, size.height as i32);
     let mut sfx = vec![None; (width * height) as usize];
     for layer in layers {
         for y in 0..height {
@@ -610,7 +597,7 @@ fn build_grid(
     tiles: &TileTable,
     obscuring: &[Rect<Tiles>],
 ) -> nav::Grid {
-    let (width, height) = (size.x.0 as i32, size.y.0 as i32);
+    let (width, height) = (size.width as i32, size.height as i32);
     let cells = (width * height) as usize;
     let mut any_walkable = vec![false; cells];
     let mut any_blocked = vec![false; cells];
@@ -641,12 +628,12 @@ fn build_grid(
     nav::Grid::new(size, walkable)
 }
 
-fn obscured_cells(rect: &Rect<Tiles>) -> Vec<Pos<i32>> {
+fn obscured_cells(rect: &Rect<Tiles>) -> Vec<CellPos> {
     let mut cells = Vec::new();
-    for y in (rect.pos.y.0.floor() as i32)..((rect.pos.y.0 + rect.size.y.0).ceil() as i32) {
-        for x in (rect.pos.x.0.floor() as i32)..((rect.pos.x.0 + rect.size.x.0).ceil() as i32) {
+    for y in (rect.origin.y.floor() as i32)..((rect.origin.y + rect.size.height).ceil() as i32) {
+        for x in (rect.origin.x.floor() as i32)..((rect.origin.x + rect.size.width).ceil() as i32) {
             if cell_overlap(rect, x, y) >= OBSCURING_CUTOFF {
-                cells.push(Pos::new(x, y));
+                cells.push(CellPos::new(x, y));
             }
         }
     }
@@ -655,10 +642,7 @@ fn obscured_cells(rect: &Rect<Tiles>) -> Vec<Pos<i32>> {
 
 /// The fraction of the 1x1 tile cell at (x, y) covered by `rect`.
 fn cell_overlap(rect: &Rect<Tiles>, x: i32, y: i32) -> f32 {
-    let cell = Rect::new(
-        Pos::new(Tiles(x as f32), Tiles(y as f32)),
-        Size::splat(Tiles(1.0)),
-    );
-    rect.intersection(cell)
+    let cell: Rect<Tiles> = Rect::new(Pos::new(x as f32, y as f32), Size::splat(1.0));
+    rect.intersection(&cell)
         .map_or(0.0, |overlap| overlap.area())
 }

@@ -115,10 +115,10 @@ fn engage(world: &mut World, time: Seconds) {
         };
         let stats = stats(world, id);
 
-        if at.distance(target_at) > stats.range.0 + TILE_DIAGONAL_MARGIN {
+        if at.distance_to(target_at) > stats.range.0 + TILE_DIAGONAL_MARGIN {
             let heading = world
                 .get::<MoveTarget>(id)
-                .is_some_and(|goal| goal.pos.distance(target_at) <= CHASE_RETARGET_THRESHOLD.0);
+                .is_some_and(|goal| goal.pos.distance_to(target_at) <= CHASE_RETARGET_THRESHOLD.0);
             if !heading {
                 world
                     .entity_mut(id)
@@ -138,7 +138,7 @@ fn engage(world: &mut World, time: Seconds) {
         {
             continue;
         }
-        let dir = Direction::from_vec(target_at.x.0 - at.x.0, target_at.y.0 - at.y.0) as u8;
+        let dir = Direction::from_vec(target_at.x - at.x, target_at.y - at.y) as u8;
         if let Some(mut actor) = world.get_mut::<Actor>(id) {
             set_facing(&mut actor, dir, ACTION_ATTACK);
         }

@@ -73,7 +73,7 @@ fn a_visitor_can_register_sign_in_and_play() {
         mirror
             .client
             .my_position()
-            .is_some_and(|pos| pos.distance(start) > 0.5)
+            .is_some_and(|pos| pos.distance_to(start) > 0.5)
     });
     assert!(moved, "clicking the canvas must move the player");
 }

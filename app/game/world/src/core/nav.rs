@@ -59,7 +59,7 @@ impl Grid {
     }
 
     fn dims(&self) -> (i32, i32) {
-        (self.size.x.0 as i32, self.size.y.0 as i32)
+        (self.size.width as i32, self.size.height as i32)
     }
 
     fn cell_walkable(&self, c: (i32, i32)) -> bool {
@@ -116,10 +116,10 @@ const NEIGHBOURS: [(i32, i32); 8] = [
 
 /// The integer cell a position falls in.
 fn cell(p: Pos<Tiles>) -> (i32, i32) {
-    (p.x.0.floor() as i32, p.y.0.floor() as i32)
+    (p.x.floor() as i32, p.y.floor() as i32)
 }
 
 /// A cell's lower-corner position.
 fn at(c: (i32, i32)) -> Pos<Tiles> {
-    Pos::new(Tiles(c.0 as f32), Tiles(c.1 as f32))
+    Pos::new(c.0 as f32, c.1 as f32)
 }

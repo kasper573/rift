@@ -3,7 +3,7 @@ use client::sfx::SfxTracker;
 use macroquad::prelude::*;
 use std::collections::HashMap;
 use world::core::actors::SfxId;
-use world::core::math::{Pixels, Pos, Rect, Size, Tiles};
+use world::core::math::{Offset, Pixels, Pos, Rect, Size, Tiles};
 use world::core::{area, assets};
 use world::{
     Actor, ClientId, Entity, Hitbox, ItemConsumed, LinkStatus, MmoClient, Position, Vitals, With,
@@ -207,16 +207,13 @@ impl Cursors {
             Cursor::MoveHeld => (&self.movable_held, true),
         };
         let hotspot = if centered {
-            Size::new(
-                Pixels(texture.width() / 2.0),
-                Pixels(texture.height() / 2.0),
-            )
+            Offset::new(texture.width() / 2.0, texture.height() / 2.0)
         } else {
-            Size::splat(Pixels(0.0))
+            Offset::zero()
         };
         let (mx, my) = mouse_position();
-        let at = Pos::new(Pixels(mx), Pixels(my)) - hotspot;
-        draw_texture(texture, at.x.0, at.y.0, WHITE);
+        let at: Pos<Pixels> = Pos::new(mx, my) - hotspot;
+        draw_texture(texture, at.x, at.y, WHITE);
     }
 }
 
@@ -228,19 +225,18 @@ struct Screen {
 
 impl Screen {
     fn fit() -> Screen {
-        let (scale, offset) =
-            render::letterbox(Size::new(Pixels(screen_width()), Pixels(screen_height())));
+        let (scale, offset) = render::letterbox(Size::new(screen_width(), screen_height()));
         Screen { scale, offset }
     }
 
     /// A world position to its on-screen window position.
     fn to_window(self, camera: render::Camera, world: Pos<Tiles>) -> Pos<Pixels> {
-        render::to_frame_f(camera, world).scale(self.scale) + self.offset
+        render::to_frame_f(camera, world) * self.scale + self.offset.to_vector()
     }
 
     /// A window pixel position back to a world-frame pixel position.
     fn to_frame(self, window: Pos<Pixels>) -> Pos<Pixels> {
-        (window - self.offset).scale(1.0 / self.scale)
+        ((window - self.offset) / self.scale).to_point()
     }
 }
 
@@ -262,16 +258,16 @@ fn play_frame(client: &mut MmoClient, screen: Screen, ui: &mut Ui) -> Cursor {
     }
 
     let (mx, my) = mouse_position();
-    let mouse = Pos::new(Pixels(mx), Pixels(my));
+    let mouse = Pos::new(mx, my);
     let world = render::frame_to_world(camera, screen.to_frame(mouse));
-    let hover = world.map(f32::floor);
+    let hover = world.floor();
     let enemy = enemy_at(client, world);
-    let in_view = mx >= screen.offset.x.0 && my >= screen.offset.y.0;
+    let in_view = mx >= screen.offset.x && my >= screen.offset.y;
 
     if is_mouse_button_pressed(MouseButton::Left) && in_view {
         match enemy {
             Some(target) => client.attack(target),
-            None => client.move_to(hover.x.0 + 0.5, hover.y.0 + 0.5),
+            None => client.move_to(hover.x + 0.5, hover.y + 0.5),
         }
     }
 
@@ -284,12 +280,12 @@ fn play_frame(client: &mut MmoClient, screen: Screen, ui: &mut Ui) -> Cursor {
             .and_then(|id| area::areas().get(id.0 as usize))
             .is_some_and(|area| area.grid.walkable(hover));
     if movable {
-        let tile = TILE_SIZE.x.0 * screen.scale;
+        let tile = TILE_SIZE.width * screen.scale;
         let p = screen.to_window(camera, hover);
         draw_texture_ex(
             &ui.highlight,
-            p.x.0,
-            p.y.0,
+            p.x,
+            p.y,
             WHITE,
             DrawTextureParams {
                 dest_size: Some(vec2(tile, tile)),
@@ -308,16 +304,16 @@ fn play_frame(client: &mut MmoClient, screen: Screen, ui: &mut Ui) -> Cursor {
 // applies its clicks; returns whether the pointer is over the grid, which swallows world input.
 fn inventory_frame(client: &mut MmoClient, ui: &mut Ui) -> bool {
     let items = client.my_inventory();
-    let grid = INV_GRID.convert::<Pixels>(|slots| slots * INV_SLOT);
-    let origin = Pos::new(Pixels(screen_width() - INV_PAD - grid.x.0), Pixels(INV_PAD));
+    let grid: Size<Pixels> = INV_GRID.to_f32().cast_unit() * INV_SLOT;
+    let origin = Pos::new(screen_width() - INV_PAD - grid.width, INV_PAD);
     let grid_rect = Rect::new(origin, grid);
 
-    let total_rows = (items.len() as u32).div_ceil(INV_GRID.x);
-    let max_scroll = total_rows.saturating_sub(INV_GRID.y);
+    let total_rows = (items.len() as u32).div_ceil(INV_GRID.width);
+    let max_scroll = total_rows.saturating_sub(INV_GRID.height);
     ui.inventory_scroll = ui.inventory_scroll.min(max_scroll);
 
     let (mx, my) = mouse_position();
-    let mouse = Pos::new(Pixels(mx), Pixels(my));
+    let mouse = Pos::new(mx, my);
     let hovering = grid_rect.contains(mouse);
     if hovering {
         let wheel = mouse_wheel().1;
@@ -328,49 +324,49 @@ fn inventory_frame(client: &mut MmoClient, ui: &mut Ui) -> bool {
         }
     }
 
-    let slot_size = Size::splat(Pixels(INV_SLOT));
-    let inner = slot_size - Size::splat(Pixels(2.0));
+    let slot_size = Size::splat(INV_SLOT);
+    let inner = slot_size - Size::splat(2.0);
     let mut hovered: Option<u32> = None;
-    for row in 0..INV_GRID.y {
-        for col in 0..INV_GRID.x {
-            let at = origin + Size::new(col, row).convert::<Pixels>(|slots| slots * INV_SLOT);
-            let slot = (ui.inventory_scroll + row) * INV_GRID.x + col;
+    for row in 0..INV_GRID.height {
+        for col in 0..INV_GRID.width {
+            let at = origin + Offset::new(col as f32, row as f32) * INV_SLOT;
+            let slot = (ui.inventory_scroll + row) * INV_GRID.width + col;
             let occupied = (slot as usize) < items.len();
             let over = Rect::new(at, slot_size).contains(mouse);
             if over && occupied {
                 hovered = Some(slot);
             }
             draw_rectangle(
-                at.x.0,
-                at.y.0,
-                inner.x.0,
-                inner.y.0,
+                at.x,
+                at.y,
+                inner.width,
+                inner.height,
                 color_u8!(0, 0, 0, 160),
             );
             let outline = if over { WHITE } else { GRAY };
-            draw_rectangle_lines(at.x.0, at.y.0, inner.x.0, inner.y.0, 2.0, outline);
+            draw_rectangle_lines(at.x, at.y, inner.width, inner.height, 2.0, outline);
             if occupied {
                 let icon = &ui.icons[items[slot as usize].0 as usize];
-                let icon_at = at + Pos::splat(Pixels(1.0));
-                draw_texture(icon, icon_at.x.0, icon_at.y.0, WHITE);
+                let icon_at = at + Offset::splat(1.0);
+                draw_texture(icon, icon_at.x, icon_at.y, WHITE);
             }
         }
     }
 
-    if total_rows > INV_GRID.y {
-        let track = origin + Size::new(Pixels(grid.x.0 + 2.0), Pixels(0.0));
-        draw_rectangle(track.x.0, track.y.0, 4.0, grid.y.0, color_u8!(0, 0, 0, 160));
-        let thumb_h = grid.y.0 * INV_GRID.y as f32 / total_rows as f32;
+    if total_rows > INV_GRID.height {
+        let track = origin + Offset::new(grid.width + 2.0, 0.0);
+        draw_rectangle(track.x, track.y, 4.0, grid.height, color_u8!(0, 0, 0, 160));
+        let thumb_h = grid.height * INV_GRID.height as f32 / total_rows as f32;
         let thumb_y =
-            track.y.0 + (grid.y.0 - thumb_h) * ui.inventory_scroll as f32 / max_scroll as f32;
-        draw_rectangle(track.x.0, thumb_y, 4.0, thumb_h, GRAY);
+            track.y + (grid.height - thumb_h) * ui.inventory_scroll as f32 / max_scroll as f32;
+        draw_rectangle(track.x, thumb_y, 4.0, thumb_h, GRAY);
     }
 
     if let Some(slot) = hovered {
         let name = &world::features::items::item(items[slot as usize]).display_name;
         let width = measure_text(name, None, 20, 1.0).width;
-        let label = origin + Size::new(Pixels(grid.x.0 - width), Pixels(grid.y.0 + 16.0));
-        draw_text(name, label.x.0, label.y.0, 20.0, WHITE);
+        let label = origin + Offset::new(grid.width - width, grid.height + 16.0);
+        draw_text(name, label.x, label.y, 20.0, WHITE);
     }
 
     if hovering
@@ -407,8 +403,8 @@ fn spectate_frame(client: &mut MmoClient, _screen: Screen, _ui: &mut Ui) -> Curs
 fn window_conf() -> Conf {
     Conf {
         window_title: "rift mmo".to_owned(),
-        window_width: VIEW.x.0 as i32 * 3,
-        window_height: VIEW.y.0 as i32 * 3,
+        window_width: VIEW.width as i32 * 3,
+        window_height: VIEW.height as i32 * 3,
         window_resizable: true,
 
         platform: macroquad::miniquad::conf::Platform {
@@ -442,7 +438,7 @@ fn debug_frame(client: &mut MmoClient, screen: Screen, mode: DebugMode) {
         return;
     };
     let (mx, my) = mouse_position();
-    let mouse = Pos::new(Pixels(mx), Pixels(my));
+    let mouse = Pos::new(mx, my);
     let pointer = render::frame_to_world(camera, screen.to_frame(mouse));
     match mode {
         DebugMode::None => {}
@@ -466,24 +462,17 @@ fn debug_frame(client: &mut MmoClient, screen: Screen, mode: DebugMode) {
             }
         }
         DebugMode::Obscured => {
-            let tile = TILE_SIZE.x.0 * screen.scale;
+            let tile = TILE_SIZE.width * screen.scale;
             for rect in &area.obscuring_rects {
-                let p = screen.to_window(camera, rect.pos);
-                let size = rect.size.convert::<Pixels>(|t| t * tile);
-                draw_rectangle(p.x.0, p.y.0, size.x.0, size.y.0, color_u8!(255, 0, 0, 128));
+                let p = screen.to_window(camera, rect.origin);
+                let size: Size<Pixels> = rect.size.cast_unit() * tile;
+                draw_rectangle(p.x, p.y, size.width, size.height, color_u8!(255, 0, 0, 128));
             }
-            let amount =
-                area.obscured_amount(pointer.x.0.floor() as i32, pointer.y.0.floor() as i32);
+            let amount = area.obscured_amount(pointer.x.floor() as i32, pointer.y.floor() as i32);
             let label = format!("{:.2}% obscured", amount * 100.0);
-            let at = mouse + Size::new(Pixels(5.0 * screen.scale), Pixels(0.0));
-            draw_text(
-                &label,
-                at.x.0 + 1.0,
-                at.y.0 + 1.0,
-                7.0 * screen.scale,
-                BLACK,
-            );
-            draw_text(&label, at.x.0, at.y.0, 7.0 * screen.scale, WHITE);
+            let at = mouse + Offset::new(5.0 * screen.scale, 0.0);
+            draw_text(&label, at.x + 1.0, at.y + 1.0, 7.0 * screen.scale, BLACK);
+            draw_text(&label, at.x, at.y, 7.0 * screen.scale, WHITE);
         }
     }
 }
@@ -500,7 +489,7 @@ fn draw_node_links(area: &area::Area, camera: render::Camera, screen: Screen, no
         (-1, 1),
         (-1, -1),
     ] {
-        let neighbor = Pos::new(Tiles(node.x.0 + dx as f32), Tiles(node.y.0 + dy as f32));
+        let neighbor = Pos::new(node.x + dx as f32, node.y + dy as f32);
         if area.grid.walkable(neighbor) {
             draw_debug_line(
                 from,
@@ -513,10 +502,10 @@ fn draw_node_links(area: &area::Area, camera: render::Camera, screen: Screen, no
 
 fn draw_debug_line(from: Pos<Pixels>, to: Pos<Pixels>, scale: f32) {
     draw_line(
-        from.x.0,
-        from.y.0,
-        to.x.0,
-        to.y.0,
+        from.x,
+        from.y,
+        to.x,
+        to.y,
         2.0 * scale,
         color_u8!(255, 0, 0, 255),
     );
@@ -524,12 +513,12 @@ fn draw_debug_line(from: Pos<Pixels>, to: Pos<Pixels>, scale: f32) {
 
 /// A tile cell's center position.
 fn tile_center(cell: Pos<Tiles>) -> Pos<Tiles> {
-    cell.map(|t| t + 0.5)
+    cell + Offset::splat(0.5)
 }
 
 /// The walkable tile at the pointer, or the nearest adjacent one.
 fn proximity_node(area: &area::Area, p: Pos<Tiles>) -> Option<Pos<Tiles>> {
-    let (tx, ty) = (p.x.0.floor() as i32, p.y.0.floor() as i32);
+    let (tx, ty) = (p.x.floor() as i32, p.y.floor() as i32);
     [
         (0, 0),
         (1, 0),
@@ -542,7 +531,7 @@ fn proximity_node(area: &area::Area, p: Pos<Tiles>) -> Option<Pos<Tiles>> {
         (-1, -1),
     ]
     .into_iter()
-    .map(|(dx, dy)| Pos::new(Tiles((tx + dx) as f32), Tiles((ty + dy) as f32)))
+    .map(|(dx, dy)| Pos::new((tx + dx) as f32, (ty + dy) as f32))
     .find(|&node| area.grid.walkable(node))
 }
 
@@ -555,11 +544,11 @@ fn enemy_at(client: &mut MmoClient, point: Pos<Tiles>) -> Option<Entity> {
         if Some(entity) == me || vitals.is_some_and(|v| v.health <= 0.0) {
             return None;
         }
-        let bottom = at.pos.y.0 + 0.5;
+        let bottom = at.pos.y + 0.5;
         let bounds = Rect::new(
             Pos::new(
-                Tiles(at.pos.x.0 - hitbox.size.x.0 / 2.0),
-                Tiles(bottom - hitbox.size.y.0),
+                at.pos.x - hitbox.size.width / 2.0,
+                bottom - hitbox.size.height,
             ),
             hitbox.size,
         );

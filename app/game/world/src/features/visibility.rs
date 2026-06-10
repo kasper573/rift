@@ -152,6 +152,6 @@ fn sees(sight: Option<&Sight>, players: &HashSet<Entity>, subject: &Subject) -> 
     if subject.area != Some(area) {
         return false;
     }
-    (!subject.anchor && pos.distance(subject.pos) <= VIEW_DISTANCE.0)
+    (!subject.anchor && pos.distance_to(subject.pos) <= VIEW_DISTANCE.0)
         || (sight.spectating && players.contains(&subject.entity))
 }

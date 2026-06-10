@@ -8,7 +8,7 @@ use macroquad::prelude::*;
 use world::Entity;
 use world::core::actors::ActorModelId;
 use world::core::area::AreaId;
-use world::core::math::{Pixels, Pos, Rect, Size, Tiles};
+use world::core::math::{GridSize, Offset, Pixels, Pos, Rect, Size, Tiles};
 use world::core::protocol::Rgba;
 use world::core::protocol::{Actor, Position, Vitals, action_name};
 use world::core::session::MmoClient;
@@ -22,16 +22,19 @@ type ActorQuery = (
 );
 
 /// One tile, in pixels.
-pub const TILE_SIZE: Size<Pixels> = Size::splat(Pixels(16.0));
+pub const TILE_SIZE: Size<Pixels> = Size::new(16.0, 16.0);
 /// The rendered viewport, in tiles.
-pub const VIEW_TILES: Size<Tiles> = Size::new(Tiles(24.0), Tiles(18.0));
+pub const VIEW_TILES: Size<Tiles> = Size::new(24.0, 18.0);
 /// The rendered viewport, in pixels — one tile's worth of pixels across each tile of the view.
-pub static VIEW: LazyLock<Size<Pixels>> = LazyLock::new(|| TILE_SIZE.mult(VIEW_TILES));
-static HALF_VIEW: LazyLock<Pos<Pixels>> = LazyLock::new(|| VIEW.scale(0.5));
-static HALF_VIEW_TILES: LazyLock<Size<Tiles>> = LazyLock::new(|| VIEW_TILES.scale(0.5));
+pub const VIEW: Size<Pixels> = Size::new(
+    TILE_SIZE.width * VIEW_TILES.width,
+    TILE_SIZE.height * VIEW_TILES.height,
+);
+static HALF_VIEW: LazyLock<Pos<Pixels>> = LazyLock::new(|| (VIEW * 0.5).to_vector().to_point());
+static HALF_VIEW_TILES: LazyLock<Size<Tiles>> = LazyLock::new(|| VIEW_TILES * 0.5);
 
 // Inventory layout, anchored top-right: a grid of square slots.
-pub const INV_GRID: Size<u32> = Size::new(4, 6);
+pub const INV_GRID: GridSize = GridSize::new(4, 6);
 pub const INV_SLOT: f32 = 36.0;
 pub const INV_PAD: f32 = 8.0;
 
@@ -40,24 +43,27 @@ pub const INV_PAD: f32 = 8.0;
 pub fn proximity_volume(listener: Pos<Tiles>, source: Pos<Tiles>) -> f32 {
     let half = *HALF_VIEW_TILES;
     let offset = source - listener;
-    let dx = offset.x.0.abs() / half.x.0;
-    let dy = offset.y.0.abs() / half.y.0;
+    let dx = offset.x.abs() / half.width;
+    let dy = offset.y.abs() / half.height;
     (1.0 - dx.max(dy)).clamp(0.0, 1.0)
 }
 
 /// A sound source's stereo pan for a listener: -1 (full left) at the left edge of the view, 0 at
 /// the listener's column, +1 (full right) at the right edge; clamped, vertical offset ignored.
 pub fn proximity_pan(listener: Pos<Tiles>, source: Pos<Tiles>) -> f32 {
-    ((source - listener).x.0 / HALF_VIEW_TILES.x.0).clamp(-1.0, 1.0)
+    ((source - listener).x / HALF_VIEW_TILES.width).clamp(-1.0, 1.0)
 }
 
 /// Integer-scales the view into a screen and centers it: the scale, and the view's top-left offset.
 pub fn letterbox(screen: Size<Pixels>) -> (f32, Pos<Pixels>) {
-    let scale = (screen.x.0 / VIEW.x.0)
-        .min(screen.y.0 / VIEW.y.0)
+    let scale = (screen.width / VIEW.width)
+        .min(screen.height / VIEW.height)
         .floor()
         .max(1.0);
-    (scale, (screen - VIEW.scale(scale)).scale(0.5))
+    (
+        scale,
+        ((screen - VIEW * scale) * 0.5).to_vector().to_point(),
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -72,9 +78,15 @@ pub fn camera(client: &mut MmoClient) -> Option<Camera> {
 pub fn camera_for(at: Pos<Tiles>, area: AreaId) -> Option<Camera> {
     let area = area::areas().get(area.0 as usize)?;
     let half = *HALF_VIEW_TILES;
-    let extent = Size::new(area.width, area.height);
-    let center = at.clamp(half, (extent - half).max(half)).map(snap);
-    Some(Camera { center })
+    let lo = Pos::new(half.width, half.height);
+    let hi = Pos::new(
+        (area.width.0 - half.width).max(half.width),
+        (area.height.0 - half.height).max(half.height),
+    );
+    let center = at.clamp(lo, hi);
+    Some(Camera {
+        center: Pos::new(snap(center.x), snap(center.y)),
+    })
 }
 
 /// Anchors each entity's animation to the moment its replicated action last changed, so
@@ -157,7 +169,7 @@ pub struct WorldView {
 
 impl WorldView {
     pub fn new() -> WorldView {
-        let target = render_target(VIEW.x.0 as u32, VIEW.y.0 as u32);
+        let target = render_target(VIEW.width as u32, VIEW.height as u32);
         target.texture.set_filter(FilterMode::Nearest);
         WorldView {
             animator: Animator::default(),
@@ -177,8 +189,12 @@ impl Default for WorldView {
 /// Renders the scene into the view's pixel target, then presents it onto the screen at the
 /// letterboxed integer scale; dead scenes pass through the red death tint.
 pub fn present(scene: &Scene, view: &mut WorldView, scale: f32, offset: Pos<Pixels>) {
-    let mut camera =
-        Camera2D::from_display_rect(macroquad::math::Rect::new(0.0, 0.0, VIEW.x.0, VIEW.y.0));
+    let mut camera = Camera2D::from_display_rect(macroquad::math::Rect::new(
+        0.0,
+        0.0,
+        VIEW.width,
+        VIEW.height,
+    ));
     camera.render_target = Some(view.target.clone());
     set_camera(&camera);
     clear_background(Color::from_rgba(0, 0, 0, 0));
@@ -189,14 +205,14 @@ pub fn present(scene: &Scene, view: &mut WorldView, scale: f32, offset: Pos<Pixe
     if scene.dead {
         gl_use_material(&view.dead_tint);
     }
-    let dest = VIEW.scale(scale);
+    let dest = VIEW * scale;
     draw_texture_ex(
         &view.target.texture,
-        offset.x.0,
-        offset.y.0,
+        offset.x,
+        offset.y,
         WHITE,
         DrawTextureParams {
-            dest_size: Some(vec2(dest.x.0, dest.y.0)),
+            dest_size: Some(vec2(dest.width, dest.height)),
             // The render-target camera writes rows bottom-up; presenting flips them back.
             flip_y: true,
             ..Default::default()
@@ -214,11 +230,11 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
     let area = &area::areas()[scene.area.0 as usize];
 
     let half = *HALF_VIEW_TILES;
-    let margin = Size::splat(Tiles(1.0));
-    let lo = (camera.center - half).map(f32::floor) - margin;
-    let hi = (camera.center + half).map(f32::ceil) + margin;
-    let (min_x, max_x) = (lo.x.0 as i32, hi.x.0 as i32);
-    let (min_y, max_y) = (lo.y.0 as i32, hi.y.0 as i32);
+    let margin = Size::splat(1.0);
+    let lo = (camera.center - half).floor() - margin;
+    let hi = (camera.center + half).ceil() + margin;
+    let (min_x, max_x) = (lo.x as i32, hi.x as i32);
+    let (min_y, max_y) = (lo.y as i32, hi.y as i32);
 
     for layer in &area.layers {
         for ty in min_y..=max_y {
@@ -233,7 +249,7 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
 
     let mut draws: Vec<(f32, Draw)> = Vec::new();
     for &(at, cell) in &area.objects {
-        let (tile_x, bottom_y) = (at.x.0, at.y.0);
+        let (tile_x, bottom_y) = (at.x, at.y);
         if tile_x < min_x as f32
             || tile_x > max_x as f32
             || bottom_y < min_y as f32
@@ -245,12 +261,12 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
             bottom_y,
             Draw::Tile {
                 cell,
-                top_left: Pos::new(at.x, Tiles(bottom_y - 1.0)),
+                top_left: Pos::new(at.x, bottom_y - 1.0),
             },
         ));
     }
     for (index, actor) in scene.actors.iter().enumerate() {
-        draws.push((actor.pos.y.0, Draw::Actor { index }));
+        draws.push((actor.pos.y, Draw::Actor { index }));
     }
     for (index, group) in area.groups.iter().enumerate() {
         if group.z >= (min_y - 2) as f32 && group.z <= (max_y + 2) as f32 {
@@ -278,11 +294,11 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
             Draw::Actor { index } => {
                 let actor = &scene.actors[index];
                 let center = to_frame_f(camera, actor.pos);
-                let anchor = Pos::new(
-                    Pixels((actor.region.size.x.0 / 2.0).round()),
-                    Pixels((actor.region.size.y.0 * 2.0 / 3.0).round()),
+                let anchor = Offset::new(
+                    (actor.region.size.width / 2.0).round(),
+                    (actor.region.size.height * 2.0 / 3.0).round(),
                 );
-                let dst = center.map(f32::round) - anchor;
+                let dst = center.round() - anchor;
                 textures.draw_png(
                     model(actor.model).sheet(),
                     actor.region,
@@ -311,11 +327,13 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
 }
 
 pub fn to_frame_f(camera: Camera, world: Pos<Tiles>) -> Pos<Pixels> {
-    TILE_SIZE.mult(world - camera.center) + *HALF_VIEW
+    let offset = world - camera.center;
+    *HALF_VIEW + Offset::new(offset.x * TILE_SIZE.width, offset.y * TILE_SIZE.height)
 }
 
 pub fn frame_to_world(camera: Camera, frame: Pos<Pixels>) -> Pos<Tiles> {
-    (frame - *HALF_VIEW).convert(|pixels| pixels / TILE_SIZE.x.0) + camera.center
+    let offset = frame - *HALF_VIEW;
+    camera.center + Offset::new(offset.x / TILE_SIZE.width, offset.y / TILE_SIZE.height)
 }
 
 struct ActorDraw {
@@ -378,16 +396,16 @@ fn draw_region(
 ) {
     draw_texture_ex(
         texture,
-        dst.x.0,
-        dst.y.0,
+        dst.x,
+        dst.y,
         tint,
         DrawTextureParams {
-            dest_size: Some(vec2(dst_size.x.0, dst_size.y.0)),
+            dest_size: Some(vec2(dst_size.width, dst_size.height)),
             source: Some(macroquad::math::Rect::new(
-                region.pos.x.0,
-                region.pos.y.0,
-                region.size.x.0,
-                region.size.y.0,
+                region.origin.x,
+                region.origin.y,
+                region.size.width,
+                region.size.height,
             )),
             flip_x: flip.0,
             flip_y: flip.1,
@@ -406,7 +424,7 @@ fn draw_map_tile(
     ty: i32,
 ) {
     if let Some(sprite) = area.resolve(cell, time) {
-        let dst = to_frame(camera, Pos::new(Tiles(tx as f32), Tiles(ty as f32)));
+        let dst = to_frame(camera, Pos::new(tx as f32, ty as f32));
         textures.draw_png(
             sprite.sheet,
             sprite.region,
@@ -418,20 +436,20 @@ fn draw_map_tile(
     }
 }
 
-const BAR_SIZE: Size<Pixels> = Size::new(Pixels(20.0), Pixels(4.0));
+const BAR_SIZE: Size<Pixels> = Size::new(20.0, 4.0);
 const BAR_BORDER: u32 = 0x140A_28FF;
 const BAR_BG: u32 = 0x2A1C_5CFF;
 const BAR_FILL: u32 = 0x00FF_00FF;
 
 fn health_bar(center: Pos<Pixels>, fraction: f32) {
-    let top_left = center.map(f32::round) + Pos::new(Pixels(-BAR_SIZE.x.0 / 2.0), Pixels(3.0));
+    let top_left = center.round() + Offset::new(-BAR_SIZE.width / 2.0, 3.0);
     fill(top_left, BAR_SIZE, BAR_BORDER);
-    let inner = top_left + Pos::splat(Pixels(1.0));
-    let inner_size = BAR_SIZE - Size::splat(Pixels(2.0));
+    let inner = top_left + Offset::splat(1.0);
+    let inner_size = BAR_SIZE - Size::splat(2.0);
     fill(inner, inner_size, BAR_BG);
     fill(
         inner,
-        Size::new(Pixels((inner_size.x.0 * fraction).floor()), inner_size.y),
+        Size::new((inner_size.width * fraction).floor(), inner_size.height),
         BAR_FILL,
     );
 }
@@ -439,10 +457,10 @@ fn health_bar(center: Pos<Pixels>, fraction: f32) {
 fn fill(top_left: Pos<Pixels>, size: Size<Pixels>, rgba: u32) {
     let [r, g, b, a] = rgba.to_be_bytes();
     draw_rectangle(
-        top_left.x.0,
-        top_left.y.0,
-        size.x.0,
-        size.y.0,
+        top_left.x,
+        top_left.y,
+        size.width,
+        size.height,
         Color::from_rgba(r, g, b, a),
     );
 }
@@ -457,11 +475,11 @@ fn model(index: ActorModelId) -> &'static actors::ActorModel {
 }
 
 fn to_frame(camera: Camera, world: Pos<Tiles>) -> Pos<Pixels> {
-    to_frame_f(camera, world).map(f32::round)
+    to_frame_f(camera, world).round()
 }
 
 fn snap(tiles: f32) -> f32 {
-    (tiles * TILE_SIZE.x.0).round() / TILE_SIZE.x.0
+    (tiles * TILE_SIZE.width).round() / TILE_SIZE.width
 }
 
 // The software renderer shifted dead frames toward red exactly this way; the shader keeps the

@@ -1,7 +1,171 @@
-//! The game's spatial/math vocabulary, re-exported from the shared `math` crate so every domain
-//! draws from one source. Game positions are `Pos<Tiles>`; map geometry crosses from `Pos<Pixels>`
-//! through `Tiling`.
-pub use math::{
-    Direction, Millis, Pixels, PlaybackRate, Pos, Rect, Rng, Seconds, Size, Tiles, TilesPerSec,
-    Tiling, Unit, next_rng, rng_unit,
-};
+//! The game's spatial vocabulary: euclid geometry tagged by unit, so a pixel value can never be
+//! used where a tile value is meant. Game positions are `Pos<Tiles>`; map geometry crosses from
+//! pixel space through [`Tiling`]. The unit tags double as scalar newtypes ([`Tiles`], [`Pixels`])
+//! for lengths carried in content tables and constants.
+
+use std::f32::consts::FRAC_1_SQRT_2;
+
+use serde::{Deserialize, Serialize};
+
+/// A length or coordinate in tile space — the game's spatial unit (positions, ranges, distances,
+/// map extents). Whole numbers fall on tile edges; tile centers are at +0.5.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct Tiles(pub f32);
+
+/// A length or coordinate in a map's pixel space — Tiled authors object geometry (and its own
+/// tile size) in pixels. Cross into tile space only through [`Tiling`].
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct Pixels(pub f32);
+
+/// A 2D position over a unit tag (`Pos<Tiles>`, `Pos<Pixels>`); components are raw `f32`s in
+/// that unit.
+pub type Pos<U> = euclid::Point2D<f32, U>;
+/// A 2D displacement over a unit tag.
+pub type Offset<U> = euclid::Vector2D<f32, U>;
+/// A 2D size — width and height — over a unit tag; replaces ad-hoc `(w, h)` tuples.
+pub type Size<U> = euclid::Size2D<f32, U>;
+/// An axis-aligned rectangle: an origin [`Pos`] and a [`Size`]; containment is half-open.
+pub type Rect<U> = euclid::Rect<f32, U>;
+/// An integer tile-grid cell index pair.
+pub type CellPos = euclid::default::Point2D<i32>;
+/// A dimensionless integer extent (e.g. a grid of inventory slots).
+pub type GridSize = euclid::default::Size2D<u32>;
+
+/// A movement speed: the tiles covered each second.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct TilesPerSec(pub Tiles);
+
+/// A duration or server-clock timestamp in seconds.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct Seconds(pub f32);
+
+/// A duration in milliseconds.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct Millis(pub f32);
+
+/// An animation-rate multiplier; 1 plays the animation at its authored speed.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct PlaybackRate(pub f32);
+
+impl std::ops::Add for Seconds {
+    type Output = Seconds;
+    fn add(self, other: Seconds) -> Seconds {
+        Seconds(self.0 + other.0)
+    }
+}
+
+impl std::ops::Sub for Seconds {
+    type Output = Seconds;
+    fn sub(self, other: Seconds) -> Seconds {
+        Seconds(self.0 - other.0)
+    }
+}
+
+impl std::ops::Mul<f32> for TilesPerSec {
+    type Output = TilesPerSec;
+    fn mul(self, factor: f32) -> TilesPerSec {
+        TilesPerSec(Tiles(self.0.0 * factor))
+    }
+}
+
+impl Millis {
+    pub fn seconds(self) -> Seconds {
+        Seconds(self.0 / 1000.0)
+    }
+}
+
+/// A map's pixels-per-tile, and the only gateway from its pixel space into tile space. Built once
+/// per map so the tile size has a single source.
+#[derive(Clone, Copy)]
+pub struct Tiling {
+    x: euclid::Scale<f32, Pixels, Tiles>,
+    y: euclid::Scale<f32, Pixels, Tiles>,
+}
+
+impl Tiling {
+    pub fn new(tile_width: Pixels, tile_height: Pixels) -> Tiling {
+        Tiling {
+            x: euclid::Scale::new(1.0 / tile_width.0.max(1.0)),
+            y: euclid::Scale::new(1.0 / tile_height.0.max(1.0)),
+        }
+    }
+
+    /// A pixel point in tile space; whole numbers lie on tile edges.
+    pub fn point(self, p: Pos<Pixels>) -> Pos<Tiles> {
+        Pos::new(self.x.transform_point(p).x, self.y.transform_point(p).y)
+    }
+
+    /// A pixel rect in tile space.
+    pub fn rect(self, r: Rect<Pixels>) -> Rect<Tiles> {
+        Rect::new(
+            self.point(r.origin),
+            Size::new(r.size.width * self.x.get(), r.size.height * self.y.get()),
+        )
+    }
+
+    /// The center of the tile a pixel point falls in. Snapping a loosely-authored pixel spawn
+    /// point to a whole tile is what keeps a placed actor on the tile grid that movement rests
+    /// it on.
+    pub fn tile_center(self, p: Pos<Pixels>) -> Pos<Tiles> {
+        let t = self.point(p);
+        Pos::new(t.x.floor() + 0.5, t.y.floor() + 0.5)
+    }
+}
+
+/// One of 8 compass facings; the discriminant is the sprite-strip index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direction {
+    S = 0,
+    SW = 1,
+    NW = 2,
+    N = 3,
+    NE = 4,
+    SE = 5,
+    E = 6,
+    W = 7,
+}
+
+impl Direction {
+    /// The facing nearest a displacement; a zero vector faces south. Takes raw components — a
+    /// facing is dimensionless, so it is independent of the displacement's unit.
+    pub fn from_vec(dx: f32, dy: f32) -> Direction {
+        if dx == 0.0 && dy == 0.0 {
+            return Direction::S;
+        }
+        const D: f32 = FRAC_1_SQRT_2;
+        let candidates = [
+            (Direction::E, 1.0, 0.0),
+            (Direction::SE, D, D),
+            (Direction::S, 0.0, 1.0),
+            (Direction::SW, -D, D),
+            (Direction::W, -1.0, 0.0),
+            (Direction::NW, -D, -D),
+            (Direction::N, 0.0, -1.0),
+            (Direction::NE, D, -D),
+        ];
+        let mut best = Direction::S;
+        let mut best_dot = f32::NEG_INFINITY;
+        for (dir, cx, cy) in candidates {
+            let dot = dx * cx + dy * cy;
+            if dot > best_dot {
+                best_dot = dot;
+                best = dir;
+            }
+        }
+        best
+    }
+}
+
+// Deterministic xorshift rng, shared by spawning and reward rolls. The exact sequence is part of
+// the game: it fixes every boot's npc layout, so it cannot move to a crate rng.
+pub fn next_rng(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+pub fn rng_unit(state: &mut u64) -> f32 {
+    (next_rng(state) >> 40) as f32 / (1u64 << 24) as f32
+}

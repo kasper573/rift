@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer};
 use crate::core::actors::{self, ActorModelId};
 use crate::core::area::{self, AreaId};
 use crate::core::math::{
-    Direction, Millis, PlaybackRate, Pos, Seconds, Tiles, TilesPerSec, next_rng, rng_unit,
+    Direction, Millis, Offset, PlaybackRate, Pos, Seconds, Tiles, TilesPerSec, next_rng, rng_unit,
 };
 use crate::core::protocol::{
     ACTION_IDLE, Actor, AreaTag, Name, Position, Rgba, Vitals, is_dead, position, set_action,
@@ -265,7 +265,7 @@ fn nearest(
             continue;
         }
         if let Some(p) = position(world, candidate) {
-            let distance = at.distance(p);
+            let distance = at.distance_to(p);
             if distance <= range.0 && best.is_none_or(|(_, b)| distance < b) {
                 best = Some((candidate, distance));
             }
@@ -292,7 +292,7 @@ fn enemies_by_group(world: &mut World) -> HashMap<u32, Vec<Entity>> {
 fn in_aggro(world: &World, target: Entity, at: Pos<Tiles>, area: AreaId, aggro: Tiles) -> bool {
     !is_dead(world, target)
         && world.get::<AreaTag>(target).map(|t| t.area) == Some(area)
-        && position(world, target).is_some_and(|p| at.distance(p) <= aggro.0)
+        && position(world, target).is_some_and(|p| at.distance_to(p) <= aggro.0)
 }
 
 pub fn run_respawn(world: &mut World) {
@@ -343,5 +343,5 @@ fn random_walkable(rng: &mut u64, area_id: AreaId) -> Option<Pos<Tiles>> {
         return None;
     }
     let node = nodes[(next_rng(rng) % nodes.len() as u64) as usize];
-    Some(node.map(|t| t + 0.5))
+    Some(node + Offset::splat(0.5))
 }

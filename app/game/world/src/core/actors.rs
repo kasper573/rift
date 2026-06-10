@@ -79,8 +79,8 @@ impl ActorModel {
         };
         Rect::new(
             Pos::new(
-                Pixels(column as f32 * self.frame.x.0),
-                Pixels(row as f32 * self.frame.y.0),
+                column as f32 * self.frame.width,
+                row as f32 * self.frame.height,
             ),
             self.frame,
         )
@@ -249,11 +249,8 @@ fn load(name: &str, manifest: &str) -> ActorModel {
     ActorModel {
         name: name.to_owned(),
         sheet,
-        frame: Size::new(
-            Pixels(manifest.frame.w as f32),
-            Pixels(manifest.frame.h as f32),
-        ),
-        hitbox: Size::new(Tiles(manifest.hitbox.0), Tiles(manifest.hitbox.1)),
+        frame: Size::new(manifest.frame.w as f32, manifest.frame.h as f32),
+        hitbox: Size::new(manifest.hitbox.0, manifest.hitbox.1),
         actions: manifest.actions,
     }
 }

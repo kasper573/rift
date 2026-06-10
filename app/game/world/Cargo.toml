@@ -15,7 +15,7 @@ bevy_replicon = { workspace = true, features = ["client"] }
 bevy_state.workspace = true
 bevy_time = { version = "0.18", default-features = false, features = ["std"], optional = true }
 include_dir = "0.7"
-math = { path = "../../../lib/math" }
+euclid = { version = "0.22", features = ["serde"] }
 pathfinding = "4"
 serde.workspace = true
 serde_json.workspace = true

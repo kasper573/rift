@@ -1,7 +1,6 @@
 [workspace]
 resolver = "3"
 members = [
-    "lib/math",
     "app/game/world",
     "app/game/server",
     "app/game/client",

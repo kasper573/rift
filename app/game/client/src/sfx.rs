@@ -66,8 +66,7 @@ impl SfxTracker {
             }
             if let Some(area) = area
                 && model.steps_crossed(action, actor.dir, prev, now, rate)
-                && let Some(id) =
-                    area.tile_sfx_at(source.x.0.floor() as i32, source.y.0.floor() as i32)
+                && let Some(id) = area.tile_sfx_at(source.x.floor() as i32, source.y.floor() as i32)
             {
                 let slot = frame.entry(id).or_insert((0.0, 0.0));
                 if volume > slot.0 {

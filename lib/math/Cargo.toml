@@ -1,8 +1,0 @@
-[package]
-name = "math"
-version.workspace = true
-edition.workspace = true
-description = "Generic math + the repo's spatial-unit vocabulary: Pos/Rect over Pixels/Tiles, durations, rng, compass directions."
-
-[dependencies]
-serde.workspace = true

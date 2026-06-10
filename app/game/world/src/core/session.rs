@@ -143,19 +143,19 @@ impl MmoClient {
                 .get(area.0 as usize)?
                 .portals
                 .iter()
-                .position(|portal| portal.rect.contains(Pos::new(Tiles(x), Tiles(y))))
+                .position(|portal| portal.rect.contains(Pos::new(x, y)))
         });
         let world = self.app.world_mut();
         match portal {
             Some(index) => {
                 world.write_message(MoveToPortal {
-                    pos: Pos::new(Tiles(x), Tiles(y)),
+                    pos: Pos::new(x, y),
                     portal: index as u32,
                 });
             }
             None => {
                 world.write_message(MoveRequest {
-                    pos: Pos::new(Tiles(x), Tiles(y)),
+                    pos: Pos::new(x, y),
                 });
             }
         }

@@ -1235,6 +1235,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "euclid"
+version = "0.22.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
+dependencies = [
+ "num-traits",
+ "serde",
+]
+
+[[package]]
 name = "event-listener"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2087,13 +2097,6 @@ name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
-
-[[package]]
-name = "math"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "memchr"
@@ -4526,8 +4529,8 @@ dependencies = [
  "bevy_replicon",
  "bevy_state",
  "bevy_time",
+ "euclid",
  "include_dir",
- "math",
  "pathfinding",
  "serde",
  "serde_json",
