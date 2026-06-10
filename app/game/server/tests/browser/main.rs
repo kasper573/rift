@@ -1,6 +1,7 @@
 //! The end-to-end suite: a real headless browser signs in through Keycloak and plays the wasm
 //! client through the reverse proxy, while a mirror session decodes the captured WebSocket
-//! traffic to assert on what the player's client actually received. Run with `cargo x e2e`.
+//! traffic to assert on what the player's client actually received. Runs against the docker
+//! test stack: `docker compose -f docker/docker-compose.yaml --profile test up -d --build --wait`.
 
 mod cdp;
 mod flow;

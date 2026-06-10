@@ -13,7 +13,13 @@ I'm doing this project for fun and to teach myself more about multiplayer game d
 ### Before each development session
 
 - Open the devcontainer in vscode or via devcontainer CLI.
-- Run `cargo x dev`
+- Build the artifacts and start the stack:
+
+  ```sh
+  cargo build --release -p website -p server && cargo wasm
+  docker compose -f docker/docker-compose.yaml --profile test up -d --build --wait
+  ```
+
 - Visit `https://rift.localhost` in your browser
 
 ## Production deployment
@@ -26,23 +32,3 @@ docker compose file as in development but with production environment variables
 provided via github action variables and secrets.
 
 Review the workflow to see which variables and secrets you need to provide.
-
-## Monorepo convention
-
-The crates in this repo is grouped into layers.
-
-Lower levels may not depend on higher levels.
-
-These are the layers, ordered highest to lowest:
-
-### app
-
-Deployable executables. Most business logic exist here.
-
-May depend on other apps, but it's preferable to do so via protocol (ie. http requests) rather than direct dependency on code.
-
-May depend on lib crates.
-
-### lib
-
-Generic and low level systems. May not depend on any app crate. May depend on other lib crates.

@@ -6,10 +6,11 @@ networks:
     name: rift
     external: true
 
+# Defaults to the test env; prod pins COMPOSE_ENV=prod in the .env its deploy writes.
 x-env-files: &env_files
   - path: .env
     required: false
-  - .env.${COMPOSE_ENV}
+  - .env.${COMPOSE_ENV:-test}
   - .env.shared
 
 x-logging: &logging
@@ -97,6 +98,7 @@ services:
   mimir:
     env_file: *env_files
     logging: *logging
+    profiles: ["prod", "obs"]
     image: grafana/mimir:2.15.2
     volumes:
       - ./grafana/mimir.yaml:/etc/mimir/config.yaml
@@ -106,6 +108,7 @@ services:
   tempo:
     env_file: *env_files
     logging: *logging
+    profiles: ["prod", "obs"]
     image: grafana/tempo:2.6.1
     volumes:
       - ./grafana/tempo.yaml:/etc/tempo-config/tempo.yaml
@@ -116,6 +119,7 @@ services:
   alloy:
     env_file: *env_files
     logging: *logging
+    profiles: ["prod", "obs"]
     image: grafana/alloy:v1.8.3
     volumes:
       - ./grafana/alloy.alloy:/etc/alloy/config.alloy
@@ -135,6 +139,7 @@ services:
 
   loki:
     logging: *logging
+    profiles: ["prod", "obs"]
     image: grafana/loki:3.5.0
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
@@ -144,11 +149,13 @@ services:
   node_exporter:
     env_file: *env_files
     logging: *logging
+    profiles: ["prod", "obs"]
     image: prom/node-exporter:v1.8.2
 
   postgres_exporter:
     env_file: *env_files
     logging: *logging
+    profiles: ["prod", "obs"]
     image: prometheuscommunity/postgres-exporter:v0.18.1
     environment:
       DATA_SOURCE_URI: postgres:5432/postgres?sslmode=disable
@@ -158,6 +165,7 @@ services:
   grafana:
     env_file: *env_files
     logging: *logging
+    profiles: ["prod", "obs"]
     image: grafana/grafana:11.6.1
     volumes:
       - grafana-data:/var/lib/grafana

@@ -5,7 +5,6 @@ members = [
     "app/game/server",
     "app/game/client",
     "app/website",
-    "xtask",
 ]
 
 [workspace.package]
@@ -31,12 +30,3 @@ ureq = { version = "3", default-features = false }
 # re-enable them for deploy-grade optimization once runtime performance matters.
 [profile.release]
 lto = false
-
-# The dev loop's profile: optimized enough to playtest, but spared release's deploy-grade
-# costs (thin LTO + a single codegen unit) and rebuilt incrementally on every save.
-[profile.dev-serve]
-inherits = "release"
-lto = "off"
-codegen-units = 16
-incremental = true
-opt-level = 2

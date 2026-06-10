@@ -43,4 +43,10 @@ Shrink this repo to the minimum first-party code that produces an identical play
 ## Verify before done
 
 - `cargo fmt` · `cargo clippy --all-targets` (no warnings) · `cargo build`
-- The E2E suite green, locally and in CI.
+- The E2E suite green, locally and in CI:
+
+  ```sh
+  cargo build --release -p website -p server && cargo wasm
+  docker compose -f docker/docker-compose.yaml --profile test up -d --build --wait
+  cargo test -p server --features stack -- --test-threads=1
+  ```

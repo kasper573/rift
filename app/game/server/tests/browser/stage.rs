@@ -12,6 +12,12 @@ use crate::keycloak::Keycloak;
 
 pub const PASSWORD: &str = "e2e-password-1";
 
+// The test stack's contract, mirroring docker/.env.test and docker/.env.shared defaults.
+const DOMAIN: &str = "rift.localhost";
+const REALM: &str = "rift";
+const KC_ADMIN_USERNAME: &str = "admin";
+const KC_ADMIN_PASSWORD: &str = "admin";
+
 /// A read-only replica of what the browser's client received: the captured server frames played
 /// into a [`world::MmoClient`] over a queue transport.
 pub struct Mirror {
@@ -60,16 +66,10 @@ pub struct BrowserStage {
 
 impl BrowserStage {
     pub fn connect() -> BrowserStage {
-        let domain = required_env("RIFT_DOMAIN");
-        let site = format!("https://{domain}");
-        let auth = format!("https://auth.{domain}");
+        let site = format!("https://{DOMAIN}");
+        let auth = format!("https://auth.{DOMAIN}");
         crate::cdp::trace("keycloak admin sign-in");
-        let keycloak = Keycloak::connect(
-            &auth,
-            &required_env("RIFT_AUTH__AUDIENCE"),
-            &required_env("KC_BOOTSTRAP_ADMIN_USERNAME"),
-            &required_env("KC_BOOTSTRAP_ADMIN_PASSWORD"),
-        );
+        let keycloak = Keycloak::connect(&auth, REALM, KC_ADMIN_USERNAME, KC_ADMIN_PASSWORD);
         crate::cdp::trace("keycloak ready");
         BrowserStage {
             browser: Browser::launch(),
@@ -110,11 +110,4 @@ impl BrowserStage {
     pub fn site_page(&self, path: &str) -> Page {
         Page::open(&self.browser.cdp, &format!("{}{path}", self.site))
     }
-}
-
-fn required_env(name: &str) -> String {
-    std::env::var(name)
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| panic!("{name} must be set — run the browser suite via `cargo x e2e`"))
 }

@@ -20,6 +20,11 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      COMPOSE: docker compose -f docker/docker-compose.yaml
+      # keycloak and reverse-proxy depend only on their own Dockerfiles, so they are tagged by a
+      # hash of those and the pushed image is reused across runs instead of rebuilding kc.sh/xcaddy.
+      INFRA_TAG: infra-${{ hashFiles('docker/Dockerfile.keycloak', 'docker/Dockerfile.reverse-proxy') }}
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
@@ -37,26 +42,52 @@ jobs:
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
       - name: Start keycloak in the background (overlaps its pull+boot with the build)
-        env:
-          INFRA_TAG: infra-${{ hashFiles('docker/Dockerfile.keycloak', 'docker/Dockerfile.reverse-proxy') }}
-        run: nohup cargo x prewarm > /tmp/prewarm.log 2>&1 &
+        run: |
+          docker network inspect rift >/dev/null 2>&1 || docker network create rift
+          cat > /tmp/prewarm.sh <<'SCRIPT'
+          set -eux
+          for service in keycloak reverse-proxy; do
+            cached="$DOCKER_REGISTRY_URL/rift-$service:$INFRA_TAG"
+            current="$DOCKER_REGISTRY_URL/rift-$service:$DOCKER_IMAGE_VERSION"
+            if docker pull "$cached"; then
+              docker tag "$cached" "$current"
+            else
+              $COMPOSE --profile prod build "$service"
+              docker tag "$current" "$cached"
+              docker push "$cached"
+            fi
+          done
+          $COMPOSE --profile test up -d --no-build postgres keycloak keycloak-healthcheck
+          SCRIPT
+          nohup bash /tmp/prewarm.sh > /tmp/prewarm.log 2>&1 &
       - name: Conventions
-        run: cargo x check
-      - name: Unit tests
-        run: cargo test --workspace --exclude client
+        # The client ships as wasm, so it is linted for that target; the rest of the workspace is
+        # linted natively, which keeps the client's native-only deps (ALSA) out of CI.
+        run: |
+          cargo fmt --check
+          cargo clippy --workspace --exclude client --all-targets --all-features -- -D warnings
+          cargo clippy -p client --target wasm32-unknown-unknown -- -D warnings
       - name: Build release artifacts
-        run: cargo x package
+        run: |
+          cargo build --release -p website -p server
+          cargo wasm
       - name: Build docker images
-        env:
-          INFRA_TAG: infra-${{ hashFiles('docker/Dockerfile.keycloak', 'docker/Dockerfile.reverse-proxy') }}
-        run: cargo x images
+        run: $COMPOSE --profile test build rift-website rift-game-server
       - name: E2E tests
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: cargo x e2e --no-build
+        run: |
+          $COMPOSE --profile test up -d --wait --no-build
+          cargo test -p server --features stack -- --test-threads=1
       - name: Collect e2e test logs
         if: failure()
-        run: cargo x logs e2e-docker-logs
+        run: |
+          cat /tmp/prewarm.log || true
+          mkdir -p e2e-docker-logs
+          for id in $(docker ps -aq); do
+            name=$(docker inspect --format '{{.Name}}' "$id" | tr -d /)
+            docker logs "$id" > "e2e-docker-logs/$name.log" 2>&1 || true
+          done
       - name: Save e2e test logs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -65,7 +96,7 @@ jobs:
           path: e2e-docker-logs/
       - name: Push docker images
         if: github.ref_name == 'main'
-        run: cargo x compose prod push
+        run: $COMPOSE --profile prod push
 
   deploy:
     needs: [build]

@@ -2,5 +2,8 @@
 .github
 .claude
 target
+!target/release/website
+!target/release/server
+!target/wasm32-unknown-unknown/release/client.wasm
 docker/.env*
 *.md

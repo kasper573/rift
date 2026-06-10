@@ -1,4 +1,4 @@
-// Appended to mq_js_bundle.js at staging (cargo x wasm): the bundle ships a quad_net plugin,
+// Appended to mq_js_bundle.js by the website image build: the bundle ships a quad_net plugin,
 // but minification stripped the sapp_jsutils globals it depends on, so it throws on first use.
 // The wasm-side counterpart is the extern block in src/platform.rs.
 miniquad_add_plugin({

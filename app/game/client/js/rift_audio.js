@@ -1,4 +1,4 @@
-// Appended to mq_js_bundle.js at staging (cargo x wasm): the browser's audio backend, giving the
+// Appended to mq_js_bundle.js by the website image build: the browser's audio backend, giving the
 // pitch + pan that macroquad's quad-snd lacks. The wasm-side counterpart is the extern block in
 // src/audio.rs. Mirrors the plugin shape of js/rift_ws.js.
 miniquad_add_plugin({
