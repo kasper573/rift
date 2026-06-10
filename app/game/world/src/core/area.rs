@@ -1,12 +1,15 @@
 use std::collections::HashSet;
+use std::io::Cursor;
+use std::path::Path;
 use std::sync::OnceLock;
 
-use crate::core::actors::SfxId;
 use rift::Wire;
 use serde::{Deserialize, Deserializer};
+use tiled::{LayerType, PropertyValue};
 
+use crate::core::actors::SfxId;
 use crate::core::assets;
-use crate::core::math::{Pos, Rect, Size, Tiles, Tiling};
+use crate::core::math::{Pixels, Pos, Rect, Size, Tiles, Tiling};
 use crate::core::table;
 
 const FILE: &str = "area_table.json";
@@ -40,7 +43,7 @@ pub struct MapRef(pub String);
 impl<'de> Deserialize<'de> for MapRef {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        if assets::find_text(assets::MAPS, &format!("{name}.json")).is_none() {
+        if assets::find(assets::MAPS, &format!("{name}.tmx")).is_none() {
             return Err(serde::de::Error::custom(format!("unknown map '{name}'")));
         }
         Ok(MapRef(name))
@@ -54,15 +57,83 @@ pub struct Portal {
     pub dest: Pos<Tiles>,
 }
 
+/// One map tile reference in a layer cell or a placed object: a [`TileDef`] index plus flips;
+/// zero is the empty cell.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub struct TileRef(u32);
+
+const FLIP_H: u32 = 0x8000_0000;
+const FLIP_V: u32 = 0x4000_0000;
+const FLIP_MASK: u32 = FLIP_H | FLIP_V;
+
+impl TileRef {
+    const EMPTY: TileRef = TileRef(0);
+
+    fn new(index: usize, flip: (bool, bool)) -> TileRef {
+        let mut bits = index as u32 + 1;
+        if flip.0 {
+            bits |= FLIP_H;
+        }
+        if flip.1 {
+            bits |= FLIP_V;
+        }
+        TileRef(bits)
+    }
+
+    fn index(self) -> Option<usize> {
+        match self.0 & !FLIP_MASK {
+            0 => None,
+            index => Some(index as usize - 1),
+        }
+    }
+
+    fn flip(self) -> (bool, bool) {
+        (self.0 & FLIP_H != 0, self.0 & FLIP_V != 0)
+    }
+}
+
+/// One tile layer, in map order, ready to draw: `dynamic` marks the layer whose grouped cells
+/// render z-sorted instead.
+#[derive(Clone)]
+pub struct RenderLayer {
+    pub dynamic: bool,
+    width: i32,
+    height: i32,
+    cells: Vec<TileRef>,
+}
+
+impl RenderLayer {
+    /// The cell at (x, y); empty outside the layer.
+    pub fn at(&self, x: i32, y: i32) -> TileRef {
+        if x < 0 || y < 0 || x >= self.width || y >= self.height {
+            return TileRef::EMPTY;
+        }
+        self.cells[(y * self.width + x) as usize]
+    }
+}
+
+/// One distinct map tile's render data: its tileset sheet and its animation frames (a static
+/// tile is a single endless frame).
+#[derive(Clone)]
+struct TileDef {
+    sheet: &'static [u8],
+    frames: Vec<(Rect<Pixels>, u32)>,
+    total_ms: u32,
+}
+
+#[derive(Clone)]
+pub struct Group {
+    pub z: f32,
+    pub tiles: Vec<(i32, i32, TileRef)>,
+}
+
 #[derive(Clone)]
 pub struct Area {
     pub id: AreaId,
     pub name: String,
     pub width: Tiles,
     pub height: Tiles,
-    pub map: tiled::Map,
 
-    pub tilesets: tiled::Tilesets,
     pub grid: nav::Grid<Tiles>,
     pub tile_sfx: Vec<Option<SfxId>>,
     pub spawn: Pos<Tiles>,
@@ -72,14 +143,48 @@ pub struct Area {
 
     pub obscuring_rects: Vec<Rect<Tiles>>,
 
-    pub objects: Vec<(Pos<Tiles>, u32)>,
+    pub objects: Vec<(Pos<Tiles>, TileRef)>,
 
     pub groups: Vec<Group>,
 
     pub grouped_cells: HashSet<(i32, i32)>,
+
+    pub layers: Vec<RenderLayer>,
+    tiles: Vec<TileDef>,
+}
+
+/// What to draw for one resolved map cell: a region of a tileset sheet, possibly mirrored.
+pub struct TileSprite {
+    pub sheet: &'static [u8],
+    pub region: Rect<Pixels>,
+    pub flip: (bool, bool),
 }
 
 impl Area {
+    /// The sprite to draw for a cell at time `t`; animated tiles advance.
+    pub fn resolve(&self, cell: TileRef, time: f32) -> Option<TileSprite> {
+        let def = &self.tiles[cell.index()?];
+        let region = if def.total_ms == 0 {
+            def.frames[0].0
+        } else {
+            let mut remaining = (time * 1000.0).max(0.0) as u32 % def.total_ms;
+            let mut region = def.frames[0].0;
+            for &(frame, duration) in &def.frames {
+                if remaining < duration {
+                    region = frame;
+                    break;
+                }
+                remaining -= duration;
+            }
+            region
+        };
+        Some(TileSprite {
+            sheet: def.sheet,
+            region,
+            flip: cell.flip(),
+        })
+    }
+
     /// The largest fraction of the tile cell at (x, y) covered by any obscuring object.
     pub fn obscured_amount(&self, x: i32, y: i32) -> f32 {
         self.obscuring_rects
@@ -95,13 +200,6 @@ impl Area {
         }
         self.tile_sfx[(y * self.width.0 as i32 + x) as usize].as_ref()
     }
-}
-
-#[derive(Clone)]
-pub struct Group {
-    pub z: f32,
-
-    pub tiles: Vec<(i32, i32, u32)>,
 }
 
 static AREA_COUNT: OnceLock<usize> = OnceLock::new();
@@ -121,11 +219,7 @@ pub fn areas() -> &'static [Area] {
         let mut areas: Vec<Area> = defs
             .iter()
             .enumerate()
-            .map(|(id, def)| {
-                let json = assets::find_text(assets::MAPS, &format!("{}.json", def.map.0))
-                    .expect("MapRef validates every map reference");
-                build_area(AreaId(id as u32), &def.id, json)
-            })
+            .map(|(id, def)| build_area(AreaId(id as u32), &def.id, &def.map.0))
             .collect();
         for id in base..count as u32 {
             let mut clone = areas[(id % base) as usize].clone();
@@ -167,40 +261,132 @@ fn index(id: &str, context: &str) -> AreaId {
     AreaId(index as u32)
 }
 
-fn build_area(id: AreaId, name: &str, map_json: &str) -> Area {
-    let map = tiled::load_map(map_json).expect("embedded Tiled map should parse");
-    let tilesets = tiled::Tilesets::load(&map, |path| {
-        assets::find(assets::TILESETS, path).map(|(_, bytes)| bytes)
-    })
-    .unwrap_or_else(|error| panic!("area {name}: {error}"));
+/// Reads `maps/<name>.tmx` and everything it references out of the embedded assets.
+fn load_map(name: &str) -> tiled::Map {
+    let mut loader = tiled::Loader::with_reader(|path: &Path| -> std::io::Result<_> {
+        let key = embedded_key(path);
+        assets::bytes(&key)
+            .map(Cursor::new)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, key))
+    });
+    loader
+        .load_tmx_map(format!("{}/{name}.tmx", assets::MAPS))
+        .unwrap_or_else(|error| panic!("map '{name}': {error}"))
+}
 
-    let tiling = Tiling::new(map.tile_width, map.tile_height);
-    let obscuring_rects = obscuring_rects(&map, &tilesets, tiling);
-    let grid = build_grid(&map, &tilesets, &obscuring_rects);
-    let walkable_nodes = (0..map.height.0 as i32)
+/// Normalizes the loader's relative paths (`maps/../tilesets/x.tsx`) to embedded asset keys.
+fn embedded_key(path: &Path) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                parts.pop();
+            }
+            std::path::Component::Normal(name) => {
+                parts.push(name.to_str().unwrap_or_default());
+            }
+            _ => {}
+        }
+    }
+    parts.join("/")
+}
+
+fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {
+    let map = load_map(map_name);
+    let tiling = Tiling::new(
+        Pixels(map.tile_width as f32),
+        Pixels(map.tile_height as f32),
+    );
+    let size = Size::new(Tiles(map.width as f32), Tiles(map.height as f32));
+
+    let mut tiles = TileTable::default();
+    let mut layers = Vec::new();
+    let mut objects = Vec::new();
+    let mut start = None;
+    let mut portals = Vec::new();
+    let mut obscuring_rects = Vec::new();
+
+    for layer in map.layers() {
+        match layer.layer_type() {
+            LayerType::Tiles(tile_layer) => {
+                let (width, height) = (map.width as i32, map.height as i32);
+                let mut cells = vec![TileRef::EMPTY; (width * height) as usize];
+                for y in 0..height {
+                    for x in 0..width {
+                        if let Some(cell) = tile_layer.get_tile(x, y) {
+                            cells[(y * width + x) as usize] = tiles.intern(
+                                cell.get_tileset(),
+                                cell.id(),
+                                (cell.flip_h, cell.flip_v),
+                            );
+                        }
+                    }
+                }
+                layers.push(RenderLayer {
+                    dynamic: layer.name.eq_ignore_ascii_case("Dynamic"),
+                    width,
+                    height,
+                    cells,
+                });
+            }
+            LayerType::Objects(object_layer) => {
+                for object in object_layer.objects() {
+                    let pos = Pos::new(Pixels(object.x), Pixels(object.y));
+                    if let Some(object_tile) = object.get_tile() {
+                        let data = object.tile_data().expect("tile object has tile data");
+                        let tileset = object_tile.get_tileset();
+                        let cell = tiles.intern(tileset, data.id(), (data.flip_h, data.flip_v));
+                        objects.push((tiling.point(pos), cell));
+                        // Tiled anchors tile objects at their bottom-left corner. Only tiles the
+                        // tileset declares something about can opt out of obscuring.
+                        let obscuring = object_tile.get_tile().is_some_and(|tile| {
+                            tile.properties.get("Walkable") != Some(&PropertyValue::BoolValue(true))
+                        });
+                        if obscuring {
+                            let object_size = shape_size(&object.shape);
+                            obscuring_rects.push(tiling.rect(Rect::new(
+                                Pos::new(pos.x, pos.y - object_size.y),
+                                object_size,
+                            )));
+                        }
+                        continue;
+                    }
+                    match object.user_type.as_str() {
+                        "start" => start = Some(tiling.tile_center(pos)),
+                        "warp" => {
+                            let goto = match object.properties.get("goto") {
+                                Some(PropertyValue::StringValue(goto)) => goto,
+                                _ => panic!(
+                                    "map '{name}': warp {} lacks a goto property",
+                                    object.id()
+                                ),
+                            };
+                            portals.push(portal(name, goto, pos, &object.shape, tiling));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let spawn = start.unwrap_or_else(|| panic!("map '{name}' must place a start object"));
+    let grid = build_grid(size, &layers, &tiles, &obscuring_rects);
+    let walkable_nodes = (0..map.height as i32)
         .flat_map(|y| {
-            (0..map.width.0 as i32).map(move |x| Pos::new(Tiles(x as f32), Tiles(y as f32)))
+            (0..map.width as i32).map(move |x| Pos::new(Tiles(x as f32), Tiles(y as f32)))
         })
         .filter(|&p| grid.walkable(p))
         .collect();
-    let objects = map
-        .objects()
-        .iter()
-        .filter(|object| object.gid != 0)
-        .map(|object| (tiling.point(object.pos), object.gid))
-        .collect();
-    let spawn = start(name, &map, tiling);
-    let portals = portals(name, &map, tiling);
-    let (groups, grouped_cells) = compute_groups(&map, &tilesets);
-    let tile_sfx = tile_sfx(&map, &tilesets);
+    let (groups, grouped_cells) = compute_groups(&layers, &tiles);
+    let tile_sfx = tile_sfx(size, &layers, &tiles);
 
     Area {
         id,
         name: name.to_owned(),
-        width: map.width,
-        height: map.height,
-        map,
-        tilesets,
+        width: size.x,
+        height: size.y,
         grid,
         tile_sfx,
         spawn,
@@ -210,61 +396,161 @@ fn build_area(id: AreaId, name: &str, map_json: &str) -> Area {
         objects,
         groups,
         grouped_cells,
+        layers,
+        tiles: tiles.defs,
     }
 }
 
-/// The map's start object, snapped to its tile's center; every map must place one.
-fn start(name: &str, map: &tiled::Map, tiling: Tiling) -> Pos<Tiles> {
-    map.objects()
-        .iter()
-        .find(|object| object.kind == "start")
-        .map(|start| tiling.tile_center(start.pos))
-        .unwrap_or_else(|| panic!("map '{name}' must place a start object"))
+/// The interned set of distinct map tiles, keyed by tileset identity and local tile id; per-tile
+/// properties are captured alongside so grid building never re-touches the tiled crate.
+#[derive(Default)]
+struct TileTable {
+    keys: Vec<(usize, u32)>,
+    defs: Vec<TileDef>,
+    walkable: Vec<Option<bool>>,
+    group: Vec<Option<i64>>,
+    sfx: Vec<Option<SfxId>>,
 }
 
-/// The map's warp objects as portals; every warp must carry a well-formed
-/// `goto: "<area>, x, y"` referencing a known area.
-fn portals(name: &str, map: &tiled::Map, tiling: Tiling) -> Vec<Portal> {
-    map.objects()
-        .iter()
-        .filter(|object| object.kind == "warp")
-        .map(|warp| {
-            let goto = warp
-                .properties
-                .get("goto")
-                .and_then(tiled::Prop::as_str)
-                .unwrap_or_else(|| panic!("map '{name}': warp {} lacks a goto property", warp.id));
-            let malformed =
-                || -> ! { panic!("map '{name}': goto '{goto}' must be '<area>, x, y'") };
-            let mut parts = goto.split(',');
-            let dest = parts.next().unwrap_or_else(|| malformed()).trim();
-            let dest_area = index(dest, &format!("map '{name}'"));
-            let mut coord = || -> f32 {
-                parts
-                    .next()
-                    .and_then(|part| part.trim().parse().ok())
-                    .unwrap_or_else(|| malformed())
-            };
-            Portal {
-                rect: tiling.rect(Rect::new(warp.pos, warp.size)),
-                dest_area,
-                dest: Pos::new(Tiles(coord()), Tiles(coord())),
+impl TileTable {
+    fn intern(&mut self, tileset: &tiled::Tileset, id: u32, flip: (bool, bool)) -> TileRef {
+        let identity = tileset as *const tiled::Tileset as usize;
+        let key = (identity, id);
+        let index = match self.keys.iter().position(|&k| k == key) {
+            Some(index) => index,
+            None => {
+                self.keys.push(key);
+                self.defs.push(tile_def(tileset, id));
+                let properties = tileset
+                    .get_tile(id)
+                    .map(|tile| tile.properties.clone())
+                    .unwrap_or_default();
+                self.walkable.push(match properties.get("Walkable") {
+                    Some(PropertyValue::BoolValue(walkable)) => Some(*walkable),
+                    _ => None,
+                });
+                self.group.push(match properties.get("Group") {
+                    Some(PropertyValue::IntValue(group)) => Some(*group as i64),
+                    Some(PropertyValue::FloatValue(group)) => Some(*group as i64),
+                    Some(PropertyValue::StringValue(group)) => group.parse().ok(),
+                    _ => None,
+                });
+                self.sfx.push(match properties.get("sfx") {
+                    Some(PropertyValue::StringValue(sfx)) => Some(SfxId(sfx.clone())),
+                    _ => None,
+                });
+                self.defs.len() - 1
             }
-        })
-        .collect()
+        };
+        TileRef::new(index, flip)
+    }
+
+    fn walkable_of(&self, cell: TileRef) -> Option<bool> {
+        self.walkable[cell.index()?]
+    }
+
+    fn group_of(&self, cell: TileRef) -> Option<i64> {
+        self.group[cell.index()?]
+    }
+
+    fn sfx_of(&self, cell: TileRef) -> Option<&SfxId> {
+        self.sfx[cell.index()?].as_ref()
+    }
 }
 
-fn compute_groups(
-    map: &tiled::Map,
-    tilesets: &tiled::Tilesets,
-) -> (Vec<Group>, HashSet<(i32, i32)>) {
+fn tile_def(tileset: &tiled::Tileset, id: u32) -> TileDef {
+    let image = tileset
+        .image
+        .as_ref()
+        .unwrap_or_else(|| panic!("tileset {} must be atlas-based", tileset.name));
+    let source = image
+        .source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_else(|| panic!("tileset {} image source", tileset.name));
+    let sheet = assets::find(assets::TILESETS, source)
+        .map(|(_, bytes)| bytes)
+        .unwrap_or_else(|| panic!("unknown tileset image {source}"));
+
+    let region = |id: u32| {
+        let columns = tileset.columns.max(1);
+        Rect::new(
+            Pos::new(
+                Pixels(
+                    (tileset.margin + (id % columns) * (tileset.tile_width + tileset.spacing))
+                        as f32,
+                ),
+                Pixels(
+                    (tileset.margin + (id / columns) * (tileset.tile_height + tileset.spacing))
+                        as f32,
+                ),
+            ),
+            Size::new(
+                Pixels(tileset.tile_width as f32),
+                Pixels(tileset.tile_height as f32),
+            ),
+        )
+    };
+
+    let animation = tileset.get_tile(id).and_then(|tile| tile.animation.clone());
+    let frames: Vec<(Rect<Pixels>, u32)> = match animation {
+        Some(frames) if !frames.is_empty() => frames
+            .iter()
+            .map(|frame| (region(frame.tile_id), frame.duration))
+            .collect(),
+        _ => vec![(region(id), 0)],
+    };
+    let total_ms = frames.iter().map(|&(_, duration)| duration).sum();
+    TileDef {
+        sheet,
+        frames,
+        total_ms,
+    }
+}
+
+fn shape_size(shape: &tiled::ObjectShape) -> Size<Pixels> {
+    match shape {
+        tiled::ObjectShape::Rect { width, height }
+        | tiled::ObjectShape::Ellipse { width, height } => {
+            Size::new(Pixels(*width), Pixels(*height))
+        }
+        _ => Size::splat(Pixels(0.0)),
+    }
+}
+
+/// A warp object's portal; every warp must carry a well-formed `goto: "<area>, x, y"`.
+fn portal(
+    name: &str,
+    goto: &str,
+    pos: Pos<Pixels>,
+    shape: &tiled::ObjectShape,
+    tiling: Tiling,
+) -> Portal {
+    let malformed = || -> ! { panic!("map '{name}': goto '{goto}' must be '<area>, x, y'") };
+    let mut parts = goto.split(',');
+    let dest = parts.next().unwrap_or_else(|| malformed()).trim();
+    let dest_area = index(dest, &format!("map '{name}'"));
+    let mut coord = || -> f32 {
+        parts
+            .next()
+            .and_then(|part| part.trim().parse().ok())
+            .unwrap_or_else(|| malformed())
+    };
+    Portal {
+        rect: tiling.rect(Rect::new(pos, shape_size(shape))),
+        dest_area,
+        dest: Pos::new(Tiles(coord()), Tiles(coord())),
+    }
+}
+
+fn compute_groups(layers: &[RenderLayer], tiles: &TileTable) -> (Vec<Group>, HashSet<(i32, i32)>) {
     let mut groups = Vec::new();
     let mut grouped_cells = HashSet::new();
-    let Some(dynamic) = map.tile_layer("Dynamic") else {
+    let Some(dynamic) = layers.iter().find(|layer| layer.dynamic) else {
         return (groups, grouped_cells);
     };
-    let (width, height) = (dynamic.width as i32, dynamic.height as i32);
-    let group_at = |x: i32, y: i32| -> Option<i64> { tile_group(tilesets, dynamic.at(x, y)) };
+    let (width, height) = (dynamic.width, dynamic.height);
+    let group_at = |x: i32, y: i32| -> Option<i64> { tiles.group_of(dynamic.at(x, y)) };
 
     let mut visited: HashSet<(i32, i32)> = HashSet::new();
     for sy in 0..height {
@@ -276,10 +562,10 @@ fn compute_groups(
                 continue;
             }
             let mut stack = vec![(sx, sy)];
-            let mut tiles = Vec::new();
+            let mut cells = Vec::new();
             let mut bottom = sy;
             while let Some((x, y)) = stack.pop() {
-                tiles.push((x, y, dynamic.at(x, y)));
+                cells.push((x, y, dynamic.at(x, y)));
                 grouped_cells.insert((x, y));
                 bottom = bottom.max(y);
                 for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
@@ -291,30 +577,23 @@ fn compute_groups(
             }
             groups.push(Group {
                 z: bottom as f32,
-                tiles,
+                tiles: cells,
             });
         }
     }
     (groups, grouped_cells)
 }
 
-fn tile_group(tilesets: &tiled::Tilesets, raw: u32) -> Option<i64> {
-    match tilesets.property(raw, "Group")? {
-        tiled::Prop::Int(n) => Some(*n),
-        tiled::Prop::Float(f) => Some(*f as i64),
-        tiled::Prop::Str(s) => s.parse().ok(),
-        tiled::Prop::Bool(_) => None,
-    }
-}
-
 // Per-cell footstep sfx, flattened row-major; the topmost tile layer that declares one wins.
-fn tile_sfx(map: &tiled::Map, tilesets: &tiled::Tilesets) -> Vec<Option<SfxId>> {
-    let width = map.width.0 as i32;
-    let mut sfx = vec![None; (map.width.0 * map.height.0) as usize];
-    for tiles in map.tile_layers() {
-        for (x, y, raw) in tiles.cells() {
-            if let Some(name) = tilesets.property(raw, "sfx").and_then(tiled::Prop::as_str) {
-                sfx[(y * width + x) as usize] = Some(SfxId(name.to_owned()));
+fn tile_sfx(size: Size<Tiles>, layers: &[RenderLayer], tiles: &TileTable) -> Vec<Option<SfxId>> {
+    let (width, height) = (size.x.0 as i32, size.y.0 as i32);
+    let mut sfx = vec![None; (width * height) as usize];
+    for layer in layers {
+        for y in 0..height {
+            for x in 0..width {
+                if let Some(id) = tiles.sfx_of(layer.at(x, y)) {
+                    sfx[(y * width + x) as usize] = Some(id.clone());
+                }
             }
         }
     }
@@ -325,23 +604,25 @@ fn tile_sfx(map: &tiled::Map, tilesets: &tiled::Tilesets) -> Vec<Option<SfxId>> 
 const OBSCURING_CUTOFF: f32 = 0.4;
 
 fn build_grid(
-    map: &tiled::Map,
-    tilesets: &tiled::Tilesets,
+    size: Size<Tiles>,
+    layers: &[RenderLayer],
+    tiles: &TileTable,
     obscuring: &[Rect<Tiles>],
 ) -> nav::Grid<Tiles> {
-    let width = map.width.0 as i32;
-    let height = map.height.0 as i32;
+    let (width, height) = (size.x.0 as i32, size.y.0 as i32);
     let cells = (width * height) as usize;
     let mut any_walkable = vec![false; cells];
     let mut any_blocked = vec![false; cells];
 
-    for tiles in map.tile_layers() {
-        for (x, y, raw) in tiles.cells() {
-            let index = (y * width + x) as usize;
-            match tilesets.property(raw, "Walkable") {
-                Some(tiled::Prop::Bool(true)) => any_walkable[index] = true,
-                Some(tiled::Prop::Bool(false)) => any_blocked[index] = true,
-                _ => {}
+    for layer in layers {
+        for y in 0..height {
+            for x in 0..width {
+                let index = (y * width + x) as usize;
+                match tiles.walkable_of(layer.at(x, y)) {
+                    Some(true) => any_walkable[index] = true,
+                    Some(false) => any_blocked[index] = true,
+                    None => {}
+                }
             }
         }
     }
@@ -356,31 +637,7 @@ fn build_grid(
             }
         }
     }
-    nav::Grid::new(Size::new(map.width, map.height), walkable)
-}
-
-/// Tile objects whose tileset tile is not walkable, as rects in tile units.
-/// Tiled anchors tile objects at their bottom-left corner.
-fn obscuring_rects(
-    map: &tiled::Map,
-    tilesets: &tiled::Tilesets,
-    tiling: Tiling,
-) -> Vec<Rect<Tiles>> {
-    map.objects()
-        .iter()
-        .filter(|object| object.gid != 0)
-        .filter(|object| {
-            tilesets.tile(object.gid).is_some_and(|tile| {
-                tile.properties.get("Walkable") != Some(&tiled::Prop::Bool(true))
-            })
-        })
-        .map(|object| {
-            tiling.rect(Rect::new(
-                Pos::new(object.pos.x, object.pos.y - object.size.y),
-                object.size,
-            ))
-        })
-        .collect()
+    nav::Grid::new(size, walkable)
 }
 
 fn obscured_cells(rect: &Rect<Tiles>) -> Vec<Pos<i32>> {

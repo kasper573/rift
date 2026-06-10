@@ -8,7 +8,7 @@ description = "The MMORPG game library: wire protocol, content tables, and world
 include_dir = "0.7"
 rift = { path = "../../../lib/rift", default-features = false }
 math = { path = "../../../lib/math" }
-tiled = { path = "../../../lib/tiled" }
+tiled = { version = "0.15", default-features = false }
 nav = { path = "../../../lib/nav" }
 serde.workspace = true
 serde_json.workspace = true

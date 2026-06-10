@@ -210,21 +210,19 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
     let (min_x, max_x) = (lo.x.0 as i32, hi.x.0 as i32);
     let (min_y, max_y) = (lo.y.0 as i32, hi.y.0 as i32);
 
-    for tiles in area.map.tile_layers() {
-        let is_dynamic = tiles.name.eq_ignore_ascii_case("Dynamic");
+    for layer in &area.layers {
         for ty in min_y..=max_y {
             for tx in min_x..=max_x {
-                if is_dynamic && area.grouped_cells.contains(&(tx, ty)) {
+                if layer.dynamic && area.grouped_cells.contains(&(tx, ty)) {
                     continue;
                 }
-                let raw = tiles.at(tx, ty);
-                draw_map_tile(textures, area, raw, scene.time, camera, tx, ty);
+                draw_map_tile(textures, area, layer.at(tx, ty), scene.time, camera, tx, ty);
             }
         }
     }
 
     let mut draws: Vec<(f32, Draw)> = Vec::new();
-    for &(at, gid) in &area.objects {
+    for &(at, cell) in &area.objects {
         let (tile_x, bottom_y) = (at.x.0, at.y.0);
         if tile_x < min_x as f32
             || tile_x > max_x as f32
@@ -236,7 +234,7 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
         draws.push((
             bottom_y,
             Draw::Tile {
-                gid,
+                cell,
                 top_left: Pos::new(at.x, Tiles(bottom_y - 1.0)),
             },
         ));
@@ -254,10 +252,17 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
     let mut bars: Vec<(Pos<Pixels>, f32)> = Vec::new();
     for (_, draw) in &draws {
         match *draw {
-            Draw::Tile { gid, top_left } => {
-                if let Some((image, region, flip)) = area.tilesets.resolve(gid, scene.time) {
+            Draw::Tile { cell, top_left } => {
+                if let Some(sprite) = area.resolve(cell, scene.time) {
                     let dst = to_frame(camera, top_left);
-                    textures.draw(image, region, dst, TILE_SIZE, WHITE, flip);
+                    textures.draw_png(
+                        sprite.sheet,
+                        sprite.region,
+                        dst,
+                        TILE_SIZE,
+                        WHITE,
+                        sprite.flip,
+                    );
                 }
             }
             Draw::Actor { index } => {
@@ -281,8 +286,8 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
                 }
             }
             Draw::Group { group } => {
-                for &(tx, ty, raw) in &area.groups[group].tiles {
-                    draw_map_tile(textures, area, raw, scene.time, camera, tx, ty);
+                for &(tx, ty, cell) in &area.groups[group].tiles {
+                    draw_map_tile(textures, area, cell, scene.time, camera, tx, ty);
                 }
             }
         }
@@ -312,9 +317,16 @@ struct ActorDraw {
 }
 
 enum Draw {
-    Tile { gid: u32, top_left: Pos<Tiles> },
-    Actor { index: usize },
-    Group { group: usize },
+    Tile {
+        cell: area::TileRef,
+        top_left: Pos<Tiles>,
+    },
+    Actor {
+        index: usize,
+    },
+    Group {
+        group: usize,
+    },
 }
 
 /// GPU textures by source atlas, uploaded on first use.
@@ -324,28 +336,6 @@ struct Textures {
 }
 
 impl Textures {
-    fn draw(
-        &mut self,
-        image: &'static image::Image,
-        region: Rect<Pixels>,
-        dst: Pos<Pixels>,
-        dst_size: Size<Pixels>,
-        tint: Color,
-        flip: (bool, bool),
-    ) {
-        let texture = self
-            .cache
-            .entry(image as *const image::Image as usize)
-            .or_insert_with(|| {
-                let texture =
-                    Texture2D::from_rgba8(image.width as u16, image.height as u16, &image.rgba);
-                texture.set_filter(FilterMode::Nearest);
-                texture
-            })
-            .clone();
-        draw_region(&texture, region, dst, dst_size, tint, flip);
-    }
-
     fn draw_png(
         &mut self,
         png: &'static [u8],
@@ -399,15 +389,22 @@ fn draw_region(
 fn draw_map_tile(
     textures: &mut Textures,
     area: &'static area::Area,
-    raw: u32,
+    cell: area::TileRef,
     time: f32,
     camera: Camera,
     tx: i32,
     ty: i32,
 ) {
-    if let Some((image, region, flip)) = area.tilesets.resolve(raw, time) {
+    if let Some(sprite) = area.resolve(cell, time) {
         let dst = to_frame(camera, Pos::new(Tiles(tx as f32), Tiles(ty as f32)));
-        textures.draw(image, region, dst, TILE_SIZE, WHITE, flip);
+        textures.draw_png(
+            sprite.sheet,
+            sprite.region,
+            dst,
+            TILE_SIZE,
+            WHITE,
+            sprite.flip,
+        );
     }
 }
 

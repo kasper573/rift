@@ -6,8 +6,6 @@ description = "Playable MMORPG client: a macroquad-free software renderer over t
 
 [dependencies]
 world = { path = "../world" }
-image = { path = "../../../lib/image" }
-tiled = { path = "../../../lib/tiled" }
 rift = { path = "../../../lib/rift", default-features = false }
 macroquad = { version = "0.4" }
 
