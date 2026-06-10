@@ -7,7 +7,7 @@ COPY Cargo.lock .
 COPY game/client/js/ js/
 RUN version=$(grep -A1 '^name = "macroquad"$' Cargo.lock | tail -1 | cut -d'"' -f2) \
  && wget -qO- "https://static.crates.io/crates/macroquad/macroquad-${version}.crate" | tar xz \
- && awk 1 "macroquad-${version}/js/mq_js_bundle.js" js/rift_ws.js js/rift_audio.js > mq_js_bundle.js
+ && awk 1 "macroquad-${version}/js/mq_js_bundle.js" js/rift_ws.js js/rift_audio.js js/rift_storage.js > mq_js_bundle.js
 
 # The binaries are compiled on the host (cached across CI runs by the rust cache) and copied out
 # of target/, which .dockerignore re-includes. The base matches the CI runner's glibc so the

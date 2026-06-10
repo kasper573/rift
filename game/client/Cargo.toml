@@ -7,8 +7,12 @@ description = "Playable MMORPG client: a thin macroquad binary rendering the rep
 [dependencies]
 world = { path = "../world", default-features = false }
 macroquad = { version = "0.4" }
+egui-macroquad = { version = "0.17", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # Native audio backend (kira). Excluded from the wasm build, which uses the Web Audio plugin in
 # js/rift_audio.js instead — so kira's wasm limitations never apply.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 kira = "0.12"
+dirs = "6"

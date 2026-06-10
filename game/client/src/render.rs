@@ -8,18 +8,13 @@ use macroquad::prelude::*;
 use world::Entity;
 use world::actors::ActorModelId;
 use world::area::AreaId;
-use world::math::{GridSize, Offset, Pixels, Pos, Rect, Size, Tiles};
+use world::math::{Offset, Pixels, Pos, Rect, Size, Tiles};
 use world::protocol::Rgba;
-use world::protocol::{Actor, Position, Vitals, action_name};
+use world::protocol::{Actor, Position, action_name};
 use world::session::MmoClient;
 use world::{actors, area};
 
-type ActorQuery = (
-    Entity,
-    &'static Actor,
-    &'static Position,
-    Option<&'static Vitals>,
-);
+type ActorQuery = (Entity, &'static Actor, &'static Position);
 
 /// One tile, in pixels.
 pub const TILE_SIZE: Size<Pixels> = Size::new(16.0, 16.0);
@@ -32,11 +27,6 @@ pub const VIEW: Size<Pixels> = Size::new(
 );
 static HALF_VIEW: LazyLock<Pos<Pixels>> = LazyLock::new(|| (VIEW * 0.5).to_vector().to_point());
 static HALF_VIEW_TILES: LazyLock<Size<Tiles>> = LazyLock::new(|| VIEW_TILES * 0.5);
-
-// Inventory layout, anchored top-right: a grid of square slots.
-pub const INV_GRID: GridSize = GridSize::new(4, 6);
-pub const INV_SLOT: f32 = 36.0;
-pub const INV_PAD: f32 = 8.0;
 
 /// A sound source's volume for a listener, both in tiles: 1 at the listener, falling linearly to
 /// 0 at the edge of the rendered view and staying 0 beyond it, so off-screen sources are silent.
@@ -64,6 +54,31 @@ pub fn letterbox(screen: Size<Pixels>) -> (f32, Pos<Pixels>) {
         scale,
         ((screen - VIEW * scale) * 0.5).to_vector().to_point(),
     )
+}
+
+/// The window-space placement of the letterboxed view: its integer scale and top-left offset.
+/// The conversions between world, view-frame, and window pixels double as the input mapping.
+#[derive(Clone, Copy)]
+pub struct Screen {
+    pub scale: f32,
+    pub offset: Pos<Pixels>,
+}
+
+impl Screen {
+    pub fn fit() -> Screen {
+        let (scale, offset) = letterbox(Size::new(screen_width(), screen_height()));
+        Screen { scale, offset }
+    }
+
+    /// A world position to its on-screen window position.
+    pub fn to_window(self, camera: Camera, world: Pos<Tiles>) -> Pos<Pixels> {
+        to_frame_f(camera, world) * self.scale + self.offset.to_vector()
+    }
+
+    /// A window pixel position back to a world-frame pixel position.
+    pub fn to_frame(self, window: Pos<Pixels>) -> Pos<Pixels> {
+        ((window - self.offset) / self.scale).to_point()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -121,7 +136,6 @@ pub struct Scene {
 pub fn build_scene(client: &mut MmoClient, time: f32, animator: &mut Animator) -> Scene {
     let camera = camera(client);
     let area = client.my_area().unwrap_or(AreaId(0));
-    let me = client.my_entity();
     let dead = client.is_dead();
     let world = client.world_mut();
     animator
@@ -130,7 +144,7 @@ pub fn build_scene(client: &mut MmoClient, time: f32, animator: &mut Animator) -
     let mut query = world.query::<ActorQuery>();
     let actors = query
         .iter(world)
-        .map(|(entity, actor, position, vitals)| {
+        .map(|(entity, actor, position)| {
             let elapsed = animator.elapsed(entity, actor.action, time);
             ActorDraw {
                 pos: position.pos,
@@ -142,10 +156,6 @@ pub fn build_scene(client: &mut MmoClient, time: f32, animator: &mut Animator) -
                 ),
                 tint: actor.color,
                 model: actor.model,
-                health: (me == Some(entity))
-                    .then_some(vitals)
-                    .flatten()
-                    .map(|v| (v.health / v.max).clamp(0.0, 1.0)),
             }
         })
         .collect();
@@ -275,7 +285,6 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
     }
     draws.sort_by(|a, b| a.0.total_cmp(&b.0));
 
-    let mut bars: Vec<(Pos<Pixels>, f32)> = Vec::new();
     for (_, draw) in &draws {
         match *draw {
             Draw::Tile { cell, top_left } => {
@@ -307,9 +316,6 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
                     rgba_color(actor.tint),
                     (false, false),
                 );
-                if let Some(fraction) = actor.health {
-                    bars.push((center, fraction));
-                }
             }
             Draw::Group { group } => {
                 for &(tx, ty, cell) in &area.groups[group].tiles {
@@ -317,12 +323,6 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
                 }
             }
         }
-    }
-
-    // Health bars are a HUD element: drawn after every world layer so an actor or object in front
-    // (a higher z) can never hide them.
-    for (center, fraction) in bars {
-        health_bar(center, fraction);
     }
 }
 
@@ -341,7 +341,6 @@ struct ActorDraw {
     region: Rect<Pixels>,
     tint: Rgba,
     model: ActorModelId,
-    health: Option<f32>,
 }
 
 enum Draw {
@@ -434,35 +433,6 @@ fn draw_map_tile(
             sprite.flip,
         );
     }
-}
-
-const BAR_SIZE: Size<Pixels> = Size::new(20.0, 4.0);
-const BAR_BORDER: u32 = 0x140A_28FF;
-const BAR_BG: u32 = 0x2A1C_5CFF;
-const BAR_FILL: u32 = 0x00FF_00FF;
-
-fn health_bar(center: Pos<Pixels>, fraction: f32) {
-    let top_left = center.round() + Offset::new(-BAR_SIZE.width / 2.0, 3.0);
-    fill(top_left, BAR_SIZE, BAR_BORDER);
-    let inner = top_left + Offset::splat(1.0);
-    let inner_size = BAR_SIZE - Size::splat(2.0);
-    fill(inner, inner_size, BAR_BG);
-    fill(
-        inner,
-        Size::new((inner_size.width * fraction).floor(), inner_size.height),
-        BAR_FILL,
-    );
-}
-
-fn fill(top_left: Pos<Pixels>, size: Size<Pixels>, rgba: u32) {
-    let [r, g, b, a] = rgba.to_be_bytes();
-    draw_rectangle(
-        top_left.x,
-        top_left.y,
-        size.width,
-        size.height,
-        Color::from_rgba(r, g, b, a),
-    );
 }
 
 fn rgba_color(tint: Rgba) -> Color {

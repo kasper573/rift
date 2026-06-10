@@ -1,5 +1,6 @@
-use client::render::{self, INV_GRID, INV_PAD, INV_SLOT, TILE_SIZE, VIEW};
+use client::render::{self, Screen, TILE_SIZE, VIEW};
 use client::sfx::SfxTracker;
+use client::ui::Hud;
 use macroquad::prelude::*;
 use std::collections::HashMap;
 use world::actors::SfxId;
@@ -12,8 +13,6 @@ use world::{area, assets};
 mod audio;
 mod platform;
 
-const DOUBLE_CLICK_SECONDS: f64 = 0.4;
-
 #[macroquad::main(window_conf)]
 async fn main() {
     let Some(mut client) = platform::open_session().await else {
@@ -21,17 +20,14 @@ async fn main() {
     };
     // The one play/spectate switch: every mode-specific input and UI lives in its frame handler.
     let spectating = platform::spectate_mode();
-    let frame: fn(&mut MmoClient, Screen, &mut Ui) -> Cursor = if spectating {
-        spectate_frame
-    } else {
-        play_frame
-    };
 
     show_mouse(false);
     let cursors = Cursors::load();
+    let highlight = texture_png(png_bytes("icons/crosshairs/white/crosshair026.png"));
     let mut announced = false;
     let mut clock = 0.0f32;
-    let mut ui = Ui::new();
+    let mut debug = DebugMode::None;
+    let mut hud = Hud::new();
     let mut view = render::WorldView::new();
     let mut audio = audio::Audio::load(world::sfx::sfx_table());
     let sfx_index: HashMap<&'static SfxId, usize> = world::sfx::sfx_table()
@@ -104,39 +100,24 @@ async fn main() {
             }
         }
         if is_key_pressed(KeyCode::F1) {
-            ui.debug = ui.debug.next();
+            debug = debug.next();
         }
-        debug_frame(&mut client, screen, ui.debug);
-        let cursor = frame(&mut client, screen, &mut ui);
+        debug_frame(&mut client, screen, debug);
 
-        hud_text(&format!("{} fps", get_fps()), 20.0);
+        let cursor = if spectating {
+            spectate_frame(&mut client)
+        } else {
+            egui_macroquad::ui(|ctx| hud.frame(ctx, &mut client, screen));
+            let cursor = play_frame(&mut client, screen, &hud, &highlight);
+            egui_macroquad::draw();
+            cursor
+        };
+
+        hud_text(&format!("{} fps", get_fps()), screen_height() - 12.0);
         cursors.draw(cursor);
 
         clock += get_frame_time();
         next_frame().await;
-    }
-}
-
-struct Ui {
-    icons: Vec<Texture2D>,
-    highlight: Texture2D,
-    inventory_scroll: u32,
-    last_inventory_click: Option<(u32, f64)>,
-    debug: DebugMode,
-}
-
-impl Ui {
-    fn new() -> Ui {
-        Ui {
-            icons: world::items::items()
-                .iter()
-                .map(|item| texture_png(item.icon.0))
-                .collect(),
-            highlight: texture_png(png_bytes("icons/crosshairs/white/crosshair026.png")),
-            inventory_scroll: 0,
-            last_inventory_click: None,
-            debug: DebugMode::None,
-        }
     }
 }
 
@@ -215,30 +196,7 @@ impl Cursors {
     }
 }
 
-#[derive(Clone, Copy)]
-struct Screen {
-    scale: f32,
-    offset: Pos<Pixels>,
-}
-
-impl Screen {
-    fn fit() -> Screen {
-        let (scale, offset) = render::letterbox(Size::new(screen_width(), screen_height()));
-        Screen { scale, offset }
-    }
-
-    /// A world position to its on-screen window position.
-    fn to_window(self, camera: render::Camera, world: Pos<Tiles>) -> Pos<Pixels> {
-        render::to_frame_f(camera, world) * self.scale + self.offset.to_vector()
-    }
-
-    /// A window pixel position back to a world-frame pixel position.
-    fn to_frame(self, window: Pos<Pixels>) -> Pos<Pixels> {
-        ((window - self.offset) / self.scale).to_point()
-    }
-}
-
-fn play_frame(client: &mut MmoClient, screen: Screen, ui: &mut Ui) -> Cursor {
+fn play_frame(client: &mut MmoClient, screen: Screen, hud: &Hud, highlight: &Texture2D) -> Cursor {
     if client.is_dead() {
         banner_text("You died! Press any key to respawn");
         if get_last_key_pressed().is_some() {
@@ -249,9 +207,7 @@ fn play_frame(client: &mut MmoClient, screen: Screen, ui: &mut Ui) -> Cursor {
     let Some(camera) = render::camera(client) else {
         return Cursor::Default;
     };
-
-    hud_text(&format!("xp {}", client.my_xp().unwrap_or(0)), 44.0);
-    if inventory_frame(client, ui) {
+    if hud.pointer_captured {
         return Cursor::Default;
     }
 
@@ -281,7 +237,7 @@ fn play_frame(client: &mut MmoClient, screen: Screen, ui: &mut Ui) -> Cursor {
         let tile = TILE_SIZE.width * screen.scale;
         let p = screen.to_window(camera, hover);
         draw_texture_ex(
-            &ui.highlight,
+            highlight,
             p.x,
             p.y,
             WHITE,
@@ -298,94 +254,7 @@ fn play_frame(client: &mut MmoClient, screen: Screen, ui: &mut Ui) -> Cursor {
     }
 }
 
-// Draws the inventory grid (fixed viewport over the unbounded inventory, wheel-scrolled) and
-// applies its clicks; returns whether the pointer is over the grid, which swallows world input.
-fn inventory_frame(client: &mut MmoClient, ui: &mut Ui) -> bool {
-    let items = client.my_inventory();
-    let grid: Size<Pixels> = INV_GRID.to_f32().cast_unit() * INV_SLOT;
-    let origin = Pos::new(screen_width() - INV_PAD - grid.width, INV_PAD);
-    let grid_rect = Rect::new(origin, grid);
-
-    let total_rows = (items.len() as u32).div_ceil(INV_GRID.width);
-    let max_scroll = total_rows.saturating_sub(INV_GRID.height);
-    ui.inventory_scroll = ui.inventory_scroll.min(max_scroll);
-
-    let (mx, my) = mouse_position();
-    let mouse = Pos::new(mx, my);
-    let hovering = grid_rect.contains(mouse);
-    if hovering {
-        let wheel = mouse_wheel().1;
-        if wheel > 0.0 {
-            ui.inventory_scroll = ui.inventory_scroll.saturating_sub(1);
-        } else if wheel < 0.0 {
-            ui.inventory_scroll = (ui.inventory_scroll + 1).min(max_scroll);
-        }
-    }
-
-    let slot_size = Size::splat(INV_SLOT);
-    let inner = slot_size - Size::splat(2.0);
-    let mut hovered: Option<u32> = None;
-    for row in 0..INV_GRID.height {
-        for col in 0..INV_GRID.width {
-            let at = origin + Offset::new(col as f32, row as f32) * INV_SLOT;
-            let slot = (ui.inventory_scroll + row) * INV_GRID.width + col;
-            let occupied = (slot as usize) < items.len();
-            let over = Rect::new(at, slot_size).contains(mouse);
-            if over && occupied {
-                hovered = Some(slot);
-            }
-            draw_rectangle(
-                at.x,
-                at.y,
-                inner.width,
-                inner.height,
-                color_u8!(0, 0, 0, 160),
-            );
-            let outline = if over { WHITE } else { GRAY };
-            draw_rectangle_lines(at.x, at.y, inner.width, inner.height, 2.0, outline);
-            if occupied {
-                let icon = &ui.icons[items[slot as usize].0 as usize];
-                let icon_at = at + Offset::splat(1.0);
-                draw_texture(icon, icon_at.x, icon_at.y, WHITE);
-            }
-        }
-    }
-
-    if total_rows > INV_GRID.height {
-        let track = origin + Offset::new(grid.width + 2.0, 0.0);
-        draw_rectangle(track.x, track.y, 4.0, grid.height, color_u8!(0, 0, 0, 160));
-        let thumb_h = grid.height * INV_GRID.height as f32 / total_rows as f32;
-        let thumb_y =
-            track.y + (grid.height - thumb_h) * ui.inventory_scroll as f32 / max_scroll as f32;
-        draw_rectangle(track.x, thumb_y, 4.0, thumb_h, GRAY);
-    }
-
-    if let Some(slot) = hovered {
-        let name = &world::items::item(items[slot as usize]).display_name;
-        let width = measure_text(name, None, 20, 1.0).width;
-        let label = origin + Offset::new(grid.width - width, grid.height + 16.0);
-        draw_text(name, label.x, label.y, 20.0, WHITE);
-    }
-
-    if hovering
-        && is_mouse_button_pressed(MouseButton::Left)
-        && let Some(slot) = hovered
-    {
-        let now = get_time();
-        let double = ui
-            .last_inventory_click
-            .is_some_and(|(last, at)| last == slot && now - at < DOUBLE_CLICK_SECONDS);
-        if double {
-            client.use_item(slot);
-            ui.last_inventory_click = None;
-        } else {
-            ui.last_inventory_click = Some((slot, now));
-        }
-    }
-    hovering
-}
-
-fn spectate_frame(client: &mut MmoClient, _screen: Screen, _ui: &mut Ui) -> Cursor {
+fn spectate_frame(client: &mut MmoClient) -> Cursor {
     if is_key_pressed(KeyCode::N) {
         let next = next_watch(client);
         client.spectate(next);

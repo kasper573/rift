@@ -199,6 +199,18 @@ impl MmoClient {
         self.world().get::<Vitals>(entity).map(|v| v.health)
     }
 
+    pub fn my_vitals(&mut self) -> Option<(f32, f32)> {
+        let entity = self.my_entity()?;
+        self.world()
+            .get::<Vitals>(entity)
+            .map(|v| (v.health, v.max))
+    }
+
+    pub fn my_name(&mut self) -> Option<String> {
+        let entity = self.my_entity()?;
+        self.world().get::<Name>(entity).map(|n| n.name.clone())
+    }
+
     pub fn my_xp(&mut self) -> Option<u32> {
         let entity = self.my_entity()?;
         self.world().get::<Xp>(entity).map(|xp| xp.amount)
