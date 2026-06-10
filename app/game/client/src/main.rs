@@ -4,9 +4,10 @@ use macroquad::prelude::*;
 use std::collections::HashMap;
 use world::core::actors::SfxId;
 use world::core::math::{Pixels, Pos, Rect, Size, Tiles};
-use world::core::protocol::is_dead;
 use world::core::{area, assets};
-use world::{Actor, ClientId, Entity, Hitbox, ItemConsumed, LinkStatus, MmoClient, Position};
+use world::{
+    Actor, ClientId, Entity, Hitbox, ItemConsumed, LinkStatus, MmoClient, Position, Vitals, With,
+};
 
 mod audio;
 mod platform;
@@ -70,9 +71,8 @@ async fn main() {
         }
 
         let listener = client
-            .my_entity()
-            .and_then(|entity| world::core::protocol::position(client.world(), entity))
-            .or_else(|| render::camera(&client).map(|cam| cam.center));
+            .my_position()
+            .or_else(|| render::camera(&mut client).map(|cam| cam.center));
 
         for ItemConsumed { item, actor } in client.drain::<ItemConsumed>() {
             let Some(listener) = listener else { continue };
@@ -90,21 +90,25 @@ async fn main() {
         }
 
         let screen = Screen::fit();
-        draw_world(&client, clock, screen, &mut view);
+        draw_world(&mut client, clock, screen, &mut view);
         if let Some(listener) = listener {
             let area = client
                 .my_area()
                 .and_then(|id| area::areas().get(id.0 as usize));
-            for (id, volume, pan) in
-                sfx_tracker.cues(client.world(), area, &mut view.animator, listener, clock)
-            {
+            for (id, volume, pan) in sfx_tracker.cues(
+                client.world_mut(),
+                area,
+                &mut view.animator,
+                listener,
+                clock,
+            ) {
                 play_cue(&mut audio, &sfx_index, id, volume, pan);
             }
         }
         if is_key_pressed(KeyCode::F1) {
             ui.debug = ui.debug.next();
         }
-        debug_frame(&client, screen, ui.debug);
+        debug_frame(&mut client, screen, ui.debug);
         let cursor = frame(&mut client, screen, &mut ui);
 
         hud_text(&format!("{} fps", get_fps()), 20.0);
@@ -417,13 +421,13 @@ fn window_conf() -> Conf {
     }
 }
 
-fn draw_world(client: &MmoClient, clock: f32, screen: Screen, view: &mut render::WorldView) {
+fn draw_world(client: &mut MmoClient, clock: f32, screen: Screen, view: &mut render::WorldView) {
     let scene = render::build_scene(client, clock, &mut view.animator);
     render::present(&scene, view, screen.scale, screen.offset);
 }
 
 /// Walkability overlays for the current area: the `-` key cycles through the modes.
-fn debug_frame(client: &MmoClient, screen: Screen, mode: DebugMode) {
+fn debug_frame(client: &mut MmoClient, screen: Screen, mode: DebugMode) {
     if mode == DebugMode::None {
         return;
     }
@@ -542,15 +546,15 @@ fn proximity_node(area: &area::Area, p: Pos<Tiles>) -> Option<Pos<Tiles>> {
     .find(|&node| area.grid.walkable(node))
 }
 
-fn enemy_at(client: &MmoClient, point: Pos<Tiles>) -> Option<Entity> {
+fn enemy_at(client: &mut MmoClient, point: Pos<Tiles>) -> Option<Entity> {
     let me = client.my_entity();
-    let world = client.world();
-    world.iter::<Actor>().find_map(|(entity, _)| {
-        if Some(entity) == me || is_dead(world, entity) {
+    let world = client.world_mut();
+    let mut actors =
+        world.query_filtered::<(Entity, &Position, &Hitbox, Option<&Vitals>), With<Actor>>();
+    actors.iter(world).find_map(|(entity, at, hitbox, vitals)| {
+        if Some(entity) == me || vitals.is_some_and(|v| v.health <= 0.0) {
             return None;
         }
-        let at = world.get::<Position>(entity)?;
-        let hitbox = world.get::<Hitbox>(entity)?;
         let bottom = at.pos.y.0 + 0.5;
         let bounds = Rect::new(
             Pos::new(
@@ -563,7 +567,7 @@ fn enemy_at(client: &MmoClient, point: Pos<Tiles>) -> Option<Entity> {
     })
 }
 
-fn next_watch(client: &MmoClient) -> Option<ClientId> {
+fn next_watch(client: &mut MmoClient) -> Option<ClientId> {
     let players = client.players();
     let current = client.watching().and_then(|current| {
         players
@@ -577,7 +581,7 @@ fn next_watch(client: &MmoClient) -> Option<ClientId> {
     .map(|(id, _)| *id)
 }
 
-fn watched_name(client: &MmoClient, id: ClientId) -> String {
+fn watched_name(client: &mut MmoClient, id: ClientId) -> String {
     client
         .players()
         .into_iter()

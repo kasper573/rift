@@ -5,7 +5,4 @@ edition.workspace = true
 description = "Generic math + the repo's spatial-unit vocabulary: Pos/Rect over Pixels/Tiles, durations, rng, compass directions."
 
 [dependencies]
-# Wire derive for the unit newtypes that cross the wire as component fields; default-features off
-# (no transport) keeps every consumer — including the wasm client — portable.
-rift = { path = "../rift", default-features = false }
 serde.workspace = true

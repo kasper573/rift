@@ -1,9 +1,62 @@
-use rift::{ClientId, Entity, Wire, World};
-use serde::{Deserialize, Deserializer};
+//! The wire contract: every replicated component and client/server message, registered
+//! identically on both sides so bevy_replicon's channels line up. The server replicates
+//! component changes each tick; clients send intents as messages, and entity-bearing payloads
+//! are remapped between the two worlds automatically.
+
+use bevy_app::App;
+use bevy_ecs::entity::MapEntities;
+use bevy_ecs::message::Message;
+use bevy_ecs::prelude::*;
+use bevy_replicon::prelude::*;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::core::actors::ActorModelId;
 use crate::core::area::AreaId;
 use crate::core::math::{PlaybackRate, Pos, Size, Tiles};
+
+pub fn protocol(app: &mut App) {
+    app.replicate::<Position>()
+        .replicate::<Actor>()
+        .replicate::<Hitbox>()
+        .replicate::<Vitals>()
+        .replicate::<AreaTag>()
+        .replicate::<Owner>()
+        .replicate::<Name>()
+        .replicate::<Spectate>()
+        .replicate::<Xp>()
+        .replicate::<Inventory>()
+        .add_client_message::<JoinRequest>(Channel::Ordered)
+        .add_client_message::<RespawnRequest>(Channel::Ordered)
+        .add_client_message::<MoveRequest>(Channel::Ordered)
+        .add_client_message::<MoveToPortal>(Channel::Ordered)
+        .add_mapped_client_message::<AttackRequest>(Channel::Ordered)
+        .add_client_message::<UseItemRequest>(Channel::Ordered)
+        .add_client_message::<SpectateRequest>(Channel::Ordered)
+        .add_server_message::<Welcome>(Channel::Ordered)
+        .add_mapped_server_message::<ItemConsumed>(Channel::Ordered);
+}
+
+/// One connection's stable id, assigned by the transport; on the server it sits on the
+/// connection's client entity.
+#[derive(
+    Component,
+    Serialize,
+    Deserialize,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
+    Default,
+)]
+#[component(immutable)]
+pub struct ClientId(pub u32);
+
+/// The JWT role that entitles a client to spectate.
+pub const SPECTATE_ROLE: &str = "spectate";
 
 pub const ACTION_IDLE: u8 = 0;
 pub const ACTION_WALK: u8 = 1;
@@ -22,20 +75,24 @@ pub fn action_name(action: u8) -> &'static str {
     }
 }
 
-/// A `0xRRGGBBAA` packed color; content tables spell it `#rrggbbaa`.
-#[derive(Wire, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+/// A `0xRRGGBBAA` packed color; content tables spell it `#rrggbbaa` via [`rgba_hex`].
+#[derive(
+    Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default,
+)]
 pub struct Rgba(pub u32);
 
 /// An item definition's index in [`crate::features::items::items`].
-#[derive(Wire, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+#[derive(
+    Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default,
+)]
 pub struct ItemId(pub u16);
 
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Position {
     pub pos: Pos<Tiles>,
 }
 
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Actor {
     pub color: Rgba,
     pub dir: u8,
@@ -45,84 +102,125 @@ pub struct Actor {
 }
 
 /// Click target in tiles: a box centered on x with its bottom at the feet line.
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Hitbox {
     pub size: Size<Tiles>,
 }
 
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Vitals {
     pub health: f32,
     pub max: f32,
 }
 
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AreaTag {
     pub area: AreaId,
 }
 
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Owner {
     pub client: ClientId,
 }
 
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Name {
     pub name: String,
 }
 
 /// A spectator's camera anchor; `watch: None` is free spectating.
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Spectate {
     pub watch: Option<ClientId>,
 }
 
-/// Each element is one owned item instance.
-#[derive(Wire, Clone, Debug, PartialEq)]
+/// Each element is one owned item instance; replicated only to the owning client.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Inventory {
     pub items: Vec<ItemId>,
 }
 
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Xp {
     pub amount: u32,
 }
 
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct JoinRequest;
+
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct RespawnRequest;
+
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct MoveRequest {
+    pub pos: Pos<Tiles>,
+}
+
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct MoveToPortal {
+    pub pos: Pos<Tiles>,
+    pub portal: u32,
+}
+
+#[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
+pub struct AttackRequest {
+    #[entities]
+    pub target: Entity,
+}
+
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UseItemRequest {
     pub slot: u32,
 }
 
-impl<'de> Deserialize<'de> for Rgba {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let hex = String::deserialize(deserializer)?;
-        hex.strip_prefix('#')
-            .filter(|digits| digits.len() == 8)
-            .and_then(|digits| u32::from_str_radix(digits, 16).ok())
-            .map(Rgba)
-            .ok_or_else(|| serde::de::Error::custom(format!("a color is #rrggbbaa, got '{hex}'")))
-    }
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SpectateRequest {
+    pub watch: Option<ClientId>,
+}
+
+/// The server's hello: the connection's [`ClientId`], which [`Owner`] components refer to.
+#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct Welcome {
+    pub id: ClientId,
+}
+
+/// Announces a consumed inventory item so clients can play its sound at the consumer.
+#[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
+pub struct ItemConsumed {
+    pub item: ItemId,
+    #[entities]
+    pub actor: Entity,
+}
+
+/// Deserializes an [`Rgba`] from a content table's `#rrggbbaa` spelling.
+pub fn rgba_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Rgba, D::Error> {
+    let hex = String::deserialize(deserializer)?;
+    hex.strip_prefix('#')
+        .filter(|digits| digits.len() == 8)
+        .and_then(|digits| u32::from_str_radix(digits, 16).ok())
+        .map(Rgba)
+        .ok_or_else(|| serde::de::Error::custom(format!("a color is #rrggbbaa, got '{hex}'")))
 }
 
 pub fn position(world: &World, entity: Entity) -> Option<Pos<Tiles>> {
     world.get::<Position>(entity).map(|p| p.pos)
 }
 
-pub fn set_action(world: &mut World, entity: Entity, action: u8) {
-    if world.get::<Actor>(entity).map(|a| a.action) != Some(action) {
-        world.modify::<Actor>(entity, |a| a.action = action);
-    }
-}
-
-pub fn set_facing(world: &mut World, entity: Entity, dir: u8, action: u8) {
-    if world.get::<Actor>(entity).map(|a| (a.dir, a.action)) != Some((dir, action)) {
-        world.modify::<Actor>(entity, |a| {
-            a.dir = dir;
-            a.action = action;
-        });
-    }
-}
-
 pub fn is_dead(world: &World, entity: Entity) -> bool {
     world.get::<Vitals>(entity).is_some_and(|v| v.health <= 0.0)
+}
+
+/// Writes only on change, so replication ships [`Actor`] exactly when it really moved.
+pub fn set_action(actor: &mut Mut<Actor>, action: u8) {
+    if actor.action != action {
+        actor.action = action;
+    }
+}
+
+/// Writes only on change, so replication ships [`Actor`] exactly when it really moved.
+pub fn set_facing(actor: &mut Mut<Actor>, dir: u8, action: u8) {
+    if actor.dir != dir || actor.action != action {
+        actor.dir = dir;
+        actor.action = action;
+    }
 }

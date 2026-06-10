@@ -3,8 +3,7 @@ use std::io::Cursor;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use rift::Wire;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use tiled::{LayerType, PropertyValue};
 
 use crate::core::actors::SfxId;
@@ -15,19 +14,20 @@ use crate::core::table;
 
 const FILE: &str = "area_table.json";
 
-/// An area's index in [`areas`]; content tables reference areas by id.
-#[derive(Wire, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+/// An area's index in [`areas`]; content tables reference areas by id via [`area_by_name`].
+#[derive(
+    Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default,
+)]
 pub struct AreaId(pub u32);
 
-impl<'de> Deserialize<'de> for AreaId {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let id = String::deserialize(deserializer)?;
-        defs()
-            .iter()
-            .position(|def| def.id == id)
-            .map(|index| AreaId(index as u32))
-            .ok_or_else(|| serde::de::Error::custom(format!("unknown area '{id}'")))
-    }
+/// Deserializes an [`AreaId`] from a content table's area id string.
+pub fn area_by_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<AreaId, D::Error> {
+    let id = String::deserialize(deserializer)?;
+    defs()
+        .iter()
+        .position(|def| def.id == id)
+        .map(|index| AreaId(index as u32))
+        .ok_or_else(|| serde::de::Error::custom(format!("unknown area '{id}'")))
 }
 
 #[derive(Deserialize)]

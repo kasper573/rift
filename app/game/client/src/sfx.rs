@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 
-use rift::World;
 use world::Entity;
 use world::core::actors;
 use world::core::actors::SfxId;
 use world::core::area::Area;
 use world::core::math::{Pos, Tiles};
-use world::core::protocol::{Actor, action_name, position};
+use world::core::protocol::{Actor, Position, action_name};
 
 use crate::render::{Animator, proximity_pan, proximity_volume};
 
@@ -32,24 +31,24 @@ impl SfxTracker {
     /// scrolling on screen never replays the death it finished off-screen.
     pub fn cues(
         &mut self,
-        world: &World,
+        world: &mut world::World,
         area: Option<&'static Area>,
         animator: &mut Animator,
         listener: Pos<Tiles>,
         clock: f32,
     ) -> Vec<(&'static SfxId, f32, f32)> {
-        self.seen.retain(|&entity, _| world.alive(entity));
+        self.seen
+            .retain(|&entity, _| world.get_entity(entity).is_ok());
         // Per distinct id this frame keep the loudest source, so near and far actors sharing a
         // sound collapse to a single play at the nearer volume (and its pan).
         let mut frame: HashMap<&'static SfxId, (f32, f32)> = HashMap::new();
-        for (entity, actor) in world.iter::<Actor>() {
+        let mut query = world.query::<(Entity, &Actor, &Position)>();
+        for (entity, actor, position) in query.iter(world) {
             let now = animator.elapsed(entity, actor.action, clock);
             let Some((was, then)) = self.seen.insert(entity, (actor.action, now)) else {
                 continue;
             };
-            let Some(source) = position(world, entity) else {
-                continue;
-            };
+            let source = position.pos;
             let volume = proximity_volume(listener, source);
             if volume <= 0.0 {
                 continue;

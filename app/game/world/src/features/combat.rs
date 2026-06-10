@@ -1,21 +1,24 @@
-use rift::{Builder, Ctx, Entity, Wire, World};
+use bevy_ecs::message::Messages;
+use bevy_ecs::prelude::*;
+use bevy_replicon::prelude::FromClient;
+use bevy_time::Time;
 
 use crate::core::actors::ActorModelId;
 use crate::core::math::{Direction, Millis, PlaybackRate, Seconds, Tiles};
 use crate::core::protocol::{
-    ACTION_ATTACK, ACTION_DEAD, AreaTag, Vitals, action_name, is_dead, position, set_action,
-    set_facing,
+    ACTION_ATTACK, ACTION_DEAD, Actor, AreaTag, AttackRequest, Vitals, action_name, is_dead,
+    position, set_action, set_facing,
 };
 use crate::core::{actors, protocol};
 use crate::features::movement::{MoveTarget, Path, forget, halt, on_tile};
-use crate::features::player::Players;
+use crate::features::player::sender_player;
 
 const TILE_DIAGONAL_MARGIN: f32 = std::f32::consts::SQRT_2 - 1.0;
 const CHASE_RETARGET_THRESHOLD: Tiles = Tiles(1.5);
 
 /// `attack_speed` scales the whole swing along with the attack animation;
 /// `attack_delay` is the recovery between swings.
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Clone, Debug, PartialEq)]
 pub struct Stats {
     pub damage: f32,
     pub attack_speed: PlaybackRate,
@@ -23,27 +26,24 @@ pub struct Stats {
     pub range: Tiles,
 }
 
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Clone, Debug, PartialEq)]
 pub struct AttackTarget {
     pub target: Entity,
 }
 
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Clone, Debug, PartialEq)]
 pub struct LastAttack {
     pub at: Seconds,
 }
 
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Clone, Debug, PartialEq)]
 pub struct Attackers {
     pub ids: Vec<Entity>,
 }
 
-#[derive(Wire, Clone, Debug, PartialEq)]
-pub struct AttackRequest {
-    pub target: Entity,
-}
-
-#[derive(Wire, Clone, Debug, PartialEq)]
+/// `Died` is the extension seam (loot/xp/quests subscribe here). Combat keeps its own inline
+/// cleanup in `strike` so behavior is unchanged this tick.
+#[derive(Message, Clone, Debug, PartialEq)]
 pub struct Died {
     pub entity: Entity,
     pub killer: Entity,
@@ -51,7 +51,7 @@ pub struct Died {
 
 /// A committed swing: the hit lands at `hit_at` — the attack animation's apex — and
 /// the attacker is occupied until `ends_at`.
-#[derive(Wire, Clone, Debug, PartialEq)]
+#[derive(Component, Clone, Debug, PartialEq)]
 pub struct Swing {
     pub target: Entity,
     pub hit_at: Seconds,
@@ -59,48 +59,46 @@ pub struct Swing {
     pub struck: bool,
 }
 
-pub fn feature(b: &mut Builder) {
-    b.intent(request);
-    b.system(combat);
-}
-
-fn request(ctx: &mut Ctx) {
-    for (client, req) in ctx.server.drain_events::<AttackRequest>() {
-        let Some(&entity) = ctx.res.get::<Players>().and_then(|p| p.0.get(&client)) else {
+pub fn request(world: &mut World) {
+    let requests: Vec<FromClient<AttackRequest>> = world
+        .resource_mut::<Messages<FromClient<AttackRequest>>>()
+        .drain()
+        .collect();
+    for request in requests {
+        let Some(entity) = sender_player(world, request.client_id) else {
             continue;
         };
-        let world = &mut ctx.server.world;
-        if is_dead(world, entity) || !world.alive(req.target) || is_dead(world, req.target) {
+        let target = request.message.target;
+        if is_dead(world, entity) || world.get_entity(target).is_err() || is_dead(world, target) {
             continue;
         }
-        world.insert(entity, AttackTarget { target: req.target });
+        world.entity_mut(entity).insert(AttackTarget { target });
     }
 }
 
-fn combat(ctx: &mut Ctx) {
-    let time = Seconds(ctx.time);
+pub fn combat(world: &mut World) {
+    let time = Seconds(world.resource::<Time>().elapsed_secs());
     let mut deaths = Vec::new();
-    {
-        let world = &mut ctx.server.world;
-        engage(world, time);
-        progress_swings(world, time, &mut deaths);
-    }
-    // `Died` is the extension seam (loot/xp/quests subscribe here). Combat keeps its own
-    // inline cleanup in `strike` so behavior is unchanged this tick.
+    engage(world, time);
+    progress_swings(world, time, &mut deaths);
     for (entity, killer) in deaths {
-        ctx.events.emit(Died { entity, killer });
+        world.write_message(Died { entity, killer });
     }
 }
 
 /// Approaches the target and, in range with recovery elapsed, commits to a swing whose
 /// timing comes from the attacker's own attack animation.
 fn engage(world: &mut World, time: Seconds) {
-    for id in world.ids::<AttackTarget>() {
+    let ids: Vec<Entity> = world
+        .query_filtered::<Entity, With<AttackTarget>>()
+        .iter(world)
+        .collect();
+    for id in ids {
         if is_dead(world, id) {
             forget(world, id);
             continue;
         }
-        if world.has::<Swing>(id) {
+        if world.get::<Swing>(id).is_some() {
             continue;
         }
         let Some(target) = world.get::<AttackTarget>(id).map(|t| t.target) else {
@@ -108,7 +106,7 @@ fn engage(world: &mut World, time: Seconds) {
         };
         let same_area = world.get::<AreaTag>(id).map(|t| t.area)
             == world.get::<AreaTag>(target).map(|t| t.area);
-        if !world.alive(target) || is_dead(world, target) || !same_area {
+        if world.get_entity(target).is_err() || is_dead(world, target) || !same_area {
             forget(world, id);
             continue;
         }
@@ -122,8 +120,10 @@ fn engage(world: &mut World, time: Seconds) {
                 .get::<MoveTarget>(id)
                 .is_some_and(|goal| goal.pos.distance(target_at) <= CHASE_RETARGET_THRESHOLD.0);
             if !heading {
-                world.remove::<Path>(id);
-                world.insert(id, MoveTarget { pos: target_at });
+                world
+                    .entity_mut(id)
+                    .remove::<Path>()
+                    .insert(MoveTarget { pos: target_at });
             }
             continue;
         }
@@ -139,43 +139,54 @@ fn engage(world: &mut World, time: Seconds) {
             continue;
         }
         let dir = Direction::from_vec(target_at.x.0 - at.x.0, target_at.y.0 - at.y.0) as u8;
-        set_facing(world, id, dir, ACTION_ATTACK);
+        if let Some(mut actor) = world.get_mut::<Actor>(id) {
+            set_facing(&mut actor, dir, ACTION_ATTACK);
+        }
         let timing = attack_timing(world, id, dir);
         let speed = stats.attack_speed.0.max(0.01);
-        world.insert(
-            id,
-            Swing {
-                target,
-                hit_at: time + Seconds(timing.apex / speed),
-                ends_at: time + Seconds(timing.duration / speed),
-                struck: false,
-            },
-        );
+        world.entity_mut(id).insert(Swing {
+            target,
+            hit_at: time + Seconds(timing.apex / speed),
+            ends_at: time + Seconds(timing.duration / speed),
+            struck: false,
+        });
     }
 }
 
 /// Carries committed swings forward: the hit lands at the apex, the attacker animates
 /// until the swing ends, and recovery starts from there. Death or movement cancels.
 fn progress_swings(world: &mut World, time: Seconds, deaths: &mut Vec<(Entity, Entity)>) {
-    for id in world.ids::<Swing>() {
-        if is_dead(world, id) || world.has::<MoveTarget>(id) || world.has::<Path>(id) {
-            world.remove::<Swing>(id);
-            world.insert(id, LastAttack { at: time });
+    let ids: Vec<Entity> = world
+        .query_filtered::<Entity, With<Swing>>()
+        .iter(world)
+        .collect();
+    for id in ids {
+        if is_dead(world, id)
+            || world.get::<MoveTarget>(id).is_some()
+            || world.get::<Path>(id).is_some()
+        {
+            world
+                .entity_mut(id)
+                .remove::<Swing>()
+                .insert(LastAttack { at: time });
             continue;
         }
-        let Some(swing) = world.get::<Swing>(id) else {
+        let Some(swing) = world.get::<Swing>(id).cloned() else {
             continue;
         };
         if !swing.struck && time >= swing.hit_at {
             strike(world, id, swing.target, deaths);
-            world.modify::<Swing>(id, |s| s.struck = true);
+            if let Some(mut swing) = world.get_mut::<Swing>(id) {
+                swing.struck = true;
+            }
         }
         if time >= swing.ends_at {
-            let ended = swing.ends_at;
-            world.remove::<Swing>(id);
-            world.insert(id, LastAttack { at: ended });
-        } else {
-            set_action(world, id, ACTION_ATTACK);
+            world
+                .entity_mut(id)
+                .remove::<Swing>()
+                .insert(LastAttack { at: swing.ends_at });
+        } else if let Some(mut actor) = world.get_mut::<Actor>(id) {
+            set_action(&mut actor, ACTION_ATTACK);
         }
     }
 }
@@ -183,22 +194,26 @@ fn progress_swings(world: &mut World, time: Seconds, deaths: &mut Vec<(Entity, E
 fn strike(world: &mut World, attacker: Entity, target: Entity, deaths: &mut Vec<(Entity, Entity)>) {
     let same_area = world.get::<AreaTag>(attacker).map(|t| t.area)
         == world.get::<AreaTag>(target).map(|t| t.area);
-    if !world.alive(target) || is_dead(world, target) || !same_area {
+    if world.get_entity(target).is_err() || is_dead(world, target) || !same_area {
         return;
     }
     let damage = stats(world, attacker).damage;
     add_attacker(world, target, attacker);
-    world.modify::<Vitals>(target, |v| v.health = (v.health - damage).max(0.0));
+    if let Some(mut vitals) = world.get_mut::<Vitals>(target) {
+        vitals.health = (vitals.health - damage).max(0.0);
+    }
     if is_dead(world, target) {
-        set_action(world, target, ACTION_DEAD);
+        if let Some(mut actor) = world.get_mut::<Actor>(target) {
+            set_action(&mut actor, ACTION_DEAD);
+        }
         forget(world, target);
-        world.remove::<Attackers>(target);
+        world.entity_mut(target).remove::<Attackers>();
         deaths.push((target, attacker));
     }
 }
 
 fn stats(world: &World, entity: Entity) -> Stats {
-    world.get::<Stats>(entity).unwrap_or(Stats {
+    world.get::<Stats>(entity).cloned().unwrap_or(Stats {
         damage: 0.0,
         attack_speed: PlaybackRate(1.0),
         attack_delay: Millis(0.0),
@@ -216,13 +231,14 @@ fn attack_timing(world: &World, entity: Entity, dir: u8) -> crate::core::actors:
 }
 
 fn add_attacker(world: &mut World, target: Entity, by: Entity) {
-    match world.get::<Attackers>(target) {
+    match world.get_mut::<Attackers>(target) {
         Some(mut attackers) => {
             if !attackers.ids.contains(&by) {
                 attackers.ids.push(by);
-                world.insert(target, attackers);
             }
         }
-        None => world.insert(target, Attackers { ids: vec![by] }),
+        None => {
+            world.entity_mut(target).insert(Attackers { ids: vec![by] });
+        }
     }
 }

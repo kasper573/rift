@@ -1,13 +1,11 @@
 use std::sync::OnceLock;
 
-use crate::core::actors::SfxId;
-use rift::{Builder, Ctx, Entity, Wire};
 use serde::{Deserialize, Deserializer};
 
+use crate::core::actors::SfxId;
 use crate::core::assets;
-use crate::core::protocol::{Inventory, ItemId, UseItemRequest, Vitals, is_dead};
+use crate::core::protocol::ItemId;
 use crate::core::table;
-use crate::features::player::Players;
 
 const FILE: &str = "item_table.json";
 
@@ -22,32 +20,12 @@ pub struct ItemDef {
     pub kind: ItemKind,
 }
 
-/// Broadcast to a shard's clients when one of its players consumes an item. Named for the fact,
-/// not the reaction: the server reports what happened and each client decides how to respond — here,
-/// by sounding the item's sfx, attenuated by where `actor` is relative to the listener.
-#[derive(Wire, Clone, Debug, PartialEq)]
-pub struct ItemConsumed {
-    pub item: ItemId,
-    pub actor: Entity,
-}
-
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ItemKind {
     Consumable { health_bonus: f32 },
     Resource,
     Equipment,
-}
-
-impl<'de> Deserialize<'de> for ItemId {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let id = String::deserialize(deserializer)?;
-        items()
-            .iter()
-            .position(|item| item.id == id)
-            .map(|index| ItemId(index as u16))
-            .ok_or_else(|| serde::de::Error::custom(format!("unknown item '{id}'")))
-    }
 }
 
 /// An icon asset's name, resolved to the embedded PNG.
@@ -62,8 +40,14 @@ impl<'de> Deserialize<'de> for Icon {
     }
 }
 
-pub fn feature(b: &mut Builder) {
-    b.intent(use_item);
+/// Deserializes an [`ItemId`] from a content table's item id string.
+pub fn item_by_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ItemId, D::Error> {
+    let id = String::deserialize(deserializer)?;
+    items()
+        .iter()
+        .position(|item| item.id == id)
+        .map(|index| ItemId(index as u16))
+        .ok_or_else(|| serde::de::Error::custom(format!("unknown item '{id}'")))
 }
 
 pub fn items() -> &'static [ItemDef] {
@@ -80,16 +64,27 @@ pub fn item(id: ItemId) -> &'static ItemDef {
 }
 
 // The one place item effects apply, keyed by the item definition's kind.
-fn use_item(ctx: &mut Ctx) {
-    for (client, req) in ctx.server.drain_events::<UseItemRequest>() {
-        let Some(&entity) = ctx.res.get::<Players>().and_then(|p| p.0.get(&client)) else {
+#[cfg(feature = "host")]
+pub fn use_item(world: &mut bevy_ecs::world::World) {
+    use bevy_ecs::message::Messages;
+    use bevy_replicon::prelude::{FromClient, SendTargets, ToClients};
+
+    use crate::core::protocol::{Inventory, ItemConsumed, UseItemRequest, Vitals, is_dead};
+    use crate::features::player::sender_player;
+    use crate::features::visibility::seen_by;
+
+    let requests: Vec<FromClient<UseItemRequest>> = world
+        .resource_mut::<Messages<FromClient<UseItemRequest>>>()
+        .drain()
+        .collect();
+    for request in requests {
+        let Some(entity) = sender_player(world, request.client_id) else {
             continue;
         };
-        let world = &mut ctx.server.world;
         if is_dead(world, entity) {
             continue;
         }
-        let slot = req.slot as usize;
+        let slot = request.message.slot as usize;
         let Some(slotted) = world
             .get::<Inventory>(entity)
             .and_then(|inventory| inventory.items.get(slot).copied())
@@ -98,18 +93,24 @@ fn use_item(ctx: &mut Ctx) {
         };
         match item(slotted).kind {
             ItemKind::Consumable { health_bonus } => {
-                world.modify::<Vitals>(entity, |v| {
-                    v.health = (v.health + health_bonus).min(v.max);
-                });
-                world.modify::<Inventory>(entity, |inventory| {
+                if let Some(mut vitals) = world.get_mut::<Vitals>(entity) {
+                    vitals.health = (vitals.health + health_bonus).min(vitals.max);
+                }
+                if let Some(mut inventory) = world.get_mut::<Inventory>(entity) {
                     inventory.items.remove(slot);
-                });
+                }
             }
             ItemKind::Resource | ItemKind::Equipment => continue,
         }
-        ctx.server.broadcast(&ItemConsumed {
-            item: slotted,
-            actor: entity,
-        });
+        // Announced per beholder: a mapped message only decodes for clients that see the actor.
+        for client in seen_by(world, entity) {
+            world.write_message(ToClients {
+                targets: SendTargets::Single(bevy_replicon::prelude::ClientId::Client(client)),
+                message: ItemConsumed {
+                    item: slotted,
+                    actor: entity,
+                },
+            });
+        }
     }
 }

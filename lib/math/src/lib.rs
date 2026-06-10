@@ -4,8 +4,7 @@
 
 use std::f32::consts::FRAC_1_SQRT_2;
 
-use rift::Wire;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// A scalar in a fixed unit, convertible to and from its raw `f32` so generic [`Pos`]/[`Rect`] can do
 /// arithmetic without knowing the unit.
@@ -16,12 +15,12 @@ pub trait Unit: Copy {
 
 /// A length or coordinate in a map's pixel space — Tiled authors object geometry (and its own tile
 /// size) in pixels. Cross into tile space only through [`Pixels::to_tiles`] / [`Tiling`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct Pixels(pub f32);
 
 /// A length or coordinate in tile space — the game's spatial unit (positions, ranges, distances, map
 /// extents). Whole numbers fall on tile edges; tile centers are at +0.5.
-#[derive(Wire, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct Tiles(pub f32);
 
 impl Pixels {
@@ -68,7 +67,7 @@ impl std::ops::Sub for Pixels {
 }
 
 /// A movement speed: the tiles covered each second.
-#[derive(Wire, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct TilesPerSec(pub Tiles);
 
 impl TilesPerSec {
@@ -79,15 +78,15 @@ impl TilesPerSec {
 }
 
 /// A duration or server-clock timestamp in seconds.
-#[derive(Wire, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct Seconds(pub f32);
 
 /// A duration in milliseconds.
-#[derive(Wire, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct Millis(pub f32);
 
 /// An animation-rate multiplier; 1 plays the animation at its authored speed.
-#[derive(Wire, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct PlaybackRate(pub f32);
 
 impl std::ops::Add for Seconds {
@@ -120,7 +119,7 @@ impl Millis {
 /// The 2-component vector backing [`Pos`] and [`Size`] — an implementation detail. Code names it
 /// `Pos` (a point or displacement) or `Size` (a width in `.x`, height in `.y`), never `Vec2`.
 #[doc(hidden)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct Vec2<U> {
     pub x: U,
     pub y: U,
@@ -229,22 +228,6 @@ impl<U: Unit> std::ops::Sub for Vec2<U> {
             U::of(self.x.raw() - other.x.raw()),
             U::of(self.y.raw() - other.y.raw()),
         )
-    }
-}
-
-// Hand-written because `#[derive(Wire)]` cannot carry the `<U>` generic. Lets a component or event
-// hold a `Pos`/`Size` directly instead of re-spelling its `x`/`y` fields.
-impl<U: Wire> Wire for Vec2<U> {
-    fn encode(&self, out: &mut Vec<u8>) {
-        self.x.encode(out);
-        self.y.encode(out);
-    }
-
-    fn decode(bytes: &mut &[u8]) -> Option<Vec2<U>> {
-        Some(Vec2 {
-            x: U::decode(bytes)?,
-            y: U::decode(bytes)?,
-        })
     }
 }
 

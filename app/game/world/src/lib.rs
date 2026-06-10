@@ -1,32 +1,28 @@
 pub mod core;
 pub mod features;
 
-pub use rift::{App, ClientId, Entity, LinkStatus, Transport};
+pub use bevy_ecs::entity::Entity;
+pub use bevy_ecs::query::With;
+pub use bevy_ecs::world::World;
+#[cfg(feature = "host")]
+pub use bevy_replicon::prelude::{ConnectedClient, ServerMessages};
 
 pub use crate::core::identity::Identity;
 pub use crate::core::protocol::{
-    ACTION_ATTACK, ACTION_DEAD, ACTION_IDLE, ACTION_RUN, ACTION_WALK, Actor, AreaTag, Hitbox,
-    Inventory, ItemId, Name, Owner, Position, Rgba, Spectate, UseItemRequest, Vitals, Xp,
+    ACTION_ATTACK, ACTION_DEAD, ACTION_IDLE, ACTION_RUN, ACTION_WALK, Actor, AreaTag,
+    AttackRequest, ClientId, Hitbox, Inventory, ItemConsumed, ItemId, JoinRequest, MoveRequest,
+    MoveToPortal, Name, Owner, Position, RespawnRequest, Rgba, SPECTATE_ROLE, Spectate,
+    SpectateRequest, UseItemRequest, Vitals, Welcome, Xp,
 };
-pub use crate::core::session::MmoClient;
-pub use crate::features::combat::AttackRequest;
-pub use crate::features::items::ItemConsumed;
-pub use crate::features::movement::{MoveRequest, MoveToPortal};
-pub use crate::features::player::{JoinRequest, RespawnRequest};
-pub use crate::features::spectate::{SPECTATE_ROLE, SpectateRequest};
-pub use crate::features::visibility::VIEW_DISTANCE;
+pub use crate::core::session::{LinkStatus, MmoClient, Transport};
 
 pub const TICK_HZ: f32 = 30.0;
 
 pub const DEFAULT_ADDRESS: &str = "127.0.0.1:9998";
 
-// rift's sharding API speaks raw zone numbers, so the AreaId boundary unwraps here.
-pub fn spawn_zone() -> u32 {
-    crate::core::area::spawn_zone().0
-}
-
 /// Forces every asset loader — actor models, areas, tables — so any broken file or dangling
-/// reference panics. The server's build script runs this, failing the build on bad content.
+/// reference panics. The server runs this at boot, refusing to start on bad content.
+#[cfg(feature = "host")]
 pub fn validate() {
     core::actors::models();
     core::area::areas();
@@ -37,14 +33,30 @@ pub fn validate() {
     features::sfx::sfx_table();
 }
 
-pub fn features() -> Vec<rift::Feature> {
-    crate::features::all()
-}
+/// The fully assembled authoritative simulation, already running; the caller owns the transport:
+/// spawn a [`bevy_replicon::prelude::ConnectedClient`] (with [`ClientId`] and [`Identity`]) per
+/// connection, shuttle byte frames through [`bevy_replicon::prelude::ServerMessages`], and call
+/// `update()` at [`TICK_HZ`].
+#[cfg(feature = "host")]
+pub fn server_app() -> bevy_app::App {
+    use bevy_replicon::prelude::{AuthMethod, RepliconSharedPlugin, ServerState};
 
-// One shard per zone: each area is its own world that ticks independently.
-pub fn zones() -> Vec<u32> {
-    crate::core::area::areas()
-        .iter()
-        .map(|area| area.id.0)
-        .collect()
+    let mut app = bevy_app::App::new();
+    app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));
+    app.add_plugins(
+        bevy_app::PluginGroup::build(bevy_replicon::prelude::RepliconPlugins)
+            .set(RepliconSharedPlugin {
+                auth_method: AuthMethod::None,
+            })
+            .set(bevy_replicon::server::ServerPlugin::new(
+                bevy_app::PostUpdate,
+            )),
+    );
+    core::protocol::protocol(&mut app);
+    features::features(&mut app);
+    app.finish();
+    app.world_mut()
+        .resource_mut::<bevy_state::prelude::NextState<ServerState>>()
+        .set(ServerState::Running);
+    app
 }

@@ -1,6 +1,6 @@
-//! The browser suite only covers the seams the in-process `standalone` suite cannot reach: the
-//! real wasm client, canvas input, Keycloak sign-in, and the WebSocket transport through the
-//! reverse proxy. Every game-logic contract lives in `standalone.rs`. Run with `cargo x e2e`.
+//! The end-to-end suite: a real headless browser signs in through Keycloak and plays the wasm
+//! client through the reverse proxy, while a mirror session decodes the captured WebSocket
+//! traffic to assert on what the player's client actually received. Run with `cargo x e2e`.
 
 mod cdp;
 mod flow;
@@ -55,32 +55,25 @@ fn a_visitor_can_register_sign_in_and_play() {
 
     flow::click_text(&page, "nav a", "Play");
     flow::wait_for(&page, "document.getElementById('glcanvas') !== null");
-    let mut mirror = rift::Client::new();
+    let mut mirror = stage::Mirror::new();
     let spawned = flow::wait(60.0, || {
-        for frame in page.received_frames() {
-            mirror.receive(&frame);
-        }
-        e2e::view_of(&mirror).me().is_some()
+        mirror.feed(page.received_frames());
+        mirror.client.my_position().is_some()
     });
     assert!(
         spawned,
         "the embedded client must connect and spawn a player"
     );
 
-    let start = {
-        let view = e2e::view_of(&mirror);
-        let me = view.me().expect("player visible").clone();
-        me.pos
-    };
+    let start = mirror.client.my_position().expect("player visible");
     let (x, y) = flow::canvas_click_point(&page, 40.0, 0.0);
     page.click(x, y);
     let moved = flow::wait(15.0, || {
-        for frame in page.received_frames() {
-            mirror.receive(&frame);
-        }
-        e2e::view_of(&mirror)
-            .me()
-            .is_some_and(|me| me.pos.distance(start) > 0.5)
+        mirror.feed(page.received_frames());
+        mirror
+            .client
+            .my_position()
+            .is_some_and(|pos| pos.distance(start) > 0.5)
     });
     assert!(moved, "clicking the canvas must move the player");
 }
@@ -98,12 +91,10 @@ fn a_spectator_can_sign_in_and_spectate_via_the_ui() {
     flow::click_text(&page, "nav a", "Spectate");
     flow::wait_for(&page, "document.getElementById('glcanvas') !== null");
 
-    let mut mirror = rift::Client::new();
+    let mut mirror = stage::Mirror::new();
     let spectating = flow::wait(60.0, || {
-        for frame in page.received_frames() {
-            mirror.receive(&frame);
-        }
-        e2e::view_of(&mirror).spectating
+        mirror.feed(page.received_frames());
+        mirror.client.is_spectating()
     });
     assert!(spectating, "the spectate page must boot a spectator client");
 }

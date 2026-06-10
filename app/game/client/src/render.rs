@@ -14,6 +14,13 @@ use world::core::protocol::{Actor, Position, Vitals, action_name};
 use world::core::session::MmoClient;
 use world::core::{actors, area};
 
+type ActorQuery = (
+    Entity,
+    &'static Actor,
+    &'static Position,
+    Option<&'static Vitals>,
+);
+
 /// One tile, in pixels.
 pub const TILE_SIZE: Size<Pixels> = Size::splat(Pixels(16.0));
 /// The rendered viewport, in tiles.
@@ -58,7 +65,7 @@ pub struct Camera {
     pub center: Pos<Tiles>,
 }
 
-pub fn camera(client: &MmoClient) -> Option<Camera> {
+pub fn camera(client: &mut MmoClient) -> Option<Camera> {
     camera_for(client.my_position()?, client.my_area()?)
 }
 
@@ -99,18 +106,21 @@ pub struct Scene {
     dead: bool,
 }
 
-pub fn build_scene(client: &MmoClient, time: f32, animator: &mut Animator) -> Scene {
+pub fn build_scene(client: &mut MmoClient, time: f32, animator: &mut Animator) -> Scene {
     let camera = camera(client);
     let area = client.my_area().unwrap_or(AreaId(0));
     let me = client.my_entity();
-    let world = client.world();
-    animator.anchors.retain(|&entity, _| world.alive(entity));
-    let actors = world
-        .iter::<Actor>()
-        .filter_map(|(entity, actor)| {
-            let position = world.get::<Position>(entity)?;
+    let dead = client.is_dead();
+    let world = client.world_mut();
+    animator
+        .anchors
+        .retain(|&entity, _| world.get_entity(entity).is_ok());
+    let mut query = world.query::<ActorQuery>();
+    let actors = query
+        .iter(world)
+        .map(|(entity, actor, position, vitals)| {
             let elapsed = animator.elapsed(entity, actor.action, time);
-            Some(ActorDraw {
+            ActorDraw {
                 pos: position.pos,
                 region: model(actor.model).frame(
                     action_name(actor.action),
@@ -121,10 +131,10 @@ pub fn build_scene(client: &MmoClient, time: f32, animator: &mut Animator) -> Sc
                 tint: actor.color,
                 model: actor.model,
                 health: (me == Some(entity))
-                    .then(|| world.get::<Vitals>(entity))
+                    .then_some(vitals)
                     .flatten()
                     .map(|v| (v.health / v.max).clamp(0.0, 1.0)),
-            })
+            }
         })
         .collect();
     Scene {
@@ -132,7 +142,7 @@ pub fn build_scene(client: &MmoClient, time: f32, animator: &mut Animator) -> Sc
         area,
         time,
         actors,
-        dead: client.is_dead(),
+        dead,
     }
 }
 

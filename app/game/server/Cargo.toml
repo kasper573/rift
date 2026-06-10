@@ -2,9 +2,26 @@
 name = "server"
 version.workspace = true
 edition.workspace = true
-description = "Authoritative MMORPG server binary: binds TCP and runs the `world` simulation at a fixed tick."
+description = "Authoritative MMORPG server binary: terminates WebSockets and runs the `world` simulation at a fixed tick."
+
+[features]
+stack = []
+
+[[test]]
+name = "browser"
+path = "tests/browser/main.rs"
+required-features = ["stack"]
 
 [dependencies]
-world = { path = "../world" }
-rift = { path = "../../../lib/rift" }
 auth = { path = "../../../lib/auth" }
+axum = { workspace = true, features = ["ws"] }
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.17", default-features = false }
+metrics-process = "2"
+tokio.workspace = true
+world = { path = "../world" }
+
+[dev-dependencies]
+serde_json.workspace = true
+tungstenite.workspace = true
+ureq = { workspace = true, features = ["rustls", "json"] }

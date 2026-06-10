@@ -5,23 +5,24 @@
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
-use rift::Wire;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::core::assets;
 use crate::core::math::{Pixels, Pos, Rect, Size, Tiles};
 use crate::core::protocol::Hitbox;
 
-/// An actor model's index in [`models`]; content tables reference models by name.
-#[derive(Wire, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+/// An actor model's index in [`models`]; content tables reference models by name via
+/// [`model_by_name`].
+#[derive(
+    Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default,
+)]
 pub struct ActorModelId(pub u16);
 
-impl<'de> Deserialize<'de> for ActorModelId {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let name = String::deserialize(deserializer)?;
-        model_index(&name)
-            .ok_or_else(|| serde::de::Error::custom(format!("unknown actor model '{name}'")))
-    }
+/// Deserializes an [`ActorModelId`] from a content table's model name.
+pub fn model_by_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ActorModelId, D::Error> {
+    let name = String::deserialize(deserializer)?;
+    model_index(&name)
+        .ok_or_else(|| serde::de::Error::custom(format!("unknown actor model '{name}'")))
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]

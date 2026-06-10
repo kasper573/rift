@@ -1,34 +1,61 @@
-pub mod actions;
-pub mod combat;
 pub mod items;
-pub mod movement;
-pub mod npc;
-pub mod player;
-pub mod regen;
-pub mod replication;
-pub mod rewards;
 pub mod sfx;
+
+#[cfg(feature = "host")]
+pub mod actions;
+#[cfg(feature = "host")]
+pub mod combat;
+#[cfg(feature = "host")]
+pub mod movement;
+#[cfg(feature = "host")]
+pub mod npc;
+#[cfg(feature = "host")]
+pub mod player;
+#[cfg(feature = "host")]
+pub mod regen;
+#[cfg(feature = "host")]
+pub mod rewards;
+#[cfg(feature = "host")]
 pub mod spectate;
+#[cfg(feature = "host")]
 pub mod visibility;
 
-use rift::Feature;
+#[cfg(feature = "host")]
+pub fn features(app: &mut bevy_app::App) {
+    use bevy_app::{Startup, Update};
+    use bevy_ecs::schedule::IntoScheduleConfigs;
 
-// Registration order is run order: reset → regen → npc_ai → combat → movement → npc_respawn.
-pub fn all() -> Vec<Feature> {
-    vec![
-        replication::feature,
-        actions::feature,
-        regen::feature,
-        npc::spawner,
-        npc::ai,
-        movement::input,
-        combat::feature,
-        items::feature,
-        rewards::feature,
-        movement::step,
-        player::feature,
-        spectate::feature,
-        npc::respawn,
-        visibility::feature,
-    ]
+    visibility::register(app);
+    app.init_resource::<player::Players>()
+        .init_resource::<spectate::Spectators>()
+        .init_resource::<regen::RegenAt>()
+        .add_message::<combat::Died>()
+        .add_observer(player::greet)
+        .add_observer(player::client_left)
+        .add_observer(spectate::client_left)
+        .add_systems(Startup, npc::spawn_all)
+        // The chain is run order: reset → regen → npc ai → intents → combat → items → rewards →
+        // movement → join/respawn → spectate → npc respawn → visibility.
+        .add_systems(
+            Update,
+            (
+                actions::reset,
+                regen::regen,
+                npc::run_ai,
+                movement::move_request,
+                movement::move_to_portal,
+                combat::request,
+                combat::combat,
+                items::use_item,
+                rewards::grant,
+                movement::advance,
+                player::join,
+                player::respawn,
+                spectate::requests,
+                spectate::follow,
+                npc::run_respawn,
+                visibility::update,
+            )
+                .chain(),
+        );
 }

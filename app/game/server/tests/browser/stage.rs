@@ -1,12 +1,54 @@
 //! Connects the browser suite to the live stack: drives Keycloak (admin sign-in and user
-//! creation) and opens pages against the deployed website. Each test owns its own `rift::Client`
-//! mirror to decode the captured WebSocket traffic.
+//! creation), opens pages against the deployed website, and decodes captured WebSocket traffic
+//! through a [`Mirror`] session.
+
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::rc::Rc;
 
 use crate::cdp::{Browser, Page};
 use crate::flow;
 use crate::keycloak::Keycloak;
 
 pub const PASSWORD: &str = "e2e-password-1";
+
+/// A read-only replica of what the browser's client received: the captured server frames played
+/// into a [`world::MmoClient`] over a queue transport.
+pub struct Mirror {
+    pub client: world::MmoClient,
+    queue: Rc<RefCell<VecDeque<Vec<u8>>>>,
+}
+
+impl Mirror {
+    pub fn new() -> Mirror {
+        let queue = Rc::new(RefCell::new(VecDeque::new()));
+        Mirror {
+            client: world::MmoClient::with_transport(Box::new(Replay(Rc::clone(&queue)))),
+            queue,
+        }
+    }
+
+    pub fn feed(&mut self, frames: Vec<Vec<u8>>) {
+        self.queue.borrow_mut().extend(frames);
+        self.client.poll();
+    }
+}
+
+struct Replay(Rc<RefCell<VecDeque<Vec<u8>>>>);
+
+impl world::Transport for Replay {
+    fn send(&mut self, _packet: &[u8]) {}
+
+    fn poll(&mut self, sink: &mut dyn FnMut(&[u8])) {
+        while let Some(frame) = self.0.borrow_mut().pop_front() {
+            sink(&frame);
+        }
+    }
+
+    fn status(&self) -> world::LinkStatus {
+        world::LinkStatus::Open
+    }
+}
 
 pub struct BrowserStage {
     browser: Browser,

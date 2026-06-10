@@ -322,7 +322,7 @@ fn ensure_network() {
 fn stack_test(args: &[&str]) {
     let vars = resolve_env("test");
     run(Command::new("cargo")
-        .args(["test", "-p", "e2e", "--features", "stack"])
+        .args(["test", "-p", "server", "--features", "stack"])
         .args(args)
         .envs(vars));
 }

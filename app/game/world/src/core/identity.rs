@@ -1,5 +1,8 @@
-// Attached as the connection's rift session data, so it travels with the client across shards.
-#[derive(Clone, Debug, PartialEq, Eq)]
+use bevy_ecs::component::Component;
+
+/// Who a connection authenticated as; sits on the connection's client entity.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+#[component(immutable)]
 pub struct Identity {
     pub id: String,
     pub name: String,

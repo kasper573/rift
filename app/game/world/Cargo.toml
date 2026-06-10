@@ -4,14 +4,22 @@ version.workspace = true
 edition.workspace = true
 description = "The MMORPG game library: wire protocol, content tables, and world simulation (NPC AI, combat, movement, portals) — organized by domain. The server and client are thin composition roots over this."
 
+[features]
+default = ["host"]
+host = ["bevy_replicon/server", "dep:bevy_time"]
+
 [dependencies]
+bevy_app.workspace = true
+bevy_ecs.workspace = true
+bevy_replicon = { workspace = true, features = ["client"] }
+bevy_state.workspace = true
+bevy_time = { version = "0.18", default-features = false, features = ["std"], optional = true }
 include_dir = "0.7"
-rift = { path = "../../../lib/rift", default-features = false }
 math = { path = "../../../lib/math" }
-tiled = { version = "0.15", default-features = false }
 pathfinding = "4"
 serde.workspace = true
 serde_json.workspace = true
+tiled = { version = "0.15", default-features = false }
 
-[dev-dependencies]
-serde_json.workspace = true
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tungstenite.workspace = true

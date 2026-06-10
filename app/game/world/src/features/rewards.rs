@@ -1,13 +1,15 @@
 use std::sync::OnceLock;
 
-use rift::{Builder, Ctx};
+use bevy_ecs::message::Messages;
+use bevy_ecs::prelude::*;
 use serde::{Deserialize, Deserializer};
 
-use crate::core::math::{Rng, rng_unit};
+use crate::core::math::rng_unit;
 use crate::core::protocol::{Inventory, ItemId, Owner, Xp};
 use crate::core::table;
 use crate::features::combat::Died;
-use crate::features::npc::{Npc, NpcId};
+use crate::features::items;
+use crate::features::npc::{GameRng, Npc, NpcId};
 
 const FILE: &str = "reward_table.json";
 
@@ -25,6 +27,7 @@ pub enum RewardKind {
     Xp,
     /// An absent `chance` is a guaranteed drop.
     Item {
+        #[serde(deserialize_with = "items::item_by_name")]
         item: ItemId,
         chance: Option<Chance>,
     },
@@ -46,10 +49,6 @@ impl<'de> Deserialize<'de> for Chance {
     }
 }
 
-pub fn feature(b: &mut Builder) {
-    b.on::<Died>(grant);
-}
-
 pub fn all() -> &'static [Reward] {
     static REWARDS: OnceLock<Vec<Reward>> = OnceLock::new();
     REWARDS.get_or_init(|| table::load(FILE))
@@ -59,32 +58,36 @@ pub fn rewards_for(npc: NpcId) -> impl Iterator<Item = &'static Reward> {
     all().iter().filter(move |reward| reward.npc == npc)
 }
 
-fn grant(ctx: &mut Ctx, died: &Died) {
-    let Some(def) = ctx.server.world.get::<Npc>(died.entity).map(|npc| npc.def) else {
-        return;
-    };
-    if !ctx.server.world.has::<Owner>(died.killer) {
-        return;
-    }
-    let mut rng = ctx.res.get::<Rng>().map_or(1, |r| r.0);
-    let world = &mut ctx.server.world;
-    for reward in rewards_for(def) {
-        match reward.kind {
-            RewardKind::Xp => {
-                world.modify::<Xp>(died.killer, |xp| xp.amount += reward.amount);
-            }
-            RewardKind::Item { item, chance } => {
-                // One roll per reward row; absent chance is guaranteed.
-                let granted = chance.is_none_or(|percent| rng_unit(&mut rng) * 100.0 < percent.0);
-                if granted {
-                    world.modify::<Inventory>(died.killer, |inventory| {
+pub fn grant(world: &mut World) {
+    let deaths: Vec<Died> = world.resource_mut::<Messages<Died>>().drain().collect();
+    for died in deaths {
+        let Some(def) = world.get::<Npc>(died.entity).map(|npc| npc.def) else {
+            continue;
+        };
+        if world.get::<Owner>(died.killer).is_none() {
+            continue;
+        }
+        let mut rng = world.resource::<GameRng>().0;
+        for reward in rewards_for(def) {
+            match reward.kind {
+                RewardKind::Xp => {
+                    if let Some(mut xp) = world.get_mut::<Xp>(died.killer) {
+                        xp.amount += reward.amount;
+                    }
+                }
+                RewardKind::Item { item, chance } => {
+                    // One roll per reward row; absent chance is guaranteed.
+                    let granted =
+                        chance.is_none_or(|percent| rng_unit(&mut rng) * 100.0 < percent.0);
+                    if granted && let Some(mut inventory) = world.get_mut::<Inventory>(died.killer)
+                    {
                         inventory
                             .items
                             .extend(std::iter::repeat_n(item, reward.amount as usize));
-                    });
+                    }
                 }
             }
         }
+        world.resource_mut::<GameRng>().0 = rng;
     }
-    ctx.res.insert(Rng(rng));
 }
