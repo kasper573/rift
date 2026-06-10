@@ -55,17 +55,18 @@ impl SfxTracker {
             }
             let pan = proximity_pan(listener, source);
             let prev = if was == actor.action { then } else { -1.0 };
-            let model = &actors::models()[actor.model.0 as usize];
+            let model = actors::model(actor.model);
             let action = action_name(actor.action);
             let rate = actor.attack_rate.0;
-            for id in model.sfx(action, actor.dir, prev, now, rate) {
+            let (cues, stepped) = model.cues(action, actor.dir, prev, now, rate);
+            for id in cues {
                 let slot = frame.entry(id).or_insert((0.0, 0.0));
                 if volume > slot.0 {
                     *slot = (volume, pan);
                 }
             }
             if let Some(area) = area
-                && model.steps_crossed(action, actor.dir, prev, now, rate)
+                && stepped
                 && let Some(id) = area.tile_sfx_at(source.x.floor() as i32, source.y.floor() as i32)
             {
                 let slot = frame.entry(id).or_insert((0.0, 0.0));

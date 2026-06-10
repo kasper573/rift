@@ -1,6 +1,4 @@
 use std::collections::HashSet;
-use std::io::Cursor;
-use std::path::Path;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -264,32 +262,9 @@ fn index(id: &str, context: &str) -> AreaId {
 
 /// Reads `maps/<name>.tmx` and everything it references out of the embedded assets.
 fn load_map(name: &str) -> tiled::Map {
-    let mut loader = tiled::Loader::with_reader(|path: &Path| -> std::io::Result<_> {
-        let key = embedded_key(path);
-        assets::bytes(&key)
-            .map(Cursor::new)
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, key))
-    });
-    loader
+    tiled::Loader::with_reader(assets::tiled_reader)
         .load_tmx_map(format!("{}/{name}.tmx", assets::MAPS))
         .unwrap_or_else(|error| panic!("map '{name}': {error}"))
-}
-
-/// Normalizes the loader's relative paths (`maps/../tilesets/x.tsx`) to embedded asset keys.
-fn embedded_key(path: &Path) -> String {
-    let mut parts: Vec<&str> = Vec::new();
-    for part in path.components() {
-        match part {
-            std::path::Component::ParentDir => {
-                parts.pop();
-            }
-            std::path::Component::Normal(name) => {
-                parts.push(name.to_str().unwrap_or_default());
-            }
-            _ => {}
-        }
-    }
-    parts.join("/")
 }
 
 fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {

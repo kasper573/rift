@@ -1,5 +1,8 @@
 //! Every file under `assets/` is embedded at compile time; the directory layout is the schema.
 
+use std::io::Cursor;
+use std::path::Path;
+
 use include_dir::{Dir, include_dir};
 
 pub const MAPS: &str = "maps";
@@ -29,6 +32,27 @@ pub fn find_text(dir: &str, reference: &str) -> Option<&'static str> {
 
 pub fn bytes(name: &str) -> Option<&'static [u8]> {
     Some(ASSETS.get_file(name)?.contents())
+}
+
+/// Reads an embedded asset for the tiled loader, normalizing the loader's relative paths
+/// (`maps/../tilesets/x.tsx`) to embedded keys.
+pub fn tiled_reader(path: &Path) -> std::io::Result<Cursor<&'static [u8]>> {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                parts.pop();
+            }
+            std::path::Component::Normal(name) => {
+                parts.push(name.to_str().unwrap_or_default());
+            }
+            _ => {}
+        }
+    }
+    let key = parts.join("/");
+    bytes(&key)
+        .map(Cursor::new)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, key))
 }
 
 pub fn text(name: &str) -> Option<&'static str> {

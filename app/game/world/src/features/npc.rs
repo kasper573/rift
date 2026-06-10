@@ -12,7 +12,8 @@ use crate::core::math::{
     Direction, Millis, Offset, PlaybackRate, Pos, Seconds, Tiles, TilesPerSec, next_rng, rng_unit,
 };
 use crate::core::protocol::{
-    ACTION_IDLE, Actor, AreaTag, Name, Position, Rgba, Vitals, is_dead, position, set_action,
+    ACTION_IDLE, Actor, AreaTag, Hitbox, Name, Position, Rgba, Vitals, is_dead, position,
+    set_action,
 };
 use crate::core::{protocol, table};
 use crate::features::combat::{AttackTarget, Attackers, Stats};
@@ -145,7 +146,9 @@ fn spawn_npc(world: &mut World, rng: &mut u64, area: &area::Area, def_index: Npc
             model: def.model,
             attack_rate: def.attack_speed,
         },
-        actors::model_hitbox(def.model),
+        Hitbox {
+            size: actors::model(def.model).hitbox(),
+        },
         Vitals {
             health: def.health,
             max: def.health,

@@ -10,7 +10,7 @@ use crate::core::area::{self, AreaId};
 use crate::core::identity::Identity;
 use crate::core::math::{Direction, Millis, PlaybackRate, Pos, Tiles, TilesPerSec};
 use crate::core::protocol::{
-    ACTION_IDLE, Actor, AreaTag, ClientId, Inventory, JoinRequest, Name, Owner, Position,
+    ACTION_IDLE, Actor, AreaTag, ClientId, Hitbox, Inventory, JoinRequest, Name, Owner, Position,
     RespawnRequest, Rgba, Vitals, Welcome, Xp, is_dead, set_action,
 };
 use crate::core::{actors, protocol};
@@ -117,7 +117,9 @@ fn spawn_player(
                 model,
                 attack_rate: PLAYER_ATTACK_SPEED,
             },
-            actors::model_hitbox(model),
+            Hitbox {
+                size: actors::model(model).hitbox(),
+            },
             Vitals {
                 health: PLAYER_MAX_HEALTH,
                 max: PLAYER_MAX_HEALTH,

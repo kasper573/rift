@@ -134,7 +134,7 @@ pub fn build_scene(client: &mut MmoClient, time: f32, animator: &mut Animator) -
             let elapsed = animator.elapsed(entity, actor.action, time);
             ActorDraw {
                 pos: position.pos,
-                region: model(actor.model).frame(
+                region: actors::model(actor.model).frame(
                     action_name(actor.action),
                     actor.dir,
                     elapsed,
@@ -300,7 +300,7 @@ fn draw_scene(scene: &Scene, textures: &mut Textures) {
                 );
                 let dst = center.round() - anchor;
                 textures.draw_png(
-                    model(actor.model).sheet(),
+                    actors::model(actor.model).sheet(),
                     actor.region,
                     dst,
                     actor.region.size,
@@ -468,10 +468,6 @@ fn fill(top_left: Pos<Pixels>, size: Size<Pixels>, rgba: u32) {
 fn rgba_color(tint: Rgba) -> Color {
     let [r, g, b, a] = tint.0.to_be_bytes();
     Color::from_rgba(r, g, b, a)
-}
-
-fn model(index: ActorModelId) -> &'static actors::ActorModel {
-    &actors::models()[index.0 as usize]
 }
 
 fn to_frame(camera: Camera, world: Pos<Tiles>) -> Pos<Pixels> {

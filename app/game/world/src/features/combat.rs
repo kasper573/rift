@@ -227,7 +227,7 @@ fn attack_timing(world: &World, entity: Entity, dir: u8) -> crate::core::actors:
     let model = world
         .get::<protocol::Actor>(entity)
         .map_or(ActorModelId(0), |a| a.model);
-    actors::models()[model.0 as usize].timing(action_name(ACTION_ATTACK), dir)
+    actors::model(model).timing(action_name(ACTION_ATTACK), dir)
 }
 
 fn add_attacker(world: &mut World, target: Entity, by: Entity) {
