@@ -22,9 +22,6 @@ jobs:
       packages: write
     env:
       COMPOSE: docker compose -f docker/docker-compose.yaml
-      # keycloak and reverse-proxy depend only on their own Dockerfiles, so they are tagged by a
-      # hash of those and the pushed image is reused across runs instead of rebuilding kc.sh/xcaddy.
-      INFRA_TAG: infra-${{ hashFiles('docker/Dockerfile.keycloak', 'docker/Dockerfile.reverse-proxy') }}
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
@@ -42,6 +39,11 @@ jobs:
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
       - name: Start keycloak in the background (overlaps its pull+boot with the build)
+        env:
+          # keycloak and reverse-proxy depend only on their own Dockerfiles, so they are tagged by
+          # a hash of those and the pushed image is reused across runs instead of rebuilding
+          # kc.sh/xcaddy.
+          INFRA_TAG: infra-${{ hashFiles('docker/Dockerfile.keycloak', 'docker/Dockerfile.reverse-proxy') }}
         run: |
           docker network inspect rift >/dev/null 2>&1 || docker network create rift
           cat > /tmp/prewarm.sh <<'SCRIPT'
