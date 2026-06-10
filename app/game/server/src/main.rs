@@ -4,6 +4,7 @@ use rift::TcpCluster;
 use world::{TICK_HZ, features, spawn_zone, zones};
 
 fn main() -> std::io::Result<()> {
+    world::validate();
     let address = std::env::var("RIFT_GAME_SERVER_PORT")
         .map(|port| {
             let hostname =

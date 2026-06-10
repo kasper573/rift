@@ -8,8 +8,3 @@ description = "Authoritative MMORPG server binary: binds TCP and runs the `world
 world = { path = "../world" }
 rift = { path = "../../../lib/rift" }
 auth = { path = "../../../lib/auth" }
-
-# The build script runs world::validate over the embedded assets, so broken
-# content fails the server build instead of the running server.
-[build-dependencies]
-world = { path = "../world" }

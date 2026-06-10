@@ -1,17 +1,21 @@
-//! Every file under `assets/` is embedded at build time; the directory layout is the schema.
+//! Every file under `assets/` is embedded at compile time; the directory layout is the schema.
+
+use include_dir::{Dir, include_dir};
 
 pub const MAPS: &str = "maps";
 pub const TILESETS: &str = "tilesets";
 pub const ACTORS: &str = "actors";
 pub const ICONS: &str = "icons";
 
-include!(concat!(env!("OUT_DIR"), "/assets.rs"));
+static ASSETS: Dir = include_dir!("$CARGO_MANIFEST_DIR/assets");
 
-pub fn dir(dir: &str) -> impl Iterator<Item = (&'static str, &'static [u8])> {
-    FILES
-        .iter()
-        .filter(move |(name, _)| name.strip_prefix(dir).is_some_and(|r| r.starts_with('/')))
-        .map(|&(name, bytes)| (name, bytes))
+pub fn dir(path: &str) -> impl Iterator<Item = (&'static str, &'static [u8])> {
+    let mut files = Vec::new();
+    if let Some(dir) = ASSETS.get_dir(path) {
+        walk(dir, &mut files);
+    }
+    files.sort_by_key(|&(name, _)| name);
+    files.into_iter()
 }
 
 pub fn find(dir: &str, reference: &str) -> Option<(&'static str, &'static [u8])> {
@@ -24,19 +28,27 @@ pub fn find_text(dir: &str, reference: &str) -> Option<&'static str> {
 }
 
 pub fn bytes(name: &str) -> Option<&'static [u8]> {
-    FILES
-        .iter()
-        .find(|(file, _)| *file == name)
-        .map(|&(_, bytes)| bytes)
+    Some(ASSETS.get_file(name)?.contents())
 }
 
 pub fn text(name: &str) -> Option<&'static str> {
-    bytes(name).and_then(|bytes| std::str::from_utf8(bytes).ok())
+    ASSETS.get_file(name)?.contents_utf8()
 }
 
 pub fn stem(name: &str) -> &str {
     let file = file_name(name);
     file.rsplit_once('.').map_or(file, |(stem, _)| stem)
+}
+
+fn walk(dir: &'static Dir, out: &mut Vec<(&'static str, &'static [u8])>) {
+    for file in dir.files() {
+        if let Some(name) = file.path().to_str() {
+            out.push((name, file.contents()));
+        }
+    }
+    for sub in dir.dirs() {
+        walk(sub, out);
+    }
 }
 
 fn file_name(name: &str) -> &str {
