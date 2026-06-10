@@ -1,24 +1,33 @@
 # CLAUDE.md
 
+## Mission: tersify
+
+Shrink this repo to the minimum first-party code that produces an identical player experience.
+
+- INVARIANT: player-identical experience — gameplay, graphics, audio, feel, and perceptible
+  performance (load times, framerate, latency). Unsure if something is player-perceivable? It is.
+- End state: exactly four first-party crates — `game/server`, `game/client`, `game/world`,
+  `website` — plus assets (convert freely), a terse E2E suite, and minimal infra config.
+- Caddy, Keycloak, and the LGTM stack stay (reconfigure freely).
+- Everything an established, actively maintained crate can do, that crate does. Only genuine
+  game logic and content earns a place here. Prefer one ecosystem's idiomatic companions.
+- Metaprogramming lives inside Rust: macros fine; zero build.rs, zero codegen scripts.
+- Depend, don't vendor.
+- Verification is E2E plus real play, nothing else. Delete internal unit/integration tests.
+- Strangle, don't big-bang: E2E green before every commit; commit messages name what was
+  deleted and the first-party LOC delta (tokei, excluding assets).
+
 ## General
 
-- Dependencies: std only by default; exceptions must be approved.
 - Correctness & clarity comes before performance.
 - Tests assert on contracts, never implementation details.
 - No mitigation fixes or hacks. Refactoring is encouraged: Don't hunt symptoms, fix root causes.
 - Content is data bundled into the runtime.
 
-## Architecture
-
-- Server-authoritative: the server owns all state and the client sends intents and renders replicated state.
-- `<projectRoot>/app`: Deployable artifacts
-- `<projectRoot>/app/game`: The actual game. Contain all content and business logic.
-- `<projectRoot>/lib/`: Reusable libraries. Entirely decoupled from /app/.
-
 ## Code style
 
 - Prioritize simplicity, stability (extensible, not brittle), readability — then performance.
-- small `macro_rules!` codegen is allowed where it removes boilerplate (see rift's `wire!`).
+- small `macro_rules!` codegen is allowed where it removes boilerplate.
 - Files read consumer-first: public API at top, private helpers at the bottom.
 - No comments by default — code must be self-explanatory. A comment is only allowed for a
   non-obvious why (an external gotcha, a constraint the code can't express), never what/how.
@@ -33,6 +42,5 @@
 
 ## Verify before done
 
-- `cargo fmt` · `cargo clippy --all-targets` (no warnings) · `cargo test`
-- `cargo build`
-- Run benchmarks before and after your change. Compare and detect and fix performance regressions.
+- `cargo fmt` · `cargo clippy --all-targets` (no warnings) · `cargo build`
+- The E2E suite green, locally and in CI.
