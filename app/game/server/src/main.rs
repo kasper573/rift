@@ -2,6 +2,8 @@
 //! connections and the `world` simulation, ticks it at [`world::TICK_HZ`], and serves the
 //! `/health` and `/metrics` endpoints the stack scrapes.
 
+mod auth;
+
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};

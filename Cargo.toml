@@ -2,7 +2,6 @@
 resolver = "3"
 members = [
     "lib/math",
-    "lib/auth",
     "app/game/world",
     "app/game/server",
     "app/game/client",

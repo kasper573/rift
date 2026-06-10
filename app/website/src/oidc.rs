@@ -4,6 +4,8 @@ use std::sync::Arc;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, header};
 use axum::response::{AppendHeaders, IntoResponse, Redirect, Response};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use sha2::{Digest, Sha256};
 
 use crate::App;
@@ -13,9 +15,9 @@ pub async fn sign_in(
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let return_path = sanitize_return(params.get("return"));
-    let state = random_hex(16);
-    let verifier = random_hex(32);
-    let challenge = base64url(&Sha256::digest(verifier.as_bytes()));
+    let state = random_token();
+    let verifier = random_token();
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     let authorize = format!(
         "{}/protocol/openid-connect/auth?client_id={}&redirect_uri={}&response_type=code\
          &scope=openid%20profile&state={state}&code_challenge={challenge}&code_challenge_method=S256",
@@ -83,7 +85,7 @@ pub async fn sign_out(State(app): State<Arc<App>>, headers: HeaderMap) -> Respon
         "{}/protocol/openid-connect/logout?client_id={}&post_logout_redirect_uri={}",
         app.authority,
         urlencode(&app.audience),
-        urlencode(origin(&app.redirect_uri)),
+        urlencode(&origin(&app.redirect_uri)),
     );
     // Without the hint keycloak interposes a logout confirmation page.
     if let Some(id_token) = cookie(&headers, "idt") {
@@ -111,16 +113,7 @@ pub fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 }
 
 pub fn urlencode(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    for byte in raw.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(byte as char);
-            }
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
+    urlencoding::encode(raw).into_owned()
 }
 
 fn exchange_code(app: &App, code: &str, verifier: &str) -> Option<(String, String)> {
@@ -153,38 +146,19 @@ fn sanitize_return(raw: Option<&String>) -> String {
     }
 }
 
-fn origin(url: &str) -> &str {
-    match url.find("://") {
-        Some(scheme) => match url[scheme + 3..].find('/') {
-            Some(path) => &url[..scheme + 3 + path],
-            None => url,
-        },
-        None => url,
-    }
+fn origin(url: &str) -> String {
+    url::Url::parse(url).map_or_else(
+        |_| url.to_owned(),
+        |parsed| parsed.origin().ascii_serialization(),
+    )
 }
 
-fn random_hex(bytes: usize) -> String {
-    let mut buffer = vec![0u8; bytes];
-    let mut file = std::fs::File::open("/dev/urandom").expect("/dev/urandom");
-    std::io::Read::read_exact(&mut file, &mut buffer).expect("read randomness");
-    buffer.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn base64url(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let buffer = [
-            chunk[0],
-            *chunk.get(1).unwrap_or(&0),
-            *chunk.get(2).unwrap_or(&0),
-        ];
-        let value = u32::from_be_bytes([0, buffer[0], buffer[1], buffer[2]]);
-        for position in 0..=chunk.len() {
-            out.push(ALPHABET[(value >> (18 - 6 * position) & 0x3F) as usize] as char);
-        }
-    }
-    out
+/// 32 bytes of OS randomness as base64url — alphabet-safe for both the PKCE verifier and the
+/// dot-separated oidc cookie.
+fn random_token() -> String {
+    let mut buffer = [0u8; 32];
+    getrandom::fill(&mut buffer).expect("read randomness");
+    URL_SAFE_NO_PAD.encode(buffer)
 }
 
 fn set_cookie(value: &str) -> (header::HeaderName, String) {

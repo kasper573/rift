@@ -9,6 +9,7 @@ use axum::routing::get;
 use tower_http::services::ServeFile;
 use tower_http::set_header::SetResponseHeaderLayer;
 
+mod auth;
 mod oidc;
 
 /// Must match the realm role the game server checks (world::SPECTATE_ROLE).
@@ -66,12 +67,8 @@ impl App {
         };
         let authority = var("RIFT_WEBSITE_AUTH__AUTHORITY");
         let audience = var("RIFT_WEBSITE_AUTH__AUDIENCE");
-        let mut verifier = auth::Verifier::new(
-            &authority,
-            &audience,
-            &var("RIFT_WEBSITE_AUTH__JWKS_URI"),
-            false,
-        );
+        let mut verifier =
+            auth::Verifier::new(&authority, &audience, &var("RIFT_WEBSITE_AUTH__JWKS_URI"));
         match verifier.warm() {
             Ok(()) => println!("auth ready, issuer {authority}"),
             Err(error) => println!("auth ready, issuer {authority} (jwks warm-up failed: {error})"),

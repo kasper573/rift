@@ -172,15 +172,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "auth"
-version = "0.1.0"
-dependencies = [
- "jsonwebtoken",
- "serde_json",
- "ureq",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3168,8 +3159,8 @@ dependencies = [
 name = "server"
 version = "0.1.0"
 dependencies = [
- "auth",
  "axum",
+ "jsonwebtoken",
  "metrics",
  "metrics-exporter-prometheus",
  "metrics-process",
@@ -3894,6 +3885,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "urlencoding"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
+
+[[package]]
 name = "utf8-zero"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4091,13 +4088,17 @@ name = "website"
 version = "0.1.0"
 dependencies = [
  "askama",
- "auth",
  "axum",
+ "base64",
+ "getrandom 0.3.4",
+ "jsonwebtoken",
  "serde_json",
  "sha2",
  "tokio",
  "tower-http",
  "ureq",
+ "url",
+ "urlencoding",
 ]
 
 [[package]]
