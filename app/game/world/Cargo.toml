@@ -9,7 +9,7 @@ include_dir = "0.7"
 rift = { path = "../../../lib/rift", default-features = false }
 math = { path = "../../../lib/math" }
 tiled = { version = "0.15", default-features = false }
-nav = { path = "../../../lib/nav" }
+pathfinding = "4"
 serde.workspace = true
 serde_json.workspace = true
 

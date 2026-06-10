@@ -218,7 +218,7 @@ fn route(world: &World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<Cell>> {
     let area = &area::areas()[area_id.0 as usize];
     let at = position(world, entity)?;
     let goal = area.grid.nearest_walkable(goal)?;
-    let mut path = nav::astar(&area.grid, at, goal)?;
+    let mut path = crate::core::nav::astar(&area.grid, at, goal)?;
     if path.len() > 1 {
         path.remove(0);
     }

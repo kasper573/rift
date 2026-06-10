@@ -101,7 +101,8 @@ fn every_area_is_walkable_pathable_and_connected() {
         assert!(
             area.portals.iter().any(|portal| {
                 let tile = portal.rect.center();
-                area.grid.walkable(tile) && nav::astar(&area.grid, spawn, tile).is_some()
+                area.grid.walkable(tile)
+                    && world::core::nav::astar(&area.grid, spawn, tile).is_some()
             }),
             "{name}: a portal must be reachable from spawn",
         );

@@ -4,7 +4,6 @@ members = [
     "lib/rift",
     "lib/rift/derive",
     "lib/math",
-    "lib/nav",
     "lib/auth",
     "app/game/world",
     "app/game/server",

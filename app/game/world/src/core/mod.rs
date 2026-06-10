@@ -3,6 +3,7 @@ pub mod area;
 pub mod assets;
 pub mod identity;
 pub mod math;
+pub mod nav;
 pub mod protocol;
 pub mod session;
 pub mod table;

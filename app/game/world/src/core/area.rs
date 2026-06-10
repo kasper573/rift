@@ -10,6 +10,7 @@ use tiled::{LayerType, PropertyValue};
 use crate::core::actors::SfxId;
 use crate::core::assets;
 use crate::core::math::{Pixels, Pos, Rect, Size, Tiles, Tiling};
+use crate::core::nav;
 use crate::core::table;
 
 const FILE: &str = "area_table.json";
@@ -134,7 +135,7 @@ pub struct Area {
     pub width: Tiles,
     pub height: Tiles,
 
-    pub grid: nav::Grid<Tiles>,
+    pub grid: nav::Grid,
     pub tile_sfx: Vec<Option<SfxId>>,
     pub spawn: Pos<Tiles>,
     pub portals: Vec<Portal>,
@@ -608,7 +609,7 @@ fn build_grid(
     layers: &[RenderLayer],
     tiles: &TileTable,
     obscuring: &[Rect<Tiles>],
-) -> nav::Grid<Tiles> {
+) -> nav::Grid {
     let (width, height) = (size.x.0 as i32, size.y.0 as i32);
     let cells = (width * height) as usize;
     let mut any_walkable = vec![false; cells];

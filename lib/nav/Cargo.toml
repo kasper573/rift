@@ -1,8 +1,0 @@
-[package]
-name = "nav"
-version.workspace = true
-edition.workspace = true
-description = "Grid walkability + A* pathfinding over a generic unit."
-
-[dependencies]
-math = { path = "../math" }
