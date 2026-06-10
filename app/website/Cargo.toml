@@ -6,13 +6,8 @@ edition.workspace = true
 [dependencies]
 askama.workspace = true
 axum.workspace = true
-base64 = "0.22"
-getrandom = "0.3"
-jsonwebtoken = { version = "10", features = ["rust_crypto"] }
-serde_json.workspace = true
-sha2.workspace = true
+axum-extra = { version = "0.10", features = ["cookie"] }
+openidconnect = "4"
+serde.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
-ureq.workspace = true
-url = "2"
-urlencoding = "2"
