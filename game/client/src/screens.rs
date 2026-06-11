@@ -75,21 +75,25 @@ fn sign_in_failed(mut commands: Commands) {
         );
 }
 
-fn choose_mode(mut commands: Commands) {
-    commands.spawn((ScreenUi, screen(), children![label("Choose a mode")]));
-    commands.spawn((ScreenUi, button("Play"))).observe(
-        |_: On<Pointer<Click>>, mut mode: ResMut<Mode>, mut screen: ResMut<NextState<Screen>>| {
-            *mode = Mode::Play;
-            screen.set(Screen::Playing);
-        },
-    );
-    commands.spawn((ScreenUi, button("Spectate"))).observe(
-        |_: On<Pointer<Click>>, mut mode: ResMut<Mode>, mut screen: ResMut<NextState<Screen>>| {
-            *mode = Mode::Spectate;
-            screen.set(Screen::Playing);
-        },
-    );
-}
+ fn choose_mode(mut commands: Commands) {
+      commands
+          .spawn((ScreenUi, screen(), children![label("Choose a mode")]))
+          .with_children(|screen_ui| {
+              screen_ui.spawn(button("Play")).observe(
+                  |_: On<Pointer<Click>>, mut mode: ResMut<Mode>, mut screen: ResMut<NextState<Screen>>| {
+                      *mode = Mode::Play;
+                      screen.set(Screen::Playing);
+                  },
+              );
+              screen_ui.spawn(button("Spectate")).observe(
+                  |_: On<Pointer<Click>>, mut mode: ResMut<Mode>, mut screen: ResMut<NextState<Screen>>| {
+                      *mode = Mode::Spectate;
+                      screen.set(Screen::Playing);
+                  },
+              );
+          });
+  }
+
 
 fn despawn(ui: Query<Entity, With<ScreenUi>>, mut commands: Commands) {
     for entity in &ui {
