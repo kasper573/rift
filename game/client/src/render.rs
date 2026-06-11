@@ -161,9 +161,9 @@ enum Bar {
     Fill,
 }
 
-/// The healthbar geometry in world pixels, above the player's head.
+/// The healthbar geometry in world pixels; it hangs just below the player's position point.
 const BAR: Vec2 = Vec2::new(20.0, 4.0);
-const BAR_RISE: f32 = 28.0;
+const BAR_DROP: f32 = 5.0;
 
 fn bar_sprite(rgb: u32, size: Vec2) -> Sprite {
     let [_, r, g, b] = rgb.to_be_bytes();
@@ -178,13 +178,13 @@ fn hidden() -> (Transform, Visibility) {
     (Transform::from_xyz(0.0, 0.0, 200.0), Visibility::Hidden)
 }
 
-/// Tracks the local player's healthbar above their head; hidden while dead or unspawned.
+/// Tracks the local player's healthbar below them; hidden while dead or unspawned.
 fn healthbar(world: &mut World) {
     let shown = match (session::my_position(world), session::my_vitals(world)) {
         // Whole pixels: at fractional offsets the fractional-width fill would alternate between
         // floor and ceil pixel coverage as the player moves.
         (Some(at), Some((health, max))) if health > 0.0 && max > 0.0 => Some((
-            Vec2::new(at.x * TILE, -at.y * TILE + BAR_RISE).round(),
+            Vec2::new(at.x * TILE, -at.y * TILE - BAR_DROP).round(),
             (health / max).clamp(0.0, 1.0),
         )),
         _ => None,
