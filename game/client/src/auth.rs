@@ -1,7 +1,3 @@
-//! Browser single sign-on every launch. [`sign_in`] runs the OIDC Authorization Code + PKCE flow
-//! against a loopback redirect (the testable lib fn the E2E drives); the plugin runs it on a
-//! background thread and routes the result into the [`Screen`] states.
-
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, TcpListener};
 use std::sync::Mutex;
@@ -22,11 +18,12 @@ use world::SPECTATE_ROLE;
 /// The public OIDC client id; the game server checks `azp == rift`.
 const CLIENT_ID: &str = "rift";
 
-/// What a completed sign-in yields: the access token the game server's `/session` verifies, and
-/// the realm roles read (unverified) from it to decide the launch flow.
+/// What entering play requires: the `Authorization` value `/session` accepts (`Bearer <jwt>` from
+/// sign-in, or `Bypass <name>`), and the realm roles read (unverified) from the token to decide
+/// the launch flow.
 #[derive(Resource, Clone)]
 pub struct Session {
-    pub access_token: String,
+    pub authorization: String,
     pub roles: Vec<String>,
 }
 
@@ -43,7 +40,13 @@ impl Plugin for AuthPlugin {
 struct Pending(Mutex<Receiver<Result<Session, String>>>);
 
 fn start(mut commands: Commands, mut screen: ResMut<NextState<Screen>>) {
-    if crate::smoke::enabled() {
+    // The client-side half of the server's RIFT_GAME_SERVER_AUTH_BYPASS: play without an identity
+    // provider (local development and the E2E test).
+    if let Ok(name) = std::env::var("RIFT_CLIENT_AUTH_BYPASS") {
+        commands.insert_resource(Session {
+            authorization: format!("Bypass {name}"),
+            roles: Vec::new(),
+        });
         screen.set(Screen::Playing);
         return;
     }
@@ -89,9 +92,8 @@ fn poll(
 
 /// Opens the system browser to the realm's authorize endpoint, captures the redirect on the
 /// loopback, and exchanges the code for tokens. Blocking; run off the main thread.
-pub fn sign_in() -> Result<Session, String> {
-    let ca = extra_ca();
-    let client_http = web::oidc_client(ca.as_deref());
+fn sign_in() -> Result<Session, String> {
+    let client_http = web::oidc_client();
     let metadata = CoreProviderMetadata::discover(&issuer()?, &client_http).map_err(stringify)?;
 
     // RFC 8252 loopback redirection: bind any free port on 127.0.0.1 and let the redirect carry it,
@@ -129,13 +131,11 @@ pub fn sign_in() -> Result<Session, String> {
     let access_token = tokens.access_token().secret().to_owned();
     let roles = roles(&access_token);
     Ok(Session {
-        access_token,
+        authorization: format!("Bearer {access_token}"),
         roles,
     })
 }
 
-/// Accepts a single redirect request on the loopback, replies with a closing page, and returns the
-/// captured `code` and `state`.
 fn capture(listener: &TcpListener) -> Result<(String, String), String> {
     let (mut stream, _) = listener.accept().map_err(stringify)?;
     let request = BufReader::new(&stream)
@@ -190,28 +190,13 @@ fn roles(access_token: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Connects to the game over netcode using the signed-in session, then announces the chosen mode.
+/// Mints a session token with the signed-in session, opens the netcode connection, and records
+/// the join/spectate intent to announce once the connection is welcomed (see [`net::Announce`]).
 pub fn enter(world: &mut World, spectate: bool) {
     let Some(session) = world.get_resource::<Session>().cloned() else {
         return;
     };
-    open(
-        world,
-        &format!("Bearer {}", session.access_token),
-        extra_ca().as_deref(),
-        spectate,
-    );
-}
-
-/// Connects without sign-in for the smoke harness; the local server runs over plain HTTP.
-pub fn enter_bypass(world: &mut World) {
-    open(world, "Bypass smoke", None, false);
-}
-
-/// Mints a session token, opens the netcode connection, and records the join/spectate intent to
-/// announce once the connection is welcomed (see [`net::Announce`]).
-fn open(world: &mut World, authorization: &str, extra_ca: Option<&[u8]>, spectate: bool) {
-    match net::request_token(&game_url(), authorization, extra_ca) {
+    match net::request_token(&game_url(), &session.authorization) {
         Ok(token) => {
             net::connect(world, &token);
             world.insert_resource(net::Announce { spectate });
@@ -235,13 +220,6 @@ fn game_url() -> String {
         option_env!("RIFT_CLIENT_GAME_URL"),
         "https://game-server.rift.localhost",
     )
-}
-
-fn extra_ca() -> Option<Vec<u8>> {
-    let path = std::env::var("RIFT_CLIENT_EXTRA_CA")
-        .ok()
-        .or_else(|| option_env!("RIFT_CLIENT_EXTRA_CA").map(str::to_owned))?;
-    std::fs::read(path).ok()
 }
 
 fn env(var: &str, shipped: Option<&str>, fallback: &str) -> String {

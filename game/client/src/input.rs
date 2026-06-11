@@ -1,6 +1,3 @@
-//! Gameplay input: a left click attacks the enemy under the cursor or walks there (the server
-//! resolves portals), and any key respawns a dead player.
-
 use bevy::prelude::*;
 use world::session;
 

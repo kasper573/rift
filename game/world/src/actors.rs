@@ -21,7 +21,6 @@ use crate::math::{Pixels, Pos, Rect, Size, Tiles};
 )]
 pub struct ActorModelId(pub u16);
 
-/// Deserializes an [`ActorModelId`] from a content table's model name.
 pub fn model_by_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ActorModelId, D::Error> {
     let name = String::deserialize(deserializer)?;
     model_index(&name)

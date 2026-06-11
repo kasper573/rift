@@ -1,7 +1,3 @@
-//! Sound: turns replicated state into one-shot cues — model sound/step frames as actors animate,
-//! plus consumed-item sounds — attenuated by a linear view-edge falloff (game feel) and played
-//! through `bevy_kira_audio`. Distinct cues landing close together collapse to a single play.
-
 use std::collections::HashMap;
 
 use bevy::prelude::*;

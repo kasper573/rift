@@ -1,8 +1,3 @@
-//! The client side of the session. [`ClientSessionPlugin`] registers the wire protocol and
-//! replicon's client plugins onto a Bevy app; the free functions below send intents
-//! (`&mut World`) and read replicated state (`&World`). The client app and the E2E tests drive
-//! them directly — there is no facade.
-
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::message::MessageReader;
 use bevy_ecs::prelude::*;

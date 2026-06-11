@@ -89,8 +89,6 @@ pub fn server_app() -> bevy_app::App {
         .add_observer(player::client_left)
         .add_observer(spectate::client_left)
         .add_systems(Startup, npc::spawn_all)
-        // The chain is run order: reset → regen → npc ai → intents → combat → items → rewards →
-        // movement → join/respawn → spectate → npc respawn → visibility.
         .add_systems(
             Update,
             (

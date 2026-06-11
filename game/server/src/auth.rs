@@ -1,7 +1,3 @@
-//! OpenID Connect access-token verification against a remote JWK set (e.g. Keycloak). The set is
-//! fetched lazily and refreshed when an unknown key id appears (key rotation), rate-limited by a
-//! cooldown.
-
 use std::time::{Duration, Instant};
 
 use jsonwebtoken::jwk::JwkSet;
@@ -14,6 +10,8 @@ pub struct Claims {
     pub roles: Vec<String>,
 }
 
+/// Verifies access tokens against the issuer's remote JWK set, fetched lazily and refreshed when
+/// an unknown key id appears (key rotation), rate-limited by a cooldown.
 pub struct Verifier {
     issuer: String,
     audience: String,

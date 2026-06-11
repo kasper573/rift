@@ -40,7 +40,6 @@ impl<'de> Deserialize<'de> for Icon {
     }
 }
 
-/// Deserializes an [`ItemId`] from a content table's item id string.
 pub fn item_by_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ItemId, D::Error> {
     let id = String::deserialize(deserializer)?;
     items()

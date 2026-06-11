@@ -1,5 +1,4 @@
-//! Content tables: JSON arrays of rows under the assets root, deserialized with serde. Loading is
-//! assertive — a malformed row or dangling reference panics with the offending file,
+//! Loading is assertive — a malformed row or dangling reference panics with the offending file,
 //! so broken content can never load.
 
 use serde::de::DeserializeOwned;

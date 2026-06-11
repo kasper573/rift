@@ -1,7 +1,4 @@
-//! The wire contract: every replicated component and client/server message, registered
-//! identically on both sides so bevy_replicon's channels line up. The server replicates
-//! component changes each tick; clients send intents as messages, and entity-bearing payloads
-//! are remapped between the two worlds automatically.
+//! Registered identically on both sides so bevy_replicon's channels line up.
 
 use bevy_app::App;
 use bevy_ecs::entity::MapEntities;
@@ -55,7 +52,6 @@ pub fn protocol(app: &mut App) {
 #[component(immutable)]
 pub struct ClientId(pub u32);
 
-/// The JWT role that entitles a client to spectate.
 pub const SPECTATE_ROLE: &str = "spectate";
 
 pub const ACTION_IDLE: u8 = 0;
@@ -192,7 +188,6 @@ pub struct ItemConsumed {
     pub actor: Entity,
 }
 
-/// Deserializes an [`Rgba`] from a content table's `#rrggbbaa` spelling.
 pub fn rgba_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Rgba, D::Error> {
     let hex = String::deserialize(deserializer)?;
     hex.strip_prefix('#')

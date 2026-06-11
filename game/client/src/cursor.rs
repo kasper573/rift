@@ -1,7 +1,3 @@
-//! The custom cursor and tile-hover highlight. Each frame the cursor reflects what a click would
-//! do — attack the enemy under it, walk to a walkable tile (held while the button is down), or
-//! nothing — and a crosshair marks the hovered walkable tile.
-
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
 use world::area;

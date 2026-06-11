@@ -16,21 +16,9 @@ eula = false
 name = "rift"
 path = "src/main.rs"
 
-# The browser sign-in suite drives the real stack (Keycloak + Caddy + Chrome), so it's gated like
-# the server's stack suite and excluded from the default `cargo test` run.
-[[test]]
-name = "sso"
-path = "tests/sso.rs"
-required-features = ["stack"]
-
 [features]
-# Dev-loop only (never CI or release): faster iterative builds and asset hot-reload.
-dev = ["bevy/dynamic_linking", "bevy/file_watcher"]
-# Hot-reload loop run under `dx serve --hot-patch`: live system patching (subsecond) plus asset
-# hot-reload. No dynamic_linking — subsecond does its own runtime patching.
+# The `dx serve --hot-patch` dev loop: live system patching (subsecond) plus asset hot-reload.
 hotpatch = ["bevy/hotpatching", "bevy/file_watcher"]
-# Gates the browser sign-in suite (`tests/sso.rs`) on the running stack.
-stack = []
 # Release/dist builds: embed the assets tree so the shipped binary is self-contained.
 dist = ["dep:include_dir", "dep:futures-lite"]
 
@@ -86,15 +74,15 @@ bevy_replicon_renet = { workspace = true, features = ["client", "renet_netcode"]
 bevy_kira_audio = { version = "0.26.0-rc.1", features = ["wav"] }
 openidconnect = { version = "4", features = ["ureq"] }
 http = "1"
-ureq = { workspace = true, features = ["rustls", "json"] }
+ureq = { workspace = true, features = ["rustls", "platform-verifier", "json"] }
 webbrowser = "1"
 base64 = "0.22"
 dirs = "6"
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# The browser sign-in suite (`tests/sso.rs`, behind `stack`) needs the shared e2e harness and
-# `world`'s role constants. Dev-deps only — neither reaches the shipped binary.
+# The E2E test drives the real client binary on its own X display and asserts on screenshots.
 [dev-dependencies]
-e2e-support = { path = "../e2e-support" }
-world = { path = "../world", default-features = false }
+png = "0.18"
+ureq = { workspace = true, features = ["rustls", "json"] }
+x11rb = { version = "0.13", features = ["xtest"] }

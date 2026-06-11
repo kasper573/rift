@@ -1,6 +1,3 @@
-//! The netcode link: registers replicon's client + renet backend, and opens the UDP connection
-//! from a `ConnectToken` the game server's `/session` mints for an authenticated player.
-
 use std::io::Cursor;
 use std::net::{Ipv4Addr, UdpSocket};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -48,14 +45,9 @@ fn announce(world: &mut World) {
 }
 
 /// Requests a session token from `{game_url}/session` with the given `authorization` (a
-/// `Bearer <jwt>` or `Bypass <name>` header), trusting `extra_ca` (the dev reverse proxy's local
-/// CA) when present.
-pub fn request_token(
-    game_url: &str,
-    authorization: &str,
-    extra_ca: Option<&[u8]>,
-) -> Result<Vec<u8>, String> {
-    let mut response = web::agent(extra_ca)
+/// `Bearer <jwt>` or `Bypass <name>` header).
+pub fn request_token(game_url: &str, authorization: &str) -> Result<Vec<u8>, String> {
+    let mut response = web::agent()
         .post(format!("{game_url}/session"))
         .header("Authorization", authorization)
         .send_empty()

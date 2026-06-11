@@ -1,45 +1,34 @@
-//! The game's spatial vocabulary: euclid geometry tagged by unit, so a pixel value can never be
-//! used where a tile value is meant. Game positions are `Pos<Tiles>`; map geometry crosses from
-//! pixel space through [`Tiling`]. The unit tags double as scalar newtypes ([`Tiles`], [`Pixels`])
-//! for lengths carried in content tables and constants.
+//! Euclid geometry tagged by unit, so a pixel value can never be used where a tile value is
+//! meant; the unit tags double as scalar newtypes for lengths in content tables and constants.
 
 use std::f32::consts::FRAC_1_SQRT_2;
 
 use serde::{Deserialize, Serialize};
 
-/// A length or coordinate in tile space — the game's spatial unit (positions, ranges, distances,
-/// map extents). Whole numbers fall on tile edges; tile centers are at +0.5.
+/// The game's spatial unit. Whole numbers fall on tile edges; tile centers are at +0.5.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct Tiles(pub f32);
 
-/// A length or coordinate in a map's pixel space — Tiled authors object geometry (and its own
-/// tile size) in pixels. Cross into tile space only through [`Tiling`].
+/// A map's pixel space — Tiled authors object geometry (and its own tile size) in pixels.
+/// Cross into tile space only through [`Tiling`].
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct Pixels(pub f32);
 
-/// A 2D position over a unit tag (`Pos<Tiles>`, `Pos<Pixels>`); components are raw `f32`s in
-/// that unit.
 pub type Pos<U> = euclid::Point2D<f32, U>;
-/// A 2D displacement over a unit tag.
 pub type Offset<U> = euclid::Vector2D<f32, U>;
-/// A 2D size — width and height — over a unit tag; replaces ad-hoc `(w, h)` tuples.
 pub type Size<U> = euclid::Size2D<f32, U>;
-/// An axis-aligned rectangle: an origin [`Pos`] and a [`Size`]; containment is half-open.
+/// Containment is half-open.
 pub type Rect<U> = euclid::Rect<f32, U>;
-/// An integer tile-grid cell index pair.
 pub type CellPos = euclid::default::Point2D<i32>;
-/// A dimensionless integer extent (e.g. a grid of inventory slots).
 pub type GridSize = euclid::default::Size2D<u32>;
 
-/// A movement speed: the tiles covered each second.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct TilesPerSec(pub Tiles);
 
-/// A duration or server-clock timestamp in seconds.
+/// A duration or server-clock timestamp.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct Seconds(pub f32);
 
-/// A duration in milliseconds.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct Millis(pub f32);
 

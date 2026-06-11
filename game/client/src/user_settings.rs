@@ -1,7 +1,3 @@
-//! Session-spanning user preferences: a serde god-struct persisted as JSON on the filesystem.
-//! Today it carries only the UI layout; new preference groups slot in as further fields on
-//! [`UserSettings`].
-
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};

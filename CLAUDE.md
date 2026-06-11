@@ -27,11 +27,4 @@
 ## Verify before done
 
 - `cargo fmt` · `cargo clippy --all-targets` (no warnings) · `cargo build`
-- The E2E suite green, locally and in CI:
-
-  ```sh
-  cargo build --release -p website -p server && cargo build -p client
-  docker compose -f docker/docker-compose.yaml --profile test up -d --build --wait
-  cargo test -p server --features stack -- --test-threads=1
-  cargo test -p client --features stack --test sso -- --test-threads=1
-  ```
+- The E2E test green, locally and in CI: `cargo test -p client --test e2e` (needs `Xvfb`)

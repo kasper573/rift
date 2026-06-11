@@ -1,8 +1,3 @@
-//! The composition root: runs the `world` simulation over an encrypted UDP netcode transport
-//! (`bevy_replicon_renet`) at a fixed tick, and serves an axum HTTP API. `POST /session` verifies
-//! a player's token and mints a renet `ConnectToken` they use to open the UDP connection;
-//! `/health` and `/metrics` are scraped by the stack.
-
 mod auth;
 
 use std::collections::HashMap;
@@ -84,8 +79,6 @@ fn main() {
     simulate(bind, public, private_key, sessions);
 }
 
-/// The fixed-rate authoritative loop: replicon_renet drives the UDP transport and replication
-/// inside each `update()`; we only pace it and observe connections.
 fn simulate(
     bind: SocketAddr,
     public: SocketAddr,

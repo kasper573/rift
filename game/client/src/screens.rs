@@ -1,7 +1,3 @@
-//! The non-gameplay screens: a sign-in notice, a retry on failure, and the play/spectate choice
-//! for accounts that hold the spectate role. Each screen's UI is despawned as its state exits;
-//! entering [`Screen::Playing`] opens the session in the chosen mode.
-
 use bevy::prelude::*;
 
 use crate::{Screen, auth};
@@ -102,10 +98,6 @@ fn despawn(ui: Query<Entity, With<ScreenUi>>, mut commands: Commands) {
 }
 
 fn enter_game(world: &mut World) {
-    if crate::smoke::enabled() {
-        auth::enter_bypass(world);
-    } else {
-        let spectate = *world.resource::<Mode>() == Mode::Spectate;
-        auth::enter(world, spectate);
-    }
+    let spectate = *world.resource::<Mode>() == Mode::Spectate;
+    auth::enter(world, spectate);
 }

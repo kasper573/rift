@@ -1,7 +1,5 @@
-//! The site's OpenID Connect relying party, driven by the openidconnect crate: the
-//! sign-in/callback/sign-out handlers run the code+PKCE flow against Keycloak, and signed-in
-//! pages read identity from the verified ID-token cookie. The raw access token rides along in
-//! its own cookie purely as a pass-through credential for the game server.
+//! The raw access token rides along in its own cookie purely as a pass-through credential for
+//! the game server; pages read identity from the verified ID-token cookie.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -24,7 +22,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::App;
 
-/// A signed-in visitor, named from the verified ID token's claims.
 pub struct Identity {
     pub name: String,
 }

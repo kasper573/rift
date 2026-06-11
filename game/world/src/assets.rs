@@ -1,6 +1,5 @@
-//! Content lives under `assets/`, read from disk at the root given by `RIFT_ASSETS` (default
-//! `assets`); the directory layout is the schema. Render-facing lookups return paths relative to
-//! the root — the client resolves them through its asset server, the server only validates them.
+//! The directory layout is the schema. Render-facing lookups return paths relative to the root —
+//! the client resolves them through its asset server, the server only validates them.
 
 use std::path::{Path, PathBuf};
 

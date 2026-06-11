@@ -1,29 +1,26 @@
-//! The HTTP plumbing for sign-in and session minting: a shared `ureq` agent that optionally trusts
-//! an extra root CA (the dev reverse proxy's local Caddy CA, from `RIFT_CLIENT_EXTRA_CA`), and an
-//! adapter that drives openidconnect's sync flow through that same agent.
+//! The HTTP plumbing for sign-in and session minting: a shared `ureq` agent, and an adapter that
+//! drives openidconnect's sync flow through it.
 
-use std::sync::Arc;
 use std::time::Duration;
 
-pub fn agent(extra_ca: Option<&[u8]>) -> ureq::Agent {
-    let mut tls = ureq::tls::TlsConfig::builder();
-    if let Some(pem) = extra_ca {
-        let cert = ureq::tls::Certificate::from_pem(pem).expect("extra CA is valid PEM");
-        tls = tls.root_certs(ureq::tls::RootCerts::Specific(Arc::new(vec![cert])));
-    }
+/// Verifies TLS against the OS trust store (not rustls' baked-in roots), so the dev proxy's
+/// Caddy CA — trusted once per machine, see the README — works like any public CA.
+pub fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(15)))
-        .tls_config(tls.build())
+        .tls_config(
+            ureq::tls::TlsConfig::builder()
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                .build(),
+        )
         .build()
         .into()
 }
 
-/// openidconnect's sync HTTP client, backed by [`agent`] so discovery and token exchange honour
-/// the extra CA.
-pub fn oidc_client(
-    extra_ca: Option<&[u8]>,
-) -> impl Fn(::http::Request<Vec<u8>>) -> Result<::http::Response<Vec<u8>>, ureq::Error> {
-    let agent = agent(extra_ca);
+/// openidconnect's sync HTTP client, backed by [`agent`].
+pub fn oidc_client()
+-> impl Fn(::http::Request<Vec<u8>>) -> Result<::http::Response<Vec<u8>>, ureq::Error> {
+    let agent = agent();
     move |request| {
         let response = agent.run(request)?;
         let (parts, mut body) = response.into_parts();

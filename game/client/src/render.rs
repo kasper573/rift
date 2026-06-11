@@ -1,7 +1,3 @@
-//! Renders the replicated world into a fixed 384×288 pixel target, then presents that target
-//! integer-scaled and letterboxed to the window through a dead-tint material. Replicated actors
-//! and the map tiles of the player's area carry their own sprites, synced from `world`'s tables.
-
 use std::collections::HashMap;
 
 use bevy::camera::visibility::RenderLayers;
@@ -210,7 +206,6 @@ fn healthbar(world: &mut World) {
     }
 }
 
-/// Integer-scales and centers the presentation quad to fit the window.
 fn letterbox(
     window: Single<&Window, With<PrimaryWindow>>,
     mut quad: Query<&mut Transform, With<Present>>,

@@ -1,9 +1,3 @@
-//! The in-game HUD: draggable widgets and the windows they toggle, built on `bevy_ui` nodes with
-//! pointer-drag observers. Widgets and windows snap to a grid, persist their geometry through
-//! [`UserSettings`], and swap visibility (a widget hides while its window is open). The character
-//! widget tracks the player; the inventory window reflows item slots (double-click to use); the
-//! settings window toggles snapping.
-
 use std::collections::HashSet;
 
 use bevy::prelude::*;
@@ -219,7 +213,6 @@ fn open_window(click: On<Pointer<Click>>, widgets: Query<&Widget>, mut open: Res
 fn reconcile_windows(
     open: Res<Open>,
     settings: Res<Settings>,
-    assets: Res<AssetServer>,
     windows: Query<(Entity, &WindowOf)>,
     mut widgets: Query<(&Widget, &mut Visibility)>,
     mut commands: Commands,
@@ -231,7 +224,7 @@ fn reconcile_windows(
     }
     for &id in &open.0 {
         if !windows.iter().any(|(_, window)| window.0 == id) {
-            spawn_window(&mut commands, &settings, &assets, id);
+            spawn_window(&mut commands, &settings, id);
         }
     }
     for (widget, mut visibility) in &mut widgets {
@@ -243,12 +236,7 @@ fn reconcile_windows(
     }
 }
 
-fn spawn_window(
-    commands: &mut Commands,
-    settings: &Settings,
-    assets: &AssetServer,
-    id: &'static str,
-) {
+fn spawn_window(commands: &mut Commands, settings: &Settings, id: &'static str) {
     let placement = settings.0.placement(id);
     let at = placement.map_or(Vec2::new(376.0, 332.0), |p| Vec2::from(p.pos));
     let size = placement
@@ -319,7 +307,6 @@ fn spawn_window(
         }
         _ => {}
     }
-    let _ = assets;
 
     commands.spawn((
         ChildOf(window),
@@ -355,19 +342,19 @@ fn on_drag(
     let delta = drag.delta;
     for entity in ancestry(drag.entity, &children) {
         if let Ok(handle) = handles.get(entity)
-            && let Ok((mut node, movable)) = nodes.get_mut(handle.0)
+            && let Ok((mut node, _)) = nodes.get_mut(handle.0)
         {
-            move_node(&mut node, delta, &settings.0, movable.id);
+            move_node(&mut node, delta, &settings.0);
             return;
         }
         if let Ok(resize) = resizes.get(entity)
-            && let Ok((mut node, movable)) = nodes.get_mut(resize.0)
+            && let Ok((mut node, _)) = nodes.get_mut(resize.0)
         {
-            resize_node(&mut node, delta, &settings.0, movable.id);
+            resize_node(&mut node, delta, &settings.0);
             return;
         }
-        if let Ok((mut node, movable)) = nodes.get_mut(entity) {
-            move_node(&mut node, delta, &settings.0, movable.id);
+        if let Ok((mut node, _)) = nodes.get_mut(entity) {
+            move_node(&mut node, delta, &settings.0);
             return;
         }
     }
@@ -497,12 +484,12 @@ fn toggle_snapping(_: On<Pointer<Click>>, mut commands: Commands) {
     });
 }
 
-fn move_node(node: &mut Node, delta: Vec2, settings: &UserSettings, _id: &str) {
+fn move_node(node: &mut Node, delta: Vec2, settings: &UserSettings) {
     node.left = Val::Px(settings.snap(px(node.left) + delta.x));
     node.top = Val::Px(settings.snap(px(node.top) + delta.y));
 }
 
-fn resize_node(node: &mut Node, delta: Vec2, settings: &UserSettings, _id: &str) {
+fn resize_node(node: &mut Node, delta: Vec2, settings: &UserSettings) {
     let width = settings.snap((px(node.width) + delta.x).max(MIN_WINDOW.x));
     let height = settings.snap((px(node.height) + delta.y).max(MIN_WINDOW.y));
     node.width = Val::Px(width.max(MIN_WINDOW.x));

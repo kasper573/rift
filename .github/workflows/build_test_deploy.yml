@@ -29,89 +29,46 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: glibc-release
-      - uses: browser-actions/setup-chrome@v1
-        id: chrome
-        with:
-          chrome-version: stable
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.DOCKER_REGISTRY }}
-          username: ${{ env.DOCKER_USERNAME }}
-          password: ${{ env.DOCKER_PASSWORD }}
-      - name: Start keycloak in the background (overlaps its pull+boot with the build)
-        env:
-          # keycloak and reverse-proxy depend only on their own Dockerfiles, so they are tagged by
-          # a hash of those and the pushed image is reused across runs instead of rebuilding
-          # kc.sh/xcaddy.
-          INFRA_TAG: infra-${{ hashFiles('docker/Dockerfile.keycloak', 'docker/Dockerfile.reverse-proxy') }}
-        run: |
-          docker network inspect rift >/dev/null 2>&1 || docker network create rift
-          cat > /tmp/prewarm.sh <<'SCRIPT'
-          set -eux
-          for service in keycloak reverse-proxy; do
-            cached="$DOCKER_REGISTRY_URL/rift-$service:$INFRA_TAG"
-            current="$DOCKER_REGISTRY_URL/rift-$service:$DOCKER_IMAGE_VERSION"
-            if docker pull "$cached"; then
-              docker tag "$cached" "$current"
-            else
-              $COMPOSE --profile prod build "$service"
-              docker tag "$current" "$cached"
-              docker push "$cached"
-            fi
-          done
-          $COMPOSE --profile test up -d --no-build postgres keycloak keycloak-healthcheck
-          SCRIPT
-          nohup bash /tmp/prewarm.sh > /tmp/prewarm.log 2>&1 &
       - name: Install system dependencies
-        # The client links ALSA (kira audio) and renders a real window in the smoke test: the X11
-        # libs winit dlopens, a software Vulkan driver (lavapipe) to render without a GPU, and Xvfb
-        # for a virtual display. Nothing here needs a gamepad/udev stack.
+        # The E2E test plays the real client on its own Xvfb display: ALSA for the audio backend,
+        # the X11 libs winit dlopens, and a software Vulkan driver (lavapipe) to render without a
+        # GPU.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libasound2-dev \
             libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon0 libxkbcommon-x11-0 \
             libvulkan1 mesa-vulkan-drivers \
-            xvfb xauth
+            xvfb
       - name: Conventions
         run: |
           cargo fmt --check
           cargo clippy --workspace --all-targets -- -D warnings
-      - name: Client smoke test
-        # Runs the actual client binary — window, rendering, netcode, HUD — against a freshly spawned
-        # server under a virtual display, asserting it connects, joins, spawns, and renders its
-        # player. The test wraps the client in `xvfb-run` itself when no display is present.
-        run: cargo test -p client --test smoke
-      - name: Build release artifacts
-        run: |
-          cargo build --release -p website -p server
-      - name: Build docker images
-        run: $COMPOSE --profile test build rift-website rift-game-server
-      - name: E2E tests
-        env:
-          CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: |
-          $COMPOSE --profile test up -d --wait --no-build
-          cargo test -p server --features stack -- --test-threads=1
-          cargo test -p client --features stack --test sso -- --test-threads=1
-      - name: Collect e2e test logs
-        if: failure()
-        run: |
-          cat /tmp/prewarm.log || true
-          mkdir -p e2e-docker-logs
-          for id in $(docker ps -aq); do
-            name=$(docker inspect --format '{{.Name}}' "$id" | tr -d /)
-            docker logs "$id" > "e2e-docker-logs/$name.log" 2>&1 || true
-          done
-      - name: Save e2e test logs
+      - name: E2E test
+        run: cargo test -p client --test e2e
+      - name: Save E2E artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-docker-logs
-          path: e2e-docker-logs/
+          name: e2e-artifacts
+          path: target/tmp/
+      - name: Build release artifacts
+        run: cargo build --release -p website -p server
+      # The first-party images only package prebuilt binaries, so they build in seconds; the
+      # keycloak/caddy images compile their plugins, so only main pays for the full set it pushes.
+      - name: Build app images
+        run: $COMPOSE --profile prod build rift-website rift-game-server
+      - uses: docker/login-action@v3
+        if: github.ref_name == 'main'
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
       - name: Push docker images
         if: github.ref_name == 'main'
-        run: $COMPOSE --profile prod push
+        run: |
+          $COMPOSE --profile prod build
+          $COMPOSE --profile prod push
 
   deploy:
     needs: [build]

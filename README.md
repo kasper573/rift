@@ -2,27 +2,54 @@
 
 An online RPG built in rust.
 
-I'm doing this project for fun and to teach myself more about multiplayer game development and web development infrastructure.
+I'm doing this project for fun and to teach myself more about multiplayer game development and
+web development infrastructure.
 
 ## Development
 
-### Initial setup (only required once)
+One-time setup:
 
-- Install [Docker](https://www.docker.com/)
+- [Docker](https://www.docker.com/) — runs the local stack (auth, website, game server,
+  observability, HTTPS proxy)
+- [Rust](https://rustup.rs/) — rustup installs the repo's pinned toolchain on first build
+- The [Dioxus CLI](https://dioxuslabs.com/) for the hot-reload dev loop:
+  `cargo install dioxus-cli --locked`
 
-### Before each development session
+Then:
 
-- Open the devcontainer in vscode or via devcontainer CLI.
-- Start the watch loop:
+```sh
+just dev
+```
 
-  ```sh
-  just dev
-  ```
+This deploys the stack to docker and runs the native client on top of it under hot-reload:
+edited systems patch into the running game, and edited `assets/` content reloads in place.
+`just stack` redeploys the stack alone; `just reset` tears it down and wipes its data.
 
-  Every save rebuilds the artifacts and redeploys what changed; `just stack` runs a
-  single cycle instead.
+The website lives at <https://rift.localhost> and Grafana at <https://grafana.rift.localhost>.
 
-- Visit `https://rift.localhost` in your browser
+### Trust the local certificate authority (once per machine)
+
+Caddy terminates HTTPS for `*.rift.localhost` with a local CA it manages itself. The OS trust
+store covers the game client and most tools, but Chrome keeps its own store, so both need a
+one-time import. With the stack running:
+
+```sh
+docker compose -f docker/docker-compose.yaml cp reverse-proxy:/data/caddy/pki/authorities/local/root.crt /tmp/rift-root.crt
+sudo cp /tmp/rift-root.crt /usr/local/share/ca-certificates/rift-root.crt && sudo update-ca-certificates
+certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n rift-root -i /tmp/rift-root.crt   # Chrome; needs libnss3-tools
+```
+
+`just reset` wipes the CA along with the rest of the stack's data; repeat the import after.
+
+## Testing
+
+```sh
+cargo test -p client --test e2e
+```
+
+This plays an honest session: the real client binary against a freshly spawned server on a
+private X display, driven by genuine input and asserted through screenshots. It needs `Xvfb`
+(`apt install xvfb`).
 
 ## Production deployment
 

@@ -1,6 +1,3 @@
-//! Shared world-space geometry: the tile under the cursor (window → letterbox → render target →
-//! world camera) and the bespoke enemy hit test, used by both input and the cursor.
-
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use world::math::{Pos, Rect, Tiles};

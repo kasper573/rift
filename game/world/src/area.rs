@@ -18,7 +18,6 @@ const FILE: &str = "area_table.json";
 )]
 pub struct AreaId(pub u32);
 
-/// Deserializes an [`AreaId`] from a content table's area id string.
 pub fn area_by_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<AreaId, D::Error> {
     let id = String::deserialize(deserializer)?;
     defs()
