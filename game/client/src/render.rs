@@ -181,8 +181,10 @@ fn hidden() -> (Transform, Visibility) {
 /// Tracks the local player's healthbar above their head; hidden while dead or unspawned.
 fn healthbar(world: &mut World) {
     let shown = match (session::my_position(world), session::my_vitals(world)) {
+        // Whole pixels: at fractional offsets the fractional-width fill would alternate between
+        // floor and ceil pixel coverage as the player moves.
         (Some(at), Some((health, max))) if health > 0.0 && max > 0.0 => Some((
-            Vec2::new(at.x * TILE, -at.y * TILE + BAR_RISE),
+            Vec2::new(at.x * TILE, -at.y * TILE + BAR_RISE).round(),
             (health / max).clamp(0.0, 1.0),
         )),
         _ => None,
@@ -199,7 +201,7 @@ fn healthbar(world: &mut World) {
             Bar::Background => transform.translation = center.extend(200.1),
             Bar::Fill => {
                 let inner = BAR.x - 2.0;
-                sprite.custom_size = Some(Vec2::new(inner * fraction, BAR.y - 2.0));
+                sprite.custom_size = Some(Vec2::new((inner * fraction).floor(), BAR.y - 2.0));
                 transform.translation = Vec3::new(center.x - inner / 2.0, center.y, 200.2);
             }
         }
