@@ -10,6 +10,7 @@ use world::session;
 use world::sfx::sfx_table;
 
 use crate::Screen;
+use crate::render::Animator;
 
 /// The view half-extent in tiles; volume falls linearly to zero at the view edge.
 const HALF_VIEW: Vec2 = Vec2::new(12.0, 9.0);
@@ -30,6 +31,7 @@ impl Plugin for SfxPlugin {
 struct Sfx {
     sources: Vec<Handle<AudioSource>>,
     index: HashMap<String, usize>,
+    /// Per actor: its action and the time-into-action the cue window last advanced to.
     seen: HashMap<Entity, (u8, f32)>,
     played: HashMap<usize, f32>,
 }
@@ -61,8 +63,9 @@ fn play_cues(world: &mut World) {
     sfx.seen
         .retain(|entity, _| actors.iter().any(|(e, ..)| e == entity));
 
+    let mut animator = world.resource_mut::<Animator>();
     for (entity, actor, source) in &actors {
-        let now = elapsed(&mut sfx.seen, *entity, actor.action, clock);
+        let now = animator.elapsed(*entity, actor.action, clock);
         let Some((was, then)) = sfx.seen.insert(*entity, (actor.action, now)) else {
             continue;
         };
@@ -148,13 +151,6 @@ fn collect(
     let slot = frame.entry(row).or_insert((0.0, 0.0));
     if volume > slot.0 {
         *slot = (volume, pan);
-    }
-}
-
-fn elapsed(seen: &mut HashMap<Entity, (u8, f32)>, entity: Entity, action: u8, time: f32) -> f32 {
-    match seen.get(&entity) {
-        Some(&(was, start)) if was == action => time - start,
-        _ => 0.0,
     }
 }
 

@@ -241,12 +241,12 @@ fn dead_tint(world: &mut World) {
 /// Anchors each entity's animation to the moment its replicated action last changed, so the model
 /// receives time-into-action rather than the global clock.
 #[derive(Resource, Default)]
-struct Animator {
+pub struct Animator {
     anchors: HashMap<Entity, (u8, f32)>,
 }
 
 impl Animator {
-    fn elapsed(&mut self, entity: Entity, action: u8, time: f32) -> f32 {
+    pub fn elapsed(&mut self, entity: Entity, action: u8, time: f32) -> f32 {
         match self.anchors.get(&entity) {
             Some(&(seen, start)) if seen == action => time - start,
             _ => {
