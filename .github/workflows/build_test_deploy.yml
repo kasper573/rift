@@ -22,19 +22,22 @@ jobs:
       packages: write
     env:
       COMPOSE: docker compose -f docker/docker-compose.yaml
-      # CI runs the tests once and throws the artifacts away; without this the workspace's debug
-      # artifacts (Bevy) overflow the runner's disk.
+      # CI runs the tests once and throws the artifacts away.
+      # Without this the workspace's debug artifacts (Bevy) overflow the runner's disk.
       CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@v6
+
       - name: Free runner disk
         # The hosted runner ships ~25GB of unrelated toolchains; reclaim the space for target/.
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+
       - name: Install the pinned toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2
         with:
           key: glibc-release
+
       - name: Install system dependencies
         # The E2E test plays the real client on its own Xvfb display: ALSA for the audio backend,
         # the X11 libs winit dlopens, and a software Vulkan driver (lavapipe) to render without a
@@ -46,20 +49,25 @@ jobs:
             libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon0 libxkbcommon-x11-0 \
             libvulkan1 mesa-vulkan-drivers \
             xvfb
+
       - name: Conventions
         run: |
           cargo fmt --check
           cargo clippy --workspace --all-targets -- -D warnings
+
       - name: E2E test
         run: cargo test -p client --test e2e
+
       - name: Save E2E artifacts
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: e2e-artifacts
           path: target/tmp/
+
       - name: Build release artifacts
         run: cargo build --release -p website -p server
+
       # The first-party images only package prebuilt binaries, so they build in seconds; the
       # keycloak/caddy images compile their plugins, so only main pays for the full set it pushes.
       - name: Build app images
@@ -70,6 +78,7 @@ jobs:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
+
       - name: Push docker images
         if: github.ref_name == 'main'
         run: |
