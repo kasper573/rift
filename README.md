@@ -35,11 +35,16 @@ one-time import. With the stack running:
 
 ```sh
 docker compose -f docker/docker-compose.yaml cp reverse-proxy:/data/caddy/pki/authorities/local/root.crt /tmp/rift-root.crt
-sudo cp /tmp/rift-root.crt /usr/local/share/ca-certificates/rift-root.crt && sudo update-ca-certificates
+sudo install -m 644 /tmp/rift-root.crt /usr/local/share/ca-certificates/rift-root.crt && sudo update-ca-certificates --fresh
 certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n rift-root -i /tmp/rift-root.crt   # Chrome; needs libnss3-tools
 ```
 
-`just reset` wipes the CA along with the rest of the stack's data; repeat the import after.
+`install -m 644` matters: the exported file is mode 600, and a straight `cp` leaves a root-only
+cert that TLS clients scanning `/etc/ssl/certs` warn about on every connection.
+
+`just reset` wipes the CA along with the rest of the stack's data. Repeat the import after, and
+remove any previously trusted copy first — a stale root with the same name fails signature
+checks (`BadSignature`) rather than falling through to the fresh one.
 
 ## Testing
 

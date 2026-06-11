@@ -39,6 +39,11 @@ pub fn run() -> AppExit {
     embedded::register(&mut app);
     app.add_plugins(
         DefaultPlugins
+            .set(bevy::log::LogPlugin {
+                // symphonia narrates every wav metadata chunk it skips at info.
+                filter: format!("{},symphonia=warn", bevy::log::DEFAULT_FILTER),
+                ..default()
+            })
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "rift mmo".to_owned(),
