@@ -2,7 +2,7 @@
 name = "client"
 version.workspace = true
 edition.workspace = true
-description = "Playable MMORPG client: a Bevy app rendering the replicated `world` over netcode, with a BSN HUD and browser SSO."
+description = "Playable MMORPG client: a Bevy app rendering the replicated `world` over netcode, with a bevy_ui HUD and browser SSO."
 repository = "https://github.com/kasper573/rift"
 authors = ["kasper573"]
 

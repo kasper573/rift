@@ -22,8 +22,14 @@ jobs:
       packages: write
     env:
       COMPOSE: docker compose -f docker/docker-compose.yaml
+      # CI runs the tests once and throws the artifacts away; without this the workspace's debug
+      # artifacts (Bevy) overflow the runner's disk.
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - name: Free runner disk
+        # The hosted runner ships ~25GB of unrelated toolchains; reclaim the space for target/.
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
       - name: Install the pinned toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2
@@ -48,7 +54,7 @@ jobs:
         run: cargo test -p client --test e2e
       - name: Save E2E artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-artifacts
           path: target/tmp/
@@ -76,7 +82,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Upload docker runtime dependencies
         uses: burnett01/rsync-deployments@7.0.1
@@ -140,7 +146,7 @@ jobs:
 
       - name: Save deployment logs
         if: steps.deploy.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deploy-failure-logs
           path: ./deploy-failure-logs.tar.gz

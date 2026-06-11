@@ -9,9 +9,10 @@ stack: build
     docker network inspect rift >/dev/null 2>&1 || docker network create rift
     {{compose}} up -d --build --wait
 
-# Run the client here, on top of the stack, under Bevy's first-class hot-reload: `dx serve
-# --hot-patch` live-patches the bodies of changed systems in the running process and falls back to
-# a full rebuild for changes it can't patch, while Bevy's file_watcher hot-reloads edited assets.
+# `dx serve --hot-patch` live-patches the bodies of changed systems in the running process and
+# falls back to a full rebuild for changes it can't patch; Bevy's file_watcher hot-reloads
+# edited assets.
+# Run the client here, on top of the stack, under hot-reload.
 dev: stack
     @command -v dx >/dev/null || { echo "just dev needs the Dioxus CLI: cargo install dioxus-cli --locked"; exit 1; }
     cd game/client && \
@@ -20,7 +21,8 @@ dev: stack
     RIFT_CLIENT_GAME_URL=https://game-server.rift.localhost \
         dx serve --hot-patch --bin rift --features hotpatch --platform {{os()}}
 
-# Tear the stack down and wipe its volumes. Keycloak only imports a realm on first boot, so the
-# realm DB must be wiped for `rift-realm.json` changes (e.g. redirect URIs) to re-apply.
+# Keycloak only imports a realm on first boot, so the realm DB must be wiped for
+# `rift-realm.json` changes (e.g. redirect URIs) to re-apply.
+# Tear the stack down and wipe its volumes.
 reset:
     {{compose}} down -v
