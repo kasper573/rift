@@ -17,7 +17,6 @@ pub fn agent() -> ureq::Agent {
         .into()
 }
 
-/// openidconnect's sync HTTP client, backed by [`agent`].
 pub fn oidc_client()
 -> impl Fn(::http::Request<Vec<u8>>) -> Result<::http::Response<Vec<u8>>, ureq::Error> {
     let agent = agent();

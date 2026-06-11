@@ -17,7 +17,6 @@ use world::session::{self, MyClient};
 
 /// World pixels per tile; the actor and tile sheets are authored at this scale.
 pub const TILE: f32 = 16.0;
-/// The rendered viewport in tiles, and in pixels (one tile is `TILE` pixels).
 const VIEW_TILES: Vec2 = Vec2::new(24.0, 18.0);
 const VIEW: Vec2 = Vec2::new(VIEW_TILES.x * TILE, VIEW_TILES.y * TILE);
 /// The presentation quad lives on its own layer so only the presentation camera draws it.
@@ -153,7 +152,6 @@ fn setup(
     ));
 }
 
-/// A player healthbar layer: a dark border, a background, and a green fill that shrinks with health.
 #[derive(Component, Clone, Copy)]
 enum Bar {
     Border,
@@ -360,8 +358,6 @@ struct SpawnedArea(Option<AreaId>);
 struct AreaTile;
 
 /// Spawns the static sprites of the player's area once, replacing them when the area changes.
-/// Layers draw flat in authored order; the dynamic layer's grouped cells and the map's tile
-/// objects instead y-sort within that layer's band, alongside the actors (see [`dynamic_z`]).
 fn spawn_area_tiles(
     me: Res<MyClient>,
     players: Query<(&Owner, &AreaTag)>,

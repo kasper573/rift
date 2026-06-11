@@ -51,7 +51,6 @@ impl Default for Settings {
     }
 }
 
-/// The set of open window ids.
 #[derive(Resource, Default)]
 struct Open(HashSet<&'static str>);
 
@@ -584,7 +583,6 @@ fn snapping_label(settings: &Settings) -> &'static str {
     }
 }
 
-/// A hover tooltip's text.
 #[derive(Component)]
 struct Tooltip(String);
 

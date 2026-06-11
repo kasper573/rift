@@ -95,7 +95,6 @@ fn draw(
     }
 }
 
-/// The world position of a tile cell's center.
 fn center(tile: Pos<Tiles>) -> Vec2 {
     corner(tile.x + 0.5, tile.y + 0.5)
 }

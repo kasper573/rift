@@ -70,7 +70,6 @@ fn a_player_joins_and_visibly_walks() {
     );
 }
 
-/// The real client binary, playing on `display` with a bypass identity.
 fn client(display: &str, game_url: &str) -> Proc {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rift"));
     command
@@ -207,7 +206,6 @@ impl X {
         X { conn, root }
     }
 
-    /// Waits for the client's top-level window to be mapped, and returns it.
     fn wait_for_window(&self, timeout: Duration) -> Window {
         let deadline = Instant::now() + timeout;
         loop {
@@ -244,7 +242,6 @@ impl X {
         }
     }
 
-    /// Captures frames until the world is on screen, then lets it settle and returns a frame.
     fn wait_for_scene(&self, window: Window, timeout: Duration) -> Image {
         let deadline = Instant::now() + timeout;
         loop {
@@ -266,7 +263,6 @@ impl X {
         }
     }
 
-    /// A genuine left click at window coordinates, through XTEST.
     fn click(&self, window: Window, x: i16, y: i16) {
         let at = self
             .conn

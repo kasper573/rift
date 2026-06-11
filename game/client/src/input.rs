@@ -32,7 +32,6 @@ fn click_to_act(world: &mut World) {
     }
 }
 
-/// Whether any pointer is over a HUD node, so a click the UI owns never doubles as a world command.
 fn pointer_on_ui(world: &World) -> bool {
     world
         .resource::<HoverMap>()
