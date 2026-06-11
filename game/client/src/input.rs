@@ -1,3 +1,4 @@
+use bevy::picking::hover::HoverMap;
 use bevy::prelude::*;
 use world::session;
 
@@ -18,6 +19,7 @@ fn click_to_act(world: &mut World) {
         .resource::<ButtonInput<MouseButton>>()
         .just_pressed(MouseButton::Left)
         || session::is_dead(world)
+        || pointer_on_ui(world)
     {
         return;
     }
@@ -28,6 +30,15 @@ fn click_to_act(world: &mut World) {
         Some(target) => session::attack(world, target),
         None => session::move_to(world, point.x, point.y),
     }
+}
+
+/// Whether any pointer is over a HUD node, so a click the UI owns never doubles as a world command.
+fn pointer_on_ui(world: &World) -> bool {
+    world
+        .resource::<HoverMap>()
+        .values()
+        .flat_map(|hits| hits.keys())
+        .any(|&entity| world.get::<Node>(entity).is_some())
 }
 
 fn respawn_when_dead(world: &mut World) {

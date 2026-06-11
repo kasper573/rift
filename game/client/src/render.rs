@@ -281,13 +281,20 @@ fn attach_sprite(
 fn sync_actors(
     time: Res<Time>,
     mut animator: ResMut<Animator>,
-    mut actors: Query<(Entity, &Actor, &Position, &mut Sprite, &mut Transform)>,
+    mut actors: Query<(
+        Entity,
+        &Actor,
+        &Position,
+        &AreaTag,
+        &mut Sprite,
+        &mut Transform,
+    )>,
 ) {
     let clock = time.elapsed_secs();
     animator
         .anchors
         .retain(|entity, _| actors.contains(*entity));
-    for (entity, actor, position, mut sprite, mut transform) in &mut actors {
+    for (entity, actor, position, tag, mut sprite, mut transform) in &mut actors {
         let elapsed = animator.elapsed(entity, actor.action, clock);
         let region = actors::model(actor.model).frame(
             action_name(actor.action),
@@ -303,7 +310,13 @@ fn sync_actors(
         ));
         sprite.custom_size = Some(Vec2::new(region.size.width, region.size.height));
         sprite.color = rgba(actor.color);
-        *transform = sprite_transform(position.pos, 1.0);
+        let Some(area) = area::areas().get(tag.area.0 as usize) else {
+            continue;
+        };
+        *transform = sprite_transform(
+            position.pos,
+            dynamic_z(area, area.dynamic_layer() as f32, position.pos.y),
+        );
     }
 }
 
@@ -346,7 +359,9 @@ struct SpawnedArea(Option<AreaId>);
 #[derive(Component)]
 struct AreaTile;
 
-/// Spawns the static tile sprites of the player's area once, replacing them when the area changes.
+/// Spawns the static sprites of the player's area once, replacing them when the area changes.
+/// Layers draw flat in authored order; the dynamic layer's grouped cells and the map's tile
+/// objects instead y-sort within that layer's band, alongside the actors (see [`dynamic_z`]).
 fn spawn_area_tiles(
     me: Res<MyClient>,
     players: Query<(&Owner, &AreaTag)>,
@@ -374,37 +389,80 @@ fn spawn_area_tiles(
     spawned.0 = Some(area_id);
 
     let area = &area::areas()[area_id.0 as usize];
-    for (z, layer) in area.layers.iter().enumerate() {
+    for (index, layer) in area.layers.iter().enumerate() {
+        let z = index as f32;
         for y in 0..area.height.0 as i32 {
             for x in 0..area.width.0 as i32 {
+                if layer.dynamic && area.grouped_cells.contains(&(x, y)) {
+                    continue;
+                }
                 let Some(sprite) = area.resolve(layer.at(x, y), 0.0) else {
                     continue;
                 };
-                let region = sprite.region;
                 commands.spawn((
                     AreaTile,
-                    Sprite {
-                        image: assets.load(sprite.sheet.to_owned()),
-                        rect: Some(Rect::new(
-                            region.origin.x,
-                            region.origin.y,
-                            region.origin.x + region.size.width,
-                            region.origin.y + region.size.height,
-                        )),
-                        custom_size: Some(Vec2::splat(TILE)),
-                        flip_x: sprite.flip.0,
-                        flip_y: sprite.flip.1,
-                        ..default()
-                    },
-                    sprite_transform(Pos::new(x as f32 + 0.5, y as f32 + 0.5), z as f32 * 0.01),
+                    tile_sprite(&assets, &sprite, Vec2::splat(TILE)),
+                    sprite_transform(Pos::new(x as f32 + 0.5, y as f32 + 0.5), z),
                 ));
             }
+        }
+        if !layer.dynamic {
+            continue;
+        }
+        for group in &area.groups {
+            let z = dynamic_z(area, z, group.z);
+            for &(x, y, cell) in &group.tiles {
+                let Some(sprite) = area.resolve(cell, 0.0) else {
+                    continue;
+                };
+                commands.spawn((
+                    AreaTile,
+                    tile_sprite(&assets, &sprite, Vec2::splat(TILE)),
+                    sprite_transform(Pos::new(x as f32 + 0.5, y as f32 + 0.5), z),
+                ));
+            }
+        }
+        for &(pos, cell) in &area.objects {
+            let Some(sprite) = area.resolve(cell, 0.0) else {
+                continue;
+            };
+            let size = Vec2::new(sprite.region.size.width, sprite.region.size.height);
+            commands.spawn((
+                AreaTile,
+                tile_sprite(&assets, &sprite, size),
+                Anchor::BOTTOM_LEFT,
+                sprite_transform(pos, dynamic_z(area, z, pos.y)),
+            ));
         }
     }
 }
 
-fn sprite_transform(pos: Pos<Tiles>, layer: f32) -> Transform {
-    Transform::from_xyz(pos.x * TILE, -pos.y * TILE, pos.y + layer)
+fn sprite_transform(pos: Pos<Tiles>, z: f32) -> Transform {
+    Transform::from_xyz(pos.x * TILE, -pos.y * TILE, z)
+}
+
+/// The z of a y-sorted child of the dynamic layer at `base`: strictly inside the band
+/// `(base, base + 1)`, above the layer's flat cells and below the next layer, ordered by `y`
+/// in tiles — an actor's position, a tile group's bottom row, or a tile object's bottom edge.
+fn dynamic_z(area: &area::Area, base: f32, y: f32) -> f32 {
+    base + (y + 1.0) / (area.height.0 + 2.0)
+}
+
+fn tile_sprite(assets: &AssetServer, sprite: &area::TileSprite, size: Vec2) -> Sprite {
+    let region = sprite.region;
+    Sprite {
+        image: assets.load(sprite.sheet.to_owned()),
+        rect: Some(Rect::new(
+            region.origin.x,
+            region.origin.y,
+            region.origin.x + region.size.width,
+            region.origin.y + region.size.height,
+        )),
+        custom_size: Some(size),
+        flip_x: sprite.flip.0,
+        flip_y: sprite.flip.1,
+        ..default()
+    }
 }
 
 fn rgba(tint: Rgba) -> Color {

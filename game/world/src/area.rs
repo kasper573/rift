@@ -191,6 +191,15 @@ impl Area {
             .fold(0.0, f32::max)
     }
 
+    /// The index of the layer whose children render y-sorted ([`RenderLayer::dynamic`]): actors,
+    /// tile groups and tile objects all draw inside this layer, between the layers below and above.
+    pub fn dynamic_layer(&self) -> usize {
+        self.layers
+            .iter()
+            .position(|layer| layer.dynamic)
+            .expect("validated at load: every map has a 'Dynamic' layer")
+    }
+
     /// The footstep sfx of the tile at (x, y), if its tileset declares one.
     pub fn tile_sfx_at(&self, x: i32, y: i32) -> Option<&SfxId> {
         if x < 0 || y < 0 || x >= self.width.0 as i32 || y >= self.height.0 as i32 {
@@ -347,6 +356,9 @@ fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {
     }
 
     let spawn = start.unwrap_or_else(|| panic!("map '{name}' must place a start object"));
+    if !layers.iter().any(|layer| layer.dynamic) {
+        panic!("map '{name}' must have a 'Dynamic' tile layer");
+    }
     let grid = build_grid(size, &layers, &tiles, &obscuring_rects);
     let walkable_nodes = (0..map.height as i32)
         .flat_map(|y| (0..map.width as i32).map(move |x| Pos::new(x as f32, y as f32)))

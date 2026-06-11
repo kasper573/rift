@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, ConnectionExt, ImageFormat, KEY_PRESS_EVENT,
-    KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT, MapState, Window,
+    BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, ConnectionExt, ImageFormat, InputFocus,
+    KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT, MapState, Window,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
@@ -226,6 +226,13 @@ impl X {
                     .reply()
                     .is_ok_and(|reply| reply.map_state == MapState::VIEWABLE);
                 if viewable && self.geometry(window).0 >= 1024 {
+                    // Nothing focuses windows on a bare Xvfb, and XTEST key events go to the
+                    // focus owner; without this, keyboard input would silently vanish.
+                    self.conn
+                        .set_input_focus(InputFocus::POINTER_ROOT, window, x11rb::CURRENT_TIME)
+                        .expect("set focus")
+                        .check()
+                        .expect("focus reply");
                     return window;
                 }
             }
