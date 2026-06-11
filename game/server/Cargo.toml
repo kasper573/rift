@@ -2,31 +2,43 @@
 name = "server"
 version.workspace = true
 edition.workspace = true
-description = "Authoritative MMORPG server binary: terminates WebSockets and runs the `world` simulation at a fixed tick."
+description = "Authoritative MMORPG server binary: mints session tokens and runs the `world` simulation over an encrypted UDP netcode transport at a fixed tick."
 
 [features]
 stack = []
 
 [[test]]
-name = "browser"
-path = "tests/browser/main.rs"
+name = "stack"
+path = "tests/stack/main.rs"
 required-features = ["stack"]
 
 [dependencies]
-axum = { workspace = true, features = ["ws"] }
+axum.workspace = true
+bevy_app.workspace = true
+bevy_ecs.workspace = true
+bevy_replicon = { workspace = true, features = ["server"] }
+bevy_replicon_renet = { workspace = true, features = ["server", "renet_netcode"] }
 envy.workspace = true
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.17", default-features = false }
 metrics-process.workspace = true
+rand = "0.9"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 ureq.workspace = true
 world = { path = "../world" }
 
+# The E2E suite builds headless client apps, so it pulls replicon's client side and the Bevy
+# plugins a client needs; none reach the release server binary (dev-deps only).
 [dev-dependencies]
-base64 = "0.22"
-headless_chrome = { version = "1", features = ["offline"] }
-serde_json.workspace = true
+bevy_replicon_renet = { workspace = true, features = ["client", "renet_netcode"] }
+bevy_state.workspace = true
+bevy_time = { version = "0.19.0-rc.3", default-features = false, features = ["std"] }
+e2e-support = { path = "../e2e-support" }
 ureq = { workspace = true, features = ["rustls", "json"] }
+
+# Only the client is distributed; the server ships as a docker image.
+[package.metadata.dist]
+dist = false

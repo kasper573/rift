@@ -18,8 +18,6 @@ pub struct Verifier {
     issuer: String,
     audience: String,
     jwks_uri: String,
-    /// Accepts unverified `bypass:<name>` tokens — local development and tests only.
-    allow_bypass: bool,
     agent: ureq::Agent,
     keys: Option<JwkSet>,
     last_fetch: Fetch,
@@ -32,7 +30,7 @@ enum Fetch {
 }
 
 impl Verifier {
-    pub fn new(issuer: &str, audience: &str, jwks_uri: &str, allow_bypass: bool) -> Self {
+    pub fn new(issuer: &str, audience: &str, jwks_uri: &str) -> Self {
         let config = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(5)))
             .build();
@@ -40,7 +38,6 @@ impl Verifier {
             issuer: issuer.to_owned(),
             audience: audience.to_owned(),
             jwks_uri: jwks_uri.to_owned(),
-            allow_bypass,
             agent: ureq::Agent::new_with_config(config),
             keys: None,
             last_fetch: Fetch::Never,
@@ -62,17 +59,6 @@ impl Verifier {
     }
 
     pub fn verify(&mut self, token: &str) -> Result<Claims, String> {
-        if self.allow_bypass
-            && let Some(name) = token.strip_prefix("bypass:")
-        {
-            // Bypass users are ordinary players; privileged roles require a real token.
-            return Ok(Claims {
-                subject: token.to_owned(),
-                name: name.to_owned(),
-                roles: Vec::new(),
-            });
-        }
-
         let header = decode_header(token).map_err(|error| error.to_string())?;
         if header.alg != Algorithm::RS256 {
             return Err(format!("unsupported algorithm {:?}", header.alg));

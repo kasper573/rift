@@ -43,6 +43,9 @@ services:
     image: ${DOCKER_REGISTRY_URL:-rift}/rift-game-server:${DOCKER_IMAGE_VERSION:-latest}
     restart: always
     profiles: ["prod", "test"]
+    # The encrypted netcode transport; clients dial it directly (Caddy only proxies the HTTP API).
+    ports:
+      - "9998:9998/udp"
     healthcheck:
       test:
         ["CMD-SHELL", "wget -qO- http://127.0.0.1:$$RIFT_GAME_SERVER_PORT/health"]

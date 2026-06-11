@@ -2,17 +2,99 @@
 name = "client"
 version.workspace = true
 edition.workspace = true
-description = "Playable MMORPG client: a thin macroquad binary rendering the replicated `world` (also the browser e2e's geometry source)."
+description = "Playable MMORPG client: a Bevy app rendering the replicated `world` over netcode, with a BSN HUD and browser SSO."
+repository = "https://github.com/kasper573/rift"
+authors = ["kasper573"]
+
+[package.metadata.wix]
+upgrade-guid = "66EB3533-08AB-4086-8389-13FD7D3CBAB1"
+path-guid = "172E55AD-414D-488C-8857-829BE2454952"
+license = false
+eula = false
+
+[[bin]]
+name = "rift"
+path = "src/main.rs"
+
+# The browser sign-in suite drives the real stack (Keycloak + Caddy + Chrome), so it's gated like
+# the server's stack suite and excluded from the default `cargo test` run.
+[[test]]
+name = "sso"
+path = "tests/sso.rs"
+required-features = ["stack"]
+
+[features]
+# Dev-loop only (never CI or release): faster iterative builds and asset hot-reload.
+dev = ["bevy/dynamic_linking", "bevy/file_watcher"]
+# Hot-reload loop run under `dx serve --hot-patch`: live system patching (subsecond) plus asset
+# hot-reload. No dynamic_linking — subsecond does its own runtime patching.
+hotpatch = ["bevy/hotpatching", "bevy/file_watcher"]
+# Gates the browser sign-in suite (`tests/sso.rs`) on the running stack.
+stack = []
+# Release/dist builds: embed the assets tree so the shipped binary is self-contained.
+dist = ["dep:include_dir", "dep:futures-lite"]
 
 [dependencies]
 world = { path = "../world", default-features = false }
-macroquad = { version = "0.4" }
-egui-macroquad = { version = "0.17", default-features = false }
+include_dir = { version = "0.7", optional = true }
+futures-lite = { version = "2", optional = true }
+# Bevy's `2d` + `ui` feature bundles, minus `bevy_gilrs` (drops the `libudev` build dependency —
+# no gamepad in a mouse/keyboard MMO) and `wayland` (drops the `libwayland-dev` build dependency;
+# `x11` is dlopen-only and runs on X11 and Wayland-via-XWayland).
+bevy = { version = "0.19.0-rc.3", default-features = false, features = [
+    "async_executor",
+    "bevy_asset",
+    "bevy_log",
+    "bevy_state",
+    "reflect_auto_register",
+    "std",
+    "bevy_winit",
+    "default_font",
+    "multi_threaded",
+    "x11",
+    "custom_cursor",
+    "sysinfo_plugin",
+    "bevy_sprite",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_post_process",
+    "bevy_sprite_render",
+    "bevy_gizmos_render",
+    "bevy_animation",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_gizmos",
+    "bevy_image",
+    "bevy_mesh",
+    "bevy_shader",
+    "bevy_material",
+    "bevy_text",
+    "bevy_window",
+    "hdr",
+    "png",
+    "bevy_input_focus",
+    "bevy_ui",
+    "bevy_ui_render",
+    "bevy_ui_widgets",
+    "bevy_scene",
+    "bevy_picking",
+    "sprite_picking",
+    "ui_picking",
+] }
+bevy_replicon = { workspace = true, features = ["client"] }
+bevy_replicon_renet = { workspace = true, features = ["client", "renet_netcode"] }
+bevy_kira_audio = { version = "0.26.0-rc.1", features = ["wav"] }
+openidconnect = { version = "4", features = ["ureq"] }
+http = "1"
+ureq = { workspace = true, features = ["rustls", "json"] }
+webbrowser = "1"
+base64 = "0.22"
+dirs = "6"
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# Native audio backend (kira). Excluded from the wasm build, which uses the Web Audio plugin in
-# js/rift_audio.js instead — so kira's wasm limitations never apply.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-kira = "0.12"
-dirs = "6"
+# The browser sign-in suite (`tests/sso.rs`, behind `stack`) needs the shared e2e harness and
+# `world`'s role constants. Dev-deps only — neither reaches the shipped binary.
+[dev-dependencies]
+e2e-support = { path = "../e2e-support" }
+world = { path = "../world", default-features = false }

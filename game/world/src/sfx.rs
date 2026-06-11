@@ -96,9 +96,9 @@ pub fn sfx_table() -> &'static [SfxDef] {
         table::unique_ids(defs.iter().map(|def| def.id.0.as_str()), FILE);
 
         for def in &defs {
-            assets::bytes(&def.src).unwrap_or_else(|| {
-                panic!("{FILE}: sfx '{}' src '{}' not found", def.id.0, def.src)
-            });
+            if !assets::exists(&def.src) {
+                panic!("{FILE}: sfx '{}' src '{}' not found", def.id.0, def.src);
+            }
             if !def.volume.valid() {
                 panic!(
                     "{FILE}: sfx '{}' volume must be within 0..=1 with min <= max",

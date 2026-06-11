@@ -111,11 +111,11 @@ impl RenderLayer {
     }
 }
 
-/// One distinct map tile's render data: its tileset sheet and its animation frames (a static
+/// One distinct map tile's render data: its tileset sheet path and its animation frames (a static
 /// tile is a single endless frame).
 #[derive(Clone)]
 struct TileDef {
-    sheet: &'static [u8],
+    sheet: String,
     frames: Vec<(Rect<Pixels>, u32)>,
     total_ms: u32,
 }
@@ -152,16 +152,16 @@ pub struct Area {
     tiles: Vec<TileDef>,
 }
 
-/// What to draw for one resolved map cell: a region of a tileset sheet, possibly mirrored.
-pub struct TileSprite {
-    pub sheet: &'static [u8],
+/// What to draw for one resolved map cell: a region of a tileset sheet (by path), possibly mirrored.
+pub struct TileSprite<'a> {
+    pub sheet: &'a str,
     pub region: Rect<Pixels>,
     pub flip: (bool, bool),
 }
 
 impl Area {
     /// The sprite to draw for a cell at time `t`; animated tiles advance.
-    pub fn resolve(&self, cell: TileRef, time: f32) -> Option<TileSprite> {
+    pub fn resolve(&self, cell: TileRef, time: f32) -> Option<TileSprite<'_>> {
         let def = &self.tiles[cell.index()?];
         let region = if def.total_ms == 0 {
             def.frames[0].0
@@ -178,7 +178,7 @@ impl Area {
             region
         };
         Some(TileSprite {
-            sheet: def.sheet,
+            sheet: &def.sheet,
             region,
             flip: cell.flip(),
         })
@@ -443,7 +443,6 @@ fn tile_def(tileset: &tiled::Tileset, id: u32) -> TileDef {
         .and_then(|name| name.to_str())
         .unwrap_or_else(|| panic!("tileset {} image source", tileset.name));
     let sheet = assets::find(assets::TILESETS, source)
-        .map(|(_, bytes)| bytes)
         .unwrap_or_else(|| panic!("unknown tileset image {source}"));
 
     let region = |id: u32| {

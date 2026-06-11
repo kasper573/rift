@@ -43,7 +43,7 @@ pub struct Timing {
 /// Unknown actions fall back to idle. Audio cues fire as their frame is entered.
 pub struct ActorModel {
     name: String,
-    sheet: &'static [u8],
+    sheet: String,
     frame: Size<Pixels>,
     columns: u32,
     hitbox: Size<Tiles>,
@@ -63,9 +63,9 @@ impl ActorModel {
         self.hitbox
     }
 
-    /// The model's sheet as PNG bytes; [`ActorModel::frame`] regions index into it.
-    pub fn sheet(&self) -> &'static [u8] {
-        self.sheet
+    /// The model's sheet as a root-relative asset path; [`ActorModel::frame`] regions index into it.
+    pub fn sheet(&self) -> &str {
+        &self.sheet
     }
 
     /// The frame to draw `t` seconds into `action`, as a pixel region of [`ActorModel::sheet`].
@@ -173,9 +173,10 @@ impl ActorModel {
 pub fn models() -> &'static [ActorModel] {
     static MODELS: OnceLock<Vec<ActorModel>> = OnceLock::new();
     MODELS.get_or_init(|| {
-        let mut all: Vec<ActorModel> = assets::dir(assets::ACTORS)
-            .filter(|(path, _)| path.ends_with(".tsx"))
-            .map(|(path, _)| load(assets::stem(path)))
+        let mut all: Vec<ActorModel> = assets::list(assets::ACTORS)
+            .iter()
+            .filter(|path| path.ends_with(".tsx"))
+            .map(|path| load(assets::stem(path)))
             .collect();
         all.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         all
@@ -207,7 +208,6 @@ fn load(name: &str) -> ActorModel {
         .and_then(|image| image.source.file_name()?.to_str())
         .unwrap_or_else(|| panic!("actor model {name} declares no sheet image"));
     let sheet = assets::find(assets::ACTORS, source)
-        .map(|(_, bytes)| bytes)
         .unwrap_or_else(|| panic!("actor model {name} has no sheet {source}"));
 
     let mut strips: HashMap<String, [Vec<Frame>; 8]> = HashMap::new();

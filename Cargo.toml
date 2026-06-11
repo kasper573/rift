@@ -4,6 +4,7 @@ members = [
     "game/world",
     "game/server",
     "game/client",
+    "game/e2e-support",
     "website",
 ]
 
@@ -13,10 +14,11 @@ edition = "2024"
 
 [workspace.dependencies]
 askama = "0.14"
-bevy_app = { version = "0.18", default-features = false }
-bevy_ecs = { version = "0.18", default-features = false, features = ["std", "serialize"] }
-bevy_replicon = { version = "0.40", default-features = false }
-bevy_state = { version = "0.18", default-features = false, features = ["bevy_app"] }
+bevy_app = { version = "0.19.0-rc.3", default-features = false }
+bevy_ecs = { version = "0.19.0-rc.3", default-features = false, features = ["std", "serialize"] }
+bevy_replicon = { version = "0.41.0-rc.1", default-features = false }
+bevy_replicon_renet = { git = "https://github.com/simgine/bevy_replicon_renet", branch = "bevy-0.19", default-features = false }
+bevy_state = { version = "0.19.0-rc.3", default-features = false, features = ["bevy_app"] }
 axum = "0.8"
 envy = "0.4"
 metrics-process = "2"
@@ -24,7 +26,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
 tower-http = { version = "0.6", features = ["fs", "set-header"] }
-tungstenite = "0.29"
 ureq = { version = "3", default-features = false }
 
 # LTO + a single codegen unit were traded away to keep CI/image builds fast (and cacheable);
@@ -34,3 +35,37 @@ lto = false
 # Serves the dev loop's rebuilds; CI is unaffected (rust-cache pins CARGO_INCREMENTAL=0, which
 # takes precedence over this setting).
 incremental = true
+
+# The dev client is playable: our code builds fast at opt-level 1, dependencies (Bevy) at 3 so the
+# simulation and rendering keep up.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# Release distribution of the client (cargo-dist). Only the client ships; dist builds embed the
+# assets via `--features dist`, and the Linux runner needs ALSA for the audio backend.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
+# Config for 'dist'
+[workspace.metadata.dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.32.0"
+# CI backends to support
+ci = "github"
+# The installers to generate for each app
+installers = ["shell", "powershell", "msi"]
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+# Features to pass to cargo build
+features = ["dist"]
+# Whether to install an updater program
+install-updater = false
+# Path that installers should place binaries in
+install-path = "CARGO_HOME"
+
+[workspace.metadata.dist.dependencies.apt]
+libasound2-dev = '*'

@@ -1,50 +1,63 @@
-# Build the release artifacts that the stack packages and the dev loop bind-mounts.
+issuer := "https://auth.rift.localhost/realms/rift"
+game_url := "https://game-server.rift.localhost"
+ca := "target/caddy-root.crt"
+compose := "docker compose -f docker/docker-compose.yaml -f docker/docker-compose.dev.yaml --profile test"
+
+# Build the server/website artifacts the stack bind-mounts.
 build:
     cargo build --release -p website -p server
-    cargo wasm
 
 # Build the artifacts and (re)deploy the local stack; compose only restarts what changed.
-stack: build
+stack: build _net
     docker compose -f docker/docker-compose.yaml --profile test up -d --build --wait
 
-# Watch mode: the stack runs with target/ bind-mounted, so every save rebuilds and restarts
-# only the services whose binary changed; a new client.wasm is picked up by a browser refresh
-# alone. Images are only built when missing — the running loop never needs the registry.
-dev: build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    compose="docker compose -f docker/docker-compose.yaml -f docker/docker-compose.dev.yaml --profile test"
-    for image in $($compose config --images); do
-        docker image inspect "$image" >/dev/null 2>&1 || { $compose build; break; }
-    done
-    $compose up -d --wait
-    watchexec --clear --on-busy-update queue -- just _dev-cycle
+# Ensure the external docker network the compose stack attaches to exists.
+_net:
+    docker network inspect rift >/dev/null 2>&1 || docker network create rift
 
-# One cycle: rebuild, then restart every service whose container runs a process older than its
-# binary on disk. Comparing against the container start (not this cycle's work) makes cycles
-# self-healing: an interrupted cycle or a stale bring-up is corrected by the next run.
-_dev-cycle:
+# Tear the stack down and wipe its volumes. Keycloak only imports a realm on first boot, so the
+# realm DB must be wiped for `rift-realm.json` changes (e.g. redirect URIs) to re-apply.
+reset:
+    {{compose}} down -v
+
+# Watch mode: bring up the stack and run the client here under Bevy's first-class hot-reload.
+# `dx serve --hot-patch` live-patches the bodies of changed `Update` systems in the running process
+# (subsecond), and Bevy's file_watcher hot-reloads edited assets — so most edits apply without
+# restarting the app, and dx falls back to a full rebuild for changes it can't patch (new systems,
+# signatures, schedules). The client is a native desktop app, so it runs on this machine — real GPU,
+# browser, audio, and loopback — connecting to the compose stack over its published ports exactly
+# like a shipped client connects to production.
+dev: build _up trust
+    cd game/client && \
+    RIFT_ASSETS="{{justfile_directory()}}/assets" \
+    RIFT_CLIENT_ISSUER={{issuer}} \
+    RIFT_CLIENT_GAME_URL={{game_url}} \
+    RIFT_CLIENT_EXTRA_CA="{{justfile_directory()}}/{{ca}}" \
+        dx serve --hot-patch --bin rift --features hotpatch --platform {{os()}}
+
+# Bring the stack up (building images only when missing) and export the proxy's local CA, which both
+# the client and the browser trust for sign-in and session minting.
+_up:
     #!/usr/bin/env bash
     set -euo pipefail
-    compose="docker compose -f docker/docker-compose.yaml -f docker/docker-compose.dev.yaml --profile test"
-    cargo build --release -p website -p server & native=$!
-    cargo wasm & wasm=$!
-    status=0
-    wait "$native" || status=$?
-    wait "$wasm" || status=$?
-    [ "$status" -eq 0 ] || exit "$status"
-    stale=()
-    for pair in "rift-game-server target/release/server" "rift-website target/release/website"; do
-        set -- $pair
-        container=$($compose ps -q "$1")
-        if [ -n "$container" ]; then
-            started=$(docker inspect "$container" --format '{{{{.State.StartedAt}}')
-            awk -v binary="$(stat -c %.Y "$2")" -v started="$(date -d "$started" +%s.%N)" \
-                'BEGIN { exit !(binary > started) }' || continue
-        fi
-        stale+=("$1")
+    for image in $({{compose}} config --images); do
+        docker image inspect "$image" >/dev/null 2>&1 || { {{compose}} build; break; }
     done
-    if [ "${#stale[@]}" -gt 0 ]; then
-        $compose up -d "${stale[@]}"
-        $compose restart "${stale[@]}"
+    {{compose}} up -d --wait
+    {{compose}} cp reverse-proxy:/data/caddy/pki/authorities/local/root.crt {{ca}}
+
+# Trust Caddy's local dev CA in the browser so it accepts https://*.rift.localhost during sign-in.
+# The client trusts the same CA file directly (RIFT_CLIENT_EXTRA_CA), but browsers keep their own
+# NSS store, so the cert has to go there too. Idempotent, and re-run by `dev` because `reset`
+# rotates the CA. Needs certutil (libnss3-tools); without it the client still works but the sign-in
+# tab shows a certificate warning.
+trust: _up
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v certutil >/dev/null 2>&1; then
+        echo "⚠ certutil not found (install libnss3-tools) — the browser won't trust the dev CA" >&2
+        exit 0
     fi
+    mkdir -p "$HOME/.pki/nssdb"
+    certutil -d sql:"$HOME/.pki/nssdb" -D -n rift-caddy-local 2>/dev/null || true
+    certutil -d sql:"$HOME/.pki/nssdb" -A -t "C,," -n rift-caddy-local -i {{ca}}

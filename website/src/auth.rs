@@ -24,27 +24,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::App;
 
-/// A signed-in visitor: claims from the verified ID token, plus the opaque access token the
-/// game client presents to the game server.
+/// A signed-in visitor, named from the verified ID token's claims.
 pub struct Identity {
     pub name: String,
-    pub roles: Vec<String>,
-    pub token: String,
 }
 
 pub async fn identity(app: &App, jar: &CookieJar) -> Option<Identity> {
-    let token = jar.get("token")?.value().to_owned();
     let id_token: RiftIdToken = jar.get("idt")?.value().parse().ok()?;
     let claims = app.auth.verified_claims(&id_token, accept_nonce).await?;
     let name = claims
         .preferred_username()
         .map(|username| username.to_string())
         .unwrap_or_else(|| claims.subject().to_string());
-    Some(Identity {
-        name,
-        roles: claims.additional_claims().realm_access.roles.clone(),
-        token,
-    })
+    Some(Identity { name })
 }
 
 pub async fn sign_in(

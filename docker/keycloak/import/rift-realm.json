@@ -741,7 +741,8 @@
       "alwaysDisplayInConsole": true,
       "clientAuthenticatorType": "client-secret",
       "redirectUris": [
-        "https://${RIFT_WEBSITE_DOMAIN}/*"
+        "https://${RIFT_WEBSITE_DOMAIN}/*",
+        "http://127.0.0.1/*"
       ],
       "webOrigins": [
         "https://${RIFT_WEBSITE_DOMAIN}"

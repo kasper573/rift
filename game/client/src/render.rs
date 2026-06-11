@@ -1,120 +1,257 @@
-//! Renders the replicated world with macroquad into a fixed-size pixel view, then presents it
-//! integer-scaled and letterboxed; the geometry helpers double as the input mapping.
+//! Renders the replicated world into a fixed 384×288 pixel target, then presents that target
+//! integer-scaled and letterboxed to the window through a dead-tint material. Replicated actors
+//! and the map tiles of the player's area carry their own sprites, synced from `world`'s tables.
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
 
-use macroquad::prelude::*;
-use world::Entity;
-use world::actors::ActorModelId;
-use world::area::AreaId;
-use world::math::{Offset, Pixels, Pos, Rect, Size, Tiles};
-use world::protocol::Rgba;
-use world::protocol::{Actor, Position, action_name};
-use world::session::MmoClient;
-use world::{actors, area};
+use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{RenderTarget, ScalingMode};
+use bevy::image::ImageSampler;
+use bevy::prelude::*;
+use bevy::render::render_resource::{AsBindGroup, TextureFormat};
+use bevy::shader::ShaderRef;
+use bevy::sprite::Anchor;
+use bevy::sprite_render::{Material2d, Material2dPlugin};
+use bevy::window::PrimaryWindow;
+use world::actors;
+use world::area::{self, AreaId};
+use world::math::{Pos, Tiles};
+use world::protocol::{Actor, AreaTag, Owner, Position, Rgba, action_name};
+use world::session::{self, MyClient};
 
-type ActorQuery = (Entity, &'static Actor, &'static Position);
+/// World pixels per tile; the actor and tile sheets are authored at this scale.
+pub const TILE: f32 = 16.0;
+/// The rendered viewport in tiles, and in pixels (one tile is `TILE` pixels).
+const VIEW_TILES: Vec2 = Vec2::new(24.0, 18.0);
+const VIEW: Vec2 = Vec2::new(VIEW_TILES.x * TILE, VIEW_TILES.y * TILE);
+/// The presentation quad lives on its own layer so only the presentation camera draws it.
+const PRESENT_LAYER: usize = 1;
 
-/// One tile, in pixels.
-pub const TILE_SIZE: Size<Pixels> = Size::new(16.0, 16.0);
-/// The rendered viewport, in tiles.
-pub const VIEW_TILES: Size<Tiles> = Size::new(24.0, 18.0);
-/// The rendered viewport, in pixels — one tile's worth of pixels across each tile of the view.
-pub const VIEW: Size<Pixels> = Size::new(
-    TILE_SIZE.width * VIEW_TILES.width,
-    TILE_SIZE.height * VIEW_TILES.height,
-);
-static HALF_VIEW: LazyLock<Pos<Pixels>> = LazyLock::new(|| (VIEW * 0.5).to_vector().to_point());
-static HALF_VIEW_TILES: LazyLock<Size<Tiles>> = LazyLock::new(|| VIEW_TILES * 0.5);
+pub struct RenderPlugin;
 
-/// A sound source's volume for a listener, both in tiles: 1 at the listener, falling linearly to
-/// 0 at the edge of the rendered view and staying 0 beyond it, so off-screen sources are silent.
-pub fn proximity_volume(listener: Pos<Tiles>, source: Pos<Tiles>) -> f32 {
-    let half = *HALF_VIEW_TILES;
-    let offset = source - listener;
-    let dx = offset.x.abs() / half.width;
-    let dy = offset.y.abs() / half.height;
-    (1.0 - dx.max(dy)).clamp(0.0, 1.0)
+impl Plugin for RenderPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(Material2dPlugin::<DeadTint>::default())
+            .init_resource::<Animator>()
+            .init_resource::<SpawnedArea>()
+            .init_resource::<Viewport>()
+            .add_systems(Startup, setup)
+            .add_observer(attach_sprite)
+            .add_systems(Update, letterbox)
+            .add_systems(
+                Update,
+                (
+                    sync_actors,
+                    follow_camera,
+                    spawn_area_tiles,
+                    dead_tint,
+                    healthbar,
+                )
+                    .run_if(in_state(crate::Screen::Playing)),
+            );
+    }
 }
 
-/// A sound source's stereo pan for a listener: -1 (full left) at the left edge of the view, 0 at
-/// the listener's column, +1 (full right) at the right edge; clamped, vertical offset ignored.
-pub fn proximity_pan(listener: Pos<Tiles>, source: Pos<Tiles>) -> f32 {
-    ((source - listener).x / HALF_VIEW_TILES.width).clamp(-1.0, 1.0)
-}
+/// The camera that renders the world into the offscreen target; it follows the player.
+#[derive(Component)]
+pub struct WorldCamera;
 
-/// Integer-scales the view into a screen and centers it: the scale, and the view's top-left offset.
-pub fn letterbox(screen: Size<Pixels>) -> (f32, Pos<Pixels>) {
-    let scale = (screen.width / VIEW.width)
-        .min(screen.height / VIEW.height)
-        .floor()
-        .max(1.0);
-    (
-        scale,
-        ((screen - VIEW * scale) * 0.5).to_vector().to_point(),
-    )
-}
+#[derive(Component)]
+struct Present;
 
-/// The window-space placement of the letterboxed view: its integer scale and top-left offset.
-/// The conversions between world, view-frame, and window pixels double as the input mapping.
-#[derive(Clone, Copy)]
-pub struct Screen {
+/// The letterboxed placement of the view in the window — integer scale and centered offset —
+/// shared with input mapping.
+#[derive(Resource, Default, Clone, Copy)]
+pub struct Viewport {
     pub scale: f32,
-    pub offset: Pos<Pixels>,
+    pub offset: Vec2,
 }
 
-impl Screen {
-    pub fn fit() -> Screen {
-        let (scale, offset) = letterbox(Size::new(screen_width(), screen_height()));
-        Screen { scale, offset }
+/// Tints the presented frame toward red on death: additive red, green and blue at a third.
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+struct DeadTint {
+    #[texture(0)]
+    #[sampler(1)]
+    world: Handle<Image>,
+    #[uniform(2)]
+    dead: f32,
+}
+
+impl Material2d for DeadTint {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/dead_tint.wgsl".into()
     }
-
-    /// A world position to its on-screen window position.
-    pub fn to_window(self, camera: Camera, world: Pos<Tiles>) -> Pos<Pixels> {
-        to_frame_f(camera, world) * self.scale + self.offset.to_vector()
-    }
-
-    /// A window pixel position back to a world-frame pixel position.
-    pub fn to_frame(self, window: Pos<Pixels>) -> Pos<Pixels> {
-        ((window - self.offset) / self.scale).to_point()
-    }
 }
 
-#[derive(Clone, Copy)]
-pub struct Camera {
-    pub center: Pos<Tiles>,
-}
-
-pub fn camera(client: &mut MmoClient) -> Option<Camera> {
-    camera_for(client.my_position()?, client.my_area()?)
-}
-
-pub fn camera_for(at: Pos<Tiles>, area: AreaId) -> Option<Camera> {
-    let area = area::areas().get(area.0 as usize)?;
-    let half = *HALF_VIEW_TILES;
-    let lo = Pos::new(half.width, half.height);
-    let hi = Pos::new(
-        (area.width.0 - half.width).max(half.width),
-        (area.height.0 - half.height).max(half.height),
+fn setup(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<DeadTint>>,
+) {
+    let mut target = Image::new_target_texture(
+        VIEW.x as u32,
+        VIEW.y as u32,
+        TextureFormat::Rgba8UnormSrgb,
+        None,
     );
-    let center = at.clamp(lo, hi);
-    Some(Camera {
-        center: Pos::new(snap(center.x), snap(center.y)),
-    })
+    target.sampler = ImageSampler::nearest();
+    let target = images.add(target);
+
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 0,
+            ..default()
+        },
+        RenderTarget::Image(target.clone().into()),
+        Projection::Orthographic(OrthographicProjection {
+            scaling_mode: ScalingMode::Fixed {
+                width: VIEW.x,
+                height: VIEW.y,
+            },
+            ..OrthographicProjection::default_2d()
+        }),
+        Msaa::Off,
+        WorldCamera,
+    ));
+
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 1,
+            ..default()
+        },
+        RenderLayers::layer(PRESENT_LAYER),
+        IsDefaultUiCamera,
+    ));
+
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle::new(VIEW.x, VIEW.y))),
+        MeshMaterial2d(materials.add(DeadTint {
+            world: target,
+            dead: 0.0,
+        })),
+        RenderLayers::layer(PRESENT_LAYER),
+        Present,
+    ));
+
+    commands.spawn((
+        Bar::Border,
+        bar_sprite(0x14_0A_28, BAR),
+        Anchor::CENTER,
+        hidden(),
+    ));
+    let inner = BAR - Vec2::splat(2.0);
+    commands.spawn((
+        Bar::Background,
+        bar_sprite(0x2A_1C_5C, inner),
+        Anchor::CENTER,
+        hidden(),
+    ));
+    commands.spawn((
+        Bar::Fill,
+        bar_sprite(0x00_FF_00, inner),
+        Anchor::CENTER_LEFT,
+        hidden(),
+    ));
 }
 
-/// Anchors each entity's animation to the moment its replicated action last changed, so
-/// [`ActorModel::frame`] receives time-into-action rather than the global clock.
-///
-/// [`ActorModel::frame`]: actors::ActorModel::frame
-#[derive(Default)]
-pub struct Animator {
-    pub anchors: HashMap<Entity, (u8, f32)>,
+/// A player healthbar layer: a dark border, a background, and a green fill that shrinks with health.
+#[derive(Component, Clone, Copy)]
+enum Bar {
+    Border,
+    Background,
+    Fill,
+}
+
+/// The healthbar geometry in world pixels, above the player's head.
+const BAR: Vec2 = Vec2::new(20.0, 4.0);
+const BAR_RISE: f32 = 28.0;
+
+fn bar_sprite(rgb: u32, size: Vec2) -> Sprite {
+    let [_, r, g, b] = rgb.to_be_bytes();
+    Sprite {
+        color: Color::srgb_u8(r, g, b),
+        custom_size: Some(size),
+        ..default()
+    }
+}
+
+fn hidden() -> (Transform, Visibility) {
+    (Transform::from_xyz(0.0, 0.0, 200.0), Visibility::Hidden)
+}
+
+/// Tracks the local player's healthbar above their head; hidden while dead or unspawned.
+fn healthbar(world: &mut World) {
+    let shown = match (session::my_position(world), session::my_vitals(world)) {
+        (Some(at), Some((health, max))) if health > 0.0 && max > 0.0 => Some((
+            Vec2::new(at.x * TILE, -at.y * TILE + BAR_RISE),
+            (health / max).clamp(0.0, 1.0),
+        )),
+        _ => None,
+    };
+    let mut bars = world.query::<(&Bar, &mut Transform, &mut Visibility, &mut Sprite)>();
+    for (bar, mut transform, mut visibility, mut sprite) in bars.iter_mut(world) {
+        let Some((center, fraction)) = shown else {
+            *visibility = Visibility::Hidden;
+            continue;
+        };
+        *visibility = Visibility::Visible;
+        match bar {
+            Bar::Border => transform.translation = center.extend(200.0),
+            Bar::Background => transform.translation = center.extend(200.1),
+            Bar::Fill => {
+                let inner = BAR.x - 2.0;
+                sprite.custom_size = Some(Vec2::new(inner * fraction, BAR.y - 2.0));
+                transform.translation = Vec3::new(center.x - inner / 2.0, center.y, 200.2);
+            }
+        }
+    }
+}
+
+/// Integer-scales and centers the presentation quad to fit the window.
+fn letterbox(
+    window: Single<&Window, With<PrimaryWindow>>,
+    mut quad: Query<&mut Transform, With<Present>>,
+    mut viewport: ResMut<Viewport>,
+) {
+    let (width, height) = (window.resolution.width(), window.resolution.height());
+    let scale = (width / VIEW.x).min(height / VIEW.y).floor().max(1.0);
+    viewport.scale = scale;
+    viewport.offset = Vec2::new(
+        (width - VIEW.x * scale) / 2.0,
+        (height - VIEW.y * scale) / 2.0,
+    );
+    for mut transform in &mut quad {
+        transform.scale = Vec3::splat(scale);
+    }
+}
+
+fn dead_tint(world: &mut World) {
+    let dead = if session::is_dead(world) { 1.0 } else { 0.0 };
+    let Ok(handle) = world
+        .query_filtered::<&MeshMaterial2d<DeadTint>, With<Present>>()
+        .single(world)
+        .map(|material| material.0.clone())
+    else {
+        return;
+    };
+    let mut materials = world.resource_mut::<Assets<DeadTint>>();
+    if let Some(mut material) = materials.get_mut(&handle) {
+        material.dead = dead;
+    }
+}
+
+/// Anchors each entity's animation to the moment its replicated action last changed, so the model
+/// receives time-into-action rather than the global clock.
+#[derive(Resource, Default)]
+struct Animator {
+    anchors: HashMap<Entity, (u8, f32)>,
 }
 
 impl Animator {
-    pub fn elapsed(&mut self, entity: Entity, action: u8, time: f32) -> f32 {
+    fn elapsed(&mut self, entity: Entity, action: u8, time: f32) -> f32 {
         match self.anchors.get(&entity) {
             Some(&(seen, start)) if seen == action => time - start,
             _ => {
@@ -125,357 +262,159 @@ impl Animator {
     }
 }
 
-pub struct Scene {
-    camera: Option<Camera>,
-    area: AreaId,
-    time: f32,
-    actors: Vec<ActorDraw>,
-    dead: bool,
-}
-
-pub fn build_scene(client: &mut MmoClient, time: f32, animator: &mut Animator) -> Scene {
-    let camera = camera(client);
-    let area = client.my_area().unwrap_or(AreaId(0));
-    let dead = client.is_dead();
-    let world = client.world_mut();
-    animator
-        .anchors
-        .retain(|&entity, _| world.get_entity(entity).is_ok());
-    let mut query = world.query::<ActorQuery>();
-    let actors = query
-        .iter(world)
-        .map(|(entity, actor, position)| {
-            let elapsed = animator.elapsed(entity, actor.action, time);
-            ActorDraw {
-                pos: position.pos,
-                region: actors::model(actor.model).frame(
-                    action_name(actor.action),
-                    actor.dir,
-                    elapsed,
-                    actor.attack_rate.0,
-                ),
-                tint: actor.color,
-                model: actor.model,
-            }
-        })
-        .collect();
-    Scene {
-        camera,
-        area,
-        time,
-        actors,
-        dead,
-    }
-}
-
-/// The view's drawing state, reused across frames: the offscreen pixel target the world renders
-/// into, the GPU textures of every atlas, and the death tint.
-pub struct WorldView {
-    pub animator: Animator,
-    target: RenderTarget,
-    textures: Textures,
-    dead_tint: Material,
-}
-
-impl WorldView {
-    pub fn new() -> WorldView {
-        let target = render_target(VIEW.width as u32, VIEW.height as u32);
-        target.texture.set_filter(FilterMode::Nearest);
-        WorldView {
-            animator: Animator::default(),
-            target,
-            textures: Textures::default(),
-            dead_tint: dead_tint_material(),
-        }
-    }
-}
-
-impl Default for WorldView {
-    fn default() -> WorldView {
-        WorldView::new()
-    }
-}
-
-/// Renders the scene into the view's pixel target, then presents it onto the screen at the
-/// letterboxed integer scale; dead scenes pass through the red death tint.
-pub fn present(scene: &Scene, view: &mut WorldView, scale: f32, offset: Pos<Pixels>) {
-    let mut camera = Camera2D::from_display_rect(macroquad::math::Rect::new(
-        0.0,
-        0.0,
-        VIEW.width,
-        VIEW.height,
-    ));
-    camera.render_target = Some(view.target.clone());
-    set_camera(&camera);
-    clear_background(Color::from_rgba(0, 0, 0, 0));
-    draw_scene(scene, &mut view.textures);
-    set_default_camera();
-
-    clear_background(BLACK);
-    if scene.dead {
-        gl_use_material(&view.dead_tint);
-    }
-    let dest = VIEW * scale;
-    draw_texture_ex(
-        &view.target.texture,
-        offset.x,
-        offset.y,
-        WHITE,
-        DrawTextureParams {
-            dest_size: Some(vec2(dest.width, dest.height)),
-            // The render-target camera writes rows bottom-up; presenting flips them back.
-            flip_y: true,
-            ..Default::default()
-        },
-    );
-    if scene.dead {
-        gl_use_default_material();
-    }
-}
-
-fn draw_scene(scene: &Scene, textures: &mut Textures) {
-    let Some(camera) = scene.camera else {
+/// Replicated actors are render entities: attach a sprite as the [`Actor`] component lands.
+fn attach_sprite(
+    add: On<Add, Actor>,
+    actors: Query<&Actor>,
+    assets: Res<AssetServer>,
+    mut commands: Commands,
+) {
+    let Ok(actor) = actors.get(add.entity) else {
         return;
     };
-    let area = &area::areas()[scene.area.0 as usize];
-
-    let half = *HALF_VIEW_TILES;
-    let margin = Size::splat(1.0);
-    let lo = (camera.center - half).floor() - margin;
-    let hi = (camera.center + half).ceil() + margin;
-    let (min_x, max_x) = (lo.x as i32, hi.x as i32);
-    let (min_y, max_y) = (lo.y as i32, hi.y as i32);
-
-    for layer in &area.layers {
-        for ty in min_y..=max_y {
-            for tx in min_x..=max_x {
-                if layer.dynamic && area.grouped_cells.contains(&(tx, ty)) {
-                    continue;
-                }
-                draw_map_tile(textures, area, layer.at(tx, ty), scene.time, camera, tx, ty);
-            }
-        }
-    }
-
-    let mut draws: Vec<(f32, Draw)> = Vec::new();
-    for &(at, cell) in &area.objects {
-        let (tile_x, bottom_y) = (at.x, at.y);
-        if tile_x < min_x as f32
-            || tile_x > max_x as f32
-            || bottom_y < min_y as f32
-            || bottom_y > (max_y + 2) as f32
-        {
-            continue;
-        }
-        draws.push((
-            bottom_y,
-            Draw::Tile {
-                cell,
-                top_left: Pos::new(at.x, bottom_y - 1.0),
-            },
-        ));
-    }
-    for (index, actor) in scene.actors.iter().enumerate() {
-        draws.push((actor.pos.y, Draw::Actor { index }));
-    }
-    for (index, group) in area.groups.iter().enumerate() {
-        if group.z >= (min_y - 2) as f32 && group.z <= (max_y + 2) as f32 {
-            draws.push((group.z, Draw::Group { group: index }));
-        }
-    }
-    draws.sort_by(|a, b| a.0.total_cmp(&b.0));
-
-    for (_, draw) in &draws {
-        match *draw {
-            Draw::Tile { cell, top_left } => {
-                if let Some(sprite) = area.resolve(cell, scene.time) {
-                    let dst = to_frame(camera, top_left);
-                    textures.draw_png(
-                        sprite.sheet,
-                        sprite.region,
-                        dst,
-                        TILE_SIZE,
-                        WHITE,
-                        sprite.flip,
-                    );
-                }
-            }
-            Draw::Actor { index } => {
-                let actor = &scene.actors[index];
-                let center = to_frame_f(camera, actor.pos);
-                let anchor = Offset::new(
-                    (actor.region.size.width / 2.0).round(),
-                    (actor.region.size.height * 2.0 / 3.0).round(),
-                );
-                let dst = center.round() - anchor;
-                textures.draw_png(
-                    actors::model(actor.model).sheet(),
-                    actor.region,
-                    dst,
-                    actor.region.size,
-                    rgba_color(actor.tint),
-                    (false, false),
-                );
-            }
-            Draw::Group { group } => {
-                for &(tx, ty, cell) in &area.groups[group].tiles {
-                    draw_map_tile(textures, area, cell, scene.time, camera, tx, ty);
-                }
-            }
-        }
-    }
+    let image = assets.load(actors::model(actor.model).sheet().to_owned());
+    commands.entity(add.entity).insert((
+        Sprite { image, ..default() },
+        Anchor(Vec2::new(0.0, -1.0 / 6.0)),
+        Transform::default(),
+        Visibility::default(),
+    ));
 }
 
-pub fn to_frame_f(camera: Camera, world: Pos<Tiles>) -> Pos<Pixels> {
-    let offset = world - camera.center;
-    *HALF_VIEW + Offset::new(offset.x * TILE_SIZE.width, offset.y * TILE_SIZE.height)
-}
-
-pub fn frame_to_world(camera: Camera, frame: Pos<Pixels>) -> Pos<Tiles> {
-    let offset = frame - *HALF_VIEW;
-    camera.center + Offset::new(offset.x / TILE_SIZE.width, offset.y / TILE_SIZE.height)
-}
-
-struct ActorDraw {
-    pos: Pos<Tiles>,
-    region: Rect<Pixels>,
-    tint: Rgba,
-    model: ActorModelId,
-}
-
-enum Draw {
-    Tile {
-        cell: area::TileRef,
-        top_left: Pos<Tiles>,
-    },
-    Actor {
-        index: usize,
-    },
-    Group {
-        group: usize,
-    },
-}
-
-/// GPU textures by source atlas, uploaded on first use.
-#[derive(Default)]
-struct Textures {
-    cache: HashMap<usize, Texture2D>,
-}
-
-impl Textures {
-    fn draw_png(
-        &mut self,
-        png: &'static [u8],
-        region: Rect<Pixels>,
-        dst: Pos<Pixels>,
-        dst_size: Size<Pixels>,
-        tint: Color,
-        flip: (bool, bool),
-    ) {
-        let texture = self
-            .cache
-            .entry(png.as_ptr() as usize)
-            .or_insert_with(|| {
-                let texture = Texture2D::from_file_with_format(png, Some(ImageFormat::Png));
-                texture.set_filter(FilterMode::Nearest);
-                texture
-            })
-            .clone();
-        draw_region(&texture, region, dst, dst_size, tint, flip);
-    }
-}
-
-fn draw_region(
-    texture: &Texture2D,
-    region: Rect<Pixels>,
-    dst: Pos<Pixels>,
-    dst_size: Size<Pixels>,
-    tint: Color,
-    flip: (bool, bool),
+fn sync_actors(
+    time: Res<Time>,
+    mut animator: ResMut<Animator>,
+    mut actors: Query<(Entity, &Actor, &Position, &mut Sprite, &mut Transform)>,
 ) {
-    draw_texture_ex(
-        texture,
-        dst.x,
-        dst.y,
-        tint,
-        DrawTextureParams {
-            dest_size: Some(vec2(dst_size.width, dst_size.height)),
-            source: Some(macroquad::math::Rect::new(
-                region.origin.x,
-                region.origin.y,
-                region.size.width,
-                region.size.height,
-            )),
-            flip_x: flip.0,
-            flip_y: flip.1,
-            ..Default::default()
-        },
-    );
-}
-
-fn draw_map_tile(
-    textures: &mut Textures,
-    area: &'static area::Area,
-    cell: area::TileRef,
-    time: f32,
-    camera: Camera,
-    tx: i32,
-    ty: i32,
-) {
-    if let Some(sprite) = area.resolve(cell, time) {
-        let dst = to_frame(camera, Pos::new(tx as f32, ty as f32));
-        textures.draw_png(
-            sprite.sheet,
-            sprite.region,
-            dst,
-            TILE_SIZE,
-            WHITE,
-            sprite.flip,
+    let clock = time.elapsed_secs();
+    animator
+        .anchors
+        .retain(|entity, _| actors.contains(*entity));
+    for (entity, actor, position, mut sprite, mut transform) in &mut actors {
+        let elapsed = animator.elapsed(entity, actor.action, clock);
+        let region = actors::model(actor.model).frame(
+            action_name(actor.action),
+            actor.dir,
+            elapsed,
+            actor.attack_rate.0,
         );
+        sprite.rect = Some(Rect::new(
+            region.origin.x,
+            region.origin.y,
+            region.origin.x + region.size.width,
+            region.origin.y + region.size.height,
+        ));
+        sprite.custom_size = Some(Vec2::new(region.size.width, region.size.height));
+        sprite.color = rgba(actor.color);
+        *transform = sprite_transform(position.pos, 1.0);
     }
 }
 
-fn rgba_color(tint: Rgba) -> Color {
-    let [r, g, b, a] = tint.0.to_be_bytes();
-    Color::from_rgba(r, g, b, a)
+fn follow_camera(
+    me: Res<MyClient>,
+    players: Query<(&Owner, &Position, &AreaTag)>,
+    mut camera: Query<&mut Transform, With<WorldCamera>>,
+) {
+    let Some(my) = me.0 else {
+        return;
+    };
+    let Some((_, position, tag)) = players.iter().find(|(owner, _, _)| owner.client == my) else {
+        return;
+    };
+    let Some(center) = camera_center(position.pos, tag.area) else {
+        return;
+    };
+    if let Ok(mut transform) = camera.single_mut() {
+        transform.translation.x = center.x * TILE;
+        transform.translation.y = -center.y * TILE;
+    }
 }
 
-fn to_frame(camera: Camera, world: Pos<Tiles>) -> Pos<Pixels> {
-    to_frame_f(camera, world).round()
+/// The clamped, pixel-snapped point the camera centers on: the player, kept inside the area edges.
+fn camera_center(at: Pos<Tiles>, area_id: AreaId) -> Option<Pos<Tiles>> {
+    let area = area::areas().get(area_id.0 as usize)?;
+    let half = VIEW_TILES * 0.5;
+    let lo = Pos::new(half.x, half.y);
+    let hi = Pos::new(
+        (area.width.0 - half.x).max(half.x),
+        (area.height.0 - half.y).max(half.y),
+    );
+    let center = at.clamp(lo, hi);
+    Some(Pos::new(snap(center.x), snap(center.y)))
+}
+
+#[derive(Resource, Default)]
+struct SpawnedArea(Option<AreaId>);
+
+#[derive(Component)]
+struct AreaTile;
+
+/// Spawns the static tile sprites of the player's area once, replacing them when the area changes.
+fn spawn_area_tiles(
+    me: Res<MyClient>,
+    players: Query<(&Owner, &AreaTag)>,
+    assets: Res<AssetServer>,
+    mut spawned: ResMut<SpawnedArea>,
+    tiles: Query<Entity, With<AreaTile>>,
+    mut commands: Commands,
+) {
+    let Some(my) = me.0 else {
+        return;
+    };
+    let Some(area_id) = players
+        .iter()
+        .find(|(owner, _)| owner.client == my)
+        .map(|(_, tag)| tag.area)
+    else {
+        return;
+    };
+    if spawned.0 == Some(area_id) {
+        return;
+    }
+    for tile in &tiles {
+        commands.entity(tile).despawn();
+    }
+    spawned.0 = Some(area_id);
+
+    let area = &area::areas()[area_id.0 as usize];
+    for (z, layer) in area.layers.iter().enumerate() {
+        for y in 0..area.height.0 as i32 {
+            for x in 0..area.width.0 as i32 {
+                let Some(sprite) = area.resolve(layer.at(x, y), 0.0) else {
+                    continue;
+                };
+                let region = sprite.region;
+                commands.spawn((
+                    AreaTile,
+                    Sprite {
+                        image: assets.load(sprite.sheet.to_owned()),
+                        rect: Some(Rect::new(
+                            region.origin.x,
+                            region.origin.y,
+                            region.origin.x + region.size.width,
+                            region.origin.y + region.size.height,
+                        )),
+                        custom_size: Some(Vec2::splat(TILE)),
+                        flip_x: sprite.flip.0,
+                        flip_y: sprite.flip.1,
+                        ..default()
+                    },
+                    sprite_transform(Pos::new(x as f32 + 0.5, y as f32 + 0.5), z as f32 * 0.01),
+                ));
+            }
+        }
+    }
+}
+
+fn sprite_transform(pos: Pos<Tiles>, layer: f32) -> Transform {
+    Transform::from_xyz(pos.x * TILE, -pos.y * TILE, pos.y + layer)
+}
+
+fn rgba(tint: Rgba) -> Color {
+    let [r, g, b, a] = tint.0.to_be_bytes();
+    Color::srgba_u8(r, g, b, a)
 }
 
 fn snap(tiles: f32) -> f32 {
-    (tiles * TILE_SIZE.width).round() / TILE_SIZE.width
+    (tiles * TILE).round() / TILE
 }
-
-// The software renderer shifted dead frames toward red exactly this way; the shader keeps the
-// look: additive red, green and blue at a third.
-fn dead_tint_material() -> Material {
-    load_material(
-        ShaderSource::Glsl {
-            vertex: DEAD_VERTEX,
-            fragment: DEAD_FRAGMENT,
-        },
-        MaterialParams::default(),
-    )
-    .expect("dead-tint shader compiles")
-}
-
-const DEAD_VERTEX: &str = r#"#version 100
-attribute vec3 position;
-attribute vec2 texcoord;
-varying lowp vec2 uv;
-uniform mat4 Model;
-uniform mat4 Projection;
-void main() {
-    gl_Position = Projection * Model * vec4(position, 1);
-    uv = texcoord;
-}"#;
-
-const DEAD_FRAGMENT: &str = r#"#version 100
-varying lowp vec2 uv;
-uniform sampler2D Texture;
-void main() {
-    lowp vec4 c = texture2D(Texture, uv);
-    gl_FragColor = vec4(min(c.r + 160.0 / 255.0, 1.0), c.g / 3.0, c.b / 3.0, c.a);
-}"#;

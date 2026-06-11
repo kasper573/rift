@@ -1,32 +1,55 @@
-//! The composition root: terminates WebSockets with axum, shuttles byte frames between
-//! connections and the `world` simulation, ticks it at [`world::TICK_HZ`], and serves the
-//! `/health` and `/metrics` endpoints the stack scrapes.
+//! The composition root: runs the `world` simulation over an encrypted UDP netcode transport
+//! (`bevy_replicon_renet`) at a fixed tick, and serves an axum HTTP API. `POST /session` verifies
+//! a player's token and mints a renet `ConnectToken` they use to open the UDP connection;
+//! `/health` and `/metrics` are scraped by the stack.
 
 mod auth;
 
 use std::collections::HashMap;
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::net::{SocketAddr, UdpSocket};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use axum::extract::ws::{Message, WebSocket};
-use axum::extract::{Query, State, WebSocketUpgrade};
-use axum::http::StatusCode;
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
+use bevy_ecs::lifecycle::Add;
+use bevy_ecs::observer::On;
+use bevy_ecs::prelude::*;
+use bevy_replicon::prelude::{ConnectedClient, RepliconChannels};
+use bevy_replicon::shared::backend::connected_client::NetworkId;
+use bevy_replicon_renet::netcode::{
+    ConnectToken, NETCODE_KEY_BYTES, NetcodeServerTransport, ServerAuthentication, ServerConfig,
+};
+use bevy_replicon_renet::renet::ConnectionConfig;
+use bevy_replicon_renet::{RenetChannelsExt, RenetServer, RepliconRenetPlugins};
 use metrics::{counter, gauge, histogram};
-use tokio::sync::{mpsc::UnboundedSender, oneshot};
-use world::{ClientId, ConnectedClient, Entity, Identity, ServerMessages, TICK_HZ};
+use rand::RngCore;
+use world::{ClientId, Identity, TICK_HZ};
 
-const MAX_MESSAGE_SIZE: usize = 64 * 1024;
+/// Identifies this game/protocol to netcode; clients minted under a different id cannot connect.
+const PROTOCOL_ID: u64 = 0x0072_6966_7400_0001;
+/// How long a minted token stays valid before the player must request another.
+const TOKEN_EXPIRE_SECS: u64 = 30;
+/// How long netcode keeps an idle connection before timing it out.
+const CONNECTION_TIMEOUT_SECS: i32 = 15;
+const MAX_CLIENTS: usize = 256;
 
-/// The `RIFT_GAME_SERVER_*` environment; without a port the address falls back to the first
-/// argument, then [`world::DEFAULT_ADDRESS`].
+/// The `RIFT_GAME_SERVER_*` environment.
 #[derive(serde::Deserialize)]
 struct Config {
-    hostname: Option<String>,
-    port: Option<u16>,
+    #[serde(default = "default_port")]
+    port: u16,
+    /// The UDP address clients dial (baked into the minted tokens); the bind address with a
+    /// loopback host by default, which suits local development and the test stack.
+    public_addr: Option<String>,
     #[serde(default)]
     auth_bypass: bool,
+}
+
+fn default_port() -> u16 {
+    9998
 }
 
 fn main() {
@@ -34,43 +57,76 @@ fn main() {
     let config: Config = envy::prefixed("RIFT_GAME_SERVER_")
         .from_env()
         .expect("RIFT_GAME_SERVER_* environment");
-    let address = config
-        .port
-        .map(|port| format!("{}:{port}", config.hostname.as_deref().unwrap_or("0.0.0.0")))
-        .or_else(|| std::env::args().nth(1))
-        .unwrap_or_else(|| world::DEFAULT_ADDRESS.to_owned());
-
-    let (events_tx, events) = mpsc::channel();
-    let net = Net {
-        events: events_tx,
-        verifier: verifier(config.auth_bypass),
-        prometheus: metrics_recorder(),
+    let bind: SocketAddr = format!("0.0.0.0:{}", config.port)
+        .parse()
+        .expect("server bind address");
+    let public: SocketAddr = match &config.public_addr {
+        Some(addr) => addr.parse().expect("RIFT_GAME_SERVER_PUBLIC_ADDR"),
+        None => format!("127.0.0.1:{}", config.port)
+            .parse()
+            .expect("address"),
     };
-    std::thread::spawn(move || serve(address, net));
-    simulate(events);
+
+    let mut private_key = [0u8; NETCODE_KEY_BYTES];
+    rand::rng().fill_bytes(&mut private_key);
+
+    let sessions = Sessions::default();
+    let http = Http {
+        sessions: sessions.clone(),
+        verifier: verifier(),
+        bypass: config.auth_bypass,
+        prometheus: metrics_recorder(),
+        private_key,
+        public,
+    };
+    std::thread::spawn(move || serve_http(bind, http));
+
+    simulate(bind, public, private_key, sessions);
 }
 
-enum Event {
-    Connected {
-        identity: Option<Identity>,
-        outbound: UnboundedSender<Vec<u8>>,
-        entity: oneshot::Sender<Entity>,
-    },
-    Frame {
-        entity: Entity,
-        bytes: Vec<u8>,
-    },
-    Closed {
-        entity: Entity,
-    },
-}
-
-/// The fixed-rate authoritative loop: drains transport events into the world, updates it, and
-/// fans replication out to each connection's outbox.
-fn simulate(events: mpsc::Receiver<Event>) {
+/// The fixed-rate authoritative loop: replicon_renet drives the UDP transport and replication
+/// inside each `update()`; we only pace it and observe connections.
+fn simulate(
+    bind: SocketAddr,
+    public: SocketAddr,
+    private_key: [u8; NETCODE_KEY_BYTES],
+    sessions: Sessions,
+) {
     let mut app = world::server_app();
-    let mut outboxes: HashMap<Entity, UnboundedSender<Vec<u8>>> = HashMap::new();
-    let mut next_client = 1u32;
+    app.add_plugins(RepliconRenetPlugins);
+
+    let channels = app.world().resource::<RepliconChannels>();
+    let server = RenetServer::new(ConnectionConfig {
+        server_channels_config: channels.server_configs(),
+        client_channels_config: channels.client_configs(),
+        ..Default::default()
+    });
+    let socket =
+        UdpSocket::bind(bind).unwrap_or_else(|error| panic!("cannot bind udp {bind}: {error}"));
+    let transport = NetcodeServerTransport::new(
+        ServerConfig {
+            current_time: unix_now(),
+            max_clients: MAX_CLIENTS,
+            protocol_id: PROTOCOL_ID,
+            public_addresses: vec![public],
+            authentication: ServerAuthentication::Secure { private_key },
+        },
+        socket,
+    )
+    .expect("netcode server transport");
+
+    app.insert_resource(server);
+    app.insert_resource(transport);
+    app.insert_resource(sessions);
+    app.insert_resource(NextClient(1));
+    app.add_observer(attach_identity);
+    app.finish();
+
+    println!("mmo server listening: netcode udp {bind}, public {public}");
+
+    let mut clients = app
+        .world_mut()
+        .query_filtered::<(), With<ConnectedClient>>();
     let frame = Duration::from_secs_f32(1.0 / TICK_HZ);
     let mut last_start: Option<Instant> = None;
     loop {
@@ -78,64 +134,10 @@ fn simulate(events: mpsc::Receiver<Event>) {
         if let Some(last) = last_start.replace(started) {
             histogram!("rift_tick_interval_seconds").record((started - last).as_secs_f64());
         }
-
-        for event in events.try_iter() {
-            match event {
-                Event::Connected {
-                    identity,
-                    outbound,
-                    entity,
-                } => {
-                    let client = ClientId(next_client);
-                    next_client += 1;
-                    let mut spawned = app.world_mut().spawn((
-                        ConnectedClient {
-                            max_size: MAX_MESSAGE_SIZE,
-                        },
-                        client,
-                    ));
-                    if let Some(identity) = identity {
-                        spawned.insert(identity);
-                    }
-                    outboxes.insert(spawned.id(), outbound);
-                    let _ = entity.send(spawned.id());
-                }
-                Event::Frame { entity, bytes } => {
-                    if outboxes.contains_key(&entity)
-                        && let Some((&channel, payload)) = bytes.split_first()
-                    {
-                        app.world_mut()
-                            .resource_mut::<ServerMessages>()
-                            .insert_received(entity, channel as usize, payload.to_vec());
-                    }
-                }
-                Event::Closed { entity } => {
-                    if outboxes.remove(&entity).is_some() {
-                        app.world_mut().despawn(entity);
-                    }
-                }
-            }
-        }
-
         app.update();
-
-        let sent: Vec<_> = app
-            .world_mut()
-            .resource_mut::<ServerMessages>()
-            .drain_sent()
-            .collect();
-        for (entity, channel, payload) in sent {
-            if let Some(outbox) = outboxes.get(&entity) {
-                let mut frame = Vec::with_capacity(payload.len() + 1);
-                frame.push(u8::try_from(channel).expect("replicon channels fit a byte"));
-                frame.extend_from_slice(&payload);
-                let _ = outbox.send(frame);
-            }
-        }
-
         counter!("rift_ticks_total").increment(1);
         histogram!("rift_tick_duration_seconds").record(started.elapsed().as_secs_f64());
-        gauge!("rift_clients_connected").set(outboxes.len() as f64);
+        gauge!("rift_clients_connected").set(clients.iter(app.world()).count() as f64);
         gauge!("rift_entities").set(app.world().entities().len() as f64);
         if let Some(remaining) = frame.checked_sub(started.elapsed()) {
             std::thread::sleep(remaining);
@@ -143,44 +145,174 @@ fn simulate(events: mpsc::Receiver<Event>) {
     }
 }
 
+/// A fresh sequential game id, assigned to each connection as it lands.
+#[derive(Resource)]
+struct NextClient(u32);
+
+/// Tokens minted but not yet redeemed, keyed by the netcode client id baked into each, so the
+/// connection that lands carries the player it was issued to.
+#[derive(Resource, Clone, Default)]
+struct Sessions(Arc<Mutex<HashMap<u64, Pending>>>);
+
+struct Pending {
+    identity: Identity,
+    minted: Instant,
+}
+
+impl Sessions {
+    fn put(&self, client_id: u64, identity: Identity) {
+        let mut map = self.0.lock().expect("sessions lock");
+        let now = Instant::now();
+        map.retain(|_, pending| {
+            now.duration_since(pending.minted) < Duration::from_secs(TOKEN_EXPIRE_SECS + 5)
+        });
+        map.insert(
+            client_id,
+            Pending {
+                identity,
+                minted: now,
+            },
+        );
+    }
+
+    fn take(&self, client_id: u64) -> Option<Identity> {
+        self.0
+            .lock()
+            .expect("sessions lock")
+            .remove(&client_id)
+            .map(|pending| pending.identity)
+    }
+}
+
+/// Attaches the connecting client's game id and (if its token carried one) authenticated
+/// [`Identity`] as soon as replicon_renet spawns its connection entity, before it can join.
+fn attach_identity(
+    add: On<Add, NetworkId>,
+    network: Query<&NetworkId>,
+    sessions: Res<Sessions>,
+    mut next: ResMut<NextClient>,
+    mut commands: Commands,
+) {
+    let Ok(network_id) = network.get(add.entity) else {
+        return;
+    };
+    let client = ClientId(next.0);
+    next.0 += 1;
+    counter!("rift_client_connections_opened_total").increment(1);
+    let mut entity = commands.entity(add.entity);
+    entity.insert(client);
+    if let Some(identity) = sessions.take(network_id.get()) {
+        entity.insert(identity);
+    }
+}
+
 #[derive(Clone)]
-struct Net {
-    events: mpsc::Sender<Event>,
-    verifier: Option<std::sync::Arc<std::sync::Mutex<auth::Verifier>>>,
+struct Http {
+    sessions: Sessions,
+    verifier: Option<Arc<Mutex<auth::Verifier>>>,
+    bypass: bool,
     prometheus: metrics_exporter_prometheus::PrometheusHandle,
+    private_key: [u8; NETCODE_KEY_BYTES],
+    public: SocketAddr,
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn serve(address: String, net: Net) {
-    let app = axum::Router::new()
-        .route("/ws", get(upgrade))
+async fn serve_http(addr: SocketAddr, http: Http) {
+    let router = axum::Router::new()
+        .route("/session", post(session))
         .route("/health", get(health))
         .route("/metrics", get(scrape))
-        .with_state(net);
-    let listener = tokio::net::TcpListener::bind(&address)
+        .with_state(http);
+    let listener = tokio::net::TcpListener::bind(&addr)
         .await
-        .unwrap_or_else(|error| panic!("cannot bind {address}: {error}"));
-    println!("mmo server listening on {address}");
+        .unwrap_or_else(|error| panic!("cannot bind {addr}: {error}"));
+    println!("http listening on {addr}");
     // Sessions are transient and nothing persists, so SIGTERM (docker stop, deploys) exits
-    // immediately instead of draining the long-lived WebSockets.
+    // immediately instead of draining live connections.
     tokio::spawn(async {
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("sigterm handler installs");
         sigterm.recv().await;
         std::process::exit(0);
     });
-    axum::serve(listener, app).await.expect("axum serves");
+    axum::serve(listener, router).await.expect("axum serves");
 }
 
-async fn scrape(State(net): State<Net>) -> String {
+/// Verifies a player's `Authorization` and mints a single-use `ConnectToken` for the UDP
+/// connection. `Bearer <JWT>` is verified against Keycloak; `Bypass <name>` is an unverified
+/// player accepted only when `RIFT_GAME_SERVER_AUTH_BYPASS` is set (local development and tests).
+async fn session(State(http): State<Http>, headers: HeaderMap) -> Response {
+    let authorization = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    let identity = match resolve(&http, authorization) {
+        Ok(identity) => identity,
+        Err(status) => return status.into_response(),
+    };
+
+    let client_id = rand::rng().next_u64();
+    http.sessions.put(client_id, identity);
+    let token = ConnectToken::generate(
+        unix_now(),
+        PROTOCOL_ID,
+        TOKEN_EXPIRE_SECS,
+        client_id,
+        CONNECTION_TIMEOUT_SECS,
+        vec![http.public],
+        None,
+        &http.private_key,
+    )
+    .expect("connect token");
+    let mut body = Vec::new();
+    token.write(&mut body).expect("serialize connect token");
+    (
+        [
+            (header::CONTENT_TYPE, "application/octet-stream"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+fn resolve(http: &Http, authorization: &str) -> Result<Identity, StatusCode> {
+    if let Some(name) = authorization.strip_prefix("Bypass ") {
+        if !http.bypass {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        // Bypass players are ordinary; privileged roles require a real token.
+        return Ok(Identity {
+            id: format!("bypass:{name}"),
+            name: name.to_owned(),
+            roles: Vec::new(),
+        });
+    }
+    if let Some(token) = authorization.strip_prefix("Bearer ") {
+        let verifier = http.verifier.as_ref().ok_or(StatusCode::UNAUTHORIZED)?;
+        let claims = verifier
+            .lock()
+            .expect("verifier lock")
+            .verify(token)
+            .map_err(|_| StatusCode::UNAUTHORIZED)?;
+        return Ok(Identity {
+            id: claims.subject,
+            name: claims.name,
+            roles: claims.roles,
+        });
+    }
+    Err(StatusCode::UNAUTHORIZED)
+}
+
+async fn scrape(State(http): State<Http>) -> String {
     metrics_process::Collector::default().collect();
-    net.prometheus.render()
+    http.prometheus.render()
 }
 
 /// Healthy means players can actually connect: a server that cannot verify tokens yet (issuer
-/// still booting next to it) stays out of rotation instead of answering upgrades with 401s.
-async fn health(State(net): State<Net>) -> Response {
-    let ready = match &net.verifier {
+/// still booting next to it) stays out of rotation instead of minting unusable sessions.
+async fn health(State(http): State<Http>) -> Response {
+    let ready = match &http.verifier {
         Some(verifier) => verifier.lock().expect("verifier lock").ready(),
         None => true,
     };
@@ -191,74 +323,10 @@ async fn health(State(net): State<Net>) -> Response {
     }
 }
 
-async fn upgrade(
-    State(net): State<Net>,
-    Query(params): Query<HashMap<String, String>>,
-    request: WebSocketUpgrade,
-) -> Response {
-    let token = params.get("accessToken").cloned().unwrap_or_default();
-    let identity = match &net.verifier {
-        Some(verifier) => {
-            let verified = verifier.lock().expect("verifier lock").verify(&token);
-            match verified {
-                Ok(claims) => Some(Identity {
-                    id: claims.subject,
-                    name: claims.name,
-                    roles: claims.roles,
-                }),
-                Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
-            }
-        }
-        None => None,
-    };
-    request.on_upgrade(move |socket| connection(net, socket, identity))
-}
-
-async fn connection(net: Net, mut socket: WebSocket, identity: Option<Identity>) {
-    let (outbound, mut frames) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-    let (entity_tx, entity_rx) = oneshot::channel();
-    if net
-        .events
-        .send(Event::Connected {
-            identity,
-            outbound,
-            entity: entity_tx,
-        })
-        .is_err()
-    {
-        return;
-    }
-    let Ok(entity) = entity_rx.await else {
-        return;
-    };
-    counter!("rift_client_connections_opened_total").increment(1);
-
-    let code = loop {
-        tokio::select! {
-            frame = frames.recv() => match frame {
-                Some(bytes) => {
-                    counter!("rift_bytes_sent_total").increment(bytes.len() as u64);
-                    counter!("rift_packets_sent_total").increment(1);
-                    if socket.send(Message::Binary(bytes.into())).await.is_err() {
-                        break "send_error";
-                    }
-                }
-                None => break "server_closed",
-            },
-            received = socket.recv() => match received {
-                Some(Ok(Message::Binary(bytes))) => {
-                    counter!("rift_bytes_received_total").increment(bytes.len() as u64);
-                    counter!("rift_packets_received_total").increment(1);
-                    let _ = net.events.send(Event::Frame { entity, bytes: bytes.into() });
-                }
-                Some(Ok(Message::Close(_))) | None => break "closed",
-                Some(Ok(_)) => {}
-                Some(Err(_)) => break "receive_error",
-            },
-        }
-    };
-    counter!("rift_client_connections_closed_total", "code" => code).increment(1);
-    let _ = net.events.send(Event::Closed { entity });
+fn unix_now() -> Duration {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock after the unix epoch")
 }
 
 fn metrics_recorder() -> metrics_exporter_prometheus::PrometheusHandle {
@@ -272,9 +340,9 @@ fn metrics_recorder() -> metrics_exporter_prometheus::PrometheusHandle {
         .expect("prometheus recorder installs")
 }
 
-/// Keycloak verification configured through the shared `RIFT_AUTH_*` block; without it the
-/// server runs open (plain local development).
-fn verifier(allow_bypass: bool) -> Option<std::sync::Arc<std::sync::Mutex<auth::Verifier>>> {
+/// Keycloak verification configured through the shared `RIFT_AUTH_*` block; without it the server
+/// mints sessions for anyone (plain local development).
+fn verifier() -> Option<Arc<Mutex<auth::Verifier>>> {
     #[derive(serde::Deserialize)]
     struct AuthConfig {
         issuer: String,
@@ -282,12 +350,7 @@ fn verifier(allow_bypass: bool) -> Option<std::sync::Arc<std::sync::Mutex<auth::
         jwks_uri: String,
     }
     let config: AuthConfig = envy::prefixed("RIFT_AUTH_").from_env().ok()?;
-    let mut verifier = auth::Verifier::new(
-        &config.issuer,
-        &config.audience,
-        &config.jwks_uri,
-        allow_bypass,
-    );
+    let mut verifier = auth::Verifier::new(&config.issuer, &config.audience, &config.jwks_uri);
     match verifier.warm() {
         Ok(()) => println!("auth enabled, issuer {}", config.issuer),
         Err(error) => println!(
@@ -295,5 +358,5 @@ fn verifier(allow_bypass: bool) -> Option<std::sync::Arc<std::sync::Mutex<auth::
             config.issuer
         ),
     }
-    Some(std::sync::Arc::new(std::sync::Mutex::new(verifier)))
+    Some(Arc::new(Mutex::new(verifier)))
 }

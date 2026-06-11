@@ -1,17 +1,13 @@
-//! Browser automation for the e2e suite, driven by the headless_chrome crate: each stage owns
-//! one Chrome with a throwaway profile, and every page records the binary WebSocket frames it
-//! receives so a mirror session can replay them.
+//! Browser automation for the e2e suite, driven by the headless_chrome crate: each stage owns one
+//! Chrome with a throwaway profile.
 
 use std::ffi::OsStr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use base64::prelude::*;
 use headless_chrome::LaunchOptions;
 use headless_chrome::browser::tab::Tab;
-use headless_chrome::browser::tab::point::Point;
-use headless_chrome::protocol::cdp::types::Event;
-use headless_chrome::protocol::cdp::{Network, Runtime};
+use headless_chrome::protocol::cdp::Runtime;
 use serde_json::Value;
 
 pub struct Browser(headless_chrome::Browser);
@@ -30,35 +26,13 @@ impl Browser {
 
     pub fn open(&self, url: &str) -> Page {
         let tab = self.0.new_tab().expect("new tab");
-        // Capture network activity (notably WebSocket frames) from the very first request.
-        tab.call_method(Network::Enable {
-            max_total_buffer_size: None,
-            max_resource_buffer_size: None,
-            max_post_data_size: None,
-            enable_durable_messages: None,
-            report_direct_socket_traffic: None,
-        })
-        .expect("network domain");
-        let frames = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&frames);
-        tab.add_event_listener(Arc::new(move |event: &Event| {
-            // Binary frames (opcode 2) arrive base64-encoded; the game speaks binary only.
-            if let Event::NetworkWebSocketFrameReceived(received) = event
-                && received.params.response.opcode == 2.0
-                && let Ok(bytes) = BASE64_STANDARD.decode(&received.params.response.payload_data)
-            {
-                sink.lock().expect("frame sink").push(bytes);
-            }
-        }))
-        .expect("frame listener");
         tab.navigate_to(url).expect("navigate");
-        Page { tab, frames }
+        Page { tab }
     }
 }
 
 pub struct Page {
     tab: Arc<Tab>,
-    frames: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 
 impl Page {
@@ -77,14 +51,6 @@ impl Page {
             Ok((value, None)) => value,
             _ => Value::Null,
         }
-    }
-
-    pub fn click(&self, x: f64, y: f64) {
-        self.tab.click_point(Point { x, y }).expect("click");
-    }
-
-    pub fn received_frames(&self) -> Vec<Vec<u8>> {
-        std::mem::take(&mut self.frames.lock().expect("frame sink"))
     }
 
     fn evaluate(
@@ -116,12 +82,5 @@ impl Page {
             evaluated.result.value.unwrap_or(Value::Null),
             evaluated.exception_details,
         ))
-    }
-}
-
-/// Phase tracing for debugging harness hangs: set `RIFT_E2E_TRACE=1`.
-pub fn trace(message: &str) {
-    if std::env::var_os("RIFT_E2E_TRACE").is_some() {
-        eprintln!("[e2e] {message}");
     }
 }

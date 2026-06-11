@@ -1,6 +1,6 @@
-//! Session-spanning user preferences: a serde god-struct persisted as JSON, on the native
-//! filesystem and in the browser's localStorage (via js/rift_storage.js). Today it carries only
-//! the UI layout; new preference groups slot in as further fields on [`UserSettings`].
+//! Session-spanning user preferences: a serde god-struct persisted as JSON on the filesystem.
+//! Today it carries only the UI layout; new preference groups slot in as further fields on
+//! [`UserSettings`].
 
 use std::collections::HashMap;
 
@@ -86,7 +86,6 @@ fn default_snap() -> f32 {
     DEFAULT_SNAP
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 mod imp {
     use std::path::PathBuf;
 
@@ -109,31 +108,5 @@ mod imp {
 
     fn path() -> Option<PathBuf> {
         Some(dirs::config_dir()?.join("rift").join("user_settings.json"))
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-mod imp {
-    // The contract with js/rift_storage.js (appended to mq_js_bundle.js at staging): load stages
-    // the stored value and returns its byte length, or -1 when absent; read copies the staged
-    // bytes into the buffer. The wasm-side counterpart is mirrored on src/platform.rs's pattern.
-    unsafe extern "C" {
-        fn rift_storage_load() -> i32;
-        fn rift_storage_read(pointer: *mut u8);
-        fn rift_storage_save(pointer: *const u8, length: usize);
-    }
-
-    pub fn load() -> Option<String> {
-        let length = unsafe { rift_storage_load() };
-        if length < 0 {
-            return None;
-        }
-        let mut buffer = vec![0u8; length as usize];
-        unsafe { rift_storage_read(buffer.as_mut_ptr()) };
-        String::from_utf8(buffer).ok()
-    }
-
-    pub fn save(json: &str) {
-        unsafe { rift_storage_save(json.as_ptr(), json.len()) };
     }
 }

@@ -99,6 +99,25 @@ impl Keycloak {
         }
     }
 
+    /// A password-grant access token for the `rift` client (direct access grants are enabled on
+    /// the realm), carrying the user's realm roles.
+    pub fn password_token(&self, username: &str, password: &str) -> String {
+        token_request(
+            &self.agent,
+            &format!(
+                "{}/realms/{}/protocol/openid-connect/token",
+                self.base, self.realm
+            ),
+            &[
+                ("grant_type", "password"),
+                ("client_id", "rift"),
+                ("scope", "openid"),
+                ("username", username),
+                ("password", password),
+            ],
+        )
+    }
+
     fn user_id(&self, username: &str) -> String {
         let users: Value = self
             .agent

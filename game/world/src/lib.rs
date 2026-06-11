@@ -32,8 +32,6 @@ pub mod visibility;
 pub use bevy_ecs::entity::Entity;
 pub use bevy_ecs::query::With;
 pub use bevy_ecs::world::World;
-#[cfg(feature = "host")]
-pub use bevy_replicon::prelude::{ConnectedClient, ServerMessages};
 
 pub use crate::identity::Identity;
 pub use crate::protocol::{
@@ -42,7 +40,6 @@ pub use crate::protocol::{
     MoveToPortal, Name, Owner, Position, RespawnRequest, Rgba, SPECTATE_ROLE, Spectate,
     SpectateRequest, UseItemRequest, Vitals, Welcome, Xp,
 };
-pub use crate::session::{LinkStatus, MmoClient, Transport};
 
 pub const TICK_HZ: f32 = 30.0;
 
@@ -61,15 +58,15 @@ pub fn validate() {
     sfx::sfx_table();
 }
 
-/// The fully assembled authoritative simulation, already running; the caller owns the transport:
-/// spawn a [`bevy_replicon::prelude::ConnectedClient`] (with [`ClientId`] and [`Identity`]) per
-/// connection, shuttle byte frames through [`bevy_replicon::prelude::ServerMessages`], and call
-/// `update()` at [`TICK_HZ`].
+/// The authoritative simulation as an unfinished [`bevy_app::App`]: replication, the tick
+/// schedule, and the connection observers are wired, but no transport is. The caller adds a
+/// messaging backend (e.g. `RepliconRenetPlugins` + a `RenetServer`), inserts an [`Identity`] and
+/// [`ClientId`] per connection, finishes the app, and calls `update()` at [`TICK_HZ`].
 #[cfg(feature = "host")]
 pub fn server_app() -> bevy_app::App {
     use bevy_app::{Startup, Update};
     use bevy_ecs::schedule::IntoScheduleConfigs;
-    use bevy_replicon::prelude::{AuthMethod, RepliconSharedPlugin, ServerState};
+    use bevy_replicon::prelude::{AuthMethod, RepliconSharedPlugin};
 
     let mut app = bevy_app::App::new();
     app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));
@@ -116,9 +113,5 @@ pub fn server_app() -> bevy_app::App {
             )
                 .chain(),
         );
-    app.finish();
-    app.world_mut()
-        .resource_mut::<bevy_state::prelude::NextState<ServerState>>()
-        .set(ServerState::Running);
     app
 }

@@ -1,15 +1,12 @@
-//! The client-side session: a bevy_replicon client app behind a pollable facade, fed by a
-//! byte-frame [`Transport`]. Each frame on the wire is one replicon message prefixed with its
-//! channel id byte.
+//! The client side of the session. [`ClientSessionPlugin`] registers the wire protocol and
+//! replicon's client plugins onto a Bevy app; the free functions below send intents
+//! (`&mut World`) and read replicated state (`&World`). The client app and the E2E tests drive
+//! them directly — there is no facade.
 
-use bevy_app::App;
-use bevy_ecs::message::Messages;
+use bevy_app::{App, Plugin, Update};
+use bevy_ecs::message::MessageReader;
 use bevy_ecs::prelude::*;
-use bevy_replicon::bytes::Bytes;
-use bevy_replicon::prelude::{
-    AuthMethod, ClientMessages, ClientState, RepliconPlugins, RepliconSharedPlugin,
-};
-use bevy_state::prelude::NextState;
+use bevy_replicon::prelude::{AuthMethod, RepliconPlugins, RepliconSharedPlugin};
 
 use crate::area::{self, AreaId};
 use crate::math::{Pos, Tiles};
@@ -19,339 +16,152 @@ use crate::protocol::{
     Vitals, Welcome, Xp,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum LinkStatus {
-    Connecting,
-    Open,
-    Closed,
+/// Registers replicon's client plugins and the shared protocol, and records the [`ClientId`] the
+/// server greets this session with. The caller adds a backend (`RepliconRenetPlugins` + a
+/// `RenetClient`/transport) and a `StatesPlugin`, then ticks the app.
+pub struct ClientSessionPlugin;
+
+impl Plugin for ClientSessionPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(
+            bevy_app::PluginGroup::build(RepliconPlugins).set(RepliconSharedPlugin {
+                auth_method: AuthMethod::None,
+            }),
+        );
+        protocol::protocol(app);
+        app.init_resource::<MyClient>();
+        app.add_systems(Update, record_welcome);
+    }
 }
 
-/// A byte-frame pipe to the server; the wasm build bridges a JS WebSocket plugin, the native
-/// build wraps [`WsTransport`].
-pub trait Transport {
-    fn send(&mut self, packet: &[u8]);
-    fn poll(&mut self, sink: &mut dyn FnMut(&[u8]));
-    fn status(&self) -> LinkStatus;
+/// The id the server greeted this session with; `None` until the welcome arrives.
+#[derive(Resource, Default)]
+pub struct MyClient(pub Option<ClientId>);
+
+pub fn my_id(world: &World) -> Option<ClientId> {
+    world.resource::<MyClient>().0
 }
 
-pub struct MmoClient {
-    app: App,
-    transport: Box<dyn Transport>,
-    id: Option<ClientId>,
-    opened: bool,
+pub fn join(world: &mut World) {
+    world.write_message(JoinRequest);
 }
 
-impl MmoClient {
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn connect(address: &str, token: &str) -> std::io::Result<MmoClient> {
-        Ok(MmoClient::with_transport(Box::new(WsTransport::connect(
-            address, token,
-        )?)))
-    }
+pub fn spectate(world: &mut World, watch: Option<ClientId>) {
+    world.write_message(SpectateRequest { watch });
+}
 
-    // No TimePlugin: nothing in the client-side plugins reads `Time`, and the std `Instant`
-    // behind it has no clock on wasm32-unknown-unknown.
-    pub fn with_transport(transport: Box<dyn Transport>) -> MmoClient {
-        let mut app = App::new();
-        app.add_plugins(bevy_state::app::StatesPlugin);
-        let plugins = bevy_app::PluginGroup::build(RepliconPlugins).set(RepliconSharedPlugin {
-            auth_method: AuthMethod::None,
-        });
-        #[cfg(feature = "host")]
-        let plugins = plugins
-            .disable::<bevy_replicon::server::ServerPlugin>()
-            .disable::<bevy_replicon::server::message::ServerMessagePlugin>();
-        app.add_plugins(plugins);
-        protocol::protocol(&mut app);
-        app.finish();
-        MmoClient {
-            app,
-            transport,
-            id: None,
-            opened: false,
+pub fn attack(world: &mut World, target: Entity) {
+    world.write_message(AttackRequest { target });
+}
+
+pub fn respawn(world: &mut World) {
+    world.write_message(RespawnRequest);
+}
+
+pub fn use_item(world: &mut World, slot: u32) {
+    world.write_message(UseItemRequest { slot });
+}
+
+/// Walks to `(x, y)`, picking the [`MoveToPortal`] intent when the point lands inside a portal of
+/// the current area so the server warps instead of pathing there.
+pub fn move_to(world: &mut World, x: f32, y: f32) {
+    let portal = my_area(world).and_then(|area| {
+        area::areas()
+            .get(area.0 as usize)?
+            .portals
+            .iter()
+            .position(|portal| portal.rect.contains(Pos::new(x, y)))
+    });
+    match portal {
+        Some(index) => {
+            world.write_message(MoveToPortal {
+                pos: Pos::new(x, y),
+                portal: index as u32,
+            });
+        }
+        None => {
+            world.write_message(MoveRequest {
+                pos: Pos::new(x, y),
+            });
         }
     }
+}
 
-    /// Pumps one frame: transport bytes in, one app update, queued messages out.
-    pub fn poll(&mut self) {
-        match (self.transport.status(), self.opened) {
-            (LinkStatus::Open, false) => {
-                self.set_state(ClientState::Connected);
-                self.opened = true;
-            }
-            (LinkStatus::Closed, true) => {
-                self.set_state(ClientState::Disconnected);
-                self.opened = false;
-            }
-            _ => {}
-        }
-        let mut messages = self.app.world_mut().resource_mut::<ClientMessages>();
-        self.transport.poll(&mut |frame| {
-            if let Some((&channel, payload)) = frame.split_first() {
-                messages.insert_received(channel as usize, Bytes::copy_from_slice(payload));
-            }
-        });
-        self.app.update();
-        if let Some(welcome) = self.drain::<Welcome>().pop() {
-            self.id = Some(welcome.id);
-        }
-        if self.transport.status() == LinkStatus::Open {
-            let frames: Vec<(usize, Bytes)> = self
-                .app
-                .world_mut()
-                .resource_mut::<ClientMessages>()
-                .drain_sent()
-                .collect();
-            for (channel, payload) in frames {
-                let mut frame = Vec::with_capacity(payload.len() + 1);
-                frame.push(u8::try_from(channel).expect("replicon channels fit a byte"));
-                frame.extend_from_slice(&payload);
-                self.transport.send(&frame);
-            }
-        }
-    }
+pub fn my_entity(world: &World) -> Option<Entity> {
+    let me = my_id(world)?;
+    world
+        .iter_entities()
+        .find(|entity| {
+            entity
+                .get::<Owner>()
+                .is_some_and(|owner| owner.client == me)
+        })
+        .map(|entity| entity.id())
+}
 
-    pub fn status(&self) -> LinkStatus {
-        self.transport.status()
-    }
+pub fn my_position(world: &World) -> Option<Pos<Tiles>> {
+    world.get::<Position>(my_entity(world)?).map(|p| p.pos)
+}
 
-    /// The id the server greeted this session with; `None` until the welcome arrives.
-    pub fn id(&self) -> Option<ClientId> {
-        self.id
-    }
+pub fn my_vitals(world: &World) -> Option<(f32, f32)> {
+    world
+        .get::<Vitals>(my_entity(world)?)
+        .map(|vitals| (vitals.health, vitals.max))
+}
 
-    pub fn world(&self) -> &World {
-        self.app.world()
-    }
+pub fn my_name(world: &World) -> Option<String> {
+    world.get::<Name>(my_entity(world)?).map(|n| n.name.clone())
+}
 
-    pub fn world_mut(&mut self) -> &mut World {
-        self.app.world_mut()
-    }
+pub fn my_xp(world: &World) -> Option<u32> {
+    world.get::<Xp>(my_entity(world)?).map(|xp| xp.amount)
+}
 
-    pub fn join(&mut self) {
-        self.app.world_mut().write_message(JoinRequest);
-    }
-    pub fn spectate(&mut self, watch: Option<ClientId>) {
-        self.app
-            .world_mut()
-            .write_message(SpectateRequest { watch });
-    }
+pub fn my_inventory(world: &World) -> Vec<ItemId> {
+    my_entity(world)
+        .and_then(|entity| world.get::<Inventory>(entity))
+        .map_or_else(Vec::new, |inventory| inventory.items.clone())
+}
 
-    pub fn move_to(&mut self, x: f32, y: f32) {
-        let portal = self.my_area().and_then(|area| {
-            area::areas()
-                .get(area.0 as usize)?
-                .portals
-                .iter()
-                .position(|portal| portal.rect.contains(Pos::new(x, y)))
-        });
-        let world = self.app.world_mut();
-        match portal {
-            Some(index) => {
-                world.write_message(MoveToPortal {
-                    pos: Pos::new(x, y),
-                    portal: index as u32,
-                });
-            }
-            None => {
-                world.write_message(MoveRequest {
-                    pos: Pos::new(x, y),
-                });
-            }
-        }
-    }
-    pub fn attack(&mut self, target: Entity) {
-        self.app.world_mut().write_message(AttackRequest { target });
-    }
-    pub fn respawn(&mut self) {
-        self.app.world_mut().write_message(RespawnRequest);
-    }
-    pub fn use_item(&mut self, slot: u32) {
-        self.app.world_mut().write_message(UseItemRequest { slot });
-    }
+pub fn my_area(world: &World) -> Option<AreaId> {
+    world.get::<AreaTag>(my_entity(world)?).map(|tag| tag.area)
+}
 
-    /// Server announcements of the given type received since the last drain.
-    pub fn drain<M: Message>(&mut self) -> Vec<M> {
-        self.app
-            .world_mut()
-            .resource_mut::<Messages<M>>()
-            .drain()
-            .collect()
-    }
+pub fn is_dead(world: &World) -> bool {
+    my_vitals(world).is_some_and(|(health, _)| health <= 0.0)
+}
 
-    pub fn my_entity(&mut self) -> Option<Entity> {
-        let me = self.id?;
-        let world = self.app.world_mut();
-        let mut owners = world.query::<(Entity, &Owner)>();
-        owners
-            .iter(world)
-            .find(|(_, owner)| owner.client == me)
-            .map(|(entity, _)| entity)
-    }
+pub fn is_spectating(world: &World) -> bool {
+    my_entity(world).is_some_and(|entity| world.get::<Spectate>(entity).is_some())
+}
 
-    pub fn my_position(&mut self) -> Option<Pos<Tiles>> {
-        let entity = self.my_entity()?;
-        self.world().get::<Position>(entity).map(|p| p.pos)
-    }
+pub fn watching(world: &World) -> Option<ClientId> {
+    world.get::<Spectate>(my_entity(world)?)?.watch
+}
 
-    pub fn my_health(&mut self) -> Option<f32> {
-        let entity = self.my_entity()?;
-        self.world().get::<Vitals>(entity).map(|v| v.health)
-    }
-
-    pub fn my_vitals(&mut self) -> Option<(f32, f32)> {
-        let entity = self.my_entity()?;
-        self.world()
-            .get::<Vitals>(entity)
-            .map(|v| (v.health, v.max))
-    }
-
-    pub fn my_name(&mut self) -> Option<String> {
-        let entity = self.my_entity()?;
-        self.world().get::<Name>(entity).map(|n| n.name.clone())
-    }
-
-    pub fn my_xp(&mut self) -> Option<u32> {
-        let entity = self.my_entity()?;
-        self.world().get::<Xp>(entity).map(|xp| xp.amount)
-    }
-
-    pub fn my_inventory(&mut self) -> Vec<ItemId> {
-        self.my_entity()
-            .and_then(|entity| self.world().get::<Inventory>(entity))
-            .map_or_else(Vec::new, |inventory| inventory.items.clone())
-    }
-
-    pub fn is_dead(&mut self) -> bool {
-        self.my_health().is_some_and(|health| health <= 0.0)
-    }
-
-    pub fn my_area(&mut self) -> Option<AreaId> {
-        let entity = self.my_entity()?;
-        self.world().get::<AreaTag>(entity).map(|tag| tag.area)
-    }
-
-    pub fn is_spectating(&mut self) -> bool {
-        self.my_entity()
-            .is_some_and(|entity| self.world().get::<Spectate>(entity).is_some())
-    }
-
-    pub fn watching(&mut self) -> Option<ClientId> {
-        let entity = self.my_entity()?;
-        self.world().get::<Spectate>(entity)?.watch
-    }
-
-    pub fn players(&mut self) -> Vec<(ClientId, String)> {
-        let me = self.id;
-        let world = self.app.world_mut();
-        let mut owners = world.query::<(&Owner, Option<&Name>, Has<Actor>)>();
-        let mut players: Vec<(ClientId, String)> = owners
-            .iter(world)
-            .filter(|(owner, _, actor)| Some(owner.client) != me && *actor)
-            .map(|(owner, name, _)| {
+/// Every other player in view, by id and name, sorted by id.
+pub fn players(world: &World) -> Vec<(ClientId, String)> {
+    let me = my_id(world);
+    let mut players: Vec<(ClientId, String)> = world
+        .iter_entities()
+        .filter_map(|entity| {
+            let owner = entity.get::<Owner>()?;
+            (Some(owner.client) != me && entity.contains::<Actor>()).then(|| {
                 (
                     owner.client,
-                    name.map_or_else(String::new, |n| n.name.clone()),
+                    entity
+                        .get::<Name>()
+                        .map_or_else(String::new, |name| name.name.clone()),
                 )
             })
-            .collect();
-        players.sort_unstable_by_key(|(id, _)| *id);
-        players
-    }
-
-    fn set_state(&mut self, state: ClientState) {
-        self.app
-            .world_mut()
-            .resource_mut::<NextState<ClientState>>()
-            .set(state);
-    }
+        })
+        .collect();
+    players.sort_unstable_by_key(|(id, _)| *id);
+    players
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub use native::WsTransport;
-
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    use std::io::ErrorKind;
-    use std::net::TcpStream;
-
-    use tungstenite::stream::MaybeTlsStream;
-    use tungstenite::{Message, WebSocket};
-
-    use super::{LinkStatus, Transport};
-
-    /// A non-blocking native WebSocket: the handshake is synchronous, then reads poll.
-    pub struct WsTransport {
-        socket: Option<WebSocket<MaybeTlsStream<TcpStream>>>,
-    }
-
-    impl WsTransport {
-        pub fn connect(address: &str, token: &str) -> std::io::Result<WsTransport> {
-            let url = if token.is_empty() {
-                format!("ws://{address}/ws")
-            } else {
-                format!("ws://{address}/ws?accessToken={token}")
-            };
-            let (mut socket, _) = tungstenite::connect(&url)
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
-            if let MaybeTlsStream::Plain(stream) = socket.get_mut() {
-                stream.set_nonblocking(true)?;
-            }
-            Ok(WsTransport {
-                socket: Some(socket),
-            })
-        }
-    }
-
-    impl Transport for WsTransport {
-        fn send(&mut self, packet: &[u8]) {
-            let Some(socket) = &mut self.socket else {
-                return;
-            };
-            match socket.send(Message::binary(packet.to_vec())) {
-                Ok(()) => {}
-                Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::WouldBlock => {}
-                Err(_) => self.socket = None,
-            }
-        }
-
-        fn poll(&mut self, sink: &mut dyn FnMut(&[u8])) {
-            let Some(socket) = &mut self.socket else {
-                return;
-            };
-            match socket.flush() {
-                Ok(())
-                | Err(tungstenite::Error::Io(_))
-                | Err(tungstenite::Error::WriteBufferFull(_)) => {}
-                Err(_) => {
-                    self.socket = None;
-                    return;
-                }
-            }
-            loop {
-                match socket.read() {
-                    Ok(Message::Binary(bytes)) => sink(&bytes),
-                    Ok(Message::Close(_)) => {
-                        self.socket = None;
-                        return;
-                    }
-                    Ok(_) => {}
-                    Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::WouldBlock => {
-                        return;
-                    }
-                    Err(_) => {
-                        self.socket = None;
-                        return;
-                    }
-                }
-            }
-        }
-
-        fn status(&self) -> LinkStatus {
-            match self.socket {
-                Some(_) => LinkStatus::Open,
-                None => LinkStatus::Closed,
-            }
-        }
+fn record_welcome(mut welcomes: MessageReader<Welcome>, mut me: ResMut<MyClient>) {
+    for welcome in welcomes.read() {
+        me.0 = Some(welcome.id);
     }
 }

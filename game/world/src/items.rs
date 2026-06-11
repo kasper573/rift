@@ -28,14 +28,14 @@ pub enum ItemKind {
     Equipment,
 }
 
-/// An icon asset's name, resolved to the embedded PNG.
-pub struct Icon(pub &'static [u8]);
+/// An icon asset's root-relative path, validated to exist when the table loads.
+pub struct Icon(pub String);
 
 impl<'de> Deserialize<'de> for Icon {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
         assets::find(assets::ICONS, &format!("{name}.png"))
-            .map(|(_, bytes)| Icon(bytes))
+            .map(Icon)
             .ok_or_else(|| serde::de::Error::custom(format!("unknown icon '{name}'")))
     }
 }

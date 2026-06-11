@@ -1,4 +1,4 @@
-//! Content tables: embedded JSON arrays of rows, deserialized with serde. Loading is
+//! Content tables: JSON arrays of rows under the assets root, deserialized with serde. Loading is
 //! assertive — a malformed row or dangling reference panics with the offending file,
 //! so broken content can never load.
 
@@ -8,7 +8,7 @@ use crate::assets;
 
 pub fn load<T: DeserializeOwned>(file: &str) -> Vec<T> {
     let json = assets::text(file).unwrap_or_else(|| panic!("missing asset {file}"));
-    serde_json::from_str(json).unwrap_or_else(|error| panic!("{file}: {error}"))
+    serde_json::from_str(&json).unwrap_or_else(|error| panic!("{file}: {error}"))
 }
 
 pub fn unique_ids<'a>(ids: impl Iterator<Item = &'a str>, file: &str) {

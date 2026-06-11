@@ -1,596 +1,653 @@
-//! The HUD's widget/window system, built on egui. A widget is a draggable on-screen control; a
-//! widget may pair with a window it toggles (the widget hides while its window is open, and vice
-//! versa). Both snap to a grid and persist their geometry through [`UserSettings`]. The player
-//! healthbar rides along as a non-interactive egui overlay.
-//!
-//! Adding a panel is a method that draws its widget (and optionally calls [`Hud::window`]); the
-//! shared helpers below carry the dragging, snapping, persistence, and chrome.
+//! The in-game HUD: draggable widgets and the windows they toggle, built on `bevy_ui` nodes with
+//! pointer-drag observers. Widgets and windows snap to a grid, persist their geometry through
+//! [`UserSettings`], and swap visibility (a widget hides while its window is open). The character
+//! widget tracks the player; the inventory window reflows item slots (double-click to use); the
+//! settings window toggles snapping.
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 
-use egui_macroquad::egui::{
-    self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Response, Sense, Stroke, StrokeKind,
-    TextureHandle, Vec2, pos2, vec2,
-};
-use macroquad::input::{KeyCode, is_key_pressed};
-use macroquad::prelude::ImageFormat;
-use macroquad::texture::Image;
-use world::math::{Offset, Pixels, Pos};
-use world::{ItemId, MmoClient};
+use bevy::prelude::*;
+use world::session;
 
-use crate::render::{self, Screen};
+use crate::Screen;
 use crate::user_settings::{Placement, UserSettings};
 
 const WIDGET: f32 = 48.0;
 const SLOT: f32 = 36.0;
-const MIN_SIZE: Vec2 = vec2(100.0, 100.0);
 const TITLE_H: f32 = 22.0;
+const MIN_WINDOW: Vec2 = Vec2::new(100.0, 100.0);
+const WINDOW_SIZE: Vec2 = Vec2::new(400.0, 200.0);
 
-const BAR: Size = Size { w: 20.0, h: 4.0 };
-const BAR_BORDER: Color32 = Color32::from_rgb(0x14, 0x0A, 0x28);
-const BAR_BG: Color32 = Color32::from_rgb(0x2A, 0x1C, 0x5C);
-const BAR_FILL: Color32 = Color32::from_rgb(0x00, 0xFF, 0x00);
+const PANEL_BG: Color = Color::srgb(0.1, 0.1, 0.1);
+const TITLE_BG: Color = Color::srgb(0.18, 0.18, 0.18);
+const BORDER: Color = Color::srgb(0.31, 0.31, 0.31);
 
-pub struct Hud {
-    pub settings: UserSettings,
-    pub pointer_captured: bool,
-    opened: HashMap<&'static str, bool>,
-    geom: HashMap<&'static str, Geom>,
-    textures: Option<Textures>,
-}
+pub struct HudPlugin;
 
-impl Hud {
-    pub fn new() -> Hud {
-        Hud {
-            settings: UserSettings::load(),
-            pointer_captured: false,
-            opened: HashMap::new(),
-            geom: HashMap::new(),
-            textures: None,
-        }
-    }
-
-    pub fn frame(&mut self, ctx: &egui::Context, client: &mut MmoClient, screen: Screen) {
-        self.ensure(ctx);
-        if client.my_position().is_none() {
-            self.pointer_captured = false;
-            return;
-        }
-        self.toggles();
-        self.healthbar(ctx, client, screen);
-        self.character(ctx, client);
-        self.inventory(ctx, client);
-        self.settings_panel(ctx);
-        self.pointer_captured = ctx.wants_pointer_input() || ctx.is_pointer_over_area();
-    }
-
-    fn toggles(&mut self) {
-        if is_key_pressed(KeyCode::I) {
-            self.flip("inventory");
-        }
-        if is_key_pressed(KeyCode::O) {
-            self.flip("settings");
-        }
-    }
-
-    fn healthbar(&self, ctx: &egui::Context, client: &mut MmoClient, screen: Screen) {
-        let Some(camera) = render::camera(client) else {
-            return;
-        };
-        let Some(pos) = client.my_position() else {
-            return;
-        };
-        let Some((health, max)) = client.my_vitals() else {
-            return;
-        };
-        if health <= 0.0 || max <= 0.0 {
-            return;
-        }
-        let ppp = ctx.pixels_per_point();
-        let scale = screen.scale / ppp;
-        let point = |frame: Pos<Pixels>| {
-            pos2(
-                (frame.x * screen.scale + screen.offset.x) / ppp,
-                (frame.y * screen.scale + screen.offset.y) / ppp,
-            )
-        };
-        let top_left = render::to_frame_f(camera, pos).round() + Offset::new(-BAR.w / 2.0, 3.0);
-        let inner = top_left + Offset::splat(1.0);
-        let fill_w = ((BAR.w - 2.0) * (health / max).clamp(0.0, 1.0)).floor() * scale;
-
-        let painter = ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Background,
-            egui::Id::new("rift.healthbar"),
-        ));
-        painter.rect_filled(
-            Rect::from_min_size(point(top_left), vec2(BAR.w * scale, BAR.h * scale)),
-            CornerRadius::ZERO,
-            BAR_BORDER,
-        );
-        painter.rect_filled(
-            Rect::from_min_size(
-                point(inner),
-                vec2((BAR.w - 2.0) * scale, (BAR.h - 2.0) * scale),
-            ),
-            CornerRadius::ZERO,
-            BAR_BG,
-        );
-        painter.rect_filled(
-            Rect::from_min_size(point(inner), vec2(fill_w, (BAR.h - 2.0) * scale)),
-            CornerRadius::ZERO,
-            BAR_FILL,
-        );
-    }
-
-    fn character(&mut self, ctx: &egui::Context, client: &mut MmoClient) {
-        let name = client.my_name().unwrap_or_default();
-        let (health, max) = client.my_vitals().unwrap_or((0.0, 0.0));
-        let xp = client.my_xp().unwrap_or(0);
-        let lines = [name, format!("{health:.0} / {max:.0}"), format!("xp {xp}")];
-        let screen = ctx.screen_rect();
-        let default_pos = pos2(screen.min.x + 8.0, screen.min.y + 8.0);
-        let base = self.placed("character", default_pos);
-        let pos = snap_pos(&self.settings, base);
-        let resp = egui::Area::new(egui::Id::new("rift.widget.character"))
-            .order(egui::Order::Middle)
-            .current_pos(pos)
-            .movable(false)
-            .constrain(true)
-            .show(ctx, |ui| text_box(ui, &lines, 16.0))
-            .inner;
-        self.dragged("character", &resp);
-    }
-
-    fn inventory(&mut self, ctx: &egui::Context, client: &mut MmoClient) {
-        if self.is_open("inventory") {
-            let items = client.my_inventory();
-            let close = self.window(
-                ctx,
-                "inventory.window",
-                "Inventory",
-                vec2(400.0, 200.0),
-                |ui, tex| {
-                    inventory_grid(ui, &items, tex, client);
-                },
+impl Plugin for HudPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Settings>()
+            .init_resource::<Open>()
+            .add_systems(OnEnter(Screen::Playing), spawn_widgets)
+            .add_systems(OnExit(Screen::Playing), despawn::<Hud>)
+            .add_observer(on_drag)
+            .add_observer(on_drag_end)
+            .add_observer(show_tooltip)
+            .add_observer(hide_tooltip)
+            .add_systems(
+                Update,
+                (
+                    toggle_keys,
+                    reconcile_windows,
+                    sync_character,
+                    sync_inventory,
+                )
+                    .run_if(in_state(Screen::Playing)),
             );
-            if close {
-                self.set_open("inventory", false);
-            }
-            return;
-        }
-        let screen = ctx.screen_rect();
-        let default_pos = pos2(screen.max.x - 8.0 - WIDGET, screen.min.y + 8.0);
-        let base = self.placed("inventory", default_pos);
-        let pos = snap_pos(&self.settings, base);
-        let icon = self.tex().inventory.clone();
-        let resp = egui::Area::new(egui::Id::new("rift.widget.inventory"))
-            .order(egui::Order::Middle)
-            .current_pos(pos)
-            .movable(false)
-            .constrain(true)
-            .show(ctx, |ui| icon_widget(ui, &icon, 8.0, "I", "Inventory"))
-            .inner;
-        self.dragged("inventory", &resp);
-        if resp.clicked() {
-            self.set_open("inventory", true);
-        }
-    }
-
-    fn settings_panel(&mut self, ctx: &egui::Context) {
-        if self.is_open("settings") {
-            let enabled = self.settings.snapping_enabled();
-            let mut toggle = false;
-            let close = self.window(
-                ctx,
-                "settings.window",
-                "Settings",
-                vec2(400.0, 200.0),
-                |ui, _tex| {
-                    let label = if enabled {
-                        "ui snapping enabled"
-                    } else {
-                        "ui snapping disabled"
-                    };
-                    if ui.button(label).clicked() {
-                        toggle = true;
-                    }
-                },
-            );
-            if toggle {
-                self.settings.toggle_snapping();
-                self.settings.save();
-            }
-            if close {
-                self.set_open("settings", false);
-            }
-            return;
-        }
-        let screen = ctx.screen_rect();
-        let default_pos = pos2(
-            screen.max.x - 8.0 - WIDGET - 8.0 - WIDGET,
-            screen.min.y + 8.0,
-        );
-        let base = self.placed("settings", default_pos);
-        let pos = snap_pos(&self.settings, base);
-        let icon = self.tex().settings.clone();
-        let resp = egui::Area::new(egui::Id::new("rift.widget.settings"))
-            .order(egui::Order::Middle)
-            .current_pos(pos)
-            .movable(false)
-            .constrain(true)
-            .show(ctx, |ui| icon_widget(ui, &icon, 8.0, "O", "Settings"))
-            .inner;
-        self.dragged("settings", &resp);
-        if resp.clicked() {
-            self.set_open("settings", true);
-        }
-    }
-
-    /// Draws a titled, draggable, resizable window with `content` as its body; returns whether its
-    /// close button was clicked this frame. Position and size are controlled by us (snapped and
-    /// persisted), not by egui's window state.
-    fn window(
-        &mut self,
-        ctx: &egui::Context,
-        key: &'static str,
-        title: &str,
-        default_size: Vec2,
-        content: impl FnOnce(&mut egui::Ui, &Textures),
-    ) -> bool {
-        let screen = ctx.screen_rect();
-        let default_pos = pos2(
-            screen.center().x - default_size.x / 2.0,
-            screen.center().y - default_size.y / 2.0,
-        );
-        let geom = self.geom(key, default_pos, default_size);
-        let pos = snap_pos(&self.settings, geom.pos);
-        let size = snap_vec(&self.settings, geom.size.max(MIN_SIZE));
-        let id = egui::Id::new(("rift.window", key));
-
-        let (chrome, ()) = {
-            let tex = self.tex();
-            let resize_icon = tex.resize.clone();
-            egui::Area::new(id)
-                .order(egui::Order::Foreground)
-                .current_pos(pos)
-                .movable(false)
-                .constrain(true)
-                .show(ctx, |ui| {
-                    window_chrome(ui, id, size, title, &resize_icon, |ui| content(ui, tex))
-                })
-                .inner
-        };
-
-        let geom = self.geom.get_mut(key).expect("seeded");
-        geom.pos += chrome.move_delta;
-        geom.size = (geom.size + chrome.size_delta).max(MIN_SIZE);
-        if chrome.drag_ended {
-            let pos = snap_pos(&self.settings, self.geom[key].pos);
-            let size = snap_vec(&self.settings, self.geom[key].size.max(MIN_SIZE));
-            self.settings.set_placement(
-                key,
-                Placement {
-                    pos: (pos.x, pos.y),
-                    size: Some((size.x, size.y)),
-                },
-            );
-            self.settings.save();
-        }
-        chrome.close
-    }
-
-    fn dragged(&mut self, key: &'static str, resp: &Response) {
-        if resp.dragged() {
-            self.geom.get_mut(key).expect("seeded").pos += resp.drag_delta();
-        }
-        if resp.drag_stopped() {
-            let pos = snap_pos(&self.settings, self.geom[key].pos);
-            self.settings.set_placement(
-                key,
-                Placement {
-                    pos: (pos.x, pos.y),
-                    size: None,
-                },
-            );
-            self.settings.save();
-        }
-    }
-
-    fn placed(&mut self, key: &'static str, default_pos: Pos2) -> Pos2 {
-        self.geom(key, default_pos, Vec2::ZERO).pos
-    }
-
-    fn geom(&mut self, key: &'static str, default_pos: Pos2, default_size: Vec2) -> Geom {
-        if !self.geom.contains_key(key) {
-            let stored = self.settings.placement(key);
-            let pos = stored.map_or(default_pos, |p| pos2(p.pos.0, p.pos.1));
-            let size = stored
-                .and_then(|p| p.size)
-                .map_or(default_size, |s| vec2(s.0, s.1));
-            self.geom.insert(key, Geom { pos, size });
-        }
-        self.geom[key]
-    }
-
-    fn ensure(&mut self, ctx: &egui::Context) {
-        if self.textures.is_some() {
-            return;
-        }
-        apply_style(ctx);
-        let items = world::items::items()
-            .iter()
-            .map(|item| load_texture(ctx, &item.id, item.icon.0))
-            .collect();
-        self.textures = Some(Textures {
-            items,
-            inventory: load_texture(
-                ctx,
-                "rift.ui.inventory",
-                asset("icons/potion/red_potion.png"),
-            ),
-            settings: load_texture(
-                ctx,
-                "rift.ui.settings",
-                asset("icons/weapon_and_tool/iron_sword.png"),
-            ),
-            resize: load_texture(ctx, "rift.ui.resize", asset("icons/cursors/pointer010.png")),
-        });
-    }
-
-    fn tex(&self) -> &Textures {
-        self.textures.as_ref().expect("textures loaded")
-    }
-
-    fn is_open(&self, key: &'static str) -> bool {
-        self.opened.get(key).copied().unwrap_or(false)
-    }
-
-    fn set_open(&mut self, key: &'static str, open: bool) {
-        self.opened.insert(key, open);
-    }
-
-    fn flip(&mut self, key: &'static str) {
-        let open = self.is_open(key);
-        self.set_open(key, !open);
     }
 }
 
-#[derive(Clone, Copy)]
-struct Geom {
-    pos: Pos2,
-    size: Vec2,
+/// Persisted UI preferences (snap grid, panel placements), loaded once and saved on every change.
+#[derive(Resource)]
+struct Settings(UserSettings);
+
+impl Default for Settings {
+    fn default() -> Settings {
+        Settings(UserSettings::load())
+    }
 }
 
-struct Textures {
-    items: Vec<TextureHandle>,
-    inventory: TextureHandle,
-    settings: TextureHandle,
-    resize: TextureHandle,
+/// The set of open window ids.
+#[derive(Resource, Default)]
+struct Open(HashSet<&'static str>);
+
+#[derive(Component)]
+struct Hud;
+
+/// A panel that drags and persists its top-left under `id`; `window` marks it resizable too.
+#[derive(Component)]
+struct Movable {
+    id: &'static str,
+    window: bool,
 }
 
-struct Chrome {
-    move_delta: Vec2,
-    size_delta: Vec2,
-    drag_ended: bool,
-    close: bool,
+/// Dragging this node moves the [`Movable`] it points at (a window's title bar moves its window).
+#[derive(Component)]
+struct DragHandle(Entity);
+
+/// Dragging this node resizes the window it points at.
+#[derive(Component)]
+struct ResizeHandle(Entity);
+
+/// A widget that toggles a window; the widget hides while its window is open.
+#[derive(Component)]
+struct Widget {
+    window: &'static str,
 }
 
-struct Size {
-    w: f32,
-    h: f32,
+#[derive(Component)]
+struct WindowOf(&'static str);
+
+#[derive(Component)]
+struct CharacterText;
+
+#[derive(Component)]
+struct InventoryGrid;
+
+struct WidgetSpec {
+    id: &'static str,
+    window: &'static str,
+    keybind: &'static str,
+    icon: &'static str,
 }
 
-fn window_chrome<R>(
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    size: Vec2,
-    title: &str,
-    resize_icon: &TextureHandle,
-    content: impl FnOnce(&mut egui::Ui) -> R,
-) -> (Chrome, R) {
-    let origin = ui.min_rect().min;
-    ui.set_min_size(size);
-    let full = Rect::from_min_size(origin, size);
-    let painter = ui.painter().clone();
-    painter.rect_filled(full, CornerRadius::ZERO, Color32::BLACK);
-    painter.rect_stroke(
-        full,
-        CornerRadius::ZERO,
-        Stroke::new(1.0, Color32::WHITE),
-        StrokeKind::Inside,
-    );
-
-    let title_bar = Rect::from_min_size(origin, vec2(size.x, TITLE_H));
-    let close = Rect::from_min_size(
-        pos2(title_bar.right() - TITLE_H, origin.y),
-        vec2(TITLE_H, TITLE_H),
-    );
-    let handle = Rect::from_min_max(origin, pos2(close.left(), title_bar.bottom()));
-    let drag_resp = ui.interact(handle, id.with("drag"), Sense::click_and_drag());
-    let close_resp = ui.interact(close, id.with("close"), Sense::click());
-    painter.text(
-        pos2(origin.x + 6.0, title_bar.center().y),
-        Align2::LEFT_CENTER,
-        title,
-        FontId::proportional(14.0),
-        Color32::WHITE,
-    );
-    painter.text(
-        close.center(),
-        Align2::CENTER_CENTER,
-        "x",
-        FontId::proportional(14.0),
-        if close_resp.hovered() {
-            Color32::WHITE
-        } else {
-            Color32::from_gray(150)
+fn spawn_widgets(mut commands: Commands, settings: Res<Settings>, assets: Res<AssetServer>) {
+    let screen = Vec2::new(1152.0, 864.0);
+    character_widget(&mut commands, &settings, Vec2::new(8.0, 8.0));
+    icon_widget(
+        &mut commands,
+        &settings,
+        &assets,
+        WidgetSpec {
+            id: "inventory",
+            window: "inventory.window",
+            keybind: "I",
+            icon: "icons/potion/red_potion.png",
         },
+        Vec2::new(screen.x - 8.0 - WIDGET, 8.0),
     );
-    painter.line_segment(
-        [
-            pos2(full.left(), title_bar.bottom()),
-            pos2(full.right(), title_bar.bottom()),
-        ],
-        Stroke::new(1.0, Color32::from_gray(70)),
+    icon_widget(
+        &mut commands,
+        &settings,
+        &assets,
+        WidgetSpec {
+            id: "settings",
+            window: "settings.window",
+            keybind: "O",
+            icon: "icons/weapon_and_tool/iron_sword.png",
+        },
+        Vec2::new(screen.x - 8.0 - WIDGET, 16.0 + WIDGET),
     );
-
-    ui.allocate_exact_size(vec2(size.x, TITLE_H), Sense::hover());
-    let inner = content(ui);
-
-    let resize = Rect::from_min_size(full.max - vec2(16.0, 16.0), vec2(16.0, 16.0));
-    let resize_resp = ui.interact(resize, id.with("resize"), Sense::drag());
-    painter.image(resize_icon.id(), resize, uv(), Color32::WHITE);
-
-    let chrome = Chrome {
-        move_delta: drag_resp.drag_delta(),
-        size_delta: resize_resp.drag_delta(),
-        drag_ended: drag_resp.drag_stopped() || resize_resp.drag_stopped(),
-        close: close_resp.clicked(),
-    };
-    (chrome, inner)
+    commands.spawn((
+        Hud,
+        TooltipDisplay,
+        Node {
+            position_type: PositionType::Absolute,
+            padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
+            ..default()
+        },
+        BackgroundColor(Color::BLACK),
+        GlobalZIndex(100),
+        Visibility::Hidden,
+        children![(
+            Text::new(String::new()),
+            TextColor(Color::WHITE),
+            Pickable::IGNORE
+        )],
+    ));
 }
 
-fn inventory_grid(ui: &mut egui::Ui, items: &[ItemId], tex: &Textures, client: &mut MmoClient) {
-    egui::ScrollArea::vertical()
-        .max_height(ui.available_height())
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing = Vec2::ZERO;
-            ui.horizontal_wrapped(|ui| {
-                for (slot, item) in items.iter().enumerate() {
-                    let (rect, resp) = ui.allocate_exact_size(vec2(SLOT, SLOT), Sense::click());
-                    let inner = Rect::from_min_size(rect.min, vec2(SLOT - 2.0, SLOT - 2.0));
-                    let painter = ui.painter();
-                    painter.rect_filled(inner, CornerRadius::ZERO, Color32::from_black_alpha(160));
-                    painter.rect_stroke(
-                        inner,
-                        CornerRadius::ZERO,
-                        Stroke::new(
-                            2.0,
-                            if resp.hovered() {
-                                Color32::WHITE
-                            } else {
-                                Color32::GRAY
-                            },
-                        ),
-                        StrokeKind::Inside,
-                    );
-                    let icon = &tex.items[item.0 as usize];
-                    painter.image(
-                        icon.id(),
-                        Rect::from_min_size(rect.min + vec2(1.0, 1.0), vec2(32.0, 32.0)),
-                        uv(),
-                        Color32::WHITE,
-                    );
-                    let resp = resp.on_hover_text(world::items::item(*item).display_name.as_str());
-                    if resp.double_clicked() {
-                        client.use_item(slot as u32);
-                    }
-                }
-            });
-        });
+fn character_widget(commands: &mut Commands, settings: &Settings, fallback: Vec2) {
+    let at = placed(settings, "character", fallback);
+    commands.spawn((
+        Hud,
+        Movable {
+            id: "character",
+            window: false,
+        },
+        panel_node(at, Vec2::new(140.0, 64.0)),
+        BackgroundColor(PANEL_BG),
+        BorderColor::all(BORDER),
+        children![(
+            CharacterText,
+            Text::new(String::new()),
+            TextColor(Color::WHITE),
+            Node {
+                margin: UiRect::all(Val::Px(6.0)),
+                ..default()
+            },
+        )],
+    ));
 }
 
 fn icon_widget(
-    ui: &mut egui::Ui,
-    icon: &TextureHandle,
-    pad: f32,
-    badge: &str,
-    title: &str,
-) -> Response {
-    let dim = 32.0 + 2.0 * pad;
-    let (rect, resp) = ui.allocate_exact_size(vec2(dim, dim), Sense::click_and_drag());
-    let fill = if resp.is_pointer_button_down_on() {
-        Color32::from_gray(70)
-    } else if resp.hovered() {
-        Color32::from_gray(40)
-    } else {
-        Color32::BLACK
-    };
-    let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::ZERO, fill);
-    painter.image(
-        icon.id(),
-        Rect::from_min_size(rect.min + vec2(pad, pad), vec2(32.0, 32.0)),
-        uv(),
-        Color32::WHITE,
-    );
-    let galley = painter.layout_no_wrap(badge.to_owned(), FontId::monospace(11.0), Color32::WHITE);
-    let badge_rect = Rect::from_min_size(
-        pos2(rect.right() - galley.size().x - 4.0, rect.top()),
-        galley.size() + vec2(4.0, 2.0),
-    );
-    painter.rect_filled(badge_rect, CornerRadius::ZERO, Color32::BLACK);
-    painter.galley(badge_rect.min + vec2(2.0, 1.0), galley, Color32::WHITE);
-    resp.on_hover_text(title)
+    commands: &mut Commands,
+    settings: &Settings,
+    assets: &AssetServer,
+    spec: WidgetSpec,
+    fallback: Vec2,
+) {
+    let at = placed(settings, spec.id, fallback);
+    commands
+        .spawn((
+            Hud,
+            Widget {
+                window: spec.window,
+            },
+            Movable {
+                id: spec.id,
+                window: false,
+            },
+            Tooltip(title_of(spec.window).to_owned()),
+            panel_node(at, Vec2::splat(WIDGET)),
+            BackgroundColor(PANEL_BG),
+            BorderColor::all(BORDER),
+            children![
+                (
+                    ImageNode::new(assets.load(spec.icon.to_owned())),
+                    Node {
+                        width: Val::Px(32.0),
+                        height: Val::Px(32.0),
+                        margin: UiRect::all(Val::Px(8.0)),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ),
+                badge(spec.keybind),
+            ],
+        ))
+        .observe(open_window);
 }
 
-fn text_box(ui: &mut egui::Ui, lines: &[String], pad: f32) -> Response {
-    let painter = ui.painter().clone();
-    let font = FontId::proportional(14.0);
-    let galleys: Vec<_> = lines
-        .iter()
-        .map(|line| painter.layout_no_wrap(line.clone(), font.clone(), Color32::WHITE))
-        .collect();
-    let width = galleys.iter().map(|g| g.size().x).fold(0.0_f32, f32::max);
-    let height: f32 = galleys.iter().map(|g| g.size().y).sum();
-    let (rect, resp) = ui.allocate_exact_size(
-        vec2(width + 2.0 * pad, height + 2.0 * pad),
-        Sense::click_and_drag(),
-    );
-    painter.rect_filled(rect, CornerRadius::ZERO, Color32::BLACK);
-    let mut y = rect.min.y + pad;
-    for galley in galleys {
-        let advance = galley.size().y;
-        painter.galley(pos2(rect.min.x + pad, y), galley, Color32::WHITE);
-        y += advance;
+fn open_window(click: On<Pointer<Click>>, widgets: Query<&Widget>, mut open: ResMut<Open>) {
+    if let Ok(widget) = widgets.get(click.entity) {
+        open.0.insert(widget.window);
     }
-    resp
 }
 
-fn apply_style(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
-    visuals.override_text_color = Some(Color32::WHITE);
-    visuals.window_fill = Color32::BLACK;
-    visuals.panel_fill = Color32::BLACK;
-    visuals.window_stroke = Stroke::new(1.0, Color32::WHITE);
-    paint_widget(&mut visuals.widgets.noninteractive, Color32::BLACK);
-    paint_widget(&mut visuals.widgets.inactive, Color32::BLACK);
-    paint_widget(&mut visuals.widgets.hovered, Color32::from_gray(40));
-    paint_widget(&mut visuals.widgets.active, Color32::from_gray(70));
-    paint_widget(&mut visuals.widgets.open, Color32::from_gray(40));
-    ctx.set_visuals(visuals);
+/// Spawns/despawns windows to match [`Open`], and hides a widget while its window is open.
+fn reconcile_windows(
+    open: Res<Open>,
+    settings: Res<Settings>,
+    assets: Res<AssetServer>,
+    windows: Query<(Entity, &WindowOf)>,
+    mut widgets: Query<(&Widget, &mut Visibility)>,
+    mut commands: Commands,
+) {
+    for (entity, window) in &windows {
+        if !open.0.contains(window.0) {
+            commands.entity(entity).despawn();
+        }
+    }
+    for &id in &open.0 {
+        if !windows.iter().any(|(_, window)| window.0 == id) {
+            spawn_window(&mut commands, &settings, &assets, id);
+        }
+    }
+    for (widget, mut visibility) in &mut widgets {
+        *visibility = if open.0.contains(widget.window) {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+    }
 }
 
-fn paint_widget(widget: &mut egui::style::WidgetVisuals, fill: Color32) {
-    widget.bg_fill = fill;
-    widget.weak_bg_fill = fill;
-    widget.bg_stroke = Stroke::new(1.0, Color32::from_gray(80));
-    widget.fg_stroke = Stroke::new(1.0, Color32::WHITE);
-    widget.corner_radius = CornerRadius::ZERO;
+fn spawn_window(
+    commands: &mut Commands,
+    settings: &Settings,
+    assets: &AssetServer,
+    id: &'static str,
+) {
+    let placement = settings.0.placement(id);
+    let at = placement.map_or(Vec2::new(376.0, 332.0), |p| Vec2::from(p.pos));
+    let size = placement
+        .and_then(|p| p.size)
+        .map_or(WINDOW_SIZE, Vec2::from);
+
+    let window = commands
+        .spawn((
+            Hud,
+            WindowOf(id),
+            Movable { id, window: true },
+            Node {
+                flex_direction: FlexDirection::Column,
+                overflow: Overflow::clip(),
+                ..panel_node(at, size)
+            },
+            BackgroundColor(PANEL_BG),
+            BorderColor::all(BORDER),
+        ))
+        .id();
+
+    let title = title_of(id);
+    let header = commands
+        .spawn((
+            ChildOf(window),
+            DragHandle(window),
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Px(TITLE_H),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::SpaceBetween,
+                padding: UiRect::horizontal(Val::Px(6.0)),
+                ..default()
+            },
+            BackgroundColor(TITLE_BG),
+        ))
+        .id();
+    commands.spawn((
+        ChildOf(header),
+        Text::new(title),
+        TextColor(Color::WHITE),
+        Pickable::IGNORE,
+    ));
+    commands
+        .spawn((ChildOf(header), close_button()))
+        .observe(close_window(id));
+
+    let content = commands
+        .spawn((
+            ChildOf(window),
+            Node {
+                flex_grow: 1.0,
+                flex_wrap: FlexWrap::Wrap,
+                align_content: AlignContent::FlexStart,
+                padding: UiRect::all(Val::Px(4.0)),
+                ..default()
+            },
+        ))
+        .id();
+    match id {
+        "inventory.window" => {
+            commands.entity(content).insert(InventoryGrid);
+        }
+        "settings.window" => {
+            commands
+                .spawn((ChildOf(content), snapping_button(settings)))
+                .observe(toggle_snapping);
+        }
+        _ => {}
+    }
+    let _ = assets;
+
+    commands.spawn((
+        ChildOf(window),
+        ResizeHandle(window),
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(0.0),
+            bottom: Val::Px(0.0),
+            width: Val::Px(16.0),
+            height: Val::Px(16.0),
+            ..default()
+        },
+        BackgroundColor(BORDER),
+    ));
 }
 
-fn load_texture(ctx: &egui::Context, name: &str, png: &[u8]) -> TextureHandle {
-    let image = Image::from_file_with_format(png, Some(ImageFormat::Png)).expect("decode ui png");
-    let color = egui::ColorImage::from_rgba_unmultiplied(
-        [image.width as usize, image.height as usize],
-        &image.bytes,
-    );
-    ctx.load_texture(name, color, egui::TextureOptions::NEAREST)
+fn close_window(id: &'static str) -> impl Fn(On<Pointer<Click>>, ResMut<Open>) {
+    move |_, mut open| {
+        open.0.remove(id);
+    }
 }
 
-fn snap_pos(settings: &UserSettings, pos: Pos2) -> Pos2 {
-    pos2(settings.snap(pos.x), settings.snap(pos.y))
+/// Accumulates a drag into the dragged panel's position (or a window's size for a resize handle),
+/// snapped to the grid.
+fn on_drag(
+    drag: On<Pointer<Drag>>,
+    handles: Query<&DragHandle>,
+    resizes: Query<&ResizeHandle>,
+    children: Query<&ChildOf>,
+    settings: Res<Settings>,
+    mut nodes: Query<(&mut Node, &Movable)>,
+) {
+    let delta = drag.delta;
+    for entity in ancestry(drag.entity, &children) {
+        if let Ok(handle) = handles.get(entity)
+            && let Ok((mut node, movable)) = nodes.get_mut(handle.0)
+        {
+            move_node(&mut node, delta, &settings.0, movable.id);
+            return;
+        }
+        if let Ok(resize) = resizes.get(entity)
+            && let Ok((mut node, movable)) = nodes.get_mut(resize.0)
+        {
+            resize_node(&mut node, delta, &settings.0, movable.id);
+            return;
+        }
+        if let Ok((mut node, movable)) = nodes.get_mut(entity) {
+            move_node(&mut node, delta, &settings.0, movable.id);
+            return;
+        }
+    }
 }
 
-fn snap_vec(settings: &UserSettings, size: Vec2) -> Vec2 {
-    vec2(settings.snap(size.x), settings.snap(size.y))
+/// Persists the dragged panel's geometry when the drag ends.
+fn on_drag_end(
+    drag: On<Pointer<DragEnd>>,
+    handles: Query<&DragHandle>,
+    resizes: Query<&ResizeHandle>,
+    children: Query<&ChildOf>,
+    nodes: Query<(&Node, &Movable)>,
+    mut settings: ResMut<Settings>,
+) {
+    for entity in ancestry(drag.entity, &children) {
+        let target = handles
+            .get(entity)
+            .map(|h| h.0)
+            .or_else(|_| resizes.get(entity).map(|r| r.0))
+            .unwrap_or(entity);
+        if let Ok((node, movable)) = nodes.get(target) {
+            let pos = (px(node.left), px(node.top));
+            let size = movable.window.then(|| (px(node.width), px(node.height)));
+            settings
+                .0
+                .set_placement(movable.id, Placement { pos, size });
+            settings.0.save();
+            return;
+        }
+    }
 }
 
-fn asset(path: &str) -> &'static [u8] {
-    world::assets::bytes(path).unwrap_or_else(|| panic!("missing asset {path}"))
+fn toggle_keys(keys: Res<ButtonInput<KeyCode>>, mut open: ResMut<Open>) {
+    if keys.just_pressed(KeyCode::KeyI) {
+        toggle(&mut open, "inventory.window");
+    }
+    if keys.just_pressed(KeyCode::KeyO) {
+        toggle(&mut open, "settings.window");
+    }
 }
 
-fn uv() -> Rect {
-    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))
+fn toggle(open: &mut Open, id: &'static str) {
+    if !open.0.remove(id) {
+        open.0.insert(id);
+    }
+}
+
+fn sync_character(world: &mut World) {
+    let name = session::my_name(world).unwrap_or_default();
+    let (health, max) = session::my_vitals(world).unwrap_or((0.0, 0.0));
+    let xp = session::my_xp(world).unwrap_or(0);
+    let content = format!("{name}\n{health:.0} / {max:.0}\nxp {xp}");
+    let mut texts = world.query_filtered::<&mut Text, With<CharacterText>>();
+    for mut text in texts.iter_mut(world) {
+        text.0.clone_from(&content);
+    }
+}
+
+fn sync_inventory(world: &mut World) {
+    let Ok(grid) = world
+        .query_filtered::<Entity, With<InventoryGrid>>()
+        .single(world)
+    else {
+        return;
+    };
+    let items = session::my_inventory(world);
+    let existing = world
+        .get::<Children>(grid)
+        .map_or(0, |children| children.len());
+    if existing == items.len() {
+        return;
+    }
+    world.entity_mut(grid).despawn_related::<Children>();
+    let cells: Vec<(Handle<Image>, String)> = {
+        let assets = world.resource::<AssetServer>();
+        items
+            .iter()
+            .map(|item| {
+                let def = world::items::item(*item);
+                (assets.load(def.icon.0.clone()), def.display_name.clone())
+            })
+            .collect()
+    };
+    for (slot, (icon, name)) in cells.into_iter().enumerate() {
+        let cell = world
+            .spawn((
+                ChildOf(grid),
+                InventorySlot(slot as u32),
+                Tooltip(name),
+                Node {
+                    width: Val::Px(SLOT),
+                    height: Val::Px(SLOT),
+                    margin: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BackgroundColor(TITLE_BG),
+                children![(
+                    ImageNode::new(icon),
+                    Node {
+                        width: Val::Px(32.0),
+                        height: Val::Px(32.0),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                )],
+            ))
+            .id();
+        world.entity_mut(cell).observe(use_slot);
+    }
+}
+
+#[derive(Component)]
+struct InventorySlot(u32);
+
+fn use_slot(click: On<Pointer<Click>>, slots: Query<&InventorySlot>, mut commands: Commands) {
+    if let Ok(slot) = slots.get(click.entity) {
+        let slot = slot.0;
+        commands.queue(move |world: &mut World| session::use_item(world, slot));
+    }
+}
+
+fn toggle_snapping(_: On<Pointer<Click>>, mut commands: Commands) {
+    commands.queue(|world: &mut World| {
+        let mut settings = world.resource_mut::<Settings>();
+        settings.0.toggle_snapping();
+        settings.0.save();
+    });
+}
+
+fn move_node(node: &mut Node, delta: Vec2, settings: &UserSettings, _id: &str) {
+    node.left = Val::Px(settings.snap(px(node.left) + delta.x));
+    node.top = Val::Px(settings.snap(px(node.top) + delta.y));
+}
+
+fn resize_node(node: &mut Node, delta: Vec2, settings: &UserSettings, _id: &str) {
+    let width = settings.snap((px(node.width) + delta.x).max(MIN_WINDOW.x));
+    let height = settings.snap((px(node.height) + delta.y).max(MIN_WINDOW.y));
+    node.width = Val::Px(width.max(MIN_WINDOW.x));
+    node.height = Val::Px(height.max(MIN_WINDOW.y));
+}
+
+/// `entity` then each of its ancestors, nearest first.
+fn ancestry(entity: Entity, children: &Query<&ChildOf>) -> Vec<Entity> {
+    let mut chain = vec![entity];
+    let mut current = entity;
+    while let Ok(parent) = children.get(current) {
+        current = parent.parent();
+        chain.push(current);
+    }
+    chain
+}
+
+fn placed(settings: &Settings, id: &str, default: Vec2) -> Vec2 {
+    settings
+        .0
+        .placement(id)
+        .map_or(default, |placement| Vec2::from(placement.pos))
+}
+
+fn panel_node(at: Vec2, size: Vec2) -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        left: Val::Px(at.x),
+        top: Val::Px(at.y),
+        width: Val::Px(size.x),
+        height: Val::Px(size.y),
+        border: UiRect::all(Val::Px(1.0)),
+        ..default()
+    }
+}
+
+fn badge(text: &str) -> impl Bundle {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(2.0),
+            bottom: Val::Px(2.0),
+            ..default()
+        },
+        children![(
+            Text::new(text.to_owned()),
+            TextFont::from_font_size(11.0),
+            TextColor(Color::WHITE),
+            Pickable::IGNORE,
+        )],
+        Pickable::IGNORE,
+    )
+}
+
+fn close_button() -> impl Bundle {
+    (
+        Button,
+        Node {
+            width: Val::Px(16.0),
+            height: Val::Px(16.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        children![(Text::new("×"), TextColor(Color::WHITE), Pickable::IGNORE)],
+    )
+}
+
+fn snapping_button(settings: &Settings) -> impl Bundle {
+    (
+        Button,
+        Node {
+            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+            border: UiRect::all(Val::Px(1.0)),
+            ..default()
+        },
+        BorderColor::all(BORDER),
+        BackgroundColor(TITLE_BG),
+        children![(
+            Text::new(snapping_label(settings)),
+            TextColor(Color::WHITE),
+            Pickable::IGNORE,
+        )],
+    )
+}
+
+fn snapping_label(settings: &Settings) -> &'static str {
+    if settings.0.snapping_enabled() {
+        "ui snapping enabled"
+    } else {
+        "ui snapping disabled"
+    }
+}
+
+/// A hover tooltip's text.
+#[derive(Component)]
+struct Tooltip(String);
+
+#[derive(Component)]
+struct TooltipDisplay;
+
+fn show_tooltip(
+    over: On<Pointer<Over>>,
+    tips: Query<&Tooltip>,
+    window: Single<&Window>,
+    display: Single<(&mut Visibility, &mut Node, &Children), With<TooltipDisplay>>,
+    mut texts: Query<&mut Text>,
+) {
+    let Ok(tip) = tips.get(over.entity) else {
+        return;
+    };
+    let (mut visibility, mut node, children) = display.into_inner();
+    *visibility = Visibility::Visible;
+    if let Some(cursor) = window.cursor_position() {
+        node.left = Val::Px(cursor.x + 12.0);
+        node.top = Val::Px(cursor.y + 12.0);
+    }
+    if let Some(&label) = children.first()
+        && let Ok(mut text) = texts.get_mut(label)
+    {
+        text.0.clone_from(&tip.0);
+    }
+}
+
+fn hide_tooltip(_: On<Pointer<Out>>, mut display: Single<&mut Visibility, With<TooltipDisplay>>) {
+    **display = Visibility::Hidden;
+}
+
+fn title_of(window: &str) -> &'static str {
+    match window {
+        "inventory.window" => "Inventory",
+        "settings.window" => "Settings",
+        _ => "",
+    }
+}
+
+fn px(val: Val) -> f32 {
+    match val {
+        Val::Px(value) => value,
+        _ => 0.0,
+    }
+}
+
+fn despawn<M: Component>(panels: Query<Entity, With<M>>, mut commands: Commands) {
+    for entity in &panels {
+        commands.entity(entity).despawn();
+    }
 }

@@ -62,17 +62,29 @@ jobs:
           $COMPOSE --profile test up -d --no-build postgres keycloak keycloak-healthcheck
           SCRIPT
           nohup bash /tmp/prewarm.sh > /tmp/prewarm.log 2>&1 &
+      - name: Install system dependencies
+        # The client links ALSA (kira audio) and renders a real window in the smoke test: the X11
+        # libs winit dlopens, a software Vulkan driver (lavapipe) to render without a GPU, and Xvfb
+        # for a virtual display. Nothing here needs a gamepad/udev stack.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon0 libxkbcommon-x11-0 \
+            libvulkan1 mesa-vulkan-drivers \
+            xvfb xauth
       - name: Conventions
-        # The client ships as wasm, so it is linted for that target; the rest of the workspace is
-        # linted natively, which keeps the client's native-only deps (ALSA) out of CI.
         run: |
           cargo fmt --check
-          cargo clippy --workspace --exclude client --all-targets --all-features -- -D warnings
-          cargo clippy -p client --target wasm32-unknown-unknown -- -D warnings
+          cargo clippy --workspace --all-targets -- -D warnings
+      - name: Client smoke test
+        # Runs the actual client binary — window, rendering, netcode, HUD — against a freshly spawned
+        # server under a virtual display, asserting it connects, joins, spawns, and renders its
+        # player. The test wraps the client in `xvfb-run` itself when no display is present.
+        run: cargo test -p client --test smoke
       - name: Build release artifacts
         run: |
           cargo build --release -p website -p server
-          cargo wasm
       - name: Build docker images
         run: $COMPOSE --profile test build rift-website rift-game-server
       - name: E2E tests
@@ -81,6 +93,7 @@ jobs:
         run: |
           $COMPOSE --profile test up -d --wait --no-build
           cargo test -p server --features stack -- --test-threads=1
+          cargo test -p client --features stack --test sso -- --test-threads=1
       - name: Collect e2e test logs
         if: failure()
         run: |

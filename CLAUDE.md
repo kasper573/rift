@@ -6,7 +6,7 @@
 - Correctness & clarity comes before performance.
 - Tests assert on contracts, never implementation details.
 - No mitigation fixes or hacks. Refactoring is encouraged: Don't hunt symptoms, fix root causes.
-- Content is data bundled into the runtime.
+- Content is data in `assets/`: dev and servers read it from disk (hot-reloadable in the dev client); shipped clients embed it.
 
 ## Code style
 
@@ -30,7 +30,8 @@
 - The E2E suite green, locally and in CI:
 
   ```sh
-  cargo build --release -p website -p server && cargo wasm
+  cargo build --release -p website -p server && cargo build -p client
   docker compose -f docker/docker-compose.yaml --profile test up -d --build --wait
   cargo test -p server --features stack -- --test-threads=1
+  cargo test -p client --features stack --test sso -- --test-threads=1
   ```
