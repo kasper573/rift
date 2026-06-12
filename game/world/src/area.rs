@@ -6,7 +6,7 @@ use tiled::{LayerType, PropertyValue};
 
 use crate::actors::SfxId;
 use crate::assets;
-use crate::math::{CellPos, Millis, Pos, Rect, Seconds, Size, Tiles, Tiling, WorldPx};
+use crate::math::{CellPos, Millis, PixelsPerTile, Pos, Rect, Seconds, Size, Tiles, WorldPx};
 use crate::nav;
 use crate::table;
 
@@ -277,13 +277,13 @@ fn load_map(name: &str) -> tiled::Map {
 
 fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {
     let map = load_map(map_name);
-    let tiling = Tiling::new(
+    let tiling = PixelsPerTile::new(
         WorldPx(map.tile_width as f32),
         WorldPx(map.tile_height as f32),
     );
     let size = Size::new(map.width as f32, map.height as f32);
 
-    let mut tiles = TileTable::default();
+    let mut tiles = TilePalette::default();
     let mut layers = Vec::new();
     let mut objects = Vec::new();
     let mut start = None;
@@ -298,7 +298,7 @@ fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {
                 for y in 0..height {
                     for x in 0..width {
                         if let Some(cell) = tile_layer.get_tile(x, y) {
-                            cells[(y * width + x) as usize] = tiles.intern(
+                            cells[(y * width + x) as usize] = tiles.add(
                                 cell.get_tileset(),
                                 cell.id(),
                                 (cell.flip_h, cell.flip_v),
@@ -319,7 +319,7 @@ fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {
                     if let Some(object_tile) = object.get_tile() {
                         let data = object.tile_data().expect("tile object has tile data");
                         let tileset = object_tile.get_tileset();
-                        let cell = tiles.intern(tileset, data.id(), (data.flip_h, data.flip_v));
+                        let cell = tiles.add(tileset, data.id(), (data.flip_h, data.flip_v));
                         objects.push((tiling.point(pos), cell));
                         // Tiled anchors tile objects at their bottom-left corner. Only tiles the
                         // tileset declares something about can opt out of obscuring.
@@ -386,10 +386,11 @@ fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {
     }
 }
 
-/// The interned set of distinct map tiles, keyed by tileset identity and local tile id; per-tile
-/// properties are captured alongside so grid building never re-touches the tiled crate.
+/// Every distinct map tile, deduplicated by tileset identity and local tile id into a compact
+/// [`TileRef`]; per-tile properties are captured alongside so grid building never re-touches the
+/// tiled crate.
 #[derive(Default)]
-struct TileTable {
+struct TilePalette {
     keys: Vec<(usize, u32)>,
     defs: Vec<TileDef>,
     walkable: Vec<Option<bool>>,
@@ -397,8 +398,8 @@ struct TileTable {
     sfx: Vec<Option<SfxId>>,
 }
 
-impl TileTable {
-    fn intern(&mut self, tileset: &tiled::Tileset, id: u32, flip: (bool, bool)) -> TileRef {
+impl TilePalette {
+    fn add(&mut self, tileset: &tiled::Tileset, id: u32, flip: (bool, bool)) -> TileRef {
         let identity = tileset as *const tiled::Tileset as usize;
         let key = (identity, id);
         let index = match self.keys.iter().position(|&k| k == key) {
@@ -497,7 +498,7 @@ fn portal(
     goto: &str,
     pos: Pos<WorldPx>,
     shape: &tiled::ObjectShape,
-    tiling: Tiling,
+    tiling: PixelsPerTile,
 ) -> Portal {
     let malformed = || -> ! { panic!("map '{name}': goto '{goto}' must be '<area>, x, y'") };
     let mut parts = goto.split(',');
@@ -516,7 +517,7 @@ fn portal(
     }
 }
 
-fn compute_groups(layers: &[RenderLayer], tiles: &TileTable) -> (Vec<Group>, HashSet<CellPos>) {
+fn compute_groups(layers: &[RenderLayer], tiles: &TilePalette) -> (Vec<Group>, HashSet<CellPos>) {
     let mut groups = Vec::new();
     let mut grouped_cells = HashSet::new();
     let Some(dynamic) = layers.iter().find(|layer| layer.dynamic) else {
@@ -559,7 +560,7 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TileTable) -> (Vec<Group>, Has
 }
 
 // Per-cell footstep sfx, flattened row-major; the topmost tile layer that declares one wins.
-fn tile_sfx(size: Size<Tiles>, layers: &[RenderLayer], tiles: &TileTable) -> Vec<Option<SfxId>> {
+fn tile_sfx(size: Size<Tiles>, layers: &[RenderLayer], tiles: &TilePalette) -> Vec<Option<SfxId>> {
     let (width, height) = (size.width as i32, size.height as i32);
     let mut sfx = vec![None; (width * height) as usize];
     for layer in layers {
@@ -580,7 +581,7 @@ const OBSCURING_CUTOFF: f32 = 0.4;
 fn build_grid(
     size: Size<Tiles>,
     layers: &[RenderLayer],
-    tiles: &TileTable,
+    tiles: &TilePalette,
     obscuring: &[Rect<Tiles>],
 ) -> nav::Grid {
     let (width, height) = (size.width as i32, size.height as i32);

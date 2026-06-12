@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub struct Tiles(pub f32);
 
 /// The world's native pixel scale: Tiled authors geometry (and its own tile size) in these, and the
-/// camera draws sprites at this scale. Cross into tile space only through [`Tiling`]; a resolution-
+/// camera draws sprites at this scale. Cross into tile space only through [`PixelsPerTile`]; a resolution-
 /// dependent zoom separates these from the on-screen pixels the player's window measures.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct WorldPx(pub f32);
@@ -134,17 +134,17 @@ impl Millis {
     }
 }
 
-/// A map's pixels-per-tile, and the only gateway from its pixel space into tile space. Built once
-/// per map so the tile size has a single source.
+/// The only gateway from a map's pixel space into tile space, built once per map so the tile size
+/// has a single source.
 #[derive(Clone, Copy)]
-pub struct Tiling {
+pub struct PixelsPerTile {
     x: euclid::Scale<f32, WorldPx, Tiles>,
     y: euclid::Scale<f32, WorldPx, Tiles>,
 }
 
-impl Tiling {
-    pub fn new(tile_width: WorldPx, tile_height: WorldPx) -> Tiling {
-        Tiling {
+impl PixelsPerTile {
+    pub fn new(tile_width: WorldPx, tile_height: WorldPx) -> PixelsPerTile {
+        PixelsPerTile {
             x: euclid::Scale::new(1.0 / tile_width.0.max(1.0)),
             y: euclid::Scale::new(1.0 / tile_height.0.max(1.0)),
         }
