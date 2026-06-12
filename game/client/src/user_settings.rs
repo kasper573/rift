@@ -2,20 +2,20 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-/// A window-space (logical) pixel, the unit bevy UI `Val::Px` and `Window::cursor_position` speak —
-/// distinct from the world-render pixels the camera draws in (a whole-number letterbox scale apart).
+/// An on-screen pixel of the player's window, the unit bevy UI `Val::Px` and `Window::cursor_position`
+/// speak — a resolution-dependent zoom apart from the [`WorldPx`] the camera draws the world in.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
-pub struct Logical(pub f32);
+pub struct ScreenPx(pub f32);
 
-impl std::ops::Add<f32> for Logical {
-    type Output = Logical;
-    fn add(self, delta: f32) -> Logical {
-        Logical(self.0 + delta)
+impl std::ops::Add<f32> for ScreenPx {
+    type Output = ScreenPx;
+    fn add(self, delta: f32) -> ScreenPx {
+        ScreenPx(self.0 + delta)
     }
 }
 
 /// The snap grid when snapping is enabled; 0 disables it.
-pub const DEFAULT_SNAP: Logical = Logical(16.0);
+pub const DEFAULT_SNAP: ScreenPx = ScreenPx(16.0);
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct UserSettings {
@@ -26,7 +26,7 @@ pub struct UserSettings {
 #[derive(Serialize, Deserialize)]
 pub struct UiSettings {
     #[serde(default = "default_snap")]
-    pub snap: Logical,
+    pub snap: ScreenPx,
     #[serde(default)]
     pub placements: HashMap<String, Placement>,
 }
@@ -34,8 +34,8 @@ pub struct UiSettings {
 /// A persisted on-screen rectangle: top-left position, and a size for resizable windows.
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct Placement {
-    pub pos: (Logical, Logical),
-    pub size: Option<(Logical, Logical)>,
+    pub pos: (ScreenPx, ScreenPx),
+    pub size: Option<(ScreenPx, ScreenPx)>,
 }
 
 impl UserSettings {
@@ -52,12 +52,12 @@ impl UserSettings {
     }
 
     /// Rounds a coordinate to the snap grid; a no-op while snapping is disabled.
-    pub fn snap(&self, value: Logical) -> Logical {
+    pub fn snap(&self, value: ScreenPx) -> ScreenPx {
         let grid = self.ui.snap.0;
         if grid <= 0.0 {
             value
         } else {
-            Logical((value.0 / grid).round() * grid)
+            ScreenPx((value.0 / grid).round() * grid)
         }
     }
 
@@ -75,7 +75,7 @@ impl UserSettings {
 
     pub fn toggle_snapping(&mut self) {
         self.ui.snap = if self.ui.snap.0 > 0.0 {
-            Logical(0.0)
+            ScreenPx(0.0)
         } else {
             DEFAULT_SNAP
         };
@@ -91,7 +91,7 @@ impl Default for UiSettings {
     }
 }
 
-fn default_snap() -> Logical {
+fn default_snap() -> ScreenPx {
     DEFAULT_SNAP
 }
 

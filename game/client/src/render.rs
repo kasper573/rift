@@ -11,16 +11,16 @@ use bevy::sprite_render::{Material2d, Material2dPlugin};
 use bevy::window::PrimaryWindow;
 use world::actors;
 use world::area::{self, AreaId};
-use world::math::{CellPos, Offset, Pixels, Pos, Seconds, Size, Tiles};
+use world::math::{CellPos, Offset, Pos, Seconds, Size, Tiles, WorldPx};
 use world::protocol::{Actor, AreaTag, Owner, Position, Rgba, action_name};
 use world::session::{self, MyClient};
 
-use crate::user_settings::Logical;
+use crate::user_settings::ScreenPx;
 
 /// World pixels per tile; the actor and tile sheets are authored at this scale.
-pub const TILE: Pixels = Pixels(16.0);
+pub const TILE: WorldPx = WorldPx(16.0);
 const VIEW_TILES: Size<Tiles> = Size::new(24.0, 18.0);
-const VIEW: Size<Pixels> = Size::new(VIEW_TILES.width * TILE.0, VIEW_TILES.height * TILE.0);
+const VIEW: Size<WorldPx> = Size::new(VIEW_TILES.width * TILE.0, VIEW_TILES.height * TILE.0);
 /// The presentation quad lives on its own layer so only the presentation camera draws it.
 const PRESENT_LAYER: usize = 1;
 
@@ -63,7 +63,7 @@ pub struct Viewport {
     /// Window logical pixels per world-render pixel.
     pub scale: f32,
     /// Where the letterboxed view's top-left sits in the window.
-    pub offset: Offset<Logical>,
+    pub offset: Offset<ScreenPx>,
 }
 
 /// Tints the presented frame toward red on death: additive red, green and blue at a third.
@@ -164,10 +164,10 @@ enum Bar {
 }
 
 /// The healthbar geometry in world pixels; it hangs just below the player's position point.
-const BAR: Size<Pixels> = Size::new(20.0, 4.0);
-const BAR_DROP: Pixels = Pixels(5.0);
+const BAR: Size<WorldPx> = Size::new(20.0, 4.0);
+const BAR_DROP: WorldPx = WorldPx(5.0);
 
-fn bar_sprite(rgb: u32, size: Size<Pixels>) -> Sprite {
+fn bar_sprite(rgb: u32, size: Size<WorldPx>) -> Sprite {
     let [_, r, g, b] = rgb.to_be_bytes();
     Sprite {
         color: Color::srgb_u8(r, g, b),

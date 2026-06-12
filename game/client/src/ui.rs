@@ -5,13 +5,13 @@ use world::math::{Offset, Pos, Size};
 use world::session;
 
 use crate::Screen;
-use crate::user_settings::{Logical, Placement, UserSettings};
+use crate::user_settings::{Placement, ScreenPx, UserSettings};
 
-const WIDGET: Logical = Logical(48.0);
-const SLOT: Logical = Logical(36.0);
-const TITLE_H: Logical = Logical(22.0);
-const MIN_WINDOW: Size<Logical> = Size::new(100.0, 100.0);
-const WINDOW_SIZE: Size<Logical> = Size::new(400.0, 200.0);
+const WIDGET: ScreenPx = ScreenPx(48.0);
+const SLOT: ScreenPx = ScreenPx(36.0);
+const TITLE_H: ScreenPx = ScreenPx(22.0);
+const MIN_WINDOW: Size<ScreenPx> = Size::new(100.0, 100.0);
+const WINDOW_SIZE: Size<ScreenPx> = Size::new(400.0, 200.0);
 
 const PANEL_BG: Color = Color::srgb(0.1, 0.1, 0.1);
 const TITLE_BG: Color = Color::srgb(0.18, 0.18, 0.18);
@@ -148,7 +148,7 @@ struct CharacterText;
 struct InventoryGrid;
 
 fn spawn_widgets(mut commands: Commands, settings: Res<Settings>, assets: Res<AssetServer>) {
-    let screen = Size::<Logical>::new(1152.0, 864.0);
+    let screen = Size::<ScreenPx>::new(1152.0, 864.0);
     character_widget(&mut commands, &settings, Pos::new(8.0, 8.0));
     icon_widget(
         &mut commands,
@@ -183,7 +183,7 @@ fn spawn_widgets(mut commands: Commands, settings: Res<Settings>, assets: Res<As
     ));
 }
 
-fn character_widget(commands: &mut Commands, settings: &Settings, fallback: Pos<Logical>) {
+fn character_widget(commands: &mut Commands, settings: &Settings, fallback: Pos<ScreenPx>) {
     let at = placed(settings, Panel::Character, fallback);
     commands.spawn((
         Hud,
@@ -211,7 +211,7 @@ fn icon_widget(
     settings: &Settings,
     assets: &AssetServer,
     pane: Pane,
-    fallback: Pos<Logical>,
+    fallback: Pos<ScreenPx>,
 ) {
     let at = placed(settings, Panel::Widget(pane), fallback);
     commands
@@ -379,7 +379,7 @@ fn on_drag(
     settings: Res<Settings>,
     mut nodes: Query<(&mut Node, &Movable)>,
 ) {
-    let delta = Offset::<Logical>::new(drag.delta.x, drag.delta.y);
+    let delta = Offset::<ScreenPx>::new(drag.delta.x, drag.delta.y);
     for entity in ancestry(drag.entity, &children) {
         if let Ok(handle) = handles.get(entity)
             && let Ok((mut node, _)) = nodes.get_mut(handle.0)
@@ -523,12 +523,12 @@ fn toggle_snapping(_: On<Pointer<Click>>, mut commands: Commands) {
     });
 }
 
-fn move_node(node: &mut Node, delta: Offset<Logical>, settings: &UserSettings) {
+fn move_node(node: &mut Node, delta: Offset<ScreenPx>, settings: &UserSettings) {
     node.left = Val::Px(settings.snap(px(node.left) + delta.x).0);
     node.top = Val::Px(settings.snap(px(node.top) + delta.y).0);
 }
 
-fn resize_node(node: &mut Node, delta: Offset<Logical>, settings: &UserSettings) {
+fn resize_node(node: &mut Node, delta: Offset<ScreenPx>, settings: &UserSettings) {
     let width = settings
         .snap(px(node.width) + delta.x)
         .0
@@ -552,22 +552,22 @@ fn ancestry(entity: Entity, children: &Query<&ChildOf>) -> Vec<Entity> {
     chain
 }
 
-fn placed(settings: &Settings, panel: Panel, default: Pos<Logical>) -> Pos<Logical> {
+fn placed(settings: &Settings, panel: Panel, default: Pos<ScreenPx>) -> Pos<ScreenPx> {
     settings
         .0
         .placement(panel.key())
         .map_or(default, |placement| point(placement.pos))
 }
 
-fn point((x, y): (Logical, Logical)) -> Pos<Logical> {
+fn point((x, y): (ScreenPx, ScreenPx)) -> Pos<ScreenPx> {
     Pos::new(x.0, y.0)
 }
 
-fn extent((width, height): (Logical, Logical)) -> Size<Logical> {
+fn extent((width, height): (ScreenPx, ScreenPx)) -> Size<ScreenPx> {
     Size::new(width.0, height.0)
 }
 
-fn panel_node(at: Pos<Logical>, size: Size<Logical>) -> Node {
+fn panel_node(at: Pos<ScreenPx>, size: Size<ScreenPx>) -> Node {
     Node {
         position_type: PositionType::Absolute,
         left: Val::Px(at.x),
@@ -670,10 +670,10 @@ fn hide_tooltip(_: On<Pointer<Out>>, mut display: Single<&mut Visibility, With<T
     **display = Visibility::Hidden;
 }
 
-fn px(val: Val) -> Logical {
+fn px(val: Val) -> ScreenPx {
     match val {
-        Val::Px(value) => Logical(value),
-        _ => Logical(0.0),
+        Val::Px(value) => ScreenPx(value),
+        _ => ScreenPx(0.0),
     }
 }
 

@@ -9,10 +9,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct Tiles(pub f32);
 
-/// A map's pixel space — Tiled authors object geometry (and its own tile size) in pixels.
-/// Cross into tile space only through [`Tiling`].
+/// The world's native pixel scale: Tiled authors geometry (and its own tile size) in these, and the
+/// camera draws sprites at this scale. Cross into tile space only through [`Tiling`]; a resolution-
+/// dependent zoom separates these from the on-screen pixels the player's window measures.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
-pub struct Pixels(pub f32);
+pub struct WorldPx(pub f32);
 
 pub type Pos<U> = euclid::Point2D<f32, U>;
 pub type Offset<U> = euclid::Vector2D<f32, U>;
@@ -137,12 +138,12 @@ impl Millis {
 /// per map so the tile size has a single source.
 #[derive(Clone, Copy)]
 pub struct Tiling {
-    x: euclid::Scale<f32, Pixels, Tiles>,
-    y: euclid::Scale<f32, Pixels, Tiles>,
+    x: euclid::Scale<f32, WorldPx, Tiles>,
+    y: euclid::Scale<f32, WorldPx, Tiles>,
 }
 
 impl Tiling {
-    pub fn new(tile_width: Pixels, tile_height: Pixels) -> Tiling {
+    pub fn new(tile_width: WorldPx, tile_height: WorldPx) -> Tiling {
         Tiling {
             x: euclid::Scale::new(1.0 / tile_width.0.max(1.0)),
             y: euclid::Scale::new(1.0 / tile_height.0.max(1.0)),
@@ -150,12 +151,12 @@ impl Tiling {
     }
 
     /// A pixel point in tile space; whole numbers lie on tile edges.
-    pub fn point(self, p: Pos<Pixels>) -> Pos<Tiles> {
+    pub fn point(self, p: Pos<WorldPx>) -> Pos<Tiles> {
         Pos::new(self.x.transform_point(p).x, self.y.transform_point(p).y)
     }
 
     /// A pixel rect in tile space.
-    pub fn rect(self, r: Rect<Pixels>) -> Rect<Tiles> {
+    pub fn rect(self, r: Rect<WorldPx>) -> Rect<Tiles> {
         Rect::new(
             self.point(r.origin),
             Size::new(r.size.width * self.x.get(), r.size.height * self.y.get()),
@@ -165,7 +166,7 @@ impl Tiling {
     /// The center of the tile a pixel point falls in. Snapping a loosely-authored pixel spawn
     /// point to a whole tile is what keeps a placed actor on the tile grid that movement rests
     /// it on.
-    pub fn tile_center(self, p: Pos<Pixels>) -> Pos<Tiles> {
+    pub fn tile_center(self, p: Pos<WorldPx>) -> Pos<Tiles> {
         let t = self.point(p);
         Pos::new(t.x.floor() + 0.5, t.y.floor() + 0.5)
     }

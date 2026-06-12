@@ -12,7 +12,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use tiled::{Frame, PropertyValue, TileId};
 
 use crate::assets;
-use crate::math::{Millis, Pixels, PlaybackRate, Pos, Rect, Seconds, Size, Tiles};
+use crate::math::{Millis, PlaybackRate, Pos, Rect, Seconds, Size, Tiles, WorldPx};
 
 /// An actor model's index in [`models`]; content tables reference models by name via
 /// [`model_by_name`].
@@ -43,7 +43,7 @@ pub struct Timing {
 pub struct ActorModel {
     name: String,
     sheet: String,
-    frame: Size<Pixels>,
+    frame: Size<WorldPx>,
     columns: u32,
     hitbox: Size<Tiles>,
     strips: HashMap<String, [Vec<Frame>; 8]>,
@@ -74,7 +74,7 @@ impl ActorModel {
         dir: u8,
         t: Seconds,
         attack_speed: PlaybackRate,
-    ) -> Rect<Pixels> {
+    ) -> Rect<WorldPx> {
         let strip = self.strip(action, dir);
         let elapsed = Millis((t.0 * 1000.0 * rate(action, attack_speed).0).max(0.0));
         let total = total_ms(strip);
@@ -159,7 +159,7 @@ impl ActorModel {
         &spec[dir_slot(dir)]
     }
 
-    fn region(&self, tile: TileId) -> Rect<Pixels> {
+    fn region(&self, tile: TileId) -> Rect<WorldPx> {
         Rect::new(
             Pos::new(
                 (tile % self.columns) as f32 * self.frame.width,

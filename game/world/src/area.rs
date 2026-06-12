@@ -6,7 +6,7 @@ use tiled::{LayerType, PropertyValue};
 
 use crate::actors::SfxId;
 use crate::assets;
-use crate::math::{CellPos, Millis, Pixels, Pos, Rect, Seconds, Size, Tiles, Tiling};
+use crate::math::{CellPos, Millis, Pos, Rect, Seconds, Size, Tiles, Tiling, WorldPx};
 use crate::nav;
 use crate::table;
 
@@ -115,7 +115,7 @@ impl RenderLayer {
 #[derive(Clone)]
 struct TileDef {
     sheet: String,
-    frames: Vec<(Rect<Pixels>, Millis)>,
+    frames: Vec<(Rect<WorldPx>, Millis)>,
     total: Millis,
 }
 
@@ -154,7 +154,7 @@ pub struct Area {
 /// What to draw for one resolved map cell: a region of a tileset sheet (by path), possibly mirrored.
 pub struct TileSprite<'a> {
     pub sheet: &'a str,
-    pub region: Rect<Pixels>,
+    pub region: Rect<WorldPx>,
     pub flip: (bool, bool),
 }
 
@@ -278,8 +278,8 @@ fn load_map(name: &str) -> tiled::Map {
 fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {
     let map = load_map(map_name);
     let tiling = Tiling::new(
-        Pixels(map.tile_width as f32),
-        Pixels(map.tile_height as f32),
+        WorldPx(map.tile_width as f32),
+        WorldPx(map.tile_height as f32),
     );
     let size = Size::new(map.width as f32, map.height as f32);
 
@@ -468,7 +468,7 @@ fn tile_def(tileset: &tiled::Tileset, id: u32) -> TileDef {
     };
 
     let animation = tileset.get_tile(id).and_then(|tile| tile.animation.clone());
-    let frames: Vec<(Rect<Pixels>, Millis)> = match animation {
+    let frames: Vec<(Rect<WorldPx>, Millis)> = match animation {
         Some(frames) if !frames.is_empty() => frames
             .iter()
             .map(|frame| (region(frame.tile_id), Millis(frame.duration as f32)))
@@ -483,7 +483,7 @@ fn tile_def(tileset: &tiled::Tileset, id: u32) -> TileDef {
     }
 }
 
-fn shape_size(shape: &tiled::ObjectShape) -> Size<Pixels> {
+fn shape_size(shape: &tiled::ObjectShape) -> Size<WorldPx> {
     match shape {
         tiled::ObjectShape::Rect { width, height }
         | tiled::ObjectShape::Ellipse { width, height } => Size::new(*width, *height),
@@ -495,7 +495,7 @@ fn shape_size(shape: &tiled::ObjectShape) -> Size<Pixels> {
 fn portal(
     name: &str,
     goto: &str,
-    pos: Pos<Pixels>,
+    pos: Pos<WorldPx>,
     shape: &tiled::ObjectShape,
     tiling: Tiling,
 ) -> Portal {
