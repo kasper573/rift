@@ -13,6 +13,10 @@ env:
   DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
   DOCKER_REGISTRY_URL: ghcr.io/${{ github.repository_owner }}
   DOCKER_IMAGE_VERSION: ${{ github.sha }}
+  # crates.io downloads flake over HTTP/2 ("error in the HTTP2 framing layer"); force HTTP/1.1 and
+  # retry hard so a cold cache doesn't fail the run on a transient blip.
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
   lint:
