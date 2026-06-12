@@ -272,31 +272,3 @@ jobs:
         run: |
           echo "🚨 Deployment failed — see deploy-failure-logs artifact for details."
           exit 1
-
-  # rust-cache leaves the old cache behind whenever Cargo.lock or the toolchain rotates the key; a
-  # burst of those can exceed GitHub's 10 GB per-repo ceiling before its 7-day eviction clears them,
-  # and GitHub then evicts unpredictably (dropping live caches, keeping orphans). So once the run has
-  # written its caches, trim deterministically: keep the most recently used caches up to a budget and
-  # delete the oldest beyond it. Uses the run's own token — no manual clearing, ever.
-  trim_cache:
-    needs: build_and_test
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      BUDGET_BYTES: "8589934592"
-    steps:
-      - name: Delete least-recently-used caches over budget
-        run: |
-          gh cache list --repo "$GITHUB_REPOSITORY" --limit 100 \
-            --json id,sizeInBytes,lastAccessedAt > caches.json
-          jq -r --argjson budget "$BUDGET_BYTES" '
-            sort_by(.lastAccessedAt) | reverse
-            | reduce .[] as $c ({total: 0, evict: []};
-                .total += $c.sizeInBytes
-                | if .total > $budget then .evict += [$c.id] else . end)
-            | .evict[]' caches.json |
-          while read -r id; do
-            [ -n "$id" ] && gh cache delete "$id" --repo "$GITHUB_REPOSITORY"
-          done
