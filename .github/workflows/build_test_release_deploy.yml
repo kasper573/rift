@@ -53,11 +53,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
-      - name: Free runner disk
-        if: runner.os == 'Linux'
-        # One release build fits with headroom once the largest preinstalled tree (Android, ~12GB of
-        # big files so the delete is quick) is gone; clearing the slower trees isn't worth the time.
-        run: sudo rm -rf /usr/local/lib/android
       - name: Install the pinned toolchain
         run: rustup show
       - name: Exclude the build from Windows Defender
