@@ -39,13 +39,9 @@ jobs:
   # The cross-platform job: only the client ships to multiple OSes, so only it (and the server the
   # e2e drives) is built per OS. Each OS builds the client, drives it through a real gameplay session
   # against a freshly built server, then uploads the tested binary — so release and deploy ship
-  # exactly what ran here. sccache caches every crate's compilation, so on a warm run the unchanged
-  # workspace crates are hits and only edited code recompiles.
+  # exactly what ran here.
   build_and_test:
     needs: lint
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
     strategy:
       fail-fast: false
       matrix:
@@ -62,7 +58,6 @@ jobs:
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
       - name: Install the pinned toolchain
         run: rustup show
-      - uses: mozilla-actions/sccache-action@v0.0.6
       - uses: Swatinem/rust-cache@v2
         with:
           key: build-and-test-${{ matrix.os }}
