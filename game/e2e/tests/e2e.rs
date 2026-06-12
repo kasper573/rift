@@ -1,14 +1,14 @@
-//! An honest gameplay session, end to end: the shipped `rift` binary runs against a freshly spawned
+//! A real gameplay session, end to end: the `rift` client binary runs against a freshly spawned
 //! server on a real display, receives genuine OS mouse/keyboard input, and every assertion reads the
 //! pixels a player would see — never the game's internals.
 //!
-//! One path serves every OS. `enigo` injects input and `xcap` finds the client window by title and
-//! captures it; the display underneath (a headless Xvfb plus a window manager on a Linux runner, the
-//! desktop everywhere else) is set up by the pipeline, so nothing here is OS-specific.
+//! One path serves every OS: `enigo` injects input and `xcap` finds the client window by title and
+//! captures it; the display underneath is the pipeline's to provide, so nothing here is OS-specific.
 //!
-//! The client and server are located by `RIFT_E2E_CLIENT` / `RIFT_E2E_SERVER` (CI points them at the
-//! release builds), so this crate never compiles them. It is `#[ignore]`d: it needs a display and is
-//! slow, so it runs only in CI (`cargo test -p e2e -- --ignored`) and via `just e2e`.
+//! The client and server are located by `RIFT_E2E_CLIENT` / `RIFT_E2E_SERVER`, so this crate never
+//! compiles them. CI builds the client once per OS and hands the same binary to this test and to the
+//! release, so the test asserts on the exact bytes a player downloads. It is `#[ignore]`d: it needs
+//! a display and is slow, so it runs only in CI (`cargo test -p e2e -- --ignored`) and via `just e2e`.
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -215,8 +215,8 @@ impl GameServer {
     }
 }
 
-/// The shipped client binary; CI points this at the release build so the test exercises the exact
-/// bytes that ship.
+/// The client binary under test — the same binary CI publishes as the release, so the test asserts
+/// on the exact bytes that ship.
 fn client_bin() -> PathBuf {
     bin("RIFT_E2E_CLIENT")
 }

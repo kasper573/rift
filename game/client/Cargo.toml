@@ -6,12 +6,6 @@ description = "Playable MMORPG client: a Bevy app rendering the replicated `worl
 repository = "https://github.com/kasper573/rift"
 authors = ["kasper573"]
 
-[package.metadata.wix]
-upgrade-guid = "66EB3533-08AB-4086-8389-13FD7D3CBAB1"
-path-guid = "172E55AD-414D-488C-8857-829BE2454952"
-license = false
-eula = false
-
 [[bin]]
 name = "rift"
 path = "src/main.rs"

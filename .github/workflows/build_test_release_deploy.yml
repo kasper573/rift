@@ -1,4 +1,5 @@
-name: CI
+name: build · test · release · deploy
+
 on:
   push:
 
@@ -14,95 +15,105 @@ env:
   DOCKER_IMAGE_VERSION: ${{ github.sha }}
 
 jobs:
-  build:
-    # Pinned to match the image base (ubuntu:24.04) so host-built glibc binaries run in the images.
+  lint:
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      packages: write
-    env:
-      COMPOSE: docker compose -f docker/docker-compose.yaml
-      # CI runs the tests once and throws the artifacts away.
-      # Without this the workspace's debug artifacts (Bevy) overflow the runner's disk.
-      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@v6
-
-      - name: Free runner disk
-        # The hosted runner ships ~25GB of unrelated toolchains; reclaim the space for target/.
-        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
-
       - name: Install the pinned toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2
         with:
-          key: glibc-release
-
+          key: lint
       - name: Install system dependencies
         # Clippy compiles the client, which links ALSA through kira.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev
-
-      - name: Conventions
-        # `e2e` is excluded from the workspace `default-members` (it needs the heavy capture stack),
-        # so `cargo clippy` lints the shipping crates; the e2e job compiles and runs that crate on
-        # every OS, which is its gate. `cargo fmt` still spans every member.
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Lint
         run: |
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
 
-      - name: Build release artifacts
-        run: cargo build --release -p website -p server
-
-      # The first-party images only package prebuilt binaries, so they build in seconds; the
-      # keycloak/caddy images compile their plugins, so only main pays for the full set it pushes.
-      - name: Build app images
-        run: $COMPOSE --profile prod build rift-website rift-game-server
-      - uses: docker/login-action@v3
-        if: github.ref_name == 'main'
-        with:
-          registry: ${{ env.DOCKER_REGISTRY }}
-          username: ${{ env.DOCKER_USERNAME }}
-          password: ${{ env.DOCKER_PASSWORD }}
-
-      - name: Push docker images
-        if: github.ref_name == 'main'
-        run: |
-          $COMPOSE --profile prod build
-          $COMPOSE --profile prod push
-
-  # The shipped client, byte-for-byte (the dist profile + features), driven through a real gameplay
-  # session on each OS it ships to. The test builds nothing it can borrow — only the release client
-  # and the server — and is `#[ignore]`d so it never runs in a developer's `cargo test`.
-  e2e:
-    name: e2e (${{ matrix.os }})
+  # Build the shipping client (+ the server it is tested against, + the linux website for the images)
+  # once per OS, and hand the binaries to the test and release jobs so every later stage runs the
+  # exact bytes built here.
+  build:
+    needs: lint
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-latest, windows-latest]
+        include:
+          - { os: ubuntu-24.04, asset: rift-linux-x86_64 }
+          - { os: macos-latest, asset: rift-macos-aarch64 }
+          - { os: windows-latest, asset: rift-windows-x86_64.exe }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
-
       - name: Free runner disk
         if: runner.os == 'Linux'
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
-
       - name: Install the pinned toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2
         with:
-          key: e2e-${{ matrix.os }}
-
+          key: build-${{ matrix.os }}
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        # The client links ALSA (kira) and renders through a software Vulkan driver (lavapipe) onto a
-        # headless Xvfb that openbox manages (xcap enumerates windows via EWMH, which needs a WM).
-        # xcap compiles its whole Linux capture surface unconditionally — pipewire and the wayland
-        # path (egl/gbm) it bundles alongside the X11 (xcb) capture we actually use — so their build
-        # and link deps are all present even though only the X11 path runs here.
+        # The client and website link ALSA through kira.
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Build the client and the server
+        shell: bash
+        run: |
+          cargo build --profile dist --features dist -p client
+          cargo build --release -p server
+      - name: Build the website
+        if: runner.os == 'Linux'
+        # Only the linux build feeds the docker images that deploy.
+        run: cargo build --release -p website
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          mkdir -p out
+          cp "target/dist/rift$ext" "out/${{ matrix.asset }}"
+          cp "target/release/server$ext" "out/server$ext"
+          [ "${{ runner.os }}" = "Linux" ] && cp target/release/website out/website || true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binaries-${{ matrix.os }}
+          path: out/
+
+  # Drive the just-built client through a real gameplay session on each OS, asserting on rendered
+  # pixels. The binaries come from the build job, so this tests precisely what release ships.
+  test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, asset: rift-linux-x86_64 }
+          - { os: macos-latest, asset: rift-macos-aarch64 }
+          - { os: windows-latest, asset: rift-windows-x86_64.exe }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - name: Free runner disk
+        if: runner.os == 'Linux'
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+      - name: Install the pinned toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ matrix.os }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: binaries-${{ matrix.os }}
+          path: bin
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        # Run the client on a headless Xvfb that openbox manages (xcap enumerates windows via EWMH,
+        # which needs a WM) and render through a software Vulkan driver (lavapipe). xcap compiles its
+        # whole linux capture surface — pipewire and the wayland path (egl/gbm) alongside the X11
+        # (xcb) path we use — so their build and link deps are all present.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -112,31 +123,21 @@ jobs:
             xvfb openbox \
             libclang-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
             libxcb1-dev libxcb-randr0-dev libxcb-render0-dev
-
       - name: Start a virtual display
         if: runner.os == 'Linux'
-        # The test drives genuine OS input and captures the real screen, so it needs an X display the
-        # pipeline owns; macOS and Windows runners provide an interactive desktop already.
         run: |
           Xvfb :99 -screen 0 1920x1080x24 -ac >/tmp/xvfb.log 2>&1 &
           for _ in $(seq 1 50); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.2; done
           DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
-
-      - name: Build the shipping client and the server
-        shell: bash
-        run: |
-          cargo build --profile dist --features dist -p client
-          cargo build --release -p server
-
       - name: E2E test
         shell: bash
         run: |
           ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
-          export RIFT_E2E_CLIENT="$PWD/target/dist/rift$ext"
-          export RIFT_E2E_SERVER="$PWD/target/release/server$ext"
+          chmod +x "bin/${{ matrix.asset }}" "bin/server$ext" || true
+          export RIFT_E2E_CLIENT="$PWD/bin/${{ matrix.asset }}"
+          export RIFT_E2E_SERVER="$PWD/bin/server$ext"
           cargo test -p e2e -- --ignored --nocapture
-
       - name: Save E2E artifacts
         if: failure()
         uses: actions/upload-artifact@v7
@@ -144,13 +145,58 @@ jobs:
           name: e2e-artifacts-${{ matrix.os }}
           path: target/tmp/
 
+  # Branch builds stop at `test`; main publishes and deploys what it just tested.
+  release:
+    needs: test
+    if: github.ref_name == 'main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: binaries-*
+          path: dist
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # The version is `0.<run number>`: simple and monotonic, and the `0.` major keeps these
+        # automated releases out of the semver space a real version would later claim.
+        run: |
+          version="0.${{ github.run_number }}"
+          gh release create "$version" dist/binaries-*/rift-* \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "$version" \
+            --notes "Automated release of ${{ github.sha }}."
+
   deploy:
-    needs: [build, e2e]
+    needs: release
     if: github.ref_name == 'main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: binaries-ubuntu-24.04
+          path: bin
+      - name: Stage the linux binaries the images package
+        run: |
+          mkdir -p target/release
+          cp bin/server target/release/server
+          cp bin/website target/release/website
+
+      - name: Build and push the app images
+        env:
+          COMPOSE: docker compose -f docker/docker-compose.yaml
+        run: |
+          echo "${{ env.DOCKER_PASSWORD }}" | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
+          $COMPOSE --profile prod build rift-website rift-game-server
+          $COMPOSE --profile prod push rift-website rift-game-server
 
       - name: Upload docker runtime dependencies
         uses: burnett01/rsync-deployments@7.0.1

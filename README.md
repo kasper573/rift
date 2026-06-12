@@ -56,13 +56,6 @@ This plays an honest session: the real client binary against a freshly spawned s
 private X display, driven by genuine input and asserted through screenshots. It needs `Xvfb`
 (`apt install xvfb`).
 
-## Production deployment
+## Release and deploy
 
-This repository comes with a github actions workflow that performs automatic
-deployments whenever the main branch receives updates. It's a simple deploy
-script designed to deploy to a single remote machine. It logs in to your remote
-machine via ssh and updates or initializes the docker stack utilizing the same
-docker compose file as in development but with production environment variables
-provided via github action variables and secrets.
-
-Review the workflow to see which variables and secrets you need to provide.
+Binaries are built for all supported platforms and published as github releases automatically on push to `main`, and deploys the latest release to the production environment.
