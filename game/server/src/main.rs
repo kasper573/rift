@@ -221,7 +221,9 @@ async fn serve_http(addr: SocketAddr, http: Http) {
         .unwrap_or_else(|error| panic!("cannot bind {addr}: {error}"));
     println!("http listening on {addr}");
     // Sessions are transient and nothing persists, so SIGTERM (docker stop, deploys) exits
-    // immediately instead of draining live connections.
+    // immediately instead of draining live connections. The server only ships on Linux; the
+    // Windows build exists solely for the e2e test, which kills the process itself.
+    #[cfg(unix)]
     tokio::spawn(async {
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("sigterm handler installs");
