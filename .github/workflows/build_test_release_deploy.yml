@@ -56,6 +56,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
+      - name: Cache the Rust toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.rustup
+          key: rustup-${{ matrix.os }}-${{ hashFiles('rust-toolchain.toml') }}
       - name: Install the pinned toolchain
         run: rustup show
       - name: Exclude the build from Windows Defender
@@ -63,15 +68,13 @@ jobs:
         shell: pwsh
         # Real-time AV scanning of every object cargo writes roughly doubles the Windows build.
         run: Add-MpPreference -ExclusionPath "${{ github.workspace }}", "$env:USERPROFILE\.cargo"
-      - name: Link with lld on Windows
+      - name: Speed up the Windows release codegen
         if: runner.os == 'Windows'
         shell: bash
-        # MSVC's link.exe is the slow part of the Windows build; LLVM (preinstalled on the runner)
-        # ships lld-link, which is dramatically faster. rust-cache folds this CARGO_* var into its
-        # key, so Windows pays one cold build to adopt it and is warm thereafter.
-        run: |
-          lld-link --version
-          echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=lld-link" >> "$GITHUB_ENV"
+        # Windows spends most of the build on the client's final codegen; more units parallelise it.
+        # Only the Windows release artifact trades a little optimisation for build time. rust-cache
+        # folds this CARGO_* var into its key, so Windows pays one cold build to adopt it.
+        run: echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           key: build-and-test-${{ matrix.os }}
