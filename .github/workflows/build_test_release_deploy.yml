@@ -73,8 +73,10 @@ jobs:
             libxcb1-dev libxcb-randr0-dev libxcb-render0-dev
       - name: Build the client and the server
         shell: bash
+        # One `release` profile for both so Bevy and the shared crates compile once; `--features
+        # dist` embeds the assets into the client.
         run: |
-          cargo build --profile dist --features dist -p client
+          cargo build --release --features dist -p client
           cargo build --release -p server
       - name: Build the website
         if: runner.os == 'Linux'
@@ -91,7 +93,7 @@ jobs:
         shell: bash
         run: |
           ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
-          export RIFT_E2E_CLIENT="$PWD/target/dist/rift$ext"
+          export RIFT_E2E_CLIENT="$PWD/target/release/rift$ext"
           export RIFT_E2E_SERVER="$PWD/target/release/server$ext"
           cargo test -p e2e -- --ignored --nocapture
       - name: Save E2E artifacts
@@ -105,7 +107,7 @@ jobs:
         run: |
           ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
           mkdir -p out
-          cp "target/dist/rift$ext" "out/${{ matrix.asset }}"
+          cp "target/release/rift$ext" "out/${{ matrix.asset }}"
           cp "target/release/server$ext" "out/server$ext"
           [ "${{ runner.os }}" = "Linux" ] && cp target/release/website out/website || true
       - uses: actions/upload-artifact@v7

@@ -32,8 +32,8 @@ reset:
 # are passed by path so the test never rebuilds them. CI runs the same test per OS (and supplies its
 # own headless display there).
 e2e:
-    cargo build --profile dist --features dist -p client
+    cargo build --release --features dist -p client
     cargo build --release -p server
-    RIFT_E2E_CLIENT="{{justfile_directory()}}/target/dist/rift" \
+    RIFT_E2E_CLIENT="{{justfile_directory()}}/target/release/rift" \
     RIFT_E2E_SERVER="{{justfile_directory()}}/target/release/server" \
         cargo test -p e2e -- --ignored --nocapture

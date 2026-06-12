@@ -53,9 +53,3 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
-
-# The release build of the client: the optimized `release` profile plus thin LTO, with the assets
-# embedded via `--features dist` so the shipped binary is self-contained.
-[profile.dist]
-inherits = "release"
-lto = "thin"
