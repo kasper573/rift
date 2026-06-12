@@ -13,7 +13,7 @@ use crate::protocol::{
 };
 use crate::{actors, protocol};
 
-const TILE_DIAGONAL_MARGIN: f32 = std::f32::consts::SQRT_2 - 1.0;
+const TILE_DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
 const CHASE_RETARGET_THRESHOLD: Tiles = Tiles(1.5);
 
 /// `attack_speed` scales the whole swing along with the attack animation;
@@ -115,10 +115,10 @@ fn engage(world: &mut World, time: Seconds) {
         };
         let stats = stats(world, id);
 
-        if at.distance_to(target_at) > stats.range.0 + TILE_DIAGONAL_MARGIN {
-            let heading = world
-                .get::<MoveTarget>(id)
-                .is_some_and(|goal| goal.pos.distance_to(target_at) <= CHASE_RETARGET_THRESHOLD.0);
+        if Tiles(at.distance_to(target_at)) > stats.range + TILE_DIAGONAL_MARGIN {
+            let heading = world.get::<MoveTarget>(id).is_some_and(|goal| {
+                Tiles(goal.pos.distance_to(target_at)) <= CHASE_RETARGET_THRESHOLD
+            });
             if !heading {
                 world
                     .entity_mut(id)
@@ -143,11 +143,11 @@ fn engage(world: &mut World, time: Seconds) {
             set_facing(&mut actor, dir, ACTION_ATTACK);
         }
         let timing = attack_timing(world, id, dir);
-        let speed = stats.attack_speed.0.max(0.01);
+        let speed = PlaybackRate(stats.attack_speed.0.max(0.01));
         world.entity_mut(id).insert(Swing {
             target,
-            hit_at: time + Seconds(timing.apex / speed),
-            ends_at: time + Seconds(timing.duration / speed),
+            hit_at: time + timing.apex / speed,
+            ends_at: time + timing.duration / speed,
             struck: false,
         });
     }

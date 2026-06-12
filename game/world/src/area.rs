@@ -6,7 +6,7 @@ use tiled::{LayerType, PropertyValue};
 
 use crate::actors::SfxId;
 use crate::assets;
-use crate::math::{CellPos, Pixels, Pos, Rect, Size, Tiles, Tiling};
+use crate::math::{CellPos, Millis, Pixels, Pos, Rect, Seconds, Size, Tiles, Tiling};
 use crate::nav;
 use crate::table;
 
@@ -101,12 +101,12 @@ pub struct RenderLayer {
 }
 
 impl RenderLayer {
-    /// The cell at (x, y); empty outside the layer.
-    pub fn at(&self, x: i32, y: i32) -> TileRef {
-        if x < 0 || y < 0 || x >= self.width || y >= self.height {
+    /// The cell at `c`; empty outside the layer.
+    pub fn at(&self, c: CellPos) -> TileRef {
+        if c.x < 0 || c.y < 0 || c.x >= self.width || c.y >= self.height {
             return TileRef::EMPTY;
         }
-        self.cells[(y * self.width + x) as usize]
+        self.cells[(c.y * self.width + c.x) as usize]
     }
 }
 
@@ -115,14 +115,14 @@ impl RenderLayer {
 #[derive(Clone)]
 struct TileDef {
     sheet: String,
-    frames: Vec<(Rect<Pixels>, u32)>,
-    total_ms: u32,
+    frames: Vec<(Rect<Pixels>, Millis)>,
+    total: Millis,
 }
 
 #[derive(Clone)]
 pub struct Group {
-    pub z: f32,
-    pub tiles: Vec<(i32, i32, TileRef)>,
+    pub bottom: Tiles,
+    pub tiles: Vec<(CellPos, TileRef)>,
 }
 
 #[derive(Clone)]
@@ -145,7 +145,7 @@ pub struct Area {
 
     pub groups: Vec<Group>,
 
-    pub grouped_cells: HashSet<(i32, i32)>,
+    pub grouped_cells: HashSet<CellPos>,
 
     pub layers: Vec<RenderLayer>,
     tiles: Vec<TileDef>,
@@ -160,12 +160,12 @@ pub struct TileSprite<'a> {
 
 impl Area {
     /// The sprite to draw for a cell at time `t`; animated tiles advance.
-    pub fn resolve(&self, cell: TileRef, time: f32) -> Option<TileSprite<'_>> {
+    pub fn resolve(&self, cell: TileRef, time: Seconds) -> Option<TileSprite<'_>> {
         let def = &self.tiles[cell.index()?];
-        let region = if def.total_ms == 0 {
+        let region = if def.total.0 == 0.0 {
             def.frames[0].0
         } else {
-            let mut remaining = (time * 1000.0).max(0.0) as u32 % def.total_ms;
+            let mut remaining = Millis((time.0 * 1000.0).max(0.0) % def.total.0);
             let mut region = def.frames[0].0;
             for &(frame, duration) in &def.frames {
                 if remaining < duration {
@@ -183,11 +183,11 @@ impl Area {
         })
     }
 
-    /// The largest fraction of the tile cell at (x, y) covered by any obscuring object.
-    pub fn obscured_amount(&self, x: i32, y: i32) -> f32 {
+    /// The largest fraction of the tile cell at `c` covered by any obscuring object.
+    pub fn obscured_amount(&self, c: CellPos) -> f32 {
         self.obscuring_rects
             .iter()
-            .map(|rect| cell_overlap(rect, x, y))
+            .map(|rect| cell_overlap(rect, c))
             .fold(0.0, f32::max)
     }
 
@@ -200,12 +200,12 @@ impl Area {
             .expect("validated at load: every map has a 'Dynamic' layer")
     }
 
-    /// The footstep sfx of the tile at (x, y), if its tileset declares one.
-    pub fn tile_sfx_at(&self, x: i32, y: i32) -> Option<&SfxId> {
-        if x < 0 || y < 0 || x >= self.width.0 as i32 || y >= self.height.0 as i32 {
+    /// The footstep sfx of the tile at `c`, if its tileset declares one.
+    pub fn tile_sfx_at(&self, c: CellPos) -> Option<&SfxId> {
+        if c.x < 0 || c.y < 0 || c.x >= self.width.0 as i32 || c.y >= self.height.0 as i32 {
             return None;
         }
-        self.tile_sfx[(y * self.width.0 as i32 + x) as usize].as_ref()
+        self.tile_sfx[(c.y * self.width.0 as i32 + c.x) as usize].as_ref()
     }
 }
 
@@ -468,18 +468,18 @@ fn tile_def(tileset: &tiled::Tileset, id: u32) -> TileDef {
     };
 
     let animation = tileset.get_tile(id).and_then(|tile| tile.animation.clone());
-    let frames: Vec<(Rect<Pixels>, u32)> = match animation {
+    let frames: Vec<(Rect<Pixels>, Millis)> = match animation {
         Some(frames) if !frames.is_empty() => frames
             .iter()
-            .map(|frame| (region(frame.tile_id), frame.duration))
+            .map(|frame| (region(frame.tile_id), Millis(frame.duration as f32)))
             .collect(),
-        _ => vec![(region(id), 0)],
+        _ => vec![(region(id), Millis(0.0))],
     };
-    let total_ms = frames.iter().map(|&(_, duration)| duration).sum();
+    let total = Millis(frames.iter().map(|&(_, duration)| duration.0).sum());
     TileDef {
         sheet,
         frames,
-        total_ms,
+        total,
     }
 }
 
@@ -516,40 +516,41 @@ fn portal(
     }
 }
 
-fn compute_groups(layers: &[RenderLayer], tiles: &TileTable) -> (Vec<Group>, HashSet<(i32, i32)>) {
+fn compute_groups(layers: &[RenderLayer], tiles: &TileTable) -> (Vec<Group>, HashSet<CellPos>) {
     let mut groups = Vec::new();
     let mut grouped_cells = HashSet::new();
     let Some(dynamic) = layers.iter().find(|layer| layer.dynamic) else {
         return (groups, grouped_cells);
     };
     let (width, height) = (dynamic.width, dynamic.height);
-    let group_at = |x: i32, y: i32| -> Option<i64> { tiles.group_of(dynamic.at(x, y)) };
+    let group_at = |c: CellPos| -> Option<i64> { tiles.group_of(dynamic.at(c)) };
 
-    let mut visited: HashSet<(i32, i32)> = HashSet::new();
+    let mut visited: HashSet<CellPos> = HashSet::new();
     for sy in 0..height {
         for sx in 0..width {
-            let Some(group_id) = group_at(sx, sy) else {
+            let start = CellPos::new(sx, sy);
+            let Some(group_id) = group_at(start) else {
                 continue;
             };
-            if !visited.insert((sx, sy)) {
+            if !visited.insert(start) {
                 continue;
             }
-            let mut stack = vec![(sx, sy)];
+            let mut stack = vec![start];
             let mut cells = Vec::new();
             let mut bottom = sy;
-            while let Some((x, y)) = stack.pop() {
-                cells.push((x, y, dynamic.at(x, y)));
-                grouped_cells.insert((x, y));
-                bottom = bottom.max(y);
+            while let Some(c) = stack.pop() {
+                cells.push((c, dynamic.at(c)));
+                grouped_cells.insert(c);
+                bottom = bottom.max(c.y);
                 for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                    let (nx, ny) = (x + dx, y + dy);
-                    if group_at(nx, ny) == Some(group_id) && visited.insert((nx, ny)) {
-                        stack.push((nx, ny));
+                    let next = CellPos::new(c.x + dx, c.y + dy);
+                    if group_at(next) == Some(group_id) && visited.insert(next) {
+                        stack.push(next);
                     }
                 }
             }
             groups.push(Group {
-                z: bottom as f32,
+                bottom: Tiles(bottom as f32),
                 tiles: cells,
             });
         }
@@ -564,7 +565,7 @@ fn tile_sfx(size: Size<Tiles>, layers: &[RenderLayer], tiles: &TileTable) -> Vec
     for layer in layers {
         for y in 0..height {
             for x in 0..width {
-                if let Some(id) = tiles.sfx_of(layer.at(x, y)) {
+                if let Some(id) = tiles.sfx_of(layer.at(CellPos::new(x, y))) {
                     sfx[(y * width + x) as usize] = Some(id.clone());
                 }
             }
@@ -591,7 +592,7 @@ fn build_grid(
         for y in 0..height {
             for x in 0..width {
                 let index = (y * width + x) as usize;
-                match tiles.walkable_of(layer.at(x, y)) {
+                match tiles.walkable_of(layer.at(CellPos::new(x, y))) {
                     Some(true) => any_walkable[index] = true,
                     Some(false) => any_blocked[index] = true,
                     None => {}
@@ -617,17 +618,18 @@ fn obscured_cells(rect: &Rect<Tiles>) -> Vec<CellPos> {
     let mut cells = Vec::new();
     for y in (rect.origin.y.floor() as i32)..((rect.origin.y + rect.size.height).ceil() as i32) {
         for x in (rect.origin.x.floor() as i32)..((rect.origin.x + rect.size.width).ceil() as i32) {
-            if cell_overlap(rect, x, y) >= OBSCURING_CUTOFF {
-                cells.push(CellPos::new(x, y));
+            let c = CellPos::new(x, y);
+            if cell_overlap(rect, c) >= OBSCURING_CUTOFF {
+                cells.push(c);
             }
         }
     }
     cells
 }
 
-/// The fraction of the 1x1 tile cell at (x, y) covered by `rect`.
-fn cell_overlap(rect: &Rect<Tiles>, x: i32, y: i32) -> f32 {
-    let cell: Rect<Tiles> = Rect::new(Pos::new(x as f32, y as f32), Size::splat(1.0));
+/// The fraction of the 1x1 tile cell at `c` covered by `rect`.
+fn cell_overlap(rect: &Rect<Tiles>, c: CellPos) -> f32 {
+    let cell: Rect<Tiles> = Rect::new(Pos::new(c.x as f32, c.y as f32), Size::splat(1.0));
     rect.intersection(&cell)
         .map_or(0.0, |overlap| overlap.area())
 }

@@ -49,7 +49,7 @@ fn setup(mut commands: Commands, assets: Res<AssetServer>) {
         Hover,
         Sprite {
             image: assets.load("icons/crosshairs/white/crosshair026.png"),
-            custom_size: Some(Vec2::splat(TILE)),
+            custom_size: Some(Vec2::splat(TILE.0)),
             ..default()
         },
         Transform::from_xyz(0.0, 0.0, 100.0),
@@ -129,8 +129,8 @@ fn apply_hover(world: &mut World, hover: Option<Pos<Tiles>>) {
     match hover {
         Some(tile) => {
             *visibility = Visibility::Visible;
-            transform.translation.x = (tile.x + 0.5) * TILE;
-            transform.translation.y = -(tile.y + 0.5) * TILE;
+            transform.translation.x = (tile.x + 0.5) * TILE.0;
+            transform.translation.y = -(tile.y + 0.5) * TILE.0;
         }
         None => *visibility = Visibility::Hidden,
     }

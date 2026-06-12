@@ -2,8 +2,20 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-/// The snap grid in pixels when snapping is enabled; 0 disables it.
-pub const DEFAULT_SNAP: f32 = 16.0;
+/// A window-space (logical) pixel, the unit bevy UI `Val::Px` and `Window::cursor_position` speak —
+/// distinct from the world-render pixels the camera draws in (a whole-number letterbox scale apart).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct Logical(pub f32);
+
+impl std::ops::Add<f32> for Logical {
+    type Output = Logical;
+    fn add(self, delta: f32) -> Logical {
+        Logical(self.0 + delta)
+    }
+}
+
+/// The snap grid when snapping is enabled; 0 disables it.
+pub const DEFAULT_SNAP: Logical = Logical(16.0);
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct UserSettings {
@@ -14,7 +26,7 @@ pub struct UserSettings {
 #[derive(Serialize, Deserialize)]
 pub struct UiSettings {
     #[serde(default = "default_snap")]
-    pub snap: f32,
+    pub snap: Logical,
     #[serde(default)]
     pub placements: HashMap<String, Placement>,
 }
@@ -22,8 +34,8 @@ pub struct UiSettings {
 /// A persisted on-screen rectangle: top-left position, and a size for resizable windows.
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct Placement {
-    pub pos: (f32, f32),
-    pub size: Option<(f32, f32)>,
+    pub pos: (Logical, Logical),
+    pub size: Option<(Logical, Logical)>,
 }
 
 impl UserSettings {
@@ -40,11 +52,12 @@ impl UserSettings {
     }
 
     /// Rounds a coordinate to the snap grid; a no-op while snapping is disabled.
-    pub fn snap(&self, value: f32) -> f32 {
-        if self.ui.snap <= 0.0 {
+    pub fn snap(&self, value: Logical) -> Logical {
+        let grid = self.ui.snap.0;
+        if grid <= 0.0 {
             value
         } else {
-            (value / self.ui.snap).round() * self.ui.snap
+            Logical((value.0 / grid).round() * grid)
         }
     }
 
@@ -57,12 +70,12 @@ impl UserSettings {
     }
 
     pub fn snapping_enabled(&self) -> bool {
-        self.ui.snap > 0.0
+        self.ui.snap.0 > 0.0
     }
 
     pub fn toggle_snapping(&mut self) {
-        self.ui.snap = if self.ui.snap > 0.0 {
-            0.0
+        self.ui.snap = if self.ui.snap.0 > 0.0 {
+            Logical(0.0)
         } else {
             DEFAULT_SNAP
         };
@@ -78,7 +91,7 @@ impl Default for UiSettings {
     }
 }
 
-fn default_snap() -> f32 {
+fn default_snap() -> Logical {
     DEFAULT_SNAP
 }
 

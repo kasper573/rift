@@ -2,7 +2,7 @@
 //! fixed-point — one tile = 1000, a diagonal = √2 ≈ 1414 — so search stays deterministic and the
 //! octile heuristic is exact.
 
-use crate::math::{Pos, Size, Tiles};
+use crate::math::{CellPos, Pos, Size, Tiles};
 
 const ORTHOGONAL: u32 = 1000;
 const DIAGONAL: u32 = 1414;
@@ -37,17 +37,17 @@ impl Grid {
         }
         let (width, height) = self.dims();
         for radius in 1..=width.max(height) {
-            let mut best: Option<(i32, i32)> = None;
+            let mut best: Option<CellPos> = None;
             let mut best_d2 = i64::MAX;
-            for ny in (from.1 - radius)..=(from.1 + radius) {
-                for nx in (from.0 - radius)..=(from.0 + radius) {
-                    if (nx - from.0).abs() != radius && (ny - from.1).abs() != radius {
+            for ny in (from.y - radius)..=(from.y + radius) {
+                for nx in (from.x - radius)..=(from.x + radius) {
+                    if (nx - from.x).abs() != radius && (ny - from.y).abs() != radius {
                         continue;
                     }
-                    let d2 = i64::from(nx - from.0).pow(2) + i64::from(ny - from.1).pow(2);
-                    if self.cell_walkable((nx, ny)) && d2 < best_d2 {
+                    let d2 = i64::from(nx - from.x).pow(2) + i64::from(ny - from.y).pow(2);
+                    if self.cell_walkable(CellPos::new(nx, ny)) && d2 < best_d2 {
                         best_d2 = d2;
-                        best = Some((nx, ny));
+                        best = Some(CellPos::new(nx, ny));
                     }
                 }
             }
@@ -62,19 +62,19 @@ impl Grid {
         (self.size.width as i32, self.size.height as i32)
     }
 
-    fn cell_walkable(&self, c: (i32, i32)) -> bool {
+    fn cell_walkable(&self, c: CellPos) -> bool {
         let (width, height) = self.dims();
-        c.0 >= 0
-            && c.1 >= 0
-            && c.0 < width
-            && c.1 < height
-            && self.walkable[(c.1 * width + c.0) as usize]
+        c.x >= 0
+            && c.y >= 0
+            && c.x < width
+            && c.y < height
+            && self.walkable[(c.y * width + c.x) as usize]
     }
 }
 
-/// The cheapest 8-connected path from `start` to `goal` as cell lower-corner positions, both
-/// inclusive; `None` when either end is blocked or no route exists.
-pub fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<Pos<Tiles>>> {
+/// The cheapest 8-connected path of cells from `start` to `goal`, both inclusive; `None` when
+/// either end is blocked or no route exists.
+pub fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
     let start = cell(start);
     let goal = cell(goal);
     if !grid.cell_walkable(start) || !grid.cell_walkable(goal) {
@@ -82,9 +82,9 @@ pub fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<Pos
     }
     let (path, _cost) = pathfinding::prelude::astar(
         &start,
-        |&(x, y)| {
+        |&c| {
             NEIGHBOURS.iter().filter_map(move |&(dx, dy)| {
-                let next = (x + dx, y + dy);
+                let next = CellPos::new(c.x + dx, c.y + dy);
                 let cost = if dx != 0 && dy != 0 {
                     DIAGONAL
                 } else {
@@ -93,14 +93,14 @@ pub fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<Pos
                 grid.cell_walkable(next).then_some((next, cost))
             })
         },
-        |&(x, y)| {
-            let dx = (x - goal.0).unsigned_abs();
-            let dy = (y - goal.1).unsigned_abs();
+        |&c| {
+            let dx = (c.x - goal.x).unsigned_abs();
+            let dy = (c.y - goal.y).unsigned_abs();
             (dx.max(dy) - dx.min(dy)) * ORTHOGONAL + dx.min(dy) * DIAGONAL
         },
         |&node| node == goal,
     )?;
-    Some(path.into_iter().map(at).collect())
+    Some(path)
 }
 
 const NEIGHBOURS: [(i32, i32); 8] = [
@@ -115,11 +115,11 @@ const NEIGHBOURS: [(i32, i32); 8] = [
 ];
 
 /// The integer cell a position falls in.
-fn cell(p: Pos<Tiles>) -> (i32, i32) {
-    (p.x.floor() as i32, p.y.floor() as i32)
+fn cell(p: Pos<Tiles>) -> CellPos {
+    CellPos::new(p.x.floor() as i32, p.y.floor() as i32)
 }
 
 /// A cell's lower-corner position.
-fn at(c: (i32, i32)) -> Pos<Tiles> {
-    Pos::new(c.0 as f32, c.1 as f32)
+fn at(c: CellPos) -> Pos<Tiles> {
+    Pos::new(c.x as f32, c.y as f32)
 }

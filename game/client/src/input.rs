@@ -28,7 +28,7 @@ fn click_to_act(world: &mut World) {
     };
     match view::enemy_at(world, point) {
         Some(target) => session::attack(world, target),
-        None => session::move_to(world, point.x, point.y),
+        None => session::move_to(world, point),
     }
 }
 

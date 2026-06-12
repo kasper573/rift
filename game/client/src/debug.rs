@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 use world::area;
-use world::math::{Pos, Tiles};
+use world::math::{Offset, Pos, Tiles};
 use world::protocol::{AreaTag, Owner};
 use world::session::MyClient;
 
@@ -80,11 +80,8 @@ fn draw(
         }
         DebugMode::Obscured => {
             for rect in &area.obscuring_rects {
-                let min = corner(rect.origin.x, rect.origin.y);
-                let max = corner(
-                    rect.origin.x + rect.size.width,
-                    rect.origin.y + rect.size.height,
-                );
+                let min = corner(rect.origin);
+                let max = corner(rect.origin + rect.size);
                 gizmos.line_2d(Vec2::new(min.x, min.y), Vec2::new(max.x, min.y), red);
                 gizmos.line_2d(Vec2::new(max.x, min.y), Vec2::new(max.x, max.y), red);
                 gizmos.line_2d(Vec2::new(max.x, max.y), Vec2::new(min.x, max.y), red);
@@ -96,9 +93,9 @@ fn draw(
 }
 
 fn center(tile: Pos<Tiles>) -> Vec2 {
-    corner(tile.x + 0.5, tile.y + 0.5)
+    corner(tile + Offset::splat(0.5))
 }
 
-fn corner(x: f32, y: f32) -> Vec2 {
-    Vec2::new(x * TILE, -y * TILE)
+fn corner(p: Pos<Tiles>) -> Vec2 {
+    Vec2::new(p.x * TILE.0, -p.y * TILE.0)
 }

@@ -11,14 +11,16 @@ use bevy::sprite_render::{Material2d, Material2dPlugin};
 use bevy::window::PrimaryWindow;
 use world::actors;
 use world::area::{self, AreaId};
-use world::math::{Pos, Tiles};
+use world::math::{CellPos, Offset, Pixels, Pos, Seconds, Size, Tiles};
 use world::protocol::{Actor, AreaTag, Owner, Position, Rgba, action_name};
 use world::session::{self, MyClient};
 
+use crate::user_settings::Logical;
+
 /// World pixels per tile; the actor and tile sheets are authored at this scale.
-pub const TILE: f32 = 16.0;
-const VIEW_TILES: Vec2 = Vec2::new(24.0, 18.0);
-const VIEW: Vec2 = Vec2::new(VIEW_TILES.x * TILE, VIEW_TILES.y * TILE);
+pub const TILE: Pixels = Pixels(16.0);
+const VIEW_TILES: Size<Tiles> = Size::new(24.0, 18.0);
+const VIEW: Size<Pixels> = Size::new(VIEW_TILES.width * TILE.0, VIEW_TILES.height * TILE.0);
 /// The presentation quad lives on its own layer so only the presentation camera draws it.
 const PRESENT_LAYER: usize = 1;
 
@@ -58,8 +60,10 @@ struct Present;
 /// shared with input mapping.
 #[derive(Resource, Default, Clone, Copy)]
 pub struct Viewport {
+    /// Window logical pixels per world-render pixel.
     pub scale: f32,
-    pub offset: Vec2,
+    /// Where the letterboxed view's top-left sits in the window.
+    pub offset: Offset<Logical>,
 }
 
 /// Tints the presented frame toward red on death: additive red, green and blue at a third.
@@ -85,8 +89,8 @@ fn setup(
     mut materials: ResMut<Assets<DeadTint>>,
 ) {
     let mut target = Image::new_target_texture(
-        VIEW.x as u32,
-        VIEW.y as u32,
+        VIEW.width as u32,
+        VIEW.height as u32,
         TextureFormat::Rgba8UnormSrgb,
         None,
     );
@@ -102,8 +106,8 @@ fn setup(
         RenderTarget::Image(target.clone().into()),
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::Fixed {
-                width: VIEW.x,
-                height: VIEW.y,
+                width: VIEW.width,
+                height: VIEW.height,
             },
             ..OrthographicProjection::default_2d()
         }),
@@ -122,7 +126,7 @@ fn setup(
     ));
 
     commands.spawn((
-        Mesh2d(meshes.add(Rectangle::new(VIEW.x, VIEW.y))),
+        Mesh2d(meshes.add(Rectangle::new(VIEW.width, VIEW.height))),
         MeshMaterial2d(materials.add(DeadTint {
             world: target,
             dead: 0.0,
@@ -137,7 +141,7 @@ fn setup(
         Anchor::CENTER,
         hidden(),
     ));
-    let inner = BAR - Vec2::splat(2.0);
+    let inner = BAR - Size::splat(2.0);
     commands.spawn((
         Bar::Background,
         bar_sprite(0x2A_1C_5C, inner),
@@ -160,14 +164,14 @@ enum Bar {
 }
 
 /// The healthbar geometry in world pixels; it hangs just below the player's position point.
-const BAR: Vec2 = Vec2::new(20.0, 4.0);
-const BAR_DROP: f32 = 5.0;
+const BAR: Size<Pixels> = Size::new(20.0, 4.0);
+const BAR_DROP: Pixels = Pixels(5.0);
 
-fn bar_sprite(rgb: u32, size: Vec2) -> Sprite {
+fn bar_sprite(rgb: u32, size: Size<Pixels>) -> Sprite {
     let [_, r, g, b] = rgb.to_be_bytes();
     Sprite {
         color: Color::srgb_u8(r, g, b),
-        custom_size: Some(size),
+        custom_size: Some(Vec2::new(size.width, size.height)),
         ..default()
     }
 }
@@ -182,7 +186,7 @@ fn healthbar(world: &mut World) {
         // Whole pixels: at fractional offsets the fractional-width fill would alternate between
         // floor and ceil pixel coverage as the player moves.
         (Some(at), Some((health, max))) if health > 0.0 && max > 0.0 => Some((
-            Vec2::new(at.x * TILE, -at.y * TILE - BAR_DROP).round(),
+            Vec2::new(at.x * TILE.0, -at.y * TILE.0 - BAR_DROP.0).round(),
             (health / max).clamp(0.0, 1.0),
         )),
         _ => None,
@@ -198,8 +202,8 @@ fn healthbar(world: &mut World) {
             Bar::Border => transform.translation = center.extend(200.0),
             Bar::Background => transform.translation = center.extend(200.1),
             Bar::Fill => {
-                let inner = BAR.x - 2.0;
-                sprite.custom_size = Some(Vec2::new((inner * fraction).floor(), BAR.y - 2.0));
+                let inner = BAR.width - 2.0;
+                sprite.custom_size = Some(Vec2::new((inner * fraction).floor(), BAR.height - 2.0));
                 transform.translation = Vec3::new(center.x - inner / 2.0, center.y, 200.2);
             }
         }
@@ -212,11 +216,14 @@ fn letterbox(
     mut viewport: ResMut<Viewport>,
 ) {
     let (width, height) = (window.resolution.width(), window.resolution.height());
-    let scale = (width / VIEW.x).min(height / VIEW.y).floor().max(1.0);
+    let scale = (width / VIEW.width)
+        .min(height / VIEW.height)
+        .floor()
+        .max(1.0);
     viewport.scale = scale;
-    viewport.offset = Vec2::new(
-        (width - VIEW.x * scale) / 2.0,
-        (height - VIEW.y * scale) / 2.0,
+    viewport.offset = Offset::new(
+        (width - VIEW.width * scale) / 2.0,
+        (height - VIEW.height * scale) / 2.0,
     );
     for mut transform in &mut quad {
         transform.scale = Vec3::splat(scale);
@@ -242,16 +249,16 @@ fn dead_tint(world: &mut World) {
 /// receives time-into-action rather than the global clock.
 #[derive(Resource, Default)]
 pub struct Animator {
-    anchors: HashMap<Entity, (u8, f32)>,
+    anchors: HashMap<Entity, (u8, Seconds)>,
 }
 
 impl Animator {
-    pub fn elapsed(&mut self, entity: Entity, action: u8, time: f32) -> f32 {
+    pub fn elapsed(&mut self, entity: Entity, action: u8, time: Seconds) -> Seconds {
         match self.anchors.get(&entity) {
             Some(&(seen, start)) if seen == action => time - start,
             _ => {
                 self.anchors.insert(entity, (action, time));
-                0.0
+                Seconds(0.0)
             }
         }
     }
@@ -288,7 +295,7 @@ fn sync_actors(
         &mut Transform,
     )>,
 ) {
-    let clock = time.elapsed_secs();
+    let clock = Seconds(time.elapsed_secs());
     animator
         .anchors
         .retain(|entity, _| actors.contains(*entity));
@@ -298,7 +305,7 @@ fn sync_actors(
             action_name(actor.action),
             actor.dir,
             elapsed,
-            actor.attack_rate.0,
+            actor.attack_rate,
         );
         sprite.rect = Some(Rect::new(
             region.origin.x,
@@ -313,7 +320,7 @@ fn sync_actors(
         };
         *transform = sprite_transform(
             position.pos,
-            dynamic_z(area, area.dynamic_layer() as f32, position.pos.y),
+            dynamic_z(area, area.dynamic_layer() as f32, Tiles(position.pos.y)),
         );
     }
 }
@@ -333,8 +340,8 @@ fn follow_camera(
         return;
     };
     if let Ok(mut transform) = camera.single_mut() {
-        transform.translation.x = center.x * TILE;
-        transform.translation.y = -center.y * TILE;
+        transform.translation.x = center.x * TILE.0;
+        transform.translation.y = -center.y * TILE.0;
     }
 }
 
@@ -342,13 +349,12 @@ fn follow_camera(
 fn camera_center(at: Pos<Tiles>, area_id: AreaId) -> Option<Pos<Tiles>> {
     let area = area::areas().get(area_id.0 as usize)?;
     let half = VIEW_TILES * 0.5;
-    let lo = Pos::new(half.x, half.y);
+    let lo = Pos::new(half.width, half.height);
     let hi = Pos::new(
-        (area.width.0 - half.x).max(half.x),
-        (area.height.0 - half.y).max(half.y),
+        (area.width.0 - half.width).max(half.width),
+        (area.height.0 - half.height).max(half.height),
     );
-    let center = at.clamp(lo, hi);
-    Some(Pos::new(snap(center.x), snap(center.y)))
+    Some(snap(at.clamp(lo, hi)))
 }
 
 #[derive(Resource, Default)]
@@ -389,16 +395,17 @@ fn spawn_area_tiles(
         let z = index as f32;
         for y in 0..area.height.0 as i32 {
             for x in 0..area.width.0 as i32 {
-                if layer.dynamic && area.grouped_cells.contains(&(x, y)) {
+                let c = CellPos::new(x, y);
+                if layer.dynamic && area.grouped_cells.contains(&c) {
                     continue;
                 }
-                let Some(sprite) = area.resolve(layer.at(x, y), 0.0) else {
+                let Some(sprite) = area.resolve(layer.at(c), Seconds(0.0)) else {
                     continue;
                 };
                 commands.spawn((
                     AreaTile,
-                    tile_sprite(&assets, &sprite, Vec2::splat(TILE)),
-                    sprite_transform(Pos::new(x as f32 + 0.5, y as f32 + 0.5), z),
+                    tile_sprite(&assets, &sprite, Vec2::splat(TILE.0)),
+                    sprite_transform(cell_center(c), z),
                 ));
             }
         }
@@ -406,20 +413,20 @@ fn spawn_area_tiles(
             continue;
         }
         for group in &area.groups {
-            let z = dynamic_z(area, z, group.z);
-            for &(x, y, cell) in &group.tiles {
-                let Some(sprite) = area.resolve(cell, 0.0) else {
+            let z = dynamic_z(area, z, group.bottom);
+            for &(c, cell) in &group.tiles {
+                let Some(sprite) = area.resolve(cell, Seconds(0.0)) else {
                     continue;
                 };
                 commands.spawn((
                     AreaTile,
-                    tile_sprite(&assets, &sprite, Vec2::splat(TILE)),
-                    sprite_transform(Pos::new(x as f32 + 0.5, y as f32 + 0.5), z),
+                    tile_sprite(&assets, &sprite, Vec2::splat(TILE.0)),
+                    sprite_transform(cell_center(c), z),
                 ));
             }
         }
         for &(pos, cell) in &area.objects {
-            let Some(sprite) = area.resolve(cell, 0.0) else {
+            let Some(sprite) = area.resolve(cell, Seconds(0.0)) else {
                 continue;
             };
             let size = Vec2::new(sprite.region.size.width, sprite.region.size.height);
@@ -427,21 +434,25 @@ fn spawn_area_tiles(
                 AreaTile,
                 tile_sprite(&assets, &sprite, size),
                 Anchor::BOTTOM_LEFT,
-                sprite_transform(pos, dynamic_z(area, z, pos.y)),
+                sprite_transform(pos, dynamic_z(area, z, Tiles(pos.y))),
             ));
         }
     }
 }
 
 fn sprite_transform(pos: Pos<Tiles>, z: f32) -> Transform {
-    Transform::from_xyz(pos.x * TILE, -pos.y * TILE, z)
+    Transform::from_xyz(pos.x * TILE.0, -pos.y * TILE.0, z)
+}
+
+fn cell_center(c: CellPos) -> Pos<Tiles> {
+    Pos::new(c.x as f32 + 0.5, c.y as f32 + 0.5)
 }
 
 /// The z of a y-sorted child of the dynamic layer at `base`: strictly inside the band
-/// `(base, base + 1)`, above the layer's flat cells and below the next layer, ordered by `y`
-/// in tiles — an actor's position, a tile group's bottom row, or a tile object's bottom edge.
-fn dynamic_z(area: &area::Area, base: f32, y: f32) -> f32 {
-    base + (y + 1.0) / (area.height.0 + 2.0)
+/// `(base, base + 1)`, above the layer's flat cells and below the next layer, ordered by `y` —
+/// an actor's position, a tile group's bottom row, or a tile object's bottom edge.
+fn dynamic_z(area: &area::Area, base: f32, y: Tiles) -> f32 {
+    base + (y.0 + 1.0) / (area.height.0 + 2.0)
 }
 
 fn tile_sprite(assets: &AssetServer, sprite: &area::TileSprite, size: Vec2) -> Sprite {
@@ -466,6 +477,7 @@ fn rgba(tint: Rgba) -> Color {
     Color::srgba_u8(r, g, b, a)
 }
 
-fn snap(tiles: f32) -> f32 {
-    (tiles * TILE).round() / TILE
+fn snap(p: Pos<Tiles>) -> Pos<Tiles> {
+    let axis = |t: f32| (t * TILE.0).round() / TILE.0;
+    Pos::new(axis(p.x), axis(p.y))
 }

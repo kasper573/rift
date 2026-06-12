@@ -26,9 +26,9 @@ use world::{ClientId, Identity, TICK_HZ};
 /// Identifies this game/protocol to netcode; clients minted under a different id cannot connect.
 const PROTOCOL_ID: u64 = 0x0072_6966_7400_0001;
 /// How long a minted token stays valid before the player must request another.
-const TOKEN_EXPIRE_SECS: u64 = 30;
+const TOKEN_EXPIRE: Duration = Duration::from_secs(30);
 /// How long netcode keeps an idle connection before timing it out.
-const CONNECTION_TIMEOUT_SECS: i32 = 15;
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_CLIENTS: usize = 256;
 
 /// The `RIFT_GAME_SERVER_*` environment.
@@ -120,7 +120,7 @@ fn simulate(
     let mut clients = app
         .world_mut()
         .query_filtered::<(), With<ConnectedClient>>();
-    let frame = Duration::from_secs_f32(1.0 / TICK_HZ);
+    let frame = TICK_HZ.period();
     let mut last_start: Option<Instant> = None;
     loop {
         let started = Instant::now();
@@ -157,7 +157,7 @@ impl Sessions {
         let mut map = self.0.lock().expect("sessions lock");
         let now = Instant::now();
         map.retain(|_, pending| {
-            now.duration_since(pending.minted) < Duration::from_secs(TOKEN_EXPIRE_SECS + 5)
+            now.duration_since(pending.minted) < TOKEN_EXPIRE + Duration::from_secs(5)
         });
         map.insert(
             client_id,
@@ -249,9 +249,9 @@ async fn session(State(http): State<Http>, headers: HeaderMap) -> Response {
     let token = ConnectToken::generate(
         unix_now(),
         PROTOCOL_ID,
-        TOKEN_EXPIRE_SECS,
+        TOKEN_EXPIRE.as_secs(),
         client_id,
-        CONNECTION_TIMEOUT_SECS,
+        CONNECTION_TIMEOUT.as_secs() as i32,
         vec![http.public],
         None,
         &http.private_key,

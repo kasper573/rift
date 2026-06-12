@@ -57,27 +57,25 @@ pub fn use_item(world: &mut World, slot: u32) {
     world.write_message(UseItemRequest { slot });
 }
 
-/// Walks to `(x, y)`, picking the [`MoveToPortal`] intent when the point lands inside a portal of
+/// Walks to `pos`, picking the [`MoveToPortal`] intent when the point lands inside a portal of
 /// the current area so the server warps instead of pathing there.
-pub fn move_to(world: &mut World, x: f32, y: f32) {
+pub fn move_to(world: &mut World, pos: Pos<Tiles>) {
     let portal = my_area(world).and_then(|area| {
         area::areas()
             .get(area.0 as usize)?
             .portals
             .iter()
-            .position(|portal| portal.rect.contains(Pos::new(x, y)))
+            .position(|portal| portal.rect.contains(pos))
     });
     match portal {
         Some(index) => {
             world.write_message(MoveToPortal {
-                pos: Pos::new(x, y),
+                pos,
                 portal: index as u32,
             });
         }
         None => {
-            world.write_message(MoveRequest {
-                pos: Pos::new(x, y),
-            });
+            world.write_message(MoveRequest { pos });
         }
     }
 }

@@ -5,12 +5,15 @@ use bevy_time::Time;
 
 use crate::area::{self, AreaId};
 use crate::combat::AttackTarget;
-use crate::math::{CellPos, Direction, Offset, Pos, Tiles, TilesPerSec};
+use crate::math::{CellPos, Direction, Offset, Pos, Seconds, Tiles, TilesPerSec};
 use crate::player::sender_player;
 use crate::protocol::{
     ACTION_RUN, ACTION_WALK, AreaTag, MoveRequest, MoveToPortal, Position, is_dead, position,
     set_facing,
 };
+
+/// Walking this fast or faster animates as a run.
+const RUN_SPEED: TilesPerSec = TilesPerSec(Tiles(2.0));
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cell {
@@ -98,7 +101,7 @@ pub fn halt(world: &mut World, entity: Entity) {
 
 /// Whether `entity` is on a tile center on both axes (within a hair), i.e. not mid-step.
 pub fn on_tile(world: &World, entity: Entity) -> bool {
-    position(world, entity).is_some_and(|p| centered(p.x) && centered(p.y))
+    position(world, entity).is_some_and(centered)
 }
 
 fn retarget(
@@ -119,7 +122,7 @@ fn retarget(
 }
 
 pub fn advance(world: &mut World) {
-    let dt = world.resource::<Time>().delta_secs();
+    let dt = Seconds(world.resource::<Time>().delta_secs());
     let movers: Vec<Entity> = world
         .query_filtered::<Entity, Or<(With<MoveTarget>, With<Path>)>>()
         .iter(world)
@@ -146,7 +149,9 @@ pub fn advance(world: &mut World) {
             }
         }
 
-        let speed = world.get::<Speed>(id).map_or(1.0, |s| s.value.0.0);
+        let speed = world
+            .get::<Speed>(id)
+            .map_or(TilesPerSec(Tiles(1.0)), |s| s.value);
         let Some(mut at) = position(world, id) else {
             continue;
         };
@@ -156,14 +161,14 @@ pub fn advance(world: &mut World) {
         };
         let mut remaining = speed * dt;
         let mut heading: Option<Offset<Tiles>> = None;
-        while remaining > 1e-6 {
+        while remaining > Tiles(1e-6) {
             let target = match tiles.first() {
                 Some(cell) => cell.center(),
                 None => break,
             };
             let step = target - at;
-            let distance = step.length();
-            if distance < 1e-4 {
+            let distance = Tiles(step.length());
+            if distance < Tiles(1e-4) {
                 at = target;
                 tiles.remove(0);
                 continue;
@@ -174,9 +179,9 @@ pub fn advance(world: &mut World) {
                 heading = Some(step);
                 tiles.remove(0);
             } else {
-                at += step.normalize() * remaining;
+                at += step.normalize() * remaining.0;
                 heading = Some(step);
-                remaining = 0.0;
+                remaining = Tiles(0.0);
             }
         }
 
@@ -187,7 +192,7 @@ pub fn advance(world: &mut World) {
             set_facing(
                 &mut actor,
                 Direction::from_vec(step.x, step.y) as u8,
-                if speed >= 2.0 {
+                if speed >= RUN_SPEED {
                     ACTION_RUN
                 } else {
                     ACTION_WALK
@@ -214,13 +219,7 @@ fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<Cell
     if path.len() > 1 {
         path.remove(0);
     }
-    Some(
-        path.into_iter()
-            .map(|p| Cell {
-                pos: CellPos::new(p.x as i32, p.y as i32),
-            })
-            .collect(),
-    )
+    Some(path.into_iter().map(|pos| Cell { pos }).collect())
 }
 
 fn cross_portal(world: &mut World, entity: Entity) {
@@ -250,6 +249,7 @@ fn cross_portal(world: &mut World, entity: Entity) {
     }
 }
 
-fn centered(coord: f32) -> bool {
-    (coord - coord.floor() - 0.5).abs() < 1e-3
+fn centered(p: Pos<Tiles>) -> bool {
+    let near = |coord: f32| (coord - coord.floor() - 0.5).abs() < 1e-3;
+    near(p.x) && near(p.y)
 }

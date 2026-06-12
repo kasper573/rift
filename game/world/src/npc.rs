@@ -259,7 +259,7 @@ fn nearest(
     range: Tiles,
     accept: impl Fn(Entity) -> bool,
 ) -> Option<Entity> {
-    let mut best: Option<(Entity, f32)> = None;
+    let mut best: Option<(Entity, Tiles)> = None;
     for &candidate in candidates {
         if is_dead(world, candidate)
             || world.get::<AreaTag>(candidate).map(|t| t.area) != Some(area)
@@ -268,8 +268,8 @@ fn nearest(
             continue;
         }
         if let Some(p) = position(world, candidate) {
-            let distance = at.distance_to(p);
-            if distance <= range.0 && best.is_none_or(|(_, b)| distance < b) {
+            let distance = Tiles(at.distance_to(p));
+            if distance <= range && best.is_none_or(|(_, b)| distance < b) {
                 best = Some((candidate, distance));
             }
         }
@@ -295,7 +295,7 @@ fn enemies_by_group(world: &mut World) -> HashMap<u32, Vec<Entity>> {
 fn in_aggro(world: &World, target: Entity, at: Pos<Tiles>, area: AreaId, aggro: Tiles) -> bool {
     !is_dead(world, target)
         && world.get::<AreaTag>(target).map(|t| t.area) == Some(area)
-        && position(world, target).is_some_and(|p| at.distance_to(p) <= aggro.0)
+        && position(world, target).is_some_and(|p| Tiles(at.distance_to(p)) <= aggro)
 }
 
 pub fn run_respawn(world: &mut World) {

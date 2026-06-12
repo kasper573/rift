@@ -41,7 +41,7 @@ pub use crate::protocol::{
     SpectateRequest, UseItemRequest, Vitals, Welcome, Xp,
 };
 
-pub const TICK_HZ: f32 = 30.0;
+pub const TICK_HZ: math::Hertz = math::Hertz(30.0);
 
 pub const DEFAULT_ADDRESS: &str = "127.0.0.1:9998";
 

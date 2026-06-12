@@ -17,13 +17,16 @@ pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
     if viewport.scale <= 0.0 {
         return None;
     }
-    let target = (cursor - viewport.offset) / viewport.scale;
+    let target = Vec2::new(
+        (cursor.x - viewport.offset.x) / viewport.scale,
+        (cursor.y - viewport.offset.y) / viewport.scale,
+    );
     let (camera, transform) = world
         .query_filtered::<(&Camera, &GlobalTransform), With<WorldCamera>>()
         .single(world)
         .ok()?;
     let point = camera.viewport_to_world_2d(transform, target).ok()?;
-    Some(Pos::new(point.x / TILE, -point.y / TILE))
+    Some(Pos::new(point.x / TILE.0, -point.y / TILE.0))
 }
 
 /// The living enemy whose click box contains `point` — feet-anchored, excluding the player.

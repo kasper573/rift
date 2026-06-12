@@ -12,7 +12,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use tiled::{Frame, PropertyValue, TileId};
 
 use crate::assets;
-use crate::math::{Pixels, Pos, Rect, Size, Tiles};
+use crate::math::{Millis, Pixels, PlaybackRate, Pos, Rect, Seconds, Size, Tiles};
 
 /// An actor model's index in [`models`]; content tables reference models by name via
 /// [`model_by_name`].
@@ -33,8 +33,8 @@ pub struct SfxId(pub String);
 /// One animation run's place in time; the apex of an action without one is 0.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Timing {
-    pub duration: f32,
-    pub apex: f32,
+    pub duration: Seconds,
+    pub apex: Seconds,
 }
 
 /// An 8-direction actor model. Frames advance at their authored durations (scaled by attack
@@ -67,19 +67,25 @@ impl ActorModel {
         &self.sheet
     }
 
-    /// The frame to draw `t` seconds into `action`, as a pixel region of [`ActorModel::sheet`].
-    pub fn frame(&self, action: &str, dir: u8, t: f32, attack_speed: f32) -> Rect<Pixels> {
+    /// The frame to draw `t` into `action`, as a pixel region of [`ActorModel::sheet`].
+    pub fn frame(
+        &self,
+        action: &str,
+        dir: u8,
+        t: Seconds,
+        attack_speed: PlaybackRate,
+    ) -> Rect<Pixels> {
         let strip = self.strip(action, dir);
-        let elapsed = (t * 1000.0 * rate(action, attack_speed)).max(0.0);
+        let elapsed = Millis((t.0 * 1000.0 * rate(action, attack_speed).0).max(0.0));
         let total = total_ms(strip);
         let position = if action == DEATH {
-            elapsed.min(total - 1.0)
+            Millis(elapsed.0.min(total.0 - 1.0))
         } else {
-            elapsed % total
+            Millis(elapsed.0 % total.0)
         };
-        let mut cursor = 0.0;
+        let mut cursor = Millis(0.0);
         for frame in strip {
-            cursor += frame.duration as f32;
+            cursor += Millis(frame.duration as f32);
             if position < cursor {
                 return self.region(frame.tile_id);
             }
@@ -91,22 +97,22 @@ impl ActorModel {
     /// of its apex frame, both in seconds.
     pub fn timing(&self, action: &str, dir: u8) -> Timing {
         let strip = self.strip(action, dir);
-        let mut apex = 0.0;
-        let mut cursor = 0.0;
+        let mut apex = Millis(0.0);
+        let mut cursor = Millis(0.0);
         for frame in strip {
             if self.apexes.contains(&frame.tile_id) {
                 apex = cursor;
             }
-            cursor += frame.duration as f32;
+            cursor += Millis(frame.duration as f32);
         }
         Timing {
-            duration: cursor / 1000.0,
-            apex: apex / 1000.0,
+            duration: cursor.seconds(),
+            apex: apex.seconds(),
         }
     }
 
     /// The sound cues whose frames were entered as time-into-`action` advanced from `prev` to
-    /// `now` seconds (pass `prev < 0.0` for "the action just started"), and whether a step frame
+    /// `now` (pass a negative `prev` for "the action just started"), and whether a step frame
     /// was crossed. A looping action refires its cues each cycle, "death" fires once and never
     /// again while it holds the last frame, a single call fires each cue at most once so a long
     /// pause can't replay it, and unknown actions are silent.
@@ -114,9 +120,9 @@ impl ActorModel {
         &self,
         action: &str,
         dir: u8,
-        prev: f32,
-        now: f32,
-        attack_speed: f32,
+        prev: Seconds,
+        now: Seconds,
+        attack_speed: PlaybackRate,
     ) -> (Vec<&SfxId>, bool) {
         let strip = self
             .strips
@@ -124,22 +130,17 @@ impl ActorModel {
             .map(|dirs| dirs[dir_slot(dir)].as_slice())
             .unwrap_or_default();
         let rate = rate(action, attack_speed);
+        let authored = |t: Seconds| Millis(t.0 * 1000.0 * rate.0);
         let total = total_ms(strip);
         let once = action == DEATH;
         let (mut sfx, mut stepped) = (Vec::new(), false);
-        let mut cursor = 0.0;
+        let mut cursor = Millis(0.0);
         for frame in strip {
-            if crossed(
-                once,
-                total,
-                cursor,
-                prev * 1000.0 * rate,
-                now * 1000.0 * rate,
-            ) {
+            if crossed(once, total, cursor, authored(prev), authored(now)) {
                 sfx.extend(self.sounds.get(&frame.tile_id));
                 stepped |= self.steps.contains(&frame.tile_id);
             }
-            cursor += frame.duration as f32;
+            cursor += Millis(frame.duration as f32);
         }
         (sfx, stepped)
     }
@@ -266,29 +267,29 @@ fn dir_slot(dir: u8) -> usize {
     if dir > 7 { 0 } else { dir as usize }
 }
 
-fn rate(action: &str, attack_speed: f32) -> f32 {
+fn rate(action: &str, attack_speed: PlaybackRate) -> PlaybackRate {
     if action == ATTACK {
-        attack_speed.max(0.01)
+        PlaybackRate(attack_speed.0.max(0.01))
     } else {
-        1.0
+        PlaybackRate(1.0)
     }
 }
 
-fn total_ms(strip: &[Frame]) -> f32 {
-    strip.iter().map(|frame| frame.duration as f32).sum()
+fn total_ms(strip: &[Frame]) -> Millis {
+    Millis(strip.iter().map(|frame| frame.duration as f32).sum())
 }
 
-// Whether the cue moment `at` ms into the strip is crossed as scaled time-into-action advances
-// from `prev` to `now` ms; shared by sound and step cues so every cue fires exactly as its frame
+// Whether the cue moment `at` into the strip is crossed as scaled time-into-action advances
+// from `prev` to `now`; shared by sound and step cues so every cue fires exactly as its frame
 // is entered. Looping actions refire each cycle, `once` (death) fires a single time ever.
-fn crossed(once: bool, total: f32, at: f32, prev: f32, now: f32) -> bool {
-    let count = |t: f32| {
+fn crossed(once: bool, total: Millis, at: Millis, prev: Millis, now: Millis) -> bool {
+    let count = |t: Millis| {
         if t < at {
             0
         } else if once {
             1
         } else {
-            ((t - at) / total) as i64 + 1
+            ((t.0 - at.0) / total.0) as i64 + 1
         }
     };
     count(now) > count(prev)

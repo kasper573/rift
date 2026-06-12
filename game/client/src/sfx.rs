@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy_kira_audio::prelude::{Audio, AudioControl, AudioSource, Decibels};
 use world::actors;
 use world::area;
-use world::math::{Pos, Tiles};
+use world::math::{CellPos, Pos, Seconds, Size, Tiles};
 use world::protocol::{Actor, ItemConsumed, Position, action_name, position};
 use world::session;
 use world::sfx::sfx_table;
@@ -12,10 +12,10 @@ use world::sfx::sfx_table;
 use crate::Screen;
 use crate::render::Animator;
 
-/// The view half-extent in tiles; volume falls linearly to zero at the view edge.
-const HALF_VIEW: Vec2 = Vec2::new(12.0, 9.0);
+/// The view half-extent; volume falls linearly to zero at the view edge.
+const HALF_VIEW: Size<Tiles> = Size::new(12.0, 9.0);
 /// Distinct one-shot cues within this window collapse to one play.
-const STACK_WINDOW: f32 = 0.1;
+const STACK_WINDOW: Seconds = Seconds(0.1);
 
 pub struct SfxPlugin;
 
@@ -32,8 +32,8 @@ struct Sfx {
     sources: Vec<Handle<AudioSource>>,
     index: HashMap<String, usize>,
     /// Per actor: its action and the time-into-action the cue window last advanced to.
-    seen: HashMap<Entity, (u8, f32)>,
-    played: HashMap<usize, f32>,
+    seen: HashMap<Entity, (u8, Seconds)>,
+    played: HashMap<usize, Seconds>,
 }
 
 fn load(assets: Res<AssetServer>, mut commands: Commands) {
@@ -49,7 +49,7 @@ fn play_cues(world: &mut World) {
     let Some(listener) = session::my_position(world) else {
         return;
     };
-    let clock = world.resource::<Time>().elapsed_secs();
+    let clock = Seconds(world.resource::<Time>().elapsed_secs());
     let area = session::my_area(world).and_then(|id| area::areas().get(id.0 as usize));
     let mut sfx = world.remove_resource::<Sfx>().expect("sfx loaded");
 
@@ -74,20 +74,27 @@ fn play_cues(world: &mut World) {
             continue;
         }
         let pan = proximity_pan(listener, *source);
-        let prev = if was == actor.action { then } else { -1.0 };
+        let prev = if was == actor.action {
+            then
+        } else {
+            Seconds(-1.0)
+        };
         let model = actors::model(actor.model);
         let (cues, stepped) = model.cues(
             action_name(actor.action),
             actor.dir,
             prev,
             now,
-            actor.attack_rate.0,
+            actor.attack_rate,
         );
         for id in cues {
             collect(&sfx.index, &mut frame, &id.0, volume, pan);
         }
         if let (Some(area), true) = (area, stepped)
-            && let Some(id) = area.tile_sfx_at(source.x.floor() as i32, source.y.floor() as i32)
+            && let Some(id) = area.tile_sfx_at(CellPos::new(
+                source.x.floor() as i32,
+                source.y.floor() as i32,
+            ))
         {
             collect(&sfx.index, &mut frame, &id.0, volume, pan);
         }
@@ -154,7 +161,7 @@ fn collect(
     }
 }
 
-fn ready(played: &mut HashMap<usize, f32>, row: usize, clock: f32) -> bool {
+fn ready(played: &mut HashMap<usize, Seconds>, row: usize, clock: Seconds) -> bool {
     if played
         .get(&row)
         .is_some_and(|&last| clock - last < STACK_WINDOW)
@@ -167,19 +174,19 @@ fn ready(played: &mut HashMap<usize, f32>, row: usize, clock: f32) -> bool {
 
 /// 1 at the listener, falling linearly to 0 at the view edge and staying 0 beyond it.
 fn proximity_volume(listener: Pos<Tiles>, source: Pos<Tiles>) -> f32 {
-    let dx = (source.x - listener.x).abs() / HALF_VIEW.x;
-    let dy = (source.y - listener.y).abs() / HALF_VIEW.y;
+    let dx = (source.x - listener.x).abs() / HALF_VIEW.width;
+    let dy = (source.y - listener.y).abs() / HALF_VIEW.height;
     (1.0 - dx.max(dy)).clamp(0.0, 1.0)
 }
 
 /// -1 (left) at the left edge, 0 at the listener's column, +1 (right) at the right edge.
 fn proximity_pan(listener: Pos<Tiles>, source: Pos<Tiles>) -> f32 {
-    ((source.x - listener.x) / HALF_VIEW.x).clamp(-1.0, 1.0)
+    ((source.x - listener.x) / HALF_VIEW.width).clamp(-1.0, 1.0)
 }
 
 /// A deterministic value in `[0, 1)` standing in for per-play randomness without a rng dep.
-fn fastrand_unit(clock: f32, salt: usize) -> f32 {
-    let bits = (clock.to_bits() as usize)
+fn fastrand_unit(clock: Seconds, salt: usize) -> f32 {
+    let bits = (clock.0.to_bits() as usize)
         .wrapping_mul(2654435761)
         .wrapping_add(salt.wrapping_mul(40503));
     (bits % 1000) as f32 / 1000.0

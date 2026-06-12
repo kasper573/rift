@@ -1,16 +1,17 @@
 use std::collections::HashSet;
 
 use bevy::prelude::*;
+use world::math::{Offset, Pos, Size};
 use world::session;
 
 use crate::Screen;
-use crate::user_settings::{Placement, UserSettings};
+use crate::user_settings::{Logical, Placement, UserSettings};
 
-const WIDGET: f32 = 48.0;
-const SLOT: f32 = 36.0;
-const TITLE_H: f32 = 22.0;
-const MIN_WINDOW: Vec2 = Vec2::new(100.0, 100.0);
-const WINDOW_SIZE: Vec2 = Vec2::new(400.0, 200.0);
+const WIDGET: Logical = Logical(48.0);
+const SLOT: Logical = Logical(36.0);
+const TITLE_H: Logical = Logical(22.0);
+const MIN_WINDOW: Size<Logical> = Size::new(100.0, 100.0);
+const WINDOW_SIZE: Size<Logical> = Size::new(400.0, 200.0);
 
 const PANEL_BG: Color = Color::srgb(0.1, 0.1, 0.1);
 const TITLE_BG: Color = Color::srgb(0.18, 0.18, 0.18);
@@ -41,6 +42,65 @@ impl Plugin for HudPlugin {
     }
 }
 
+/// A toggleable HUD window, opened by its icon widget.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Pane {
+    Inventory,
+    Settings,
+}
+
+impl Pane {
+    const ALL: [Pane; 2] = [Pane::Inventory, Pane::Settings];
+
+    fn title(self) -> &'static str {
+        match self {
+            Pane::Inventory => "Inventory",
+            Pane::Settings => "Settings",
+        }
+    }
+
+    fn toggle(self) -> KeyCode {
+        match self {
+            Pane::Inventory => KeyCode::KeyI,
+            Pane::Settings => KeyCode::KeyO,
+        }
+    }
+
+    fn keybind(self) -> &'static str {
+        match self {
+            Pane::Inventory => "I",
+            Pane::Settings => "O",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Pane::Inventory => "icons/potion/red_potion.png",
+            Pane::Settings => "icons/weapon_and_tool/iron_sword.png",
+        }
+    }
+}
+
+/// A draggable HUD element; [`Panel::key`] is the stable id it persists its placement under.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Panel {
+    Character,
+    Widget(Pane),
+    Window(Pane),
+}
+
+impl Panel {
+    fn key(self) -> &'static str {
+        match self {
+            Panel::Character => "character",
+            Panel::Widget(Pane::Inventory) => "inventory",
+            Panel::Widget(Pane::Settings) => "settings",
+            Panel::Window(Pane::Inventory) => "inventory.window",
+            Panel::Window(Pane::Settings) => "settings.window",
+        }
+    }
+}
+
 /// Persisted UI preferences (snap grid, panel placements), loaded once and saved on every change.
 #[derive(Resource)]
 struct Settings(UserSettings);
@@ -52,16 +112,16 @@ impl Default for Settings {
 }
 
 #[derive(Resource, Default)]
-struct Open(HashSet<&'static str>);
+struct Open(HashSet<Pane>);
 
 #[derive(Component)]
 struct Hud;
 
-/// A panel that drags and persists its top-left under `id`; `window` marks it resizable too.
+/// A panel that drags and persists its top-left under [`Movable::panel`]; `resizable` adds a window.
 #[derive(Component)]
 struct Movable {
-    id: &'static str,
-    window: bool,
+    panel: Panel,
+    resizable: bool,
 }
 
 /// Dragging this node moves the [`Movable`] it points at (a window's title bar moves its window).
@@ -72,14 +132,14 @@ struct DragHandle(Entity);
 #[derive(Component)]
 struct ResizeHandle(Entity);
 
-/// A widget that toggles a window; the widget hides while its window is open.
+/// An icon that toggles its [`Pane`]; the icon hides while the window is open.
 #[derive(Component)]
 struct Widget {
-    window: &'static str,
+    pane: Pane,
 }
 
 #[derive(Component)]
-struct WindowOf(&'static str);
+struct WindowOf(Pane);
 
 #[derive(Component)]
 struct CharacterText;
@@ -87,39 +147,22 @@ struct CharacterText;
 #[derive(Component)]
 struct InventoryGrid;
 
-struct WidgetSpec {
-    id: &'static str,
-    window: &'static str,
-    keybind: &'static str,
-    icon: &'static str,
-}
-
 fn spawn_widgets(mut commands: Commands, settings: Res<Settings>, assets: Res<AssetServer>) {
-    let screen = Vec2::new(1152.0, 864.0);
-    character_widget(&mut commands, &settings, Vec2::new(8.0, 8.0));
+    let screen = Size::<Logical>::new(1152.0, 864.0);
+    character_widget(&mut commands, &settings, Pos::new(8.0, 8.0));
     icon_widget(
         &mut commands,
         &settings,
         &assets,
-        WidgetSpec {
-            id: "inventory",
-            window: "inventory.window",
-            keybind: "I",
-            icon: "icons/potion/red_potion.png",
-        },
-        Vec2::new(screen.x - 8.0 - WIDGET, 8.0),
+        Pane::Inventory,
+        Pos::new(screen.width - 8.0 - WIDGET.0, 8.0),
     );
     icon_widget(
         &mut commands,
         &settings,
         &assets,
-        WidgetSpec {
-            id: "settings",
-            window: "settings.window",
-            keybind: "O",
-            icon: "icons/weapon_and_tool/iron_sword.png",
-        },
-        Vec2::new(screen.x - 8.0 - WIDGET, 16.0 + WIDGET),
+        Pane::Settings,
+        Pos::new(screen.width - 8.0 - WIDGET.0, 16.0 + WIDGET.0),
     );
     commands.spawn((
         Hud,
@@ -140,15 +183,15 @@ fn spawn_widgets(mut commands: Commands, settings: Res<Settings>, assets: Res<As
     ));
 }
 
-fn character_widget(commands: &mut Commands, settings: &Settings, fallback: Vec2) {
-    let at = placed(settings, "character", fallback);
+fn character_widget(commands: &mut Commands, settings: &Settings, fallback: Pos<Logical>) {
+    let at = placed(settings, Panel::Character, fallback);
     commands.spawn((
         Hud,
         Movable {
-            id: "character",
-            window: false,
+            panel: Panel::Character,
+            resizable: false,
         },
-        panel_node(at, Vec2::new(140.0, 64.0)),
+        panel_node(at, Size::new(140.0, 64.0)),
         BackgroundColor(PANEL_BG),
         BorderColor::all(BORDER),
         children![(
@@ -167,27 +210,25 @@ fn icon_widget(
     commands: &mut Commands,
     settings: &Settings,
     assets: &AssetServer,
-    spec: WidgetSpec,
-    fallback: Vec2,
+    pane: Pane,
+    fallback: Pos<Logical>,
 ) {
-    let at = placed(settings, spec.id, fallback);
+    let at = placed(settings, Panel::Widget(pane), fallback);
     commands
         .spawn((
             Hud,
-            Widget {
-                window: spec.window,
-            },
+            Widget { pane },
             Movable {
-                id: spec.id,
-                window: false,
+                panel: Panel::Widget(pane),
+                resizable: false,
             },
-            Tooltip(title_of(spec.window).to_owned()),
-            panel_node(at, Vec2::splat(WIDGET)),
+            Tooltip(pane.title().to_owned()),
+            panel_node(at, Size::splat(WIDGET.0)),
             BackgroundColor(PANEL_BG),
             BorderColor::all(BORDER),
             children![
                 (
-                    ImageNode::new(assets.load(spec.icon.to_owned())),
+                    ImageNode::new(assets.load(pane.icon().to_owned())),
                     Node {
                         width: Val::Px(32.0),
                         height: Val::Px(32.0),
@@ -196,7 +237,7 @@ fn icon_widget(
                     },
                     Pickable::IGNORE,
                 ),
-                badge(spec.keybind),
+                badge(pane.keybind()),
             ],
         ))
         .observe(open_window);
@@ -204,7 +245,7 @@ fn icon_widget(
 
 fn open_window(click: On<Pointer<Click>>, widgets: Query<&Widget>, mut open: ResMut<Open>) {
     if let Ok(widget) = widgets.get(click.entity) {
-        open.0.insert(widget.window);
+        open.0.insert(widget.pane);
     }
 }
 
@@ -217,17 +258,17 @@ fn reconcile_windows(
     mut commands: Commands,
 ) {
     for (entity, window) in &windows {
-        if !open.0.contains(window.0) {
+        if !open.0.contains(&window.0) {
             commands.entity(entity).despawn();
         }
     }
-    for &id in &open.0 {
-        if !windows.iter().any(|(_, window)| window.0 == id) {
-            spawn_window(&mut commands, &settings, id);
+    for &pane in &open.0 {
+        if !windows.iter().any(|(_, window)| window.0 == pane) {
+            spawn_window(&mut commands, &settings, pane);
         }
     }
     for (widget, mut visibility) in &mut widgets {
-        *visibility = if open.0.contains(widget.window) {
+        *visibility = if open.0.contains(&widget.pane) {
             Visibility::Hidden
         } else {
             Visibility::Inherited
@@ -235,18 +276,20 @@ fn reconcile_windows(
     }
 }
 
-fn spawn_window(commands: &mut Commands, settings: &Settings, id: &'static str) {
-    let placement = settings.0.placement(id);
-    let at = placement.map_or(Vec2::new(376.0, 332.0), |p| Vec2::from(p.pos));
-    let size = placement
-        .and_then(|p| p.size)
-        .map_or(WINDOW_SIZE, Vec2::from);
+fn spawn_window(commands: &mut Commands, settings: &Settings, pane: Pane) {
+    let panel = Panel::Window(pane);
+    let placement = settings.0.placement(panel.key());
+    let at = placement.map_or(Pos::new(376.0, 332.0), |p| point(p.pos));
+    let size = placement.and_then(|p| p.size).map_or(WINDOW_SIZE, extent);
 
     let window = commands
         .spawn((
             Hud,
-            WindowOf(id),
-            Movable { id, window: true },
+            WindowOf(pane),
+            Movable {
+                panel,
+                resizable: true,
+            },
             Node {
                 flex_direction: FlexDirection::Column,
                 overflow: Overflow::clip(),
@@ -257,14 +300,13 @@ fn spawn_window(commands: &mut Commands, settings: &Settings, id: &'static str) 
         ))
         .id();
 
-    let title = title_of(id);
     let header = commands
         .spawn((
             ChildOf(window),
             DragHandle(window),
             Node {
                 width: Val::Percent(100.0),
-                height: Val::Px(TITLE_H),
+                height: Val::Px(TITLE_H.0),
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::SpaceBetween,
                 padding: UiRect::horizontal(Val::Px(6.0)),
@@ -275,13 +317,13 @@ fn spawn_window(commands: &mut Commands, settings: &Settings, id: &'static str) 
         .id();
     commands.spawn((
         ChildOf(header),
-        Text::new(title),
+        Text::new(pane.title()),
         TextColor(Color::WHITE),
         Pickable::IGNORE,
     ));
     commands
         .spawn((ChildOf(header), close_button()))
-        .observe(close_window(id));
+        .observe(close_window(pane));
 
     let content = commands
         .spawn((
@@ -295,16 +337,15 @@ fn spawn_window(commands: &mut Commands, settings: &Settings, id: &'static str) 
             },
         ))
         .id();
-    match id {
-        "inventory.window" => {
+    match pane {
+        Pane::Inventory => {
             commands.entity(content).insert(InventoryGrid);
         }
-        "settings.window" => {
+        Pane::Settings => {
             commands
                 .spawn((ChildOf(content), snapping_button(settings)))
                 .observe(toggle_snapping);
         }
-        _ => {}
     }
 
     commands.spawn((
@@ -322,9 +363,9 @@ fn spawn_window(commands: &mut Commands, settings: &Settings, id: &'static str) 
     ));
 }
 
-fn close_window(id: &'static str) -> impl Fn(On<Pointer<Click>>, ResMut<Open>) {
+fn close_window(pane: Pane) -> impl Fn(On<Pointer<Click>>, ResMut<Open>) {
     move |_, mut open| {
-        open.0.remove(id);
+        open.0.remove(&pane);
     }
 }
 
@@ -338,7 +379,7 @@ fn on_drag(
     settings: Res<Settings>,
     mut nodes: Query<(&mut Node, &Movable)>,
 ) {
-    let delta = drag.delta;
+    let delta = Offset::<Logical>::new(drag.delta.x, drag.delta.y);
     for entity in ancestry(drag.entity, &children) {
         if let Ok(handle) = handles.get(entity)
             && let Ok((mut node, _)) = nodes.get_mut(handle.0)
@@ -376,10 +417,10 @@ fn on_drag_end(
             .unwrap_or(entity);
         if let Ok((node, movable)) = nodes.get(target) {
             let pos = (px(node.left), px(node.top));
-            let size = movable.window.then(|| (px(node.width), px(node.height)));
+            let size = movable.resizable.then(|| (px(node.width), px(node.height)));
             settings
                 .0
-                .set_placement(movable.id, Placement { pos, size });
+                .set_placement(movable.panel.key(), Placement { pos, size });
             settings.0.save();
             return;
         }
@@ -387,17 +428,16 @@ fn on_drag_end(
 }
 
 fn toggle_keys(keys: Res<ButtonInput<KeyCode>>, mut open: ResMut<Open>) {
-    if keys.just_pressed(KeyCode::KeyI) {
-        toggle(&mut open, "inventory.window");
-    }
-    if keys.just_pressed(KeyCode::KeyO) {
-        toggle(&mut open, "settings.window");
+    for pane in Pane::ALL {
+        if keys.just_pressed(pane.toggle()) {
+            toggle(&mut open, pane);
+        }
     }
 }
 
-fn toggle(open: &mut Open, id: &'static str) {
-    if !open.0.remove(id) {
-        open.0.insert(id);
+fn toggle(open: &mut Open, pane: Pane) {
+    if !open.0.remove(&pane) {
+        open.0.insert(pane);
     }
 }
 
@@ -444,8 +484,8 @@ fn sync_inventory(world: &mut World) {
                 InventorySlot(slot as u32),
                 Tooltip(name),
                 Node {
-                    width: Val::Px(SLOT),
-                    height: Val::Px(SLOT),
+                    width: Val::Px(SLOT.0),
+                    height: Val::Px(SLOT.0),
                     margin: UiRect::all(Val::Px(1.0)),
                     ..default()
                 },
@@ -483,16 +523,22 @@ fn toggle_snapping(_: On<Pointer<Click>>, mut commands: Commands) {
     });
 }
 
-fn move_node(node: &mut Node, delta: Vec2, settings: &UserSettings) {
-    node.left = Val::Px(settings.snap(px(node.left) + delta.x));
-    node.top = Val::Px(settings.snap(px(node.top) + delta.y));
+fn move_node(node: &mut Node, delta: Offset<Logical>, settings: &UserSettings) {
+    node.left = Val::Px(settings.snap(px(node.left) + delta.x).0);
+    node.top = Val::Px(settings.snap(px(node.top) + delta.y).0);
 }
 
-fn resize_node(node: &mut Node, delta: Vec2, settings: &UserSettings) {
-    let width = settings.snap((px(node.width) + delta.x).max(MIN_WINDOW.x));
-    let height = settings.snap((px(node.height) + delta.y).max(MIN_WINDOW.y));
-    node.width = Val::Px(width.max(MIN_WINDOW.x));
-    node.height = Val::Px(height.max(MIN_WINDOW.y));
+fn resize_node(node: &mut Node, delta: Offset<Logical>, settings: &UserSettings) {
+    let width = settings
+        .snap(px(node.width) + delta.x)
+        .0
+        .max(MIN_WINDOW.width);
+    let height = settings
+        .snap(px(node.height) + delta.y)
+        .0
+        .max(MIN_WINDOW.height);
+    node.width = Val::Px(width);
+    node.height = Val::Px(height);
 }
 
 /// `entity` then each of its ancestors, nearest first.
@@ -506,20 +552,28 @@ fn ancestry(entity: Entity, children: &Query<&ChildOf>) -> Vec<Entity> {
     chain
 }
 
-fn placed(settings: &Settings, id: &str, default: Vec2) -> Vec2 {
+fn placed(settings: &Settings, panel: Panel, default: Pos<Logical>) -> Pos<Logical> {
     settings
         .0
-        .placement(id)
-        .map_or(default, |placement| Vec2::from(placement.pos))
+        .placement(panel.key())
+        .map_or(default, |placement| point(placement.pos))
 }
 
-fn panel_node(at: Vec2, size: Vec2) -> Node {
+fn point((x, y): (Logical, Logical)) -> Pos<Logical> {
+    Pos::new(x.0, y.0)
+}
+
+fn extent((width, height): (Logical, Logical)) -> Size<Logical> {
+    Size::new(width.0, height.0)
+}
+
+fn panel_node(at: Pos<Logical>, size: Size<Logical>) -> Node {
     Node {
         position_type: PositionType::Absolute,
         left: Val::Px(at.x),
         top: Val::Px(at.y),
-        width: Val::Px(size.x),
-        height: Val::Px(size.y),
+        width: Val::Px(size.width),
+        height: Val::Px(size.height),
         border: UiRect::all(Val::Px(1.0)),
         ..default()
     }
@@ -616,18 +670,10 @@ fn hide_tooltip(_: On<Pointer<Out>>, mut display: Single<&mut Visibility, With<T
     **display = Visibility::Hidden;
 }
 
-fn title_of(window: &str) -> &'static str {
-    match window {
-        "inventory.window" => "Inventory",
-        "settings.window" => "Settings",
-        _ => "",
-    }
-}
-
-fn px(val: Val) -> f32 {
+fn px(val: Val) -> Logical {
     match val {
-        Val::Px(value) => value,
-        _ => 0.0,
+        Val::Px(value) => Logical(value),
+        _ => Logical(0.0),
     }
 }
 
