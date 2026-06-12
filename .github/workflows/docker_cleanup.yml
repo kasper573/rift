@@ -1,4 +1,4 @@
-name: Daily Image Cleanup
+name: Daily Cleanup
 on:
   schedule:
     - cron: "30 1 * * *"
@@ -16,3 +16,31 @@ jobs:
           package: "*"
           expand-packages: true
           keep-n-tagged: 10
+
+  # Keep the Actions cache under GitHub's 10 GB per-repo ceiling. rust-cache rotates a fresh cache in
+  # whenever Cargo.lock or the toolchain changes and leaves the previous one to GitHub's 7-day
+  # eviction; a burst of those (e.g. iterating on CI) can blow the ceiling before they age out, at
+  # which point GitHub evicts unpredictably. So we trim deterministically: keep the most recently used
+  # caches up to a budget and delete the rest.
+  actions-cache-cleanup:
+    permissions:
+      actions: write
+    name: trim the actions cache
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUDGET_BYTES: "8589934592"
+    steps:
+      - name: Delete least-recently-used caches over budget
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --limit 100 \
+            --json id,sizeInBytes,lastAccessedAt > caches.json
+          jq -r --argjson budget "$BUDGET_BYTES" '
+            sort_by(.lastAccessedAt) | reverse
+            | reduce .[] as $c ({total: 0, evict: []};
+                .total += $c.sizeInBytes
+                | if .total > $budget then .evict += [$c.id] else . end)
+            | .evict[]' caches.json |
+          while read -r id; do
+            [ -n "$id" ] && gh cache delete "$id" --repo "$GITHUB_REPOSITORY"
+          done
