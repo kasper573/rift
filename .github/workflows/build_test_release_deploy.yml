@@ -32,59 +32,11 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
 
-  # Build the shipping client (+ the server it is tested against, + the linux website for the images)
-  # once per OS, and hand the binaries to the test and release jobs so every later stage runs the
-  # exact bytes built here.
-  build:
+  # Build the shipping client (+ the server it runs against, + the linux website for the images) and
+  # drive it through a real gameplay session, once per OS. Building and testing in one job means the
+  # uploaded binary is the exact one the e2e just drove — so release and deploy ship tested bytes.
+  build_and_test:
     needs: lint
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-24.04, asset: rift-linux-x86_64 }
-          - { os: macos-latest, asset: rift-macos-aarch64 }
-          - { os: windows-latest, asset: rift-windows-x86_64.exe }
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v6
-      - name: Free runner disk
-        if: runner.os == 'Linux'
-        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
-      - name: Install the pinned toolchain
-        run: rustup show
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: build-${{ matrix.os }}
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        # The client and website link ALSA through kira.
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - name: Build the client and the server
-        shell: bash
-        run: |
-          cargo build --profile dist --features dist -p client
-          cargo build --release -p server
-      - name: Build the website
-        if: runner.os == 'Linux'
-        # Only the linux build feeds the docker images that deploy.
-        run: cargo build --release -p website
-      - name: Stage artifacts
-        shell: bash
-        run: |
-          ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
-          mkdir -p out
-          cp "target/dist/rift$ext" "out/${{ matrix.asset }}"
-          cp "target/release/server$ext" "out/server$ext"
-          [ "${{ runner.os }}" = "Linux" ] && cp target/release/website out/website || true
-      - uses: actions/upload-artifact@v7
-        with:
-          name: binaries-${{ matrix.os }}
-          path: out/
-
-  # Drive the just-built client through a real gameplay session on each OS, asserting on rendered
-  # pixels. The binaries come from the build job, so this tests precisely what release ships.
-  test:
-    needs: build
     strategy:
       fail-fast: false
       matrix:
@@ -103,17 +55,13 @@ jobs:
         run: rustup show
       - uses: Swatinem/rust-cache@v2
         with:
-          key: test-${{ matrix.os }}
-      - uses: actions/download-artifact@v7
-        with:
-          name: binaries-${{ matrix.os }}
-          path: bin
+          key: build-and-test-${{ matrix.os }}
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        # Run the client on a headless Xvfb that openbox manages (xcap enumerates windows via EWMH,
-        # which needs a WM) and render through a software Vulkan driver (lavapipe). xcap compiles its
-        # whole linux capture surface — pipewire and the wayland path (egl/gbm) alongside the X11
-        # (xcb) path we use — so their build and link deps are all present.
+        # Build deps (the client and website link ALSA through kira) plus everything the e2e needs:
+        # a headless Xvfb that openbox manages (xcap enumerates windows via EWMH, which needs a WM),
+        # a software Vulkan driver (lavapipe), and xcap's whole linux capture surface — pipewire and
+        # the wayland path (egl/gbm) alongside the X11 (xcb) path we use.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -123,6 +71,15 @@ jobs:
             xvfb openbox \
             libclang-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
             libxcb1-dev libxcb-randr0-dev libxcb-render0-dev
+      - name: Build the client and the server
+        shell: bash
+        run: |
+          cargo build --profile dist --features dist -p client
+          cargo build --release -p server
+      - name: Build the website
+        if: runner.os == 'Linux'
+        # Only the linux build feeds the docker images that deploy.
+        run: cargo build --release -p website
       - name: Start a virtual display
         if: runner.os == 'Linux'
         run: |
@@ -134,9 +91,8 @@ jobs:
         shell: bash
         run: |
           ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
-          chmod +x "bin/${{ matrix.asset }}" "bin/server$ext" || true
-          export RIFT_E2E_CLIENT="$PWD/bin/${{ matrix.asset }}"
-          export RIFT_E2E_SERVER="$PWD/bin/server$ext"
+          export RIFT_E2E_CLIENT="$PWD/target/dist/rift$ext"
+          export RIFT_E2E_SERVER="$PWD/target/release/server$ext"
           cargo test -p e2e -- --ignored --nocapture
       - name: Save E2E artifacts
         if: failure()
@@ -144,11 +100,24 @@ jobs:
         with:
           name: e2e-artifacts-${{ matrix.os }}
           path: target/tmp/
+      - name: Stage the tested binaries
+        shell: bash
+        run: |
+          ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          mkdir -p out
+          cp "target/dist/rift$ext" "out/${{ matrix.asset }}"
+          cp "target/release/server$ext" "out/server$ext"
+          [ "${{ runner.os }}" = "Linux" ] && cp target/release/website out/website || true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binaries-${{ matrix.os }}
+          path: out/
 
-  # Branch builds stop at `test`; main publishes and deploys what it just tested.
+  # Branch builds stop at build_and_test; main publishes and deploys what it just tested.
   release:
-    needs: test
-    if: github.ref_name == 'main'
+    needs: build_and_test
+    # TEMP: while perfecting the release flow it runs on every branch. Restore `if: github.ref_name
+    # == 'main'` when done.
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -162,8 +131,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # The version is `0.<run number>`: simple and monotonic, and the `0.` major keeps these
         # automated releases out of the semver space a real version would later claim.
+        # TEMP: `temp-` prefix keeps in-progress release runs out of the version space. Restore the
+        # plain `0.<run number>` when the release flow is perfected.
         run: |
-          version="0.${{ github.run_number }}"
+          version="temp-0.${{ github.run_number }}"
           gh release create "$version" dist/binaries-*/rift-* \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
