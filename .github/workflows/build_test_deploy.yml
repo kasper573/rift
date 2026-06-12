@@ -46,8 +46,8 @@ jobs:
 
       - name: Conventions
         # `e2e` is excluded from the workspace `default-members` (it needs the heavy capture stack),
-        # so plain `cargo clippy` lints the shipping crates; the e2e job lints it where that stack is
-        # installed. `cargo fmt` still spans every member.
+        # so `cargo clippy` lints the shipping crates; the e2e job compiles and runs that crate on
+        # every OS, which is its gate. `cargo fmt` still spans every member.
         run: |
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
@@ -112,10 +112,6 @@ jobs:
             xvfb openbox \
             libclang-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
             libxcb1-dev libxcb-randr0-dev libxcb-render0-dev
-
-      - name: Lint the e2e crate
-        if: runner.os == 'Linux'
-        run: cargo clippy -p e2e --all-targets -- -D warnings
 
       - name: Start a virtual display
         if: runner.os == 'Linux'
