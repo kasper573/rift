@@ -27,4 +27,7 @@
 ## Verify before done
 
 - `cargo fmt` · `cargo clippy --all-targets` (no warnings) · `cargo build`
-- The E2E test green, locally and in CI: `cargo test -p client --test e2e` (needs `Xvfb`)
+- The E2E test (`game/e2e`) drives the shipping client through a real gameplay session and asserts on
+  rendered pixels. It is `#[ignore]`d, so the default `cargo test` skips it; CI runs it in a
+  linux/macOS/windows matrix against the release-profile binaries. Run it locally with `just e2e`
+  (needs a display; Linux brings up its own `Xvfb`).

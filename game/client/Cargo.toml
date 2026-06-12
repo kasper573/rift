@@ -80,9 +80,3 @@ base64 = "0.22"
 dirs = "6"
 serde = { workspace = true }
 serde_json = { workspace = true }
-
-# The E2E test drives the real client binary on its own X display and asserts on screenshots.
-[dev-dependencies]
-png = "0.18"
-ureq = { workspace = true, features = ["rustls", "json"] }
-x11rb = { version = "0.13", features = ["xtest"] }

@@ -4,6 +4,7 @@ members = [
     "game/world",
     "game/server",
     "game/client",
+    "game/e2e",
     "website",
 ]
 

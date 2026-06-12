@@ -39,31 +39,15 @@ jobs:
           key: glibc-release
 
       - name: Install system dependencies
-        # The E2E test plays the real client on its own Xvfb display: ALSA for the audio backend,
-        # the X11 libs winit dlopens, and a software Vulkan driver (lavapipe) to render without a
-        # GPU.
+        # Clippy compiles the client, which links ALSA through kira.
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libasound2-dev \
-            libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon0 libxkbcommon-x11-0 \
-            libvulkan1 mesa-vulkan-drivers \
-            xvfb
+          sudo apt-get install -y libasound2-dev
 
       - name: Conventions
         run: |
           cargo fmt --check
           cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: E2E test
-        run: cargo test -p client --test e2e
-
-      - name: Save E2E artifacts
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: e2e-artifacts
-          path: target/tmp/
 
       - name: Build release artifacts
         run: cargo build --release -p website -p server
@@ -85,8 +69,65 @@ jobs:
           $COMPOSE --profile prod build
           $COMPOSE --profile prod push
 
+  # The shipped client, byte-for-byte (the dist profile + features), driven through a real gameplay
+  # session on each OS it ships to. The test builds nothing it can borrow — only the release client
+  # and the server — and is `#[ignore]`d so it never runs in a developer's `cargo test`.
+  e2e:
+    name: e2e (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Free runner disk
+        if: runner.os == 'Linux'
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+
+      - name: Install the pinned toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e-${{ matrix.os }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        # Build the client (ALSA via kira) and run it on a private Xvfb display: the X11 libs winit
+        # dlopens, plus a software Vulkan driver (lavapipe) to render without a GPU.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon0 libxkbcommon-x11-0 \
+            libvulkan1 mesa-vulkan-drivers \
+            xvfb
+
+      - name: Build the shipping client and the server
+        shell: bash
+        run: |
+          cargo build --profile dist --features dist -p client
+          cargo build --release -p server
+
+      - name: E2E test
+        shell: bash
+        run: |
+          ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          export RIFT_E2E_CLIENT="$PWD/target/dist/rift$ext"
+          export RIFT_E2E_SERVER="$PWD/target/release/server$ext"
+          cargo test -p e2e -- --ignored --nocapture
+
+      - name: Save E2E artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-artifacts-${{ matrix.os }}
+          path: target/tmp/
+
   deploy:
-    needs: [build]
+    needs: [build, e2e]
     if: github.ref_name == 'main'
     runs-on: ubuntu-latest
     steps:

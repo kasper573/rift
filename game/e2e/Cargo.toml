@@ -1,0 +1,27 @@
+[package]
+name = "e2e"
+version.workspace = true
+edition.workspace = true
+description = "Cross-platform end-to-end test: drives the shipped client against a live server on a real display and asserts on the pixels it renders."
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+# `enigo` feeds the client genuine OS input on every platform. ureq polls the server's health
+# endpoint. The client and server binaries are located by env var (the CI passes the release builds),
+# so this crate never compiles them — keeping the cross-platform test cheap to build.
+[dev-dependencies]
+enigo = "0.6"
+png = "0.18"
+ureq = { workspace = true, features = ["rustls", "json"] }
+
+# On Linux the test runs on its own headless Xvfb display: x11rb reads pixels straight off it and
+# enumerates the window with no compositor. xcap would drag pipewire in here, so it is kept off Linux.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+x11rb = "0.13"
+
+# Windows and macOS run the client on the runner's real desktop; xcap captures its window through the
+# native platform APIs.
+[target.'cfg(not(target_os = "linux"))'.dev-dependencies]
+xcap = "0.9"

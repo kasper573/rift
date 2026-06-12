@@ -26,3 +26,13 @@ dev: stack
 # Tear the stack down and wipe its volumes.
 reset:
     {{compose}} down -v
+
+# The cross-platform E2E test against the shipping client: it drives a real gameplay session on a
+# display and asserts on rendered pixels. CI runs this per OS; locally it needs a display (Linux uses
+# its own Xvfb). The client/server binaries are passed by path so the test never rebuilds them.
+e2e:
+    cargo build --profile dist --features dist -p client
+    cargo build --release -p server
+    RIFT_E2E_CLIENT="{{justfile_directory()}}/target/dist/rift" \
+    RIFT_E2E_SERVER="{{justfile_directory()}}/target/release/server" \
+        cargo test -p e2e -- --ignored --nocapture
