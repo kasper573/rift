@@ -17,10 +17,7 @@ pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
     if viewport.scale <= 0.0 {
         return None;
     }
-    let target = Vec2::new(
-        (cursor.x - viewport.offset.x) / viewport.scale,
-        (cursor.y - viewport.offset.y) / viewport.scale,
-    );
+    let target = cursor / viewport.scale;
     let (camera, transform) = world
         .query_filtered::<(&Camera, &GlobalTransform), With<WorldCamera>>()
         .single(world)

@@ -183,6 +183,12 @@ impl Area {
         })
     }
 
+    /// Whether the cell's tile cycles through more than one animation frame.
+    pub fn animated(&self, cell: TileRef) -> bool {
+        cell.index()
+            .is_some_and(|index| self.tiles[index].total.0 > 0.0)
+    }
+
     /// The largest fraction of the tile cell at `c` covered by any obscuring object.
     pub fn obscured_amount(&self, c: CellPos) -> f32 {
         self.obscuring_rects

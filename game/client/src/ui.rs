@@ -36,6 +36,7 @@ impl Plugin for HudPlugin {
                     reconcile_windows,
                     sync_character,
                     sync_inventory,
+                    sync_death_banner,
                 )
                     .run_if(in_state(Screen::Playing)),
             );
@@ -132,6 +133,14 @@ struct DragHandle(Entity);
 #[derive(Component)]
 struct ResizeHandle(Entity);
 
+/// Marks a widget the pointer is mid-drag on, so its closing click doesn't also open its window.
+#[derive(Component)]
+struct Dragged;
+
+/// The centered overlay shown while the local player is dead.
+#[derive(Component)]
+struct DeathBanner;
+
 /// An icon that toggles its [`Pane`]; the icon hides while the window is open.
 #[derive(Component)]
 struct Widget {
@@ -179,6 +188,27 @@ fn spawn_widgets(mut commands: Commands, settings: Res<Settings>, assets: Res<As
             Text::new(String::new()),
             TextColor(Color::WHITE),
             Pickable::IGNORE
+        )],
+    ));
+    commands.spawn((
+        Hud,
+        DeathBanner,
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        GlobalZIndex(50),
+        Visibility::Hidden,
+        Pickable::IGNORE,
+        children![(
+            Text::new("You died! Press any key to respawn"),
+            TextFont::from_font_size(32.0),
+            TextColor(Color::WHITE),
+            Pickable::IGNORE,
         )],
     ));
 }
@@ -243,7 +273,17 @@ fn icon_widget(
         .observe(open_window);
 }
 
-fn open_window(click: On<Pointer<Click>>, widgets: Query<&Widget>, mut open: ResMut<Open>) {
+// A drag that releases over its widget still emits a `Click`; the `Dragged` mark (set while
+// dragging, cleared on drag end) tells the two gestures apart so only a true click opens a window.
+fn open_window(
+    click: On<Pointer<Click>>,
+    widgets: Query<&Widget>,
+    dragged: Query<&Dragged>,
+    mut open: ResMut<Open>,
+) {
+    if dragged.get(click.entity).is_ok() {
+        return;
+    }
     if let Ok(widget) = widgets.get(click.entity) {
         open.0.insert(widget.pane);
     }
@@ -369,62 +409,71 @@ fn close_window(pane: Pane) -> impl Fn(On<Pointer<Click>>, ResMut<Open>) {
     }
 }
 
-/// Accumulates a drag into the dragged panel's position (or a window's size for a resize handle),
-/// snapped to the grid.
+/// Accumulates a drag into the dragged panel's position, or a window's size for a resize handle.
+/// Pointer events bubble up the hierarchy, so the first matching node consumes the event — without
+/// that the delta lands once per ancestor and the panel races ahead of the cursor; a window moves
+/// only by its header handle, never by its body.
 fn on_drag(
-    drag: On<Pointer<Drag>>,
+    mut drag: On<Pointer<Drag>>,
     handles: Query<&DragHandle>,
     resizes: Query<&ResizeHandle>,
-    children: Query<&ChildOf>,
-    settings: Res<Settings>,
     mut nodes: Query<(&mut Node, &Movable)>,
+    mut commands: Commands,
 ) {
+    let entity = drag.entity;
     let delta = Offset::<ScreenPx>::new(drag.delta.x, drag.delta.y);
-    for entity in ancestry(drag.entity, &children) {
-        if let Ok(handle) = handles.get(entity)
-            && let Ok((mut node, _)) = nodes.get_mut(handle.0)
-        {
-            move_node(&mut node, delta, &settings.0);
-            return;
+    if let Ok(handle) = handles.get(entity) {
+        if let Ok((mut node, _)) = nodes.get_mut(handle.0) {
+            move_node(&mut node, delta);
         }
-        if let Ok(resize) = resizes.get(entity)
-            && let Ok((mut node, _)) = nodes.get_mut(resize.0)
-        {
-            resize_node(&mut node, delta, &settings.0);
-            return;
+        drag.propagate(false);
+    } else if let Ok(resize) = resizes.get(entity) {
+        if let Ok((mut node, _)) = nodes.get_mut(resize.0) {
+            resize_node(&mut node, delta);
         }
-        if let Ok((mut node, _)) = nodes.get_mut(entity) {
-            move_node(&mut node, delta, &settings.0);
-            return;
-        }
+        drag.propagate(false);
+    } else if let Ok((mut node, movable)) = nodes.get_mut(entity)
+        && !movable.resizable
+    {
+        move_node(&mut node, delta);
+        commands.entity(entity).insert(Dragged);
+        drag.propagate(false);
     }
 }
 
-/// Persists the dragged panel's geometry when the drag ends.
+/// Snaps and persists the dragged panel's geometry when the drag ends, and clears its drag mark.
 fn on_drag_end(
-    drag: On<Pointer<DragEnd>>,
+    mut drag: On<Pointer<DragEnd>>,
     handles: Query<&DragHandle>,
     resizes: Query<&ResizeHandle>,
-    children: Query<&ChildOf>,
-    nodes: Query<(&Node, &Movable)>,
+    mut nodes: Query<(&mut Node, &Movable)>,
     mut settings: ResMut<Settings>,
+    mut commands: Commands,
 ) {
-    for entity in ancestry(drag.entity, &children) {
-        let target = handles
-            .get(entity)
-            .map(|h| h.0)
-            .or_else(|_| resizes.get(entity).map(|r| r.0))
-            .unwrap_or(entity);
-        if let Ok((node, movable)) = nodes.get(target) {
-            let pos = (px(node.left), px(node.top));
-            let size = movable.resizable.then(|| (px(node.width), px(node.height)));
-            settings
-                .0
-                .set_placement(movable.panel.key(), Placement { pos, size });
-            settings.0.save();
-            return;
-        }
+    let entity = drag.entity;
+    let target = if let Ok(handle) = handles.get(entity) {
+        handle.0
+    } else if let Ok(resize) = resizes.get(entity) {
+        resize.0
+    } else if nodes
+        .get(entity)
+        .is_ok_and(|(_, movable)| !movable.resizable)
+    {
+        entity
+    } else {
+        return;
+    };
+    commands.entity(target).remove::<Dragged>();
+    if let Ok((mut node, movable)) = nodes.get_mut(target) {
+        snap_node(&mut node, movable.resizable, &settings.0);
+        let pos = (px(node.left), px(node.top));
+        let size = movable.resizable.then(|| (px(node.width), px(node.height)));
+        settings
+            .0
+            .set_placement(movable.panel.key(), Placement { pos, size });
+        settings.0.save();
     }
+    drag.propagate(false);
 }
 
 fn toggle_keys(keys: Res<ButtonInput<KeyCode>>, mut open: ResMut<Open>) {
@@ -438,6 +487,18 @@ fn toggle_keys(keys: Res<ButtonInput<KeyCode>>, mut open: ResMut<Open>) {
 fn toggle(open: &mut Open, pane: Pane) {
     if !open.0.remove(&pane) {
         open.0.insert(pane);
+    }
+}
+
+fn sync_death_banner(world: &mut World) {
+    let dead = session::is_dead(world);
+    let mut banners = world.query_filtered::<&mut Visibility, With<DeathBanner>>();
+    for mut visibility in banners.iter_mut(world) {
+        *visibility = if dead {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
     }
 }
 
@@ -523,33 +584,25 @@ fn toggle_snapping(_: On<Pointer<Click>>, mut commands: Commands) {
     });
 }
 
-fn move_node(node: &mut Node, delta: Offset<ScreenPx>, settings: &UserSettings) {
-    node.left = Val::Px(settings.snap(px(node.left) + delta.x).0);
-    node.top = Val::Px(settings.snap(px(node.top) + delta.y).0);
+// Drag accumulates raw deltas so a slow drag isn't lost to grid rounding; snapping waits for
+// release, where [`snap_node`] settles the panel onto the grid.
+fn move_node(node: &mut Node, delta: Offset<ScreenPx>) {
+    node.left = Val::Px((px(node.left) + delta.x).0);
+    node.top = Val::Px((px(node.top) + delta.y).0);
 }
 
-fn resize_node(node: &mut Node, delta: Offset<ScreenPx>, settings: &UserSettings) {
-    let width = settings
-        .snap(px(node.width) + delta.x)
-        .0
-        .max(MIN_WINDOW.width);
-    let height = settings
-        .snap(px(node.height) + delta.y)
-        .0
-        .max(MIN_WINDOW.height);
-    node.width = Val::Px(width);
-    node.height = Val::Px(height);
+fn resize_node(node: &mut Node, delta: Offset<ScreenPx>) {
+    node.width = Val::Px((px(node.width) + delta.x).0.max(MIN_WINDOW.width));
+    node.height = Val::Px((px(node.height) + delta.y).0.max(MIN_WINDOW.height));
 }
 
-/// `entity` then each of its ancestors, nearest first.
-fn ancestry(entity: Entity, children: &Query<&ChildOf>) -> Vec<Entity> {
-    let mut chain = vec![entity];
-    let mut current = entity;
-    while let Ok(parent) = children.get(current) {
-        current = parent.parent();
-        chain.push(current);
+fn snap_node(node: &mut Node, resizable: bool, settings: &UserSettings) {
+    node.left = Val::Px(settings.snap(px(node.left)).0);
+    node.top = Val::Px(settings.snap(px(node.top)).0);
+    if resizable {
+        node.width = Val::Px(settings.snap(px(node.width)).0.max(MIN_WINDOW.width));
+        node.height = Val::Px(settings.snap(px(node.height)).0.max(MIN_WINDOW.height));
     }
-    chain
 }
 
 fn placed(settings: &Settings, panel: Panel, default: Pos<ScreenPx>) -> Pos<ScreenPx> {
