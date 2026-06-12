@@ -28,6 +28,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: lint
+          # Only main writes caches; every branch restores them. This keeps the repo to a single
+          # cache set instead of one per branch, well under GitHub's 10 GB ceiling.
+          save-if: ${{ github.ref_name == 'main' }}
       - name: Install system dependencies
         # Clippy compiles the client, which links ALSA through kira.
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
@@ -72,6 +75,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: build-and-test-${{ matrix.os }}
+          # Only main writes caches; every branch restores them (see the lint job).
+          # TEMP: cp-e2e also writes while the warm-cache timing is being verified off main.
+          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'cp-e2e' }}
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         # The client links ALSA (kira) and renders through a software Vulkan driver (lavapipe) onto a
@@ -175,6 +181,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: deploy
+          save-if: ${{ github.ref_name == 'main' }}
       - name: Build the website
         run: cargo build --release -p website
       - uses: actions/download-artifact@v7
