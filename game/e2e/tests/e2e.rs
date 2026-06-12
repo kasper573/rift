@@ -2,12 +2,13 @@
 //! server on a real display, receives genuine OS mouse/keyboard input, and every assertion reads the
 //! pixels a player would see — never the game's internals.
 //!
+//! One path serves every OS. `enigo` injects input and `xcap` finds the client window by title and
+//! captures it; the display underneath (a headless Xvfb plus a window manager on a Linux runner, the
+//! desktop everywhere else) is set up by the pipeline, so nothing here is OS-specific.
+//!
 //! The client and server are located by `RIFT_E2E_CLIENT` / `RIFT_E2E_SERVER` (CI points them at the
 //! release builds), so this crate never compiles them. It is `#[ignore]`d: it needs a display and is
-//! slow, so it runs only in CI (`cargo test -p e2e -- --ignored`), never in the default `cargo test`.
-//!
-//! The display layer differs by OS — Xvfb + x11rb on Linux, the runner's desktop + xcap elsewhere —
-//! but the gameplay assertions are identical everywhere.
+//! slow, so it runs only in CI (`cargo test -p e2e -- --ignored`) and via `just e2e`.
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -16,10 +17,13 @@ use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use enigo::{Direction, Enigo, Key, Keyboard};
+use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
+use xcap::Window;
 
 const ARTIFACTS: &str = env!("CARGO_TARGET_TMPDIR");
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
+// The title the client sets on its window; xcap finds it by this.
+const WINDOW_TITLE: &str = "rift mmo";
 
 /// The world is on screen once the view's center shows real scenery: tens of distinct colors even in
 /// pixel art's tight palette, against the single flat clear color drawn there before (the HUD sits in
@@ -32,12 +36,15 @@ const WALKED: f64 = 0.2;
 #[test]
 #[ignore = "e2e: needs a display and is slow; CI-only, run with `cargo test -p e2e -- --ignored`"]
 fn a_player_joins_and_visibly_walks() {
-    let display = Display::start();
     let server = GameServer::start();
-    let _client = display.spawn_client(&server.url);
-    let mut enigo = Enigo::new(&display.input_settings()).expect("start OS input");
+    let _client = spawn_client(&server.url);
+    let mut enigo = Enigo::new(&Settings {
+        open_prompt_to_get_permissions: false,
+        ..Settings::default()
+    })
+    .expect("start OS input");
 
-    let window = display.wait_for_window(Duration::from_secs(120));
+    let window = wait_for_window(Duration::from_secs(120));
     let before = wait_for_scene(&window, Duration::from_secs(120));
     save(&before, "before");
 
@@ -70,7 +77,74 @@ fn a_player_joins_and_visibly_walks() {
     );
 }
 
-fn wait_for_scene(window: &Window, timeout: Duration) -> Image {
+/// The client window once it is on screen and full size; panics if it never appears.
+fn wait_for_window(timeout: Duration) -> Client {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(window) = find_window()
+            && window.width().unwrap_or(0) >= 1024
+        {
+            return Client {
+                id: window.id().expect("window id"),
+            };
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the client never opened its window (see {}/client.err)",
+            artifacts().display()
+        );
+        sleep(Duration::from_millis(250));
+    }
+}
+
+fn find_window() -> Option<Window> {
+    Window::all().ok()?.into_iter().find(|window| {
+        window
+            .title()
+            .map(|title| title.to_lowercase().contains(WINDOW_TITLE))
+            .unwrap_or(false)
+    })
+}
+
+/// A handle to the client window. xcap hands out window snapshots, so each call re-resolves the live
+/// window by id.
+struct Client {
+    id: u32,
+}
+
+impl Client {
+    fn window(&self) -> Window {
+        Window::all()
+            .expect("list windows")
+            .into_iter()
+            .find(|window| window.id().ok() == Some(self.id))
+            .expect("the client window is gone")
+    }
+
+    fn capture(&self) -> Image {
+        let image = self.window().capture_image().expect("capture window");
+        let (width, height) = (image.width() as u16, image.height() as u16);
+        let rgb = image
+            .into_vec()
+            .chunks_exact(4)
+            .flat_map(|rgba| [rgba[0], rgba[1], rgba[2]])
+            .collect();
+        Image { width, height, rgb }
+    }
+
+    /// Clicks at a window-relative point by moving the system pointer to its absolute screen position.
+    fn click(&self, enigo: &mut Enigo, x: i32, y: i32) {
+        let window = self.window();
+        let (origin_x, origin_y) = (window.x().expect("x"), window.y().expect("y"));
+        enigo
+            .move_mouse(origin_x + x, origin_y + y, Coordinate::Abs)
+            .expect("move pointer");
+        sleep(Duration::from_millis(100));
+        enigo.button(Button::Left, Direction::Click).expect("click");
+    }
+}
+
+fn wait_for_scene(window: &Client, timeout: Duration) -> Image {
     let deadline = Instant::now() + timeout;
     loop {
         let image = window.capture();
@@ -94,6 +168,19 @@ fn wait_for_scene(window: &Window, timeout: Duration) -> Image {
 fn tap_space(enigo: &mut Enigo) {
     enigo.key(Key::Space, Direction::Click).expect("tap space");
     sleep(Duration::from_millis(100));
+}
+
+fn spawn_client(game_url: &str) -> Proc {
+    let mut command = Command::new(client_bin());
+    command
+        // Use the test's display, and never let a stray Wayland socket pull the window elsewhere.
+        .env_remove("RIFT_CLIENT_ISSUER")
+        .env_remove("WAYLAND_DISPLAY")
+        .env("RIFT_CLIENT_AUTH_BYPASS", "tester")
+        .env("RIFT_CLIENT_GAME_URL", game_url)
+        .env("RIFT_ASSETS", ASSETS)
+        .env("XDG_CONFIG_HOME", artifacts().join("config"));
+    Proc::start(command, "client")
 }
 
 struct GameServer {
@@ -139,8 +226,9 @@ fn server_bin() -> PathBuf {
 }
 
 fn bin(var: &str) -> PathBuf {
-    let path = std::env::var_os(var)
-        .unwrap_or_else(|| panic!("set {var} to the binary to test (CI builds it; see Justfile)"));
+    let path = std::env::var_os(var).unwrap_or_else(|| {
+        panic!("set {var} to the binary to test (CI builds it; see `just e2e`)")
+    });
     PathBuf::from(path)
 }
 
@@ -227,266 +315,4 @@ fn artifacts() -> PathBuf {
     let dir = PathBuf::from(ARTIFACTS);
     std::fs::create_dir_all(&dir).expect("artifacts dir");
     dir
-}
-
-// The window title the client sets; the handle xcap finds it by where a window manager runs.
-#[cfg(not(target_os = "linux"))]
-const WINDOW_TITLE: &str = "rift mmo";
-
-#[cfg(target_os = "linux")]
-mod platform {
-    //! Linux CI is headless: the test brings up its own Xvfb display, reads pixels off it with
-    //! x11rb's `GetImage`, and walks the root window tree to find the client (no compositor sets the
-    //! EWMH client list xcap would need).
-
-    use super::{Command, Duration, Image, Instant, Proc, artifacts, sleep};
-    use std::path::Path;
-
-    use enigo::{Button, Coordinate, Direction, Enigo, Mouse, Settings};
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::{
-        ConnectionExt, ImageFormat, InputFocus, MapState, Window as XWindow,
-    };
-    use x11rb::rust_connection::RustConnection;
-
-    pub struct Display {
-        name: String,
-        _proc: Proc,
-    }
-
-    impl Display {
-        pub fn start() -> Display {
-            let mut number = 100 + std::process::id() % 9000;
-            while Path::new(&format!("/tmp/.X11-unix/X{number}")).exists() {
-                number += 1;
-            }
-            let name = format!(":{number}");
-            let mut command = Command::new("Xvfb");
-            command.args([&name, "-screen", "0", "1280x960x24"]);
-            let proc = Proc::start(command, "xvfb");
-
-            let socket = format!("/tmp/.X11-unix/X{number}");
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while !Path::new(&socket).exists() {
-                assert!(
-                    Instant::now() < deadline,
-                    "Xvfb never came up on {name} — is Xvfb installed?"
-                );
-                sleep(Duration::from_millis(100));
-            }
-            Display { name, _proc: proc }
-        }
-
-        pub fn input_settings(&self) -> Settings {
-            Settings {
-                x11_display: Some(self.name.clone()),
-                open_prompt_to_get_permissions: false,
-                ..Settings::default()
-            }
-        }
-
-        pub fn spawn_client(&self, game_url: &str) -> Proc {
-            let mut command = Command::new(super::client_bin());
-            command
-                .env("DISPLAY", &self.name)
-                // Wayland would win over the private X display and open on the developer's screen.
-                .env_remove("WAYLAND_DISPLAY");
-            super::client_env(&mut command, game_url);
-            Proc::start(command, "client")
-        }
-
-        pub fn wait_for_window(&self, timeout: Duration) -> Window {
-            let (conn, screen) = x11rb::connect(Some(&self.name)).expect("connect to Xvfb");
-            let root = conn.setup().roots[screen].root;
-            let deadline = Instant::now() + timeout;
-            loop {
-                let children = conn
-                    .query_tree(root)
-                    .expect("query tree")
-                    .reply()
-                    .expect("tree reply")
-                    .children;
-                for window in children {
-                    let viewable = conn
-                        .get_window_attributes(window)
-                        .expect("window attributes")
-                        .reply()
-                        .is_ok_and(|reply| reply.map_state == MapState::VIEWABLE);
-                    if viewable && geometry(&conn, window).0 >= 1024 {
-                        // Nothing focuses windows on a bare Xvfb, and key events go to the focus
-                        // owner; without this, keyboard input would silently vanish.
-                        conn.set_input_focus(InputFocus::POINTER_ROOT, window, x11rb::CURRENT_TIME)
-                            .expect("set focus")
-                            .check()
-                            .expect("focus reply");
-                        return Window {
-                            conn,
-                            root,
-                            id: window,
-                        };
-                    }
-                }
-                assert!(
-                    Instant::now() < deadline,
-                    "the client never opened its window (see {}/client.err)",
-                    artifacts().display()
-                );
-                sleep(Duration::from_millis(250));
-            }
-        }
-    }
-
-    pub struct Window {
-        conn: RustConnection,
-        root: XWindow,
-        id: XWindow,
-    }
-
-    impl Window {
-        pub fn click(&self, enigo: &mut Enigo, x: i32, y: i32) {
-            let at = self
-                .conn
-                .translate_coordinates(self.id, self.root, x as i16, y as i16)
-                .expect("translate coordinates")
-                .reply()
-                .expect("translate reply");
-            enigo
-                .move_mouse(at.dst_x.into(), at.dst_y.into(), Coordinate::Abs)
-                .expect("move pointer");
-            sleep(Duration::from_millis(100));
-            enigo.button(Button::Left, Direction::Click).expect("click");
-        }
-
-        pub fn capture(&self) -> Image {
-            let (width, height) = geometry(&self.conn, self.id);
-            let reply = self
-                .conn
-                .get_image(ImageFormat::Z_PIXMAP, self.id, 0, 0, width, height, !0)
-                .expect("get image")
-                .reply()
-                .expect("image reply");
-            let rgb = reply
-                .data
-                .chunks_exact(4)
-                .flat_map(|bgrx| [bgrx[2], bgrx[1], bgrx[0]])
-                .collect();
-            Image { width, height, rgb }
-        }
-    }
-
-    fn geometry(conn: &RustConnection, window: XWindow) -> (u16, u16) {
-        let reply = conn
-            .get_geometry(window)
-            .expect("get geometry")
-            .reply()
-            .expect("geometry reply");
-        (reply.width, reply.height)
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-mod platform {
-    //! Windows and macOS runners have a real desktop: the client opens a normal window there, xcap
-    //! finds it by title and captures it, and enigo drives the system pointer and keyboard.
-
-    use super::{Command, Duration, Image, Instant, Proc, WINDOW_TITLE, sleep};
-
-    use enigo::{Button, Coordinate, Direction, Enigo, Mouse, Settings};
-    use xcap::Window as XcapWindow;
-
-    pub struct Display;
-
-    impl Display {
-        pub fn start() -> Display {
-            Display
-        }
-
-        pub fn input_settings(&self) -> Settings {
-            Settings {
-                open_prompt_to_get_permissions: false,
-                ..Settings::default()
-            }
-        }
-
-        pub fn spawn_client(&self, game_url: &str) -> Proc {
-            let mut command = Command::new(super::client_bin());
-            super::client_env(&mut command, game_url);
-            Proc::start(command, "client")
-        }
-
-        pub fn wait_for_window(&self, timeout: Duration) -> Window {
-            let deadline = Instant::now() + timeout;
-            loop {
-                if let Some(window) = find() {
-                    if window.width().expect("width") >= 1024 {
-                        return Window {
-                            id: window.id().expect("window id"),
-                        };
-                    }
-                }
-                assert!(
-                    Instant::now() < deadline,
-                    "the client never opened its window (see client.err)"
-                );
-                sleep(Duration::from_millis(250));
-            }
-        }
-    }
-
-    pub struct Window {
-        id: u32,
-    }
-
-    impl Window {
-        fn current(&self) -> XcapWindow {
-            XcapWindow::all()
-                .expect("list windows")
-                .into_iter()
-                .find(|window| window.id().ok() == Some(self.id))
-                .expect("the client window is gone")
-        }
-
-        pub fn click(&self, enigo: &mut Enigo, x: i32, y: i32) {
-            let window = self.current();
-            let (ox, oy) = (window.x().expect("x"), window.y().expect("y"));
-            enigo
-                .move_mouse(ox + x, oy + y, Coordinate::Abs)
-                .expect("move pointer");
-            sleep(Duration::from_millis(100));
-            enigo.button(Button::Left, Direction::Click).expect("click");
-        }
-
-        pub fn capture(&self) -> Image {
-            let image = self.current().capture_image().expect("capture window");
-            let (width, height) = (image.width() as u16, image.height() as u16);
-            let rgb = image
-                .into_vec()
-                .chunks_exact(4)
-                .flat_map(|rgba| [rgba[0], rgba[1], rgba[2]])
-                .collect();
-            Image { width, height, rgb }
-        }
-    }
-
-    fn find() -> Option<XcapWindow> {
-        XcapWindow::all().ok()?.into_iter().find(|window| {
-            window
-                .title()
-                .map(|title| title.to_lowercase().contains(WINDOW_TITLE))
-                .unwrap_or(false)
-        })
-    }
-}
-
-use platform::{Display, Window};
-
-/// The client env every platform shares: bypass SSO, point at the test server, and keep its config
-/// out of the developer's real settings.
-fn client_env(command: &mut Command, game_url: &str) {
-    command
-        .env_remove("RIFT_CLIENT_ISSUER")
-        .env("RIFT_CLIENT_AUTH_BYPASS", "tester")
-        .env("RIFT_CLIENT_GAME_URL", game_url)
-        .env("RIFT_ASSETS", ASSETS)
-        .env("XDG_CONFIG_HOME", artifacts().join("config"));
 }

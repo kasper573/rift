@@ -68,13 +68,13 @@ async fn main() {
         .await
         .unwrap_or_else(|error| panic!("could not bind 0.0.0.0:{port}: {error}"));
     println!("website listening on 0.0.0.0:{port}");
+    // Drain in-flight requests on a stop request (docker stop, deploys). ctrlc handles the platform
+    // signals; a Notify bridges its callback into the async shutdown axum awaits.
+    let stop = std::sync::Arc::new(tokio::sync::Notify::new());
+    let signal = stop.clone();
+    ctrlc::set_handler(move || signal.notify_one()).expect("install stop handler");
     axum::serve(listener, router)
-        .with_graceful_shutdown(async {
-            let mut sigterm =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("sigterm handler installs");
-            sigterm.recv().await;
-        })
+        .with_graceful_shutdown(async move { stop.notified().await })
         .await
         .expect("serve");
 }

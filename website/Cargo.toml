@@ -8,6 +8,7 @@ askama.workspace = true
 axum.workspace = true
 axum-extra = { version = "0.10", features = ["cookie"] }
 axum-prometheus = "0.10"
+ctrlc.workspace = true
 envy.workspace = true
 metrics-process.workspace = true
 openidconnect = "4"

@@ -220,16 +220,9 @@ async fn serve_http(addr: SocketAddr, http: Http) {
         .await
         .unwrap_or_else(|error| panic!("cannot bind {addr}: {error}"));
     println!("http listening on {addr}");
-    // Sessions are transient and nothing persists, so SIGTERM (docker stop, deploys) exits
-    // immediately instead of draining live connections. The server only ships on Linux; the
-    // Windows build exists solely for the e2e test, which kills the process itself.
-    #[cfg(unix)]
-    tokio::spawn(async {
-        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("sigterm handler installs");
-        sigterm.recv().await;
-        std::process::exit(0);
-    });
+    // Sessions are transient and nothing persists, so a stop request (docker stop, deploys, a
+    // console close) exits immediately instead of draining live connections.
+    ctrlc::set_handler(|| std::process::exit(0)).expect("install stop handler");
     axum::serve(listener, router).await.expect("axum serves");
 }
 

@@ -2978,7 +2978,6 @@ dependencies = [
  "enigo",
  "png",
  "ureq 3.3.0",
- "x11rb",
  "xcap",
 ]
 
@@ -7057,6 +7056,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_replicon",
  "bevy_replicon_renet",
+ "ctrlc",
  "envy",
  "jsonwebtoken",
  "metrics",
@@ -7665,7 +7665,6 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
- "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",
@@ -8476,6 +8475,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "axum-prometheus",
+ "ctrlc",
  "envy",
  "metrics-process",
  "openidconnect",

@@ -45,9 +45,12 @@ jobs:
           sudo apt-get install -y libasound2-dev
 
       - name: Conventions
+        # `e2e` is excluded from the workspace `default-members` (it needs the heavy capture stack),
+        # so plain `cargo clippy` lints the shipping crates; the e2e job lints it where that stack is
+        # installed. `cargo fmt` still spans every member.
         run: |
           cargo fmt --check
-          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --all-targets -- -D warnings
 
       - name: Build release artifacts
         run: cargo build --release -p website -p server
@@ -95,15 +98,34 @@ jobs:
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        # Build the client (ALSA via kira) and run it on a private Xvfb display: the X11 libs winit
-        # dlopens, plus a software Vulkan driver (lavapipe) to render without a GPU.
+        # The client links ALSA (kira) and renders through a software Vulkan driver (lavapipe) onto a
+        # headless Xvfb that openbox manages (xcap enumerates windows via EWMH, which needs a WM).
+        # xcap compiles its whole Linux capture surface unconditionally — pipewire and the wayland
+        # path (egl/gbm) it bundles alongside the X11 (xcb) capture we actually use — so their build
+        # and link deps are all present even though only the X11 path runs here.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libasound2-dev \
             libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon0 libxkbcommon-x11-0 \
             libvulkan1 mesa-vulkan-drivers \
-            xvfb
+            xvfb openbox \
+            libclang-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
+            libxcb1-dev libxcb-randr0-dev libxcb-render0-dev
+
+      - name: Lint the e2e crate
+        if: runner.os == 'Linux'
+        run: cargo clippy -p e2e --all-targets -- -D warnings
+
+      - name: Start a virtual display
+        if: runner.os == 'Linux'
+        # The test drives genuine OS input and captures the real screen, so it needs an X display the
+        # pipeline owns; macOS and Windows runners provide an interactive desktop already.
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 -ac >/tmp/xvfb.log 2>&1 &
+          for _ in $(seq 1 50); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.2; done
+          DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
 
       - name: Build the shipping client and the server
         shell: bash
