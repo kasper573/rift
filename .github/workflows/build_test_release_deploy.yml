@@ -56,11 +56,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
-      - name: Cache the Rust toolchain
-        uses: actions/cache@v4
-        with:
-          path: ~/.rustup
-          key: rustup-${{ matrix.os }}-${{ hashFiles('rust-toolchain.toml') }}
       - name: Install the pinned toolchain
         run: rustup show
       - name: Exclude the build from Windows Defender
@@ -71,16 +66,15 @@ jobs:
       - name: Speed up the Windows release codegen
         if: runner.os == 'Windows'
         shell: bash
-        # Windows spends most of the build on the client's final codegen; more units parallelise it.
-        # Only the Windows release artifact trades a little optimisation for build time. rust-cache
-        # folds this CARGO_* var into its key, so Windows pays one cold build to adopt it.
+        # Windows is the slowest compiler; finer codegen units cut its build by ~20s for a small
+        # optimisation cost on the Windows artifact only. rust-cache folds this CARGO_* var into its
+        # key, so Windows pays one cold build to adopt it.
         run: echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           key: build-and-test-${{ matrix.os }}
           # Only main writes caches; every branch restores them (see the lint job).
-          # TEMP: cp-e2e also writes while the warm-cache timing is being verified off main.
-          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'cp-e2e' }}
+          save-if: ${{ github.ref_name == 'main' }}
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         # The client links ALSA (kira) and renders through a software Vulkan driver (lavapipe) onto a
@@ -143,8 +137,7 @@ jobs:
   # Branch builds stop at build_and_test; main publishes and deploys what it just tested.
   release:
     needs: build_and_test
-    # TEMP: while perfecting the flow it runs on every branch. Restore `if: github.ref_name ==
-    # 'main'` when done.
+    if: github.ref_name == 'main'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -158,10 +151,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # The version is `0.<run number>`: simple and monotonic, and the `0.` major keeps these
         # automated releases out of the semver space a real version would later claim.
-        # TEMP: `temp-` prefix keeps in-progress release runs out of the version space. Restore the
-        # plain `0.<run number>` when the release flow is perfected.
         run: |
-          version="temp-0.${{ github.run_number }}"
+          version="0.${{ github.run_number }}"
           gh release create "$version" dist/client-*/rift-* \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
