@@ -9,7 +9,6 @@
   <body>
     <nav>
       <a href="/"{% if nav.path == "/" %} data-status="active"{% endif %}>Home</a>
-      <a href="/download"{% if nav.path == "/download" %} data-status="active"{% endif %}>Download</a>
       <div class="right">
         {% if let Some(user) = nav.user %}
           <a class="user-name" href="{{ nav.account_url }}">{{ user }}</a>

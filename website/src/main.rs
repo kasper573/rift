@@ -18,22 +18,22 @@ struct Config {
     #[serde(default = "default_port")]
     port: u16,
     redirect_uri: RedirectUrl,
-    /// The base URL the download page links into (a GitHub Releases `latest/download` folder).
-    #[serde(default = "default_releases")]
-    releases: String,
+    /// The GitHub `owner/name` whose releases the landing page's download link points at.
+    #[serde(default = "default_repo")]
+    repo: String,
 }
 
 fn default_port() -> u16 {
     80
 }
 
-fn default_releases() -> String {
-    "https://github.com/kasper573/rift/releases/latest/download".to_owned()
+fn default_repo() -> String {
+    "kasper573/rift".to_owned()
 }
 
 pub struct App {
     pub auth: auth::Auth,
-    releases: String,
+    releases_url: String,
 }
 
 #[tokio::main]
@@ -46,11 +46,10 @@ async fn main() {
     let port = config.port;
     let app = Arc::new(App {
         auth: auth::Auth::from_env(config.redirect_uri).await,
-        releases: config.releases,
+        releases_url: format!("https://github.com/{}/releases/latest", config.repo),
     });
     let router = axum::Router::new()
         .route("/", get(landing))
-        .route("/download", get(download))
         .route("/auth/sign-in", get(auth::sign_in))
         .route("/auth/sign-out", get(auth::sign_out))
         .route("/auth-callback", get(auth::callback))
@@ -100,25 +99,13 @@ struct Nav {
 #[template(path = "landing.html")]
 struct Landing {
     nav: Nav,
-}
-
-#[derive(Template)]
-#[template(path = "download.html")]
-struct Download {
-    nav: Nav,
-    releases: String,
+    releases_url: String,
 }
 
 async fn landing(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
     page(Landing {
         nav: app.nav(&jar, "/").await,
-    })
-}
-
-async fn download(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
-    page(Download {
-        nav: app.nav(&jar, "/download").await,
-        releases: app.releases.clone(),
+        releases_url: app.releases_url.clone(),
     })
 }
 
