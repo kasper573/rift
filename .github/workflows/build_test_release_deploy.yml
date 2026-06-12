@@ -36,11 +36,16 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
 
-  # Build the shipping client (+ the server it runs against, + the linux website for the images) and
-  # drive it through a real gameplay session, once per OS. Building and testing in one job means the
-  # uploaded binary is the exact one the e2e just drove — so release and deploy ship tested bytes.
+  # The cross-platform job: only the client ships to multiple OSes, so only it (and the server the
+  # e2e drives) is built per OS. Each OS builds the client, drives it through a real gameplay session
+  # against a freshly built server, then uploads the tested binary — so release and deploy ship
+  # exactly what ran here. sccache caches every crate's compilation, so on a warm run the unchanged
+  # workspace crates are hits and only edited code recompiles.
   build_and_test:
     needs: lint
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     strategy:
       fail-fast: false
       matrix:
@@ -57,15 +62,16 @@ jobs:
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
       - name: Install the pinned toolchain
         run: rustup show
+      - uses: mozilla-actions/sccache-action@v0.0.6
       - uses: Swatinem/rust-cache@v2
         with:
           key: build-and-test-${{ matrix.os }}
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        # Build deps (the client and website link ALSA through kira) plus everything the e2e needs:
-        # a headless Xvfb that openbox manages (xcap enumerates windows via EWMH, which needs a WM),
-        # a software Vulkan driver (lavapipe), and xcap's whole linux capture surface — pipewire and
-        # the wayland path (egl/gbm) alongside the X11 (xcb) path we use.
+        # The client links ALSA (kira) and renders through a software Vulkan driver (lavapipe) onto a
+        # headless Xvfb that openbox manages (xcap enumerates windows via EWMH, which needs a WM).
+        # xcap compiles its whole linux capture surface — pipewire and the wayland path (egl/gbm)
+        # alongside the X11 (xcb) path we use.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -77,15 +83,11 @@ jobs:
             libxcb1-dev libxcb-randr0-dev libxcb-render0-dev
       - name: Build the client and the server
         shell: bash
-        # One `release` profile for both so Bevy and the shared crates compile once; `--features
-        # dist` embeds the assets into the client.
+        # The client is the released artifact; the server is the backend the e2e drives. Both use the
+        # release profile so they share one dependency compilation.
         run: |
           cargo build --release --features dist -p client
           cargo build --release -p server
-      - name: Build the website
-        if: runner.os == 'Linux'
-        # Only the linux build feeds the docker images that deploy.
-        run: cargo build --release -p website
       - name: Start a virtual display
         if: runner.os == 'Linux'
         run: |
@@ -106,31 +108,35 @@ jobs:
         with:
           name: e2e-artifacts-${{ matrix.os }}
           path: target/tmp/
-      - name: Stage the tested binaries
+      - name: Stage the client
         shell: bash
         run: |
           ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
           mkdir -p out
           cp "target/release/rift$ext" "out/${{ matrix.asset }}"
-          cp "target/release/server$ext" "out/server$ext"
-          [ "${{ runner.os }}" = "Linux" ] && cp target/release/website out/website || true
       - uses: actions/upload-artifact@v7
         with:
-          name: binaries-${{ matrix.os }}
+          name: client-${{ matrix.os }}
           path: out/
+      - name: Upload the server for the deploy images
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: server-linux
+          path: target/release/server
 
   # Branch builds stop at build_and_test; main publishes and deploys what it just tested.
   release:
     needs: build_and_test
-    # TEMP: while perfecting the release flow it runs on every branch. Restore `if: github.ref_name
-    # == 'main'` when done.
+    # TEMP: while perfecting the flow it runs on every branch. Restore `if: github.ref_name ==
+    # 'main'` when done.
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v7
         with:
-          pattern: binaries-*
+          pattern: client-*
           path: dist
       - name: Publish the release
         env:
@@ -141,14 +147,16 @@ jobs:
         # plain `0.<run number>` when the release flow is perfected.
         run: |
           version="temp-0.${{ github.run_number }}"
-          gh release create "$version" dist/binaries-*/rift-* \
+          gh release create "$version" dist/client-*/rift-* \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "$version" \
             --notes "Automated release of ${{ github.sha }}."
 
+  # Only the linux server/website ship as docker images. The server is the very binary the e2e drove;
+  # the website is built here since nothing else needs it.
   deploy:
-    needs: release
+    needs: build_and_test
     if: github.ref_name == 'main'
     runs-on: ubuntu-latest
     permissions:
@@ -156,17 +164,21 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v6
-
+      - name: Install the pinned toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: deploy
+      - name: Build the website
+        run: cargo build --release -p website
       - uses: actions/download-artifact@v7
         with:
-          name: binaries-ubuntu-24.04
-          path: bin
-      - name: Stage the linux binaries the images package
+          name: server-linux
+          path: server-bin
+      - name: Stage the binaries the images package
         run: |
           mkdir -p target/release
-          cp bin/server target/release/server
-          cp bin/website target/release/website
-
+          cp server-bin/server target/release/server
       - name: Build and push the app images
         env:
           COMPOSE: docker compose -f docker/docker-compose.yaml
