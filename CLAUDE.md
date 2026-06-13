@@ -6,7 +6,6 @@
 - Correctness & clarity comes before performance.
 - Tests assert on contracts, never implementation details.
 - No mitigation fixes or hacks. Refactoring is encouraged: Don't hunt symptoms, fix root causes.
-- Content is data in `assets/`: dev and servers read it from disk (hot-reloadable in the dev client); shipped clients embed it.
 - Build once, run everywhere. The same binary (applies to all binaries in the repo) should be able to run in any environment. If assets or environment variables are changed the runtime should work anyway. (Note that runtimes may still panic or have degraded behavior if essential assets are missing)
 - No hardcoded environment defaults: Panic if an env var is missing or invalid. Makes mistakes loud and obvious and forces environments to be well and explicitly configured. Also aids with the "build once, run everywhere" principle.
 
