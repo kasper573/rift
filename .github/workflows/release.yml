@@ -2,14 +2,12 @@ name: release
 
 on:
   push:
-    branches: [refactor]
+    branches: [main]
 
 # Deploys must never be cancelled mid-way; later pushes queue behind the running one.
-# TEMP (refactor playtest): cancel-in-progress so a corrected push supersedes a stale build mid-run.
-# Restore to false before main.
 concurrency:
   group: release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   DOCKER_REGISTRY: ghcr.io
@@ -102,16 +100,16 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # TEMP (refactor branch prod playtest): temp-prefixed and forced --latest so k573.dev's
-        # download link resolves to it. Revert to `0.<run number + 100>` / no --latest for main.
+        # `0.<run number + 100>`: simple and monotonic; the offset keeps new tags clear of the
+        # numbers the previous workflow already released, and the `0.` major keeps these
+        # automated releases out of the semver space a real version would later claim.
         run: |
-          version="temp-0.$(( ${{ github.run_number }} + 100 ))"
+          version="0.$(( ${{ github.run_number }} + 100 ))"
           gh release create "$version" dist/client-*/rift-* \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "$version" \
-            --latest \
-            --notes "Temporary refactor-branch test release of ${{ github.sha }}."
+            --notes "Automated release of ${{ github.sha }}."
 
   deploy:
     needs: build
