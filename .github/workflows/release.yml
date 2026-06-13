@@ -2,7 +2,7 @@ name: release
 
 on:
   push:
-    branches: [main]
+    branches: [refactor]
 
 # Deploys must never be cancelled mid-way; later pushes queue behind the running one.
 concurrency:
@@ -100,16 +100,16 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # `0.<run number + 100>`: simple and monotonic; the offset keeps new tags clear of the
-        # numbers the previous workflow already released, and the `0.` major keeps these
-        # automated releases out of the semver space a real version would later claim.
+        # TEMP (refactor branch prod playtest): temp-prefixed and forced --latest so k573.dev's
+        # download link resolves to it. Revert to `0.<run number + 100>` / no --latest for main.
         run: |
-          version="0.$(( ${{ github.run_number }} + 100 ))"
+          version="temp-0.$(( ${{ github.run_number }} + 100 ))"
           gh release create "$version" dist/client-*/rift-* \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "$version" \
-            --notes "Automated release of ${{ github.sha }}."
+            --latest \
+            --notes "Temporary refactor-branch test release of ${{ github.sha }}."
 
   deploy:
     needs: build
