@@ -125,8 +125,10 @@ jobs:
           name: assets-archive
           path: dist-assets
       - name: Publish the release
+        # GITHUB_TOKEN can't create releases while the repo's default workflow permission is read;
+        # RELEASE_TOKEN (a PAT with contents: write) does the publish.
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         # `0.<run number + 100>`: simple and monotonic; the offset keeps new tags clear of the
         # numbers the previous workflow already released, and the `0.` major keeps these
         # automated releases out of the semver space a real version would later claim.
