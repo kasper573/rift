@@ -46,16 +46,6 @@ cert that TLS clients scanning `/etc/ssl/certs` warn about on every connection.
 remove any previously trusted copy first — a stale root with the same name fails signature
 checks (`BadSignature`) rather than falling through to the fresh one.
 
-## Testing
-
-```sh
-cargo test -p client --test e2e
-```
-
-This plays an honest session: the real client binary against a freshly spawned server on a
-private X display, driven by genuine input and asserted through screenshots. It needs `Xvfb`
-(`apt install xvfb`).
-
 ## Release and deploy
 
 Binaries are built for all supported platforms and published as github releases automatically on push to `main`, and deploys the latest release to the production environment.

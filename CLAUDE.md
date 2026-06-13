@@ -26,7 +26,4 @@
 
 ## Verify before done
 
-- `cargo fmt` · `cargo clippy --all-targets` (no warnings) · `cargo build`
-- The E2E test (`game/e2e`) drives a real gameplay session and asserts on rendered pixels. It is
-  `#[ignore]`d, so the default `cargo test` skips it; CI runs it in a linux/macOS/windows matrix
-  against the very binaries it then releases. Run it locally with `just e2e` (needs a display).
+- `cargo fmt` · `cargo clippy --all-targets` (no warnings) · `cargo build` · `just e2e`

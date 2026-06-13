@@ -2,20 +2,26 @@
 //! server on a real display, receives genuine OS mouse/keyboard input, and every assertion reads the
 //! pixels a player would see — never the game's internals.
 //!
-//! One path serves every OS: `enigo` injects input and `xcap` finds the client window by title and
-//! captures it; the display underneath is the pipeline's to provide, so nothing here is OS-specific.
+//! Auth is the real thing too. The client opens the system browser on the stack's keycloak, the
+//! test registers a fresh account in that browser window through the keyboard, and the session
+//! continues with the token the realm minted — so sign-in, registration, token verification, and
+//! session minting are all exercised. The docker stack must be up and its CA trusted (see the
+//! README); run locally with `just e2e` (drives the desktop you're on).
+//!
+//! One path serves every OS: `enigo` injects input and `xcap` finds windows by title and captures
+//! them; the display and browser underneath are the pipeline's to provide, so nothing here is
+//! OS-specific.
 //!
 //! The client and server are located by `RIFT_E2E_CLIENT` / `RIFT_E2E_SERVER`, so this crate never
-//! compiles them. CI builds the client once per OS and hands the same binary to this test and to the
-//! release, so the test asserts on the exact bytes a player downloads. It is `#[ignore]`d: it needs
-//! a display and is slow, so it runs only in CI (`cargo test -p e2e -- --ignored`) and via `just e2e`.
+//! compiles them. It is `#[ignore]`d: it needs a display, a browser, and the stack, so it runs
+//! only in CI (`cargo test -p e2e -- --ignored`) and via `just e2e`.
 
 use std::collections::HashSet;
 use std::fs::File;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use xcap::Window;
@@ -24,6 +30,9 @@ const ARTIFACTS: &str = env!("CARGO_TARGET_TMPDIR");
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
 // The title the client sets on its window; xcap finds it by this.
 const WINDOW_TITLE: &str = "rift mmo";
+// What the stack's realm pages title the browser window; same on the login and register pages.
+const BROWSER_TITLE: &str = "sign in to rift";
+const ISSUER: &str = "https://auth.rift.localhost/realms/rift";
 
 /// The world is on screen once the view's center shows real scenery: tens of distinct colors even in
 /// pixel art's tight palette, against the single flat clear color drawn there before (the HUD sits in
@@ -34,8 +43,8 @@ const SCENE_COLORS: usize = 16;
 const WALKED: f64 = 0.2;
 
 #[test]
-#[ignore = "e2e: needs a display and is slow; CI-only, run with `cargo test -p e2e -- --ignored`"]
-fn a_player_joins_and_visibly_walks() {
+#[ignore = "e2e: needs a display, a browser and the stack; CI-only, run with `just e2e`"]
+fn a_player_registers_and_visibly_walks() {
     let server = GameServer::start();
     let _client = spawn_client(&server.url);
     let mut enigo = Enigo::new(&Settings {
@@ -44,8 +53,13 @@ fn a_player_joins_and_visibly_walks() {
     })
     .expect("start OS input");
 
-    let window = wait_for_window(Duration::from_secs(120));
-    let before = wait_for_scene(&window, Duration::from_secs(120));
+    let game = wait_for_window(Duration::from_secs(120));
+    register_in_browser(&mut enigo);
+
+    // Raise the game window now that the browser is gone (X captures read the framebuffer, so an
+    // occluded window would capture whatever covered it).
+    game.click(&mut enigo, 20, 20);
+    let before = wait_for_scene(&game, Duration::from_secs(120));
     save(&before, "before");
 
     // Click mid-view in each direction until one walks the player (and scrolls the camera with it);
@@ -55,9 +69,9 @@ fn a_player_joins_and_visibly_walks() {
     let mut moved = 0.0;
     for (dx, dy) in [(200, 0), (0, 150), (-200, 0), (0, -150)] {
         tap_space(&mut enigo);
-        window.click(&mut enigo, width / 2 + dx, height / 2 + dy);
+        game.click(&mut enigo, width / 2 + dx, height / 2 + dy);
         sleep(Duration::from_secs(2));
-        let after = window.capture();
+        let after = game.capture();
         moved = diff_fraction(&before, &after);
         save(&after, "after");
         println!(
@@ -77,14 +91,104 @@ fn a_player_joins_and_visibly_walks() {
     );
 }
 
-/// The client window once it is on screen and full size; panics if it never appears.
-fn wait_for_window(timeout: Duration) -> Client {
+/// Registers a fresh account in the browser window the client opened, driven purely through the
+/// keyboard so no theme pixel positions are assumed.
+fn register_in_browser(enigo: &mut Enigo) {
+    // The realm's `registrations` endpoint takes the same OIDC parameters as `auth`, so swapping
+    // the path continues the exact sign-in the client started — state, nonce, PKCE and redirect
+    // included — and registering lands back on the client's loopback listener like a login would.
+    let register_url = wait_for_authorize_url(Duration::from_secs(60)).replace(
+        "/protocol/openid-connect/auth?",
+        "/protocol/openid-connect/registrations?",
+    );
+    let browser = wait_for_browser(Duration::from_secs(60));
+    browser.click(enigo, 100, 10);
+    chord(enigo, Key::Control, Key::Unicode('l'));
+    enigo.text(&register_url).expect("type url");
+    // A history match can inline-autocomplete a selected suffix; Delete drops it (no-op otherwise).
+    tap(enigo, Key::Delete);
+    tap(enigo, Key::Return);
+    sleep(Duration::from_secs(5));
+
+    // Keyboard-only form fill, calibrated to the pinned keycloak version and theme. Tab order on
+    // its register page: username, password, [reveal], password-confirm, [reveal], email,
+    // firstName, lastName, submit.
+    let stamp = unix_now().as_secs();
+    let user = format!("tester{stamp}");
+    let password = format!("e2e-{stamp}-pw");
+    let fields: [(usize, &str); 6] = [
+        (1, &user),
+        (1, &password),
+        (2, &password),
+        (2, &format!("{user}@example.com")),
+        (1, "Tester"),
+        (1, "Testersson"),
+    ];
+    for (tabs, value) in fields {
+        for _ in 0..tabs {
+            tap(enigo, Key::Tab);
+        }
+        enigo.text(value).expect("fill field");
+        sleep(Duration::from_millis(100));
+    }
+    tap(enigo, Key::Tab);
+    tap(enigo, Key::Return);
+    println!("registered {user}; waiting for the redirect to the client");
+    sleep(Duration::from_secs(5));
+
+    // Close the browser so it cannot cover the game window; the redirect page is done with.
+    chord(enigo, Key::Control, Key::Unicode('w'));
+    sleep(Duration::from_secs(1));
+}
+
+/// The authorize URL the client prints when it opens the browser.
+fn wait_for_authorize_url(timeout: Duration) -> String {
     let deadline = Instant::now() + timeout;
     loop {
-        if let Some(window) = find_window()
+        for log in ["client.out", "client.err"] {
+            let content = std::fs::read_to_string(artifacts().join(log)).unwrap_or_default();
+            if let Some(url) = content
+                .split_whitespace()
+                .find(|word| word.contains("/protocol/openid-connect/auth?"))
+            {
+                return url.to_owned();
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the client never printed its sign-in URL (see {}/client.*)",
+            artifacts().display()
+        );
+        sleep(Duration::from_millis(250));
+    }
+}
+
+fn wait_for_browser(timeout: Duration) -> Win {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(window) = find_window(BROWSER_TITLE) {
+            sleep(Duration::from_millis(500));
+            return Win {
+                id: window.id().expect("window id"),
+            };
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no browser window showed the sign-in page (see {}/client.*)",
+            artifacts().display()
+        );
+        sleep(Duration::from_millis(250));
+    }
+}
+
+/// The client window once it is on screen and full size; panics if it never appears.
+fn wait_for_window(timeout: Duration) -> Win {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(window) = find_window(WINDOW_TITLE)
             && window.width().unwrap_or(0) >= 1024
         {
-            return Client {
+            return Win {
                 id: window.id().expect("window id"),
             };
         }
@@ -97,28 +201,28 @@ fn wait_for_window(timeout: Duration) -> Client {
     }
 }
 
-fn find_window() -> Option<Window> {
+fn find_window(title: &str) -> Option<Window> {
     Window::all().ok()?.into_iter().find(|window| {
         window
             .title()
-            .map(|title| title.to_lowercase().contains(WINDOW_TITLE))
+            .map(|t| t.to_lowercase().contains(title))
             .unwrap_or(false)
     })
 }
 
-/// A handle to the client window. xcap hands out window snapshots, so each call re-resolves the live
-/// window by id.
-struct Client {
+/// A handle to an on-screen window. xcap hands out window snapshots, so each call re-resolves the
+/// live window by id.
+struct Win {
     id: u32,
 }
 
-impl Client {
+impl Win {
     fn window(&self) -> Window {
         Window::all()
             .expect("list windows")
             .into_iter()
             .find(|window| window.id().ok() == Some(self.id))
-            .expect("the client window is gone")
+            .expect("the window is gone")
     }
 
     fn capture(&self) -> Image {
@@ -141,10 +245,11 @@ impl Client {
             .expect("move pointer");
         sleep(Duration::from_millis(100));
         enigo.button(Button::Left, Direction::Click).expect("click");
+        sleep(Duration::from_millis(200));
     }
 }
 
-fn wait_for_scene(window: &Client, timeout: Duration) -> Image {
+fn wait_for_scene(window: &Win, timeout: Duration) -> Image {
     let deadline = Instant::now() + timeout;
     loop {
         let image = window.capture();
@@ -156,6 +261,11 @@ fn wait_for_scene(window: &Client, timeout: Duration) -> Image {
         }
         if Instant::now() >= deadline {
             save(&image, "timeout");
+            // A leftover realm page means registration never completed; its pixels say why.
+            if let Some(browser) = find_window(BROWSER_TITLE) {
+                let id = browser.id().expect("window id");
+                save(&Win { id }.capture(), "browser");
+            }
             panic!(
                 "the world never appeared: {colors} distinct colors mid-view, a scene shows more \
                  than {SCENE_COLORS} (see {ARTIFACTS}/timeout.png and client.err)"
@@ -165,21 +275,39 @@ fn wait_for_scene(window: &Client, timeout: Duration) -> Image {
     }
 }
 
-fn tap_space(enigo: &mut Enigo) {
-    enigo.key(Key::Space, Direction::Click).expect("tap space");
+fn tap(enigo: &mut Enigo, key: Key) {
+    enigo.key(key, Direction::Click).expect("tap key");
     sleep(Duration::from_millis(100));
 }
 
-fn spawn_client(game_url: &str) -> Proc {
+fn chord(enigo: &mut Enigo, modifier: Key, key: Key) {
+    enigo.key(modifier, Direction::Press).expect("hold");
+    sleep(Duration::from_millis(50));
+    enigo.key(key, Direction::Click).expect("tap");
+    sleep(Duration::from_millis(50));
+    enigo.key(modifier, Direction::Release).expect("release");
+    sleep(Duration::from_millis(200));
+}
+
+fn tap_space(enigo: &mut Enigo) {
+    tap(enigo, Key::Space);
+}
+
+fn spawn_client(game_server_url: &str) -> Proc {
+    // A browser inheriting this XDG_CONFIG_HOME gets a fresh profile; pre-marking chrome's first
+    // run keeps its welcome dialog from covering the page.
+    let config = artifacts().join("config");
+    std::fs::create_dir_all(config.join("google-chrome")).expect("chrome config dir");
+    let _ = File::create(config.join("google-chrome").join("First Run"));
+
     let mut command = Command::new(client_bin());
     command
         // Use the test's display, and never let a stray Wayland socket pull the window elsewhere.
-        .env_remove("RIFT_CLIENT_ISSUER")
         .env_remove("WAYLAND_DISPLAY")
-        .env("RIFT_CLIENT_AUTH_BYPASS", "tester")
-        .env("RIFT_CLIENT_GAME_URL", game_url)
+        .env("RIFT_CLIENT_ISSUER", ISSUER)
+        .env("RIFT_CLIENT_GAME_SERVER_URL", game_server_url)
         .env("RIFT_ASSETS", ASSETS)
-        .env("XDG_CONFIG_HOME", artifacts().join("config"));
+        .env("XDG_CONFIG_HOME", config);
     Proc::start(command, "client")
 }
 
@@ -195,28 +323,34 @@ impl GameServer {
         let mut command = Command::new(server_bin());
         command
             .env("RIFT_ASSETS", ASSETS)
-            .env("RIFT_GAME_SERVER_AUTH_BYPASS", "true")
             .env("RIFT_GAME_SERVER_PORT", port.to_string())
-            .env_remove("RIFT_GAME_SERVER_PUBLIC_ADDR")
-            .env_remove("RIFT_AUTH_ISSUER")
-            .env_remove("RIFT_AUTH_AUDIENCE")
-            .env_remove("RIFT_AUTH_JWKS_URI");
+            .env("RIFT_AUTH_ISSUER", ISSUER)
+            .env("RIFT_AUTH_AUDIENCE", "rift")
+            .env(
+                "RIFT_AUTH_JWKS_URI",
+                format!("{ISSUER}/protocol/openid-connect/certs"),
+            )
+            .env_remove("RIFT_GAME_SERVER_PUBLIC_ADDR");
         let proc = Proc::start(command, "server");
 
-        let deadline = Instant::now() + Duration::from_secs(30);
+        // Healthy only once it can verify tokens, so this also waits out the stack's keycloak.
+        let deadline = Instant::now() + Duration::from_secs(60);
         let health = format!("{url}/health");
         loop {
             if ureq::get(&health).call().is_ok() {
                 return GameServer { url, _proc: proc };
             }
-            assert!(Instant::now() < deadline, "the server never became healthy");
+            assert!(
+                Instant::now() < deadline,
+                "the server never became healthy (is the stack up? see `just stack`)"
+            );
             sleep(Duration::from_millis(200));
         }
     }
 }
 
-/// The client binary under test — the same binary CI publishes as the release, so the test asserts
-/// on the exact bytes that ship.
+/// The client binary under test — the same binary CI later releases, so the test asserts on what
+/// ships.
 fn client_bin() -> PathBuf {
     bin("RIFT_E2E_CLIENT")
 }
@@ -230,6 +364,12 @@ fn bin(var: &str) -> PathBuf {
         panic!("set {var} to the binary to test (CI builds it; see `just e2e`)")
     });
     PathBuf::from(path)
+}
+
+fn unix_now() -> Duration {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock after the unix epoch")
 }
 
 /// A child process killed on drop, with its output captured under the test artifacts.
