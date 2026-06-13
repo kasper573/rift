@@ -36,10 +36,10 @@ const MAX_CLIENTS: usize = 256;
 struct Config {
     #[serde(default = "default_port")]
     port: u16,
-    /// The UDP address clients dial (baked into the minted tokens), as `host:port`. A hostname is
-    /// resolved at startup, so prod can name its public domain; defaults to loopback, which suits
-    /// local development and the test stack.
-    public_addr: Option<String>,
+    /// The host clients dial for netcode, baked into the minted tokens (its port is always the
+    /// server's own [`port`]). A hostname is resolved at startup, so prod can name its public
+    /// domain; defaults to loopback, which suits local development and the test stack.
+    public_host: Option<String>,
 }
 
 fn default_port() -> u16 {
@@ -54,16 +54,12 @@ fn main() {
     let bind: SocketAddr = format!("0.0.0.0:{}", config.port)
         .parse()
         .expect("server bind address");
-    let public: SocketAddr = match &config.public_addr {
-        Some(addr) => addr
-            .to_socket_addrs()
-            .expect("resolve RIFT_GAME_SERVER_PUBLIC_ADDR")
-            .next()
-            .expect("RIFT_GAME_SERVER_PUBLIC_ADDR resolves to an address"),
-        None => format!("127.0.0.1:{}", config.port)
-            .parse()
-            .expect("address"),
-    };
+    let public_host = config.public_host.as_deref().unwrap_or("127.0.0.1");
+    let public: SocketAddr = format!("{public_host}:{}", config.port)
+        .to_socket_addrs()
+        .expect("resolve RIFT_GAME_SERVER_PUBLIC_HOST")
+        .next()
+        .expect("RIFT_GAME_SERVER_PUBLIC_HOST resolves to an address");
 
     let mut private_key = [0u8; NETCODE_KEY_BYTES];
     rand::rng().fill_bytes(&mut private_key);
