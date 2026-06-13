@@ -1,8 +1,9 @@
 #!/bin/bash
-# Syncs the realm with the source of truth on every container start: the game's roles and groups
-# (roles.conf, generated from game/world) plus realm security settings. A temporary admin service
-# account is written straight to the database before the server boots and deleted once the sync
-# ends, so no admin credential ever exists outside this container or outlives the sync.
+# Syncs the realm's roles and groups with the source of truth (roles.conf, generated from
+# game/world) on every container start. A temporary admin service account is written straight to
+# the database before the server boots and deleted once the sync ends, so no admin credential ever
+# exists outside this container or outlives the sync. Everything else about the realm lives in the
+# realm import, not here.
 set -euo pipefail
 
 bin=/opt/keycloak/bin
@@ -42,9 +43,6 @@ if [[ "${1:-}" == "--sync" ]]; then
       ;;
     esac
   done </opt/keycloak/roles.conf
-
-  # Account lockout on repeated password failures; fail2ban covers the network side.
-  kcadm update "realms/$realm" -s bruteForceProtected=true
 
   # Drop every provisioning account: leftovers from interrupted runs first, our own last.
   own=""

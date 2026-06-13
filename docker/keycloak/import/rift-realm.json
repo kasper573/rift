@@ -49,7 +49,7 @@
     "realm": [
       {
         "id": "8c31d78d-1b59-469c-b083-f7488a488723",
-        "name": "default-roles-rift",
+        "name": "default-roles-${RIFT_AUTH_AUDIENCE}",
         "description": "${role_default-roles}",
         "composite": true,
         "composites": {
@@ -291,7 +291,7 @@
           "attributes": {}
         }
       ],
-      "rift": [],
+      "${RIFT_AUTH_AUDIENCE}": [],
       "security-admin-console": [],
       "admin-cli": [],
       "account-console": [],
@@ -399,7 +399,7 @@
   "groups": [],
   "defaultRole": {
     "id": "8c31d78d-1b59-469c-b083-f7488a488723",
-    "name": "default-roles-rift",
+    "name": "default-roles-${RIFT_AUTH_AUDIENCE}",
     "description": "${role_default-roles}",
     "composite": true,
     "clientRole": false,
