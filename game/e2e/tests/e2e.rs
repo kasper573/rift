@@ -112,7 +112,7 @@ fn register_in_browser(enigo: &mut Enigo) {
     let browser = wait_for_browser(Duration::from_secs(60));
     browser.click(enigo, 100, 10);
     chord(enigo, Key::Control, Key::Unicode('l'));
-    enigo.text(&register_url).expect("type url");
+    type_text(enigo, &register_url);
     // A history match can inline-autocomplete a selected suffix; Delete drops it (no-op otherwise).
     tap(enigo, Key::Delete);
     tap(enigo, Key::Return);
@@ -133,7 +133,7 @@ fn register_in_browser(enigo: &mut Enigo) {
         for _ in 0..tabs {
             tap(enigo, Key::Tab);
         }
-        enigo.text(value).expect("fill field");
+        type_text(enigo, value);
         sleep(Duration::from_millis(100));
     }
     tap(enigo, Key::Tab);
@@ -288,6 +288,16 @@ fn wait_for_scene(window: &Win, timeout: Duration) -> Image {
             );
         }
         sleep(Duration::from_millis(500));
+    }
+}
+
+/// Types a string one character at a time with a gap between each. A single `enigo.text` burst loses
+/// keystrokes under a loaded X server (a dropped char in the URL's PKCE `code_challenge` makes
+/// keycloak reject the request; a dropped char in a field fails registration silently).
+fn type_text(enigo: &mut Enigo, text: &str) {
+    for ch in text.chars() {
+        enigo.text(&ch.to_string()).expect("type character");
+        sleep(Duration::from_millis(12));
     }
 }
 
