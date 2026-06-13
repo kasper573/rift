@@ -108,7 +108,7 @@ fn register_in_browser(enigo: &mut Enigo) {
     // A history match can inline-autocomplete a selected suffix; Delete drops it (no-op otherwise).
     tap(enigo, Key::Delete);
     tap(enigo, Key::Return);
-    sleep(Duration::from_secs(5));
+    sleep(Duration::from_secs(8));
 
     // Keyboard-only form fill, calibrated to the pinned keycloak version and theme. Tab order on
     // its register page: username, password, [reveal], password-confirm, [reveal], email,
@@ -134,7 +134,7 @@ fn register_in_browser(enigo: &mut Enigo) {
     tap(enigo, Key::Tab);
     tap(enigo, Key::Return);
     println!("registered {user}; waiting for the redirect to the client");
-    sleep(Duration::from_secs(5));
+    sleep(Duration::from_secs(8));
 
     // Close the browser so it cannot cover the game window; the redirect page is done with.
     chord(enigo, Key::Control, Key::Unicode('w'));
