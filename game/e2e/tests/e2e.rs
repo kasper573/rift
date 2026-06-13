@@ -34,10 +34,15 @@ const WINDOW_TITLE: &str = "rift mmo";
 const BROWSER_TITLE: &str = "sign in to rift";
 const ISSUER: &str = "https://auth.rift.localhost/realms/rift";
 
-/// The world is on screen once the view's center shows real scenery: tens of distinct colors even in
-/// pixel art's tight palette, against the single flat clear color drawn there before (the HUD sits in
-/// the corners).
-const SCENE_COLORS: usize = 16;
+/// The world is on screen once the mid-view fills with scenery rather than a flat screen behind a
+/// label. Diced into a grid, the world makes most cells busy with several colors each; the sign-in,
+/// failure, and mode screens are a flat fill with a few centered words, so only the handful of cells
+/// crossing that text are busy — well under this fraction.
+const SCENE_CELLS: f64 = 0.3;
+/// Grid resolution over the mid-view, and the distinct-color count above which a cell reads as
+/// scenery rather than flat fill (a stray anti-aliased text edge never reaches it).
+const GRID: u16 = 8;
+const CELL_COLORS: usize = 4;
 /// Walking scrolls the whole camera. Tiled scenery is self-similar, so a scroll changes ~40% of the
 /// pixels; idle animation changes only a few percent.
 const WALKED: f64 = 0.2;
@@ -45,8 +50,11 @@ const WALKED: f64 = 0.2;
 #[test]
 #[ignore = "e2e: needs a display, a browser and the stack; CI-only, run with `just e2e`"]
 fn a_player_registers_and_visibly_walks() {
-    let server = GameServer::start();
-    let _client = spawn_client(&server.url);
+    // Prod mode (RIFT_E2E_PROD) drives the released binary against the live deployment: no local
+    // server, and the client keeps its baked-in prod endpoints and embedded assets. Otherwise a
+    // fresh local server is spawned and the client is pointed at it.
+    let server = (!prod()).then(GameServer::start);
+    let _client = spawn_client(server.as_ref().map(|server| server.url.as_str()));
     let mut enigo = Enigo::new(&Settings {
         open_prompt_to_get_permissions: false,
         ..Settings::default()
@@ -253,9 +261,12 @@ fn wait_for_scene(window: &Win, timeout: Duration) -> Image {
     let deadline = Instant::now() + timeout;
     loop {
         let image = window.capture();
-        let colors = distinct_colors(&center(&image));
-        if colors > SCENE_COLORS {
-            println!("the world is on screen ({colors} distinct colors mid-view)");
+        let scenery = scene_fraction(&center(&image));
+        if scenery >= SCENE_CELLS {
+            println!(
+                "the world is on screen ({:.0}% of mid-view cells show scenery)",
+                scenery * 100.0
+            );
             sleep(Duration::from_millis(300));
             return window.capture();
         }
@@ -267,8 +278,10 @@ fn wait_for_scene(window: &Win, timeout: Duration) -> Image {
                 save(&Win { id }.capture(), "browser");
             }
             panic!(
-                "the world never appeared: {colors} distinct colors mid-view, a scene shows more \
-                 than {SCENE_COLORS} (see {ARTIFACTS}/timeout.png and client.err)"
+                "the world never appeared: {:.0}% of mid-view cells show scenery, a scene fills at \
+                 least {:.0}% (see {ARTIFACTS}/timeout.png and client.err)",
+                scenery * 100.0,
+                SCENE_CELLS * 100.0,
             );
         }
         sleep(Duration::from_millis(500));
@@ -293,7 +306,7 @@ fn tap_space(enigo: &mut Enigo) {
     tap(enigo, Key::Space);
 }
 
-fn spawn_client(game_server_url: &str) -> Proc {
+fn spawn_client(game_server_url: Option<&str>) -> Proc {
     // A browser inheriting this XDG_CONFIG_HOME gets a fresh profile; pre-marking chrome's first
     // run keeps its welcome dialog from covering the page.
     let config = artifacts().join("config");
@@ -304,11 +317,20 @@ fn spawn_client(game_server_url: &str) -> Proc {
     command
         // Use the test's display, and never let a stray Wayland socket pull the window elsewhere.
         .env_remove("WAYLAND_DISPLAY")
-        .env("RIFT_CLIENT_ISSUER", ISSUER)
-        .env("RIFT_CLIENT_GAME_SERVER_URL", game_server_url)
-        .env("RIFT_ASSETS", ASSETS)
         .env("XDG_CONFIG_HOME", config);
+    // Local stack: point the client at the freshly spawned server and the test assets. Prod: the
+    // released binary already bakes in the prod endpoints and embeds its assets, so override nothing.
+    if let Some(url) = game_server_url {
+        command
+            .env("RIFT_CLIENT_ISSUER", ISSUER)
+            .env("RIFT_CLIENT_GAME_SERVER_URL", url)
+            .env("RIFT_ASSETS", ASSETS);
+    }
     Proc::start(command, "client")
+}
+
+fn prod() -> bool {
+    std::env::var_os("RIFT_E2E_PROD").is_some()
 }
 
 struct GameServer {
@@ -403,13 +425,30 @@ struct Image {
     rgb: Vec<u8>,
 }
 
-fn distinct_colors(image: &Image) -> usize {
-    image
-        .rgb
-        .chunks_exact(3)
-        .map(|px| [px[0], px[1], px[2]])
-        .collect::<HashSet<_>>()
-        .len()
+/// The share of the frame's cells that carry scenery: diced into a `GRID`×`GRID` grid, the cells
+/// showing more than `CELL_COLORS` distinct colors. A flat fill scores near zero; a few words of
+/// text light only the cells they cross; tiled scenery lights most of them.
+fn scene_fraction(image: &Image) -> f64 {
+    let (cell_w, cell_h) = (image.width / GRID, image.height / GRID);
+    if cell_w == 0 || cell_h == 0 {
+        return 0.0;
+    }
+    let mut busy = 0;
+    for gy in 0..GRID {
+        for gx in 0..GRID {
+            let mut colors = HashSet::new();
+            for y in gy * cell_h..(gy + 1) * cell_h {
+                for x in gx * cell_w..(gx + 1) * cell_w {
+                    let i = 3 * (y as usize * image.width as usize + x as usize);
+                    colors.insert([image.rgb[i], image.rgb[i + 1], image.rgb[i + 2]]);
+                }
+            }
+            if colors.len() > CELL_COLORS {
+                busy += 1;
+            }
+        }
+    }
+    busy as f64 / (GRID * GRID) as f64
 }
 
 /// The middle half of the frame, where only the world is ever drawn.
