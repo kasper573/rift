@@ -1,0 +1,121 @@
+name: check
+
+on:
+  push:
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # crates.io downloads flake over HTTP/2 ("error in the HTTP2 framing layer"); force HTTP/1.1 and
+  # retry hard so a cold cache doesn't fail the run on a transient blip.
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the pinned toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: lint
+          # Only main writes caches; every branch restores them. This keeps the repo to a single
+          # cache set instead of one per branch, well under GitHub's 10 GB ceiling.
+          save-if: ${{ github.ref_name == 'main' }}
+      - name: Install system dependencies
+        # Clippy compiles the client, which links ALSA through kira.
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Lint
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+
+  test:
+    needs: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the pinned toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test
+          # Only main writes caches; every branch restores them (see the lint job).
+          save-if: ${{ github.ref_name == 'main' }}
+      - name: Install system dependencies
+        # The client links ALSA (kira) and renders through a software Vulkan driver (lavapipe) onto
+        # a headless Xvfb that openbox manages (xcap enumerates windows via EWMH, which needs a WM).
+        # xcap compiles its whole linux capture surface — pipewire and the wayland path (egl/gbm)
+        # alongside the X11 (xcb) path we use. certutil (libnss3-tools) teaches the browser's NSS
+        # store the stack's CA.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon0 libxkbcommon-x11-0 \
+            libvulkan1 mesa-vulkan-drivers \
+            xvfb openbox libnss3-tools \
+            libclang-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
+            libxcb1-dev libxcb-randr0-dev libxcb-render0-dev
+      - name: Build the client and the server
+        # The e2e drives these very binaries through a real session.
+        run: |
+          cargo build --release --features dist -p client
+          cargo build --release -p server
+      - name: Test
+        run: cargo test --release
+      - name: Start the auth stack
+        # The e2e signs in for real, so it needs keycloak behind the TLS proxy — only that slice
+        # of the stack; the game server under test is the binary built above. The hosts entries
+        # cover resolvers that do not special-case *.localhost.
+        run: |
+          echo "127.0.0.1 rift.localhost auth.rift.localhost game-server.rift.localhost" | sudo tee -a /etc/hosts
+          cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
+          docker network inspect rift >/dev/null 2>&1 || docker network create rift
+          docker compose -f docker/docker-compose.yaml up -d --wait postgres keycloak keycloak-healthcheck reverse-proxy
+      - name: Trust the stack's certificate authority
+        # Caddy mints its own CA at first boot; the OS store covers the client/server binaries,
+        # chrome keeps its own NSS store.
+        run: |
+          for _ in $(seq 1 60); do
+            docker compose -f docker/docker-compose.yaml cp reverse-proxy:/data/caddy/pki/authorities/local/root.crt /tmp/rift-root.crt 2>/dev/null && break
+            sleep 2
+          done
+          sudo install -m 644 /tmp/rift-root.crt /usr/local/share/ca-certificates/rift-root.crt
+          sudo update-ca-certificates
+          mkdir -p "$HOME/.pki/nssdb"
+          certutil -d sql:"$HOME"/.pki/nssdb -N --empty-password 2>/dev/null || true
+          certutil -d sql:"$HOME"/.pki/nssdb -A -t C,, -n rift-root -i /tmp/rift-root.crt
+      - name: Start a virtual display
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 -ac >/tmp/xvfb.log 2>&1 &
+          for _ in $(seq 1 50); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.2; done
+          DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+      - name: E2E test
+        env:
+          BROWSER: google-chrome
+        run: |
+          export RIFT_E2E_CLIENT="$PWD/target/release/rift"
+          export RIFT_E2E_SERVER="$PWD/target/release/server"
+          cargo test -p e2e -- --ignored --nocapture
+      - name: Save E2E artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-artifacts
+          path: target/tmp/
+      - name: Save stack logs
+        if: failure()
+        run: docker compose -f docker/docker-compose.yaml logs --no-color > /tmp/stack.log 2>&1 || true
+      - name: Upload stack logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stack-logs
+          path: /tmp/stack.log

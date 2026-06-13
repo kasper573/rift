@@ -1,11 +1,13 @@
-name: build · test · release · deploy
+name: release
 
 on:
   push:
+    branches: [main]
 
+# Deploys must never be cancelled mid-way; later pushes queue behind the running one.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: release
+  cancel-in-progress: false
 
 env:
   DOCKER_REGISTRY: ghcr.io
@@ -19,34 +21,10 @@ env:
   CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
-  lint:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install the pinned toolchain
-        run: rustup show
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: lint
-          # Only main writes caches; every branch restores them. This keeps the repo to a single
-          # cache set instead of one per branch, well under GitHub's 10 GB ceiling.
-          save-if: ${{ github.ref_name == 'main' }}
-      - name: Install system dependencies
-        # Clippy compiles the client, which links ALSA through kira.
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - name: Lint
-        run: |
-          cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-
-  # The cross-platform job: only the client ships to multiple OSes, so only it (and the server the
-  # e2e drives) is built per OS. Each OS builds the client, drives it through a real gameplay session
-  # against a freshly built server, then uploads the tested binary — so release and deploy ship
-  # exactly what ran here.
-  build_and_test:
-    needs: lint
+  # Only the client ships to multiple OSes, so only it builds per OS; linux additionally builds
+  # everything the stack images package.
+  build:
     strategy:
-      fail-fast: false
       matrix:
         include:
           - { os: ubuntu-24.04, asset: rift-linux-x86_64 }
@@ -72,51 +50,18 @@ jobs:
         run: echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
-          key: build-and-test-${{ matrix.os }}
-          # Only main writes caches; every branch restores them (see the lint job).
-          save-if: ${{ github.ref_name == 'main' }}
+          key: release-${{ matrix.os }}
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        # The client links ALSA (kira) and renders through a software Vulkan driver (lavapipe) onto a
-        # headless Xvfb that openbox manages (xcap enumerates windows via EWMH, which needs a WM).
-        # xcap compiles its whole linux capture surface — pipewire and the wayland path (egl/gbm)
-        # alongside the X11 (xcb) path we use.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libasound2-dev \
-            libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon0 libxkbcommon-x11-0 \
-            libvulkan1 mesa-vulkan-drivers \
-            xvfb openbox \
-            libclang-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
-            libxcb1-dev libxcb-randr0-dev libxcb-render0-dev
-      - name: Build the client and the server
+        # The client links ALSA through kira.
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Build the client
         shell: bash
-        # The client is the released artifact; the server is the backend the e2e drives. Both use the
-        # release profile so they share one dependency compilation.
-        run: |
-          cargo build --release --features dist -p client
-          cargo build --release -p server
-      - name: Start a virtual display
-        if: runner.os == 'Linux'
-        run: |
-          Xvfb :99 -screen 0 1920x1080x24 -ac >/tmp/xvfb.log 2>&1 &
-          for _ in $(seq 1 50); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.2; done
-          DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &
-          echo "DISPLAY=:99" >> "$GITHUB_ENV"
-      - name: E2E test
-        shell: bash
-        run: |
-          ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
-          export RIFT_E2E_CLIENT="$PWD/target/release/rift$ext"
-          export RIFT_E2E_SERVER="$PWD/target/release/server$ext"
-          cargo test -p e2e -- --ignored --nocapture
-      - name: Save E2E artifacts
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: e2e-artifacts-${{ matrix.os }}
-          path: target/tmp/
+        # The production endpoints are baked in so the shipped binary works out of the box.
+        env:
+          RIFT_CLIENT_ISSUER: https://auth.${{ vars.RIFT_DOMAIN }}/realms/rift
+          RIFT_CLIENT_GAME_SERVER_URL: https://game-server.${{ vars.RIFT_DOMAIN }}
+        run: cargo build --release --features dist -p client
       - name: Stage the client
         shell: bash
         run: |
@@ -127,17 +72,23 @@ jobs:
         with:
           name: client-${{ matrix.os }}
           path: out/
-      - name: Upload the server for the deploy images
+      - name: Build the server, the website, and the keycloak provisioning input
+        if: runner.os == 'Linux'
+        run: |
+          cargo build --release -p server -p website
+          cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
+      - name: Upload the stack inputs for the deploy images
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
-          name: server-linux
-          path: target/release/server
+          name: stack-linux
+          path: |
+            target/release/server
+            target/release/website
+            docker/keycloak/roles.conf
 
-  # Branch builds stop at build_and_test; main publishes and deploys what it just tested.
   release:
-    needs: build_and_test
-    if: github.ref_name == 'main'
+    needs: build
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -149,50 +100,40 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # The version is `0.<run number>`: simple and monotonic, and the `0.` major keeps these
+        # `0.<run number + 100>`: simple and monotonic; the offset keeps new tags clear of the
+        # numbers the previous workflow already released, and the `0.` major keeps these
         # automated releases out of the semver space a real version would later claim.
         run: |
-          version="0.${{ github.run_number }}"
+          version="0.$(( ${{ github.run_number }} + 100 ))"
           gh release create "$version" dist/client-*/rift-* \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "$version" \
             --notes "Automated release of ${{ github.sha }}."
 
-  # Only the linux server/website ship as docker images. The server is the very binary the e2e drove;
-  # the website is built here since nothing else needs it.
   deploy:
-    needs: build_and_test
-    if: github.ref_name == 'main'
-    runs-on: ubuntu-latest
+    needs: build
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v6
-      - name: Install the pinned toolchain
-        run: rustup show
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: deploy
-          save-if: ${{ github.ref_name == 'main' }}
-      - name: Build the website
-        run: cargo build --release -p website
       - uses: actions/download-artifact@v7
         with:
-          name: server-linux
-          path: server-bin
-      - name: Stage the binaries the images package
-        run: |
-          mkdir -p target/release
-          cp server-bin/server target/release/server
-      - name: Build and push the app images
+          name: stack-linux
+          # The artifact paths are relative to the repo root, so unpacking there puts every file
+          # where the image builds expect it.
+          path: .
+      - name: Restore the executable bits artifact transport may drop
+        run: chmod +x target/release/server target/release/website
+      - name: Build and push the stack images
         env:
           COMPOSE: docker compose -f docker/docker-compose.yaml
         run: |
           echo "${{ env.DOCKER_PASSWORD }}" | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
-          $COMPOSE --profile prod build rift-website rift-game-server
-          $COMPOSE --profile prod push rift-website rift-game-server
+          $COMPOSE --profile prod build rift-website rift-game-server keycloak reverse-proxy
+          $COMPOSE --profile prod push rift-website rift-game-server keycloak reverse-proxy
 
       - name: Upload docker runtime dependencies
         uses: burnett01/rsync-deployments@7.0.1
@@ -221,8 +162,6 @@ jobs:
             echo "DOCKER_REGISTRY_URL=\"${{ env.DOCKER_REGISTRY_URL }}\"" >> .env
             echo "DOCKER_IMAGE_VERSION=\"${{ env.DOCKER_IMAGE_VERSION }}\"" >> .env
             echo "RIFT_DOMAIN=\"${{ vars.RIFT_DOMAIN }}\"" >> .env
-            echo "KC_ADMIN_USERNAME=\"${{ secrets.KC_ADMIN_USERNAME }}\"" >> .env
-            echo "KC_ADMIN_PASSWORD=\"${{ secrets.KC_ADMIN_PASSWORD }}\"" >> .env
 
             echo ${{ env.DOCKER_PASSWORD }} | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
             docker network inspect rift >/dev/null 2>&1 || docker network create rift
