@@ -113,9 +113,17 @@ services:
     image: grafana/tempo:2.6.1
     volumes:
       - ./grafana/tempo.yaml:/etc/tempo-config/tempo.yaml
+      - tempo-data:/var/tempo
     command:
       - -config.file=/etc/tempo-config/tempo.yaml
       - -config.expand-env=true
+
+  pyroscope:
+    env_file: *env_files
+    logging: *logging
+    image: grafana/pyroscope:1.21.1
+    volumes:
+      - pyroscope-data:/data
 
   alloy:
     env_file: *env_files
@@ -187,6 +195,7 @@ services:
       - ./reverse-proxy/Caddyfile:/etc/caddy/Caddyfile
       - reverse-proxy-data:/data
       - reverse-proxy-config:/config
+      - caddy-logs:/var/log/caddy
 
   postfix:
     env_file: *env_files
@@ -194,10 +203,32 @@ services:
     image: boky/postfix:v4.3.0
     restart: always
 
+  # Bans abusive ips at the host firewall, fed by caddy's access log (the stack's public edge)
+  # and the host's sshd log. Host networking + NET_ADMIN because bans are iptables rules.
+  fail2ban:
+    logging: *logging
+    image: crazymax/fail2ban:1.1.0
+    restart: always
+    profiles: ["prod"]
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - fail2ban-data:/data
+      - ./fail2ban/jail.d:/data/jail.d:ro
+      - ./fail2ban/filter.d:/data/filter.d:ro
+      - caddy-logs:/var/log/caddy:ro
+      - /var/log/auth.log:/var/log/auth.log:ro
+
 volumes:
+  caddy-logs:
+  fail2ban-data:
   grafana-data:
   loki-data:
   mimir-data:
   postgres-data:
+  pyroscope-data:
   reverse-proxy-data:
   reverse-proxy-config:
+  tempo-data:

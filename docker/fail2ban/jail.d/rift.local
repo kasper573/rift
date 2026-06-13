@@ -1,0 +1,19 @@
+[DEFAULT]
+# The stack's own traffic arrives from docker networks; never ban those or loopback.
+ignoreip = 127.0.0.0/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+bantime = 1h
+bantime.increment = true
+findtime = 10m
+
+[caddy-status]
+enabled = true
+logpath = /var/log/caddy/access.log
+maxretry = 10
+# Published container ports bypass the INPUT chain; bans must land in DOCKER-USER to take effect
+# (this also cuts the game server's UDP port for the banned ip).
+banaction = iptables-allports[chain="DOCKER-USER"]
+
+[sshd]
+enabled = true
+logpath = /var/log/auth.log
+maxretry = 5

@@ -28,7 +28,7 @@ metrics_generator:
       source: "tempo"
       cluster: "rift"
   storage:
-    path: "/tmp/tempo/generator/wal"
+    path: "/var/tempo/generator/wal"
     remote_write:
       - url: "${MIMIR_BASE}/api/v1/push"
         send_exemplars: true
@@ -41,10 +41,10 @@ storage:
       v2_index_downsample_bytes: 1000
       v2_encoding: "zstd"
     wal:
-      path: "/tmp/tempo/wal"
+      path: "/var/tempo/wal"
       v2_encoding: "snappy"
     local:
-      path: "/tmp/tempo/blocks"
+      path: "/var/tempo/blocks"
     pool:
       max_workers: 100
       queue_depth: 10000

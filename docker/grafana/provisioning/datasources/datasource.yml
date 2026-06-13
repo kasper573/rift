@@ -4,6 +4,7 @@ deleteDatasources:
   - name: "Mimir"
   - name: "Tempo"
   - name: "Loki"
+  - name: "Pyroscope"
 
 datasources:
   - name: "Mimir"
@@ -57,3 +58,14 @@ datasources:
           matcherRegex: 'traceID=(\w+)'
           name: "TraceID"
           url: "$${__value.raw}"
+
+  - name: "Pyroscope"
+    type: "grafana-pyroscope-datasource"
+    access: "proxy"
+    orgId: 1
+    url: "$PYROSCOPE_BASE"
+    basicAuth: false
+    isDefault: false
+    version: 1
+    editable: false
+    uid: "pyroscope"

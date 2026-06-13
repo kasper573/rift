@@ -26,11 +26,23 @@
     respond @options 204
 }
 
+# Access logs on a shared volume for fail2ban; iso8601 timestamps so its date detection works.
+(access_log) {
+    log {
+        output file /var/log/caddy/access.log
+        format json {
+            time_format iso8601
+        }
+    }
+}
+
 grafana.{$RIFT_DOMAIN} {
+    import access_log
     reverse_proxy {$GRAFANA_TARGET}
 }
 
 auth.{$RIFT_DOMAIN} {
+    import access_log
     tracing {
         span keycloak
     }
@@ -44,12 +56,14 @@ auth.{$RIFT_DOMAIN} {
 }
 
 {$RIFT_WEBSITE_DOMAIN} {
+    import access_log
     import common_rate_limit
     import internal_metrics
     reverse_proxy {$RIFT_WEBSITE_PROXY_HOST}
 }
 
 {$RIFT_GAME_SERVER_DOMAIN} {
+    import access_log
     import common_rate_limit
     import internal_metrics
     tracing {
