@@ -52,8 +52,8 @@ const WALKED: f64 = 0.2;
 #[ignore = "e2e: needs a display, a browser and the stack; CI-only, run with `just e2e`"]
 fn a_player_registers_and_visibly_walks() {
     // Prod mode (RIFT_E2E_PROD) drives the released binary against the live deployment: no local
-    // server, and the client keeps its baked-in prod endpoints and resolves assets beside the
-    // executable. Otherwise a fresh local server is spawned and the client is pointed at it.
+    // server, and the client reads its prod endpoints and asset path from the .env shipped beside it.
+    // Otherwise a fresh local server is spawned and the client is pointed at it.
     let server = (!prod()).then(GameServer::start);
     let _client = spawn_client(server.as_ref().map(|server| server.url.as_str()));
     let mut enigo = Enigo::new(&Settings {
@@ -335,8 +335,7 @@ fn spawn_client(game_server_url: Option<&str>) -> Proc {
         .env_remove("WAYLAND_DISPLAY")
         .env("XDG_CONFIG_HOME", config);
     // Local stack: point the client at the freshly spawned server and the test assets. Prod: the
-    // released binary bakes in the prod endpoints and resolves assets beside the executable, so
-    // override nothing.
+    // released binary reads its config from the .env beside it, so override nothing.
     if let Some(url) = game_server_url {
         command
             .env("RIFT_CLIENT_ISSUER", ISSUER)

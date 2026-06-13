@@ -29,7 +29,7 @@ jobs:
         include:
           - { os: ubuntu-24.04, asset: rift-linux-x86_64 }
           - { os: macos-latest, asset: rift-macos-aarch64 }
-          - { os: windows-latest, asset: rift-windows-x86_64.exe }
+          - { os: windows-latest, asset: rift-windows-x86_64 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -57,17 +57,27 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - name: Build the client
         shell: bash
-        # The production endpoints are baked in so the shipped binary works out of the box.
-        env:
-          RIFT_CLIENT_ISSUER: https://auth.${{ vars.RIFT_DOMAIN }}/realms/rift
-          RIFT_CLIENT_GAME_SERVER_URL: https://game-server.${{ vars.RIFT_DOMAIN }}
+        # The binary is environment-agnostic; the prod .env packaged below configures it.
         run: cargo build --release -p client
-      - name: Stage the client
+      - name: Package the client with its prod .env
         shell: bash
+        # A player extracts this archive and rift-assets.zip into one folder; the client reads the
+        # .env beside it at startup for its endpoints and (bundle-relative) asset path.
         run: |
           ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
-          mkdir -p out
-          cp "target/release/rift$ext" "out/${{ matrix.asset }}"
+          pkg="${{ matrix.asset }}"
+          mkdir -p "stage/$pkg" out
+          cp "target/release/rift$ext" "stage/$pkg/rift$ext"
+          cat > "stage/$pkg/.env" <<EOF
+          RIFT_CLIENT_ISSUER=https://auth.${{ vars.RIFT_DOMAIN }}/realms/rift
+          RIFT_CLIENT_GAME_SERVER_URL=https://game-server.${{ vars.RIFT_DOMAIN }}
+          RIFT_ASSETS_DIR=assets
+          EOF
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            (cd "stage/$pkg" && 7z a -tzip "../../out/$pkg.zip" . >/dev/null)
+          else
+            tar czf "out/$pkg.tar.gz" -C "stage/$pkg" .
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: client-${{ matrix.os }}
@@ -126,7 +136,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "$version" \
-            --notes "Automated release of ${{ github.sha }}. Download your OS binary and rift-assets.zip, extract the zip next to the binary, then run it."
+            --notes "Automated release of ${{ github.sha }}. Download your OS archive and rift-assets.zip, extract both into the same folder, then run the binary."
 
   deploy:
     needs: build

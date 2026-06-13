@@ -31,7 +31,28 @@ fn assets_root() -> String {
         .into_owned()
 }
 
+/// Loads the `.env` shipped beside the executable into the environment before anything reads it, so a
+/// distributed client is configured by the file next to it. Already-set vars win, so dev and the e2e
+/// (which export their own) are untouched, and an absent file is fine. A relative `RIFT_ASSETS_DIR`
+/// in that file is anchored to the executable's directory — the bundle root.
+fn load_bundle_env() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(dir) = exe.parent() else {
+        return;
+    };
+    let _ = dotenvy::from_path(dir.join(".env"));
+    if let Some(assets) = std::env::var_os("RIFT_ASSETS_DIR") {
+        // SAFETY: called first in run(), before any thread or asset system starts.
+        unsafe {
+            std::env::set_var("RIFT_ASSETS_DIR", dir.join(assets));
+        }
+    }
+}
+
 pub fn run() -> AppExit {
+    load_bundle_env();
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins

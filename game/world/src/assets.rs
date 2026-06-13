@@ -8,24 +8,13 @@ pub const TILESETS: &str = "tilesets";
 pub const ACTORS: &str = "actors";
 pub const ICONS: &str = "icons";
 
-/// The assets root: `RIFT_ASSETS_DIR` if set, else an `assets` folder beside the executable (how a
-/// shipped build is laid out). No working-directory fallback — a missing tree is a hard error, never
-/// a silent read from the wrong place.
+/// The assets root, from the required `RIFT_ASSETS_DIR`. The client sets this from the `.env` shipped
+/// beside its executable; the server gets it from its container. A missing value is a hard error,
+/// never a guessed path.
 pub fn root() -> PathBuf {
-    if let Some(dir) = std::env::var_os("RIFT_ASSETS_DIR") {
-        return PathBuf::from(dir);
-    }
-    let adjacent = std::env::current_exe()
-        .expect("locate the executable to find its assets")
-        .parent()
-        .expect("the executable has a parent directory")
-        .join("assets");
-    assert!(
-        adjacent.is_dir(),
-        "set RIFT_ASSETS_DIR or place an assets directory beside the executable at {}",
-        adjacent.display()
-    );
-    adjacent
+    std::env::var_os("RIFT_ASSETS_DIR")
+        .map(PathBuf::from)
+        .expect("RIFT_ASSETS_DIR must be set")
 }
 
 /// An asset's absolute path from its root-relative name.
