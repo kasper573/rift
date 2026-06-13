@@ -70,7 +70,7 @@ jobs:
       - name: Build the client and the server
         # The e2e drives these very binaries through a real session.
         run: |
-          cargo build --release --features dist -p client
+          cargo build --release -p client
           cargo build --release -p server
       - name: Test
         run: cargo test --release

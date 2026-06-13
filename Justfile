@@ -23,7 +23,7 @@ kc-provision:
 dev: stack
     @command -v dx >/dev/null || { echo "just dev needs the Dioxus CLI: cargo install dioxus-cli --locked"; exit 1; }
     cd game/client && \
-    RIFT_ASSETS="{{justfile_directory()}}/assets" \
+    RIFT_ASSETS_DIR="{{justfile_directory()}}/assets" \
     RIFT_CLIENT_ISSUER=https://auth.rift.localhost/realms/rift \
     RIFT_CLIENT_GAME_SERVER_URL=https://game-server.rift.localhost \
         dx serve --hot-patch --bin rift --features hotpatch --platform desktop

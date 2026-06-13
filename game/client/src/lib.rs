@@ -3,8 +3,6 @@ use bevy::prelude::*;
 pub mod auth;
 pub mod cursor;
 pub mod debug;
-#[cfg(feature = "dist")]
-pub mod embedded;
 pub mod input;
 pub mod net;
 pub mod render;
@@ -35,14 +33,6 @@ fn assets_root() -> String {
 
 pub fn run() -> AppExit {
     let mut app = App::new();
-    // A distributed build carries its assets embedded; materialize them and point the rest of the
-    // process (Bevy's asset server and the world crate's direct file reads) at them via RIFT_ASSETS.
-    #[cfg(feature = "dist")]
-    // SAFETY: run() is the entry point — no other thread exists yet, and the asset systems that read
-    // RIFT_ASSETS only start once the app runs.
-    unsafe {
-        std::env::set_var("RIFT_ASSETS", embedded::extract());
-    }
     app.add_plugins(
         DefaultPlugins
             .set(bevy::log::LogPlugin {

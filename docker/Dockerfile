@@ -11,5 +11,5 @@ COPY --from=busybox:1.36-musl /bin/busybox /usr/bin/wget
 COPY target/release/server /usr/local/bin/game-server
 # Content is read from disk at boot (world::validate panics on anything broken).
 COPY assets/ /assets
-ENV RIFT_ASSETS=/assets
+ENV RIFT_ASSETS_DIR=/assets
 ENTRYPOINT ["game-server"]

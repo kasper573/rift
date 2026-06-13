@@ -274,7 +274,7 @@ fn index(id: &str, context: &str) -> AreaId {
     AreaId(index as u32)
 }
 
-/// Reads `maps/<name>.tmx` and everything it references out of the embedded assets.
+/// Reads `maps/<name>.tmx` and everything it references out of the assets root.
 fn load_map(name: &str) -> tiled::Map {
     tiled::Loader::with_reader(assets::tiled_reader)
         .load_tmx_map(format!("{}/{name}.tmx", assets::MAPS))

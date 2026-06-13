@@ -227,27 +227,23 @@ pub fn enter(world: &mut World, spectate: bool) {
 }
 
 fn issuer() -> Result<IssuerUrl, String> {
-    IssuerUrl::new(env(
-        "RIFT_CLIENT_ISSUER",
-        option_env!("RIFT_CLIENT_ISSUER"),
-        "https://auth.rift.localhost/realms/rift",
-    ))
-    .map_err(stringify)
+    IssuerUrl::new(env("RIFT_CLIENT_ISSUER", option_env!("RIFT_CLIENT_ISSUER"))).map_err(stringify)
 }
 
 fn game_server_url() -> String {
     env(
         "RIFT_CLIENT_GAME_SERVER_URL",
         option_env!("RIFT_CLIENT_GAME_SERVER_URL"),
-        "https://game-server.rift.localhost",
     )
 }
 
-fn env(var: &str, shipped: Option<&str>, fallback: &str) -> String {
+/// A client endpoint comes from the runtime env, or the value baked in at build time (release.yml
+/// sets these), or it's a hard error — never a guessed default.
+fn env(var: &str, shipped: Option<&str>) -> String {
     std::env::var(var)
         .ok()
         .or_else(|| shipped.map(str::to_owned))
-        .unwrap_or_else(|| fallback.to_owned())
+        .unwrap_or_else(|| panic!("{var} must be set at runtime or baked in at build"))
 }
 
 fn stringify(error: impl std::fmt::Display) -> String {

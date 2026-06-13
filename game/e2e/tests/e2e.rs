@@ -52,8 +52,8 @@ const WALKED: f64 = 0.2;
 #[ignore = "e2e: needs a display, a browser and the stack; CI-only, run with `just e2e`"]
 fn a_player_registers_and_visibly_walks() {
     // Prod mode (RIFT_E2E_PROD) drives the released binary against the live deployment: no local
-    // server, and the client keeps its baked-in prod endpoints and embedded assets. Otherwise a
-    // fresh local server is spawned and the client is pointed at it.
+    // server, and the client keeps its baked-in prod endpoints and resolves assets beside the
+    // executable. Otherwise a fresh local server is spawned and the client is pointed at it.
     let server = (!prod()).then(GameServer::start);
     let _client = spawn_client(server.as_ref().map(|server| server.url.as_str()));
     let mut enigo = Enigo::new(&Settings {
@@ -335,12 +335,13 @@ fn spawn_client(game_server_url: Option<&str>) -> Proc {
         .env_remove("WAYLAND_DISPLAY")
         .env("XDG_CONFIG_HOME", config);
     // Local stack: point the client at the freshly spawned server and the test assets. Prod: the
-    // released binary already bakes in the prod endpoints and embeds its assets, so override nothing.
+    // released binary bakes in the prod endpoints and resolves assets beside the executable, so
+    // override nothing.
     if let Some(url) = game_server_url {
         command
             .env("RIFT_CLIENT_ISSUER", ISSUER)
             .env("RIFT_CLIENT_GAME_SERVER_URL", url)
-            .env("RIFT_ASSETS", ASSETS);
+            .env("RIFT_ASSETS_DIR", ASSETS);
     }
     Proc::start(command, "client")
 }
@@ -360,7 +361,7 @@ impl GameServer {
         let url = format!("http://127.0.0.1:{port}");
         let mut command = Command::new(server_bin());
         command
-            .env("RIFT_ASSETS", ASSETS)
+            .env("RIFT_ASSETS_DIR", ASSETS)
             .env("RIFT_GAME_SERVER_PORT", port.to_string())
             .env("RIFT_AUTH_ISSUER", ISSUER)
             .env("RIFT_AUTH_AUDIENCE", "rift")
@@ -368,7 +369,7 @@ impl GameServer {
                 "RIFT_AUTH_JWKS_URI",
                 format!("{ISSUER}/protocol/openid-connect/certs"),
             )
-            .env_remove("RIFT_GAME_SERVER_PUBLIC_HOST");
+            .env("RIFT_GAME_SERVER_PUBLIC_HOST", "127.0.0.1");
         let proc = Proc::start(command, "server");
 
         // Healthy only once it can verify tokens, so this also waits out the stack's keycloak.

@@ -15,20 +15,10 @@ mod auth;
 /// The `RIFT_WEBSITE_*` environment; auth additionally reads the shared `RIFT_AUTH_*` block.
 #[derive(Deserialize)]
 struct Config {
-    #[serde(default = "default_port")]
     port: u16,
     redirect_uri: RedirectUrl,
     /// The GitHub `owner/name` whose releases the landing page's download link points at.
-    #[serde(default = "default_repo")]
     repo: String,
-}
-
-fn default_port() -> u16 {
-    80
-}
-
-fn default_repo() -> String {
-    "kasper573/rift".to_owned()
 }
 
 pub struct App {

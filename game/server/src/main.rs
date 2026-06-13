@@ -34,16 +34,11 @@ const MAX_CLIENTS: usize = 256;
 /// The `RIFT_GAME_SERVER_*` environment.
 #[derive(serde::Deserialize)]
 struct Config {
-    #[serde(default = "default_port")]
     port: u16,
     /// The host clients dial for netcode, baked into the minted tokens (its port is always the
-    /// server's own [`port`]). A hostname is resolved at startup, so prod can name its public
-    /// domain; defaults to loopback, which suits local development and the test stack.
-    public_host: Option<String>,
-}
-
-fn default_port() -> u16 {
-    9998
+    /// server's own [`port`]). A hostname is resolved at startup, so prod names its public domain
+    /// and the test stack names loopback.
+    public_host: String,
 }
 
 fn main() {
@@ -54,8 +49,7 @@ fn main() {
     let bind: SocketAddr = format!("0.0.0.0:{}", config.port)
         .parse()
         .expect("server bind address");
-    let public_host = config.public_host.as_deref().unwrap_or("127.0.0.1");
-    let public: SocketAddr = format!("{public_host}:{}", config.port)
+    let public: SocketAddr = format!("{}:{}", config.public_host, config.port)
         .to_socket_addrs()
         .expect("resolve RIFT_GAME_SERVER_PUBLIC_HOST")
         .next()
