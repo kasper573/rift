@@ -1,0 +1,4 @@
+{
+  "rust-analyzer.check.extraArgs": ["--exclude", "e2e"],
+  "rust-analyzer.cargo.extraArgs": ["--exclude", "e2e"]
+}
