@@ -97,9 +97,20 @@ jobs:
           for _ in $(seq 1 50); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.2; done
           DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
+      - name: Quiet chrome's first-run prompts
+        # A fresh chrome profile pops first-run UI — the "set as default" bar and, by region, the EU
+        # search-engine choice dialog — that covers the page and breaks the keyboard-driven sign-in.
+        # A managed policy pre-picks the search provider and the wrapper flags suppress the rest, so
+        # the browser behaves like a returning user's. The e2e drives chrome through $BROWSER.
+        run: |
+          sudo mkdir -p /etc/opt/chrome/policies/managed
+          echo '{"DefaultSearchProviderEnabled":true,"DefaultSearchProviderName":"Google","DefaultSearchProviderKeyword":"google","DefaultSearchProviderSearchURL":"https://www.google.com/search?q={searchTerms}"}' \
+            | sudo tee /etc/opt/chrome/policies/managed/no-choice.json >/dev/null
+          printf '#!/bin/sh\nexec google-chrome --no-first-run --no-default-browser-check --disable-search-engine-choice-screen --disable-features=Translate "$@"\n' > /tmp/rift-chrome
+          chmod +x /tmp/rift-chrome
       - name: E2E test
         env:
-          BROWSER: google-chrome
+          BROWSER: /tmp/rift-chrome
         run: |
           export RIFT_E2E_CLIENT="$PWD/target/release/rift"
           export RIFT_E2E_SERVER="$PWD/target/release/server"
