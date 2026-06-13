@@ -14,12 +14,11 @@ path = "src/main.rs"
 # The `dx serve --hot-patch` dev loop: live system patching (subsecond) plus asset hot-reload.
 hotpatch = ["bevy/hotpatching", "bevy/file_watcher"]
 # Release/dist builds: embed the assets tree so the shipped binary is self-contained.
-dist = ["dep:include_dir", "dep:futures-lite"]
+dist = ["dep:include_dir"]
 
 [dependencies]
 world = { path = "../world", default-features = false }
 include_dir = { version = "0.7", optional = true }
-futures-lite = { version = "2", optional = true }
 # Bevy's `2d` + `ui` feature bundles, minus `bevy_gilrs` (drops the `libudev` build dependency —
 # no gamepad in a mouse/keyboard MMO) and `wayland` (drops the `libwayland-dev` build dependency;
 # `x11` is dlopen-only and runs on X11 and Wayland-via-XWayland).

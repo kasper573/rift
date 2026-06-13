@@ -2181,7 +2181,6 @@ dependencies = [
  "bevy_replicon",
  "bevy_replicon_renet",
  "dirs",
- "futures-lite",
  "http",
  "include_dir",
  "openidconnect",
