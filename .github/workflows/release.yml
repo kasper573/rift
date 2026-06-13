@@ -92,6 +92,9 @@ jobs:
             tar czf "out/$pkg.tar.gz"  -C "stage/$pkg"  .
             tar czf "out/$inst.tar.gz" -C "stage/$inst" .
           fi
+          # Temporary patch-detection probe: a per-platform release asset the installer downloads and
+          # writes verbatim, so a fresh install dir gaining this file proves it applied a newer release.
+          echo "${{ github.sha }}" > "out/rift-marker-${pkg#rift-}.txt"
       - uses: actions/upload-artifact@v7
         with:
           name: client-${{ matrix.os }}
