@@ -171,7 +171,7 @@ jobs:
           # where the image builds expect it.
           path: .
       - name: Restore the executable bits artifact transport may drop
-        run: chmod +x target/release/server target/release/website
+        run: chmod +x target/release/server target/release/website target/release/installer-backend
       - name: Build and push the stack images
         env:
           COMPOSE: docker compose -f docker/docker-compose.yaml
