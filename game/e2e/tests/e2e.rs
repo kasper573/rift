@@ -23,6 +23,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use arboard::Clipboard;
 use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use xcap::Window;
 
@@ -110,9 +111,15 @@ fn register_in_browser(enigo: &mut Enigo) {
         "/protocol/openid-connect/registrations?",
     );
     let browser = wait_for_browser(Duration::from_secs(60));
+    // Paste the URL into the address bar rather than type it: a 40-character PKCE code_challenge
+    // sent key-by-key loses characters on a loaded X server, and keycloak then rejects the request
+    // as invalid. The clipboard transfers the whole URL atomically. `clipboard` is held to the end
+    // of the function so it keeps serving the selection until chrome has pasted.
+    let mut clipboard = Clipboard::new().expect("open clipboard");
+    clipboard.set_text(&register_url).expect("set clipboard");
     browser.click(enigo, 100, 10);
     chord(enigo, Key::Control, Key::Unicode('l'));
-    type_text(enigo, &register_url);
+    chord(enigo, Key::Control, Key::Unicode('v'));
     // A history match can inline-autocomplete a selected suffix; Delete drops it (no-op otherwise).
     tap(enigo, Key::Delete);
     tap(enigo, Key::Return);
@@ -140,6 +147,9 @@ fn register_in_browser(enigo: &mut Enigo) {
     tap(enigo, Key::Return);
     println!("registered {user}; waiting for the redirect to the client");
     sleep(Duration::from_secs(8));
+    // Snapshot the page before closing it: if sign-in never completes, this shows whether
+    // registration errored or a browser prompt got in the way.
+    save(&browser.capture(), "register-result");
 
     // Close the browser so it cannot cover the game window; the redirect page is done with.
     chord(enigo, Key::Control, Key::Unicode('w'));

@@ -15,6 +15,7 @@ path = "src/lib.rs"
 # crate is excluded from the workspace `default-members`, so a plain `cargo build`/`test` skips it
 # (xcap pulls heavy capture deps); build it via `just e2e`.
 [dev-dependencies]
+arboard = "3"
 enigo = "0.6"
 png = "0.18"
 ureq = { workspace = true, features = ["rustls", "json"] }
