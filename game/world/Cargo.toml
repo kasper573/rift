@@ -8,6 +8,10 @@ description = "The MMORPG game library: wire protocol, content tables, and world
 default = ["host"]
 host = ["bevy_replicon/server", "dep:bevy_time"]
 
+[[bin]]
+name = "kc-roles"
+path = "src/bin/kc_roles.rs"
+
 [dependencies]
 bevy_app.workspace = true
 bevy_ecs.workspace = true

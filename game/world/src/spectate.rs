@@ -9,9 +9,8 @@ use bevy_replicon::prelude::{FromClient, Replicated};
 use crate::area;
 use crate::identity::Identity;
 use crate::player::Players;
-use crate::protocol::{
-    AreaTag, ClientId, Owner, Position, SPECTATE_ROLE, Spectate, SpectateRequest,
-};
+use crate::protocol::{AreaTag, ClientId, Owner, Position, Spectate, SpectateRequest};
+use crate::role::Role;
 
 #[derive(Resource, Default)]
 pub struct Spectators(pub HashMap<ClientId, Entity>);
@@ -43,12 +42,11 @@ pub fn requests(world: &mut World) {
     }
 }
 
-// No identity means the server runs without an authenticator; anyone may spectate then.
 fn allowed(world: &World, client_entity: Entity, client: ClientId) -> bool {
     let playing = world.resource::<Players>().0.contains_key(&client);
     let entitled = world
         .get::<Identity>(client_entity)
-        .is_none_or(|identity| identity.has_role(SPECTATE_ROLE));
+        .is_some_and(|identity| identity.has_role(Role::Spectate));
     !playing && entitled
 }
 

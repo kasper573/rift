@@ -6,6 +6,7 @@ pub mod items;
 pub mod math;
 pub mod nav;
 pub mod protocol;
+pub mod role;
 pub mod session;
 pub mod sfx;
 pub mod table;
@@ -37,9 +38,10 @@ pub use crate::identity::Identity;
 pub use crate::protocol::{
     ACTION_ATTACK, ACTION_DEAD, ACTION_IDLE, ACTION_RUN, ACTION_WALK, Actor, AreaTag,
     AttackRequest, ClientId, Hitbox, Inventory, ItemConsumed, ItemId, JoinRequest, MoveRequest,
-    MoveToPortal, Name, Owner, Position, RespawnRequest, Rgba, SPECTATE_ROLE, Spectate,
-    SpectateRequest, UseItemRequest, Vitals, Welcome, Xp,
+    MoveToPortal, Name, Owner, Position, RespawnRequest, Rgba, Spectate, SpectateRequest,
+    UseItemRequest, Vitals, Welcome, Xp,
 };
+pub use crate::role::Role;
 
 pub const TICK_HZ: math::Hertz = math::Hertz(30.0);
 

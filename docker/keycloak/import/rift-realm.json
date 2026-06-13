@@ -35,7 +35,7 @@
   "duplicateEmailsAllowed": false,
   "resetPasswordAllowed": true,
   "editUsernameAllowed": false,
-  "bruteForceProtected": false,
+  "bruteForceProtected": true,
   "permanentLockout": false,
   "maxTemporaryLockouts": 0,
   "bruteForceStrategy": "MULTIPLE",
@@ -69,54 +69,9 @@
         "attributes": {}
       },
       {
-        "id": "593fc145-b104-409f-8ae3-09219f6fb01c",
-        "name": "admin",
-        "description": "",
-        "composite": true,
-        "composites": {
-          "realm": [
-            "offline_access",
-            "admin",
-            "uma_authorization",
-            "default-roles-rift"
-          ],
-          "client": {
-            "realm-management": [
-              "impersonation",
-              "create-client"
-            ],
-            "broker": [
-              "read-token"
-            ],
-            "account": [
-              "view-groups",
-              "view-profile",
-              "delete-account",
-              "view-applications",
-              "view-consent",
-              "manage-account",
-              "manage-account-links",
-              "manage-consent"
-            ]
-          }
-        },
-        "clientRole": false,
-        "containerId": "024a6c08-e66b-4433-8686-f58644f3bbc3",
-        "attributes": {}
-      },
-      {
         "id": "f85299d9-fb56-4736-a28d-5031f1a31667",
         "name": "uma_authorization",
         "description": "${role_uma_authorization}",
-        "composite": false,
-        "clientRole": false,
-        "containerId": "024a6c08-e66b-4433-8686-f58644f3bbc3",
-        "attributes": {}
-      },
-      {
-        "id": "5e1f9d2a-7c44-4b1b-9a64-2f0d6c3a8b11",
-        "name": "spectate",
-        "description": "May watch the game as a spectator",
         "composite": false,
         "clientRole": false,
         "containerId": "024a6c08-e66b-4433-8686-f58644f3bbc3",
@@ -441,28 +396,7 @@
       ]
     }
   },
-  "groups": [
-    {
-      "id": "cea763c4-2f02-4b42-80fd-cf15d2c6749e",
-      "name": "admin",
-      "path": "/admin",
-      "subGroups": [],
-      "attributes": {},
-      "realmRoles": [],
-      "clientRoles": {}
-    },
-    {
-      "id": "b4c7a6e2-9d31-4f58-8c02-61e5a9d47f23",
-      "name": "spectator",
-      "path": "/spectator",
-      "subGroups": [],
-      "attributes": {},
-      "realmRoles": [
-        "spectate"
-      ],
-      "clientRoles": {}
-    }
-  ],
+  "groups": [],
   "defaultRole": {
     "id": "8c31d78d-1b59-469c-b083-f7488a488723",
     "name": "default-roles-rift",

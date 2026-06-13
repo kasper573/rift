@@ -13,18 +13,17 @@ use openidconnect::{
 
 use crate::web;
 use crate::{Screen, net};
-use world::SPECTATE_ROLE;
+use world::Role;
 
 /// The public OIDC client id; the game server checks `azp == rift`.
 const CLIENT_ID: &str = "rift";
 
-/// What entering play requires: the `Authorization` value `/session` accepts (`Bearer <jwt>` from
-/// sign-in, or `Bypass <name>`), and the realm roles read (unverified) from the token to decide
-/// the launch flow.
+/// What entering play requires: the `Bearer <jwt>` Authorization value `/session` accepts, and
+/// the realm roles read (unverified) from the token to decide the launch flow.
 #[derive(Resource, Clone)]
 pub struct Session {
     pub authorization: String,
-    pub roles: Vec<String>,
+    pub roles: Vec<Role>,
 }
 
 pub struct AuthPlugin;
@@ -39,17 +38,7 @@ impl Plugin for AuthPlugin {
 #[derive(Resource)]
 struct Pending(Mutex<Receiver<Result<Session, String>>>);
 
-fn start(mut commands: Commands, mut screen: ResMut<NextState<Screen>>) {
-    // The client-side half of the server's RIFT_GAME_SERVER_AUTH_BYPASS: play without an identity
-    // provider (local development and the E2E test).
-    if let Ok(name) = std::env::var("RIFT_CLIENT_AUTH_BYPASS") {
-        commands.insert_resource(Session {
-            authorization: format!("Bypass {name}"),
-            roles: Vec::new(),
-        });
-        screen.set(Screen::Playing);
-        return;
-    }
+fn start(mut commands: Commands) {
     let (tx, rx) = channel();
     std::thread::spawn(move || {
         let _ = tx.send(sign_in());
@@ -68,7 +57,7 @@ fn poll(
     let received = pending.0.lock().expect("pending lock").try_recv();
     match received {
         Ok(Ok(session)) => {
-            let spectator = session.roles.iter().any(|role| role == SPECTATE_ROLE);
+            let spectator = session.roles.contains(&Role::Spectate);
             commands.insert_resource(session);
             commands.remove_resource::<Pending>();
             screen.set(if spectator {
@@ -116,6 +105,8 @@ fn sign_in() -> Result<Session, String> {
         .set_pkce_challenge(challenge)
         .url();
 
+    // Printed so sign-in stays possible when the browser fails to open: visit the URL manually.
+    println!("sign in at {authorize_url}");
     webbrowser::open(authorize_url.as_str()).map_err(stringify)?;
     let (code, state) = capture(&listener)?;
     if state != *csrf.secret() {
@@ -169,7 +160,7 @@ fn capture(listener: &TcpListener) -> Result<(String, String), String> {
 
 /// Reads `realm_access.roles` from the access token's payload — unverified client-side; the game
 /// server verifies the token before granting anything.
-fn roles(access_token: &str) -> Vec<String> {
+fn roles(access_token: &str) -> Vec<Role> {
     let Some(payload) = access_token.split('.').nth(1) else {
         return Vec::new();
     };
@@ -184,7 +175,7 @@ fn roles(access_token: &str) -> Vec<String> {
         .map(|roles| {
             roles
                 .iter()
-                .filter_map(|role| role.as_str().map(str::to_owned))
+                .filter_map(|role| role.as_str().and_then(Role::parse))
                 .collect()
         })
         .unwrap_or_default()
@@ -196,7 +187,7 @@ pub fn enter(world: &mut World, spectate: bool) {
     let Some(session) = world.get_resource::<Session>().cloned() else {
         return;
     };
-    match net::request_token(&game_url(), &session.authorization) {
+    match net::request_token(&game_server_url(), &session.authorization) {
         Ok(token) => {
             net::connect(world, &token);
             world.insert_resource(net::Announce { spectate });
@@ -214,10 +205,10 @@ fn issuer() -> Result<IssuerUrl, String> {
     .map_err(stringify)
 }
 
-fn game_url() -> String {
+fn game_server_url() -> String {
     env(
-        "RIFT_CLIENT_GAME_URL",
-        option_env!("RIFT_CLIENT_GAME_URL"),
+        "RIFT_CLIENT_GAME_SERVER_URL",
+        option_env!("RIFT_CLIENT_GAME_SERVER_URL"),
         "https://game-server.rift.localhost",
     )
 }

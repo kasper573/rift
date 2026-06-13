@@ -52,8 +52,6 @@ pub fn protocol(app: &mut App) {
 #[component(immutable)]
 pub struct ClientId(pub u32);
 
-pub const SPECTATE_ROLE: &str = "spectate";
-
 pub const ACTION_IDLE: u8 = 0;
 pub const ACTION_WALK: u8 = 1;
 pub const ACTION_RUN: u8 = 2;

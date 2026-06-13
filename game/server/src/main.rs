@@ -39,8 +39,6 @@ struct Config {
     /// The UDP address clients dial (baked into the minted tokens); the bind address with a
     /// loopback host by default, which suits local development and the test stack.
     public_addr: Option<String>,
-    #[serde(default)]
-    auth_bypass: bool,
 }
 
 fn default_port() -> u16 {
@@ -69,7 +67,6 @@ fn main() {
     let http = Http {
         sessions: sessions.clone(),
         verifier: verifier(),
-        bypass: config.auth_bypass,
         prometheus: metrics_recorder(),
         private_key,
         public,
@@ -202,8 +199,7 @@ fn attach_identity(
 #[derive(Clone)]
 struct Http {
     sessions: Sessions,
-    verifier: Option<Arc<Mutex<auth::Verifier>>>,
-    bypass: bool,
+    verifier: Arc<Mutex<auth::Verifier>>,
     prometheus: metrics_exporter_prometheus::PrometheusHandle,
     private_key: [u8; NETCODE_KEY_BYTES],
     public: SocketAddr,
@@ -226,9 +222,8 @@ async fn serve_http(addr: SocketAddr, http: Http) {
     axum::serve(listener, router).await.expect("axum serves");
 }
 
-/// Verifies a player's `Authorization` and mints a single-use `ConnectToken` for the UDP
-/// connection. `Bearer <JWT>` is verified against Keycloak; `Bypass <name>` is an unverified
-/// player accepted only when `RIFT_GAME_SERVER_AUTH_BYPASS` is set (local development and tests).
+/// Verifies a player's `Bearer <JWT>` against Keycloak and mints a single-use `ConnectToken`
+/// for the UDP connection.
 async fn session(State(http): State<Http>, headers: HeaderMap) -> Response {
     let authorization = headers
         .get(header::AUTHORIZATION)
@@ -265,31 +260,24 @@ async fn session(State(http): State<Http>, headers: HeaderMap) -> Response {
 }
 
 fn resolve(http: &Http, authorization: &str) -> Result<Identity, StatusCode> {
-    if let Some(name) = authorization.strip_prefix("Bypass ") {
-        if !http.bypass {
-            return Err(StatusCode::UNAUTHORIZED);
-        }
-        // Bypass players are ordinary; privileged roles require a real token.
-        return Ok(Identity {
-            id: format!("bypass:{name}"),
-            name: name.to_owned(),
-            roles: Vec::new(),
-        });
-    }
-    if let Some(token) = authorization.strip_prefix("Bearer ") {
-        let verifier = http.verifier.as_ref().ok_or(StatusCode::UNAUTHORIZED)?;
-        let claims = verifier
-            .lock()
-            .expect("verifier lock")
-            .verify(token)
-            .map_err(|_| StatusCode::UNAUTHORIZED)?;
-        return Ok(Identity {
-            id: claims.subject,
-            name: claims.name,
-            roles: claims.roles,
-        });
-    }
-    Err(StatusCode::UNAUTHORIZED)
+    let token = authorization
+        .strip_prefix("Bearer ")
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let claims = http
+        .verifier
+        .lock()
+        .expect("verifier lock")
+        .verify(token)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    Ok(Identity {
+        id: claims.subject,
+        name: claims.name,
+        roles: claims
+            .roles
+            .iter()
+            .filter_map(|role| world::Role::parse(role))
+            .collect(),
+    })
 }
 
 async fn scrape(State(http): State<Http>) -> String {
@@ -300,10 +288,7 @@ async fn scrape(State(http): State<Http>) -> String {
 /// Healthy means players can actually connect: a server that cannot verify tokens yet (issuer
 /// still booting next to it) stays out of rotation instead of minting unusable sessions.
 async fn health(State(http): State<Http>) -> Response {
-    let ready = match &http.verifier {
-        Some(verifier) => verifier.lock().expect("verifier lock").ready(),
-        None => true,
-    };
+    let ready = http.verifier.lock().expect("verifier lock").ready();
     if ready {
         "ok".into_response()
     } else {
@@ -328,16 +313,18 @@ fn metrics_recorder() -> metrics_exporter_prometheus::PrometheusHandle {
         .expect("prometheus recorder installs")
 }
 
-/// Keycloak verification configured through the shared `RIFT_AUTH_*` block; without it the server
-/// mints sessions for anyone (plain local development).
-fn verifier() -> Option<Arc<Mutex<auth::Verifier>>> {
+/// Keycloak verification configured through the shared `RIFT_AUTH_*` block, which every
+/// deployment must provide: sessions are only ever minted for verified tokens.
+fn verifier() -> Arc<Mutex<auth::Verifier>> {
     #[derive(serde::Deserialize)]
     struct AuthConfig {
         issuer: String,
         audience: String,
         jwks_uri: String,
     }
-    let config: AuthConfig = envy::prefixed("RIFT_AUTH_").from_env().ok()?;
+    let config: AuthConfig = envy::prefixed("RIFT_AUTH_")
+        .from_env()
+        .expect("RIFT_AUTH_* environment");
     let mut verifier = auth::Verifier::new(&config.issuer, &config.audience, &config.jwks_uri);
     match verifier.warm() {
         Ok(()) => println!("auth enabled, issuer {}", config.issuer),
@@ -346,5 +333,5 @@ fn verifier() -> Option<Arc<Mutex<auth::Verifier>>> {
             config.issuer
         ),
     }
-    Some(Arc::new(Mutex::new(verifier)))
+    Arc::new(Mutex::new(verifier))
 }

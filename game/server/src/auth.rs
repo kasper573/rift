@@ -29,8 +29,15 @@ enum Fetch {
 
 impl Verifier {
     pub fn new(issuer: &str, audience: &str, jwks_uri: &str) -> Self {
+        // TLS against the OS trust store (not rustls' baked-in roots), so a locally trusted CA
+        // (the dev/test proxy's Caddy CA) works like any public one.
         let config = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(5)))
+            .tls_config(
+                ureq::tls::TlsConfig::builder()
+                    .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                    .build(),
+            )
             .build();
         Self {
             issuer: issuer.to_owned(),

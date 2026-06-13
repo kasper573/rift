@@ -44,11 +44,11 @@ fn announce(world: &mut World) {
     world.remove_resource::<Announce>();
 }
 
-/// Requests a session token from `{game_url}/session` with the given `authorization` (a
-/// `Bearer <jwt>` or `Bypass <name>` header).
-pub fn request_token(game_url: &str, authorization: &str) -> Result<Vec<u8>, String> {
+/// Requests a session token from `{game_server_url}/session` with the given `Bearer <jwt>`
+/// authorization.
+pub fn request_token(game_server_url: &str, authorization: &str) -> Result<Vec<u8>, String> {
     let mut response = web::agent()
-        .post(format!("{game_url}/session"))
+        .post(format!("{game_server_url}/session"))
         .header("Authorization", authorization)
         .send_empty()
         .map_err(|error| error.to_string())?;
