@@ -119,18 +119,15 @@ fn register_in_browser(enigo: &mut Enigo) {
     sleep(Duration::from_secs(8));
 
     // Keyboard-only form fill, calibrated to the pinned keycloak version and theme. Tab order on
-    // its register page: username, password, [reveal], password-confirm, [reveal], email,
-    // firstName, lastName, submit.
+    // its register page: username, password, [reveal], password-confirm, [reveal], email, submit.
     let stamp = unix_now().as_secs();
     let user = format!("tester{stamp}");
     let password = format!("e2e-{stamp}-pw");
-    let fields: [(usize, &str); 6] = [
+    let fields: [(usize, &str); 4] = [
         (1, &user),
         (1, &password),
         (2, &password),
         (2, &format!("{user}@example.com")),
-        (1, "Tester"),
-        (1, "Testersson"),
     ];
     for (tabs, value) in fields {
         for _ in 0..tabs {
@@ -180,11 +177,17 @@ fn wait_for_browser(timeout: Duration) -> Win {
                 id: window.id().expect("window id"),
             };
         }
-        assert!(
-            Instant::now() < deadline,
-            "no browser window showed the sign-in page (see {}/client.*)",
-            artifacts().display()
-        );
+        if Instant::now() >= deadline {
+            let titles: Vec<String> = Window::all()
+                .into_iter()
+                .flatten()
+                .filter_map(|w| w.title().ok())
+                .collect();
+            panic!(
+                "no browser window showed the sign-in page; windows seen: {titles:?} (see {}/client.*)",
+                artifacts().display()
+            );
+        }
         sleep(Duration::from_millis(250));
     }
 }
