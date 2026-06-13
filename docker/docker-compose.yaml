@@ -33,6 +33,17 @@ services:
     depends_on:
       - rift-game-server
 
+  rift-installer:
+    env_file: *env_files
+    logging: *logging
+    build:
+      dockerfile: ./docker/Dockerfile
+      context: ..
+      target: installer-backend
+    image: ${DOCKER_REGISTRY_URL:-rift}/rift-installer:${DOCKER_IMAGE_VERSION:-latest}
+    restart: always
+    profiles: ["prod", "test"]
+
   rift-game-server:
     env_file: *env_files
     logging: *logging

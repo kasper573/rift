@@ -1,8 +1,9 @@
 compose := "docker compose -f docker/docker-compose.yaml --profile test"
 
-# Build the server/website artifacts and the keycloak provisioning input the stack images package.
+# Build the server/website/installer-backend artifacts and the keycloak provisioning input the stack images package.
 build:
     cargo build --release -p website -p server
+    cargo build --release -p installer --features backend --bin installer-backend
     cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
 
 # Build the artifacts and (re)deploy the local stack; compose only restarts what changed.
@@ -40,7 +41,7 @@ reset:
 # and its CA trusted (see the README). The client/server binaries are passed by path so the test
 # never rebuilds them. CI runs the same test on linux (and supplies its own headless display).
 e2e: stack
-    cargo build --release --features dist -p client
+    cargo build --release -p client
     RIFT_E2E_CLIENT="{{justfile_directory()}}/target/release/rift" \
     RIFT_E2E_SERVER="{{justfile_directory()}}/target/release/server" \
         cargo test -p e2e -- --ignored --nocapture

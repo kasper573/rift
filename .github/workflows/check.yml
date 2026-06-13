@@ -66,7 +66,9 @@ jobs:
             libvulkan1 mesa-vulkan-drivers \
             xvfb openbox libnss3-tools \
             libclang-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
-            libxcb1-dev libxcb-randr0-dev libxcb-render0-dev
+            libxcb1-dev libxcb-randr0-dev libxcb-render0-dev \
+            cmake g++ libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev \
+            libxrender-dev libxfixes-dev libpango1.0-dev libgl1-mesa-dev libglu1-mesa-dev
       - name: Build the client and the server
         # The e2e drives these very binaries through a real session.
         run: |
@@ -74,6 +76,14 @@ jobs:
           cargo build --release -p server
       - name: Test
         run: cargo test --release
+      - name: Lint and test the installer's feature-gated targets
+        # The installer's lib and unit tests run in the default lint/test above; its fltk frontend and
+        # axum backend build only under their own features, so they are linted here (where fltk's build
+        # deps are installed), and the backend's router integration test runs with the backend feature.
+        run: |
+          cargo clippy -p installer --features frontend --all-targets -- -D warnings
+          cargo clippy -p installer --features backend --all-targets -- -D warnings
+          cargo test -p installer --features backend
       - name: Start the auth stack
         # The e2e signs in for real, so it needs keycloak behind the TLS proxy — only that slice
         # of the stack; the game server under test is the binary built above. The hosts entries

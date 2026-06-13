@@ -72,3 +72,11 @@ auth.{$RIFT_DOMAIN} {
     reverse_proxy {$RIFT_GAME_SERVER_PROXY_HOST}
     import common_cors
 }
+
+# The auto-installer's update manifest. A desktop client, not a browser, so no CORS.
+{$RIFT_INSTALLER_DOMAIN} {
+    import access_log
+    import common_rate_limit
+    import internal_metrics
+    reverse_proxy {$RIFT_INSTALLER_PROXY_HOST}
+}

@@ -4,5 +4,6 @@
 target
 !target/release/website
 !target/release/server
+!target/release/installer-backend
 docker/.env*
 *.md

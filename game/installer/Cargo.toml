@@ -1,0 +1,49 @@
+[package]
+name = "installer"
+version.workspace = true
+edition.workspace = true
+description = "Auto-installer/patcher: a tiny GUI that updates the game to the latest release then launches the client, plus the backend service that serves its update manifest."
+
+[lib]
+name = "installer"
+
+[[bin]]
+name = "rift-installer"
+path = "src/bin/frontend.rs"
+required-features = ["frontend"]
+
+[[bin]]
+name = "installer-backend"
+path = "src/bin/backend.rs"
+required-features = ["backend"]
+
+[features]
+default = []
+frontend = ["dep:fltk", "dep:self-replace", "dep:dotenvy", "dep:envy"]
+backend = ["dep:axum", "dep:tokio", "dep:ctrlc", "dep:envy"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+semver = "1"
+bytesize = "1"
+flate2 = "1"
+tar = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+ureq = { workspace = true, features = ["rustls", "platform-verifier", "json"] }
+
+fltk = { version = "1.5", optional = true }
+self-replace = { version = "1", optional = true }
+dotenvy = { version = "0.15", optional = true }
+
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+ctrlc = { workspace = true, optional = true }
+envy = { workspace = true, optional = true }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+tempfile = "3"

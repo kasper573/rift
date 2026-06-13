@@ -53,30 +53,44 @@ jobs:
           key: release-${{ matrix.os }}
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        # The client links ALSA through kira.
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - name: Build the client
+        # The client links ALSA through kira; the installer's fltk GUI is built from source on Linux, so
+        # it needs cmake plus the X11/GL/pango headers. macOS and Windows build fltk with their own toolchains.
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev cmake g++ libx11-dev libxext-dev libxft-dev \
+            libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpango1.0-dev \
+            libgl1-mesa-dev libglu1-mesa-dev
+      - name: Build the client and the installer
         shell: bash
-        # The binary is environment-agnostic; the prod .env packaged below configures it.
-        run: cargo build --release -p client
-      - name: Package the client with its prod .env
+        # Both are environment-agnostic; the prod .env packaged into the installer archive configures the
+        # installer and, through it, the client the installer launches.
+        run: cargo build --release -p client -p installer --features installer/frontend
+      - name: Package the client and the installer
         shell: bash
-        # A player extracts this archive and rift-assets.zip into one folder; the client reads the
-        # .env beside it at startup for its endpoints and (bundle-relative) asset path.
+        # The player downloads only the installer archive (binary + .env) and runs it; the installer
+        # fetches the client, the assets, and any newer installer into the same folder. The client archive
+        # is binary-only: the installer carries the one .env, so nothing collides when they land together.
         run: |
           ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
           pkg="${{ matrix.asset }}"
-          mkdir -p "stage/$pkg" out
+          inst="rift-installer-${pkg#rift-}"
+          mkdir -p "stage/$pkg" "stage/$inst" out
           cp "target/release/rift$ext" "stage/$pkg/rift$ext"
-          cat > "stage/$pkg/.env" <<EOF
+          cp "target/release/rift-installer$ext" "stage/$inst/rift-installer$ext"
+          cat > "stage/$inst/.env" <<EOF
           RIFT_CLIENT_ISSUER=https://auth.${{ vars.RIFT_DOMAIN }}/realms/rift
           RIFT_CLIENT_GAME_SERVER_URL=https://game-server.${{ vars.RIFT_DOMAIN }}
           RIFT_ASSETS_DIR=assets
+          RIFT_INSTALLER_METADATA_URL=https://installer.${{ vars.RIFT_DOMAIN }}
+          RIFT_CLIENT_EXECUTABLE=rift$ext
           EOF
           if [ "${{ runner.os }}" = "Windows" ]; then
-            (cd "stage/$pkg" && 7z a -tzip "../../out/$pkg.zip" . >/dev/null)
+            (cd "stage/$pkg"  && 7z a -tzip "../../out/$pkg.zip"  . >/dev/null)
+            (cd "stage/$inst" && 7z a -tzip "../../out/$inst.zip" . >/dev/null)
           else
-            tar czf "out/$pkg.tar.gz" -C "stage/$pkg" .
+            tar czf "out/$pkg.tar.gz"  -C "stage/$pkg"  .
+            tar czf "out/$inst.tar.gz" -C "stage/$inst" .
           fi
       - uses: actions/upload-artifact@v7
         with:
@@ -95,10 +109,11 @@ jobs:
         with:
           name: assets-archive
           path: assets-out/
-      - name: Build the server, the website, and the keycloak provisioning input
+      - name: Build the server, the website, the installer backend, and the keycloak provisioning input
         if: runner.os == 'Linux'
         run: |
           cargo build --release -p server -p website
+          cargo build --release -p installer --features backend --bin installer-backend
           cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
       - name: Upload the stack inputs for the deploy images
         if: runner.os == 'Linux'
@@ -108,6 +123,7 @@ jobs:
           path: |
             target/release/server
             target/release/website
+            target/release/installer-backend
             docker/keycloak/roles.conf
 
   release:
@@ -138,7 +154,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "$version" \
-            --notes "Automated release of ${{ github.sha }}. Download your OS archive and rift-assets.zip, extract both into the same folder, then run the binary."
+            --notes "Automated release of ${{ github.sha }}. Download the installer for your OS and run it; it fetches the game and keeps it up to date."
 
   deploy:
     needs: build
@@ -161,8 +177,8 @@ jobs:
           COMPOSE: docker compose -f docker/docker-compose.yaml
         run: |
           echo "${{ env.DOCKER_PASSWORD }}" | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
-          $COMPOSE --profile prod build rift-website rift-game-server keycloak reverse-proxy
-          $COMPOSE --profile prod push rift-website rift-game-server keycloak reverse-proxy
+          $COMPOSE --profile prod build rift-website rift-installer rift-game-server keycloak reverse-proxy
+          $COMPOSE --profile prod push rift-website rift-installer rift-game-server keycloak reverse-proxy
 
       - name: Upload docker runtime dependencies
         uses: burnett01/rsync-deployments@7.0.1
@@ -191,6 +207,10 @@ jobs:
             echo "DOCKER_REGISTRY_URL=\"${{ env.DOCKER_REGISTRY_URL }}\"" >> .env
             echo "DOCKER_IMAGE_VERSION=\"${{ env.DOCKER_IMAGE_VERSION }}\"" >> .env
             echo "RIFT_DOMAIN=\"${{ vars.RIFT_DOMAIN }}\"" >> .env
+            # The downloads page lists the latest release's installers; the website only renders these
+            # URLs, so CI (which owns the release naming) is the single place that knows their shape.
+            base="https://github.com/${{ github.repository }}/releases/latest/download"
+            echo "RIFT_WEBSITE_DOWNLOAD_LINKS=\"$base/rift-installer-linux-x86_64.tar.gz,$base/rift-installer-macos-aarch64.tar.gz,$base/rift-installer-windows-x86_64.zip\"" >> .env
 
             echo ${{ env.DOCKER_PASSWORD }} | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
             docker network inspect rift >/dev/null 2>&1 || docker network create rift

@@ -17,13 +17,14 @@ mod auth;
 struct Config {
     port: u16,
     redirect_uri: RedirectUrl,
-    /// The GitHub `owner/name` whose releases the landing page's download link points at.
-    repo: String,
+    /// Installer download URLs (`RIFT_WEBSITE_DOWNLOAD_LINKS`, comma-separated) listed on the downloads
+    /// page. CI fills these in, so the website needs no knowledge of where releases are actually hosted.
+    download_links: Vec<String>,
 }
 
 pub struct App {
     pub auth: auth::Auth,
-    releases_url: String,
+    downloads: Vec<Download>,
 }
 
 #[tokio::main]
@@ -36,10 +37,18 @@ async fn main() {
     let port = config.port;
     let app = Arc::new(App {
         auth: auth::Auth::from_env(config.redirect_uri).await,
-        releases_url: format!("https://github.com/{}/releases/latest", config.repo),
+        downloads: config
+            .download_links
+            .iter()
+            .map(|url| Download {
+                filename: filename_of(url),
+                url: url.clone(),
+            })
+            .collect(),
     });
     let router = axum::Router::new()
         .route("/", get(landing))
+        .route("/downloads", get(downloads))
         .route("/auth/sign-in", get(auth::sign_in))
         .route("/auth/sign-out", get(auth::sign_out))
         .route("/auth-callback", get(auth::callback))
@@ -89,14 +98,43 @@ struct Nav {
 #[template(path = "landing.html")]
 struct Landing {
     nav: Nav,
-    releases_url: String,
 }
 
 async fn landing(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
     page(Landing {
         nav: app.nav(&jar, "/").await,
-        releases_url: app.releases_url.clone(),
     })
+}
+
+#[derive(Clone)]
+struct Download {
+    filename: String,
+    url: String,
+}
+
+#[derive(Template)]
+#[template(path = "downloads.html")]
+struct Downloads {
+    nav: Nav,
+    downloads: Vec<Download>,
+}
+
+async fn downloads(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
+    page(Downloads {
+        nav: app.nav(&jar, "/downloads").await,
+        downloads: app.downloads.clone(),
+    })
+}
+
+/// The label shown for a download link: the URL's last path segment.
+fn filename_of(url: &str) -> String {
+    url.rsplit('/')
+        .next()
+        .unwrap_or(url)
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .to_owned()
 }
 
 fn page<T: Template>(template: T) -> Response {

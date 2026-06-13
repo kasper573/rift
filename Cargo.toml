@@ -5,6 +5,7 @@ members = [
     "game/server",
     "game/client",
     "game/e2e",
+    "game/installer",
     "website",
 ]
 # `e2e` pulls heavy screen-capture deps (and system libraries) only the CI needs, so a plain
@@ -13,6 +14,7 @@ default-members = [
     "game/world",
     "game/server",
     "game/client",
+    "game/installer",
     "website",
 ]
 
