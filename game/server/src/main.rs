@@ -1,7 +1,7 @@
 mod auth;
 
 use std::collections::HashMap;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -36,8 +36,9 @@ const MAX_CLIENTS: usize = 256;
 struct Config {
     #[serde(default = "default_port")]
     port: u16,
-    /// The UDP address clients dial (baked into the minted tokens); the bind address with a
-    /// loopback host by default, which suits local development and the test stack.
+    /// The UDP address clients dial (baked into the minted tokens), as `host:port`. A hostname is
+    /// resolved at startup, so prod can name its public domain; defaults to loopback, which suits
+    /// local development and the test stack.
     public_addr: Option<String>,
 }
 
@@ -54,7 +55,11 @@ fn main() {
         .parse()
         .expect("server bind address");
     let public: SocketAddr = match &config.public_addr {
-        Some(addr) => addr.parse().expect("RIFT_GAME_SERVER_PUBLIC_ADDR"),
+        Some(addr) => addr
+            .to_socket_addrs()
+            .expect("resolve RIFT_GAME_SERVER_PUBLIC_ADDR")
+            .next()
+            .expect("RIFT_GAME_SERVER_PUBLIC_ADDR resolves to an address"),
         None => format!("127.0.0.1:{}", config.port)
             .parse()
             .expect("address"),

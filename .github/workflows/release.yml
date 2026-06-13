@@ -164,10 +164,6 @@ jobs:
             echo "DOCKER_REGISTRY_URL=\"${{ env.DOCKER_REGISTRY_URL }}\"" >> .env
             echo "DOCKER_IMAGE_VERSION=\"${{ env.DOCKER_IMAGE_VERSION }}\"" >> .env
             echo "RIFT_DOMAIN=\"${{ vars.RIFT_DOMAIN }}\"" >> .env
-            # The UDP address remote clients dial for netcode, baked into minted ConnectTokens.
-            # Without it the server advertises 127.0.0.1 and no remote player can connect.
-            public_ip=$(curl -fsS --max-time 10 https://api.ipify.org || curl -fsS --max-time 10 https://ifconfig.me)
-            echo "RIFT_GAME_SERVER_PUBLIC_ADDR=\"${public_ip}:9998\"" >> .env
 
             echo ${{ env.DOCKER_PASSWORD }} | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
             docker network inspect rift >/dev/null 2>&1 || docker network create rift
