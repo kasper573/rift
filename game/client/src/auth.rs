@@ -1,7 +1,8 @@
 use std::io::{BufRead, BufReader, Write};
-use std::net::{Ipv4Addr, TcpListener};
+use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, channel};
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use bevy::prelude::*;
@@ -17,6 +18,11 @@ use world::Role;
 
 /// The public OIDC client id; the game server checks `azp == rift`.
 const CLIENT_ID: &str = "rift";
+
+/// How long sign-in waits for the browser to deliver the OAuth redirect before giving up.
+const REDIRECT_TIMEOUT: Duration = Duration::from_secs(300);
+/// Per-connection read cap, so a silent probe on the loopback port can't stall the wait.
+const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// What entering play requires: the `Bearer <jwt>` Authorization value `/session` accepts, and
 /// the realm roles read (unverified) from the token to decide the launch flow.
@@ -127,13 +133,35 @@ fn sign_in() -> Result<Session, String> {
     })
 }
 
+/// Waits on the loopback for the OAuth redirect. The browser also opens speculative preconnects and
+/// fetches `/favicon.ico` against the same port, so connections that aren't the redirect are
+/// dismissed and the wait continues until the real callback (the one carrying `state`) lands.
 fn capture(listener: &TcpListener) -> Result<(String, String), String> {
-    let (mut stream, _) = listener.accept().map_err(stringify)?;
-    let request = BufReader::new(&stream)
-        .lines()
-        .next()
-        .and_then(Result::ok)
-        .ok_or("empty redirect request")?;
+    let deadline = Instant::now() + REDIRECT_TIMEOUT;
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .ok_or("timed out waiting for the sign-in redirect")?;
+        let (mut stream, _) = listener.accept().map_err(stringify)?;
+        let _ = stream.set_read_timeout(Some(remaining.min(READ_TIMEOUT)));
+        match redirect(&stream) {
+            Some(result) => {
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSigned in \xe2\x80\x94 return to the game.",
+                );
+                return result;
+            }
+            None => {
+                let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+            }
+        }
+    }
+}
+
+/// Parses one loopback request. `None` means it isn't the OAuth redirect (it carries no `state`), so
+/// the caller keeps waiting; `Some` carries the authorization code or the realm's reported error.
+fn redirect(stream: &TcpStream) -> Option<Result<(String, String), String>> {
+    let request = BufReader::new(stream).lines().next()?.ok()?;
     let query = request
         .split_whitespace()
         .nth(1)
@@ -142,20 +170,22 @@ fn capture(listener: &TcpListener) -> Result<(String, String), String> {
         .unwrap_or_default();
     let mut code = None;
     let mut state = None;
+    let mut error = None;
     for (key, value) in query.split('&').filter_map(|pair| pair.split_once('=')) {
         match key {
             "code" => code = Some(value.to_owned()),
             "state" => state = Some(value.to_owned()),
+            "error" => error = Some(value.to_owned()),
             _ => {}
         }
     }
-    let _ = stream.write_all(
-        b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSigned in \xe2\x80\x94 return to the game.",
-    );
-    match (code, state) {
-        (Some(code), Some(state)) => Ok((code, state)),
-        _ => Err("redirect missing code or state".to_owned()),
-    }
+    let state = state?;
+    Some(match code {
+        Some(code) => Ok((code, state)),
+        None => Err(error
+            .map(|error| format!("sign-in rejected: {error}"))
+            .unwrap_or_else(|| "redirect missing code".to_owned())),
+    })
 }
 
 /// Reads `realm_access.roles` from the access token's payload — unverified client-side; the game
