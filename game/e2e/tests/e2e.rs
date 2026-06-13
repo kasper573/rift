@@ -140,7 +140,10 @@ fn register_in_browser(enigo: &mut Enigo) {
         for _ in 0..tabs {
             tap(enigo, Key::Tab);
         }
-        type_text(enigo, value);
+        // Paste each value too: typed key-by-key, a field can lose a character under load (a dropped
+        // `@` makes the email invalid, a dropped password char fails the confirm match).
+        clipboard.set_text(value).expect("set clipboard");
+        chord(enigo, Key::Control, Key::Unicode('v'));
         sleep(Duration::from_millis(100));
     }
     tap(enigo, Key::Tab);
@@ -298,16 +301,6 @@ fn wait_for_scene(window: &Win, timeout: Duration) -> Image {
             );
         }
         sleep(Duration::from_millis(500));
-    }
-}
-
-/// Types a string one character at a time with a gap between each. A single `enigo.text` burst loses
-/// keystrokes under a loaded X server (a dropped char in the URL's PKCE `code_challenge` makes
-/// keycloak reject the request; a dropped char in a field fails registration silently).
-fn type_text(enigo: &mut Enigo, text: &str) {
-    for ch in text.chars() {
-        enigo.text(&ch.to_string()).expect("type character");
-        sleep(Duration::from_millis(12));
     }
 }
 
