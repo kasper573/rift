@@ -27,8 +27,12 @@ jobs:
           # cache set instead of one per branch, well under GitHub's 10 GB ceiling.
           save-if: ${{ github.ref_name == 'main' }}
       - name: Install system dependencies
-        # Clippy compiles the client, which links ALSA through kira.
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+        # Clippy compiles the client, which links ALSA through kira. Drop the runner image's
+        # microsoft/azure apt sources first: we install nothing from them, but the mirror 403s
+        # intermittently and `apt-get update` fails the whole step when any source errors.
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
+          sudo apt-get update && sudo apt-get install -y libasound2-dev
       - name: Lint
         run: |
           cargo fmt --check
@@ -54,6 +58,7 @@ jobs:
         # alongside the X11 (xcb) path we use. certutil (libnss3-tools) teaches the browser's NSS
         # store the stack's CA.
         run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
           sudo apt-get update
           sudo apt-get install -y \
             libasound2-dev \
