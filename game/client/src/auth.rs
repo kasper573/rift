@@ -32,6 +32,15 @@ pub struct Session {
     pub roles: Vec<Role>,
 }
 
+/// The client's endpoints, read once from `RIFT_CLIENT_*` at startup and injected as a resource
+/// rather than reached for inside the sign-in flow: `issuer` is the realm the browser authenticates
+/// against, and the game server's `/session` lives at `game_server_url`.
+#[derive(Resource, Clone, serde::Deserialize)]
+pub struct ClientConfig {
+    pub issuer: String,
+    pub game_server_url: String,
+}
+
 pub struct AuthPlugin;
 
 impl Plugin for AuthPlugin {
@@ -44,10 +53,11 @@ impl Plugin for AuthPlugin {
 #[derive(Resource)]
 struct Pending(Mutex<Receiver<Result<Session, String>>>);
 
-fn start(mut commands: Commands) {
+fn start(config: Res<ClientConfig>, mut commands: Commands) {
+    let issuer = config.issuer.clone();
     let (tx, rx) = channel();
     std::thread::spawn(move || {
-        let _ = tx.send(sign_in());
+        let _ = tx.send(sign_in(&issuer));
     });
     commands.insert_resource(Pending(Mutex::new(rx)));
 }
@@ -87,9 +97,10 @@ fn poll(
 
 /// Opens the system browser to the realm's authorize endpoint, captures the redirect on the
 /// loopback, and exchanges the code for tokens. Blocking; run off the main thread.
-fn sign_in() -> Result<Session, String> {
+fn sign_in(issuer: &str) -> Result<Session, String> {
     let client_http = web::oidc_client();
-    let metadata = CoreProviderMetadata::discover(&issuer()?, &client_http).map_err(stringify)?;
+    let issuer = IssuerUrl::new(issuer.to_owned()).map_err(stringify)?;
+    let metadata = CoreProviderMetadata::discover(&issuer, &client_http).map_err(stringify)?;
 
     // RFC 8252 loopback redirection: bind any free port on 127.0.0.1 and let the redirect carry it,
     // so two clients (or a stale socket) never collide on a fixed port. The realm registers the
@@ -220,28 +231,14 @@ pub fn enter(world: &mut World, spectate: bool) {
     let Some(session) = world.get_resource::<Session>().cloned() else {
         return;
     };
-    match net::request_token(&game_server_url(), &session.authorization) {
+    let game_server_url = world.resource::<ClientConfig>().game_server_url.clone();
+    match net::request_token(&game_server_url, &session.authorization) {
         Ok(token) => {
             net::connect(world, &token);
             world.insert_resource(net::Announce { spectate });
         }
         Err(error) => error!("could not open a session: {error}"),
     }
-}
-
-fn issuer() -> Result<IssuerUrl, String> {
-    IssuerUrl::new(env("RIFT_CLIENT_ISSUER")).map_err(stringify)
-}
-
-fn game_server_url() -> String {
-    env("RIFT_CLIENT_GAME_SERVER_URL")
-}
-
-/// A client endpoint comes from the environment — the `.env` shipped beside the binary, or the vars
-/// dev and the e2e export — never a guessed default.
-fn env(var: &str) -> String {
-    std::env::var(var)
-        .unwrap_or_else(|_| panic!("{var} must be set (e.g. in the .env beside the client)"))
 }
 
 fn stringify(error: impl std::fmt::Display) -> String {

@@ -2278,6 +2278,7 @@ dependencies = [
  "bevy_replicon_renet",
  "dirs",
  "dotenvy",
+ "envy",
  "http",
  "openidconnect",
  "serde",

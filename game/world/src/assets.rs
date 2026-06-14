@@ -2,19 +2,28 @@
 //! the client resolves them through its asset server, the server only validates them.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 pub const MAPS: &str = "maps";
 pub const TILESETS: &str = "tilesets";
 pub const ACTORS: &str = "actors";
 pub const ICONS: &str = "icons";
 
-/// The assets root, from the required `RIFT_ASSETS_DIR`. The client sets this from the `.env` shipped
-/// beside its executable; the server gets it from its container. A missing value is a hard error,
-/// never a guessed path.
+static ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+/// Sets the assets root for the process. A composition root — a binary's `main`, or a test — calls
+/// this once before any content loads; the library never reaches into the environment for it, so
+/// where the root comes from (a container env var, the `.env` beside a client, a test fixture) is
+/// the caller's concern, not the domain's. Idempotent: the first root wins.
+pub fn init(root: impl Into<PathBuf>) {
+    let _ = ROOT.set(root.into());
+}
+
+/// The assets root set by [`init`]. Panics if content is loaded before a root is injected.
 pub fn root() -> PathBuf {
-    std::env::var_os("RIFT_ASSETS_DIR")
-        .map(PathBuf::from)
-        .expect("RIFT_ASSETS_DIR must be set")
+    ROOT.get()
+        .cloned()
+        .expect("assets::init must be called before loading assets")
 }
 
 /// An asset's absolute path from its root-relative name.

@@ -46,6 +46,7 @@ struct Config {
 }
 
 fn main() {
+    world::assets::init(std::env::var_os("RIFT_ASSETS_DIR").expect("RIFT_ASSETS_DIR must be set"));
     world::validate();
     let config: Config = envy::prefixed("RIFT_GAME_SERVER_")
         .from_env()
