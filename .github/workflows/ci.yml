@@ -43,9 +43,10 @@ jobs:
       - name: Prewarm the stack infra in the background
         # `just prewarm` only pulls externals and builds the keycloak + reverse-proxy images — no app
         # binaries, no roles.conf, no boot — so it runs from here, overlapping the apt setup, the cache
-        # restore and the whole compile below; `just stack` then reuses the built layers. nohup detaches
-        # it so it outlives this step, and the stack step waits on the sentinel before its compose run.
-        run: nohup bash -c 'just prewarm && touch /tmp/prewarm.done' > /tmp/prewarm.log 2>&1 &
+        # restore and the whole compile below; the stack boot then reuses the built layers. nohup
+        # detaches it so it outlives this step; it signals its sentinel even on failure (the boot can
+        # rebuild the images itself) so a failed prewarm never makes the boot wait out its timeout.
+        run: nohup bash -c 'just prewarm; touch /tmp/prewarm.done' > /tmp/prewarm.log 2>&1 &
       - uses: ./.github/actions/setup
         with:
           deps: all
@@ -53,19 +54,34 @@ jobs:
         with:
           key: linux
           save-if: ${{ github.ref_name == 'main' || github.ref_name == 'ci' }}
-      - name: Build the test binaries
-        # Build first so the release lint and test reuse these compiled deps instead of compiling Bevy
-        # again in a separate (debug) pass, and so e2e reuses the client instead of rebuilding it.
+      - name: Build the stack binaries
+        # The server/website/installer-backend the stack images package, plus keycloak's roles input.
+        # The client — the heavy render/wgpu compile — is built in the next step so the stack can boot
+        # alongside it.
+        run: just build
+      - name: Bring up the full stack in the background
+        # Booting the stack is mostly idle waiting on container healthchecks, so it overlaps the client
+        # compile + lint + test below at no cost. It needs the host binaries the previous step built (the
+        # images only package them), so it can't start before now; it waits for the infra prewarm so the
+        # two don't build the same images twice, then signals its own sentinel. `just stack-up` runs no
+        # cargo, so it never contends with the foreground compile for the target lock.
         run: |
-          just build
+          nohup bash -c '
+            for _ in $(seq 1 180); do [ -f /tmp/prewarm.done ] && break; sleep 2; done
+            just stack-up && touch /tmp/stack.done
+          ' > /tmp/stack.log 2>&1 &
+      - name: Build the client, then lint and test
+        # Build the client first so the release lint and test reuse these compiled deps instead of
+        # compiling Bevy again in a separate (debug) pass, and so e2e reuses the client binary.
+        run: |
           cargo build --release -p client
-      - run: just lint
-      - run: just test
-      - name: Bring up the full stack
+          just lint
+          just test
+      - name: Wait for the full stack
         run: |
-          for _ in $(seq 1 180); do [ -f /tmp/prewarm.done ] && break; sleep 2; done
-          tail -n 30 /tmp/prewarm.log || true
-          just stack
+          for _ in $(seq 1 180); do [ -f /tmp/stack.done ] && break; sleep 2; done
+          tail -n 50 /tmp/stack.log || true
+          test -f /tmp/stack.done
       - name: Trust the stack's certificate authority
         # Caddy mints its own CA at first boot; the OS store covers the client/server binaries and
         # chrome keeps its own NSS store. The CA's location in the stack lives in `just ca-cert`.

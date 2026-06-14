@@ -31,7 +31,12 @@ build-client:
     cargo build --release -p client -p installer --features installer/frontend
 
 # Build the artifacts and (re)deploy the local stack; compose only restarts what changed.
-stack: build
+stack: build stack-up
+
+# Bring the stack up, assuming the host binaries and roles.conf already exist (the images only
+# package them, never compile). Split out of `stack` so CI can build first and then boot the stack
+# on its own — without a second cargo invocation fighting the client compile for the target lock.
+stack-up:
     docker network inspect rift >/dev/null 2>&1 || docker network create rift
     {{compose}} up -d --build --wait
 
