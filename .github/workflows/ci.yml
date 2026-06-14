@@ -42,16 +42,20 @@ jobs:
         with:
           key: linux
           save-if: ${{ github.ref_name == 'main' || github.ref_name == 'ci' }}
-      - name: Prewarm the stack infra (it builds and boots while the workspace compiles)
-        run: nohup bash -c 'just prewarm && touch /tmp/prewarm.done' >/tmp/prewarm.log 2>&1 &
-      - run: just lint
-      - run: just test
-      - name: Bring up the full stack
-        # The prewarm above is racing the compile; let it finish issuing its compose run before this
-        # one starts, then just stack only has the app images left to build and waits on little.
+      - name: Lint and test, while the stack infra prewarms in the background
+        # Prewarm runs in this step's own shell and is waited on here, so it reliably overlaps the
+        # compile (a process backgrounded in its own step does not survive into later steps). The slow
+        # infra — image pulls, the keycloak and reverse-proxy builds, keycloak's boot — happens under
+        # lint+test, so `just stack` below only has the app images left and waits on little.
         run: |
-          for _ in $(seq 1 240); do [ -f /tmp/prewarm.done ] && break; sleep 1; done
-          just stack
+          just prewarm > /tmp/prewarm.log 2>&1 &
+          prewarm=$!
+          start=$SECONDS; just lint; echo "::notice::lint $((SECONDS - start))s"
+          start=$SECONDS; just test; echo "::notice::test $((SECONDS - start))s"
+          wait "$prewarm" || echo "::warning::prewarm exited non-zero (just stack will build it)"
+          tail -n 20 /tmp/prewarm.log
+      - name: Bring up the full stack
+        run: just stack
       - name: Trust the stack's certificate authority
         # Caddy mints its own CA at first boot; the OS store covers the client/server binaries and
         # chrome keeps its own NSS store. The CA's location in the stack lives in `just ca-cert`.
