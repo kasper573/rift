@@ -32,6 +32,14 @@ stack: build
     docker network inspect rift >/dev/null 2>&1 || docker network create rift
     {{compose}} up -d --build --wait
 
+# Pull the external images and build+boot the slow infra (keycloak's image+boot, caddy's xcaddy
+# build) on its own, with no dependency on the app binaries. A caller can run this while the
+# workspace compiles so the infra is ready by the time `just stack` only has the app images left.
+prewarm:
+    docker network inspect rift >/dev/null 2>&1 || docker network create rift
+    {{compose}} pull --ignore-buildable || true
+    {{compose}} up -d --build keycloak keycloak-healthcheck reverse-proxy
+
 # Build and push the prod stack images. No service names: compose's build sections are the source
 # of truth for what we publish, so adding/removing/renaming a service needs no change here.
 push-images:

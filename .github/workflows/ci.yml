@@ -42,10 +42,16 @@ jobs:
         with:
           key: linux
           save-if: ${{ github.ref_name == 'main' || github.ref_name == 'ci' }}
+      - name: Prewarm the stack infra (it builds and boots while the workspace compiles)
+        run: nohup bash -c 'just prewarm && touch /tmp/prewarm.done' >/tmp/prewarm.log 2>&1 &
       - run: just lint
       - run: just test
       - name: Bring up the full stack
-        run: just stack
+        # The prewarm above is racing the compile; let it finish issuing its compose run before this
+        # one starts, then just stack only has the app images left to build and waits on little.
+        run: |
+          for _ in $(seq 1 240); do [ -f /tmp/prewarm.done ] && break; sleep 1; done
+          just stack
       - name: Trust the stack's certificate authority
         # Caddy mints its own CA at first boot; the OS store covers the client/server binaries and
         # chrome keeps its own NSS store. The CA's location in the stack lives in `just ca-cert`.
