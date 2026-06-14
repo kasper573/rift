@@ -3,6 +3,7 @@ use bevy::prelude::*;
 pub mod auth;
 pub mod cursor;
 pub mod debug;
+pub mod fps;
 pub mod input;
 pub mod net;
 pub mod render;
@@ -89,6 +90,7 @@ pub fn run() -> AppExit {
         sfx::SfxPlugin,
         screens::ScreensPlugin,
         ui::HudPlugin,
+        fps::FpsPlugin,
     ));
     app.run()
 }
