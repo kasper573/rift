@@ -1,13 +1,20 @@
-name: release
+name: ci
 
+# Branch push (pillar 2): lint + test + e2e on Linux against the full stack.
+# main push (pillar 1): the above, then build the other platforms, publish the release, deploy to prod.
+# Tags are excluded so the RELEASE_TOKEN-made 0.x tag can't re-trigger CI.
 on:
   push:
-    branches: [main]
+    branches: ['**']
+  workflow_dispatch:
 
-# Deploys must never be cancelled mid-way; later pushes queue behind the running one.
+# Branch runs cancel superseded runs; main runs queue so deploys never overlap or get cancelled.
 concurrency:
-  group: release
-  cancel-in-progress: false
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
 
 env:
   DOCKER_REGISTRY: ghcr.io
@@ -15,23 +22,131 @@ env:
   DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
   DOCKER_REGISTRY_URL: ghcr.io/${{ github.repository_owner }}
   DOCKER_IMAGE_VERSION: ${{ github.sha }}
-  # The release's own download-naming scheme, defined once and referenced by packaging and the
-  # link derivation below.
+  # The release's own download-naming scheme, referenced by packaging and the link derivation below.
   INSTALLER_PREFIX: rift-installer-
   ASSETS_ZIP: rift-assets.zip
 
 jobs:
-  # Only the client ships to multiple OSes, so only it builds per OS; linux additionally builds
-  # everything the stack images package.
-  build:
+  # Everything on Linux: the quality gate every push must pass, and — on main — the source of the
+  # Linux release/stack artifacts. The gate already compiles the release workspace, so building the
+  # artifacts here costs nothing extra and the Bevy workspace compiles once per push.
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+        with:
+          deps: all
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux
+          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'ci' }}
+      - run: just lint
+      - run: just test
+      - name: Bring up the full stack
+        run: just stack
+      - name: Trust the stack's certificate authority
+        # Caddy mints its own CA at first boot; the OS store covers the client/server binaries and
+        # chrome keeps its own NSS store. The CA's location in the stack lives in `just ca-cert`.
+        run: |
+          just ca-cert /tmp/rift-root.crt
+          sudo install -m 644 /tmp/rift-root.crt /usr/local/share/ca-certificates/rift-root.crt
+          sudo update-ca-certificates
+          mkdir -p "$HOME/.pki/nssdb"
+          certutil -d sql:"$HOME"/.pki/nssdb -N --empty-password 2>/dev/null || true
+          certutil -d sql:"$HOME"/.pki/nssdb -A -t C,, -n rift-root -i /tmp/rift-root.crt
+      - name: Start a virtual display
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 -ac >/tmp/xvfb.log 2>&1 &
+          for _ in $(seq 1 50); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.2; done
+          DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+      - name: Quiet chrome's first-run prompts
+        # A fresh chrome profile pops first-run UI — the "set as default" bar and, by region, the EU
+        # search-engine choice dialog — that covers the page and breaks the keyboard-driven sign-in.
+        # A managed policy pre-picks the search provider and the wrapper flags suppress the rest. The
+        # e2e drives chrome through $BROWSER.
+        run: |
+          sudo mkdir -p /etc/opt/chrome/policies/managed
+          echo '{"DefaultSearchProviderEnabled":true,"DefaultSearchProviderName":"Google","DefaultSearchProviderKeyword":"google","DefaultSearchProviderSearchURL":"https://www.google.com/search?q={searchTerms}"}' \
+            | sudo tee /etc/opt/chrome/policies/managed/no-choice.json >/dev/null
+          printf '#!/bin/sh\nexec google-chrome --no-first-run --no-default-browser-check --disable-search-engine-choice-screen --disable-features=Translate "$@"\n' > /tmp/rift-chrome
+          chmod +x /tmp/rift-chrome
+      - name: E2E test
+        env:
+          BROWSER: /tmp/rift-chrome
+        run: just e2e
+      - name: Save E2E artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-artifacts
+          path: target/tmp/
+      - name: Save stack logs
+        if: failure()
+        run: just logs > /tmp/stack.log 2>&1 || true
+      - name: Upload stack logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stack-logs
+          path: /tmp/stack.log
+
+      # --- main only: emit the Linux release + stack artifacts from the already-warm target ---
+      - name: Build and stage the Linux release artifacts
+        if: ${{ success() && github.ref == 'refs/heads/main' }}
+        # The player downloads only the installer archive (binary + .env) and runs it; the installer
+        # fetches the client, the assets, and any newer installer into the same folder. The client
+        # archive is binary-only: the installer carries the one .env, so nothing collides. Assets are
+        # platform-independent, so the one archive is built here on the Linux leg.
+        run: |
+          just build-client
+          just build
+          pkg="rift-linux-x86_64"
+          inst="${INSTALLER_PREFIX}${pkg#rift-}"
+          mkdir -p "stage/$pkg" "stage/$inst" out assets-out
+          cp target/release/rift "stage/$pkg/rift"
+          cp target/release/rift-installer "stage/$inst/rift-installer"
+          just installer-env "${{ vars.RIFT_DOMAIN }}" rift > "stage/$inst/.env"
+          tar czf "out/$pkg.tar.gz"  -C "stage/$pkg"  .
+          tar czf "out/$inst.tar.gz" -C "stage/$inst" .
+          zip -r "assets-out/${ASSETS_ZIP}" assets
+      - name: Upload the Linux client and installer
+        if: ${{ success() && github.ref == 'refs/heads/main' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: client-linux
+          path: out/
+      - name: Upload the assets archive
+        if: ${{ success() && github.ref == 'refs/heads/main' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: assets-archive
+          path: assets-out/
+      - name: Upload the stack inputs for the deploy images
+        if: ${{ success() && github.ref == 'refs/heads/main' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: stack-linux
+          path: |
+            target/release/server
+            target/release/website
+            target/release/installer-backend
+            docker/keycloak/roles.conf
+
+  # main only: the remaining shipping platforms. Native runners, no cross-compilation. Gated behind a
+  # green Linux job, so a red gate burns no macOS/Windows minutes and ships nothing untested.
+  windows-macos:
+    needs: linux
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 60
     strategy:
       matrix:
         include:
-          - { os: ubuntu-24.04, asset: rift-linux-x86_64 }
           - { os: macos-latest, asset: rift-macos-aarch64 }
           - { os: windows-latest, asset: rift-windows-x86_64 }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
@@ -42,9 +157,6 @@ jobs:
         run: just build-client
       - name: Package the client and the installer
         shell: bash
-        # The player downloads only the installer archive (binary + .env) and runs it; the installer
-        # fetches the client, the assets, and any newer installer into the same folder. The client
-        # archive is binary-only: the installer carries the one .env, so nothing collides.
         run: |
           ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
           pkg="${{ matrix.asset }}"
@@ -64,36 +176,12 @@ jobs:
         with:
           name: client-${{ matrix.os }}
           path: out/
-      - name: Package the assets
-        if: runner.os == 'Linux'
-        # Assets are platform-independent, so build the one archive on the Linux leg. Players download
-        # it alongside their OS binary and extract it next to the binary, where the client finds it.
-        run: |
-          mkdir -p assets-out
-          zip -r "assets-out/${ASSETS_ZIP}" assets
-      - name: Upload the assets archive
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v7
-        with:
-          name: assets-archive
-          path: assets-out/
-      - name: Build the stack inputs for the deploy images
-        if: runner.os == 'Linux'
-        run: just build
-      - name: Upload the stack inputs for the deploy images
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v7
-        with:
-          name: stack-linux
-          path: |
-            target/release/server
-            target/release/website
-            target/release/installer-backend
-            docker/keycloak/roles.conf
 
   release:
-    needs: build
+    needs: [linux, windows-macos]
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     # The workflow is the single source of truth for where downloads live: it derives these from the
@@ -142,8 +230,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   deploy:
-    needs: [build, release]
+    needs: [linux, release]
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
