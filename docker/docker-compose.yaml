@@ -77,6 +77,10 @@ services:
     command: start --optimized --import-realm
     volumes:
       - ./keycloak/import:/opt/keycloak/data/import
+      # roles.conf is generated from game/world (`just build`/`just kc-provision`); the entrypoint
+      # syncs the realm with it on every start. Mounted, not baked, so the image is independent of
+      # the roles and can be built (and prewarmed in CI) before the file is generated.
+      - ./keycloak/roles.conf:/opt/keycloak/roles.conf
     depends_on:
       postgres:
         condition: service_healthy

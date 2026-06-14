@@ -32,13 +32,12 @@ stack: build
     docker network inspect rift >/dev/null 2>&1 || docker network create rift
     {{compose}} up -d --build --wait
 
-# Pull the external images and build+boot the slow infra (keycloak's image+boot, caddy's xcaddy
-# build) on its own, with no dependency on the app binaries. A caller can run this while the
-# workspace compiles so the infra is ready by the time `just stack` only has the app images left.
+# Pull the external images and build the slow infra images (keycloak's kc.sh build, caddy's xcaddy
+# build) — no app binaries or roles.conf needed. A caller can run this while the workspace compiles;
+# `just stack` then reuses the freshly built layers and only has the app images left to build.
 prewarm:
-    docker network inspect rift >/dev/null 2>&1 || docker network create rift
     {{compose}} pull --ignore-buildable || true
-    {{compose}} up -d --build keycloak keycloak-healthcheck reverse-proxy
+    {{compose}} build keycloak reverse-proxy
 
 # Build and push the prod stack images. No service names: compose's build sections are the source
 # of truth for what we publish, so adding/removing/renaming a service needs no change here.
@@ -109,7 +108,11 @@ reset:
 # asserts on rendered pixels, so it runs against the desktop you're on and needs the stack up
 # and its CA trusted (see the README). The client/server binaries are passed by path so the test
 # never rebuilds them. CI runs the same test on linux (and supplies its own headless display).
-e2e: stack
+e2e: stack e2e-run
+
+# Run the e2e test against an already-running stack. CI brings the stack up as its own step (so it
+# can trust the CA in between), then calls this; `just e2e` is the all-in-one for local use.
+e2e-run:
     cargo build --release -p client
     RIFT_E2E_CLIENT="{{justfile_directory()}}/target/release/rift" \
     RIFT_E2E_SERVER="{{justfile_directory()}}/target/release/server" \

@@ -17,12 +17,9 @@ permissions:
   contents: read
 
 env:
-  DOCKER_REGISTRY: ghcr.io
-  DOCKER_USERNAME: ${{ github.repository_owner }}
-  DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-  DOCKER_REGISTRY_URL: ghcr.io/${{ github.repository_owner }}
-  DOCKER_IMAGE_VERSION: ${{ github.sha }}
   # The release's own download-naming scheme, referenced by packaging and the link derivation below.
+  # The deploy job owns the DOCKER_* registry/version vars; the test stack uses compose's defaults so
+  # its image tags stay stable across commits (prewarm-friendly).
   INSTALLER_PREFIX: rift-installer-
   ASSETS_ZIP: rift-assets.zip
 
@@ -35,6 +32,13 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v2
+      - name: Prewarm the stack infra in the background
+        # `just prewarm` only pulls externals and builds the keycloak + reverse-proxy images — no app
+        # binaries, no roles.conf, no boot — so it runs from here, overlapping the apt setup, the cache
+        # restore and the whole compile below; `just stack` then reuses the built layers. nohup detaches
+        # it so it outlives this step, and the stack step waits on the sentinel before its compose run.
+        run: nohup bash -c 'just prewarm && touch /tmp/prewarm.done' > /tmp/prewarm.log 2>&1 &
       - uses: ./.github/actions/setup
         with:
           deps: all
@@ -42,20 +46,13 @@ jobs:
         with:
           key: linux
           save-if: ${{ github.ref_name == 'main' || github.ref_name == 'ci' }}
-      - name: Lint and test, while the stack infra prewarms in the background
-        # Prewarm runs in this step's own shell and is waited on here, so it reliably overlaps the
-        # compile (a process backgrounded in its own step does not survive into later steps). The slow
-        # infra — image pulls, the keycloak and reverse-proxy builds, keycloak's boot — happens under
-        # lint+test, so `just stack` below only has the app images left and waits on little.
-        run: |
-          just prewarm > /tmp/prewarm.log 2>&1 &
-          prewarm=$!
-          start=$SECONDS; just lint; echo "::notice::lint $((SECONDS - start))s"
-          start=$SECONDS; just test; echo "::notice::test $((SECONDS - start))s"
-          wait "$prewarm" || echo "::warning::prewarm exited non-zero (just stack will build it)"
-          tail -n 20 /tmp/prewarm.log
+      - run: just lint
+      - run: just test
       - name: Bring up the full stack
-        run: just stack
+        run: |
+          for _ in $(seq 1 180); do [ -f /tmp/prewarm.done ] && break; sleep 2; done
+          tail -n 30 /tmp/prewarm.log || true
+          just stack
       - name: Trust the stack's certificate authority
         # Caddy mints its own CA at first boot; the OS store covers the client/server binaries and
         # chrome keeps its own NSS store. The CA's location in the stack lives in `just ca-cert`.
@@ -86,7 +83,7 @@ jobs:
       - name: E2E test
         env:
           BROWSER: /tmp/rift-chrome
-        run: just e2e
+        run: just e2e-run
       - name: Save E2E artifacts
         if: failure()
         uses: actions/upload-artifact@v7
@@ -247,6 +244,12 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      DOCKER_REGISTRY: ghcr.io
+      DOCKER_USERNAME: ${{ github.repository_owner }}
+      DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      DOCKER_REGISTRY_URL: ghcr.io/${{ github.repository_owner }}
+      DOCKER_IMAGE_VERSION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
