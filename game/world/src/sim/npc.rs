@@ -320,8 +320,9 @@ pub fn run_respawn(world: &mut World) {
         if time - since < NPC_RESPAWN_DELAY {
             continue;
         }
-        let area = world.get::<AreaTag>(id).map_or(AreaId(0), |tag| tag.area);
-        let at = random_walkable(&mut rng, area).unwrap_or_default();
+        let area_id = world.get::<AreaTag>(id).map_or(AreaId(0), |tag| tag.area);
+        let at = random_walkable(&mut rng, area_id)
+            .unwrap_or_else(|| area::areas()[area_id.0 as usize].spawn);
         if let Some(mut vitals) = world.get_mut::<Vitals>(id) {
             vitals.health = vitals.max;
         }
