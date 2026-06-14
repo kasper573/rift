@@ -45,7 +45,7 @@ struct Config {
 
 fn main() {
     world::assets::init(std::env::var_os("RIFT_ASSETS_DIR").expect("RIFT_ASSETS_DIR must be set"));
-    world::validate();
+    world::sim::validate();
     let config: Config = envy::prefixed("RIFT_GAME_SERVER_")
         .from_env()
         .expect("RIFT_GAME_SERVER_* environment");
@@ -86,7 +86,7 @@ fn simulate(
     private_key: [u8; NETCODE_KEY_BYTES],
     sessions: Sessions,
 ) {
-    let mut app = world::server_app();
+    let mut app = world::sim::server_app();
     app.add_plugins(RepliconRenetPlugins);
 
     let channels = app.world().resource::<RepliconChannels>();

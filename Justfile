@@ -4,11 +4,13 @@ set shell := ["bash", "-c"]
 compose_file := "docker/docker-compose.yaml"
 compose := "docker compose -f " + compose_file + " --profile test"
 
-# Lint everything CI lints: format, the workspace, and the installer's feature-gated targets.
+# Lint everything CI lints: format, the workspace, the installer's feature-gated targets, and the
+# `world` contract layer on its own (no `host`) — the client's view, so simulation can't leak into it.
 lint:
     cargo fmt --check
     cargo clippy --all-targets -- -D warnings
     cargo clippy -p installer --all-features --all-targets -- -D warnings
+    cargo clippy -p world --no-default-features -- -D warnings
 
 # The non-e2e test suite: the workspace plus the installer's feature-gated tests.
 test:

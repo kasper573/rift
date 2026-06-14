@@ -4,10 +4,10 @@ use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Deserializer};
 
-use crate::combat::Died;
+use super::combat::Died;
+use super::npc::{GameRng, Npc, NpcId};
 use crate::items;
 use crate::math::rng_unit;
-use crate::npc::{GameRng, Npc, NpcId};
 use crate::protocol::{Inventory, ItemId, Owner, Xp};
 use crate::table;
 

@@ -3,10 +3,10 @@ use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::FromClient;
 use bevy_time::Time;
 
+use super::movement::{MoveTarget, Path, forget, halt, on_tile};
+use super::player::sender_player;
 use crate::actors::ActorModelId;
 use crate::math::{Direction, Millis, PlaybackRate, Seconds, Tiles};
-use crate::movement::{MoveTarget, Path, forget, halt, on_tile};
-use crate::player::sender_player;
 use crate::protocol::{
     ACTION_ATTACK, ACTION_DEAD, Actor, AreaTag, AttackRequest, Vitals, action_name, is_dead,
     position, set_action, set_facing,

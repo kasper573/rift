@@ -6,14 +6,14 @@ use bevy_replicon::prelude::Replicated;
 use bevy_time::Time;
 use serde::{Deserialize, Deserializer};
 
+use super::combat::{AttackTarget, Attackers, Stats};
+use super::movement::{MoveTarget, Path, Speed, forget};
+use super::player::Players;
 use crate::actors::{self, ActorModelId};
 use crate::area::{self, AreaId};
-use crate::combat::{AttackTarget, Attackers, Stats};
 use crate::math::{
     Direction, Millis, Offset, PlaybackRate, Pos, Seconds, Tiles, TilesPerSec, next_rng, rng_unit,
 };
-use crate::movement::{MoveTarget, Path, Speed, forget};
-use crate::player::Players;
 use crate::protocol::{
     ACTION_IDLE, Actor, AreaTag, Hitbox, Name, Position, Rgba, Vitals, is_dead, position,
     set_action,

@@ -6,9 +6,9 @@ use bevy_ecs::observer::On;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{FromClient, Replicated};
 
+use super::player::Players;
 use crate::area;
 use crate::identity::Identity;
-use crate::player::Players;
 use crate::protocol::{AreaTag, ClientId, Owner, Position, Spectate, SpectateRequest};
 use crate::role::Role;
 
