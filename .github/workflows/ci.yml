@@ -70,11 +70,13 @@ jobs:
             for _ in $(seq 1 180); do [ -f /tmp/prewarm.done ] && break; sleep 2; done
             just stack-up && touch /tmp/stack.done
           ' > /tmp/stack.log 2>&1 &
-      - name: Build the client, then lint and test
-        # Build the client first so the release lint and test reuse these compiled deps instead of
-        # compiling Bevy again in a separate (debug) pass, and so e2e reuses the client binary.
+      - name: Build the client and e2e test, then lint and test
+        # The CPU-bound foreground that the stack boot overlaps. Building the client and the e2e test
+        # binary here (the heavy render compile, which the stack doesn't need) means the e2e step is pure
+        # runtime, and fills this window to match the boot so it's fully hidden. Building before lint/test
+        # lets them reuse these compiled deps instead of compiling Bevy again in a separate pass.
         run: |
-          cargo build --release -p client
+          just e2e-build
           just lint
           just test
       - name: Wait for the full stack

@@ -118,10 +118,15 @@ reset:
 # never rebuilds them. CI runs the same test on linux (and supplies its own headless display).
 e2e: stack e2e-run
 
-# Run the e2e test against an already-running stack. CI brings the stack up as its own step (so it
-# can trust the CA in between), then calls this; `just e2e` is the all-in-one for local use.
-e2e-run:
+# Compile the release client the e2e drives and the e2e test binary, without running anything. CI
+# does this while the stack boots so the e2e step is pure runtime; e2e-run depends on it for local use.
+e2e-build:
     cargo build --release -p client
+    cargo test -p e2e --no-run
+
+# Run the e2e test against an already-running stack. CI brings the stack up as its own step (so it can
+# trust the CA in between) and pre-builds via e2e-build; `just e2e` is the all-in-one for local use.
+e2e-run: e2e-build
     RIFT_E2E_CLIENT="{{justfile_directory()}}/target/release/rift" \
     RIFT_E2E_SERVER="{{justfile_directory()}}/target/release/server" \
         cargo test -p e2e -- --ignored --nocapture
