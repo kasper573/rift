@@ -33,6 +33,10 @@ jobs:
     env:
       # mold links the Bevy binaries far faster than the default linker (installed by the setup action).
       RUSTFLAGS: -C link-arg=-fuse-ld=mold
+      # Non-release CI compiles the test-stack/e2e binaries at opt-level 1 — they only run the gameplay
+      # test, they don't ship. The shipped artifacts override this back to full opt (the main-only
+      # "Build and stage" step below and the windows-macos job).
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
     steps:
       - uses: actions/checkout@v6
       - uses: extractions/setup-just@v2
@@ -49,6 +53,12 @@ jobs:
         with:
           key: linux
           save-if: ${{ github.ref_name == 'main' || github.ref_name == 'ci' }}
+      - name: Build the test binaries
+        # Build first so the release lint and test reuse these compiled deps instead of compiling Bevy
+        # again in a separate (debug) pass, and so e2e reuses the client instead of rebuilding it.
+        run: |
+          just build
+          cargo build --release -p client
       - run: just lint
       - run: just test
       - name: Bring up the full stack
@@ -106,10 +116,14 @@ jobs:
       # --- main only: emit the Linux release + stack artifacts from the already-warm target ---
       - name: Build and stage the Linux release artifacts
         if: ${{ success() && github.ref == 'refs/heads/main' }}
-        # The player downloads only the installer archive (binary + .env) and runs it; the installer
-        # fetches the client, the assets, and any newer installer into the same folder. The client
-        # archive is binary-only: the installer carries the one .env, so nothing collides. Assets are
-        # platform-independent, so the one archive is built here on the Linux leg.
+        # Shipped binaries are fully optimized — override the job's non-release opt-level. (This
+        # recompiles the workspace at full opt; main only.) The player downloads only the installer
+        # archive (binary + .env) and runs it; the installer fetches the client, the assets, and any
+        # newer installer into the same folder. The client archive is binary-only: the installer carries
+        # the one .env, so nothing collides. Assets are platform-independent, so the one archive is built
+        # here on the Linux leg.
+        env:
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
         run: |
           just build-client
           just build

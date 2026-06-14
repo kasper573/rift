@@ -8,17 +8,17 @@ compose := "docker compose -f " + compose_file + " --profile test"
 # `world` contract layer on its own (no `host`) — the client's view, so simulation can't leak into it.
 lint:
     cargo fmt --check
-    cargo clippy --all-targets -- -D warnings
-    cargo clippy -p installer --all-features --all-targets -- -D warnings
-    cargo clippy -p world --no-default-features -- -D warnings
+    cargo clippy --release --all-targets -- -D warnings
+    cargo clippy --release -p installer --all-features --all-targets -- -D warnings
+    cargo clippy --release -p world --no-default-features -- -D warnings
 
 # The non-e2e test suite. Only world and installer carry tests; the binary crates (client, server,
 # website) are compile-checked by `lint` and built by `build`/`e2e`, so running the whole workspace
 # here only recompiled the heavy crates in test config for nothing. Debug build — tests assert on
 # contracts, and debug keeps the overflow/debug assertions on.
 test:
-    cargo test -p world
-    cargo test -p installer --all-features
+    cargo test --release -p world
+    cargo test --release -p installer --all-features
 
 # Build the server/website/installer-backend artifacts and the keycloak provisioning input the stack images package.
 build:
