@@ -151,7 +151,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
-          version="0.$(( ${{ github.run_number }} + 100 ))"
+          version="0.$(( ${{ github.run_number }} ))"
           gh release create "$version" dist/client-*/rift-* dist-assets/rift-assets.zip \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
