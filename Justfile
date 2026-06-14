@@ -26,6 +26,17 @@ build:
     cargo build --release -p installer --features backend --bin installer-backend
     cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
 
+# Build every binary the Linux gate exercises in one cargo invocation. The server and client share the
+# Bevy ECS layer (bevy_ecs/app/state/replicon) but with different features, so building them separately
+# compiles that layer once each; one invocation unifies the features and compiles it once. The client
+# this produces links `world`'s `host` deps (inert without the server plugin) — fine for the test it
+# drives, while the shipped client stays host-free via `build-client`. `build` stays client-free so the
+# local stack/dev and deploy paths don't pay for the client.
+build-gate:
+    cargo build --release
+    cargo build --release -p installer --features backend --bin installer-backend
+    cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
+
 # Build the shipping client and the installer GUI (the artifacts the release packages per OS).
 build-client:
     cargo build --release -p client -p installer --features installer/frontend
@@ -116,17 +127,15 @@ reset:
 # asserts on rendered pixels, so it runs against the desktop you're on and needs the stack up
 # and its CA trusted (see the README). The client/server binaries are passed by path so the test
 # never rebuilds them. CI runs the same test on linux (and supplies its own headless display).
-e2e: stack e2e-run
+e2e: build-gate stack-up e2e-run
 
-# Compile the release client the e2e drives and the e2e test binary, without running anything. CI
-# does this while the stack boots so the e2e step is pure runtime; e2e-run depends on it for local use.
+# Compile the e2e test binary; build-gate builds the client/server it drives. CI pre-builds this while
+# the stack boots so the e2e step is pure runtime.
 e2e-build:
-    cargo build --release -p client
     cargo test -p e2e --no-run
 
-# Run the e2e test against an already-running stack. CI brings the stack up as its own step (so it can
-# trust the CA in between) and pre-builds via e2e-build; `just e2e` is the all-in-one for local use.
-e2e-run: e2e-build
+# Run the e2e test against an already-running stack and the client/server build-gate already built.
+e2e-run:
     RIFT_E2E_CLIENT="{{justfile_directory()}}/target/release/rift" \
     RIFT_E2E_SERVER="{{justfile_directory()}}/target/release/server" \
         cargo test -p e2e -- --ignored --nocapture
