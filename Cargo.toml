@@ -24,8 +24,12 @@ edition = "2024"
 
 [workspace.dependencies]
 askama = "0.14"
+axum-prometheus = "0.10"
 # Cross-platform termination handling (SIGTERM/SIGHUP on Unix, console + shutdown events on Windows).
 ctrlc = { version = "3", features = ["termination"] }
+# Continuous profiling agent that samples the process with pprof-rs and pushes to Pyroscope. Default
+# features keep rustls (no openssl system dep); only the backend services link it, never the client.
+pyroscope = { version = "2", features = ["backend-pprof-rs"] }
 bevy_app = { version = "0.19.0-rc.3", default-features = false }
 bevy_ecs = { version = "0.19.0-rc.3", default-features = false, features = ["std", "serialize"] }
 bevy_replicon = { version = "0.41.0-rc.1", default-features = false }

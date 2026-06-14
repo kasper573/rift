@@ -27,7 +27,7 @@ dev: stack
     RIFT_ASSETS_DIR="{{justfile_directory()}}/assets" \
     RIFT_CLIENT_ISSUER=https://auth.rift.localhost/realms/rift \
     RIFT_CLIENT_GAME_SERVER_URL=https://game-server.rift.localhost \
-        dx serve --hot-patch --bin rift --features hotpatch --platform desktop
+        dx serve --hot-patch --package client --bin rift --features hotpatch --platform desktop
 
 # Keycloak only imports a realm on first boot, so the realm DB must be wiped for
 # `rift-realm.json` changes (e.g. redirect URIs) to re-apply.

@@ -20,7 +20,15 @@ required-features = ["backend"]
 [features]
 default = []
 frontend = ["dep:fltk", "dep:self-replace", "dep:dotenvy", "dep:envy"]
-backend = ["dep:axum", "dep:tokio", "dep:ctrlc", "dep:envy"]
+backend = [
+    "dep:axum",
+    "dep:tokio",
+    "dep:ctrlc",
+    "dep:envy",
+    "dep:axum-prometheus",
+    "dep:metrics-process",
+    "dep:pyroscope",
+]
 
 [dependencies]
 serde = { workspace = true }
@@ -40,6 +48,9 @@ axum = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 ctrlc = { workspace = true, optional = true }
 envy = { workspace = true, optional = true }
+axum-prometheus = { workspace = true, optional = true }
+metrics-process = { workspace = true, optional = true }
+pyroscope = { workspace = true, optional = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

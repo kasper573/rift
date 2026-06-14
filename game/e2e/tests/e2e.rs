@@ -368,7 +368,9 @@ impl GameServer {
                 "RIFT_AUTH_JWKS_URI",
                 format!("{ISSUER}/protocol/openid-connect/certs"),
             )
-            .env("RIFT_GAME_SERVER_PUBLIC_HOST", "127.0.0.1");
+            .env("RIFT_GAME_SERVER_PUBLIC_HOST", "127.0.0.1")
+            .env("RIFT_GAME_SERVER_PYROSCOPE_ENABLED", "false")
+            .env("RIFT_GAME_SERVER_PYROSCOPE_SAMPLE_HZ", "99");
         let proc = Proc::start(command, "server");
 
         // Healthy only once it can verify tokens, so this also waits out the stack's keycloak.

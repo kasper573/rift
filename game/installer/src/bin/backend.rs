@@ -1,8 +1,12 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use axum::routing::get;
+use axum_prometheus::PrometheusMetricLayer;
 use installer::metadata::FileEntry;
 use installer::service::{Release, ReleaseSource, SourceError, router};
+use pyroscope::backend::{BackendConfig, PprofConfig, pprof_backend};
+use pyroscope::pyroscope::{PyroscopeAgent, PyroscopeAgentBuilder, PyroscopeAgentRunning};
 use serde::Deserialize;
 
 /// The `RIFT_INSTALLER_*` environment.
@@ -10,6 +14,8 @@ use serde::Deserialize;
 struct Config {
     port: u16,
     github_repo: String,
+    pyroscope_enabled: bool,
+    pyroscope_sample_hz: u32,
 }
 
 #[tokio::main]
@@ -18,7 +24,23 @@ async fn main() {
         .from_env()
         .expect("RIFT_INSTALLER_* environment");
     let port = config.port;
-    let app = router(Arc::new(GithubSource::new(config.github_repo)));
+    // Held for the process lifetime: dropping the agent stops the profiler.
+    let _profiler = if config.pyroscope_enabled {
+        Some(start_profiler("rift-installer", config.pyroscope_sample_hz))
+    } else {
+        None
+    };
+    let (track, prometheus) = PrometheusMetricLayer::pair();
+    metrics_process::Collector::default().describe();
+    let app = router(Arc::new(GithubSource::new(config.github_repo)))
+        .layer(track)
+        .route(
+            "/metrics",
+            get(move || async move {
+                metrics_process::Collector::default().collect();
+                prometheus.render()
+            }),
+        );
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
         .await
         .unwrap_or_else(|error| panic!("could not bind 0.0.0.0:{port}: {error}"));
@@ -31,6 +53,36 @@ async fn main() {
         .with_graceful_shutdown(async move { stop.notified().await })
         .await
         .expect("serve");
+}
+
+/// Continuously samples this process at `sample_hz` and pushes profiles to the `PYROSCOPE_BASE`
+/// server under the given application name, where they surface in Grafana's profiles drilldown.
+/// The returned agent must be held for the process lifetime, as dropping it stops profiling.
+fn start_profiler(application: &str, sample_hz: u32) -> PyroscopeAgent<PyroscopeAgentRunning> {
+    #[derive(Deserialize)]
+    struct Profiling {
+        base: String,
+    }
+    let profiling: Profiling = envy::prefixed("PYROSCOPE_")
+        .from_env()
+        .expect("PYROSCOPE_* environment");
+    PyroscopeAgentBuilder::new(
+        profiling.base,
+        application,
+        sample_hz,
+        "pyroscope-rs",
+        env!("CARGO_PKG_VERSION"),
+        pprof_backend(
+            PprofConfig {
+                sample_rate: sample_hz,
+            },
+            BackendConfig::default(),
+        ),
+    )
+    .build()
+    .expect("build pyroscope agent")
+    .start()
+    .expect("start pyroscope agent")
 }
 
 /// Caches the parsed release briefly so a burst of installers costs one upstream call and stays under

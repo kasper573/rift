@@ -8,6 +8,8 @@ use axum::routing::get;
 use axum_extra::extract::cookie::CookieJar;
 use axum_prometheus::PrometheusMetricLayer;
 use openidconnect::RedirectUrl;
+use pyroscope::backend::{BackendConfig, PprofConfig, pprof_backend};
+use pyroscope::pyroscope::{PyroscopeAgent, PyroscopeAgentBuilder, PyroscopeAgentRunning};
 use serde::Deserialize;
 
 mod auth;
@@ -20,6 +22,8 @@ struct Config {
     /// Installer download URLs (`RIFT_WEBSITE_DOWNLOAD_LINKS`, comma-separated) listed on the downloads
     /// page. CI fills these in, so the website needs no knowledge of where releases are actually hosted.
     download_links: Vec<String>,
+    pyroscope_enabled: bool,
+    pyroscope_sample_hz: u32,
 }
 
 pub struct App {
@@ -32,6 +36,12 @@ async fn main() {
     let config: Config = envy::prefixed("RIFT_WEBSITE_")
         .from_env()
         .expect("RIFT_WEBSITE_* environment");
+    // Held for the process lifetime: dropping the agent stops the profiler.
+    let _profiler = if config.pyroscope_enabled {
+        Some(start_profiler("rift-website", config.pyroscope_sample_hz))
+    } else {
+        None
+    };
     let (track, prometheus) = PrometheusMetricLayer::pair();
     metrics_process::Collector::default().describe();
     let port = config.port;
@@ -124,6 +134,36 @@ async fn downloads(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
         nav: app.nav(&jar, "/downloads").await,
         downloads: app.downloads.clone(),
     })
+}
+
+/// Continuously samples this process at `sample_hz` and pushes profiles to the `PYROSCOPE_BASE`
+/// server under the given application name, where they surface in Grafana's profiles drilldown.
+/// The returned agent must be held for the process lifetime, as dropping it stops profiling.
+fn start_profiler(application: &str, sample_hz: u32) -> PyroscopeAgent<PyroscopeAgentRunning> {
+    #[derive(Deserialize)]
+    struct Profiling {
+        base: String,
+    }
+    let profiling: Profiling = envy::prefixed("PYROSCOPE_")
+        .from_env()
+        .expect("PYROSCOPE_* environment");
+    PyroscopeAgentBuilder::new(
+        profiling.base,
+        application,
+        sample_hz,
+        "pyroscope-rs",
+        env!("CARGO_PKG_VERSION"),
+        pprof_backend(
+            PprofConfig {
+                sample_rate: sample_hz,
+            },
+            BackendConfig::default(),
+        ),
+    )
+    .build()
+    .expect("build pyroscope agent")
+    .start()
+    .expect("start pyroscope agent")
 }
 
 /// The label shown for a download link: the URL's last path segment.
