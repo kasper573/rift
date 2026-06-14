@@ -100,7 +100,8 @@ jobs:
     # release it just published, and the deploy job feeds them to the website and the installer backend.
     outputs:
       version: ${{ steps.publish.outputs.version }}
-      release_artifact_links: ${{ steps.publish.outputs.release_artifact_links }}
+      per_platform_artifact_links: ${{ steps.publish.outputs.per_platform_artifact_links }}
+      shared_artifact_links: ${{ steps.publish.outputs.shared_artifact_links }}
       installer_links: ${{ steps.publish.outputs.installer_links }}
     steps:
       - uses: actions/download-artifact@v7
@@ -122,13 +123,23 @@ jobs:
             --target "${{ github.sha }}" \
             --title "$version" \
             --notes "Automated release of ${{ github.sha }}."
-          # Read the asset download URLs back from the published release. release_artifact_links is every
-          # asset (the installer backend filters per platform); installer_links is the per-OS installers
-          # the downloads page links. One API call so both views describe the exact files just uploaded.
+          # Read the asset download URLs back from the published release and organize them the way the
+          # installer backend serves them: a per-platform map keyed by the installer's {os}-{arch} string
+          # (derived from the installer asset names) plus the assets every platform shares. installer_links
+          # is the per-OS installers the downloads page links. The map is JSON, which can't survive
+          # interpolation into a shell command, so it travels to the deploy host base64-encoded. One API
+          # call so every view describes the exact files just uploaded.
           assets=$(gh release view "$version" --repo "${{ github.repository }}" --json assets)
+          per_platform=$(jq -c --arg z "$ASSETS_ZIP" --arg p "$INSTALLER_PREFIX" '
+            (.assets) as $a
+            | [$a[].name | select(startswith($p)) | ltrimstr($p) | sub("\\.(tar\\.gz|zip)$"; "")] as $platforms
+            | reduce $platforms[] as $plat ({};
+                .[$plat] = [$a[] | select(.name != $z and (.name | contains($plat))) | .url])
+          ' <<<"$assets")
           {
             echo "version=$version"
-            echo "release_artifact_links=$(jq -r '[.assets[].url] | join(",")' <<<"$assets")"
+            echo "per_platform_artifact_links=$(printf %s "$per_platform" | base64 -w0)"
+            echo "shared_artifact_links=$(jq -r --arg z "$ASSETS_ZIP" '[.assets[] | select(.name == $z) | .url] | join(",")' <<<"$assets")"
             echo "installer_links=$(jq -r --arg p "$INSTALLER_PREFIX" '[.assets[] | select(.name | startswith($p)) | .url] | join(",")' <<<"$assets")"
           } >> "$GITHUB_OUTPUT"
 
@@ -179,10 +190,9 @@ jobs:
             echo "DOCKER_REGISTRY_URL=\"${{ env.DOCKER_REGISTRY_URL }}\"" >> .env
             echo "DOCKER_IMAGE_VERSION=\"${{ env.DOCKER_IMAGE_VERSION }}\"" >> .env
             echo "RIFT_DOMAIN=\"${{ vars.RIFT_DOMAIN }}\"" >> .env
-            # Download URLs derived by the release job from the release it just published. The website
-            # lists the per-OS installers; the installer backend serves the full set, filtered per platform.
             echo "RIFT_INSTALLER_LINKS=\"${{ needs.release.outputs.installer_links }}\"" >> .env
-            echo "RIFT_RELEASE_ARTIFACT_LINKS=\"${{ needs.release.outputs.release_artifact_links }}\"" >> .env
+            echo "RIFT_INSTALLER_SHARED_ARTIFACT_LINKS=\"${{ needs.release.outputs.shared_artifact_links }}\"" >> .env
+            printf 'RIFT_INSTALLER_PER_PLATFORM_ARTIFACT_LINKS=%s\n' "$(echo '${{ needs.release.outputs.per_platform_artifact_links }}' | base64 -d)" >> .env
             echo "RIFT_VERSION=\"${{ needs.release.outputs.version }}\"" >> .env
 
             echo ${{ env.DOCKER_PASSWORD }} | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
