@@ -123,12 +123,10 @@ jobs:
             --target "${{ github.sha }}" \
             --title "$version" \
             --notes "Automated release of ${{ github.sha }}."
-          # Read the asset download URLs back from the published release and organize them the way the
-          # installer backend serves them: a per-platform map keyed by the installer's {os}-{arch} string
-          # (derived from the installer asset names) plus the assets every platform shares. installer_links
-          # is the per-OS installers the downloads page links. The map is JSON, which can't survive
-          # interpolation into a shell command, so it travels to the deploy host base64-encoded. One API
-          # call so every view describes the exact files just uploaded.
+          # Read the asset URLs back and organize them as the installer backend serves them: a
+          # per-platform map (keyed by {os}-{arch}, derived from the installer asset names) plus the
+          # shared assets, alongside the per-OS installers the downloads page lists. The map is JSON,
+          # which can't survive interpolation into a shell command, so it leaves here base64-encoded.
           assets=$(gh release view "$version" --repo "${{ github.repository }}" --json assets)
           per_platform=$(jq -c --arg z "$ASSETS_ZIP" --arg p "$INSTALLER_PREFIX" '
             (.assets) as $a
@@ -152,6 +150,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
+        with:
+          deps: none
       - uses: actions/download-artifact@v7
         with:
           name: stack-linux

@@ -27,6 +27,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
+        with:
+          deps: all
       - uses: Swatinem/rust-cache@v2
         with:
           key: test
@@ -34,13 +36,6 @@ jobs:
       - run: just test
       - name: Bring up the full stack
         run: just stack
-      - name: Set up the e2e environment
-        # The e2e test harness — not the build. A headless Xvfb needs a software Vulkan driver to
-        # render and a window manager to place the window; certutil teaches chrome's NSS store the
-        # stack's CA. These are the runner's job (the e2e crate documents this), not crate deps.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mesa-vulkan-drivers libnss3-tools openbox
       - name: Trust the stack's certificate authority
         # Caddy mints its own CA at first boot; the OS store covers the client/server binaries and
         # chrome keeps its own NSS store. The CA's location in the stack lives in `just ca-cert`.
