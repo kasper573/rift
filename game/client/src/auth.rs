@@ -147,7 +147,10 @@ fn capture(listener: &TcpListener) -> Result<(String, String), String> {
         match redirect(&stream) {
             Some(result) => {
                 let _ = stream.write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSigned in \xe2\x80\x94 return to the game.",
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+                      <!doctype html><title>Signed in</title>\
+                      <p>Signed in! You can close this tab and return to the game.</p>\
+                      <script>window.close()</script>",
                 );
                 return result;
             }
