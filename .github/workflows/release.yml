@@ -131,6 +131,12 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    # The workflow is the single source of truth for where downloads live: it derives these from the
+    # release it just published, and the deploy job feeds them to the website and the installer backend.
+    outputs:
+      version: ${{ steps.publish.outputs.version }}
+      release_artifact_links: ${{ steps.publish.outputs.release_artifact_links }}
+      installer_links: ${{ steps.publish.outputs.installer_links }}
     steps:
       - uses: actions/download-artifact@v7
         with:
@@ -140,14 +146,10 @@ jobs:
         with:
           name: assets-archive
           path: dist-assets
-      - name: Publish the release
-        # GITHUB_TOKEN can't create releases while the repo's default workflow permission is read;
-        # RELEASE_TOKEN (a PAT with contents: write) does the publish.
+      - name: Publish the release and derive its download links
+        id: publish
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-        # `0.<run number + 100>`: simple and monotonic; the offset keeps new tags clear of the
-        # numbers the previous workflow already released, and the `0.` major keeps these
-        # automated releases out of the semver space a real version would later claim.
         run: |
           version="0.$(( ${{ github.run_number }} + 100 ))"
           gh release create "$version" dist/client-*/rift-* dist-assets/rift-assets.zip \
@@ -155,9 +157,18 @@ jobs:
             --target "${{ github.sha }}" \
             --title "$version" \
             --notes "Automated release of ${{ github.sha }}. Download the installer for your OS and run it; it fetches the game and keeps it up to date."
+          # Read the asset download URLs back from the published release. release_artifact_links is every
+          # asset (the installer backend filters per platform); installer_links is the per-OS installers
+          # the downloads page links. One API call so both views describe the exact files just uploaded.
+          assets=$(gh release view "$version" --repo "${{ github.repository }}" --json assets)
+          {
+            echo "version=$version"
+            echo "release_artifact_links=$(jq -r '[.assets[].url] | join(",")' <<<"$assets")"
+            echo "installer_links=$(jq -r '[.assets[] | select(.name | startswith("rift-installer-")) | .url] | join(",")' <<<"$assets")"
+          } >> "$GITHUB_OUTPUT"
 
   deploy:
-    needs: build
+    needs: [build, release]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -167,8 +178,6 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: stack-linux
-          # The artifact paths are relative to the repo root, so unpacking there puts every file
-          # where the image builds expect it.
           path: .
       - name: Restore the executable bits artifact transport may drop
         run: chmod +x target/release/server target/release/website target/release/installer-backend
@@ -207,10 +216,11 @@ jobs:
             echo "DOCKER_REGISTRY_URL=\"${{ env.DOCKER_REGISTRY_URL }}\"" >> .env
             echo "DOCKER_IMAGE_VERSION=\"${{ env.DOCKER_IMAGE_VERSION }}\"" >> .env
             echo "RIFT_DOMAIN=\"${{ vars.RIFT_DOMAIN }}\"" >> .env
-            # The downloads page lists the latest release's installers; the website only renders these
-            # URLs, so CI (which owns the release naming) is the single place that knows their shape.
-            base="https://github.com/${{ github.repository }}/releases/latest/download"
-            echo "RIFT_WEBSITE_DOWNLOAD_LINKS=\"$base/rift-installer-linux-x86_64.tar.gz,$base/rift-installer-macos-aarch64.tar.gz,$base/rift-installer-windows-x86_64.zip\"" >> .env
+            # Download URLs derived by the release job from the release it just published. The website
+            # lists the per-OS installers; the installer backend serves the full set, filtered per platform.
+            echo "RIFT_INSTALLER_LINKS=\"${{ needs.release.outputs.installer_links }}\"" >> .env
+            echo "RIFT_RELEASE_ARTIFACT_LINKS=\"${{ needs.release.outputs.release_artifact_links }}\"" >> .env
+            echo "RIFT_VERSION=\"${{ needs.release.outputs.version }}\"" >> .env
 
             echo ${{ env.DOCKER_PASSWORD }} | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
             docker network inspect rift >/dev/null 2>&1 || docker network create rift

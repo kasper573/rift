@@ -19,11 +19,13 @@ mod auth;
 struct Config {
     port: u16,
     redirect_uri: RedirectUrl,
-    /// Installer download URLs (`RIFT_WEBSITE_DOWNLOAD_LINKS`, comma-separated) listed on the downloads
-    /// page. CI fills these in, so the website needs no knowledge of where releases are actually hosted.
-    download_links: Vec<String>,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
+}
+
+#[derive(Deserialize)]
+struct Installers {
+    installer_links: Vec<String>,
 }
 
 pub struct App {
@@ -36,6 +38,9 @@ async fn main() {
     let config: Config = envy::prefixed("RIFT_WEBSITE_")
         .from_env()
         .expect("RIFT_WEBSITE_* environment");
+    let installers: Installers = envy::prefixed("RIFT_")
+        .from_env()
+        .expect("RIFT_INSTALLER_LINKS environment");
     // Held for the process lifetime: dropping the agent stops the profiler.
     let _profiler = if config.pyroscope_enabled {
         Some(start_profiler("rift-website", config.pyroscope_sample_hz))
@@ -47,8 +52,8 @@ async fn main() {
     let port = config.port;
     let app = Arc::new(App {
         auth: auth::Auth::from_env(config.redirect_uri).await,
-        downloads: config
-            .download_links
+        downloads: installers
+            .installer_links
             .iter()
             .map(|url| Download {
                 filename: filename_of(url),

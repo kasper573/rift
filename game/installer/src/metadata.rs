@@ -12,6 +12,17 @@ pub struct FileEntry {
     pub url: String,
 }
 
+/// Builds a [`FileEntry`] per URL, naming each by the URL's last path segment. The pipeline decides
+/// where releases are hosted; the manifest only needs the filename the installer writes locally.
+pub fn files_from_urls(urls: &[String]) -> Vec<FileEntry> {
+    urls.iter()
+        .map(|url| FileEntry {
+            name: filename_of(url),
+            url: url.clone(),
+        })
+        .collect()
+}
+
 /// A platform with no `{os}-{arch}` file is unsupported and yields nothing — the shared assets alone are
 /// useless without a binary, so the caller can treat an empty result as "no release for this platform".
 pub fn select_files(all: &[FileEntry], os: &str, arch: &str) -> Vec<FileEntry> {
@@ -32,3 +43,13 @@ pub fn select_files(all: &[FileEntry], os: &str, arch: &str) -> Vec<FileEntry> {
 }
 
 const SHARED_FILES: &[&str] = &["rift-assets.zip"];
+
+fn filename_of(url: &str) -> String {
+    url.rsplit('/')
+        .next()
+        .unwrap_or(url)
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .to_owned()
+}

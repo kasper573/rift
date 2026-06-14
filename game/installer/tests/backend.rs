@@ -1,42 +1,30 @@
 #![cfg(feature = "backend")]
 
-use std::sync::Arc;
-
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use installer::metadata::{FileEntry, Metadata};
-use installer::service::{Release, ReleaseSource, SourceError, router};
+use installer::metadata::{Metadata, files_from_urls};
+use installer::service::{Release, router};
 use tower::ServiceExt;
 
-struct FakeSource;
-
-impl ReleaseSource for FakeSource {
-    fn latest(&self) -> Result<Release, SourceError> {
-        Ok(Release {
-            version: "0.110".to_owned(),
-            files: ["linux-x86_64", "windows-x86_64"]
-                .iter()
-                .flat_map(|platform| {
-                    [
-                        file(&format!("rift-installer-{platform}.tar.gz")),
-                        file(&format!("rift-{platform}.tar.gz")),
-                    ]
-                })
-                .chain([file("rift-assets.zip")])
-                .collect(),
+fn release() -> Release {
+    let urls: Vec<String> = ["linux-x86_64", "windows-x86_64"]
+        .iter()
+        .flat_map(|platform| {
+            [
+                format!("https://example.test/rift-installer-{platform}.tar.gz"),
+                format!("https://example.test/rift-{platform}.tar.gz"),
+            ]
         })
-    }
-}
-
-fn file(name: &str) -> FileEntry {
-    FileEntry {
-        name: name.to_owned(),
-        url: format!("https://example.test/{name}"),
+        .chain(["https://example.test/rift-assets.zip".to_owned()])
+        .collect();
+    Release {
+        version: "0.110".to_owned(),
+        files: files_from_urls(&urls),
     }
 }
 
 async fn get(uri: &str) -> (StatusCode, Vec<u8>) {
-    let response = router(Arc::new(FakeSource))
+    let response = router(release())
         .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
         .await
         .unwrap();
