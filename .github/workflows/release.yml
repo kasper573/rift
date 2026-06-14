@@ -35,8 +35,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
-        with:
-          deps: release
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.os }}
@@ -143,8 +141,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
-        with:
-          deps: none # deploy builds docker images and needs just, not the rust native deps
       - uses: actions/download-artifact@v7
         with:
           name: stack-linux

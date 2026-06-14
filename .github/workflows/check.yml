@@ -13,8 +13,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
-        with:
-          deps: release # the installer's fltk frontend is linted here, so it needs fltk's build deps
       - uses: Swatinem/rust-cache@v2
         with:
           key: lint
@@ -29,8 +27,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
-        with:
-          deps: e2e
       - uses: Swatinem/rust-cache@v2
         with:
           key: test
@@ -38,12 +34,13 @@ jobs:
       - run: just test
       - name: Bring up the full stack
         run: just stack
-      - name: Resolve the stack's hostnames
-        # *.localhost isn't special-cased by every resolver; point the stack's names at the proxy.
-        # The domain is sourced from the stack's env, not restated here.
+      - name: Set up the e2e environment
+        # The e2e test harness — not the build. A headless Xvfb needs a software Vulkan driver to
+        # render and a window manager to place the window; certutil teaches chrome's NSS store the
+        # stack's CA. These are the runner's job (the e2e crate documents this), not crate deps.
         run: |
-          source docker/.env.test
-          echo "127.0.0.1 ${RIFT_DOMAIN} auth.${RIFT_DOMAIN} game-server.${RIFT_DOMAIN} installer.${RIFT_DOMAIN}" | sudo tee -a /etc/hosts
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libnss3-tools openbox
       - name: Trust the stack's certificate authority
         # Caddy mints its own CA at first boot; the OS store covers the client/server binaries and
         # chrome keeps its own NSS store. The CA's location in the stack lives in `just ca-cert`.

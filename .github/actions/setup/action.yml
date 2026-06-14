@@ -1,9 +1,5 @@
 name: Set up the build environment
-description: Pinned toolchain, just, and the OS-specific native dependencies — the one place they live.
-inputs:
-  deps:
-    description: Linux native-dependency tier — none | client | release | e2e.
-    default: client
+description: Pinned toolchain and just. Native build dependencies come from the crates and the runner's toolchain, not from here.
 runs:
   using: composite
   steps:
@@ -22,26 +18,3 @@ runs:
       # Windows is the slowest compiler; finer codegen units cut its build for a small optimisation
       # cost on the Windows artifact only. rust-cache folds this CARGO_* var into its key.
       run: echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256" >> "$GITHUB_ENV"
-    - name: Install Linux native dependencies
-      if: runner.os == 'Linux'
-      shell: bash
-      # client: the client links ALSA through kira. release: the installer's fltk GUI builds from
-      # source, needing cmake plus the X11/GL/pango headers. e2e: the client renders through a
-      # software Vulkan driver onto a headless Xvfb that openbox manages; xcap compiles its whole
-      # linux capture surface (pipewire + the wayland egl/gbm path alongside x11/xcb); certutil
-      # teaches the browser's NSS store the stack's CA. Drop the runner's microsoft/azure apt
-      # sources first — we install nothing from them, but they 403 intermittently and fail the update.
-      run: |
-        [ "${{ inputs.deps }}" = "none" ] && exit 0
-        sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
-        sudo apt-get update
-        client="libasound2-dev"
-        fltk="cmake g++ libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpango1.0-dev libgl1-mesa-dev libglu1-mesa-dev"
-        e2e="libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon0 libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers xvfb openbox libnss3-tools libclang-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev libxcb1-dev libxcb-randr0-dev libxcb-render0-dev"
-        case "${{ inputs.deps }}" in
-          client)  pkgs="$client" ;;
-          release) pkgs="$client $fltk" ;;
-          e2e)     pkgs="$client $fltk $e2e" ;;
-          *) echo "unknown deps tier: ${{ inputs.deps }}" >&2; exit 1 ;;
-        esac
-        sudo apt-get install -y $pkgs
