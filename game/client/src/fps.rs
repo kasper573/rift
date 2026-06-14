@@ -28,6 +28,7 @@ fn spawn(mut commands: Commands) {
             bottom: Val::Px(8.0),
             ..default()
         },
+        BackgroundColor(Color::BLACK),
         Text::new("-- fps"),
         TextColor(Color::WHITE),
         GlobalZIndex(100),
