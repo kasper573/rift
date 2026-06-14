@@ -1,5 +1,5 @@
 //! The runtime every rift HTTP service shares: continuous profiling, request + process metrics on
-//! `/metrics`, and graceful shutdown. A binary supplies its routes and config; this supplies the rest.
+//! `/metrics`, and graceful shutdown. A service supplies its routes and config; this supplies the rest.
 
 use std::sync::Arc;
 
