@@ -38,6 +38,26 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
 
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the pinned toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: build
+          # Only main writes caches; every branch restores them (see the lint job).
+          save-if: ${{ github.ref_name == 'main' }}
+      - name: Install system dependencies
+        # cargo build compiles the client, which links ALSA through kira. Drop the runner image's
+        # microsoft/azure apt sources first (see the lint job).
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
+          sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Build
+        run: cargo build
+
   test:
     needs: lint
     runs-on: ubuntu-24.04
