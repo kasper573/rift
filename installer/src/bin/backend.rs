@@ -2,7 +2,6 @@ use installer::metadata::files_from_urls;
 use installer::service::{Release, router};
 use serde::Deserialize;
 
-/// The `RIFT_INSTALLER_*` environment.
 #[derive(Deserialize)]
 struct Config {
     port: u16,
