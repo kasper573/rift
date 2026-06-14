@@ -37,13 +37,18 @@ push-images:
     docker compose -f {{compose_file}} --profile prod push
 
 # Print the prod .env packaged beside the shipped installer (read by the client it launches). The
-# domain -> URL convention lives here rather than being restated in the release workflow.
+# external client can't read the cluster's interpolated env, so the domain -> URL convention lives
+# here; the realm/audience is derived from its one owner (docker/.env.shared) so it can't drift.
 installer-env domain exe="rift":
-    @echo 'RIFT_CLIENT_ISSUER=https://auth.{{domain}}/realms/rift'
-    @echo 'RIFT_CLIENT_GAME_SERVER_URL=https://game-server.{{domain}}'
-    @echo 'RIFT_ASSETS_DIR=assets'
-    @echo 'RIFT_INSTALLER_METADATA_URL=https://installer.{{domain}}'
-    @echo 'RIFT_CLIENT_EXECUTABLE={{exe}}'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    audience=$(grep -E '^RIFT_AUTH_AUDIENCE=' docker/.env.shared | cut -d= -f2)
+    echo "RIFT_CLIENT_ISSUER=https://auth.{{domain}}/realms/${audience}"
+    echo "RIFT_CLIENT_GAME_SERVER_URL=https://game-server.{{domain}}"
+    echo "RIFT_CLIENT_OIDC_CLIENT_ID=${audience}"
+    echo "RIFT_ASSETS_DIR=assets"
+    echo "RIFT_INSTALLER_METADATA_URL=https://installer.{{domain}}"
+    echo "RIFT_CLIENT_EXECUTABLE={{exe}}"
 
 # Copy the stack's first-boot CA out of the running reverse-proxy (the service name and in-container
 # path live here, not in the workflow or the README). Waits for caddy to mint it.
@@ -70,13 +75,16 @@ kc-provision:
 # `dx serve --hot-patch` live-patches the bodies of changed systems in the running process and
 # falls back to a full rebuild for changes it can't patch; Bevy's file_watcher hot-reloads
 # edited assets.
-# Run the client here, on top of the stack, under hot-reload.
+# Run the client here, on top of the stack, under hot-reload. The client endpoints come from the
+# same `installer-env` the release packages, pointed at the test domain, so dev and prod can't drift.
 dev: stack
-    @command -v dx >/dev/null || { echo "just dev needs the Dioxus CLI: cargo install dioxus-cli --locked"; exit 1; }
-    cd game/client && \
-    RIFT_ASSETS_DIR="{{justfile_directory()}}/assets" \
-    RIFT_CLIENT_ISSUER=https://auth.rift.localhost/realms/rift \
-    RIFT_CLIENT_GAME_SERVER_URL=https://game-server.rift.localhost \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v dx >/dev/null || { echo "just dev needs the Dioxus CLI: cargo install dioxus-cli --locked"; exit 1; }
+    domain=$(grep -E '^RIFT_DOMAIN=' docker/.env.test | cut -d= -f2)
+    client_env=$(just installer-env "$domain")
+    cd game/client
+    env $client_env RIFT_ASSETS_DIR="{{justfile_directory()}}/assets" \
         dx serve --hot-patch --package client --bin rift --features hotpatch --platform desktop
 
 # Keycloak only imports a realm on first boot, so the realm DB must be wiped for

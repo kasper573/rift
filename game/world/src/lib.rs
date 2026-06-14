@@ -45,8 +45,6 @@ pub use crate::role::Role;
 
 pub const TICK_HZ: math::Hertz = math::Hertz(30.0);
 
-pub const DEFAULT_ADDRESS: &str = "127.0.0.1:9998";
-
 /// Forces every asset loader — actor models, areas, tables — so any broken file or dangling
 /// reference panics. The server runs this at boot, refusing to start on bad content.
 #[cfg(feature = "host")]

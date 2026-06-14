@@ -16,9 +16,6 @@ use crate::web;
 use crate::{Screen, net};
 use world::Role;
 
-/// The public OIDC client id; the game server checks `azp == rift`.
-const CLIENT_ID: &str = "rift";
-
 /// How long sign-in waits for the browser to deliver the OAuth redirect before giving up.
 const REDIRECT_TIMEOUT: Duration = Duration::from_secs(300);
 /// Per-connection read cap, so a silent probe on the loopback port can't stall the wait.
@@ -34,11 +31,13 @@ pub struct Session {
 
 /// The client's endpoints, read once from `RIFT_CLIENT_*` at startup and injected as a resource
 /// rather than reached for inside the sign-in flow: `issuer` is the realm the browser authenticates
-/// against, and the game server's `/session` lives at `game_server_url`.
+/// against, `oidc_client_id` is the public OIDC client this game presents (and the audience the
+/// server verifies), and the game server's `/session` lives at `game_server_url`.
 #[derive(Resource, Clone, serde::Deserialize)]
 pub struct ClientConfig {
     pub issuer: String,
     pub game_server_url: String,
+    pub oidc_client_id: String,
 }
 
 pub struct AuthPlugin;
@@ -55,9 +54,10 @@ struct Pending(Mutex<Receiver<Result<Session, String>>>);
 
 fn start(config: Res<ClientConfig>, mut commands: Commands) {
     let issuer = config.issuer.clone();
+    let client_id = config.oidc_client_id.clone();
     let (tx, rx) = channel();
     std::thread::spawn(move || {
-        let _ = tx.send(sign_in(&issuer));
+        let _ = tx.send(sign_in(&issuer, &client_id));
     });
     commands.insert_resource(Pending(Mutex::new(rx)));
 }
@@ -97,7 +97,7 @@ fn poll(
 
 /// Opens the system browser to the realm's authorize endpoint, captures the redirect on the
 /// loopback, and exchanges the code for tokens. Blocking; run off the main thread.
-fn sign_in(issuer: &str) -> Result<Session, String> {
+fn sign_in(issuer: &str, client_id: &str) -> Result<Session, String> {
     let client_http = web::oidc_client();
     let issuer = IssuerUrl::new(issuer.to_owned()).map_err(stringify)?;
     let metadata = CoreProviderMetadata::discover(&issuer, &client_http).map_err(stringify)?;
@@ -108,7 +108,7 @@ fn sign_in(issuer: &str) -> Result<Session, String> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(stringify)?;
     let redirect = format!("http://{}/", listener.local_addr().map_err(stringify)?);
     let client =
-        CoreClient::from_provider_metadata(metadata, ClientId::new(CLIENT_ID.to_owned()), None)
+        CoreClient::from_provider_metadata(metadata, ClientId::new(client_id.to_owned()), None)
             .set_redirect_uri(RedirectUrl::new(redirect).map_err(stringify)?);
 
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
