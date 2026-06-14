@@ -1,0 +1,15 @@
+[package]
+name = "service"
+version.workspace = true
+edition.workspace = true
+description = "Shared runtime for rift's HTTP services: continuous profiling, request and process metrics, and graceful shutdown — so a binary is its routes plus a call to serve."
+
+[dependencies]
+axum.workspace = true
+axum-prometheus.workspace = true
+ctrlc.workspace = true
+metrics-process.workspace = true
+pyroscope.workspace = true
+serde.workspace = true
+envy.workspace = true
+tokio.workspace = true

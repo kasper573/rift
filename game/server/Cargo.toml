@@ -16,10 +16,10 @@ jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.17", default-features = false }
 metrics-process.workspace = true
-pyroscope.workspace = true
 rand = "0.9"
 serde.workspace = true
 serde_json.workspace = true
+service = { path = "../../service" }
 tokio.workspace = true
 ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 world = { path = "../world" }

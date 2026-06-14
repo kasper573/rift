@@ -2278,6 +2278,7 @@ dependencies = [
  "bevy_replicon_renet",
  "dirs",
  "dotenvy",
+ "envy",
  "http",
  "openidconnect",
  "serde",
@@ -4445,19 +4446,16 @@ name = "installer"
 version = "0.1.0"
 dependencies = [
  "axum",
- "axum-prometheus",
  "bytesize",
- "ctrlc",
  "dotenvy",
  "envy",
  "flate2",
  "fltk",
- "metrics-process",
- "pyroscope",
  "self-replace",
  "semver",
  "serde",
  "serde_json",
+ "service",
  "tar",
  "tempfile",
  "tokio",
@@ -7581,13 +7579,27 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus 0.17.2",
  "metrics-process",
- "pyroscope",
  "rand 0.9.4",
  "serde",
  "serde_json",
+ "service",
  "tokio",
  "ureq 3.3.0",
  "world",
+]
+
+[[package]]
+name = "service"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "axum-prometheus",
+ "ctrlc",
+ "envy",
+ "metrics-process",
+ "pyroscope",
+ "serde",
+ "tokio",
 ]
 
 [[package]]
@@ -9062,13 +9074,10 @@ dependencies = [
  "askama",
  "axum",
  "axum-extra",
- "axum-prometheus",
- "ctrlc",
  "envy",
- "metrics-process",
  "openidconnect",
- "pyroscope",
  "serde",
+ "service",
  "tokio",
  "tower-http",
 ]

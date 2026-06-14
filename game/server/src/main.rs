@@ -20,8 +20,6 @@ use bevy_replicon_renet::netcode::{
 use bevy_replicon_renet::renet::ConnectionConfig;
 use bevy_replicon_renet::{RenetChannelsExt, RenetServer, RepliconRenetPlugins};
 use metrics::{counter, gauge, histogram};
-use pyroscope::backend::{BackendConfig, PprofConfig, pprof_backend};
-use pyroscope::pyroscope::{PyroscopeAgent, PyroscopeAgentBuilder, PyroscopeAgentRunning};
 use rand::RngCore;
 use world::{ClientId, Identity, TICK_HZ};
 
@@ -46,19 +44,17 @@ struct Config {
 }
 
 fn main() {
-    world::validate();
+    world::assets::init(std::env::var_os("RIFT_ASSETS_DIR").expect("RIFT_ASSETS_DIR must be set"));
+    world::sim::validate();
     let config: Config = envy::prefixed("RIFT_GAME_SERVER_")
         .from_env()
         .expect("RIFT_GAME_SERVER_* environment");
     // Held for the process lifetime: dropping the agent stops the profiler.
-    let _profiler = if config.pyroscope_enabled {
-        Some(start_profiler(
-            "rift-game-server",
-            config.pyroscope_sample_hz,
-        ))
-    } else {
-        None
-    };
+    let _profiler = service::profiler(
+        "rift-game-server",
+        config.pyroscope_enabled,
+        config.pyroscope_sample_hz,
+    );
     let bind: SocketAddr = format!("0.0.0.0:{}", config.port)
         .parse()
         .expect("server bind address");
@@ -90,7 +86,7 @@ fn simulate(
     private_key: [u8; NETCODE_KEY_BYTES],
     sessions: Sessions,
 ) {
-    let mut app = world::server_app();
+    let mut app = world::sim::server_app();
     app.add_plugins(RepliconRenetPlugins);
 
     let channels = app.world().resource::<RepliconChannels>();
@@ -308,36 +304,6 @@ fn unix_now() -> Duration {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock after the unix epoch")
-}
-
-/// Continuously samples this process at `sample_hz` and pushes profiles to the `PYROSCOPE_BASE`
-/// server under the given application name, where they surface in Grafana's profiles drilldown.
-/// The returned agent must be held for the process lifetime, as dropping it stops profiling.
-fn start_profiler(application: &str, sample_hz: u32) -> PyroscopeAgent<PyroscopeAgentRunning> {
-    #[derive(serde::Deserialize)]
-    struct Profiling {
-        base: String,
-    }
-    let profiling: Profiling = envy::prefixed("PYROSCOPE_")
-        .from_env()
-        .expect("PYROSCOPE_* environment");
-    PyroscopeAgentBuilder::new(
-        profiling.base,
-        application,
-        sample_hz,
-        "pyroscope-rs",
-        env!("CARGO_PKG_VERSION"),
-        pprof_backend(
-            PprofConfig {
-                sample_rate: sample_hz,
-            },
-            BackendConfig::default(),
-        ),
-    )
-    .build()
-    .expect("build pyroscope agent")
-    .start()
-    .expect("start pyroscope agent")
 }
 
 fn metrics_recorder() -> metrics_exporter_prometheus::PrometheusHandle {

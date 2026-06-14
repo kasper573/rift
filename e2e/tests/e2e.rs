@@ -28,12 +28,15 @@ use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings
 use xcap::Window;
 
 const ARTIFACTS: &str = env!("CARGO_TARGET_TMPDIR");
-const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
+const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets");
 // The title the client sets on its window; xcap finds it by this.
 const WINDOW_TITLE: &str = "rift mmo";
 // What the stack's realm pages title the browser window; same on the login and register pages.
 const BROWSER_TITLE: &str = "sign in to rift";
 const ISSUER: &str = "https://auth.rift.localhost/realms/rift";
+// The realm/audience the stack provisions; the client presents it as its OIDC client and the server
+// verifies it as the token audience.
+const AUDIENCE: &str = "rift";
 
 /// The world is on screen once the mid-view fills with scenery rather than a flat screen behind a
 /// label. Diced into a grid, the world makes most cells busy with several colors each; the sign-in,
@@ -340,6 +343,7 @@ fn spawn_client(game_server_url: Option<&str>) -> Proc {
         command
             .env("RIFT_CLIENT_ISSUER", ISSUER)
             .env("RIFT_CLIENT_GAME_SERVER_URL", url)
+            .env("RIFT_CLIENT_OIDC_CLIENT_ID", AUDIENCE)
             .env("RIFT_ASSETS_DIR", ASSETS);
     }
     Proc::start(command, "client")
@@ -363,7 +367,7 @@ impl GameServer {
             .env("RIFT_ASSETS_DIR", ASSETS)
             .env("RIFT_GAME_SERVER_PORT", port.to_string())
             .env("RIFT_AUTH_ISSUER", ISSUER)
-            .env("RIFT_AUTH_AUDIENCE", "rift")
+            .env("RIFT_AUTH_AUDIENCE", AUDIENCE)
             .env(
                 "RIFT_AUTH_JWKS_URI",
                 format!("{ISSUER}/protocol/openid-connect/certs"),

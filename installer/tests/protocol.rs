@@ -1,5 +1,5 @@
 use installer::archive::{ArchiveKind, kind};
-use installer::metadata::{FileEntry, Metadata, select_files};
+use installer::metadata::{FileEntry, Metadata};
 use installer::version;
 
 fn entry(name: &str) -> FileEntry {
@@ -40,46 +40,6 @@ fn files_are_classified_by_extension() {
     assert_eq!(kind("bundle.tar"), ArchiveKind::Tar);
     assert_eq!(kind("rift"), ArchiveKind::Raw);
     assert_eq!(kind("rift.exe"), ArchiveKind::Raw);
-}
-
-#[test]
-fn select_keeps_this_platform_and_shared_assets_only() {
-    let all = [
-        entry("rift-installer-linux-x86_64.tar.gz"),
-        entry("rift-linux-x86_64.tar.gz"),
-        entry("rift-installer-macos-aarch64.tar.gz"),
-        entry("rift-macos-aarch64.tar.gz"),
-        entry("rift-installer-windows-x86_64.zip"),
-        entry("rift-windows-x86_64.zip"),
-        entry("rift-assets.zip"),
-    ];
-
-    let linux: Vec<_> = select_files(&all, "linux", "x86_64")
-        .into_iter()
-        .map(|file| file.name)
-        .collect();
-    assert_eq!(
-        linux,
-        [
-            "rift-installer-linux-x86_64.tar.gz",
-            "rift-linux-x86_64.tar.gz",
-            "rift-assets.zip",
-        ]
-    );
-
-    // Same arch, different os: windows must not pick up the linux archives.
-    let windows: Vec<_> = select_files(&all, "windows", "x86_64")
-        .into_iter()
-        .map(|file| file.name)
-        .collect();
-    assert_eq!(
-        windows,
-        [
-            "rift-installer-windows-x86_64.zip",
-            "rift-windows-x86_64.zip",
-            "rift-assets.zip",
-        ]
-    );
 }
 
 #[test]

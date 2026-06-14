@@ -110,10 +110,10 @@ impl Bundle {
     }
 
     fn fetch_manifest(&self) -> Result<Metadata, String> {
+        let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
         installer::http_agent(Duration::from_secs(30))
             .get(&self.metadata_url)
-            .query("os", std::env::consts::OS)
-            .query("arch", std::env::consts::ARCH)
+            .query("platform", &platform)
             .call()
             .map_err(|error| format!("update check failed: {error}"))?
             .body_mut()

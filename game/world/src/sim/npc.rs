@@ -6,14 +6,14 @@ use bevy_replicon::prelude::Replicated;
 use bevy_time::Time;
 use serde::{Deserialize, Deserializer};
 
+use super::combat::{AttackTarget, Attackers, Stats};
+use super::movement::{MoveTarget, Path, Speed, forget};
+use super::player::Players;
 use crate::actors::{self, ActorModelId};
 use crate::area::{self, AreaId};
-use crate::combat::{AttackTarget, Attackers, Stats};
 use crate::math::{
     Direction, Millis, Offset, PlaybackRate, Pos, Seconds, Tiles, TilesPerSec, next_rng, rng_unit,
 };
-use crate::movement::{MoveTarget, Path, Speed, forget};
-use crate::player::Players;
 use crate::protocol::{
     ACTION_IDLE, Actor, AreaTag, Hitbox, Name, Position, Rgba, Vitals, is_dead, position,
     set_action,
@@ -320,8 +320,9 @@ pub fn run_respawn(world: &mut World) {
         if time - since < NPC_RESPAWN_DELAY {
             continue;
         }
-        let area = world.get::<AreaTag>(id).map_or(AreaId(0), |tag| tag.area);
-        let at = random_walkable(&mut rng, area).unwrap_or_default();
+        let area_id = world.get::<AreaTag>(id).map_or(AreaId(0), |tag| tag.area);
+        let at = random_walkable(&mut rng, area_id)
+            .unwrap_or_else(|| area::areas()[area_id.0 as usize].spawn);
         if let Some(mut vitals) = world.get_mut::<Vitals>(id) {
             vitals.health = vitals.max;
         }

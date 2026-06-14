@@ -15,10 +15,10 @@ env:
   DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
   DOCKER_REGISTRY_URL: ghcr.io/${{ github.repository_owner }}
   DOCKER_IMAGE_VERSION: ${{ github.sha }}
-  # crates.io downloads flake over HTTP/2 ("error in the HTTP2 framing layer"); force HTTP/1.1 and
-  # retry hard so a cold cache doesn't fail the run on a transient blip.
-  CARGO_NET_RETRY: "10"
-  CARGO_HTTP_MULTIPLEXING: "false"
+  # The release's own download-naming scheme, defined once and referenced by packaging and the
+  # link derivation below.
+  INSTALLER_PREFIX: rift-installer-
+  ASSETS_ZIP: rift-assets.zip
 
 jobs:
   # Only the client ships to multiple OSes, so only it builds per OS; linux additionally builds
@@ -34,57 +34,25 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
-      - name: Install the pinned toolchain
-        run: rustup show
-      - name: Exclude the build from Windows Defender
-        if: runner.os == 'Windows'
-        shell: pwsh
-        # Real-time AV scanning of every object cargo writes roughly doubles the Windows build.
-        run: Add-MpPreference -ExclusionPath "${{ github.workspace }}", "$env:USERPROFILE\.cargo"
-      - name: Speed up the Windows release codegen
-        if: runner.os == 'Windows'
-        shell: bash
-        # Windows is the slowest compiler; finer codegen units cut its build by ~20s for a small
-        # optimisation cost on the Windows artifact only. rust-cache folds this CARGO_* var into its
-        # key, so Windows pays one cold build to adopt it.
-        run: echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.os }}
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        # The client links ALSA through kira; the installer's fltk GUI is built from source on Linux, so
-        # it needs cmake plus the X11/GL/pango headers. macOS and Windows build fltk with their own toolchains.
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev cmake g++ libx11-dev libxext-dev libxft-dev \
-            libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpango1.0-dev \
-            libgl1-mesa-dev libglu1-mesa-dev
       - name: Build the client and the installer
-        shell: bash
-        # Both are environment-agnostic; the prod .env packaged into the installer archive configures the
-        # installer and, through it, the client the installer launches.
-        run: cargo build --release -p client -p installer --features installer/frontend
+        run: just build-client
       - name: Package the client and the installer
         shell: bash
         # The player downloads only the installer archive (binary + .env) and runs it; the installer
-        # fetches the client, the assets, and any newer installer into the same folder. The client archive
-        # is binary-only: the installer carries the one .env, so nothing collides when they land together.
+        # fetches the client, the assets, and any newer installer into the same folder. The client
+        # archive is binary-only: the installer carries the one .env, so nothing collides.
         run: |
           ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
           pkg="${{ matrix.asset }}"
-          inst="rift-installer-${pkg#rift-}"
+          inst="${INSTALLER_PREFIX}${pkg#rift-}"
           mkdir -p "stage/$pkg" "stage/$inst" out
           cp "target/release/rift$ext" "stage/$pkg/rift$ext"
           cp "target/release/rift-installer$ext" "stage/$inst/rift-installer$ext"
-          cat > "stage/$inst/.env" <<EOF
-          RIFT_CLIENT_ISSUER=https://auth.${{ vars.RIFT_DOMAIN }}/realms/rift
-          RIFT_CLIENT_GAME_SERVER_URL=https://game-server.${{ vars.RIFT_DOMAIN }}
-          RIFT_ASSETS_DIR=assets
-          RIFT_INSTALLER_METADATA_URL=https://installer.${{ vars.RIFT_DOMAIN }}
-          RIFT_CLIENT_EXECUTABLE=rift$ext
-          EOF
+          just installer-env "${{ vars.RIFT_DOMAIN }}" "rift$ext" > "stage/$inst/.env"
           if [ "${{ runner.os }}" = "Windows" ]; then
             (cd "stage/$pkg"  && 7z a -tzip "../../out/$pkg.zip"  . >/dev/null)
             (cd "stage/$inst" && 7z a -tzip "../../out/$inst.zip" . >/dev/null)
@@ -102,19 +70,16 @@ jobs:
         # it alongside their OS binary and extract it next to the binary, where the client finds it.
         run: |
           mkdir -p assets-out
-          zip -r assets-out/rift-assets.zip assets
+          zip -r "assets-out/${ASSETS_ZIP}" assets
       - name: Upload the assets archive
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
           name: assets-archive
           path: assets-out/
-      - name: Build the server, the website, the installer backend, and the keycloak provisioning input
+      - name: Build the stack inputs for the deploy images
         if: runner.os == 'Linux'
-        run: |
-          cargo build --release -p server -p website
-          cargo build --release -p installer --features backend --bin installer-backend
-          cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
+        run: just build
       - name: Upload the stack inputs for the deploy images
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
@@ -135,7 +100,8 @@ jobs:
     # release it just published, and the deploy job feeds them to the website and the installer backend.
     outputs:
       version: ${{ steps.publish.outputs.version }}
-      release_artifact_links: ${{ steps.publish.outputs.release_artifact_links }}
+      per_platform_artifact_links: ${{ steps.publish.outputs.per_platform_artifact_links }}
+      shared_artifact_links: ${{ steps.publish.outputs.shared_artifact_links }}
       installer_links: ${{ steps.publish.outputs.installer_links }}
     steps:
       - uses: actions/download-artifact@v7
@@ -152,19 +118,27 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           version="0.$(( ${{ github.run_number }} ))"
-          gh release create "$version" dist/client-*/rift-* dist-assets/rift-assets.zip \
+          gh release create "$version" dist/client-*/rift-* "dist-assets/${ASSETS_ZIP}" \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "$version" \
             --notes "Automated release of ${{ github.sha }}."
-          # Read the asset download URLs back from the published release. release_artifact_links is every
-          # asset (the installer backend filters per platform); installer_links is the per-OS installers
-          # the downloads page links. One API call so both views describe the exact files just uploaded.
+          # Read the asset URLs back and organize them as the installer backend serves them: a
+          # per-platform map (keyed by {os}-{arch}, derived from the installer asset names) plus the
+          # shared assets, alongside the per-OS installers the downloads page lists. The map is JSON,
+          # which can't survive interpolation into a shell command, so it leaves here base64-encoded.
           assets=$(gh release view "$version" --repo "${{ github.repository }}" --json assets)
+          per_platform=$(jq -c --arg z "$ASSETS_ZIP" --arg p "$INSTALLER_PREFIX" '
+            (.assets) as $a
+            | [$a[].name | select(startswith($p)) | ltrimstr($p) | sub("\\.(tar\\.gz|zip)$"; "")] as $platforms
+            | reduce $platforms[] as $plat ({};
+                .[$plat] = [$a[] | select(.name != $z and (.name | contains($plat))) | .url])
+          ' <<<"$assets")
           {
             echo "version=$version"
-            echo "release_artifact_links=$(jq -r '[.assets[].url] | join(",")' <<<"$assets")"
-            echo "installer_links=$(jq -r '[.assets[] | select(.name | startswith("rift-installer-")) | .url] | join(",")' <<<"$assets")"
+            echo "per_platform_artifact_links=$(printf %s "$per_platform" | base64 -w0)"
+            echo "shared_artifact_links=$(jq -r --arg z "$ASSETS_ZIP" '[.assets[] | select(.name == $z) | .url] | join(",")' <<<"$assets")"
+            echo "installer_links=$(jq -r --arg p "$INSTALLER_PREFIX" '[.assets[] | select(.name | startswith($p)) | .url] | join(",")' <<<"$assets")"
           } >> "$GITHUB_OUTPUT"
 
   deploy:
@@ -175,6 +149,9 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+        with:
+          deps: none
       - uses: actions/download-artifact@v7
         with:
           name: stack-linux
@@ -182,12 +159,9 @@ jobs:
       - name: Restore the executable bits artifact transport may drop
         run: chmod +x target/release/server target/release/website target/release/installer-backend
       - name: Build and push the stack images
-        env:
-          COMPOSE: docker compose -f docker/docker-compose.yaml
         run: |
           echo "${{ env.DOCKER_PASSWORD }}" | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
-          $COMPOSE --profile prod build rift-website rift-installer rift-game-server keycloak reverse-proxy
-          $COMPOSE --profile prod push rift-website rift-installer rift-game-server keycloak reverse-proxy
+          just push-images
 
       - name: Upload docker runtime dependencies
         uses: burnett01/rsync-deployments@7.0.1
@@ -216,10 +190,9 @@ jobs:
             echo "DOCKER_REGISTRY_URL=\"${{ env.DOCKER_REGISTRY_URL }}\"" >> .env
             echo "DOCKER_IMAGE_VERSION=\"${{ env.DOCKER_IMAGE_VERSION }}\"" >> .env
             echo "RIFT_DOMAIN=\"${{ vars.RIFT_DOMAIN }}\"" >> .env
-            # Download URLs derived by the release job from the release it just published. The website
-            # lists the per-OS installers; the installer backend serves the full set, filtered per platform.
             echo "RIFT_INSTALLER_LINKS=\"${{ needs.release.outputs.installer_links }}\"" >> .env
-            echo "RIFT_RELEASE_ARTIFACT_LINKS=\"${{ needs.release.outputs.release_artifact_links }}\"" >> .env
+            echo "RIFT_INSTALLER_SHARED_ARTIFACT_LINKS=\"${{ needs.release.outputs.shared_artifact_links }}\"" >> .env
+            printf 'RIFT_INSTALLER_PER_PLATFORM_ARTIFACT_LINKS=%s\n' "$(echo '${{ needs.release.outputs.per_platform_artifact_links }}' | base64 -d)" >> .env
             echo "RIFT_VERSION=\"${{ needs.release.outputs.version }}\"" >> .env
 
             echo ${{ env.DOCKER_PASSWORD }} | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin

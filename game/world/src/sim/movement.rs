@@ -3,10 +3,10 @@ use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::FromClient;
 use bevy_time::Time;
 
+use super::combat::AttackTarget;
+use super::player::sender_player;
 use crate::area::{self, AreaId};
-use crate::combat::AttackTarget;
 use crate::math::{CellPos, Direction, Offset, Pos, Seconds, Tiles, TilesPerSec};
-use crate::player::sender_player;
 use crate::protocol::{
     ACTION_RUN, ACTION_WALK, AreaTag, MoveRequest, MoveToPortal, Position, is_dead, position,
     set_facing,

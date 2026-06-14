@@ -1,0 +1,42 @@
+name: Set up the build environment
+description: Pinned toolchain, just, and the Linux system libraries cargo can't provide.
+inputs:
+  deps:
+    description: "Which Linux system libraries to install: none | build | all."
+    default: build
+runs:
+  using: composite
+  steps:
+    - uses: extractions/setup-just@v2
+    - name: Install the pinned toolchain
+      shell: bash
+      run: rustup show
+    - name: Install Linux system libraries
+      if: runner.os == 'Linux' && inputs.deps != 'none'
+      shell: bash
+      # `-sys` crates link system C libraries and fltk compiles its C++ GUI from source, so cargo
+      # can't supply these; the repo's platform rule keeps them here, the one platform-specific place.
+      # `build` covers compiling: libasound (client audio, via alsa-sys) and fltk's toolchain (the
+      # installer GUI). `all` adds the e2e harness: xcap builds its X11/wayland/pipewire capture
+      # surface, and a software Vulkan driver, headless display, window manager and NSS tools let the
+      # released client render and sign in on CI. Drop the runner's microsoft/azure apt sources first:
+      # nothing is installed from them, but they 403 intermittently and fail `apt-get update`.
+      run: |
+        sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
+        sudo apt-get update
+        build="libasound2-dev cmake g++ libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpango1.0-dev libgl1-mesa-dev libglu1-mesa-dev"
+        e2e="libclang-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev libxcb1-dev libxcb-randr0-dev libxcb-render0-dev libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers xvfb openbox libnss3-tools"
+        pkgs="$build"
+        [ "${{ inputs.deps }}" = "all" ] && pkgs="$build $e2e"
+        sudo apt-get install -y $pkgs
+    - name: Exclude the build from Windows Defender
+      if: runner.os == 'Windows'
+      shell: pwsh
+      # Real-time AV scanning of every object cargo writes roughly doubles the Windows build.
+      run: Add-MpPreference -ExclusionPath "${{ github.workspace }}", "$env:USERPROFILE\.cargo"
+    - name: Speed up the Windows release codegen
+      if: runner.os == 'Windows'
+      shell: bash
+      # Windows is the slowest compiler; finer codegen units cut its build for a small optimisation
+      # cost on the Windows artifact only. rust-cache folds this CARGO_* var into its key.
+      run: echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256" >> "$GITHUB_ENV"

@@ -7,120 +7,27 @@ concurrency:
   group: check-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-env:
-  # crates.io downloads flake over HTTP/2 ("error in the HTTP2 framing layer"); force HTTP/1.1 and
-  # retry hard so a cold cache doesn't fail the run on a transient blip.
-  CARGO_NET_RETRY: "10"
-  CARGO_HTTP_MULTIPLEXING: "false"
-
 jobs:
-  lint:
+  check:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - name: Install the pinned toolchain
-        run: rustup show
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/setup
         with:
-          key: lint
-          # Only main writes caches; every branch restores them. This keeps the repo to a single
-          # cache set instead of one per branch, well under GitHub's 10 GB ceiling.
-          save-if: ${{ github.ref_name == 'main' }}
-      - name: Install system dependencies
-        # Clippy compiles the client, which links ALSA through kira. Drop the runner image's
-        # microsoft/azure apt sources first: we install nothing from them, but the mirror 403s
-        # intermittently and `apt-get update` fails the whole step when any source errors.
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
-          sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - name: Lint
-        run: |
-          cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-
-  build:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install the pinned toolchain
-        run: rustup show
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: build
-          # Only main writes caches; every branch restores them (see the lint job).
-          save-if: ${{ github.ref_name == 'main' }}
-      - name: Install system dependencies
-        # cargo build compiles the client, which links ALSA through kira. Drop the runner image's
-        # microsoft/azure apt sources first (see the lint job).
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
-          sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - name: Build
-        run: cargo build
-
-  test:
-    needs: lint
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install the pinned toolchain
-        run: rustup show
+          deps: all
       - uses: Swatinem/rust-cache@v2
         with:
           key: test
-          # Only main writes caches; every branch restores them (see the lint job).
           save-if: ${{ github.ref_name == 'main' }}
-      - name: Install system dependencies
-        # The client links ALSA (kira) and renders through a software Vulkan driver (lavapipe) onto
-        # a headless Xvfb that openbox manages (xcap enumerates windows via EWMH, which needs a WM).
-        # xcap compiles its whole linux capture surface — pipewire and the wayland path (egl/gbm)
-        # alongside the X11 (xcb) path we use. certutil (libnss3-tools) teaches the browser's NSS
-        # store the stack's CA.
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
-          sudo apt-get update
-          sudo apt-get install -y \
-            libasound2-dev \
-            libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon0 libxkbcommon-x11-0 \
-            libvulkan1 mesa-vulkan-drivers \
-            xvfb openbox libnss3-tools \
-            libclang-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
-            libxcb1-dev libxcb-randr0-dev libxcb-render0-dev \
-            cmake g++ libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev \
-            libxrender-dev libxfixes-dev libpango1.0-dev libgl1-mesa-dev libglu1-mesa-dev
-      - name: Build the client and the server
-        # The e2e drives these very binaries through a real session.
-        run: |
-          cargo build --release -p client
-          cargo build --release -p server
-      - name: Test
-        run: cargo test --release
-      - name: Lint and test the installer's feature-gated targets
-        # The installer's lib and unit tests run in the default lint/test above; its fltk frontend and
-        # axum backend build only under their own features, so they are linted here (where fltk's build
-        # deps are installed), and the backend's router integration test runs with the backend feature.
-        run: |
-          cargo clippy -p installer --features frontend --all-targets -- -D warnings
-          cargo clippy -p installer --features backend --all-targets -- -D warnings
-          cargo test -p installer --features backend
-      - name: Start the auth stack
-        # The e2e signs in for real, so it needs keycloak behind the TLS proxy — only that slice
-        # of the stack; the game server under test is the binary built above. The hosts entries
-        # cover resolvers that do not special-case *.localhost.
-        run: |
-          echo "127.0.0.1 rift.localhost auth.rift.localhost game-server.rift.localhost" | sudo tee -a /etc/hosts
-          cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
-          docker network inspect rift >/dev/null 2>&1 || docker network create rift
-          docker compose -f docker/docker-compose.yaml up -d --wait postgres keycloak keycloak-healthcheck reverse-proxy
+      - run: just lint
+      - run: just test
+      - name: Bring up the full stack
+        run: just stack
       - name: Trust the stack's certificate authority
-        # Caddy mints its own CA at first boot; the OS store covers the client/server binaries,
-        # chrome keeps its own NSS store.
+        # Caddy mints its own CA at first boot; the OS store covers the client/server binaries and
+        # chrome keeps its own NSS store. The CA's location in the stack lives in `just ca-cert`.
         run: |
-          for _ in $(seq 1 60); do
-            docker compose -f docker/docker-compose.yaml cp reverse-proxy:/data/caddy/pki/authorities/local/root.crt /tmp/rift-root.crt 2>/dev/null && break
-            sleep 2
-          done
+          just ca-cert /tmp/rift-root.crt
           sudo install -m 644 /tmp/rift-root.crt /usr/local/share/ca-certificates/rift-root.crt
           sudo update-ca-certificates
           mkdir -p "$HOME/.pki/nssdb"
@@ -135,8 +42,8 @@ jobs:
       - name: Quiet chrome's first-run prompts
         # A fresh chrome profile pops first-run UI — the "set as default" bar and, by region, the EU
         # search-engine choice dialog — that covers the page and breaks the keyboard-driven sign-in.
-        # A managed policy pre-picks the search provider and the wrapper flags suppress the rest, so
-        # the browser behaves like a returning user's. The e2e drives chrome through $BROWSER.
+        # A managed policy pre-picks the search provider and the wrapper flags suppress the rest. The
+        # e2e drives chrome through $BROWSER.
         run: |
           sudo mkdir -p /etc/opt/chrome/policies/managed
           echo '{"DefaultSearchProviderEnabled":true,"DefaultSearchProviderName":"Google","DefaultSearchProviderKeyword":"google","DefaultSearchProviderSearchURL":"https://www.google.com/search?q={searchTerms}"}' \
@@ -146,10 +53,7 @@ jobs:
       - name: E2E test
         env:
           BROWSER: /tmp/rift-chrome
-        run: |
-          export RIFT_E2E_CLIENT="$PWD/target/release/rift"
-          export RIFT_E2E_SERVER="$PWD/target/release/server"
-          cargo test -p e2e -- --ignored --nocapture
+        run: just e2e
       - name: Save E2E artifacts
         if: failure()
         uses: actions/upload-artifact@v7
@@ -158,7 +62,7 @@ jobs:
           path: target/tmp/
       - name: Save stack logs
         if: failure()
-        run: docker compose -f docker/docker-compose.yaml logs --no-color > /tmp/stack.log 2>&1 || true
+        run: just logs > /tmp/stack.log 2>&1 || true
       - name: Upload stack logs
         if: failure()
         uses: actions/upload-artifact@v7

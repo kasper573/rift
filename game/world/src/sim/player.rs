@@ -6,17 +6,17 @@ use bevy_ecs::observer::On;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{FromClient, Replicated, SendTargets, ToClients};
 
+use super::combat::Stats;
+use super::movement::{Speed, forget};
+use super::spectate::Spectators;
+use super::visibility::OwnedBy;
 use crate::area::{self, AreaId};
-use crate::combat::Stats;
 use crate::identity::Identity;
 use crate::math::{Direction, Millis, PlaybackRate, Pos, Tiles, TilesPerSec};
-use crate::movement::{Speed, forget};
 use crate::protocol::{
     ACTION_IDLE, Actor, AreaTag, ClientId, Hitbox, Inventory, JoinRequest, Name, Owner, Position,
     RespawnRequest, Rgba, Vitals, Welcome, Xp, is_dead, set_action,
 };
-use crate::spectate::Spectators;
-use crate::visibility::OwnedBy;
 use crate::{actors, protocol};
 
 const PLAYER_MAX_HEALTH: f32 = 30.0;
