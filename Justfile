@@ -41,16 +41,17 @@ push-images:
 # Print the prod .env packaged beside the shipped installer (read by the client it launches). The
 # external client can't read the cluster's interpolated env, so the domain -> URL convention lives
 # here; the realm/audience is derived from its one owner (docker/.env.shared) so it can't drift.
+# Runs on every release runner including Windows, so it stays a plain `set shell` recipe (one
+# bash -c) rather than a `#!/usr/bin/env bash` shebang, which just can't reliably launch on Windows.
 installer-env domain exe="rift":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    audience=$(grep -E '^RIFT_AUTH_AUDIENCE=' docker/.env.shared | cut -d= -f2)
-    echo "RIFT_CLIENT_ISSUER=https://auth.{{domain}}/realms/${audience}"
-    echo "RIFT_CLIENT_GAME_SERVER_URL=https://game-server.{{domain}}"
-    echo "RIFT_CLIENT_OIDC_CLIENT_ID=${audience}"
-    echo "RIFT_ASSETS_DIR=assets"
-    echo "RIFT_INSTALLER_METADATA_URL=https://installer.{{domain}}"
-    echo "RIFT_CLIENT_EXECUTABLE={{exe}}"
+    @set -euo pipefail; \
+      audience=$(grep -E '^RIFT_AUTH_AUDIENCE=' docker/.env.shared | cut -d= -f2); \
+      echo "RIFT_CLIENT_ISSUER=https://auth.{{domain}}/realms/${audience}"; \
+      echo "RIFT_CLIENT_GAME_SERVER_URL=https://game-server.{{domain}}"; \
+      echo "RIFT_CLIENT_OIDC_CLIENT_ID=${audience}"; \
+      echo "RIFT_ASSETS_DIR=assets"; \
+      echo "RIFT_INSTALLER_METADATA_URL=https://installer.{{domain}}"; \
+      echo "RIFT_CLIENT_EXECUTABLE={{exe}}"
 
 # Copy the stack's first-boot CA out of the running reverse-proxy (the service name and in-container
 # path live here, not in the workflow or the README). Waits for caddy to mint it.
