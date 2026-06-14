@@ -4,8 +4,8 @@ members = [
     "game/world",
     "game/server",
     "game/client",
-    "game/e2e",
-    "game/installer",
+    "e2e",
+    "installer",
     "service",
     "website",
 ]
@@ -15,7 +15,7 @@ default-members = [
     "game/world",
     "game/server",
     "game/client",
-    "game/installer",
+    "installer",
     "service",
     "website",
 ]

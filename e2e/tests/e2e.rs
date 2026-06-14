@@ -28,7 +28,7 @@ use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings
 use xcap::Window;
 
 const ARTIFACTS: &str = env!("CARGO_TARGET_TMPDIR");
-const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
+const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets");
 // The title the client sets on its window; xcap finds it by this.
 const WINDOW_TITLE: &str = "rift mmo";
 // What the stack's realm pages title the browser window; same on the login and register pages.
