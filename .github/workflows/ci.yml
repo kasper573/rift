@@ -54,31 +54,31 @@ jobs:
         with:
           key: linux
           save-if: ${{ github.ref_name == 'main' || github.ref_name == 'ci' }}
-      - name: Build the gate binaries
-        # One cargo invocation builds server + client + website so the Bevy ECS layer the server and
-        # client share compiles once, not once per binary; plus the installer backend and keycloak's
-        # roles input. The stack images package the server/website/installer-backend; e2e drives the
-        # client.
-        run: just build-gate
+      - name: Build the stack binaries
+        # The server/website/installer-backend the stack images package, plus keycloak's roles input.
+        # The client — the heavy render/wgpu compile — is built in the next step so the stack can boot
+        # alongside it.
+        run: just build
       - name: Bring up the full stack in the background
-        # Booting the stack is mostly idle waiting on container healthchecks, so it overlaps the lint +
-        # test + e2e compile below at no cost. It needs the host binaries the previous step built (the
+        # Booting the stack is mostly idle waiting on container healthchecks, so it overlaps the client
+        # compile + lint + test below at no cost. It needs the host binaries the previous step built (the
         # images only package them), so it can't start before now; it waits for the infra prewarm so the
         # two don't build the same images twice, then signals its own sentinel. `just stack-up` runs no
-        # cargo, so it never contends with any foreground compile for the target lock.
+        # cargo, so it never contends with the foreground compile for the target lock.
         run: |
           nohup bash -c '
             for _ in $(seq 1 180); do [ -f /tmp/prewarm.done ] && break; sleep 2; done
             just stack-up && touch /tmp/stack.done
           ' > /tmp/stack.log 2>&1 &
-      - name: Lint, test, and pre-build the e2e
-        # The foreground the stack boot overlaps. lint and test reuse the gate build's compiled deps;
-        # pre-building the e2e test binary (its deps are Bevy-independent) leaves the e2e step pure
-        # runtime.
+      - name: Build the client and e2e test, then lint and test
+        # The CPU-bound foreground that the stack boot overlaps. Building the client and the e2e test
+        # binary here (the heavy render compile, which the stack doesn't need) means the e2e step is pure
+        # runtime, and fills this window to match the boot so it's fully hidden. Building before lint/test
+        # lets them reuse these compiled deps instead of compiling Bevy again in a separate pass.
         run: |
+          just e2e-build
           just lint
           just test
-          just e2e-build
       - name: Wait for the full stack
         run: |
           for _ in $(seq 1 180); do [ -f /tmp/stack.done ] && break; sleep 2; done
