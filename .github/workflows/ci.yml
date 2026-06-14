@@ -30,6 +30,9 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      # mold links the Bevy binaries far faster than the default linker (installed by the setup action).
+      RUSTFLAGS: -C link-arg=-fuse-ld=mold
     steps:
       - uses: actions/checkout@v6
       - uses: extractions/setup-just@v2

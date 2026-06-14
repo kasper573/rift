@@ -12,9 +12,12 @@ lint:
     cargo clippy -p installer --all-features --all-targets -- -D warnings
     cargo clippy -p world --no-default-features -- -D warnings
 
-# The non-e2e test suite: the workspace plus the installer's feature-gated tests.
+# The non-e2e test suite. Only world and installer carry tests; the binary crates (client, server,
+# website) are compile-checked by `lint` and built by `build`/`e2e`, so running the whole workspace
+# here only recompiled the heavy crates in test config for nothing. Debug build — tests assert on
+# contracts, and debug keeps the overflow/debug assertions on.
 test:
-    cargo test --release
+    cargo test -p world
     cargo test -p installer --all-features
 
 # Build the server/website/installer-backend artifacts and the keycloak provisioning input the stack images package.

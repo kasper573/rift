@@ -24,7 +24,7 @@ runs:
       run: |
         sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
         sudo apt-get update
-        build="libasound2-dev cmake g++ libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpango1.0-dev libgl1-mesa-dev libglu1-mesa-dev"
+        build="mold libasound2-dev cmake g++ libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpango1.0-dev libgl1-mesa-dev libglu1-mesa-dev"
         e2e="libclang-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev libxcb1-dev libxcb-randr0-dev libxcb-render0-dev libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers xvfb openbox libnss3-tools"
         pkgs="$build"
         [ "${{ inputs.deps }}" = "all" ] && pkgs="$build $e2e"
