@@ -2,7 +2,7 @@ name: release
 
 on:
   push:
-    branches: [main]
+    branches: [main, architecture]
 
 # Deploys must never be cancelled mid-way; later pushes queue behind the running one.
 concurrency:
