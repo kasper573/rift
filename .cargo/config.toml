@@ -1,0 +1,8 @@
+# crates.io downloads flake over HTTP/2 ("error in the HTTP2 framing layer"); force HTTP/1.1 and
+# retry hard so a cold cache doesn't fail a build on a transient blip. Applies to every build —
+# local and CI — instead of being restated in each workflow's env block.
+[net]
+retry = 10
+
+[http]
+multiplexing = false
