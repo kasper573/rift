@@ -33,10 +33,11 @@ jobs:
     env:
       # mold links the Bevy binaries far faster than the default linker (installed by the setup action).
       RUSTFLAGS: -C link-arg=-fuse-ld=mold
-      # Non-release CI compiles the test-stack/e2e binaries at opt-level 1 — they only run the gameplay
-      # test, they don't ship. The shipped artifacts override this back to full opt (the main-only
-      # "Build and stage" step below and the windows-macos job).
-      CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
+      # Non-release CI compiles the test-stack/e2e binaries at opt-level 0 — the gameplay test only
+      # checks that the server-driven player visibly walks, which is position- not framerate-bound, so
+      # unoptimized binaries pass it while building far faster. The shipped artifacts override this back
+      # to full opt (the main-only "Build and stage" step below and the windows-macos job).
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
     steps:
       - uses: actions/checkout@v6
       - uses: extractions/setup-just@v2
