@@ -11,7 +11,7 @@ on:
 # Branch runs cancel superseded runs; main runs queue so deploys never overlap or get cancelled.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/ci' }}
 
 permissions:
   contents: read
@@ -134,7 +134,7 @@ jobs:
 
       # --- main only: emit the Linux release + stack artifacts from the already-warm target ---
       - name: Build and stage the Linux release artifacts
-        if: ${{ success() && github.ref == 'refs/heads/main' }}
+        if: ${{ success() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci') }}
         # Shipped binaries are fully optimized — override the job's non-release opt-level. (This
         # recompiles the workspace at full opt; main only.) The player downloads only the installer
         # archive (binary + .env) and runs it; the installer fetches the client, the assets, and any
@@ -156,19 +156,19 @@ jobs:
           tar czf "out/$inst.tar.gz" -C "stage/$inst" .
           zip -r "assets-out/${ASSETS_ZIP}" assets
       - name: Upload the Linux client and installer
-        if: ${{ success() && github.ref == 'refs/heads/main' }}
+        if: ${{ success() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci') }}
         uses: actions/upload-artifact@v7
         with:
           name: client-linux
           path: out/
       - name: Upload the assets archive
-        if: ${{ success() && github.ref == 'refs/heads/main' }}
+        if: ${{ success() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci') }}
         uses: actions/upload-artifact@v7
         with:
           name: assets-archive
           path: assets-out/
       - name: Upload the stack inputs for the deploy images
-        if: ${{ success() && github.ref == 'refs/heads/main' }}
+        if: ${{ success() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci') }}
         uses: actions/upload-artifact@v7
         with:
           name: stack-linux
@@ -182,7 +182,7 @@ jobs:
   # green Linux job, so a red gate burns no macOS/Windows minutes and ships nothing untested.
   windows-macos:
     needs: linux
-    if: github.ref == 'refs/heads/main'
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci')
     timeout-minutes: 60
     strategy:
       matrix:
@@ -222,7 +222,7 @@ jobs:
 
   release:
     needs: [linux, windows-macos]
-    if: github.ref == 'refs/heads/main'
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -274,7 +274,7 @@ jobs:
 
   deploy:
     needs: [linux, release]
-    if: github.ref == 'refs/heads/main'
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
