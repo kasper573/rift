@@ -120,13 +120,16 @@ e2e: stack e2e-run
 
 # Compile the release client the e2e drives and the e2e test binary, without running anything. CI
 # does this while the stack boots so the e2e step is pure runtime; e2e-run depends on it for local use.
+# --release: the test is just orchestration (asserts, generous timeouts), so it gains nothing from the
+# dev profile, while building under it would compile xcap's heavy capture stack at the dev profile's
+# opt-level 3 in isolation — the same deps the release graph already builds, at the CI opt-level.
 e2e-build:
     cargo build --release -p client
-    cargo test -p e2e --no-run
+    cargo test --release -p e2e --no-run
 
 # Run the e2e test against an already-running stack. CI brings the stack up as its own step (so it can
 # trust the CA in between) and pre-builds via e2e-build; `just e2e` is the all-in-one for local use.
 e2e-run: e2e-build
     RIFT_E2E_CLIENT="{{justfile_directory()}}/target/release/rift" \
     RIFT_E2E_SERVER="{{justfile_directory()}}/target/release/server" \
-        cargo test -p e2e -- --ignored --nocapture
+        cargo test --release -p e2e -- --ignored --nocapture
