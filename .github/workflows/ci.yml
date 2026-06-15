@@ -1,14 +1,13 @@
 name: ci
 
-# Branch push (pillar 2): lint + test + e2e on Linux against the full stack.
-# main push (pillar 1): the above, then build the other platforms, publish the release, deploy to prod.
-# Tags are excluded so the RELEASE_TOKEN-made 0.x tag can't re-trigger CI.
 on:
   push:
+    # All branches, never tags: the release job pushes a 0.x tag with a PAT, which would otherwise
+    # re-trigger this workflow.
     branches: ['**']
   workflow_dispatch:
 
-# Branch runs cancel superseded runs; main runs queue so deploys never overlap or get cancelled.
+# Branch runs cancel superseded runs; main runs queue so deploys never overlap or cancel mid-flight.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -17,36 +16,28 @@ permissions:
   contents: read
 
 env:
-  # The release's own download-naming scheme, referenced by packaging and the link derivation below.
-  # The deploy job owns the DOCKER_* registry/version vars; the test stack uses compose's defaults so
-  # its image tags stay stable across commits (prewarm-friendly).
   INSTALLER_PREFIX: rift-installer-
   ASSETS_ZIP: rift-assets.zip
 
 jobs:
-  # Everything on Linux: the quality gate every push must pass, and — on main — the source of the
-  # Linux release/stack artifacts. The gate already compiles the release workspace, so building the
-  # artifacts here costs nothing extra and the Bevy workspace compiles once per push.
+  # The quality gate every push runs, and — on main only — the source of the Linux release artifacts,
+  # so the workspace compiles once per push instead of once for the gate and again for the release.
   linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      # mold links the Bevy binaries far faster than the default linker (installed by the setup action).
       RUSTFLAGS: -C link-arg=-fuse-ld=mold
-      # Non-release CI compiles the test-stack/e2e binaries at opt-level 0 — the gameplay test only
-      # checks that the server-driven player visibly walks, which is position- not framerate-bound, so
-      # unoptimized binaries pass it while building far faster. The shipped artifacts override this back
-      # to full opt (the main-only "Build and stage" step below and the windows-macos job).
+      # The gate builds at opt-level 0 — far faster, and the gameplay e2e asserts on player position,
+      # not framerate, so it passes unoptimized. Shipped artifacts override this back to full opt.
       CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
     steps:
       - uses: actions/checkout@v6
       - uses: extractions/setup-just@v2
       - name: Prewarm the stack infra in the background
-        # `just prewarm` only pulls externals and builds the keycloak + reverse-proxy images — no app
-        # binaries, no roles.conf, no boot — so it runs from here, overlapping the apt setup, the cache
-        # restore and the whole compile below; the stack boot then reuses the built layers. nohup
-        # detaches it so it outlives this step; it signals its sentinel even on failure (the boot can
-        # rebuild the images itself) so a failed prewarm never makes the boot wait out its timeout.
+        # prewarm → boot → wait hand off through /tmp sentinels so the stack comes up during the
+        # compile below rather than after it. Each step signals its sentinel even on failure, so a
+        # stalled one can't make a waiter time out. prewarm builds only the infra images (no app
+        # binaries) so it starts now; the boot needs the built binaries so it waits for them.
         run: nohup bash -c 'just prewarm; touch /tmp/prewarm.done' > /tmp/prewarm.log 2>&1 &
       - uses: ./.github/actions/setup
         with:
@@ -56,26 +47,14 @@ jobs:
           key: linux
           save-if: ${{ github.ref_name == 'main' }}
       - name: Build the stack binaries
-        # The server/website/installer-backend the stack images package, plus keycloak's roles input.
-        # The client — the heavy render/wgpu compile — is built in the next step so the stack can boot
-        # alongside it.
         run: just build
       - name: Bring up the full stack in the background
-        # Booting the stack is mostly idle waiting on container healthchecks, so it overlaps the client
-        # compile + lint + test below at no cost. It needs the host binaries the previous step built (the
-        # images only package them), so it can't start before now; it waits for the infra prewarm so the
-        # two don't build the same images twice, then signals its own sentinel. `just stack-up` runs no
-        # cargo, so it never contends with the foreground compile for the target lock.
         run: |
           nohup bash -c '
             for _ in $(seq 1 180); do [ -f /tmp/prewarm.done ] && break; sleep 2; done
             just stack-up && touch /tmp/stack.done
           ' > /tmp/stack.log 2>&1 &
       - name: Build the client and e2e test, then lint and test
-        # The CPU-bound foreground that the stack boot overlaps. Building the client and the e2e test
-        # binary here (the heavy render compile, which the stack doesn't need) means the e2e step is pure
-        # runtime, and fills this window to match the boot so it's fully hidden. Building before lint/test
-        # lets them reuse these compiled deps instead of compiling Bevy again in a separate pass.
         run: |
           just e2e-build
           just lint
@@ -86,8 +65,7 @@ jobs:
           tail -n 50 /tmp/stack.log || true
           test -f /tmp/stack.done
       - name: Trust the stack's certificate authority
-        # Caddy mints its own CA at first boot; the OS store covers the client/server binaries and
-        # chrome keeps its own NSS store. The CA's location in the stack lives in `just ca-cert`.
+        # The OS store covers the client/server binaries; chrome reads its own NSS store, hence both.
         run: |
           just ca-cert /tmp/rift-root.crt
           sudo install -m 644 /tmp/rift-root.crt /usr/local/share/ca-certificates/rift-root.crt
@@ -102,10 +80,8 @@ jobs:
           DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
       - name: Quiet chrome's first-run prompts
-        # A fresh chrome profile pops first-run UI — the "set as default" bar and, by region, the EU
-        # search-engine choice dialog — that covers the page and breaks the keyboard-driven sign-in.
-        # A managed policy pre-picks the search provider and the wrapper flags suppress the rest. The
-        # e2e drives chrome through $BROWSER.
+        # A fresh chrome profile pops first-run UI (default-browser bar, EU search-engine dialog) that
+        # covers the page and breaks the keyboard-driven sign-in. The policy + wrapper flags suppress it.
         run: |
           sudo mkdir -p /etc/opt/chrome/policies/managed
           echo '{"DefaultSearchProviderEnabled":true,"DefaultSearchProviderName":"Google","DefaultSearchProviderKeyword":"google","DefaultSearchProviderSearchURL":"https://www.google.com/search?q={searchTerms}"}' \
@@ -132,15 +108,11 @@ jobs:
           name: stack-logs
           path: /tmp/stack.log
 
-      # --- main only: emit the Linux release + stack artifacts from the already-warm target ---
+      # main-only: package and upload the Linux release + stack artifacts from the warm target. The
+      # player downloads only the installer (binary + .env); it then fetches the client and the
+      # platform-independent assets, so the client archive is binary-only and assets ship once, here.
       - name: Build and stage the Linux release artifacts
         if: ${{ success() && github.ref == 'refs/heads/main' }}
-        # Shipped binaries are fully optimized — override the job's non-release opt-level. (This
-        # recompiles the workspace at full opt; main only.) The player downloads only the installer
-        # archive (binary + .env) and runs it; the installer fetches the client, the assets, and any
-        # newer installer into the same folder. The client archive is binary-only: the installer carries
-        # the one .env, so nothing collides. Assets are platform-independent, so the one archive is built
-        # here on the Linux leg.
         env:
           CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
         run: |
@@ -178,8 +150,7 @@ jobs:
             target/release/installer-backend
             docker/keycloak/roles.conf
 
-  # main only: the remaining shipping platforms. Native runners, no cross-compilation. Gated behind a
-  # green Linux job, so a red gate burns no macOS/Windows minutes and ships nothing untested.
+  # main only, gated on a green linux so a red gate burns no (costly) macOS/Windows minutes.
   windows-macos:
     needs: linux
     if: github.ref == 'refs/heads/main'
@@ -227,8 +198,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
-    # The workflow is the single source of truth for where downloads live: it derives these from the
-    # release it just published, and the deploy job feeds them to the website and the installer backend.
     outputs:
       version: ${{ steps.publish.outputs.version }}
       per_platform_artifact_links: ${{ steps.publish.outputs.per_platform_artifact_links }}
@@ -248,20 +217,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
-          # +100 keeps the version ahead of the tags the previous release workflow published (its run
-          # counter reached the mid-20s before this workflow's counter restarted at 1), so releases
-          # never collide with — nor rank below — the live one.
+          # +100 keeps versions ahead of the previous release workflow's tags (it reached the mid-20s
+          # before this counter restarted at 1), so a release never collides with or ranks below the live one.
           version="0.$(( ${{ github.run_number }} + 100 ))"
           gh release create "$version" dist/client-*/rift-* "dist-assets/${ASSETS_ZIP}" \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "$version" \
             --notes "Automated release of ${{ github.sha }}."
-          # Read the asset URLs back and organize them as the installer backend serves them: a
-          # per-platform map (keyed by {os}-{arch}, derived from the installer asset names) plus the
-          # shared assets, alongside the per-OS installers the downloads page lists. The map is JSON,
-          # which can't survive interpolation into a shell command, so it leaves here base64-encoded.
           assets=$(gh release view "$version" --repo "${{ github.repository }}" --json assets)
+          # per_platform is a JSON map keyed by {os}-{arch}; it crosses to the deploy job base64-encoded
+          # because JSON can't survive interpolation into a shell command.
           per_platform=$(jq -c --arg z "$ASSETS_ZIP" --arg p "$INSTALLER_PREFIX" '
             (.assets) as $a
             | [$a[].name | select(startswith($p)) | ltrimstr($p) | sub("\\.(tar\\.gz|zip)$"; "")] as $platforms
@@ -327,7 +293,6 @@ jobs:
             set -euo pipefail
             cd ~/docker
 
-            # Set production host env vars; compose reads .env for interpolation and layering.
             echo "COMPOSE_ENV=prod" > .env
             echo "DOCKER_REGISTRY_URL=\"${{ env.DOCKER_REGISTRY_URL }}\"" >> .env
             echo "DOCKER_IMAGE_VERSION=\"${{ env.DOCKER_IMAGE_VERSION }}\"" >> .env
