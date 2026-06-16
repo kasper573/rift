@@ -1,48 +1,42 @@
-# Recipes run under bash so they behave identically on the Linux/macOS/Windows CI runners.
 set shell := ["bash", "-c"]
 
 compose_file := "docker/docker-compose.yaml"
 compose := "docker compose -f " + compose_file + " --profile test"
 
-# Lint everything CI lints: format, the workspace, the installer's feature-gated targets, and the
-# `world` contract layer on its own (no `host`) — the client's view, so simulation can't leak into it.
 lint:
     cargo fmt --check
-    cargo clippy --all-targets -- -D warnings
-    cargo clippy -p installer --all-features --all-targets -- -D warnings
-    cargo clippy -p world --no-default-features -- -D warnings
+    cargo clippy --release --all-targets -- -D warnings
+    cargo clippy --release -p installer --all-features --all-targets -- -D warnings
+    cargo clippy --release -p world --no-default-features -- -D warnings
 
-# The non-e2e test suite: the workspace plus the installer's feature-gated tests.
 test:
-    cargo test --release
-    cargo test -p installer --all-features
+    cargo test --release -p world
+    cargo test --release -p installer --all-features
 
-# Build the server/website/installer-backend artifacts and the keycloak provisioning input the stack images package.
 build:
     cargo build --release -p website -p server
     cargo build --release -p installer --features backend --bin installer-backend
     cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
 
-# Build the shipping client and the installer GUI (the artifacts the release packages per OS).
 build-client:
     cargo build --release -p client -p installer --features installer/frontend
 
-# Build the artifacts and (re)deploy the local stack; compose only restarts what changed.
-stack: build
+stack: build stack-up
+
+stack-up:
     docker network inspect rift >/dev/null 2>&1 || docker network create rift
     {{compose}} up -d --build --wait
 
-# Build and push the prod stack images. No service names: compose's build sections are the source
-# of truth for what we publish, so adding/removing/renaming a service needs no change here.
+prewarm:
+    {{compose}} pull --ignore-buildable || true
+    {{compose}} build keycloak reverse-proxy
+
+# No service names: compose's build sections are the single source of truth for what we publish.
 push-images:
     docker compose -f {{compose_file}} --profile prod build
     docker compose -f {{compose_file}} --profile prod push
 
-# Print the prod .env packaged beside the shipped installer (read by the client it launches). The
-# external client can't read the cluster's interpolated env, so the domain -> URL convention lives
-# here; the realm/audience is derived from its one owner (docker/.env.shared) so it can't drift.
-# Runs on every release runner including Windows, so it stays a plain `set shell` recipe (one
-# bash -c) rather than a `#!/usr/bin/env bash` shebang, which just can't reliably launch on Windows.
+# No shebang: this runs on the Windows release runner, which can't launch `#!/usr/bin/env bash`.
 installer-env domain exe="rift":
     @set -euo pipefail; \
       audience=$(grep -E '^RIFT_AUTH_AUDIENCE=' docker/.env.shared | cut -d= -f2); \
@@ -53,8 +47,6 @@ installer-env domain exe="rift":
       echo "RIFT_INSTALLER_METADATA_URL=https://installer.{{domain}}"; \
       echo "RIFT_CLIENT_EXECUTABLE={{exe}}"
 
-# Copy the stack's first-boot CA out of the running reverse-proxy (the service name and in-container
-# path live here, not in the workflow or the README). Waits for caddy to mint it.
 ca-cert out:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -65,21 +57,13 @@ ca-cert out:
     echo "reverse-proxy CA not available" >&2
     exit 1
 
-# Dump all stack container logs (CI failure diagnostics).
 logs:
     {{compose}} logs --no-color
 
-# Re-sync keycloak's roles and groups from source (game/world): rebuild the keycloak image and
-# restart it — its entrypoint re-provisions on every start, the same mechanism production uses.
 kc-provision:
     cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
     {{compose}} up -d --build keycloak
 
-# `dx serve --hot-patch` live-patches the bodies of changed systems in the running process and
-# falls back to a full rebuild for changes it can't patch; Bevy's file_watcher hot-reloads
-# edited assets.
-# Run the client here, on top of the stack, under hot-reload. The client endpoints come from the
-# same `installer-env` the release packages, pointed at the test domain, so dev and prod can't drift.
 dev: stack
     #!/usr/bin/env bash
     set -euo pipefail
@@ -90,19 +74,18 @@ dev: stack
     env $client_env RIFT_ASSETS_DIR="{{justfile_directory()}}/assets" \
         dx serve --hot-patch --package client --bin rift --features hotpatch --platform desktop
 
-# Keycloak only imports a realm on first boot, so the realm DB must be wiped for
-# `rift-realm.json` changes (e.g. redirect URIs) to re-apply.
-# Tear the stack down and wipe its volumes.
+# `down -v` wipes volumes: keycloak only imports its realm on first boot, so realm changes
+# (e.g. redirect URIs) don't apply until the DB is gone.
 reset:
     {{compose}} down -v
 
-# The E2E test against the shipping client: it drives a real gameplay session on the screen —
-# including registering a fresh account through the browser against the stack's keycloak — and
-# asserts on rendered pixels, so it runs against the desktop you're on and needs the stack up
-# and its CA trusted (see the README). The client/server binaries are passed by path so the test
-# never rebuilds them. CI runs the same test on linux (and supplies its own headless display).
-e2e: stack
+e2e: stack e2e-run
+
+e2e-build:
     cargo build --release -p client
+    cargo test --release -p e2e --no-run
+
+e2e-run: e2e-build
     RIFT_E2E_CLIENT="{{justfile_directory()}}/target/release/rift" \
     RIFT_E2E_SERVER="{{justfile_directory()}}/target/release/server" \
-        cargo test -p e2e -- --ignored --nocapture
+        cargo test --release -p e2e -- --ignored --nocapture
