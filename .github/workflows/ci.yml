@@ -20,8 +20,8 @@ env:
   ASSETS_ZIP: rift-assets.zip
 
 jobs:
-  # The quality gate every push runs, and — on main only — the source of the Linux release artifacts,
-  # so the workspace compiles once per push instead of once for the gate and again for the release.
+  # Runs on every push as the quality gate. On main it also builds the Linux release artifacts, so
+  # the workspace compiles once per push instead of once for the gate and again for the release.
   linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -31,8 +31,8 @@ jobs:
       # not framerate, so it passes unoptimized. Shipped artifacts override this back to full opt.
       CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
     steps:
-      - uses: actions/checkout@v6
-      - uses: extractions/setup-just@v2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
       - name: Prewarm the stack infra in the background
         # prewarm → boot → wait hand off through /tmp sentinels so the stack comes up during the
         # compile below rather than after it. Each step signals its sentinel even on failure, so a
@@ -42,7 +42,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           deps: all
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: linux
           save-if: ${{ github.ref_name == 'main' }}
@@ -94,7 +94,7 @@ jobs:
         run: just e2e-run
       - name: Save E2E artifacts
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: e2e-artifacts
           path: target/tmp/
@@ -103,7 +103,7 @@ jobs:
         run: just logs > /tmp/stack.log 2>&1 || true
       - name: Upload stack logs
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: stack-logs
           path: /tmp/stack.log
@@ -129,19 +129,19 @@ jobs:
           zip -r "assets-out/${ASSETS_ZIP}" assets
       - name: Upload the Linux client and installer
         if: ${{ success() && github.ref == 'refs/heads/main' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: client-linux
           path: out/
       - name: Upload the assets archive
         if: ${{ success() && github.ref == 'refs/heads/main' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: assets-archive
           path: assets-out/
       - name: Upload the stack inputs for the deploy images
         if: ${{ success() && github.ref == 'refs/heads/main' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: stack-linux
           path: |
@@ -162,9 +162,9 @@ jobs:
           - { os: windows-latest, asset: rift-windows-x86_64 }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: ./.github/actions/setup
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: release-${{ matrix.os }}
       - name: Build the client and the installer
@@ -186,7 +186,7 @@ jobs:
             tar czf "out/$pkg.tar.gz"  -C "stage/$pkg"  .
             tar czf "out/$inst.tar.gz" -C "stage/$inst" .
           fi
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: client-${{ matrix.os }}
           path: out/
@@ -204,11 +204,11 @@ jobs:
       shared_artifact_links: ${{ steps.publish.outputs.shared_artifact_links }}
       installer_links: ${{ steps.publish.outputs.installer_links }}
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: client-*
           path: dist
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: assets-archive
           path: dist-assets
@@ -256,11 +256,11 @@ jobs:
       DOCKER_REGISTRY_URL: ghcr.io/${{ github.repository_owner }}
       DOCKER_IMAGE_VERSION: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: ./.github/actions/setup
         with:
           deps: none
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: stack-linux
           path: .
@@ -272,7 +272,7 @@ jobs:
           just push-images
 
       - name: Upload docker runtime dependencies
-        uses: burnett01/rsync-deployments@7.0.1
+        uses: burnett01/rsync-deployments@796cf0d5e4b535745ce49d7429f77cf39e25ef39 # 7.0.1
         with:
           switches: -avz --delete
           path: docker/
@@ -283,7 +283,7 @@ jobs:
 
       - name: Deploy via SSH action
         id: deploy
-        uses: appleboy/ssh-action@v1.2.2
+        uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
         continue-on-error: true
         with:
           host: ${{ secrets.PROD_SSH_HOST }}
@@ -322,7 +322,7 @@ jobs:
 
       - name: Download deployment logs from server
         if: steps.deploy.outcome == 'failure'
-        uses: nicklasfrahm/scp-action@main
+        uses: nicklasfrahm/scp-action@ff9723c16c864e37adf7ef4111362b86905bfb04 # v1.0.1
         with:
           direction: download
           host: ${{ secrets.PROD_SSH_HOST }}
@@ -334,7 +334,7 @@ jobs:
 
       - name: Save deployment logs
         if: steps.deploy.outcome == 'failure'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: deploy-failure-logs
           path: ./deploy-failure-logs.tar.gz
