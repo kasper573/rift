@@ -217,9 +217,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
-          # +100 keeps versions ahead of the previous release workflow's tags (it reached the mid-20s
-          # before this counter restarted at 1), so a release never collides with or ranks below the live one.
-          version="0.$(( ${{ github.run_number }} + 100 ))"
+          version="0.$(( ${{ github.run_number }} ))"
           gh release create "$version" dist/client-*/rift-* "dist-assets/${ASSETS_ZIP}" \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
