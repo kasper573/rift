@@ -14,7 +14,7 @@ use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings
 use xcap::Window;
 
 const TITLE: &str = "rift ui gallery";
-/// Scene count and per-scene names, kept in step with the gallery binary's `SCENES`.
+/// Scene count and per-scene names; these must match the gallery binary's `SCENES`.
 const SCENES: &[&str] = &[
     "Button intents",
     "Button sizes",
@@ -104,7 +104,6 @@ fn every_component_state_is_visible_and_eases() {
             .expect("release");
         sleep(Duration::from_millis(250));
 
-        // Park the pointer and advance to the next scene.
         window.move_to(&mut enigo, 0.5, 0.12);
         sleep(Duration::from_millis(250));
         enigo.key(Key::Space, Direction::Click).expect("advance");

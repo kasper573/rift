@@ -41,8 +41,8 @@ pub struct Attackers {
     pub ids: Vec<Entity>,
 }
 
-/// `Died` is the extension seam (loot/xp/quests subscribe here). Combat keeps its own inline
-/// cleanup in `strike` so behavior is unchanged this tick.
+/// `Died` is the extension seam loot/xp/quests subscribe to; combat's own death cleanup stays
+/// inline in `strike` rather than reacting to `Died`.
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct Died {
     pub entity: Entity,

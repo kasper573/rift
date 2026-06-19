@@ -302,7 +302,7 @@ fn setup(
         director.settle = SETTLE;
     }
     stage.checkmark = assets.load("icons/misc/checkmark.png");
-    // The library's fonts are loaded by `UiPlugin` now, so the showcase doesn't wire them up.
+    // The library's fonts are loaded by `UiPlugin`, so the showcase doesn't wire them up.
     commands.spawn((Camera2d, IsDefaultUiCamera));
     commands.spawn((
         Node {

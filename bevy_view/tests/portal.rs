@@ -87,8 +87,8 @@ fn sibling_portals_sharing_a_boundary_reach_one_outlet_without_colliding() {
         "two portals that share their boundary's instance each reach the outlet on their own path"
     );
 
-    // A second render used to reuse one entity for both bodies (a dialog's overlay and content share a
-    // boundary), listing it twice under the outlet and panicking the layout tree; it must stay stable.
+    // Both bodies share a boundary (a dialog's overlay and content), so each must keep its own entity;
+    // collapsing them onto one would list it twice under the outlet and panic the layout tree.
     ui.render(view());
     let mut again = ui.texts_under(sink);
     again.sort();

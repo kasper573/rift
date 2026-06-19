@@ -34,8 +34,8 @@ const MAX_VISIBLE: usize = 3;
 const STACK_HEIGHT: f32 = MAX_VISIBLE as f32 * (CARD_HEIGHT + GAP);
 const EDGE: f32 = 24.0;
 
-/// Where the stack pins. The abstraction allows for the eight sonner positions, but only `BottomRight`
-/// is implemented for now — add the others by extending [`SonnerPosition::place`] and the stack/travel
+/// Where the stack pins. The abstraction allows for the eight sonner positions; only `BottomRight`
+/// is implemented — add the others by extending [`SonnerPosition::place`] and the stack/travel
 /// vectors in [`card`].
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum SonnerPosition {
