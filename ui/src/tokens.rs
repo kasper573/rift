@@ -160,7 +160,7 @@ pub mod typography {
         font::FAMILY_TEXT,
     );
 
-    pub fn by_name(name: &str) -> Typography {
+    pub fn by_name(_name: &str) -> Typography {
         // TODO match on name when we have more than one typography
         // match name {
         //     _ => BODY,
