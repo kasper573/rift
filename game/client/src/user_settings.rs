@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
+
+use crate::hud::Panel;
 
 /// An on-screen pixel of the player's window, the unit bevy UI `Val::Px` and `Window::cursor_position`
 /// speak — a resolution-dependent zoom apart from the [`WorldPx`] the camera draws the world in.
@@ -27,8 +27,10 @@ pub struct UserSettings {
 pub struct UiSettings {
     #[serde(default = "default_snap")]
     pub snap: ScreenPx,
+    // A JSON map can't be keyed on an enum-with-data, so placements are an association list keyed by
+    // the typed `Panel` each component already names itself with.
     #[serde(default)]
-    pub placements: HashMap<String, Placement>,
+    pub placements: Vec<(Panel, Placement)>,
 }
 
 /// A persisted on-screen rectangle: top-left position, and a size for resizable windows.
@@ -61,12 +63,19 @@ impl UserSettings {
         }
     }
 
-    pub fn placement(&self, id: &str) -> Option<Placement> {
-        self.ui.placements.get(id).copied()
+    pub fn placement(&self, panel: Panel) -> Option<Placement> {
+        self.ui
+            .placements
+            .iter()
+            .find(|(key, _)| *key == panel)
+            .map(|(_, placement)| *placement)
     }
 
-    pub fn set_placement(&mut self, id: &str, placement: Placement) {
-        self.ui.placements.insert(id.to_owned(), placement);
+    pub fn set_placement(&mut self, panel: Panel, placement: Placement) {
+        match self.ui.placements.iter_mut().find(|(key, _)| *key == panel) {
+            Some(entry) => entry.1 = placement,
+            None => self.ui.placements.push((panel, placement)),
+        }
     }
 
     pub fn snapping_enabled(&self) -> bool {
@@ -86,7 +95,7 @@ impl Default for UiSettings {
     fn default() -> UiSettings {
         UiSettings {
             snap: default_snap(),
-            placements: HashMap::new(),
+            placements: Vec::new(),
         }
     }
 }

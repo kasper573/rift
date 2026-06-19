@@ -7,9 +7,11 @@ use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::actors::ActorModelId;
-use crate::area::AreaId;
+use crate::actors::ActorModel;
+use crate::area::AreaDef;
+use crate::items::ItemDef;
 use crate::math::{PlaybackRate, Pos, Size, Tiles};
+use crate::table::Id;
 
 pub fn protocol(app: &mut App) {
     app.replicate::<Position>()
@@ -75,12 +77,6 @@ pub fn action_name(action: u8) -> &'static str {
 )]
 pub struct Rgba(pub u32);
 
-/// An item definition's index in [`crate::items::items`].
-#[derive(
-    Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default,
-)]
-pub struct ItemId(pub u16);
-
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Position {
     pub pos: Pos<Tiles>,
@@ -91,7 +87,7 @@ pub struct Actor {
     pub color: Rgba,
     pub dir: u8,
     pub action: u8,
-    pub model: ActorModelId,
+    pub model: Id<ActorModel>,
     pub attack_rate: PlaybackRate,
 }
 
@@ -109,7 +105,7 @@ pub struct Vitals {
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AreaTag {
-    pub area: AreaId,
+    pub area: Id<AreaDef>,
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -131,7 +127,7 @@ pub struct Spectate {
 /// Each element is one owned item instance; replicated only to the owning client.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Inventory {
-    pub items: Vec<ItemId>,
+    pub items: Vec<Id<ItemDef>>,
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -181,7 +177,7 @@ pub struct Welcome {
 /// Announces a consumed inventory item so clients can play its sound at the consumer.
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
 pub struct ItemConsumed {
-    pub item: ItemId,
+    pub item: Id<ItemDef>,
     #[entities]
     pub actor: Entity,
 }

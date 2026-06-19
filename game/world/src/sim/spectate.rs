@@ -52,7 +52,7 @@ fn allowed(world: &World, client_entity: Entity, client: ClientId) -> bool {
 
 fn spawn_anchor(world: &mut World, client: ClientId, watch: Option<ClientId>) {
     let zone = area::spawn_zone();
-    let spawn = area::areas()[zone.0 as usize].spawn;
+    let spawn = area::areas()[zone.index()].spawn;
     let entity = world
         .spawn((
             Replicated,

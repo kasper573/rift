@@ -17,9 +17,10 @@ use bevy_replicon::shared::replication::registry::ReplicationRegistry;
 
 use super::player::Players;
 use super::spectate::Spectators;
-use crate::area::AreaId;
+use crate::area::AreaDef;
 use crate::math::{Pos, Tiles};
 use crate::protocol::{AreaTag, ClientId, Inventory, Position, Spectate, position};
+use crate::table::Id;
 
 pub const VIEW_DISTANCE: Tiles = Tiles(24.0);
 
@@ -115,7 +116,7 @@ impl FromWorld for RangeBit {
 struct Subject {
     entity: Entity,
     pos: Pos<Tiles>,
-    area: Option<AreaId>,
+    area: Option<Id<AreaDef>>,
     anchor: bool,
 }
 
@@ -123,7 +124,7 @@ struct Subject {
 struct Sight {
     focus: Entity,
     pos: Option<Pos<Tiles>>,
-    area: Option<AreaId>,
+    area: Option<Id<AreaDef>>,
     spectating: bool,
 }
 

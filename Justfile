@@ -13,6 +13,9 @@ test:
     cargo test --release -p world
     cargo test --release -p installer --all-features
 
+bench:
+    cargo run --release -p bench
+
 build:
     cargo build --release -p website -p server
     cargo build --release -p installer --features backend --bin installer-backend
@@ -89,3 +92,11 @@ e2e-run: e2e-build
     RIFT_E2E_CLIENT="{{justfile_directory()}}/target/release/rift" \
     RIFT_E2E_SERVER="{{justfile_directory()}}/target/release/server" \
         cargo test --release -p e2e -- --ignored --nocapture
+
+# The `ui` component showcase: drives every component's states with real input on a real display.
+# Needs an unlocked desktop session (it injects OS input). Build the gallery first, then drive it.
+gallery:
+    cargo build -p client --bin gallery
+    cargo test -p e2e --test gallery --no-run
+    RIFT_GALLERY="{{justfile_directory()}}/target/debug/gallery" \
+        cargo test -p e2e --test gallery -- --ignored --nocapture

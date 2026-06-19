@@ -8,24 +8,12 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::Deserialize;
 use tiled::{Frame, PropertyValue, TileId};
 
 use crate::assets;
 use crate::math::{Millis, PlaybackRate, Pos, Rect, Seconds, Size, Tiles, WorldPx};
-
-/// An actor model's index in [`models`]; content tables reference models by name via
-/// [`model_by_name`].
-#[derive(
-    Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default,
-)]
-pub struct ActorModelId(pub u16);
-
-pub fn model_by_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ActorModelId, D::Error> {
-    let name = String::deserialize(deserializer)?;
-    model_index(&name)
-        .ok_or_else(|| serde::de::Error::custom(format!("unknown actor model '{name}'")))
-}
+use crate::table::Content;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
 pub struct SfxId(pub String);
@@ -170,6 +158,15 @@ impl ActorModel {
     }
 }
 
+impl Content for ActorModel {
+    fn table() -> &'static [ActorModel] {
+        models()
+    }
+    fn id(&self) -> &str {
+        &self.name
+    }
+}
+
 pub fn models() -> &'static [ActorModel] {
     static MODELS: OnceLock<Vec<ActorModel>> = OnceLock::new();
     MODELS.get_or_init(|| {
@@ -181,17 +178,6 @@ pub fn models() -> &'static [ActorModel] {
         all.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         all
     })
-}
-
-pub fn model(id: ActorModelId) -> &'static ActorModel {
-    &models()[id.0 as usize]
-}
-
-pub fn model_index(name: &str) -> Option<ActorModelId> {
-    models()
-        .iter()
-        .position(|model| model.name() == name)
-        .map(|index| ActorModelId(index as u16))
 }
 
 const IDLE: &str = "idle";

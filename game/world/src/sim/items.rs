@@ -3,7 +3,7 @@
 use bevy_ecs::message::Messages;
 use bevy_replicon::prelude::{FromClient, SendTargets, ToClients};
 
-use crate::items::{ItemKind, item};
+use crate::items::ItemKind;
 use crate::protocol::{Inventory, ItemConsumed, UseItemRequest, Vitals, is_dead};
 
 use super::player::sender_player;
@@ -29,7 +29,7 @@ pub fn use_item(world: &mut bevy_ecs::world::World) {
         else {
             continue;
         };
-        match item(slotted).kind {
+        match slotted.get().kind {
             ItemKind::Consumable { health_bonus } => {
                 if let Some(mut vitals) = world.get_mut::<Vitals>(entity) {
                     vitals.health = (vitals.health + health_bonus).min(vitals.max);

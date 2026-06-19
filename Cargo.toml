@@ -1,9 +1,12 @@
 [workspace]
 resolver = "3"
 members = [
+    "bevy_view",
+    "ui",
     "game/world",
     "game/server",
     "game/client",
+    "game/bench",
     "e2e",
     "installer",
     "service",
@@ -12,9 +15,12 @@ members = [
 # `e2e` pulls heavy screen-capture deps (and system libraries) only the CI needs, so a plain
 # `cargo build`/`test`/`clippy` skips it; build it explicitly with `just e2e` or `-p e2e`.
 default-members = [
+    "bevy_view",
+    "ui",
     "game/world",
     "game/server",
     "game/client",
+    "game/bench",
     "installer",
     "service",
     "website",
@@ -34,6 +40,18 @@ ctrlc = { version = "3", features = ["termination"] }
 pyroscope = { version = "2", features = ["backend-pprof-rs"] }
 bevy_app = { version = "0.19.0-rc.3", default-features = false }
 bevy_ecs = { version = "0.19.0-rc.3", default-features = false, features = ["std", "serialize"] }
+bevy_ui = { version = "0.19.0-rc.3", default-features = false, features = ["bevy_picking"] }
+bevy_picking = { version = "0.19.0-rc.3", default-features = false }
+bevy_input = { version = "0.19.0-rc.3", default-features = false }
+bevy_asset = { version = "0.19.0-rc.3", default-features = false }
+bevy_color = { version = "0.19.0-rc.3", default-features = false }
+bevy_text = { version = "0.19.0-rc.3", default-features = false }
+bevy_window = { version = "0.19.0-rc.3", default-features = false }
+bevy_math = { version = "0.19.0-rc.3", default-features = false }
+bevy_time = { version = "0.19.0-rc.3", default-features = false }
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
 bevy_replicon = { version = "0.41.0-rc.1", default-features = false }
 bevy_replicon_renet = { git = "https://github.com/simgine/bevy_replicon_renet", branch = "bevy-0.19", default-features = false }
 bevy_state = { version = "0.19.0-rc.3", default-features = false, features = ["bevy_app"] }

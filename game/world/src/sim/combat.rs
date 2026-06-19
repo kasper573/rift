@@ -5,13 +5,13 @@ use bevy_time::Time;
 
 use super::movement::{MoveTarget, Path, forget, halt, on_tile};
 use super::player::sender_player;
-use crate::actors::ActorModelId;
 use crate::math::{Direction, Millis, PlaybackRate, Seconds, Tiles};
+use crate::protocol;
 use crate::protocol::{
     ACTION_ATTACK, ACTION_DEAD, Actor, AreaTag, AttackRequest, Vitals, action_name, is_dead,
     position, set_action, set_facing,
 };
-use crate::{actors, protocol};
+use crate::table::Id;
 
 const TILE_DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
 const CHASE_RETARGET_THRESHOLD: Tiles = Tiles(1.5);
@@ -226,8 +226,8 @@ fn stats(world: &World, entity: Entity) -> Stats {
 fn attack_timing(world: &World, entity: Entity, dir: u8) -> crate::actors::Timing {
     let model = world
         .get::<protocol::Actor>(entity)
-        .map_or(ActorModelId(0), |a| a.model);
-    actors::model(model).timing(action_name(ACTION_ATTACK), dir)
+        .map_or(Id::new(0), |a| a.model);
+    model.get().timing(action_name(ACTION_ATTACK), dir)
 }
 
 fn add_attacker(world: &mut World, target: Entity, by: Entity) {

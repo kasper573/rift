@@ -4,13 +4,14 @@ use std::sync::OnceLock;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::Replicated;
 use bevy_time::Time;
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 
+use super::Character;
 use super::combat::{AttackTarget, Attackers, Stats};
 use super::movement::{MoveTarget, Path, Speed, forget};
 use super::player::Players;
-use crate::actors::{self, ActorModelId};
-use crate::area::{self, AreaId};
+use crate::actors::ActorModel;
+use crate::area::{self, AreaDef};
 use crate::math::{
     Direction, Millis, Offset, PlaybackRate, Pos, Seconds, Tiles, TilesPerSec, next_rng, rng_unit,
 };
@@ -18,6 +19,7 @@ use crate::protocol::{
     ACTION_IDLE, Actor, AreaTag, Hitbox, Name, Position, Rgba, Vitals, is_dead, position,
     set_action,
 };
+use crate::table::{Content, Id};
 use crate::{protocol, table};
 
 const FILE: &str = "npc_table.json";
@@ -28,13 +30,9 @@ const CHASE_SPEED_MULTIPLIER: f32 = 2.0;
 const PACIFIST_WANDER_CHANCE: f32 = 0.4;
 const RNG_SEED: u64 = 0x1234_5678_9abc_def0;
 
-/// An npc definition's index in [`defs`]; content tables reference npcs by id.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
-pub struct NpcId(pub u16);
-
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Npc {
-    pub def: NpcId,
+    pub def: Id<NpcDef>,
     pub group: u32,
 }
 
@@ -47,24 +45,13 @@ pub struct DeadAt {
 #[derive(Resource)]
 pub struct GameRng(pub u64);
 
-impl<'de> Deserialize<'de> for NpcId {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let id = String::deserialize(deserializer)?;
-        defs()
-            .iter()
-            .position(|def| def.id == id)
-            .map(|index| NpcId(index as u16))
-            .ok_or_else(|| serde::de::Error::custom(format!("unknown npc '{id}'")))
-    }
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NpcDef {
     pub id: String,
     pub display_name: String,
-    #[serde(deserialize_with = "actors::model_by_name")]
-    pub model: ActorModelId,
+    #[serde(deserialize_with = "Id::<ActorModel>::deserialize_named")]
+    pub model: Id<ActorModel>,
     #[serde(deserialize_with = "protocol::rgba_hex")]
     pub tint: Rgba,
     pub ai: Ai,
@@ -75,6 +62,15 @@ pub struct NpcDef {
     pub range: Tiles,
     pub speed: TilesPerSec,
     pub aggro: Tiles,
+}
+
+impl Content for NpcDef {
+    fn table() -> &'static [NpcDef] {
+        defs()
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -89,9 +85,10 @@ pub enum Ai {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpawnRow {
-    pub npc: NpcId,
-    #[serde(deserialize_with = "area::area_by_name")]
-    pub area: AreaId,
+    #[serde(deserialize_with = "Id::<NpcDef>::deserialize_named")]
+    pub npc: Id<NpcDef>,
+    #[serde(deserialize_with = "Id::<AreaDef>::deserialize_named")]
+    pub area: Id<AreaDef>,
     pub population: u32,
 }
 
@@ -102,10 +99,6 @@ pub fn defs() -> &'static [NpcDef] {
         table::unique_ids(defs.iter().map(|def| def.id.as_str()), FILE);
         defs
     })
-}
-
-pub fn def(id: NpcId) -> &'static NpcDef {
-    &defs()[id.0 as usize]
 }
 
 pub fn spawns() -> &'static [SpawnRow] {
@@ -130,41 +123,49 @@ pub fn spawn_all(world: &mut World) {
     world.insert_resource(GameRng(rng));
 }
 
-fn spawn_npc(world: &mut World, rng: &mut u64, area: &area::Area, def_index: NpcId, group: u32) {
-    let def = def(def_index);
+fn spawn_npc(
+    world: &mut World,
+    rng: &mut u64,
+    area: &area::Area,
+    def_index: Id<NpcDef>,
+    group: u32,
+) {
+    let def = def_index.get();
     let at = random_walkable(rng, area.id).unwrap_or(area.spawn);
     world.spawn((
-        Replicated,
-        Position { pos: at },
-        Name {
-            name: def.display_name.clone(),
+        Character {
+            replicated: Replicated,
+            position: Position { pos: at },
+            name: Name {
+                name: def.display_name.clone(),
+            },
+            actor: Actor {
+                color: def.tint,
+                dir: Direction::S as u8,
+                action: ACTION_IDLE,
+                model: def.model,
+                attack_rate: def.attack_speed,
+            },
+            hitbox: Hitbox {
+                size: def.model.get().hitbox(),
+            },
+            vitals: Vitals {
+                health: def.health,
+                max: def.health,
+            },
+            area: AreaTag { area: area.id },
+            stats: Stats {
+                damage: def.damage,
+                attack_speed: def.attack_speed,
+                attack_delay: def.attack_delay,
+                range: def.range,
+            },
+            speed: Speed { value: def.speed },
         },
-        Actor {
-            color: def.tint,
-            dir: Direction::S as u8,
-            action: ACTION_IDLE,
-            model: def.model,
-            attack_rate: def.attack_speed,
-        },
-        Hitbox {
-            size: actors::model(def.model).hitbox(),
-        },
-        Vitals {
-            health: def.health,
-            max: def.health,
-        },
-        AreaTag { area: area.id },
         Npc {
             def: def_index,
             group,
         },
-        Stats {
-            damage: def.damage,
-            attack_speed: def.attack_speed,
-            attack_delay: def.attack_delay,
-            range: def.range,
-        },
-        Speed { value: def.speed },
     ));
 }
 
@@ -187,8 +188,8 @@ pub fn run_ai(world: &mut World) {
         let Some(at) = position(world, id) else {
             continue;
         };
-        let def = def(npc.def);
-        let area = world.get::<AreaTag>(id).map_or(AreaId(0), |tag| tag.area);
+        let def = npc.def.get();
+        let area = world.get::<AreaTag>(id).map_or(Id::new(0), |tag| tag.area);
 
         if let Some(target) = world.get::<AttackTarget>(id).map(|t| t.target) {
             if in_aggro(world, target, at, area, def.aggro) {
@@ -211,7 +212,7 @@ pub fn run_ai(world: &mut World) {
     world.resource_mut::<GameRng>().0 = rng;
 }
 
-fn idle_wander(world: &mut World, rng: &mut u64, id: Entity, def: &NpcDef, area: AreaId) {
+fn idle_wander(world: &mut World, rng: &mut u64, id: Entity, def: &NpcDef, area: Id<AreaDef>) {
     if world.get::<MoveTarget>(id).is_some() || world.get::<Path>(id).is_some() {
         return;
     }
@@ -235,7 +236,7 @@ fn find_aggro(
     npc: &Npc,
     def: &NpcDef,
     at: Pos<Tiles>,
-    area: AreaId,
+    area: Id<AreaDef>,
 ) -> Option<Entity> {
     match def.ai {
         Ai::Pacifist => None,
@@ -255,7 +256,7 @@ fn nearest(
     world: &World,
     candidates: &[Entity],
     at: Pos<Tiles>,
-    area: AreaId,
+    area: Id<AreaDef>,
     range: Tiles,
     accept: impl Fn(Entity) -> bool,
 ) -> Option<Entity> {
@@ -292,7 +293,13 @@ fn enemies_by_group(world: &mut World) -> HashMap<u32, Vec<Entity>> {
     by_group
 }
 
-fn in_aggro(world: &World, target: Entity, at: Pos<Tiles>, area: AreaId, aggro: Tiles) -> bool {
+fn in_aggro(
+    world: &World,
+    target: Entity,
+    at: Pos<Tiles>,
+    area: Id<AreaDef>,
+    aggro: Tiles,
+) -> bool {
     !is_dead(world, target)
         && world.get::<AreaTag>(target).map(|t| t.area) == Some(area)
         && position(world, target).is_some_and(|p| Tiles(at.distance_to(p)) <= aggro)
@@ -320,9 +327,9 @@ pub fn run_respawn(world: &mut World) {
         if time - since < NPC_RESPAWN_DELAY {
             continue;
         }
-        let area_id = world.get::<AreaTag>(id).map_or(AreaId(0), |tag| tag.area);
+        let area_id = world.get::<AreaTag>(id).map_or(Id::new(0), |tag| tag.area);
         let at = random_walkable(&mut rng, area_id)
-            .unwrap_or_else(|| area::areas()[area_id.0 as usize].spawn);
+            .unwrap_or_else(|| area::areas()[area_id.index()].spawn);
         if let Some(mut vitals) = world.get_mut::<Vitals>(id) {
             vitals.health = vitals.max;
         }
@@ -334,15 +341,15 @@ pub fn run_respawn(world: &mut World) {
         }
         world.entity_mut(id).remove::<DeadAt>();
         forget(world, id);
-        if let Some(speed) = world.get::<Npc>(id).map(|npc| def(npc.def).speed) {
+        if let Some(speed) = world.get::<Npc>(id).map(|npc| npc.def.get().speed) {
             world.entity_mut(id).insert(Speed { value: speed });
         }
     }
     world.resource_mut::<GameRng>().0 = rng;
 }
 
-fn random_walkable(rng: &mut u64, area_id: AreaId) -> Option<Pos<Tiles>> {
-    let nodes = &area::areas()[area_id.0 as usize].walkable_nodes;
+fn random_walkable(rng: &mut u64, area_id: Id<AreaDef>) -> Option<Pos<Tiles>> {
+    let nodes = &area::areas()[area_id.index()].walkable_nodes;
     if nodes.is_empty() {
         return None;
     }

@@ -1,31 +1,16 @@
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer};
 use tiled::{LayerType, PropertyValue};
 
 use crate::actors::SfxId;
 use crate::assets;
 use crate::math::{CellPos, Millis, PixelsPerTile, Pos, Rect, Seconds, Size, Tiles, WorldPx};
 use crate::nav;
-use crate::table;
+use crate::table::{self, Content, Id};
 
 const FILE: &str = "area_table.json";
-
-/// An area's index in [`areas`]; content tables reference areas by id via [`area_by_name`].
-#[derive(
-    Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default,
-)]
-pub struct AreaId(pub u32);
-
-pub fn area_by_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<AreaId, D::Error> {
-    let id = String::deserialize(deserializer)?;
-    defs()
-        .iter()
-        .position(|def| def.id == id)
-        .map(|index| AreaId(index as u32))
-        .ok_or_else(|| serde::de::Error::custom(format!("unknown area '{id}'")))
-}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,6 +18,15 @@ pub struct AreaDef {
     pub id: String,
     pub map: MapRef,
     pub spawn: Option<bool>,
+}
+
+impl Content for AreaDef {
+    fn table() -> &'static [AreaDef] {
+        defs()
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
 }
 
 /// A map asset's name; parsing validates that the map exists.
@@ -51,7 +45,7 @@ impl<'de> Deserialize<'de> for MapRef {
 #[derive(Clone)]
 pub struct Portal {
     pub rect: Rect<Tiles>,
-    pub dest_area: AreaId,
+    pub dest_area: Id<AreaDef>,
     pub dest: Pos<Tiles>,
 }
 
@@ -127,7 +121,7 @@ pub struct Group {
 
 #[derive(Clone)]
 pub struct Area {
-    pub id: AreaId,
+    pub id: Id<AreaDef>,
     pub name: String,
     pub width: Tiles,
     pub height: Tiles,
@@ -232,11 +226,11 @@ pub fn areas() -> &'static [Area] {
         let mut areas: Vec<Area> = defs
             .iter()
             .enumerate()
-            .map(|(id, def)| build_area(AreaId(id as u32), &def.id, &def.map.0))
+            .map(|(id, def)| build_area(Id::new(id as u32), &def.id, &def.map.0))
             .collect();
         for id in base..count as u32 {
             let mut clone = areas[(id % base) as usize].clone();
-            clone.id = AreaId(id);
+            clone.id = Id::new(id);
             clone.portals.clear();
             areas.push(clone);
         }
@@ -257,21 +251,12 @@ pub fn defs() -> &'static [AreaDef] {
     })
 }
 
-pub fn spawn_zone() -> AreaId {
+pub fn spawn_zone() -> Id<AreaDef> {
     let index = defs()
         .iter()
         .position(|def| def.spawn == Some(true))
         .expect("defs() validates exactly one spawn area");
-    AreaId(index as u32)
-}
-
-/// Resolves an area id from map data; `context` names the referencing map on panic.
-fn index(id: &str, context: &str) -> AreaId {
-    let index = defs()
-        .iter()
-        .position(|def| def.id == id)
-        .unwrap_or_else(|| panic!("{context}: unknown area '{id}'"));
-    AreaId(index as u32)
+    Id::new(index as u32)
 }
 
 /// Reads `maps/<name>.tmx` and everything it references out of the assets root.
@@ -281,7 +266,7 @@ fn load_map(name: &str) -> tiled::Map {
         .unwrap_or_else(|error| panic!("map '{name}': {error}"))
 }
 
-fn build_area(id: AreaId, name: &str, map_name: &str) -> Area {
+fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
     let map = load_map(map_name);
     let tiling = PixelsPerTile::new(
         WorldPx(map.tile_width as f32),
@@ -509,7 +494,8 @@ fn portal(
     let malformed = || -> ! { panic!("map '{name}': goto '{goto}' must be '<area>, x, y'") };
     let mut parts = goto.split(',');
     let dest = parts.next().unwrap_or_else(|| malformed()).trim();
-    let dest_area = index(dest, &format!("map '{name}'"));
+    let dest_area = Id::<AreaDef>::by_name(dest)
+        .unwrap_or_else(|| panic!("map '{name}': unknown area '{dest}'"));
     let mut coord = || -> f32 {
         parts
             .next()

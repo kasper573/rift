@@ -1,0 +1,15 @@
+[package]
+name = "bevy_view_macro"
+version.workspace = true
+edition.workspace = true
+description = "Angle-bracket `view!` JSX macro that lowers to bevy_view's runtime builder."
+repository = "https://github.com/kasper573/rift"
+authors = ["kasper573"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
