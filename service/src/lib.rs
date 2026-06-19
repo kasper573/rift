@@ -4,12 +4,15 @@
 use std::sync::Arc;
 
 use axum::Router;
+use axum::ServiceExt;
+use axum::extract::Request;
 use axum::routing::get;
 use axum_prometheus::PrometheusMetricLayer;
 use pyroscope::backend::{BackendConfig, PprofConfig, pprof_backend};
 use pyroscope::pyroscope::{PyroscopeAgent, PyroscopeAgentBuilder, PyroscopeAgentRunning};
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
+use tower_http::normalize_path::NormalizePath;
 
 /// Serves `router` on `0.0.0.0:{port}`, wrapping it with Prometheus request metrics plus process
 /// metrics on `/metrics`, and draining in-flight requests on a stop signal (docker stop, deploys).
@@ -32,7 +35,10 @@ pub async fn serve(name: &str, port: u16, router: Router) {
     let stop = Arc::new(Notify::new());
     let signal = stop.clone();
     ctrlc::set_handler(move || signal.notify_one()).expect("install stop handler");
-    axum::serve(listener, app)
+    // Rewrite `/foo/` to `/foo` before routing so trailing slashes resolve; axum matches paths
+    // exactly, so this must wrap the whole router rather than sit behind it as a per-route layer.
+    let app = NormalizePath::trim_trailing_slash(app);
+    axum::serve(listener, ServiceExt::<Request>::into_make_service(app))
         .with_graceful_shutdown(async move { stop.notified().await })
         .await
         .expect("serve");

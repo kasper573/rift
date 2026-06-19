@@ -7,6 +7,7 @@ description = "Shared runtime for rift's HTTP services: continuous profiling, re
 [dependencies]
 axum.workspace = true
 axum-prometheus.workspace = true
+tower-http = { workspace = true, features = ["normalize-path"] }
 ctrlc.workspace = true
 metrics-process.workspace = true
 pyroscope.workspace = true

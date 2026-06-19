@@ -7635,6 +7635,7 @@ dependencies = [
  "pyroscope",
  "serde",
  "tokio",
+ "tower-http",
 ]
 
 [[package]]
