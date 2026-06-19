@@ -161,8 +161,10 @@ pub mod typography {
     );
 
     pub fn by_name(name: &str) -> Typography {
-        match name {
-            _ => BODY,
-        }
+        // TODO match on name when we have more than one typography
+        // match name {
+        //     _ => BODY,
+        // }
+        BODY
     }
 }
