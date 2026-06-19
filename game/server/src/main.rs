@@ -122,11 +122,8 @@ fn simulate(
         .world_mut()
         .query_filtered::<(), With<ConnectedClient>>();
     let frame = TICK_HZ.period();
-    let mut last_start: Option<Instant> = None;
     loop {
         let started = Instant::now();
-        if let Some(last) = last_start.replace(started) {
-        }
         app.update();
         counter!("rift_ticks_total").increment(1);
         histogram!("rift_tick_duration_seconds").record(started.elapsed().as_secs_f64());
