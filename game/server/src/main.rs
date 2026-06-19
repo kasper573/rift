@@ -126,7 +126,6 @@ fn simulate(
     loop {
         let started = Instant::now();
         if let Some(last) = last_start.replace(started) {
-            histogram!("rift_tick_interval_seconds").record((started - last).as_secs_f64());
         }
         app.update();
         counter!("rift_ticks_total").increment(1);

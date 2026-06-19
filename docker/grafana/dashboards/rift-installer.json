@@ -256,9 +256,9 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum(changes(process_start_time_seconds{job=\"rift_installer\"}[1m]))",
+          "expr": "sum(changes(process_start_time_seconds{job=\"rift_installer\"}[$__range]))",
           "legendFormat": "restarts",
-          "range": true,
+          "instant": true,
           "refId": "A"
         }
       ],

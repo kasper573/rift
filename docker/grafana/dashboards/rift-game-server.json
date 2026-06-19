@@ -201,20 +201,9 @@
           "legendFormat": "duration p99",
           "range": true,
           "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(rift_tick_interval_seconds_bucket{job=\"rift_game_server\"}[$__rate_interval])) by (le))",
-          "legendFormat": "interval p95",
-          "range": true,
-          "refId": "D"
         }
       ],
-      "title": "Tick Duration & Interval",
+      "title": "Tick Duration",
       "type": "timeseries"
     },
     {
@@ -275,9 +264,9 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum(changes(process_start_time_seconds{job=\"rift_game_server\"}[1m]))",
+          "expr": "sum(changes(process_start_time_seconds{job=\"rift_game_server\"}[$__range]))",
           "legendFormat": "restarts",
-          "range": true,
+          "instant": true,
           "refId": "A"
         }
       ],
