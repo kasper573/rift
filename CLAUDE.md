@@ -33,6 +33,11 @@
 - Don't scatter comments describing how a specific mechanism works all over the codebase. Keep it in one place, ideally at the implementation of that mechanism. A common source of this type of bad hygiene is re-explaining a mechanism in the workflow, in env files, in call sites, and finally also in the source code implementation of the mechanism.
 
 
-## Verify before done
+## Verification
+
+Before you start work on a task run benchmarks via `just bench` and save the results to a temporary file.
+
+After you finish the task:
 
 - `cargo fmt` · `cargo clippy --all-targets` (no warnings) · `cargo build` · `just e2e`
+- Run benchmarks again and compare the results to the previous run. If there is a significant regression, investigate and fix it.

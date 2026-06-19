@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
 use world::area;
 use world::math::{Pos, Tiles};
+use world::protocol::AreaTag;
 use world::session;
 
 use crate::Screen;
@@ -31,7 +32,7 @@ struct Cursors {
     attack: Handle<Image>,
     walk: Handle<Image>,
     walk_held: Handle<Image>,
-    current: Option<Pointer>,
+    applied: Option<CursorIcon>,
 }
 
 #[derive(Component)]
@@ -43,7 +44,7 @@ fn setup(mut commands: Commands, assets: Res<AssetServer>) {
         attack: assets.load("icons/cursors/swords002.png"),
         walk: assets.load("icons/cursors/pointer010.png"),
         walk_held: assets.load("icons/cursors/pointer011.png"),
-        current: None,
+        applied: None,
     });
     commands.spawn((
         Hover,
@@ -58,9 +59,19 @@ fn setup(mut commands: Commands, assets: Res<AssetServer>) {
 }
 
 fn update(world: &mut World) {
-    let (pointer, hover) = compute(world);
-    apply_cursor(world, pointer);
+    let (icon, hover) = desired(world);
+    set_cursor(world, icon);
     apply_hover(world, hover);
+}
+
+/// The cursor to show and the tile to highlight. A hovered UI widget (or an in-progress window
+/// resize) takes over the cursor and clears the highlight; otherwise both follow the world.
+fn desired(world: &mut World) -> (CursorIcon, Option<Pos<Tiles>>) {
+    if let Some(ui) = bevy_view::hovered_cursor(world) {
+        return (ui, None);
+    }
+    let (pointer, hover) = compute(world);
+    (gameplay_cursor(world, pointer), hover)
 }
 
 /// The pointer the cursor should show and the walkable tile to highlight (if any).
@@ -75,8 +86,10 @@ fn compute(world: &mut World) -> (Pointer, Option<Pos<Tiles>>) {
         return (Pointer::Attack, None);
     }
     let tile = Pos::new(point.x.floor(), point.y.floor());
-    let walkable = session::my_area(world)
-        .and_then(|id| area::areas().get(id.0 as usize))
+    let walkable = session::me(world)
+        .and_then(|me| me.get::<AreaTag>())
+        .map(|tag| tag.area)
+        .and_then(|id| area::areas().get(id.index()))
         .is_some_and(|area| area.grid.walkable(tile));
     if !walkable {
         return (Pointer::Default, None);
@@ -92,10 +105,7 @@ fn compute(world: &mut World) -> (Pointer, Option<Pos<Tiles>>) {
     (pointer, Some(tile))
 }
 
-fn apply_cursor(world: &mut World, pointer: Pointer) {
-    if world.resource::<Cursors>().current == Some(pointer) {
-        return;
-    }
+fn gameplay_cursor(world: &World, pointer: Pointer) -> CursorIcon {
     let cursors = world.resource::<Cursors>();
     // The default pointer's tip sits at the image's top-left; the others are centered 64×64 motifs.
     let (handle, hotspot) = match pointer {
@@ -104,15 +114,21 @@ fn apply_cursor(world: &mut World, pointer: Pointer) {
         Pointer::Move => (cursors.walk.clone(), (32, 32)),
         Pointer::MoveHeld => (cursors.walk_held.clone(), (32, 32)),
     };
-    world.resource_mut::<Cursors>().current = Some(pointer);
-    let icon = CursorIcon::Custom(CustomCursor::Image(CustomCursorImage {
+    CursorIcon::Custom(CustomCursor::Image(CustomCursorImage {
         handle,
         texture_atlas: None,
         flip_x: false,
         flip_y: false,
         rect: None,
         hotspot,
-    }));
+    }))
+}
+
+fn set_cursor(world: &mut World, icon: CursorIcon) {
+    if world.resource::<Cursors>().applied.as_ref() == Some(&icon) {
+        return;
+    }
+    world.resource_mut::<Cursors>().applied = Some(icon.clone());
     if let Ok(window) = world
         .query_filtered::<Entity, With<PrimaryWindow>>()
         .single(world)

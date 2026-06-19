@@ -5,17 +5,18 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Deserializer};
 
 use super::combat::Died;
-use super::npc::{GameRng, Npc, NpcId};
-use crate::items;
+use super::npc::{GameRng, Npc, NpcDef};
+use crate::items::ItemDef;
 use crate::math::rng_unit;
-use crate::protocol::{Inventory, ItemId, Owner, Xp};
-use crate::table;
+use crate::protocol::{Inventory, Owner, Xp};
+use crate::table::{self, Id};
 
 const FILE: &str = "reward_table.json";
 
 #[derive(Deserialize)]
 pub struct Reward {
-    pub npc: NpcId,
+    #[serde(deserialize_with = "Id::<NpcDef>::deserialize_named")]
+    pub npc: Id<NpcDef>,
     pub amount: u32,
     #[serde(flatten)]
     pub kind: RewardKind,
@@ -27,8 +28,8 @@ pub enum RewardKind {
     Xp,
     /// An absent `chance` is a guaranteed drop.
     Item {
-        #[serde(deserialize_with = "items::item_by_name")]
-        item: ItemId,
+        #[serde(deserialize_with = "Id::<ItemDef>::deserialize_named")]
+        item: Id<ItemDef>,
         chance: Option<Chance>,
     },
 }
@@ -54,7 +55,7 @@ pub fn all() -> &'static [Reward] {
     REWARDS.get_or_init(|| table::load(FILE))
 }
 
-pub fn rewards_for(npc: NpcId) -> impl Iterator<Item = &'static Reward> {
+pub fn rewards_for(npc: Id<NpcDef>) -> impl Iterator<Item = &'static Reward> {
     all().iter().filter(move |reward| reward.npc == npc)
 }
 

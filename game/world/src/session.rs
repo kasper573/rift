@@ -1,14 +1,14 @@
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::message::MessageReader;
 use bevy_ecs::prelude::*;
+use bevy_ecs::world::EntityRef;
 use bevy_replicon::prelude::{AuthMethod, RepliconPlugins, RepliconSharedPlugin};
 
-use crate::area::{self, AreaId};
+use crate::area;
 use crate::math::{Pos, Tiles};
 use crate::protocol::{
-    self, Actor, AreaTag, AttackRequest, ClientId, Inventory, ItemId, JoinRequest, MoveRequest,
-    MoveToPortal, Name, Owner, Position, RespawnRequest, Spectate, SpectateRequest, UseItemRequest,
-    Vitals, Welcome, Xp,
+    self, AreaTag, AttackRequest, ClientId, JoinRequest, MoveRequest, MoveToPortal, Owner,
+    RespawnRequest, SpectateRequest, UseItemRequest, Welcome,
 };
 
 /// Registers replicon's client plugins and the shared protocol, and records the [`ClientId`] the
@@ -37,6 +37,21 @@ pub fn my_id(world: &World) -> Option<ClientId> {
     world.resource::<MyClient>().0
 }
 
+/// The character this client controls — the entity whose [`Owner`] carries our [`ClientId`]. It is
+/// an ordinary character; read its components like any other: `me(world)?.get::<Vitals>()`.
+pub fn me(world: &World) -> Option<EntityRef<'_>> {
+    let mine = my_id(world)?;
+    world.iter_entities().find(|entity| {
+        entity
+            .get::<Owner>()
+            .is_some_and(|owner| owner.client == mine)
+    })
+}
+
+pub fn is_dead(world: &World) -> bool {
+    me(world).is_some_and(|entity| protocol::is_dead(world, entity.id()))
+}
+
 pub fn join(world: &mut World) {
     world.write_message(JoinRequest);
 }
@@ -60,13 +75,14 @@ pub fn use_item(world: &mut World, slot: u32) {
 /// Walks to `pos`, picking the [`MoveToPortal`] intent when the point lands inside a portal of
 /// the current area so the server warps instead of pathing there.
 pub fn move_to(world: &mut World, pos: Pos<Tiles>) {
-    let portal = my_area(world).and_then(|area| {
-        area::areas()
-            .get(area.0 as usize)?
-            .portals
-            .iter()
-            .position(|portal| portal.rect.contains(pos))
-    });
+    let portal = me(world)
+        .and_then(|entity| entity.get::<AreaTag>())
+        .and_then(|tag| area::areas().get(tag.area.index()))
+        .and_then(|area| {
+            area.portals
+                .iter()
+                .position(|portal| portal.rect.contains(pos))
+        });
     match portal {
         Some(index) => {
             world.write_message(MoveToPortal {
@@ -78,79 +94,6 @@ pub fn move_to(world: &mut World, pos: Pos<Tiles>) {
             world.write_message(MoveRequest { pos });
         }
     }
-}
-
-pub fn my_entity(world: &World) -> Option<Entity> {
-    let me = my_id(world)?;
-    world
-        .iter_entities()
-        .find(|entity| {
-            entity
-                .get::<Owner>()
-                .is_some_and(|owner| owner.client == me)
-        })
-        .map(|entity| entity.id())
-}
-
-pub fn my_position(world: &World) -> Option<Pos<Tiles>> {
-    world.get::<Position>(my_entity(world)?).map(|p| p.pos)
-}
-
-pub fn my_vitals(world: &World) -> Option<(f32, f32)> {
-    world
-        .get::<Vitals>(my_entity(world)?)
-        .map(|vitals| (vitals.health, vitals.max))
-}
-
-pub fn my_name(world: &World) -> Option<String> {
-    world.get::<Name>(my_entity(world)?).map(|n| n.name.clone())
-}
-
-pub fn my_xp(world: &World) -> Option<u32> {
-    world.get::<Xp>(my_entity(world)?).map(|xp| xp.amount)
-}
-
-pub fn my_inventory(world: &World) -> Vec<ItemId> {
-    my_entity(world)
-        .and_then(|entity| world.get::<Inventory>(entity))
-        .map_or_else(Vec::new, |inventory| inventory.items.clone())
-}
-
-pub fn my_area(world: &World) -> Option<AreaId> {
-    world.get::<AreaTag>(my_entity(world)?).map(|tag| tag.area)
-}
-
-pub fn is_dead(world: &World) -> bool {
-    my_vitals(world).is_some_and(|(health, _)| health <= 0.0)
-}
-
-pub fn is_spectating(world: &World) -> bool {
-    my_entity(world).is_some_and(|entity| world.get::<Spectate>(entity).is_some())
-}
-
-pub fn watching(world: &World) -> Option<ClientId> {
-    world.get::<Spectate>(my_entity(world)?)?.watch
-}
-
-/// Every other player in view, by id and name, sorted by id.
-pub fn players(world: &World) -> Vec<(ClientId, String)> {
-    let me = my_id(world);
-    let mut players: Vec<(ClientId, String)> = world
-        .iter_entities()
-        .filter_map(|entity| {
-            let owner = entity.get::<Owner>()?;
-            (Some(owner.client) != me && entity.contains::<Actor>()).then(|| {
-                (
-                    owner.client,
-                    entity
-                        .get::<Name>()
-                        .map_or_else(String::new, |name| name.name.clone()),
-                )
-            })
-        })
-        .collect();
-    players.sort_unstable_by_key(|(id, _)| *id);
-    players
 }
 
 fn record_welcome(mut welcomes: MessageReader<Welcome>, mut me: ResMut<MyClient>) {

@@ -5,12 +5,13 @@ use bevy_time::Time;
 
 use super::combat::AttackTarget;
 use super::player::sender_player;
-use crate::area::{self, AreaId};
+use crate::area;
 use crate::math::{CellPos, Direction, Offset, Pos, Seconds, Tiles, TilesPerSec};
 use crate::protocol::{
     ACTION_RUN, ACTION_WALK, AreaTag, MoveRequest, MoveToPortal, Position, is_dead, position,
     set_facing,
 };
+use crate::table::Id;
 
 /// Walking this fast or faster animates as a run.
 const RUN_SPEED: TilesPerSec = TilesPerSec(Tiles(2.0));
@@ -211,8 +212,8 @@ pub fn advance(world: &mut World) {
 fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<Cell>> {
     let area_id = world
         .get::<AreaTag>(entity)
-        .map_or(AreaId(0), |tag| tag.area);
-    let area = &area::areas()[area_id.0 as usize];
+        .map_or(Id::new(0), |tag| tag.area);
+    let area = &area::areas()[area_id.index()];
     let at = position(world, entity)?;
     let goal = area.grid.nearest_walkable(goal)?;
     let mut path = crate::nav::astar(&area.grid, at, goal)?;
@@ -228,8 +229,8 @@ fn cross_portal(world: &mut World, entity: Entity) {
     };
     let area_id = world
         .get::<AreaTag>(entity)
-        .map_or(AreaId(0), |tag| tag.area);
-    let Some(portal) = area::areas()[area_id.0 as usize].portals.get(want) else {
+        .map_or(Id::new(0), |tag| tag.area);
+    let Some(portal) = area::areas()[area_id.index()].portals.get(want) else {
         world.entity_mut(entity).remove::<DesiredPortal>();
         return;
     };

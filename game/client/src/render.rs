@@ -9,11 +9,11 @@ use bevy::shader::ShaderRef;
 use bevy::sprite::Anchor;
 use bevy::sprite_render::{Material2d, Material2dPlugin};
 use bevy::window::PrimaryWindow;
-use world::actors;
-use world::area::{self, AreaId, TileRef};
+use world::area::{self, AreaDef, TileRef};
 use world::math::{CellPos, Pos, Seconds, Size, Tiles, WorldPx};
-use world::protocol::{Actor, AreaTag, Owner, Position, Rgba, action_name};
+use world::protocol::{Actor, AreaTag, Owner, Position, Rgba, Vitals, action_name};
 use world::session::{self, MyClient};
+use world::table::Id;
 
 /// World pixels per tile; the actor and tile sheets are authored at this scale.
 pub const TILE: WorldPx = WorldPx(16.0);
@@ -193,15 +193,18 @@ fn hidden() -> (Transform, Visibility) {
 
 /// Tracks the local player's healthbar below them; hidden while dead or unspawned.
 fn healthbar(world: &mut World) {
-    let shown = match (session::my_position(world), session::my_vitals(world)) {
+    let shown = session::me(world).and_then(|me| {
         // Whole pixels: at fractional offsets the fractional-width fill would alternate between
         // floor and ceil pixel coverage as the player moves.
-        (Some(at), Some((health, max))) if health > 0.0 && max > 0.0 => Some((
-            Vec2::new(at.x * TILE.0, -at.y * TILE.0 - BAR_DROP.0).round(),
-            (health / max).clamp(0.0, 1.0),
-        )),
-        _ => None,
-    };
+        let at = me.get::<Position>()?.pos;
+        let vitals = me.get::<Vitals>()?;
+        (vitals.health > 0.0 && vitals.max > 0.0).then(|| {
+            (
+                Vec2::new(at.x * TILE.0, -at.y * TILE.0 - BAR_DROP.0).round(),
+                (vitals.health / vitals.max).clamp(0.0, 1.0),
+            )
+        })
+    });
     let mut bars = world.query::<(&Bar, &mut Transform, &mut Visibility, &mut Sprite)>();
     for (bar, mut transform, mut visibility, mut sprite) in bars.iter_mut(world) {
         let Some((center, fraction)) = shown else {
@@ -300,7 +303,7 @@ fn attach_sprite(
     let Ok(actor) = actors.get(add.entity) else {
         return;
     };
-    let image = assets.load(actors::model(actor.model).sheet().to_owned());
+    let image = assets.load(actor.model.get().sheet().to_owned());
     commands.entity(add.entity).insert((
         Sprite { image, ..default() },
         Anchor(Vec2::new(0.0, -1.0 / 6.0)),
@@ -327,7 +330,7 @@ fn sync_actors(
         .retain(|entity, _| actors.contains(*entity));
     for (entity, actor, position, tag, mut sprite, mut transform) in &mut actors {
         let elapsed = animator.elapsed(entity, actor.action, clock);
-        let region = actors::model(actor.model).frame(
+        let region = actor.model.get().frame(
             action_name(actor.action),
             actor.dir,
             elapsed,
@@ -336,7 +339,7 @@ fn sync_actors(
         sprite.rect = Some(atlas_rect(region));
         sprite.custom_size = Some(Vec2::new(region.size.width, region.size.height));
         sprite.color = rgba(actor.color);
-        let Some(area) = area::areas().get(tag.area.0 as usize) else {
+        let Some(area) = area::areas().get(tag.area.index()) else {
             continue;
         };
         *transform = sprite_transform(
@@ -368,8 +371,8 @@ fn follow_camera(
 }
 
 /// The clamped, pixel-snapped point the camera centers on: the player, kept inside the area edges.
-fn camera_center(at: Pos<Tiles>, area_id: AreaId, half: Vec2) -> Option<Pos<Tiles>> {
-    let area = area::areas().get(area_id.0 as usize)?;
+fn camera_center(at: Pos<Tiles>, area_id: Id<AreaDef>, half: Vec2) -> Option<Pos<Tiles>> {
+    let area = area::areas().get(area_id.index())?;
     let lo = Pos::new(half.x, half.y);
     let hi = Pos::new(
         (area.width.0 - half.x).max(half.x),
@@ -394,7 +397,7 @@ fn view_half(window: &Window) -> Vec2 {
 }
 
 #[derive(Resource, Default)]
-struct SpawnedArea(Option<AreaId>);
+struct SpawnedArea(Option<Id<AreaDef>>);
 
 #[derive(Component)]
 struct AreaTile;
@@ -430,7 +433,7 @@ fn spawn_area_tiles(
     }
     spawned.0 = Some(area_id);
 
-    let area = &area::areas()[area_id.0 as usize];
+    let area = &area::areas()[area_id.index()];
     for (index, layer) in area.layers.iter().enumerate() {
         let z = index as f32;
         for y in 0..area.height.0 as i32 {
@@ -500,7 +503,7 @@ fn animate_tiles(
     let Some(area_id) = spawned.0 else {
         return;
     };
-    let area = &area::areas()[area_id.0 as usize];
+    let area = &area::areas()[area_id.index()];
     let now = Seconds(time.elapsed_secs());
     for (animated, mut sprite) in &mut tiles {
         if let Some(resolved) = area.resolve(animated.0, now) {

@@ -56,7 +56,7 @@ fn draw(
     else {
         return;
     };
-    let area = &area::areas()[area_id.0 as usize];
+    let area = &area::areas()[area_id.index()];
     let red = Color::srgb(1.0, 0.0, 0.0);
     match *mode {
         DebugMode::Nodes => {

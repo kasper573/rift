@@ -2,10 +2,9 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_kira_audio::prelude::{Audio, AudioControl, AudioSource, Decibels};
-use world::actors;
 use world::area;
 use world::math::{CellPos, Pos, Seconds, Size, Tiles};
-use world::protocol::{Actor, ItemConsumed, Position, action_name, position};
+use world::protocol::{Actor, AreaTag, ItemConsumed, Position, action_name, position};
 use world::session;
 use world::sfx::sfx_table;
 
@@ -46,11 +45,17 @@ fn load(assets: Res<AssetServer>, mut commands: Commands) {
 }
 
 fn play_cues(world: &mut World) {
-    let Some(listener) = session::my_position(world) else {
+    let Some(listener) = session::me(world)
+        .and_then(|me| me.get::<Position>())
+        .map(|position| position.pos)
+    else {
         return;
     };
     let clock = Seconds(world.resource::<Time>().elapsed_secs());
-    let area = session::my_area(world).and_then(|id| area::areas().get(id.0 as usize));
+    let area = session::me(world)
+        .and_then(|me| me.get::<AreaTag>())
+        .map(|tag| tag.area)
+        .and_then(|id| area::areas().get(id.index()));
     let mut sfx = world.remove_resource::<Sfx>().expect("sfx loaded");
 
     // Per distinct row this frame keep the loudest source, so near and far actors collapse.
@@ -79,7 +84,7 @@ fn play_cues(world: &mut World) {
         } else {
             Seconds(-1.0)
         };
-        let model = actors::model(actor.model);
+        let model = actor.model.get();
         let (cues, stepped) = model.cues(
             action_name(actor.action),
             actor.dir,
@@ -133,7 +138,7 @@ fn item_cue(
     listener: Pos<Tiles>,
     consumed: &ItemConsumed,
 ) {
-    let Some(id) = world::items::items()[consumed.item.0 as usize].sfx.as_ref() else {
+    let Some(id) = consumed.item.get().sfx.as_ref() else {
         return;
     };
     let Some(source) = position(world, consumed.actor) else {

@@ -4,8 +4,7 @@ use serde::{Deserialize, Deserializer};
 
 use crate::actors::SfxId;
 use crate::assets;
-use crate::protocol::ItemId;
-use crate::table;
+use crate::table::{self, Content};
 
 const FILE: &str = "item_table.json";
 
@@ -18,6 +17,15 @@ pub struct ItemDef {
     pub sfx: Option<SfxId>,
     #[serde(flatten)]
     pub kind: ItemKind,
+}
+
+impl Content for ItemDef {
+    fn table() -> &'static [ItemDef] {
+        items()
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
 }
 
 #[derive(Deserialize)]
@@ -40,15 +48,6 @@ impl<'de> Deserialize<'de> for Icon {
     }
 }
 
-pub fn item_by_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ItemId, D::Error> {
-    let id = String::deserialize(deserializer)?;
-    items()
-        .iter()
-        .position(|item| item.id == id)
-        .map(|index| ItemId(index as u16))
-        .ok_or_else(|| serde::de::Error::custom(format!("unknown item '{id}'")))
-}
-
 pub fn items() -> &'static [ItemDef] {
     static ITEMS: OnceLock<Vec<ItemDef>> = OnceLock::new();
     ITEMS.get_or_init(|| {
@@ -56,8 +55,4 @@ pub fn items() -> &'static [ItemDef] {
         table::unique_ids(items.iter().map(|item| item.id.as_str()), FILE);
         items
     })
-}
-
-pub fn item(id: ItemId) -> &'static ItemDef {
-    &items()[id.0 as usize]
 }

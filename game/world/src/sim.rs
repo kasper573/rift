@@ -14,6 +14,28 @@ pub mod rewards;
 pub mod spectate;
 pub mod visibility;
 
+use bevy_ecs::prelude::Bundle;
+use bevy_replicon::prelude::Replicated;
+
+use crate::protocol::{Actor, AreaTag, Hitbox, Name, Position, Vitals};
+use combat::Stats;
+use movement::Speed;
+
+/// The components every character — player or NPC — shares. Ownership, inventory, AI and the like
+/// are inserted alongside, per kind.
+#[derive(Bundle)]
+pub struct Character {
+    pub replicated: Replicated,
+    pub position: Position,
+    pub name: Name,
+    pub actor: Actor,
+    pub hitbox: Hitbox,
+    pub vitals: Vitals,
+    pub area: AreaTag,
+    pub stats: Stats,
+    pub speed: Speed,
+}
+
 /// Forces every asset loader — actor models, areas, tables — so any broken file or dangling
 /// reference panics. The server runs this at boot, refusing to start on bad content.
 pub fn validate() {

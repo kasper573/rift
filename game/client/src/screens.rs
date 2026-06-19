@@ -1,4 +1,7 @@
 use bevy::prelude::*;
+use bevy_view::{View, ViewRoot, view};
+
+use ui::{Button, Text};
 
 use crate::{Screen, auth};
 
@@ -16,12 +19,16 @@ impl Plugin for ScreensPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Mode>()
             .add_systems(OnEnter(Screen::SigningIn), |c: Commands| {
-                notice(c, "Signing in…")
+                screen(c, signing_in)
             })
             .add_systems(OnExit(Screen::SigningIn), despawn)
-            .add_systems(OnEnter(Screen::SignInFailed), sign_in_failed)
+            .add_systems(OnEnter(Screen::SignInFailed), |c: Commands| {
+                screen(c, sign_in_failed)
+            })
             .add_systems(OnExit(Screen::SignInFailed), despawn)
-            .add_systems(OnEnter(Screen::ChooseMode), choose_mode)
+            .add_systems(OnEnter(Screen::ChooseMode), |c: Commands| {
+                screen(c, choose_mode)
+            })
             .add_systems(OnExit(Screen::ChooseMode), despawn)
             .add_systems(OnEnter(Screen::Playing), enter_game);
     }
@@ -30,72 +37,48 @@ impl Plugin for ScreensPlugin {
 #[derive(Component)]
 struct ScreenUi;
 
-fn screen() -> Node {
-    Node {
-        width: Val::Percent(100.0),
-        height: Val::Percent(100.0),
-        flex_direction: FlexDirection::Column,
-        align_items: AlignItems::Center,
-        justify_content: JustifyContent::Center,
-        row_gap: Val::Px(16.0),
-        ..default()
+fn screen(mut commands: Commands, content: fn(&World) -> View) {
+    commands.spawn((
+        ScreenUi,
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            row_gap: Val::Px(16.0),
+            ..default()
+        },
+        ViewRoot::new(content),
+    ));
+}
+
+fn signing_in(_: &World) -> View {
+    Text::new("Signing in…").color(Color::WHITE).into()
+}
+
+fn sign_in_failed(_: &World) -> View {
+    view! {
+        { Text::new("Could not sign in").color(Color::WHITE) }
+        <Button label="Try again" on:click={|w| set_screen(w, Screen::SigningIn)}/>
     }
 }
 
-fn label(text: &str) -> impl Bundle {
-    (Text::new(text), TextColor(Color::WHITE))
+fn choose_mode(_: &World) -> View {
+    view! {
+        { Text::new("Choose a mode").color(Color::WHITE) }
+        <Button label="Play" on:click={|w| enter(w, Mode::Play)}/>
+        <Button label="Spectate" on:click={|w| enter(w, Mode::Spectate)}/>
+    }
 }
 
-fn button(text: &str) -> impl Bundle {
-    (
-        Button,
-        Node {
-            padding: UiRect::axes(Val::Px(20.0), Val::Px(10.0)),
-            border: UiRect::all(Val::Px(1.0)),
-            ..default()
-        },
-        BorderColor::all(Color::WHITE),
-        BackgroundColor(Color::BLACK),
-        children![label(text)],
-    )
+fn enter(world: &mut World, mode: Mode) {
+    *world.resource_mut::<Mode>() = mode;
+    set_screen(world, Screen::Playing);
 }
 
-fn notice(mut commands: Commands, text: &str) {
-    commands.spawn((ScreenUi, screen(), children![label(text)]));
-}
-
-fn sign_in_failed(mut commands: Commands) {
-    commands
-        .spawn((ScreenUi, screen(), children![label("Could not sign in")]))
-        .with_child(button("Try again"))
-        .observe(
-            |_: On<Pointer<Click>>, mut screen: ResMut<NextState<Screen>>| {
-                screen.set(Screen::SigningIn);
-            },
-        );
-}
-
-fn choose_mode(mut commands: Commands) {
-    commands
-        .spawn((ScreenUi, screen(), children![label("Choose a mode")]))
-        .with_children(|screen_ui| {
-            screen_ui.spawn(button("Play")).observe(
-                |_: On<Pointer<Click>>,
-                 mut mode: ResMut<Mode>,
-                 mut screen: ResMut<NextState<Screen>>| {
-                    *mode = Mode::Play;
-                    screen.set(Screen::Playing);
-                },
-            );
-            screen_ui.spawn(button("Spectate")).observe(
-                |_: On<Pointer<Click>>,
-                 mut mode: ResMut<Mode>,
-                 mut screen: ResMut<NextState<Screen>>| {
-                    *mode = Mode::Spectate;
-                    screen.set(Screen::Playing);
-                },
-            );
-        });
+fn set_screen(world: &mut World, screen: Screen) {
+    world.resource_mut::<NextState<Screen>>().set(screen);
 }
 
 fn despawn(ui: Query<Entity, With<ScreenUi>>, mut commands: Commands) {

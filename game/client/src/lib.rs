@@ -6,12 +6,12 @@ pub mod auth;
 pub mod cursor;
 pub mod debug;
 pub mod fps;
+pub mod hud;
 pub mod input;
 pub mod net;
 pub mod render;
 pub mod screens;
 pub mod sfx;
-pub mod ui;
 pub mod user_settings;
 pub mod view;
 pub mod web;
@@ -84,6 +84,8 @@ pub fn run() -> AppExit {
     .insert_resource(config)
     .init_state::<Screen>()
     .add_plugins((
+        bevy_view::ViewPlugin,
+        ui::UiPlugin,
         net::NetPlugin,
         auth::AuthPlugin,
         render::RenderPlugin,
@@ -92,7 +94,7 @@ pub fn run() -> AppExit {
         debug::DebugPlugin,
         sfx::SfxPlugin,
         screens::ScreensPlugin,
-        ui::HudPlugin,
+        hud::HudPlugin,
         fps::FpsPlugin,
     ));
     app.run()

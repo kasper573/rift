@@ -671,6 +671,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bench"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_replicon",
+ "bevy_state",
+ "world",
+]
+
+[[package]]
 name = "bevy"
 version = "0.19.0-rc.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1917,6 +1928,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_view"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_math",
+ "bevy_picking",
+ "bevy_ui",
+ "bevy_view_macro",
+ "bevy_window",
+]
+
+[[package]]
+name = "bevy_view_macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "bevy_window"
 version = "0.19.0-rc.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2276,6 +2309,7 @@ dependencies = [
  "bevy_kira_audio",
  "bevy_replicon",
  "bevy_replicon_renet",
+ "bevy_view",
  "dirs",
  "dotenvy",
  "envy",
@@ -2283,6 +2317,7 @@ dependencies = [
  "openidconnect",
  "serde",
  "serde_json",
+ "ui",
  "ureq 3.3.0",
  "webbrowser",
  "world",
@@ -8554,6 +8589,24 @@ dependencies = [
  "memoffset",
  "tempfile",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ui"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_color",
+ "bevy_ecs",
+ "bevy_input",
+ "bevy_math",
+ "bevy_picking",
+ "bevy_text",
+ "bevy_time",
+ "bevy_ui",
+ "bevy_view",
+ "bevy_window",
 ]
 
 [[package]]

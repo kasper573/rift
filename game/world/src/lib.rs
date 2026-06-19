@@ -24,7 +24,7 @@ pub use bevy_ecs::world::World;
 pub use crate::identity::Identity;
 pub use crate::protocol::{
     ACTION_ATTACK, ACTION_DEAD, ACTION_IDLE, ACTION_RUN, ACTION_WALK, Actor, AreaTag,
-    AttackRequest, ClientId, Hitbox, Inventory, ItemConsumed, ItemId, JoinRequest, MoveRequest,
+    AttackRequest, ClientId, Hitbox, Inventory, ItemConsumed, JoinRequest, MoveRequest,
     MoveToPortal, Name, Owner, Position, RespawnRequest, Rgba, Spectate, SpectateRequest,
     UseItemRequest, Vitals, Welcome, Xp,
 };

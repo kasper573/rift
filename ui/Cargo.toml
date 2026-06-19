@@ -1,0 +1,32 @@
+[package]
+name = "ui"
+version.workspace = true
+edition.workspace = true
+description = "A small UI component library over bevy_view: Radix-inspired Popover and Tooltip that float into app-placed outlets with collision-aware positioning."
+repository = "https://github.com/kasper573/rift"
+authors = ["kasper573"]
+
+[dependencies]
+bevy_view = { path = "../bevy_view" }
+bevy_app = { workspace = true }
+bevy_ecs = { workspace = true }
+bevy_ui = { workspace = true }
+bevy_picking = { workspace = true }
+bevy_input = { workspace = true }
+bevy_asset = { workspace = true }
+bevy_color = { workspace = true }
+bevy_text = { workspace = true }
+bevy_window = { workspace = true }
+bevy_math = { workspace = true }
+bevy_time = { workspace = true }
+
+[dev-dependencies]
+bevy_app = { workspace = true }
+bevy_ecs = { workspace = true }
+bevy_ui = { workspace = true }
+bevy_picking = { workspace = true }
+bevy_color = { workspace = true }
+bevy_text = { workspace = true }
+bevy_window = { workspace = true }
+bevy_math = { workspace = true }
+bevy_time = { workspace = true }

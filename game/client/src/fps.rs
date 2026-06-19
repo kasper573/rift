@@ -2,6 +2,8 @@
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
+use bevy_view::{View, ViewRoot};
+use ui::Text;
 
 use crate::Screen;
 
@@ -11,17 +13,16 @@ impl Plugin for FpsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
             .add_systems(OnEnter(Screen::Playing), spawn)
-            .add_systems(OnExit(Screen::Playing), despawn)
-            .add_systems(Update, update.run_if(in_state(Screen::Playing)));
+            .add_systems(OnExit(Screen::Playing), despawn);
     }
 }
 
 #[derive(Component)]
-struct FpsText;
+struct FpsHud;
 
 fn spawn(mut commands: Commands) {
     commands.spawn((
-        FpsText,
+        FpsHud,
         Node {
             position_type: PositionType::Absolute,
             left: Val::Px(8.0),
@@ -29,24 +30,29 @@ fn spawn(mut commands: Commands) {
             ..default()
         },
         BackgroundColor(Color::BLACK),
-        Text::new("-- fps"),
-        TextColor(Color::WHITE),
         GlobalZIndex(100),
         Pickable::IGNORE,
+        ViewRoot::new(readout),
     ));
 }
 
-fn update(diagnostics: Res<DiagnosticsStore>, mut text: Single<&mut Text, With<FpsText>>) {
-    if let Some(fps) = diagnostics
-        .get(&FrameTimeDiagnosticsPlugin::FPS)
-        .and_then(|fps| fps.smoothed())
-    {
-        text.0 = format!("{fps:.0} fps");
-    }
+fn readout(_: &World) -> View {
+    Text::dynamic(|w: &World| fps(w)).color(Color::WHITE).into()
 }
 
-fn despawn(texts: Query<Entity, With<FpsText>>, mut commands: Commands) {
-    for entity in &texts {
+fn fps(world: &World) -> String {
+    world
+        .get_resource::<DiagnosticsStore>()
+        .and_then(|diagnostics| {
+            diagnostics
+                .get(&FrameTimeDiagnosticsPlugin::FPS)?
+                .smoothed()
+        })
+        .map_or_else(|| "-- fps".to_owned(), |fps| format!("{fps:.0} fps"))
+}
+
+fn despawn(huds: Query<Entity, With<FpsHud>>, mut commands: Commands) {
+    for entity in &huds {
         commands.entity(entity).despawn();
     }
 }

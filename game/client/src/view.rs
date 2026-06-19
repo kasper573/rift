@@ -28,7 +28,7 @@ pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
 
 /// The living enemy whose click box contains `point` — feet-anchored, excluding the player.
 pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
-    let me = session::my_entity(world);
+    let me = session::me(world).map(|entity| entity.id());
     let mut actors =
         world.query_filtered::<(Entity, &Position, &Hitbox, Option<&Vitals>), With<Actor>>();
     actors.iter(world).find_map(|(entity, at, hitbox, vitals)| {

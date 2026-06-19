@@ -6,18 +6,21 @@ use bevy_ecs::observer::On;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{FromClient, Replicated, SendTargets, ToClients};
 
+use super::Character;
 use super::combat::Stats;
 use super::movement::{Speed, forget};
 use super::spectate::Spectators;
 use super::visibility::OwnedBy;
-use crate::area::{self, AreaId};
+use crate::actors::ActorModel;
+use crate::area::{self, AreaDef};
 use crate::identity::Identity;
 use crate::math::{Direction, Millis, PlaybackRate, Pos, Tiles, TilesPerSec};
+use crate::protocol;
 use crate::protocol::{
     ACTION_IDLE, Actor, AreaTag, ClientId, Hitbox, Inventory, JoinRequest, Name, Owner, Position,
     RespawnRequest, Rgba, Vitals, Welcome, Xp, is_dead, set_action,
 };
-use crate::{actors, protocol};
+use crate::table::Id;
 
 const PLAYER_MAX_HEALTH: f32 = 30.0;
 const PLAYER_SPEED: TilesPerSec = TilesPerSec(Tiles(4.0));
@@ -71,7 +74,7 @@ pub fn client_left(
 
 pub fn join(world: &mut World) {
     let zone = area::spawn_zone();
-    let spawn = area::areas()[zone.0 as usize].spawn;
+    let spawn = area::areas()[zone.index()].spawn;
     let requests: Vec<FromClient<JoinRequest>> = world
         .resource_mut::<Messages<FromClient<JoinRequest>>>()
         .drain()
@@ -99,44 +102,46 @@ fn spawn_player(
     world: &mut World,
     client: ClientId,
     client_entity: Entity,
-    zone: AreaId,
+    zone: Id<AreaDef>,
     at: Pos<Tiles>,
     name: String,
 ) {
-    let model = actors::model_index(PLAYER_MODEL).expect("the player model exists");
+    let model = Id::<ActorModel>::by_name(PLAYER_MODEL).expect("the player model exists");
     let entity = world
         .spawn((
-            Replicated,
+            Character {
+                replicated: Replicated,
+                position: Position { pos: at },
+                name: Name { name },
+                actor: Actor {
+                    color: PLAYER_TINT,
+                    dir: Direction::S as u8,
+                    action: ACTION_IDLE,
+                    model,
+                    attack_rate: PLAYER_ATTACK_SPEED,
+                },
+                hitbox: Hitbox {
+                    size: model.get().hitbox(),
+                },
+                vitals: Vitals {
+                    health: PLAYER_MAX_HEALTH,
+                    max: PLAYER_MAX_HEALTH,
+                },
+                area: AreaTag { area: zone },
+                stats: Stats {
+                    damage: PLAYER_DAMAGE,
+                    attack_speed: PLAYER_ATTACK_SPEED,
+                    attack_delay: PLAYER_ATTACK_DELAY,
+                    range: PLAYER_RANGE,
+                },
+                speed: Speed {
+                    value: PLAYER_SPEED,
+                },
+            },
             OwnedBy(client_entity),
-            Position { pos: at },
-            Name { name },
-            Actor {
-                color: PLAYER_TINT,
-                dir: Direction::S as u8,
-                action: ACTION_IDLE,
-                model,
-                attack_rate: PLAYER_ATTACK_SPEED,
-            },
-            Hitbox {
-                size: actors::model(model).hitbox(),
-            },
-            Vitals {
-                health: PLAYER_MAX_HEALTH,
-                max: PLAYER_MAX_HEALTH,
-            },
-            AreaTag { area: zone },
             Owner { client },
             Inventory { items: Vec::new() },
             Xp { amount: 0 },
-            Stats {
-                damage: PLAYER_DAMAGE,
-                attack_speed: PLAYER_ATTACK_SPEED,
-                attack_delay: PLAYER_ATTACK_DELAY,
-                range: PLAYER_RANGE,
-            },
-            Speed {
-                value: PLAYER_SPEED,
-            },
         ))
         .id();
     world.resource_mut::<Players>().0.insert(client, entity);
@@ -144,7 +149,7 @@ fn spawn_player(
 
 pub fn respawn(world: &mut World) {
     let zone = area::spawn_zone();
-    let spawn = area::areas()[zone.0 as usize].spawn;
+    let spawn = area::areas()[zone.index()].spawn;
     let requests: Vec<FromClient<RespawnRequest>> = world
         .resource_mut::<Messages<FromClient<RespawnRequest>>>()
         .drain()

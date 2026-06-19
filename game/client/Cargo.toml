@@ -16,6 +16,8 @@ hotpatch = ["bevy/hotpatching", "bevy/file_watcher"]
 
 [dependencies]
 world = { path = "../world", default-features = false }
+bevy_view = { path = "../../bevy_view" }
+ui = { path = "../../ui" }
 dotenvy = "0.15"
 envy = { workspace = true }
 # Bevy's `2d` + `ui` feature bundles, minus `bevy_gilrs` (drops the `libudev` build dependency —
