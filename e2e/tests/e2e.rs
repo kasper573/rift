@@ -28,14 +28,12 @@ const RESEMBLANCE: f64 = 0.5;
 const ISLAND_SNAPSHOT: &str = "spawn-on-island.png";
 const FOREST_SNAPSHOT: &str = "spawn-on-forest.png";
 
-// Geometry for aiming a portal click, in tiles. Tiles per screen height must match
-// `client::render::VIEW_TILES_TALL`; the camera centers on the player. The island's spawn and the
-// nearest warp (which leads to the forest) come from `assets/maps/island.tmx`.
-const VIEW_TILES_TALL: f64 = 18.0;
-// Tile centers: the spawn (`start` object's tile) and the nearest warp's 1-tile rect — so the warp
-// sits straight up, 3 tiles north of where the player spawns.
-const ISLAND_SPAWN: (f64, f64) = (39.0, 29.0);
-const ISLAND_PORTAL: (f64, f64) = (39.0, 26.0);
+// The portal marker sprite, cropped from a scene. The test finds it in the live frame and clicks its
+// center rather than aiming at hardcoded tile coordinates, so it tracks the portal wherever it lands.
+const PORTAL_TEMPLATE: &str = "portal.png";
+// Mean per-channel-sum difference over the template's opaque pixels. A match scores near 0; an absent
+// portal scores in the hundreds (measured: ~270 on a portal-less frame), so this cleanly splits them.
+const PORTAL_MATCH: f64 = 120.0;
 
 #[test]
 #[ignore = "e2e: drives the live stack; run with `just e2e`"]
@@ -151,71 +149,125 @@ fn register_and_spawn() -> Session {
     }
 }
 
-/// Walks the player from the island spawn through the nearest warp and returns the scene once it
-/// resembles the forest. A `MoveToPortal` click (one landing inside the 1-tile warp rect) makes the
-/// server path the player onto the portal and cross; the first aim is the warp seen from spawn, then,
-/// since a miss leaves the player walked-toward-it, a small grid around the now-near warp.
+/// Walks the player through the island's warp and returns the scene once it resembles the forest.
+/// Finds the portal marker in the live frame and clicks its center: that lands inside the 1-tile warp
+/// rect, so the server's `MoveToPortal` paths the player onto the portal and crosses. The marker is
+/// re-found each pass — the camera shifts as the player walks, and a click swallowed by a roaming NPC
+/// just retries against the unchanged scene.
 fn cross_island_portal(enigo: &mut Enigo, game: &Win, island: &Image, forest: &Image) -> Image {
+    let template = load_template(PORTAL_TEMPLATE);
     let crossed = |cap: &Image| {
         let on_forest = resemblance(cap, forest);
         on_forest >= RESEMBLANCE && on_forest > resemblance(cap, island)
     };
-    let ppt = game.capture().height as f64 / VIEW_TILES_TALL;
-    let aim = |enigo: &mut Enigo, tx: f64, ty: f64| {
+
+    // Acquire the portal before trying to cross: if the spawn scene never shows it, the run is broken
+    // in a way no amount of clicking fixes, so fail fast and loudly instead of timing out.
+    let acquire = Instant::now() + Duration::from_secs(10);
+    let mut target = loop {
         let cap = game.capture();
-        let x = (cap.width as f64 / 2.0 + tx * ppt).round() as i32;
-        let y = (cap.height as f64 / 2.0 + ty * ppt).round() as i32;
-        game.click(enigo, x, y);
+        if let Some(point) = locate(&cap, &template) {
+            break point;
+        }
+        if Instant::now() >= acquire {
+            save(&cap, "portal-not-found");
+            panic!(
+                "the portal marker ({PORTAL_TEMPLATE}) never appeared in the spawn scene; the player \
+                 may not have spawned on the island (see {ARTIFACTS}/portal-not-found.png)",
+            );
+        }
+        sleep(Duration::from_millis(500));
     };
-    let poll = |secs: u64| -> Option<Image> {
-        let until = Instant::now() + Duration::from_secs(secs);
-        loop {
+
+    let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        game.click(enigo, target.0, target.1);
+        for _ in 0..8 {
             sleep(Duration::from_millis(500));
             let cap = game.capture();
             if crossed(&cap) {
-                return Some(cap);
-            }
-            if Instant::now() >= until {
-                return None;
+                return cap;
             }
         }
-    };
-
-    // First aim: the warp as seen from the spawn, where the player still stands.
-    let (wx, wy) = (
-        ISLAND_PORTAL.0 - ISLAND_SPAWN.0,
-        ISLAND_PORTAL.1 - ISLAND_SPAWN.1,
-    );
-    aim(enigo, wx, wy);
-    if let Some(cap) = poll(8) {
-        return cap;
-    }
-
-    // A miss walks the player toward the warp; nudge it onto the 1-tile rect with fine, mostly
-    // northward steps (smaller than a tile so a click can't skip over the rect), polling each.
-    let sweep = [
-        (0.0, -0.35),
-        (0.0, -0.7),
-        (0.0, 0.0),
-        (-0.35, -0.5),
-        (0.35, -0.5),
-        (0.0, -1.05),
-        (-0.35, -1.0),
-        (0.35, -1.0),
-        (0.0, 0.4),
-        (-0.4, 0.0),
-        (0.4, 0.0),
-        (0.0, -1.4),
-    ];
-    for (ox, oy) in sweep {
-        aim(enigo, ox, oy);
-        if let Some(cap) = poll(4) {
+        let cap = game.capture();
+        if Instant::now() >= deadline {
+            save(&cap, "portal-timeout");
             return cap;
         }
+        if let Some(point) = locate(&cap, &template) {
+            target = point;
+        }
     }
-    let cap = game.capture();
-    save(&cap, "portal-timeout");
-    cap
+}
+
+/// The center, in capture pixels, of the best match for `template` in `cap` — or `None` when nothing
+/// resembles it closely enough (see `PORTAL_MATCH`). Coarse-to-fine masked matching: a stride-4 sweep
+/// locates the region, then a 1px refinement around it; only the template's opaque pixels count.
+fn locate(cap: &Image, template: &Template) -> Option<(i32, i32)> {
+    const COARSE: usize = 4;
+    let (tw, th) = (template.width as usize, template.height as usize);
+    let (cw, ch) = (cap.width as usize, cap.height as usize);
+    if cw <= tw || ch <= th {
+        return None;
+    }
+    let mut best = (u64::MAX, 0usize, 0usize);
+
+    let mut y = 0;
+    while y <= ch - th {
+        let mut x = 0;
+        while x <= cw - tw {
+            let score = template.score(cap, x, y, best.0);
+            if score < best.0 {
+                best = (score, x, y);
+            }
+            x += COARSE;
+        }
+        y += COARSE;
+    }
+
+    let (x0, x1) = (
+        best.1.saturating_sub(COARSE),
+        (best.1 + COARSE).min(cw - tw),
+    );
+    let (y0, y1) = (
+        best.2.saturating_sub(COARSE),
+        (best.2 + COARSE).min(ch - th),
+    );
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let score = template.score(cap, x, y, best.0);
+            if score < best.0 {
+                best = (score, x, y);
+            }
+        }
+    }
+
+    let mean = best.0 as f64 / template.samples.len() as f64;
+    (mean <= PORTAL_MATCH).then(|| ((best.1 + tw / 2) as i32, (best.2 + th / 2) as i32))
+}
+
+/// A sprite reduced to its opaque pixels, for matching against a capture by sum-of-absolute-difference.
+struct Template {
+    width: u16,
+    height: u16,
+    samples: Vec<([u16; 2], [u8; 3])>,
+}
+
+impl Template {
+    /// Total per-channel absolute difference over the opaque samples placed at `(ox, oy)`, abandoned
+    /// early once it passes `cutoff` (it can only grow), which is what keeps the full sweep cheap.
+    fn score(&self, cap: &Image, ox: usize, oy: usize, cutoff: u64) -> u64 {
+        let mut sum = 0u64;
+        for ([dx, dy], rgb) in &self.samples {
+            let i = 3 * ((oy + *dy as usize) * cap.width as usize + ox + *dx as usize);
+            let d = |a: u8, b: u8| (a as i32 - b as i32).unsigned_abs() as u64;
+            sum += d(cap.rgb[i], rgb[0]) + d(cap.rgb[i + 1], rgb[1]) + d(cap.rgb[i + 2], rgb[2]);
+            if sum >= cutoff {
+                return sum;
+            }
+        }
+        sum
+    }
 }
 
 fn register_in_browser(enigo: &mut Enigo) {
@@ -619,6 +671,42 @@ fn load_reference(name: &str) -> Image {
         width: info.width as u16,
         height: info.height as u16,
         rgb,
+    }
+}
+
+// Every other opaque pixel is plenty to identify the marker and halves the matching work.
+const TEMPLATE_STRIDE: usize = 2;
+
+fn load_template(name: &str) -> Template {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("snapshots")
+        .join(name);
+    let file = File::open(&path).unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
+    let mut reader = png::Decoder::new(BufReader::new(file))
+        .read_info()
+        .expect("png info");
+    let mut buf = vec![0; reader.output_buffer_size().expect("png buffer size")];
+    let info = reader.next_frame(&mut buf).expect("png frame");
+    assert_eq!(
+        info.color_type,
+        png::ColorType::Rgba,
+        "template {name} needs an alpha channel to mask its background"
+    );
+    let (width, height) = (info.width as u16, info.height as u16);
+    let samples = buf[..info.buffer_size()]
+        .chunks_exact(4)
+        .enumerate()
+        .filter(|(_, p)| p[3] > 128)
+        .step_by(TEMPLATE_STRIDE)
+        .map(|(i, p)| {
+            let (x, y) = ((i % width as usize) as u16, (i / width as usize) as u16);
+            ([x, y], [p[0], p[1], p[2]])
+        })
+        .collect();
+    Template {
+        width,
+        height,
+        samples,
     }
 }
 
