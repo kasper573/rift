@@ -6,14 +6,28 @@ use world::tiling::Tiles;
 
 use crate::render::TILE;
 
-pub fn to_screen(pos: Pos<Tiles>) -> Vec2 {
-    Vec2::new(pos.x * TILE.0, -pos.y * TILE.0)
+pub trait ToScreen {
+    fn to_screen(self) -> Vec2;
 }
 
-pub fn to_screen_size(size: Size<Tiles>) -> Vec2 {
-    Vec2::new(size.width * TILE.0, size.height * TILE.0)
+impl ToScreen for Pos<Tiles> {
+    fn to_screen(self) -> Vec2 {
+        Vec2::new(self.x * TILE.0, -self.y * TILE.0)
+    }
 }
 
-pub fn to_tile(screen: Vec2) -> Pos<Tiles> {
-    Pos::new(screen.x / TILE.0, -screen.y / TILE.0)
+impl ToScreen for Size<Tiles> {
+    fn to_screen(self) -> Vec2 {
+        Vec2::new(self.width * TILE.0, self.height * TILE.0)
+    }
+}
+
+pub trait ToTile {
+    fn to_tile(self) -> Pos<Tiles>;
+}
+
+impl ToTile for Vec2 {
+    fn to_tile(self) -> Pos<Tiles> {
+        Pos::new(self.x / TILE.0, -self.y / TILE.0)
+    }
 }

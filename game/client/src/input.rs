@@ -4,7 +4,7 @@ use bevy::picking::hover::HoverMap;
 use bevy::prelude::*;
 use world::math::Pos;
 use world::session;
-use world::tiling::{self, Tiles};
+use world::tiling::{TilePos, Tiles};
 
 use crate::Screen;
 use crate::view;
@@ -53,7 +53,7 @@ fn press(world: &mut World) {
         }
         None => {
             session::move_to(world, point);
-            stamp(world, Some(tiling::snap_to_tile(point)));
+            stamp(world, Some(point.snap()));
         }
     }
 }
@@ -73,7 +73,7 @@ fn repeat_move(world: &mut World) {
     if view::enemy_at(world, point).is_some() {
         return;
     }
-    let tile = tiling::snap_to_tile(point);
+    let tile = point.snap();
     if !view::walkable(world, tile) || world.resource::<HeldMove>().last_tile == Some(tile) {
         return;
     }

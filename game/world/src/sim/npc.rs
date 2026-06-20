@@ -12,7 +12,7 @@ use super::movement::{MoveTarget, Path, Speed, forget};
 use super::player::Players;
 use crate::actors::ActorModel;
 use crate::area::{self, AreaDef};
-use crate::math::{Direction, Pos, next_rng, rng_unit};
+use crate::math::{Direction, Pos, Rng};
 use crate::protocol::{
     ACTION_IDLE, Actor, AreaTag, Hitbox, Name, Position, Rgba, Vitals, is_dead, position,
     set_action,
@@ -42,7 +42,7 @@ pub struct DeadAt {
 }
 
 #[derive(Resource)]
-pub struct GameRng(pub u64);
+pub struct GameRng(pub Rng);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -108,7 +108,7 @@ pub fn spawns() -> &'static [SpawnRow] {
 pub fn spawn_all(world: &mut World) {
     let hosted = world.resource::<super::HostedArea>().0;
     let area = &area::areas()[hosted.index()];
-    let mut rng = RNG_SEED | 1;
+    let mut rng = Rng(RNG_SEED | 1);
     for (group, row) in spawns().iter().enumerate() {
         if row.area != hosted {
             continue;
@@ -122,7 +122,7 @@ pub fn spawn_all(world: &mut World) {
 
 fn spawn_npc(
     world: &mut World,
-    rng: &mut u64,
+    rng: &mut Rng,
     area: &area::Area,
     def_index: Id<NpcDef>,
     group: u32,
@@ -209,12 +209,12 @@ pub fn run_ai(world: &mut World) {
     world.resource_mut::<GameRng>().0 = rng;
 }
 
-fn idle_wander(world: &mut World, rng: &mut u64, id: Entity, def: &NpcDef, area: Id<AreaDef>) {
+fn idle_wander(world: &mut World, rng: &mut Rng, id: Entity, def: &NpcDef, area: Id<AreaDef>) {
     if world.get::<MoveTarget>(id).is_some() || world.get::<Path>(id).is_some() {
         return;
     }
     let wander = match def.ai {
-        Ai::Pacifist => rng_unit(rng) < PACIFIST_WANDER_CHANCE,
+        Ai::Pacifist => rng.unit() < PACIFIST_WANDER_CHANCE,
         _ => true,
     };
     if wander && let Some(node) = random_walkable(rng, area) {
@@ -344,10 +344,10 @@ pub fn run_respawn(world: &mut World) {
     world.resource_mut::<GameRng>().0 = rng;
 }
 
-fn random_walkable(rng: &mut u64, area_id: Id<AreaDef>) -> Option<Pos<Tiles>> {
+fn random_walkable(rng: &mut Rng, area_id: Id<AreaDef>) -> Option<Pos<Tiles>> {
     let nodes = &area::areas()[area_id.index()].walkable_nodes;
     if nodes.is_empty() {
         return None;
     }
-    Some(nodes[(next_rng(rng) % nodes.len() as u64) as usize])
+    Some(nodes[(rng.roll() % nodes.len() as u64) as usize])
 }

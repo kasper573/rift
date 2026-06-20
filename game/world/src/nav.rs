@@ -1,36 +1,32 @@
 //! Pathfinding with fixed-point costs for determinism.
 
-use crate::math::{Pos, Size};
-use crate::tiling::{self, CellPos, Tiles};
+use crate::math::Pos;
+use crate::tiling::{self, Cell, CellPos, GridSize, TilePos, Tiles};
 
 const ORTHOGONAL: u32 = 1000;
 const DIAGONAL: u32 = 1414;
 
 #[derive(Clone)]
 pub struct Grid {
-    size: Size<Tiles>,
+    size: GridSize,
     walkable: Vec<bool>,
 }
 
 impl Grid {
-    pub fn new(size: Size<Tiles>, walkable: Vec<bool>) -> Grid {
+    pub fn new(size: GridSize, walkable: Vec<bool>) -> Grid {
         Grid { size, walkable }
     }
 
-    pub fn size(&self) -> Size<Tiles> {
-        self.size
-    }
-
     pub fn walkable(&self, p: Pos<Tiles>) -> bool {
-        self.cell_walkable(tiling::tile_at(p))
+        self.cell_walkable(p.cell())
     }
 
     pub fn nearest_walkable(&self, p: Pos<Tiles>) -> Option<Pos<Tiles>> {
-        let from = tiling::tile_at(p);
+        let from = p.cell();
         if self.cell_walkable(from) {
-            return Some(tiling::tile_center(from));
+            return Some(from.center());
         }
-        let (width, height) = self.dims();
+        let (width, height) = (self.size.width as i32, self.size.height as i32);
         for radius in 1..=width.max(height) {
             let mut best: Option<CellPos> = None;
             let mut best_d2 = i64::MAX;
@@ -47,25 +43,20 @@ impl Grid {
                 }
             }
             if let Some(best) = best {
-                return Some(tiling::tile_center(best));
+                return Some(best.center());
             }
         }
         None
     }
 
-    fn dims(&self) -> (i32, i32) {
-        (self.size.width as i32, self.size.height as i32)
-    }
-
     fn cell_walkable(&self, c: CellPos) -> bool {
-        let (width, height) = self.dims();
-        tiling::cell_index(c, width, height).is_some_and(|i| self.walkable[i])
+        c.index(self.size).is_some_and(|i| self.walkable[i])
     }
 }
 
 pub fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
-    let start = tiling::tile_at(start);
-    let goal = tiling::tile_at(goal);
+    let start = start.cell();
+    let goal = goal.cell();
     if !grid.cell_walkable(start) || !grid.cell_walkable(goal) {
         return None;
     }
@@ -73,7 +64,7 @@ pub fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<Cel
         &start,
         |&c| {
             tiling::NEIGHBORS_8.iter().filter_map(move |&(dx, dy)| {
-                let next = tiling::cell_step(c, (dx, dy));
+                let next = c.step((dx, dy));
                 let cost = if dx != 0 && dy != 0 {
                     DIAGONAL
                 } else {

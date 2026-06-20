@@ -14,10 +14,10 @@ use world::math::{Pos, Size, WorldPx};
 use world::protocol::{Actor, AreaTag, Owner, Position, Rgba, Vitals, action_name};
 use world::session::{self, MyClient};
 use world::table::Id;
-use world::tiling::{self, CellPos, Tiles};
+use world::tiling::{Cell, GridDims, TileSize, Tiles};
 use world::time::Seconds;
 
-use crate::screen;
+use crate::screen::ToScreen;
 
 pub const TILE: WorldPx = WorldPx(16.0);
 const VIEW_TILES_TALL: f32 = 18.0;
@@ -190,7 +190,7 @@ fn healthbar(world: &mut World) {
         let vitals = me.get::<Vitals>()?;
         (!vitals.is_dead() && vitals.max > 0.0).then(|| {
             (
-                (screen::to_screen(at) - Vec2::new(0.0, BAR_DROP.0)).round(),
+                (at.to_screen() - Vec2::new(0.0, BAR_DROP.0)).round(),
                 vitals.fraction(),
             )
         })
@@ -350,7 +350,7 @@ fn follow_camera(
         return;
     };
     if let Ok(mut transform) = camera.single_mut() {
-        let p = screen::to_screen(center);
+        let p = center.to_screen();
         transform.translation.x = p.x;
         transform.translation.y = p.y;
     }
@@ -358,7 +358,7 @@ fn follow_camera(
 
 fn camera_center(at: Pos<Tiles>, area_id: Id<AreaDef>, half: Vec2) -> Option<Pos<Tiles>> {
     let area = area::areas().get(area_id.index())?;
-    let bounds = tiling::grid_bounds(area.width, area.height);
+    let bounds = area.size.bounds();
     let lo = Pos::new(bounds.min().x + half.x, bounds.min().y + half.y);
     let hi = Pos::new(
         (bounds.max().x - half.x).max(lo.x),
@@ -417,24 +417,21 @@ fn spawn_area_tiles(
     let area = &area::areas()[area_id.index()];
     for (index, layer) in area.layers.iter().enumerate() {
         let z = index as f32;
-        for y in 0..area.height.0 as i32 {
-            for x in 0..area.width.0 as i32 {
-                let c = CellPos::new(x, y);
-                if layer.dynamic && area.grouped_cells.contains(&c) {
-                    continue;
-                }
-                let cell = layer.at(c);
-                let Some(sprite) = area.resolve(cell, Seconds(0.0)) else {
-                    continue;
-                };
-                let mut tile = commands.spawn((
-                    AreaTile,
-                    tile_sprite(&assets, &sprite, Vec2::splat(TILE.0)),
-                    sprite_transform(tiling::tile_center(c), z),
-                ));
-                if area.animated(cell) {
-                    tile.insert(Animated(cell));
-                }
+        for c in area.size.grid().cells() {
+            if layer.dynamic && area.grouped_cells.contains(&c) {
+                continue;
+            }
+            let cell = layer.at(c);
+            let Some(sprite) = area.resolve(cell, Seconds(0.0)) else {
+                continue;
+            };
+            let mut tile = commands.spawn((
+                AreaTile,
+                tile_sprite(&assets, &sprite, Vec2::splat(TILE.0)),
+                sprite_transform(c.center(), z),
+            ));
+            if area.animated(cell) {
+                tile.insert(Animated(cell));
             }
         }
         if !layer.dynamic {
@@ -449,7 +446,7 @@ fn spawn_area_tiles(
                 let mut tile = commands.spawn((
                     AreaTile,
                     tile_sprite(&assets, &sprite, Vec2::splat(TILE.0)),
-                    sprite_transform(tiling::tile_center(c), z),
+                    sprite_transform(c.center(), z),
                 ));
                 if area.animated(cell) {
                     tile.insert(Animated(cell));
@@ -492,11 +489,11 @@ fn animate_tiles(
 }
 
 fn sprite_transform(pos: Pos<Tiles>, z: f32) -> Transform {
-    Transform::from_translation(screen::to_screen(pos).extend(z))
+    Transform::from_translation(pos.to_screen().extend(z))
 }
 
 fn dynamic_z(area: &area::Area, base: f32, y: Tiles) -> f32 {
-    base + (y + Tiles(1.0)).ratio(area.height + Tiles(2.0))
+    base + (y + Tiles(1.0)).ratio(Tiles(area.size.height + 2.0))
 }
 
 fn tile_sprite(assets: &AssetServer, sprite: &area::TileSprite, size: Vec2) -> Sprite {
@@ -504,8 +501,8 @@ fn tile_sprite(assets: &AssetServer, sprite: &area::TileSprite, size: Vec2) -> S
         image: assets.load(sprite.sheet.to_owned()),
         rect: Some(atlas_rect(sprite.region)),
         custom_size: Some(size),
-        flip_x: sprite.flip.0,
-        flip_y: sprite.flip.1,
+        flip_x: sprite.flip.x,
+        flip_y: sprite.flip.y,
         ..default()
     }
 }

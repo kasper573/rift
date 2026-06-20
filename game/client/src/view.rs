@@ -4,10 +4,10 @@ use world::area;
 use world::math::Pos;
 use world::protocol::{Actor, AreaTag, Hitbox, Position, Vitals};
 use world::session;
-use world::tiling::{self, Tiles};
+use world::tiling::{TilePos, Tiles};
 
 use crate::render::{Viewport, WorldCamera};
-use crate::screen;
+use crate::screen::ToTile;
 
 pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
     let cursor = world
@@ -25,7 +25,7 @@ pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
         .single(world)
         .ok()?;
     let point = camera.viewport_to_world_2d(transform, target).ok()?;
-    Some(screen::to_tile(point))
+    Some(point.to_tile())
 }
 
 pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
@@ -44,8 +44,6 @@ pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
         if Some(entity) == me || vitals.is_some_and(Vitals::is_dead) {
             return None;
         }
-        tiling::hitbox_bounds(at.pos, hitbox.size)
-            .contains(point)
-            .then_some(entity)
+        at.pos.hitbox(hitbox.size).contains(point).then_some(entity)
     })
 }

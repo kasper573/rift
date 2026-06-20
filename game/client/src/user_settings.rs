@@ -1,3 +1,4 @@
+use bevy::math::Vec2;
 use serde::{Deserialize, Serialize};
 
 use crate::hud::Panel;
@@ -9,6 +10,25 @@ impl std::ops::Add<f32> for ScreenPx {
     type Output = ScreenPx;
     fn add(self, delta: f32) -> ScreenPx {
         ScreenPx(self.0 + delta)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
+pub struct ScreenVec {
+    pub x: ScreenPx,
+    pub y: ScreenPx,
+}
+
+impl ScreenVec {
+    pub fn to_vec2(self) -> Vec2 {
+        Vec2::new(self.x.0, self.y.0)
+    }
+
+    pub fn from_vec2(v: Vec2) -> ScreenVec {
+        ScreenVec {
+            x: ScreenPx(v.x),
+            y: ScreenPx(v.y),
+        }
     }
 }
 
@@ -30,8 +50,8 @@ pub struct UiSettings {
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct Placement {
-    pub pos: (ScreenPx, ScreenPx),
-    pub size: Option<(ScreenPx, ScreenPx)>,
+    pub pos: ScreenVec,
+    pub size: Option<ScreenVec>,
 }
 
 impl UserSettings {

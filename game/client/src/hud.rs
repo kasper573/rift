@@ -10,7 +10,7 @@ use world::protocol::{Inventory, Name, Vitals, Xp};
 use world::session;
 
 use crate::Screen;
-use crate::user_settings::{Placement, ScreenPx, UserSettings};
+use crate::user_settings::{Placement, ScreenPx, ScreenVec, UserSettings};
 
 const WIDGET: ScreenPx = ScreenPx(48.0);
 const SLOT: ScreenPx = ScreenPx(36.0);
@@ -406,18 +406,22 @@ fn resolve(
     fallback_size: Option<Vec2>,
 ) -> (Vec2, Option<Vec2>) {
     let placement = world.resource::<Settings>().0.placement(panel);
-    let pos = placement.map_or(fallback_pos, |p| point(p.pos));
-    let size = fallback_size.map(|fallback| placement.and_then(|p| p.size).map_or(fallback, point));
+    let pos = placement.map_or(fallback_pos, |p| p.pos.to_vec2());
+    let size = fallback_size.map(|fallback| {
+        placement
+            .and_then(|p| p.size)
+            .map_or(fallback, ScreenVec::to_vec2)
+    });
     (pos, size)
 }
 
 fn persist(world: &mut World, panel: Panel, geom: Geom) -> Geom {
     let mut settings = world.resource_mut::<Settings>();
     let snapped = snap(&settings.0, geom, panel.resizable());
-    let pos = (ScreenPx(snapped.pos.x), ScreenPx(snapped.pos.y));
+    let pos = ScreenVec::from_vec2(snapped.pos);
     let size = panel
         .resizable()
-        .then_some((ScreenPx(snapped.size.x), ScreenPx(snapped.size.y)));
+        .then_some(ScreenVec::from_vec2(snapped.size));
     settings.0.set_placement(panel, Placement { pos, size });
     settings.0.save();
     snapped
@@ -461,10 +465,6 @@ fn toggle_keys(keys: Res<ButtonInput<KeyCode>>, mut open: ResMut<Open>) {
             open.0.insert(pane);
         }
     }
-}
-
-fn point((x, y): (ScreenPx, ScreenPx)) -> Vec2 {
-    Vec2::new(x.0, y.0)
 }
 
 fn despawn<M: Component>(panels: Query<Entity, With<M>>, mut commands: Commands) {

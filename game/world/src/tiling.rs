@@ -5,7 +5,19 @@ use serde::{Deserialize, Serialize};
 use crate::math::{Offset, Pos, Rect, Size, WorldPx};
 use crate::time::Seconds;
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+#[derive(
+    Serialize,
+    Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    PartialOrd,
+    derive_more::Add,
+    derive_more::Sub,
+    derive_more::SubAssign,
+)]
 pub struct Tiles(pub f32);
 
 pub type CellPos = euclid::default::Point2D<i32>;
@@ -25,26 +37,6 @@ pub const NEIGHBORS_8: [(i32, i32); 8] = [
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct TilesPerSec(pub Tiles);
-
-impl std::ops::Add for Tiles {
-    type Output = Tiles;
-    fn add(self, other: Tiles) -> Tiles {
-        Tiles(self.0 + other.0)
-    }
-}
-
-impl std::ops::Sub for Tiles {
-    type Output = Tiles;
-    fn sub(self, other: Tiles) -> Tiles {
-        Tiles(self.0 - other.0)
-    }
-}
-
-impl std::ops::SubAssign for Tiles {
-    fn sub_assign(&mut self, other: Tiles) {
-        self.0 -= other.0;
-    }
-}
 
 impl Tiles {
     pub fn ratio(self, other: Tiles) -> f32 {
@@ -68,76 +60,114 @@ impl std::ops::Mul<Seconds> for TilesPerSec {
 
 // Tile coordinates, single source of truth. An integer `CellPos` names a tile; its
 // center sits at the same numbers in continuous `Tiles` space, and the tile fills the
-// unit square around it. Nothing outside this section may add or subtract half-tiles:
+// unit square around it. Nothing outside this module may add or subtract half-tiles:
 // "tile 0,0" is where you stand, and ".5" is only the transient state between tiles.
 
-pub fn tile_center(cell: CellPos) -> Pos<Tiles> {
-    Pos::new(cell.x as f32, cell.y as f32)
+pub trait Cell {
+    fn center(self) -> Pos<Tiles>;
+    fn bounds(self) -> Rect<Tiles>;
+    fn index(self, size: GridSize) -> Option<usize>;
+    fn step(self, offset: (i32, i32)) -> CellPos;
 }
 
-pub fn tile_at(p: Pos<Tiles>) -> CellPos {
-    CellPos::new(p.x.round() as i32, p.y.round() as i32)
-}
+impl Cell for CellPos {
+    fn center(self) -> Pos<Tiles> {
+        Pos::new(self.x as f32, self.y as f32)
+    }
 
-pub fn snap_to_tile(p: Pos<Tiles>) -> Pos<Tiles> {
-    tile_center(tile_at(p))
-}
+    fn bounds(self) -> Rect<Tiles> {
+        Rect::new(
+            Pos::new(self.x as f32 - 0.5, self.y as f32 - 0.5),
+            Size::splat(1.0),
+        )
+    }
 
-pub fn on_center(p: Pos<Tiles>) -> bool {
-    let resting = |c: f32| (c - c.round()).abs() < 1e-3;
-    resting(p.x) && resting(p.y)
-}
+    fn index(self, size: GridSize) -> Option<usize> {
+        let (w, h) = (size.width as i32, size.height as i32);
+        let inside = self.x >= 0 && self.y >= 0 && self.x < w && self.y < h;
+        inside.then(|| (self.y * w + self.x) as usize)
+    }
 
-pub fn tile_bounds(cell: CellPos) -> Rect<Tiles> {
-    Rect::new(
-        Pos::new(cell.x as f32 - 0.5, cell.y as f32 - 0.5),
-        Size::splat(1.0),
-    )
-}
-
-pub fn grid_bounds(width: Tiles, height: Tiles) -> Rect<Tiles> {
-    Rect::new(Pos::new(-0.5, -0.5), Size::new(width.0, height.0))
-}
-
-pub fn tiles_in(rect: Rect<Tiles>) -> impl Iterator<Item = CellPos> {
-    let min = tile_at(rect.min());
-    let max = tile_at(rect.max());
-    (min.y..=max.y).flat_map(move |y| (min.x..=max.x).map(move |x| CellPos::new(x, y)))
-}
-
-pub fn grid_cells(width: i32, height: i32) -> impl Iterator<Item = CellPos> {
-    (0..height).flat_map(move |y| (0..width).map(move |x| CellPos::new(x, y)))
-}
-
-pub fn cell_index(cell: CellPos, width: i32, height: i32) -> Option<usize> {
-    let inside = cell.x >= 0 && cell.y >= 0 && cell.x < width && cell.y < height;
-    inside.then(|| (cell.y * width + cell.x) as usize)
-}
-
-pub fn cell_step(cell: CellPos, (dx, dy): (i32, i32)) -> CellPos {
-    CellPos::new(cell.x + dx, cell.y + dy)
-}
-
-/// An actor's hitbox in tile space: feet half a tile below its center, rising by its height.
-pub fn hitbox_bounds(pos: Pos<Tiles>, size: Size<Tiles>) -> Rect<Tiles> {
-    Rect::new(
-        pos + Offset::new(-size.width / 2.0, 0.5 - size.height),
-        size,
-    )
+    fn step(self, (dx, dy): (i32, i32)) -> CellPos {
+        CellPos::new(self.x + dx, self.y + dy)
+    }
 }
 
 pub trait TilePos {
+    fn cell(self) -> CellPos;
+    fn snap(self) -> Pos<Tiles>;
+    fn on_center(self) -> bool;
     fn distance(self, other: Pos<Tiles>) -> Tiles;
     fn toward(self, target: Pos<Tiles>, by: Tiles) -> Pos<Tiles>;
+    /// An actor's hitbox in tile space: feet half a tile below its center, rising by its height.
+    fn hitbox(self, size: Size<Tiles>) -> Rect<Tiles>;
 }
 
 impl TilePos for Pos<Tiles> {
+    fn cell(self) -> CellPos {
+        CellPos::new(self.x.round() as i32, self.y.round() as i32)
+    }
+
+    fn snap(self) -> Pos<Tiles> {
+        self.cell().center()
+    }
+
+    fn on_center(self) -> bool {
+        let resting = |c: f32| (c - c.round()).abs() < 1e-3;
+        resting(self.x) && resting(self.y)
+    }
+
     fn distance(self, other: Pos<Tiles>) -> Tiles {
         Tiles(self.distance_to(other))
     }
 
     fn toward(self, target: Pos<Tiles>, by: Tiles) -> Pos<Tiles> {
         self + (target - self).normalize() * by.0
+    }
+
+    fn hitbox(self, size: Size<Tiles>) -> Rect<Tiles> {
+        Rect::new(
+            self + Offset::new(-size.width / 2.0, 0.5 - size.height),
+            size,
+        )
+    }
+}
+
+pub trait TileRect {
+    fn tiles(self) -> impl Iterator<Item = CellPos>;
+}
+
+impl TileRect for Rect<Tiles> {
+    fn tiles(self) -> impl Iterator<Item = CellPos> {
+        let min = self.min().cell();
+        let max = self.max().cell();
+        (min.y..=max.y).flat_map(move |y| (min.x..=max.x).map(move |x| CellPos::new(x, y)))
+    }
+}
+
+pub trait TileSize {
+    fn bounds(self) -> Rect<Tiles>;
+    fn grid(self) -> GridSize;
+}
+
+impl TileSize for Size<Tiles> {
+    fn bounds(self) -> Rect<Tiles> {
+        Rect::new(Pos::new(-0.5, -0.5), self)
+    }
+
+    fn grid(self) -> GridSize {
+        GridSize::new(self.width as u32, self.height as u32)
+    }
+}
+
+pub trait GridDims {
+    fn cells(self) -> impl Iterator<Item = CellPos>;
+}
+
+impl GridDims for GridSize {
+    fn cells(self) -> impl Iterator<Item = CellPos> {
+        let (w, h) = (self.width as i32, self.height as i32);
+        (0..h).flat_map(move |y| (0..w).map(move |x| CellPos::new(x, y)))
     }
 }
 
@@ -148,10 +178,10 @@ pub struct PixelsPerTile {
 }
 
 impl PixelsPerTile {
-    pub fn new(tile_width: WorldPx, tile_height: WorldPx) -> PixelsPerTile {
+    pub fn new(tile_size: Size<WorldPx>) -> PixelsPerTile {
         PixelsPerTile {
-            x: euclid::Scale::new(1.0 / tile_width.0.max(1.0)),
-            y: euclid::Scale::new(1.0 / tile_height.0.max(1.0)),
+            x: euclid::Scale::new(1.0 / tile_size.width.max(1.0)),
+            y: euclid::Scale::new(1.0 / tile_size.height.max(1.0)),
         }
     }
 
@@ -171,6 +201,6 @@ impl PixelsPerTile {
     }
 
     pub fn tile_center(self, p: Pos<WorldPx>) -> Pos<Tiles> {
-        snap_to_tile(self.point(p))
+        self.point(p).snap()
     }
 }

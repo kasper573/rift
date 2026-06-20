@@ -2,11 +2,11 @@ use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
 use world::math::Pos;
 use world::session;
-use world::tiling::{self, Tiles};
+use world::tiling::{TilePos, Tiles};
 
 use crate::Screen;
 use crate::render::TILE;
-use crate::screen;
+use crate::screen::ToScreen;
 use crate::view;
 
 pub struct CursorPlugin;
@@ -82,7 +82,7 @@ fn compute(world: &mut World) -> (Pointer, Option<Pos<Tiles>>) {
     if view::enemy_at(world, point).is_some() {
         return (Pointer::Attack, None);
     }
-    let tile = tiling::snap_to_tile(point);
+    let tile = point.snap();
     if !view::walkable(world, tile) {
         return (Pointer::Default, None);
     }
@@ -136,7 +136,7 @@ fn apply_hover(world: &mut World, hover: Option<Pos<Tiles>>) {
     match hover {
         Some(tile) => {
             *visibility = Visibility::Visible;
-            let p = screen::to_screen(tile);
+            let p = tile.to_screen();
             transform.translation.x = p.x;
             transform.translation.y = p.y;
         }

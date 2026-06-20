@@ -9,7 +9,9 @@ use crate::assets;
 use crate::math::{Offset, Pos, Rect, Size, WorldPx};
 use crate::nav;
 use crate::table::{self, Content, Id};
-use crate::tiling::{self, CellPos, PixelsPerTile, Tiles};
+use crate::tiling::{
+    self, Cell, CellPos, GridDims, GridSize, PixelsPerTile, TileRect, TileSize, Tiles,
+};
 use crate::time::{Millis, Seconds};
 
 const FILE: &str = "area_table.json";
@@ -53,6 +55,12 @@ pub struct Portal {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct TileRef(u32);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Flip {
+    pub x: bool,
+    pub y: bool,
+}
+
 const FLIP_H: u32 = 0x8000_0000;
 const FLIP_V: u32 = 0x4000_0000;
 const FLIP_MASK: u32 = FLIP_H | FLIP_V;
@@ -60,12 +68,12 @@ const FLIP_MASK: u32 = FLIP_H | FLIP_V;
 impl TileRef {
     const EMPTY: TileRef = TileRef(0);
 
-    fn new(index: usize, flip: (bool, bool)) -> TileRef {
+    fn new(index: usize, flip: Flip) -> TileRef {
         let mut bits = index as u32 + 1;
-        if flip.0 {
+        if flip.x {
             bits |= FLIP_H;
         }
-        if flip.1 {
+        if flip.y {
             bits |= FLIP_V;
         }
         TileRef(bits)
@@ -78,22 +86,24 @@ impl TileRef {
         }
     }
 
-    fn flip(self) -> (bool, bool) {
-        (self.0 & FLIP_H != 0, self.0 & FLIP_V != 0)
+    fn flip(self) -> Flip {
+        Flip {
+            x: self.0 & FLIP_H != 0,
+            y: self.0 & FLIP_V != 0,
+        }
     }
 }
 
 #[derive(Clone)]
 pub struct RenderLayer {
     pub dynamic: bool,
-    width: i32,
-    height: i32,
+    size: GridSize,
     cells: Vec<TileRef>,
 }
 
 impl RenderLayer {
     pub fn at(&self, c: CellPos) -> TileRef {
-        tiling::cell_index(c, self.width, self.height).map_or(TileRef::EMPTY, |i| self.cells[i])
+        c.index(self.size).map_or(TileRef::EMPTY, |i| self.cells[i])
     }
 }
 
@@ -114,8 +124,7 @@ pub struct Group {
 pub struct Area {
     pub id: Id<AreaDef>,
     pub name: String,
-    pub width: Tiles,
-    pub height: Tiles,
+    pub size: Size<Tiles>,
 
     pub grid: nav::Grid,
     pub tile_sfx: Vec<Option<SfxId>>,
@@ -139,7 +148,7 @@ pub struct Area {
 pub struct TileSprite<'a> {
     pub sheet: &'a str,
     pub region: Rect<WorldPx>,
-    pub flip: (bool, bool),
+    pub flip: Flip,
 }
 
 impl Area {
@@ -186,7 +195,7 @@ impl Area {
     }
 
     pub fn tile_sfx_at(&self, c: CellPos) -> Option<&SfxId> {
-        let i = tiling::cell_index(c, self.width.0 as i32, self.height.0 as i32)?;
+        let i = c.index(self.size.grid())?;
         self.tile_sfx[i].as_ref()
     }
 }
@@ -247,10 +256,7 @@ fn load_map(name: &str) -> tiled::Map {
 
 fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
     let map = load_map(map_name);
-    let tiling = PixelsPerTile::new(
-        WorldPx(map.tile_width as f32),
-        WorldPx(map.tile_height as f32),
-    );
+    let tiling = PixelsPerTile::new(Size::new(map.tile_width as f32, map.tile_height as f32));
     let size = Size::new(map.width as f32, map.height as f32);
 
     let mut tiles = TilePalette::default();
@@ -263,18 +269,23 @@ fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
     for layer in map.layers() {
         match layer.layer_type() {
             LayerType::Tiles(tile_layer) => {
-                let (width, height) = (map.width as i32, map.height as i32);
-                let mut cells = vec![TileRef::EMPTY; (width * height) as usize];
-                for (i, cell) in tiling::grid_cells(width, height).enumerate() {
+                let dims = GridSize::new(map.width, map.height);
+                let mut cells = vec![TileRef::EMPTY; (dims.width * dims.height) as usize];
+                for (i, cell) in dims.cells().enumerate() {
                     if let Some(tile) = tile_layer.get_tile(cell.x, cell.y) {
-                        cells[i] =
-                            tiles.add(tile.get_tileset(), tile.id(), (tile.flip_h, tile.flip_v));
+                        cells[i] = tiles.add(
+                            tile.get_tileset(),
+                            tile.id(),
+                            Flip {
+                                x: tile.flip_h,
+                                y: tile.flip_v,
+                            },
+                        );
                     }
                 }
                 layers.push(RenderLayer {
                     dynamic: layer.name.eq_ignore_ascii_case("Dynamic"),
-                    width,
-                    height,
+                    size: dims,
                     cells,
                 });
             }
@@ -284,7 +295,14 @@ fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
                     if let Some(object_tile) = object.get_tile() {
                         let data = object.tile_data().expect("tile object has tile data");
                         let tileset = object_tile.get_tileset();
-                        let cell = tiles.add(tileset, data.id(), (data.flip_h, data.flip_v));
+                        let cell = tiles.add(
+                            tileset,
+                            data.id(),
+                            Flip {
+                                x: data.flip_h,
+                                y: data.flip_v,
+                            },
+                        );
                         objects.push((tiling.point(pos), cell));
                         let obscuring = object_tile.get_tile().is_some_and(|tile| {
                             tile.properties.get("Walkable") != Some(&PropertyValue::BoolValue(true))
@@ -323,8 +341,10 @@ fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
         panic!("map '{name}' must have a 'Dynamic' tile layer");
     }
     let grid = build_grid(size, &layers, &tiles, &obscuring_rects);
-    let walkable_nodes = tiling::grid_cells(map.width as i32, map.height as i32)
-        .map(tiling::tile_center)
+    let walkable_nodes = size
+        .grid()
+        .cells()
+        .map(|c| c.center())
         .filter(|&p| grid.walkable(p))
         .collect();
     let (groups, grouped_cells) = compute_groups(&layers, &tiles);
@@ -333,8 +353,7 @@ fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
     Area {
         id,
         name: name.to_owned(),
-        width: Tiles(size.width),
-        height: Tiles(size.height),
+        size,
         grid,
         tile_sfx,
         spawn,
@@ -359,7 +378,7 @@ struct TilePalette {
 }
 
 impl TilePalette {
-    fn add(&mut self, tileset: &tiled::Tileset, id: u32, flip: (bool, bool)) -> TileRef {
+    fn add(&mut self, tileset: &tiled::Tileset, id: u32, flip: Flip) -> TileRef {
         let identity = tileset as *const tiled::Tileset as usize;
         let key = (identity, id);
         let index = match self.keys.iter().position(|&k| k == key) {
@@ -483,11 +502,10 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TilePalette) -> (Vec<Group>, H
     let Some(dynamic) = layers.iter().find(|layer| layer.dynamic) else {
         return (groups, grouped_cells);
     };
-    let (width, height) = (dynamic.width, dynamic.height);
     let group_at = |c: CellPos| -> Option<i64> { tiles.group_of(dynamic.at(c)) };
 
     let mut visited: HashSet<CellPos> = HashSet::new();
-    for start in tiling::grid_cells(width, height) {
+    for start in dynamic.size.cells() {
         let Some(group_id) = group_at(start) else {
             continue;
         };
@@ -502,7 +520,7 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TilePalette) -> (Vec<Group>, H
             grouped_cells.insert(c);
             bottom = bottom.max(c.y);
             for step in tiling::NEIGHBORS_4 {
-                let next = tiling::cell_step(c, step);
+                let next = c.step(step);
                 if group_at(next) == Some(group_id) && visited.insert(next) {
                     stack.push(next);
                 }
@@ -511,7 +529,7 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TilePalette) -> (Vec<Group>, H
         groups.push(Group {
             // Depth sorts against actor/object centers (see tiling.rs); anchoring at the
             // bottom row's near edge keeps a player on that row in front, never tying.
-            bottom: Tiles(tiling::tile_bounds(CellPos::new(0, bottom)).min().y),
+            bottom: Tiles(CellPos::new(0, bottom).bounds().min().y),
             tiles: cells,
         });
     }
@@ -519,10 +537,10 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TilePalette) -> (Vec<Group>, H
 }
 
 fn tile_sfx(size: Size<Tiles>, layers: &[RenderLayer], tiles: &TilePalette) -> Vec<Option<SfxId>> {
-    let (width, height) = (size.width as i32, size.height as i32);
-    let mut sfx = vec![None; (width * height) as usize];
+    let grid = size.grid();
+    let mut sfx = vec![None; (grid.width * grid.height) as usize];
     for layer in layers {
-        for (i, cell) in tiling::grid_cells(width, height).enumerate() {
+        for (i, cell) in grid.cells().enumerate() {
             if let Some(id) = tiles.sfx_of(layer.at(cell)) {
                 sfx[i] = Some(id.clone());
             }
@@ -539,13 +557,13 @@ fn build_grid(
     tiles: &TilePalette,
     obscuring: &[Rect<Tiles>],
 ) -> nav::Grid {
-    let (width, height) = (size.width as i32, size.height as i32);
-    let cells = (width * height) as usize;
+    let grid = size.grid();
+    let cells = (grid.width * grid.height) as usize;
     let mut any_walkable = vec![false; cells];
     let mut any_blocked = vec![false; cells];
 
     for layer in layers {
-        for (index, cell) in tiling::grid_cells(width, height).enumerate() {
+        for (index, cell) in grid.cells().enumerate() {
             match tiles.walkable_of(layer.at(cell)) {
                 Some(true) => any_walkable[index] = true,
                 Some(false) => any_blocked[index] = true,
@@ -559,21 +577,21 @@ fn build_grid(
         .collect();
     for rect in obscuring {
         for c in obscured_cells(rect) {
-            if let Some(i) = tiling::cell_index(c, width, height) {
+            if let Some(i) = c.index(grid) {
                 walkable[i] = false;
             }
         }
     }
-    nav::Grid::new(size, walkable)
+    nav::Grid::new(grid, walkable)
 }
 
 fn obscured_cells(rect: &Rect<Tiles>) -> Vec<CellPos> {
-    tiling::tiles_in(*rect)
+    rect.tiles()
         .filter(|&c| cell_overlap(rect, c) >= OBSCURING_CUTOFF)
         .collect()
 }
 
 fn cell_overlap(rect: &Rect<Tiles>, c: CellPos) -> f32 {
-    rect.intersection(&tiling::tile_bounds(c))
+    rect.intersection(&c.bounds())
         .map_or(0.0, |overlap| overlap.area())
 }

@@ -7,7 +7,6 @@ use serde::{Deserialize, Deserializer};
 use super::combat::Died;
 use super::npc::{GameRng, Npc, NpcDef};
 use crate::items::ItemDef;
-use crate::math::rng_unit;
 use crate::protocol::{Inventory, Owner, Xp};
 use crate::table::{self, Id};
 
@@ -76,8 +75,7 @@ pub fn grant(world: &mut World) {
                     }
                 }
                 RewardKind::Item { item, chance } => {
-                    let granted =
-                        chance.is_none_or(|percent| rng_unit(&mut rng) * 100.0 < percent.0);
+                    let granted = chance.is_none_or(|percent| rng.unit() * 100.0 < percent.0);
                     if granted && let Some(mut inventory) = world.get_mut::<Inventory>(died.killer)
                     {
                         inventory

@@ -54,14 +54,19 @@ impl<U> From<Offset<U>> for Direction {
 }
 
 // The exact sequence is part of the game: it fixes every boot's npc layout, so it cannot move to a crate rng.
-pub fn next_rng(state: &mut u64) -> u64 {
-    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    let mut z = *state;
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
-}
+#[derive(Clone, Copy)]
+pub struct Rng(pub u64);
 
-pub fn rng_unit(state: &mut u64) -> f32 {
-    (next_rng(state) >> 40) as f32 / (1u64 << 24) as f32
+impl Rng {
+    pub fn roll(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    pub fn unit(&mut self) -> f32 {
+        (self.roll() >> 40) as f32 / (1u64 << 24) as f32
+    }
 }

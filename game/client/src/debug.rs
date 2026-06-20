@@ -3,10 +3,10 @@ use world::area;
 use world::math::Offset;
 use world::protocol::{Actor, AreaTag, Hitbox, Owner, Position};
 use world::session::MyClient;
-use world::tiling;
+use world::tiling::{self, TilePos};
 
 use crate::Screen;
-use crate::screen;
+use crate::screen::ToScreen;
 
 pub struct DebugPlugin;
 
@@ -67,15 +67,15 @@ fn draw(
                 for (dx, dy) in tiling::NEIGHBORS_8 {
                     let neighbor = node + Offset::new(dx as f32, dy as f32);
                     if area.grid.walkable(neighbor) {
-                        gizmos.line_2d(screen::to_screen(node), screen::to_screen(neighbor), red);
+                        gizmos.line_2d(node.to_screen(), neighbor.to_screen(), red);
                     }
                 }
             }
         }
         DebugMode::Obscured => {
             for rect in &area.obscuring_rects {
-                let min = screen::to_screen(rect.origin);
-                let max = screen::to_screen(rect.origin + rect.size);
+                let min = rect.origin.to_screen();
+                let max = (rect.origin + rect.size).to_screen();
                 gizmos.line_2d(Vec2::new(min.x, min.y), Vec2::new(max.x, min.y), red);
                 gizmos.line_2d(Vec2::new(max.x, min.y), Vec2::new(max.x, max.y), red);
                 gizmos.line_2d(Vec2::new(max.x, max.y), Vec2::new(min.x, max.y), red);
@@ -112,9 +112,9 @@ fn draw_hitboxes(
         return;
     }
     for (position, hitbox) in &actors {
-        let bounds = tiling::hitbox_bounds(position.pos, hitbox.size);
-        let size = screen::to_screen_size(hitbox.size);
-        let center = screen::to_screen(bounds.center());
+        let bounds = position.pos.hitbox(hitbox.size);
+        let size = hitbox.size.to_screen();
+        let center = bounds.center().to_screen();
         commands.spawn((
             HitboxOverlay,
             Sprite {

@@ -12,25 +12,14 @@ use crate::protocol::{
     set_facing,
 };
 use crate::table::Id;
-use crate::tiling::{self, CellPos, TilePos, Tiles, TilesPerSec};
+use crate::tiling::{Cell, CellPos, TilePos, Tiles, TilesPerSec};
 use crate::time::Seconds;
 
 const RUN_SPEED: TilesPerSec = TilesPerSec(Tiles(2.0));
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Cell {
-    pub pos: CellPos,
-}
-
-impl Cell {
-    fn center(&self) -> Pos<Tiles> {
-        tiling::tile_center(self.pos)
-    }
-}
-
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Path {
-    pub tiles: Vec<Cell>,
+    pub tiles: Vec<CellPos>,
 }
 
 #[derive(Component, Clone, Debug, PartialEq)]
@@ -88,9 +77,7 @@ pub fn halt(world: &mut World, entity: Entity) {
     world.entity_mut(entity).remove::<MoveTarget>();
     if on_tile(world, entity) {
         if let Some(at) = position(world, entity) {
-            world.entity_mut(entity).insert(Position {
-                pos: tiling::snap_to_tile(at),
-            });
+            world.entity_mut(entity).insert(Position { pos: at.snap() });
         }
         world.entity_mut(entity).remove::<Path>();
     } else if let Some(mut path) = world.get_mut::<Path>(entity) {
@@ -99,7 +86,7 @@ pub fn halt(world: &mut World, entity: Entity) {
 }
 
 pub fn on_tile(world: &World, entity: Entity) -> bool {
-    position(world, entity).is_some_and(tiling::on_center)
+    position(world, entity).is_some_and(|p| p.on_center())
 }
 
 fn retarget(
@@ -205,7 +192,7 @@ pub fn advance(world: &mut World) {
     }
 }
 
-fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<Cell>> {
+fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
     let area_id = world
         .get::<AreaTag>(entity)
         .map_or(Id::new(0), |tag| tag.area);
@@ -216,7 +203,7 @@ fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<Cell
     if path.len() > 1 {
         path.remove(0);
     }
-    Some(path.into_iter().map(|pos| Cell { pos }).collect())
+    Some(path)
 }
 
 fn cross_portal(world: &mut World, entity: Entity) {

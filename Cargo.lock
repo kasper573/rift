@@ -10044,6 +10044,7 @@ dependencies = [
  "bevy_replicon",
  "bevy_state",
  "bevy_time",
+ "derive_more",
  "euclid",
  "pathfinding",
  "serde",
