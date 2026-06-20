@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use world::area;
 use world::math::{Offset, Pos, Tiles};
-use world::protocol::{AreaTag, Owner};
+use world::protocol::{Actor, AreaTag, Hitbox, Owner, Position};
 use world::session::MyClient;
 
 use crate::Screen;
@@ -12,7 +12,12 @@ pub struct DebugPlugin;
 impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DebugMode>()
-            .add_systems(Update, (cycle, draw).run_if(in_state(Screen::Playing)));
+            .init_resource::<ShowHitboxes>()
+            .add_systems(
+                Update,
+                (cycle, draw, toggle_hitboxes, draw_hitboxes).run_if(in_state(Screen::Playing)),
+            )
+            .add_systems(OnExit(Screen::Playing), clear_hitboxes);
     }
 }
 
@@ -86,6 +91,59 @@ fn draw(
             }
         }
         DebugMode::Off => {}
+    }
+}
+
+#[derive(Resource, Default)]
+struct ShowHitboxes(bool);
+
+#[derive(Component)]
+struct HitboxOverlay;
+
+const HITBOX_FILL: Color = Color::srgba(1.0, 0.0, 0.0, 0.35);
+const HITBOX_Z: f32 = 100.0;
+
+fn toggle_hitboxes(keys: Res<ButtonInput<KeyCode>>, mut show: ResMut<ShowHitboxes>) {
+    if keys.just_pressed(KeyCode::F2) {
+        show.0 = !show.0;
+    }
+}
+
+fn draw_hitboxes(
+    show: Res<ShowHitboxes>,
+    actors: Query<(&Position, &Hitbox), With<Actor>>,
+    overlays: Query<Entity, With<HitboxOverlay>>,
+    mut commands: Commands,
+) {
+    clear(&overlays, &mut commands);
+    if !show.0 {
+        return;
+    }
+    for (position, hitbox) in &actors {
+        let size = Vec2::new(hitbox.size.width * TILE.0, hitbox.size.height * TILE.0);
+        let center = Vec2::new(
+            position.pos.x * TILE.0,
+            -(position.pos.y + 0.5 - hitbox.size.height / 2.0) * TILE.0,
+        );
+        commands.spawn((
+            HitboxOverlay,
+            Sprite {
+                color: HITBOX_FILL,
+                custom_size: Some(size),
+                ..default()
+            },
+            Transform::from_translation(center.extend(HITBOX_Z)),
+        ));
+    }
+}
+
+fn clear_hitboxes(overlays: Query<Entity, With<HitboxOverlay>>, mut commands: Commands) {
+    clear(&overlays, &mut commands);
+}
+
+fn clear(overlays: &Query<Entity, With<HitboxOverlay>>, commands: &mut Commands) {
+    for entity in overlays {
+        commands.entity(entity).despawn();
     }
 }
 
