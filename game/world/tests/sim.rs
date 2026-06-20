@@ -6,5 +6,5 @@
 fn assembles_the_authoritative_app_from_an_injected_root() {
     world::assets::init(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets"));
     world::sim::validate();
-    let _app = world::sim::server_app();
+    let _app = world::sim::server_app(world::area::spawn_zone());
 }

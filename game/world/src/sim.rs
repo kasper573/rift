@@ -9,17 +9,22 @@ pub mod player;
 pub mod regen;
 pub mod rewards;
 pub mod spectate;
+pub mod transition;
 pub mod visibility;
 
-use bevy_ecs::prelude::Bundle;
+use bevy_ecs::prelude::{Bundle, Resource};
 use bevy_replicon::prelude::Replicated;
 
+use crate::area::AreaDef;
 use crate::protocol::{Actor, AreaTag, Hitbox, Name, Position, Vitals};
+use crate::table::Id;
 use combat::Stats;
 use movement::Speed;
 
-/// The components every character — player or NPC — shares. Ownership, inventory, AI and the like
-/// are inserted alongside, per kind.
+/// Each world hosts exactly one area; crossing a portal hands the player off to the world hosting the destination area.
+#[derive(Resource, Clone, Copy)]
+pub struct HostedArea(pub Id<AreaDef>);
+
 #[derive(Bundle)]
 pub struct Character {
     pub replicated: Replicated,
@@ -43,16 +48,13 @@ pub fn validate() {
     crate::sfx::sfx_table();
 }
 
-/// The authoritative simulation as an unfinished [`bevy_app::App`]: replication, the tick
-/// schedule, and the connection observers are wired, but no transport is. The caller adds a
-/// messaging backend (e.g. `RepliconRenetPlugins` + a `RenetServer`), inserts an `Identity` and
-/// `ClientId` per connection, finishes the app, and calls `update()` at [`crate::TICK_HZ`].
-pub fn server_app() -> bevy_app::App {
+pub fn server_app(area: Id<AreaDef>) -> bevy_app::App {
     use bevy_app::{Startup, Update};
     use bevy_ecs::schedule::IntoScheduleConfigs;
     use bevy_replicon::prelude::{AuthMethod, RepliconSharedPlugin};
 
     let mut app = bevy_app::App::new();
+    app.insert_resource(HostedArea(area));
     app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));
     app.add_plugins(
         bevy_app::PluginGroup::build(bevy_replicon::prelude::RepliconPlugins)

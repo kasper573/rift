@@ -232,14 +232,19 @@ fn cross_portal(world: &mut World, entity: Entity) {
     let Some(at) = position(world, entity) else {
         return;
     };
-    if rect.contains(at) {
-        if let Some(mut tag) = world.get_mut::<AreaTag>(entity) {
-            tag.area = dest_area;
-        }
+    if !rect.contains(at) {
+        return;
+    }
+    let dest = Pos::new(dest.x + 0.5, dest.y + 0.5);
+    if dest_area == area_id {
         if let Some(mut p) = world.get_mut::<Position>(entity) {
-            p.pos = Pos::new(dest.x + 0.5, dest.y + 0.5);
+            p.pos = dest;
         }
-        world.entity_mut(entity).remove::<DesiredPortal>();
+        forget(world, entity);
+    } else {
+        world
+            .entity_mut(entity)
+            .insert(super::transition::Crossing { dest_area, dest });
         forget(world, entity);
     }
 }
