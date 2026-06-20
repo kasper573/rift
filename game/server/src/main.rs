@@ -201,16 +201,33 @@ fn simulate(
         counter!("rift_ticks_total").increment(1);
         histogram!("rift_tick_duration_seconds").record(started.elapsed().as_secs_f64());
         gauge!("rift_clients_connected").set(conns.len() as f64);
-        let entities: usize = worlds
-            .iter()
-            .map(|app| app.world().entities().len() as usize)
-            .sum();
-        gauge!("rift_entities").set(entities as f64);
+        record_ecs_metrics(&worlds);
 
         if let Some(remaining) = frame.checked_sub(started.elapsed()) {
             std::thread::sleep(remaining);
         }
     }
+}
+
+fn record_ecs_metrics(worlds: &[App]) {
+    gauge!("rift_worlds").set(worlds.len() as f64);
+    let mut entities = 0usize;
+    let mut components = 0usize;
+    let mut archetypes = 0usize;
+    let mut tables = 0usize;
+    for app in worlds {
+        let world = app.world();
+        for archetype in world.archetypes().iter() {
+            entities += archetype.len() as usize;
+            components += archetype.len() as usize * archetype.component_count();
+        }
+        archetypes += world.archetypes().len();
+        tables += world.storages().tables.len();
+    }
+    gauge!("rift_entities").set(entities as f64);
+    gauge!("rift_components").set(components as f64);
+    gauge!("rift_archetypes").set(archetypes as f64);
+    gauge!("rift_tables").set(tables as f64);
 }
 
 struct Conn {

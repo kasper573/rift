@@ -371,9 +371,53 @@
           "legendFormat": "entities",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "rift_worlds{job=\"rift_game_server\"}",
+          "legendFormat": "worlds",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "rift_components{job=\"rift_game_server\"}",
+          "legendFormat": "components",
+          "range": true,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "rift_archetypes{job=\"rift_game_server\"}",
+          "legendFormat": "archetypes",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "rift_tables{job=\"rift_game_server\"}",
+          "legendFormat": "tables",
+          "range": true,
+          "refId": "F"
         }
       ],
-      "title": "Clients & Entities",
+      "title": "ECS",
       "type": "timeseries"
     },
     {
