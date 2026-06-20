@@ -38,6 +38,10 @@ ctrlc = { version = "3", features = ["termination"] }
 # Continuous profiling agent that samples the process with pprof-rs and pushes to Pyroscope. Default
 # features keep rustls (no openssl system dep); only the backend services link it, never the client.
 pyroscope = { version = "2", features = ["backend-pprof-rs"] }
+# pprof-rs only profiles CPU; heap profiles come from jemalloc's sampling allocator, dumped as pprof
+# by jemalloc_pprof and scraped by alloy. Linux-only, which is where the backend services run.
+tikv-jemallocator = { version = "0.6", features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
+jemalloc_pprof = { version = "0.8", features = ["symbolize"] }
 bevy_app = { version = "0.19.0-rc.3", default-features = false }
 bevy_ecs = { version = "0.19.0-rc.3", default-features = false, features = ["std", "serialize"] }
 bevy_ui = { version = "0.19.0-rc.3", default-features = false, features = ["bevy_picking"] }

@@ -3,24 +3,39 @@ use std::sync::Arc;
 use axum::Router;
 use axum::ServiceExt;
 use axum::extract::Request;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::routing::get;
-use axum_prometheus::PrometheusMetricLayer;
+use axum_prometheus::PrometheusMetricLayerBuilder;
+use axum_prometheus::metrics_exporter_prometheus::PrometheusBuilder;
 use pyroscope::backend::{BackendConfig, PprofConfig, pprof_backend};
 use pyroscope::pyroscope::{PyroscopeAgent, PyroscopeAgentBuilder, PyroscopeAgentRunning};
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tower_http::normalize_path::NormalizePath;
 
+pub use axum_prometheus::metrics_exporter_prometheus::PrometheusHandle;
+pub use tikv_jemallocator::Jemalloc;
+
+/// Installs jemalloc, with heap-profile sampling active, as the process global allocator so
+/// [`heap_profile`] can serve heap profiles. Invoke once at the crate root of every binary that
+/// serves [`heap_profile`]: jemalloc reads its `malloc_conf` symbol at startup, which only an item
+/// linked into the final binary (not this library) reliably provides. `lg_prof_sample:19` samples
+/// one allocation per ~512 KiB, keeping the overhead low enough for always-on production profiling.
+#[macro_export]
+macro_rules! heap_profiling {
+    () => {
+        #[global_allocator]
+        static GLOBAL_ALLOCATOR: $crate::Jemalloc = $crate::Jemalloc;
+
+        #[allow(non_upper_case_globals)]
+        #[unsafe(export_name = "malloc_conf")]
+        pub static MALLOC_CONF: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
+    };
+}
+
 pub async fn serve(name: &str, port: u16, router: Router) {
-    let (track, prometheus) = PrometheusMetricLayer::pair();
-    metrics_process::Collector::default().describe();
-    let app = router.layer(track).route(
-        "/metrics",
-        get(move || async move {
-            metrics_process::Collector::default().collect();
-            prometheus.render()
-        }),
-    );
+    let app = track(router, recorder());
     let listener = TcpListener::bind(format!("0.0.0.0:{port}"))
         .await
         .unwrap_or_else(|error| panic!("could not bind 0.0.0.0:{port}: {error}"));
@@ -33,6 +48,54 @@ pub async fn serve(name: &str, port: u16, router: Router) {
         .with_graceful_shutdown(async move { stop.notified().await })
         .await
         .expect("serve");
+}
+
+/// Installs the process-wide Prometheus recorder and describes process metrics, returning the handle
+/// that [`track`] renders at `/metrics`. Histogram buckets span sub-millisecond to seconds so both
+/// HTTP latencies and the game server's per-tick timings resolve well. Call once, before any metric
+/// is recorded: [`serve`] does so just before serving, and the game server up front so its
+/// simulation's first-tick metrics are captured.
+pub fn recorder() -> PrometheusHandle {
+    metrics_process::Collector::default().describe();
+    PrometheusBuilder::new()
+        .set_buckets(&[
+            0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
+        ])
+        .expect("non-empty histogram buckets")
+        .install_recorder()
+        .expect("prometheus recorder installs")
+}
+
+/// Adds the shared observability surface to `router`: an HTTP request-metrics layer, the `/metrics`
+/// endpoint that renders `handle` (from [`recorder`]), and the `/debug/pprof/heap` endpoint alloy
+/// scrapes for memory profiles. [`serve`] applies this for the simple services; the game server
+/// applies it to its own router since it runs its own listener.
+pub fn track(router: Router, handle: PrometheusHandle) -> Router {
+    let (layer, handle) = PrometheusMetricLayerBuilder::new()
+        .with_metrics_from_fn(|| handle)
+        .build_pair();
+    router
+        .layer(layer)
+        .route(
+            "/metrics",
+            get(move || async move {
+                metrics_process::Collector::default().collect();
+                handle.render()
+            }),
+        )
+        .route("/debug/pprof/heap", get(heap_profile))
+}
+
+/// Serves the current heap as a pprof profile for alloy's `pyroscope.scrape` to ship to Pyroscope.
+/// Requires the binary to have installed the profiling allocator via [`heap_profiling!`].
+async fn heap_profile() -> impl IntoResponse {
+    let Some(controller) = jemalloc_pprof::PROF_CTL.as_ref() else {
+        return (StatusCode::NOT_FOUND, "heap profiling is not enabled").into_response();
+    };
+    match controller.lock().await.dump_pprof() {
+        Ok(pprof) => pprof.into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
 }
 
 pub fn profiler(

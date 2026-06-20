@@ -69,6 +69,38 @@ prometheus.remote_write "default" {
 	}
 }
 
+// CPU profiles are pushed in-process by each service's pyroscope agent; heap profiles can't be
+// (pprof-rs is CPU-only), so the services expose jemalloc's heap as pprof and alloy scrapes it.
+// service_name matches each agent's application name so both profile types group under one service.
+pyroscope.scrape "rift_heap" {
+	targets = [
+		{ __address__ = env("RIFT_GAME_SERVER_PROXY_HOST"), service_name = "rift-game-server" },
+		{ __address__ = env("RIFT_WEBSITE_PROXY_HOST"), service_name = "rift-website" },
+		{ __address__ = env("RIFT_INSTALLER_PROXY_HOST"), service_name = "rift-installer" },
+	]
+	forward_to      = [pyroscope.write.default.receiver]
+	scrape_interval = env("PROMETHEUS_SCRAPE_INTERVAL")
+	scrape_timeout  = env("PROMETHEUS_SCRAPE_TIMEOUT")
+
+	profiling_config {
+		profile.memory {
+			enabled = true
+			path    = "/debug/pprof/heap"
+			delta   = false
+		}
+		profile.process_cpu { enabled = false }
+		profile.goroutine { enabled = false }
+		profile.block { enabled = false }
+		profile.mutex { enabled = false }
+	}
+}
+
+pyroscope.write "default" {
+	endpoint {
+		url = env("PYROSCOPE_BASE")
+	}
+}
+
 local.file_match "system" {
 	path_targets = [{
 		__address__ = "localhost",

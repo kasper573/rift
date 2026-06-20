@@ -11,6 +11,8 @@ use serde::Deserialize;
 
 mod auth;
 
+service::heap_profiling!();
+
 #[derive(Deserialize)]
 struct Config {
     port: u16,

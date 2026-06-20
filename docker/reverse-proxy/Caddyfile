@@ -49,23 +49,23 @@ auth.{$RIFT_DOMAIN} {
     reverse_proxy {$KEYCLOAK_TARGET}
 }
 
-# Metrics are for the internal alloy scraper, never the public internet.
-(internal_metrics) {
-    @metrics path /metrics
-    respond @metrics 404
+# Metrics and profiling endpoints are for the internal alloy scraper, never the public internet.
+(internal_endpoints) {
+    @internal path /metrics /debug/pprof/*
+    respond @internal 404
 }
 
 {$RIFT_WEBSITE_DOMAIN} {
     import access_log
     import common_rate_limit
-    import internal_metrics
+    import internal_endpoints
     reverse_proxy {$RIFT_WEBSITE_PROXY_HOST}
 }
 
 {$RIFT_GAME_SERVER_DOMAIN} {
     import access_log
     import common_rate_limit
-    import internal_metrics
+    import internal_endpoints
     tracing {
         span rift_game_server
     }
@@ -77,6 +77,6 @@ auth.{$RIFT_DOMAIN} {
 {$RIFT_INSTALLER_DOMAIN} {
     import access_log
     import common_rate_limit
-    import internal_metrics
+    import internal_endpoints
     reverse_proxy {$RIFT_INSTALLER_PROXY_HOST}
 }

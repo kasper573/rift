@@ -11,6 +11,8 @@ tower-http = { workspace = true, features = ["normalize-path"] }
 ctrlc.workspace = true
 metrics-process.workspace = true
 pyroscope.workspace = true
+tikv-jemallocator.workspace = true
+jemalloc_pprof.workspace = true
 serde.workspace = true
 envy.workspace = true
 tokio.workspace = true

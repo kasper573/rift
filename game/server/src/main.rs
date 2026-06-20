@@ -26,6 +26,8 @@ use world::sim::transition;
 use world::table::Id;
 use world::{ClientId, Identity, TICK_HZ};
 
+service::heap_profiling!();
+
 const PROTOCOL_ID: u64 = 0x0072_6966_7400_0001;
 const TOKEN_EXPIRE: Duration = Duration::from_secs(30);
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
@@ -65,15 +67,15 @@ fn main() {
     let mut private_key = [0u8; NETCODE_KEY_BYTES];
     rand::rng().fill_bytes(&mut private_key);
 
+    let metrics = service::recorder();
     let sessions = Sessions::default();
     let http = Http {
         sessions: sessions.clone(),
         verifier: verifier(),
-        prometheus: metrics_recorder(),
         private_key,
         public,
     };
-    std::thread::spawn(move || serve_http(bind, http));
+    std::thread::spawn(move || serve_http(bind, http, metrics));
 
     simulate(bind, public, private_key, sessions, config.player_health);
 }
@@ -412,18 +414,19 @@ impl Sessions {
 struct Http {
     sessions: Sessions,
     verifier: Arc<Mutex<auth::Verifier>>,
-    prometheus: metrics_exporter_prometheus::PrometheusHandle,
     private_key: [u8; NETCODE_KEY_BYTES],
     public: SocketAddr,
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn serve_http(addr: SocketAddr, http: Http) {
-    let router = axum::Router::new()
-        .route("/session", post(session))
-        .route("/health", get(health))
-        .route("/metrics", get(scrape))
-        .with_state(http);
+async fn serve_http(addr: SocketAddr, http: Http, metrics: service::PrometheusHandle) {
+    let router = service::track(
+        axum::Router::new()
+            .route("/session", post(session))
+            .route("/health", get(health))
+            .with_state(http),
+        metrics,
+    );
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|error| panic!("cannot bind {addr}: {error}"));
@@ -488,11 +491,6 @@ fn resolve(http: &Http, authorization: &str) -> Result<Identity, StatusCode> {
     })
 }
 
-async fn scrape(State(http): State<Http>) -> String {
-    metrics_process::Collector::default().collect();
-    http.prometheus.render()
-}
-
 async fn health(State(http): State<Http>) -> Response {
     let ready = http.verifier.lock().expect("verifier lock").ready();
     if ready {
@@ -506,17 +504,6 @@ fn unix_now() -> Duration {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock after the unix epoch")
-}
-
-fn metrics_recorder() -> metrics_exporter_prometheus::PrometheusHandle {
-    metrics_process::Collector::default().describe();
-    metrics_exporter_prometheus::PrometheusBuilder::new()
-        .set_buckets(&[
-            0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
-        ])
-        .expect("non-empty histogram buckets")
-        .install_recorder()
-        .expect("prometheus recorder installs")
 }
 
 fn verifier() -> Arc<Mutex<auth::Verifier>> {
