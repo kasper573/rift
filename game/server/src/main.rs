@@ -17,7 +17,7 @@ use bevy_replicon_renet::RenetChannelsExt;
 use bevy_replicon_renet::netcode::{
     ConnectToken, NETCODE_KEY_BYTES, NetcodeServerTransport, ServerAuthentication, ServerConfig,
 };
-use bevy_replicon_renet::renet::{ConnectionConfig, RenetServer, ServerEvent};
+use bevy_replicon_renet::renet::{ConnectionConfig, DisconnectReason, RenetServer, ServerEvent};
 use bevy_state::prelude::NextState;
 use metrics::{counter, gauge, histogram};
 use rand::RngCore;
@@ -154,7 +154,9 @@ fn simulate(
                         },
                     );
                 }
-                ServerEvent::ClientDisconnected { client_id, .. } => {
+                ServerEvent::ClientDisconnected { client_id, reason } => {
+                    counter!("rift_client_connections_closed_total", "code" => disconnect_code(&reason))
+                        .increment(1);
                     if let Some(conn) = conns.remove(&client_id) {
                         worlds[conn.area].world_mut().despawn(conn.entity);
                     }
@@ -202,6 +204,7 @@ fn simulate(
         histogram!("rift_tick_duration_seconds").record(started.elapsed().as_secs_f64());
         gauge!("rift_clients_connected").set(conns.len() as f64);
         record_ecs_metrics(&worlds);
+        record_network_metrics(&server, &conns);
 
         if let Some(remaining) = frame.checked_sub(started.elapsed()) {
             std::thread::sleep(remaining);
@@ -228,6 +231,34 @@ fn record_ecs_metrics(worlds: &[App]) {
     gauge!("rift_components").set(components as f64);
     gauge!("rift_archetypes").set(archetypes as f64);
     gauge!("rift_tables").set(tables as f64);
+}
+
+fn record_network_metrics(server: &RenetServer, conns: &HashMap<u64, Conn>) {
+    let mut sent_per_sec = 0.0;
+    let mut received_per_sec = 0.0;
+    let mut max_packet_loss = 0.0;
+    for &network_id in conns.keys() {
+        sent_per_sec += server.bytes_sent_per_sec(network_id);
+        received_per_sec += server.bytes_received_per_sec(network_id);
+        max_packet_loss = f64::max(max_packet_loss, server.packet_loss(network_id));
+        histogram!("rift_client_rtt_seconds").record(server.rtt(network_id));
+    }
+    gauge!("rift_net_bytes_sent_per_sec").set(sent_per_sec);
+    gauge!("rift_net_bytes_received_per_sec").set(received_per_sec);
+    gauge!("rift_packet_loss_ratio").set(max_packet_loss);
+}
+
+fn disconnect_code(reason: &DisconnectReason) -> &'static str {
+    match reason {
+        DisconnectReason::Transport => "transport",
+        DisconnectReason::DisconnectedByClient => "by_client",
+        DisconnectReason::DisconnectedByServer => "by_server",
+        DisconnectReason::PacketSerialization(_) => "packet_serialization",
+        DisconnectReason::PacketDeserialization(_) => "packet_deserialization",
+        DisconnectReason::ReceivedInvalidChannelId(_) => "invalid_channel_id",
+        DisconnectReason::SendChannelError { .. } => "send_channel_error",
+        DisconnectReason::ReceiveChannelError { .. } => "receive_channel_error",
+    }
 }
 
 struct Conn {
