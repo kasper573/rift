@@ -34,6 +34,9 @@ struct Config {
     public_host: String,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
+    /// Optional override for the health players spawn with; e2e scenarios raise it so a player
+    /// can't die mid-test. Absent in real deployments, where players use the in-game default.
+    player_health: Option<f32>,
 }
 
 fn main() {
@@ -69,7 +72,7 @@ fn main() {
     };
     std::thread::spawn(move || serve_http(bind, http));
 
-    simulate(bind, public, private_key, sessions);
+    simulate(bind, public, private_key, sessions, config.player_health);
 }
 
 fn simulate(
@@ -77,9 +80,13 @@ fn simulate(
     public: SocketAddr,
     private_key: [u8; NETCODE_KEY_BYTES],
     sessions: Sessions,
+    player_health: Option<f32>,
 ) {
     let mut app = world::sim::server_app();
     app.add_plugins(RepliconRenetPlugins);
+    if let Some(health) = player_health {
+        app.insert_resource(world::sim::player::PlayerHealth(health));
+    }
 
     let channels = app.world().resource::<RepliconChannels>();
     let server = RenetServer::new(ConnectionConfig {

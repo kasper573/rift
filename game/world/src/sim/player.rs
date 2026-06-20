@@ -34,6 +34,11 @@ const PLAYER_MODEL: &str = "adventurer";
 #[derive(Resource, Default)]
 pub struct Players(pub HashMap<ClientId, Entity>);
 
+/// The health players spawn (and respawn) with. The server may override it — e2e scenarios raise it
+/// so a player can't die mid-test; without it, players use [`PLAYER_MAX_HEALTH`].
+#[derive(Resource, Clone, Copy)]
+pub struct PlayerHealth(pub f32);
+
 pub(crate) fn sender_player(
     world: &World,
     sender: bevy_replicon::prelude::ClientId,
@@ -105,6 +110,9 @@ fn spawn_player(
     name: String,
 ) {
     let model = Id::<ActorModel>::by_name(PLAYER_MODEL).expect("the player model exists");
+    let max = world
+        .get_resource::<PlayerHealth>()
+        .map_or(PLAYER_MAX_HEALTH, |health| health.0);
     let entity = world
         .spawn((
             Character {
@@ -121,10 +129,7 @@ fn spawn_player(
                 hitbox: Hitbox {
                     size: model.get().hitbox(),
                 },
-                vitals: Vitals {
-                    health: PLAYER_MAX_HEALTH,
-                    max: PLAYER_MAX_HEALTH,
-                },
+                vitals: Vitals { health: max, max },
                 area: AreaTag { area: zone },
                 stats: Stats {
                     damage: PLAYER_DAMAGE,
