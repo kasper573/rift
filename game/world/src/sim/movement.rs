@@ -12,7 +12,7 @@ use crate::protocol::{
     set_facing,
 };
 use crate::table::Id;
-use crate::tiling::{self, CellPos, Tiles, TilesPerSec};
+use crate::tiling::{self, CellPos, TilePos, Tiles, TilesPerSec};
 use crate::time::Seconds;
 
 const RUN_SPEED: TilesPerSec = TilesPerSec(Tiles(2.0));
@@ -164,7 +164,7 @@ pub fn advance(world: &mut World) {
                 None => break,
             };
             let step = target - at;
-            let distance = Tiles(step.length());
+            let distance = at.distance(target);
             if distance < Tiles(1e-4) {
                 at = target;
                 tiles.remove(0);
@@ -176,7 +176,7 @@ pub fn advance(world: &mut World) {
                 heading = Some(step);
                 tiles.remove(0);
             } else {
-                at += step.normalize() * remaining.0;
+                at = at.toward(target, remaining);
                 heading = Some(step);
                 remaining = Tiles(0.0);
             }
@@ -188,7 +188,7 @@ pub fn advance(world: &mut World) {
         {
             set_facing(
                 &mut actor,
-                Direction::from_vec(step.x, step.y) as u8,
+                Direction::from(step) as u8,
                 if speed >= RUN_SPEED {
                     ACTION_RUN
                 } else {

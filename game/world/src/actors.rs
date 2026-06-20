@@ -52,12 +52,12 @@ impl ActorModel {
         attack_speed: PlaybackRate,
     ) -> Rect<WorldPx> {
         let strip = self.strip(action, dir);
-        let elapsed = Millis((t.0 * 1000.0 * rate(action, attack_speed).0).max(0.0));
+        let elapsed = (t.millis() * rate(action, attack_speed)).max(Millis(0.0));
         let total = total_ms(strip);
         let position = if action == DEATH {
-            Millis(elapsed.0.min(total.0 - 1.0))
+            elapsed.min(total - Millis(1.0))
         } else {
-            Millis(elapsed.0 % total.0)
+            elapsed % total
         };
         let mut cursor = Millis(0.0);
         for frame in strip {
@@ -99,7 +99,7 @@ impl ActorModel {
             .map(|dirs| dirs[dir_slot(dir)].as_slice())
             .unwrap_or_default();
         let rate = rate(action, attack_speed);
-        let authored = |t: Seconds| Millis(t.0 * 1000.0 * rate.0);
+        let authored = |t: Seconds| t.millis() * rate;
         let total = total_ms(strip);
         let once = action == DEATH;
         let (mut sfx, mut stepped) = (Vec::new(), false);
@@ -235,7 +235,7 @@ fn dir_slot(dir: u8) -> usize {
 
 fn rate(action: &str, attack_speed: PlaybackRate) -> PlaybackRate {
     if action == ATTACK {
-        PlaybackRate(attack_speed.0.max(0.01))
+        attack_speed.at_least(0.01)
     } else {
         PlaybackRate(1.0)
     }
@@ -252,7 +252,7 @@ fn crossed(once: bool, total: Millis, at: Millis, prev: Millis, now: Millis) -> 
         } else if once {
             1
         } else {
-            ((t.0 - at.0) / total.0) as i64 + 1
+            (t - at).ratio(total) as i64 + 1
         }
     };
     count(now) > count(prev)

@@ -10,6 +10,7 @@ pub mod hud;
 pub mod input;
 pub mod net;
 pub mod render;
+pub mod screen;
 pub mod screens;
 pub mod sfx;
 pub mod user_settings;

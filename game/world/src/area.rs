@@ -6,7 +6,7 @@ use tiled::{LayerType, PropertyValue};
 
 use crate::actors::SfxId;
 use crate::assets;
-use crate::math::{Pos, Rect, Size, WorldPx};
+use crate::math::{Offset, Pos, Rect, Size, WorldPx};
 use crate::nav;
 use crate::table::{self, Content, Id};
 use crate::tiling::{self, CellPos, PixelsPerTile, Tiles};
@@ -93,10 +93,7 @@ pub struct RenderLayer {
 
 impl RenderLayer {
     pub fn at(&self, c: CellPos) -> TileRef {
-        if c.x < 0 || c.y < 0 || c.x >= self.width || c.y >= self.height {
-            return TileRef::EMPTY;
-        }
-        self.cells[(c.y * self.width + c.x) as usize]
+        tiling::cell_index(c, self.width, self.height).map_or(TileRef::EMPTY, |i| self.cells[i])
     }
 }
 
@@ -151,7 +148,7 @@ impl Area {
         let region = if def.total.0 == 0.0 {
             def.frames[0].0
         } else {
-            let mut remaining = Millis((time.0 * 1000.0).max(0.0) % def.total.0);
+            let mut remaining = time.millis().max(Millis(0.0)) % def.total;
             let mut region = def.frames[0].0;
             for &(frame, duration) in &def.frames {
                 if remaining < duration {
@@ -189,10 +186,8 @@ impl Area {
     }
 
     pub fn tile_sfx_at(&self, c: CellPos) -> Option<&SfxId> {
-        if c.x < 0 || c.y < 0 || c.x >= self.width.0 as i32 || c.y >= self.height.0 as i32 {
-            return None;
-        }
-        self.tile_sfx[(c.y * self.width.0 as i32 + c.x) as usize].as_ref()
+        let i = tiling::cell_index(c, self.width.0 as i32, self.height.0 as i32)?;
+        self.tile_sfx[i].as_ref()
     }
 }
 
@@ -270,15 +265,10 @@ fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
             LayerType::Tiles(tile_layer) => {
                 let (width, height) = (map.width as i32, map.height as i32);
                 let mut cells = vec![TileRef::EMPTY; (width * height) as usize];
-                for y in 0..height {
-                    for x in 0..width {
-                        if let Some(cell) = tile_layer.get_tile(x, y) {
-                            cells[(y * width + x) as usize] = tiles.add(
-                                cell.get_tileset(),
-                                cell.id(),
-                                (cell.flip_h, cell.flip_v),
-                            );
-                        }
+                for (i, cell) in tiling::grid_cells(width, height).enumerate() {
+                    if let Some(tile) = tile_layer.get_tile(cell.x, cell.y) {
+                        cells[i] =
+                            tiles.add(tile.get_tileset(), tile.id(), (tile.flip_h, tile.flip_v));
                     }
                 }
                 layers.push(RenderLayer {
@@ -302,7 +292,7 @@ fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
                         if obscuring {
                             let object_size = shape_size(&object.shape);
                             obscuring_rects.push(tiling.rect(Rect::new(
-                                Pos::new(pos.x, pos.y - object_size.height),
+                                pos - Offset::new(0.0, object_size.height),
                                 object_size,
                             )));
                         }
@@ -333,8 +323,8 @@ fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
         panic!("map '{name}' must have a 'Dynamic' tile layer");
     }
     let grid = build_grid(size, &layers, &tiles, &obscuring_rects);
-    let walkable_nodes = (0..map.height as i32)
-        .flat_map(|y| (0..map.width as i32).map(move |x| tiling::tile_center(CellPos::new(x, y))))
+    let walkable_nodes = tiling::grid_cells(map.width as i32, map.height as i32)
+        .map(tiling::tile_center)
         .filter(|&p| grid.walkable(p))
         .collect();
     let (groups, grouped_cells) = compute_groups(&layers, &tiles);
@@ -497,36 +487,33 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TilePalette) -> (Vec<Group>, H
     let group_at = |c: CellPos| -> Option<i64> { tiles.group_of(dynamic.at(c)) };
 
     let mut visited: HashSet<CellPos> = HashSet::new();
-    for sy in 0..height {
-        for sx in 0..width {
-            let start = CellPos::new(sx, sy);
-            let Some(group_id) = group_at(start) else {
-                continue;
-            };
-            if !visited.insert(start) {
-                continue;
-            }
-            let mut stack = vec![start];
-            let mut cells = Vec::new();
-            let mut bottom = sy;
-            while let Some(c) = stack.pop() {
-                cells.push((c, dynamic.at(c)));
-                grouped_cells.insert(c);
-                bottom = bottom.max(c.y);
-                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                    let next = CellPos::new(c.x + dx, c.y + dy);
-                    if group_at(next) == Some(group_id) && visited.insert(next) {
-                        stack.push(next);
-                    }
+    for start in tiling::grid_cells(width, height) {
+        let Some(group_id) = group_at(start) else {
+            continue;
+        };
+        if !visited.insert(start) {
+            continue;
+        }
+        let mut stack = vec![start];
+        let mut cells = Vec::new();
+        let mut bottom = start.y;
+        while let Some(c) = stack.pop() {
+            cells.push((c, dynamic.at(c)));
+            grouped_cells.insert(c);
+            bottom = bottom.max(c.y);
+            for step in tiling::NEIGHBORS_4 {
+                let next = tiling::cell_step(c, step);
+                if group_at(next) == Some(group_id) && visited.insert(next) {
+                    stack.push(next);
                 }
             }
-            groups.push(Group {
-                // Depth sorts against actor/object centers (see tiling.rs); anchoring at the
-                // bottom row's near edge keeps a player on that row in front, never tying.
-                bottom: Tiles(tiling::tile_bounds(CellPos::new(0, bottom)).min().y),
-                tiles: cells,
-            });
         }
+        groups.push(Group {
+            // Depth sorts against actor/object centers (see tiling.rs); anchoring at the
+            // bottom row's near edge keeps a player on that row in front, never tying.
+            bottom: Tiles(tiling::tile_bounds(CellPos::new(0, bottom)).min().y),
+            tiles: cells,
+        });
     }
     (groups, grouped_cells)
 }
@@ -535,11 +522,9 @@ fn tile_sfx(size: Size<Tiles>, layers: &[RenderLayer], tiles: &TilePalette) -> V
     let (width, height) = (size.width as i32, size.height as i32);
     let mut sfx = vec![None; (width * height) as usize];
     for layer in layers {
-        for y in 0..height {
-            for x in 0..width {
-                if let Some(id) = tiles.sfx_of(layer.at(CellPos::new(x, y))) {
-                    sfx[(y * width + x) as usize] = Some(id.clone());
-                }
+        for (i, cell) in tiling::grid_cells(width, height).enumerate() {
+            if let Some(id) = tiles.sfx_of(layer.at(cell)) {
+                sfx[i] = Some(id.clone());
             }
         }
     }
@@ -560,14 +545,11 @@ fn build_grid(
     let mut any_blocked = vec![false; cells];
 
     for layer in layers {
-        for y in 0..height {
-            for x in 0..width {
-                let index = (y * width + x) as usize;
-                match tiles.walkable_of(layer.at(CellPos::new(x, y))) {
-                    Some(true) => any_walkable[index] = true,
-                    Some(false) => any_blocked[index] = true,
-                    None => {}
-                }
+        for (index, cell) in tiling::grid_cells(width, height).enumerate() {
+            match tiles.walkable_of(layer.at(cell)) {
+                Some(true) => any_walkable[index] = true,
+                Some(false) => any_blocked[index] = true,
+                None => {}
             }
         }
     }
@@ -577,8 +559,8 @@ fn build_grid(
         .collect();
     for rect in obscuring {
         for c in obscured_cells(rect) {
-            if c.x >= 0 && c.y >= 0 && c.x < width && c.y < height {
-                walkable[(c.y * width + c.x) as usize] = false;
+            if let Some(i) = tiling::cell_index(c, width, height) {
+                walkable[i] = false;
             }
         }
     }

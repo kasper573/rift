@@ -1,12 +1,13 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use world::area;
-use world::math::{Pos, Rect, Size};
+use world::math::Pos;
 use world::protocol::{Actor, AreaTag, Hitbox, Position, Vitals};
 use world::session;
-use world::tiling::Tiles;
+use world::tiling::{self, Tiles};
 
-use crate::render::{TILE, Viewport, WorldCamera};
+use crate::render::{Viewport, WorldCamera};
+use crate::screen;
 
 pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
     let cursor = world
@@ -24,7 +25,7 @@ pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
         .single(world)
         .ok()?;
     let point = camera.viewport_to_world_2d(transform, target).ok()?;
-    Some(Pos::new(point.x / TILE.0, -point.y / TILE.0))
+    Some(screen::to_tile(point))
 }
 
 pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
@@ -40,17 +41,11 @@ pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
     let mut actors =
         world.query_filtered::<(Entity, &Position, &Hitbox, Option<&Vitals>), With<Actor>>();
     actors.iter(world).find_map(|(entity, at, hitbox, vitals)| {
-        if Some(entity) == me || vitals.is_some_and(|vitals| vitals.health <= 0.0) {
+        if Some(entity) == me || vitals.is_some_and(Vitals::is_dead) {
             return None;
         }
-        hitbox_bounds(at.pos, hitbox.size)
+        tiling::hitbox_bounds(at.pos, hitbox.size)
             .contains(point)
             .then_some(entity)
     })
-}
-
-/// An actor's hitbox in tile space: feet half a tile below its center, rising by its height.
-pub fn hitbox_bounds(pos: Pos<Tiles>, size: Size<Tiles>) -> Rect<Tiles> {
-    let feet = pos.y + 0.5;
-    Rect::new(Pos::new(pos.x - size.width / 2.0, feet - size.height), size)
 }

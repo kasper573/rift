@@ -173,13 +173,14 @@ fn ready(played: &mut HashMap<usize, Seconds>, row: usize, clock: Seconds) -> bo
 }
 
 fn proximity_volume(listener: Pos<Tiles>, source: Pos<Tiles>) -> f32 {
-    let dx = (source.x - listener.x).abs() / HALF_VIEW.width;
-    let dy = (source.y - listener.y).abs() / HALF_VIEW.height;
+    let offset = source - listener;
+    let dx = offset.x.abs() / HALF_VIEW.width;
+    let dy = offset.y.abs() / HALF_VIEW.height;
     (1.0 - dx.max(dy)).clamp(0.0, 1.0)
 }
 
 fn proximity_pan(listener: Pos<Tiles>, source: Pos<Tiles>) -> f32 {
-    ((source.x - listener.x) / HALF_VIEW.width).clamp(-1.0, 1.0)
+    ((source - listener).x / HALF_VIEW.width).clamp(-1.0, 1.0)
 }
 
 fn fastrand_unit(clock: Seconds, salt: usize) -> f32 {

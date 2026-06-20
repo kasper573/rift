@@ -17,6 +17,8 @@ use world::table::Id;
 use world::tiling::{self, CellPos, Tiles};
 use world::time::Seconds;
 
+use crate::screen;
+
 pub const TILE: WorldPx = WorldPx(16.0);
 const VIEW_TILES_TALL: f32 = 18.0;
 const VIEW_TALL: f32 = VIEW_TILES_TALL * TILE.0;
@@ -186,10 +188,10 @@ fn healthbar(world: &mut World) {
         // Whole pixels: avoid floor/ceil alternation on fractional offsets during movement.
         let at = me.get::<Position>()?.pos;
         let vitals = me.get::<Vitals>()?;
-        (vitals.health > 0.0 && vitals.max > 0.0).then(|| {
+        (!vitals.is_dead() && vitals.max > 0.0).then(|| {
             (
-                Vec2::new(at.x * TILE.0, -at.y * TILE.0 - BAR_DROP.0).round(),
-                (vitals.health / vitals.max).clamp(0.0, 1.0),
+                (screen::to_screen(at) - Vec2::new(0.0, BAR_DROP.0)).round(),
+                vitals.fraction(),
             )
         })
     });
@@ -348,8 +350,9 @@ fn follow_camera(
         return;
     };
     if let Ok(mut transform) = camera.single_mut() {
-        transform.translation.x = center.x * TILE.0;
-        transform.translation.y = -center.y * TILE.0;
+        let p = screen::to_screen(center);
+        transform.translation.x = p.x;
+        transform.translation.y = p.y;
     }
 }
 
@@ -489,11 +492,11 @@ fn animate_tiles(
 }
 
 fn sprite_transform(pos: Pos<Tiles>, z: f32) -> Transform {
-    Transform::from_xyz(pos.x * TILE.0, -pos.y * TILE.0, z)
+    Transform::from_translation(screen::to_screen(pos).extend(z))
 }
 
 fn dynamic_z(area: &area::Area, base: f32, y: Tiles) -> f32 {
-    base + (y.0 + 1.0) / (area.height.0 + 2.0)
+    base + (y + Tiles(1.0)).ratio(area.height + Tiles(2.0))
 }
 
 fn tile_sprite(assets: &AssetServer, sprite: &area::TileSprite, size: Vec2) -> Sprite {
@@ -509,10 +512,10 @@ fn tile_sprite(assets: &AssetServer, sprite: &area::TileSprite, size: Vec2) -> S
 
 fn atlas_rect(region: world::math::Rect<WorldPx>) -> Rect {
     Rect::new(
-        region.origin.x,
-        region.origin.y,
-        region.origin.x + region.size.width,
-        region.origin.y + region.size.height,
+        region.min().x,
+        region.min().y,
+        region.max().x,
+        region.max().y,
     )
 }
 

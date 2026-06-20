@@ -59,11 +59,7 @@ impl Grid {
 
     fn cell_walkable(&self, c: CellPos) -> bool {
         let (width, height) = self.dims();
-        c.x >= 0
-            && c.y >= 0
-            && c.x < width
-            && c.y < height
-            && self.walkable[(c.y * width + c.x) as usize]
+        tiling::cell_index(c, width, height).is_some_and(|i| self.walkable[i])
     }
 }
 
@@ -76,8 +72,8 @@ pub fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<Cel
     let (path, _cost) = pathfinding::prelude::astar(
         &start,
         |&c| {
-            NEIGHBOURS.iter().filter_map(move |&(dx, dy)| {
-                let next = CellPos::new(c.x + dx, c.y + dy);
+            tiling::NEIGHBORS_8.iter().filter_map(move |&(dx, dy)| {
+                let next = tiling::cell_step(c, (dx, dy));
                 let cost = if dx != 0 && dy != 0 {
                     DIAGONAL
                 } else {
@@ -95,14 +91,3 @@ pub fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<Cel
     )?;
     Some(path)
 }
-
-const NEIGHBOURS: [(i32, i32); 8] = [
-    (1, 0),
-    (-1, 0),
-    (0, 1),
-    (0, -1),
-    (1, 1),
-    (1, -1),
-    (-1, 1),
-    (-1, -1),
-];

@@ -19,7 +19,7 @@ use crate::area::AreaDef;
 use crate::math::Pos;
 use crate::protocol::{AreaTag, ClientId, Inventory, Position, Spectate, position};
 use crate::table::Id;
-use crate::tiling::Tiles;
+use crate::tiling::{TilePos, Tiles};
 
 pub const VIEW_DISTANCE: Tiles = Tiles(24.0);
 
@@ -146,6 +146,6 @@ fn sees(sight: Option<&Sight>, players: &HashSet<Entity>, subject: &Subject) -> 
     if subject.area != Some(area) {
         return false;
     }
-    (!subject.anchor && pos.distance_to(subject.pos) <= VIEW_DISTANCE.0)
+    (!subject.anchor && pos.distance(subject.pos) <= VIEW_DISTANCE)
         || (sight.spectating && players.contains(&subject.entity))
 }

@@ -6,6 +6,7 @@ use world::tiling::{self, Tiles};
 
 use crate::Screen;
 use crate::render::TILE;
+use crate::screen;
 use crate::view;
 
 pub struct CursorPlugin;
@@ -135,8 +136,9 @@ fn apply_hover(world: &mut World, hover: Option<Pos<Tiles>>) {
     match hover {
         Some(tile) => {
             *visibility = Visibility::Visible;
-            transform.translation.x = tile.x * TILE.0;
-            transform.translation.y = -tile.y * TILE.0;
+            let p = screen::to_screen(tile);
+            transform.translation.x = p.x;
+            transform.translation.y = p.y;
         }
         None => *visibility = Visibility::Hidden,
     }

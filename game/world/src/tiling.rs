@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::math::{Pos, Rect, Size, WorldPx};
+use crate::math::{Offset, Pos, Rect, Size, WorldPx};
 use crate::time::Seconds;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
@@ -10,6 +10,18 @@ pub struct Tiles(pub f32);
 
 pub type CellPos = euclid::default::Point2D<i32>;
 pub type GridSize = euclid::default::Size2D<u32>;
+
+pub const NEIGHBORS_4: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+pub const NEIGHBORS_8: [(i32, i32); 8] = [
+    (1, 0),
+    (-1, 0),
+    (0, 1),
+    (0, -1),
+    (1, 1),
+    (1, -1),
+    (-1, 1),
+    (-1, -1),
+];
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct TilesPerSec(pub Tiles);
@@ -31,6 +43,12 @@ impl std::ops::Sub for Tiles {
 impl std::ops::SubAssign for Tiles {
     fn sub_assign(&mut self, other: Tiles) {
         self.0 -= other.0;
+    }
+}
+
+impl Tiles {
+    pub fn ratio(self, other: Tiles) -> f32 {
+        self.0 / other.0
     }
 }
 
@@ -85,6 +103,42 @@ pub fn tiles_in(rect: Rect<Tiles>) -> impl Iterator<Item = CellPos> {
     let min = tile_at(rect.min());
     let max = tile_at(rect.max());
     (min.y..=max.y).flat_map(move |y| (min.x..=max.x).map(move |x| CellPos::new(x, y)))
+}
+
+pub fn grid_cells(width: i32, height: i32) -> impl Iterator<Item = CellPos> {
+    (0..height).flat_map(move |y| (0..width).map(move |x| CellPos::new(x, y)))
+}
+
+pub fn cell_index(cell: CellPos, width: i32, height: i32) -> Option<usize> {
+    let inside = cell.x >= 0 && cell.y >= 0 && cell.x < width && cell.y < height;
+    inside.then(|| (cell.y * width + cell.x) as usize)
+}
+
+pub fn cell_step(cell: CellPos, (dx, dy): (i32, i32)) -> CellPos {
+    CellPos::new(cell.x + dx, cell.y + dy)
+}
+
+/// An actor's hitbox in tile space: feet half a tile below its center, rising by its height.
+pub fn hitbox_bounds(pos: Pos<Tiles>, size: Size<Tiles>) -> Rect<Tiles> {
+    Rect::new(
+        pos + Offset::new(-size.width / 2.0, 0.5 - size.height),
+        size,
+    )
+}
+
+pub trait TilePos {
+    fn distance(self, other: Pos<Tiles>) -> Tiles;
+    fn toward(self, target: Pos<Tiles>, by: Tiles) -> Pos<Tiles>;
+}
+
+impl TilePos for Pos<Tiles> {
+    fn distance(self, other: Pos<Tiles>) -> Tiles {
+        Tiles(self.distance_to(other))
+    }
+
+    fn toward(self, target: Pos<Tiles>, by: Tiles) -> Pos<Tiles> {
+        self + (target - self).normalize() * by.0
+    }
 }
 
 #[derive(Clone, Copy)]

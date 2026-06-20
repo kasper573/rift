@@ -24,9 +24,9 @@ pub enum Direction {
     W = 7,
 }
 
-impl Direction {
-    pub fn from_vec(dx: f32, dy: f32) -> Direction {
-        if dx == 0.0 && dy == 0.0 {
+impl<U> From<Offset<U>> for Direction {
+    fn from(v: Offset<U>) -> Direction {
+        if v.x == 0.0 && v.y == 0.0 {
             return Direction::S;
         }
         const D: f32 = FRAC_1_SQRT_2;
@@ -43,7 +43,7 @@ impl Direction {
         let mut best = Direction::S;
         let mut best_dot = f32::NEG_INFINITY;
         for (dir, cx, cy) in candidates {
-            let dot = dx * cx + dy * cy;
+            let dot = v.x * cx + v.y * cy;
             if dot > best_dot {
                 best_dot = dot;
                 best = dir;

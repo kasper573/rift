@@ -12,7 +12,7 @@ use crate::protocol::{
     position, set_action, set_facing,
 };
 use crate::table::Id;
-use crate::tiling::Tiles;
+use crate::tiling::{TilePos, Tiles};
 use crate::time::{Millis, PlaybackRate, Seconds};
 
 const TILE_DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
@@ -109,10 +109,10 @@ fn engage(world: &mut World, time: Seconds) {
         };
         let stats = stats(world, id);
 
-        if Tiles(at.distance_to(target_at)) > stats.range + TILE_DIAGONAL_MARGIN {
-            let heading = world.get::<MoveTarget>(id).is_some_and(|goal| {
-                Tiles(goal.pos.distance_to(target_at)) <= CHASE_RETARGET_THRESHOLD
-            });
+        if at.distance(target_at) > stats.range + TILE_DIAGONAL_MARGIN {
+            let heading = world
+                .get::<MoveTarget>(id)
+                .is_some_and(|goal| goal.pos.distance(target_at) <= CHASE_RETARGET_THRESHOLD);
             if !heading {
                 world
                     .entity_mut(id)
@@ -132,12 +132,12 @@ fn engage(world: &mut World, time: Seconds) {
         {
             continue;
         }
-        let dir = Direction::from_vec(target_at.x - at.x, target_at.y - at.y) as u8;
+        let dir = Direction::from(target_at - at) as u8;
         if let Some(mut actor) = world.get_mut::<Actor>(id) {
             set_facing(&mut actor, dir, ACTION_ATTACK);
         }
         let timing = attack_timing(world, id, dir);
-        let speed = PlaybackRate(stats.attack_speed.0.max(0.01));
+        let speed = stats.attack_speed.at_least(0.01);
         world.entity_mut(id).insert(Swing {
             target,
             hit_at: time + timing.apex / speed,
@@ -192,7 +192,7 @@ fn strike(world: &mut World, attacker: Entity, target: Entity, deaths: &mut Vec<
     let damage = stats(world, attacker).damage;
     add_attacker(world, target, attacker);
     if let Some(mut vitals) = world.get_mut::<Vitals>(target) {
-        vitals.health = (vitals.health - damage).max(0.0);
+        vitals.damage(damage);
     }
     if is_dead(world, target) {
         if let Some(mut actor) = world.get_mut::<Actor>(target) {

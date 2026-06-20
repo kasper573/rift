@@ -18,7 +18,7 @@ use crate::protocol::{
     set_action,
 };
 use crate::table::{Content, Id};
-use crate::tiling::{Tiles, TilesPerSec};
+use crate::tiling::{TilePos, Tiles, TilesPerSec};
 use crate::time::{Millis, PlaybackRate, Seconds};
 use crate::{protocol, table};
 
@@ -266,7 +266,7 @@ fn nearest(
             continue;
         }
         if let Some(p) = position(world, candidate) {
-            let distance = Tiles(at.distance_to(p));
+            let distance = at.distance(p);
             if distance <= range && best.is_none_or(|(_, b)| distance < b) {
                 best = Some((candidate, distance));
             }
@@ -298,7 +298,7 @@ fn in_aggro(
 ) -> bool {
     !is_dead(world, target)
         && world.get::<AreaTag>(target).map(|t| t.area) == Some(area)
-        && position(world, target).is_some_and(|p| Tiles(at.distance_to(p)) <= aggro)
+        && position(world, target).is_some_and(|p| at.distance(p) <= aggro)
 }
 
 pub fn run_respawn(world: &mut World) {
@@ -327,7 +327,7 @@ pub fn run_respawn(world: &mut World) {
         let at = random_walkable(&mut rng, area_id)
             .unwrap_or_else(|| area::areas()[area_id.index()].spawn);
         if let Some(mut vitals) = world.get_mut::<Vitals>(id) {
-            vitals.health = vitals.max;
+            vitals.refill();
         }
         if let Some(mut position) = world.get_mut::<Position>(id) {
             position.pos = at;

@@ -72,7 +72,7 @@ pub fn grant(world: &mut World) {
             match reward.kind {
                 RewardKind::Xp => {
                     if let Some(mut xp) = world.get_mut::<Xp>(died.killer) {
-                        xp.amount += reward.amount;
+                        xp.gain(reward.amount);
                     }
                 }
                 RewardKind::Item { item, chance } => {

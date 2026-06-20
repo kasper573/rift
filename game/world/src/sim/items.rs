@@ -29,7 +29,7 @@ pub fn use_item(world: &mut bevy_ecs::world::World) {
         match slotted.get().kind {
             ItemKind::Consumable { health_bonus } => {
                 if let Some(mut vitals) = world.get_mut::<Vitals>(entity) {
-                    vitals.health = (vitals.health + health_bonus).min(vitals.max);
+                    vitals.heal(health_bonus);
                 }
                 if let Some(mut inventory) = world.get_mut::<Inventory>(entity) {
                     inventory.items.remove(slot);

@@ -21,8 +21,8 @@ pub fn regen(
     }
     last.0 = now;
     for mut vitals in &mut players {
-        if vitals.health > 0.0 {
-            vitals.health = (vitals.health + HP_REGEN_AMOUNT).min(vitals.max);
+        if !vitals.is_dead() {
+            vitals.heal(HP_REGEN_AMOUNT);
         }
     }
 }

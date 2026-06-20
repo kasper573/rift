@@ -1,13 +1,12 @@
 use bevy::prelude::*;
 use world::area;
-use world::math::Pos;
+use world::math::Offset;
 use world::protocol::{Actor, AreaTag, Hitbox, Owner, Position};
 use world::session::MyClient;
-use world::tiling::Tiles;
+use world::tiling;
 
 use crate::Screen;
-use crate::render::TILE;
-use crate::view;
+use crate::screen;
 
 pub struct DebugPlugin;
 
@@ -65,27 +64,18 @@ fn draw(
     match *mode {
         DebugMode::Nodes => {
             for &node in &area.walkable_nodes {
-                for (dx, dy) in [
-                    (1, 0),
-                    (-1, 0),
-                    (0, 1),
-                    (0, -1),
-                    (1, 1),
-                    (1, -1),
-                    (-1, 1),
-                    (-1, -1),
-                ] {
-                    let neighbor = Pos::new(node.x + dx as f32, node.y + dy as f32);
+                for (dx, dy) in tiling::NEIGHBORS_8 {
+                    let neighbor = node + Offset::new(dx as f32, dy as f32);
                     if area.grid.walkable(neighbor) {
-                        gizmos.line_2d(corner(node), corner(neighbor), red);
+                        gizmos.line_2d(screen::to_screen(node), screen::to_screen(neighbor), red);
                     }
                 }
             }
         }
         DebugMode::Obscured => {
             for rect in &area.obscuring_rects {
-                let min = corner(rect.origin);
-                let max = corner(rect.origin + rect.size);
+                let min = screen::to_screen(rect.origin);
+                let max = screen::to_screen(rect.origin + rect.size);
                 gizmos.line_2d(Vec2::new(min.x, min.y), Vec2::new(max.x, min.y), red);
                 gizmos.line_2d(Vec2::new(max.x, min.y), Vec2::new(max.x, max.y), red);
                 gizmos.line_2d(Vec2::new(max.x, max.y), Vec2::new(min.x, max.y), red);
@@ -122,9 +112,9 @@ fn draw_hitboxes(
         return;
     }
     for (position, hitbox) in &actors {
-        let bounds = view::hitbox_bounds(position.pos, hitbox.size);
-        let size = Vec2::new(hitbox.size.width * TILE.0, hitbox.size.height * TILE.0);
-        let center = corner(bounds.center());
+        let bounds = tiling::hitbox_bounds(position.pos, hitbox.size);
+        let size = screen::to_screen_size(hitbox.size);
+        let center = screen::to_screen(bounds.center());
         commands.spawn((
             HitboxOverlay,
             Sprite {
@@ -145,8 +135,4 @@ fn clear(overlays: &Query<Entity, With<HitboxOverlay>>, commands: &mut Commands)
     for entity in overlays {
         commands.entity(entity).despawn();
     }
-}
-
-fn corner(p: Pos<Tiles>) -> Vec2 {
-    Vec2::new(p.x * TILE.0, -p.y * TILE.0)
 }

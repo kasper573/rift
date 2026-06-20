@@ -98,6 +98,28 @@ pub struct Vitals {
     pub max: f32,
 }
 
+impl Vitals {
+    pub fn heal(&mut self, amount: f32) {
+        self.health = (self.health + amount).min(self.max);
+    }
+
+    pub fn damage(&mut self, amount: f32) {
+        self.health = (self.health - amount).max(0.0);
+    }
+
+    pub fn refill(&mut self) {
+        self.health = self.max;
+    }
+
+    pub fn fraction(&self) -> f32 {
+        (self.health / self.max).clamp(0.0, 1.0)
+    }
+
+    pub fn is_dead(&self) -> bool {
+        self.health <= 0.0
+    }
+}
+
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AreaTag {
     pub area: Id<AreaDef>,
@@ -126,6 +148,12 @@ pub struct Inventory {
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Xp {
     pub amount: u32,
+}
+
+impl Xp {
+    pub fn gain(&mut self, amount: u32) {
+        self.amount += amount;
+    }
 }
 
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -187,7 +215,7 @@ pub fn position(world: &World, entity: Entity) -> Option<Pos<Tiles>> {
 }
 
 pub fn is_dead(world: &World, entity: Entity) -> bool {
-    world.get::<Vitals>(entity).is_some_and(|v| v.health <= 0.0)
+    world.get::<Vitals>(entity).is_some_and(Vitals::is_dead)
 }
 
 pub fn set_action(actor: &mut Mut<Actor>, action: u8) {
