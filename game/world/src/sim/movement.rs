@@ -6,7 +6,7 @@ use bevy_time::Time;
 use super::combat::AttackTarget;
 use super::player::sender_player;
 use crate::area;
-use crate::math::{CellPos, Direction, Offset, Pos, Seconds, Tiles, TilesPerSec};
+use crate::math::{self, CellPos, Direction, Offset, Pos, Seconds, Tiles, TilesPerSec};
 use crate::protocol::{
     ACTION_RUN, ACTION_WALK, AreaTag, MoveRequest, MoveToPortal, Position, is_dead, position,
     set_facing,
@@ -22,7 +22,7 @@ pub struct Cell {
 
 impl Cell {
     fn center(&self) -> Pos<Tiles> {
-        Pos::new(self.pos.x as f32 + 0.5, self.pos.y as f32 + 0.5)
+        math::tile_center(self.pos)
     }
 }
 
@@ -87,7 +87,7 @@ pub fn halt(world: &mut World, entity: Entity) {
     if on_tile(world, entity) {
         if let Some(at) = position(world, entity) {
             world.entity_mut(entity).insert(Position {
-                pos: Pos::new(at.x.floor() + 0.5, at.y.floor() + 0.5),
+                pos: math::snap_to_tile(at),
             });
         }
         world.entity_mut(entity).remove::<Path>();
@@ -97,7 +97,7 @@ pub fn halt(world: &mut World, entity: Entity) {
 }
 
 pub fn on_tile(world: &World, entity: Entity) -> bool {
-    position(world, entity).is_some_and(centered)
+    position(world, entity).is_some_and(math::on_center)
 }
 
 fn retarget(
@@ -235,7 +235,6 @@ fn cross_portal(world: &mut World, entity: Entity) {
     if !rect.contains(at) {
         return;
     }
-    let dest = Pos::new(dest.x + 0.5, dest.y + 0.5);
     if dest_area == area_id {
         if let Some(mut p) = world.get_mut::<Position>(entity) {
             p.pos = dest;
@@ -247,9 +246,4 @@ fn cross_portal(world: &mut World, entity: Entity) {
             .insert(super::transition::Crossing { dest_area, dest });
         forget(world, entity);
     }
-}
-
-fn centered(p: Pos<Tiles>) -> bool {
-    let near = |coord: f32| (coord - coord.floor() - 0.5).abs() < 1e-3;
-    near(p.x) && near(p.y)
 }

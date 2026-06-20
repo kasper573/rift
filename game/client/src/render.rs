@@ -10,7 +10,7 @@ use bevy::sprite::Anchor;
 use bevy::sprite_render::{Material2d, Material2dPlugin};
 use bevy::window::PrimaryWindow;
 use world::area::{self, AreaDef, TileRef};
-use world::math::{CellPos, Pos, Seconds, Size, Tiles, WorldPx};
+use world::math::{self, CellPos, Pos, Seconds, Size, Tiles, WorldPx};
 use world::protocol::{Actor, AreaTag, Owner, Position, Rgba, Vitals, action_name};
 use world::session::{self, MyClient};
 use world::table::Id;
@@ -353,10 +353,11 @@ fn follow_camera(
 
 fn camera_center(at: Pos<Tiles>, area_id: Id<AreaDef>, half: Vec2) -> Option<Pos<Tiles>> {
     let area = area::areas().get(area_id.index())?;
-    let lo = Pos::new(half.x, half.y);
+    let bounds = math::grid_bounds(area.width, area.height);
+    let lo = Pos::new(bounds.min().x + half.x, bounds.min().y + half.y);
     let hi = Pos::new(
-        (area.width.0 - half.x).max(half.x),
-        (area.height.0 - half.y).max(half.y),
+        (bounds.max().x - half.x).max(lo.x),
+        (bounds.max().y - half.y).max(lo.y),
     );
     Some(snap(at.clamp(lo, hi)))
 }
@@ -424,7 +425,7 @@ fn spawn_area_tiles(
                 let mut tile = commands.spawn((
                     AreaTile,
                     tile_sprite(&assets, &sprite, Vec2::splat(TILE.0)),
-                    sprite_transform(cell_center(c), z),
+                    sprite_transform(math::tile_center(c), z),
                 ));
                 if area.animated(cell) {
                     tile.insert(Animated(cell));
@@ -443,7 +444,7 @@ fn spawn_area_tiles(
                 let mut tile = commands.spawn((
                     AreaTile,
                     tile_sprite(&assets, &sprite, Vec2::splat(TILE.0)),
-                    sprite_transform(cell_center(c), z),
+                    sprite_transform(math::tile_center(c), z),
                 ));
                 if area.animated(cell) {
                     tile.insert(Animated(cell));
@@ -487,10 +488,6 @@ fn animate_tiles(
 
 fn sprite_transform(pos: Pos<Tiles>, z: f32) -> Transform {
     Transform::from_xyz(pos.x * TILE.0, -pos.y * TILE.0, z)
-}
-
-fn cell_center(c: CellPos) -> Pos<Tiles> {
-    Pos::new(c.x as f32 + 0.5, c.y as f32 + 0.5)
 }
 
 fn dynamic_z(area: &area::Area, base: f32, y: Tiles) -> f32 {

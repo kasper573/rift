@@ -1,8 +1,6 @@
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
-use world::area;
-use world::math::{Pos, Tiles};
-use world::protocol::AreaTag;
+use world::math::{self, Pos, Tiles};
 use world::session;
 
 use crate::Screen;
@@ -82,13 +80,8 @@ fn compute(world: &mut World) -> (Pointer, Option<Pos<Tiles>>) {
     if view::enemy_at(world, point).is_some() {
         return (Pointer::Attack, None);
     }
-    let tile = Pos::new(point.x.floor(), point.y.floor());
-    let walkable = session::me(world)
-        .and_then(|me| me.get::<AreaTag>())
-        .map(|tag| tag.area)
-        .and_then(|id| area::areas().get(id.index()))
-        .is_some_and(|area| area.grid.walkable(tile));
-    if !walkable {
+    let tile = math::snap_to_tile(point);
+    if !view::walkable(world, tile) {
         return (Pointer::Default, None);
     }
     let held = world
@@ -141,8 +134,8 @@ fn apply_hover(world: &mut World, hover: Option<Pos<Tiles>>) {
     match hover {
         Some(tile) => {
             *visibility = Visibility::Visible;
-            transform.translation.x = (tile.x + 0.5) * TILE.0;
-            transform.translation.y = -(tile.y + 0.5) * TILE.0;
+            transform.translation.x = tile.x * TILE.0;
+            transform.translation.y = -tile.y * TILE.0;
         }
         None => *visibility = Visibility::Hidden,
     }

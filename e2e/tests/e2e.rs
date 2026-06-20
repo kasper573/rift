@@ -34,8 +34,8 @@ const FOREST_SNAPSHOT: &str = "spawn-on-forest.png";
 const VIEW_TILES_TALL: f64 = 18.0;
 // Tile centers: the spawn (`start` object's tile) and the nearest warp's 1-tile rect — so the warp
 // sits straight up, 3 tiles north of where the player spawns.
-const ISLAND_SPAWN: (f64, f64) = (39.5, 29.5);
-const ISLAND_PORTAL: (f64, f64) = (39.5, 26.5);
+const ISLAND_SPAWN: (f64, f64) = (39.0, 29.0);
+const ISLAND_PORTAL: (f64, f64) = (39.0, 26.0);
 
 #[test]
 #[ignore = "e2e: needs a display, a browser and the stack; CI-only, run with `just e2e`"]

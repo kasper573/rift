@@ -6,7 +6,7 @@ use tiled::{LayerType, PropertyValue};
 
 use crate::actors::SfxId;
 use crate::assets;
-use crate::math::{CellPos, Millis, PixelsPerTile, Pos, Rect, Seconds, Size, Tiles, WorldPx};
+use crate::math::{self, CellPos, Millis, PixelsPerTile, Pos, Rect, Seconds, Size, Tiles, WorldPx};
 use crate::nav;
 use crate::table::{self, Content, Id};
 
@@ -332,7 +332,7 @@ fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
     }
     let grid = build_grid(size, &layers, &tiles, &obscuring_rects);
     let walkable_nodes = (0..map.height as i32)
-        .flat_map(|y| (0..map.width as i32).map(move |x| Pos::new(x as f32, y as f32)))
+        .flat_map(|y| (0..map.width as i32).map(move |x| math::tile_center(CellPos::new(x, y))))
         .filter(|&p| grid.walkable(p))
         .collect();
     let (groups, grouped_cells) = compute_groups(&layers, &tiles);
@@ -519,7 +519,9 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TilePalette) -> (Vec<Group>, H
                 }
             }
             groups.push(Group {
-                bottom: Tiles(bottom as f32),
+                // Depth sorts against actor/object centers (see math.rs); anchoring at the
+                // bottom row's near edge keeps a player on that row in front, never tying.
+                bottom: Tiles(math::tile_bounds(CellPos::new(0, bottom)).min().y),
                 tiles: cells,
             });
         }
@@ -582,20 +584,12 @@ fn build_grid(
 }
 
 fn obscured_cells(rect: &Rect<Tiles>) -> Vec<CellPos> {
-    let mut cells = Vec::new();
-    for y in (rect.origin.y.floor() as i32)..((rect.origin.y + rect.size.height).ceil() as i32) {
-        for x in (rect.origin.x.floor() as i32)..((rect.origin.x + rect.size.width).ceil() as i32) {
-            let c = CellPos::new(x, y);
-            if cell_overlap(rect, c) >= OBSCURING_CUTOFF {
-                cells.push(c);
-            }
-        }
-    }
-    cells
+    math::tiles_in(*rect)
+        .filter(|&c| cell_overlap(rect, c) >= OBSCURING_CUTOFF)
+        .collect()
 }
 
 fn cell_overlap(rect: &Rect<Tiles>, c: CellPos) -> f32 {
-    let cell: Rect<Tiles> = Rect::new(Pos::new(c.x as f32, c.y as f32), Size::splat(1.0));
-    rect.intersection(&cell)
+    rect.intersection(&math::tile_bounds(c))
         .map_or(0.0, |overlap| overlap.area())
 }

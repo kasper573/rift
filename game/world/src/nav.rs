@@ -1,6 +1,6 @@
 //! Pathfinding with fixed-point costs for determinism.
 
-use crate::math::{CellPos, Pos, Size, Tiles};
+use crate::math::{self, CellPos, Pos, Size, Tiles};
 
 const ORTHOGONAL: u32 = 1000;
 const DIAGONAL: u32 = 1414;
@@ -21,13 +21,13 @@ impl Grid {
     }
 
     pub fn walkable(&self, p: Pos<Tiles>) -> bool {
-        self.cell_walkable(cell(p))
+        self.cell_walkable(math::tile_at(p))
     }
 
     pub fn nearest_walkable(&self, p: Pos<Tiles>) -> Option<Pos<Tiles>> {
-        let from = cell(p);
+        let from = math::tile_at(p);
         if self.cell_walkable(from) {
-            return Some(at(from));
+            return Some(math::tile_center(from));
         }
         let (width, height) = self.dims();
         for radius in 1..=width.max(height) {
@@ -46,7 +46,7 @@ impl Grid {
                 }
             }
             if let Some(best) = best {
-                return Some(at(best));
+                return Some(math::tile_center(best));
             }
         }
         None
@@ -67,8 +67,8 @@ impl Grid {
 }
 
 pub fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
-    let start = cell(start);
-    let goal = cell(goal);
+    let start = math::tile_at(start);
+    let goal = math::tile_at(goal);
     if !grid.cell_walkable(start) || !grid.cell_walkable(goal) {
         return None;
     }
@@ -105,11 +105,3 @@ const NEIGHBOURS: [(i32, i32); 8] = [
     (-1, 1),
     (-1, -1),
 ];
-
-fn cell(p: Pos<Tiles>) -> CellPos {
-    CellPos::new(p.x.floor() as i32, p.y.floor() as i32)
-}
-
-fn at(c: CellPos) -> Pos<Tiles> {
-    Pos::new(c.x as f32, c.y as f32)
-}

@@ -13,7 +13,7 @@ use super::player::Players;
 use crate::actors::ActorModel;
 use crate::area::{self, AreaDef};
 use crate::math::{
-    Direction, Millis, Offset, PlaybackRate, Pos, Seconds, Tiles, TilesPerSec, next_rng, rng_unit,
+    Direction, Millis, PlaybackRate, Pos, Seconds, Tiles, TilesPerSec, next_rng, rng_unit,
 };
 use crate::protocol::{
     ACTION_IDLE, Actor, AreaTag, Hitbox, Name, Position, Rgba, Vitals, is_dead, position,
@@ -349,6 +349,5 @@ fn random_walkable(rng: &mut u64, area_id: Id<AreaDef>) -> Option<Pos<Tiles>> {
     if nodes.is_empty() {
         return None;
     }
-    let node = nodes[(next_rng(rng) % nodes.len() as u64) as usize];
-    Some(node + Offset::splat(0.5))
+    Some(nodes[(next_rng(rng) % nodes.len() as u64) as usize])
 }

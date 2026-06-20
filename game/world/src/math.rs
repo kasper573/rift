@@ -125,6 +125,45 @@ impl Millis {
     }
 }
 
+// Tile coordinates, single source of truth. An integer `CellPos` names a tile; its
+// center sits at the same numbers in continuous `Tiles` space, and the tile fills the
+// unit square around it. Nothing outside this section may add or subtract half-tiles:
+// "tile 0,0" is where you stand, and ".5" is only the transient state between tiles.
+
+pub fn tile_center(cell: CellPos) -> Pos<Tiles> {
+    Pos::new(cell.x as f32, cell.y as f32)
+}
+
+pub fn tile_at(p: Pos<Tiles>) -> CellPos {
+    CellPos::new(p.x.round() as i32, p.y.round() as i32)
+}
+
+pub fn snap_to_tile(p: Pos<Tiles>) -> Pos<Tiles> {
+    tile_center(tile_at(p))
+}
+
+pub fn on_center(p: Pos<Tiles>) -> bool {
+    let resting = |c: f32| (c - c.round()).abs() < 1e-3;
+    resting(p.x) && resting(p.y)
+}
+
+pub fn tile_bounds(cell: CellPos) -> Rect<Tiles> {
+    Rect::new(
+        Pos::new(cell.x as f32 - 0.5, cell.y as f32 - 0.5),
+        Size::splat(1.0),
+    )
+}
+
+pub fn grid_bounds(width: Tiles, height: Tiles) -> Rect<Tiles> {
+    Rect::new(Pos::new(-0.5, -0.5), Size::new(width.0, height.0))
+}
+
+pub fn tiles_in(rect: Rect<Tiles>) -> impl Iterator<Item = CellPos> {
+    let min = tile_at(rect.min());
+    let max = tile_at(rect.max());
+    (min.y..=max.y).flat_map(move |y| (min.x..=max.x).map(move |x| CellPos::new(x, y)))
+}
+
 #[derive(Clone, Copy)]
 pub struct PixelsPerTile {
     x: euclid::Scale<f32, WorldPx, Tiles>,
@@ -139,8 +178,12 @@ impl PixelsPerTile {
         }
     }
 
+    // Source maps put a tile's origin at its top-left corner; ours is the center, half a tile in.
     pub fn point(self, p: Pos<WorldPx>) -> Pos<Tiles> {
-        Pos::new(self.x.transform_point(p).x, self.y.transform_point(p).y)
+        Pos::new(
+            self.x.transform_point(p).x - 0.5,
+            self.y.transform_point(p).y - 0.5,
+        )
     }
 
     pub fn rect(self, r: Rect<WorldPx>) -> Rect<Tiles> {
@@ -151,8 +194,7 @@ impl PixelsPerTile {
     }
 
     pub fn tile_center(self, p: Pos<WorldPx>) -> Pos<Tiles> {
-        let t = self.point(p);
-        Pos::new(t.x.floor() + 0.5, t.y.floor() + 0.5)
+        snap_to_tile(self.point(p))
     }
 }
 

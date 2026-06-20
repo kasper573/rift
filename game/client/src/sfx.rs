@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy_kira_audio::prelude::{Audio, AudioControl, AudioSource, Decibels};
 use world::area;
-use world::math::{CellPos, Pos, Seconds, Size, Tiles};
+use world::math::{self, Pos, Seconds, Size, Tiles};
 use world::protocol::{Actor, AreaTag, ItemConsumed, Position, action_name, position};
 use world::session;
 use world::sfx::sfx_table;
@@ -92,10 +92,7 @@ fn play_cues(world: &mut World) {
             collect(&sfx.index, &mut frame, &id.0, volume, pan);
         }
         if let (Some(area), true) = (area, stepped)
-            && let Some(id) = area.tile_sfx_at(CellPos::new(
-                source.x.floor() as i32,
-                source.y.floor() as i32,
-            ))
+            && let Some(id) = area.tile_sfx_at(math::tile_at(*source))
         {
             collect(&sfx.index, &mut frame, &id.0, volume, pan);
         }

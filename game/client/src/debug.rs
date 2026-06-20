@@ -1,11 +1,12 @@
 use bevy::prelude::*;
 use world::area;
-use world::math::{Offset, Pos, Tiles};
+use world::math::{Pos, Tiles};
 use world::protocol::{Actor, AreaTag, Hitbox, Owner, Position};
 use world::session::MyClient;
 
 use crate::Screen;
 use crate::render::TILE;
+use crate::view;
 
 pub struct DebugPlugin;
 
@@ -75,7 +76,7 @@ fn draw(
                 ] {
                     let neighbor = Pos::new(node.x + dx as f32, node.y + dy as f32);
                     if area.grid.walkable(neighbor) {
-                        gizmos.line_2d(center(node), center(neighbor), red);
+                        gizmos.line_2d(corner(node), corner(neighbor), red);
                     }
                 }
             }
@@ -120,11 +121,9 @@ fn draw_hitboxes(
         return;
     }
     for (position, hitbox) in &actors {
+        let bounds = view::hitbox_bounds(position.pos, hitbox.size);
         let size = Vec2::new(hitbox.size.width * TILE.0, hitbox.size.height * TILE.0);
-        let center = Vec2::new(
-            position.pos.x * TILE.0,
-            -(position.pos.y + 0.5 - hitbox.size.height / 2.0) * TILE.0,
-        );
+        let center = corner(bounds.center());
         commands.spawn((
             HitboxOverlay,
             Sprite {
@@ -145,10 +144,6 @@ fn clear(overlays: &Query<Entity, With<HitboxOverlay>>, commands: &mut Commands)
     for entity in overlays {
         commands.entity(entity).despawn();
     }
-}
-
-fn center(tile: Pos<Tiles>) -> Vec2 {
-    corner(tile + Offset::splat(0.5))
 }
 
 fn corner(p: Pos<Tiles>) -> Vec2 {
