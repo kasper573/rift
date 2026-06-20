@@ -6,9 +6,11 @@ use tiled::{LayerType, PropertyValue};
 
 use crate::actors::SfxId;
 use crate::assets;
-use crate::math::{self, CellPos, Millis, PixelsPerTile, Pos, Rect, Seconds, Size, Tiles, WorldPx};
+use crate::math::{Pos, Rect, Size, WorldPx};
 use crate::nav;
 use crate::table::{self, Content, Id};
+use crate::tiling::{self, CellPos, PixelsPerTile, Tiles};
+use crate::time::{Millis, Seconds};
 
 const FILE: &str = "area_table.json";
 
@@ -332,7 +334,7 @@ fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
     }
     let grid = build_grid(size, &layers, &tiles, &obscuring_rects);
     let walkable_nodes = (0..map.height as i32)
-        .flat_map(|y| (0..map.width as i32).map(move |x| math::tile_center(CellPos::new(x, y))))
+        .flat_map(|y| (0..map.width as i32).map(move |x| tiling::tile_center(CellPos::new(x, y))))
         .filter(|&p| grid.walkable(p))
         .collect();
     let (groups, grouped_cells) = compute_groups(&layers, &tiles);
@@ -519,9 +521,9 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TilePalette) -> (Vec<Group>, H
                 }
             }
             groups.push(Group {
-                // Depth sorts against actor/object centers (see math.rs); anchoring at the
+                // Depth sorts against actor/object centers (see tiling.rs); anchoring at the
                 // bottom row's near edge keeps a player on that row in front, never tying.
-                bottom: Tiles(math::tile_bounds(CellPos::new(0, bottom)).min().y),
+                bottom: Tiles(tiling::tile_bounds(CellPos::new(0, bottom)).min().y),
                 tiles: cells,
             });
         }
@@ -584,12 +586,12 @@ fn build_grid(
 }
 
 fn obscured_cells(rect: &Rect<Tiles>) -> Vec<CellPos> {
-    math::tiles_in(*rect)
+    tiling::tiles_in(*rect)
         .filter(|&c| cell_overlap(rect, c) >= OBSCURING_CUTOFF)
         .collect()
 }
 
 fn cell_overlap(rect: &Rect<Tiles>, c: CellPos) -> f32 {
-    rect.intersection(&math::tile_bounds(c))
+    rect.intersection(&tiling::tile_bounds(c))
         .map_or(0.0, |overlap| overlap.area())
 }

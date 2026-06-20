@@ -1,8 +1,9 @@
 use bevy::prelude::*;
 use world::area;
-use world::math::{Pos, Tiles};
+use world::math::Pos;
 use world::protocol::{Actor, AreaTag, Hitbox, Owner, Position};
 use world::session::MyClient;
+use world::tiling::Tiles;
 
 use crate::Screen;
 use crate::render::TILE;

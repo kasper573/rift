@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
-use world::math::{self, Pos, Tiles};
+use world::math::Pos;
 use world::session;
+use world::tiling::{self, Tiles};
 
 use crate::Screen;
 use crate::render::TILE;
@@ -80,7 +81,7 @@ fn compute(world: &mut World) -> (Pointer, Option<Pos<Tiles>>) {
     if view::enemy_at(world, point).is_some() {
         return (Pointer::Attack, None);
     }
-    let tile = math::snap_to_tile(point);
+    let tile = tiling::snap_to_tile(point);
     if !view::walkable(world, tile) {
         return (Pointer::Default, None);
     }

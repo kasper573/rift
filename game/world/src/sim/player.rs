@@ -14,13 +14,15 @@ use super::visibility::OwnedBy;
 use crate::actors::ActorModel;
 use crate::area::{self, AreaDef};
 use crate::identity::Identity;
-use crate::math::{Direction, Millis, PlaybackRate, Pos, Tiles, TilesPerSec};
+use crate::math::{Direction, Pos};
 use crate::protocol;
 use crate::protocol::{
     ACTION_IDLE, Actor, AreaTag, ClientId, Hitbox, Inventory, JoinRequest, Name, Owner, Position,
     RespawnRequest, Rgba, Vitals, Welcome, Xp, is_dead, set_action,
 };
 use crate::table::Id;
+use crate::tiling::{Tiles, TilesPerSec};
+use crate::time::{Millis, PlaybackRate};
 
 const PLAYER_MAX_HEALTH: f32 = 30.0;
 const PLAYER_SPEED: TilesPerSec = TilesPerSec(Tiles(4.0));

@@ -5,13 +5,15 @@ use bevy_time::Time;
 
 use super::movement::{MoveTarget, Path, forget, halt, on_tile};
 use super::player::sender_player;
-use crate::math::{Direction, Millis, PlaybackRate, Seconds, Tiles};
+use crate::math::Direction;
 use crate::protocol;
 use crate::protocol::{
     ACTION_ATTACK, ACTION_DEAD, Actor, AreaTag, AttackRequest, Vitals, action_name, is_dead,
     position, set_action, set_facing,
 };
 use crate::table::Id;
+use crate::tiling::Tiles;
+use crate::time::{Millis, PlaybackRate, Seconds};
 
 const TILE_DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
 const CHASE_RETARGET_THRESHOLD: Tiles = Tiles(1.5);

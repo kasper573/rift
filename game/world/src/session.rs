@@ -5,11 +5,12 @@ use bevy_ecs::world::EntityRef;
 use bevy_replicon::prelude::{AuthMethod, RepliconPlugins, RepliconSharedPlugin};
 
 use crate::area;
-use crate::math::{Pos, Tiles};
+use crate::math::Pos;
 use crate::protocol::{
     self, AreaTag, AttackRequest, ClientId, JoinRequest, MoveRequest, MoveToPortal, Owner,
     RespawnRequest, SpectateRequest, UseItemRequest, Welcome,
 };
+use crate::tiling::Tiles;
 
 pub struct ClientSessionPlugin;
 

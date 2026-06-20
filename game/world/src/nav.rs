@@ -1,6 +1,7 @@
 //! Pathfinding with fixed-point costs for determinism.
 
-use crate::math::{self, CellPos, Pos, Size, Tiles};
+use crate::math::{Pos, Size};
+use crate::tiling::{self, CellPos, Tiles};
 
 const ORTHOGONAL: u32 = 1000;
 const DIAGONAL: u32 = 1414;
@@ -21,13 +22,13 @@ impl Grid {
     }
 
     pub fn walkable(&self, p: Pos<Tiles>) -> bool {
-        self.cell_walkable(math::tile_at(p))
+        self.cell_walkable(tiling::tile_at(p))
     }
 
     pub fn nearest_walkable(&self, p: Pos<Tiles>) -> Option<Pos<Tiles>> {
-        let from = math::tile_at(p);
+        let from = tiling::tile_at(p);
         if self.cell_walkable(from) {
-            return Some(math::tile_center(from));
+            return Some(tiling::tile_center(from));
         }
         let (width, height) = self.dims();
         for radius in 1..=width.max(height) {
@@ -46,7 +47,7 @@ impl Grid {
                 }
             }
             if let Some(best) = best {
-                return Some(math::tile_center(best));
+                return Some(tiling::tile_center(best));
             }
         }
         None
@@ -67,8 +68,8 @@ impl Grid {
 }
 
 pub fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
-    let start = math::tile_at(start);
-    let goal = math::tile_at(goal);
+    let start = tiling::tile_at(start);
+    let goal = tiling::tile_at(goal);
     if !grid.cell_walkable(start) || !grid.cell_walkable(goal) {
         return None;
     }

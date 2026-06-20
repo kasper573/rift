@@ -10,10 +10,12 @@ use bevy::sprite::Anchor;
 use bevy::sprite_render::{Material2d, Material2dPlugin};
 use bevy::window::PrimaryWindow;
 use world::area::{self, AreaDef, TileRef};
-use world::math::{self, CellPos, Pos, Seconds, Size, Tiles, WorldPx};
+use world::math::{Pos, Size, WorldPx};
 use world::protocol::{Actor, AreaTag, Owner, Position, Rgba, Vitals, action_name};
 use world::session::{self, MyClient};
 use world::table::Id;
+use world::tiling::{self, CellPos, Tiles};
+use world::time::Seconds;
 
 pub const TILE: WorldPx = WorldPx(16.0);
 const VIEW_TILES_TALL: f32 = 18.0;
@@ -353,7 +355,7 @@ fn follow_camera(
 
 fn camera_center(at: Pos<Tiles>, area_id: Id<AreaDef>, half: Vec2) -> Option<Pos<Tiles>> {
     let area = area::areas().get(area_id.index())?;
-    let bounds = math::grid_bounds(area.width, area.height);
+    let bounds = tiling::grid_bounds(area.width, area.height);
     let lo = Pos::new(bounds.min().x + half.x, bounds.min().y + half.y);
     let hi = Pos::new(
         (bounds.max().x - half.x).max(lo.x),
@@ -425,7 +427,7 @@ fn spawn_area_tiles(
                 let mut tile = commands.spawn((
                     AreaTile,
                     tile_sprite(&assets, &sprite, Vec2::splat(TILE.0)),
-                    sprite_transform(math::tile_center(c), z),
+                    sprite_transform(tiling::tile_center(c), z),
                 ));
                 if area.animated(cell) {
                     tile.insert(Animated(cell));
@@ -444,7 +446,7 @@ fn spawn_area_tiles(
                 let mut tile = commands.spawn((
                     AreaTile,
                     tile_sprite(&assets, &sprite, Vec2::splat(TILE.0)),
-                    sprite_transform(math::tile_center(c), z),
+                    sprite_transform(tiling::tile_center(c), z),
                 ));
                 if area.animated(cell) {
                     tile.insert(Animated(cell));

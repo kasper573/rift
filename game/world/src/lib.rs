@@ -10,6 +10,8 @@ pub mod role;
 pub mod session;
 pub mod sfx;
 pub mod table;
+pub mod tiling;
+pub mod time;
 
 #[cfg(feature = "host")]
 pub mod sim;
@@ -27,4 +29,4 @@ pub use crate::protocol::{
 };
 pub use crate::role::Role;
 
-pub const TICK_HZ: math::Hertz = math::Hertz(30.0);
+pub const TICK_HZ: time::Hertz = time::Hertz(30.0);

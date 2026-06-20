@@ -6,12 +6,14 @@ use bevy_time::Time;
 use super::combat::AttackTarget;
 use super::player::sender_player;
 use crate::area;
-use crate::math::{self, CellPos, Direction, Offset, Pos, Seconds, Tiles, TilesPerSec};
+use crate::math::{Direction, Offset, Pos};
 use crate::protocol::{
     ACTION_RUN, ACTION_WALK, AreaTag, MoveRequest, MoveToPortal, Position, is_dead, position,
     set_facing,
 };
 use crate::table::Id;
+use crate::tiling::{self, CellPos, Tiles, TilesPerSec};
+use crate::time::Seconds;
 
 const RUN_SPEED: TilesPerSec = TilesPerSec(Tiles(2.0));
 
@@ -22,7 +24,7 @@ pub struct Cell {
 
 impl Cell {
     fn center(&self) -> Pos<Tiles> {
-        math::tile_center(self.pos)
+        tiling::tile_center(self.pos)
     }
 }
 
@@ -87,7 +89,7 @@ pub fn halt(world: &mut World, entity: Entity) {
     if on_tile(world, entity) {
         if let Some(at) = position(world, entity) {
             world.entity_mut(entity).insert(Position {
-                pos: math::snap_to_tile(at),
+                pos: tiling::snap_to_tile(at),
             });
         }
         world.entity_mut(entity).remove::<Path>();
@@ -97,7 +99,7 @@ pub fn halt(world: &mut World, entity: Entity) {
 }
 
 pub fn on_tile(world: &World, entity: Entity) -> bool {
-    position(world, entity).is_some_and(math::on_center)
+    position(world, entity).is_some_and(tiling::on_center)
 }
 
 fn retarget(

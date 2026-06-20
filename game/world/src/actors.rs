@@ -5,8 +5,10 @@ use serde::Deserialize;
 use tiled::{Frame, PropertyValue, TileId};
 
 use crate::assets;
-use crate::math::{Millis, PlaybackRate, Pos, Rect, Seconds, Size, Tiles, WorldPx};
+use crate::math::{Pos, Rect, Size, WorldPx};
 use crate::table::Content;
+use crate::tiling::Tiles;
+use crate::time::{Millis, PlaybackRate, Seconds};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
 pub struct SfxId(pub String);

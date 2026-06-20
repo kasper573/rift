@@ -1,9 +1,10 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use world::area;
-use world::math::{Pos, Rect, Size, Tiles};
+use world::math::{Pos, Rect, Size};
 use world::protocol::{Actor, AreaTag, Hitbox, Position, Vitals};
 use world::session;
+use world::tiling::Tiles;
 
 use crate::render::{TILE, Viewport, WorldCamera};
 

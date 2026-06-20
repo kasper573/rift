@@ -12,14 +12,14 @@ use super::movement::{MoveTarget, Path, Speed, forget};
 use super::player::Players;
 use crate::actors::ActorModel;
 use crate::area::{self, AreaDef};
-use crate::math::{
-    Direction, Millis, PlaybackRate, Pos, Seconds, Tiles, TilesPerSec, next_rng, rng_unit,
-};
+use crate::math::{Direction, Pos, next_rng, rng_unit};
 use crate::protocol::{
     ACTION_IDLE, Actor, AreaTag, Hitbox, Name, Position, Rgba, Vitals, is_dead, position,
     set_action,
 };
 use crate::table::{Content, Id};
+use crate::tiling::{Tiles, TilesPerSec};
+use crate::time::{Millis, PlaybackRate, Seconds};
 use crate::{protocol, table};
 
 const FILE: &str = "npc_table.json";

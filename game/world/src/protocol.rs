@@ -8,8 +8,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::actors::ActorModel;
 use crate::area::AreaDef;
 use crate::items::ItemDef;
-use crate::math::{PlaybackRate, Pos, Size, Tiles};
+use crate::math::{Pos, Size};
 use crate::table::Id;
+use crate::tiling::Tiles;
+use crate::time::PlaybackRate;
 
 pub fn protocol(app: &mut App) {
     app.replicate::<Position>()
