@@ -1,25 +1,3 @@
-//! The `view!` angle-bracket JSX macro for `bevy_view`. It lowers markup to the runtime builder.
-//!
-//! ```ignore
-//! view! {
-//!     <button on:click={open} padding=UiRect::all(Val::Px(8.0))>
-//!         <text insert={TextColor(Color::WHITE)}>"Play"</text>
-//!     </button>
-//!     <node use={drag.whole()} position_type=PositionType::Absolute>
-//!         <image src={icon}/>
-//!         <Show when={|w| logged_in(w)}><text>{ |w| greeting(w) }</text></Show>
-//!         <For each={|w| rows(w)} key={|row| row.id} let={row}>
-//!             <text>{ move |_| row.label.clone() }</text>
-//!         </For>
-//!         { custom_widget() }
-//!     </node>
-//! }
-//! ```
-//!
-//! Lowercase tags are the `bevy_ui` intrinsics `node`/`text`/`button`/`image`; bareword attributes on
-//! them set `Node` fields. Capitalized tags are components: `Show`/`Hide`/`For` are control flow, any
-//! other is a builder (`Tag::default().prop(v).child(..)`). `{ expr }` embeds any `View`.
-
 use proc_macro::TokenStream;
 use proc_macro2::{TokenStream as TokenStream2, TokenTree};
 use quote::quote;
@@ -193,10 +171,8 @@ impl Parse for Attr {
     }
 }
 
-/// An attribute value is either `{ expr }` (the inner expression) or a bare expression. A bare value
-/// is collected token-by-token up to the tag boundary or the next attribute, so a trailing `/>` or
-/// `>` is not mistaken for a division or comparison operator. Values needing top-level `<`/`>`/`/`
-/// (turbofish, generics, comparisons) must be braced.
+/// Bare values must be braced if they contain `<`/`>`/`/` (turbofish, generics, comparisons) to avoid
+/// being mistaken for tag boundaries or attribute separators.
 fn attr_value(input: ParseStream) -> syn::Result<Expr> {
     if input.peek(syn::token::Brace) {
         let content;
@@ -217,16 +193,14 @@ fn attr_value(input: ParseStream) -> syn::Result<Expr> {
     }
 }
 
-/// Whether the stream is at the start of the next attribute (`name=…`, `use=…`, `let=…`, or `on:…`)
-/// rather than a continuation of the current bare value.
+/// `on:` event boundary checks peek for the literal `on`, so a `::` path separator (e.g. `Val::Px`)
+/// inside a bare value is not mistaken for it.
 fn next_attribute_starts(input: ParseStream) -> bool {
     if (input.peek(Ident) || input.peek(Token![use]) || input.peek(Token![let]))
         && input.peek2(Token![=])
     {
         return true;
     }
-    // An `on:` event boundary — but only the literal `on`, so a `::` path separator (e.g. `Val::Px`)
-    // inside a bare value is not mistaken for it.
     if input.peek(Ident) && input.peek2(Token![:]) {
         let fork = input.fork();
         if let Ok(ident) = fork.parse::<Ident>() {
@@ -322,8 +296,8 @@ fn lower_text(element: &ElementNode) -> TokenStream2 {
     quote!(#ctor #attrs)
 }
 
-/// Lowers an intrinsic's attributes: bareword fields collapse into one partial `Node` setter; events,
-/// `use`, `insert`, and `cursor` chain on as builder calls.
+/// Bareword fields collapse into one partial `Node` setter so that retained fields (like a drag
+/// system's position) survive the render.
 fn intrinsic_attrs(element: &ElementNode) -> TokenStream2 {
     let mut fields = Vec::new();
     let mut chain = TokenStream2::new();
@@ -373,10 +347,8 @@ fn event_method(kind: EventKind) -> TokenStream2 {
     }
 }
 
-/// Lowers a component tag. `prop=value` attributes become builder calls and children become `.child`
-/// calls. The styling/behavior attributes an intrinsic accepts (`insert`, `on:…`, `use`, `cursor`) are
-/// collected into one decorator applied to the component's root element via its `.modify(Bind)` builder
-/// — so a headless component can be styled and wired at its use site like an intrinsic.
+/// Component styling/behavior attributes are collected into one decorator and applied to the root
+/// via `.modify(Bind)` — so a headless component can be wired at its use site like an intrinsic.
 fn lower_component(element: &ElementNode) -> TokenStream2 {
     let tag = &element.tag;
     let mut expr = quote!(#tag::default());

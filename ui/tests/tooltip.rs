@@ -1,8 +1,3 @@
-//! `Tooltip` is controlled and hover-driven: the app owns `open`; hovering the trigger arms the delay,
-//! and once it elapses the timing requests `open=true`. Leaving requests `false`. A re-hover within the
-//! skip window opens immediately, and the content ignores picking. The provider and overlay root each
-//! nest the trigger one level deeper.
-
 mod harness;
 
 use std::time::Duration;

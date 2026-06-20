@@ -1,9 +1,3 @@
-//! Drives the `ui` component gallery on a real display with genuine OS input and asserts that pointer
-//! interaction visibly changes what's rendered — proof that the interaction-state and motion systems
-//! work end to end, not just in unit tests. Run under a screen recorder to capture every state and
-//! tween for review. The gallery binary is located by `RIFT_GALLERY`; build it and run via the
-//! `just gallery` recipe. `#[ignore]`d like the rest of this crate (needs a display).
-
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -14,7 +8,6 @@ use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings
 use xcap::Window;
 
 const TITLE: &str = "rift ui gallery";
-/// Scene count and per-scene names; these must match the gallery binary's `SCENES`.
 const SCENES: &[&str] = &[
     "Button intents",
     "Button sizes",
@@ -40,8 +33,6 @@ impl Drop for Gallery {
 #[test]
 #[ignore = "gallery: needs a display; run with `just gallery`"]
 fn every_component_state_is_visible_and_eases() {
-    // Own the gallery when handed a binary; otherwise drive a window someone else launched (so a
-    // recorder can frame it first).
     let launched = std::env::var("RIFT_GALLERY").ok().map(|binary| {
         Gallery(
             Command::new(PathBuf::from(binary))
@@ -50,8 +41,6 @@ fn every_component_state_is_visible_and_eases() {
         )
     });
 
-    // Nothing to drive (e.g. the gameplay `just e2e` pass, which runs every ignored test): skip rather
-    // than block. This showcase is driven by `just gallery`, which provides the binary.
     if launched.is_none() && find_window().is_none() {
         eprintln!("no gallery binary or window present; skipping the showcase");
         return;
@@ -63,20 +52,16 @@ fn every_component_state_is_visible_and_eases() {
     window.click(&mut input(), 0.5, 0.04);
     sleep(Duration::from_millis(500));
 
-    // Whichever sample column the liveliest hover lands on across all scenes — the proof that real
-    // pointer input reached the components and moved their paint.
     let mut peak = 0.0f32;
 
     for name in SCENES {
         println!("scene: {name}");
         let mut enigo = input();
 
-        // Rest: pointer parked above the samples.
         window.move_to(&mut enigo, 0.5, 0.12);
         sleep(Duration::from_millis(450));
         let resting = window.capture();
 
-        // Sweep a handful of columns at sample height; remember the liveliest (a real element there).
         let mut best = (0.0f32, 0.5f32);
         for column in 0..6 {
             let fx = 0.28 + 0.44 * (column as f32 / 5.0);
@@ -94,7 +79,6 @@ fn every_component_state_is_visible_and_eases() {
             best.1
         );
 
-        // Hover the liveliest spot, then press and release to show the active state.
         window.move_to(&mut enigo, best.1, 0.5);
         sleep(Duration::from_millis(350));
         enigo.button(Button::Left, Direction::Press).expect("press");
@@ -153,9 +137,7 @@ fn find_window() -> Option<Window> {
     })
 }
 
-/// A live window handle, re-resolved by id each use (xcap hands out snapshots). Tracks the last
-/// pointer position so moves can be glided in small steps — a single absolute warp often fails to
-/// register as a `CursorMoved`, but a stream of small ones reliably does.
+/// Tracks pointer position so moves can be glided in small steps — a single absolute warp often fails to register as a `CursorMoved`, but a stream of small ones reliably does.
 struct Win {
     id: u32,
     cursor: Cell<(i32, i32)>,
@@ -170,7 +152,6 @@ impl Win {
             .expect("the window is gone")
     }
 
-    /// The absolute screen point at a fraction of the window (0..1 in each axis).
     fn point(&self, fx: f32, fy: f32) -> (i32, i32) {
         let window = self.window();
         (
@@ -179,8 +160,7 @@ impl Win {
         )
     }
 
-    /// Glides the pointer from where it is to a fraction of the window in small steps (a stream of
-    /// small moves registers as `CursorMoved` far more reliably than one warp).
+    /// Glide in small steps: a stream of small moves registers as `CursorMoved` far more reliably than one warp.
     fn move_to(&self, enigo: &mut Enigo, fx: f32, fy: f32) {
         let (tx, ty) = self.point(fx, fy);
         let (sx, sy) = self.cursor.get();
@@ -217,7 +197,6 @@ struct Frame {
     rgba: Vec<u8>,
 }
 
-/// Fraction of pixels that differ noticeably between two same-size frames.
 fn diff_fraction(a: &Frame, b: &Frame) -> f32 {
     if a.width != b.width || a.height != b.height || a.rgba.len() != b.rgba.len() {
         return 1.0;

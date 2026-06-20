@@ -1,7 +1,3 @@
-//! `RadioGroup`: single selection across items. Controlled — `value` is a prop and an item requests its
-//! own value through `on_value_change`. Each item is a 24px round button with primary/surface states and
-//! hover/active overlays, with a centered 10px indicator dot shown only when selected.
-
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -38,8 +34,6 @@ impl RadioGroup {
 
 children_builder!(RadioGroup);
 
-/// One option: a circle (holding the indicator) and an optional label, laid out as a clickable row so
-/// pressing either the circle or the label selects its `value`.
 #[derive(Default)]
 pub struct RadioGroupItem {
     value: String,
@@ -53,7 +47,6 @@ impl RadioGroupItem {
         self
     }
 
-    /// The label rendered beside the circle. Clicking it selects this option too.
     pub fn label(mut self, label: impl Into<View>) -> RadioGroupItem {
         self.label = Some(label.into());
         self
@@ -62,7 +55,6 @@ impl RadioGroupItem {
 
 children_builder!(RadioGroupItem);
 
-/// The mark (a checkmark) shown while its item is selected — a radio is a circular checkbox.
 #[derive(Default)]
 pub struct RadioGroupIndicator {
     children: Vec<View>,
@@ -102,7 +94,6 @@ impl From<RadioGroupItem> for View {
     }
 }
 
-/// The item row: the circle and its label side by side, with a comfortable gap.
 fn item_row_style() -> Style {
     Style::new().node(|node| {
         node.flex_direction = FlexDirection::Row;
@@ -134,7 +125,6 @@ fn is_selected(world: &World, host: Entity) -> bool {
         == Some(mine.0.as_str())
 }
 
-/// The 24px round circle: primary when selected, surface when not, with hover/active overlays.
 fn radio_style(selected: bool) -> Style {
     let (base, hover, active) = if selected {
         (
@@ -149,8 +139,7 @@ fn radio_style(selected: bool) -> Style {
             color::surface_canvas_active,
         )
     };
-    // Selected fills to the edge: drop the border (a bordered rounded box leaks the surface behind at the
-    // corner arcs — a bevy quirk); unselected keeps a hairline ring.
+    // When selected, drop the border — bordered rounded boxes leak surface at corners (bevy quirk).
     let (border_width, border) = if selected {
         (0.0, color::primary_base)
     } else {
@@ -174,7 +163,6 @@ fn radio_style(selected: bool) -> Style {
         .transition(STANDARD_ENTER)
 }
 
-/// The mark: centered in the on-primary color, filling the circle.
 fn indicator_style() -> Style {
     Style::new().text_color(color::primary_on).node(|node| {
         node.width = Val::Percent(100.0);

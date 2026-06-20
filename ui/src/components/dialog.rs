@@ -1,7 +1,3 @@
-//! `Dialog`: a modal window. Controlled — `open` is a prop, the trigger requests `true` through
-//! `on_open_change`, and the backdrop or `DialogClose` request `false`. The overlay and content mount
-//! into a [`DialogOutlet`] only while open; the outlet centers content over a full-screen backdrop.
-
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -47,7 +43,6 @@ impl Dialog {
 
 children_builder!(Dialog);
 
-/// Opens the dialog when clicked.
 #[derive(Default)]
 pub struct DialogTrigger {
     children: Vec<View>,
@@ -55,7 +50,6 @@ pub struct DialogTrigger {
 
 children_builder!(DialogTrigger);
 
-/// The dimmed backdrop behind the dialog; pressing it closes the dialog.
 #[derive(Default)]
 pub struct DialogOverlay {
     children: Vec<View>,
@@ -63,7 +57,6 @@ pub struct DialogOverlay {
 
 children_builder!(DialogOverlay);
 
-/// The dialog panel, centered over the backdrop.
 #[derive(Default)]
 pub struct DialogContent {
     children: Vec<View>,
@@ -71,7 +64,6 @@ pub struct DialogContent {
 
 children_builder!(DialogContent);
 
-/// The dialog's accessible title (a plain text container here).
 #[derive(Default)]
 pub struct DialogTitle {
     children: Vec<View>,
@@ -79,7 +71,6 @@ pub struct DialogTitle {
 
 children_builder!(DialogTitle);
 
-/// The dialog's supporting description.
 #[derive(Default)]
 pub struct DialogDescription {
     children: Vec<View>,
@@ -87,7 +78,6 @@ pub struct DialogDescription {
 
 children_builder!(DialogDescription);
 
-/// Closes the dialog when clicked.
 #[derive(Default)]
 pub struct DialogClose {
     children: Vec<View>,
@@ -95,7 +85,7 @@ pub struct DialogClose {
 
 children_builder!(DialogClose);
 
-/// Where dialogs render. Place it last so it paints above the rest of the UI.
+/// Where dialogs render — place it last to paint above the rest of the UI.
 #[derive(Default)]
 pub struct DialogOutlet;
 
@@ -128,7 +118,6 @@ impl From<DialogTrigger> for View {
 
 impl From<DialogOverlay> for View {
     fn from(overlay: DialogOverlay) -> View {
-        // The backdrop just paints; its fade in/out is owned by `exit_on_close` (no transform).
         let style = Style::new().background(color::scrim_dark);
         let scrim = crate::exit_on_close(
             node()
@@ -157,7 +146,7 @@ impl From<DialogContent> for View {
                 node.border_radius = BorderRadius::all(Val::Px(radius::M));
                 node.overflow = Overflow::hidden();
             });
-        // Opacity + scale (enter and exit) are owned by `exit_on_close`.
+        // Opacity + scale (enter/exit) owned by `exit_on_close`.
         let panel = crate::exit_on_close(
             node().style(style).children(content.children),
             crate::POPPER_ENTER,

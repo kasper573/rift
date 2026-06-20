@@ -1,7 +1,3 @@
-//! The `view!` macro is sugar over the runtime builder: every contract proven against the builder
-//! must hold when the same UI is written as markup. These tests author UI the way a game would and
-//! assert on the rendered tree.
-
 mod harness;
 
 use bevy_ecs::prelude::*;

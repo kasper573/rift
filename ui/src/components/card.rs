@@ -1,9 +1,3 @@
-//! `Card`: a surface container — a rounded, padded panel laying its children out in a column. Its
-//! variants: an `intent` palette (surface, success, error, info, muted), `floating` (lifts on an
-//! elevation shadow instead of a border), `interactive` (gains a pointer cursor and hover/press
-//! surfaces), and `compact` (tighter radius and padding). Purely presentational, so it composes
-//! anywhere — on its own, or as the body of a tooltip/popover/dialog.
-
 use bevy_color::Color;
 use bevy_ui::{BorderRadius, BoxShadow, FlexDirection, ShadowStyle, UiRect, Val};
 use bevy_view::{Element, View, node};
@@ -50,10 +44,8 @@ impl From<Card> for View {
         let (floating, interactive) = (card.floating, card.interactive);
         let element: Element = node()
             .style(card_style(&palette, floating, interactive, card.compact))
-            // The shadow depends on the live hover state, which the recipe can't animate, so it's set
-            // each render: a floating card rests on elevation 1; an interactive card lifts on hover —
-            // to elevation 1 (flat) or 2 (already floating) — the interactive-plus-floating compound.
             .attr(move |entity| {
+                // Shadow depends on live hover state (recipe can't animate it); set each render.
                 let hovered = entity
                     .get::<PointerState>()
                     .is_some_and(|pointer| pointer.hovered && !pointer.pressed);
@@ -71,7 +63,6 @@ impl From<Card> for View {
     }
 }
 
-/// The card's elevation shadow for the current `floating`/`interactive`/`hovered` state, or none.
 fn shadow(floating: bool, interactive: bool, hovered: bool) -> Option<BoxShadow> {
     let level = if floating {
         if interactive && hovered { 2 } else { 1 }
@@ -83,7 +74,6 @@ fn shadow(floating: bool, interactive: bool, hovered: bool) -> Option<BoxShadow>
     Some(elevation(level))
 }
 
-/// One intent's surface colours, and whether it draws a hairline border (only `surface` does).
 struct Palette {
     base: ColorVar,
     hover: ColorVar,
@@ -138,7 +128,6 @@ fn card_style(palette: &Palette, floating: bool, interactive: bool, compact: boo
     } else {
         (radius::M, spacing::XL)
     };
-    // A border only when not lifted on a shadow and the intent calls for one.
     let bordered = !floating && palette.stroke.is_some();
     let mut style = Style::new()
         .background(palette.base)
@@ -164,7 +153,6 @@ fn card_style(palette: &Palette, floating: bool, interactive: bool, compact: boo
     style
 }
 
-/// A soft elevation shadow at one of two depths — level 2 lifts roughly twice as far as level 1.
 fn elevation(level: u8) -> BoxShadow {
     let scale = level as f32;
     BoxShadow(vec![

@@ -1,8 +1,3 @@
-//! `ScrollArea`: a fixed-size region whose viewport clips and scrolls its overflowing content (via the
-//! `Node`'s overflow and a [`ScrollPosition`]), paired with a scrollbar whose thumb is sized and moved
-//! to mirror how much is shown and where — kept in sync by [`sync_scrollbars`] from the viewport's
-//! measured content. The app owns the scroll offset; the showcase animates it.
-
 use bevy_ecs::prelude::*;
 use bevy_ui::{
     BorderRadius, ComputedNode, FlexDirection, Node, Overflow, PositionType, ScrollPosition, Val,
@@ -13,7 +8,6 @@ use crate::recipe::{Style, Styled};
 use crate::theme::color;
 use crate::tokens::radius;
 
-/// Marks a scroll area's root, viewport, scrollbar and thumb so [`sync_scrollbars`] can pair them up.
 #[derive(Component, Clone)]
 pub(crate) struct ScrollRoot;
 #[derive(Component, Clone)]
@@ -30,7 +24,6 @@ pub struct ScrollArea {
 
 children_builder!(ScrollArea);
 
-/// The clipping, scrolling viewport.
 #[derive(Default)]
 pub struct ScrollAreaViewport {
     children: Vec<View>,
@@ -38,7 +31,6 @@ pub struct ScrollAreaViewport {
 
 children_builder!(ScrollAreaViewport);
 
-/// A scrollbar track.
 #[derive(Default)]
 pub struct ScrollAreaScrollbar {
     children: Vec<View>,
@@ -46,11 +38,9 @@ pub struct ScrollAreaScrollbar {
 
 children_builder!(ScrollAreaScrollbar);
 
-/// The thumb within a scrollbar; its length and position track the viewport.
 #[derive(Default)]
 pub struct ScrollAreaThumb;
 
-/// The corner where two scrollbars meet.
 #[derive(Default)]
 pub struct ScrollAreaCorner;
 
@@ -127,9 +117,7 @@ impl From<ScrollAreaCorner> for View {
     }
 }
 
-/// Sizes and positions each scroll area's thumb from its viewport: the thumb's length is the fraction of
-/// the content that's visible, and its offset is how far the viewport has scrolled. Runs after layout so
-/// the measured content size is current.
+/// Sizes and positions thumbs from viewports. Runs after layout so measured sizes are current.
 pub(crate) fn sync_scrollbars(
     roots: Query<&Children, With<ScrollRoot>>,
     is_viewport: Query<(), With<ScrollViewport>>,

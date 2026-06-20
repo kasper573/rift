@@ -1,6 +1,3 @@
-//! Context resolves over the entity hierarchy: a descendant reads the nearest value `provide`d at or
-//! above it, an inner provider shadows an outer one, and an unprovided type resolves to `None`.
-
 mod harness;
 
 use bevy_view::{context, node, provide};

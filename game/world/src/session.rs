@@ -11,9 +11,6 @@ use crate::protocol::{
     RespawnRequest, SpectateRequest, UseItemRequest, Welcome,
 };
 
-/// Registers replicon's client plugins and the shared protocol, and records the [`ClientId`] the
-/// server greets this session with. The caller adds a backend (`RepliconRenetPlugins` + a
-/// `RenetClient`/transport) and a `StatesPlugin`, then ticks the app.
 pub struct ClientSessionPlugin;
 
 impl Plugin for ClientSessionPlugin {
@@ -29,7 +26,6 @@ impl Plugin for ClientSessionPlugin {
     }
 }
 
-/// The id the server greeted this session with; `None` until the welcome arrives.
 #[derive(Resource, Default)]
 pub struct MyClient(pub Option<ClientId>);
 
@@ -37,8 +33,6 @@ pub fn my_id(world: &World) -> Option<ClientId> {
     world.resource::<MyClient>().0
 }
 
-/// The character this client controls — the entity whose [`Owner`] carries our [`ClientId`]. It is
-/// an ordinary character; read its components like any other: `me(world)?.get::<Vitals>()`.
 pub fn me(world: &World) -> Option<EntityRef<'_>> {
     let mine = my_id(world)?;
     world.iter_entities().find(|entity| {
@@ -72,8 +66,6 @@ pub fn use_item(world: &mut World, slot: u32) {
     world.write_message(UseItemRequest { slot });
 }
 
-/// Walks to `pos`, picking the [`MoveToPortal`] intent when the point lands inside a portal of
-/// the current area so the server warps instead of pathing there.
 pub fn move_to(world: &mut World, pos: Pos<Tiles>) {
     let portal = me(world)
         .and_then(|entity| entity.get::<AreaTag>())

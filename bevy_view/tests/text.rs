@@ -1,6 +1,3 @@
-//! Dynamic text re-reads the world every render, keeps its entity identity as the content changes,
-//! and accepts the empty string.
-
 mod harness;
 
 use bevy_ecs::prelude::*;

@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::hud::Panel;
 
-/// An on-screen pixel of the player's window, the unit bevy UI `Val::Px` and `Window::cursor_position`
-/// speak — a resolution-dependent zoom apart from the [`WorldPx`] the camera draws the world in.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct ScreenPx(pub f32);
 
@@ -14,7 +12,6 @@ impl std::ops::Add<f32> for ScreenPx {
     }
 }
 
-/// The snap grid when snapping is enabled; 0 disables it.
 pub const DEFAULT_SNAP: ScreenPx = ScreenPx(16.0);
 
 #[derive(Serialize, Deserialize, Default)]
@@ -27,13 +24,10 @@ pub struct UserSettings {
 pub struct UiSettings {
     #[serde(default = "default_snap")]
     pub snap: ScreenPx,
-    // A JSON map can't be keyed on an enum-with-data, so placements are an association list keyed by
-    // the typed `Panel` each component already names itself with.
     #[serde(default)]
     pub placements: Vec<(Panel, Placement)>,
 }
 
-/// A persisted on-screen rectangle: top-left position, and a size for resizable windows.
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct Placement {
     pub pos: (ScreenPx, ScreenPx),
@@ -53,7 +47,6 @@ impl UserSettings {
         }
     }
 
-    /// Rounds a coordinate to the snap grid; a no-op while snapping is disabled.
     pub fn snap(&self, value: ScreenPx) -> ScreenPx {
         let grid = self.ui.snap.0;
         if grid <= 0.0 {

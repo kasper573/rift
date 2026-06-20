@@ -23,21 +23,14 @@ use metrics::{counter, gauge, histogram};
 use rand::RngCore;
 use world::{ClientId, Identity, TICK_HZ};
 
-/// Identifies this game/protocol to netcode; clients minted under a different id cannot connect.
 const PROTOCOL_ID: u64 = 0x0072_6966_7400_0001;
-/// How long a minted token stays valid before the player must request another.
 const TOKEN_EXPIRE: Duration = Duration::from_secs(30);
-/// How long netcode keeps an idle connection before timing it out.
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_CLIENTS: usize = 256;
 
-/// The `RIFT_GAME_SERVER_*` environment.
 #[derive(serde::Deserialize)]
 struct Config {
     port: u16,
-    /// The host clients dial for netcode, baked into the minted tokens (its port is always the
-    /// server's own [`port`]). A hostname is resolved at startup, so prod names its public domain
-    /// and the test stack names loopback.
     public_host: String,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
@@ -49,7 +42,6 @@ fn main() {
     let config: Config = envy::prefixed("RIFT_GAME_SERVER_")
         .from_env()
         .expect("RIFT_GAME_SERVER_* environment");
-    // Held for the process lifetime: dropping the agent stops the profiler.
     let _profiler = service::profiler(
         "rift-game-server",
         config.pyroscope_enabled,
@@ -139,8 +131,6 @@ fn simulate(
 #[derive(Resource)]
 struct NextClient(u32);
 
-/// Tokens minted but not yet redeemed, keyed by the netcode client id baked into each, so the
-/// connection that lands carries the player it was issued to.
 #[derive(Resource, Clone, Default)]
 struct Sessions(Arc<Mutex<HashMap<u64, Pending>>>);
 
@@ -216,14 +206,10 @@ async fn serve_http(addr: SocketAddr, http: Http) {
         .await
         .unwrap_or_else(|error| panic!("cannot bind {addr}: {error}"));
     println!("http listening on {addr}");
-    // Sessions are transient and nothing persists, so a stop request (docker stop, deploys, a
-    // console close) exits immediately instead of draining live connections.
     ctrlc::set_handler(|| std::process::exit(0)).expect("install stop handler");
     axum::serve(listener, router).await.expect("axum serves");
 }
 
-/// Verifies a player's `Bearer <JWT>` against Keycloak and mints a single-use `ConnectToken`
-/// for the UDP connection.
 async fn session(State(http): State<Http>, headers: HeaderMap) -> Response {
     let authorization = headers
         .get(header::AUTHORIZATION)
@@ -285,8 +271,6 @@ async fn scrape(State(http): State<Http>) -> String {
     http.prometheus.render()
 }
 
-/// Healthy means players can actually connect: a server that cannot verify tokens yet (issuer
-/// still booting next to it) stays out of rotation instead of minting unusable sessions.
 async fn health(State(http): State<Http>) -> Response {
     let ready = http.verifier.lock().expect("verifier lock").ready();
     if ready {
@@ -313,8 +297,6 @@ fn metrics_recorder() -> metrics_exporter_prometheus::PrometheusHandle {
         .expect("prometheus recorder installs")
 }
 
-/// Keycloak verification configured through the shared `RIFT_AUTH_*` block, which every
-/// deployment must provide: sessions are only ever minted for verified tokens.
 fn verifier() -> Arc<Mutex<auth::Verifier>> {
     #[derive(serde::Deserialize)]
     struct AuthConfig {

@@ -1,7 +1,3 @@
-//! Portals render their body into an app-placed outlet instead of in place: the content is absent
-//! where declared and present under the outlet, keeps stable identity across renders, unmounts (with
-//! cleanup) when its source goes away, and an outlet's children are never churned by a re-render.
-
 mod harness;
 
 use bevy_ecs::prelude::*;
@@ -87,8 +83,7 @@ fn sibling_portals_sharing_a_boundary_reach_one_outlet_without_colliding() {
         "two portals that share their boundary's instance each reach the outlet on their own path"
     );
 
-    // Both bodies share a boundary (a dialog's overlay and content), so each must keep its own entity;
-    // collapsing them onto one would list it twice under the outlet and panic the layout tree.
+    // Separate entities required: collapsing them would list one twice under the outlet.
     ui.render(view());
     let mut again = ui.texts_under(sink);
     again.sort();

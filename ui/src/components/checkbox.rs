@@ -1,9 +1,3 @@
-//! `Checkbox`: a tri-state control — a 24px rounded box
-//! that fills with the primary color when checked and shows a hairline border when not, easing between
-//! states. Controlled: `checked` is a [`Check`] prop and a click requests the toggled value through
-//! `on_checked_change` (an `Indeterminate` value resolves to on). The root shares the value with its
-//! `CheckboxIndicator` through context; the indicator (the mark) mounts only while checked.
-
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -16,7 +10,6 @@ use crate::recipe::{Style, Styled};
 use crate::theme::color;
 use crate::tokens::{radius, size};
 
-/// A checkbox's value: unchecked, checked, or a mixed/indeterminate state.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Check {
     #[default]
@@ -49,7 +42,6 @@ impl Checkbox {
 
 children_builder!(Checkbox);
 
-/// The mark shown while the checkbox is checked or indeterminate.
 #[derive(Default)]
 pub struct CheckboxIndicator {
     children: Vec<View>,
@@ -94,7 +86,7 @@ fn checked(world: &World, _: InstanceId, host: Entity) -> bool {
     controlled::<Check>(world, host).is_some_and(|control| control.value != Check::Off)
 }
 
-/// The 24px box: primary fill when checked, hairline surface when not, hover/press shades easing in.
+/// Checkbox box. When filled, drop the border — bordered rounded boxes leak surface at corners (bevy quirk).
 fn box_style(on: bool) -> Style {
     let (base, hover, active, border) = if on {
         (
@@ -111,8 +103,6 @@ fn box_style(on: bool) -> Style {
             color::surface_canvas_border,
         )
     };
-    // When filled, the border equals the fill, so drop it: a bordered rounded box leaks the surface
-    // behind at the corner arcs (a bevy rendering quirk), and a plain rounded fill renders cleanly.
     let border_width = if on { 0.0 } else { 2.0 };
     Style::new()
         .node(move |node| {
@@ -132,7 +122,6 @@ fn box_style(on: bool) -> Style {
         .transition(STANDARD_ENTER)
 }
 
-/// The mark: centered, in the on-primary color, filling the box.
 fn indicator_style() -> Style {
     Style::new().text_color(color::primary_on).node(|node| {
         node.width = Val::Percent(100.0);

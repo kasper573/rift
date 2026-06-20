@@ -1,8 +1,6 @@
 use crate::theme::Theme;
 use crate::tokens::palette;
 
-/// Constructs the `dark` theme. Provide it to a subtree with
-/// [`provide_theme`](crate::theme::provide_theme).
 pub fn theme() -> Theme {
     Theme {
         scrim_light: palette::SHADE_20,

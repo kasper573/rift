@@ -32,7 +32,6 @@ fn main() {
     app::add_timeout3(0.1, move |handle| {
         view.set_label(&render(&status, &progress));
         view.redraw();
-        // A failure leaves `done` false, so the window stays up for the user to read the error.
         let finished = {
             let status = status.lock().expect("status lock");
             status.error.is_none() && status.done
@@ -75,7 +74,6 @@ impl Bundle {
         }
     }
 
-    /// Runs on the worker thread and never touches fltk — the UI thread owns that.
     fn run(&self, progress: &Arc<Mutex<Progress>>, status: &Arc<Mutex<Status>>) {
         match self.patch_and_launch(progress, status) {
             Ok(()) => status.lock().expect("status lock").done = true,
@@ -121,8 +119,6 @@ impl Bundle {
             .map_err(|error| format!("update manifest invalid: {error}"))
     }
 
-    /// The installer's own new binary (the entry matching the running executable) is swapped in via
-    /// `self_replace`, which handles platforms that refuse to overwrite a running executable in place.
     fn install(&self, files: &[FileEntry], downloads: &Path) -> std::io::Result<()> {
         let exe = std::env::current_exe()?;
         let stem = exe

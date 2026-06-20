@@ -1,11 +1,4 @@
-//! `Text`: the library's typographic primitive and the one way text is rendered. Pick a role with
-//! `intent` (the type scale — `body`, `label`, `title`, `headline_*`, …) and
-//! the font size, line height and weight come from the [typography tokens](crate::tokens::typography);
-//! `color` sets the foreground from a [theme variable](crate::theme) or a literal color. Content is
-//! either fixed ([`new`](Text::new)) or read off the world every render ([`dynamic`](Text::dynamic)).
-//! It wraps the bare [`bevy_view::text`]/[`bevy_view::dyn_text`] primitives and ignores picking, so a
-//! label never swallows a click meant for the control it captions. By convention every piece of text in
-//! the library — and apps built on it — is a `Text`, leaving the lowercase primitives used only here.
+//! `Text` ignores picking so captions don't swallow clicks.
 
 use std::sync::Arc;
 
@@ -34,7 +27,6 @@ impl Text {
         Text::with(Content::Fixed(content.into()))
     }
 
-    /// Content read off the world on every render — for values that change, like a live counter.
     pub fn dynamic<F>(content: F) -> Text
     where
         F: Fn(&World) -> String + Send + Sync + 'static,
@@ -50,15 +42,11 @@ impl Text {
         }
     }
 
-    /// Selects the type scale by name (`body`, `label`, `title`, …), falling back to
-    /// `body` for an unknown name.
     pub fn intent(mut self, intent: &str) -> Text {
         self.typography = typography::by_name(intent);
         self
     }
 
-    /// Overrides the foreground color — a [`ColorVar`](crate::theme::ColorVar) or a literal `Color`
-    /// (defaults to on-surface text).
     pub fn color(mut self, color: impl Into<Paint>) -> Text {
         self.color = color.into();
         self

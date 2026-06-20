@@ -1,5 +1,3 @@
-//! Registered identically on both sides so bevy_replicon's channels line up.
-
 use bevy_app::App;
 use bevy_ecs::entity::MapEntities;
 use bevy_ecs::message::Message;
@@ -35,8 +33,6 @@ pub fn protocol(app: &mut App) {
         .add_mapped_server_message::<ItemConsumed>(Channel::Ordered);
 }
 
-/// One connection's stable id, assigned by the transport; on the server it sits on the
-/// connection's client entity.
 #[derive(
     Component,
     Serialize,
@@ -60,7 +56,6 @@ pub const ACTION_RUN: u8 = 2;
 pub const ACTION_ATTACK: u8 = 3;
 pub const ACTION_DEAD: u8 = 4;
 
-/// The wire action's verb in the actor model manifests; unknown actions read as idle.
 pub fn action_name(action: u8) -> &'static str {
     match action {
         ACTION_WALK => "walk",
@@ -71,7 +66,6 @@ pub fn action_name(action: u8) -> &'static str {
     }
 }
 
-/// A `0xRRGGBBAA` packed color; content tables spell it `#rrggbbaa` via [`rgba_hex`].
 #[derive(
     Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default,
 )]
@@ -91,7 +85,6 @@ pub struct Actor {
     pub attack_rate: PlaybackRate,
 }
 
-/// Click target in tiles: a box centered on x with its bottom at the feet line.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Hitbox {
     pub size: Size<Tiles>,
@@ -118,13 +111,11 @@ pub struct Name {
     pub name: String,
 }
 
-/// A spectator's camera anchor; `watch: None` is free spectating.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Spectate {
     pub watch: Option<ClientId>,
 }
 
-/// Each element is one owned item instance; replicated only to the owning client.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Inventory {
     pub items: Vec<Id<ItemDef>>,
@@ -168,13 +159,11 @@ pub struct SpectateRequest {
     pub watch: Option<ClientId>,
 }
 
-/// The server's hello: the connection's [`ClientId`], which [`Owner`] components refer to.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Welcome {
     pub id: ClientId,
 }
 
-/// Announces a consumed inventory item so clients can play its sound at the consumer.
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
 pub struct ItemConsumed {
     pub item: Id<ItemDef>,
@@ -199,14 +188,12 @@ pub fn is_dead(world: &World, entity: Entity) -> bool {
     world.get::<Vitals>(entity).is_some_and(|v| v.health <= 0.0)
 }
 
-/// Writes only on change, so replication ships [`Actor`] exactly when it really moved.
 pub fn set_action(actor: &mut Mut<Actor>, action: u8) {
     if actor.action != action {
         actor.action = action;
     }
 }
 
-/// Writes only on change, so replication ships [`Actor`] exactly when it really moved.
 pub fn set_facing(actor: &mut Mut<Actor>, dir: u8, action: u8) {
     if actor.dir != dir || actor.action != action {
         actor.dir = dir;

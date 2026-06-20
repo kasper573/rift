@@ -1,8 +1,3 @@
-//! `Popover`: a click-toggled, dismissible floating panel anchored to its trigger. Controlled — `open`
-//! is a prop and the trigger requests the flipped value through `on_open_change`. Its content is gated
-//! by `open` as control flow (mounted into the [`PopoverOutlet`] while open, unmounted when closed),
-//! collision-positioned against the trigger, and dismissed by a press outside it.
-
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -11,11 +6,8 @@ use bevy_view::{PortalKind, View, node};
 use crate::controlled::{OnChange, flip, noop};
 use crate::{Align, Side, close_overlay, overlay_root, register_anchor};
 
-/// The reserved portal destination for popovers; place a [`PopoverOutlet`] where they should paint.
 const POPOVER_OUTLET: PortalKind = PortalKind(0xb0_0000_0000_0090);
 
-/// A click-toggled, dismissible popover. Wrap a [`PopoverTrigger`] and a [`PopoverContent`]; the
-/// content portals to a [`PopoverOutlet`].
 #[derive(Default)]
 pub struct Popover {
     open: bool,
@@ -38,13 +30,11 @@ impl Popover {
     }
 }
 
-/// Wraps the element that toggles the popover.
 #[derive(Default)]
 pub struct PopoverTrigger {
     children: Vec<View>,
 }
 
-/// The floating panel, shown while the popover is open.
 #[derive(Default)]
 pub struct PopoverContent {
     side: Side,
@@ -53,13 +43,11 @@ pub struct PopoverContent {
     children: Vec<View>,
 }
 
-/// A control inside content that closes the popover when clicked.
 #[derive(Default)]
 pub struct PopoverClose {
     children: Vec<View>,
 }
 
-/// Where popovers render.
 #[derive(Default)]
 pub struct PopoverOutlet;
 
@@ -92,8 +80,7 @@ impl From<PopoverTrigger> for View {
 
 impl From<PopoverContent> for View {
     fn from(content: PopoverContent) -> View {
-        // No appearance: the popover just floats whatever is composed inside it (compose a `Card` for a
-        // surface). It is interactive and dismissed by a press outside it.
+        // No appearance; the popover floats composed content (e.g. a `Card`). Dismissable on outside press.
         crate::popper::content(
             POPOVER_OUTLET,
             content.side,

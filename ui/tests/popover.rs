@@ -1,8 +1,3 @@
-//! `Popover` is controlled: the app owns `open`, the trigger requests the flipped value, and the content
-//! mounts into the outlet while open. It unmounts on a second click, on `PopoverClose`, or on a press
-//! outside it — while a press carrying its own instance leaves it open. The overlay root is a
-//! context-providing node, so its trigger sits one level in.
-
 mod harness;
 
 use bevy_view::view;

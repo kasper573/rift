@@ -1,16 +1,3 @@
-//! The styling core. A [`Style`] is the one appearance primitive every component reaches for: it
-//! collects instant layout (`Node` patches and component inserts), the tweenable paints
-//! (`background`/`border`/`text`), a [transform](Style::translate), optional hover/press
-//! [state](Style::hover) overlays, and an optional [`transition`](Style::transition) — then `apply`s
-//! itself to one element, resolving everything in one place: theme variables against the active
-//! [theme](crate::theme), hover/press against the element's [`PointerState`], and easing through
-//! [`Motion`](crate::motion). Attach one with [`Styled::style`].
-//!
-//! A [`Recipe`] is the only thing layered on top: it composes Styles by variant — a `bevy_ui` take on
-//! [vanilla-extract's recipes](https://vanilla-extract.style/documentation/packages/recipes/) — and
-//! `resolve`s a (partial) selection into a single `Style`. Nothing else styles elements directly, so
-//! adding a paint, a state, or a transition is the same gesture everywhere.
-
 use std::sync::Arc;
 
 use bevy_color::Color;
@@ -25,11 +12,8 @@ use crate::interaction::PointerState;
 use crate::motion::{Motion, Opacity, Paint as MotionPaint, Timing, Transform2d};
 use crate::theme::{ColorVar, active_theme};
 
-/// One instant styling operation: a `Node` patch or a component insert, run against the entity.
 type Op = Arc<dyn Fn(&mut EntityWorldMut) + Send + Sync>;
 
-/// A color source for a tweenable paint: a [theme variable](ColorVar) resolved against the active
-/// theme, or a literal color.
 #[derive(Clone, Copy)]
 pub enum Paint {
     Var(ColorVar),
@@ -60,9 +44,6 @@ impl Paint {
     }
 }
 
-/// One element's complete appearance: instant layout, tweenable paints, a transform, hover/press
-/// overlays, and a transition. Cheaply cloned and [merged](Style::merge); a later tweenable field wins
-/// over an earlier one, instant operations accumulate in order, and the state overlays compose.
 #[derive(Clone, Default)]
 pub struct Style {
     ops: Vec<Op>,
@@ -84,8 +65,7 @@ impl Style {
         Style::default()
     }
 
-    /// Patches `Node` fields in place, leaving the rest — and any runtime-owned fields like a
-    /// draggable's `left`/`top` — untouched.
+    /// Patch `Node` fields in place without touching runtime-owned fields.
     pub fn node<F>(self, patch: F) -> Style
     where
         F: Fn(&mut Node) + Send + Sync + 'static,
@@ -97,7 +77,6 @@ impl Style {
         })
     }
 
-    /// Inserts a component immediately (a marker, or a paint the recipe doesn't tween itself).
     pub fn insert<B>(self, bundle: B) -> Style
     where
         B: Bundle + Clone,
@@ -107,25 +86,21 @@ impl Style {
         })
     }
 
-    /// The background paint — a [`ColorVar`] or a literal [`Color`] (e.g. `Color::NONE`).
     pub fn background(mut self, paint: impl Into<Paint>) -> Style {
         self.background = Some(paint.into());
         self
     }
 
-    /// The border paint (set a `Node.border` width to make it show).
     pub fn border_color(mut self, paint: impl Into<Paint>) -> Style {
         self.border = Some(paint.into());
         self
     }
 
-    /// A text element's foreground paint.
     pub fn text_color(mut self, paint: impl Into<Paint>) -> Style {
         self.text = Some(paint.into());
         self
     }
 
-    /// Offsets the element by a logical-pixel translation.
     pub fn translate(mut self, offset: Vec2) -> Style {
         self.transform
             .get_or_insert(Transform2d::IDENTITY)
@@ -133,66 +108,53 @@ impl Style {
         self
     }
 
-    /// Scales the element (1.0 = natural size).
     pub fn scale(mut self, scale: Vec2) -> Style {
         self.transform.get_or_insert(Transform2d::IDENTITY).scale = scale;
         self
     }
 
-    /// Rotates the element clockwise by `radians`.
     pub fn rotate(mut self, radians: f32) -> Style {
         self.transform.get_or_insert(Transform2d::IDENTITY).rotation = radians;
         self
     }
 
-    /// The transform the element animates *from* when it first mounts — an entrance (e.g. a smaller
-    /// scale, or an offset, that eases to rest). Needs a [`transition`](Style::transition).
     pub fn enter(mut self, from: Transform2d) -> Style {
         self.enter = Some(from);
         self
     }
 
-    /// The element's opacity in `0..=1`, faded into this node *and its descendants* — bevy_ui has no
-    /// subtree opacity, so this provides it (the basis for overlay cross-fades).
+    /// Opacity in 0..=1, applied to node and descendants (bevy_ui has no subtree opacity).
     pub fn opacity(mut self, opacity: f32) -> Style {
         self.opacity = Some(opacity);
         self
     }
 
-    /// The opacity the element animates *from* on mount (e.g. `0.0` to fade in). Needs a
-    /// [`transition`](Style::transition).
     pub fn enter_opacity(mut self, from: f32) -> Style {
         self.enter_opacity = Some(from);
         self
     }
 
-    /// Spins the element continuously, `radians` per second (composed over any transform).
     pub fn spin(mut self, radians_per_second: f32) -> Style {
         self.spin = Some(radians_per_second);
         self
     }
 
-    /// Eases this style's tweenable paints and transform over `timing` instead of snapping — including
-    /// the changes its [`hover`](Style::hover)/[`active`](Style::active) overlays bring.
     pub fn transition(mut self, timing: Timing) -> Style {
         self.transition = Some(timing);
         self
     }
 
-    /// Overlays `style` while the pointer is over the element (and while pressed, since a press implies
-    /// hover) — the analog of CSS `:hover`. Layered over the base; pair with a [`transition`].
+    /// Overlay style while pointer hovers (and while pressed, since press implies hover).
     pub fn hover(mut self, style: Style) -> Style {
         self.hover = Some(Box::new(style));
         self
     }
 
-    /// Overlays `style` while the element is pressed — the analog of CSS `:active`.
     pub fn active(mut self, style: Style) -> Style {
         self.active = Some(Box::new(style));
         self
     }
 
-    /// Pushes an arbitrary instant operation against the element's entity.
     pub(crate) fn op<F>(mut self, op: F) -> Style
     where
         F: Fn(&mut EntityWorldMut) + Send + Sync + 'static,
@@ -201,8 +163,7 @@ impl Style {
         self
     }
 
-    /// Appends `other`: its instant ops run after this style's, each tweenable field it sets wins, and
-    /// their state overlays compose.
+    /// Append another style; its instant ops run after this one's, tweenable fields win, state overlays compose.
     pub fn merge(mut self, other: Style) -> Style {
         self.ops.extend(other.ops);
         self.background = other.background.or(self.background);
@@ -219,8 +180,6 @@ impl Style {
         self
     }
 
-    /// Applies the style to `entity`: resolves hover/press against the element's [`PointerState`] (which
-    /// it installs so the observers track it), then writes the resulting look.
     pub fn apply(&self, entity: &mut EntityWorldMut) {
         if (self.hover.is_some() || self.active.is_some()) && entity.get::<PointerState>().is_none()
         {
@@ -230,9 +189,6 @@ impl Style {
         self.for_state(pointer).write(entity);
     }
 
-    /// The flattened style for `pointer`: this base with its hover overlay merged while hovered/pressed
-    /// and its active overlay merged while pressed (so a press shows both, as CSS `:active` implies
-    /// `:hover`).
     fn for_state(&self, pointer: PointerState) -> Style {
         let mut style = Style {
             ops: self.ops.clone(),
@@ -261,8 +217,6 @@ impl Style {
         style
     }
 
-    /// Writes this (already state-flattened) style: instant ops, then the paints/transform — directly
-    /// when there's no transition, or aimed at via [`Motion`] so they ease over time.
     fn write(&self, entity: &mut EntityWorldMut) {
         for op in &self.ops {
             op(entity);
@@ -354,8 +308,6 @@ impl Styled for Element {
     }
 }
 
-/// A composed style: a base plus named variant dimensions, optional compound overrides, and default
-/// selections. [`resolve`](Recipe::resolve) turns a partial selection into the final [`Style`].
 #[derive(Default)]
 pub struct Recipe {
     base: Style,
@@ -369,13 +321,11 @@ impl Recipe {
         Recipe::default()
     }
 
-    /// The style applied before any variant — the component's default look.
     pub fn base(mut self, style: Style) -> Recipe {
         self.base = style;
         self
     }
 
-    /// Declares a variant dimension `name` with its `(option, style)` choices.
     pub fn variant<I>(mut self, name: &'static str, options: I) -> Recipe
     where
         I: IntoIterator<Item = (&'static str, Style)>,
@@ -387,8 +337,6 @@ impl Recipe {
         self
     }
 
-    /// A style applied only when every `(dimension, option)` pair in `selection` is chosen — the
-    /// equivalent of vanilla-extract's `compoundVariants`.
     pub fn compound<I>(mut self, selection: I, style: Style) -> Recipe
     where
         I: IntoIterator<Item = (&'static str, &'static str)>,
@@ -400,7 +348,6 @@ impl Recipe {
         self
     }
 
-    /// The option chosen for `dimension` when a resolved selection omits it.
     pub fn default_variant(mut self, dimension: &'static str, option: &'static str) -> Recipe {
         self.defaults.push((dimension, option));
         self

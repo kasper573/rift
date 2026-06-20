@@ -1,13 +1,7 @@
-//! Capitalized component tags lower to a builder: `<Comp prop=v>child</Comp>` becomes
-//! `Comp::default().prop(v).child(child)`, where the builder is `Into<View>`. This is how a game (or
-//! `bevy_view`'s own overlays) author reusable components in markup.
-
 mod harness;
 
 use bevy_view::{View, node, text, view};
 use harness::Ui;
-
-/// A game-authored component: a builder with a prop setter, children, and `Into<View>`.
 #[derive(Default)]
 struct Panel {
     title: String,

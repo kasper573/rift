@@ -23,7 +23,6 @@ pub fn kind(name: &str) -> ArchiveKind {
     }
 }
 
-/// Unpacking is rooted at `dir`, so an archive entry can only ever land inside it.
 pub fn extract_or_write(name: &str, src: &Path, dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     match kind(name) {

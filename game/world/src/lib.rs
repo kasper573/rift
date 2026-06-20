@@ -1,5 +1,3 @@
-// The data contract the client and server share: the wire protocol, the content tables, and the
-// injected asset adapter that loads them. Compiles on its own — the client builds exactly this.
 pub mod actors;
 pub mod area;
 pub mod assets;
@@ -13,7 +11,6 @@ pub mod session;
 pub mod sfx;
 pub mod table;
 
-// The host-only simulation layered on top of the contract above; gated out of the client entirely.
 #[cfg(feature = "host")]
 pub mod sim;
 

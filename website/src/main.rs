@@ -11,7 +11,6 @@ use serde::Deserialize;
 
 mod auth;
 
-/// The `RIFT_WEBSITE_*` environment; auth additionally reads the shared `RIFT_AUTH_*` block.
 #[derive(Deserialize)]
 struct Config {
     port: u16,
@@ -38,7 +37,6 @@ async fn main() {
     let installers: Installers = envy::prefixed("RIFT_")
         .from_env()
         .expect("RIFT_INSTALLER_LINKS environment");
-    // Held for the process lifetime: dropping the agent stops the profiler.
     let _profiler = service::profiler(
         "rift-website",
         config.pyroscope_enabled,
@@ -116,7 +114,6 @@ async fn downloads(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
     })
 }
 
-/// The label shown for a download link: the URL's last path segment.
 fn filename_of(url: &str) -> String {
     url.rsplit('/')
         .next()

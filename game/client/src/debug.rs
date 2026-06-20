@@ -1,6 +1,3 @@
-//! F1 cycles debug overlays drawn as gizmos in world space: the area's walkable node graph, then
-//! the obscuring object rectangles.
-
 use bevy::prelude::*;
 use world::area;
 use world::math::{Offset, Pos, Tiles};

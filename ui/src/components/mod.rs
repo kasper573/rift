@@ -1,7 +1,3 @@
-//! The component library: one module per conceptual component, each a controlled view builder over
-//! [`bevy_view`](bevy_view). Shared mechanism (recipes, theming, controlled-value plumbing) lives in
-//! [`crate::utils`]; the per-theme token values live in [`crate::themes`].
-
 mod accordion;
 mod alert_dialog;
 mod avatar;

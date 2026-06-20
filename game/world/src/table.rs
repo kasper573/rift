@@ -1,11 +1,4 @@
-//! Loading is assertive — a malformed row or dangling reference panics with the offending file,
-//! so broken content can never load.
-//!
-//! A content type implements [`Content`] to gain a typed index ([`Id`]) into its static table:
-//! `id.get()` reads the row, [`Id::by_name`] resolves a string id, and [`Id::deserialize_named`]
-//! is the `#[serde(deserialize_with = …)]` hook content tables use to reference rows by name. Each
-//! content module still owns its own loader (a `OnceLock`), because loading differs — JSON via
-//! [`load`], a directory of Tiled tilesets, or rows built from other rows.
+//! Assertive loading: malformed content or dangling references panic immediately.
 
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
@@ -15,15 +8,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::assets;
 
-/// A content row addressable by a stable string id and laid out in a static, index-addressed
-/// table. The index is the wire form of an [`Id`].
 pub trait Content: Sized + 'static {
     fn table() -> &'static [Self];
     fn id(&self) -> &str;
 }
 
-/// A typed index into `T`'s [`Content::table`]. Serializes as its numeric index (the wire form
-/// replication ships); resolve from a name with [`Id::by_name`] or the [`by_name`] serde hook.
 pub struct Id<T> {
     index: u32,
     _content: PhantomData<fn() -> T>,
@@ -43,12 +32,10 @@ impl<T> Id<T> {
 }
 
 impl<T: Content> Id<T> {
-    /// The row this id points at.
     pub fn get(self) -> &'static T {
         &T::table()[self.index as usize]
     }
 
-    /// The id of the row with this string id, if any.
     pub fn by_name(name: &str) -> Option<Self> {
         T::table()
             .iter()
@@ -56,8 +43,6 @@ impl<T: Content> Id<T> {
             .map(|index| Id::new(index as u32))
     }
 
-    /// The `#[serde(deserialize_with = "crate::table::Id::<…>::deserialize_named")]` hook:
-    /// resolves a content reference written as its string id.
     pub fn deserialize_named<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
         Self::by_name(&name).ok_or_else(|| serde::de::Error::custom(format!("unknown id '{name}'")))
@@ -79,7 +64,6 @@ pub fn unique_ids<'a>(ids: impl Iterator<Item = &'a str>, file: &str) {
     }
 }
 
-// Derives by hand so the bounds never reach `T` — an `Id` is just a `u32`.
 impl<T> Clone for Id<T> {
     fn clone(&self) -> Self {
         *self

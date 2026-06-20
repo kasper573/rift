@@ -3,20 +3,14 @@ use bevy_picking::hover::HoverMap;
 
 pub use bevy_window::CursorIcon;
 
-/// A cursor an element opts into showing while the pointer is over it. Set it with
-/// [`Element::cursor`](crate::Element::cursor); an element without one never changes the cursor.
+/// An element without a cursor never changes it, so the game's own cursor stays in charge.
 #[derive(Component, Clone)]
 pub struct HoverCursor(pub CursorIcon);
 
-/// Forces a cursor regardless of what is hovered — set it for the duration of a gesture (e.g. a
-/// window resize) so the cursor holds even as the pointer leaves the element, and clear it when the
-/// gesture ends.
+/// Locks a cursor for the duration of a gesture so it holds even as the pointer leaves the element.
 #[derive(Resource, Default)]
 pub struct CursorLock(pub Option<CursorIcon>);
 
-/// The cursor the UI wants right now: the [`CursorLock`] if set, otherwise the topmost hovered
-/// element's [`HoverCursor`]. Returns `None` when the UI has no opinion, leaving the game's own
-/// cursor in charge — so a game applies it as `bevy_view::hovered_cursor(world).unwrap_or(game_cursor)`.
 pub fn hovered_cursor(world: &World) -> Option<CursorIcon> {
     if let Some(locked) = world
         .get_resource::<CursorLock>()

@@ -16,7 +16,6 @@ pub mod user_settings;
 pub mod view;
 pub mod web;
 
-/// The top-level flow: sign in through the browser, optionally choose a mode, then play.
 #[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Screen {
     #[default]
@@ -26,15 +25,10 @@ pub enum Screen {
     Playing,
 }
 
-/// The directory the executable lives in — the bundle root for a distributed client. A relative
-/// `RIFT_ASSETS_DIR` is anchored here, and the `.env` shipped beside the binary is loaded from here.
 fn bundle_dir() -> Option<PathBuf> {
     Some(std::env::current_exe().ok()?.parent()?.to_owned())
 }
 
-/// Resolves `RIFT_ASSETS_DIR` to an absolute path: a relative value anchors to the bundle dir (so a
-/// distributed client finds the assets shipped beside it), an absolute one is used as-is. It must be
-/// absolute because Bevy resolves its asset path against the executable's directory, not the cwd.
 fn assets_root(bundle: Option<&Path>) -> PathBuf {
     let raw =
         PathBuf::from(std::env::var_os("RIFT_ASSETS_DIR").expect("RIFT_ASSETS_DIR must be set"));
@@ -47,9 +41,6 @@ fn assets_root(bundle: Option<&Path>) -> PathBuf {
 
 pub fn run() -> AppExit {
     let bundle = bundle_dir();
-    // Load the `.env` shipped beside the executable before reading any config, so a distributed
-    // client is configured by the file next to it. Already-set vars win, so dev and the e2e (which
-    // export their own) are untouched, and an absent file is fine.
     if let Some(dir) = &bundle {
         let _ = dotenvy::from_path(dir.join(".env"));
     }
@@ -62,7 +53,6 @@ pub fn run() -> AppExit {
     app.add_plugins(
         DefaultPlugins
             .set(bevy::log::LogPlugin {
-                // symphonia narrates every wav metadata chunk it skips at info.
                 filter: format!("{},symphonia=warn", bevy::log::DEFAULT_FILTER),
                 ..default()
             })

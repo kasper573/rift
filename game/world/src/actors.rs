@@ -1,10 +1,3 @@
-//! The embedded actor registry: every `assets/actors/<name>.tsx` is a Tiled tileset over the
-//! model's sheet (`<name>.png`), sorted by name — the index is the wire id. A sheet holds one
-//! row of frame-sized cells per action and direction; the strip for an action+direction is the
-//! tile animation on the row's first cell (its `action`/`dir` properties name it), and frame
-//! metadata rides on the member tiles' properties (`sfx`, `step`, `apex`), the click hitbox on
-//! the tileset's.
-
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
@@ -18,16 +11,12 @@ use crate::table::Content;
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
 pub struct SfxId(pub String);
 
-/// One animation run's place in time; the apex of an action without one is 0.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Timing {
     pub duration: Seconds,
     pub apex: Seconds,
 }
 
-/// An 8-direction actor model. Frames advance at their authored durations (scaled by attack
-/// speed for "attack"); actions loop, except "death" which plays once and holds its last frame.
-/// Unknown actions fall back to idle. Audio cues fire as their frame is entered.
 pub struct ActorModel {
     name: String,
     sheet: String,
@@ -45,17 +34,14 @@ impl ActorModel {
         &self.name
     }
 
-    /// The click target in tiles: a box centered on x with its bottom at the feet line.
     pub fn hitbox(&self) -> Size<Tiles> {
         self.hitbox
     }
 
-    /// The model's sheet as a root-relative asset path; [`ActorModel::frame`] regions index into it.
     pub fn sheet(&self) -> &str {
         &self.sheet
     }
 
-    /// The frame to draw `t` into `action`, as a pixel region of [`ActorModel::sheet`].
     pub fn frame(
         &self,
         action: &str,
@@ -81,8 +67,6 @@ impl ActorModel {
         self.region(strip[strip.len() - 1].tile_id)
     }
 
-    /// The timing of `action` facing `dir` at the authored pace: total run length and the moment
-    /// of its apex frame, both in seconds.
     pub fn timing(&self, action: &str, dir: u8) -> Timing {
         let strip = self.strip(action, dir);
         let mut apex = Millis(0.0);
@@ -99,11 +83,6 @@ impl ActorModel {
         }
     }
 
-    /// The sound cues whose frames were entered as time-into-`action` advanced from `prev` to
-    /// `now` (pass a negative `prev` for "the action just started"), and whether a step frame
-    /// was crossed. A looping action refires its cues each cycle, "death" fires once and never
-    /// again while it holds the last frame, a single call fires each cue at most once so a long
-    /// pause can't replay it, and unknown actions are silent.
     pub fn cues(
         &self,
         action: &str,
@@ -133,7 +112,6 @@ impl ActorModel {
         (sfx, stepped)
     }
 
-    /// Every cue id this model references.
     pub fn sfx_ids(&self) -> impl Iterator<Item = &SfxId> {
         self.sounds.values()
     }
@@ -265,9 +243,6 @@ fn total_ms(strip: &[Frame]) -> Millis {
     Millis(strip.iter().map(|frame| frame.duration as f32).sum())
 }
 
-// Whether the cue moment `at` into the strip is crossed as scaled time-into-action advances
-// from `prev` to `now`; shared by sound and step cues so every cue fires exactly as its frame
-// is entered. Looping actions refire each cycle, `once` (death) fires a single time ever.
 fn crossed(once: bool, total: Millis, at: Millis, prev: Millis, now: Millis) -> bool {
     let count = |t: Millis| {
         if t < at {

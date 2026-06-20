@@ -1,12 +1,6 @@
-//! Pointer interaction state, the analog of CSS `:hover`/`:active`. [`PointerState`] tracks whether the
-//! pointer is over an element and pressing it; observers maintain it from `bevy_picking` events, and a
-//! recipe reads it to pick the hover/active styling. Elements opt in by carrying the component (the
-//! stateful styling inserts it); the observers ignore everything else.
-
 use bevy_ecs::prelude::*;
 use bevy_picking::prelude::{Out, Over, Pointer, Press, Release};
 
-/// Whether an element is currently hovered and/or pressed.
 #[derive(Component, Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub struct PointerState {
     pub hovered: bool,

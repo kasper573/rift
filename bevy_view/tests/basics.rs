@@ -1,6 +1,3 @@
-//! Foundations: an empty view renders nothing, primitives mount under the host, and re-rendering an
-//! unchanged tree leaves the entities untouched.
-
 mod harness;
 
 use bevy_view::{View, node, text};

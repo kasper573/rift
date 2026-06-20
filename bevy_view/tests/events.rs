@@ -1,7 +1,3 @@
-//! Events: a click runs the element's handler; re-rendering with a new handler replaces it (latest
-//! wins, no stacking across renders); a handler may drive state that unmounts its own element on the
-//! next render without panicking.
-
 mod harness;
 
 use bevy_ecs::prelude::*;

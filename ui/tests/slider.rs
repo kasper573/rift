@@ -1,6 +1,3 @@
-//! The slider is controlled: the app owns `value`, the thumb reads it from context, and a drag requests
-//! a new value clamped to `min..max` through `on_value_change`.
-
 mod harness;
 
 use bevy_math::{DVec2, Vec2};
@@ -48,7 +45,6 @@ fn dragging_the_thumb_requests_a_new_value_within_bounds() {
     ui.activate_drag(thumb, Vec2::new(1.0, 0.0));
     assert_eq!(value.get(), 40.0, "value follows the cursor on the track");
 
-    // Cursor past the track end clamps to max.
     if let Some(mut window) = ui.world().entity_mut(window_entity).get_mut::<Window>() {
         window.set_physical_cursor_position(Some(DVec2::new(200.0, 0.0)));
     }

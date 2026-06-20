@@ -36,7 +36,6 @@ pub enum ItemKind {
     Equipment,
 }
 
-/// An icon asset's root-relative path, validated to exist when the table loads.
 pub struct Icon(pub String);
 
 impl<'de> Deserialize<'de> for Icon {

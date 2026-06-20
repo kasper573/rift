@@ -1,8 +1,3 @@
-//! Composition: deep nesting, fragments and empties returned by component-style functions, a slot
-//! whose element type changes (a swap, not an in-place mutation), a conditional subtree inside a
-//! list item, and — the load-bearing one — static sibling slots that keep their identity even as a
-//! neighbouring `For` grows and shrinks between them.
-
 mod harness;
 
 use bevy_ecs::prelude::Component;
@@ -14,7 +9,6 @@ struct Plain;
 #[derive(Component, Clone)]
 struct Wrapped;
 
-/// A component: an ordinary function returning a `View`, composed like any element.
 fn labelled(value: &str) -> View {
     node().child(text(value.to_owned())).into()
 }
@@ -90,9 +84,8 @@ fn swapping_the_element_type_at_a_slot_replaces_the_entity() {
 #[test]
 fn swapping_a_plain_node_for_a_boundary_wrapped_one_remounts() {
     let mut ui = Ui::new();
-    // The game's window/widget case: a slot that is a plain `node` (a window frame) or a
-    // `boundary`-wrapped `node` (a component). They share a path and tag but differ in instance, so the
-    // slot must remount — otherwise the plain node's frame survives onto the component and never goes.
+    // Shared path and tag but different instance requires remount; otherwise the plain node's state
+    // survives onto the component.
     let view = |wrapped: bool| -> View {
         if wrapped {
             boundary(node().insert(Wrapped))
@@ -162,7 +155,6 @@ fn static_sibling_slots_keep_identity_as_a_neighbouring_for_resizes() {
 #[test]
 fn a_conditional_subtree_inside_a_list_item_toggles_per_item() {
     let mut ui = Ui::new();
-    // Each item shows its id, and — only for even ids — an extra "even" marker line.
     let view = || {
         each(
             |_| vec![1u64, 2, 3, 4],

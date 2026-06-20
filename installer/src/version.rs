@@ -4,12 +4,10 @@ use semver::Version;
 
 pub const VERSION_FILE: &str = ".rift-version";
 
-/// Tolerates the 2-component `0.110` tags our CI mints by filling the missing patch with `0`.
 pub fn parse(tag: &str) -> Result<Version, semver::Error> {
     Version::parse(&normalize(tag))
 }
 
-/// `0.0.0` when no version is recorded, so a fresh install always sees the release as newer and patches.
 pub fn installed(dir: &Path) -> Version {
     std::fs::read_to_string(dir.join(VERSION_FILE))
         .ok()

@@ -1,10 +1,3 @@
-//! Time-based motion: tweens and looping animations, the analog of CSS
-//! `transition`s and keyframe animations. A [`Motion`] component holds animated channels — the paint
-//! colors, the [`UiTransform`], and an optional continuous spin — each easing from where it is toward a
-//! target that styling sets every frame. [`advance_motion`] integrates them against real time and
-//! writes the underlying `bevy_ui` components, so a recipe only ever sets *targets* and the smoothing
-//! is automatic. Durations and easings come from the library's motion tokens.
-
 use std::time::Duration;
 
 use bevy_app::{App, Plugin, PostUpdate};
@@ -17,7 +10,6 @@ use bevy_time::Time;
 use bevy_ui::widget::ImageNode;
 use bevy_ui::{BackgroundColor, BorderColor, Node, UiTransform, Val2};
 
-/// A cubic-bezier easing.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Easing {
     Linear,
@@ -30,7 +22,6 @@ pub enum Easing {
 }
 
 impl Easing {
-    /// The `(x1, y1, x2, y2)` control points of the unit cubic bezier (`P0=(0,0)`, `P3=(1,1)`).
     const fn control(self) -> [f32; 4] {
         match self {
             Easing::Linear => [0.0, 0.0, 1.0, 1.0],
@@ -42,11 +33,8 @@ impl Easing {
         }
     }
 
-    /// Eased output for linear progress `t` in `0..=1`.
     fn eval(self, t: f32) -> f32 {
         let [x1, y1, x2, y2] = self.control();
-        // Solve the bezier's x(s) = t for the parameter s (Newton, then a couple of bisection
-        // fallbacks), then read y(s). Good enough for per-frame UI easing.
         let bezier = |a: f32, b: f32, s: f32| {
             let u = 1.0 - s;
             3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s
@@ -66,7 +54,6 @@ impl Easing {
     }
 }
 
-/// A duration paired with an easing — a `Transition`.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Timing {
     pub duration: Duration,
@@ -82,23 +69,15 @@ impl Timing {
     }
 }
 
-/// The named transitions. Reach for [`STANDARD_ENTER`] for the
-/// ubiquitous hover/press appearance change; the rest cover overlay enter/exit motion.
 pub mod transition {
     use super::{Easing, Timing};
 
-    /// `standard.enter` — the default appearance transition (hover/press color changes).
     pub const STANDARD_ENTER: Timing = Timing::new(250, Easing::StandardDecelerate);
-    /// `standard.exit`.
     pub const STANDARD_EXIT: Timing = Timing::new(200, Easing::StandardAccelerate);
-    /// `emphasized.enter` — overlay entrances.
     pub const EMPHASIZED_ENTER: Timing = Timing::new(400, Easing::EmphasizedDecelerate);
-    /// `emphasized.exit`.
     pub const EMPHASIZED_EXIT: Timing = Timing::new(200, Easing::EmphasizedAccelerate);
 }
 
-/// A 2D UI transform as plain numbers (logical-pixel translation, unitless scale, radian rotation) so
-/// it interpolates cleanly; written out as a [`UiTransform`].
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Transform2d {
     pub translation: Vec2,
@@ -130,7 +109,6 @@ impl Transform2d {
     }
 }
 
-/// One animated value easing from `from` to `target` over `timing`.
 #[derive(Clone, Copy)]
 struct Tween<T> {
     from: T,
@@ -149,8 +127,7 @@ impl<T: Copy + PartialEq> Tween<T> {
         }
     }
 
-    /// Aims the tween at `target`: snaps when `timing` is `None` or already there, otherwise restarts
-    /// from the current eased value so an in-flight tween redirects smoothly.
+    /// Aim tween at target: snap if no timing or already there; restart from current eased value so in-flight tweens redirect smoothly.
     fn retarget(&mut self, current: T, target: T, timing: Option<Timing>) {
         if self.target == target {
             return;
@@ -165,7 +142,7 @@ impl<T: Copy + PartialEq> Tween<T> {
             None => {
                 self.from = target;
                 self.target = target;
-                self.elapsed = self.timing.duration; // fully settled
+                self.elapsed = self.timing.duration;
             }
         }
     }
@@ -179,9 +156,6 @@ impl<T: Copy + PartialEq> Tween<T> {
     }
 }
 
-/// Per-element animation state. Styling sets each channel's target every frame; [`advance_motion`]
-/// eases the stored value toward it and writes the matching `bevy_ui` component. An absent channel is
-/// left to whatever set the component directly.
 #[derive(Component, Default)]
 pub struct Motion {
     background: Option<Tween<Color>>,
@@ -189,18 +163,14 @@ pub struct Motion {
     text: Option<Tween<Color>>,
     transform: Option<Tween<Transform2d>>,
     opacity: Option<Tween<f32>>,
-    /// Continuous clockwise spin in radians per second, composed on top of `transform`.
     spin: Option<f32>,
     spun: f32,
 }
 
-/// A node's own opacity in `0..=1`, written by [`advance_motion`] from the opacity tween and multiplied
-/// into the alpha of this node and its descendants by [`apply_opacity`] — bevy_ui has no built-in
-/// subtree opacity, so this gives one (the basis for overlay show/hide cross-fades).
+/// Node's opacity, applied to node and descendants (bevy_ui has no built-in subtree opacity).
 #[derive(Component, Clone, Copy)]
 pub(crate) struct Opacity(pub f32);
 
-/// Which paint a color channel drives.
 #[derive(Clone, Copy)]
 pub(crate) enum Paint {
     Background,
@@ -209,8 +179,6 @@ pub(crate) enum Paint {
 }
 
 impl Motion {
-    /// Aims a color channel at `target`, returning the value to show this frame: a new channel settles
-    /// at `target` (no mount fade-in), while an existing one redirects from its live value and eases.
     pub(crate) fn aim_color(
         &mut self,
         paint: Paint,
@@ -235,8 +203,6 @@ impl Motion {
         }
     }
 
-    /// Aims the transform at `target`; a new channel eases from `enter` (its entrance start, usually
-    /// equal to `target` for a plain element). Returns the value to show this frame.
     pub(crate) fn aim_transform(
         &mut self,
         enter: Transform2d,
@@ -266,8 +232,6 @@ impl Motion {
         }
     }
 
-    /// Aims the opacity at `target`; a new channel eases from `enter` (its mount start). Returns the
-    /// value to show this frame.
     pub(crate) fn aim_opacity(&mut self, enter: f32, target: f32, timing: Option<Timing>) -> f32 {
         match &mut self.opacity {
             Some(tween) => {
@@ -308,7 +272,6 @@ type Painted = (
     Option<&'static mut Opacity>,
 );
 
-/// Eases every channel toward its target and writes the underlying paints/transform.
 pub(crate) fn advance_motion(time: Res<Time>, mut motions: Query<Painted>) {
     let dt = time.delta();
     for (mut motion, background, border, text, transform, opacity) in &mut motions {
@@ -415,12 +378,10 @@ fn fade(color: Color, alpha: f32) -> Color {
     color.with_alpha(color.alpha() * alpha)
 }
 
-/// The current eased value of a tween mid-flight.
 fn value_of<T: Lerp + Copy + PartialEq>(tween: &Tween<T>) -> T {
     tween.from.lerp_to(tween.target, tween.fraction())
 }
 
-/// Minimal interpolation so [`value_of`] reads an in-flight tween generically.
 trait Lerp {
     fn lerp_to(self, other: Self, t: f32) -> Self;
 }
@@ -440,7 +401,6 @@ impl Lerp for f32 {
     }
 }
 
-/// Registers the motion integrator. Added by [`UiPlugin`](crate::UiPlugin).
 pub(crate) struct MotionPlugin;
 
 impl Plugin for MotionPlugin {

@@ -1,7 +1,3 @@
-//! Shared scaffolding for the `bevy_view` spec. Drives the reconciler from an external author's
-//! perspective: build a [`View`], render it against a host, then assert on the resulting `bevy_ui`
-//! tree (`Children`, `Text`, component values) — never on library internals.
-
 #![allow(dead_code)]
 
 use bevy_app::App;
@@ -12,11 +8,9 @@ use bevy_ui::Node;
 use bevy_ui::prelude::Text;
 use bevy_view::{View, ViewPlugin, render};
 
-/// An ordered record of side effects (mount/cleanup/click) so tests can assert what fired and when.
 #[derive(Resource, Default)]
 pub struct Log(pub Vec<String>);
 
-/// Appends to the [`Log`] from inside a handler closure.
 pub fn log(world: &mut World, message: impl Into<String>) {
     world.resource_mut::<Log>().0.push(message.into());
 }
@@ -43,7 +37,6 @@ impl Ui {
         self.app.world_mut()
     }
 
-    /// Renders `view` against the host, then flushes so mount/cleanup commands take effect.
     pub fn render(&mut self, view: impl Into<View>) {
         let host = self.host;
         render(self.app.world_mut(), host, view.into());
@@ -66,7 +59,6 @@ impl Ui {
         self.children().len()
     }
 
-    /// Every `Text` value in pre-order traversal of the host subtree.
     pub fn texts(&self) -> Vec<String> {
         let mut out = Vec::new();
         self.collect_text(self.host, &mut out);
@@ -82,7 +74,6 @@ impl Ui {
         }
     }
 
-    /// Every `Text` value in pre-order traversal of `entity`'s subtree (inclusive).
     pub fn texts_under(&self, entity: Entity) -> Vec<String> {
         let mut out = Vec::new();
         self.collect_text(entity, &mut out);
@@ -129,7 +120,6 @@ impl Ui {
         self.app.world_mut().flush();
     }
 
-    /// Whether `entity` carries component `C` — for asserting an intrinsic inserted its primitive.
     pub fn has<C: Component>(&self, entity: Entity) -> bool {
         self.app.world().get::<C>(entity).is_some()
     }
@@ -138,7 +128,6 @@ impl Ui {
         self.app.world().get::<C>(entity).cloned()
     }
 
-    /// The first managed descendant carrying component `C`, in pre-order.
     pub fn find<C: Component>(&self, root: Entity) -> Option<Entity> {
         if self.app.world().get::<C>(root).is_some() && root != self.host {
             return Some(root);

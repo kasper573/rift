@@ -1,11 +1,3 @@
-//! Declarative, immediate-mode UI over retained `bevy_ui`.
-//!
-//! A [`View`] is a description of UI built with [`node`], [`text`], [`show`], [`each`] (or the
-//! [`view!`] JSX macro). The [`ViewPlugin`] reconciles each [`ViewRoot`] host's children against
-//! its view every frame: stable slots and keys keep entity identity and retained component state,
-//! newly required elements mount (`on_mount`), and gone ones unmount (`on_cleanup`). Layout,
-//! rendering, text shaping, and picking all stay delegated to `bevy_ui`.
-
 mod context;
 mod cursor;
 mod draggable;
@@ -28,7 +20,6 @@ pub use view::{
     image, node, outlet, portal, show, text,
 };
 
-/// Registers the reconciler's lifecycle/pointer observers and drives every [`ViewRoot`] each frame.
 pub struct ViewPlugin;
 
 impl Plugin for ViewPlugin {

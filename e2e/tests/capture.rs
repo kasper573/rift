@@ -1,6 +1,3 @@
-//! Captures the gallery window's own buffer frame-by-frame (via xcap, so it's immune to whatever is
-//! stacked over it) into a PNG sequence for encoding into the showcase video. Driven by `just gallery`.
-
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -17,7 +14,7 @@ fn capture_gallery() {
     let _ = std::fs::remove_dir_all(&frames_dir);
     std::fs::create_dir_all(&frames_dir).expect("frames dir");
 
-    let target = Duration::from_millis(40); // ~25fps ceiling; real rate is reported for encoding.
+    let target = Duration::from_millis(40);
     let start = Instant::now();
     let mut frame = 0u32;
     while start.elapsed().as_secs_f32() < seconds {

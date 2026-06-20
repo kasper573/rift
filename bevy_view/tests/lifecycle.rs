@@ -1,7 +1,3 @@
-//! Mount and cleanup contracts: `on_mount` fires exactly once when an element first appears,
-//! `on_cleanup` exactly once when it goes away — whether it leaves because a `Show` flipped, a `For`
-//! key disappeared, or the whole host was torn down.
-
 mod harness;
 
 use bevy_view::{each, node, show};

@@ -41,7 +41,6 @@ pub struct DeadAt {
     pub at: Seconds,
 }
 
-/// The world's wander/drop randomness, advanced by every roll.
 #[derive(Resource)]
 pub struct GameRng(pub u64);
 
@@ -106,7 +105,6 @@ pub fn spawns() -> &'static [SpawnRow] {
     SPAWNS.get_or_init(|| table::load(SPAWN_FILE))
 }
 
-// Each area seeds its own sequence, reproducing the layout from when every area was its own shard.
 pub fn spawn_all(world: &mut World) {
     let mut rng = RNG_SEED | 1;
     for area in area::areas() {
@@ -278,7 +276,6 @@ fn nearest(
     best.map(|(entity, _)| entity)
 }
 
-// Computed once per tick (O(N)) instead of rescanning all NPCs per protector.
 fn enemies_by_group(world: &mut World) -> HashMap<u32, Vec<Entity>> {
     let mut by_group: HashMap<u32, Vec<Entity>> = HashMap::new();
     let mut query = world.query::<(&Npc, &Attackers)>();

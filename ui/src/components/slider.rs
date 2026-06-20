@@ -1,8 +1,3 @@
-//! `Slider`: a draggable value along a track. Controlled — `value` is a prop and dragging the thumb
-//! requests a new value (clamped to `min..max`) through `on_value_change`. The root shares its value and
-//! bounds with the thumb through context. The track is 4px high, the thumb is 24px, and the range fills
-//! from left based on the value.
-
 use std::sync::Arc;
 
 use bevy_color::Color;
@@ -20,7 +15,6 @@ use crate::recipe::{Style, Styled};
 use crate::theme::color;
 use crate::tokens::{radius, size};
 
-/// The value and bounds a [`Slider`] shares with its [`SliderThumb`].
 #[derive(Clone)]
 struct Range {
     value: f32,
@@ -63,7 +57,6 @@ impl Slider {
 
 children_builder!(Slider);
 
-/// The rail the thumb travels along.
 #[derive(Default)]
 pub struct SliderTrack {
     children: Vec<View>,
@@ -71,11 +64,9 @@ pub struct SliderTrack {
 
 children_builder!(SliderTrack);
 
-/// The filled portion from the start to the thumb (styled by the app).
 #[derive(Default)]
 pub struct SliderRange;
 
-/// The draggable handle.
 #[derive(Default)]
 pub struct SliderThumb;
 
@@ -140,9 +131,7 @@ impl From<SliderThumb> for View {
                 let Some(range) = context::<Range>(world, entity).cloned() else {
                     return;
                 };
-                // Put the thumb exactly under the pointer: where the cursor sits along the track is the
-                // value. Both the cursor and the track bounds are read in physical pixels, so this is
-                // correct regardless of display scale (a pixel-delta mapping was not).
+                // Use physical pixels (cursor and track) so display scale doesn't affect mapping.
                 let Some((left, width)) = track_bounds(world, entity) else {
                     return;
                 };
@@ -160,7 +149,6 @@ impl From<SliderThumb> for View {
     }
 }
 
-/// The thumb's track left edge and width in physical pixels (the same space as the cursor position).
 fn track_bounds(world: &World, thumb: Entity) -> Option<(f32, f32)> {
     let track = world.get::<ChildOf>(thumb)?.parent();
     let computed = world.get::<ComputedNode>(track)?;
@@ -169,7 +157,6 @@ fn track_bounds(world: &World, thumb: Entity) -> Option<(f32, f32)> {
     Some((transform.translation.x - width / 2.0, width))
 }
 
-/// The primary window's cursor position in physical pixels.
 fn window_cursor(world: &mut World) -> Option<Vec2> {
     let mut query = world.query_filtered::<&Window, With<PrimaryWindow>>();
     query
@@ -178,15 +165,12 @@ fn window_cursor(world: &mut World) -> Option<Vec2> {
         .and_then(|window| window.cursor_position())
 }
 
-/// The thumb/range fill fraction (0..1) from the shared [`Range`], read each render so both track the
-/// controlled value.
 fn fraction(world: &World, entity: Entity) -> f32 {
     context::<Range>(world, entity)
         .map(|range| ((range.value - range.min) / (range.max - range.min)).clamp(0.0, 1.0))
         .unwrap_or(0.0)
 }
 
-/// The slider root: flex row centered, 24px tall, 100% wide.
 fn root_style() -> Style {
     Style::new().node(|node| {
         node.width = Val::Percent(100.0);
@@ -196,8 +180,7 @@ fn root_style() -> Style {
     })
 }
 
-/// The track: 4px high, flex_grow fills the width, dark background, rounded. Holds the range and thumb,
-/// positioned against it; it stays unclipped so the thumb can overhang.
+/// Track: unclipped so thumb can overhang.
 fn track_style() -> Style {
     Style::new().background(color::scrim_dark).node(|node| {
         node.flex_grow = 1.0;
@@ -207,7 +190,6 @@ fn track_style() -> Style {
     })
 }
 
-/// The range: anchored to the track's left, 100% height, fills rightward by the value fraction.
 fn range_style() -> Style {
     Style::new().background(color::primary_base).node(|node| {
         node.position_type = bevy_ui::PositionType::Absolute;
@@ -217,8 +199,7 @@ fn range_style() -> Style {
     })
 }
 
-/// The 24px round thumb, centered on the 4px track (top `(4-24)/2 = -10`) and shifted left by half its
-/// width so its centre — not its corner — sits on the value point.
+/// Thumb: centered on track, shifted left so center aligns with value.
 fn thumb_style() -> Style {
     Style::new()
         .background(color::surface_canvas_base)

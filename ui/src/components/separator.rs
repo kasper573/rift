@@ -1,5 +1,3 @@
-//! `Separator`: a thin dividing line along one axis.
-
 use bevy_ui::{Node, Val};
 use bevy_view::{View, node};
 
@@ -9,7 +7,6 @@ use crate::{
     theme::color,
 };
 
-/// A visual divider. Horizontal spans its container's width; vertical spans its height.
 #[derive(Default)]
 pub struct Separator {
     orientation: Orientation,

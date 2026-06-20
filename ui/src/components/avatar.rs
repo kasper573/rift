@@ -1,6 +1,3 @@
-//! `Avatar`: a 40px round image placeholder or fallback. The root centers content; the image is
-//! a source-driven element; the fallback displays when no image is set.
-
 use bevy_ui::{AlignItems, BorderRadius, JustifyContent, Val, prelude::ImageNode};
 use bevy_view::{View, image, node};
 
@@ -15,7 +12,6 @@ pub struct Avatar {
 
 children_builder!(Avatar);
 
-/// The avatar image; renders nothing until a source is set.
 #[derive(Default)]
 pub struct AvatarImage {
     source: Option<ImageNode>,
@@ -28,7 +24,6 @@ impl AvatarImage {
     }
 }
 
-/// Shown in place of the image (e.g. initials) when no source loads.
 #[derive(Default)]
 pub struct AvatarFallback {
     children: Vec<View>,

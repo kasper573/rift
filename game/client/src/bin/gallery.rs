@@ -1,12 +1,3 @@
-//! An exhaustive, self-driving showcase of the `ui` component library, recorded headlessly for review.
-//! Every component gets a labelled scene. A scripted *director* moves a visible cursor to each
-//! interactive target and drives it through real states — hovering, pressing and releasing buttons one
-//! by one, opening overlays (and closing them again), flipping overlays against each viewport edge to
-//! show collision handling, raising and expiring a stack of toasts, dragging the slider, filling the
-//! progress bar, and scrolling a list. State lives in a `Stage` resource and the components are wired to
-//! it, so the cursor's actions flow through the same controlled paths the library exposes; only the
-//! pointer motion is synthesized.
-
 use std::collections::HashSet;
 
 use bevy::prelude::*;
@@ -54,9 +45,7 @@ fn main() {
         .run();
 }
 
-/// bevy tints UI images by multiplying, so the solid-black `checkmark.png` can't be tinted to the
-/// indicator's `primary.on` color. Recolor its pixels white (keeping the alpha shape) once it loads, so
-/// the per-checkbox tint applies.
+// bevy tints UI images by multiplying, so the solid-black checkmark can't be tinted; recolor it white.
 fn whiten_checkmark(mut images: ResMut<Assets<Image>>, stage: Res<Stage>, mut done: Local<bool>) {
     if *done {
         return;
@@ -73,7 +62,6 @@ fn whiten_checkmark(mut images: ResMut<Assets<Image>>, stage: Res<Stage>, mut do
     }
 }
 
-/// A smoothed frames-per-second readout, shown in the corner.
 #[derive(Resource, Default)]
 struct Fps(f32);
 
@@ -82,10 +70,6 @@ fn update_fps(time: Res<Time>, mut fps: ResMut<Fps>) {
     fps.0 = fps.0 * 0.9 + instant * 0.1;
 }
 
-// --- interactive state ------------------------------------------------------------------------
-
-/// Everything the scenes render from and the cursor's actions feed back into — the app's single source
-/// of truth, exactly as a real consumer of the controlled components would own.
 #[derive(Resource)]
 struct Stage {
     checkbox: Check,
@@ -98,7 +82,6 @@ struct Stage {
     progress: f32,
     dialog: bool,
     alert: bool,
-    /// For the multi-trigger overlay scenes: which trigger (if any) is currently open.
     tooltip: Option<usize>,
     popover: Option<usize>,
     toasts: Vec<LiveToast>,
@@ -137,7 +120,6 @@ struct LiveToast {
     title: &'static str,
     body: &'static str,
     born: f32,
-    /// When the toast began exiting (auto-expired or dismissed), if it has — drives the close animation.
     leaving_at: Option<f32>,
 }
 
@@ -151,9 +133,6 @@ const TOAST_MESSAGES: &[(&str, &str)] = &[
     ("Upload complete", "report-q3.pdf finished uploading."),
 ];
 
-/// Marks toasts past their lifetime as leaving (so the toaster slides them out), then drops any leaving
-/// toast once its exit has played — whether it expired or was dismissed. Like sonner, the lifetime timer
-/// pauses while the stack is hovered, so the auto-close only happens once the pointer has left.
 fn expire_toasts(time: Res<Time>, mut stage: ResMut<Stage>) {
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
@@ -173,16 +152,12 @@ fn expire_toasts(time: Res<Time>, mut stage: ResMut<Stage>) {
         .retain(|toast| toast.leaving_at.is_none_or(|at| now - at < TOAST_EXIT));
 }
 
-/// Begins a toast's exit (if not already leaving) — shared by the close button and the scripted dismiss.
 fn start_leaving(stage: &mut Stage, id: u64, now: f32) {
     if let Some(toast) = stage.toasts.iter_mut().find(|toast| toast.id == id) {
         toast.leaving_at.get_or_insert(now);
     }
 }
 
-// --- the director -----------------------------------------------------------------------------
-
-/// Tags an interactive target in a scene with the order the director visits it and what it should do.
 #[derive(Component, Clone, Copy)]
 struct Demo {
     order: u32,
@@ -201,15 +176,12 @@ enum Act {
     Fill,
 }
 
-/// Marks the cursor sprite the director moves.
 #[derive(Component)]
 struct CursorDot;
 
 #[derive(Resource, Default)]
 struct Director {
     scene: usize,
-    /// Whether the scripted clickthrough drives the showcase. Off by default (manual: navigate with the
-    /// tabs and use the real pointer); turned on with `RIFT_AUTOPLAY` for recording a video.
     autoplay: bool,
     pinned: bool,
     settle: f32,
@@ -248,7 +220,6 @@ fn plan(act: Act) -> &'static [(Beat, f32)] {
     match act {
         Act::Press => &[(Approach, 0.4), (Hover, 0.7), (Down, 0.6), (Up, 0.6)],
         Act::Click => &[(Approach, 0.4), (Hover, 0.5), (Down, 0.4), (Up, 1.1)],
-        // Like Click, but holds afterwards so a closing dialog has time to be seen gone.
         Act::Close => &[(Approach, 0.4), (Hover, 0.5), (Down, 0.4), (Up, 2.2)],
         Act::Open => &[
             (Approach, 0.4),
@@ -259,18 +230,14 @@ fn plan(act: Act) -> &'static [(Beat, f32)] {
         ],
         Act::Drag => &[(Approach, 0.4), (Down, 0.3), (Sweep, 1.8), (Up, 0.6)],
         Act::Fill => &[(Approach, 0.4), (Filling, 3.0), (Hold, 0.6)],
-        // One full flow; the director repeats it once per sonner position.
         Act::Spawn => &[
             (SetPosition, 0.5),
-            // Three toasts in quick succession, 400ms apart.
             (Emit, 0.0),
             (Hold, 0.4),
             (Emit, 0.0),
             (Hold, 0.4),
             (Emit, 0.0),
             (Hold, 0.8),
-            // Hover to fan the stack out, then close the cards one by one — each slides out while the
-            // rest ease into their new slots. Closing the middle first shows the reposition.
             (Expand, 1.6),
             (DismissMiddle, 1.5),
             (DismissOne, 1.4),
@@ -282,8 +249,6 @@ fn plan(act: Act) -> &'static [(Beat, f32)] {
 }
 
 const SETTLE: f32 = 0.4;
-/// A longer hold on the very first scene, so the recording (which starts a moment after launch) catches
-/// the first variant's interaction rather than missing it during warm-up.
 const INTRO: f32 = 4.0;
 const STATIC_HOLD: f32 = 2.6;
 
@@ -302,7 +267,6 @@ fn setup(
         director.settle = SETTLE;
     }
     stage.checkmark = assets.load("icons/misc/checkmark.png");
-    // The library's fonts are loaded by `UiPlugin`, so the showcase doesn't wire them up.
     commands.spawn((Camera2d, IsDefaultUiCamera));
     commands.spawn((
         Node {
@@ -335,7 +299,6 @@ fn direct(world: &mut World) {
     let dt = world.resource::<Time>().delta_secs().min(0.1);
     let mut dir = world.remove_resource::<Director>().unwrap();
 
-    // Manual mode: the tabs drive the scene and the real pointer drives the components — stand down.
     if !dir.autoplay {
         world.insert_resource(dir);
         return;
@@ -408,15 +371,12 @@ fn on_beat_enter(world: &mut World, dir: &mut Director, beat: Beat, target: Targ
     match beat {
         Up if matches!(target.act, Act::Click | Act::Close | Act::Open) => {
             dir.pressed = false;
-            // Click opens the click-triggered overlays; over opens the hover-triggered ones.
             for entity in descendants(world, target.entity) {
                 activate_over(world, entity);
                 activate_click(world, entity);
             }
         }
         Leave => {
-            // Close whatever the trigger opened: hover overlays close on leave, dismissable ones (popover)
-            // on an outside press.
             for entity in descendants(world, target.entity) {
                 activate_out(world, entity);
             }
@@ -440,7 +400,6 @@ fn on_beat_enter(world: &mut World, dir: &mut Director, beat: Beat, target: Targ
         DismissOne => {
             let now = world.resource::<Time>().elapsed_secs();
             let mut stage = world.resource_mut::<Stage>();
-            // The front-most (newest) live toast.
             if let Some(id) = stage
                 .toasts
                 .iter()
@@ -481,8 +440,6 @@ fn drive_beat(world: &mut World, dir: &mut Director, beat: Beat, target: Target,
             set_state(world, target.entity, true, true);
         }
         Sweep => {
-            // Drive the value straight from the cursor's position along the track so the thumb stays
-            // exactly under the cursor (the track is the full ~360px slider width, centered).
             let half = 180.0;
             dir.cursor.x = target.center.x - half + 2.0 * half * progress;
             dir.cursor.y = target.center.y;
@@ -525,7 +482,6 @@ fn drive_beat(world: &mut World, dir: &mut Director, beat: Beat, target: Target,
     }
 }
 
-/// A cursor resting spot over the (bottom-right) sonner stack, so the pointer hovers the toasts.
 fn stack_cursor(_position: SonnerPosition) -> Vec2 {
     Vec2::new(0.87 * WINDOW.x, 0.88 * WINDOW.y)
 }
@@ -647,8 +603,6 @@ fn place_cursor(
     });
 }
 
-// --- the view ---------------------------------------------------------------------------------
-
 type Build = fn(&World) -> View;
 const SCENES: &[(&str, Build)] = &[
     ("Button intents", button_intents),
@@ -680,8 +634,6 @@ fn gallery(world: &World) -> View {
     let (title, build) = SCENES[scene];
     let content = node().tag(0x5ce00 + scene as u64).children([build(world)]);
 
-    // Autoplay records a video, so the scene stays centred in the whole viewport (the scripted cursor
-    // coordinates assume that). Manual mode adds a tab bar to navigate, with the scene below it.
     let body: Vec<View> = if autoplay {
         let centered = node().attr(center_fill).children([content.into()]);
         vec![
@@ -729,7 +681,6 @@ fn gallery(world: &World) -> View {
         .into()
 }
 
-/// A live FPS readout pinned to the bottom-left, in black.
 fn fps_overlay() -> View {
     node()
         .attr(|entity| {
@@ -756,7 +707,6 @@ fn center_fill(entity: &mut bevy::ecs::world::EntityWorldMut) {
     }
 }
 
-/// A tab per scene across the top; selecting one navigates the showcase (manual mode).
 fn tabs_bar(world: &World) -> View {
     let current = world.resource::<Director>().scene;
     let triggers: Vec<View> = SCENES
@@ -815,7 +765,6 @@ fn toaster(world: &World) -> View {
         .expanded(stage.sonner_expanded)
         .toasts(toasts)
         .on_dismiss(|world, id| {
-            // Begin the exit animation; `expire_toasts` drops it once the slide-out has played.
             let now = world.resource::<Time>().elapsed_secs();
             start_leaving(&mut world.resource_mut::<Stage>(), id, now);
         })
@@ -825,7 +774,6 @@ fn toaster(world: &World) -> View {
         .into()
 }
 
-/// A toast's app-composed content: a title row with a `SonnerClose` dismiss button, and a body line.
 fn toast_content(title: &'static str, body: &'static str) -> View {
     View::fragment([
         node()
@@ -871,14 +819,10 @@ fn corner_label(title: &str) -> View {
         .into()
 }
 
-// --- shared scene helpers ---------------------------------------------------------------------
-
 fn demo(order: u32, act: Act, child: impl Into<View>) -> View {
     node().insert(Demo { order, act }).child(child).into()
 }
 
-/// Like [`demo`], but the wrapper fills its parent's width — for full-width children (slider, progress)
-/// whose `100%` would otherwise resolve against a content-sized wrapper and collapse to nothing.
 fn demo_wide(order: u32, act: Act, child: impl Into<View>) -> View {
     node()
         .insert(Demo { order, act })
@@ -906,7 +850,6 @@ fn mark(content: &str) -> View {
     Text::new(content).color(color::primary_on).into()
 }
 
-/// A theme-tinted checkmark image for a checkbox indicator.
 fn checkmark(world: &World) -> View {
     let handle = world.resource::<Stage>().checkmark.clone();
     let tint = color::primary_on.resolve(&themes::light::theme());
@@ -970,8 +913,6 @@ fn framed(width: f32, child: impl Into<View>) -> View {
         .child(child)
         .into()
 }
-
-// --- scenes -----------------------------------------------------------------------------------
 
 const INTENTS: &[&str] = &[
     "primary",
@@ -1278,14 +1219,9 @@ const SLOTS: [(f32, f32, Side); 5] = [
     (0.5, 0.5, Side::Bottom),
 ];
 
-/// Lays out the overlay triggers at each [`SLOTS`] viewport position. The scene sits in the gallery's
-/// centred root, so each slot is placed by its offset from the centre; `build(index, side, open)`
-/// constructs the overlay for a slot (wired to the app's open state) and the director visits each in
-/// turn.
 fn edged(open: Option<usize>, build: impl Fn(usize, Side, bool) -> View) -> View {
     let mut layer = node();
     for (i, (fx, fy, side)) in SLOTS.iter().enumerate() {
-        // Place each slot relative to the centred scene root, derived from the viewport fraction.
         let (left, top) = ((fx - 0.5) * WINDOW.x, (fy - 0.5) * WINDOW.y);
         let slot = node()
             .attr(move |entity| {
@@ -1504,7 +1440,6 @@ fn scroll_area_scene(_: &World) -> View {
     )
 }
 
-/// A dialog footer: actions pushed to the right.
 fn actions(children: impl IntoIterator<Item = View>) -> View {
     laid_out(children, FlexDirection::Row, 12.0, JustifyContent::End)
 }

@@ -1,7 +1,3 @@
-//! `Accordion`: a set of collapsible items. Controlled — `value` is the set of expanded item values and
-//! a trigger requests the next set through `on_value_change`. `multiple` allows several open at once;
-//! otherwise opening one closes the rest. Each item shares its value with its parts through context.
-
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -50,7 +46,6 @@ impl Accordion {
 
 children_builder!(Accordion);
 
-/// One section, identified by `value`.
 #[derive(Default)]
 pub struct AccordionItem {
     value: String,
@@ -66,7 +61,6 @@ impl AccordionItem {
 
 children_builder!(AccordionItem);
 
-/// Wraps the trigger row.
 #[derive(Default)]
 pub struct AccordionHeader {
     children: Vec<View>,
@@ -74,7 +68,6 @@ pub struct AccordionHeader {
 
 children_builder!(AccordionHeader);
 
-/// Expands or collapses its item when clicked.
 #[derive(Default)]
 pub struct AccordionTrigger {
     children: Vec<View>,
@@ -82,7 +75,6 @@ pub struct AccordionTrigger {
 
 children_builder!(AccordionTrigger);
 
-/// The section body, present only while its item is expanded.
 #[derive(Default)]
 pub struct AccordionContent {
     children: Vec<View>,
@@ -92,7 +84,6 @@ children_builder!(AccordionContent);
 
 impl From<Accordion> for View {
     fn from(accordion: Accordion) -> View {
-        // The sections sit in a rounded surface card.
         let card = node()
             .style(card_style())
             .insert(card_shadow())
@@ -147,8 +138,6 @@ impl From<AccordionContent> for View {
     }
 }
 
-/// True while this item's value is in the accordion's selection — read every render to drive the
-/// collapse.
 fn is_member(world: &World, entity: Entity) -> bool {
     let Some(item) = context::<ItemValue>(world, entity) else {
         return false;
@@ -156,7 +145,6 @@ fn is_member(world: &World, entity: Entity) -> bool {
     context::<MultiControlled>(world, entity).is_some_and(|group| group.values.contains(&item.0))
 }
 
-/// A full-width vertical stack.
 fn column() -> Style {
     Style::new().node(|node| {
         node.flex_direction = FlexDirection::Column;
@@ -164,7 +152,6 @@ fn column() -> Style {
     })
 }
 
-/// One section: a full-width column closed off by a hairline divider beneath it.
 fn item_style() -> Style {
     Style::new()
         .border_color(color::surface_canvas_border_decorative)
@@ -175,8 +162,7 @@ fn item_style() -> Style {
         })
 }
 
-/// The surface card the sections sit in. It uses an elevation shadow rather than a 1px border, since a
-/// border on a rounded box whitens out along the corner arcs.
+/// Surface card. Uses elevation shadow instead of 1px border — borders on rounded boxes show white at corners.
 fn card_style() -> Style {
     Style::new()
         .background(color::surface_elevated_base)
@@ -187,7 +173,6 @@ fn card_style() -> Style {
         })
 }
 
-/// A soft elevation shadow, lifting the card off the sunken background.
 fn card_shadow() -> BoxShadow {
     BoxShadow(vec![
         ShadowStyle {
@@ -207,7 +192,6 @@ fn card_shadow() -> BoxShadow {
     ])
 }
 
-/// The clickable header row: label left, full width, padded, with a hover wash.
 fn trigger_style() -> Style {
     Style::new()
         .text_color(color::surface_canvas_on)
@@ -222,7 +206,6 @@ fn trigger_style() -> Style {
         })
 }
 
-/// The expanded body: muted text, padded (the collapse eases its height).
 fn content_style() -> Style {
     Style::new()
         .text_color(color::surface_canvas_on_soft)

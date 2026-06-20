@@ -1,10 +1,3 @@
-//! `Toaster`: a sonner-style toast stack, modelled on shadcn's sonner. Controlled — the app owns the
-//! list of live toasts (their ids, content, and when they appear, expire and leave). The toaster pins
-//! the stack to one of eight positions, slides each new toast in from that edge (a fixed 100px straight
-//! line, scaling) and out the same way, keeps the newest in front with the older ones scaled down
-//! behind, and — while `expanded` (the app sets this on hover) — fans the stack into a list. A toast's
-//! content is app-composed; dropping a [`SonnerClose`] into it gives the user a dismiss control.
-
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -22,21 +15,15 @@ use crate::tokens::{radius, spacing};
 
 const CARD_WIDTH: f32 = 356.0;
 const CARD_HEIGHT: f32 = 76.0;
-/// The straight-line distance a toast travels on enter and exit — fixed, so the motion reads the same
-/// whether the stack is collapsed or expanded.
 const TRAVEL: f32 = 100.0;
-/// How far each card behind the front is nudged toward the centre when collapsed (the peek).
 const PEEK: f32 = 16.0;
 const PEEK_SCALE: f32 = 0.05;
 const GAP: f32 = 14.0;
 const MAX_VISIBLE: usize = 3;
-/// The hover region's height — covers the fully fanned-out stack.
 const STACK_HEIGHT: f32 = MAX_VISIBLE as f32 * (CARD_HEIGHT + GAP);
 const EDGE: f32 = 24.0;
 
-/// Where the stack pins. The abstraction allows for the eight sonner positions; only `BottomRight`
-/// is implemented — add the others by extending [`SonnerPosition::place`] and the stack/travel
-/// vectors in [`card`].
+/// Where the stack pins. Only `BottomRight` implemented; extend [`SonnerPosition::place`] for others.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum SonnerPosition {
     #[default]
@@ -44,25 +31,20 @@ pub enum SonnerPosition {
 }
 
 impl SonnerPosition {
-    /// The unit vector the stack grows and fans out along — toward the screen centre.
     fn grow(self) -> Vec2 {
         Vec2::new(0.0, -1.0)
     }
 
-    /// The unit vector a toast travels in on enter/exit — straight off the nearest edge.
     fn travel(self) -> Vec2 {
         Vec2::new(0.0, 1.0)
     }
 
-    /// Pins a card's box to the corner of the hover region (the rest is done with transforms).
     fn place(self, node: &mut Node) {
         node.position_type = PositionType::Absolute;
         node.bottom = Val::Px(0.0);
         node.right = Val::Px(0.0);
     }
 
-    /// Pins the hover region over the stack at the viewport edge — wide enough for a card, tall enough to
-    /// cover the fanned-out list so moving between cards never leaves it.
     fn place_region(self, node: &mut Node) {
         node.position_type = PositionType::Absolute;
         node.bottom = Val::Px(EDGE);
@@ -72,7 +54,6 @@ impl SonnerPosition {
     }
 }
 
-/// One live toast: a stable `id` and its app-composed content (title, body, and any [`SonnerClose`]).
 #[derive(Clone)]
 pub struct Toast {
     id: u64,
@@ -92,15 +73,12 @@ impl Toast {
         }
     }
 
-    /// Marks the toast as exiting, so the toaster slides it back off the edge.
     pub fn leaving(mut self, leaving: bool) -> Toast {
         self.leaving = leaving;
         self
     }
 }
 
-/// The toast stack. Pass the live toasts oldest-first; the last is the newest and sits in front. Set
-/// `expanded` (on hover) to fan the stack into a list.
 #[derive(Default)]
 pub struct Toaster {
     position: Option<SonnerPosition>,
@@ -131,8 +109,6 @@ impl Toaster {
         self
     }
 
-    /// Requests the expanded state to change — the toaster reports a hover over the stack as `true` and a
-    /// leave as `false`, so the app can fan the toasts out into a list while pointed at.
     pub fn on_expand_change<F>(mut self, handler: F) -> Toaster
     where
         F: Fn(&mut World, bool) + Send + Sync + 'static,
@@ -142,16 +118,12 @@ impl Toaster {
     }
 }
 
-/// The id of the toast a piece of content belongs to, shared with any [`SonnerClose`] in it.
 #[derive(Clone, Copy)]
 struct ToastId(u64);
 
-/// The toaster's dismiss callback, shared with any [`SonnerClose`].
 #[derive(Clone)]
 struct Dismiss(OnChange<u64>);
 
-/// A dismiss control placed inside a toast's content (typically wrapping a button); clicking it asks the
-/// toaster to remove that toast.
 #[derive(Default)]
 pub struct SonnerClose {
     children: Vec<View>,
@@ -164,9 +136,8 @@ impl From<Toaster> for View {
         let position = toaster.position.unwrap_or(SonnerPosition::BottomRight);
         let expanded = toaster.expanded;
         let dismiss = toaster.on_dismiss.map(Dismiss);
-        // Depth counts only the live toasts (newest = 0), so a leaving toast frees its slot immediately:
-        // the toasts behind it ease forward to their new depth while it eases out. Visited newest-first
-        // to assign depth, then reversed so the front card paints on top.
+        // Depth counts only live toasts (newest = 0), so leaving toasts free slots immediately.
+        // Visit newest-first to assign depth; reverse so front card paints on top.
         let mut depth_counter = 0;
         let mut stacked: Vec<(Toast, usize)> = toaster
             .toasts
@@ -188,8 +159,7 @@ impl From<Toaster> for View {
             move |(toast, depth)| card(toast, *depth, position, expanded, dismiss.clone()),
         );
 
-        // A region pinned over the stack receives the hover so the app can expand it; the cards sit
-        // inside it. The full-screen layer itself ignores picking so the rest of the app stays clickable.
+        // Hover region pinned over the stack; cards sit inside. Full-screen layer ignores picking.
         let on_expand = toaster.on_expand_change;
         let over = on_expand.clone();
         let out = on_expand;
@@ -255,7 +225,6 @@ fn card(
 ) -> View {
     let grow = position.grow();
     let depth = depth as f32;
-    // The card's resting translation: its place in the stack (collapsed peek or expanded list).
     let rest = if expanded {
         grow * depth * (CARD_HEIGHT + GAP)
     } else {
@@ -266,8 +235,6 @@ fn card(
     } else {
         1.0 - depth * PEEK_SCALE
     };
-    // Enter from / exit to a point a fixed distance straight off the edge — a straight line through the
-    // anchor, scaling down.
     let off = position.travel() * TRAVEL;
     let (translate, scale) = if toast.leaving {
         (rest + off, scale * 0.9)

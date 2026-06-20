@@ -10,7 +10,6 @@ const HP_REGEN_AMOUNT: f32 = 5.0;
 #[derive(Resource, Default)]
 pub struct RegenAt(Seconds);
 
-// Players are exactly the owned entities; NPCs regenerate on respawn instead.
 pub fn regen(
     time: Res<Time>,
     mut last: ResMut<RegenAt>,

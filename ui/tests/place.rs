@@ -1,7 +1,3 @@
-//! The collision-aware positioning math, exercised in isolation from layout: it anchors on the
-//! preferred side, aligns on the cross axis, flips to the opposite side on overflow, and clamps into
-//! the viewport.
-
 use bevy_math::Vec2;
 use ui::{Align, Side, place};
 

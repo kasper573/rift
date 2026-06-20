@@ -10,8 +10,6 @@ pub struct Claims {
     pub roles: Vec<String>,
 }
 
-/// Verifies access tokens against the issuer's remote JWK set, fetched lazily and refreshed when
-/// an unknown key id appears (key rotation), rate-limited by a cooldown.
 pub struct Verifier {
     issuer: String,
     audience: String,
@@ -49,13 +47,10 @@ impl Verifier {
         }
     }
 
-    /// Failure is not fatal: verification refetches on demand.
     pub fn warm(&mut self) -> Result<(), String> {
         self.fetch()
     }
 
-    /// Whether tokens can be verified right now; fetches the keys if they are missing. Lets a
-    /// health endpoint hold a freshly started server out of rotation until auth works.
     pub fn ready(&mut self) -> bool {
         if self.keys.is_none() && self.cooldown_passed() {
             let _ = self.fetch();
@@ -74,7 +69,7 @@ impl Verifier {
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_issuer(&[&self.issuer]);
         validation.set_required_spec_claims(&["exp", "iss"]);
-        // Keycloak names the client in `azp`; `aud` is unreliable across client configurations.
+        // Keycloak names the client in azp; aud is unreliable across client configurations.
         validation.validate_aud = false;
         let data = decode::<serde_json::Value>(token, &key, &validation)
             .map_err(|error| error.to_string())?;
@@ -120,8 +115,6 @@ impl Verifier {
         DecodingKey::from_jwk(jwk).map_err(|error| error.to_string())
     }
 
-    /// Unknown-key refetches are rate-limited to keep bad tokens from hammering the issuer, but
-    /// a failed fetch retries quickly: a brief issuer outage must not lock players out after it.
     fn cooldown_passed(&self) -> bool {
         match self.last_fetch {
             Fetch::Never => true,

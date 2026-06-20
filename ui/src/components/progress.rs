@@ -1,6 +1,3 @@
-//! `Progress`: a determinate progress bar. The track is 8px high, full width, with a rounded,
-//! sunken background. The indicator fills from the left with the primary color, proportional to value/max.
-
 use bevy_ui::{BorderRadius, Node, Val};
 use bevy_view::{View, context, node, provide};
 
@@ -8,7 +5,6 @@ use crate::recipe::{Style, Styled};
 use crate::theme::color;
 use crate::tokens::{radius, size};
 
-/// The completed fraction (0..=1) a [`Progress`] shares with its [`ProgressIndicator`].
 #[derive(Clone, Copy)]
 struct Fraction(f32);
 
@@ -32,7 +28,6 @@ impl Progress {
 
 children_builder!(Progress);
 
-/// The filled portion of the bar; mirrors the root's completed fraction.
 #[derive(Default)]
 pub struct ProgressIndicator;
 
@@ -70,7 +65,6 @@ impl From<ProgressIndicator> for View {
     }
 }
 
-/// The track: 8px high, 100% wide, rounded, dark background, overflow hidden.
 fn track_style() -> Style {
     Style::new()
         .background(color::surface_inset_base)
@@ -82,7 +76,6 @@ fn track_style() -> Style {
         })
 }
 
-/// The indicator: primary fill, rounded, positioned and sized on mount by reading the fraction.
 fn indicator_style() -> Style {
     Style::new().background(color::primary_base).node(|node| {
         node.border_radius = BorderRadius::all(Val::Px(radius::PILL));

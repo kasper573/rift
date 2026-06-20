@@ -5,7 +5,6 @@ use ui::{Button, Text};
 
 use crate::{Screen, auth};
 
-/// The mode chosen before entering play; ordinary accounts always play.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     #[default]

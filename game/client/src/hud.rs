@@ -39,7 +39,6 @@ impl Plugin for HudPlugin {
     }
 }
 
-/// A toggleable HUD window, opened by its icon widget.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Pane {
     Inventory,
@@ -75,8 +74,6 @@ impl Pane {
     }
 }
 
-/// A draggable HUD element, persisted under its own typed value — the identity flows from the value,
-/// not a hand-written key. Only windows are resizable.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Panel {
     Character,
@@ -90,7 +87,6 @@ impl Panel {
     }
 }
 
-/// Persisted UI preferences (snap grid, panel placements), loaded once and saved on every change.
 #[derive(Resource)]
 struct Settings(UserSettings);
 
@@ -114,8 +110,6 @@ fn spawn_hud(mut commands: Commands) {
             height: Val::Percent(100.0),
             ..default()
         },
-        // The full-screen host must not block world clicks: non-hoverable so it never enters the
-        // hover map that `pointer_on_ui` reads, and pass-through so the world stays pickable.
         Pickable::IGNORE,
         ViewRoot::new(hud),
     ));
@@ -256,9 +250,7 @@ fn window_content(world: &World, pane: Pane) -> View {
 fn inventory_grid() -> View {
     each(
         |world: &World| inventory_cells(world),
-        // Key by item kind, not slot: a slot is a position, so keying by it reuses a cell for whatever
-        // item lands there and shows stale content. Keying by kind makes a cell follow its item (`each`
-        // disambiguates equal kinds by occurrence), so using one removes its own cell, not a neighbour's.
+        // Key by item kind, not slot: keying by kind makes a cell follow its item, so using one removes its own cell, not a neighbour's.
         |cell: &Cell| cell.kind,
         |cell: &Cell| inventory_slot(cell),
     )
@@ -366,7 +358,6 @@ fn badge(keybind: &str) -> View {
     }
 }
 
-/// A floating label for a tooltip: a dark, padded chip around its text.
 fn tooltip_label(text: impl Into<String>) -> View {
     let text = text.into();
     view! {
@@ -408,8 +399,6 @@ fn character_text(world: &World) -> String {
     })
 }
 
-/// The panel's initial top-left (and, for a window, size) from its persisted placement, falling back
-/// to the supplied defaults. Once mounted, `draggable` owns the geometry; this only seeds it.
 fn resolve(
     world: &World,
     panel: Panel,
@@ -422,8 +411,6 @@ fn resolve(
     (pos, size)
 }
 
-/// Snaps the dragged geometry onto the grid and persists it under `panel`, returning where the panel
-/// should settle. Wired as the `on_settle` of every draggable panel.
 fn persist(world: &mut World, panel: Panel, geom: Geom) -> Geom {
     let mut settings = world.resource_mut::<Settings>();
     let snapped = snap(&settings.0, geom, panel.resizable());

@@ -1,8 +1,3 @@
-//! `Tooltip`: a hover-triggered, non-interactive floating label. Controlled — `open` is a prop; the
-//! trigger records a hover, and once the [`TooltipProvider`]'s delay has elapsed [`open_due_tooltips`]
-//! requests `open=true` through `on_open_change`. Leaving the trigger requests `false`. A re-hover within
-//! the provider's skip window opens immediately.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,10 +8,8 @@ use bevy_view::{InstanceId, PortalKind, View, context, node, provide};
 use crate::controlled::{OnChange, controlled, noop};
 use crate::{Align, Overlays, Side, overlay_root, register_anchor, set_overlay};
 
-/// The reserved portal destination for tooltips; place a [`TooltipOutlet`] where they should paint.
 const TOOLTIP_OUTLET: PortalKind = PortalKind(0x70_0000_0000_0070);
 
-/// Shared tooltip timing, supplied by a [`TooltipProvider`] and read via context.
 #[derive(Clone, Copy)]
 pub struct TooltipConfig {
     pub delay: Duration,
@@ -32,7 +25,6 @@ impl Default for TooltipConfig {
     }
 }
 
-/// A hover-triggered, non-interactive tooltip. Wrap a [`TooltipTrigger`] and a [`TooltipContent`].
 #[derive(Default)]
 pub struct Tooltip {
     open: bool,
@@ -57,7 +49,6 @@ impl Tooltip {
 
 children_builder!(Tooltip);
 
-/// Shares tooltip timing (`delay`, `skip_delay`) with the tooltips it wraps.
 #[derive(Default)]
 pub struct TooltipProvider {
     config: TooltipConfig,
@@ -77,7 +68,6 @@ impl TooltipProvider {
 
 children_builder!(TooltipProvider);
 
-/// Wraps the element a tooltip describes; hovering it opens the tooltip after the delay.
 #[derive(Default)]
 pub struct TooltipTrigger {
     children: Vec<View>,
@@ -85,7 +75,6 @@ pub struct TooltipTrigger {
 
 children_builder!(TooltipTrigger);
 
-/// The floating tooltip body.
 #[derive(Default)]
 pub struct TooltipContent {
     side: Side,
@@ -97,7 +86,6 @@ pub struct TooltipContent {
 crate::popper::placement_props!(TooltipContent);
 children_builder!(TooltipContent);
 
-/// Where tooltips render.
 #[derive(Default)]
 pub struct TooltipOutlet;
 
@@ -132,8 +120,8 @@ impl From<TooltipTrigger> for View {
 
 impl From<TooltipContent> for View {
     fn from(content: TooltipContent) -> View {
-        // No appearance: the tooltip just floats whatever is composed inside it (bare text, or a `Card`
-        // for a surface). It ignores picking (click-through) and isn't dismissed by an outside press.
+        // No appearance; floats composed content (e.g. bare text or a `Card`).
+        // Ignores picking and isn't dismissable.
         crate::popper::content(
             TOOLTIP_OUTLET,
             content.side,
@@ -152,8 +140,6 @@ impl From<TooltipOutlet> for View {
     }
 }
 
-/// Opens each hovered tooltip whose delay has elapsed, requesting `open=true` once (then forgetting the
-/// hover, so it fires a single time). Runs every frame; available for scripted activation in tests.
 pub fn open_due_tooltips(world: &mut World) {
     let Some(now) = world.get_resource::<Time>().map(|time| time.elapsed()) else {
         return;

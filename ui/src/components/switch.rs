@@ -1,6 +1,3 @@
-//! `Switch`: an on/off control. Controlled — `checked` is a prop and a click requests the flipped value
-//! through `on_checked_change`. `SwitchThumb` is the sliding knob that slides 20px on a 52×32 track.
-
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -39,11 +36,9 @@ impl Switch {
 
 children_builder!(Switch);
 
-/// The state shared from track to thumb.
 #[derive(Component, Clone, Copy)]
 struct SwitchOn(bool);
 
-/// The knob inside a [`Switch`].
 #[derive(Default)]
 pub struct SwitchThumb;
 
@@ -76,7 +71,6 @@ impl From<SwitchThumb> for View {
     }
 }
 
-/// The 52×32 track: a hairline surface pill when off, a borderless primary fill when on.
 fn track_style(checked: bool) -> Style {
     let bg = if checked {
         color::primary_base
@@ -96,8 +90,6 @@ fn track_style(checked: bool) -> Style {
         .transition(STANDARD_ENTER)
 }
 
-/// The 24px thumb: absolute, inset 2px against the off track's border, 4px once the border drops away
-/// when on; translates 20px right when on.
 fn thumb_style(on: bool) -> Style {
     let inset = if on { 4.0 } else { 2.0 };
     Style::new()

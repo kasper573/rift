@@ -6,7 +6,6 @@ use world::session;
 
 use crate::render::{TILE, Viewport, WorldCamera};
 
-/// The tile under the cursor, or `None` when the cursor is outside the window.
 pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
     let cursor = world
         .query_filtered::<&Window, With<PrimaryWindow>>()
@@ -26,7 +25,6 @@ pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
     Some(Pos::new(point.x / TILE.0, -point.y / TILE.0))
 }
 
-/// The living enemy whose click box contains `point` — feet-anchored, excluding the player.
 pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
     let me = session::me(world).map(|entity| entity.id());
     let mut actors =

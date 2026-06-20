@@ -1,6 +1,3 @@
-//! `Tabs`: one panel visible at a time. Controlled — `value` is a prop and a trigger requests its own
-//! value through `on_value_change`; each `TabsContent` mounts only while its value is the active one.
-
 use std::sync::Arc;
 
 use bevy_color::Color;
@@ -38,7 +35,6 @@ impl Tabs {
 
 children_builder!(Tabs);
 
-/// The row of triggers.
 #[derive(Default)]
 pub struct TabsList {
     children: Vec<View>,
@@ -46,7 +42,6 @@ pub struct TabsList {
 
 children_builder!(TabsList);
 
-/// Selects its `value` when clicked.
 #[derive(Default)]
 pub struct TabsTrigger {
     value: String,
@@ -62,7 +57,6 @@ impl TabsTrigger {
 
 children_builder!(TabsTrigger);
 
-/// The panel shown while its `value` is active.
 #[derive(Default)]
 pub struct TabsContent {
     value: String,
@@ -137,8 +131,6 @@ fn is_selected(world: &World, host: Entity, value: &str) -> bool {
         == Some(value)
 }
 
-/// A trigger: wide padding, surface fill with hover/press shades, and a 2px bottom rule that turns the
-/// primary color (and the label the selected color) while it owns the active panel.
 fn trigger_style(selected: bool) -> Style {
     let (text, underline): (Paint, Paint) = if selected {
         (color::secondary_on.into(), color::primary_base.into())

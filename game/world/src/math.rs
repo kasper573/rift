@@ -1,24 +1,18 @@
-//! Euclid geometry tagged by unit, so a pixel value can never be used where a tile value is
-//! meant; the unit tags double as scalar newtypes for lengths in content tables and constants.
+//! Euclid geometry with unit tags to prevent type confusion.
 
 use std::f32::consts::FRAC_1_SQRT_2;
 
 use serde::{Deserialize, Serialize};
 
-/// The game's spatial unit. Whole numbers fall on tile edges; tile centers are at +0.5.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct Tiles(pub f32);
 
-/// The world's native pixel scale: Tiled authors geometry (and its own tile size) in these, and the
-/// camera draws sprites at this scale. Cross into tile space only through [`PixelsPerTile`]; a resolution-
-/// dependent zoom separates these from the on-screen pixels the player's window measures.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct WorldPx(pub f32);
 
 pub type Pos<U> = euclid::Point2D<f32, U>;
 pub type Offset<U> = euclid::Vector2D<f32, U>;
 pub type Size<U> = euclid::Size2D<f32, U>;
-/// Containment is half-open.
 pub type Rect<U> = euclid::Rect<f32, U>;
 pub type CellPos = euclid::default::Point2D<i32>;
 pub type GridSize = euclid::default::Size2D<u32>;
@@ -26,14 +20,12 @@ pub type GridSize = euclid::default::Size2D<u32>;
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct TilesPerSec(pub Tiles);
 
-/// A duration or server-clock timestamp.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct Seconds(pub f32);
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct Millis(pub f32);
 
-/// An animation-rate multiplier; 1 plays the animation at its authored speed.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct PlaybackRate(pub f32);
 
@@ -80,7 +72,6 @@ impl std::ops::Sub for Seconds {
     }
 }
 
-/// Stretches an authored duration to real time: a half-speed playback doubles it.
 impl std::ops::Div<PlaybackRate> for Seconds {
     type Output = Seconds;
     fn div(self, rate: PlaybackRate) -> Seconds {
@@ -134,8 +125,6 @@ impl Millis {
     }
 }
 
-/// The only gateway from a map's pixel space into tile space, built once per map so the tile size
-/// has a single source.
 #[derive(Clone, Copy)]
 pub struct PixelsPerTile {
     x: euclid::Scale<f32, WorldPx, Tiles>,
@@ -150,12 +139,10 @@ impl PixelsPerTile {
         }
     }
 
-    /// A pixel point in tile space; whole numbers lie on tile edges.
     pub fn point(self, p: Pos<WorldPx>) -> Pos<Tiles> {
         Pos::new(self.x.transform_point(p).x, self.y.transform_point(p).y)
     }
 
-    /// A pixel rect in tile space.
     pub fn rect(self, r: Rect<WorldPx>) -> Rect<Tiles> {
         Rect::new(
             self.point(r.origin),
@@ -163,16 +150,12 @@ impl PixelsPerTile {
         )
     }
 
-    /// The center of the tile a pixel point falls in. Snapping a loosely-authored pixel spawn
-    /// point to a whole tile is what keeps a placed actor on the tile grid that movement rests
-    /// it on.
     pub fn tile_center(self, p: Pos<WorldPx>) -> Pos<Tiles> {
         let t = self.point(p);
         Pos::new(t.x.floor() + 0.5, t.y.floor() + 0.5)
     }
 }
 
-/// One of 8 compass facings; the discriminant is the sprite-strip index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
     S = 0,
@@ -186,8 +169,6 @@ pub enum Direction {
 }
 
 impl Direction {
-    /// The facing nearest a displacement; a zero vector faces south. Takes raw components — a
-    /// facing is dimensionless, so it is independent of the displacement's unit.
     pub fn from_vec(dx: f32, dy: f32) -> Direction {
         if dx == 0.0 && dy == 0.0 {
             return Direction::S;
@@ -216,8 +197,7 @@ impl Direction {
     }
 }
 
-// Deterministic xorshift rng, shared by spawning and reward rolls. The exact sequence is part of
-// the game: it fixes every boot's npc layout, so it cannot move to a crate rng.
+// The exact sequence is part of the game: it fixes every boot's npc layout, so it cannot move to a crate rng.
 pub fn next_rng(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
     let mut z = *state;

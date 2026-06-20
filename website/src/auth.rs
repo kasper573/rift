@@ -1,6 +1,3 @@
-//! The raw access token rides along in its own cookie purely as a pass-through credential for
-//! the game server; pages read identity from the verified ID-token cookie.
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -128,7 +125,6 @@ pub async fn sign_out(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
     let mut logout = LogoutRequest::from(app.auth.end_session_url.clone())
         .set_client_id(app.auth.client_id.clone())
         .set_post_logout_redirect_uri(app.auth.post_logout.clone());
-    // Without the hint keycloak interposes a logout confirmation page.
     let id_token: Option<RiftIdToken> = jar.get("idt").and_then(|idt| idt.value().parse().ok());
     if let Some(id_token) = &id_token {
         logout = logout.set_id_token_hint(id_token);
@@ -139,7 +135,6 @@ pub async fn sign_out(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
     (jar, Redirect::to(logout.http_get_url().as_str())).into_response()
 }
 
-/// The relying-party configuration and the cached realm key set.
 pub struct Auth {
     client_id: ClientId,
     issuer: IssuerUrl,
@@ -154,7 +149,6 @@ pub struct Auth {
     http: reqwest::Client,
 }
 
-/// The `RIFT_AUTH_*` environment, shared with the game server's token verifier.
 #[derive(Deserialize)]
 struct AuthConfig {
     issuer: IssuerUrl,
@@ -196,7 +190,6 @@ impl Auth {
             redirect,
             post_logout,
         };
-        // Failure is not fatal: verification refetches on demand.
         match auth.refresh_jwks().await {
             Some(()) => println!("auth ready, issuer {}", auth.issuer.as_str()),
             None => println!(
@@ -225,8 +218,6 @@ impl Auth {
         .set_redirect_uri(self.redirect.clone())
     }
 
-    /// Verifies the ID token against the cached realm keys, refetching them on a miss: the
-    /// cache starts empty when the website boots before Keycloak, and key rotation stales it.
     async fn verified_claims<N: NonceVerifier + Copy>(
         &self,
         id_token: &RiftIdToken,
@@ -246,9 +237,6 @@ impl Auth {
         id_token.claims(&verifier, nonce).ok().cloned()
     }
 
-    /// Refreshes the cached realm keys. While a recent fetch already provided keys the refresh
-    /// is skipped, so requests bearing garbage tokens cannot hammer Keycloak; an empty cache
-    /// always fetches.
     async fn refresh_jwks(&self) -> Option<()> {
         const COOLDOWN: Duration = Duration::from_secs(30);
         {
@@ -267,7 +255,6 @@ impl Auth {
     }
 }
 
-/// Keycloak's realm-role claim, mapped into the ID token by the realm's client scope config.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct RealmClaims {
     #[serde(default)]
@@ -282,8 +269,6 @@ struct RealmRoles {
 
 impl AdditionalClaims for RealmClaims {}
 
-/// The realm-roles claim only matters when pages read identity, so only the cookie's ID-token
-/// type carries it; the sign-in flow itself runs on the stock Core types.
 type RiftIdToken = IdToken<
     RealmClaims,
     CoreGenderClaim,
@@ -296,7 +281,6 @@ type RiftClaims = IdTokenClaims<RealmClaims, CoreGenderClaim>;
 type RiftClient =
     CoreClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
 
-// The nonce is consumed when the sign-in callback verifies it; later requests accept any.
 fn accept_nonce(_: Option<&Nonce>) -> Result<(), String> {
     Ok(())
 }
@@ -310,7 +294,6 @@ fn cookie(name: &'static str, value: &str) -> Cookie<'static> {
         .build()
 }
 
-// Browsers normalize `\` to `/` in URLs, so `/\host` would redirect off-site.
 fn sanitize_return(raw: Option<&String>) -> String {
     match raw.map(String::as_str) {
         Some(path) if path.starts_with('/') && !path.starts_with("//") && !path.contains('\\') => {

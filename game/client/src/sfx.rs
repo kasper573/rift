@@ -11,9 +11,7 @@ use world::sfx::sfx_table;
 use crate::Screen;
 use crate::render::Animator;
 
-/// The view half-extent; volume falls linearly to zero at the view edge.
 const HALF_VIEW: Size<Tiles> = Size::new(12.0, 9.0);
-/// Distinct one-shot cues within this window collapse to one play.
 const STACK_WINDOW: Seconds = Seconds(0.1);
 
 pub struct SfxPlugin;
@@ -30,7 +28,6 @@ impl Plugin for SfxPlugin {
 struct Sfx {
     sources: Vec<Handle<AudioSource>>,
     index: HashMap<String, usize>,
-    /// Per actor: its action and the time-into-action the cue window last advanced to.
     seen: HashMap<Entity, (u8, Seconds)>,
     played: HashMap<usize, Seconds>,
 }
@@ -58,7 +55,6 @@ fn play_cues(world: &mut World) {
         .and_then(|id| area::areas().get(id.index()));
     let mut sfx = world.remove_resource::<Sfx>().expect("sfx loaded");
 
-    // Per distinct row this frame keep the loudest source, so near and far actors collapse.
     let mut frame: HashMap<usize, (f32, f32)> = HashMap::new();
     let actors: Vec<(Entity, Actor, Pos<Tiles>)> = world
         .query::<(Entity, &Actor, &Position)>()
@@ -177,19 +173,16 @@ fn ready(played: &mut HashMap<usize, Seconds>, row: usize, clock: Seconds) -> bo
     true
 }
 
-/// 1 at the listener, falling linearly to 0 at the view edge and staying 0 beyond it.
 fn proximity_volume(listener: Pos<Tiles>, source: Pos<Tiles>) -> f32 {
     let dx = (source.x - listener.x).abs() / HALF_VIEW.width;
     let dy = (source.y - listener.y).abs() / HALF_VIEW.height;
     (1.0 - dx.max(dy)).clamp(0.0, 1.0)
 }
 
-/// -1 (left) at the left edge, 0 at the listener's column, +1 (right) at the right edge.
 fn proximity_pan(listener: Pos<Tiles>, source: Pos<Tiles>) -> f32 {
     ((source.x - listener.x) / HALF_VIEW.width).clamp(-1.0, 1.0)
 }
 
-/// A deterministic value in `[0, 1)` standing in for per-play randomness without a rng dep.
 fn fastrand_unit(clock: Seconds, salt: usize) -> f32 {
     let bits = (clock.0.to_bits() as usize)
         .wrapping_mul(2654435761)

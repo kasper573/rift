@@ -1,7 +1,3 @@
-//! `Bind` is the composable behavior primitive: an `Element -> Element` decorator applied with a
-//! repeatable `use=`. Repeated binders apply in order, and because events fan out, two binders that
-//! touch the same event both run.
-
 mod harness;
 
 use bevy_view::{Bind, node, view};

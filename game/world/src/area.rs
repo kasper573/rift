@@ -29,7 +29,6 @@ impl Content for AreaDef {
     }
 }
 
-/// A map asset's name; parsing validates that the map exists.
 pub struct MapRef(pub String);
 
 impl<'de> Deserialize<'de> for MapRef {
@@ -49,8 +48,6 @@ pub struct Portal {
     pub dest: Pos<Tiles>,
 }
 
-/// One map tile reference in a layer cell or a placed object: a [`TileDef`] index plus flips;
-/// zero is the empty cell.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct TileRef(u32);
 
@@ -84,8 +81,6 @@ impl TileRef {
     }
 }
 
-/// One tile layer, in map order, ready to draw: `dynamic` marks the layer whose grouped cells
-/// render z-sorted instead.
 #[derive(Clone)]
 pub struct RenderLayer {
     pub dynamic: bool,
@@ -95,7 +90,6 @@ pub struct RenderLayer {
 }
 
 impl RenderLayer {
-    /// The cell at `c`; empty outside the layer.
     pub fn at(&self, c: CellPos) -> TileRef {
         if c.x < 0 || c.y < 0 || c.x >= self.width || c.y >= self.height {
             return TileRef::EMPTY;
@@ -104,8 +98,6 @@ impl RenderLayer {
     }
 }
 
-/// One distinct map tile's render data: its tileset sheet path and its animation frames (a static
-/// tile is a single endless frame).
 #[derive(Clone)]
 struct TileDef {
     sheet: String,
@@ -145,7 +137,6 @@ pub struct Area {
     tiles: Vec<TileDef>,
 }
 
-/// What to draw for one resolved map cell: a region of a tileset sheet (by path), possibly mirrored.
 pub struct TileSprite<'a> {
     pub sheet: &'a str,
     pub region: Rect<WorldPx>,
@@ -153,7 +144,6 @@ pub struct TileSprite<'a> {
 }
 
 impl Area {
-    /// The sprite to draw for a cell at time `t`; animated tiles advance.
     pub fn resolve(&self, cell: TileRef, time: Seconds) -> Option<TileSprite<'_>> {
         let def = &self.tiles[cell.index()?];
         let region = if def.total.0 == 0.0 {
@@ -177,13 +167,11 @@ impl Area {
         })
     }
 
-    /// Whether the cell's tile cycles through more than one animation frame.
     pub fn animated(&self, cell: TileRef) -> bool {
         cell.index()
             .is_some_and(|index| self.tiles[index].total.0 > 0.0)
     }
 
-    /// The largest fraction of the tile cell at `c` covered by any obscuring object.
     pub fn obscured_amount(&self, c: CellPos) -> f32 {
         self.obscuring_rects
             .iter()
@@ -191,8 +179,6 @@ impl Area {
             .fold(0.0, f32::max)
     }
 
-    /// The index of the layer whose children render y-sorted ([`RenderLayer::dynamic`]): actors,
-    /// tile groups and tile objects all draw inside this layer, between the layers below and above.
     pub fn dynamic_layer(&self) -> usize {
         self.layers
             .iter()
@@ -200,7 +186,6 @@ impl Area {
             .expect("validated at load: every map has a 'Dynamic' layer")
     }
 
-    /// The footstep sfx of the tile at `c`, if its tileset declares one.
     pub fn tile_sfx_at(&self, c: CellPos) -> Option<&SfxId> {
         if c.x < 0 || c.y < 0 || c.x >= self.width.0 as i32 || c.y >= self.height.0 as i32 {
             return None;
@@ -211,8 +196,6 @@ impl Area {
 
 static AREA_COUNT: OnceLock<usize> = OnceLock::new();
 
-/// Must run before [`areas`] is first used; extra areas are portal-less clones of the base
-/// areas so benchmarks can scatter entities across a larger world.
 pub fn configure_areas(count: usize) {
     let _ = AREA_COUNT.set(count);
 }
@@ -259,7 +242,6 @@ pub fn spawn_zone() -> Id<AreaDef> {
     Id::new(index as u32)
 }
 
-/// Reads `maps/<name>.tmx` and everything it references out of the assets root.
 fn load_map(name: &str) -> tiled::Map {
     tiled::Loader::with_reader(assets::tiled_reader)
         .load_tmx_map(format!("{}/{name}.tmx", assets::MAPS))
@@ -312,8 +294,6 @@ fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
                         let tileset = object_tile.get_tileset();
                         let cell = tiles.add(tileset, data.id(), (data.flip_h, data.flip_v));
                         objects.push((tiling.point(pos), cell));
-                        // Tiled anchors tile objects at their bottom-left corner. Only tiles the
-                        // tileset declares something about can opt out of obscuring.
                         let obscuring = object_tile.get_tile().is_some_and(|tile| {
                             tile.properties.get("Walkable") != Some(&PropertyValue::BoolValue(true))
                         });
@@ -377,9 +357,6 @@ fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
     }
 }
 
-/// Every distinct map tile, deduplicated by tileset identity and local tile id into a compact
-/// [`TileRef`]; per-tile properties are captured alongside so grid building never re-touches the
-/// tiled crate.
 #[derive(Default)]
 struct TilePalette {
     keys: Vec<(usize, u32)>,
@@ -483,7 +460,6 @@ fn shape_size(shape: &tiled::ObjectShape) -> Size<WorldPx> {
     }
 }
 
-/// A warp object's portal; every warp must carry a well-formed `goto: "<area>, x, y"`.
 fn portal(
     name: &str,
     goto: &str,
@@ -551,7 +527,6 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TilePalette) -> (Vec<Group>, H
     (groups, grouped_cells)
 }
 
-// Per-cell footstep sfx, flattened row-major; the topmost tile layer that declares one wins.
 fn tile_sfx(size: Size<Tiles>, layers: &[RenderLayer], tiles: &TilePalette) -> Vec<Option<SfxId>> {
     let (width, height) = (size.width as i32, size.height as i32);
     let mut sfx = vec![None; (width * height) as usize];
@@ -567,7 +542,6 @@ fn tile_sfx(size: Size<Tiles>, layers: &[RenderLayer], tiles: &TilePalette) -> V
     sfx
 }
 
-/// A tile object blocks every cell it covers by at least this fraction
 const OBSCURING_CUTOFF: f32 = 0.4;
 
 fn build_grid(
@@ -620,7 +594,6 @@ fn obscured_cells(rect: &Rect<Tiles>) -> Vec<CellPos> {
     cells
 }
 
-/// The fraction of the 1x1 tile cell at `c` covered by `rect`.
 fn cell_overlap(rect: &Rect<Tiles>, c: CellPos) -> f32 {
     let cell: Rect<Tiles> = Rect::new(Pos::new(c.x as f32, c.y as f32), Size::splat(1.0));
     rect.intersection(&cell)

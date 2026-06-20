@@ -34,7 +34,6 @@ pub enum RewardKind {
     },
 }
 
-/// A drop chance in percent (fractions allowed), in (0, 100].
 #[derive(Clone, Copy)]
 pub struct Chance(pub f32);
 
@@ -77,7 +76,6 @@ pub fn grant(world: &mut World) {
                     }
                 }
                 RewardKind::Item { item, chance } => {
-                    // One roll per reward row; absent chance is guaranteed.
                     let granted =
                         chance.is_none_or(|percent| rng_unit(&mut rng) * 100.0 < percent.0);
                     if granted && let Some(mut inventory) = world.get_mut::<Inventory>(died.killer)

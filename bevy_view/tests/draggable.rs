@@ -1,7 +1,3 @@
-//! The `draggable`/`resizable` behaviors: a handle moves/resizes the nearest movable root; `initial`
-//! seeds geometry exactly once (a live drag survives re-renders); a tap is suppressed when it is the
-//! tail of a drag; `on_settle` is given the final geometry and decides where the panel settles.
-
 mod harness;
 
 use bevy_math::Vec2;
@@ -112,7 +108,7 @@ fn on_settle_receives_the_geometry_and_decides_where_it_lands() {
     ui.render(view());
     let entity = ui.children()[0];
 
-    ui.activate_drag(entity, Vec2::new(14.0, 0.0)); // pos -> (16, 3)
+    ui.activate_drag(entity, Vec2::new(14.0, 0.0));
     ui.activate_drag_end(entity);
 
     assert_eq!(ui.log(), vec!["settle 16 3".to_owned()]);

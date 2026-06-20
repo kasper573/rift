@@ -15,13 +15,9 @@ use world::protocol::{Actor, AreaTag, Owner, Position, Rgba, Vitals, action_name
 use world::session::{self, MyClient};
 use world::table::Id;
 
-/// World pixels per tile; the actor and tile sheets are authored at this scale.
 pub const TILE: WorldPx = WorldPx(16.0);
-/// The view is locked to this many tiles tall on every display; the width fills the window, so a
-/// larger or higher-resolution screen zooms in rather than revealing more of the map.
 const VIEW_TILES_TALL: f32 = 18.0;
 const VIEW_TALL: f32 = VIEW_TILES_TALL * TILE.0;
-/// The present quad lives on its own layer so only the presentation camera draws it.
 const PRESENT_LAYER: usize = 1;
 
 pub struct RenderPlugin;
@@ -50,27 +46,20 @@ impl Plugin for RenderPlugin {
     }
 }
 
-/// The camera that renders the world into the offscreen target; it follows the player.
 #[derive(Component)]
 pub struct WorldCamera;
 
-/// The full-window quad that draws the offscreen target, upscaled, into the window.
 #[derive(Component)]
 struct Screen;
 
-/// The offscreen target the world is rendered into, resized to the window's aspect.
 #[derive(Resource)]
 struct WorldTarget(Handle<Image>);
 
-/// The zoom that fits the fixed-height world view to the window, shared with cursor mapping.
 #[derive(Resource, Default, Clone, Copy)]
 pub struct Viewport {
-    /// Window pixels per world-render pixel: the on-screen size of one world pixel.
     pub scale: f32,
 }
 
-/// Presents the offscreen world render to the window: a sharp-bilinear upscale (crisp pixels at any
-/// zoom) plus a death tint — additive red, green and blue cut to a third.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 struct Present {
     #[texture(0)]
@@ -174,7 +163,6 @@ enum Bar {
     Fill,
 }
 
-/// The healthbar geometry in world pixels; it hangs just below the player's position point.
 const BAR: Size<WorldPx> = Size::new(20.0, 4.0);
 const BAR_DROP: WorldPx = WorldPx(5.0);
 
@@ -191,11 +179,9 @@ fn hidden() -> (Transform, Visibility) {
     (Transform::from_xyz(0.0, 0.0, 200.0), Visibility::Hidden)
 }
 
-/// Tracks the local player's healthbar below them; hidden while dead or unspawned.
 fn healthbar(world: &mut World) {
     let shown = session::me(world).and_then(|me| {
-        // Whole pixels: at fractional offsets the fractional-width fill would alternate between
-        // floor and ceil pixel coverage as the player moves.
+        // Whole pixels: avoid floor/ceil alternation on fractional offsets during movement.
         let at = me.get::<Position>()?.pos;
         let vitals = me.get::<Vitals>()?;
         (vitals.health > 0.0 && vitals.max > 0.0).then(|| {
@@ -224,8 +210,6 @@ fn healthbar(world: &mut World) {
     }
 }
 
-/// Keeps the offscreen target at the window's aspect (fixed height, fill width) and the present
-/// quad covering the window, so the world fills the viewport at a single resolution-driven zoom.
 fn fit(
     window: Single<&Window, With<PrimaryWindow>>,
     target: Res<WorldTarget>,
@@ -274,8 +258,6 @@ fn dead_tint(world: &mut World) {
     }
 }
 
-/// Anchors each entity's animation to the moment its replicated action last changed, so the model
-/// receives time-into-action rather than the global clock.
 #[derive(Resource, Default)]
 pub struct Animator {
     anchors: HashMap<Entity, (u8, Seconds)>,
@@ -293,7 +275,6 @@ impl Animator {
     }
 }
 
-/// Replicated actors are render entities: attach a sprite as the [`Actor`] component lands.
 fn attach_sprite(
     add: On<Add, Actor>,
     actors: Query<&Actor>,
@@ -370,7 +351,6 @@ fn follow_camera(
     }
 }
 
-/// The clamped, pixel-snapped point the camera centers on: the player, kept inside the area edges.
 fn camera_center(at: Pos<Tiles>, area_id: Id<AreaDef>, half: Vec2) -> Option<Pos<Tiles>> {
     let area = area::areas().get(area_id.index())?;
     let lo = Pos::new(half.x, half.y);
@@ -381,16 +361,13 @@ fn camera_center(at: Pos<Tiles>, area_id: Id<AreaDef>, half: Vec2) -> Option<Pos
     Some(snap(at.clamp(lo, hi)))
 }
 
-/// The offscreen target's width in world pixels: fixed height, window aspect, rounded to even. An
-/// odd width centers the camera on a half-pixel, knocking the world render off the texel grid and
-/// drawing seams between tiles; an even width keeps tile edges on whole texels.
+// Even width keeps tile edges on whole texels; odd width would draw seams between tiles.
 fn target_width(window: &Window) -> u32 {
     let aspect = window.resolution.width() / window.resolution.height();
     let width = (VIEW_TALL * aspect).round().max(1.0) as u32;
     width + (width & 1)
 }
 
-/// Half the visible world extent in tiles — vertical fixed, horizontal tracking the window.
 fn view_half(window: &Window) -> Vec2 {
     let aspect = window.resolution.width() / window.resolution.height();
     Vec2::new(0.5 * VIEW_TILES_TALL * aspect, 0.5 * VIEW_TILES_TALL)
@@ -402,11 +379,9 @@ struct SpawnedArea(Option<Id<AreaDef>>);
 #[derive(Component)]
 struct AreaTile;
 
-/// An area tile whose tileset animates; [`animate_tiles`] re-resolves its frame each tick.
 #[derive(Component)]
 struct Animated(TileRef);
 
-/// Spawns the static sprites of the player's area once, replacing them when the area changes.
 fn spawn_area_tiles(
     me: Res<MyClient>,
     players: Query<(&Owner, &AreaTag)>,
@@ -493,8 +468,6 @@ fn spawn_area_tiles(
     }
 }
 
-/// Advances each animated area tile's frame against the world clock; static tiles carry no
-/// [`Animated`] and are left untouched.
 fn animate_tiles(
     time: Res<Time>,
     spawned: Res<SpawnedArea>,
@@ -520,9 +493,6 @@ fn cell_center(c: CellPos) -> Pos<Tiles> {
     Pos::new(c.x as f32 + 0.5, c.y as f32 + 0.5)
 }
 
-/// The z of a y-sorted child of the dynamic layer at `base`: strictly inside the band
-/// `(base, base + 1)`, above the layer's flat cells and below the next layer, ordered by `y` —
-/// an actor's position, a tile group's bottom row, or a tile object's bottom edge.
 fn dynamic_z(area: &area::Area, base: f32, y: Tiles) -> f32 {
     base + (y.0 + 1.0) / (area.height.0 + 2.0)
 }
@@ -538,7 +508,6 @@ fn tile_sprite(assets: &AssetServer, sprite: &area::TileSprite, size: Vec2) -> S
     }
 }
 
-/// A tileset/sheet pixel region as the texture sub-rect a `Sprite` samples.
 fn atlas_rect(region: world::math::Rect<WorldPx>) -> Rect {
     Rect::new(
         region.origin.x,

@@ -1,8 +1,3 @@
-//! Contract for the recipe engine: resolving a (partial) selection merges base, the selected variant
-//! options, and matching compounds with later styles winning, and unselected dimensions fall back to
-//! their defaults. Asserted by applying the resolved [`Style`] to an entity and reading the resulting
-//! `bevy_ui` components — and through [`Button`], whose props drive its recipe.
-
 mod harness;
 
 use bevy_color::Color;
@@ -17,7 +12,6 @@ use harness::Ui;
 const BLUE: Color = Color::srgb(0.0, 0.0, 1.0);
 const RED: Color = Color::srgb(1.0, 0.0, 0.0);
 
-/// A size×color recipe mirroring the vanilla-extract example, with a compound and defaults.
 fn swatch() -> Recipe {
     Recipe::new()
         .base(

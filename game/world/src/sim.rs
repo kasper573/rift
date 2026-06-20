@@ -1,7 +1,4 @@
-//! The host-only simulation layer: the systems that advance the authoritative world (NPC AI,
-//! combat, movement, portals, rewards, visibility). It depends on the protocol, content, and asset
-//! adapter beneath it and nothing depends back on it — the client never compiles this module (it is
-//! gated behind the `host` feature), so the data contract it renders can never pull in server logic.
+//! Host-only simulation layer; gated behind the `host` feature so the protocol cannot depend on server logic.
 
 pub mod actions;
 pub mod combat;
@@ -36,8 +33,6 @@ pub struct Character {
     pub speed: Speed,
 }
 
-/// Forces every asset loader — actor models, areas, tables — so any broken file or dangling
-/// reference panics. The server runs this at boot, refusing to start on bad content.
 pub fn validate() {
     crate::actors::models();
     crate::area::areas();

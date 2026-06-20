@@ -1,5 +1,3 @@
-//! Structural components are plain containers: they render their children into the tree.
-
 mod harness;
 
 use bevy_view::view;

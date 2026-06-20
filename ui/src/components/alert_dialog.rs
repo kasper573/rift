@@ -1,6 +1,3 @@
-//! `AlertDialog`: a modal confirmation. Like [`Dialog`](crate::Dialog) — controlled `open` +
-//! `on_open_change` — but the backdrop does not dismiss it; only `Cancel` or `Action` close it.
-
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -46,7 +43,6 @@ impl AlertDialog {
 
 children_builder!(AlertDialog);
 
-/// Opens the alert when clicked.
 #[derive(Default)]
 pub struct AlertDialogTrigger {
     children: Vec<View>,
@@ -54,7 +50,6 @@ pub struct AlertDialogTrigger {
 
 children_builder!(AlertDialogTrigger);
 
-/// The non-dismissing backdrop.
 #[derive(Default)]
 pub struct AlertDialogOverlay {
     children: Vec<View>,
@@ -62,7 +57,6 @@ pub struct AlertDialogOverlay {
 
 children_builder!(AlertDialogOverlay);
 
-/// The alert panel, centered over the backdrop.
 #[derive(Default)]
 pub struct AlertDialogContent {
     children: Vec<View>,
@@ -84,7 +78,6 @@ pub struct AlertDialogDescription {
 
 children_builder!(AlertDialogDescription);
 
-/// Dismisses the alert without acting.
 #[derive(Default)]
 pub struct AlertDialogCancel {
     children: Vec<View>,
@@ -92,7 +85,6 @@ pub struct AlertDialogCancel {
 
 children_builder!(AlertDialogCancel);
 
-/// Confirms and closes the alert.
 #[derive(Default)]
 pub struct AlertDialogAction {
     children: Vec<View>,
@@ -100,7 +92,6 @@ pub struct AlertDialogAction {
 
 children_builder!(AlertDialogAction);
 
-/// Where alert dialogs render.
 #[derive(Default)]
 pub struct AlertDialogOutlet;
 
@@ -125,7 +116,6 @@ impl From<AlertDialogTrigger> for View {
 
 impl From<AlertDialogOverlay> for View {
     fn from(overlay: AlertDialogOverlay) -> View {
-        // The backdrop just paints; its fade in/out is owned by `exit_on_close` (no transform).
         let style = Style::new().background(color::scrim_dark);
         let scrim = crate::exit_on_close(
             node()
@@ -159,7 +149,7 @@ impl From<AlertDialogContent> for View {
                 node.border_radius = BorderRadius::all(Val::Px(radius::M));
                 node.overflow = Overflow::hidden();
             });
-        // Opacity + scale (enter and exit) are owned by `exit_on_close`.
+        // Opacity + scale (enter/exit) owned by `exit_on_close`.
         let panel = crate::exit_on_close(
             node().style(style).children(content.children),
             crate::POPPER_ENTER,

@@ -1,5 +1,3 @@
-//! A windowless FPS readout pinned to the bottom-left of the HUD, shown only while playing.
-
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy_view::{View, ViewRoot};

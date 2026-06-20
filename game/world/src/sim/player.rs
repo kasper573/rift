@@ -34,7 +34,6 @@ const PLAYER_MODEL: &str = "adventurer";
 #[derive(Resource, Default)]
 pub struct Players(pub HashMap<ClientId, Entity>);
 
-/// The player entity behind a received intent's sender.
 pub(crate) fn sender_player(
     world: &World,
     sender: bevy_replicon::prelude::ClientId,
@@ -43,7 +42,6 @@ pub(crate) fn sender_player(
     world.resource::<Players>().0.get(client).copied()
 }
 
-/// Tells a fresh connection which [`ClientId`] its [`Owner`] components will carry.
 pub fn greet(
     add: On<Add, ClientId>,
     clients: Query<&ClientId>,

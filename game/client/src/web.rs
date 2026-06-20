@@ -1,10 +1,6 @@
-//! The HTTP plumbing for sign-in and session minting: a shared `ureq` agent, and an adapter that
-//! drives openidconnect's sync flow through it.
-
 use std::time::Duration;
 
-/// Verifies TLS against the OS trust store (not rustls' baked-in roots), so the dev proxy's
-/// Caddy CA — trusted once per machine, see the README — works like any public CA.
+// Verifies TLS against the OS trust store (not rustls' baked-in roots) so the dev proxy's Caddy CA works.
 pub fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(15)))

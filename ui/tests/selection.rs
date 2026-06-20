@@ -1,7 +1,3 @@
-//! Selection components are controlled: the app owns the selected value (or set), the component renders
-//! from it, and an item requests the next selection through the change callback. The matching content or
-//! indicator mounts for the active item(s).
-
 mod harness;
 
 use std::collections::HashSet;

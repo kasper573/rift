@@ -16,23 +16,15 @@ use crate::web;
 use crate::{Screen, net};
 use world::Role;
 
-/// How long sign-in waits for the browser to deliver the OAuth redirect before giving up.
 const REDIRECT_TIMEOUT: Duration = Duration::from_secs(300);
-/// Per-connection read cap, so a silent probe on the loopback port can't stall the wait.
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// What entering play requires: the `Bearer <jwt>` Authorization value `/session` accepts, and
-/// the realm roles read (unverified) from the token to decide the launch flow.
 #[derive(Resource, Clone)]
 pub struct Session {
     pub authorization: String,
     pub roles: Vec<Role>,
 }
 
-/// The client's endpoints, read once from `RIFT_CLIENT_*` at startup and injected as a resource
-/// rather than reached for inside the sign-in flow: `issuer` is the realm the browser authenticates
-/// against, `oidc_client_id` is the public OIDC client this game presents (and the audience the
-/// server verifies), and the game server's `/session` lives at `game_server_url`.
 #[derive(Resource, Clone, serde::Deserialize)]
 pub struct ClientConfig {
     pub issuer: String,
@@ -95,16 +87,12 @@ fn poll(
     }
 }
 
-/// Opens the system browser to the realm's authorize endpoint, captures the redirect on the
-/// loopback, and exchanges the code for tokens. Blocking; run off the main thread.
 fn sign_in(issuer: &str, client_id: &str) -> Result<Session, String> {
     let client_http = web::oidc_client();
     let issuer = IssuerUrl::new(issuer.to_owned()).map_err(stringify)?;
     let metadata = CoreProviderMetadata::discover(&issuer, &client_http).map_err(stringify)?;
 
-    // RFC 8252 loopback redirection: bind any free port on 127.0.0.1 and let the redirect carry it,
-    // so two clients (or a stale socket) never collide on a fixed port. The realm registers the
-    // port-agnostic `http://127.0.0.1/*`, which Keycloak matches against whatever port we land on.
+    // RFC 8252 loopback redirection: bind any free port on 127.0.0.1 so two clients (or a stale socket) never collide on a fixed port.
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(stringify)?;
     let redirect = format!("http://{}/", listener.local_addr().map_err(stringify)?);
     let client =
@@ -122,7 +110,6 @@ fn sign_in(issuer: &str, client_id: &str) -> Result<Session, String> {
         .set_pkce_challenge(challenge)
         .url();
 
-    // Printed so sign-in stays possible when the browser fails to open: visit the URL manually.
     println!("sign in at {authorize_url}");
     webbrowser::open(authorize_url.as_str()).map_err(stringify)?;
     let (code, state) = capture(&listener)?;
@@ -144,9 +131,6 @@ fn sign_in(issuer: &str, client_id: &str) -> Result<Session, String> {
     })
 }
 
-/// Waits on the loopback for the OAuth redirect. The browser also opens speculative preconnects and
-/// fetches `/favicon.ico` against the same port, so connections that aren't the redirect are
-/// dismissed and the wait continues until the real callback (the one carrying `state`) lands.
 fn capture(listener: &TcpListener) -> Result<(String, String), String> {
     let deadline = Instant::now() + REDIRECT_TIMEOUT;
     loop {
@@ -172,8 +156,6 @@ fn capture(listener: &TcpListener) -> Result<(String, String), String> {
     }
 }
 
-/// Parses one loopback request. `None` means it isn't the OAuth redirect (it carries no `state`), so
-/// the caller keeps waiting; `Some` carries the authorization code or the realm's reported error.
 fn redirect(stream: &TcpStream) -> Option<Result<(String, String), String>> {
     let request = BufReader::new(stream).lines().next()?.ok()?;
     let query = request
@@ -202,8 +184,6 @@ fn redirect(stream: &TcpStream) -> Option<Result<(String, String), String>> {
     })
 }
 
-/// Reads `realm_access.roles` from the access token's payload — unverified client-side; the game
-/// server verifies the token before granting anything.
 fn roles(access_token: &str) -> Vec<Role> {
     let Some(payload) = access_token.split('.').nth(1) else {
         return Vec::new();
@@ -225,8 +205,6 @@ fn roles(access_token: &str) -> Vec<Role> {
         .unwrap_or_default()
 }
 
-/// Mints a session token with the signed-in session, opens the netcode connection, and records
-/// the join/spectate intent to announce once the connection is welcomed (see [`net::Announce`]).
 pub fn enter(world: &mut World, spectate: bool) {
     let Some(session) = world.get_resource::<Session>().cloned() else {
         return;

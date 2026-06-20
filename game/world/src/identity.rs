@@ -2,7 +2,6 @@ use bevy_ecs::component::Component;
 
 use crate::role::Role;
 
-/// Who a connection authenticated as; sits on the connection's client entity.
 #[derive(Component, Clone, Debug, PartialEq, Eq)]
 #[component(immutable)]
 pub struct Identity {

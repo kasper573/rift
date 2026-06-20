@@ -20,8 +20,6 @@ impl Plugin for NetPlugin {
     }
 }
 
-/// The intent to send once the connection is established — the server greets a fresh connection
-/// with a [`Welcome`] before it accepts a join, so we wait for that rather than racing it.
 #[derive(Resource)]
 pub struct Announce {
     pub spectate: bool,
@@ -44,8 +42,6 @@ fn announce(world: &mut World) {
     world.remove_resource::<Announce>();
 }
 
-/// Requests a session token from `{game_server_url}/session` with the given `Bearer <jwt>`
-/// authorization.
 pub fn request_token(game_server_url: &str, authorization: &str) -> Result<Vec<u8>, String> {
     let mut response = web::agent()
         .post(format!("{game_server_url}/session"))
@@ -61,8 +57,6 @@ pub fn request_token(game_server_url: &str, authorization: &str) -> Result<Vec<u
         .map_err(|error| error.to_string())
 }
 
-/// Opens the netcode connection from a serialized [`ConnectToken`]; replicon begins replicating
-/// once the renet client and transport are present.
 pub fn connect(world: &mut World, token: &[u8]) {
     let channels = world.resource::<RepliconChannels>();
     let client = RenetClient::new(ConnectionConfig {

@@ -1,19 +1,12 @@
-//! `For`/[`each`] is the heart of a reconciler. It owes its users: a count that always matches the
-//! data, stable entity identity for stable keys across every kind of edit (append, prepend, insert,
-//! remove, reorder, reverse), retained component state on surviving keys, a remount when a key's
-//! value changes, and a defined answer for duplicate keys.
-
 mod harness;
 
 use bevy_ecs::prelude::*;
 use bevy_view::{each, node};
 use harness::Ui;
 
-/// External, view-independent state stamped on an item's entity to prove identity + retention.
 #[derive(Component)]
 struct External(u64);
 
-/// A keyed list of plain nodes, each tagged in `Text` with its id so the rendered order is legible.
 fn list(ids: &'static [u64]) -> bevy_view::View {
     each(
         move |_| ids.to_vec(),

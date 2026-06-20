@@ -1,9 +1,3 @@
-//! Shared scaffolding for the `ui` component-library spec. Drives the reconciler from an external
-//! author's perspective: build a [`View`], render it against a host, then assert on the resulting
-//! `bevy_ui` tree (`Children`, `Text`, component values) — never on library internals. The app wires
-//! `bevy_view`'s [`ViewPlugin`] and the library's [`UiPlugin`] so overlay state (the `Overlays`
-//! resource, the dismissal observer) is registered exactly as in a real client.
-
 #![allow(dead_code)]
 
 use std::sync::{Arc, Mutex};
@@ -17,9 +11,6 @@ use bevy_ui::prelude::Text;
 use bevy_view::{View, ViewPlugin, render};
 use ui::UiPlugin;
 
-/// App-owned state for a controlled component: the test holds the value, passes a snapshot in as a
-/// prop, and the component's change callback writes the next value back here. Cloneable and thread-safe
-/// so a `view!` builder can read it and a handler closure can capture it.
 #[derive(Clone)]
 pub struct State<T>(Arc<Mutex<T>>);
 
@@ -73,7 +64,6 @@ impl Ui {
         self.children_of(self.host)
     }
 
-    /// Every `Text` value in pre-order traversal of the host subtree.
     pub fn texts(&self) -> Vec<String> {
         let mut out = Vec::new();
         self.collect_text(self.host, &mut out);
@@ -127,8 +117,6 @@ impl Ui {
         self.app.world().get::<C>(entity).cloned()
     }
 
-    /// Advances the virtual clock, then opens any tooltip whose delay has now elapsed (the timing the
-    /// `UiPlugin` runs each frame in a real app).
     pub fn advance(&mut self, by: std::time::Duration) {
         self.app
             .world_mut()

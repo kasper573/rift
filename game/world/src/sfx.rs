@@ -22,8 +22,6 @@ pub struct SfxDef {
     pub pitch: SfxPitch,
 }
 
-/// A sound's base gain before distance attenuation: a fixed level, or one drawn at random from
-/// `[min, max]` on each play. JSON writes `Fixed` as `volume: v`, `Random` as `volume: [min, max]`.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(untagged)]
 pub enum SfxVolume {
@@ -38,8 +36,6 @@ impl Default for SfxVolume {
 }
 
 impl SfxVolume {
-    /// The gain for one play; `roll` is a random value in `[0, 1)` supplied by the caller (ignored
-    /// when fixed), keeping the randomness source out of this crate.
     pub fn resolve(self, roll: f32) -> f32 {
         match self {
             SfxVolume::Fixed(volume) => volume,
@@ -56,8 +52,6 @@ impl SfxVolume {
     }
 }
 
-/// A sound's base playback rate (pitch) — a fixed multiplier (1.0 = normal), or one drawn at random
-/// from `[min, max]` on each play. JSON writes `Fixed` as `pitch: v`, `Random` as `pitch: [min, max]`.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(untagged)]
 pub enum SfxPitch {
@@ -72,8 +66,6 @@ impl Default for SfxPitch {
 }
 
 impl SfxPitch {
-    /// The playback rate for one play; `roll` is a random value in `[0, 1)` supplied by the caller
-    /// (ignored when fixed).
     pub fn resolve(self, roll: f32) -> f32 {
         match self {
             SfxPitch::Fixed(pitch) => pitch,

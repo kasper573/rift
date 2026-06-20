@@ -1,9 +1,3 @@
-//! `Button`: the library's clickable, styled by a state-aware recipe. Pick a look with the `variant`
-//! (the intent — `primary`, `secondary`, `muted`, `danger`, `plain`, …) and `size` (`sm`/`md`/`lg`)
-//! props, and a caption with `label`. Each intent carries resting, hover and press surfaces from
-//! [theme variables](crate::theme); the surface eases between them over the standard transition.
-//! Stateless control-wise: a click is just an event, so wire `on:click` at the use site.
-
 use bevy_ui::{AlignItems, BorderRadius, JustifyContent, UiRect, Val};
 use bevy_view::{Bind, View, button};
 
@@ -13,7 +7,6 @@ use crate::recipe::{Paint, Style, Styled};
 use crate::theme::{ColorVar, color};
 use crate::tokens::{radius, spacing};
 
-/// A variant's surface color in one state: a theme variable, or transparent.
 #[derive(Clone, Copy)]
 enum Surface {
     Themed(ColorVar),
@@ -29,8 +22,6 @@ impl From<Surface> for Paint {
     }
 }
 
-/// One button intent: resting/hover/press surfaces, the caption (`on`) color, and an optional border —
-/// the button's `intent` variants, the single source the recipe and caption are built from.
 struct Intent {
     name: &'static str,
     base: Surface,
@@ -99,8 +90,6 @@ impl Button {
         self
     }
 
-    /// Applies use-site styling and handlers (`insert=`/`on:…`/`use`/`cursor`) to the underlying button
-    /// — the seam the `view!` macro targets; applied after the recipe, so a use site can override it.
     pub fn modify(mut self, decorate: Bind) -> Button {
         self.modify = Some(decorate);
         self
@@ -125,8 +114,6 @@ impl From<Button> for View {
     }
 }
 
-/// The resting look for `intent` with `size` baked in, plus its hover/press surfaces as overlays that
-/// ease in over the standard transition.
 fn intent_style(intent: &Intent, size: Style) -> Style {
     let mut style = Style::new()
         .node(|node| {
@@ -175,8 +162,7 @@ fn chosen<'a>(variants: &[(&'a str, &'a str)], dimension: &str) -> Option<&'a st
         .map(|(_, option)| *option)
 }
 
-/// A button's caption: the `label` typography in the intent's on-color. [`Text`] ignores
-/// picking, so a click falls through to the button.
+/// Button caption in intent's on-color. [`Text`] ignores picking so clicks reach the button.
 fn caption(label: String, on: ColorVar) -> View {
     Text::new(label).intent("label").color(on).into()
 }

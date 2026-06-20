@@ -10,8 +10,6 @@ use bytesize::ByteSize;
 
 use crate::metadata::FileEntry;
 
-/// Downloads land here, under the install dir, so promoting a finished file into place is a same-
-/// filesystem rename rather than a copy.
 pub const DOWNLOAD_DIR: &str = ".rift-download";
 
 #[derive(Default)]
@@ -27,7 +25,6 @@ pub struct FileProgress {
 }
 
 impl Progress {
-    /// `None` until at least one total is known, so the header can read "Downloading…" instead of a false 0%.
     pub fn fraction(&self) -> Option<f64> {
         let total: u64 = self
             .files
@@ -62,8 +59,6 @@ impl fmt::Display for DownloadError {
 
 impl std::error::Error for DownloadError {}
 
-/// Downloads every file concurrently into `dir`'s [`DOWNLOAD_DIR`], advancing the shared [`Progress`].
-/// The first failure cancels the rest and is returned; on success the download dir is returned.
 pub fn run(
     files: &[FileEntry],
     dir: &Path,
@@ -88,7 +83,6 @@ pub fn run(
         message: error.to_string(),
     })?;
 
-    // A 30-minute ceiling bounds a stalled connection without cutting off a large download on a slow link.
     let agent = crate::http_agent(Duration::from_secs(30 * 60));
     let cancel = Arc::new(AtomicBool::new(false));
     let handles: Vec<_> = files

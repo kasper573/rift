@@ -1,6 +1,3 @@
-//! The runtime every rift HTTP service shares: continuous profiling, request + process metrics on
-//! `/metrics`, and graceful shutdown. A service supplies its routes and config; this supplies the rest.
-
 use std::sync::Arc;
 
 use axum::Router;
@@ -14,9 +11,6 @@ use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tower_http::normalize_path::NormalizePath;
 
-/// Serves `router` on `0.0.0.0:{port}`, wrapping it with Prometheus request metrics plus process
-/// metrics on `/metrics`, and draining in-flight requests on a stop signal (docker stop, deploys).
-/// `name` is only used in the startup log line. Returns when the server stops.
 pub async fn serve(name: &str, port: u16, router: Router) {
     let (track, prometheus) = PrometheusMetricLayer::pair();
     metrics_process::Collector::default().describe();
@@ -31,12 +25,9 @@ pub async fn serve(name: &str, port: u16, router: Router) {
         .await
         .unwrap_or_else(|error| panic!("could not bind 0.0.0.0:{port}: {error}"));
     println!("{name} listening on 0.0.0.0:{port}");
-    // ctrlc handles the platform signals; a Notify bridges its callback into the async shutdown.
     let stop = Arc::new(Notify::new());
     let signal = stop.clone();
     ctrlc::set_handler(move || signal.notify_one()).expect("install stop handler");
-    // Rewrite `/foo/` to `/foo` before routing so trailing slashes resolve; axum matches paths
-    // exactly, so this must wrap the whole router rather than sit behind it as a per-route layer.
     let app = NormalizePath::trim_trailing_slash(app);
     axum::serve(listener, ServiceExt::<Request>::into_make_service(app))
         .with_graceful_shutdown(async move { stop.notified().await })
@@ -44,9 +35,6 @@ pub async fn serve(name: &str, port: u16, router: Router) {
         .expect("serve");
 }
 
-/// Continuously samples this process at `sample_hz` and pushes profiles to `PYROSCOPE_BASE` under
-/// `application`, where they surface in Grafana's profiles drilldown. Returns `None` when disabled;
-/// the agent must be held for the process lifetime, as dropping it stops profiling.
 pub fn profiler(
     application: &str,
     enabled: bool,

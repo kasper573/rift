@@ -13,7 +13,6 @@ use crate::protocol::{
 };
 use crate::table::Id;
 
-/// Walking this fast or faster animates as a run.
 const RUN_SPEED: TilesPerSec = TilesPerSec(Tiles(2.0));
 
 #[derive(Clone, Debug, PartialEq)]
@@ -81,14 +80,11 @@ pub fn forget(world: &mut World, entity: Entity) {
     halt(world, entity);
 }
 
-/// Brings `entity` to rest without stranding it between tiles. Mid-step it keeps only the tile it is
-/// entering, so movement lands it on that tile's center; at (or a hair from) a tile it snaps onto the
-/// exact center and drops the route. Stopping funnels through here (a redirect re-routes instead), so
-/// a resting actor always lands on an exact tile.
+/// Mid-step it keeps only the entering tile so it lands on that tile's center; else snaps to exact center.
+/// A resting actor always lands on an exact tile via this funnel.
 pub fn halt(world: &mut World, entity: Entity) {
     world.entity_mut(entity).remove::<MoveTarget>();
     if on_tile(world, entity) {
-        // A mid-step stop can land a hair short of the center; snap exactly onto the tile.
         if let Some(at) = position(world, entity) {
             world.entity_mut(entity).insert(Position {
                 pos: Pos::new(at.x.floor() + 0.5, at.y.floor() + 0.5),
@@ -100,7 +96,6 @@ pub fn halt(world: &mut World, entity: Entity) {
     }
 }
 
-/// Whether `entity` is on a tile center on both axes (within a hair), i.e. not mid-step.
 pub fn on_tile(world: &World, entity: Entity) -> bool {
     position(world, entity).is_some_and(centered)
 }
@@ -156,7 +151,6 @@ pub fn advance(world: &mut World) {
         let Some(mut at) = position(world, id) else {
             continue;
         };
-        // Move the path out (no clone) and reinsert it below, reusing the same allocation.
         let Some(Path { mut tiles }) = world.entity_mut(id).take::<Path>() else {
             continue;
         };

@@ -1,5 +1,3 @@
-//! Item-effect systems: the behavior the server runs over the `crate::items` content tables.
-
 use bevy_ecs::message::Messages;
 use bevy_replicon::prelude::{FromClient, SendTargets, ToClients};
 
@@ -9,7 +7,6 @@ use crate::protocol::{Inventory, ItemConsumed, UseItemRequest, Vitals, is_dead};
 use super::player::sender_player;
 use super::visibility::seen_by;
 
-// The one place item effects apply, keyed by the item definition's kind.
 pub fn use_item(world: &mut bevy_ecs::world::World) {
     let requests: Vec<FromClient<UseItemRequest>> = world
         .resource_mut::<Messages<FromClient<UseItemRequest>>>()

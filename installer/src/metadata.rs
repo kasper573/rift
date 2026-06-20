@@ -12,8 +12,6 @@ pub struct FileEntry {
     pub url: String,
 }
 
-/// Builds a [`FileEntry`] per URL, naming each by the URL's last path segment. The pipeline decides
-/// where releases are hosted; the manifest only needs the filename the installer writes locally.
 pub fn files_from_urls(urls: &[String]) -> Vec<FileEntry> {
     urls.iter()
         .map(|url| FileEntry {

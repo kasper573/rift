@@ -1,9 +1,3 @@
-//! The shared design tokens.
-//! the raw [`palette`] of colors plus the unitless [`size`], [`spacing`] and [`radius`] scales
-//! (all logical pixels) and the [`font`] families and weights. These are theme-independent —
-//! the per-theme semantic colors that *reference* this palette live in [`crate::themes`].
-
-/// The raw color palette every theme draws its semantic colors from.
 #[rustfmt::skip]
 pub mod palette {
     use bevy_color::Color;
@@ -91,7 +85,6 @@ pub mod palette {
     pub const CRIMSON_0: Color = Color::srgb_u8(100, 20, 8);
 }
 
-/// The numeric size scale the other scales are derived from (logical px).
 pub mod size {
     pub const STEP_100: f32 = 4.0;
     pub const STEP_200: f32 = 8.0;
@@ -101,7 +94,6 @@ pub mod size {
     pub const STEP_1000: f32 = 40.0;
 }
 
-/// Spacing between elements (logical px).
 pub mod spacing {
     pub const S: f32 = 2.0;
     pub const M: f32 = 4.0;
@@ -111,7 +103,6 @@ pub mod spacing {
     pub const XXXL: f32 = 40.0;
 }
 
-/// Corner radii (logical px); `PILL` is an effectively-pill value.
 pub mod radius {
     pub const PILL: f32 = 999.0;
     pub const S: f32 = 4.0;
@@ -119,7 +110,6 @@ pub mod radius {
     pub const L: f32 = 16.0;
 }
 
-/// Font families and weights. Identical across themes, so they live here rather than in a theme.
 pub mod font {
     pub const FAMILY_TEXT: &str = "Lato";
     pub const FAMILY_DISPLAY: &str = "Circular TT";
@@ -128,14 +118,9 @@ pub mod font {
     pub const WEIGHT_BOLD: u16 = 700;
 }
 
-/// The typography scale — one entry per text intent, carrying the font size, line height and weight
-/// paired with that role. These are theme-independent (identical in light and dark), so they live here
-/// rather than in a per-theme contract.
 pub mod typography {
     use super::{font, size};
 
-    /// A resolved typographic style: the four values that distinguish one text intent from another —
-    /// `family` is the font family name (matched against the registered TTFs).
     #[derive(Clone, Copy)]
     pub struct Typography {
         pub font_size: f32,

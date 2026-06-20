@@ -9,13 +9,11 @@ use bevy_picking::prelude::{Click, Drag, DragEnd, Out, Over, Pointer};
 
 use crate::view::{Act, DragAct, Element, InstanceId, PortalKind, PortalSink, View, ViewKind};
 
-/// Marks every entity the reconciler owns, so the lifecycle observers fire on mount/unmount and so
-/// a host's managed children can be told apart from anything else.
 #[derive(Component)]
 pub struct ViewNode;
 
-/// The instance an entity belongs to, stamped onto every element under a [`boundary`](crate::boundary)
-/// — how a component library queries which overlay instance an entity is part of.
+/// Stamped onto every element under a [`boundary`](crate::boundary) so component libraries can query
+/// which overlay instance an entity belongs to.
 #[derive(Component, Clone, Copy)]
 pub struct Instance(pub(crate) InstanceId);
 
@@ -25,17 +23,14 @@ impl Instance {
     }
 }
 
-/// The reconciliation identity of a managed entity: its stable path among its parent's children and
-/// the element tag last rendered there.
 #[derive(Component)]
 struct Managed {
     path: Path,
     tag: u64,
 }
 
-/// The live handlers the global observers dispatch for an entity, refreshed every render so the
-/// latest tree's closures win without stacking across frames. Every event fans out: all handlers
-/// installed for it (by the element and any `use=` behaviors) run in order.
+/// The live handlers for an entity, refreshed every render so the latest tree's closures win without
+/// stacking. Every event fans out: all handlers (element and `use=` behaviors) run in order.
 #[derive(Component, Default)]
 pub(crate) struct ViewState {
     pub(crate) click: Vec<Act>,
@@ -56,9 +51,6 @@ enum Seg {
     Dup(u64, u32),
 }
 
-/// Context threaded down the collect pass: the nearest `Provide` instance and the entity whose
-/// children are being collected (the enclosing parent), so a `Gate` test can read that entity's
-/// context — e.g. an item's value provided to the content it gates.
 #[derive(Clone, Copy)]
 struct Cx {
     instance: Option<InstanceId>,
@@ -71,20 +63,15 @@ struct Desired {
     element: Element,
 }
 
-/// A subtree siphoned out of the in-place pass to be reconciled under its outlet.
+/// A subtree siphoned out to be reconciled under its outlet. `seed` distinguishes portals sharing an
+/// instance by their source location, so they reconcile to distinct paths rather than colliding.
 struct PortalItem {
     kind: PortalKind,
     instance: InstanceId,
-    /// Distinguishes portals that share an `instance` (e.g. a dialog's overlay and content both sit
-    /// under one boundary) by where each appeared in the source tree, so they reconcile to distinct
-    /// paths under the outlet rather than colliding on one entity.
     seed: u64,
     body: View,
 }
 
-/// Reconciles `host`'s children to match `view`, then flushes any portaled subtrees to their outlets.
-/// Call every frame with a freshly built view: reused entities keep their identity and retained state,
-/// newly required ones mount, and gone ones unmount.
 pub fn render(world: &mut World, host: Entity, view: View) {
     let mut desired = Vec::new();
     let mut portals = Vec::new();
@@ -104,13 +91,10 @@ pub fn render(world: &mut World, host: Entity, view: View) {
     flush_portals(world, portals);
 }
 
-/// Runs every stored click handler for `entity` — the programmatic equivalent of a pointer click
-/// (used by the picking bridge and available for keyboard/scripted activation).
 pub fn activate_click(world: &mut World, entity: Entity) {
     run_acts(world, entity, |state| &state.click);
 }
 
-/// Runs every stored drag handler for `entity` with `delta`.
 pub fn activate_drag(world: &mut World, entity: Entity, delta: Vec2) {
     let handlers = world
         .get::<ViewState>(entity)
@@ -121,22 +105,18 @@ pub fn activate_drag(world: &mut World, entity: Entity, delta: Vec2) {
     }
 }
 
-/// Runs every stored drag-end handler for `entity`.
 pub fn activate_drag_end(world: &mut World, entity: Entity) {
     run_acts(world, entity, |state| &state.drag_end);
 }
 
-/// Runs every stored pointer-over handler for `entity`.
 pub fn activate_over(world: &mut World, entity: Entity) {
     run_acts(world, entity, |state| &state.over);
 }
 
-/// Runs every stored pointer-out handler for `entity`.
 pub fn activate_out(world: &mut World, entity: Entity) {
     run_acts(world, entity, |state| &state.out);
 }
 
-/// The instance an entity belongs to, if it sits under a [`boundary`](crate::boundary).
 pub fn instance_of(world: &World, entity: Entity) -> Option<InstanceId> {
     world.get::<Instance>(entity).map(|instance| instance.0)
 }
@@ -195,10 +175,8 @@ fn collect(
         }
         ViewKind::Provide { body } => {
             let saved = cx.instance;
-            // Mix the host entity in: the path is local to the nearest ancestor element and resets at
-            // each one, so structurally identical siblings (e.g. several overlays laid out together)
-            // would otherwise share an instance. The host is the (stable, reused) parent entity, which
-            // distinguishes them.
+            // The host entity distinguishes structurally identical sibling boundaries (e.g. several
+            // overlays together) so they don't share an instance.
             cx.instance = Some(InstanceId(hash_host(cx.host, prefix)));
             collect(world, prefix, cx, *body, out, portals);
             cx.instance = saved;
@@ -242,10 +220,8 @@ fn reconcile_level(
 
     let mut ordered = Vec::with_capacity(desired.len());
     for item in desired {
-        // Reuse the entity at this path only if it's the *same* element: same tag and same boundary
-        // instance. A slot switching between structurally different views — e.g. a plain `node` and a
-        // `Provide`-wrapped one (a window vs. a component) — shares a path and tag but differs in
-        // instance, so it must remount rather than graft the new view onto the old entity's components.
+        // Reuse only if the tag AND instance match; a slot switching between structurally different
+        // views (e.g. plain node vs. Provide-wrapped) must remount, not graft.
         let reuse = by_path.get(&item.path).copied().filter(|&entity| {
             world.get::<Managed>(entity).map(|m| m.tag) == Some(item.element.tag)
                 && instance_of(world, entity) == item.instance
@@ -279,8 +255,7 @@ fn spawn_managed(
     element: &Element,
     instance: Option<InstanceId>,
 ) -> Entity {
-    // Insert ViewNode last, so the mount observer it triggers sees a fully-formed entity — in
-    // particular its Instance, which a mount handler reads to register per-instance state.
+    // Insert ViewNode last so the mount observer sees a fully-formed entity with Instance set.
     let mut entity = world.spawn((
         Managed {
             path: path.clone(),
@@ -323,7 +298,7 @@ fn apply_element(
         }
     }
 
-    // An outlet's children are owned by the portal flush, not the view, so don't reconcile them here.
+    // Portal sinks' children are flushed separately, not reconciled from the view.
     if world.get::<PortalSink>(entity).is_some() {
         return;
     }
@@ -351,11 +326,8 @@ fn flush_portals(world: &mut World, initial: Vec<PortalItem>) {
     for item in initial {
         by_kind.entry(item.kind).or_default().push(item);
     }
-    // Reconcile every outlet against its accumulated portals, to a fixpoint. Reconciling one outlet's
-    // content can reveal nested portals (e.g. a tooltip inside a popover), which grow the buckets and
-    // trigger another pass. Buckets only ever grow and every outlet is reconciled each pass (so an
-    // outlet whose source vanished is emptied), and each outlet always sees the full set of its
-    // content — no pass discards another's. A guard bounds pathological nesting.
+    // Reconcile to a fixpoint; reconciling one outlet can reveal nested portals. Guard bounds
+    // pathological nesting.
     let mut guard = 0;
     loop {
         guard += 1;
@@ -412,8 +384,7 @@ fn hash_path(path: &Path) -> u64 {
     hasher.finish()
 }
 
-/// Hashes a boundary's local `path` together with its host entity, so structurally identical sibling
-/// boundaries get distinct, render-stable instances.
+/// Hashes host + path so sibling boundaries get distinct, render-stable instances.
 fn hash_host(host: Entity, path: &Path) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     host.hash(&mut hasher);
@@ -437,9 +408,6 @@ fn view_state(element: &Element) -> ViewState {
     }
 }
 
-/// A host that re-renders its builder's view every frame; spawn one as a styled container and the
-/// [`ViewPlugin`](crate::ViewPlugin) keeps its subtree reconciled. The builder receives `&World`, so
-/// it can read game state (resources, the asset server, components) while describing the UI.
 #[derive(Component, Clone)]
 pub struct ViewRoot(Arc<dyn Fn(&World) -> View + Send + Sync>);
 
@@ -458,8 +426,7 @@ pub(crate) fn render_roots(world: &mut World) {
         .iter(world)
         .map(|(entity, root)| (entity, root.clone()))
         .collect();
-    // Portals from every root accumulate, then flush once so all content for an outlet is reconciled
-    // together (one root never despawns another root's portaled content).
+    // Portals accumulate and flush once per frame, so outlets reconcile all roots' content together.
     let mut portals = Vec::new();
     for (host, root) in roots {
         let view = (root.0)(world);
@@ -500,8 +467,7 @@ pub(crate) fn on_view_removed(
     states: Query<&ViewState>,
     mut commands: Commands,
 ) {
-    // Capture the handlers now, while `ViewState` is still alive — the queued command runs after the
-    // entity has been despawned, so a deferred lookup would find nothing.
+    // Capture handlers now; the queued command runs after despawn.
     let entity = remove.entity;
     if let Ok(state) = states.get(entity)
         && !state.cleanup.is_empty()

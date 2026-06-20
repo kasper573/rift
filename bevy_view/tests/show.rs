@@ -1,7 +1,3 @@
-//! `Show` is a conditional subtree: its `when` is read every render, false hides (and unmounts) the
-//! body, true reveals (and mounts) it. It nests, and its body may itself be any view including a
-//! `For`.
-
 mod harness;
 
 use bevy_ecs::prelude::*;

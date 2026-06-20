@@ -1,8 +1,3 @@
-//! Property test: under any sequence of list edits (insert, remove, swap), the reconciler must
-//! always leave the host's children exactly equal to the declared data, in order, and must keep a
-//! stable entity for every key that survives an edit. Driven by a deterministic PRNG so failures
-//! reproduce.
-
 mod harness;
 
 use std::collections::HashMap;

@@ -1,20 +1,3 @@
-//! Zero-config load benchmark for the authoritative `world` simulation: it finds, on its own, the
-//! highest number of areas the server sustains within the per-tick frame budget and reports it.
-//!
-//! The world is modelled as A areas (the content maps reused under fresh ids via
-//! `world::area::configure_areas`) of 25 NPCs + 25 players each, every player backed by an in-process
-//! `ConnectedClient` (replicon's headless-test shape — exercises the real area+range visibility cull and
-//! replicon serialization with no socket). The program builds a fresh app per candidate A, drives
-//! `app.update()` like the real server loop (`game/server/src/main.rs::simulate`), times the ticks, and
-//! ramps A (exponential bracket, then binary search) until the mean tick crosses the budget. It reports
-//! the largest sustained A and its area/player/NPC totals, plus the sim-vs-replication split at that point.
-//!
-//! Players spread evenly across areas, so the per-area replication cull is exercised: this blueprint
-//! server culls by area+range, the golden reference the (unculled, ~O(A^2)) rift server is compared to.
-//!
-//! Run:      cargo run -p bench --release          (no arguments)
-//! Profile:  cargo flamegraph -p bench             ;  heaptrack target/release/bench
-
 use std::time::Instant;
 
 use bevy_ecs::prelude::*;
@@ -36,9 +19,9 @@ use world::{
 const NPCS_PER_AREA: usize = 25;
 const PLAYERS_PER_AREA: usize = 25;
 const BUDGET_MS: f64 = 40.0;
-const MAX_AREAS: usize = 128; // size of the reusable area pool; the ramp never needs more than this here
+const MAX_AREAS: usize = 128;
 const WARMUP: usize = 30;
-const MEASURE: usize = 200; // one window for every candidate, so the reported number is the one decided on
+const MEASURE: usize = 200;
 
 fn main() {
     world::assets::init(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets"));
@@ -65,7 +48,6 @@ fn main() {
         pass
     };
 
-    // Exponential bracket: double A until the mean tick exceeds budget.
     let mut a = 1usize;
     loop {
         if consider(a, &mut good, &mut best) {
@@ -79,7 +61,6 @@ fn main() {
         }
     }
 
-    // Binary search the crossover between the last good and first bad A.
     while bad > good + 1 {
         let mid = (good + bad) / 2;
         if !consider(mid, &mut good, &mut best) {
@@ -125,9 +106,6 @@ struct Point {
     max: f64,
 }
 
-// Build a fresh server app populated with `areas` areas (the first `areas` of the configured pool) of 25
-// NPCs + 25 players each, measure the sim alone, then attach a client per player and measure the full
-// sim+replication tick.
 fn point(areas: usize, warmup: usize, ticks: usize) -> Point {
     let mut app = world::sim::server_app();
     app.finish();

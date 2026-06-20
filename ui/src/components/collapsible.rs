@@ -1,7 +1,3 @@
-//! `Collapsible`: a disclosure whose content is revealed by easing its height open and closed (a real
-//! [`collapse`](crate::collapse)). Controlled — `open` is a prop and the trigger requests the flipped
-//! value through `on_open_change`.
-
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -39,7 +35,6 @@ impl Collapsible {
 
 children_builder!(Collapsible);
 
-/// Toggles the collapsible open and closed.
 #[derive(Default)]
 pub struct CollapsibleTrigger {
     children: Vec<View>,
@@ -47,7 +42,6 @@ pub struct CollapsibleTrigger {
 
 children_builder!(CollapsibleTrigger);
 
-/// The body, present only while open.
 #[derive(Default)]
 pub struct CollapsibleContent {
     children: Vec<View>,
@@ -90,7 +84,6 @@ impl From<CollapsibleContent> for View {
     }
 }
 
-/// The clickable header row: full width, padded, with a hover wash.
 fn trigger_style() -> Style {
     Style::new()
         .text_color(color::surface_canvas_on)
@@ -105,7 +98,6 @@ fn trigger_style() -> Style {
         })
 }
 
-/// The revealed body: muted text with room above it (the collapse eases its height).
 fn content_style() -> Style {
     Style::new()
         .text_color(color::surface_canvas_on_soft)

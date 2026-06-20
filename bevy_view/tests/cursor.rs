@@ -1,7 +1,3 @@
-//! Hover cursors: an element may opt into a cursor shown while the pointer is over it; a lock forces
-//! a cursor for the length of a gesture. An element without a cursor never has an opinion, so the
-//! game's own cursor stays in charge.
-
 mod harness;
 
 use bevy_ecs::entity::EntityHashMap;

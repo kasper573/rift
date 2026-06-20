@@ -1,7 +1,3 @@
-//! Intrinsic tags are real `bevy_ui` primitives: `<button>` inserts `Button`, `<image>` inserts
-//! `ImageNode`, and swapping an element's tag at a slot is a type change — despawn + respawn, not a
-//! mutate in place.
-
 mod harness;
 
 use bevy_ui::prelude::{Button, ImageNode, Node};

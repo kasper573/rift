@@ -1,15 +1,12 @@
 //! A small Radix-inspired UI component library over [`bevy_view`].
 //!
-//! Every component is **controlled**: it never owns its open/value state. The app passes the current
-//! value as a prop and a change-request callback; the component renders from that value and calls the
-//! callback on interaction. [`controlled`] shows how a component shares its value and callback from its
-//! root to its separate parts. Overlays additionally float their content into an app-placed outlet —
-//! draw order comes from where the outlet sits in the tree, not a z-index — and position it
-//! collision-aware against its trigger; the math lives in [`place`] and is unit-tested apart from
-//! layout.
+//! Every component is **controlled**: it never owns its open/value state, so the app is the single
+//! source of truth. [`controlled`] shows how a component shares its value and callback from its
+//! root to its separate parts. Overlays float their content into an app-placed outlet rather than
+//! using z-index so draw order is determined by tree position. The collision-aware positioning
+//! lives in [`place`] and is unit-tested apart from layout.
 
-/// Generates the `child` builder method shared by every component part — the seam the `view!` macro's
-/// `<Comp>…children…</Comp>` lowering targets.
+/// Generates the `child` builder method every component uses — the seam for `view!` macro lowering.
 macro_rules! children_builder {
     ($ty:ty) => {
         impl $ty {
@@ -21,9 +18,6 @@ macro_rules! children_builder {
     };
 }
 
-/// Generates a variant-selection builder method per named dimension, each pushing its choice onto the
-/// component's `variants: Vec<(&'static str, &'static str)>` for its [`recipe`] to resolve. The method
-/// name is the dimension key, so `<Button size="lg"/>` lowers to `.size("lg")` → `("size", "lg")`.
 macro_rules! variant_props {
     ($ty:ty { $($dimension:ident),+ $(,)? }) => {
         impl $ty {
@@ -76,8 +70,6 @@ pub use utils::theme;
 // Internal module paths the components still reach for as `crate::recipe` / `crate::controlled`.
 pub(crate) use utils::{collapse, controlled, interaction, motion, popper, recipe};
 
-/// Drives overlay positioning, outside-press dismissal, and tooltip open timing, and registers the
-/// [`Overlays`] store overlays coordinate through. Add it alongside [`bevy_view::ViewPlugin`].
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
@@ -109,8 +101,7 @@ impl Plugin for UiPlugin {
 #[derive(Resource)]
 struct DesignFonts(#[allow(dead_code)] Vec<Handle<Font>>);
 
-/// Loads the library's fonts (which [`Text`] matches by family) from the conventional `fonts/`
-/// asset directory and keeps them alive — so any app on the library gets text without wiring fonts up.
+/// Loads fonts from the `fonts/` directory — any app using the library gets text without wiring fonts.
 fn load_fonts(assets: Option<Res<AssetServer>>, mut commands: Commands) {
     let Some(assets) = assets else {
         return;
@@ -128,7 +119,6 @@ fn load_fonts(assets: Option<Res<AssetServer>>, mut commands: Commands) {
     commands.insert_resource(DesignFonts(handles));
 }
 
-/// Which side of the trigger an overlay's content prefers.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Side {
     Top,
@@ -138,7 +128,6 @@ pub enum Side {
     Left,
 }
 
-/// How content aligns along the trigger's cross axis.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Align {
     #[default]
@@ -147,7 +136,6 @@ pub enum Align {
     End,
 }
 
-/// The axis a component lays out or divides along.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Orientation {
     #[default]
@@ -155,25 +143,17 @@ pub enum Orientation {
     Vertical,
 }
 
-/// Per-instance overlay coordination, keyed by the instance id its parts share. The open state itself
-/// lives with the app (the component is controlled); this only holds what the parts can't pass to each
-/// other directly — the positioning anchor, the close callback portaled content needs, and tooltip
-/// hover timing.
 #[derive(Default)]
 pub(crate) struct Overlay {
     pub(crate) anchor: Option<Entity>,
     pub(crate) on_open_change: Option<OnChange<bool>>,
     pub(crate) hover_at: Option<Duration>,
     pub(crate) delay: Duration,
-    /// Whether the overlay was open on the previous render — so the root can spot an open→closed edge,
-    /// whatever path triggered it (a close button, a press outside, leaving a hover trigger).
+    /// Tracks open→closed edge to start the exit animation, allowing the content to linger and ease out.
     pub(crate) was_open: bool,
-    /// When set, the overlay is playing its exit: the content stays mounted and eases out (even though
-    /// `open` is already `false`), until [`advance_overlay_close`] drops it once the exit has played.
     pub(crate) closing_at: Option<Duration>,
 }
 
-/// How long an overlay's content lingers, easing out, after a close is requested.
 const OVERLAY_EXIT: Duration = Duration::from_millis(240);
 
 #[derive(Resource, Default)]
@@ -182,11 +162,9 @@ pub(crate) struct Overlays {
     pub(crate) last_tooltip_closed: Option<Duration>,
 }
 
-/// Marks floating content a press outside should dismiss (anchored popovers and menus, not tooltips).
 #[derive(Component, Clone, Copy)]
 pub(crate) struct Dismissable;
 
-/// How a piece of content is placed against its anchor; read by [`position_overlays`].
 #[derive(Component, Clone, Copy)]
 pub(crate) struct Placement {
     pub(crate) side: Side,
@@ -194,9 +172,8 @@ pub(crate) struct Placement {
     pub(crate) offset: f32,
 }
 
-/// Builds an overlay root: a [`controller`] sharing the controlled `bool` (open) with its in-tree
-/// trigger and content gate via context, plus the open-change callback registered in [`Overlays`] so
-/// portaled content (which leaves the hierarchy) can still close it. Forgets the instance on unmount.
+/// Builds an overlay root, sharing the controlled bool with trigger/content via context, storing the
+/// open-change callback in [`Overlays`] so portaled content (outside the hierarchy) can close it.
 pub(crate) fn overlay_root(
     open: bool,
     on_open_change: OnChange<bool>,
@@ -213,12 +190,11 @@ pub(crate) fn overlay_root(
             })
             .on_cleanup_with(forget)
             .attr(move |entity| {
-                // Track the open edge every render: opening cancels any pending exit; closing (after
-                // having been open) starts one, so whatever closed it, the content lingers to ease out.
                 let id = entity.id();
                 entity.world_scope(|world| {
                     let now = overlay_now(world);
                     set_overlay(world, id, move |overlay| {
+                        // Track open edge: opening cancels exit; closing after open starts one so content eases out.
                         if open {
                             overlay.closing_at = None;
                             overlay.was_open = true;
@@ -234,7 +210,6 @@ pub(crate) fn overlay_root(
     )
 }
 
-/// Applies `change` to the overlay state of the instance `entity` belongs to, creating it if absent.
 pub(crate) fn set_overlay(world: &mut World, entity: Entity, change: impl FnOnce(&mut Overlay)) {
     if let Some(instance) = instance_of(world, entity) {
         change(
@@ -253,14 +228,12 @@ pub(crate) fn overlay(world: &World, instance: InstanceId) -> Option<&Overlay> {
         .and_then(|overlays| overlays.states.get(&instance))
 }
 
-/// Records `entity` as its overlay instance's positioning anchor (a trigger's `on_mount`/`on_over`).
 pub(crate) fn register_anchor(world: &mut World, entity: Entity) {
     set_overlay(world, entity, |overlay| overlay.anchor = Some(entity));
 }
 
-/// Requests the overlay containing `entity` to close — for a portaled close button or menu item, which
-/// can't reach the in-tree controlled `bool` by context. Sets `open=false`; the root then notices the
-/// edge and holds the content mounted to ease it out.
+/// Closes the overlay containing `entity` — for portaled close buttons/items that can't reach the
+/// in-tree controlled bool. The root detects the edge and eases the content out before unmounting.
 pub(crate) fn close_overlay(world: &mut World, entity: Entity) {
     let close = instance_of(world, entity)
         .and_then(|instance| overlay(world, instance).and_then(|o| o.on_open_change.clone()));
@@ -269,20 +242,16 @@ pub(crate) fn close_overlay(world: &mut World, entity: Entity) {
     }
 }
 
-/// True while the entity's overlay is in its closing (exit-animating) window.
 pub(crate) fn overlay_closing(world: &World, entity: Entity) -> bool {
     instance_of(world, entity)
         .and_then(|instance| overlay(world, instance))
         .is_some_and(|overlay| overlay.closing_at.is_some())
 }
 
-/// True while the instance is in its closing (exit-animating) window — keyed by instance, for the gate.
 pub(crate) fn instance_closing(world: &World, instance: InstanceId) -> bool {
     overlay(world, instance).is_some_and(|overlay| overlay.closing_at.is_some())
 }
 
-/// Once a closing overlay's exit has had time to play, drops the closing mark (its `open` is already
-/// `false`, so the content then unmounts). Runs every frame; available for scripted activation in tests.
 pub fn advance_overlay_close(world: &mut World) {
     let now = overlay_now(world);
     let due: Vec<InstanceId> = world
@@ -310,10 +279,9 @@ fn overlay_now(world: &World) -> Duration {
         .unwrap_or_default()
 }
 
-/// Gives overlay content a show/hide animation: it fades its whole subtree (via [`Opacity`](motion)) in
-/// from `enter` and, while its overlay is closing, out to `exit`. It stays mounted through the exit
-/// because the overlay root defers the unmount. Pass `IDENTITY`/`IDENTITY` for a fade with no scale
-/// (e.g. a full-screen backdrop, which must keep covering the viewport).
+/// Animates overlay content show/hide: fading in from `enter` and out to `exit` while closing.
+/// The content stays mounted through exit so the root can defer unmount. Pass `IDENTITY`/`IDENTITY` for
+/// a fade-only animation (e.g. full-screen backdrops need to keep covering the viewport).
 pub(crate) fn exit_on_close(
     element: bevy_view::Element,
     enter: motion::Transform2d,
@@ -346,22 +314,18 @@ pub(crate) fn exit_on_close(
     })
 }
 
-/// The scale a floating panel grows in from when it opens.
 pub(crate) const POPPER_ENTER: motion::Transform2d = motion::Transform2d {
     translation: Vec2::ZERO,
     scale: Vec2::splat(0.94),
     rotation: 0.0,
 };
-/// The scale a floating panel shrinks out to when it closes.
 pub(crate) const POPPER_EXIT: motion::Transform2d = motion::Transform2d {
     translation: Vec2::ZERO,
     scale: Vec2::splat(0.9),
     rotation: 0.0,
 };
 
-/// Scrolls whatever scrollable node is under the pointer by the mouse wheel — bevy_ui tracks the offset
-/// in [`ScrollPosition`] but doesn't drive it from input, so this walks up from the hovered entity to the
-/// nearest scrollable and moves it.
+/// Scrolls the hovered scrollable from mouse wheel — bevy_ui tracks offset but doesn't drive input.
 fn scroll_hovered(
     mut wheel: MessageReader<MouseWheel>,
     hover_map: Option<Res<HoverMap>>,
@@ -398,15 +362,13 @@ fn scroll_hovered(
     }
 }
 
-/// Drops an instance's overlay state — wired to a root's cleanup so a removed overlay leaves nothing.
+/// Drops overlay state on cleanup to avoid stale entries.
 pub(crate) fn forget(world: &mut World, entity: Entity) {
     if let Some(instance) = instance_of(world, entity) {
         world.resource_mut::<Overlays>().states.remove(&instance);
     }
 }
 
-/// Wraps `children` in an absolutely positioned floating node carrying its placement. Dismissable
-/// content is closed by a press outside it; tooltip content additionally ignores picking.
 pub(crate) fn floating(
     placement: Placement,
     ignore_picking: bool,
@@ -430,10 +392,8 @@ pub(crate) fn floating(
     element
 }
 
-/// A full-screen, click-through portal sink for anchored overlays. [`position_overlays`] writes content
-/// `left`/`top` in viewport coordinates, so the outlet has to span the viewport from the origin for an
-/// absolutely-positioned child to land where intended; an unsized outlet in a centered layout would
-/// push it off-screen. `Pickable::IGNORE` lets presses fall through the empty area to the scene below.
+/// Full-screen portal sink for overlays positioned in viewport coordinates — must span from origin
+/// so absolutely-positioned children land where intended (unsized outlets in centered layouts drift).
 pub(crate) fn overlay_outlet(kind: PortalKind) -> Element {
     outlet(kind)
         .attr(|entity| {
@@ -448,10 +408,6 @@ pub(crate) fn overlay_outlet(kind: PortalKind) -> Element {
         .insert(Pickable::IGNORE)
 }
 
-/// Closes every dismissable overlay the press landed outside of — exposed for scripted activation; the
-/// global press observer calls it with the hit entity. An overlay is open exactly while its content is
-/// mounted (carrying [`Dismissable`] and the instance). A press carrying an open overlay's own instance
-/// (its trigger or content) leaves it open; `None` (empty space) closes them all.
 pub fn dismiss_overlays(world: &mut World, pressed: Option<Entity>) {
     let inside = pressed.and_then(|entity| instance_of(world, entity));
     let open: Vec<InstanceId> = world
@@ -468,14 +424,12 @@ pub fn dismiss_overlays(world: &mut World, pressed: Option<Entity>) {
     }
 }
 
-/// A press anywhere dismisses the overlays it landed outside of.
 pub(crate) fn dismiss_on_press(press: On<Pointer<Press>>, mut commands: Commands) {
     let target = press.entity;
     commands.queue(move |world: &mut World| dismiss_overlays(world, Some(target)));
 }
 
-/// Positions every mounted overlay content against its anchor, collision-aware. Runs after layout, so
-/// it reads measured rects; the written `Node.left/top` settle on the next frame.
+/// Positions overlays against anchors, collision-aware. Runs after layout so measured rects are current.
 fn position_overlays(
     contents: Query<(Entity, &Placement, &Instance)>,
     measured: Query<(&ComputedNode, &UiGlobalTransform)>,
@@ -516,11 +470,6 @@ fn position_overlays(
     }
 }
 
-// --- Positioning math (pure, unit-tested) -----------------------------------------------------
-
-/// Places content of size `content` against the `anchor` rectangle within `viewport`, preferring
-/// `side`/`align`/`offset` but flipping to the opposite side when the preferred one overflows and
-/// clamping into the viewport. All values are logical pixels; returns the content's top-left.
 pub fn place(
     anchor_pos: Vec2,
     anchor_size: Vec2,

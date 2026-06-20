@@ -64,8 +64,6 @@ fn update(world: &mut World) {
     apply_hover(world, hover);
 }
 
-/// The cursor to show and the tile to highlight. A hovered UI widget (or an in-progress window
-/// resize) takes over the cursor and clears the highlight; otherwise both follow the world.
 fn desired(world: &mut World) -> (CursorIcon, Option<Pos<Tiles>>) {
     if let Some(ui) = bevy_view::hovered_cursor(world) {
         return (ui, None);
@@ -74,7 +72,6 @@ fn desired(world: &mut World) -> (CursorIcon, Option<Pos<Tiles>>) {
     (gameplay_cursor(world, pointer), hover)
 }
 
-/// The pointer the cursor should show and the walkable tile to highlight (if any).
 fn compute(world: &mut World) -> (Pointer, Option<Pos<Tiles>>) {
     if session::is_dead(world) {
         return (Pointer::Default, None);
@@ -107,7 +104,6 @@ fn compute(world: &mut World) -> (Pointer, Option<Pos<Tiles>>) {
 
 fn gameplay_cursor(world: &World, pointer: Pointer) -> CursorIcon {
     let cursors = world.resource::<Cursors>();
-    // The default pointer's tip sits at the image's top-left; the others are centered 64×64 motifs.
     let (handle, hotspot) = match pointer {
         Pointer::Default => (cursors.default.clone(), (0, 0)),
         Pointer::Attack => (cursors.attack.clone(), (32, 32)),

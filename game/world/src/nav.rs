@@ -1,14 +1,10 @@
-//! The walkability grid over a map's tiles, and pathfinding across it. A* step costs are
-//! fixed-point — one tile = 1000, a diagonal = √2 ≈ 1414 — so search stays deterministic and the
-//! octile heuristic is exact.
+//! Pathfinding with fixed-point costs for determinism.
 
 use crate::math::{CellPos, Pos, Size, Tiles};
 
 const ORTHOGONAL: u32 = 1000;
 const DIAGONAL: u32 = 1414;
 
-/// A walkability grid in tile space. A [`Pos<Tiles>`] selects the integer cell it falls in, so
-/// callers pass world positions directly without flooring them first.
 #[derive(Clone)]
 pub struct Grid {
     size: Size<Tiles>,
@@ -28,8 +24,6 @@ impl Grid {
         self.cell_walkable(cell(p))
     }
 
-    /// The nearest walkable cell's position (its lower corner), spiralling outward; `None` if the
-    /// whole grid is blocked.
     pub fn nearest_walkable(&self, p: Pos<Tiles>) -> Option<Pos<Tiles>> {
         let from = cell(p);
         if self.cell_walkable(from) {
@@ -72,8 +66,6 @@ impl Grid {
     }
 }
 
-/// The cheapest 8-connected path of cells from `start` to `goal`, both inclusive; `None` when
-/// either end is blocked or no route exists.
 pub fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
     let start = cell(start);
     let goal = cell(goal);
@@ -114,12 +106,10 @@ const NEIGHBOURS: [(i32, i32); 8] = [
     (-1, -1),
 ];
 
-/// The integer cell a position falls in.
 fn cell(p: Pos<Tiles>) -> CellPos {
     CellPos::new(p.x.floor() as i32, p.y.floor() as i32)
 }
 
-/// A cell's lower-corner position.
 fn at(c: CellPos) -> Pos<Tiles> {
     Pos::new(c.x as f32, c.y as f32)
 }

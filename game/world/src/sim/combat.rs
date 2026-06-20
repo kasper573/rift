@@ -16,8 +16,6 @@ use crate::table::Id;
 const TILE_DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
 const CHASE_RETARGET_THRESHOLD: Tiles = Tiles(1.5);
 
-/// `attack_speed` scales the whole swing along with the attack animation;
-/// `attack_delay` is the recovery between swings.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Stats {
     pub damage: f32,
@@ -41,16 +39,12 @@ pub struct Attackers {
     pub ids: Vec<Entity>,
 }
 
-/// `Died` is the extension seam loot/xp/quests subscribe to; combat's own death cleanup stays
-/// inline in `strike` rather than reacting to `Died`.
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct Died {
     pub entity: Entity,
     pub killer: Entity,
 }
 
-/// A committed swing: the hit lands at `hit_at` — the attack animation's apex — and
-/// the attacker is occupied until `ends_at`.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Swing {
     pub target: Entity,
@@ -86,8 +80,6 @@ pub fn combat(world: &mut World) {
     }
 }
 
-/// Approaches the target and, in range with recovery elapsed, commits to a swing whose
-/// timing comes from the attacker's own attack animation.
 fn engage(world: &mut World, time: Seconds) {
     let ids: Vec<Entity> = world
         .query_filtered::<Entity, With<AttackTarget>>()
@@ -153,8 +145,6 @@ fn engage(world: &mut World, time: Seconds) {
     }
 }
 
-/// Carries committed swings forward: the hit lands at the apex, the attacker animates
-/// until the swing ends, and recovery starts from there. Death or movement cancels.
 fn progress_swings(world: &mut World, time: Seconds, deaths: &mut Vec<(Entity, Entity)>) {
     let ids: Vec<Entity> = world
         .query_filtered::<Entity, With<Swing>>()
@@ -221,8 +211,7 @@ fn stats(world: &World, entity: Entity) -> Stats {
     })
 }
 
-/// The attack animation's native timing for this attacker's model and facing — the same
-/// manifest the client animates from, so the felt hit and the applied hit coincide.
+// Manifest the client animates from, so the felt hit and applied hit coincide.
 fn attack_timing(world: &World, entity: Entity, dir: u8) -> crate::actors::Timing {
     let model = world
         .get::<protocol::Actor>(entity)

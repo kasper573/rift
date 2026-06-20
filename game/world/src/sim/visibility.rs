@@ -1,7 +1,5 @@
-//! Who replicates to whom: each client sees its own player or spectator anchor, everything
-//! nearby in the same area, and — when spectating — the area's full player roster so the UI can
-//! offer it. Spectator anchors stay invisible to everyone else, and a player's [`Inventory`]
-//! replicates only to its owning connection.
+//! Visibility rules: players see nearby entities in their area; spectators see their watched player
+//! and the full roster for UI; spectator anchors stay invisible; inventories replicate only to owners.
 
 use std::collections::HashSet;
 
@@ -29,7 +27,6 @@ pub fn register(app: &mut App) {
     app.init_resource::<RangeBit>();
 }
 
-/// Recomputes every client's interest set for the tick, against the bit behind [`RangeBit`].
 pub fn update(world: &mut World) {
     let bit = world.resource::<RangeBit>().0;
     let players: HashSet<Entity> = world.resource::<Players>().0.values().copied().collect();
@@ -59,8 +56,6 @@ pub fn update(world: &mut World) {
     }
 }
 
-/// The client entities whose interest set currently includes `entity`; what the [`update`] rule
-/// answers per tick, asked once — e.g. to address a message about the entity to its beholders.
 pub fn seen_by(world: &mut World, entity: Entity) -> Vec<Entity> {
     let Some(pos) = position(world, entity) else {
         return Vec::new();
@@ -84,7 +79,6 @@ pub fn seen_by(world: &mut World, entity: Entity) -> Vec<Entity> {
         .collect()
 }
 
-/// Marks a player entity's [`Inventory`] as visible only to its owning client connection.
 #[derive(Component)]
 #[component(immutable)]
 pub struct OwnedBy(pub Entity);
@@ -98,7 +92,6 @@ impl VisibilityFilter for OwnedBy {
     }
 }
 
-/// The whole-entity visibility bit driven by [`update`], registered once at startup.
 #[derive(Resource, Clone, Copy)]
 struct RangeBit(FilterBit);
 
@@ -120,7 +113,6 @@ struct Subject {
     anchor: bool,
 }
 
-/// What a client looks out from: its player or its spectator anchor.
 struct Sight {
     focus: Entity,
     pos: Option<Pos<Tiles>>,

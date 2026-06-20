@@ -1,7 +1,3 @@
-//! Disclosure components are controlled: the app owns `open`, the component mounts its content as
-//! control flow while open, and a trigger requests the next value through `on_open_change`. The root is
-//! a context-providing node, so its trigger sits one level in.
-
 mod harness;
 
 use bevy_view::view;
