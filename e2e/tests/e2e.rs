@@ -22,6 +22,10 @@ const GRID: u16 = 8;
 const CELL_COLORS: usize = 4;
 const WALKED: f64 = 0.2;
 
+// How long a click holds the mouse button down. Must outlast a frame on CI's slow software renderer
+// (~14fps, ~70ms) so the client samples the button as held; short of the client's move-repeat window.
+const CLICK_HOLD: Duration = Duration::from_millis(250);
+
 // A color-histogram intersection at or above this means the scene "shows basically the same place"
 // as a reference snapshot — tolerant of the player's exact position and the NPCs milling about.
 const RESEMBLANCE: f64 = 0.5;
@@ -418,7 +422,13 @@ impl Win {
             .move_mouse(origin_x + x, origin_y + y, Coordinate::Abs)
             .expect("move pointer");
         sleep(Duration::from_millis(100));
-        enigo.button(Button::Left, Direction::Click).expect("click");
+        // Hold the button down, don't tap it: the client only acts on a click it sees held during a
+        // frame, and an instant press+release falls between frames on CI's ~14fps software renderer.
+        enigo.button(Button::Left, Direction::Press).expect("press");
+        sleep(CLICK_HOLD);
+        enigo
+            .button(Button::Left, Direction::Release)
+            .expect("release");
         sleep(Duration::from_millis(200));
     }
 }
