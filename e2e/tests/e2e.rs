@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs::File;
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
@@ -21,33 +22,37 @@ const GRID: u16 = 8;
 const CELL_COLORS: usize = 4;
 const WALKED: f64 = 0.2;
 
+// A color-histogram intersection at or above this means the scene "shows basically the same place"
+// as a reference snapshot — tolerant of the player's exact position and the NPCs milling about.
+const RESEMBLANCE: f64 = 0.5;
+const ISLAND_SNAPSHOT: &str = "spawn-on-island.png";
+const FOREST_SNAPSHOT: &str = "spawn-on-forest.png";
+
+// Geometry for aiming a portal click, in tiles. Tiles per screen height must match
+// `client::render::VIEW_TILES_TALL`; the camera centers on the player. The island's spawn and the
+// nearest warp (which leads to the forest) come from `assets/maps/island.tmx`.
+const VIEW_TILES_TALL: f64 = 18.0;
+// Tile centers: the spawn (`start` object's tile) and the nearest warp's 1-tile rect — so the warp
+// sits straight up, 3 tiles north of where the player spawns.
+const ISLAND_SPAWN: (f64, f64) = (39.5, 29.5);
+const ISLAND_PORTAL: (f64, f64) = (39.5, 26.5);
+
 #[test]
 #[ignore = "e2e: needs a display, a browser and the stack; CI-only, run with `just e2e`"]
 fn a_player_registers_and_visibly_walks() {
-    let server = (!prod()).then(GameServer::start);
-    let _client = spawn_client(server.as_ref().map(|server| server.url.as_str()));
-    let mut enigo = Enigo::new(&Settings {
-        open_prompt_to_get_permissions: false,
-        ..Settings::default()
-    })
-    .expect("start OS input");
-
-    let game = wait_for_window(Duration::from_secs(120));
-    register_in_browser(&mut enigo);
-
-    // Raise the game window now that the browser is gone (X captures read the framebuffer, so an
-    // occluded window would capture whatever covered it).
-    game.click(&mut enigo, 20, 20);
-    let before = wait_for_scene(&game, Duration::from_secs(120));
+    let mut session = register_and_spawn();
+    let before = session.scene;
     save(&before, "before");
 
     let (width, height) = (before.width as i32, before.height as i32);
     let mut moved = 0.0;
     for (dx, dy) in [(200, 0), (0, 150), (-200, 0), (0, -150)] {
-        tap_space(&mut enigo);
-        game.click(&mut enigo, width / 2 + dx, height / 2 + dy);
+        tap_space(&mut session.enigo);
+        session
+            .game
+            .click(&mut session.enigo, width / 2 + dx, height / 2 + dy);
         sleep(Duration::from_secs(2));
-        let after = game.capture();
+        let after = session.game.capture();
         moved = diff_fraction(&before, &after);
         save(&after, "after");
         println!(
@@ -65,6 +70,152 @@ fn a_player_registers_and_visibly_walks() {
         moved * 100.0,
         WALKED * 100.0,
     );
+}
+
+#[test]
+#[ignore = "e2e: needs a display, a browser and the stack; CI-only, run with `just e2e`"]
+fn spawns_into_the_expected_island_scene() {
+    let session = register_and_spawn();
+    save(&session.scene, "island-spawn");
+    let island = load_reference(ISLAND_SNAPSHOT);
+    let forest = load_reference(FOREST_SNAPSHOT);
+    let on_island = resemblance(&session.scene, &island);
+    let on_forest = resemblance(&session.scene, &forest);
+    println!("spawn resemblance: island {on_island:.3}, forest {on_forest:.3}");
+    assert!(
+        on_island >= RESEMBLANCE && on_island > on_forest,
+        "the spawn scene should resemble the island snapshot (island {on_island:.3}, forest \
+         {on_forest:.3}; need >= {RESEMBLANCE:.2} and island > forest; see {ARTIFACTS}/island-spawn.png)",
+    );
+}
+
+#[test]
+#[ignore = "e2e: needs a display, a browser and the stack; CI-only, run with `just e2e`"]
+fn walking_through_a_portal_crosses_to_the_forest() {
+    let mut session = register_and_spawn();
+    let island = load_reference(ISLAND_SNAPSHOT);
+    let forest = load_reference(FOREST_SNAPSHOT);
+    save(&session.scene, "portal-before");
+
+    let on_island = resemblance(&session.scene, &island);
+    assert!(
+        on_island > resemblance(&session.scene, &forest),
+        "the player should start in the island (island resemblance {on_island:.3}); \
+         see {ARTIFACTS}/portal-before.png",
+    );
+
+    let after = cross_island_portal(&mut session.enigo, &session.game, &island, &forest);
+    save(&after, "portal-after");
+    let on_forest = resemblance(&after, &forest);
+    let on_island = resemblance(&after, &island);
+    println!("after crossing: forest {on_forest:.3}, island {on_island:.3}");
+    assert!(
+        on_forest >= RESEMBLANCE && on_forest > on_island,
+        "walking through the portal should show the forest (forest {on_forest:.3}, island \
+         {on_island:.3}; need >= {RESEMBLANCE:.2} and forest > island; see {ARTIFACTS}/portal-after.png)",
+    );
+}
+
+/// A registered, signed-in session sitting in the game with the spawn scene captured. Holds the
+/// server and client processes alive for the duration of the test.
+struct Session {
+    _server: Option<GameServer>,
+    _client: Proc,
+    enigo: Enigo,
+    game: Win,
+    scene: Image,
+}
+
+fn register_and_spawn() -> Session {
+    let server = (!prod()).then(GameServer::start);
+    let client = spawn_client(server.as_ref().map(|server| server.url.as_str()));
+    let mut enigo = Enigo::new(&Settings {
+        open_prompt_to_get_permissions: false,
+        ..Settings::default()
+    })
+    .expect("start OS input");
+
+    let game = wait_for_window(Duration::from_secs(120));
+    register_in_browser(&mut enigo);
+
+    // Raise the game window now that the browser is gone (X captures read the framebuffer, so an
+    // occluded window would capture whatever covered it).
+    game.click(&mut enigo, 20, 20);
+    let scene = wait_for_scene(&game, Duration::from_secs(120));
+    Session {
+        _server: server,
+        _client: client,
+        enigo,
+        game,
+        scene,
+    }
+}
+
+/// Walks the player from the island spawn through the nearest warp and returns the scene once it
+/// resembles the forest. A `MoveToPortal` click (one landing inside the 1-tile warp rect) makes the
+/// server path the player onto the portal and cross; the first aim is the warp seen from spawn, then,
+/// since a miss leaves the player walked-toward-it, a small grid around the now-near warp.
+fn cross_island_portal(enigo: &mut Enigo, game: &Win, island: &Image, forest: &Image) -> Image {
+    let crossed = |cap: &Image| {
+        let on_forest = resemblance(cap, forest);
+        on_forest >= RESEMBLANCE && on_forest > resemblance(cap, island)
+    };
+    let ppt = game.capture().height as f64 / VIEW_TILES_TALL;
+    let aim = |enigo: &mut Enigo, tx: f64, ty: f64| {
+        let cap = game.capture();
+        let x = (cap.width as f64 / 2.0 + tx * ppt).round() as i32;
+        let y = (cap.height as f64 / 2.0 + ty * ppt).round() as i32;
+        game.click(enigo, x, y);
+    };
+    let poll = |secs: u64| -> Option<Image> {
+        let until = Instant::now() + Duration::from_secs(secs);
+        loop {
+            sleep(Duration::from_millis(500));
+            let cap = game.capture();
+            if crossed(&cap) {
+                return Some(cap);
+            }
+            if Instant::now() >= until {
+                return None;
+            }
+        }
+    };
+
+    // First aim: the warp as seen from the spawn, where the player still stands.
+    let (wx, wy) = (
+        ISLAND_PORTAL.0 - ISLAND_SPAWN.0,
+        ISLAND_PORTAL.1 - ISLAND_SPAWN.1,
+    );
+    aim(enigo, wx, wy);
+    if let Some(cap) = poll(8) {
+        return cap;
+    }
+
+    // A miss walks the player toward the warp; nudge it onto the 1-tile rect with fine, mostly
+    // northward steps (smaller than a tile so a click can't skip over the rect), polling each.
+    let sweep = [
+        (0.0, -0.35),
+        (0.0, -0.7),
+        (0.0, 0.0),
+        (-0.35, -0.5),
+        (0.35, -0.5),
+        (0.0, -1.05),
+        (-0.35, -1.0),
+        (0.35, -1.0),
+        (0.0, 0.4),
+        (-0.4, 0.0),
+        (0.4, 0.0),
+        (0.0, -1.4),
+    ];
+    for (ox, oy) in sweep {
+        aim(enigo, ox, oy);
+        if let Some(cap) = poll(4) {
+            return cap;
+        }
+    }
+    let cap = game.capture();
+    save(&cap, "portal-timeout");
+    cap
 }
 
 fn register_in_browser(enigo: &mut Enigo) {
@@ -314,7 +465,10 @@ impl GameServer {
             )
             .env("RIFT_GAME_SERVER_PUBLIC_HOST", "127.0.0.1")
             .env("RIFT_GAME_SERVER_PYROSCOPE_ENABLED", "false")
-            .env("RIFT_GAME_SERVER_PYROSCOPE_SAMPLE_HZ", "99");
+            .env("RIFT_GAME_SERVER_PYROSCOPE_SAMPLE_HZ", "99")
+            // Survive the scenario: with a normal 30 HP the island's NPCs kill the player before it
+            // can walk a portal, and the death overlay tints the whole scene.
+            .env("RIFT_GAME_SERVER_PLAYER_HEALTH", "1000000");
         let proc = Proc::start(command, "server");
 
         // Verify tokens before returning; this also waits out the stack's keycloak.
@@ -441,6 +595,70 @@ fn save(image: &Image, name: &str) {
         .expect("png header")
         .write_image_data(&image.rgb)
         .expect("png data");
+}
+
+fn load_reference(name: &str) -> Image {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("snapshots")
+        .join(name);
+    let file = File::open(&path).unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
+    let mut reader = png::Decoder::new(BufReader::new(file))
+        .read_info()
+        .expect("png info");
+    let mut buf = vec![0; reader.output_buffer_size().expect("png buffer size")];
+    let info = reader.next_frame(&mut buf).expect("png frame");
+    let rgb = match info.color_type {
+        png::ColorType::Rgba => buf[..info.buffer_size()]
+            .chunks_exact(4)
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect(),
+        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+        other => panic!("snapshot {name} has unsupported color type {other:?}"),
+    };
+    Image {
+        width: info.width as u16,
+        height: info.height as u16,
+        rgb,
+    }
+}
+
+const HIST_BINS: usize = 8;
+
+fn color_histogram(image: &Image) -> [f64; HIST_BINS * HIST_BINS * HIST_BINS] {
+    let mut hist = [0f64; HIST_BINS * HIST_BINS * HIST_BINS];
+    let (w, h) = (image.width as usize, image.height as usize);
+    if w == 0 || h == 0 {
+        return hist;
+    }
+    let samples = 64usize;
+    for ty in 0..samples {
+        for tx in 0..samples {
+            let sx = (tx * w / samples).min(w - 1);
+            let sy = (ty * h / samples).min(h - 1);
+            let i = 3 * (sy * w + sx);
+            let bin = |c: u8| (c as usize * HIST_BINS / 256).min(HIST_BINS - 1);
+            let (r, g, b) = (
+                bin(image.rgb[i]),
+                bin(image.rgb[i + 1]),
+                bin(image.rgb[i + 2]),
+            );
+            hist[(r * HIST_BINS + g) * HIST_BINS + b] += 1.0;
+        }
+    }
+    let total = (samples * samples) as f64;
+    for value in hist.iter_mut() {
+        *value /= total;
+    }
+    hist
+}
+
+/// Color-histogram intersection in [0, 1]: 1 is an identical color distribution, 0 no overlap.
+/// Coarsely samples to 64x64 with 8 bins per channel so it answers "is this the same place",
+/// tolerant of the player's exact position and roaming NPCs rather than exact pixels (ported from
+/// the pre-Rust suite's `image-resemblance`).
+fn resemblance(a: &Image, b: &Image) -> f64 {
+    let (ha, hb) = (color_histogram(a), color_histogram(b));
+    ha.iter().zip(hb.iter()).map(|(x, y)| x.min(*y)).sum()
 }
 
 fn artifacts() -> PathBuf {

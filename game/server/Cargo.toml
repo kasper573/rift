@@ -10,6 +10,7 @@ bevy_app.workspace = true
 bevy_ecs.workspace = true
 bevy_replicon = { workspace = true, features = ["server"] }
 bevy_replicon_renet = { workspace = true, features = ["server", "renet_netcode"] }
+bevy_state.workspace = true
 ctrlc.workspace = true
 envy.workspace = true
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }

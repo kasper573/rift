@@ -9,18 +9,21 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use bevy_ecs::lifecycle::Add;
-use bevy_ecs::observer::On;
+use bevy_app::App;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{ConnectedClient, RepliconChannels};
-use bevy_replicon::shared::backend::connected_client::NetworkId;
+use bevy_replicon::prelude::{ConnectedClient, RepliconChannels, ServerState};
+use bevy_replicon::shared::backend::server_messages::ServerMessages;
+use bevy_replicon_renet::RenetChannelsExt;
 use bevy_replicon_renet::netcode::{
     ConnectToken, NETCODE_KEY_BYTES, NetcodeServerTransport, ServerAuthentication, ServerConfig,
 };
-use bevy_replicon_renet::renet::ConnectionConfig;
-use bevy_replicon_renet::{RenetChannelsExt, RenetServer, RepliconRenetPlugins};
+use bevy_replicon_renet::renet::{ConnectionConfig, RenetServer, ServerEvent};
+use bevy_state::prelude::NextState;
 use metrics::{counter, gauge, histogram};
 use rand::RngCore;
+use world::area::{self, AreaDef};
+use world::sim::transition;
+use world::table::Id;
 use world::{ClientId, Identity, TICK_HZ};
 
 const PROTOCOL_ID: u64 = 0x0072_6966_7400_0001;
@@ -34,6 +37,9 @@ struct Config {
     public_host: String,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
+    /// Optional override for the health players spawn with; e2e scenarios raise it so a player
+    /// can't die mid-test. Absent in real deployments, where players use the in-game default.
+    player_health: Option<f32>,
 }
 
 fn main() {
@@ -69,7 +75,7 @@ fn main() {
     };
     std::thread::spawn(move || serve_http(bind, http));
 
-    simulate(bind, public, private_key, sessions);
+    simulate(bind, public, private_key, sessions, config.player_health);
 }
 
 fn simulate(
@@ -77,19 +83,27 @@ fn simulate(
     public: SocketAddr,
     private_key: [u8; NETCODE_KEY_BYTES],
     sessions: Sessions,
+    player_health: Option<f32>,
 ) {
-    let mut app = world::sim::server_app();
-    app.add_plugins(RepliconRenetPlugins);
+    let spawn = area::spawn_zone().index();
+    let mut worlds: Vec<App> = area::areas()
+        .iter()
+        .map(|a| build_world(a.id, player_health))
+        .collect();
 
-    let channels = app.world().resource::<RepliconChannels>();
-    let server = RenetServer::new(ConnectionConfig {
-        server_channels_config: channels.server_configs(),
-        client_channels_config: channels.client_configs(),
-        ..Default::default()
-    });
+    let (connection_config, client_channels) = {
+        let channels = worlds[0].world().resource::<RepliconChannels>();
+        let config = ConnectionConfig {
+            server_channels_config: channels.server_configs(),
+            client_channels_config: channels.client_configs(),
+            ..Default::default()
+        };
+        (config, channels.client_channels().len())
+    };
+    let mut server = RenetServer::new(connection_config);
     let socket =
         UdpSocket::bind(bind).unwrap_or_else(|error| panic!("cannot bind udp {bind}: {error}"));
-    let transport = NetcodeServerTransport::new(
+    let mut transport = NetcodeServerTransport::new(
         ServerConfig {
             current_time: unix_now(),
             max_clients: MAX_CLIENTS,
@@ -101,35 +115,217 @@ fn simulate(
     )
     .expect("netcode server transport");
 
-    app.insert_resource(server);
-    app.insert_resource(transport);
-    app.insert_resource(sessions);
-    app.insert_resource(NextClient(1));
-    app.add_observer(attach_identity);
-    app.finish();
+    println!(
+        "mmo server listening: netcode udp {bind}, public {public} ({} area worlds)",
+        worlds.len()
+    );
 
-    println!("mmo server listening: netcode udp {bind}, public {public}");
-
-    let mut clients = app
-        .world_mut()
-        .query_filtered::<(), With<ConnectedClient>>();
+    let mut conns: HashMap<u64, Conn> = HashMap::new();
+    let mut transfers: Vec<Transfer> = Vec::new();
+    let mut next_client = 1u32;
+    let mut tick = 0u64;
     let frame = TICK_HZ.period();
+    let mut last = Instant::now();
     loop {
         let started = Instant::now();
-        app.update();
+        let dt = started - last;
+        last = started;
+        tick += 1;
+
+        server.update(dt);
+        if let Err(error) = transport.update(dt, &mut server) {
+            eprintln!("netcode transport update failed: {error}");
+        }
+
+        while let Some(event) = server.get_event() {
+            match event {
+                ServerEvent::ClientConnected { client_id } => {
+                    let client = ClientId(next_client);
+                    next_client += 1;
+                    counter!("rift_client_connections_opened_total").increment(1);
+                    let identity = sessions.take(client_id);
+                    let entity = spawn_conn(&mut worlds[spawn], client, client_id, identity);
+                    conns.insert(
+                        client_id,
+                        Conn {
+                            area: spawn,
+                            entity,
+                            client,
+                        },
+                    );
+                }
+                ServerEvent::ClientDisconnected { client_id, .. } => {
+                    if let Some(conn) = conns.remove(&client_id) {
+                        worlds[conn.area].world_mut().despawn(conn.entity);
+                    }
+                }
+            }
+        }
+
+        for (&network_id, conn) in &conns {
+            let world = worlds[conn.area].world_mut();
+            for channel in 0..client_channels as u8 {
+                while let Some(message) = server.receive_message(network_id, channel) {
+                    world.resource_mut::<ServerMessages>().insert_received(
+                        conn.entity,
+                        channel,
+                        message,
+                    );
+                }
+            }
+        }
+
+        for app in worlds.iter_mut() {
+            app.update();
+        }
+
+        begin_transfers(&mut worlds, &conns, &mut transfers, tick);
+
+        for app in worlds.iter_mut() {
+            let world = app.world_mut();
+            let sent: Vec<_> = world
+                .resource_mut::<ServerMessages>()
+                .drain_sent()
+                .collect();
+            for (entity, channel, message) in sent {
+                if let Some(&Wire(network_id)) = world.get::<Wire>(entity) {
+                    server.send_message(network_id, channel as u8, message);
+                }
+            }
+        }
+
+        finish_transfers(&mut worlds, &mut conns, &mut transfers, tick);
+
+        transport.send_packets(&mut server);
+
         counter!("rift_ticks_total").increment(1);
         histogram!("rift_tick_duration_seconds").record(started.elapsed().as_secs_f64());
-        gauge!("rift_clients_connected").set(clients.iter(app.world()).count() as f64);
-        gauge!("rift_entities").set(app.world().entities().len() as f64);
+        gauge!("rift_clients_connected").set(conns.len() as f64);
+        let entities: usize = worlds
+            .iter()
+            .map(|app| app.world().entities().len() as usize)
+            .sum();
+        gauge!("rift_entities").set(entities as f64);
+
         if let Some(remaining) = frame.checked_sub(started.elapsed()) {
             std::thread::sleep(remaining);
         }
     }
 }
 
-/// A fresh sequential game id, assigned to each connection as it lands.
-#[derive(Resource)]
-struct NextClient(u32);
+struct Conn {
+    area: usize,
+    entity: Entity,
+    client: ClientId,
+}
+
+#[derive(Component)]
+struct Wire(u64);
+
+fn build_world(area: Id<AreaDef>, player_health: Option<f32>) -> App {
+    let mut app = world::sim::server_app(area);
+    if let Some(health) = player_health {
+        app.insert_resource(world::sim::player::PlayerHealth(health));
+    }
+    app.finish();
+    app.cleanup();
+    app.world_mut()
+        .resource_mut::<NextState<ServerState>>()
+        .set(ServerState::Running);
+    app.update();
+    app
+}
+
+fn spawn_conn(
+    app: &mut App,
+    client: ClientId,
+    network_id: u64,
+    identity: Option<Identity>,
+) -> Entity {
+    let world = app.world_mut();
+    let mut entity = world.spawn((ConnectedClient { max_size: 1200 }, client, Wire(network_id)));
+    if let Some(identity) = identity {
+        entity.insert(identity);
+    }
+    entity.id()
+}
+
+/// A connection whose character left its world (despawned) and is waiting to be re-created in the
+/// destination world. The one-tick wait lets the source world's despawns reach the client first, so
+/// its replication state is empty before the destination's fresh snapshot arrives over the same
+/// connection — no entity-id or tick collision between the two worlds.
+struct Transfer {
+    network_id: u64,
+    traveler: transition::Traveler,
+    departed_tick: u64,
+}
+
+/// Phase 1: despawn the character of everyone who stepped through a cross-area portal this tick (so
+/// replicon despawns this world's entities for their client), and queue the connection to move.
+fn begin_transfers(
+    worlds: &mut [App],
+    conns: &HashMap<u64, Conn>,
+    transfers: &mut Vec<Transfer>,
+    tick: u64,
+) {
+    for (area, app) in worlds.iter_mut().enumerate() {
+        for traveler in transition::departing(app.world_mut()) {
+            let Some((&network_id, _)) = conns
+                .iter()
+                .find(|(_, conn)| conn.area == area && conn.client == traveler.client)
+            else {
+                continue;
+            };
+            transfers.push(Transfer {
+                network_id,
+                traveler,
+                departed_tick: tick,
+            });
+        }
+    }
+}
+
+/// Phase 2: a tick after departing — once the source world's despawns have been sent — move the
+/// connection to the destination world and re-create the character there.
+fn finish_transfers(
+    worlds: &mut [App],
+    conns: &mut HashMap<u64, Conn>,
+    transfers: &mut Vec<Transfer>,
+    tick: u64,
+) {
+    let mut index = 0;
+    while index < transfers.len() {
+        if tick <= transfers[index].departed_tick {
+            index += 1;
+            continue;
+        }
+        let Transfer {
+            network_id,
+            traveler,
+            ..
+        } = transfers.remove(index);
+        let Some(conn) = conns.remove(&network_id) else {
+            continue;
+        };
+        let client = traveler.client;
+        let dest = traveler.dest_area.index();
+        let identity = worlds[conn.area]
+            .world()
+            .get::<Identity>(conn.entity)
+            .cloned();
+        worlds[conn.area].world_mut().despawn(conn.entity);
+        let entity = spawn_conn(&mut worlds[dest], client, network_id, identity);
+        transition::arrive(worlds[dest].world_mut(), entity, traveler);
+        conns.insert(
+            network_id,
+            Conn {
+                area: dest,
+                entity,
+                client,
+            },
+        );
+    }
+}
 
 #[derive(Resource, Clone, Default)]
 struct Sessions(Arc<Mutex<HashMap<u64, Pending>>>);
@@ -161,28 +357,6 @@ impl Sessions {
             .expect("sessions lock")
             .remove(&client_id)
             .map(|pending| pending.identity)
-    }
-}
-
-/// Attaches the connecting client's game id and (if its token carried one) authenticated
-/// [`Identity`] as soon as replicon_renet spawns its connection entity, before it can join.
-fn attach_identity(
-    add: On<Add, NetworkId>,
-    network: Query<&NetworkId>,
-    sessions: Res<Sessions>,
-    mut next: ResMut<NextClient>,
-    mut commands: Commands,
-) {
-    let Ok(network_id) = network.get(add.entity) else {
-        return;
-    };
-    let client = ClientId(next.0);
-    next.0 += 1;
-    counter!("rift_client_connections_opened_total").increment(1);
-    let mut entity = commands.entity(add.entity);
-    entity.insert(client);
-    if let Some(identity) = sessions.take(network_id.get()) {
-        entity.insert(identity);
     }
 }
 

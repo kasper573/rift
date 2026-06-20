@@ -34,6 +34,11 @@ const PLAYER_MODEL: &str = "adventurer";
 #[derive(Resource, Default)]
 pub struct Players(pub HashMap<ClientId, Entity>);
 
+/// The health players spawn (and respawn) with. The server may override it — e2e scenarios raise it
+/// so a player can't die mid-test; without it, players use [`PLAYER_MAX_HEALTH`].
+#[derive(Resource, Clone, Copy)]
+pub struct PlayerHealth(pub f32);
+
 pub(crate) fn sender_player(
     world: &World,
     sender: bevy_replicon::prelude::ClientId,
@@ -71,7 +76,7 @@ pub fn client_left(
 }
 
 pub fn join(world: &mut World) {
-    let zone = area::spawn_zone();
+    let zone = world.resource::<super::HostedArea>().0;
     let spawn = area::areas()[zone.index()].spawn;
     let requests: Vec<FromClient<JoinRequest>> = world
         .resource_mut::<Messages<FromClient<JoinRequest>>>()
@@ -104,6 +109,35 @@ fn spawn_player(
     at: Pos<Tiles>,
     name: String,
 ) {
+    let max = world
+        .get_resource::<PlayerHealth>()
+        .map_or(PLAYER_MAX_HEALTH, |health| health.0);
+    place(
+        world,
+        client,
+        client_entity,
+        zone,
+        at,
+        name,
+        Vitals { health: max, max },
+        Inventory { items: Vec::new() },
+        Xp { amount: 0 },
+    );
+}
+
+/// Fresh joins pass starting state; portals pass carried state from the previous world.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn place(
+    world: &mut World,
+    client: ClientId,
+    client_entity: Entity,
+    zone: Id<AreaDef>,
+    at: Pos<Tiles>,
+    name: String,
+    vitals: Vitals,
+    inventory: Inventory,
+    xp: Xp,
+) -> Entity {
     let model = Id::<ActorModel>::by_name(PLAYER_MODEL).expect("the player model exists");
     let entity = world
         .spawn((
@@ -121,10 +155,7 @@ fn spawn_player(
                 hitbox: Hitbox {
                     size: model.get().hitbox(),
                 },
-                vitals: Vitals {
-                    health: PLAYER_MAX_HEALTH,
-                    max: PLAYER_MAX_HEALTH,
-                },
+                vitals,
                 area: AreaTag { area: zone },
                 stats: Stats {
                     damage: PLAYER_DAMAGE,
@@ -138,15 +169,16 @@ fn spawn_player(
             },
             OwnedBy(client_entity),
             Owner { client },
-            Inventory { items: Vec::new() },
-            Xp { amount: 0 },
+            inventory,
+            xp,
         ))
         .id();
     world.resource_mut::<Players>().0.insert(client, entity);
+    entity
 }
 
 pub fn respawn(world: &mut World) {
-    let zone = area::spawn_zone();
+    let zone = world.resource::<super::HostedArea>().0;
     let spawn = area::areas()[zone.index()].spawn;
     let requests: Vec<FromClient<RespawnRequest>> = world
         .resource_mut::<Messages<FromClient<RespawnRequest>>>()

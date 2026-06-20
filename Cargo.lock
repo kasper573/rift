@@ -7608,6 +7608,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_replicon",
  "bevy_replicon_renet",
+ "bevy_state",
  "ctrlc",
  "envy",
  "jsonwebtoken",

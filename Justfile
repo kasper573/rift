@@ -85,13 +85,15 @@ reset:
 e2e: stack e2e-run
 
 e2e-build:
-    cargo build --release -p client
+    cargo build --release -p client -p server
     cargo test --release -p e2e --no-run
 
+# `--test-threads=1`: every e2e drives one shared display, injects OS input and finds the client
+# window by title, so the tests must run one at a time.
 e2e-run: e2e-build
     RIFT_E2E_CLIENT="{{justfile_directory()}}/target/release/rift" \
     RIFT_E2E_SERVER="{{justfile_directory()}}/target/release/server" \
-        cargo test --release -p e2e -- --ignored --nocapture
+        cargo test --release -p e2e -- --ignored --nocapture --test-threads=1
 
 # The `ui` component showcase: drives every component's states with real input on a real display.
 # Needs an unlocked desktop session (it injects OS input). Build the gallery first, then drive it.
