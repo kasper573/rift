@@ -11,6 +11,11 @@ One-time setup:
 - [Rust](https://rustup.rs/) — rustup installs the repo's pinned toolchain on first build
 - The [Dioxus CLI](https://dioxuslabs.com/) for the hot-reload dev loop:
   `cargo install dioxus-cli --locked`
+- To run the end-to-end suite (`just e2e`): Google Chrome plus the e2e system packages (a virtual
+  X server, a window manager and the capture/render libraries) — the `all` set in
+  [`.github/actions/setup`](.github/actions/setup/action.yml) is the canonical list. `just e2e` is
+  then zero-config: it drives the released client through a real sign-in on its own throwaway
+  headless display, so it never touches your desktop and needs no display or browser flags.
 
 Then:
 

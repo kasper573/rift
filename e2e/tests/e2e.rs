@@ -38,7 +38,7 @@ const ISLAND_SPAWN: (f64, f64) = (39.0, 29.0);
 const ISLAND_PORTAL: (f64, f64) = (39.0, 26.0);
 
 #[test]
-#[ignore = "e2e: needs a display, a browser and the stack; CI-only, run with `just e2e`"]
+#[ignore = "e2e: drives the live stack; run with `just e2e`"]
 fn a_player_registers_and_visibly_walks() {
     let mut session = register_and_spawn();
     let before = session.scene;
@@ -73,7 +73,7 @@ fn a_player_registers_and_visibly_walks() {
 }
 
 #[test]
-#[ignore = "e2e: needs a display, a browser and the stack; CI-only, run with `just e2e`"]
+#[ignore = "e2e: drives the live stack; run with `just e2e`"]
 fn spawns_into_the_expected_island_scene() {
     let session = register_and_spawn();
     save(&session.scene, "island-spawn");
@@ -90,7 +90,7 @@ fn spawns_into_the_expected_island_scene() {
 }
 
 #[test]
-#[ignore = "e2e: needs a display, a browser and the stack; CI-only, run with `just e2e`"]
+#[ignore = "e2e: drives the live stack; run with `just e2e`"]
 fn walking_through_a_portal_crosses_to_the_forest() {
     let mut session = register_and_spawn();
     let island = load_reference(ISLAND_SNAPSHOT);

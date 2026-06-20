@@ -82,18 +82,41 @@ dev: stack
 reset:
     {{compose}} down -v
 
-e2e: stack e2e-run
+# An optional FILTER runs only matching tests (e.g. `just e2e portal`); omit it to run the whole
+# suite. Either way it's the one command — never reach for cargo/xvfb/chrome by hand.
+e2e filter="": stack (e2e-run filter)
 
 e2e-build:
     cargo build --release -p client -p server
     cargo test --release -p e2e --no-run
 
-# `--test-threads=1`: every e2e drives one shared display, injects OS input and finds the client
+# Zero-config and self-contained: stands up a throwaway virtual display (never your desktop) with a
+# window manager and locks the OIDC sign-in to headless Chrome, so `just e2e` behaves the same here
+# and in CI. Only prerequisite is the e2e system packages (see README).
+# `--test-threads=1`: every e2e drives that one shared display, injects OS input and finds the client
 # window by title, so the tests must run one at a time.
-e2e-run: e2e-build
-    RIFT_E2E_CLIENT="{{justfile_directory()}}/target/release/rift" \
-    RIFT_E2E_SERVER="{{justfile_directory()}}/target/release/server" \
-        cargo test --release -p e2e -- --ignored --nocapture --test-threads=1
+e2e-run filter="": e2e-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for tool in xvfb-run openbox google-chrome; do
+      command -v "$tool" >/dev/null || { echo "just e2e needs '$tool': install the e2e system packages (see README)"; exit 1; }
+    done
+
+    # Chrome is the one supported sign-in browser; the flags drop the first-run UI (welcome bar, EU
+    # search-engine choice) that would otherwise cover the page and break the keyboard-driven sign-up.
+    browser="$(mktemp)"
+    trap 'rm -f "$browser"' EXIT
+    printf '#!/bin/sh\nexec google-chrome --no-first-run --no-default-browser-check --disable-search-engine-choice-screen --disable-features=Translate "$@"\n' > "$browser"
+    chmod +x "$browser"
+
+    export RIFT_E2E_CLIENT="{{justfile_directory()}}/target/release/rift"
+    export RIFT_E2E_SERVER="{{justfile_directory()}}/target/release/server"
+    export BROWSER="$browser"
+
+    # xvfb-run picks a free display, runs the suite on it and tears it down on exit; openbox is the
+    # window manager that display needs for focus and stacking to behave.
+    xvfb-run -a -s "-screen 0 1920x1080x24 -ac" \
+      bash -c 'openbox & exec cargo test --release -p e2e -- --ignored --nocapture --test-threads=1 {{filter}}'
 
 # The `ui` component showcase: drives every component's states with real input on a real display.
 # Needs an unlocked desktop session (it injects OS input). Build the gallery first, then drive it.

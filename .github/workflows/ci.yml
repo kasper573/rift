@@ -73,24 +73,9 @@ jobs:
           mkdir -p "$HOME/.pki/nssdb"
           certutil -d sql:"$HOME"/.pki/nssdb -N --empty-password 2>/dev/null || true
           certutil -d sql:"$HOME"/.pki/nssdb -A -t C,, -n rift-root -i /tmp/rift-root.crt
-      - name: Start a virtual display
-        run: |
-          Xvfb :99 -screen 0 1920x1080x24 -ac >/tmp/xvfb.log 2>&1 &
-          for _ in $(seq 1 50); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.2; done
-          DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &
-          echo "DISPLAY=:99" >> "$GITHUB_ENV"
-      - name: Quiet chrome's first-run prompts
-        # A fresh chrome profile pops first-run UI (default-browser bar, EU search-engine dialog) that
-        # covers the page and breaks the keyboard-driven sign-in. The policy + wrapper flags suppress it.
-        run: |
-          sudo mkdir -p /etc/opt/chrome/policies/managed
-          echo '{"DefaultSearchProviderEnabled":true,"DefaultSearchProviderName":"Google","DefaultSearchProviderKeyword":"google","DefaultSearchProviderSearchURL":"https://www.google.com/search?q={searchTerms}"}' \
-            | sudo tee /etc/opt/chrome/policies/managed/no-choice.json >/dev/null
-          printf '#!/bin/sh\nexec google-chrome --no-first-run --no-default-browser-check --disable-search-engine-choice-screen --disable-features=Translate "$@"\n' > /tmp/rift-chrome
-          chmod +x /tmp/rift-chrome
       - name: E2E test
-        env:
-          BROWSER: /tmp/rift-chrome
+        # `just e2e-run` is self-contained: it stands up its own virtual display and locks the
+        # sign-in to headless Chrome, so it behaves identically here and on a developer's machine.
         run: just e2e-run
       - name: Save E2E artifacts
         if: failure()
