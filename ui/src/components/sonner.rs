@@ -8,11 +8,12 @@ use bevy_time::Time;
 use bevy_ui::{BorderRadius, FlexDirection, Node, PositionType, UiRect, UiTransform, Val};
 
 use crate::motion::transition::STANDARD_ENTER;
-use crate::motion::{Motion, Opacity, Transform2d};
+use crate::motion::{Motion, Transform2d};
 use crate::state::ancestor_with;
 use crate::style::Style;
 use crate::theme::color;
 use crate::tokens::{radius, spacing};
+use bevy_opacity::Opacity;
 
 const CARD_WIDTH: f32 = 356.0;
 const CARD_HEIGHT: f32 = 76.0;
@@ -50,8 +51,6 @@ pub struct Toaster {
 #[derive(Component)]
 pub struct Toast {
     pub leaving: bool,
-    // Time the toast has spent stacked. It only advances while the toaster is collapsed, so an
-    // expanded stack never auto-dismisses; each toast leaves once its own age reaches `TOAST_TTL`.
     age: Duration,
 }
 
@@ -86,7 +85,7 @@ pub fn toast() -> impl Bundle {
             age: Duration::ZERO,
         },
         Motion::default(),
-        Opacity(0.0),
+        Opacity::new(0.0),
         UiTransform::default(),
         card_style(),
     )
@@ -103,7 +102,6 @@ pub(crate) fn on_close(
     has_toast: Query<(), With<Toast>>,
     mut toasts: Query<&mut Toast>,
 ) {
-    // The click lands on the close button nested inside the `ToastClose` node, so walk up to it.
     if ancestor_with::<ToastClose>(click.entity, &parents, &is_close).is_none() {
         return;
     }
@@ -114,8 +112,6 @@ pub(crate) fn on_close(
     }
 }
 
-// Stacked toasts auto-dismiss once their own age reaches `TOAST_TTL`; an expanded stack pauses,
-// so toasts the user is reading never disappear out from under them.
 pub(crate) fn age_toasts(
     time: Res<Time>,
     toasters: Query<(&Toaster, &Children)>,
@@ -141,10 +137,6 @@ pub(crate) fn age_toasts(
     }
 }
 
-// Grow the toaster's hit box to span the expanded toasts (collapsed it stays the stack height), so
-// hovering anywhere within the spread — including the gaps between cards — holds the expanded state
-// however many toasts there are. Without it the cards extend past a fixed box and crossing a gap
-// fires `Out`, collapsing the stack out from under the cursor.
 pub(crate) fn size_toaster(
     mut toasters: Query<(&Toaster, &Children, &mut Node)>,
     toasts: Query<&Toast>,
@@ -224,7 +216,7 @@ pub(crate) fn layout_toasts(
                 1.0 - here * PEEK_SCALE
             };
             let (translate, scale, opacity) = if toast.leaving {
-                (rest + off, scale * 0.9, 0.0)
+                (rest, scale, 0.0)
             } else {
                 (rest, scale, 1.0)
             };

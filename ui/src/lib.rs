@@ -35,6 +35,7 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(bevy_opacity::OpacityPlugin);
         app.add_plugins(MotionPlugin);
         // Bevy's `DefaultPlugins` already register these when the `bevy_ui_widgets` feature is on;
         // headless apps (tests) don't, so add only what's missing.

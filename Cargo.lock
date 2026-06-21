@@ -1374,6 +1374,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_opacity"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_color",
+ "bevy_ecs",
+ "bevy_text",
+ "bevy_time",
+ "bevy_ui",
+]
+
+[[package]]
 name = "bevy_picking"
 version = "0.19.0-rc.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8678,6 +8690,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_input",
  "bevy_math",
+ "bevy_opacity",
  "bevy_picking",
  "bevy_text",
  "bevy_time",

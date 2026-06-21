@@ -1,14 +1,14 @@
 use std::time::Duration;
 
 use bevy_app::{App, Plugin, PostUpdate};
-use bevy_color::{Alpha, Color, Mix};
-use bevy_ecs::hierarchy::{ChildOf, Children};
+use bevy_color::{Color, Mix};
 use bevy_ecs::prelude::*;
 use bevy_math::{Rot2, Vec2};
 use bevy_text::TextColor;
 use bevy_time::Time;
-use bevy_ui::widget::ImageNode;
-use bevy_ui::{BackgroundColor, BorderColor, Node, UiTransform, Val2};
+use bevy_ui::{BackgroundColor, BorderColor, UiTransform, Val2};
+
+use bevy_opacity::{Opacity, OpacitySet};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Easing {
@@ -167,10 +167,6 @@ pub struct Motion {
     spun: f32,
 }
 
-/// Node's opacity, applied to node and descendants (bevy_ui has no built-in subtree opacity).
-#[derive(Component, Clone, Copy)]
-pub(crate) struct Opacity(pub f32);
-
 #[derive(Clone, Copy)]
 pub(crate) enum Paint {
     Background,
@@ -285,7 +281,7 @@ pub(crate) fn advance_motion(time: Res<Time>, mut motions: Query<Painted>) {
             paint.0 = step_color(tween, dt);
         }
         if let (Some(tween), Some(mut opacity)) = (motion.opacity.as_mut(), opacity) {
-            opacity.0 = step_f32(tween, dt);
+            opacity.set(step_f32(tween, dt));
         }
 
         let spin = motion.spin.map(|speed| {
@@ -323,61 +319,6 @@ fn step_f32(tween: &mut Tween<f32>, dt: Duration) -> f32 {
     tween.from + (tween.target - tween.from) * t
 }
 
-/// Propagates each [`Opacity`] down the UI tree, multiplying the cumulative value into the alpha of every
-/// node's paints. Runs after [`advance_motion`] (which sets the base colors and the opacity value) and is
-/// re-applied each frame, so it composes with the per-frame styling without permanently dimming anything.
-/// The alpha-bearing paints [`apply_opacity`] dims on a node — all optional, since a node has only the
-/// ones its styling set.
-type Tinted = (
-    Option<&'static mut BackgroundColor>,
-    Option<&'static mut BorderColor>,
-    Option<&'static mut TextColor>,
-    Option<&'static mut ImageNode>,
-);
-
-fn apply_opacity(
-    roots: Query<Entity, (With<Node>, Without<ChildOf>)>,
-    children: Query<&Children>,
-    opacities: Query<&Opacity>,
-    mut paints: Query<Tinted>,
-) {
-    // Nothing is transparent — skip the tree walk entirely (the common case).
-    if opacities.is_empty() {
-        return;
-    }
-    let mut stack: Vec<(Entity, f32)> = roots.iter().map(|entity| (entity, 1.0)).collect();
-    while let Some((entity, parent_alpha)) = stack.pop() {
-        let own = opacities.get(entity).map_or(1.0, |opacity| opacity.0);
-        let alpha = parent_alpha * own;
-        if alpha < 0.999
-            && let Ok((background, border, text, image)) = paints.get_mut(entity)
-        {
-            if let Some(mut background) = background {
-                background.0 = fade(background.0, alpha);
-            }
-            if let Some(mut border) = border {
-                border.top = fade(border.top, alpha);
-                border.right = fade(border.right, alpha);
-                border.bottom = fade(border.bottom, alpha);
-                border.left = fade(border.left, alpha);
-            }
-            if let Some(mut text) = text {
-                text.0 = fade(text.0, alpha);
-            }
-            if let Some(mut image) = image {
-                image.color = fade(image.color, alpha);
-            }
-        }
-        if let Ok(kids) = children.get(entity) {
-            stack.extend(kids.iter().map(|kid| (kid, alpha)));
-        }
-    }
-}
-
-fn fade(color: Color, alpha: f32) -> Color {
-    color.with_alpha(color.alpha() * alpha)
-}
-
 fn value_of<T: Lerp + Copy + PartialEq>(tween: &Tween<T>) -> T {
     tween.from.lerp_to(tween.target, tween.fraction())
 }
@@ -405,6 +346,6 @@ pub(crate) struct MotionPlugin;
 
 impl Plugin for MotionPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostUpdate, (advance_motion, apply_opacity).chain());
+        app.add_systems(PostUpdate, advance_motion.before(OpacitySet::Calculate));
     }
 }

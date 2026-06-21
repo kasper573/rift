@@ -9,8 +9,9 @@ use bevy_picking::hover::Hovered;
 use bevy_text::TextColor;
 use bevy_ui::{BackgroundColor, BorderColor, Checked, Node, Pressed, UiTransform};
 
-use crate::motion::{Motion, Opacity, Paint as MotionPaint, Timing, Transform2d};
+use crate::motion::{Motion, Paint as MotionPaint, Timing, Transform2d};
 use crate::theme::{ColorVar, Theme};
+use bevy_opacity::Opacity;
 
 type Op = Arc<dyn Fn(&mut EntityWorldMut) + Send + Sync>;
 
@@ -242,7 +243,7 @@ impl Style {
                 entity.insert(transform.to_ui());
             }
             if let Some(opacity) = self.opacity {
-                entity.insert(Opacity(opacity));
+                entity.insert(Opacity::new(opacity));
             }
             return;
         }
@@ -286,7 +287,7 @@ impl Style {
             entity.insert(UiTransform::default());
         }
         if let Some(value) = opacity {
-            entity.insert(Opacity(value));
+            entity.insert(Opacity::new(value));
         }
     }
 }
