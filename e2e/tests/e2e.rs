@@ -62,7 +62,6 @@ async fn a_player_registers_and_visibly_walks() {
             break;
         }
     }
-    session.quit().await;
     assert!(
         moved > WALKED,
         "clicking must visibly walk the player ({:.0}% of pixels changed, needed more than {:.0}%; \
@@ -81,7 +80,6 @@ async fn spawns_into_the_expected_island_scene() {
     let forest = load_reference(FOREST_SNAPSHOT);
     let on_island = resemblance(&session.scene, &island);
     let on_forest = resemblance(&session.scene, &forest);
-    session.quit().await;
     println!("spawn resemblance: island {on_island:.3}, forest {on_forest:.3}");
     assert!(
         on_island >= RESEMBLANCE && on_island > on_forest,
@@ -109,7 +107,6 @@ async fn walking_through_a_portal_crosses_to_the_forest() {
     save(&after, "portal-after");
     let on_forest = resemblance(&after, &forest);
     let on_island = resemblance(&after, &island);
-    session.quit().await;
     println!("after crossing: forest {on_forest:.3}, island {on_island:.3}");
     assert!(
         on_forest >= RESEMBLANCE && on_forest > on_island,
@@ -137,13 +134,13 @@ async fn register_and_spawn() -> Session {
 
     let canvas = wait_for_canvas(&driver).await;
     fit_canvas(&driver, &canvas).await;
-    let session = Session {
+    let mut session = Session {
         scene: capture(&canvas).await,
         driver,
         canvas,
     };
-    let scene = wait_for_scene(&session).await;
-    Session { scene, ..session }
+    session.scene = wait_for_scene(&session).await;
+    session
 }
 
 async fn new_driver() -> WebDriver {
@@ -322,9 +319,21 @@ impl Session {
             .await
             .expect("release on canvas");
     }
+}
 
-    async fn quit(self) {
-        let _ = self.driver.quit().await;
+impl Drop for Session {
+    fn drop(&mut self) {
+        // Always tear the browser down, even when a test panics mid-assertion: a leaked WebDriver
+        // session keeps a headless Chrome (and the game, audio and all) alive, and a killed
+        // chromedriver orphans rather than reaps it. `quit` is async and we may be inside the test's
+        // runtime, so drive it to completion on a throwaway runtime on its own thread.
+        let driver = self.driver.clone();
+        let _ = std::thread::spawn(move || {
+            if let Ok(runtime) = tokio::runtime::Runtime::new() {
+                let _ = runtime.block_on(driver.quit());
+            }
+        })
+        .join();
     }
 }
 

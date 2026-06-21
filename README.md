@@ -12,6 +12,9 @@ One-time setup:
 - `wasm-bindgen-cli` for building the wasm client:
   `cargo install wasm-bindgen-cli --locked`
 - `cargo-watch` for the dev loop: `cargo install cargo-watch --locked`
+- `binaryen` (optional) — `just wasm` runs its `wasm-opt` to roughly halve the bundle so it fits
+  mobile Safari's memory budget; it's skipped (with a warning) when absent, so the dev loop stays
+  fast. CI and the deploy install it, so the shipped bundle is always optimized.
 - To run the end-to-end suite (`just e2e`): chromedriver and Google Chrome — the `all` set in
   [`.github/actions/setup`](.github/actions/setup/action.yml) is the canonical list. `just e2e` is
   then zero-config: it drives a headless browser through a real sign-in, so it never touches your
