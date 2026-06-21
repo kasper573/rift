@@ -29,13 +29,11 @@ pub fn avatar_image(source: impl Into<ImageNode>) -> impl Bundle {
 pub fn avatar_fallback() -> impl Bundle {
     (
         Node::default(),
-        Style::new()
-            .text_color(theme().secondary.on)
-            .node(|node| {
-                node.align_items = AlignItems::Center;
-                node.justify_content = JustifyContent::Center;
-                node.width = Val::Percent(100.0);
-                node.height = Val::Percent(100.0);
-            }),
+        Style::new().text_color(theme().secondary.on).node(|node| {
+            node.align_items = AlignItems::Center;
+            node.justify_content = JustifyContent::Center;
+            node.width = Val::Percent(100.0);
+            node.height = Val::Percent(100.0);
+        }),
     )
 }

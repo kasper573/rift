@@ -34,11 +34,9 @@ pub fn progress_indicator() -> impl Bundle {
     (
         Node::default(),
         ProgressIndicator,
-        Style::new()
-            .background(theme().primary.base)
-            .node(|node| {
-                node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
-            }),
+        Style::new().background(theme().primary.base).node(|node| {
+            node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
+        }),
     )
 }
 

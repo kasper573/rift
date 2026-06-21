@@ -63,14 +63,12 @@ pub fn slider_range() -> impl Bundle {
     (
         Node::default(),
         SliderRange,
-        Style::new()
-            .background(theme().primary.base)
-            .node(|node| {
-                node.position_type = PositionType::Absolute;
-                node.left = Val::Px(0.0);
-                node.height = Val::Percent(100.0);
-                node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
-            }),
+        Style::new().background(theme().primary.base).node(|node| {
+            node.position_type = PositionType::Absolute;
+            node.left = Val::Px(0.0);
+            node.height = Val::Percent(100.0);
+            node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
+        }),
     )
 }
 

@@ -1,17 +1,19 @@
 use std::collections::HashSet;
 
 use bevy::prelude::*;
+use ui::button::intent as button_intent;
+use ui::card::intent as card_intent;
 use ui::theme::theme;
 use ui::{
-    Align, ButtonIntent, ButtonSize, CardIntent, CardOpts, Check, Orientation, Side,
-    SonnerPosition, accordion, accordion_body, accordion_content, accordion_header, accordion_item,
-    accordion_trigger, alert_dialog, alert_dialog_action, alert_dialog_cancel, avatar,
-    avatar_fallback, button, button_styled, card, checkbox, checkbox_indicator, collapsible,
-    collapsible_content, collapsible_trigger, dialog, dialog_close, popover, popover_content,
-    popover_trigger, progress, progress_indicator, radio_circle, radio_group, radio_indicator,
-    radio_item, scroll_area, scroll_bar, scroll_thumb, scroll_viewport, separator, slider,
-    slider_range, slider_thumb, slider_track, sonner_close, switch, switch_thumb, tabs, tabs_list,
-    tabs_trigger, text, text_colored, toast, toaster, tooltip, tooltip_content,
+    Align, ButtonIntent, ButtonSize, CardOpts, Check, Orientation, Side, SonnerPosition, accordion,
+    accordion_body, accordion_content, accordion_header, accordion_item, accordion_trigger,
+    alert_dialog, alert_dialog_action, alert_dialog_cancel, avatar, avatar_fallback, button,
+    button_styled, card, checkbox, checkbox_indicator, collapsible, collapsible_content,
+    collapsible_trigger, dialog, dialog_close, popover, popover_content, popover_trigger, progress,
+    progress_indicator, radio_circle, radio_group, radio_indicator, radio_item, scroll_area,
+    scroll_bar, scroll_thumb, scroll_viewport, separator, slider, slider_range, slider_thumb,
+    slider_track, sonner_close, switch, switch_thumb, tabs, tabs_list, tabs_trigger, text,
+    text_colored, toast, toaster, tooltip, tooltip_content,
 };
 
 const WINDOW: Vec2 = Vec2::new(1600.0, 900.0);
@@ -178,7 +180,7 @@ fn show_toast(
                     row.spawn(text(title));
                     row.spawn(sonner_close()).with_children(|close| {
                         close.spawn(button_styled(
-                            ButtonIntent::Secondary,
+                            button_intent::SECONDARY,
                             ButtonSize::Sm,
                             "close",
                         ));
@@ -216,11 +218,11 @@ const SCENES: &[(&str, SceneBuilder)] = &[
 ];
 
 const BUTTON_INTENTS: &[(ButtonIntent, &str)] = &[
-    (ButtonIntent::Primary, "primary"),
-    (ButtonIntent::Secondary, "secondary"),
-    (ButtonIntent::Danger, "danger"),
-    (ButtonIntent::Muted, "muted"),
-    (ButtonIntent::Plain, "plain"),
+    (button_intent::PRIMARY, "primary"),
+    (button_intent::SECONDARY, "secondary"),
+    (button_intent::DANGER, "danger"),
+    (button_intent::MUTED, "muted"),
+    (button_intent::PLAIN, "plain"),
 ];
 
 const BUTTON_SIZES: &[(ButtonSize, &str)] = &[
@@ -265,7 +267,7 @@ fn button_sizes_scene(scene: &mut EntityCommands) {
             },))
             .with_children(|parent| {
                 for &(size, label) in BUTTON_SIZES {
-                    parent.spawn((button_styled(ButtonIntent::Primary, size, label),));
+                    parent.spawn((button_styled(button_intent::PRIMARY, size, label),));
                 }
             });
     });
@@ -603,7 +605,7 @@ fn dialog_scene(scene: &mut EntityCommands) {
     scene.with_children(|parent| {
         parent.spawn(dialog(
             false,
-            button_styled(ButtonIntent::Primary, ButtonSize::Md, "Delete project"),
+            button_styled(button_intent::PRIMARY, ButtonSize::Md, "Delete project"),
             children![
                 text("Delete project?"),
                 text_colored(
@@ -624,9 +626,13 @@ fn dialog_scene(scene: &mut EntityCommands) {
                     children![
                         (
                             dialog_close(),
-                            children![button_styled(ButtonIntent::Plain, ButtonSize::Md, "Cancel")],
+                            children![button_styled(
+                                button_intent::PLAIN,
+                                ButtonSize::Md,
+                                "Cancel"
+                            )],
                         ),
-                        button_styled(ButtonIntent::Danger, ButtonSize::Md, "Delete"),
+                        button_styled(button_intent::DANGER, ButtonSize::Md, "Delete"),
                     ],
                 ),
             ],
@@ -638,7 +644,7 @@ fn alert_dialog_scene(scene: &mut EntityCommands) {
     scene.with_children(|parent| {
         parent.spawn(alert_dialog(
             false,
-            button_styled(ButtonIntent::Danger, ButtonSize::Md, "Reset everything"),
+            button_styled(button_intent::DANGER, ButtonSize::Md, "Reset everything"),
             children![
                 text("Are you absolutely sure?"),
                 text_colored("This action cannot be undone.", theme().surface_canvas.on),
@@ -656,12 +662,16 @@ fn alert_dialog_scene(scene: &mut EntityCommands) {
                     children![
                         (
                             alert_dialog_cancel(),
-                            children![button_styled(ButtonIntent::Plain, ButtonSize::Md, "Cancel")],
+                            children![button_styled(
+                                button_intent::PLAIN,
+                                ButtonSize::Md,
+                                "Cancel"
+                            )],
                         ),
                         (
                             alert_dialog_action(),
                             children![button_styled(
-                                ButtonIntent::Primary,
+                                button_intent::PRIMARY,
                                 ButtonSize::Md,
                                 "Continue"
                             )],
@@ -736,7 +746,7 @@ fn card_scene(scene: &mut EntityCommands) {
                         "Intent color",
                         theme().success_soft.on,
                         CardOpts {
-                            intent: CardIntent::Success,
+                            intent: card_intent::SUCCESS,
                             ..default()
                         },
                     ),
@@ -745,7 +755,7 @@ fn card_scene(scene: &mut EntityCommands) {
                         "Intent color",
                         theme().error_soft.on,
                         CardOpts {
-                            intent: CardIntent::Error,
+                            intent: card_intent::ERROR,
                             ..default()
                         },
                     ),
@@ -754,7 +764,7 @@ fn card_scene(scene: &mut EntityCommands) {
                         "Intent color",
                         theme().info_soft.on,
                         CardOpts {
-                            intent: CardIntent::Info,
+                            intent: card_intent::INFO,
                             ..default()
                         },
                     ),
@@ -763,7 +773,7 @@ fn card_scene(scene: &mut EntityCommands) {
                         "Intent color",
                         theme().neutral.on,
                         CardOpts {
-                            intent: CardIntent::Muted,
+                            intent: card_intent::MUTED,
                             ..default()
                         },
                     ),
@@ -822,7 +832,7 @@ fn tooltip_scene(scene: &mut EntityCommands) {
                                     .spawn((Node::default(), tooltip(open == Some(i))))
                                     .with_children(|parent| {
                                         parent.spawn(button_styled(
-                                            ButtonIntent::Primary,
+                                            button_intent::PRIMARY,
                                             ButtonSize::Md,
                                             "Hover me",
                                         ));
@@ -946,7 +956,7 @@ fn tooltip_card_scene(scene: &mut EntityCommands) {
                                     .spawn((Node::default(), tooltip(open == Some(i))))
                                     .with_children(|parent| {
                                         parent.spawn(button_styled(
-                                            ButtonIntent::Primary,
+                                            button_intent::PRIMARY,
                                             ButtonSize::Md,
                                             "Hover me",
                                         ));

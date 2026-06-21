@@ -1,8 +1,8 @@
 pub(crate) mod accordion;
 pub(crate) mod alert_dialog;
 pub(crate) mod avatar;
-pub(crate) mod button;
-pub(crate) mod card;
+pub mod button;
+pub mod card;
 pub(crate) mod checkbox;
 pub(crate) mod collapsible;
 pub(crate) mod dialog;
