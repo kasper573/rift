@@ -150,6 +150,10 @@ hover to ease back to. Only the accordion hit this; tabs and checkbox already ca
 
 `position_overlays` measures the content and writes its `left`/`top` in PostUpdate *after* layout,
 so the change only lands on the next frame's layout — the content paints one frame at its preferred,
-pre-flip position before snapping to the resolved side. Fixed by keeping placed content invisible
-until it has been positioned: a `Placed` marker that `position_overlays` sets only once it has a real
-measurement, with the overlay enter animation withheld until then.
+pre-flip position before snapping to the resolved side. Fixed by keeping placed content hidden until
+it has been positioned: a `Placed` marker that `position_overlays` sets only once it has a real
+measurement, with the overlay enter animation withheld until then. My first cut held only the
+opacity at 0 — but `apply_opacity` doesn't dim a card's `BoxShadow`, so a tooltip/popover floating
+*over a card* still flashed the card's shadow at the wrong side for a frame. Switched to
+`Visibility::Hidden`, which hides the whole subtree (shadow included) while keeping it laid out and
+therefore measurable.

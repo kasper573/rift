@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use bevy_camera::visibility::Visibility;
 use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
@@ -232,10 +233,16 @@ pub(crate) fn advance_overlays(
     owners: Query<&PortalOwner>,
     placeable: Query<(), With<Placement>>,
     placed: Query<(), With<Placed>>,
-    mut contents: Query<(Entity, &mut OverlayContent, &mut Node, &mut Motion)>,
+    mut contents: Query<(
+        Entity,
+        &mut OverlayContent,
+        &mut Node,
+        &mut Motion,
+        &mut Visibility,
+    )>,
 ) {
     let now = time.elapsed();
-    for (entity, mut content, mut node, mut motion) in &mut contents {
+    for (entity, mut content, mut node, mut motion, mut visibility) in &mut contents {
         let open = open_holder(entity, &parents, &is_open, &owners)
             .and_then(|root| opens.get(root).ok())
             .is_some_and(|open| open.0);
@@ -264,9 +271,20 @@ pub(crate) fn advance_overlays(
             node.display = display;
         }
 
-        // Placed content (tooltip/popover) stays invisible until `position_overlays` has measured
-        // and placed it, so it never paints a frame at its un-flipped, pre-measurement position.
+        // Placed content (tooltip/popover) stays hidden until `position_overlays` has measured and
+        // placed it, so it never paints a frame at its un-flipped, pre-measurement position. Opacity
+        // alone isn't enough: `apply_opacity` doesn't dim a card's `BoxShadow`, so the shadow would
+        // show through — `Visibility::Hidden` hides the whole subtree while keeping it laid out (and
+        // therefore measurable).
         let awaiting_placement = placeable.contains(entity) && !placed.contains(entity);
+        let wanted = if awaiting_placement {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+        if *visibility != wanted {
+            *visibility = wanted;
+        }
 
         if open && !awaiting_placement {
             motion.aim_opacity(0.0, 1.0, Some(EMPHASIZED_ENTER));

@@ -14,6 +14,7 @@ bevy_ui_widgets = { workspace = true }
 bevy_picking = { workspace = true }
 bevy_input = { workspace = true }
 bevy_asset = { workspace = true }
+bevy_camera = "0.19.0-rc.3"
 bevy_color = { workspace = true }
 bevy_text = { workspace = true }
 bevy_window = { workspace = true }
@@ -54,7 +55,6 @@ bevy_ecs = { workspace = true }
 bevy_ui = { workspace = true }
 bevy_ui_widgets = { workspace = true }
 bevy_picking = { workspace = true }
-bevy_camera = "0.19.0-rc.3"
 bevy_color = { workspace = true }
 bevy_text = { workspace = true }
 bevy_window = { workspace = true }
