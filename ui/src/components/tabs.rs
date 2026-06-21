@@ -5,7 +5,7 @@ use bevy_ui_widgets::Button;
 
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::{Gated, SelectGroup, SelectItem, SelectTrigger};
-use crate::style::Style;
+use crate::style::{StatefulPaint, Style};
 use crate::theme::color;
 use crate::tokens::spacing;
 
@@ -67,15 +67,12 @@ fn trigger_style() -> Style {
             node.align_items = AlignItems::End;
             node.justify_content = JustifyContent::Center;
         })
-        .background(color::surface_canvas.base)
-        .text_color(color::surface_canvas.on)
-        .border_color(Color::NONE)
-        .transition(STANDARD_ENTER)
-        .hover(Style::new().background(color::surface_canvas.hover))
-        .active(Style::new().background(color::surface_canvas.active))
-        .checked(
-            Style::new()
-                .text_color(color::secondary.on)
-                .border_color(color::primary.base),
+        .background(
+            StatefulPaint::new(color::surface_canvas.base)
+                .hover(color::surface_canvas.hover)
+                .active(color::surface_canvas.active),
         )
+        .text_color(StatefulPaint::new(color::surface_canvas.on).checked(color::secondary.on))
+        .border_color(StatefulPaint::new(Color::NONE).checked(color::primary.base))
+        .transition(STANDARD_ENTER)
 }

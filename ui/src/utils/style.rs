@@ -42,6 +42,80 @@ impl Paint {
     }
 }
 
+/// A paint that may change with interaction state. The `base` is required, so a hover/active/checked
+/// paint can never exist without a resting value to ease back to — the class of bug where a paint
+/// set only on hover sticks after mouseout, or a checked control washes its fill on hover.
+#[derive(Clone, Copy)]
+pub struct StatefulPaint {
+    base: Paint,
+    hover: Option<Paint>,
+    active: Option<Paint>,
+    checked: Option<Paint>,
+    checked_hover: Option<Paint>,
+    checked_active: Option<Paint>,
+}
+
+impl StatefulPaint {
+    pub fn new(base: impl Into<Paint>) -> StatefulPaint {
+        StatefulPaint {
+            base: base.into(),
+            hover: None,
+            active: None,
+            checked: None,
+            checked_hover: None,
+            checked_active: None,
+        }
+    }
+
+    pub fn hover(mut self, paint: impl Into<Paint>) -> StatefulPaint {
+        self.hover = Some(paint.into());
+        self
+    }
+
+    pub fn active(mut self, paint: impl Into<Paint>) -> StatefulPaint {
+        self.active = Some(paint.into());
+        self
+    }
+
+    pub fn checked(mut self, paint: impl Into<Paint>) -> StatefulPaint {
+        self.checked = Some(paint.into());
+        self
+    }
+
+    pub fn checked_hover(mut self, paint: impl Into<Paint>) -> StatefulPaint {
+        self.checked_hover = Some(paint.into());
+        self
+    }
+
+    pub fn checked_active(mut self, paint: impl Into<Paint>) -> StatefulPaint {
+        self.checked_active = Some(paint.into());
+        self
+    }
+}
+
+impl<T: Into<Paint>> From<T> for StatefulPaint {
+    fn from(paint: T) -> StatefulPaint {
+        StatefulPaint::new(paint)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Channel {
+    Background,
+    Border,
+    Text,
+}
+
+impl Channel {
+    fn set(self, style: &mut Style, paint: Paint) {
+        match self {
+            Channel::Background => style.background = Some(paint),
+            Channel::Border => style.border = Some(paint),
+            Channel::Text => style.text = Some(paint),
+        }
+    }
+}
+
 #[derive(Component, Clone, Default)]
 pub struct Style {
     ops: Vec<Op>,
@@ -84,19 +158,54 @@ impl Style {
         })
     }
 
-    pub fn background(mut self, paint: impl Into<Paint>) -> Style {
-        self.background = Some(paint.into());
+    pub fn background(mut self, paint: impl Into<StatefulPaint>) -> Style {
+        self.put(Channel::Background, paint.into());
         self
     }
 
-    pub fn border_color(mut self, paint: impl Into<Paint>) -> Style {
-        self.border = Some(paint.into());
+    pub fn border_color(mut self, paint: impl Into<StatefulPaint>) -> Style {
+        self.put(Channel::Border, paint.into());
         self
     }
 
-    pub fn text_color(mut self, paint: impl Into<Paint>) -> Style {
-        self.text = Some(paint.into());
+    pub fn text_color(mut self, paint: impl Into<StatefulPaint>) -> Style {
+        self.put(Channel::Text, paint.into());
         self
+    }
+
+    // Expand a stateful paint into the resting field plus the matching state sub-styles, so the
+    // existing `for_state` resolution is unchanged — but the base is always present.
+    fn put(&mut self, channel: Channel, paint: StatefulPaint) {
+        channel.set(self, paint.base);
+        if let Some(p) = paint.hover {
+            channel.set(self.hover_mut(), p);
+        }
+        if let Some(p) = paint.active {
+            channel.set(self.active_mut(), p);
+        }
+        if let Some(p) = paint.checked {
+            channel.set(self.checked_mut(), p);
+        }
+        if let Some(p) = paint.checked_hover {
+            let checked = self.checked_mut();
+            channel.set(checked.hover_mut(), p);
+        }
+        if let Some(p) = paint.checked_active {
+            let checked = self.checked_mut();
+            channel.set(checked.active_mut(), p);
+        }
+    }
+
+    fn hover_mut(&mut self) -> &mut Style {
+        self.hover.get_or_insert_with(|| Box::new(Style::new()))
+    }
+
+    fn active_mut(&mut self) -> &mut Style {
+        self.active.get_or_insert_with(|| Box::new(Style::new()))
+    }
+
+    fn checked_mut(&mut self) -> &mut Style {
+        self.checked.get_or_insert_with(|| Box::new(Style::new()))
     }
 
     pub fn translate(mut self, offset: Vec2) -> Style {
@@ -143,17 +252,17 @@ impl Style {
     }
 
     pub fn hover(mut self, style: Style) -> Style {
-        self.hover = Some(Box::new(style));
+        self.hover = compose(self.hover.take(), Some(Box::new(style)));
         self
     }
 
     pub fn active(mut self, style: Style) -> Style {
-        self.active = Some(Box::new(style));
+        self.active = compose(self.active.take(), Some(Box::new(style)));
         self
     }
 
     pub fn checked(mut self, style: Style) -> Style {
-        self.checked = Some(Box::new(style));
+        self.checked = compose(self.checked.take(), Some(Box::new(style)));
         self
     }
 

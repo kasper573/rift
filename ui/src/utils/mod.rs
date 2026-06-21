@@ -4,4 +4,5 @@ pub mod overlay;
 pub mod place;
 pub mod state;
 pub mod style;
+pub mod surface;
 pub mod theme;

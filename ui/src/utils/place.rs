@@ -7,6 +7,7 @@ use bevy_window::Window;
 use crate::{Align, Side};
 
 #[derive(Component, Clone, Copy)]
+#[require(Node)]
 pub struct Placement {
     pub side: Side,
     pub align: Align,

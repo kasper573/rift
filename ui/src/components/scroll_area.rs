@@ -11,7 +11,7 @@ use bevy_window::{PrimaryWindow, Window};
 
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::ancestor_with;
-use crate::style::Style;
+use crate::style::{StatefulPaint, Style};
 use crate::theme::color;
 use crate::tokens::radius;
 
@@ -79,9 +79,11 @@ pub fn scroll_thumb() -> impl Bundle {
         Node::default(),
         ScrollThumbMark,
         Style::new()
-            .background(color::surface_canvas.border)
-            .hover(Style::new().background(color::surface_canvas.on))
-            .active(Style::new().background(color::surface_canvas.on))
+            .background(
+                StatefulPaint::new(color::surface_canvas.border)
+                    .hover(color::surface_canvas.on)
+                    .active(color::surface_canvas.on),
+            )
             .transition(STANDARD_ENTER)
             .node(|node| {
                 node.position_type = PositionType::Absolute;

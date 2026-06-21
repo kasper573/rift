@@ -3,7 +3,10 @@ use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, SystemCursorIcon};
 use serde::{Deserialize, Serialize};
-use ui::{Activate, Align, Side, button_styled, observe, text_colored, tooltip, tooltip_content};
+use ui::{
+    Activate, Align, ButtonIntent, ButtonSize, Side, button_styled, observe, text_colored, tooltip,
+    tooltip_content,
+};
 use world::protocol::{Inventory, Name, Vitals, Xp};
 use world::session;
 
@@ -288,7 +291,11 @@ fn content_area(pane: Pane) -> impl Bundle {
             }
             Pane::Settings => {
                 content.spawn((
-                    button_styled("primary", "md", "ui snapping disabled"),
+                    button_styled(
+                        ButtonIntent::Primary,
+                        ButtonSize::Md,
+                        "ui snapping disabled",
+                    ),
                     SnappingButton,
                     observe(|_: On<Activate>, mut commands: Commands| {
                         commands.queue(toggle_snapping);
@@ -317,7 +324,7 @@ fn resize_grip() -> impl Bundle {
 
 fn close_button(pane: Pane) -> impl Bundle {
     (
-        button_styled("text", "icon", "×"),
+        button_styled(ButtonIntent::Primary, ButtonSize::Icon, "×"),
         HoverCursor(POINTER),
         observe(move |_: On<Activate>, mut open: ResMut<Open>| {
             open.0.remove(&pane);

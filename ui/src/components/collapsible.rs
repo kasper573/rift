@@ -5,7 +5,7 @@ use bevy_ui_widgets::Button;
 use crate::collapse::Collapse;
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::{SelectGroup, SelectItem, SelectTrigger};
-use crate::style::Style;
+use crate::style::{StatefulPaint, Style};
 use crate::theme::color;
 use crate::tokens::spacing;
 
@@ -37,8 +37,10 @@ pub fn collapsible_trigger() -> impl Bundle {
         SelectTrigger,
         Style::new()
             .text_color(color::surface_canvas.on)
+            .background(
+                StatefulPaint::new(bevy_color::Color::NONE).hover(color::surface_canvas.hover),
+            )
             .transition(STANDARD_ENTER)
-            .hover(Style::new().background(color::surface_canvas.hover))
             .node(|node| {
                 node.width = Val::Percent(100.0);
                 node.flex_direction = FlexDirection::Row;

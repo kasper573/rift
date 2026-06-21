@@ -29,12 +29,15 @@ pub(crate) const POPPER_EXIT: Transform2d = Transform2d {
 };
 
 #[derive(Component, Clone, Copy)]
+#[require(Node)]
 pub struct Open(pub bool);
 
 #[derive(Component)]
+#[require(Node)]
 pub struct Dismissable;
 
 #[derive(Component, Clone, Copy)]
+#[require(Node)]
 pub enum OverlayAction {
     Open,
     Close,
@@ -42,6 +45,7 @@ pub enum OverlayAction {
 }
 
 #[derive(Component)]
+#[require(Node)]
 pub struct OverlayContent {
     pub enter: Transform2d,
     pub exit: Transform2d,
@@ -68,6 +72,7 @@ impl OverlayContent {
 // Full-screen modal layers (dialog scrim + panel) re-parent here so they fill the viewport and paint
 // above the rest of the UI, independent of where the component sits in the tree.
 #[derive(Component)]
+#[require(Node)]
 pub struct Portal;
 
 #[derive(Component)]
@@ -301,6 +306,7 @@ pub(crate) fn advance_overlays(
 }
 
 #[derive(Component)]
+#[require(Node)]
 pub struct TooltipTimer {
     pub delay: Duration,
     pub skip_delay: Duration,

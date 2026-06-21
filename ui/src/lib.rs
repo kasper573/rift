@@ -14,7 +14,7 @@ use bevy_ui_widgets::{ButtonPlugin, CheckboxPlugin, ScrollAreaPlugin};
 use utils::motion::MotionPlugin;
 
 pub use utils::theme;
-pub(crate) use utils::{collapse, motion, overlay, place, state, style};
+pub(crate) use utils::{collapse, motion, overlay, place, state, style, surface};
 
 pub use bevy_ui_widgets::{Activate, ValueChange, observe};
 pub use components::*;
@@ -22,7 +22,7 @@ pub use utils::motion::{Easing, Timing, Transform2d, transition};
 pub use utils::overlay::{Dismissable, Open, OverlayAction, set_overlay_open};
 pub use utils::place::place;
 pub use utils::state::{SelectionChanged, selected};
-pub use utils::style::{Paint, Style};
+pub use utils::style::{Paint, StatefulPaint, Style};
 pub use utils::theme::{ColorSlot, ColorVar, Family, Theme};
 
 /// The `Update` system set holding the ui crate's reactive pass (styling, selection, overlays).

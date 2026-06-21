@@ -20,6 +20,7 @@ pub(crate) fn ancestor_with<C: Component>(
 
 // `exclusive`: selecting one clears the others. `toggleable`: re-selecting deselects.
 #[derive(Component)]
+#[require(Node)]
 pub struct SelectGroup {
     pub exclusive: bool,
     pub toggleable: bool,
@@ -45,11 +46,13 @@ pub(crate) fn init_selection(
 }
 
 #[derive(Component)]
+#[require(Node)]
 pub struct SelectItem {
     pub value: String,
 }
 
 #[derive(Component)]
+#[require(Node)]
 pub struct SelectTrigger;
 
 #[derive(EntityEvent)]
@@ -129,6 +132,7 @@ pub fn selected(
 
 // Sets the initial `Checked` once at spawn (a bundle can't conditionally carry a marker).
 #[derive(Component)]
+#[require(Node)]
 pub struct StartChecked(pub bool);
 
 pub(crate) fn apply_start_checked(
@@ -144,6 +148,7 @@ pub(crate) fn apply_start_checked(
 }
 
 #[derive(Component)]
+#[require(Node)]
 pub struct InheritChecked;
 
 pub(crate) fn inherit_checked(
@@ -171,6 +176,7 @@ pub(crate) fn inherit_checked(
 }
 
 #[derive(Component)]
+#[require(Node)]
 pub struct Gated;
 
 pub(crate) fn apply_gating(mut gated: Query<(&mut Node, Has<Checked>), With<Gated>>) {
@@ -188,6 +194,7 @@ pub(crate) fn apply_gating(mut gated: Query<(&mut Node, Has<Checked>), With<Gate
 
 // `Pressed` for non-widget styled nodes (e.g. interactive cards), cleared on release or leave.
 #[derive(Component)]
+#[require(Node)]
 pub struct Pressable;
 
 pub(crate) fn on_pressable_press(

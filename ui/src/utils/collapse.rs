@@ -3,6 +3,7 @@ use bevy_time::Time;
 use bevy_ui::{Checked, ComputedNode, Node, Val};
 
 #[derive(Component, Default)]
+#[require(Node)]
 pub(crate) struct Collapse {
     pub(crate) height: f32,
 }

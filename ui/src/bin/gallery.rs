@@ -4,12 +4,11 @@ use bevy::prelude::*;
 use ui::theme::color;
 use ui::themes;
 use ui::{
-    Align, CardOpts, Check, Orientation, Side, SonnerPosition, accordion, accordion_body,
-    accordion_content, accordion_header, accordion_item, accordion_trigger, alert_dialog,
-    alert_dialog_action, alert_dialog_cancel, alert_dialog_content, alert_dialog_scrim,
-    alert_dialog_trigger, avatar, avatar_fallback, button, button_styled, card, checkbox,
-    checkbox_indicator, collapsible, collapsible_content, collapsible_trigger, dialog,
-    dialog_close, dialog_content, dialog_scrim, dialog_trigger, popover, popover_content,
+    Align, ButtonIntent, ButtonSize, CardIntent, CardOpts, Check, Orientation, Side,
+    SonnerPosition, accordion, accordion_body, accordion_content, accordion_header, accordion_item,
+    accordion_trigger, alert_dialog, alert_dialog_action, alert_dialog_cancel, avatar,
+    avatar_fallback, button, button_styled, card, checkbox, checkbox_indicator, collapsible,
+    collapsible_content, collapsible_trigger, dialog, dialog_close, popover, popover_content,
     popover_trigger, progress, progress_indicator, radio_circle, radio_group, radio_indicator,
     radio_item, scroll_area, scroll_bar, scroll_thumb, scroll_viewport, separator, slider,
     slider_range, slider_thumb, slider_track, sonner_close, switch, switch_thumb, tabs, tabs_list,
@@ -182,7 +181,11 @@ fn show_toast(
                 .with_children(|row| {
                     row.spawn(text(title));
                     row.spawn(sonner_close()).with_children(|close| {
-                        close.spawn(button_styled("secondary", "sm", "close"));
+                        close.spawn(button_styled(
+                            ButtonIntent::Secondary,
+                            ButtonSize::Sm,
+                            "close",
+                        ));
                     });
                 });
             toast.spawn(text_colored(body, color::surface_canvas.on));
@@ -217,21 +220,6 @@ const SCENES: &[(&str, SceneBuilder)] = &[
 ];
 
 fn button_intents_scene(scene: &mut EntityCommands) {
-    const INTENTS: &[&str] = &[
-        "primary",
-        "secondary",
-        "tonal",
-        "muted",
-        "soft",
-        "quiet",
-        "bare",
-        "danger",
-        "danger_soft",
-        "ghost",
-        "plain",
-        "accent",
-    ];
-
     scene.with_children(|parent| {
         parent
             .spawn((Node {
@@ -245,8 +233,8 @@ fn button_intents_scene(scene: &mut EntityCommands) {
                 ..default()
             },))
             .with_children(|parent| {
-                for intent in INTENTS.iter() {
-                    parent.spawn((button_styled(intent, "md", *intent),));
+                for intent in ButtonIntent::ALL {
+                    parent.spawn((button_styled(intent, ButtonSize::Md, intent.label()),));
                 }
             });
     });
@@ -266,8 +254,8 @@ fn button_sizes_scene(scene: &mut EntityCommands) {
                 ..default()
             },))
             .with_children(|parent| {
-                for size in ["sm", "md", "lg"].iter() {
-                    parent.spawn((button_styled("primary", size, *size),));
+                for size in ButtonSize::ALL {
+                    parent.spawn((button_styled(ButtonIntent::Primary, size, size.label()),));
                 }
             });
     });
@@ -603,85 +591,75 @@ fn collapsible_scene(scene: &mut EntityCommands) {
 
 fn dialog_scene(scene: &mut EntityCommands) {
     scene.with_children(|parent| {
-        parent.spawn(dialog(false)).with_children(|parent| {
-            parent.spawn((dialog_trigger(),)).with_children(|parent| {
-                parent.spawn(button_styled("soft", "md", "Delete project"));
-            });
-            parent.spawn(ui::dialog_modal()).with_children(|parent| {
-                parent.spawn(dialog_scrim());
-                parent.spawn(dialog_content()).with_children(|parent| {
-                    parent.spawn(text("Delete project?"));
-                    parent.spawn(text_colored(
-                        "This permanently removes the project and its data.",
-                        color::surface_canvas.on,
-                    ));
-                    parent
-                        .spawn((Node {
-                            flex_direction: FlexDirection::Row,
-                            column_gap: Val::Px(12.0),
-                            row_gap: Val::Px(12.0),
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::FlexEnd,
-                            flex_wrap: FlexWrap::Wrap,
-                            max_width: Val::Px(1360.0),
-                            ..default()
-                        },))
-                        .with_children(|parent| {
-                            parent.spawn((dialog_close(),)).with_children(|parent| {
-                                parent.spawn(button_styled("plain", "md", "Cancel"));
-                            });
-                            parent.spawn(button_styled("danger", "md", "Delete"));
-                        });
-                });
-            });
-        });
+        parent.spawn(dialog(
+            false,
+            button_styled(ButtonIntent::Primary, ButtonSize::Md, "Delete project"),
+            children![
+                text("Delete project?"),
+                text_colored(
+                    "This permanently removes the project and its data.",
+                    color::surface_canvas.on,
+                ),
+                (
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(12.0),
+                        row_gap: Val::Px(12.0),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::FlexEnd,
+                        flex_wrap: FlexWrap::Wrap,
+                        max_width: Val::Px(1360.0),
+                        ..default()
+                    },
+                    children![
+                        (
+                            dialog_close(),
+                            children![button_styled(ButtonIntent::Plain, ButtonSize::Md, "Cancel")],
+                        ),
+                        button_styled(ButtonIntent::Danger, ButtonSize::Md, "Delete"),
+                    ],
+                ),
+            ],
+        ));
     });
 }
 
 fn alert_dialog_scene(scene: &mut EntityCommands) {
     scene.with_children(|parent| {
-        parent.spawn(alert_dialog(false)).with_children(|parent| {
-            parent
-                .spawn((alert_dialog_trigger(),))
-                .with_children(|parent| {
-                    parent.spawn(button_styled("danger", "md", "Reset everything"));
-                });
-            parent
-                .spawn(ui::alert_dialog_modal())
-                .with_children(|parent| {
-                    parent.spawn(alert_dialog_scrim());
-                    parent
-                        .spawn(alert_dialog_content())
-                        .with_children(|parent| {
-                            parent.spawn(text("Are you absolutely sure?"));
-                            parent.spawn(text_colored(
-                                "This action cannot be undone.",
-                                color::surface_canvas.on,
-                            ));
-                            parent
-                                .spawn((Node {
-                                    flex_direction: FlexDirection::Row,
-                                    column_gap: Val::Px(12.0),
-                                    row_gap: Val::Px(12.0),
-                                    align_items: AlignItems::Center,
-                                    justify_content: JustifyContent::FlexEnd,
-                                    flex_wrap: FlexWrap::Wrap,
-                                    max_width: Val::Px(1360.0),
-                                    ..default()
-                                },))
-                                .with_children(|parent| {
-                                    parent.spawn((alert_dialog_cancel(),)).with_children(
-                                        |parent| {
-                                            parent.spawn(button_styled("plain", "md", "Cancel"));
-                                        },
-                                    );
-                                    parent.spawn(alert_dialog_action()).with_children(|parent| {
-                                        parent.spawn(button_styled("primary", "md", "Continue"));
-                                    });
-                                });
-                        });
-                });
-        });
+        parent.spawn(alert_dialog(
+            false,
+            button_styled(ButtonIntent::Danger, ButtonSize::Md, "Reset everything"),
+            children![
+                text("Are you absolutely sure?"),
+                text_colored("This action cannot be undone.", color::surface_canvas.on),
+                (
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(12.0),
+                        row_gap: Val::Px(12.0),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::FlexEnd,
+                        flex_wrap: FlexWrap::Wrap,
+                        max_width: Val::Px(1360.0),
+                        ..default()
+                    },
+                    children![
+                        (
+                            alert_dialog_cancel(),
+                            children![button_styled(ButtonIntent::Plain, ButtonSize::Md, "Cancel")],
+                        ),
+                        (
+                            alert_dialog_action(),
+                            children![button_styled(
+                                ButtonIntent::Primary,
+                                ButtonSize::Md,
+                                "Continue"
+                            )],
+                        ),
+                    ],
+                ),
+            ],
+        ));
     });
 }
 
@@ -748,7 +726,7 @@ fn card_scene(scene: &mut EntityCommands) {
                         "Intent palette",
                         color::success_soft.on,
                         CardOpts {
-                            intent: "success",
+                            intent: CardIntent::Success,
                             ..default()
                         },
                     ),
@@ -757,7 +735,7 @@ fn card_scene(scene: &mut EntityCommands) {
                         "Intent palette",
                         color::error_soft.on,
                         CardOpts {
-                            intent: "error",
+                            intent: CardIntent::Error,
                             ..default()
                         },
                     ),
@@ -766,7 +744,7 @@ fn card_scene(scene: &mut EntityCommands) {
                         "Intent palette",
                         color::info_soft.on,
                         CardOpts {
-                            intent: "info",
+                            intent: CardIntent::Info,
                             ..default()
                         },
                     ),
@@ -775,7 +753,7 @@ fn card_scene(scene: &mut EntityCommands) {
                         "Intent palette",
                         color::neutral.on,
                         CardOpts {
-                            intent: "muted",
+                            intent: CardIntent::Muted,
                             ..default()
                         },
                     ),
@@ -833,7 +811,11 @@ fn tooltip_scene(scene: &mut EntityCommands) {
                                 parent
                                     .spawn((Node::default(), tooltip(open == Some(i))))
                                     .with_children(|parent| {
-                                        parent.spawn(button_styled("soft", "md", "Hover me"));
+                                        parent.spawn(button_styled(
+                                            ButtonIntent::Primary,
+                                            ButtonSize::Md,
+                                            "Hover me",
+                                        ));
                                         parent
                                             .spawn(tooltip_content(*side, Align::Center, 8.0))
                                             .with_children(|parent| {
@@ -953,7 +935,11 @@ fn tooltip_card_scene(scene: &mut EntityCommands) {
                                 parent
                                     .spawn((Node::default(), tooltip(open == Some(i))))
                                     .with_children(|parent| {
-                                        parent.spawn(button_styled("soft", "md", "Hover me"));
+                                        parent.spawn(button_styled(
+                                            ButtonIntent::Primary,
+                                            ButtonSize::Md,
+                                            "Hover me",
+                                        ));
                                         parent
                                             .spawn(tooltip_content(*side, Align::Center, 8.0))
                                             .with_children(|parent| {

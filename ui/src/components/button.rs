@@ -5,21 +5,42 @@ use bevy_ui_widgets::Button;
 
 use crate::components::text::text_colored;
 use crate::motion::transition::STANDARD_ENTER;
-use crate::style::{Paint, Style};
+use crate::style::{Paint, StatefulPaint, Style};
 use crate::theme::{ColorVar, Family, color};
 use crate::tokens::{radius, spacing};
 
-pub fn button(label: impl Into<String>) -> impl Bundle {
-    button_styled("primary", "md", label)
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ButtonIntent {
+    Primary,
+    Secondary,
+    Danger,
+    Muted,
+    Plain,
 }
 
-pub fn button_styled(variant: &str, size: &str, label: impl Into<String>) -> impl Bundle {
-    let intent = selected_intent(variant);
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ButtonSize {
+    Sm,
+    Md,
+    Lg,
+    Icon,
+}
+
+pub fn button(label: impl Into<String>) -> impl Bundle {
+    button_styled(ButtonIntent::Primary, ButtonSize::Md, label)
+}
+
+pub fn button_styled(
+    intent: ButtonIntent,
+    size: ButtonSize,
+    label: impl Into<String>,
+) -> impl Bundle {
+    let surfaces = intent.surfaces();
     (
         Node::default(),
         Button,
-        intent_style(intent, sized(size)),
-        children![text_colored(label.into(), intent.on)],
+        intent_style(&surfaces, sized(size)),
+        children![text_colored(label.into(), surfaces.on)],
     )
 }
 
@@ -38,8 +59,7 @@ impl From<Surface> for Paint {
     }
 }
 
-struct ButtonIntent {
-    name: &'static str,
+struct Surfaces {
     base: Surface,
     hover: Surface,
     active: Surface,
@@ -47,46 +67,76 @@ struct ButtonIntent {
     border: Option<ColorVar>,
 }
 
-use Surface::{Themed, Transparent};
-
-impl ButtonIntent {
-    // The common case: take base/hover/active/on straight from one color family.
-    const fn family(name: &'static str, family: Family<ColorVar>) -> ButtonIntent {
-        ButtonIntent {
-            name,
-            base: Themed(family.base),
-            hover: Themed(family.hover),
-            active: Themed(family.active),
+impl Surfaces {
+    // The common case: base/hover/active/on come straight from one color family.
+    const fn family(family: Family<ColorVar>) -> Surfaces {
+        Surfaces {
+            base: Surface::Themed(family.base),
+            hover: Surface::Themed(family.hover),
+            active: Surface::Themed(family.active),
             on: family.on,
             border: None,
         }
     }
 }
 
-const INTENTS: &[ButtonIntent] = &[
-    ButtonIntent::family("primary", color::primary),
-    ButtonIntent::family("secondary", color::secondary),
-    ButtonIntent::family("danger", color::error_solid),
-    // muted and plain deliberately blend slots from several families.
-    ButtonIntent {
-        name: "muted",
-        base: Themed(color::surface_inset.base),
-        hover: Themed(color::surface_elevated.hover),
-        active: Themed(color::surface_elevated.active),
-        on: color::surface_canvas.on,
-        border: None,
-    },
-    ButtonIntent {
-        name: "plain",
-        base: Transparent,
-        hover: Themed(color::secondary.hover),
-        active: Themed(color::secondary.active),
-        on: color::surface_canvas.on,
-        border: None,
-    },
-];
+impl ButtonIntent {
+    pub const ALL: [ButtonIntent; 5] = [
+        ButtonIntent::Primary,
+        ButtonIntent::Secondary,
+        ButtonIntent::Danger,
+        ButtonIntent::Muted,
+        ButtonIntent::Plain,
+    ];
 
-fn intent_style(intent: &ButtonIntent, size: Style) -> Style {
+    pub const fn label(self) -> &'static str {
+        match self {
+            ButtonIntent::Primary => "primary",
+            ButtonIntent::Secondary => "secondary",
+            ButtonIntent::Danger => "danger",
+            ButtonIntent::Muted => "muted",
+            ButtonIntent::Plain => "plain",
+        }
+    }
+
+    fn surfaces(self) -> Surfaces {
+        match self {
+            ButtonIntent::Primary => Surfaces::family(color::primary),
+            ButtonIntent::Secondary => Surfaces::family(color::secondary),
+            ButtonIntent::Danger => Surfaces::family(color::error_solid),
+            // muted and plain deliberately blend slots from several families.
+            ButtonIntent::Muted => Surfaces {
+                base: Surface::Themed(color::surface_inset.base),
+                hover: Surface::Themed(color::surface_elevated.hover),
+                active: Surface::Themed(color::surface_elevated.active),
+                on: color::surface_canvas.on,
+                border: None,
+            },
+            ButtonIntent::Plain => Surfaces {
+                base: Surface::Transparent,
+                hover: Surface::Themed(color::secondary.hover),
+                active: Surface::Themed(color::secondary.active),
+                on: color::surface_canvas.on,
+                border: None,
+            },
+        }
+    }
+}
+
+impl ButtonSize {
+    pub const ALL: [ButtonSize; 3] = [ButtonSize::Sm, ButtonSize::Md, ButtonSize::Lg];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            ButtonSize::Sm => "sm",
+            ButtonSize::Md => "md",
+            ButtonSize::Lg => "lg",
+            ButtonSize::Icon => "icon",
+        }
+    }
+}
+
+fn intent_style(surfaces: &Surfaces, size: Style) -> Style {
     let mut style = Style::new()
         .node(|node| {
             node.align_items = AlignItems::Center;
@@ -94,12 +144,14 @@ fn intent_style(intent: &ButtonIntent, size: Style) -> Style {
             node.column_gap = Val::Px(spacing::L);
             node.border_radius = BorderRadius::all(Val::Px(radius::S));
         })
-        .background(intent.base)
-        .hover(Style::new().background(intent.hover))
-        .active(Style::new().background(intent.active))
+        .background(
+            StatefulPaint::new(surfaces.base)
+                .hover(surfaces.hover)
+                .active(surfaces.active),
+        )
         .transition(STANDARD_ENTER)
         .merge(size);
-    if let Some(border) = intent.border {
+    if let Some(border) = surfaces.border {
         style = style
             .node(|node| node.border = UiRect::all(Val::Px(1.0)))
             .border_color(border);
@@ -107,8 +159,8 @@ fn intent_style(intent: &ButtonIntent, size: Style) -> Style {
     style
 }
 
-fn sized(size: &str) -> Style {
-    if size == "icon" {
+fn sized(size: ButtonSize) -> Style {
+    if size == ButtonSize::Icon {
         return Style::new().node(|node| {
             node.width = Val::Px(16.0);
             node.height = Val::Px(16.0);
@@ -116,19 +168,12 @@ fn sized(size: &str) -> Style {
         });
     }
     let (height, padding) = match size {
-        "sm" => (32.0, spacing::L),
-        "lg" => (48.0, spacing::XXL),
-        _ => (40.0, spacing::XL),
+        ButtonSize::Sm => (32.0, spacing::L),
+        ButtonSize::Lg => (48.0, spacing::XXL),
+        ButtonSize::Md | ButtonSize::Icon => (40.0, spacing::XL),
     };
     Style::new().node(move |node| {
         node.height = Val::Px(height);
         node.padding = UiRect::horizontal(Val::Px(padding));
     })
-}
-
-fn selected_intent(name: &str) -> &'static ButtonIntent {
-    INTENTS
-        .iter()
-        .find(|intent| intent.name == name)
-        .unwrap_or(&INTENTS[0])
 }

@@ -1,4 +1,5 @@
 use bevy_ecs::bundle::Bundle;
+use bevy_ecs::children;
 use bevy_picking::prelude::Pickable;
 use bevy_ui::{
     AlignItems, BorderRadius, FlexDirection, JustifyContent, Node, Overflow, PositionType, UiRect,
@@ -11,22 +12,40 @@ use crate::style::Style;
 use crate::theme::color;
 use crate::tokens::{radius, spacing};
 
-pub fn dialog(open: bool) -> impl Bundle {
-    (Node::default(), Open(open))
+/// A modal dialog: `trigger` opens it, `content` fills the centered panel. The full-screen layer,
+/// scrim, and panel scaffolding are owned here, so a caller can't omit a part or forget to make the
+/// layer click-through (the soft-lock). Clicking the scrim closes the dialog; pass close buttons in
+/// `content` via [`dialog_close`].
+pub fn dialog(open: bool, trigger: impl Bundle, content: impl Bundle) -> impl Bundle {
+    (
+        Node::default(),
+        Open(open),
+        children![
+            (dialog_trigger(), children![trigger]),
+            (
+                dialog_modal(),
+                children![dialog_scrim(), (dialog_content(), content)],
+            ),
+        ],
+    )
 }
 
-pub fn dialog_trigger() -> impl Bundle {
+pub fn dialog_close() -> impl Bundle {
+    (Node::default(), OverlayAction::Close)
+}
+
+pub(crate) fn dialog_trigger() -> impl Bundle {
     (Node::default(), OverlayAction::Open)
 }
 
 // The modal is only a full-screen centering container; it must not capture input itself (the scrim
 // child does that). Without `Pickable::IGNORE` it sits at the overlay z-index over the whole UI and
 // swallows every click — a soft-lock.
-pub fn dialog_modal() -> impl Bundle {
+pub(crate) fn dialog_modal() -> impl Bundle {
     (full_screen_center(), Portal, Pickable::IGNORE)
 }
 
-pub fn dialog_scrim() -> impl Bundle {
+pub(crate) fn dialog_scrim() -> impl Bundle {
     (
         Node {
             position_type: PositionType::Absolute,
@@ -42,16 +61,12 @@ pub fn dialog_scrim() -> impl Bundle {
     )
 }
 
-pub fn dialog_content() -> impl Bundle {
+pub(crate) fn dialog_content() -> impl Bundle {
     (
         Node::default(),
         OverlayContent::animated(POPPER_ENTER, POPPER_EXIT),
         panel_style(),
     )
-}
-
-pub fn dialog_close() -> impl Bundle {
-    (Node::default(), OverlayAction::Close)
 }
 
 pub(crate) fn full_screen_center() -> Node {

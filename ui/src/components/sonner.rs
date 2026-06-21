@@ -43,12 +43,14 @@ impl SonnerPosition {
 }
 
 #[derive(Component)]
+#[require(Node)]
 pub struct Toaster {
     pub position: SonnerPosition,
     pub expanded: bool,
 }
 
 #[derive(Component)]
+#[require(Node)]
 pub struct Toast {
     pub leaving: bool,
     age: Duration,
@@ -58,6 +60,7 @@ pub struct Toast {
 pub struct ToastLeaving(Duration);
 
 #[derive(Component)]
+#[require(Node)]
 pub struct ToastClose;
 
 pub fn toaster(position: SonnerPosition) -> impl Bundle {

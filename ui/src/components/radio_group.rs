@@ -6,7 +6,7 @@ use bevy_ui_widgets::Button;
 
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::{Gated, InheritChecked, SelectGroup, SelectItem, SelectTrigger};
-use crate::style::Style;
+use crate::style::{StatefulPaint, Style};
 use crate::theme::color;
 use crate::tokens::{radius, size, spacing};
 
@@ -75,17 +75,15 @@ fn circle_style() -> Style {
             node.align_items = AlignItems::Center;
             node.justify_content = JustifyContent::Center;
         })
-        .background(color::surface_elevated.base)
-        .border_color(color::surface_canvas.border)
-        .hover(Style::new().background(color::surface_canvas.hover))
-        .active(Style::new().background(color::surface_canvas.active))
-        .transition(STANDARD_ENTER)
-        .checked(
-            Style::new()
-                .node(|node| node.border = UiRect::all(Val::Px(0.0)))
-                .background(color::primary.base)
-                .border_color(color::primary.base)
-                .hover(Style::new().background(color::primary.hover))
-                .active(Style::new().background(color::primary.active)),
+        .background(
+            StatefulPaint::new(color::surface_elevated.base)
+                .hover(color::surface_canvas.hover)
+                .active(color::surface_canvas.active)
+                .checked(color::primary.base)
+                .checked_hover(color::primary.hover)
+                .checked_active(color::primary.active),
         )
+        .border_color(StatefulPaint::new(color::surface_canvas.border).checked(color::primary.base))
+        .transition(STANDARD_ENTER)
+        .checked(Style::new().node(|node| node.border = UiRect::all(Val::Px(0.0))))
 }

@@ -22,18 +22,13 @@ pub use accordion::{
     accordion, accordion_body, accordion_content, accordion_header, accordion_item,
     accordion_trigger,
 };
-pub use alert_dialog::{
-    alert_dialog, alert_dialog_action, alert_dialog_cancel, alert_dialog_content,
-    alert_dialog_modal, alert_dialog_scrim, alert_dialog_trigger,
-};
+pub use alert_dialog::{alert_dialog, alert_dialog_action, alert_dialog_cancel};
 pub use avatar::{avatar, avatar_fallback, avatar_image};
-pub use button::{button, button_styled};
-pub use card::{CardOpts, card};
+pub use button::{ButtonIntent, ButtonSize, button, button_styled};
+pub use card::{CardIntent, CardOpts, card};
 pub use checkbox::{Check, checkbox, checkbox_indicator};
 pub use collapsible::{collapsible, collapsible_body, collapsible_content, collapsible_trigger};
-pub use dialog::{
-    dialog, dialog_close, dialog_content, dialog_modal, dialog_scrim, dialog_trigger,
-};
+pub use dialog::{dialog, dialog_close};
 pub use popover::{popover, popover_close, popover_content, popover_trigger};
 pub use progress::{ProgressFraction, progress, progress_indicator};
 pub use radio_group::{radio_circle, radio_group, radio_indicator, radio_item};
