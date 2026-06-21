@@ -19,7 +19,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      RUSTFLAGS: -C link-arg=-fuse-ld=mold
+      # mold is a native linker; scope it to the host target so the wasm build (rust-lld) ignores it.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
       # Build unoptimized: far faster, and the e2e asserts on what the game renders, not framerate.
       # The deploy job rebuilds at full opt for the images it ships.
       CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
@@ -31,7 +32,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: gate
-          save-if: ${{ github.ref_name == 'main' }}
+          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'bevy-web' }}
       - name: Lint and test
         run: |
           just lint
@@ -66,7 +67,7 @@ jobs:
       contents: read
       packages: write
     env:
-      RUSTFLAGS: -C link-arg=-fuse-ld=mold
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
       DOCKER_REGISTRY: ghcr.io
       DOCKER_USERNAME: ${{ github.repository_owner }}
       DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
