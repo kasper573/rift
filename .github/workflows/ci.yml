@@ -32,7 +32,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: gate
-          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'bevy-web' }}
+          save-if: ${{ github.ref_name == 'main' }}
       - name: Lint and test
         run: |
           just lint
@@ -60,7 +60,7 @@ jobs:
   # main only: rebuild at full opt, build and push the stack images, and deploy to production.
   deploy:
     needs: gate
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bevy-web'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
