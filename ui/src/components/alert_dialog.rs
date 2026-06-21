@@ -7,7 +7,7 @@ use crate::components::dialog::{full_screen_center, panel_style};
 use crate::motion::Transform2d;
 use crate::overlay::{Open, OverlayAction, OverlayContent, POPPER_ENTER, POPPER_EXIT, Portal};
 use crate::style::Style;
-use crate::theme::color;
+use crate::theme::theme;
 
 /// Like [`dialog`](super::dialog), but the scrim does **not** dismiss — an alert demands an explicit
 /// choice, so only the buttons in `content` (wrapped in [`alert_dialog_cancel`]/[`alert_dialog_action`])
@@ -54,7 +54,7 @@ pub(crate) fn alert_dialog_scrim() -> impl Bundle {
             ..Node::default()
         },
         OverlayContent::animated(Transform2d::IDENTITY, Transform2d::IDENTITY),
-        Style::new().background(color::scrim_dark),
+        Style::new().background(theme().scrim_dark),
     )
 }
 

@@ -10,7 +10,7 @@ use crate::collapse::Collapse;
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::{SelectGroup, SelectItem, SelectTrigger};
 use crate::style::{StatefulPaint, Style};
-use crate::theme::color;
+use crate::theme::theme;
 use crate::tokens::{radius, spacing};
 
 pub fn accordion(value: HashSet<String>, multiple: bool) -> impl Bundle {
@@ -30,7 +30,7 @@ pub fn accordion_item() -> impl Bundle {
     (
         Node::default(),
         Style::new()
-            .border_color(color::surface_canvas.border)
+            .border_color(theme().surface_canvas.border)
             .node(|node| {
                 node.flex_direction = FlexDirection::Column;
                 node.width = Val::Percent(100.0);
@@ -58,9 +58,10 @@ pub fn accordion_trigger(value: impl Into<String>) -> impl Bundle {
         },
         SelectTrigger,
         Style::new()
-            .text_color(color::surface_canvas.on)
+            .text_color(theme().surface_canvas.on)
             .background(
-                StatefulPaint::new(color::surface_elevated.base).hover(color::surface_canvas.hover),
+                StatefulPaint::new(theme().surface_elevated.base)
+                    .hover(theme().surface_canvas.hover),
             )
             .transition(STANDARD_ENTER)
             .node(|node| {
@@ -91,7 +92,7 @@ pub fn accordion_body() -> impl Bundle {
     (
         Node::default(),
         Style::new()
-            .text_color(color::surface_canvas.on)
+            .text_color(theme().surface_canvas.on)
             .node(|node| {
                 node.padding = UiRect::new(
                     Val::Px(spacing::XL),
@@ -105,7 +106,7 @@ pub fn accordion_body() -> impl Bundle {
 
 fn card_style() -> Style {
     Style::new()
-        .background(color::surface_elevated.base)
+        .background(theme().surface_elevated.base)
         .node(|node| {
             node.flex_direction = FlexDirection::Column;
             node.width = Val::Percent(100.0);

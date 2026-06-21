@@ -22,8 +22,8 @@ pub use utils::motion::{Easing, Timing, Transform2d, transition};
 pub use utils::overlay::{Dismissable, Open, OverlayAction, set_overlay_open};
 pub use utils::place::place;
 pub use utils::state::{SelectionChanged, selected};
-pub use utils::style::{Paint, StatefulPaint, Style};
-pub use utils::theme::{ColorSlot, ColorVar, Family, Theme};
+pub use utils::style::{StatefulPaint, Style};
+pub use utils::theme::{Family, Theme};
 
 /// The `Update` system set holding the ui crate's reactive pass (styling, selection, overlays).
 /// Consumers that mutate ui state from their own systems should order them `.before(UiReactive)`
@@ -47,10 +47,6 @@ impl Plugin for UiPlugin {
         }
         if !app.is_plugin_added::<ScrollAreaPlugin>() {
             app.add_plugins(ScrollAreaPlugin);
-        }
-        // Don't override a theme the app already configured before adding the plugin.
-        if !app.world().contains_resource::<Theme>() {
-            app.insert_resource(theme::default_theme());
         }
         app.init_resource::<overlay::TooltipClock>()
             .add_systems(Startup, (load_fonts, overlay::spawn_overlay_host))

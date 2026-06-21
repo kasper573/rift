@@ -12,7 +12,7 @@ use bevy_window::{PrimaryWindow, Window};
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::ancestor_with;
 use crate::style::{StatefulPaint, Style};
-use crate::theme::color;
+use crate::theme::theme;
 use crate::tokens::radius;
 
 // Exponential approach rate: higher snaps faster. Frame-rate independent via `dt`.
@@ -64,7 +64,7 @@ pub fn scroll_bar() -> impl Bundle {
         Node::default(),
         ScrollBar,
         Style::new()
-            .background(color::surface_canvas.hover)
+            .background(theme().surface_canvas.hover)
             .node(|node| {
                 node.width = Val::Px(10.0);
                 node.height = Val::Percent(100.0);
@@ -80,9 +80,9 @@ pub fn scroll_thumb() -> impl Bundle {
         ScrollThumbMark,
         Style::new()
             .background(
-                StatefulPaint::new(color::surface_canvas.border)
-                    .hover(color::surface_canvas.on)
-                    .active(color::surface_canvas.on),
+                StatefulPaint::new(theme().surface_canvas.border)
+                    .hover(theme().surface_canvas.on)
+                    .active(theme().surface_canvas.on),
             )
             .transition(STANDARD_ENTER)
             .node(|node| {

@@ -89,5 +89,6 @@ pub fn run() -> AppExit {
         hud::HudPlugin,
         fps::FpsPlugin,
     ));
+    ui::theme::set_theme(ui::themes::dark::THEME);
     app.run()
 }

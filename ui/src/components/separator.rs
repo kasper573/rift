@@ -3,7 +3,7 @@ use bevy_ui::{Node, Val};
 
 use crate::Orientation;
 use crate::style::Style;
-use crate::theme::color;
+use crate::theme::theme;
 
 pub fn separator(orientation: Orientation) -> impl Bundle {
     let (width, height) = match orientation {
@@ -13,7 +13,7 @@ pub fn separator(orientation: Orientation) -> impl Bundle {
     (
         Node::default(),
         Style::new()
-            .background(color::surface_canvas.border)
+            .background(theme().surface_canvas.border)
             .node(move |node| {
                 node.width = width;
                 node.height = height;

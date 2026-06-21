@@ -6,7 +6,7 @@ use crate::collapse::Collapse;
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::{SelectGroup, SelectItem, SelectTrigger};
 use crate::style::{StatefulPaint, Style};
-use crate::theme::color;
+use crate::theme::theme;
 use crate::tokens::spacing;
 
 const OPEN: &str = "open";
@@ -36,9 +36,9 @@ pub fn collapsible_trigger() -> impl Bundle {
         },
         SelectTrigger,
         Style::new()
-            .text_color(color::surface_canvas.on)
+            .text_color(theme().surface_canvas.on)
             .background(
-                StatefulPaint::new(bevy_color::Color::NONE).hover(color::surface_canvas.hover),
+                StatefulPaint::new(bevy_color::Color::NONE).hover(theme().surface_canvas.hover),
             )
             .transition(STANDARD_ENTER)
             .node(|node| {
@@ -69,7 +69,7 @@ pub fn collapsible_body() -> impl Bundle {
     (
         Node::default(),
         Style::new()
-            .text_color(color::surface_canvas.on)
+            .text_color(theme().surface_canvas.on)
             .node(|node| {
                 node.padding = UiRect::new(
                     Val::Px(spacing::M),

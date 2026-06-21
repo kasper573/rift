@@ -11,7 +11,7 @@ use crate::motion::transition::STANDARD_ENTER;
 use crate::motion::{Motion, Transform2d};
 use crate::state::ancestor_with;
 use crate::style::Style;
-use crate::theme::color;
+use crate::theme::theme;
 use crate::tokens::{radius, spacing};
 use bevy_opacity::Opacity;
 
@@ -277,6 +277,6 @@ fn card_node() -> Node {
 
 fn card_style() -> Style {
     Style::new()
-        .background(color::surface_elevated.base)
-        .border_color(color::surface_elevated.border)
+        .background(theme().surface_elevated.base)
+        .border_color(theme().surface_elevated.border)
 }

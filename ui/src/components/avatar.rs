@@ -3,20 +3,22 @@ use bevy_ui::widget::ImageNode;
 use bevy_ui::{AlignItems, BorderRadius, JustifyContent, Node, Overflow, Val};
 
 use crate::style::Style;
-use crate::theme::color;
+use crate::theme::theme;
 use crate::tokens::{radius, size};
 
 pub fn avatar() -> impl Bundle {
     (
         Node::default(),
-        Style::new().background(color::secondary.base).node(|node| {
-            node.width = Val::Px(size::STEP_1000);
-            node.height = Val::Px(size::STEP_1000);
-            node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
-            node.align_items = AlignItems::Center;
-            node.justify_content = JustifyContent::Center;
-            node.overflow = Overflow::hidden();
-        }),
+        Style::new()
+            .background(theme().secondary.base)
+            .node(|node| {
+                node.width = Val::Px(size::STEP_1000);
+                node.height = Val::Px(size::STEP_1000);
+                node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
+                node.align_items = AlignItems::Center;
+                node.justify_content = JustifyContent::Center;
+                node.overflow = Overflow::hidden();
+            }),
     )
 }
 
@@ -27,11 +29,13 @@ pub fn avatar_image(source: impl Into<ImageNode>) -> impl Bundle {
 pub fn avatar_fallback() -> impl Bundle {
     (
         Node::default(),
-        Style::new().text_color(color::secondary.on).node(|node| {
-            node.align_items = AlignItems::Center;
-            node.justify_content = JustifyContent::Center;
-            node.width = Val::Percent(100.0);
-            node.height = Val::Percent(100.0);
-        }),
+        Style::new()
+            .text_color(theme().secondary.on)
+            .node(|node| {
+                node.align_items = AlignItems::Center;
+                node.justify_content = JustifyContent::Center;
+                node.width = Val::Percent(100.0);
+                node.height = Val::Percent(100.0);
+            }),
     )
 }

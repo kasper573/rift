@@ -10,55 +10,27 @@ use bevy_text::TextColor;
 use bevy_ui::{BackgroundColor, BorderColor, Checked, Node, Pressed, UiTransform};
 
 use crate::motion::{Motion, Paint as MotionPaint, Timing, Transform2d};
-use crate::theme::{ColorVar, Theme};
 use bevy_opacity::Opacity;
 
 type Op = Arc<dyn Fn(&mut EntityWorldMut) + Send + Sync>;
 
-#[derive(Clone, Copy)]
-pub enum Paint {
-    Var(ColorVar),
-    Literal(Color),
-}
-
-impl From<ColorVar> for Paint {
-    fn from(var: ColorVar) -> Paint {
-        Paint::Var(var)
-    }
-}
-
-impl From<Color> for Paint {
-    fn from(color: Color) -> Paint {
-        Paint::Literal(color)
-    }
-}
-
-impl Paint {
-    fn resolve(self, theme: &Theme) -> Color {
-        match self {
-            Paint::Literal(color) => color,
-            Paint::Var(var) => var.resolve(theme),
-        }
-    }
-}
-
-/// A paint that may change with interaction state. The `base` is required, so a hover/active/checked
-/// paint can never exist without a resting value to ease back to — the class of bug where a paint
+/// A color that may change with interaction state. The `base` is required, so a hover/active/checked
+/// color can never exist without a resting value to ease back to — the class of bug where a color
 /// set only on hover sticks after mouseout, or a checked control washes its fill on hover.
 #[derive(Clone, Copy)]
 pub struct StatefulPaint {
-    base: Paint,
-    hover: Option<Paint>,
-    active: Option<Paint>,
-    checked: Option<Paint>,
-    checked_hover: Option<Paint>,
-    checked_active: Option<Paint>,
+    base: Color,
+    hover: Option<Color>,
+    active: Option<Color>,
+    checked: Option<Color>,
+    checked_hover: Option<Color>,
+    checked_active: Option<Color>,
 }
 
 impl StatefulPaint {
-    pub fn new(base: impl Into<Paint>) -> StatefulPaint {
+    pub fn new(base: Color) -> StatefulPaint {
         StatefulPaint {
-            base: base.into(),
+            base,
             hover: None,
             active: None,
             checked: None,
@@ -67,35 +39,35 @@ impl StatefulPaint {
         }
     }
 
-    pub fn hover(mut self, paint: impl Into<Paint>) -> StatefulPaint {
-        self.hover = Some(paint.into());
+    pub fn hover(mut self, color: Color) -> StatefulPaint {
+        self.hover = Some(color);
         self
     }
 
-    pub fn active(mut self, paint: impl Into<Paint>) -> StatefulPaint {
-        self.active = Some(paint.into());
+    pub fn active(mut self, color: Color) -> StatefulPaint {
+        self.active = Some(color);
         self
     }
 
-    pub fn checked(mut self, paint: impl Into<Paint>) -> StatefulPaint {
-        self.checked = Some(paint.into());
+    pub fn checked(mut self, color: Color) -> StatefulPaint {
+        self.checked = Some(color);
         self
     }
 
-    pub fn checked_hover(mut self, paint: impl Into<Paint>) -> StatefulPaint {
-        self.checked_hover = Some(paint.into());
+    pub fn checked_hover(mut self, color: Color) -> StatefulPaint {
+        self.checked_hover = Some(color);
         self
     }
 
-    pub fn checked_active(mut self, paint: impl Into<Paint>) -> StatefulPaint {
-        self.checked_active = Some(paint.into());
+    pub fn checked_active(mut self, color: Color) -> StatefulPaint {
+        self.checked_active = Some(color);
         self
     }
 }
 
-impl<T: Into<Paint>> From<T> for StatefulPaint {
-    fn from(paint: T) -> StatefulPaint {
-        StatefulPaint::new(paint)
+impl From<Color> for StatefulPaint {
+    fn from(color: Color) -> StatefulPaint {
+        StatefulPaint::new(color)
     }
 }
 
@@ -107,11 +79,11 @@ enum Channel {
 }
 
 impl Channel {
-    fn set(self, style: &mut Style, paint: Paint) {
+    fn set(self, style: &mut Style, color: Color) {
         match self {
-            Channel::Background => style.background = Some(paint),
-            Channel::Border => style.border = Some(paint),
-            Channel::Text => style.text = Some(paint),
+            Channel::Background => style.background = Some(color),
+            Channel::Border => style.border = Some(color),
+            Channel::Text => style.text = Some(color),
         }
     }
 }
@@ -119,9 +91,9 @@ impl Channel {
 #[derive(Component, Clone, Default)]
 pub struct Style {
     ops: Vec<Op>,
-    background: Option<Paint>,
-    border: Option<Paint>,
-    text: Option<Paint>,
+    background: Option<Color>,
+    border: Option<Color>,
+    text: Option<Color>,
     transform: Option<Transform2d>,
     enter: Option<Transform2d>,
     opacity: Option<f32>,
@@ -329,14 +301,14 @@ impl Style {
         self.hover.is_some() || self.active.is_some() || self.checked.is_some()
     }
 
-    fn write(&self, entity: &mut EntityWorldMut, theme: &Theme) {
+    fn write(&self, entity: &mut EntityWorldMut) {
         for op in &self.ops {
             op(entity);
         }
 
-        let background = self.background.map(|paint| paint.resolve(theme));
-        let border = self.border.map(|paint| paint.resolve(theme));
-        let text = self.text.map(|paint| paint.resolve(theme));
+        let background = self.background;
+        let border = self.border;
+        let text = self.text;
 
         if self.transition.is_none() && self.spin.is_none() {
             if let Some(color) = background {
@@ -409,7 +381,6 @@ fn compose(base: Option<Box<Style>>, over: Option<Box<Style>>) -> Option<Box<Sty
 }
 
 pub(crate) fn apply_styles(world: &mut World) {
-    let theme = *world.resource::<Theme>();
     let entities: Vec<Entity> = world
         .query_filtered::<Entity, With<Style>>()
         .iter(world)
@@ -428,6 +399,6 @@ pub(crate) fn apply_styles(world: &mut World) {
         }
         style
             .for_state(hovered, pressed, checked)
-            .write(&mut entity, &theme);
+            .write(&mut entity);
     }
 }

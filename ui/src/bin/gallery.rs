@@ -1,8 +1,7 @@
 use std::collections::HashSet;
 
 use bevy::prelude::*;
-use ui::theme::color;
-use ui::themes;
+use ui::theme::theme;
 use ui::{
     Align, ButtonIntent, ButtonSize, CardIntent, CardOpts, Check, Orientation, Side,
     SonnerPosition, accordion, accordion_body, accordion_content, accordion_header, accordion_item,
@@ -58,10 +57,7 @@ fn main() {
                     ..default()
                 }),
         )
-        .insert_resource(ClearColor(
-            color::surface_inset.base.resolve(&themes::light::THEME),
-        ))
-        .insert_resource(themes::light::THEME)
+        .insert_resource(ClearColor(theme().surface_inset.base))
         .init_resource::<CurrentScene>()
         .add_plugins(ui::UiPlugin)
         .add_systems(Startup, setup)
@@ -188,7 +184,7 @@ fn show_toast(
                         ));
                     });
                 });
-            toast.spawn(text_colored(body, color::surface_canvas.on));
+            toast.spawn(text_colored(body, theme().surface_canvas.on));
         });
     });
 }
@@ -342,7 +338,7 @@ fn checkbox_scene(scene: &mut EntityCommands) {
                                 border_radius: BorderRadius::all(Val::Px(999.0)),
                                 ..default()
                             },
-                            ui::Style::new().background(color::primary.on),
+                            ui::Style::new().background(theme().primary.on),
                         ));
                     });
             });
@@ -472,12 +468,12 @@ fn avatar_scene(scene: &mut EntityCommands) {
             .with_children(|parent| {
                 parent.spawn(avatar()).with_children(|parent| {
                     parent.spawn(avatar_fallback()).with_children(|parent| {
-                        parent.spawn(text_colored("KS", color::primary.on));
+                        parent.spawn(text_colored("KS", theme().primary.on));
                     });
                 });
                 parent.spawn(avatar()).with_children(|parent| {
                     parent.spawn(avatar_fallback()).with_children(|parent| {
-                        parent.spawn(text_colored("AB", color::primary.on));
+                        parent.spawn(text_colored("AB", theme().primary.on));
                     });
                 });
             });
@@ -528,7 +524,7 @@ fn accordion_scene(scene: &mut EntityCommands) {
                                     parent.spawn(accordion_body()).with_children(|parent| {
                                         parent.spawn(text_colored(
                                             "Yes, on orders over $50.",
-                                            color::surface_canvas.on,
+                                            theme().surface_canvas.on,
                                         ));
                                     });
                                 });
@@ -547,7 +543,7 @@ fn accordion_scene(scene: &mut EntityCommands) {
                                     parent.spawn(accordion_body()).with_children(|parent| {
                                         parent.spawn(text_colored(
                                             "Within 30 days, no questions.",
-                                            color::surface_canvas.on,
+                                            theme().surface_canvas.on,
                                         ));
                                     });
                                 });
@@ -566,7 +562,7 @@ fn accordion_scene(scene: &mut EntityCommands) {
                                     parent.spawn(accordion_body()).with_children(|parent| {
                                         parent.spawn(text_colored(
                                             "Every color comes from the theme.",
-                                            color::surface_canvas.on,
+                                            theme().surface_canvas.on,
                                         ));
                                     });
                                 });
@@ -595,7 +591,7 @@ fn collapsible_scene(scene: &mut EntityCommands) {
                     parent.spawn(collapsible_content()).with_children(|parent| {
                         parent.spawn(text_colored(
                             "Email me about replies and mentions.",
-                            color::surface_canvas.on,
+                            theme().surface_canvas.on,
                         ));
                     });
                 });
@@ -612,7 +608,7 @@ fn dialog_scene(scene: &mut EntityCommands) {
                 text("Delete project?"),
                 text_colored(
                     "This permanently removes the project and its data.",
-                    color::surface_canvas.on,
+                    theme().surface_canvas.on,
                 ),
                 (
                     Node {
@@ -645,7 +641,7 @@ fn alert_dialog_scene(scene: &mut EntityCommands) {
             button_styled(ButtonIntent::Danger, ButtonSize::Md, "Reset everything"),
             children![
                 text("Are you absolutely sure?"),
-                text_colored("This action cannot be undone.", color::surface_canvas.on),
+                text_colored("This action cannot be undone.", theme().surface_canvas.on),
                 (
                     Node {
                         flex_direction: FlexDirection::Row,
@@ -695,13 +691,13 @@ fn card_scene(scene: &mut EntityCommands) {
                     (
                         "Surface",
                         "Default, bordered",
-                        color::surface_elevated.on,
+                        theme().surface_elevated.on,
                         CardOpts::default(),
                     ),
                     (
                         "Floating",
                         "Elevation shadow",
-                        color::surface_elevated.on,
+                        theme().surface_elevated.on,
                         CardOpts {
                             floating: true,
                             ..default()
@@ -710,7 +706,7 @@ fn card_scene(scene: &mut EntityCommands) {
                     (
                         "Compact",
                         "Tighter padding",
-                        color::surface_elevated.on,
+                        theme().surface_elevated.on,
                         CardOpts {
                             compact: true,
                             ..default()
@@ -719,7 +715,7 @@ fn card_scene(scene: &mut EntityCommands) {
                     (
                         "Interactive",
                         "Hover & press me",
-                        color::surface_elevated.on,
+                        theme().surface_elevated.on,
                         CardOpts {
                             interactive: true,
                             ..default()
@@ -728,7 +724,7 @@ fn card_scene(scene: &mut EntityCommands) {
                     (
                         "Floating + interactive",
                         "Lifts higher on hover",
-                        color::surface_elevated.on,
+                        theme().surface_elevated.on,
                         CardOpts {
                             floating: true,
                             interactive: true,
@@ -738,7 +734,7 @@ fn card_scene(scene: &mut EntityCommands) {
                     (
                         "Success",
                         "Intent color",
-                        color::success_soft.on,
+                        theme().success_soft.on,
                         CardOpts {
                             intent: CardIntent::Success,
                             ..default()
@@ -747,7 +743,7 @@ fn card_scene(scene: &mut EntityCommands) {
                     (
                         "Error",
                         "Intent color",
-                        color::error_soft.on,
+                        theme().error_soft.on,
                         CardOpts {
                             intent: CardIntent::Error,
                             ..default()
@@ -756,7 +752,7 @@ fn card_scene(scene: &mut EntityCommands) {
                     (
                         "Info",
                         "Intent color",
-                        color::info_soft.on,
+                        theme().info_soft.on,
                         CardOpts {
                             intent: CardIntent::Info,
                             ..default()
@@ -765,7 +761,7 @@ fn card_scene(scene: &mut EntityCommands) {
                     (
                         "Muted",
                         "Intent color",
-                        color::neutral.on,
+                        theme().neutral.on,
                         CardOpts {
                             intent: CardIntent::Muted,
                             ..default()
@@ -903,7 +899,7 @@ fn popover_scene(scene: &mut EntityCommands) {
                                                         parent.spawn(text("Dimensions"));
                                                         parent.spawn(text_colored(
                                                             FLIP_NOTE,
-                                                            color::surface_canvas.on,
+                                                            theme().surface_canvas.on,
                                                         ));
                                                     });
                                             });
@@ -1041,7 +1037,7 @@ fn popover_card_scene(scene: &mut EntityCommands) {
                                                                 parent.spawn(text("Dimensions"));
                                                                 parent.spawn(text_colored(
                                                                     FLIP_NOTE,
-                                                                    color::surface_canvas.on,
+                                                                    theme().surface_canvas.on,
                                                                 ));
                                                             });
                                                     });
@@ -1092,7 +1088,7 @@ fn scroll_area_scene(scene: &mut EntityCommands) {
                                         for n in 1..=16 {
                                             parent.spawn(text_colored(
                                                 format!("Item {n}"),
-                                                color::surface_canvas.on,
+                                                theme().surface_canvas.on,
                                             ));
                                         }
                                     });

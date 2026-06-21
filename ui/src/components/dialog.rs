@@ -9,7 +9,7 @@ use bevy_ui::{
 use crate::motion::Transform2d;
 use crate::overlay::{Open, OverlayAction, OverlayContent, POPPER_ENTER, POPPER_EXIT, Portal};
 use crate::style::Style;
-use crate::theme::color;
+use crate::theme::theme;
 use crate::tokens::{radius, spacing};
 
 /// A modal dialog: `trigger` opens it, `content` fills the centered panel. The full-screen layer,
@@ -57,7 +57,7 @@ pub(crate) fn dialog_scrim() -> impl Bundle {
         },
         OverlayAction::Close,
         OverlayContent::animated(Transform2d::IDENTITY, Transform2d::IDENTITY),
-        Style::new().background(color::scrim_dark),
+        Style::new().background(theme().scrim_dark),
     )
 }
 
@@ -84,8 +84,8 @@ pub(crate) fn full_screen_center() -> Node {
 
 pub(crate) fn panel_style() -> Style {
     Style::new()
-        .background(color::surface_elevated.base)
-        .text_color(color::surface_elevated.on)
+        .background(theme().surface_elevated.base)
+        .text_color(theme().surface_elevated.on)
         .node(|node| {
             node.flex_direction = FlexDirection::Column;
             node.width = Val::Px(440.0);

@@ -1,3 +1,4 @@
+use bevy_color::Color;
 use bevy_ecs::bundle::Bundle;
 use bevy_ecs::children;
 use bevy_ui::{AlignItems, BorderRadius, JustifyContent, Node, UiRect, Val};
@@ -5,8 +6,8 @@ use bevy_ui_widgets::Button;
 
 use crate::components::text::text_colored;
 use crate::motion::transition::STANDARD_ENTER;
-use crate::style::{Paint, StatefulPaint, Style};
-use crate::theme::{ColorVar, Family, color};
+use crate::style::{StatefulPaint, Style};
+use crate::theme::{Family, theme};
 use crate::tokens::{radius, spacing};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -44,36 +45,21 @@ pub fn button_styled(
     )
 }
 
-#[derive(Clone, Copy)]
-enum Surface {
-    Themed(ColorVar),
-    Transparent,
-}
-
-impl From<Surface> for Paint {
-    fn from(surface: Surface) -> Paint {
-        match surface {
-            Surface::Themed(var) => Paint::Var(var),
-            Surface::Transparent => Paint::Literal(bevy_color::Color::NONE),
-        }
-    }
-}
-
 struct Surfaces {
-    base: Surface,
-    hover: Surface,
-    active: Surface,
-    on: ColorVar,
-    border: Option<ColorVar>,
+    base: Color,
+    hover: Color,
+    active: Color,
+    on: Color,
+    border: Option<Color>,
 }
 
 impl Surfaces {
     // The common case: base/hover/active/on come straight from one color family.
-    const fn family(family: Family<ColorVar>) -> Surfaces {
+    fn family(family: Family) -> Surfaces {
         Surfaces {
-            base: Surface::Themed(family.base),
-            hover: Surface::Themed(family.hover),
-            active: Surface::Themed(family.active),
+            base: family.base,
+            hover: family.hover,
+            active: family.active,
             on: family.on,
             border: None,
         }
@@ -82,23 +68,24 @@ impl Surfaces {
 
 impl ButtonIntent {
     fn surfaces(self) -> Surfaces {
+        let theme = theme();
         match self {
-            ButtonIntent::Primary => Surfaces::family(color::primary),
-            ButtonIntent::Secondary => Surfaces::family(color::secondary),
-            ButtonIntent::Danger => Surfaces::family(color::error_solid),
+            ButtonIntent::Primary => Surfaces::family(theme.primary),
+            ButtonIntent::Secondary => Surfaces::family(theme.secondary),
+            ButtonIntent::Danger => Surfaces::family(theme.error_solid),
             // muted and plain deliberately blend slots from several families.
             ButtonIntent::Muted => Surfaces {
-                base: Surface::Themed(color::surface_inset.base),
-                hover: Surface::Themed(color::surface_elevated.hover),
-                active: Surface::Themed(color::surface_elevated.active),
-                on: color::surface_canvas.on,
+                base: theme.surface_inset.base,
+                hover: theme.surface_elevated.hover,
+                active: theme.surface_elevated.active,
+                on: theme.surface_canvas.on,
                 border: None,
             },
             ButtonIntent::Plain => Surfaces {
-                base: Surface::Transparent,
-                hover: Surface::Themed(color::secondary.hover),
-                active: Surface::Themed(color::secondary.active),
-                on: color::surface_canvas.on,
+                base: Color::NONE,
+                hover: theme.secondary.hover,
+                active: theme.secondary.active,
+                on: theme.surface_canvas.on,
                 border: None,
             },
         }

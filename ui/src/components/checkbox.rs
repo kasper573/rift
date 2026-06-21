@@ -5,7 +5,7 @@ use bevy_ui_widgets::{Checkbox, checkbox_self_update, observe};
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::{Gated, InheritChecked, StartChecked};
 use crate::style::{StatefulPaint, Style};
-use crate::theme::color;
+use crate::theme::theme;
 use crate::tokens::{radius, size};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -44,7 +44,7 @@ pub fn checkbox_indicator() -> impl Bundle {
         InheritChecked,
         Gated,
         Style::new()
-            .border_color(color::primary.on)
+            .border_color(theme().primary.on)
             .rotate(std::f32::consts::FRAC_PI_4)
             .translate(bevy_math::Vec2::new(0.0, -1.0)),
     )
@@ -64,14 +64,16 @@ fn box_style() -> Style {
             node.justify_content = JustifyContent::Center;
         })
         .background(
-            StatefulPaint::new(color::surface_elevated.base)
-                .hover(color::surface_canvas.hover)
-                .active(color::surface_canvas.active)
-                .checked(color::primary.base)
-                .checked_hover(color::primary.hover)
-                .checked_active(color::primary.active),
+            StatefulPaint::new(theme().surface_elevated.base)
+                .hover(theme().surface_canvas.hover)
+                .active(theme().surface_canvas.active)
+                .checked(theme().primary.base)
+                .checked_hover(theme().primary.hover)
+                .checked_active(theme().primary.active),
         )
-        .border_color(StatefulPaint::new(color::surface_canvas.border).checked(color::primary.base))
+        .border_color(
+            StatefulPaint::new(theme().surface_canvas.border).checked(theme().primary.base),
+        )
         .transition(STANDARD_ENTER)
         .checked(Style::new().node(|node| node.border = UiRect::all(Val::Px(0.0))))
 }

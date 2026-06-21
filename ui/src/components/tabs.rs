@@ -6,7 +6,7 @@ use bevy_ui_widgets::Button;
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::{Gated, SelectGroup, SelectItem, SelectTrigger};
 use crate::style::{StatefulPaint, Style};
-use crate::theme::color;
+use crate::theme::theme;
 use crate::tokens::spacing;
 
 pub fn tabs(value: Option<String>) -> impl Bundle {
@@ -33,7 +33,7 @@ pub fn tabs_list() -> impl Bundle {
                 node.width = Val::Percent(100.0);
                 node.border = UiRect::bottom(Val::Px(1.0));
             })
-            .border_color(color::surface_canvas.border),
+            .border_color(theme().surface_canvas.border),
     )
 }
 
@@ -68,11 +68,11 @@ fn trigger_style() -> Style {
             node.justify_content = JustifyContent::Center;
         })
         .background(
-            StatefulPaint::new(color::surface_canvas.base)
-                .hover(color::surface_canvas.hover)
-                .active(color::surface_canvas.active),
+            StatefulPaint::new(theme().surface_canvas.base)
+                .hover(theme().surface_canvas.hover)
+                .active(theme().surface_canvas.active),
         )
-        .text_color(StatefulPaint::new(color::surface_canvas.on).checked(color::secondary.on))
-        .border_color(StatefulPaint::new(Color::NONE).checked(color::primary.base))
+        .text_color(StatefulPaint::new(theme().surface_canvas.on).checked(theme().secondary.on))
+        .border_color(StatefulPaint::new(Color::NONE).checked(theme().primary.base))
         .transition(STANDARD_ENTER)
 }

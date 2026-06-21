@@ -1,3 +1,4 @@
+use bevy_color::Color;
 use bevy_ecs::bundle::Bundle;
 use bevy_picking::hover::Hovered;
 use bevy_ui::{BorderRadius, BoxShadow, FlexDirection, Node, Pressed, UiRect, Val};
@@ -5,7 +6,7 @@ use bevy_ui::{BorderRadius, BoxShadow, FlexDirection, Node, Pressed, UiRect, Val
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::Pressable;
 use crate::style::{StatefulPaint, Style};
-use crate::theme::{ColorVar, Family, color};
+use crate::theme::{Family, theme};
 use crate::tokens::{radius, spacing};
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -56,32 +57,33 @@ fn shadow(floating: bool, interactive: bool, hovered: bool) -> Option<BoxShadow>
 }
 
 struct CardColors {
-    family: Family<ColorVar>,
-    stroke: Option<ColorVar>,
+    family: Family,
+    stroke: Option<Color>,
 }
 
 impl CardIntent {
     fn colors(self) -> CardColors {
+        let theme = theme();
         match self {
             CardIntent::Success => CardColors {
-                family: color::success_soft,
+                family: theme.success_soft,
                 stroke: None,
             },
             CardIntent::Error => CardColors {
-                family: color::error_soft,
+                family: theme.error_soft,
                 stroke: None,
             },
             CardIntent::Info => CardColors {
-                family: color::info_soft,
+                family: theme.info_soft,
                 stroke: None,
             },
             CardIntent::Muted => CardColors {
-                family: color::neutral,
+                family: theme.neutral,
                 stroke: None,
             },
             CardIntent::Default => CardColors {
-                family: color::surface_elevated,
-                stroke: Some(color::surface_elevated.border),
+                family: theme.surface_elevated,
+                stroke: Some(theme.surface_elevated.border),
             },
         }
     }

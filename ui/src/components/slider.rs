@@ -13,7 +13,7 @@ use bevy_picking::prelude::{Drag, Pointer};
 
 use crate::state::ancestor_with;
 use crate::style::Style;
-use crate::theme::color;
+use crate::theme::theme;
 use crate::tokens::{radius, size};
 
 #[derive(Component)]
@@ -50,7 +50,7 @@ pub fn slider(value: f32, min: f32, max: f32) -> impl Bundle {
 pub fn slider_track() -> impl Bundle {
     (
         Node::default(),
-        Style::new().background(color::scrim_dark).node(|node| {
+        Style::new().background(theme().scrim_dark).node(|node| {
             node.flex_grow = 1.0;
             node.height = Val::Px(size::STEP_100);
             node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
@@ -63,12 +63,14 @@ pub fn slider_range() -> impl Bundle {
     (
         Node::default(),
         SliderRange,
-        Style::new().background(color::primary.base).node(|node| {
-            node.position_type = PositionType::Absolute;
-            node.left = Val::Px(0.0);
-            node.height = Val::Percent(100.0);
-            node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
-        }),
+        Style::new()
+            .background(theme().primary.base)
+            .node(|node| {
+                node.position_type = PositionType::Absolute;
+                node.left = Val::Px(0.0);
+                node.height = Val::Percent(100.0);
+                node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
+            }),
     )
 }
 
@@ -84,7 +86,7 @@ pub fn slider_thumb() -> impl Bundle {
             blur_radius: Val::Px(6.0),
         }]),
         Style::new()
-            .background(color::surface_canvas.base)
+            .background(theme().surface_canvas.base)
             .node(|node| {
                 node.width = Val::Px(size::STEP_600);
                 node.height = Val::Px(size::STEP_600);
