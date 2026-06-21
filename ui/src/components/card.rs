@@ -27,9 +27,9 @@ pub struct CardOpts {
 }
 
 pub fn card(opts: CardOpts) -> impl Bundle {
-    let palette = opts.intent.palette();
+    let colors = opts.intent.colors();
     let (floating, interactive) = (opts.floating, opts.interactive);
-    let style = card_style(&palette, floating, interactive, opts.compact).op(move |entity| {
+    let style = card_style(&colors, floating, interactive, opts.compact).op(move |entity| {
         let hovered =
             entity.get::<Hovered>().is_some_and(Hovered::get) && entity.get::<Pressed>().is_none();
         match shadow(floating, interactive, hovered) {
@@ -55,31 +55,31 @@ fn shadow(floating: bool, interactive: bool, hovered: bool) -> Option<BoxShadow>
     Some(crate::surface::elevation(level))
 }
 
-struct CardPalette {
+struct CardColors {
     family: Family<ColorVar>,
     stroke: Option<ColorVar>,
 }
 
 impl CardIntent {
-    fn palette(self) -> CardPalette {
+    fn colors(self) -> CardColors {
         match self {
-            CardIntent::Success => CardPalette {
+            CardIntent::Success => CardColors {
                 family: color::success_soft,
                 stroke: None,
             },
-            CardIntent::Error => CardPalette {
+            CardIntent::Error => CardColors {
                 family: color::error_soft,
                 stroke: None,
             },
-            CardIntent::Info => CardPalette {
+            CardIntent::Info => CardColors {
                 family: color::info_soft,
                 stroke: None,
             },
-            CardIntent::Muted => CardPalette {
+            CardIntent::Muted => CardColors {
                 family: color::neutral,
                 stroke: None,
             },
-            CardIntent::Default => CardPalette {
+            CardIntent::Default => CardColors {
                 family: color::surface_elevated,
                 stroke: Some(color::surface_elevated.border),
             },
@@ -87,22 +87,22 @@ impl CardIntent {
     }
 }
 
-fn card_style(palette: &CardPalette, floating: bool, interactive: bool, compact: bool) -> Style {
+fn card_style(colors: &CardColors, floating: bool, interactive: bool, compact: bool) -> Style {
     let (corner, pad) = if compact {
         (radius::S, spacing::L)
     } else {
         (radius::M, spacing::XL)
     };
-    let bordered = !floating && palette.stroke.is_some();
-    let mut background = StatefulPaint::new(palette.family.base);
+    let bordered = !floating && colors.stroke.is_some();
+    let mut background = StatefulPaint::new(colors.family.base);
     if interactive {
         background = background
-            .hover(palette.family.hover)
-            .active(palette.family.active);
+            .hover(colors.family.hover)
+            .active(colors.family.active);
     }
     let mut style = Style::new()
         .background(background)
-        .text_color(palette.family.on)
+        .text_color(colors.family.on)
         .node(move |node| {
             node.flex_direction = FlexDirection::Column;
             node.row_gap = Val::Px(spacing::M);
@@ -112,7 +112,7 @@ fn card_style(palette: &CardPalette, floating: bool, interactive: bool, compact:
                 node.border = UiRect::all(Val::Px(1.0));
             }
         });
-    if let Some(stroke) = palette.stroke.filter(|_| bordered) {
+    if let Some(stroke) = colors.stroke.filter(|_| bordered) {
         style = style.border_color(stroke);
     }
     if interactive {

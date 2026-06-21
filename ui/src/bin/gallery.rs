@@ -219,6 +219,20 @@ const SCENES: &[(&str, SceneBuilder)] = &[
     ("Scroll area", scroll_area_scene),
 ];
 
+const BUTTON_INTENTS: &[(ButtonIntent, &str)] = &[
+    (ButtonIntent::Primary, "primary"),
+    (ButtonIntent::Secondary, "secondary"),
+    (ButtonIntent::Danger, "danger"),
+    (ButtonIntent::Muted, "muted"),
+    (ButtonIntent::Plain, "plain"),
+];
+
+const BUTTON_SIZES: &[(ButtonSize, &str)] = &[
+    (ButtonSize::Sm, "sm"),
+    (ButtonSize::Md, "md"),
+    (ButtonSize::Lg, "lg"),
+];
+
 fn button_intents_scene(scene: &mut EntityCommands) {
     scene.with_children(|parent| {
         parent
@@ -233,8 +247,8 @@ fn button_intents_scene(scene: &mut EntityCommands) {
                 ..default()
             },))
             .with_children(|parent| {
-                for intent in ButtonIntent::ALL {
-                    parent.spawn((button_styled(intent, ButtonSize::Md, intent.label()),));
+                for &(intent, label) in BUTTON_INTENTS {
+                    parent.spawn((button_styled(intent, ButtonSize::Md, label),));
                 }
             });
     });
@@ -254,8 +268,8 @@ fn button_sizes_scene(scene: &mut EntityCommands) {
                 ..default()
             },))
             .with_children(|parent| {
-                for size in ButtonSize::ALL {
-                    parent.spawn((button_styled(ButtonIntent::Primary, size, size.label()),));
+                for &(size, label) in BUTTON_SIZES {
+                    parent.spawn((button_styled(ButtonIntent::Primary, size, label),));
                 }
             });
     });
@@ -677,7 +691,7 @@ fn card_scene(scene: &mut EntityCommands) {
                 ..default()
             },))
             .with_children(|parent| {
-                let variants = vec![
+                let variants = [
                     (
                         "Surface",
                         "Default, bordered",
@@ -723,7 +737,7 @@ fn card_scene(scene: &mut EntityCommands) {
                     ),
                     (
                         "Success",
-                        "Intent palette",
+                        "Intent color",
                         color::success_soft.on,
                         CardOpts {
                             intent: CardIntent::Success,
@@ -732,7 +746,7 @@ fn card_scene(scene: &mut EntityCommands) {
                     ),
                     (
                         "Error",
-                        "Intent palette",
+                        "Intent color",
                         color::error_soft.on,
                         CardOpts {
                             intent: CardIntent::Error,
@@ -741,7 +755,7 @@ fn card_scene(scene: &mut EntityCommands) {
                     ),
                     (
                         "Info",
-                        "Intent palette",
+                        "Intent color",
                         color::info_soft.on,
                         CardOpts {
                             intent: CardIntent::Info,
@@ -749,8 +763,8 @@ fn card_scene(scene: &mut EntityCommands) {
                         },
                     ),
                     (
-                        "Utility",
-                        "Intent palette",
+                        "Muted",
+                        "Intent color",
                         color::neutral.on,
                         CardOpts {
                             intent: CardIntent::Muted,

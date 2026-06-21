@@ -81,24 +81,6 @@ impl Surfaces {
 }
 
 impl ButtonIntent {
-    pub const ALL: [ButtonIntent; 5] = [
-        ButtonIntent::Primary,
-        ButtonIntent::Secondary,
-        ButtonIntent::Danger,
-        ButtonIntent::Muted,
-        ButtonIntent::Plain,
-    ];
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            ButtonIntent::Primary => "primary",
-            ButtonIntent::Secondary => "secondary",
-            ButtonIntent::Danger => "danger",
-            ButtonIntent::Muted => "muted",
-            ButtonIntent::Plain => "plain",
-        }
-    }
-
     fn surfaces(self) -> Surfaces {
         match self {
             ButtonIntent::Primary => Surfaces::family(color::primary),
@@ -119,19 +101,6 @@ impl ButtonIntent {
                 on: color::surface_canvas.on,
                 border: None,
             },
-        }
-    }
-}
-
-impl ButtonSize {
-    pub const ALL: [ButtonSize; 3] = [ButtonSize::Sm, ButtonSize::Md, ButtonSize::Lg];
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            ButtonSize::Sm => "sm",
-            ButtonSize::Md => "md",
-            ButtonSize::Lg => "lg",
-            ButtonSize::Icon => "icon",
         }
     }
 }
