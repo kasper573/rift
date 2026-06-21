@@ -1,6 +1,6 @@
 use crate::Family;
-use bevy_ecs::bundle::Bundle;
-use bevy_ecs::children;
+use bevy_ecs::hierarchy::Children;
+use bevy_scene::{EntityScene, Scene, bsn, template_value};
 use bevy_ui::{AlignItems, BorderRadius, JustifyContent, Node, UiRect, Val};
 use bevy_ui_widgets::Button;
 
@@ -54,7 +54,7 @@ pub enum ButtonSize {
     Icon,
 }
 
-pub fn button(label: impl Into<String>) -> impl Bundle {
+pub fn button(label: impl Into<String>) -> impl Scene {
     button_styled(intent::PRIMARY, ButtonSize::Md, label)
 }
 
@@ -62,14 +62,16 @@ pub fn button_styled(
     intent: ButtonIntent,
     size: ButtonSize,
     label: impl Into<String>,
-) -> impl Bundle {
+) -> impl Scene {
     let theme = theme();
-    (
-        Node::default(),
-        Button,
-        intent_style(intent, &theme).merge(sized(size)),
-        children![text_colored(label.into(), (intent.family)(&theme).on)],
-    )
+    let style = intent_style(intent, &theme).merge(sized(size));
+    let label = text_colored(label.into(), (intent.family)(&theme).on);
+    bsn! {
+        Node
+        Button
+        template_value(style)
+        Children [ {EntityScene(label)} ]
+    }
 }
 
 fn intent_style(intent: ButtonIntent, theme: &Theme) -> Style {

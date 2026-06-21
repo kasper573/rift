@@ -27,6 +27,15 @@ pub enum Screen {
     Playing,
 }
 
+/// Inserts an already-built [`Component`] value into a `bsn!` scene — the bridge for our builder-style
+/// helpers and `FromTemplate`/`Arc`-backed components (e.g. `ImageNode`, `OnSettle`) that `bsn!`'s
+/// `template_value` (which needs plain `Default + Clone`) can't take.
+pub(crate) fn component<C: Component + Clone>(value: C) -> impl bevy::scene::Scene {
+    bevy::ecs::template::FnTemplate(move |_: &mut bevy::ecs::template::TemplateContext| {
+        Ok(value.clone())
+    })
+}
+
 fn bundle_dir() -> Option<PathBuf> {
     Some(std::env::current_exe().ok()?.parent()?.to_owned())
 }

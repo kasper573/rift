@@ -1,5 +1,6 @@
 use bevy::prelude::*;
-use ui::{Activate, button, observe, text_colored};
+use bevy::scene::EntityScene;
+use ui::{Activate, button, text_colored};
 
 use crate::{Screen, auth};
 
@@ -25,7 +26,7 @@ impl Plugin for ScreensPlugin {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct ScreenUi;
 
 fn screen_node() -> Node {
@@ -41,42 +42,42 @@ fn screen_node() -> Node {
 }
 
 fn signing_in(mut commands: Commands) {
-    commands.spawn((
-        ScreenUi,
-        screen_node(),
-        children![text_colored("Signing in…", Color::WHITE)],
-    ));
+    commands.spawn_scene(bsn! {
+        ScreenUi
+        template_value(screen_node())
+        Children [ {EntityScene(text_colored("Signing in…", Color::WHITE))} ]
+    });
 }
 
 fn sign_in_failed(mut commands: Commands) {
-    commands.spawn((
-        ScreenUi,
-        screen_node(),
-        children![
-            text_colored("Could not sign in", Color::WHITE),
+    commands.spawn_scene(bsn! {
+        ScreenUi
+        template_value(screen_node())
+        Children [
+            {EntityScene(text_colored("Could not sign in", Color::WHITE))},
             (
-                button("Try again"),
-                observe(|_: On<Activate>, mut next: ResMut<NextState<Screen>>| {
+                {button("Try again")}
+                on(|_: On<Activate>, mut next: ResMut<NextState<Screen>>| {
                     next.set(Screen::SigningIn);
                 })
             ),
-        ],
-    ));
+        ]
+    });
 }
 
 fn choose_mode(mut commands: Commands) {
-    commands.spawn((
-        ScreenUi,
-        screen_node(),
-        children![
-            text_colored("Choose a mode", Color::WHITE),
-            (button("Play"), observe(enter(Mode::Play))),
-            (button("Spectate"), observe(enter(Mode::Spectate))),
-        ],
-    ));
+    commands.spawn_scene(bsn! {
+        ScreenUi
+        template_value(screen_node())
+        Children [
+            {EntityScene(text_colored("Choose a mode", Color::WHITE))},
+            ( {button("Play")} on(enter(Mode::Play)) ),
+            ( {button("Spectate")} on(enter(Mode::Spectate)) ),
+        ]
+    });
 }
 
-fn enter(mode: Mode) -> impl Fn(On<Activate>, ResMut<Mode>, ResMut<NextState<Screen>>) {
+fn enter(mode: Mode) -> impl Fn(On<Activate>, ResMut<Mode>, ResMut<NextState<Screen>>) + Clone {
     move |_, mut current, mut next| {
         *current = mode;
         next.set(Screen::Playing);

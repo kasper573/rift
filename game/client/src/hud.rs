@@ -1,13 +1,13 @@
-use bevy::ecs::hierarchy::ChildSpawner;
-use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
+use bevy::scene::EntityScene;
 use bevy::window::{CursorIcon, SystemCursorIcon};
 use serde::{Deserialize, Serialize};
 use ui::button::intent as button_intent;
 use ui::{
-    Activate, Align, ButtonSize, Side, button_styled, observe, text_colored, tooltip,
-    tooltip_content,
+    Activate, Align, ButtonSize, Side, button_styled, text_colored, tooltip, tooltip_content,
 };
+
+use crate::component;
 use world::protocol::{Inventory, Name, Vitals, Xp};
 use world::session;
 
@@ -113,50 +113,43 @@ impl Default for Settings {
 #[derive(Resource, Default)]
 struct Open(std::collections::HashSet<Pane>);
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct Hud;
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 struct PaneView {
     pane: Pane,
     open: bool,
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct CharacterText;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct InventoryGrid;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct Cell {
     kind: u64,
     slot: u32,
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct SnappingButton;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct DeathBanner;
 
 fn spawn_hud(mut commands: Commands, settings: Res<Settings>, assets: Res<AssetServer>) {
-    let hud = commands
-        .spawn((
-            Hud,
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                ..default()
-            },
-            Pickable::IGNORE,
-        ))
-        .id();
-    commands.entity(hud).with_children(|hud| {
-        hud.spawn(character_panel(&settings));
-        for pane in Pane::ALL {
-            hud.spawn(widget_panel(pane, &settings, &assets));
-        }
+    let mut panels: Vec<Box<dyn Scene>> = vec![Box::new(character_panel(&settings))];
+    for pane in Pane::ALL {
+        panels.push(Box::new(widget_panel(pane, &settings, &assets)));
+    }
+    commands.spawn_scene(bsn! {
+        Hud
+        Node { width: Val::Percent(100.0), height: Val::Percent(100.0) }
+        Pickable { should_block_lower: false, is_hoverable: false }
+        Children [ {panels} ]
     });
 }
 
@@ -178,69 +171,63 @@ fn rebuild_panes(
         let hud = child_of.parent();
         let pane = view.pane;
         commands.entity(entity).despawn();
-        commands.entity(hud).with_children(|hud| {
-            if should_open {
-                hud.spawn(window_panel(pane, &settings));
-            } else {
-                hud.spawn(widget_panel(pane, &settings, &assets));
-            }
-        });
+        let panel: Box<dyn Scene> = if should_open {
+            Box::new(window_panel(pane, &settings))
+        } else {
+            Box::new(widget_panel(pane, &settings, &assets))
+        };
+        commands.spawn_scene(panel).insert(ChildOf(hud));
     }
 }
 
-fn character_panel(settings: &Settings) -> impl Bundle {
+fn character_panel(settings: &Settings) -> impl Scene {
     let (pos, _) = resolve(settings, Panel::Character, Vec2::new(8.0, 8.0), None);
     let mut node = panel_node(pos, Vec2::new(140.0, 64.0), false);
     node.padding = UiRect::all(Val::Px(6.0));
-    (
-        node,
-        BackgroundColor(PANEL_BG),
-        BorderColor::all(BORDER),
-        DragRoot,
-        DragHandle,
-        OnSettle::new(move |world, geom| persist(world, Panel::Character, geom)),
-        children![(CharacterText, text_colored(String::new(), Color::WHITE))],
-    )
+    bsn! {
+        template_value(node)
+        BackgroundColor({PANEL_BG})
+        component(BorderColor::all(BORDER))
+        DragRoot
+        DragHandle
+        component(OnSettle::new(move |world, geom| persist(world, Panel::Character, geom)))
+        Children [ ( {text_colored(String::new(), Color::WHITE)} CharacterText ) ]
+    }
 }
 
-fn widget_panel(pane: Pane, settings: &Settings, assets: &AssetServer) -> impl Bundle {
+fn widget_panel(pane: Pane, settings: &Settings, assets: &AssetServer) -> impl Scene {
     let info = pane.info();
     let (pos, _) = resolve(settings, Panel::Widget(pane), widget_fallback(pane), None);
     let icon = assets.load(info.icon.to_owned());
     let keybind = info.keybind;
     let title = info.title;
-    (
-        panel_node(pos, Vec2::splat(WIDGET.0), false),
-        BackgroundColor(PANEL_BG),
-        BorderColor::all(BORDER),
-        tooltip(false),
-        DragRoot,
-        DragHandle,
-        OnTap::new(move |world| open_pane(world, pane)),
-        OnSettle::new(move |world, geom| persist(world, Panel::Widget(pane), geom)),
-        HoverCursor(POINTER),
-        PaneView { pane, open: false },
-        children![
+    bsn! {
+        template_value(panel_node(pos, Vec2::splat(WIDGET.0), false))
+        BackgroundColor({PANEL_BG})
+        component(BorderColor::all(BORDER))
+        {tooltip(false)}
+        DragRoot
+        DragHandle
+        component(OnTap::new(move |world| open_pane(world, pane)))
+        component(OnSettle::new(move |world, geom| persist(world, Panel::Widget(pane), geom)))
+        component(HoverCursor(POINTER))
+        component(PaneView { pane, open: false })
+        Children [
             (
-                Node {
-                    width: Val::Px(32.0),
-                    height: Val::Px(32.0),
-                    margin: UiRect::all(Val::Px(8.0)),
-                    ..default()
-                },
-                ImageNode::new(icon),
-                Pickable::IGNORE,
+                Node { width: Val::Px(32.0), height: Val::Px(32.0), margin: {UiRect::all(Val::Px(8.0))} }
+                component(ImageNode::new(icon))
+                Pickable { should_block_lower: false, is_hoverable: false }
             ),
-            badge(keybind),
+            {EntityScene(badge(keybind))},
             (
-                tooltip_content(Side::Bottom, Align::Start, 0.0),
-                children![tooltip_label(title)],
+                {tooltip_content(Side::Bottom, Align::Start, 0.0)}
+                Children [ {EntityScene(tooltip_label(title))} ]
             ),
-        ],
-    )
+        ]
+    }
 }
 
-fn window_panel(pane: Pane, settings: &Settings) -> impl Bundle {
+fn window_panel(pane: Pane, settings: &Settings) -> impl Scene {
     let info = pane.info();
     let (pos, size) = resolve(
         settings,
@@ -250,152 +237,131 @@ fn window_panel(pane: Pane, settings: &Settings) -> impl Bundle {
     );
     let size = size.unwrap_or(WINDOW_SIZE);
     let title = info.title;
-    (
-        panel_node(pos, size, true),
-        BackgroundColor(PANEL_BG),
-        BorderColor::all(BORDER),
-        DragRoot,
-        OnSettle::new(move |world, geom| persist(world, Panel::Window(pane), geom)),
-        PaneView { pane, open: true },
-        children![title_bar(title, pane), content_area(pane), resize_grip(),],
-    )
+    bsn! {
+        template_value(panel_node(pos, size, true))
+        BackgroundColor({PANEL_BG})
+        component(BorderColor::all(BORDER))
+        DragRoot
+        component(OnSettle::new(move |world, geom| persist(world, Panel::Window(pane), geom)))
+        component(PaneView { pane, open: true })
+        Children [
+            {EntityScene(title_bar(title, pane))},
+            {EntityScene(content_area(pane))},
+            {EntityScene(resize_grip())},
+        ]
+    }
 }
 
-fn title_bar(title: &'static str, pane: Pane) -> impl Bundle {
-    (
+fn title_bar(title: &'static str, pane: Pane) -> impl Scene {
+    bsn! {
         Node {
             width: Val::Percent(100.0),
-            height: Val::Px(TITLE_H.0),
+            height: Val::Px({TITLE_H.0}),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::SpaceBetween,
-            padding: UiRect::horizontal(Val::Px(6.0)),
-            ..default()
-        },
-        BackgroundColor(TITLE_BG),
-        DragHandle,
-        children![text_colored(title, Color::WHITE), close_button(pane)],
-    )
+            padding: {UiRect::horizontal(Val::Px(6.0))},
+        }
+        BackgroundColor({TITLE_BG})
+        DragHandle
+        Children [
+            {EntityScene(text_colored(title, Color::WHITE))},
+            {EntityScene(close_button(pane))},
+        ]
+    }
 }
 
-fn content_area(pane: Pane) -> impl Bundle {
-    (
+fn content_area(pane: Pane) -> impl Scene {
+    let inner: Box<dyn Scene> = match pane {
+        Pane::Inventory => Box::new(bsn! { Node InventoryGrid }),
+        Pane::Settings => Box::new(bsn! {
+            {button_styled(button_intent::PRIMARY, ButtonSize::Md, "ui snapping disabled")}
+            SnappingButton
+            on(|_: On<Activate>, mut commands: Commands| {
+                commands.queue(toggle_snapping);
+            })
+        }),
+    };
+    bsn! {
         Node {
             flex_grow: 1.0,
             flex_wrap: FlexWrap::Wrap,
             align_content: AlignContent::FlexStart,
-            padding: UiRect::all(Val::Px(4.0)),
-            ..default()
-        },
-        Children::spawn(SpawnWith(move |content: &mut ChildSpawner| match pane {
-            Pane::Inventory => {
-                content.spawn((Node::default(), InventoryGrid));
-            }
-            Pane::Settings => {
-                content.spawn((
-                    button_styled(
-                        button_intent::PRIMARY,
-                        ButtonSize::Md,
-                        "ui snapping disabled",
-                    ),
-                    SnappingButton,
-                    observe(|_: On<Activate>, mut commands: Commands| {
-                        commands.queue(toggle_snapping);
-                    }),
-                ));
-            }
-        })),
-    )
+            padding: {UiRect::all(Val::Px(4.0))},
+        }
+        Children [ {EntityScene(inner)} ]
+    }
 }
 
-fn resize_grip() -> impl Bundle {
-    (
+fn resize_grip() -> impl Scene {
+    bsn! {
         Node {
             position_type: PositionType::Absolute,
             right: Val::Px(0.0),
             bottom: Val::Px(0.0),
             width: Val::Px(16.0),
             height: Val::Px(16.0),
-            ..default()
-        },
-        BackgroundColor(BORDER),
-        ResizeHandle { min: MIN_WINDOW },
-        HoverCursor(RESIZE),
-    )
+        }
+        BackgroundColor({BORDER})
+        ResizeHandle { min: {MIN_WINDOW} }
+        component(HoverCursor(RESIZE))
+    }
 }
 
-fn close_button(pane: Pane) -> impl Bundle {
-    (
-        button_styled(button_intent::PRIMARY, ButtonSize::Icon, "×"),
-        HoverCursor(POINTER),
-        observe(move |_: On<Activate>, mut open: ResMut<Open>| {
+fn close_button(pane: Pane) -> impl Scene {
+    bsn! {
+        {button_styled(button_intent::PRIMARY, ButtonSize::Icon, "×")}
+        component(HoverCursor(POINTER))
+        on(move |_: On<Activate>, mut open: ResMut<Open>| {
             open.0.remove(&pane);
-        }),
-    )
+        })
+    }
 }
 
-fn badge(keybind: &'static str) -> impl Bundle {
-    (
-        Node {
-            position_type: PositionType::Absolute,
-            right: Val::Px(2.0),
-            bottom: Val::Px(2.0),
-            ..default()
-        },
-        Pickable::IGNORE,
-        children![text_colored(keybind, Color::WHITE)],
-    )
+fn badge(keybind: &'static str) -> impl Scene {
+    bsn! {
+        Node { position_type: PositionType::Absolute, right: Val::Px(2.0), bottom: Val::Px(2.0) }
+        Pickable { should_block_lower: false, is_hoverable: false }
+        Children [ {EntityScene(text_colored(keybind, Color::WHITE))} ]
+    }
 }
 
-fn tooltip_label(text: impl Into<String>) -> impl Bundle {
-    (
-        Node {
-            padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
-            ..default()
-        },
-        BackgroundColor(TOOLTIP_BG),
-        Pickable::IGNORE,
-        children![text_colored(text.into(), Color::WHITE)],
-    )
+fn tooltip_label(text: impl Into<String>) -> impl Scene {
+    bsn! {
+        Node { padding: {UiRect::axes(Val::Px(6.0), Val::Px(3.0))} }
+        BackgroundColor({TOOLTIP_BG})
+        Pickable { should_block_lower: false, is_hoverable: false }
+        Children [ {EntityScene(text_colored(text.into(), Color::WHITE))} ]
+    }
 }
 
-fn slot(cell: &CellData) -> impl Bundle {
-    (
+fn slot(cell: &CellData) -> impl Scene {
+    bsn! {
         Node {
-            width: Val::Px(SLOT.0),
-            height: Val::Px(SLOT.0),
-            margin: UiRect::all(Val::Px(1.0)),
-            ..default()
-        },
-        BackgroundColor(TITLE_BG),
-        tooltip(false),
-        Cell {
-            kind: cell.kind,
-            slot: cell.slot,
-        },
-        observe(
-            |click: On<Pointer<Click>>, cells: Query<&Cell>, mut commands: Commands| {
-                if let Ok(cell) = cells.get(click.entity) {
-                    let slot = cell.slot;
-                    commands.queue(move |world: &mut World| session::use_item(world, slot));
-                }
-            },
-        ),
-        children![
+            width: Val::Px({SLOT.0}),
+            height: Val::Px({SLOT.0}),
+            margin: {UiRect::all(Val::Px(1.0))},
+        }
+        BackgroundColor({TITLE_BG})
+        {tooltip(false)}
+        Cell { kind: {cell.kind}, slot: {cell.slot} }
+        on(|click: On<Pointer<Click>>, cells: Query<&Cell>, mut commands: Commands| {
+            if let Ok(cell) = cells.get(click.entity) {
+                let slot = cell.slot;
+                commands.queue(move |world: &mut World| session::use_item(world, slot));
+            }
+        })
+        Children [
             (
-                Node {
-                    width: Val::Px(32.0),
-                    height: Val::Px(32.0),
-                    ..default()
-                },
-                ImageNode::new(cell.icon.clone()),
-                Pickable::IGNORE,
+                Node { width: Val::Px(32.0), height: Val::Px(32.0) }
+                component(ImageNode::new(cell.icon.clone()))
+                Pickable { should_block_lower: false, is_hoverable: false }
             ),
             (
-                tooltip_content(Side::Bottom, Align::Start, 0.0),
-                children![tooltip_label(cell.name.clone())],
+                {tooltip_content(Side::Bottom, Align::Start, 0.0)}
+                Children [ {EntityScene(tooltip_label(cell.name.clone()))} ]
             ),
-        ],
-    )
+        ]
+    }
 }
 
 fn panel_node(pos: Vec2, size: Vec2, window: bool) -> Node {
@@ -451,9 +417,10 @@ fn sync_inventory(world: &mut World) {
 
     let present: std::collections::HashSet<u64> = existing.iter().map(|(_, kind)| *kind).collect();
     for cell in &cells {
-        if !present.contains(&cell.kind) {
-            let bundle = slot(cell);
-            let child = world.spawn(bundle).id();
+        if !present.contains(&cell.kind)
+            && let Ok(spawned) = world.spawn_scene(slot(cell))
+        {
+            let child = spawned.id();
             world.entity_mut(grid).add_child(child);
         }
     }
@@ -529,8 +496,9 @@ fn sync_death_banner(world: &mut World) {
                 .query_filtered::<Entity, With<Hud>>()
                 .iter(world)
                 .next()
+                && let Ok(spawned) = world.spawn_scene(death_banner())
             {
-                let banner = world.spawn(death_banner()).id();
+                let banner = spawned.id();
                 world.entity_mut(hud).add_child(banner);
             }
         }
@@ -539,24 +507,20 @@ fn sync_death_banner(world: &mut World) {
     }
 }
 
-fn death_banner() -> impl Bundle {
-    (
-        DeathBanner,
+fn death_banner() -> impl Scene {
+    bsn! {
+        DeathBanner
         Node {
             position_type: PositionType::Absolute,
             width: Val::Percent(100.0),
             height: Val::Percent(100.0),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
-            ..default()
-        },
-        GlobalZIndex(50),
-        Pickable::IGNORE,
-        children![text_colored(
-            "You died! Press any key to respawn",
-            Color::WHITE
-        )],
-    )
+        }
+        GlobalZIndex({50})
+        Pickable { should_block_lower: false, is_hoverable: false }
+        Children [ {EntityScene(text_colored("You died! Press any key to respawn", Color::WHITE))} ]
+    }
 }
 
 fn resolve(

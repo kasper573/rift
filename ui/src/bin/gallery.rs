@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use bevy::prelude::*;
+use bevy_scene::{CommandsSceneExt, EntityScene, Scene, bsn, on, template_value};
 use ui::button::intent as button_intent;
 use ui::card::intent as card_intent;
 use ui::theme::theme;
@@ -25,19 +26,30 @@ const TOAST_MESSAGES: &[(&str, &str)] = &[
     ("Upload complete", "report-q3.pdf finished uploading."),
 ];
 
+// Five anchor positions (four edges + center) used by the floating-overlay demos to show how a
+// popper flips to the opposite side when its preferred side would overflow the viewport.
+const SLOTS: [(f32, f32, Side); 5] = [
+    (0.5, 0.02, Side::Top),
+    (0.94, 0.5, Side::Right),
+    (0.5, 0.95, Side::Bottom),
+    (0.03, 0.5, Side::Left),
+    (0.5, 0.5, Side::Bottom),
+];
+const FLIP_NOTE: &str = "This floating panel flips to the opposite side when its preferred side would overflow the viewport.";
+
 #[derive(Resource, Default)]
 struct CurrentScene(usize);
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct GalleryRoot;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct SceneRoot;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct SceneTab(usize);
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct ToasterEntity;
 
 fn main() {
@@ -67,42 +79,44 @@ fn main() {
         .run();
 }
 
+fn boxed(scene: impl Scene + 'static) -> Box<dyn Scene> {
+    Box::new(scene)
+}
+
 fn setup(mut commands: Commands) {
     commands.spawn((Camera2d, IsDefaultUiCamera));
-    commands
-        .spawn((
-            GalleryRoot,
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                ..default()
-            },
-        ))
-        .with_children(|root| {
-            root.spawn(tabs(Some("0".to_owned())))
-                .with_children(|group| {
-                    group
-                        .spawn(Node {
-                            flex_direction: FlexDirection::Row,
-                            flex_wrap: FlexWrap::Wrap,
-                            width: Val::Percent(100.0),
-                            column_gap: Val::Px(4.0),
-                            row_gap: Val::Px(4.0),
-                            padding: UiRect::all(Val::Px(12.0)),
-                            ..default()
-                        })
-                        .with_children(|list| {
-                            for (index, (name, _)) in SCENES.iter().enumerate() {
-                                list.spawn((tabs_trigger(index.to_string()), SceneTab(index)))
-                                    .observe(on_tab)
-                                    .with_children(|trigger| {
-                                        trigger.spawn(text(*name));
-                                    });
-                            }
-                        });
-                });
-        });
+    let tab_buttons: Vec<Box<dyn Scene>> = SCENES
+        .iter()
+        .enumerate()
+        .map(|(index, (name, _))| {
+            boxed(bsn! {
+                {tabs_trigger(index.to_string())}
+                SceneTab({index})
+                on(on_tab)
+                Children [ {EntityScene(text(*name))} ]
+            })
+        })
+        .collect();
+    commands.spawn_scene(bsn! {
+        GalleryRoot
+        Node { width: Val::Percent(100.0), height: Val::Percent(100.0), flex_direction: FlexDirection::Column }
+        Children [
+            ( {tabs(Some("0".to_owned()))}
+              Children [
+                ( Node {
+                      flex_direction: FlexDirection::Row,
+                      flex_wrap: FlexWrap::Wrap,
+                      width: Val::Percent(100.0),
+                      column_gap: Val::Px(4.0),
+                      row_gap: Val::Px(4.0),
+                      padding: {UiRect::all(Val::Px(12.0))},
+                  }
+                  Children [ {tab_buttons} ]
+                )
+              ]
+            )
+        ]
+    });
 }
 
 // Loop the progress bars 0→100% so the scene is a live demo rather than a frozen empty bar.
@@ -137,21 +151,20 @@ fn rebuild_scene(
     for scene in &scenes {
         commands.entity(scene).despawn();
     }
-    commands.entity(root).with_children(|parent| {
-        let mut scene = parent.spawn((
-            SceneRoot,
+    let content = (SCENES[current.0].1)();
+    commands
+        .spawn_scene(bsn! {
+            SceneRoot
             Node {
                 flex_grow: 1.0,
                 width: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                ..default()
-            },
-        ));
-        let (_name, builder) = SCENES[current.0];
-        builder(&mut scene);
-    });
+            }
+            Children [ {EntityScene(content)} ]
+        })
+        .insert(ChildOf(root));
 }
 
 // The toasts scene spawns a real toast on each "Show toast" press, cycling the example messages.
@@ -166,32 +179,30 @@ fn show_toast(
     };
     let (title, body) = TOAST_MESSAGES[*next % TOAST_MESSAGES.len()];
     *next += 1;
-    commands.entity(toaster).with_children(|parent| {
-        parent.spawn(toast()).with_children(|toast| {
-            toast
-                .spawn(Node {
-                    flex_direction: FlexDirection::Row,
-                    justify_content: JustifyContent::SpaceBetween,
-                    align_items: AlignItems::Center,
-                    column_gap: Val::Px(12.0),
-                    ..default()
-                })
-                .with_children(|row| {
-                    row.spawn(text(title));
-                    row.spawn(sonner_close()).with_children(|close| {
-                        close.spawn(button_styled(
-                            button_intent::SECONDARY,
-                            ButtonSize::Sm,
-                            "close",
-                        ));
-                    });
-                });
-            toast.spawn(text_colored(body, theme().surface_canvas.on));
-        });
-    });
+    commands
+        .spawn_scene(bsn! {
+            {toast()}
+            Children [
+                ( Node {
+                      flex_direction: FlexDirection::Row,
+                      justify_content: JustifyContent::SpaceBetween,
+                      align_items: AlignItems::Center,
+                      column_gap: Val::Px(12.0),
+                  }
+                  Children [
+                    {EntityScene(text(title))},
+                    ( {sonner_close()}
+                      Children [ {EntityScene(button_styled(button_intent::SECONDARY, ButtonSize::Sm, "close"))} ]
+                    )
+                  ]
+                ),
+                {EntityScene(text_colored(body, theme().surface_canvas.on))}
+            ]
+        })
+        .insert(ChildOf(toaster));
 }
 
-type SceneBuilder = fn(&mut EntityCommands);
+type SceneBuilder = fn() -> Box<dyn Scene>;
 
 const SCENES: &[(&str, SceneBuilder)] = &[
     ("Button intents", button_intents_scene),
@@ -231,883 +242,465 @@ const BUTTON_SIZES: &[(ButtonSize, &str)] = &[
     (ButtonSize::Lg, "lg"),
 ];
 
-fn button_intents_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                flex_direction: FlexDirection::Row,
-                flex_wrap: FlexWrap::Wrap,
-                column_gap: Val::Px(18.0),
-                row_gap: Val::Px(18.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                max_width: Val::Px(1360.0),
-                ..default()
-            },))
-            .with_children(|parent| {
-                for &(intent, label) in BUTTON_INTENTS {
-                    parent.spawn((button_styled(intent, ButtonSize::Md, label),));
-                }
-            });
-    });
+// A wrapping, centered row — the common showcase container for a set of variants.
+fn wrap(kids: Vec<Box<dyn Scene>>) -> Box<dyn Scene> {
+    boxed(bsn! {
+        Node {
+            flex_direction: FlexDirection::Row,
+            flex_wrap: FlexWrap::Wrap,
+            column_gap: Val::Px(18.0),
+            row_gap: Val::Px(18.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            max_width: Val::Px(1360.0),
+        }
+        Children [ {kids} ]
+    })
 }
 
-fn button_sizes_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                flex_direction: FlexDirection::Row,
-                flex_wrap: FlexWrap::Wrap,
-                column_gap: Val::Px(18.0),
-                row_gap: Val::Px(18.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                max_width: Val::Px(1360.0),
-                ..default()
-            },))
-            .with_children(|parent| {
-                for &(size, label) in BUTTON_SIZES {
-                    parent.spawn((button_styled(button_intent::PRIMARY, size, label),));
-                }
-            });
-    });
+// A fixed-width centered column.
+fn col(width: f32, kids: Vec<Box<dyn Scene>>) -> Box<dyn Scene> {
+    boxed(bsn! {
+        Node { width: Val::Px({width}), flex_direction: FlexDirection::Column, align_items: AlignItems::Center }
+        Children [ {kids} ]
+    })
 }
 
-fn tabs_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                width: Val::Px(520.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                ..default()
-            },))
-            .with_children(|parent| {
-                parent
-                    .spawn(tabs(Some("overview".to_owned())))
-                    .with_children(|parent| {
-                        parent.spawn(tabs_list()).with_children(|parent| {
-                            parent
-                                .spawn((tabs_trigger("overview"),))
-                                .with_children(|parent| {
-                                    parent.spawn(text("Overview"));
-                                });
-                            parent
-                                .spawn((tabs_trigger("activity"),))
-                                .with_children(|parent| {
-                                    parent.spawn(text("Activity"));
-                                });
-                            parent
-                                .spawn((tabs_trigger("settings"),))
-                                .with_children(|parent| {
-                                    parent.spawn(text("Settings"));
-                                });
-                        });
-                    });
-            });
-    });
+fn button_intents_scene() -> Box<dyn Scene> {
+    wrap(
+        BUTTON_INTENTS
+            .iter()
+            .map(|&(intent, label)| boxed(button_styled(intent, ButtonSize::Md, label)))
+            .collect(),
+    )
 }
 
-fn checkbox_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                flex_direction: FlexDirection::Row,
-                flex_wrap: FlexWrap::Wrap,
-                column_gap: Val::Px(18.0),
-                row_gap: Val::Px(18.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                max_width: Val::Px(1360.0),
-                ..default()
-            },))
-            .with_children(|parent| {
-                parent
-                    .spawn((checkbox(Check::Off),))
-                    .with_children(|parent| {
-                        parent.spawn(checkbox_indicator());
-                    });
-                parent.spawn(checkbox(Check::On)).with_children(|parent| {
-                    parent.spawn(checkbox_indicator());
-                });
-                parent
-                    .spawn(checkbox(Check::Indeterminate))
-                    .with_children(|parent| {
-                        parent.spawn((
-                            Node {
-                                width: Val::Px(10.0),
-                                height: Val::Px(2.0),
-                                border_radius: BorderRadius::all(Val::Px(999.0)),
-                                ..default()
-                            },
-                            ui::Style::new().background(theme().primary.on),
-                        ));
-                    });
-            });
-    });
+fn button_sizes_scene() -> Box<dyn Scene> {
+    wrap(
+        BUTTON_SIZES
+            .iter()
+            .map(|&(size, label)| boxed(button_styled(button_intent::PRIMARY, size, label)))
+            .collect(),
+    )
 }
 
-fn switch_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                flex_direction: FlexDirection::Row,
-                flex_wrap: FlexWrap::Wrap,
-                column_gap: Val::Px(18.0),
-                row_gap: Val::Px(18.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                max_width: Val::Px(1360.0),
-                ..default()
-            },))
-            .with_children(|parent| {
-                parent.spawn((switch(false),)).with_children(|parent| {
-                    parent.spawn(switch_thumb());
-                });
-                parent.spawn(switch(true)).with_children(|parent| {
-                    parent.spawn(switch_thumb());
-                });
-            });
-    });
+fn tabs_scene() -> Box<dyn Scene> {
+    col(
+        520.0,
+        vec![boxed(bsn! {
+            {tabs(Some("overview".to_owned()))}
+            Children [
+                ( {tabs_list()}
+                  Children [
+                    ( {tabs_trigger("overview")} Children [ {EntityScene(text("Overview"))} ] ),
+                    ( {tabs_trigger("activity")} Children [ {EntityScene(text("Activity"))} ] ),
+                    ( {tabs_trigger("settings")} Children [ {EntityScene(text("Settings"))} ] ),
+                  ]
+                )
+            ]
+        })],
+    )
 }
 
-fn radio_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                width: Val::Px(240.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                ..default()
-            },))
-            .with_children(|parent| {
-                parent
-                    .spawn(radio_group(Some("apple".to_owned())))
-                    .with_children(|parent| {
-                        parent
-                            .spawn((radio_item("apple"),))
-                            .with_children(|parent| {
-                                parent.spawn(radio_circle()).with_children(|parent| {
-                                    parent.spawn(radio_indicator());
-                                });
-                                parent.spawn(text("Apple"));
-                            });
-                        parent
-                            .spawn((radio_item("banana"),))
-                            .with_children(|parent| {
-                                parent.spawn(radio_circle()).with_children(|parent| {
-                                    parent.spawn(radio_indicator());
-                                });
-                                parent.spawn(text("Banana"));
-                            });
-                        parent
-                            .spawn((radio_item("cherry"),))
-                            .with_children(|parent| {
-                                parent.spawn(radio_circle()).with_children(|parent| {
-                                    parent.spawn(radio_indicator());
-                                });
-                                parent.spawn(text("Cherry"));
-                            });
-                    });
-            });
-    });
+fn checkbox_scene() -> Box<dyn Scene> {
+    wrap(vec![
+        boxed(bsn! { {checkbox(Check::Off)} Children [ {EntityScene(checkbox_indicator())} ] }),
+        boxed(bsn! { {checkbox(Check::On)} Children [ {EntityScene(checkbox_indicator())} ] }),
+        boxed(bsn! {
+            {checkbox(Check::Indeterminate)}
+            Children [
+                ( Node { width: Val::Px(10.0), height: Val::Px(2.0), border_radius: {BorderRadius::all(Val::Px(999.0))} }
+                  template_value(ui::Style::new().background(theme().primary.on))
+                )
+            ]
+        }),
+    ])
 }
 
-fn slider_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                width: Val::Px(360.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                ..default()
-            },))
-            .with_children(|parent| {
-                parent
-                    .spawn((slider(35.0, 0.0, 100.0),))
-                    .with_children(|parent| {
-                        parent.spawn(slider_track()).with_children(|parent| {
-                            parent.spawn(slider_range());
-                            parent.spawn(slider_thumb());
-                        });
-                    });
-            });
-    });
+fn switch_scene() -> Box<dyn Scene> {
+    wrap(vec![
+        boxed(bsn! { {switch(false)} Children [ {EntityScene(switch_thumb())} ] }),
+        boxed(bsn! { {switch(true)} Children [ {EntityScene(switch_thumb())} ] }),
+    ])
 }
 
-fn progress_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                width: Val::Px(360.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                ..default()
-            },))
-            .with_children(|parent| {
-                parent
-                    .spawn((progress(0.0, 100.0),))
-                    .with_children(|parent| {
-                        parent.spawn(progress_indicator());
-                    });
-            });
+fn radio_scene() -> Box<dyn Scene> {
+    let items = ["apple", "banana", "cherry"].map(|name| {
+        let label = format!("{}{}", name[..1].to_uppercase(), &name[1..]);
+        boxed(bsn! {
+            {radio_item(name)}
+            Children [
+                ( {radio_circle()} Children [ {EntityScene(radio_indicator())} ] ),
+                {EntityScene(text(label))}
+            ]
+        })
     });
+    col(
+        240.0,
+        vec![boxed(bsn! {
+            {radio_group(Some("apple".to_owned()))}
+            Children [ {items.into_iter().collect::<Vec<_>>()} ]
+        })],
+    )
 }
 
-fn avatar_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                flex_direction: FlexDirection::Row,
-                flex_wrap: FlexWrap::Wrap,
-                column_gap: Val::Px(18.0),
-                row_gap: Val::Px(18.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                max_width: Val::Px(1360.0),
-                ..default()
-            },))
-            .with_children(|parent| {
-                parent.spawn(avatar()).with_children(|parent| {
-                    parent.spawn(avatar_fallback()).with_children(|parent| {
-                        parent.spawn(text_colored("KS", theme().primary.on));
-                    });
-                });
-                parent.spawn(avatar()).with_children(|parent| {
-                    parent.spawn(avatar_fallback()).with_children(|parent| {
-                        parent.spawn(text_colored("AB", theme().primary.on));
-                    });
-                });
-            });
-    });
+fn slider_scene() -> Box<dyn Scene> {
+    col(
+        360.0,
+        vec![boxed(bsn! {
+            {slider(35.0, 0.0, 100.0)}
+            Children [
+                ( {slider_track()}
+                  Children [ {EntityScene(slider_range())}, {EntityScene(slider_thumb())} ]
+                )
+            ]
+        })],
+    )
 }
 
-fn separator_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                width: Val::Px(360.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                ..default()
-            },))
-            .with_children(|parent| {
-                parent.spawn(text("Above"));
-                parent.spawn(separator(Orientation::Horizontal));
-                parent.spawn(text("Below"));
-            });
-    });
+fn progress_scene() -> Box<dyn Scene> {
+    col(
+        360.0,
+        vec![boxed(bsn! {
+            {progress(0.0, 100.0)}
+            Children [ {EntityScene(progress_indicator())} ]
+        })],
+    )
 }
 
-fn accordion_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                width: Val::Px(440.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                ..default()
-            },))
-            .with_children(|parent| {
-                parent
-                    .spawn(accordion(HashSet::from(["shipping".to_owned()]), false))
-                    .with_children(|parent| {
-                        parent.spawn(accordion_item()).with_children(|parent| {
-                            parent.spawn(accordion_header()).with_children(|parent| {
-                                parent
-                                    .spawn((accordion_trigger("shipping"),))
-                                    .with_children(|parent| {
-                                        parent.spawn(text("Is shipping free?"));
-                                    });
-                            });
-                            parent
-                                .spawn(accordion_content("shipping"))
-                                .with_children(|parent| {
-                                    parent.spawn(accordion_body()).with_children(|parent| {
-                                        parent.spawn(text_colored(
-                                            "Yes, on orders over $50.",
-                                            theme().surface_canvas.on,
-                                        ));
-                                    });
-                                });
-                        });
-                        parent.spawn(accordion_item()).with_children(|parent| {
-                            parent.spawn(accordion_header()).with_children(|parent| {
-                                parent.spawn((accordion_trigger("returns"),)).with_children(
-                                    |parent| {
-                                        parent.spawn(text("Can I return it?"));
-                                    },
-                                );
-                            });
-                            parent
-                                .spawn(accordion_content("returns"))
-                                .with_children(|parent| {
-                                    parent.spawn(accordion_body()).with_children(|parent| {
-                                        parent.spawn(text_colored(
-                                            "Within 30 days, no questions.",
-                                            theme().surface_canvas.on,
-                                        ));
-                                    });
-                                });
-                        });
-                        parent.spawn(accordion_item()).with_children(|parent| {
-                            parent.spawn(accordion_header()).with_children(|parent| {
-                                parent.spawn((accordion_trigger("styled"),)).with_children(
-                                    |parent| {
-                                        parent.spawn(text("Is it themed?"));
-                                    },
-                                );
-                            });
-                            parent
-                                .spawn(accordion_content("styled"))
-                                .with_children(|parent| {
-                                    parent.spawn(accordion_body()).with_children(|parent| {
-                                        parent.spawn(text_colored(
-                                            "Every color comes from the theme.",
-                                            theme().surface_canvas.on,
-                                        ));
-                                    });
-                                });
-                        });
-                    });
-            });
-    });
+fn avatar_scene() -> Box<dyn Scene> {
+    let one = |initials: &'static str| {
+        boxed(bsn! {
+            {avatar()}
+            Children [
+                ( {avatar_fallback()} Children [ {EntityScene(text_colored(initials, theme().primary.on))} ] )
+            ]
+        })
+    };
+    wrap(vec![one("KS"), one("AB")])
 }
 
-fn collapsible_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                width: Val::Px(360.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                ..default()
-            },))
-            .with_children(|parent| {
-                parent.spawn(collapsible(false)).with_children(|parent| {
-                    parent
-                        .spawn((collapsible_trigger(),))
-                        .with_children(|parent| {
-                            parent.spawn(text("Notification settings"));
-                        });
-                    parent.spawn(collapsible_content()).with_children(|parent| {
-                        parent.spawn(text_colored(
-                            "Email me about replies and mentions.",
-                            theme().surface_canvas.on,
-                        ));
-                    });
-                });
-            });
-    });
+fn separator_scene() -> Box<dyn Scene> {
+    col(
+        360.0,
+        vec![
+            boxed(text("Above")),
+            boxed(separator(Orientation::Horizontal)),
+            boxed(text("Below")),
+        ],
+    )
 }
 
-fn dialog_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent.spawn(dialog(
-            false,
-            button_styled(button_intent::PRIMARY, ButtonSize::Md, "Delete project"),
-            children![
-                text("Delete project?"),
-                text_colored(
-                    "This permanently removes the project and its data.",
-                    theme().surface_canvas.on,
+fn accordion_scene() -> Box<dyn Scene> {
+    let item = |value: &'static str, q: &'static str, a: &'static str| {
+        boxed(bsn! {
+            {accordion_item()}
+            Children [
+                ( {accordion_header()}
+                  Children [ ( {accordion_trigger(value)} Children [ {EntityScene(text(q))} ] ) ]
                 ),
-                (
-                    Node {
-                        flex_direction: FlexDirection::Row,
-                        column_gap: Val::Px(12.0),
-                        row_gap: Val::Px(12.0),
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::FlexEnd,
-                        flex_wrap: FlexWrap::Wrap,
-                        max_width: Val::Px(1360.0),
-                        ..default()
-                    },
-                    children![
-                        (
-                            dialog_close(),
-                            children![button_styled(
-                                button_intent::PLAIN,
-                                ButtonSize::Md,
-                                "Cancel"
-                            )],
-                        ),
-                        button_styled(button_intent::DANGER, ButtonSize::Md, "Delete"),
-                    ],
-                ),
-            ],
-        ));
-    });
+                ( {accordion_content(value)}
+                  Children [ ( {accordion_body()} Children [ {EntityScene(text_colored(a, theme().surface_canvas.on))} ] ) ]
+                )
+            ]
+        })
+    };
+    col(
+        440.0,
+        vec![boxed(bsn! {
+            {accordion(HashSet::from(["shipping".to_owned()]), false)}
+            Children [
+                {EntityScene(item("shipping", "Is shipping free?", "Yes, on orders over $50."))},
+                {EntityScene(item("returns", "Can I return it?", "Within 30 days, no questions."))},
+                {EntityScene(item("styled", "Is it themed?", "Every color comes from the theme."))}
+            ]
+        })],
+    )
 }
 
-fn alert_dialog_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent.spawn(alert_dialog(
-            false,
-            button_styled(button_intent::DANGER, ButtonSize::Md, "Reset everything"),
-            children![
-                text("Are you absolutely sure?"),
-                text_colored("This action cannot be undone.", theme().surface_canvas.on),
-                (
-                    Node {
-                        flex_direction: FlexDirection::Row,
-                        column_gap: Val::Px(12.0),
-                        row_gap: Val::Px(12.0),
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::FlexEnd,
-                        flex_wrap: FlexWrap::Wrap,
-                        max_width: Val::Px(1360.0),
-                        ..default()
-                    },
-                    children![
-                        (
-                            alert_dialog_cancel(),
-                            children![button_styled(
-                                button_intent::PLAIN,
-                                ButtonSize::Md,
-                                "Cancel"
-                            )],
-                        ),
-                        (
-                            alert_dialog_action(),
-                            children![button_styled(
-                                button_intent::PRIMARY,
-                                ButtonSize::Md,
-                                "Continue"
-                            )],
-                        ),
-                    ],
-                ),
-            ],
-        ));
-    });
+fn collapsible_scene() -> Box<dyn Scene> {
+    col(
+        360.0,
+        vec![boxed(bsn! {
+            {collapsible(false)}
+            Children [
+                ( {collapsible_trigger()} Children [ {EntityScene(text("Notification settings"))} ] ),
+                ( {collapsible_content()}
+                  Children [ {EntityScene(text_colored("Email me about replies and mentions.", theme().surface_canvas.on))} ]
+                )
+            ]
+        })],
+    )
 }
 
-fn card_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                flex_direction: FlexDirection::Row,
-                flex_wrap: FlexWrap::Wrap,
-                column_gap: Val::Px(18.0),
-                row_gap: Val::Px(18.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                max_width: Val::Px(1360.0),
+// A row of dialog action buttons, aligned to the trailing edge.
+fn dialog_actions(kids: Vec<Box<dyn Scene>>) -> Box<dyn Scene> {
+    boxed(bsn! {
+        Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: Val::Px(12.0),
+            row_gap: Val::Px(12.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::FlexEnd,
+            flex_wrap: FlexWrap::Wrap,
+            max_width: Val::Px(1360.0),
+        }
+        Children [ {kids} ]
+    })
+}
+
+fn dialog_scene() -> Box<dyn Scene> {
+    boxed(dialog(
+        false,
+        button_styled(button_intent::PRIMARY, ButtonSize::Md, "Delete project"),
+        bsn! {
+            Children [
+                {EntityScene(text("Delete project?"))},
+                {EntityScene(text_colored("This permanently removes the project and its data.", theme().surface_canvas.on))},
+                {EntityScene(dialog_actions(vec![
+                    boxed(bsn! {
+                        {dialog_close()}
+                        Children [ {EntityScene(button_styled(button_intent::PLAIN, ButtonSize::Md, "Cancel"))} ]
+                    }),
+                    boxed(button_styled(button_intent::DANGER, ButtonSize::Md, "Delete")),
+                ]))}
+            ]
+        },
+    ))
+}
+
+fn alert_dialog_scene() -> Box<dyn Scene> {
+    boxed(alert_dialog(
+        false,
+        button_styled(button_intent::DANGER, ButtonSize::Md, "Reset everything"),
+        bsn! {
+            Children [
+                {EntityScene(text("Are you absolutely sure?"))},
+                {EntityScene(text_colored("This action cannot be undone.", theme().surface_canvas.on))},
+                {EntityScene(dialog_actions(vec![
+                    boxed(bsn! {
+                        {alert_dialog_cancel()}
+                        Children [ {EntityScene(button_styled(button_intent::PLAIN, ButtonSize::Md, "Cancel"))} ]
+                    }),
+                    boxed(bsn! {
+                        {alert_dialog_action()}
+                        Children [ {EntityScene(button_styled(button_intent::PRIMARY, ButtonSize::Md, "Continue"))} ]
+                    }),
+                ]))}
+            ]
+        },
+    ))
+}
+
+fn card_scene() -> Box<dyn Scene> {
+    let variants: [(&str, &str, Color, CardOpts); 8] = [
+        (
+            "Surface",
+            "Default, bordered",
+            theme().surface_elevated.on,
+            CardOpts::default(),
+        ),
+        (
+            "Floating",
+            "Elevation shadow",
+            theme().surface_elevated.on,
+            CardOpts {
+                floating: true,
                 ..default()
-            },))
-            .with_children(|parent| {
-                let variants = [
-                    (
-                        "Surface",
-                        "Default, bordered",
-                        theme().surface_elevated.on,
-                        CardOpts::default(),
-                    ),
-                    (
-                        "Floating",
-                        "Elevation shadow",
-                        theme().surface_elevated.on,
-                        CardOpts {
-                            floating: true,
-                            ..default()
-                        },
-                    ),
-                    (
-                        "Compact",
-                        "Tighter padding",
-                        theme().surface_elevated.on,
-                        CardOpts {
-                            compact: true,
-                            ..default()
-                        },
-                    ),
-                    (
-                        "Interactive",
-                        "Hover & press me",
-                        theme().surface_elevated.on,
-                        CardOpts {
-                            interactive: true,
-                            ..default()
-                        },
-                    ),
-                    (
-                        "Floating + interactive",
-                        "Lifts higher on hover",
-                        theme().surface_elevated.on,
-                        CardOpts {
-                            floating: true,
-                            interactive: true,
-                            ..default()
-                        },
-                    ),
-                    (
-                        "Success",
-                        "Intent color",
-                        theme().success_soft.on,
-                        CardOpts {
-                            intent: card_intent::SUCCESS,
-                            ..default()
-                        },
-                    ),
-                    (
-                        "Error",
-                        "Intent color",
-                        theme().error_soft.on,
-                        CardOpts {
-                            intent: card_intent::ERROR,
-                            ..default()
-                        },
-                    ),
-                    (
-                        "Info",
-                        "Intent color",
-                        theme().info_soft.on,
-                        CardOpts {
-                            intent: card_intent::INFO,
-                            ..default()
-                        },
-                    ),
-                    (
-                        "Muted",
-                        "Intent color",
-                        theme().neutral.on,
-                        CardOpts {
-                            intent: card_intent::MUTED,
-                            ..default()
-                        },
-                    ),
-                ];
-                for (title, desc, on, opts) in variants {
-                    parent.spawn(card(opts)).with_children(|parent| {
-                        parent
-                            .spawn((Node {
-                                flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(4.0),
-                                width: Val::Px(150.0),
-                                ..default()
-                            },))
-                            .with_children(|parent| {
-                                parent.spawn(text_colored(title, on));
-                                parent.spawn(text_colored(desc, on));
-                            });
-                    });
-                }
-            });
-    });
-}
-
-fn tooltip_scene(scene: &mut EntityCommands) {
-    const SLOTS: [(f32, f32, Side); 5] = [
-        (0.5, 0.02, Side::Top),
-        (0.94, 0.5, Side::Right),
-        (0.5, 0.95, Side::Bottom),
-        (0.03, 0.5, Side::Left),
-        (0.5, 0.5, Side::Bottom),
+            },
+        ),
+        (
+            "Compact",
+            "Tighter padding",
+            theme().surface_elevated.on,
+            CardOpts {
+                compact: true,
+                ..default()
+            },
+        ),
+        (
+            "Interactive",
+            "Hover & press me",
+            theme().surface_elevated.on,
+            CardOpts {
+                interactive: true,
+                ..default()
+            },
+        ),
+        (
+            "Floating + interactive",
+            "Lifts higher on hover",
+            theme().surface_elevated.on,
+            CardOpts {
+                floating: true,
+                interactive: true,
+                ..default()
+            },
+        ),
+        (
+            "Success",
+            "Intent color",
+            theme().success_soft.on,
+            CardOpts {
+                intent: card_intent::SUCCESS,
+                ..default()
+            },
+        ),
+        (
+            "Error",
+            "Intent color",
+            theme().error_soft.on,
+            CardOpts {
+                intent: card_intent::ERROR,
+                ..default()
+            },
+        ),
+        (
+            "Info",
+            "Intent color",
+            theme().info_soft.on,
+            CardOpts {
+                intent: card_intent::INFO,
+                ..default()
+            },
+        ),
     ];
-    const FLIP_NOTE: &str = "This floating panel flips to the opposite side when its preferred side would overflow the viewport.";
-
-    let open: Option<usize> = None;
-
-    scene.with_children(|parent| {
-        parent
-            .spawn(Node {
-                position_type: PositionType::Relative,
-                ..default()
+    wrap(variants
+        .into_iter()
+        .map(|(title, desc, on, opts)| {
+            boxed(bsn! {
+                {card(opts)}
+                Children [
+                    ( Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(4.0), width: Val::Px(150.0) }
+                      Children [
+                        {EntityScene(text_colored(title, on))},
+                        {EntityScene(text_colored(desc, on))}
+                      ]
+                    )
+                ]
             })
-            .with_children(|parent| {
-                for (i, (fx, fy, side)) in SLOTS.iter().enumerate() {
-                    let left = (fx - 0.5) * WINDOW.x;
-                    let top = (fy - 0.5) * WINDOW.y;
-                    parent
-                        .spawn(Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(left),
-                            top: Val::Px(top),
-                            ..default()
-                        })
-                        .with_children(|parent| {
-                            parent.spawn((Node::default(),)).with_children(|parent| {
-                                parent
-                                    .spawn((Node::default(), tooltip(open == Some(i))))
-                                    .with_children(|parent| {
-                                        parent.spawn(button_styled(
-                                            button_intent::PRIMARY,
-                                            ButtonSize::Md,
-                                            "Hover me",
-                                        ));
-                                        parent
-                                            .spawn(tooltip_content(*side, Align::Center, 8.0))
-                                            .with_children(|parent| {
-                                                parent
-                                                    .spawn((Node {
-                                                        width: Val::Px(220.0),
-                                                        padding: UiRect::all(Val::Px(12.0)),
-                                                        ..default()
-                                                    },))
-                                                    .with_children(|parent| {
-                                                        parent.spawn(text(FLIP_NOTE));
-                                                    });
-                                            });
-                                    });
-                            });
-                        });
-                }
-            });
-    });
+        })
+        .collect())
 }
 
-fn popover_scene(scene: &mut EntityCommands) {
-    const SLOTS: [(f32, f32, Side); 5] = [
-        (0.5, 0.02, Side::Top),
-        (0.94, 0.5, Side::Right),
-        (0.5, 0.95, Side::Bottom),
-        (0.03, 0.5, Side::Left),
-        (0.5, 0.5, Side::Bottom),
-    ];
-    const FLIP_NOTE: &str = "This floating panel flips to the opposite side when its preferred side would overflow the viewport.";
-
-    let open: Option<usize> = None;
-
-    scene.with_children(|parent| {
-        parent
-            .spawn(Node {
-                position_type: PositionType::Relative,
-                ..default()
+// Builds the five-position floating-overlay demo grid; `make` produces the anchored content per slot.
+fn floating(make: impl Fn(Side) -> Box<dyn Scene>) -> Box<dyn Scene> {
+    let slots: Vec<Box<dyn Scene>> = SLOTS
+        .iter()
+        .map(|&(fx, fy, side)| {
+            let left = (fx - 0.5) * WINDOW.x;
+            let top = (fy - 0.5) * WINDOW.y;
+            boxed(bsn! {
+                Node { position_type: PositionType::Absolute, left: Val::Px({left}), top: Val::Px({top}) }
+                Children [ ( Node Children [ {EntityScene(make(side))} ] ) ]
             })
-            .with_children(|parent| {
-                for (i, (fx, fy, side)) in SLOTS.iter().enumerate() {
-                    let left = (fx - 0.5) * WINDOW.x;
-                    let top = (fy - 0.5) * WINDOW.y;
-                    parent
-                        .spawn(Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(left),
-                            top: Val::Px(top),
-                            ..default()
-                        })
-                        .with_children(|parent| {
-                            parent.spawn((Node::default(),)).with_children(|parent| {
-                                parent
-                                    .spawn((Node::default(), popover(open == Some(i))))
-                                    .with_children(|parent| {
-                                        parent.spawn(popover_trigger()).with_children(|parent| {
-                                            parent.spawn(button("Open"));
-                                        });
-                                        parent
-                                            .spawn(popover_content(*side, Align::Center, 8.0))
-                                            .with_children(|parent| {
-                                                parent
-                                                    .spawn((Node {
-                                                        width: Val::Px(220.0),
-                                                        flex_direction: FlexDirection::Column,
-                                                        row_gap: Val::Px(8.0),
-                                                        padding: UiRect::all(Val::Px(12.0)),
-                                                        ..default()
-                                                    },))
-                                                    .with_children(|parent| {
-                                                        parent.spawn(text("Dimensions"));
-                                                        parent.spawn(text_colored(
-                                                            FLIP_NOTE,
-                                                            theme().surface_canvas.on,
-                                                        ));
-                                                    });
-                                            });
-                                    });
-                            });
-                        });
-                }
-            });
-    });
+        })
+        .collect();
+    boxed(bsn! {
+        Node { position_type: PositionType::Relative }
+        Children [ {slots} ]
+    })
 }
 
-fn tooltip_card_scene(scene: &mut EntityCommands) {
-    const SLOTS: [(f32, f32, Side); 5] = [
-        (0.5, 0.02, Side::Top),
-        (0.94, 0.5, Side::Right),
-        (0.5, 0.95, Side::Bottom),
-        (0.03, 0.5, Side::Left),
-        (0.5, 0.5, Side::Bottom),
-    ];
-    const FLIP_NOTE: &str = "This floating panel flips to the opposite side when its preferred side would overflow the viewport.";
-
-    let open: Option<usize> = None;
-
-    scene.with_children(|parent| {
-        parent
-            .spawn(Node {
-                position_type: PositionType::Relative,
-                ..default()
-            })
-            .with_children(|parent| {
-                for (i, (fx, fy, side)) in SLOTS.iter().enumerate() {
-                    let left = (fx - 0.5) * WINDOW.x;
-                    let top = (fy - 0.5) * WINDOW.y;
-                    parent
-                        .spawn(Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(left),
-                            top: Val::Px(top),
-                            ..default()
-                        })
-                        .with_children(|parent| {
-                            parent.spawn((Node::default(),)).with_children(|parent| {
-                                parent
-                                    .spawn((Node::default(), tooltip(open == Some(i))))
-                                    .with_children(|parent| {
-                                        parent.spawn(button_styled(
-                                            button_intent::PRIMARY,
-                                            ButtonSize::Md,
-                                            "Hover me",
-                                        ));
-                                        parent
-                                            .spawn(tooltip_content(*side, Align::Center, 8.0))
-                                            .with_children(|parent| {
-                                                parent
-                                                    .spawn(card(CardOpts {
-                                                        floating: true,
-                                                        ..default()
-                                                    }))
-                                                    .with_children(|parent| {
-                                                        parent
-                                                            .spawn((Node {
-                                                                width: Val::Px(220.0),
-                                                                padding: UiRect::all(Val::Px(12.0)),
-                                                                ..default()
-                                                            },))
-                                                            .with_children(|parent| {
-                                                                parent.spawn(text(FLIP_NOTE));
-                                                            });
-                                                    });
-                                            });
-                                    });
-                            });
-                        });
-                }
-            });
-    });
+fn tooltip_overlay(side: Side, panel: Box<dyn Scene>) -> Box<dyn Scene> {
+    boxed(bsn! {
+        {tooltip(false)}
+        Children [
+            {EntityScene(button_styled(button_intent::PRIMARY, ButtonSize::Md, "Hover me"))},
+            ( {tooltip_content(side, Align::Center, 8.0)} Children [ {EntityScene(panel)} ] )
+        ]
+    })
 }
 
-fn popover_card_scene(scene: &mut EntityCommands) {
-    const SLOTS: [(f32, f32, Side); 5] = [
-        (0.5, 0.02, Side::Top),
-        (0.94, 0.5, Side::Right),
-        (0.5, 0.95, Side::Bottom),
-        (0.03, 0.5, Side::Left),
-        (0.5, 0.5, Side::Bottom),
-    ];
-    const FLIP_NOTE: &str = "This floating panel flips to the opposite side when its preferred side would overflow the viewport.";
-
-    let open: Option<usize> = None;
-
-    scene.with_children(|parent| {
-        parent
-            .spawn(Node {
-                position_type: PositionType::Relative,
-                ..default()
-            })
-            .with_children(|parent| {
-                for (i, (fx, fy, side)) in SLOTS.iter().enumerate() {
-                    let left = (fx - 0.5) * WINDOW.x;
-                    let top = (fy - 0.5) * WINDOW.y;
-                    parent
-                        .spawn(Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(left),
-                            top: Val::Px(top),
-                            ..default()
-                        })
-                        .with_children(|parent| {
-                            parent.spawn((Node::default(),)).with_children(|parent| {
-                                parent
-                                    .spawn((Node::default(), popover(open == Some(i))))
-                                    .with_children(|parent| {
-                                        parent.spawn(popover_trigger()).with_children(|parent| {
-                                            parent.spawn(button("Open"));
-                                        });
-                                        parent
-                                            .spawn(popover_content(*side, Align::Center, 8.0))
-                                            .with_children(|parent| {
-                                                parent
-                                                    .spawn(card(CardOpts {
-                                                        floating: true,
-                                                        ..default()
-                                                    }))
-                                                    .with_children(|parent| {
-                                                        parent
-                                                            .spawn((Node {
-                                                                width: Val::Px(220.0),
-                                                                flex_direction:
-                                                                    FlexDirection::Column,
-                                                                row_gap: Val::Px(8.0),
-                                                                padding: UiRect::all(Val::Px(12.0)),
-                                                                ..default()
-                                                            },))
-                                                            .with_children(|parent| {
-                                                                parent.spawn(text("Dimensions"));
-                                                                parent.spawn(text_colored(
-                                                                    FLIP_NOTE,
-                                                                    theme().surface_canvas.on,
-                                                                ));
-                                                            });
-                                                    });
-                                            });
-                                    });
-                            });
-                        });
-                }
-            });
-    });
+fn popover_overlay(side: Side, panel: Box<dyn Scene>) -> Box<dyn Scene> {
+    boxed(bsn! {
+        {popover(false)}
+        Children [
+            ( {popover_trigger()} Children [ {EntityScene(button("Open"))} ] ),
+            ( {popover_content(side, Align::Center, 8.0)} Children [ {EntityScene(panel)} ] )
+        ]
+    })
 }
 
-fn toasts_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent.spawn(button("Show toast")).observe(show_toast);
-        parent.spawn((ToasterEntity, toaster(SonnerPosition::BottomRight)));
-    });
+fn note_panel() -> Box<dyn Scene> {
+    boxed(bsn! {
+        Node { width: Val::Px(220.0), padding: {UiRect::all(Val::Px(12.0))} }
+        Children [ {EntityScene(text(FLIP_NOTE))} ]
+    })
 }
 
-fn scroll_area_scene(scene: &mut EntityCommands) {
-    scene.with_children(|parent| {
-        parent
-            .spawn((Node {
-                width: Val::Px(320.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                ..default()
-            },))
-            .with_children(|parent| {
-                parent
-                    .spawn((Node {
-                        width: Val::Px(300.0),
-                        height: Val::Px(220.0),
-                        ..default()
-                    },))
-                    .with_children(|parent| {
-                        parent.spawn(scroll_area()).with_children(|parent| {
-                            parent.spawn(scroll_viewport()).with_children(|parent| {
-                                parent
-                                    .spawn((Node {
-                                        flex_direction: FlexDirection::Column,
-                                        row_gap: Val::Px(10.0),
-                                        width: Val::Percent(100.0),
-                                        padding: UiRect::all(Val::Px(8.0)),
-                                        ..default()
-                                    },))
-                                    .with_children(|parent| {
-                                        for n in 1..=16 {
-                                            parent.spawn(text_colored(
-                                                format!("Item {n}"),
-                                                theme().surface_canvas.on,
-                                            ));
-                                        }
-                                    });
-                            });
-                            parent.spawn(scroll_bar()).with_children(|parent| {
-                                parent.spawn(scroll_thumb());
-                            });
-                        });
-                    });
-            });
-    });
+fn dimensions_panel() -> Box<dyn Scene> {
+    boxed(bsn! {
+        Node { width: Val::Px(220.0), flex_direction: FlexDirection::Column, row_gap: Val::Px(8.0), padding: {UiRect::all(Val::Px(12.0))} }
+        Children [
+            {EntityScene(text("Dimensions"))},
+            {EntityScene(text_colored(FLIP_NOTE, theme().surface_canvas.on))}
+        ]
+    })
+}
+
+fn in_card(panel: Box<dyn Scene>) -> Box<dyn Scene> {
+    boxed(bsn! {
+        {card(CardOpts { floating: true, ..default() })}
+        Children [ {EntityScene(panel)} ]
+    })
+}
+
+fn tooltip_scene() -> Box<dyn Scene> {
+    floating(|side| tooltip_overlay(side, note_panel()))
+}
+
+fn popover_scene() -> Box<dyn Scene> {
+    floating(|side| popover_overlay(side, dimensions_panel()))
+}
+
+fn tooltip_card_scene() -> Box<dyn Scene> {
+    floating(|side| tooltip_overlay(side, in_card(note_panel())))
+}
+
+fn popover_card_scene() -> Box<dyn Scene> {
+    floating(|side| popover_overlay(side, in_card(dimensions_panel())))
+}
+
+fn toasts_scene() -> Box<dyn Scene> {
+    // Fill the scene area so the toaster's absolute bottom-right anchors to the screen, not to a
+    // content-sized box.
+    boxed(bsn! {
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+        }
+        Children [
+            ( {button("Show toast")} on(show_toast) ),
+            ( {toaster(SonnerPosition::BottomRight)} ToasterEntity )
+        ]
+    })
+}
+
+fn scroll_area_scene() -> Box<dyn Scene> {
+    let items: Vec<Box<dyn Scene>> = (1..=16)
+        .map(|n| boxed(text_colored(format!("Item {n}"), theme().surface_canvas.on)))
+        .collect();
+    col(
+        320.0,
+        vec![boxed(bsn! {
+            Node { width: Val::Px(300.0), height: Val::Px(220.0) }
+            Children [
+                ( {scroll_area()}
+                  Children [
+                    ( {scroll_viewport()}
+                      Children [
+                        ( Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(10.0), width: Val::Percent(100.0), padding: {UiRect::all(Val::Px(8.0))} }
+                          Children [ {items} ]
+                        )
+                      ]
+                    ),
+                    ( {scroll_bar()} Children [ {EntityScene(scroll_thumb())} ] )
+                  ]
+                )
+            ]
+        })],
+    )
 }

@@ -3,6 +3,7 @@ use std::time::Duration;
 use bevy_app::{App, Plugin, PostUpdate};
 use bevy_color::{Color, Mix};
 use bevy_ecs::prelude::*;
+use bevy_math::cubic_splines::CubicSegment;
 use bevy_math::{Rot2, Vec2};
 use bevy_text::TextColor;
 use bevy_time::Time;
@@ -35,22 +36,7 @@ impl Easing {
 
     fn eval(self, t: f32) -> f32 {
         let [x1, y1, x2, y2] = self.control();
-        let bezier = |a: f32, b: f32, s: f32| {
-            let u = 1.0 - s;
-            3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s
-        };
-        let mut s = t;
-        for _ in 0..6 {
-            let x = bezier(x1, x2, s) - t;
-            let dx = 3.0 * (1.0 - s) * (1.0 - s) * x1
-                + 6.0 * (1.0 - s) * s * (x2 - x1)
-                + 3.0 * s * s * (1.0 - x2);
-            if dx.abs() < 1e-5 {
-                break;
-            }
-            s = (s - x / dx).clamp(0.0, 1.0);
-        }
-        bezier(y1, y2, s)
+        CubicSegment::new_bezier_easing([x1, y1], [x2, y2]).ease(t)
     }
 }
 
@@ -83,6 +69,12 @@ pub struct Transform2d {
     pub translation: Vec2,
     pub scale: Vec2,
     pub rotation: f32,
+}
+
+impl Default for Transform2d {
+    fn default() -> Transform2d {
+        Transform2d::IDENTITY
+    }
 }
 
 impl Transform2d {
@@ -156,7 +148,7 @@ impl<T: Copy + PartialEq> Tween<T> {
     }
 }
 
-#[derive(Component, Default)]
+#[derive(Component, Default, Clone)]
 pub struct Motion {
     background: Option<Tween<Color>>,
     border: Option<Tween<Color>>,

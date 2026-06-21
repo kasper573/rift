@@ -15,26 +15,25 @@ impl Plugin for FpsPlugin {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct FpsHud;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 struct FpsText;
 
 fn spawn(mut commands: Commands) {
-    commands.spawn((
-        FpsHud,
+    commands.spawn_scene(bsn! {
+        FpsHud
         Node {
             position_type: PositionType::Absolute,
             left: Val::Px(8.0),
             bottom: Val::Px(8.0),
-            ..default()
-        },
-        BackgroundColor(Color::BLACK),
-        GlobalZIndex(100),
-        Pickable::IGNORE,
-        children![(FpsText, text_colored("-- fps", Color::WHITE))],
-    ));
+        }
+        BackgroundColor({Color::BLACK})
+        GlobalZIndex({100})
+        Pickable { should_block_lower: false, is_hoverable: false }
+        Children [ ( {text_colored("-- fps", Color::WHITE)} FpsText ) ]
+    });
 }
 
 fn readout(diagnostics: Res<DiagnosticsStore>, mut texts: Query<&mut Text, With<FpsText>>) {

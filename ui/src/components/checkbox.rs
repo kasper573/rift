@@ -1,6 +1,6 @@
-use bevy_ecs::bundle::Bundle;
+use bevy_scene::{Scene, bsn, on, template_value};
 use bevy_ui::{AlignItems, BorderRadius, Checkable, JustifyContent, Node, UiRect, Val};
-use bevy_ui_widgets::{Checkbox, checkbox_self_update, observe};
+use bevy_ui_widgets::{Checkbox, checkbox_self_update};
 
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::{Gated, InheritChecked, StartChecked};
@@ -16,38 +16,32 @@ pub enum Check {
     Indeterminate,
 }
 
-pub fn checkbox(checked: Check) -> impl Bundle {
-    (
-        Node::default(),
-        Checkbox,
-        Checkable,
-        observe(checkbox_self_update),
-        StartChecked(checked != Check::Off),
-        box_style(),
-    )
+pub fn checkbox(checked: Check) -> impl Scene {
+    bsn! {
+        Checkbox
+        Checkable
+        on(checkbox_self_update)
+        StartChecked({checked != Check::Off})
+        template_value(box_style())
+    }
 }
 
 // A checkmark drawn as a right+bottom border corner rotated 45° (the design fonts have no ✓ glyph).
 // Painted in the face color so it reads on the filled box.
-pub fn checkbox_indicator() -> impl Bundle {
-    (
+pub fn checkbox_indicator() -> impl Scene {
+    bsn! {
         Node {
             width: Val::Px(6.0),
             height: Val::Px(11.0),
-            border: UiRect {
-                right: Val::Px(2.0),
-                bottom: Val::Px(2.0),
-                ..UiRect::ZERO
-            },
-            ..Node::default()
-        },
-        InheritChecked,
-        Gated,
-        Style::new()
+            border: { UiRect { right: Val::Px(2.0), bottom: Val::Px(2.0), ..UiRect::ZERO } },
+        }
+        InheritChecked
+        Gated
+        template_value(Style::new()
             .border_color(theme().primary.on)
             .rotate(std::f32::consts::FRAC_PI_4)
-            .translate(bevy_math::Vec2::new(0.0, -1.0)),
-    )
+            .translate(bevy_math::Vec2::new(0.0, -1.0)))
+    }
 }
 
 // Filled box drops its border: a bordered rounded box leaks surface at the corners (bevy quirk).

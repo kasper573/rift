@@ -7,6 +7,8 @@ pub mod tokens;
 use bevy_app::{App, Plugin, PostUpdate, Startup, Update};
 use bevy_asset::{AssetServer, Handle};
 use bevy_ecs::prelude::*;
+use bevy_ecs::template::{FnTemplate, TemplateContext};
+use bevy_scene::{Scene, ScenePlugin};
 use bevy_text::Font;
 use bevy_ui::UiSystems;
 use bevy_ui_widgets::{ButtonPlugin, CheckboxPlugin, ScrollAreaPlugin};
@@ -47,6 +49,11 @@ impl Plugin for UiPlugin {
         }
         if !app.is_plugin_added::<ScrollAreaPlugin>() {
             app.add_plugins(ScrollAreaPlugin);
+        }
+        // bsn!/spawn_scene needs ScenePlugin (asset-backed scene patches). DefaultPlugins already
+        // registers it when the umbrella's `bevy_scene` feature is on; add it otherwise.
+        if !app.is_plugin_added::<ScenePlugin>() {
+            app.add_plugins(ScenePlugin);
         }
         app.init_resource::<overlay::TooltipClock>()
             .add_systems(Startup, (load_fonts, overlay::spawn_overlay_host))
@@ -124,6 +131,13 @@ pub enum Orientation {
 
 #[derive(Resource)]
 struct DesignFonts(#[allow(dead_code)] Vec<Handle<Font>>);
+
+/// Inserts an already-built [`Component`] value into a `bsn!` scene. Our component helpers build
+/// whole component values; `bsn!`'s `template_value` only accepts plain `Default + Clone` templates,
+/// so `FromTemplate` components (e.g. `TextFont`) reach a scene through this instead.
+pub(crate) fn component<C: Component + Clone>(value: C) -> impl Scene {
+    FnTemplate(move |_: &mut TemplateContext| Ok(value.clone()))
+}
 
 fn load_fonts(assets: Option<Res<AssetServer>>, mut commands: Commands) {
     let Some(assets) = assets else {

@@ -4,9 +4,11 @@ use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
 use bevy_picking::prelude::{Click, Out, Over, Pointer};
+use bevy_scene::{Scene, bsn, template_value};
 use bevy_time::Time;
 use bevy_ui::{BorderRadius, FlexDirection, Node, PositionType, UiRect, UiTransform, Val};
 
+use crate::component;
 use crate::motion::transition::STANDARD_ENTER;
 use crate::motion::{Motion, Transform2d};
 use crate::state::ancestor_with;
@@ -42,60 +44,55 @@ impl SonnerPosition {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Clone, Default)]
 #[require(Node)]
 pub struct Toaster {
     pub position: SonnerPosition,
     pub expanded: bool,
 }
 
-#[derive(Component)]
+#[derive(Component, Clone, Default)]
 #[require(Node)]
 pub struct Toast {
     pub leaving: bool,
     age: Duration,
 }
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct ToastLeaving(Duration);
 
-#[derive(Component)]
+#[derive(Component, Clone, Default)]
 #[require(Node)]
 pub struct ToastClose;
 
-pub fn toaster(position: SonnerPosition) -> impl Bundle {
-    (
+pub fn toaster(position: SonnerPosition) -> impl Scene {
+    bsn! {
         Node {
             position_type: PositionType::Absolute,
             bottom: Val::Px(EDGE),
             right: Val::Px(EDGE),
             width: Val::Px(CARD_WIDTH),
             height: Val::Px(STACK_HEIGHT),
-            ..Node::default()
-        },
-        Toaster {
-            position,
-            expanded: false,
-        },
-    )
+        }
+        Toaster { position: {position} }
+    }
 }
 
-pub fn toast() -> impl Bundle {
-    (
-        card_node(),
-        Toast {
-            leaving: false,
-            age: Duration::ZERO,
-        },
-        Motion::default(),
-        Opacity::new(0.0),
-        UiTransform::default(),
-        card_style(),
-    )
+pub fn toast() -> impl Scene {
+    bsn! {
+        component(card_node())
+        Toast
+        Motion
+        component(Opacity::new(0.0))
+        UiTransform
+        template_value(card_style())
+    }
 }
 
-pub fn sonner_close() -> impl Bundle {
-    (Node::default(), ToastClose)
+pub fn sonner_close() -> impl Scene {
+    bsn! {
+        ToastClose
+    }
 }
 
 pub(crate) fn on_close(

@@ -1,4 +1,4 @@
-use bevy_ecs::bundle::Bundle;
+use bevy_scene::{Scene, bsn, template_value};
 use bevy_ui::{
     AlignItems, BorderRadius, Checkable, FlexDirection, JustifyContent, Node, UiRect, Val,
 };
@@ -10,56 +10,55 @@ use crate::style::{StatefulPaint, Style};
 use crate::theme::theme;
 use crate::tokens::{radius, size, spacing};
 
-pub fn radio_group(value: Option<String>) -> impl Bundle {
-    (
-        Node::default(),
+pub fn radio_group(value: Option<String>) -> impl Scene {
+    bsn! {
         SelectGroup {
             exclusive: true,
             toggleable: false,
-            initial: value.into_iter().collect(),
-        },
-        Style::new().node(|node| {
+            initial: {value.into_iter().collect::<Vec<_>>()},
+        }
+        template_value(Style::new().node(|node| {
             node.flex_direction = FlexDirection::Column;
             node.width = Val::Percent(100.0);
             node.row_gap = Val::Px(spacing::L);
-        }),
-    )
+        }))
+    }
 }
 
-pub fn radio_item(value: impl Into<String>) -> impl Bundle {
-    (
-        Node::default(),
-        Button,
-        Checkable,
-        SelectItem {
-            value: value.into(),
-        },
-        SelectTrigger,
-        Style::new().node(|node| {
+pub fn radio_item(value: impl Into<String>) -> impl Scene {
+    let value_str = value.into();
+    bsn! {
+        Button
+        Checkable
+        SelectItem { value: {value_str} }
+        SelectTrigger
+        template_value(Style::new().node(|node| {
             node.flex_direction = FlexDirection::Row;
             node.align_items = AlignItems::Center;
             node.column_gap = Val::Px(spacing::M);
-        }),
-    )
+        }))
+    }
 }
 
-pub fn radio_circle() -> impl Bundle {
-    (Node::default(), InheritChecked, circle_style())
+pub fn radio_circle() -> impl Scene {
+    bsn! {
+        InheritChecked
+        template_value(circle_style())
+    }
 }
 
 // Selected dot, painted in the face color (the design fonts have no ● glyph).
-pub fn radio_indicator() -> impl Bundle {
-    (
+pub fn radio_indicator() -> impl Scene {
+    bsn! {
         Node {
             width: Val::Px(10.0),
             height: Val::Px(10.0),
-            border_radius: BorderRadius::all(Val::Px(radius::PILL)),
-            ..Node::default()
-        },
-        InheritChecked,
-        Gated,
-        Style::new().background(theme().primary.on),
-    )
+            border_radius: { BorderRadius::all(Val::Px(radius::PILL)) },
+        }
+        InheritChecked
+        Gated
+        template_value(Style::new().background(theme().primary.on))
+    }
 }
 
 // Filled circle drops its border: a bordered rounded box leaks surface at the corners (bevy quirk).

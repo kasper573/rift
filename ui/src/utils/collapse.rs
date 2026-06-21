@@ -2,10 +2,16 @@ use bevy_ecs::prelude::*;
 use bevy_time::Time;
 use bevy_ui::{Checked, ComputedNode, Node, Val};
 
-#[derive(Component, Default)]
+#[derive(Component, Clone)]
 #[require(Node)]
 pub(crate) struct Collapse {
     pub(crate) height: f32,
+}
+
+impl Default for Collapse {
+    fn default() -> Self {
+        Collapse { height: 0.0 }
+    }
 }
 
 pub(crate) fn advance_collapse(

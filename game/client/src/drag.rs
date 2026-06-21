@@ -11,13 +11,13 @@ pub struct Geom {
     pub size: Vec2,
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 pub struct DragRoot;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 pub struct DragHandle;
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 pub struct ResizeHandle {
     pub min: Vec2,
 }

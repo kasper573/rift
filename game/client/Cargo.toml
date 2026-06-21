@@ -22,7 +22,7 @@ envy = { workspace = true }
 # Bevy's `2d` + `ui` feature bundles, minus `bevy_gilrs` (drops the `libudev` build dependency —
 # no gamepad in a mouse/keyboard MMO) and `wayland` (drops the `libwayland-dev` build dependency;
 # `x11` is dlopen-only and runs on X11 and Wayland-via-XWayland).
-bevy = { version = "0.19.0-rc.3", default-features = false, features = [
+bevy = { workspace = true, features = [
     "async_executor",
     "bevy_asset",
     "bevy_log",
@@ -62,7 +62,7 @@ bevy = { version = "0.19.0-rc.3", default-features = false, features = [
     "sprite_picking",
     "ui_picking",
 ] }
-bevy_picking = { version = "0.19.0-rc.3", default-features = false }
+bevy_picking = { workspace = true }
 bevy_replicon = { workspace = true, features = ["client"] }
 bevy_replicon_renet = { workspace = true, features = ["client", "renet_netcode"] }
 bevy_kira_audio = { version = "0.26.0-rc.1", features = ["wav"] }

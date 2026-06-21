@@ -5,9 +5,11 @@ use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
 use bevy_picking::prelude::{Click, Out, Over, Pickable, Pointer, Press};
+use bevy_scene::{Scene, bsn};
 use bevy_time::Time;
 use bevy_ui::{Display, GlobalZIndex, Node, PositionType, UiTransform, Val};
 
+use crate::component;
 use crate::motion::transition::{EMPHASIZED_ENTER, EMPHASIZED_EXIT};
 use crate::motion::{Motion, Transform2d};
 use crate::place::{Placed, Placement};
@@ -28,11 +30,11 @@ pub(crate) const POPPER_EXIT: Transform2d = Transform2d {
     rotation: 0.0,
 };
 
-#[derive(Component, Clone, Copy)]
+#[derive(Component, Clone, Copy, Default)]
 #[require(Node)]
 pub struct Open(pub bool);
 
-#[derive(Component)]
+#[derive(Component, Default, Clone, Copy)]
 #[require(Node)]
 pub struct Dismissable;
 
@@ -44,34 +46,29 @@ pub enum OverlayAction {
     Toggle,
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 #[require(Node)]
 pub struct OverlayContent {
     pub enter: Transform2d,
     pub exit: Transform2d,
-    closing_at: Option<Duration>,
-    was_open: bool,
+    pub(crate) closing_at: Option<Duration>,
+    pub(crate) was_open: bool,
 }
 
 impl OverlayContent {
-    pub fn animated(enter: Transform2d, exit: Transform2d) -> impl Bundle {
-        (
-            OverlayContent {
-                enter,
-                exit,
-                closing_at: None,
-                was_open: false,
-            },
-            Motion::default(),
-            Opacity::new(0.0),
-            UiTransform::default(),
-        )
+    pub fn animated(enter: Transform2d, exit: Transform2d) -> impl Scene {
+        bsn! {
+            component(OverlayContent { enter, exit, closing_at: None, was_open: false })
+            Motion
+            component(Opacity::new(0.0))
+            UiTransform
+        }
     }
 }
 
 // Full-screen modal layers (dialog scrim + panel) re-parent here so they fill the viewport and paint
 // above the rest of the UI, independent of where the component sits in the tree.
-#[derive(Component)]
+#[derive(Component, Default, Clone, Copy)]
 #[require(Node)]
 pub struct Portal;
 
@@ -305,7 +302,7 @@ pub(crate) fn advance_overlays(
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 #[require(Node)]
 pub struct TooltipTimer {
     pub delay: Duration,

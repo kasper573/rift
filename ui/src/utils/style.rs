@@ -88,7 +88,11 @@ impl Channel {
     }
 }
 
+// Every styled element is a UI node: the builder's `.node(..)` patches and the color channels it
+// writes only make sense on an entity with a `Node`, so guarantee one rather than relying on every
+// caller to pair `Node` with `Style`.
 #[derive(Component, Clone, Default)]
+#[require(Node)]
 pub struct Style {
     ops: Vec<Op>,
     background: Option<Color>,

@@ -2,6 +2,7 @@ use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::prelude::*;
 use bevy_input::mouse::MouseScrollUnit;
 use bevy_picking::prelude::{Drag, Pointer, Scroll};
+use bevy_scene::{Scene, bsn, template_value};
 use bevy_time::Time;
 use bevy_ui::{
     BorderRadius, ComputedNode, FlexDirection, Node, Overflow, PositionType, ScrollPosition,
@@ -18,67 +19,63 @@ use crate::tokens::radius;
 // Exponential approach rate: higher snaps faster. Frame-rate independent via `dt`.
 const SCROLL_SMOOTHING: f32 = 16.0;
 
-#[derive(Component)]
+#[derive(Component, Clone, Default)]
 pub(crate) struct ScrollRoot;
-#[derive(Component)]
+#[derive(Component, Clone, Default)]
 pub(crate) struct ScrollViewport;
-#[derive(Component)]
+#[derive(Component, Clone, Default)]
 pub(crate) struct ScrollBar;
-#[derive(Component)]
+#[derive(Component, Clone, Default)]
 pub(crate) struct ScrollThumbMark;
 
 // The scroll offset the viewport is heading toward; `ScrollPosition` eases to it so wheel and drag
 // scrolling animate instead of snapping.
-#[derive(Component, Default)]
+#[derive(Component, Default, Clone)]
 pub(crate) struct ScrollTarget(f32);
 
-pub fn scroll_area() -> impl Bundle {
-    (
-        Node::default(),
-        ScrollRoot,
-        Style::new().node(|node| {
+pub fn scroll_area() -> impl Scene {
+    bsn! {
+        ScrollRoot
+        template_value(Style::new().node(|node| {
             node.flex_direction = FlexDirection::Row;
             node.overflow = Overflow::clip();
             node.position_type = PositionType::Relative;
-        }),
-    )
+        }))
+    }
 }
 
-pub fn scroll_viewport() -> impl Bundle {
-    (
-        Node::default(),
-        ScrollViewport,
-        ScrollPosition::default(),
-        ScrollTarget::default(),
-        Style::new().node(|node| {
+pub fn scroll_viewport() -> impl Scene {
+    bsn! {
+        ScrollViewport
+        ScrollPosition::default()
+        ScrollTarget::default()
+        template_value(Style::new().node(|node| {
             node.overflow = Overflow::scroll_y();
             node.flex_grow = 1.0;
             node.height = Val::Percent(100.0);
             node.flex_direction = FlexDirection::Column;
-        }),
-    )
+        }))
+    }
 }
 
-pub fn scroll_bar() -> impl Bundle {
-    (
-        Node::default(),
-        ScrollBar,
-        Style::new()
+pub fn scroll_bar() -> impl Scene {
+    bsn! {
+        ScrollBar
+        template_value(Style::new()
             .background(theme().surface_canvas.hover)
             .node(|node| {
                 node.width = Val::Px(10.0);
                 node.height = Val::Percent(100.0);
                 node.position_type = PositionType::Relative;
                 node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
-            }),
-    )
+            }))
+    }
 }
 
-pub fn scroll_thumb() -> impl Bundle {
-    (
-        Node::default(),
-        ScrollThumbMark,
-        Style::new()
+pub fn scroll_thumb() -> impl Scene {
+    bsn! {
+        ScrollThumbMark
+        template_value(Style::new()
             .background(
                 StatefulPaint::new(theme().surface_canvas.border)
                     .hover(theme().surface_canvas.on)
@@ -90,12 +87,12 @@ pub fn scroll_thumb() -> impl Bundle {
                 node.left = Val::Px(2.0);
                 node.width = Val::Px(6.0);
                 node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
-            }),
-    )
+            }))
+    }
 }
 
-pub fn scroll_corner() -> impl Bundle {
-    Node::default()
+pub fn scroll_corner() -> impl Scene {
+    bsn! { Node }
 }
 
 // Wheel/trackpad over a viewport nudges its target; `animate_scroll` carries the real offset there.

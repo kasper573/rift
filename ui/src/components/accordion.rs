@@ -1,63 +1,61 @@
 use std::collections::HashSet;
 
-use bevy_ecs::bundle::Bundle;
+use bevy_scene::{Scene, bsn, template_value};
 use bevy_ui::{
     AlignItems, BorderRadius, FlexDirection, JustifyContent, Node, Overflow, UiRect, Val,
 };
 use bevy_ui_widgets::Button;
 
 use crate::collapse::Collapse;
+use crate::component;
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::{SelectGroup, SelectItem, SelectTrigger};
 use crate::style::{StatefulPaint, Style};
 use crate::theme::theme;
 use crate::tokens::{radius, spacing};
 
-pub fn accordion(value: HashSet<String>, multiple: bool) -> impl Bundle {
-    (
-        Node::default(),
+pub fn accordion(value: HashSet<String>, multiple: bool) -> impl Scene {
+    bsn! {
         SelectGroup {
-            exclusive: !multiple,
+            exclusive: {!multiple},
             toggleable: true,
-            initial: value.into_iter().collect(),
-        },
-        card_style(),
-        crate::surface::elevation(1),
-    )
+            initial: {value.into_iter().collect::<Vec<_>>()},
+        }
+        template_value(card_style())
+        component(crate::surface::elevation(1))
+    }
 }
 
-pub fn accordion_item() -> impl Bundle {
-    (
-        Node::default(),
-        Style::new()
+pub fn accordion_item() -> impl Scene {
+    bsn! {
+        template_value(Style::new()
             .border_color(theme().surface_canvas.border)
             .node(|node| {
                 node.flex_direction = FlexDirection::Column;
                 node.width = Val::Percent(100.0);
                 node.border = UiRect::bottom(Val::Px(1.0));
-            }),
-    )
+            }))
+    }
 }
 
-pub fn accordion_header() -> impl Bundle {
-    (
-        Node::default(),
-        Style::new().node(|node| {
+pub fn accordion_header() -> impl Scene {
+    bsn! {
+        template_value(Style::new().node(|node| {
             node.flex_direction = FlexDirection::Column;
             node.width = Val::Percent(100.0);
-        }),
-    )
+        }))
+    }
 }
 
-pub fn accordion_trigger(value: impl Into<String>) -> impl Bundle {
-    (
-        Node::default(),
-        Button,
+pub fn accordion_trigger(value: impl Into<String>) -> impl Scene {
+    let value_str = value.into();
+    bsn! {
+        Button
         SelectItem {
-            value: value.into(),
-        },
-        SelectTrigger,
-        Style::new()
+            value: value_str,
+        }
+        SelectTrigger
+        template_value(Style::new()
             .text_color(theme().surface_canvas.on)
             .background(
                 StatefulPaint::new(theme().surface_elevated.base)
@@ -70,28 +68,21 @@ pub fn accordion_trigger(value: impl Into<String>) -> impl Bundle {
                 node.justify_content = JustifyContent::SpaceBetween;
                 node.align_items = AlignItems::Center;
                 node.padding = UiRect::axes(Val::Px(spacing::XL), Val::Px(spacing::L));
-            }),
-    )
+            }))
+    }
 }
 
-pub fn accordion_content(value: impl Into<String>) -> impl Bundle {
-    (
-        Node {
-            overflow: Overflow::clip(),
-            width: Val::Percent(100.0),
-            ..Node::default()
-        },
-        SelectItem {
-            value: value.into(),
-        },
-        Collapse::default(),
-    )
+pub fn accordion_content(value: impl Into<String>) -> impl Scene {
+    bsn! {
+        Node { overflow: {Overflow::clip()}, width: Val::Percent(100.0) }
+        SelectItem { value: {value.into()} }
+        Collapse
+    }
 }
 
-pub fn accordion_body() -> impl Bundle {
-    (
-        Node::default(),
-        Style::new()
+pub fn accordion_body() -> impl Scene {
+    bsn! {
+        template_value(Style::new()
             .text_color(theme().surface_canvas.on)
             .node(|node| {
                 node.padding = UiRect::new(
@@ -100,8 +91,8 @@ pub fn accordion_body() -> impl Bundle {
                     Val::Px(0.0),
                     Val::Px(spacing::L),
                 );
-            }),
-    )
+            }))
+    }
 }
 
 fn card_style() -> Style {

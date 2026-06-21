@@ -1,6 +1,6 @@
-use bevy_ecs::bundle::Bundle;
 use bevy_picking::hover::Hovered;
-use bevy_ui::{BorderRadius, BoxShadow, FlexDirection, Node, Pressed, UiRect, Val};
+use bevy_scene::{Scene, bsn, template_value};
+use bevy_ui::{BorderRadius, BoxShadow, FlexDirection, Pressed, UiRect, Val};
 
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::Pressable;
@@ -58,7 +58,7 @@ pub struct CardOpts {
     pub compact: bool,
 }
 
-pub fn card(opts: CardOpts) -> impl Bundle {
+pub fn card(opts: CardOpts) -> impl Scene {
     let (floating, interactive) = (opts.floating, opts.interactive);
     let style = card_style(opts.intent, floating, interactive, opts.compact).op(move |entity| {
         let hovered =
@@ -72,7 +72,10 @@ pub fn card(opts: CardOpts) -> impl Bundle {
             }
         }
     });
-    (Node::default(), style, Pressable)
+    bsn! {
+        template_value(style)
+        Pressable
+    }
 }
 
 fn shadow(floating: bool, interactive: bool, hovered: bool) -> Option<BoxShadow> {

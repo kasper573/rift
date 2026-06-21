@@ -14,16 +14,17 @@ bevy_ui_widgets = { workspace = true }
 bevy_picking = { workspace = true }
 bevy_input = { workspace = true }
 bevy_asset = { workspace = true }
-bevy_camera = "0.19.0-rc.3"
+bevy_camera = { workspace = true }
 bevy_color = { workspace = true }
 bevy_text = { workspace = true }
 bevy_window = { workspace = true }
 bevy_math = { workspace = true }
 bevy_time = { workspace = true }
+bevy_scene = { workspace = true }
 bevy_opacity = { path = "../bevy_opacity" }
 # The `gallery` binary (a standalone showcase window) needs the full Bevy app — windowing, rendering,
 # winit — which the library half (built on the individual `bevy_*` crates above) does not.
-bevy = { version = "0.19.0-rc.3", default-features = false, features = [
+bevy = { workspace = true, features = [
     "std",
     "async_executor",
     "multi_threaded",

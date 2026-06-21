@@ -1,7 +1,7 @@
-use bevy_ecs::bundle::Bundle;
 use bevy_math::Vec2;
-use bevy_ui::{BorderRadius, Checkable, Node, PositionType, UiRect, Val};
-use bevy_ui_widgets::{Checkbox, checkbox_self_update, observe};
+use bevy_scene::{Scene, bsn, on, template_value};
+use bevy_ui::{BorderRadius, Checkable, PositionType, UiRect, Val};
+use bevy_ui_widgets::{Checkbox, checkbox_self_update};
 
 use crate::motion::transition::STANDARD_ENTER;
 use crate::motion::{Easing, Timing};
@@ -10,19 +10,21 @@ use crate::style::Style;
 use crate::theme::theme;
 use crate::tokens::{radius, size};
 
-pub fn switch(checked: bool) -> impl Bundle {
-    (
-        Node::default(),
-        Checkbox,
-        Checkable,
-        observe(checkbox_self_update),
-        StartChecked(checked),
-        track_style(),
-    )
+pub fn switch(checked: bool) -> impl Scene {
+    bsn! {
+        Checkbox
+        Checkable
+        on(checkbox_self_update)
+        StartChecked({checked})
+        template_value(track_style())
+    }
 }
 
-pub fn switch_thumb() -> impl Bundle {
-    (Node::default(), InheritChecked, thumb_style())
+pub fn switch_thumb() -> impl Scene {
+    bsn! {
+        InheritChecked
+        template_value(thumb_style())
+    }
 }
 
 fn track_style() -> Style {
