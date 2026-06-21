@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% if let Some(access_token) = access_token %}
+<canvas
+  id="glcanvas"
+  tabindex="0"
+  data-access-token="{{ access_token }}"
+  data-game-server-url="{{ game_server_url }}"
+  data-game-server-ws-url="{{ game_server_ws_url }}"
+></canvas>
+<script type="module">
+  import init, { run } from "/wasm/rift.js";
+  await init();
+  run();
+</script>
+{% else %}
+<div class="centered">
+  <h1>Play Rift</h1>
+  <form method="get" action="/auth/sign-in">
+    <input type="hidden" name="return" value="/play">
+    <button>Sign in to play</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

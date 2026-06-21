@@ -2,8 +2,6 @@ name: ci
 
 on:
   push:
-    # All branches, never tags: the release job pushes a 0.x tag with a PAT, which would otherwise
-    # re-trigger this workflow.
     branches: ['**']
   workflow_dispatch:
 
@@ -15,69 +13,34 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  INSTALLER_PREFIX: rift-installer-
-  ASSETS_ZIP: rift-assets.zip
-
 jobs:
-  # Runs on every push as the quality gate. On main it also builds the Linux release artifacts, so
-  # the workspace compiles once per push instead of once for the gate and again for the release.
-  linux:
+  # The quality gate on every push: lint, unit tests, and the browser e2e against the full stack.
+  gate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 45
     env:
       RUSTFLAGS: -C link-arg=-fuse-ld=mold
-      # The gate builds at opt-level 0 — far faster, and the gameplay e2e asserts on player position,
-      # not framerate, so it passes unoptimized. Shipped artifacts override this back to full opt.
+      # Build unoptimized: far faster, and the e2e asserts on what the game renders, not framerate.
+      # The deploy job rebuilds at full opt for the images it ships.
       CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
-      - name: Prewarm the stack infra in the background
-        # prewarm → boot → wait hand off through /tmp sentinels so the stack comes up during the
-        # compile below rather than after it. Each step signals its sentinel even on failure, so a
-        # stalled one can't make a waiter time out. prewarm builds only the infra images (no app
-        # binaries) so it starts now; the boot needs the built binaries so it waits for them.
-        run: nohup bash -c 'just prewarm; touch /tmp/prewarm.done' > /tmp/prewarm.log 2>&1 &
       - uses: ./.github/actions/setup
         with:
           deps: all
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          key: linux
+          key: gate
           save-if: ${{ github.ref_name == 'main' }}
-      - name: Build the stack binaries
-        run: just build
-      - name: Bring up the full stack in the background
+      - name: Lint and test
         run: |
-          nohup bash -c '
-            for _ in $(seq 1 180); do [ -f /tmp/prewarm.done ] && break; sleep 2; done
-            just stack-up && touch /tmp/stack.done
-          ' > /tmp/stack.log 2>&1 &
-      - name: Build the client and e2e test, then lint and test
-        run: |
-          just e2e-build
           just lint
           just test
-      - name: Wait for the full stack
-        run: |
-          for _ in $(seq 1 180); do [ -f /tmp/stack.done ] && break; sleep 2; done
-          tail -n 50 /tmp/stack.log || true
-          test -f /tmp/stack.done
-      - name: Trust the stack's certificate authority
-        # The OS store covers the client/server binaries; chrome reads its own NSS store, hence both.
-        run: |
-          just ca-cert /tmp/rift-root.crt
-          sudo install -m 644 /tmp/rift-root.crt /usr/local/share/ca-certificates/rift-root.crt
-          sudo update-ca-certificates
-          mkdir -p "$HOME/.pki/nssdb"
-          certutil -d sql:"$HOME"/.pki/nssdb -N --empty-password 2>/dev/null || true
-          certutil -d sql:"$HOME"/.pki/nssdb -A -t C,, -n rift-root -i /tmp/rift-root.crt
-      - name: E2E test
-        # `just e2e-run` is self-contained: it stands up its own virtual display and locks the
-        # sign-in to headless Chrome, so it behaves identically here and on a developer's machine.
-        run: just e2e-run
-      - name: Save E2E artifacts
+      - name: End-to-end test
+        # `just e2e` builds the binaries and the wasm bundle, brings the stack up (website serving the
+        # baked wasm), then drives headless Chrome through registration and gameplay.
+        run: just e2e
+      - name: Save e2e artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -93,146 +56,17 @@ jobs:
           name: stack-logs
           path: /tmp/stack.log
 
-      # main-only: package and upload the Linux release + stack artifacts from the warm target. The
-      # player downloads only the installer (binary + .env); it then fetches the client and the
-      # platform-independent assets, so the client archive is binary-only and assets ship once, here.
-      - name: Build and stage the Linux release artifacts
-        if: ${{ success() && github.ref == 'refs/heads/main' }}
-        env:
-          CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
-        run: |
-          just build-client
-          just build
-          pkg="rift-linux-x86_64"
-          inst="${INSTALLER_PREFIX}${pkg#rift-}"
-          mkdir -p "stage/$pkg" "stage/$inst" out assets-out
-          cp target/release/rift "stage/$pkg/rift"
-          cp target/release/rift-installer "stage/$inst/rift-installer"
-          just installer-env "${{ vars.RIFT_DOMAIN }}" rift > "stage/$inst/.env"
-          tar czf "out/$pkg.tar.gz"  -C "stage/$pkg"  .
-          tar czf "out/$inst.tar.gz" -C "stage/$inst" .
-          zip -r "assets-out/${ASSETS_ZIP}" assets
-      - name: Upload the Linux client and installer
-        if: ${{ success() && github.ref == 'refs/heads/main' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: client-linux
-          path: out/
-      - name: Upload the assets archive
-        if: ${{ success() && github.ref == 'refs/heads/main' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: assets-archive
-          path: assets-out/
-      - name: Upload the stack inputs for the deploy images
-        if: ${{ success() && github.ref == 'refs/heads/main' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: stack-linux
-          path: |
-            target/release/server
-            target/release/website
-            target/release/installer-backend
-            docker/keycloak/roles.conf
-
-  # main only, gated on a green linux so a red gate burns no (costly) macOS/Windows minutes.
-  windows-macos:
-    needs: linux
-    if: github.ref == 'refs/heads/main'
-    timeout-minutes: 60
-    strategy:
-      matrix:
-        include:
-          - { os: macos-latest, asset: rift-macos-aarch64 }
-          - { os: windows-latest, asset: rift-windows-x86_64 }
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: ./.github/actions/setup
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          key: release-${{ matrix.os }}
-      - name: Build the client and the installer
-        run: just build-client
-      - name: Package the client and the installer
-        shell: bash
-        run: |
-          ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
-          pkg="${{ matrix.asset }}"
-          inst="${INSTALLER_PREFIX}${pkg#rift-}"
-          mkdir -p "stage/$pkg" "stage/$inst" out
-          cp "target/release/rift$ext" "stage/$pkg/rift$ext"
-          cp "target/release/rift-installer$ext" "stage/$inst/rift-installer$ext"
-          just installer-env "${{ vars.RIFT_DOMAIN }}" "rift$ext" > "stage/$inst/.env"
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            (cd "stage/$pkg"  && 7z a -tzip "../../out/$pkg.zip"  . >/dev/null)
-            (cd "stage/$inst" && 7z a -tzip "../../out/$inst.zip" . >/dev/null)
-          else
-            tar czf "out/$pkg.tar.gz"  -C "stage/$pkg"  .
-            tar czf "out/$inst.tar.gz" -C "stage/$inst" .
-          fi
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: client-${{ matrix.os }}
-          path: out/
-
-  release:
-    needs: [linux, windows-macos]
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    outputs:
-      version: ${{ steps.publish.outputs.version }}
-      per_platform_artifact_links: ${{ steps.publish.outputs.per_platform_artifact_links }}
-      shared_artifact_links: ${{ steps.publish.outputs.shared_artifact_links }}
-      installer_links: ${{ steps.publish.outputs.installer_links }}
-    steps:
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          pattern: client-*
-          path: dist
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: assets-archive
-          path: dist-assets
-      - name: Publish the release and derive its download links
-        id: publish
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-        run: |
-          version="0.$(( ${{ github.run_number }} ))"
-          gh release create "$version" dist/client-*/rift-* "dist-assets/${ASSETS_ZIP}" \
-            --repo "${{ github.repository }}" \
-            --target "${{ github.sha }}" \
-            --title "$version" \
-            --notes "Automated release of ${{ github.sha }}."
-          assets=$(gh release view "$version" --repo "${{ github.repository }}" --json assets)
-          # per_platform is a JSON map keyed by {os}-{arch}; it crosses to the deploy job base64-encoded
-          # because JSON can't survive interpolation into a shell command.
-          per_platform=$(jq -c --arg z "$ASSETS_ZIP" --arg p "$INSTALLER_PREFIX" '
-            (.assets) as $a
-            | [$a[].name | select(startswith($p)) | ltrimstr($p) | sub("\\.(tar\\.gz|zip)$"; "")] as $platforms
-            | reduce $platforms[] as $plat ({};
-                .[$plat] = [$a[] | select(.name != $z and (.name | contains($plat))) | .url])
-          ' <<<"$assets")
-          {
-            echo "version=$version"
-            echo "per_platform_artifact_links=$(printf %s "$per_platform" | base64 -w0)"
-            echo "shared_artifact_links=$(jq -r --arg z "$ASSETS_ZIP" '[.assets[] | select(.name == $z) | .url] | join(",")' <<<"$assets")"
-            echo "installer_links=$(jq -r --arg p "$INSTALLER_PREFIX" '[.assets[] | select(.name | startswith($p)) | .url] | join(",")' <<<"$assets")"
-          } >> "$GITHUB_OUTPUT"
-
+  # main only: rebuild at full opt, build and push the stack images, and deploy to production.
   deploy:
-    needs: [linux, release]
+    needs: gate
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
     env:
+      RUSTFLAGS: -C link-arg=-fuse-ld=mold
       DOCKER_REGISTRY: ghcr.io
       DOCKER_USERNAME: ${{ github.repository_owner }}
       DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
@@ -242,18 +76,19 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: ./.github/actions/setup
         with:
-          deps: none
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+          deps: build
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          name: stack-linux
-          path: .
-      - name: Restore the executable bits artifact transport may drop
-        run: chmod +x target/release/server target/release/website target/release/installer-backend
+          key: deploy
+      - name: Build the optimized server, website, and wasm bundle
+        run: |
+          just build
+          just wasm
       - name: Build and push the stack images
+        # The website image bakes in the wasm bundle; the game-server image its server binary.
         run: |
           echo "${{ env.DOCKER_PASSWORD }}" | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
           just push-images
-
       - name: Upload docker runtime dependencies
         uses: burnett01/rsync-deployments@796cf0d5e4b535745ce49d7429f77cf39e25ef39 # 7.0.1
         with:
@@ -263,7 +98,6 @@ jobs:
           remote_host: ${{ secrets.PROD_SSH_HOST }}
           remote_user: ${{ secrets.PROD_SSH_USERNAME }}
           remote_key: ${{ secrets.PROD_SSH_KEY }}
-
       - name: Deploy via SSH action
         id: deploy
         uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
@@ -280,16 +114,11 @@ jobs:
             echo "DOCKER_REGISTRY_URL=\"${{ env.DOCKER_REGISTRY_URL }}\"" >> .env
             echo "DOCKER_IMAGE_VERSION=\"${{ env.DOCKER_IMAGE_VERSION }}\"" >> .env
             echo "RIFT_DOMAIN=\"${{ vars.RIFT_DOMAIN }}\"" >> .env
-            echo "RIFT_INSTALLER_LINKS=\"${{ needs.release.outputs.installer_links }}\"" >> .env
-            echo "RIFT_INSTALLER_SHARED_ARTIFACT_LINKS=\"${{ needs.release.outputs.shared_artifact_links }}\"" >> .env
-            printf 'RIFT_INSTALLER_PER_PLATFORM_ARTIFACT_LINKS=%s\n' "$(echo '${{ needs.release.outputs.per_platform_artifact_links }}' | base64 -d)" >> .env
-            echo "RIFT_VERSION=\"${{ needs.release.outputs.version }}\"" >> .env
 
             echo ${{ env.DOCKER_PASSWORD }} | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
             docker network inspect rift >/dev/null 2>&1 || docker network create rift
             docker compose --profile prod pull
             docker compose --profile prod down
-
             if ! docker compose --profile prod up -d --remove-orphans --no-build; then
               echo "🚨 docker-compose up failed — gathering all container logs"
               mkdir -p logs
@@ -300,9 +129,7 @@ jobs:
               tar czf deploy-failure-logs.tar.gz logs/
               exit 1
             fi
-
-            docker image prune
-
+            docker image prune -f
       - name: Download deployment logs from server
         if: steps.deploy.outcome == 'failure'
         uses: nicklasfrahm/scp-action@ff9723c16c864e37adf7ef4111362b86905bfb04 # v1.0.1
@@ -314,14 +141,12 @@ jobs:
           source: ~/docker/deploy-failure-logs.tar.gz
           target: ./deploy-failure-logs.tar.gz
           insecure_ignore_fingerprint: true
-
       - name: Save deployment logs
         if: steps.deploy.outcome == 'failure'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: deploy-failure-logs
           path: ./deploy-failure-logs.tar.gz
-
       - name: Fail workflow on deploy error
         if: steps.deploy.outcome == 'failure'
         run: |

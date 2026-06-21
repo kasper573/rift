@@ -33,17 +33,6 @@ services:
     depends_on:
       - rift-game-server
 
-  rift-installer:
-    env_file: *env_files
-    logging: *logging
-    build:
-      dockerfile: ./docker/Dockerfile
-      context: ..
-      target: installer-backend
-    image: ${DOCKER_REGISTRY_URL:-rift}/rift-installer:${DOCKER_IMAGE_VERSION:-latest}
-    restart: always
-    profiles: ["prod", "test"]
-
   rift-game-server:
     env_file: *env_files
     logging: *logging
@@ -54,9 +43,8 @@ services:
     image: ${DOCKER_REGISTRY_URL:-rift}/rift-game-server:${DOCKER_IMAGE_VERSION:-latest}
     restart: always
     profiles: ["prod", "test"]
-    # The encrypted netcode transport; clients dial it directly (Caddy only proxies the HTTP API).
-    ports:
-      - "9998:9998/udp"
+    # No published ports: browsers reach both the HTTP API and the WebSocket netcode transport
+    # through Caddy (wss://), so nothing dials the container directly.
     healthcheck:
       test:
         ["CMD-SHELL", "wget -qO- http://127.0.0.1:$$RIFT_GAME_SERVER_PORT/health"]

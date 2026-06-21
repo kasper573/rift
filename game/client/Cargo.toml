@@ -2,26 +2,21 @@
 name = "client"
 version.workspace = true
 edition.workspace = true
-description = "Playable MMORPG client: a Bevy app rendering the replicated `world` over netcode, with a bevy_ui HUD and browser SSO."
+description = "In-browser MMORPG client: a wasm Bevy app rendering the replicated `world` over a WebSocket netcode transport, with a bevy_ui HUD. The website hands it an access token; it does no auth itself."
 repository = "https://github.com/kasper573/rift"
 authors = ["kasper573"]
 
-[[bin]]
+# A wasm `cdylib` whose exported `run` the page's loader calls; `rlib` keeps it usable from tests.
+[lib]
 name = "rift"
-path = "src/main.rs"
-
-[features]
-# The `dx serve --hot-patch` dev loop: live system patching (subsecond) plus asset hot-reload.
-hotpatch = ["bevy/hotpatching", "bevy/file_watcher"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 world = { path = "../world", default-features = false }
 ui = { path = "../../ui" }
-dotenvy = "0.15"
-envy = { workspace = true }
-# Bevy's `2d` + `ui` feature bundles, minus `bevy_gilrs` (drops the `libudev` build dependency —
-# no gamepad in a mouse/keyboard MMO) and `wayland` (drops the `libwayland-dev` build dependency;
-# `x11` is dlopen-only and runs on X11 and Wayland-via-XWayland).
+# Bevy's `2d` + `ui` feature bundles for the browser: `webgl2` (far more reliable than `webgpu` under
+# headless Chrome for e2e) and `web` for the browser platform integration. No `x11`/`multi_threaded`/
+# `sysinfo_plugin` — those are native-only and wasm is single-threaded.
 bevy = { workspace = true, features = [
     "async_executor",
     "bevy_asset",
@@ -31,10 +26,7 @@ bevy = { workspace = true, features = [
     "std",
     "bevy_winit",
     "default_font",
-    "multi_threaded",
-    "x11",
     "custom_cursor",
-    "sysinfo_plugin",
     "bevy_sprite",
     "bevy_render",
     "bevy_core_pipeline",
@@ -61,16 +53,31 @@ bevy = { workspace = true, features = [
     "bevy_picking",
     "sprite_picking",
     "ui_picking",
+    "webgl2",
+    "web",
 ] }
 bevy_picking = { workspace = true }
 bevy_replicon = { workspace = true, features = ["client"] }
-bevy_replicon_renet = { workspace = true, features = ["client", "renet_netcode"] }
+renet2 = { workspace = true }
+renet2_netcode = { workspace = true, features = ["ws_client_transport"] }
 bevy_kira_audio = { version = "0.26.0-rc.1", features = ["wav"] }
-openidconnect = { version = "4", features = ["ureq"] }
-http = "1"
-ureq = { workspace = true, features = ["rustls", "platform-verifier", "json"] }
-webbrowser = "1"
 base64 = "0.22"
-dirs = "6"
 serde = { workspace = true }
 serde_json = { workspace = true }
+gloo-net = { version = "0.6", default-features = false, features = ["http"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlCanvasElement",
+    "Storage",
+] }
+include_dir = "0.7"
+console_error_panic_hook = "0.1"
+web-time = "1"
+url = "2"
+# renetcode2's session encryption needs entropy; route getrandom to the browser's crypto on wasm.
+getrandom = { version = "0.2", features = ["js"] }

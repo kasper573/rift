@@ -11,17 +11,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 FROM runtime AS website
 COPY target/release/website /usr/local/bin/website
+# The wasm client bundle the website serves at /wasm (built by `just wasm` before the image).
+COPY target/wasm /wasm
 ENTRYPOINT ["website"]
-
-FROM runtime AS installer-backend
-COPY target/release/installer-backend /usr/local/bin/installer-backend
-ENTRYPOINT ["installer-backend"]
 
 FROM runtime AS game-server
 # A static busybox supplies wget for the compose healthcheck without an apt layer.
 COPY --from=busybox:1.36-musl /bin/busybox /usr/bin/wget
 COPY target/release/server /usr/local/bin/game-server
-# Content is read from disk at boot (world::validate panics on anything broken).
-COPY assets/ /assets
-ENV RIFT_ASSETS_DIR=/assets
 ENTRYPOINT ["game-server"]

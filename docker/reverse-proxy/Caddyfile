@@ -59,9 +59,14 @@ auth.{$RIFT_DOMAIN} {
     import access_log
     import common_rate_limit
     import internal_endpoints
+    # The wasm client bundle is large but highly compressible; compress it (and the html/js) so the
+    # browser downloads a fraction of the on-disk size.
+    encode zstd gzip
     reverse_proxy {$RIFT_WEBSITE_PROXY_HOST}
 }
 
+# The browser opens the netcode WebSocket here (terminated to plain ws toward the server) and POSTs
+# `/session`/`/health` to the HTTP API — two separate listeners, split by the upgrade handshake.
 {$RIFT_GAME_SERVER_DOMAIN} {
     import access_log
     import common_rate_limit
@@ -69,14 +74,11 @@ auth.{$RIFT_DOMAIN} {
     tracing {
         span rift_game_server
     }
+    @websocket {
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    reverse_proxy @websocket {$RIFT_GAME_SERVER_WS_PROXY_HOST}
     reverse_proxy {$RIFT_GAME_SERVER_PROXY_HOST}
     import common_cors
-}
-
-# The auto-installer's update manifest. A desktop client, not a browser, so no CORS.
-{$RIFT_INSTALLER_DOMAIN} {
-    import access_log
-    import common_rate_limit
-    import internal_endpoints
-    reverse_proxy {$RIFT_INSTALLER_PROXY_HOST}
 }

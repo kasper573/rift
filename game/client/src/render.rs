@@ -34,7 +34,7 @@ impl Plugin for RenderPlugin {
             .init_resource::<Viewport>()
             .add_systems(Startup, setup)
             .add_observer(attach_sprite)
-            .add_systems(Update, fit)
+            .add_systems(Update, (track_canvas_size, fit).chain())
             .add_systems(
                 Update,
                 (
@@ -69,8 +69,10 @@ struct Present {
     #[texture(0)]
     #[sampler(1)]
     world: Handle<Image>,
+    // WebGL2 requires uniform buffer bindings to be 16-byte aligned, so this death-tint flag rides in
+    // `.x` of a Vec4 rather than a bare f32 (which the browser's GL backend rejects at pipeline creation).
     #[uniform(2)]
-    dead: f32,
+    dead: Vec4,
 }
 
 impl Material2d for Present {
@@ -128,7 +130,7 @@ fn setup(
         Mesh2d(meshes.add(Rectangle::new(1.0, 1.0))),
         MeshMaterial2d(materials.add(Present {
             world: target,
-            dead: 0.0,
+            dead: Vec4::ZERO,
         })),
         Transform::from_scale(Vec3::new(
             window.resolution.width(),
@@ -214,6 +216,37 @@ fn healthbar(world: &mut World) {
     }
 }
 
+/// Keeps the render resolution matched to the canvas's displayed size. Bevy binds to the existing
+/// canvas but never sizes its backing buffer, so without this it stays the 300x150 HTML default and
+/// the browser stretches it (blurry); driving the backing to the displayed pixels lets the pixel art
+/// upscale crisply (and picks up window resizes).
+fn track_canvas_size(mut window: Single<&mut Window, With<PrimaryWindow>>) {
+    use wasm_bindgen::JsCast;
+    let Some(canvas) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.query_selector("#glcanvas").ok().flatten())
+        .and_then(|element| element.dyn_into::<web_sys::HtmlCanvasElement>().ok())
+    else {
+        return;
+    };
+    let (width, height) = (canvas.client_width(), canvas.client_height());
+    if width <= 0 || height <= 0 {
+        return;
+    }
+    // winit doesn't resize a canvas we hand it, so set the backing buffer to the displayed pixels
+    // ourselves; the matching `window.resolution` keeps bevy's render surface and camera in step.
+    if canvas.width() != width as u32 {
+        canvas.set_width(width as u32);
+    }
+    if canvas.height() != height as u32 {
+        canvas.set_height(height as u32);
+    }
+    let (width, height) = (width as f32, height as f32);
+    if window.resolution.width() != width || window.resolution.height() != height {
+        window.resolution.set(width, height);
+    }
+}
+
 fn fit(
     window: Single<&Window, With<PrimaryWindow>>,
     target: Res<WorldTarget>,
@@ -249,6 +282,7 @@ fn fit(
 
 fn dead_tint(world: &mut World) {
     let dead = if session::is_dead(world) { 1.0 } else { 0.0 };
+    let dead = Vec4::new(dead, 0.0, 0.0, 0.0);
     let Ok(handle) = world
         .query_filtered::<&MeshMaterial2d<Present>, With<Screen>>()
         .single(world)

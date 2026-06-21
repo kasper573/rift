@@ -1,28 +1,102 @@
-use std::io::Cursor;
-use std::net::{Ipv4Addr, UdpSocket};
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use bevy::prelude::*;
+use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
 use bevy_replicon::prelude::RepliconChannels;
-use bevy_replicon_renet::netcode::{ClientAuthentication, ConnectToken, NetcodeClientTransport};
-use bevy_replicon_renet::renet::ConnectionConfig;
-use bevy_replicon_renet::{RenetChannelsExt, RenetClient, RepliconRenetPlugins};
+use renet2::{ConnectionConfig, RenetClient};
+use renet2_netcode::{
+    ClientAuthentication, ClientSocket, ConnectToken, NetcodeClientTransport, WebSocketClient,
+    WebSocketClientConfig,
+};
+use web_time::{SystemTime, UNIX_EPOCH};
 use world::session::ClientSessionPlugin;
+use world::wire::RenetChannelsExt;
 
-use crate::web;
+use crate::auth::Session;
+use crate::replicon_renet::{Client, RepliconRenetClientPlugin, Transport};
+use crate::start::StartParams;
 
 pub struct NetPlugin;
 
 impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((ClientSessionPlugin, RepliconRenetPlugins))
-            .add_systems(Update, announce);
+        app.add_plugins((ClientSessionPlugin, RepliconRenetClientPlugin))
+            .add_systems(Update, (poll_session, announce));
     }
 }
 
 #[derive(Resource)]
 pub struct Announce {
     pub spectate: bool,
+}
+
+#[derive(Resource)]
+struct PendingSession {
+    task: Task<Result<Vec<u8>, String>>,
+    spectate: bool,
+}
+
+/// Begins joining: asks the game server for a connect token over the browser network (non-blocking),
+/// finished by [`poll_session`] once it resolves.
+pub fn open_session(world: &mut World, spectate: bool) {
+    let Some(session) = world.get_resource::<Session>().cloned() else {
+        error!("no access token; cannot open a session");
+        return;
+    };
+    let game_server_url = world.resource::<StartParams>().game_server_url.clone();
+    let task = IoTaskPool::get().spawn(fetch_token(game_server_url, session.authorization));
+    world.insert_resource(PendingSession { task, spectate });
+}
+
+fn poll_session(world: &mut World) {
+    let Some(mut pending) = world.remove_resource::<PendingSession>() else {
+        return;
+    };
+    match block_on(future::poll_once(&mut pending.task)) {
+        Some(Ok(token)) => {
+            connect(world, &token);
+            world.insert_resource(Announce {
+                spectate: pending.spectate,
+            });
+        }
+        Some(Err(error)) => error!("could not open a session: {error}"),
+        None => world.insert_resource(pending),
+    }
+}
+
+async fn fetch_token(game_server_url: String, authorization: String) -> Result<Vec<u8>, String> {
+    let response = gloo_net::http::Request::post(&format!("{game_server_url}/session"))
+        .header("Authorization", &authorization)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.ok() {
+        return Err(format!("session request failed: {}", response.status()));
+    }
+    response.binary().await.map_err(|error| error.to_string())
+}
+
+fn connect(world: &mut World, token: &[u8]) {
+    let channels = world.resource::<RepliconChannels>();
+    let connection_config =
+        ConnectionConfig::from_channels(channels.server_configs(), channels.client_configs());
+    let connect_token =
+        ConnectToken::read(&mut std::io::Cursor::new(token)).expect("read connect token");
+    let server_url = world.resource::<StartParams>().game_server_ws_url.clone();
+    let socket = WebSocketClient::new(WebSocketClientConfig {
+        server_url: url::Url::parse(&server_url).expect("game server ws url"),
+    })
+    .expect("websocket client");
+    let client = RenetClient::new(connection_config, socket.is_reliable());
+    let transport = NetcodeClientTransport::new(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock"),
+        ClientAuthentication::Secure { connect_token },
+        socket,
+    )
+    .expect("client transport");
+    world.insert_resource(Client(client));
+    world.insert_resource(Transport(transport));
+    info!("netcode connection opened");
 }
 
 fn announce(world: &mut World) {
@@ -40,41 +114,4 @@ fn announce(world: &mut World) {
         world::session::join(world);
     }
     world.remove_resource::<Announce>();
-}
-
-pub fn request_token(game_server_url: &str, authorization: &str) -> Result<Vec<u8>, String> {
-    let mut response = web::agent()
-        .post(format!("{game_server_url}/session"))
-        .header("Authorization", authorization)
-        .send_empty()
-        .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("session request failed: {}", response.status()));
-    }
-    response
-        .body_mut()
-        .read_to_vec()
-        .map_err(|error| error.to_string())
-}
-
-pub fn connect(world: &mut World, token: &[u8]) {
-    let channels = world.resource::<RepliconChannels>();
-    let client = RenetClient::new(ConnectionConfig {
-        server_channels_config: channels.server_configs(),
-        client_channels_config: channels.client_configs(),
-        ..default()
-    });
-    let connect_token = ConnectToken::read(&mut Cursor::new(token)).expect("read connect token");
-    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).expect("bind udp socket");
-    let transport = NetcodeClientTransport::new(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock"),
-        ClientAuthentication::Secure { connect_token },
-        socket,
-    )
-    .expect("client transport");
-    world.insert_resource(client);
-    world.insert_resource(transport);
-    info!("netcode connection opened");
 }

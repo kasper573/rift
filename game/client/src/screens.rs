@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::{Activate, button, text_colored};
 
-use crate::{Screen, auth};
+use crate::{Screen, net};
 
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -16,10 +16,6 @@ pub struct ScreensPlugin;
 impl Plugin for ScreensPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Mode>()
-            .add_systems(OnEnter(Screen::SigningIn), signing_in)
-            .add_systems(OnExit(Screen::SigningIn), despawn)
-            .add_systems(OnEnter(Screen::SignInFailed), sign_in_failed)
-            .add_systems(OnExit(Screen::SignInFailed), despawn)
             .add_systems(OnEnter(Screen::ChooseMode), choose_mode)
             .add_systems(OnExit(Screen::ChooseMode), despawn)
             .add_systems(OnEnter(Screen::Playing), enter_game);
@@ -39,30 +35,6 @@ fn screen_node() -> Node {
         row_gap: Val::Px(16.0),
         ..default()
     }
-}
-
-fn signing_in(mut commands: Commands) {
-    commands.spawn_scene(bsn! {
-        ScreenUi
-        template_value(screen_node())
-        Children [ {EntityScene(text_colored("Signing in…", Color::WHITE))} ]
-    });
-}
-
-fn sign_in_failed(mut commands: Commands) {
-    commands.spawn_scene(bsn! {
-        ScreenUi
-        template_value(screen_node())
-        Children [
-            {EntityScene(text_colored("Could not sign in", Color::WHITE))},
-            (
-                {button("Try again")}
-                on(|_: On<Activate>, mut next: ResMut<NextState<Screen>>| {
-                    next.set(Screen::SigningIn);
-                })
-            ),
-        ]
-    });
 }
 
 fn choose_mode(mut commands: Commands) {
@@ -92,5 +64,5 @@ fn despawn(ui: Query<Entity, With<ScreenUi>>, mut commands: Commands) {
 
 fn enter_game(world: &mut World) {
     let spectate = *world.resource::<Mode>() == Mode::Spectate;
-    auth::enter(world, spectate);
+    net::open_session(world, spectate);
 }

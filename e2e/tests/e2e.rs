@@ -1,29 +1,29 @@
 use std::collections::HashSet;
-use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use arboard::Clipboard;
-use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
-use xcap::Window;
+use thirtyfour::LoggingPrefsLogLevel;
+use thirtyfour::prelude::*;
 
 const ARTIFACTS: &str = env!("CARGO_TARGET_TMPDIR");
-const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets");
-const WINDOW_TITLE: &str = "rift mmo";
-const BROWSER_TITLE: &str = "sign in to rift";
-const ISSUER: &str = "https://auth.rift.localhost/realms/rift";
-const AUDIENCE: &str = "rift";
+const CHROMEDRIVER: &str = "http://127.0.0.1:9515";
+const DEFAULT_URL: &str = "https://rift.localhost";
+
+// The reference snapshots were captured at this canvas size, and the portal template matches at that
+// exact pixel scale (the game upscales its fixed-height view to the canvas). The harness resizes the
+// browser so the canvas matches, independent of the surrounding chrome.
+const CANVAS_W: i64 = 1156;
+const CANVAS_H: i64 = 862;
 
 const SCENE_CELLS: f64 = 0.3;
 const GRID: u16 = 8;
 const CELL_COLORS: usize = 4;
 const WALKED: f64 = 0.2;
 
-// How long a click holds the mouse button down. Must outlast a frame on CI's slow software renderer
-// (~14fps, ~70ms) so the client samples the button as held; short of the client's move-repeat window.
+// How long a click holds the mouse button down. The client only acts on a click it sees held during
+// a frame (`click_to_act` samples the button as pressed), and an instant press+release can fall
+// between frames on the headless software renderer; this outlasts a frame, short of move-repeat.
 const CLICK_HOLD: Duration = Duration::from_millis(250);
 
 // A color-histogram intersection at or above this means the scene "shows basically the same place"
@@ -39,22 +39,19 @@ const PORTAL_TEMPLATE: &str = "portal.png";
 // portal scores in the hundreds (measured: ~270 on a portal-less frame), so this cleanly splits them.
 const PORTAL_MATCH: f64 = 120.0;
 
-#[test]
+#[tokio::test]
 #[ignore = "e2e: drives the live stack; run with `just e2e`"]
-fn a_player_registers_and_visibly_walks() {
-    let mut session = register_and_spawn();
-    let before = session.scene;
+async fn a_player_registers_and_visibly_walks() {
+    let session = register_and_spawn().await;
+    let before = session.scene.clone();
     save(&before, "before");
 
     let (width, height) = (before.width as i32, before.height as i32);
     let mut moved = 0.0;
     for (dx, dy) in [(200, 0), (0, 150), (-200, 0), (0, -150)] {
-        tap_space(&mut session.enigo);
-        session
-            .game
-            .click(&mut session.enigo, width / 2 + dx, height / 2 + dy);
-        sleep(Duration::from_secs(2));
-        let after = session.game.capture();
+        session.click(width / 2 + dx, height / 2 + dy).await;
+        sleep(Duration::from_secs(2)).await;
+        let after = session.capture().await;
         moved = diff_fraction(&before, &after);
         save(&after, "after");
         println!(
@@ -65,6 +62,7 @@ fn a_player_registers_and_visibly_walks() {
             break;
         }
     }
+    session.quit().await;
     assert!(
         moved > WALKED,
         "clicking must visibly walk the player ({:.0}% of pixels changed, needed more than {:.0}%; \
@@ -74,15 +72,16 @@ fn a_player_registers_and_visibly_walks() {
     );
 }
 
-#[test]
+#[tokio::test]
 #[ignore = "e2e: drives the live stack; run with `just e2e`"]
-fn spawns_into_the_expected_island_scene() {
-    let session = register_and_spawn();
+async fn spawns_into_the_expected_island_scene() {
+    let session = register_and_spawn().await;
     save(&session.scene, "island-spawn");
     let island = load_reference(ISLAND_SNAPSHOT);
     let forest = load_reference(FOREST_SNAPSHOT);
     let on_island = resemblance(&session.scene, &island);
     let on_forest = resemblance(&session.scene, &forest);
+    session.quit().await;
     println!("spawn resemblance: island {on_island:.3}, forest {on_forest:.3}");
     assert!(
         on_island >= RESEMBLANCE && on_island > on_forest,
@@ -91,10 +90,10 @@ fn spawns_into_the_expected_island_scene() {
     );
 }
 
-#[test]
+#[tokio::test]
 #[ignore = "e2e: drives the live stack; run with `just e2e`"]
-fn walking_through_a_portal_crosses_to_the_forest() {
-    let mut session = register_and_spawn();
+async fn walking_through_a_portal_crosses_to_the_forest() {
+    let session = register_and_spawn().await;
     let island = load_reference(ISLAND_SNAPSHOT);
     let forest = load_reference(FOREST_SNAPSHOT);
     save(&session.scene, "portal-before");
@@ -106,10 +105,11 @@ fn walking_through_a_portal_crosses_to_the_forest() {
          see {ARTIFACTS}/portal-before.png",
     );
 
-    let after = cross_island_portal(&mut session.enigo, &session.game, &island, &forest);
+    let after = cross_island_portal(&session, &island, &forest).await;
     save(&after, "portal-after");
     let on_forest = resemblance(&after, &forest);
     let on_island = resemblance(&after, &island);
+    session.quit().await;
     println!("after crossing: forest {on_forest:.3}, island {on_island:.3}");
     assert!(
         on_forest >= RESEMBLANCE && on_forest > on_island,
@@ -119,38 +119,219 @@ fn walking_through_a_portal_crosses_to_the_forest() {
 }
 
 /// A registered, signed-in session sitting in the game with the spawn scene captured. Holds the
-/// server and client processes alive for the duration of the test.
+/// browser open for the duration of the test (its canvas is the game).
 struct Session {
-    _server: Option<GameServer>,
-    _client: Proc,
-    enigo: Enigo,
-    game: Win,
+    driver: WebDriver,
+    canvas: WebElement,
+    scale_x: f64,
+    scale_y: f64,
     scene: Image,
 }
 
-fn register_and_spawn() -> Session {
-    let server = (!prod()).then(GameServer::start);
-    let client = spawn_client(server.as_ref().map(|server| server.url.as_str()));
-    let mut enigo = Enigo::new(&Settings {
-        open_prompt_to_get_permissions: false,
-        ..Settings::default()
-    })
-    .expect("start OS input");
+async fn register_and_spawn() -> Session {
+    let driver = new_driver().await;
+    let base = base_url();
+    driver
+        .goto(format!("{base}/play"))
+        .await
+        .expect("navigate to /play");
+    register(&driver).await;
 
-    let game = wait_for_window(Duration::from_secs(120));
-    register_in_browser(&mut enigo);
+    let canvas = wait_for_canvas(&driver).await;
+    fit_canvas(&driver, &canvas).await;
+    let first = capture(&canvas).await;
+    let rect = canvas.rect().await.expect("canvas rect");
+    let session = Session {
+        scale_x: rect.width / first.width as f64,
+        scale_y: rect.height / first.height as f64,
+        driver,
+        canvas,
+        scene: first,
+    };
+    let scene = wait_for_scene(&session).await;
+    Session { scene, ..session }
+}
 
-    // Raise the game window now that the browser is gone (X captures read the framebuffer, so an
-    // occluded window would capture whatever covered it).
-    game.click(&mut enigo, 20, 20);
-    let scene = wait_for_scene(&game, Duration::from_secs(120));
-    Session {
-        _server: server,
-        _client: client,
-        enigo,
-        game,
-        scene,
+async fn new_driver() -> WebDriver {
+    let mut caps = DesiredCapabilities::chrome();
+    for arg in [
+        "--headless=new",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        // Caddy serves a local CA the browser doesn't trust; the test isn't checking TLS.
+        "--ignore-certificate-errors",
+        // Roughly sized so the canvas lands near the snapshot resolution; `fit_canvas` fine-tunes it.
+        "--window-size=1156,1062",
+        "--force-device-scale-factor=1",
+        // Software WebGL2 so the game renders without a GPU on CI.
+        "--use-gl=angle",
+        "--use-angle=swiftshader",
+        "--enable-unsafe-swiftshader",
+    ] {
+        caps.add_arg(arg).expect("chrome arg");
     }
+    caps.set_logging_prefs("browser", LoggingPrefsLogLevel::All)
+        .expect("enable browser logging");
+    WebDriver::new(CHROMEDRIVER, caps)
+        .await
+        .expect("connect to chromedriver (is it running? see `just e2e`)")
+}
+
+/// Prints the browser console — the wasm client logs (and panics) here, the only window into why a
+/// scene never rendered.
+async fn dump_console(driver: &WebDriver) {
+    if let Ok(entries) = driver.browser_log().await {
+        for entry in entries {
+            println!("[browser:{}] {}", entry.level, entry.message);
+        }
+    }
+}
+
+fn base_url() -> String {
+    std::env::var("RIFT_E2E_URL").unwrap_or_else(|_| DEFAULT_URL.to_owned())
+}
+
+/// Signs in by registering a fresh throwaway account: from signed-out `/play`, follow the sign-in
+/// link to Keycloak, jump straight to its registration form, fill it, and submit. Keycloak then
+/// redirects back through the website's callback to `/play`, now signed in.
+async fn register(driver: &WebDriver) {
+    driver
+        .find(By::Css(".centered button"))
+        .await
+        .expect("the signed-out /play sign-in button")
+        .click()
+        .await
+        .expect("click sign-in");
+
+    let authorize = wait_for_url(driver, "/protocol/openid-connect/auth").await;
+    let registration = authorize.replace(
+        "/protocol/openid-connect/auth?",
+        "/protocol/openid-connect/registrations?",
+    );
+    driver
+        .goto(registration)
+        .await
+        .expect("open the registration form");
+
+    let stamp = unix_now().as_secs();
+    let user = format!("tester{stamp}");
+    let password = format!("e2e-{stamp}-pw");
+    fill(driver, "username", &user).await;
+    fill(driver, "email", &format!("{user}@example.com")).await;
+    fill(driver, "password", &password).await;
+    fill(driver, "password-confirm", &password).await;
+    fill_if_present(driver, "firstName", &user).await;
+    fill_if_present(driver, "lastName", &user).await;
+
+    driver
+        .find(By::Css("input[type=submit]"))
+        .await
+        .expect("the registration submit button")
+        .click()
+        .await
+        .expect("submit registration");
+    println!("registered {user}; waiting for the redirect to /play");
+    wait_for_url(driver, "/play").await;
+}
+
+async fn fill(driver: &WebDriver, id: &str, value: &str) {
+    driver
+        .find(By::Id(id))
+        .await
+        .unwrap_or_else(|_| panic!("registration field #{id}"))
+        .send_keys(value)
+        .await
+        .unwrap_or_else(|_| panic!("fill #{id}"));
+}
+
+async fn fill_if_present(driver: &WebDriver, id: &str, value: &str) {
+    if let Ok(field) = driver.find(By::Id(id)).await {
+        let _ = field.send_keys(value).await;
+    }
+}
+
+async fn wait_for_url(driver: &WebDriver, needle: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if let Ok(url) = driver.current_url().await
+            && url.as_str().contains(needle)
+        {
+            return url.into();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the page never navigated to a url containing `{needle}`",
+        );
+        sleep(Duration::from_millis(250)).await;
+    }
+}
+
+/// Resizes the browser so the game canvas matches the reference snapshots' resolution, absorbing
+/// whatever chrome (the nav bar) surrounds it into the window size.
+async fn fit_canvas(driver: &WebDriver, canvas: &WebElement) {
+    let window = driver.get_window_rect().await.expect("window rect");
+    let rect = canvas.rect().await.expect("canvas rect");
+    let width = (window.width + (CANVAS_W - rect.width as i64)).max(1) as u32;
+    let height = (window.height + (CANVAS_H - rect.height as i64)).max(1) as u32;
+    driver
+        .set_window_rect(window.x, window.y, width, height)
+        .await
+        .expect("resize window");
+    // Let the layout settle and the client re-render at the new canvas size.
+    sleep(Duration::from_millis(500)).await;
+}
+
+async fn wait_for_canvas(driver: &WebDriver) -> WebElement {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        if let Ok(canvas) = driver.find(By::Id("glcanvas")).await {
+            return canvas;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the game canvas never appeared on /play",
+        );
+        sleep(Duration::from_millis(500)).await;
+    }
+}
+
+impl Session {
+    /// Captures the game canvas.
+    async fn capture(&self) -> Image {
+        capture(&self.canvas).await
+    }
+
+    /// Clicks the canvas at a point in capture-pixel coordinates (origin top-left), holding the
+    /// button down long enough for the client to sample it. WebDriver offsets are from the element
+    /// center, so we recentre and scale capture pixels to the element's CSS pixels.
+    async fn click(&self, x: i32, y: i32) {
+        let rect = self.canvas.rect().await.expect("canvas rect");
+        let offset_x = (x as f64 * self.scale_x - rect.width / 2.0) as i64;
+        let offset_y = (y as f64 * self.scale_y - rect.height / 2.0) as i64;
+        self.driver
+            .action_chain()
+            .move_to_element_with_offset(&self.canvas, offset_x, offset_y)
+            .click_and_hold()
+            .perform()
+            .await
+            .expect("press on canvas");
+        sleep(CLICK_HOLD).await;
+        self.driver
+            .action_chain()
+            .release()
+            .perform()
+            .await
+            .expect("release on canvas");
+    }
+
+    async fn quit(self) {
+        let _ = self.driver.quit().await;
+    }
+}
+
+async fn capture(canvas: &WebElement) -> Image {
+    let png = canvas.screenshot_as_png().await.expect("canvas screenshot");
+    decode(std::io::Cursor::new(png))
 }
 
 /// Walks the player through the island's warp and returns the scene once it resembles the forest.
@@ -158,7 +339,7 @@ fn register_and_spawn() -> Session {
 /// rect, so the server's `MoveToPortal` paths the player onto the portal and crosses. The marker is
 /// re-found each pass — the camera shifts as the player walks, and a click swallowed by a roaming NPC
 /// just retries against the unchanged scene.
-fn cross_island_portal(enigo: &mut Enigo, game: &Win, island: &Image, forest: &Image) -> Image {
+async fn cross_island_portal(session: &Session, island: &Image, forest: &Image) -> Image {
     let template = load_template(PORTAL_TEMPLATE);
     let crossed = |cap: &Image| {
         let on_forest = resemblance(cap, forest);
@@ -169,7 +350,7 @@ fn cross_island_portal(enigo: &mut Enigo, game: &Win, island: &Image, forest: &I
     // in a way no amount of clicking fixes, so fail fast and loudly instead of timing out.
     let acquire = Instant::now() + Duration::from_secs(10);
     let mut target = loop {
-        let cap = game.capture();
+        let cap = session.capture().await;
         if let Some(point) = locate(&cap, &template) {
             break point;
         }
@@ -180,20 +361,20 @@ fn cross_island_portal(enigo: &mut Enigo, game: &Win, island: &Image, forest: &I
                  may not have spawned on the island (see {ARTIFACTS}/portal-not-found.png)",
             );
         }
-        sleep(Duration::from_millis(500));
+        sleep(Duration::from_millis(500)).await;
     };
 
     let deadline = Instant::now() + Duration::from_secs(45);
     loop {
-        game.click(enigo, target.0, target.1);
+        session.click(target.0, target.1).await;
         for _ in 0..8 {
-            sleep(Duration::from_millis(500));
-            let cap = game.capture();
+            sleep(Duration::from_millis(500)).await;
+            let cap = session.capture().await;
             if crossed(&cap) {
                 return cap;
             }
         }
-        let cap = game.capture();
+        let cap = session.capture().await;
         if Instant::now() >= deadline {
             save(&cap, "portal-timeout");
             return cap;
@@ -201,6 +382,33 @@ fn cross_island_portal(enigo: &mut Enigo, game: &Win, island: &Image, forest: &I
         if let Some(point) = locate(&cap, &template) {
             target = point;
         }
+    }
+}
+
+async fn wait_for_scene(session: &Session) -> Image {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        let image = session.capture().await;
+        let scenery = scene_fraction(&center(&image));
+        if scenery >= SCENE_CELLS {
+            println!(
+                "the world is on screen ({:.0}% of mid-view cells show scenery)",
+                scenery * 100.0
+            );
+            sleep(Duration::from_millis(300)).await;
+            return session.capture().await;
+        }
+        if Instant::now() >= deadline {
+            save(&image, "timeout");
+            dump_console(&session.driver).await;
+            panic!(
+                "the world never appeared: {:.0}% of mid-view cells show scenery, a scene fills at \
+                 least {:.0}% (see {ARTIFACTS}/timeout.png)",
+                scenery * 100.0,
+                SCENE_CELLS * 100.0,
+            );
+        }
+        sleep(Duration::from_millis(500)).await;
     }
 }
 
@@ -274,325 +482,17 @@ impl Template {
     }
 }
 
-fn register_in_browser(enigo: &mut Enigo) {
-    let register_url = wait_for_authorize_url(Duration::from_secs(60)).replace(
-        "/protocol/openid-connect/auth?",
-        "/protocol/openid-connect/registrations?",
-    );
-    let browser = wait_for_browser(Duration::from_secs(60));
-    // Paste the URL into the address bar rather than type it: a 40-character PKCE code_challenge sent key-by-key loses characters on a loaded X server. The clipboard transfers the whole URL atomically.
-    let mut clipboard = Clipboard::new().expect("open clipboard");
-    clipboard.set_text(&register_url).expect("set clipboard");
-    browser.click(enigo, 100, 10);
-    chord(enigo, Key::Control, Key::Unicode('l'));
-    chord(enigo, Key::Control, Key::Unicode('v'));
-    tap(enigo, Key::Delete);
-    tap(enigo, Key::Return);
-    sleep(Duration::from_secs(8));
-
-    let stamp = unix_now().as_secs();
-    let user = format!("tester{stamp}");
-    let password = format!("e2e-{stamp}-pw");
-    let fields: [(usize, &str); 4] = [
-        (1, &user),
-        (1, &password),
-        (2, &password),
-        (2, &format!("{user}@example.com")),
-    ];
-    for (tabs, value) in fields {
-        for _ in 0..tabs {
-            tap(enigo, Key::Tab);
-        }
-        // Paste each value: typed key-by-key, a field can lose a character under load.
-        clipboard.set_text(value).expect("set clipboard");
-        chord(enigo, Key::Control, Key::Unicode('v'));
-        sleep(Duration::from_millis(100));
-    }
-    tap(enigo, Key::Tab);
-    tap(enigo, Key::Return);
-    println!("registered {user}; waiting for the redirect to the client");
-    sleep(Duration::from_secs(8));
-    save(&browser.capture(), "register-result");
-
-    chord(enigo, Key::Control, Key::Unicode('w'));
-    sleep(Duration::from_secs(1));
-}
-
-fn wait_for_authorize_url(timeout: Duration) -> String {
-    let deadline = Instant::now() + timeout;
-    loop {
-        for log in ["client.out", "client.err"] {
-            let content = std::fs::read_to_string(artifacts().join(log)).unwrap_or_default();
-            if let Some(url) = content
-                .split_whitespace()
-                .find(|word| word.contains("/protocol/openid-connect/auth?"))
-            {
-                return url.to_owned();
-            }
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the client never printed its sign-in URL (see {}/client.*)",
-            artifacts().display()
-        );
-        sleep(Duration::from_millis(250));
-    }
-}
-
-fn wait_for_browser(timeout: Duration) -> Win {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(window) = find_window(BROWSER_TITLE) {
-            sleep(Duration::from_millis(500));
-            return Win {
-                id: window.id().expect("window id"),
-            };
-        }
-        if Instant::now() >= deadline {
-            let titles: Vec<String> = Window::all()
-                .into_iter()
-                .flatten()
-                .filter_map(|w| w.title().ok())
-                .collect();
-            panic!(
-                "no browser window showed the sign-in page; windows seen: {titles:?} (see {}/client.*)",
-                artifacts().display()
-            );
-        }
-        sleep(Duration::from_millis(250));
-    }
-}
-
-fn wait_for_window(timeout: Duration) -> Win {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(window) = find_window(WINDOW_TITLE)
-            && window.width().unwrap_or(0) >= 1024
-        {
-            return Win {
-                id: window.id().expect("window id"),
-            };
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the client never opened its window (see {}/client.err)",
-            artifacts().display()
-        );
-        sleep(Duration::from_millis(250));
-    }
-}
-
-fn find_window(title: &str) -> Option<Window> {
-    Window::all().ok()?.into_iter().find(|window| {
-        window
-            .title()
-            .map(|t| t.to_lowercase().contains(title))
-            .unwrap_or(false)
-    })
-}
-
-struct Win {
-    id: u32,
-}
-
-impl Win {
-    fn window(&self) -> Window {
-        Window::all()
-            .expect("list windows")
-            .into_iter()
-            .find(|window| window.id().ok() == Some(self.id))
-            .expect("the window is gone")
-    }
-
-    fn capture(&self) -> Image {
-        let image = self.window().capture_image().expect("capture window");
-        let (width, height) = (image.width() as u16, image.height() as u16);
-        let rgb = image
-            .into_vec()
-            .chunks_exact(4)
-            .flat_map(|rgba| [rgba[0], rgba[1], rgba[2]])
-            .collect();
-        Image { width, height, rgb }
-    }
-
-    fn click(&self, enigo: &mut Enigo, x: i32, y: i32) {
-        let window = self.window();
-        let (origin_x, origin_y) = (window.x().expect("x"), window.y().expect("y"));
-        enigo
-            .move_mouse(origin_x + x, origin_y + y, Coordinate::Abs)
-            .expect("move pointer");
-        sleep(Duration::from_millis(100));
-        // Hold the button down, don't tap it: the client only acts on a click it sees held during a
-        // frame, and an instant press+release falls between frames on CI's ~14fps software renderer.
-        enigo.button(Button::Left, Direction::Press).expect("press");
-        sleep(CLICK_HOLD);
-        enigo
-            .button(Button::Left, Direction::Release)
-            .expect("release");
-        sleep(Duration::from_millis(200));
-    }
-}
-
-fn wait_for_scene(window: &Win, timeout: Duration) -> Image {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let image = window.capture();
-        let scenery = scene_fraction(&center(&image));
-        if scenery >= SCENE_CELLS {
-            println!(
-                "the world is on screen ({:.0}% of mid-view cells show scenery)",
-                scenery * 100.0
-            );
-            sleep(Duration::from_millis(300));
-            return window.capture();
-        }
-        if Instant::now() >= deadline {
-            save(&image, "timeout");
-            if let Some(browser) = find_window(BROWSER_TITLE) {
-                let id = browser.id().expect("window id");
-                save(&Win { id }.capture(), "browser");
-            }
-            panic!(
-                "the world never appeared: {:.0}% of mid-view cells show scenery, a scene fills at \
-                 least {:.0}% (see {ARTIFACTS}/timeout.png and client.err)",
-                scenery * 100.0,
-                SCENE_CELLS * 100.0,
-            );
-        }
-        sleep(Duration::from_millis(500));
-    }
-}
-
-fn tap(enigo: &mut Enigo, key: Key) {
-    enigo.key(key, Direction::Click).expect("tap key");
-    sleep(Duration::from_millis(100));
-}
-
-fn chord(enigo: &mut Enigo, modifier: Key, key: Key) {
-    enigo.key(modifier, Direction::Press).expect("hold");
-    sleep(Duration::from_millis(50));
-    enigo.key(key, Direction::Click).expect("tap");
-    sleep(Duration::from_millis(50));
-    enigo.key(modifier, Direction::Release).expect("release");
-    sleep(Duration::from_millis(200));
-}
-
-fn tap_space(enigo: &mut Enigo) {
-    tap(enigo, Key::Space);
-}
-
-fn spawn_client(game_server_url: Option<&str>) -> Proc {
-    // Pre-mark chrome's first run to keep its welcome dialog from covering the page.
-    let config = artifacts().join("config");
-    std::fs::create_dir_all(config.join("google-chrome")).expect("chrome config dir");
-    let _ = File::create(config.join("google-chrome").join("First Run"));
-
-    let mut command = Command::new(client_bin());
-    command
-        // Never let a stray Wayland socket pull the window elsewhere.
-        .env_remove("WAYLAND_DISPLAY")
-        .env("XDG_CONFIG_HOME", config);
-    if let Some(url) = game_server_url {
-        command
-            .env("RIFT_CLIENT_ISSUER", ISSUER)
-            .env("RIFT_CLIENT_GAME_SERVER_URL", url)
-            .env("RIFT_CLIENT_OIDC_CLIENT_ID", AUDIENCE)
-            .env("RIFT_ASSETS_DIR", ASSETS);
-    }
-    Proc::start(command, "client")
-}
-
-fn prod() -> bool {
-    std::env::var_os("RIFT_E2E_PROD").is_some()
-}
-
-struct GameServer {
-    url: String,
-    _proc: Proc,
-}
-
-impl GameServer {
-    fn start() -> GameServer {
-        let port = 30000 + (std::process::id() % 20000) as u16;
-        let url = format!("http://127.0.0.1:{port}");
-        let mut command = Command::new(server_bin());
-        command
-            .env("RIFT_ASSETS_DIR", ASSETS)
-            .env("RIFT_GAME_SERVER_PORT", port.to_string())
-            .env("RIFT_AUTH_ISSUER", ISSUER)
-            .env("RIFT_AUTH_AUDIENCE", AUDIENCE)
-            .env(
-                "RIFT_AUTH_JWKS_URI",
-                format!("{ISSUER}/protocol/openid-connect/certs"),
-            )
-            .env("RIFT_GAME_SERVER_PUBLIC_HOST", "127.0.0.1")
-            .env("RIFT_GAME_SERVER_PYROSCOPE_ENABLED", "false")
-            .env("RIFT_GAME_SERVER_PYROSCOPE_SAMPLE_HZ", "99")
-            // Survive the scenario: with a normal 30 HP the island's NPCs kill the player before it
-            // can walk a portal, and the death overlay tints the whole scene.
-            .env("RIFT_GAME_SERVER_PLAYER_HEALTH", "1000000");
-        let proc = Proc::start(command, "server");
-
-        // Verify tokens before returning; this also waits out the stack's keycloak.
-        let deadline = Instant::now() + Duration::from_secs(60);
-        let health = format!("{url}/health");
-        loop {
-            if ureq::get(&health).call().is_ok() {
-                return GameServer { url, _proc: proc };
-            }
-            assert!(
-                Instant::now() < deadline,
-                "the server never became healthy (is the stack up? see `just stack`)"
-            );
-            sleep(Duration::from_millis(200));
-        }
-    }
-}
-
-fn client_bin() -> PathBuf {
-    bin("RIFT_E2E_CLIENT")
-}
-
-fn server_bin() -> PathBuf {
-    bin("RIFT_E2E_SERVER")
-}
-
-fn bin(var: &str) -> PathBuf {
-    let path = std::env::var_os(var).unwrap_or_else(|| {
-        panic!("set {var} to the binary to test (CI builds it; see `just e2e`)")
-    });
-    PathBuf::from(path)
-}
-
 fn unix_now() -> Duration {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock after the unix epoch")
 }
 
-struct Proc(Child);
-
-impl Proc {
-    fn start(mut command: Command, name: &str) -> Proc {
-        let log = |extension| {
-            File::create(artifacts().join(format!("{name}.{extension}"))).expect("create log")
-        };
-        let child = command
-            .stdout(Stdio::from(log("out")))
-            .stderr(Stdio::from(log("err")))
-            .spawn()
-            .unwrap_or_else(|error| panic!("could not start {name}: {error}"));
-        Proc(child)
-    }
+async fn sleep(duration: Duration) {
+    tokio::time::sleep(duration).await;
 }
 
-impl Drop for Proc {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
+#[derive(Clone)]
 struct Image {
     width: u16,
     height: u16,
@@ -648,7 +548,7 @@ fn diff_fraction(a: &Image, b: &Image) -> f64 {
 }
 
 fn save(image: &Image, name: &str) {
-    let file = File::create(artifacts().join(format!("{name}.png"))).expect("create png");
+    let file = std::fs::File::create(artifacts().join(format!("{name}.png"))).expect("create png");
     let mut encoder = png::Encoder::new(file, image.width.into(), image.height.into());
     encoder.set_color(png::ColorType::Rgb);
     encoder.set_depth(png::BitDepth::Eight);
@@ -663,10 +563,14 @@ fn load_reference(name: &str) -> Image {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("snapshots")
         .join(name);
-    let file = File::open(&path).unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
-    let mut reader = png::Decoder::new(BufReader::new(file))
-        .read_info()
-        .expect("png info");
+    let file = std::fs::File::open(&path)
+        .unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
+    decode(BufReader::new(file))
+}
+
+/// Decodes a PNG (a reference snapshot or a live canvas screenshot) into an RGB [`Image`].
+fn decode<R: std::io::BufRead + std::io::Seek>(source: R) -> Image {
+    let mut reader = png::Decoder::new(source).read_info().expect("png info");
     let mut buf = vec![0; reader.output_buffer_size().expect("png buffer size")];
     let info = reader.next_frame(&mut buf).expect("png frame");
     let rgb = match info.color_type {
@@ -675,7 +579,7 @@ fn load_reference(name: &str) -> Image {
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect(),
         png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        other => panic!("snapshot {name} has unsupported color type {other:?}"),
+        other => panic!("unsupported png color type {other:?}"),
     };
     Image {
         width: info.width as u16,
@@ -691,7 +595,8 @@ fn load_template(name: &str) -> Template {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("snapshots")
         .join(name);
-    let file = File::open(&path).unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
+    let file = std::fs::File::open(&path)
+        .unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
     let mut reader = png::Decoder::new(BufReader::new(file))
         .read_info()
         .expect("png info");

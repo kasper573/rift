@@ -26,7 +26,6 @@ const WARMUP: usize = 30;
 const MEASURE: usize = 200;
 
 fn main() {
-    world::assets::init(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets"));
     area::configure_areas(MAX_AREAS);
     world::sim::validate();
 

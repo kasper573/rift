@@ -118,26 +118,19 @@ fn default_snap() -> ScreenPx {
 }
 
 mod imp {
-    use std::path::PathBuf;
+    const KEY: &str = "rift.user_settings";
 
     pub fn load() -> Option<String> {
-        std::fs::read_to_string(path()?).ok()
+        storage()?.get_item(KEY).ok()?
     }
 
     pub fn save(json: &str) {
-        let Some(path) = path() else { return };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Err(error) = std::fs::write(&path, json) {
-            eprintln!(
-                "could not save user settings to {}: {error}",
-                path.display()
-            );
+        if let Some(storage) = storage() {
+            let _ = storage.set_item(KEY, json);
         }
     }
 
-    fn path() -> Option<PathBuf> {
-        Some(dirs::config_dir()?.join("rift").join("user_settings.json"))
+    fn storage() -> Option<web_sys::Storage> {
+        web_sys::window()?.local_storage().ok()?
     }
 }
