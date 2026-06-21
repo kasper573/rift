@@ -60,7 +60,7 @@ jobs:
   # main only: rebuild at full opt, build and push the stack images, and deploy to production.
   deploy:
     needs: gate
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bevy-web'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
