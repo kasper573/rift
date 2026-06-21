@@ -19,6 +19,34 @@ bevy_text = { workspace = true }
 bevy_window = { workspace = true }
 bevy_math = { workspace = true }
 bevy_time = { workspace = true }
+# The `gallery` binary (a standalone showcase window) needs the full Bevy app — windowing, rendering,
+# winit — which the library half (built on the individual `bevy_*` crates above) does not.
+bevy = { version = "0.19.0-rc.3", default-features = false, features = [
+    "std",
+    "async_executor",
+    "multi_threaded",
+    "bevy_log",
+    "bevy_winit",
+    "x11",
+    "bevy_window",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_camera",
+    "bevy_sprite",
+    "bevy_sprite_render",
+    "bevy_asset",
+    "bevy_image",
+    "png",
+    "bevy_color",
+    "bevy_text",
+    "default_font",
+    "bevy_input_focus",
+    "bevy_ui",
+    "bevy_ui_render",
+    "bevy_ui_widgets",
+    "bevy_picking",
+    "ui_picking",
+] }
 
 [dev-dependencies]
 bevy_app = { workspace = true }

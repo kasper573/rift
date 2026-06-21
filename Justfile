@@ -117,17 +117,3 @@ e2e-run filter="": e2e-build
     # window manager that display needs for focus and stacking to behave.
     xvfb-run -a -s "-screen 0 1920x1080x24 -ac" \
       bash -c 'openbox & exec cargo test --release -p e2e -- --ignored --nocapture --test-threads=1 {{filter}}'
-
-# The `ui` component showcase: drives every component's states with real input on a real display.
-# Needs an unlocked desktop session (it injects OS input). Build the gallery first, then drive it.
-gallery:
-    cargo build -p client --bin gallery
-    cargo test -p e2e --test gallery --no-run
-    RIFT_GALLERY="{{justfile_directory()}}/target/debug/gallery" \
-    RIFT_ASSETS_DIR="{{justfile_directory()}}/assets" \
-        cargo test -p e2e --test gallery -- --ignored --nocapture
-
-# Open the gallery window to browse it yourself (Space steps scenes; set RIFT_AUTOPLAY=1 to autoplay).
-gallery-run *args:
-    RIFT_ASSETS_DIR="{{justfile_directory()}}/assets" \
-        cargo run -p client --bin gallery {{args}}
