@@ -52,9 +52,9 @@ struct Config {
     ws_port: u16,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
-    /// Optional override for the health players spawn with; e2e scenarios raise it so a player
-    /// can't die mid-test. Absent in real deployments, where players use the in-game default.
-    player_health: Option<f32>,
+    /// Whether areas populate with NPCs. The e2e turns them off so its idle player can cross the
+    /// island without being attacked; real deployments leave them on.
+    spawn_npcs: bool,
 }
 
 fn main() {
@@ -94,7 +94,7 @@ fn main() {
         ws_bind,
         private_key,
         sessions,
-        config.player_health,
+        config.spawn_npcs,
         runtime.handle().clone(),
     );
 }
@@ -103,13 +103,13 @@ fn simulate(
     ws_bind: SocketAddr,
     private_key: [u8; NETCODE_KEY_BYTES],
     sessions: Sessions,
-    player_health: Option<f32>,
+    spawn_npcs: bool,
     runtime: tokio::runtime::Handle,
 ) {
     let spawn = area::spawn_zone().index();
     let mut worlds: Vec<App> = area::areas()
         .iter()
-        .map(|a| build_world(a.id, player_health))
+        .map(|a| build_world(a.id, spawn_npcs))
         .collect();
 
     let (connection_config, client_channels) = {
@@ -307,11 +307,9 @@ struct Conn {
 #[derive(Component)]
 struct Wire(u64);
 
-fn build_world(area: Id<AreaDef>, player_health: Option<f32>) -> App {
+fn build_world(area: Id<AreaDef>, spawn_npcs: bool) -> App {
     let mut app = world::sim::server_app(area);
-    if let Some(health) = player_health {
-        app.insert_resource(world::sim::player::PlayerHealth(health));
-    }
+    app.insert_resource(world::sim::SpawnNpcs(spawn_npcs));
     app.finish();
     app.cleanup();
     app.world_mut()
