@@ -11,6 +11,21 @@ runs:
     - name: Install the pinned toolchain
       shell: bash
       run: rustup show
+    - name: Install wasm-bindgen-cli matching the lockfile
+      if: runner.os == 'Linux' && inputs.deps != 'none'
+      shell: bash
+      # `just wasm` post-processes the client with `wasm-bindgen`, whose version must match the
+      # `wasm-bindgen` crate exactly; grab that prebuilt release rather than compiling the CLI.
+      run: |
+        version=$(awk '/^name = "wasm-bindgen"$/{getline; gsub(/version = "|"/, ""); print}' Cargo.lock)
+        curl -sSfL "https://github.com/rustwasm/wasm-bindgen/releases/download/${version}/wasm-bindgen-${version}-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C /tmp
+        sudo install "/tmp/wasm-bindgen-${version}-x86_64-unknown-linux-musl/wasm-bindgen" /usr/local/bin/wasm-bindgen
+        wasm-bindgen --version
+    - name: Ensure chromedriver is on PATH for the e2e
+      if: runner.os == 'Linux' && inputs.deps == 'all'
+      shell: bash
+      # The runner preinstalls a matched Chrome + chromedriver, but chromedriver isn't always on PATH.
+      run: command -v chromedriver >/dev/null || echo "${CHROMEWEBDRIVER}" >> "$GITHUB_PATH"
     - name: Install Linux system libraries
       if: runner.os == 'Linux' && inputs.deps != 'none'
       shell: bash
