@@ -308,6 +308,15 @@ impl Session {
         let rect = self.canvas.rect().await.expect("canvas rect");
         let offset_x = (x as f64 * self.scale_x - rect.width / 2.0) as i64;
         let offset_y = (y as f64 * self.scale_y - rect.height / 2.0) as i64;
+        println!(
+            "[click] image=({x},{y}) rect=({:.0}x{:.0}) scene=({}x{}) scale=({:.3},{:.3}) -> offset=({offset_x},{offset_y})",
+            rect.width,
+            rect.height,
+            self.scene.width,
+            self.scene.height,
+            self.scale_x,
+            self.scale_y,
+        );
         self.driver
             .action_chain()
             .move_to_element_with_offset(&self.canvas, offset_x, offset_y)
@@ -361,6 +370,10 @@ async fn cross_island_portal(session: &Session, island: &Image, forest: &Image) 
         }
         sleep(Duration::from_millis(500)).await;
     };
+    println!(
+        "[portal] located marker at {target:?}; scene {}x{}",
+        session.scene.width, session.scene.height
+    );
 
     // The warp is one tile; a software renderer can place the marker a touch off, landing the click on
     // a neighbouring tile (a plain move, no cross). Sweep a half-tile cross around the located centre so
