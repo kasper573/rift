@@ -335,17 +335,15 @@ async fn capture(canvas: &WebElement) -> Image {
 }
 
 /// Walks the player through the island's warp and returns the scene once it resembles the forest.
-/// Finds the portal marker in the live frame and clicks its center: that lands inside the 1-tile warp
+/// Finds the portal marker in the live frame and clicks its centre: that lands inside the 1-tile warp
 /// rect, so the server's `MoveToPortal` paths the player onto the portal and crosses. The marker is
-/// re-found each pass — the camera shifts as the player walks, and a click swallowed by a roaming NPC
-/// just retries against the unchanged scene.
+/// re-found each pass — the camera shifts as the player walks toward it.
 async fn cross_island_portal(session: &Session, island: &Image, forest: &Image) -> Image {
     let template = load_template(PORTAL_TEMPLATE);
     let crossed = |cap: &Image| {
         let on_forest = resemblance(cap, forest);
         on_forest >= RESEMBLANCE && on_forest > resemblance(cap, island)
     };
-
     // Acquire the portal before trying to cross: if the spawn scene never shows it, the run is broken
     // in a way no amount of clicking fixes, so fail fast and loudly instead of timing out.
     let acquire = Instant::now() + Duration::from_secs(10);
@@ -364,14 +362,21 @@ async fn cross_island_portal(session: &Session, island: &Image, forest: &Image) 
         sleep(Duration::from_millis(500)).await;
     };
 
-    let deadline = Instant::now() + Duration::from_secs(45);
+    // The warp is one tile; a software renderer can place the marker a touch off, landing the click on
+    // a neighbouring tile (a plain move, no cross). Sweep a half-tile cross around the located centre so
+    // one click reliably lands inside the rect.
+    let step = (session.scene.height as i32 / 36).max(1);
+    let sweep = [(0, 0), (step, 0), (-step, 0), (0, step), (0, -step)];
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        session.click(target.0, target.1).await;
-        for _ in 0..8 {
-            sleep(Duration::from_millis(500)).await;
-            let cap = session.capture().await;
-            if crossed(&cap) {
-                return cap;
+        for (dx, dy) in sweep {
+            session.click(target.0 + dx, target.1 + dy).await;
+            for _ in 0..3 {
+                sleep(Duration::from_millis(500)).await;
+                let cap = session.capture().await;
+                if crossed(&cap) {
+                    return cap;
+                }
             }
         }
         let cap = session.capture().await;
