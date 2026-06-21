@@ -123,8 +123,6 @@ async fn walking_through_a_portal_crosses_to_the_forest() {
 struct Session {
     driver: WebDriver,
     canvas: WebElement,
-    scale_x: f64,
-    scale_y: f64,
     scene: Image,
 }
 
@@ -139,14 +137,10 @@ async fn register_and_spawn() -> Session {
 
     let canvas = wait_for_canvas(&driver).await;
     fit_canvas(&driver, &canvas).await;
-    let first = capture(&canvas).await;
-    let rect = canvas.rect().await.expect("canvas rect");
     let session = Session {
-        scale_x: rect.width / first.width as f64,
-        scale_y: rect.height / first.height as f64,
+        scene: capture(&canvas).await,
         driver,
         canvas,
-        scene: first,
     };
     let scene = wait_for_scene(&session).await;
     Session { scene, ..session }
@@ -306,17 +300,13 @@ impl Session {
     /// center, so we recentre and scale capture pixels to the element's CSS pixels.
     async fn click(&self, x: i32, y: i32) {
         let rect = self.canvas.rect().await.expect("canvas rect");
-        let offset_x = (x as f64 * self.scale_x - rect.width / 2.0) as i64;
-        let offset_y = (y as f64 * self.scale_y - rect.height / 2.0) as i64;
-        println!(
-            "[click] image=({x},{y}) rect=({:.0}x{:.0}) scene=({}x{}) scale=({:.3},{:.3}) -> offset=({offset_x},{offset_y})",
-            rect.width,
-            rect.height,
-            self.scene.width,
-            self.scene.height,
-            self.scale_x,
-            self.scale_y,
-        );
+        // The displayed canvas can differ in size from its backing buffer (what we screenshot and
+        // locate in), and that ratio only settles after the initial layout, so derive it fresh each
+        // click rather than caching a value that may be stale by the time we act.
+        let scale_x = rect.width / self.scene.width as f64;
+        let scale_y = rect.height / self.scene.height as f64;
+        let offset_x = (x as f64 * scale_x - rect.width / 2.0) as i64;
+        let offset_y = (y as f64 * scale_y - rect.height / 2.0) as i64;
         self.driver
             .action_chain()
             .move_to_element_with_offset(&self.canvas, offset_x, offset_y)
@@ -370,10 +360,6 @@ async fn cross_island_portal(session: &Session, island: &Image, forest: &Image) 
         }
         sleep(Duration::from_millis(500)).await;
     };
-    println!(
-        "[portal] located marker at {target:?}; scene {}x{}",
-        session.scene.width, session.scene.height
-    );
 
     // The warp is one tile; a software renderer can place the marker a touch off, landing the click on
     // a neighbouring tile (a plain move, no cross). Sweep a half-tile cross around the located centre so
