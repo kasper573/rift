@@ -81,3 +81,50 @@ the `Open` root — it leads to the host); select groups react to `Activate`; to
 `Pointer<Over>` plus a hidden timer; sliders expose a public `SliderState`, but progress's
 `ProgressFraction` **wasn't even re-exported** (I had to make it public). I'd expected one "set
 this component's value/state" path and repeatedly reached for the wrong one.
+
+### Checkbox and radio washed their fill away on hover when checked
+
+The original baked the checked colours straight into the base/hover/active paints. I replaced that
+with a `.checked()` sub-style, then wrote `for_state` to read the hover/active paints from the
+*base* style even when checked — so a checked, hovered box painted the unchecked grey hover over its
+blue fill (the fill looked like it vanished) instead of `primary_hover`. Fixed `for_state` to take
+hover/active from the checked sub-style when the control is checked.
+
+### Checkbox and radio indicators rendered as `?` in the wrong colour
+
+The original drew the marks as a tinted image because the design fonts have no ✓ or ● glyph. I
+changed the gallery to pass literal `text("✓")` / `text("●")` into the indicator, which the font
+can't render (so it showed the missing-glyph `?`), and the child text carried its own
+`surface_canvas_on` colour instead of the indicator's `primary_on` face colour — dark marks on a
+blue box. Fixed by drawing the marks as self-contained shapes in `primary_on` inside the `ui`
+components: a rotated border-corner checkmark and a filled dot.
+
+### Dialog and alert-dialog soft-locked the entire UI
+
+The original's overlay outlet was `Pickable::IGNORE` and gated its content out when closed. My
+retained `dialog_modal()` is a full-screen centering container with no `OverlayContent` and default
+pickability, re-parented to the overlay host at z-index 1000 — so it sat over everything,
+permanently swallowing every click. Opening a dialog appeared to do nothing and nothing was
+clickable afterwards. Fixed by making the modal `Pickable::IGNORE`; its scrim child still captures
+input and dismisses.
+
+### The sonner close button did nothing
+
+`on_close` only acted when the click landed *on* the `ToastClose` node, but the close button is a
+child of it, so the click target was the button and the early-return swallowed it. Fixed by walking
+up to the nearest `ToastClose` ancestor.
+
+### Toasts never auto-dismissed
+
+The original aged each toast and dismissed it after a TTL, pausing while the stack was expanded. I
+never ported that lifecycle, so toasts only ever left on a manual close. Added a per-toast age that
+advances only while the stack is collapsed and leaves the toast once it passes `TOAST_TTL`, so an
+expanded stack the user is reading never disappears out from under them.
+
+### The scroll area was a thin port — no animation, drag, or affordance
+
+I reproduced the original scroll area verbatim, limitations included: the wheel snapped
+`ScrollPosition` instantly, the thumb couldn't be dragged, and the bar had no hover/press
+appearance. Faithful, but a rough component carried over rather than finished. Replaced the instant
+native scroll with a `ScrollTarget` that `ScrollPosition` eases toward, added a thumb-drag observer
+(cursor position within the bar → offset), and gave the thumb hover/active styling.

@@ -66,7 +66,7 @@ fn main() {
         .init_resource::<CurrentScene>()
         .add_plugins(ui::UiPlugin)
         .add_systems(Startup, setup)
-        .add_systems(Update, rebuild_scene)
+        .add_systems(Update, (rebuild_scene, animate_progress))
         .run();
 }
 
@@ -106,6 +106,14 @@ fn setup(mut commands: Commands) {
                         });
                 });
         });
+}
+
+// Loop the progress bars 0→100% so the scene is a live demo rather than a frozen empty bar.
+fn animate_progress(time: Res<Time>, mut fractions: Query<&mut ui::ProgressFraction>) {
+    let fraction = (time.elapsed_secs() % 2.5) / 2.5;
+    for mut progress in &mut fractions {
+        progress.0 = fraction;
+    }
 }
 
 // Clicking a tab records its scene index; `rebuild_scene` rebuilds the scene tree when it changes.
@@ -317,21 +325,23 @@ fn checkbox_scene(scene: &mut EntityCommands) {
                 parent
                     .spawn((checkbox(Check::Off),))
                     .with_children(|parent| {
-                        parent.spawn(checkbox_indicator()).with_children(|parent| {
-                            parent.spawn(text("✓"));
-                        });
+                        parent.spawn(checkbox_indicator());
                     });
                 parent.spawn(checkbox(Check::On)).with_children(|parent| {
-                    parent.spawn(checkbox_indicator()).with_children(|parent| {
-                        parent.spawn(text("✓"));
-                    });
+                    parent.spawn(checkbox_indicator());
                 });
                 parent
                     .spawn(checkbox(Check::Indeterminate))
                     .with_children(|parent| {
-                        parent.spawn(checkbox_indicator()).with_children(|parent| {
-                            parent.spawn(text("−"));
-                        });
+                        parent.spawn((
+                            Node {
+                                width: Val::Px(10.0),
+                                height: Val::Px(2.0),
+                                border_radius: BorderRadius::all(Val::Px(999.0)),
+                                ..default()
+                            },
+                            ui::Style::new().background(color::primary_on),
+                        ));
                     });
             });
     });
@@ -378,9 +388,7 @@ fn radio_scene(scene: &mut EntityCommands) {
                             .spawn((radio_item("apple"),))
                             .with_children(|parent| {
                                 parent.spawn(radio_circle()).with_children(|parent| {
-                                    parent.spawn(radio_indicator()).with_children(|parent| {
-                                        parent.spawn(text("●"));
-                                    });
+                                    parent.spawn(radio_indicator());
                                 });
                                 parent.spawn(text("Apple"));
                             });
@@ -388,9 +396,7 @@ fn radio_scene(scene: &mut EntityCommands) {
                             .spawn((radio_item("banana"),))
                             .with_children(|parent| {
                                 parent.spawn(radio_circle()).with_children(|parent| {
-                                    parent.spawn(radio_indicator()).with_children(|parent| {
-                                        parent.spawn(text("●"));
-                                    });
+                                    parent.spawn(radio_indicator());
                                 });
                                 parent.spawn(text("Banana"));
                             });
@@ -398,9 +404,7 @@ fn radio_scene(scene: &mut EntityCommands) {
                             .spawn((radio_item("cherry"),))
                             .with_children(|parent| {
                                 parent.spawn(radio_circle()).with_children(|parent| {
-                                    parent.spawn(radio_indicator()).with_children(|parent| {
-                                        parent.spawn(text("●"));
-                                    });
+                                    parent.spawn(radio_indicator());
                                 });
                                 parent.spawn(text("Cherry"));
                             });

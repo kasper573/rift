@@ -23,6 +23,7 @@ const GAP: f32 = 14.0;
 const MAX_VISIBLE: usize = 3;
 const STACK_HEIGHT: f32 = MAX_VISIBLE as f32 * (CARD_HEIGHT + GAP);
 const EDGE: f32 = 24.0;
+const TOAST_TTL: Duration = Duration::from_secs(4);
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum SonnerPosition {
@@ -49,6 +50,9 @@ pub struct Toaster {
 #[derive(Component)]
 pub struct Toast {
     pub leaving: bool,
+    // Time the toast has spent stacked. It only advances while the toaster is collapsed, so an
+    // expanded stack never auto-dismisses; each toast leaves once its own age reaches `TOAST_TTL`.
+    age: Duration,
 }
 
 #[derive(Component)]
@@ -77,7 +81,10 @@ pub fn toaster(position: SonnerPosition) -> impl Bundle {
 pub fn toast() -> impl Bundle {
     (
         card_node(),
-        Toast { leaving: false },
+        Toast {
+            leaving: false,
+            age: Duration::ZERO,
+        },
         Motion::default(),
         Opacity(0.0),
         UiTransform::default(),
@@ -91,18 +98,46 @@ pub fn sonner_close() -> impl Bundle {
 
 pub(crate) fn on_close(
     click: On<Pointer<Click>>,
-    closes: Query<(), With<ToastClose>>,
+    is_close: Query<(), With<ToastClose>>,
     parents: Query<&ChildOf>,
     has_toast: Query<(), With<Toast>>,
     mut toasts: Query<&mut Toast>,
 ) {
-    if !closes.contains(click.entity) {
+    // The click lands on the close button nested inside the `ToastClose` node, so walk up to it.
+    if ancestor_with::<ToastClose>(click.entity, &parents, &is_close).is_none() {
         return;
     }
     if let Some(toast) = ancestor_with::<Toast>(click.entity, &parents, &has_toast)
         && let Ok(mut toast) = toasts.get_mut(toast)
     {
         toast.leaving = true;
+    }
+}
+
+// Stacked toasts auto-dismiss once their own age reaches `TOAST_TTL`; an expanded stack pauses,
+// so toasts the user is reading never disappear out from under them.
+pub(crate) fn age_toasts(
+    time: Res<Time>,
+    toasters: Query<(&Toaster, &Children)>,
+    mut toasts: Query<&mut Toast>,
+) {
+    let dt = time.delta();
+    for (toaster, children) in &toasters {
+        if toaster.expanded {
+            continue;
+        }
+        for &child in children {
+            let Ok(mut toast) = toasts.get_mut(child) else {
+                continue;
+            };
+            if toast.leaving {
+                continue;
+            }
+            toast.age += dt;
+            if toast.age >= TOAST_TTL {
+                toast.leaving = true;
+            }
+        }
     }
 }
 

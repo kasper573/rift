@@ -1,4 +1,5 @@
 use bevy_ecs::bundle::Bundle;
+use bevy_picking::prelude::Pickable;
 use bevy_ui::{
     AlignItems, BorderRadius, FlexDirection, JustifyContent, Node, Overflow, PositionType, UiRect,
     Val,
@@ -18,8 +19,11 @@ pub fn dialog_trigger() -> impl Bundle {
     (Node::default(), OverlayAction::Open)
 }
 
+// The modal is only a full-screen centering container; it must not capture input itself (the scrim
+// child does that). Without `Pickable::IGNORE` it sits at the overlay z-index over the whole UI and
+// swallows every click — a soft-lock.
 pub fn dialog_modal() -> impl Bundle {
-    (full_screen_center(), Portal)
+    (full_screen_center(), Portal, Pickable::IGNORE)
 }
 
 pub fn dialog_scrim() -> impl Bundle {

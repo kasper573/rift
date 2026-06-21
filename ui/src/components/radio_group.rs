@@ -47,17 +47,18 @@ pub fn radio_circle() -> impl Bundle {
     (Node::default(), InheritChecked, circle_style())
 }
 
+// Selected dot, painted in the face color (the design fonts have no ● glyph).
 pub fn radio_indicator() -> impl Bundle {
     (
-        Node::default(),
+        Node {
+            width: Val::Px(10.0),
+            height: Val::Px(10.0),
+            border_radius: BorderRadius::all(Val::Px(radius::PILL)),
+            ..Node::default()
+        },
         InheritChecked,
         Gated,
-        Style::new().text_color(color::primary_on).node(|node| {
-            node.width = Val::Percent(100.0);
-            node.height = Val::Percent(100.0);
-            node.align_items = AlignItems::Center;
-            node.justify_content = JustifyContent::Center;
-        }),
+        Style::new().background(color::primary_on),
     )
 }
 

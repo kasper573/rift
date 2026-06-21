@@ -66,8 +66,10 @@ impl Plugin for UiPlugin {
                     state::apply_gating,
                     components::progress::sync_progress,
                     components::slider::sync_slider,
+                    components::sonner::age_toasts,
                     components::sonner::layout_toasts,
                     components::sonner::reap_toasts,
+                    components::scroll_area::animate_scroll,
                     style::apply_styles,
                 )
                     .chain()
@@ -86,6 +88,8 @@ impl Plugin for UiPlugin {
             .add_observer(state::on_pressable_release)
             .add_observer(state::on_pressable_out)
             .add_observer(components::slider::on_thumb_drag)
+            .add_observer(components::scroll_area::on_scroll)
+            .add_observer(components::scroll_area::on_thumb_drag)
             .add_observer(components::sonner::on_close)
             .add_observer(components::sonner::toaster_hover)
             .add_observer(components::sonner::toaster_leave)

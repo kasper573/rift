@@ -27,17 +27,26 @@ pub fn checkbox(checked: Check) -> impl Bundle {
     )
 }
 
+// A checkmark drawn as a right+bottom border corner rotated 45° (the design fonts have no ✓ glyph).
+// Painted in the face color so it reads on the filled box.
 pub fn checkbox_indicator() -> impl Bundle {
     (
-        Node::default(),
+        Node {
+            width: Val::Px(6.0),
+            height: Val::Px(11.0),
+            border: UiRect {
+                right: Val::Px(2.0),
+                bottom: Val::Px(2.0),
+                ..UiRect::ZERO
+            },
+            ..Node::default()
+        },
         InheritChecked,
         Gated,
-        Style::new().text_color(color::primary_on).node(|node| {
-            node.width = Val::Percent(100.0);
-            node.height = Val::Percent(100.0);
-            node.align_items = AlignItems::Center;
-            node.justify_content = JustifyContent::Center;
-        }),
+        Style::new()
+            .border_color(color::primary_on)
+            .rotate(std::f32::consts::FRAC_PI_4)
+            .translate(bevy_math::Vec2::new(0.0, -1.0)),
     )
 }
 

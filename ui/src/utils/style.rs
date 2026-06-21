@@ -182,33 +182,37 @@ impl Style {
     }
 
     fn for_state(&self, hovered: bool, pressed: bool, checked: bool) -> Style {
-        let mut style = Style {
-            ops: self.ops.clone(),
-            background: self.background,
-            border: self.border,
-            text: self.text,
-            transform: self.transform,
-            enter: self.enter,
-            opacity: self.opacity,
-            enter_opacity: self.enter_opacity,
-            spin: self.spin,
-            transition: self.transition,
+        let mut style = self.flat();
+        // When checked, the `checked` sub-style overrides the base paints AND supplies the
+        // hover/active for the checked state — so a checked+hovered control uses e.g. `primary_hover`
+        // rather than the base's unchecked hover (which would wash the fill away).
+        let (hover, active) = if checked && let Some(checked) = &self.checked {
+            style = style.merge(checked.flat());
+            (
+                checked.hover.clone().or_else(|| self.hover.clone()),
+                checked.active.clone().or_else(|| self.active.clone()),
+            )
+        } else {
+            (self.hover.clone(), self.active.clone())
+        };
+        if (hovered || pressed)
+            && let Some(hover) = &hover
+        {
+            style = style.merge(hover.flat());
+        }
+        if pressed && let Some(active) = &active {
+            style = style.merge(active.flat());
+        }
+        style
+    }
+
+    fn flat(&self) -> Style {
+        Style {
             hover: None,
             active: None,
             checked: None,
-        };
-        if checked && let Some(checked) = &self.checked {
-            style = style.merge((**checked).clone());
+            ..self.clone()
         }
-        if (hovered || pressed)
-            && let Some(hover) = &self.hover
-        {
-            style = style.merge((**hover).clone());
-        }
-        if pressed && let Some(active) = &self.active {
-            style = style.merge((**active).clone());
-        }
-        style
     }
 
     fn stateful(&self) -> bool {

@@ -1,4 +1,5 @@
 use bevy_ecs::bundle::Bundle;
+use bevy_picking::prelude::Pickable;
 use bevy_ui::{Node, PositionType, Val};
 
 use crate::components::dialog::{full_screen_center, panel_style};
@@ -16,7 +17,7 @@ pub fn alert_dialog_trigger() -> impl Bundle {
 }
 
 pub fn alert_dialog_modal() -> impl Bundle {
-    (full_screen_center(), Portal)
+    (full_screen_center(), Portal, Pickable::IGNORE)
 }
 
 pub fn alert_dialog_scrim() -> impl Bundle {
