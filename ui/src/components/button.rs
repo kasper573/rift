@@ -41,7 +41,8 @@ pub mod intent {
     pub const PLAIN: ButtonIntent = ButtonIntent {
         family: |t: &Theme| Family {
             base: Color::NONE,
-            ..t.neutral
+            on: t.surface_canvas.on,
+            ..t.secondary
         },
     };
 }
