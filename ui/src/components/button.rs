@@ -4,7 +4,6 @@ use bevy_ecs::children;
 use bevy_ui::{AlignItems, BorderRadius, JustifyContent, Node, UiRect, Val};
 use bevy_ui_widgets::Button;
 
-
 use crate::components::text::text_colored;
 use crate::motion::transition::STANDARD_ENTER;
 use crate::style::{StatefulPaint, Style};
@@ -17,10 +16,10 @@ pub struct ButtonIntent {
 }
 
 pub mod intent {
-    use bevy_color::Color;
-    use crate::Family;
     use super::ButtonIntent;
+    use crate::Family;
     use crate::theme::Theme;
+    use bevy_color::Color;
 
     pub const PRIMARY: ButtonIntent = ButtonIntent {
         family: |t: &Theme| t.primary,
@@ -36,7 +35,7 @@ pub mod intent {
 
     // muted and plain deliberately blend slots from several families.
     pub const MUTED: ButtonIntent = ButtonIntent {
-        family: |t: &Theme| t.neutral
+        family: |t: &Theme| t.neutral,
     };
 
     pub const PLAIN: ButtonIntent = ButtonIntent {
