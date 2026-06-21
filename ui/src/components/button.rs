@@ -1,8 +1,9 @@
-use bevy_color::Color;
+use crate::Family;
 use bevy_ecs::bundle::Bundle;
 use bevy_ecs::children;
 use bevy_ui::{AlignItems, BorderRadius, JustifyContent, Node, UiRect, Val};
 use bevy_ui_widgets::Button;
+
 
 use crate::components::text::text_colored;
 use crate::motion::transition::STANDARD_ENTER;
@@ -12,52 +13,37 @@ use crate::tokens::{radius, spacing};
 
 #[derive(Clone, Copy)]
 pub struct ButtonIntent {
-    base: fn(&Theme) -> Color,
-    hover: fn(&Theme) -> Color,
-    active: fn(&Theme) -> Color,
-    on: fn(&Theme) -> Color,
+    family: fn(&Theme) -> Family,
 }
 
 pub mod intent {
     use bevy_color::Color;
-
+    use crate::Family;
     use super::ButtonIntent;
     use crate::theme::Theme;
 
     pub const PRIMARY: ButtonIntent = ButtonIntent {
-        base: |t: &Theme| t.primary.base,
-        hover: |t: &Theme| t.primary.hover,
-        active: |t: &Theme| t.primary.active,
-        on: |t: &Theme| t.primary.on,
+        family: |t: &Theme| t.primary,
     };
 
     pub const SECONDARY: ButtonIntent = ButtonIntent {
-        base: |t: &Theme| t.secondary.base,
-        hover: |t: &Theme| t.secondary.hover,
-        active: |t: &Theme| t.secondary.active,
-        on: |t: &Theme| t.secondary.on,
+        family: |t: &Theme| t.secondary,
     };
 
     pub const DANGER: ButtonIntent = ButtonIntent {
-        base: |t: &Theme| t.error_solid.base,
-        hover: |t: &Theme| t.error_solid.hover,
-        active: |t: &Theme| t.error_solid.active,
-        on: |t: &Theme| t.error_solid.on,
+        family: |t: &Theme| t.error_solid,
     };
 
     // muted and plain deliberately blend slots from several families.
     pub const MUTED: ButtonIntent = ButtonIntent {
-        base: |t: &Theme| t.surface_inset.base,
-        hover: |t: &Theme| t.surface_elevated.hover,
-        active: |t: &Theme| t.surface_elevated.active,
-        on: |t: &Theme| t.surface_canvas.on,
+        family: |t: &Theme| t.neutral
     };
 
     pub const PLAIN: ButtonIntent = ButtonIntent {
-        base: |_: &Theme| Color::NONE,
-        hover: |t: &Theme| t.secondary.hover,
-        active: |t: &Theme| t.secondary.active,
-        on: |t: &Theme| t.surface_canvas.on,
+        family: |t: &Theme| Family {
+            base: Color::NONE,
+            ..t.neutral
+        },
     };
 }
 
@@ -83,11 +69,12 @@ pub fn button_styled(
         Node::default(),
         Button,
         intent_style(intent, &theme).merge(sized(size)),
-        children![text_colored(label.into(), (intent.on)(&theme))],
+        children![text_colored(label.into(), (intent.family)(&theme).on)],
     )
 }
 
 fn intent_style(intent: ButtonIntent, theme: &Theme) -> Style {
+    let family = (intent.family)(theme);
     Style::new()
         .node(|node| {
             node.align_items = AlignItems::Center;
@@ -96,9 +83,9 @@ fn intent_style(intent: ButtonIntent, theme: &Theme) -> Style {
             node.border_radius = BorderRadius::all(Val::Px(radius::S));
         })
         .background(
-            StatefulPaint::new((intent.base)(theme))
-                .hover((intent.hover)(theme))
-                .active((intent.active)(theme)),
+            StatefulPaint::new(family.base)
+                .hover(family.hover)
+                .active(family.active),
         )
         .transition(STANDARD_ENTER)
 }
