@@ -18,9 +18,9 @@ pub struct CardOpts {
 }
 
 pub fn card(opts: CardOpts) -> impl Bundle {
-    let palette = palette(opts.intent);
+    let intent = card_intent(opts.intent);
     let (floating, interactive) = (opts.floating, opts.interactive);
-    let style = card_style(&palette, floating, interactive, opts.compact).op(move |entity| {
+    let style = card_style(&intent, floating, interactive, opts.compact).op(move |entity| {
         let hovered =
             entity.get::<Hovered>().is_some_and(Hovered::get) && entity.get::<Pressed>().is_none();
         match shadow(floating, interactive, hovered) {
@@ -46,37 +46,37 @@ fn shadow(floating: bool, interactive: bool, hovered: bool) -> Option<BoxShadow>
     Some(elevation(level))
 }
 
-struct Palette {
+struct CardIntent {
     family: Family<ColorVar>,
     stroke: Option<ColorVar>,
 }
 
-fn palette(intent: &str) -> Palette {
+fn card_intent(intent: &str) -> CardIntent {
     match intent {
-        "success" => Palette {
+        "success" => CardIntent {
             family: color::success_soft,
             stroke: None,
         },
-        "error" => Palette {
+        "error" => CardIntent {
             family: color::error_soft,
             stroke: None,
         },
-        "info" => Palette {
+        "info" => CardIntent {
             family: color::info_soft,
             stroke: None,
         },
-        "muted" => Palette {
+        "muted" => CardIntent {
             family: color::neutral,
             stroke: None,
         },
-        _ => Palette {
+        _ => CardIntent {
             family: color::surface_elevated,
             stroke: Some(color::surface_elevated.border),
         },
     }
 }
 
-fn card_style(palette: &Palette, floating: bool, interactive: bool, compact: bool) -> Style {
+fn card_style(palette: &CardIntent, floating: bool, interactive: bool, compact: bool) -> Style {
     let (corner, pad) = if compact {
         (radius::S, spacing::L)
     } else {

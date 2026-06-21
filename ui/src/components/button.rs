@@ -38,7 +38,7 @@ impl From<Surface> for Paint {
     }
 }
 
-struct Intent {
+struct ButtonIntent {
     name: &'static str,
     base: Surface,
     hover: Surface,
@@ -49,10 +49,10 @@ struct Intent {
 
 use Surface::{Themed, Transparent};
 
-impl Intent {
+impl ButtonIntent {
     // The common case: take base/hover/active/on straight from one color family.
-    const fn family(name: &'static str, family: Family<ColorVar>) -> Intent {
-        Intent {
+    const fn family(name: &'static str, family: Family<ColorVar>) -> ButtonIntent {
+        ButtonIntent {
             name,
             base: Themed(family.base),
             hover: Themed(family.hover),
@@ -63,12 +63,12 @@ impl Intent {
     }
 }
 
-const INTENTS: &[Intent] = &[
-    Intent::family("primary", color::primary),
-    Intent::family("secondary", color::secondary),
-    Intent::family("danger", color::error_solid),
+const INTENTS: &[ButtonIntent] = &[
+    ButtonIntent::family("primary", color::primary),
+    ButtonIntent::family("secondary", color::secondary),
+    ButtonIntent::family("danger", color::error_solid),
     // muted and plain deliberately blend slots from several families.
-    Intent {
+    ButtonIntent {
         name: "muted",
         base: Themed(color::surface_inset.base),
         hover: Themed(color::surface_elevated.hover),
@@ -76,7 +76,7 @@ const INTENTS: &[Intent] = &[
         on: color::surface_canvas.on,
         border: None,
     },
-    Intent {
+    ButtonIntent {
         name: "plain",
         base: Transparent,
         hover: Themed(color::secondary.hover),
@@ -86,7 +86,7 @@ const INTENTS: &[Intent] = &[
     },
 ];
 
-fn intent_style(intent: &Intent, size: Style) -> Style {
+fn intent_style(intent: &ButtonIntent, size: Style) -> Style {
     let mut style = Style::new()
         .node(|node| {
             node.align_items = AlignItems::Center;
@@ -126,7 +126,7 @@ fn sized(size: &str) -> Style {
     })
 }
 
-fn selected_intent(name: &str) -> &'static Intent {
+fn selected_intent(name: &str) -> &'static ButtonIntent {
     INTENTS
         .iter()
         .find(|intent| intent.name == name)
