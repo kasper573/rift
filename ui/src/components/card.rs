@@ -6,7 +6,7 @@ use bevy_ui::{BorderRadius, BoxShadow, FlexDirection, Node, Pressed, ShadowStyle
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::Pressable;
 use crate::style::Style;
-use crate::theme::{ColorVar, color};
+use crate::theme::{ColorVar, Family, color};
 use crate::tokens::{radius, spacing};
 
 #[derive(Default, Clone, Copy)]
@@ -47,49 +47,31 @@ fn shadow(floating: bool, interactive: bool, hovered: bool) -> Option<BoxShadow>
 }
 
 struct Palette {
-    base: ColorVar,
-    hover: ColorVar,
-    active: ColorVar,
-    on: ColorVar,
+    family: Family<ColorVar>,
     stroke: Option<ColorVar>,
 }
 
 fn palette(intent: &str) -> Palette {
     match intent {
         "success" => Palette {
-            base: color::success_soft_base,
-            hover: color::success_soft_hover,
-            active: color::success_soft_active,
-            on: color::success_soft_on,
+            family: color::success_soft,
             stroke: None,
         },
         "error" => Palette {
-            base: color::error_soft_base,
-            hover: color::error_soft_hover,
-            active: color::error_soft_active,
-            on: color::error_soft_on,
+            family: color::error_soft,
             stroke: None,
         },
         "info" => Palette {
-            base: color::info_soft_base,
-            hover: color::info_soft_hover,
-            active: color::info_soft_active,
-            on: color::info_soft_on,
+            family: color::info_soft,
             stroke: None,
         },
         "muted" => Palette {
-            base: color::neutral_base,
-            hover: color::neutral_hover,
-            active: color::neutral_active,
-            on: color::neutral_on,
+            family: color::neutral,
             stroke: None,
         },
         _ => Palette {
-            base: color::surface_elevated_base,
-            hover: color::surface_elevated_hover,
-            active: color::surface_elevated_active,
-            on: color::surface_elevated_on,
-            stroke: Some(color::surface_elevated_border_decorative),
+            family: color::surface_elevated,
+            stroke: Some(color::surface_elevated.border),
         },
     }
 }
@@ -102,8 +84,8 @@ fn card_style(palette: &Palette, floating: bool, interactive: bool, compact: boo
     };
     let bordered = !floating && palette.stroke.is_some();
     let mut style = Style::new()
-        .background(palette.base)
-        .text_color(palette.on)
+        .background(palette.family.base)
+        .text_color(palette.family.on)
         .node(move |node| {
             node.flex_direction = FlexDirection::Column;
             node.row_gap = Val::Px(spacing::M);
@@ -118,8 +100,8 @@ fn card_style(palette: &Palette, floating: bool, interactive: bool, compact: boo
     }
     if interactive {
         style = style
-            .hover(Style::new().background(palette.hover))
-            .active(Style::new().background(palette.active))
+            .hover(Style::new().background(palette.family.hover))
+            .active(Style::new().background(palette.family.active))
             .transition(STANDARD_ENTER);
     }
     style

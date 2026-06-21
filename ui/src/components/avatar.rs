@@ -9,7 +9,7 @@ use crate::tokens::{radius, size};
 pub fn avatar() -> impl Bundle {
     (
         Node::default(),
-        Style::new().background(color::secondary_base).node(|node| {
+        Style::new().background(color::secondary.base).node(|node| {
             node.width = Val::Px(size::STEP_1000);
             node.height = Val::Px(size::STEP_1000);
             node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
@@ -27,7 +27,7 @@ pub fn avatar_image(source: impl Into<ImageNode>) -> impl Bundle {
 pub fn avatar_fallback() -> impl Bundle {
     (
         Node::default(),
-        Style::new().text_color(color::secondary_on).node(|node| {
+        Style::new().text_color(color::secondary.on).node(|node| {
             node.align_items = AlignItems::Center;
             node.justify_content = JustifyContent::Center;
             node.width = Val::Percent(100.0);

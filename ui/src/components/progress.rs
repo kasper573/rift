@@ -20,7 +20,7 @@ pub fn progress(value: f32, max: f32) -> impl Bundle {
         Node::default(),
         ProgressFraction(fraction),
         Style::new()
-            .background(color::surface_inset_base)
+            .background(color::surface_inset.base)
             .node(|node| {
                 node.height = Val::Px(size::STEP_200);
                 node.width = Val::Percent(100.0);
@@ -34,7 +34,7 @@ pub fn progress_indicator() -> impl Bundle {
     (
         Node::default(),
         ProgressIndicator,
-        Style::new().background(color::primary_base).node(|node| {
+        Style::new().background(color::primary.base).node(|node| {
             node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
         }),
     )

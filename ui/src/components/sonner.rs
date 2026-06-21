@@ -282,6 +282,6 @@ fn card_node() -> Node {
 
 fn card_style() -> Style {
     Style::new()
-        .background(color::surface_elevated_base)
-        .border_color(color::surface_elevated_border)
+        .background(color::surface_elevated.base)
+        .border_color(color::surface_elevated.border)
 }

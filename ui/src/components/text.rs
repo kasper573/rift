@@ -8,7 +8,7 @@ use crate::theme::color;
 use crate::tokens::typography::{self, Typography};
 
 pub fn text(content: impl Into<String>) -> impl Bundle {
-    styled(content, color::surface_canvas_on.into())
+    styled(content, color::surface_canvas.on.into())
 }
 
 pub fn text_colored(content: impl Into<String>, color: impl Into<Paint>) -> impl Bundle {

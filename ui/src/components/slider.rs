@@ -63,7 +63,7 @@ pub fn slider_range() -> impl Bundle {
     (
         Node::default(),
         SliderRange,
-        Style::new().background(color::primary_base).node(|node| {
+        Style::new().background(color::primary.base).node(|node| {
             node.position_type = PositionType::Absolute;
             node.left = Val::Px(0.0);
             node.height = Val::Percent(100.0);
@@ -84,7 +84,7 @@ pub fn slider_thumb() -> impl Bundle {
             blur_radius: Val::Px(6.0),
         }]),
         Style::new()
-            .background(color::surface_canvas_base)
+            .background(color::surface_canvas.base)
             .node(|node| {
                 node.width = Val::Px(size::STEP_600);
                 node.height = Val::Px(size::STEP_600);

@@ -64,7 +64,7 @@ pub fn scroll_bar() -> impl Bundle {
         Node::default(),
         ScrollBar,
         Style::new()
-            .background(color::surface_canvas_hover)
+            .background(color::surface_canvas.hover)
             .node(|node| {
                 node.width = Val::Px(10.0);
                 node.height = Val::Percent(100.0);
@@ -79,9 +79,9 @@ pub fn scroll_thumb() -> impl Bundle {
         Node::default(),
         ScrollThumbMark,
         Style::new()
-            .background(color::surface_canvas_border)
-            .hover(Style::new().background(color::surface_canvas_on_soft))
-            .active(Style::new().background(color::surface_canvas_on))
+            .background(color::surface_canvas.border)
+            .hover(Style::new().background(color::surface_canvas.on))
+            .active(Style::new().background(color::surface_canvas.on))
             .transition(STANDARD_ENTER)
             .node(|node| {
                 node.position_type = PositionType::Absolute;

@@ -32,7 +32,7 @@ pub fn accordion_item() -> impl Bundle {
     (
         Node::default(),
         Style::new()
-            .border_color(color::surface_canvas_border_decorative)
+            .border_color(color::surface_canvas.border)
             .node(|node| {
                 node.flex_direction = FlexDirection::Column;
                 node.width = Val::Percent(100.0);
@@ -60,12 +60,12 @@ pub fn accordion_trigger(value: impl Into<String>) -> impl Bundle {
         },
         SelectTrigger,
         Style::new()
-            .text_color(color::surface_canvas_on)
+            .text_color(color::surface_canvas.on)
             // Resting background (matches the card) so the hover paint has a value to ease back to;
             // without it the Motion is never re-aimed and the hover sticks after mouseout.
-            .background(color::surface_elevated_base)
+            .background(color::surface_elevated.base)
             .transition(STANDARD_ENTER)
-            .hover(Style::new().background(color::surface_canvas_hover))
+            .hover(Style::new().background(color::surface_canvas.hover))
             .node(|node| {
                 node.width = Val::Percent(100.0);
                 node.flex_direction = FlexDirection::Row;
@@ -94,7 +94,7 @@ pub fn accordion_body() -> impl Bundle {
     (
         Node::default(),
         Style::new()
-            .text_color(color::surface_canvas_on_soft)
+            .text_color(color::surface_canvas.on)
             .node(|node| {
                 node.padding = UiRect::new(
                     Val::Px(spacing::XL),
@@ -109,7 +109,7 @@ pub fn accordion_body() -> impl Bundle {
 // Surface card uses an elevation shadow, not a 1px border: borders on rounded boxes show white at corners.
 fn card_style() -> Style {
     Style::new()
-        .background(color::surface_elevated_base)
+        .background(color::surface_elevated.base)
         .node(|node| {
             node.flex_direction = FlexDirection::Column;
             node.width = Val::Percent(100.0);

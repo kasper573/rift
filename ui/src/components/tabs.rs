@@ -33,7 +33,7 @@ pub fn tabs_list() -> impl Bundle {
                 node.width = Val::Percent(100.0);
                 node.border = UiRect::bottom(Val::Px(1.0));
             })
-            .border_color(color::surface_canvas_border_decorative),
+            .border_color(color::surface_canvas.border),
     )
 }
 
@@ -67,15 +67,15 @@ fn trigger_style() -> Style {
             node.align_items = AlignItems::End;
             node.justify_content = JustifyContent::Center;
         })
-        .background(color::surface_canvas_base)
-        .text_color(color::surface_canvas_on)
+        .background(color::surface_canvas.base)
+        .text_color(color::surface_canvas.on)
         .border_color(Color::NONE)
         .transition(STANDARD_ENTER)
-        .hover(Style::new().background(color::surface_canvas_hover))
-        .active(Style::new().background(color::surface_canvas_active))
+        .hover(Style::new().background(color::surface_canvas.hover))
+        .active(Style::new().background(color::surface_canvas.active))
         .checked(
             Style::new()
-                .text_color(color::secondary_on)
-                .border_color(color::primary_base),
+                .text_color(color::secondary.on)
+                .border_color(color::primary.base),
         )
 }

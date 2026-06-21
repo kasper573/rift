@@ -44,7 +44,7 @@ pub fn checkbox_indicator() -> impl Bundle {
         InheritChecked,
         Gated,
         Style::new()
-            .border_color(color::primary_on)
+            .border_color(color::primary.on)
             .rotate(std::f32::consts::FRAC_PI_4)
             .translate(bevy_math::Vec2::new(0.0, -1.0)),
     )
@@ -63,17 +63,17 @@ fn box_style() -> Style {
             node.align_items = AlignItems::Center;
             node.justify_content = JustifyContent::Center;
         })
-        .background(color::surface_elevated_base)
-        .border_color(color::surface_canvas_border)
-        .hover(Style::new().background(color::surface_canvas_hover))
-        .active(Style::new().background(color::surface_canvas_active))
+        .background(color::surface_elevated.base)
+        .border_color(color::surface_canvas.border)
+        .hover(Style::new().background(color::surface_canvas.hover))
+        .active(Style::new().background(color::surface_canvas.active))
         .transition(STANDARD_ENTER)
         .checked(
             Style::new()
                 .node(|node| node.border = UiRect::all(Val::Px(0.0)))
-                .background(color::primary_base)
-                .border_color(color::primary_base)
-                .hover(Style::new().background(color::primary_hover))
-                .active(Style::new().background(color::primary_active)),
+                .background(color::primary.base)
+                .border_color(color::primary.base)
+                .hover(Style::new().background(color::primary.hover))
+                .active(Style::new().background(color::primary.active)),
         )
 }

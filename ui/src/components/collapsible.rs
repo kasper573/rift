@@ -36,9 +36,9 @@ pub fn collapsible_trigger() -> impl Bundle {
         },
         SelectTrigger,
         Style::new()
-            .text_color(color::surface_canvas_on)
+            .text_color(color::surface_canvas.on)
             .transition(STANDARD_ENTER)
-            .hover(Style::new().background(color::surface_canvas_hover))
+            .hover(Style::new().background(color::surface_canvas.hover))
             .node(|node| {
                 node.width = Val::Percent(100.0);
                 node.flex_direction = FlexDirection::Row;
@@ -67,7 +67,7 @@ pub fn collapsible_body() -> impl Bundle {
     (
         Node::default(),
         Style::new()
-            .text_color(color::surface_canvas_on_soft)
+            .text_color(color::surface_canvas.on)
             .node(|node| {
                 node.padding = UiRect::new(
                     Val::Px(spacing::M),

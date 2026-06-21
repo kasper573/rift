@@ -23,7 +23,7 @@ pub use utils::overlay::{Dismissable, Open, OverlayAction, set_overlay_open};
 pub use utils::place::place;
 pub use utils::state::{SelectionChanged, selected};
 pub use utils::style::{Paint, Style};
-pub use utils::theme::{ColorVar, Theme};
+pub use utils::theme::{ColorSlot, ColorVar, Family, Theme};
 
 /// The `Update` system set holding the ui crate's reactive pass (styling, selection, overlays).
 /// Consumers that mutate ui state from their own systems should order them `.before(UiReactive)`

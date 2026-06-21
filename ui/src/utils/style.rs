@@ -299,7 +299,7 @@ fn compose(base: Option<Box<Style>>, over: Option<Box<Style>>) -> Option<Box<Sty
 }
 
 pub(crate) fn apply_styles(world: &mut World) {
-    let theme = world.resource::<Theme>().clone();
+    let theme = *world.resource::<Theme>();
     let entities: Vec<Entity> = world
         .query_filtered::<Entity, With<Style>>()
         .iter(world)

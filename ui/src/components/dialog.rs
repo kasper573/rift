@@ -69,8 +69,8 @@ pub(crate) fn full_screen_center() -> Node {
 
 pub(crate) fn panel_style() -> Style {
     Style::new()
-        .background(color::surface_elevated_base)
-        .text_color(color::surface_elevated_on)
+        .background(color::surface_elevated.base)
+        .text_color(color::surface_elevated.on)
         .node(|node| {
             node.flex_direction = FlexDirection::Column;
             node.width = Val::Px(440.0);

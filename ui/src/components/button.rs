@@ -6,7 +6,7 @@ use bevy_ui_widgets::Button;
 use crate::components::text::text_colored;
 use crate::motion::transition::STANDARD_ENTER;
 use crate::style::{Paint, Style};
-use crate::theme::{ColorVar, color};
+use crate::theme::{ColorVar, Family, color};
 use crate::tokens::{radius, spacing};
 
 pub fn button(label: impl Into<String>) -> impl Bundle {
@@ -49,45 +49,39 @@ struct Intent {
 
 use Surface::{Themed, Transparent};
 
+impl Intent {
+    // The common case: take base/hover/active/on straight from one color family.
+    const fn family(name: &'static str, family: Family<ColorVar>) -> Intent {
+        Intent {
+            name,
+            base: Themed(family.base),
+            hover: Themed(family.hover),
+            active: Themed(family.active),
+            on: family.on,
+            border: None,
+        }
+    }
+}
+
 const INTENTS: &[Intent] = &[
-    Intent {
-        name: "primary",
-        base: Themed(color::primary_base),
-        hover: Themed(color::primary_hover),
-        active: Themed(color::primary_active),
-        on: color::primary_on,
-        border: None,
-    },
-    Intent {
-        name: "secondary",
-        base: Themed(color::secondary_base),
-        hover: Themed(color::secondary_hover),
-        active: Themed(color::secondary_active),
-        on: color::secondary_on,
-        border: None,
-    },
+    Intent::family("primary", color::primary),
+    Intent::family("secondary", color::secondary),
+    Intent::family("danger", color::error_solid),
+    // muted and plain deliberately blend slots from several families.
     Intent {
         name: "muted",
-        base: Themed(color::surface_inset_base),
-        hover: Themed(color::surface_elevated_hover),
-        active: Themed(color::surface_elevated_active),
-        on: color::surface_canvas_on,
-        border: None,
-    },
-    Intent {
-        name: "danger",
-        base: Themed(color::error_solid_base),
-        hover: Themed(color::error_solid_hover),
-        active: Themed(color::error_solid_active),
-        on: color::error_solid_on,
+        base: Themed(color::surface_inset.base),
+        hover: Themed(color::surface_elevated.hover),
+        active: Themed(color::surface_elevated.active),
+        on: color::surface_canvas.on,
         border: None,
     },
     Intent {
         name: "plain",
         base: Transparent,
-        hover: Themed(color::secondary_hover),
-        active: Themed(color::secondary_active),
-        on: color::surface_canvas_on,
+        hover: Themed(color::secondary.hover),
+        active: Themed(color::secondary.active),
+        on: color::surface_canvas.on,
         border: None,
     },
 ];

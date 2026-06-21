@@ -13,7 +13,7 @@ pub fn separator(orientation: Orientation) -> impl Bundle {
     (
         Node::default(),
         Style::new()
-            .background(color::surface_canvas_border_decorative)
+            .background(color::surface_canvas.border)
             .node(move |node| {
                 node.width = width;
                 node.height = height;
