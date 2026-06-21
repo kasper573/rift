@@ -271,11 +271,9 @@ pub(crate) fn advance_overlays(
             node.display = display;
         }
 
-        // Placed content (tooltip/popover) stays hidden until `position_overlays` has measured and
-        // placed it, so it never paints a frame at its un-flipped, pre-measurement position. Opacity
-        // alone isn't enough: `apply_opacity` doesn't dim a card's `BoxShadow`, so the shadow would
-        // show through — `Visibility::Hidden` hides the whole subtree while keeping it laid out (and
-        // therefore measurable).
+        // Placed content stays hidden until `position_overlays` has measured and positioned it, so
+        // it never paints a frame at its pre-flip position. `Visibility::Hidden` hides it without
+        // taking it out of layout, so it can still be measured.
         let awaiting_placement = placeable.contains(entity) && !placed.contains(entity);
         let wanted = if awaiting_placement {
             Visibility::Hidden
