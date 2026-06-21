@@ -1,122 +1,99 @@
-//! A small Radix-inspired UI component library over [`bevy_view`].
-//!
-//! Every component is **controlled**: it never owns its open/value state, so the app is the single
-//! source of truth. [`controlled`] shows how a component shares its value and callback from its
-//! root to its separate parts. Overlays float their content into an app-placed outlet rather than
-//! using z-index so draw order is determined by tree position. The collision-aware positioning
-//! lives in [`place`] and is unit-tested apart from layout.
-
-/// Generates the `child` builder method every component uses — the seam for `view!` macro lowering.
-macro_rules! children_builder {
-    ($ty:ty) => {
-        impl $ty {
-            pub fn child(mut self, child: impl Into<::bevy_view::View>) -> $ty {
-                self.children.push(child.into());
-                self
-            }
-        }
-    };
-}
-
-macro_rules! variant_props {
-    ($ty:ty { $($dimension:ident),+ $(,)? }) => {
-        impl $ty {
-            $(
-                pub fn $dimension(mut self, option: &'static str) -> $ty {
-                    self.variants.push((stringify!($dimension), option));
-                    self
-                }
-            )+
-        }
-    };
-}
-
 mod components;
 mod utils;
 
 pub mod themes;
 pub mod tokens;
 
-use std::collections::HashMap;
-use std::time::Duration;
-
-use bevy_app::{App, Plugin, PostUpdate, PreUpdate, Startup};
+use bevy_app::{App, Plugin, PostUpdate, Startup, Update};
 use bevy_asset::{AssetServer, Handle};
-use bevy_ecs::hierarchy::ChildOf;
-use bevy_ecs::message::MessageReader;
 use bevy_ecs::prelude::*;
-use bevy_input::mouse::{MouseScrollUnit, MouseWheel};
-use bevy_math::Vec2;
-use bevy_picking::hover::HoverMap;
-use bevy_picking::prelude::{Pickable, Pointer, Press};
 use bevy_text::Font;
-use bevy_ui::{
-    ComputedNode, Node, PositionType, ScrollPosition, UiGlobalTransform, UiSystems, Val,
-};
-use bevy_window::Window;
+use bevy_ui::UiSystems;
+use bevy_ui_widgets::{ButtonPlugin, CheckboxPlugin, ScrollAreaPlugin};
 
-use bevy_view::{Element, Instance, InstanceId, PortalKind, View, instance_of, node, outlet};
-
-use utils::controlled::{OnChange, controller};
-use utils::interaction::{on_out, on_over, on_press, on_release};
 use utils::motion::MotionPlugin;
 
-pub use components::*;
-pub use utils::interaction::PointerState;
-pub use utils::motion::{Easing, Timing, Transform2d, transition};
-pub use utils::recipe::{Paint, Recipe, Style, Styled};
 pub use utils::theme;
+pub(crate) use utils::{collapse, motion, overlay, place, state, style};
 
-// Internal module paths the components still reach for as `crate::recipe` / `crate::controlled`.
-pub(crate) use utils::{collapse, controlled, interaction, motion, popper, recipe};
+pub use bevy_ui_widgets::{Activate, ValueChange, observe};
+pub use components::*;
+pub use utils::motion::{Easing, Timing, Transform2d, transition};
+pub use utils::overlay::{Dismissable, Open, OverlayAction, set_overlay_open};
+pub use utils::place::place;
+pub use utils::state::{SelectionChanged, selected};
+pub use utils::style::{Paint, Style};
+pub use utils::theme::{ColorVar, Theme};
+
+/// The `Update` system set holding the ui crate's reactive pass (styling, selection, overlays).
+/// Consumers that mutate ui state from their own systems should order them `.before(UiReactive)`
+/// so the change is seen the same frame instead of one frame late.
+#[derive(bevy_ecs::schedule::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UiReactive;
 
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(MotionPlugin)
-            .init_resource::<Overlays>()
-            .add_message::<MouseWheel>()
-            .add_systems(Startup, load_fonts)
-            .add_systems(PreUpdate, scroll_hovered)
+        app.add_plugins(MotionPlugin);
+        // Bevy's `DefaultPlugins` already register these when the `bevy_ui_widgets` feature is on;
+        // headless apps (tests) don't, so add only what's missing.
+        if !app.is_plugin_added::<ButtonPlugin>() {
+            app.add_plugins(ButtonPlugin);
+        }
+        if !app.is_plugin_added::<CheckboxPlugin>() {
+            app.add_plugins(CheckboxPlugin);
+        }
+        if !app.is_plugin_added::<ScrollAreaPlugin>() {
+            app.add_plugins(ScrollAreaPlugin);
+        }
+        // Don't override a theme the app already configured before adding the plugin.
+        if !app.world().contains_resource::<Theme>() {
+            app.insert_resource(theme::default_theme());
+        }
+        app.init_resource::<overlay::TooltipClock>()
+            .add_systems(Startup, (load_fonts, overlay::spawn_overlay_host))
+            .add_systems(
+                Update,
+                (
+                    overlay::reparent_portals,
+                    overlay::cleanup_portals,
+                    state::init_selection,
+                    state::apply_start_checked,
+                    state::inherit_checked,
+                    overlay::open_due_tooltips,
+                    overlay::advance_overlays,
+                    state::apply_gating,
+                    components::progress::sync_progress,
+                    components::slider::sync_slider,
+                    components::sonner::layout_toasts,
+                    components::sonner::reap_toasts,
+                    style::apply_styles,
+                )
+                    .chain()
+                    .in_set(UiReactive),
+            )
             .add_systems(
                 PostUpdate,
                 (
-                    position_overlays.after(UiSystems::Layout),
-                    sync_scrollbars.after(UiSystems::Layout),
                     collapse::advance_collapse.after(UiSystems::Layout),
-                    open_due_tooltips,
-                    advance_overlay_close,
+                    place::position_overlays.after(UiSystems::Layout),
+                    components::scroll_area::sync_scrollbars.after(UiSystems::Layout),
                 ),
             )
-            .add_observer(dismiss_on_press)
-            .add_observer(on_over)
-            .add_observer(on_out)
-            .add_observer(on_press)
-            .add_observer(on_release);
+            .add_observer(state::on_select_activate)
+            .add_observer(state::on_pressable_press)
+            .add_observer(state::on_pressable_release)
+            .add_observer(state::on_pressable_out)
+            .add_observer(components::slider::on_thumb_drag)
+            .add_observer(components::sonner::on_close)
+            .add_observer(components::sonner::toaster_hover)
+            .add_observer(components::sonner::toaster_leave)
+            .add_observer(overlay::on_overlay_action)
+            .add_observer(overlay::dismiss_on_press)
+            .add_observer(overlay::tooltip_over)
+            .add_observer(overlay::tooltip_out);
     }
-}
-
-/// Keeps the library's fonts loaded so [`Text`] can resolve them by family.
-#[derive(Resource)]
-struct DesignFonts(#[allow(dead_code)] Vec<Handle<Font>>);
-
-/// Loads fonts from the `fonts/` directory — any app using the library gets text without wiring fonts.
-fn load_fonts(assets: Option<Res<AssetServer>>, mut commands: Commands) {
-    let Some(assets) = assets else {
-        return;
-    };
-    let handles = [
-        "fonts/circular-400-normal.ttf",
-        "fonts/circular-500-normal.ttf",
-        "fonts/circular-700-normal.ttf",
-        "fonts/lato-400-normal.ttf",
-        "fonts/lato-700-normal.ttf",
-    ]
-    .iter()
-    .map(|path| assets.load(*path))
-    .collect();
-    commands.insert_resource(DesignFonts(handles));
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -143,388 +120,22 @@ pub enum Orientation {
     Vertical,
 }
 
-#[derive(Default)]
-pub(crate) struct Overlay {
-    pub(crate) anchor: Option<Entity>,
-    pub(crate) on_open_change: Option<OnChange<bool>>,
-    pub(crate) hover_at: Option<Duration>,
-    pub(crate) delay: Duration,
-    /// Tracks open→closed edge to start the exit animation, allowing the content to linger and ease out.
-    pub(crate) was_open: bool,
-    pub(crate) closing_at: Option<Duration>,
-}
+#[derive(Resource)]
+struct DesignFonts(#[allow(dead_code)] Vec<Handle<Font>>);
 
-const OVERLAY_EXIT: Duration = Duration::from_millis(240);
-
-#[derive(Resource, Default)]
-pub(crate) struct Overlays {
-    pub(crate) states: HashMap<InstanceId, Overlay>,
-    pub(crate) last_tooltip_closed: Option<Duration>,
-}
-
-#[derive(Component, Clone, Copy)]
-pub(crate) struct Dismissable;
-
-#[derive(Component, Clone, Copy)]
-pub(crate) struct Placement {
-    pub(crate) side: Side,
-    pub(crate) align: Align,
-    pub(crate) offset: f32,
-}
-
-/// Builds an overlay root, sharing the controlled bool with trigger/content via context, storing the
-/// open-change callback in [`Overlays`] so portaled content (outside the hierarchy) can close it.
-pub(crate) fn overlay_root(
-    open: bool,
-    on_open_change: OnChange<bool>,
-    children: Vec<View>,
-) -> View {
-    let registered = on_open_change.clone();
-    controller(
-        node()
-            .on_mount_with(move |world, entity| {
-                let cb = registered.clone();
-                set_overlay(world, entity, move |overlay| {
-                    overlay.on_open_change = Some(cb)
-                });
-            })
-            .on_cleanup_with(forget)
-            .attr(move |entity| {
-                let id = entity.id();
-                entity.world_scope(|world| {
-                    let now = overlay_now(world);
-                    set_overlay(world, id, move |overlay| {
-                        // Track open edge: opening cancels exit; closing after open starts one so content eases out.
-                        if open {
-                            overlay.closing_at = None;
-                            overlay.was_open = true;
-                        } else if overlay.was_open && overlay.closing_at.is_none() {
-                            overlay.closing_at = Some(now);
-                        }
-                    });
-                });
-            }),
-        open,
-        on_open_change,
-        children,
-    )
-}
-
-pub(crate) fn set_overlay(world: &mut World, entity: Entity, change: impl FnOnce(&mut Overlay)) {
-    if let Some(instance) = instance_of(world, entity) {
-        change(
-            world
-                .resource_mut::<Overlays>()
-                .states
-                .entry(instance)
-                .or_default(),
-        );
-    }
-}
-
-pub(crate) fn overlay(world: &World, instance: InstanceId) -> Option<&Overlay> {
-    world
-        .get_resource::<Overlays>()
-        .and_then(|overlays| overlays.states.get(&instance))
-}
-
-pub(crate) fn register_anchor(world: &mut World, entity: Entity) {
-    set_overlay(world, entity, |overlay| overlay.anchor = Some(entity));
-}
-
-/// Closes the overlay containing `entity` — for portaled close buttons/items that can't reach the
-/// in-tree controlled bool. The root detects the edge and eases the content out before unmounting.
-pub(crate) fn close_overlay(world: &mut World, entity: Entity) {
-    let close = instance_of(world, entity)
-        .and_then(|instance| overlay(world, instance).and_then(|o| o.on_open_change.clone()));
-    if let Some(close) = close {
-        close(world, false);
-    }
-}
-
-pub(crate) fn overlay_closing(world: &World, entity: Entity) -> bool {
-    instance_of(world, entity)
-        .and_then(|instance| overlay(world, instance))
-        .is_some_and(|overlay| overlay.closing_at.is_some())
-}
-
-pub(crate) fn instance_closing(world: &World, instance: InstanceId) -> bool {
-    overlay(world, instance).is_some_and(|overlay| overlay.closing_at.is_some())
-}
-
-pub fn advance_overlay_close(world: &mut World) {
-    let now = overlay_now(world);
-    let due: Vec<InstanceId> = world
-        .resource::<Overlays>()
-        .states
-        .iter()
-        .filter_map(|(id, overlay)| {
-            let at = overlay.closing_at?;
-            (now.saturating_sub(at) >= OVERLAY_EXIT).then_some(*id)
-        })
-        .collect();
-    let mut overlays = world.resource_mut::<Overlays>();
-    for id in due {
-        if let Some(overlay) = overlays.states.get_mut(&id) {
-            overlay.closing_at = None;
-            overlay.was_open = false;
-        }
-    }
-}
-
-fn overlay_now(world: &World) -> Duration {
-    world
-        .get_resource::<bevy_time::Time>()
-        .map(|time| time.elapsed())
-        .unwrap_or_default()
-}
-
-/// Animates overlay content show/hide: fading in from `enter` and out to `exit` while closing.
-/// The content stays mounted through exit so the root can defer unmount. Pass `IDENTITY`/`IDENTITY` for
-/// a fade-only animation (e.g. full-screen backdrops need to keep covering the viewport).
-pub(crate) fn exit_on_close(
-    element: bevy_view::Element,
-    enter: motion::Transform2d,
-    exit: motion::Transform2d,
-) -> bevy_view::Element {
-    use motion::transition::{EMPHASIZED_ENTER, EMPHASIZED_EXIT};
-    // The content's opacity and transform are driven *only* here (the recipe deliberately doesn't touch
-    // them) so one consistent target reaches the motion each frame and the tween actually runs: toward
-    // the resting look while open, toward zero opacity + `exit` while closing.
-    element.attr(move |entity| {
-        let id = entity.id();
-        let closing = entity.world_scope(|world| overlay_closing(world, id));
-        if entity.get::<motion::Motion>().is_none() {
-            entity.insert(motion::Motion::default());
-        }
-        if entity.get::<motion::Opacity>().is_none() {
-            entity.insert(motion::Opacity(0.0));
-        }
-        if entity.get::<bevy_ui::UiTransform>().is_none() {
-            entity.insert(bevy_ui::UiTransform::default());
-        }
-        let mut motion = entity.get_mut::<motion::Motion>().expect("just inserted");
-        if closing {
-            motion.aim_opacity(0.0, 0.0, Some(EMPHASIZED_EXIT));
-            motion.aim_transform(motion::Transform2d::IDENTITY, exit, Some(EMPHASIZED_EXIT));
-        } else {
-            motion.aim_opacity(0.0, 1.0, Some(EMPHASIZED_ENTER));
-            motion.aim_transform(enter, motion::Transform2d::IDENTITY, Some(EMPHASIZED_ENTER));
-        }
-    })
-}
-
-pub(crate) const POPPER_ENTER: motion::Transform2d = motion::Transform2d {
-    translation: Vec2::ZERO,
-    scale: Vec2::splat(0.94),
-    rotation: 0.0,
-};
-pub(crate) const POPPER_EXIT: motion::Transform2d = motion::Transform2d {
-    translation: Vec2::ZERO,
-    scale: Vec2::splat(0.9),
-    rotation: 0.0,
-};
-
-/// Scrolls the hovered scrollable from mouse wheel — bevy_ui tracks offset but doesn't drive input.
-fn scroll_hovered(
-    mut wheel: MessageReader<MouseWheel>,
-    hover_map: Option<Res<HoverMap>>,
-    parents: Query<&ChildOf>,
-    mut scrollables: Query<&mut ScrollPosition>,
-) {
-    let Some(hover_map) = hover_map else {
+fn load_fonts(assets: Option<Res<AssetServer>>, mut commands: Commands) {
+    let Some(assets) = assets else {
         return;
     };
-    let delta: f32 = wheel
-        .read()
-        .map(|event| match event.unit {
-            MouseScrollUnit::Line => event.y * 20.0,
-            MouseScrollUnit::Pixel => event.y,
-        })
-        .sum();
-    if delta == 0.0 {
-        return;
-    }
-    for hits in hover_map.values() {
-        for &hovered in hits.keys() {
-            let mut entity = hovered;
-            loop {
-                if let Ok(mut scroll) = scrollables.get_mut(entity) {
-                    scroll.0.y = (scroll.0.y - delta).max(0.0);
-                    break;
-                }
-                match parents.get(entity) {
-                    Ok(child_of) => entity = child_of.parent(),
-                    Err(_) => break,
-                }
-            }
-        }
-    }
-}
-
-/// Drops overlay state on cleanup to avoid stale entries.
-pub(crate) fn forget(world: &mut World, entity: Entity) {
-    if let Some(instance) = instance_of(world, entity) {
-        world.resource_mut::<Overlays>().states.remove(&instance);
-    }
-}
-
-pub(crate) fn floating(
-    placement: Placement,
-    ignore_picking: bool,
-    dismissable: bool,
-    children: Vec<View>,
-) -> Element {
-    let mut element = node()
-        .attr(|entity| {
-            if let Some(mut node) = entity.get_mut::<Node>() {
-                node.position_type = PositionType::Absolute;
-            }
-        })
-        .insert(placement)
-        .children(children);
-    if dismissable {
-        element = element.insert(Dismissable);
-    }
-    if ignore_picking {
-        element = element.insert(Pickable::IGNORE);
-    }
-    element
-}
-
-/// Full-screen portal sink for overlays positioned in viewport coordinates — must span from origin
-/// so absolutely-positioned children land where intended (unsized outlets in centered layouts drift).
-pub(crate) fn overlay_outlet(kind: PortalKind) -> Element {
-    outlet(kind)
-        .attr(|entity| {
-            if let Some(mut node) = entity.get_mut::<Node>() {
-                node.position_type = PositionType::Absolute;
-                node.top = Val::Px(0.0);
-                node.left = Val::Px(0.0);
-                node.width = Val::Percent(100.0);
-                node.height = Val::Percent(100.0);
-            }
-        })
-        .insert(Pickable::IGNORE)
-}
-
-pub fn dismiss_overlays(world: &mut World, pressed: Option<Entity>) {
-    let inside = pressed.and_then(|entity| instance_of(world, entity));
-    let open: Vec<InstanceId> = world
-        .query_filtered::<&Instance, With<Dismissable>>()
-        .iter(world)
-        .map(|instance| instance.id())
-        .filter(|id| Some(*id) != inside)
-        .collect();
-    for id in open {
-        let close = overlay(world, id).and_then(|overlay| overlay.on_open_change.clone());
-        if let Some(close) = close {
-            close(world, false);
-        }
-    }
-}
-
-pub(crate) fn dismiss_on_press(press: On<Pointer<Press>>, mut commands: Commands) {
-    let target = press.entity;
-    commands.queue(move |world: &mut World| dismiss_overlays(world, Some(target)));
-}
-
-/// Positions overlays against anchors, collision-aware. Runs after layout so measured rects are current.
-fn position_overlays(
-    contents: Query<(Entity, &Placement, &Instance)>,
-    measured: Query<(&ComputedNode, &UiGlobalTransform)>,
-    overlays: Res<Overlays>,
-    windows: Query<&Window>,
-    mut nodes: Query<&mut Node>,
-) {
-    let Some(window) = windows.iter().next() else {
-        return;
-    };
-    let viewport = window.size();
-    for (entity, placement, instance) in &contents {
-        let Some(anchor) = overlays.states.get(&instance.id()).and_then(|o| o.anchor) else {
-            continue;
-        };
-        let (Ok((anchor_node, anchor_transform)), Ok((content_node, _))) =
-            (measured.get(anchor), measured.get(entity))
-        else {
-            continue;
-        };
-        let anchor_size = anchor_node.size * anchor_node.inverse_scale_factor;
-        let anchor_center = anchor_transform.translation * anchor_node.inverse_scale_factor;
-        let anchor_pos = anchor_center - anchor_size / 2.0;
-        let content_size = content_node.size * content_node.inverse_scale_factor;
-        let pos = place(
-            anchor_pos,
-            anchor_size,
-            content_size,
-            viewport,
-            placement.side,
-            placement.align,
-            placement.offset,
-        );
-        if let Ok(mut node) = nodes.get_mut(entity) {
-            node.left = Val::Px(pos.x);
-            node.top = Val::Px(pos.y);
-        }
-    }
-}
-
-pub fn place(
-    anchor_pos: Vec2,
-    anchor_size: Vec2,
-    content: Vec2,
-    viewport: Vec2,
-    side: Side,
-    align: Align,
-    offset: f32,
-) -> Vec2 {
-    let preferred = anchored(side, anchor_pos, anchor_size, content, align, offset);
-    let pos = if overflows(side, preferred, content, viewport) {
-        let opposite = opposite(side);
-        let alternate = anchored(opposite, anchor_pos, anchor_size, content, align, offset);
-        if overflows(opposite, alternate, content, viewport) {
-            preferred
-        } else {
-            alternate
-        }
-    } else {
-        preferred
-    };
-    Vec2::new(
-        pos.x.clamp(0.0, (viewport.x - content.x).max(0.0)),
-        pos.y.clamp(0.0, (viewport.y - content.y).max(0.0)),
-    )
-}
-
-fn anchored(side: Side, pos: Vec2, size: Vec2, content: Vec2, align: Align, offset: f32) -> Vec2 {
-    let cross = |start: f32, extent: f32, content: f32| match align {
-        Align::Start => start,
-        Align::Center => start + (extent - content) / 2.0,
-        Align::End => start + extent - content,
-    };
-    match side {
-        Side::Bottom => Vec2::new(cross(pos.x, size.x, content.x), pos.y + size.y + offset),
-        Side::Top => Vec2::new(cross(pos.x, size.x, content.x), pos.y - content.y - offset),
-        Side::Right => Vec2::new(pos.x + size.x + offset, cross(pos.y, size.y, content.y)),
-        Side::Left => Vec2::new(pos.x - content.x - offset, cross(pos.y, size.y, content.y)),
-    }
-}
-
-fn overflows(side: Side, pos: Vec2, content: Vec2, viewport: Vec2) -> bool {
-    match side {
-        Side::Bottom => pos.y + content.y > viewport.y,
-        Side::Top => pos.y < 0.0,
-        Side::Right => pos.x + content.x > viewport.x,
-        Side::Left => pos.x < 0.0,
-    }
-}
-
-fn opposite(side: Side) -> Side {
-    match side {
-        Side::Top => Side::Bottom,
-        Side::Bottom => Side::Top,
-        Side::Left => Side::Right,
-        Side::Right => Side::Left,
-    }
+    let handles = [
+        "fonts/circular-400-normal.ttf",
+        "fonts/circular-500-normal.ttf",
+        "fonts/circular-700-normal.ttf",
+        "fonts/lato-400-normal.ttf",
+        "fonts/lato-700-normal.ttf",
+    ]
+    .iter()
+    .map(|path| assets.load(*path))
+    .collect();
+    commands.insert_resource(DesignFonts(handles));
 }

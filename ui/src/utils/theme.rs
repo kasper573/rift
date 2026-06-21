@@ -1,13 +1,6 @@
-use std::sync::LazyLock;
-
 use bevy_color::Color;
-use bevy_ecs::prelude::Entity;
-use bevy_ecs::world::World;
-use bevy_view::{Bind, context, provide};
+use bevy_ecs::resource::Resource;
 
-use crate::themes;
-
-/// Handle to one color slot. Carries no color; resolves against active theme at render time.
 #[derive(Clone, Copy)]
 pub struct ColorVar(fn(&Theme) -> Color);
 
@@ -19,7 +12,7 @@ impl ColorVar {
 
 macro_rules! theme_contract {
     ($($slot:ident),+ $(,)?) => {
-        #[derive(Clone)]
+        #[derive(Resource, Clone)]
         #[rustfmt::skip]
         pub struct Theme {
             $(pub $slot: Color,)+
@@ -130,17 +123,6 @@ theme_contract! {
     neutral_border,
 }
 
-pub fn provide_theme(theme: Theme) -> Bind {
-    provide(theme)
-}
-
-/// The [`Theme`] in scope at `entity` — the nearest one [`provide_theme`]d at or above it, or the
-/// [default](default_theme) when none is provided (so components render themed without setup).
-pub fn active_theme(world: &World, entity: Entity) -> &Theme {
-    context::<Theme>(world, entity).unwrap_or_else(|| default_theme())
-}
-
-pub fn default_theme() -> &'static Theme {
-    static DEFAULT: LazyLock<Theme> = LazyLock::new(themes::dark::theme);
-    &DEFAULT
+pub fn default_theme() -> Theme {
+    crate::themes::dark::theme()
 }

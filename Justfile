@@ -124,4 +124,10 @@ gallery:
     cargo build -p client --bin gallery
     cargo test -p e2e --test gallery --no-run
     RIFT_GALLERY="{{justfile_directory()}}/target/debug/gallery" \
+    RIFT_ASSETS_DIR="{{justfile_directory()}}/assets" \
         cargo test -p e2e --test gallery -- --ignored --nocapture
+
+# Open the gallery window to browse it yourself (Space steps scenes; set RIFT_AUTOPLAY=1 to autoplay).
+gallery-run *args:
+    RIFT_ASSETS_DIR="{{justfile_directory()}}/assets" \
+        cargo run -p client --bin gallery {{args}}

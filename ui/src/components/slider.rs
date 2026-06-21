@@ -1,214 +1,167 @@
-use std::sync::Arc;
-
 use bevy_color::Color;
 use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::prelude::*;
-use bevy_math::Vec2;
 use bevy_ui::{
-    AlignItems, BorderRadius, BoxShadow, ComputedNode, ShadowStyle, UiGlobalTransform, Val,
+    AlignItems, BorderRadius, BoxShadow, ComputedNode, Display, Node, PositionType, ShadowStyle,
+    UiGlobalTransform, Val,
 };
-use bevy_view::{View, context, node, provide};
+use bevy_ui_widgets::ValueChange;
 use bevy_window::{PrimaryWindow, Window};
 
-use crate::controlled::{OnChange, noop};
-use crate::recipe::{Style, Styled};
+use bevy_math::Vec2;
+use bevy_picking::prelude::{Drag, Pointer};
+
+use crate::state::ancestor_with;
+use crate::style::Style;
 use crate::theme::color;
 use crate::tokens::{radius, size};
 
-#[derive(Clone)]
-struct Range {
-    value: f32,
-    min: f32,
-    max: f32,
-    on_change: OnChange<f32>,
+#[derive(Component)]
+pub struct SliderState {
+    pub value: f32,
+    pub min: f32,
+    pub max: f32,
 }
 
-#[derive(Default)]
-pub struct Slider {
-    value: f32,
-    min: f32,
-    max: f32,
-    on_value_change: Option<OnChange<f32>>,
-    children: Vec<View>,
-}
-
-impl Slider {
-    pub fn value(mut self, value: f32) -> Slider {
-        self.value = value;
-        self
-    }
-    pub fn min(mut self, min: f32) -> Slider {
-        self.min = min;
-        self
-    }
-    pub fn max(mut self, max: f32) -> Slider {
-        self.max = max;
-        self
-    }
-
-    pub fn on_value_change<F>(mut self, handler: F) -> Slider
-    where
-        F: Fn(&mut World, f32) + Send + Sync + 'static,
-    {
-        self.on_value_change = Some(Arc::new(handler));
-        self
-    }
-}
-
-children_builder!(Slider);
-
-#[derive(Default)]
-pub struct SliderTrack {
-    children: Vec<View>,
-}
-
-children_builder!(SliderTrack);
-
-#[derive(Default)]
+#[derive(Component)]
 pub struct SliderRange;
 
-#[derive(Default)]
+#[derive(Component)]
 pub struct SliderThumb;
 
-impl From<Slider> for View {
-    fn from(slider: Slider) -> View {
-        let max = if slider.max > 0.0 { slider.max } else { 100.0 };
-        let range = Range {
-            value: slider.value.clamp(slider.min, max),
-            min: slider.min,
+pub fn slider(value: f32, min: f32, max: f32) -> impl Bundle {
+    let max = if max > 0.0 { max } else { 100.0 };
+    (
+        Node::default(),
+        SliderState {
+            value: value.clamp(min, max),
+            min,
             max,
-            on_change: slider.on_value_change.unwrap_or_else(noop),
-        };
-        node()
-            .style(root_style())
-            .bind(provide(range))
-            .children(slider.children)
-            .into()
-    }
-}
-
-impl From<SliderTrack> for View {
-    fn from(track: SliderTrack) -> View {
-        let style = track_style();
-        node().style(style).children(track.children).into()
-    }
-}
-
-impl From<SliderRange> for View {
-    fn from(_: SliderRange) -> View {
-        node()
-            .style(range_style())
-            .attr(|entity| {
-                let id = entity.id();
-                let fraction = entity.world_scope(|world| fraction(world, id));
-                if let Some(mut node) = entity.get_mut::<bevy_ui::Node>() {
-                    node.width = Val::Percent(fraction * 100.0);
-                }
-            })
-            .into()
-    }
-}
-
-impl From<SliderThumb> for View {
-    fn from(_: SliderThumb) -> View {
-        node()
-            .style(thumb_style())
-            .insert(BoxShadow(vec![ShadowStyle {
-                color: Color::srgba(0.0, 0.0, 0.0, 0.28),
-                x_offset: Val::Px(0.0),
-                y_offset: Val::Px(2.0),
-                spread_radius: Val::Px(0.0),
-                blur_radius: Val::Px(6.0),
-            }]))
-            .attr(|entity| {
-                let id = entity.id();
-                let fraction = entity.world_scope(|world| fraction(world, id));
-                if let Some(mut node) = entity.get_mut::<bevy_ui::Node>() {
-                    node.left = Val::Percent(fraction * 100.0);
-                }
-            })
-            .on_drag_with(|world, entity, _delta| {
-                let Some(range) = context::<Range>(world, entity).cloned() else {
-                    return;
-                };
-                // Use physical pixels (cursor and track) so display scale doesn't affect mapping.
-                let Some((left, width)) = track_bounds(world, entity) else {
-                    return;
-                };
-                let Some(cursor) = window_cursor(world) else {
-                    return;
-                };
-                if width <= 0.0 {
-                    return;
-                }
-                let fraction = ((cursor.x - left) / width).clamp(0.0, 1.0);
-                let next = range.min + fraction * (range.max - range.min);
-                (range.on_change)(world, next);
-            })
-            .into()
-    }
-}
-
-fn track_bounds(world: &World, thumb: Entity) -> Option<(f32, f32)> {
-    let track = world.get::<ChildOf>(thumb)?.parent();
-    let computed = world.get::<ComputedNode>(track)?;
-    let transform = world.get::<UiGlobalTransform>(track)?;
-    let width = computed.size.x;
-    Some((transform.translation.x - width / 2.0, width))
-}
-
-fn window_cursor(world: &mut World) -> Option<Vec2> {
-    let mut query = world.query_filtered::<&Window, With<PrimaryWindow>>();
-    query
-        .iter(world)
-        .next()
-        .and_then(|window| window.cursor_position())
-}
-
-fn fraction(world: &World, entity: Entity) -> f32 {
-    context::<Range>(world, entity)
-        .map(|range| ((range.value - range.min) / (range.max - range.min)).clamp(0.0, 1.0))
-        .unwrap_or(0.0)
-}
-
-fn root_style() -> Style {
-    Style::new().node(|node| {
-        node.width = Val::Percent(100.0);
-        node.height = Val::Px(size::STEP_600);
-        node.display = bevy_ui::Display::Flex;
-        node.align_items = AlignItems::Center;
-    })
-}
-
-/// Track: unclipped so thumb can overhang.
-fn track_style() -> Style {
-    Style::new().background(color::scrim_dark).node(|node| {
-        node.flex_grow = 1.0;
-        node.height = Val::Px(size::STEP_100);
-        node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
-        node.position_type = bevy_ui::PositionType::Relative;
-    })
-}
-
-fn range_style() -> Style {
-    Style::new().background(color::primary_base).node(|node| {
-        node.position_type = bevy_ui::PositionType::Absolute;
-        node.left = Val::Px(0.0);
-        node.height = Val::Percent(100.0);
-        node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
-    })
-}
-
-/// Thumb: centered on track, shifted left so center aligns with value.
-fn thumb_style() -> Style {
-    Style::new()
-        .background(color::surface_canvas_base)
-        .node(|node| {
-            node.width = Val::Px(size::STEP_600);
+        },
+        Style::new().node(|node| {
+            node.width = Val::Percent(100.0);
             node.height = Val::Px(size::STEP_600);
-            node.border_radius = BorderRadius::all(Val::Px(radius::L));
-            node.position_type = bevy_ui::PositionType::Absolute;
-            node.top = Val::Px(-10.0);
-        })
-        .translate(Vec2::new(-(size::STEP_600 / 2.0), 0.0))
+            node.display = Display::Flex;
+            node.align_items = AlignItems::Center;
+        }),
+    )
+}
+
+pub fn slider_track() -> impl Bundle {
+    (
+        Node::default(),
+        Style::new().background(color::scrim_dark).node(|node| {
+            node.flex_grow = 1.0;
+            node.height = Val::Px(size::STEP_100);
+            node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
+            node.position_type = PositionType::Relative;
+        }),
+    )
+}
+
+pub fn slider_range() -> impl Bundle {
+    (
+        Node::default(),
+        SliderRange,
+        Style::new().background(color::primary_base).node(|node| {
+            node.position_type = PositionType::Absolute;
+            node.left = Val::Px(0.0);
+            node.height = Val::Percent(100.0);
+            node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
+        }),
+    )
+}
+
+pub fn slider_thumb() -> impl Bundle {
+    (
+        Node::default(),
+        SliderThumb,
+        BoxShadow(vec![ShadowStyle {
+            color: Color::srgba(0.0, 0.0, 0.0, 0.28),
+            x_offset: Val::Px(0.0),
+            y_offset: Val::Px(2.0),
+            spread_radius: Val::Px(0.0),
+            blur_radius: Val::Px(6.0),
+        }]),
+        Style::new()
+            .background(color::surface_canvas_base)
+            .node(|node| {
+                node.width = Val::Px(size::STEP_600);
+                node.height = Val::Px(size::STEP_600);
+                node.border_radius = BorderRadius::all(Val::Px(radius::L));
+                node.position_type = PositionType::Absolute;
+                node.top = Val::Px(-10.0);
+            })
+            .translate(Vec2::new(-(size::STEP_600 / 2.0), 0.0)),
+    )
+}
+
+fn fraction(state: &SliderState) -> f32 {
+    ((state.value - state.min) / (state.max - state.min)).clamp(0.0, 1.0)
+}
+
+#[allow(clippy::type_complexity)]
+pub(crate) fn sync_slider(
+    states: Query<&SliderState>,
+    parents: Query<&ChildOf>,
+    has_state: Query<(), With<SliderState>>,
+    mut ranges: Query<(Entity, &mut Node), (With<SliderRange>, Without<SliderThumb>)>,
+    mut thumbs: Query<(Entity, &mut Node), (With<SliderThumb>, Without<SliderRange>)>,
+) {
+    let fraction_of = |entity: Entity| {
+        ancestor_with::<SliderState>(entity, &parents, &has_state)
+            .and_then(|root| states.get(root).ok())
+            .map_or(0.0, fraction)
+    };
+    for (entity, mut node) in &mut ranges {
+        node.width = Val::Percent(fraction_of(entity) * 100.0);
+    }
+    for (entity, mut node) in &mut thumbs {
+        node.left = Val::Percent(fraction_of(entity) * 100.0);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn on_thumb_drag(
+    drag: On<Pointer<Drag>>,
+    thumbs: Query<(), With<SliderThumb>>,
+    parents: Query<&ChildOf>,
+    has_state: Query<(), With<SliderState>>,
+    mut states: Query<&mut SliderState>,
+    measured: Query<(&ComputedNode, &UiGlobalTransform)>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut commands: Commands,
+) {
+    let thumb = drag.entity;
+    if !thumbs.contains(thumb) {
+        return;
+    }
+    let (Some(root), Ok(track)) = (
+        ancestor_with::<SliderState>(thumb, &parents, &has_state),
+        parents.get(thumb).map(ChildOf::parent),
+    ) else {
+        return;
+    };
+    let Ok((track_node, track_transform)) = measured.get(track) else {
+        return;
+    };
+    // Physical pixels (cursor and track) so display scale doesn't affect the mapping.
+    let width = track_node.size.x;
+    let left = track_transform.translation.x - width / 2.0;
+    let Some(cursor) = windows.iter().next().and_then(Window::cursor_position) else {
+        return;
+    };
+    if width <= 0.0 {
+        return;
+    }
+    let fraction = ((cursor.x - left) / width).clamp(0.0, 1.0);
+    if let Ok(mut state) = states.get_mut(root) {
+        let next = state.min + fraction * (state.max - state.min);
+        state.value = next;
+        commands.trigger(ValueChange {
+            source: root,
+            value: next,
+            is_final: false,
+        });
+    }
 }

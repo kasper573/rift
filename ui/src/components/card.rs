@@ -1,66 +1,38 @@
 use bevy_color::Color;
-use bevy_ui::{BorderRadius, BoxShadow, FlexDirection, ShadowStyle, UiRect, Val};
-use bevy_view::{Element, View, node};
+use bevy_ecs::bundle::Bundle;
+use bevy_picking::hover::Hovered;
+use bevy_ui::{BorderRadius, BoxShadow, FlexDirection, Node, Pressed, ShadowStyle, UiRect, Val};
 
-use crate::PointerState;
 use crate::motion::transition::STANDARD_ENTER;
-use crate::recipe::{Style, Styled};
+use crate::state::Pressable;
+use crate::style::Style;
 use crate::theme::{ColorVar, color};
 use crate::tokens::{radius, spacing};
 
-#[derive(Default)]
-pub struct Card {
-    intent: &'static str,
-    floating: bool,
-    interactive: bool,
-    compact: bool,
-    children: Vec<View>,
+#[derive(Default, Clone, Copy)]
+pub struct CardOpts {
+    pub intent: &'static str,
+    pub floating: bool,
+    pub interactive: bool,
+    pub compact: bool,
 }
 
-impl Card {
-    pub fn intent(mut self, intent: &'static str) -> Card {
-        self.intent = intent;
-        self
-    }
-    pub fn floating(mut self, floating: bool) -> Card {
-        self.floating = floating;
-        self
-    }
-    pub fn interactive(mut self, interactive: bool) -> Card {
-        self.interactive = interactive;
-        self
-    }
-    pub fn compact(mut self, compact: bool) -> Card {
-        self.compact = compact;
-        self
-    }
-}
-
-children_builder!(Card);
-
-impl From<Card> for View {
-    fn from(card: Card) -> View {
-        let palette = palette(card.intent);
-        let (floating, interactive) = (card.floating, card.interactive);
-        let element: Element = node()
-            .style(card_style(&palette, floating, interactive, card.compact))
-            .attr(move |entity| {
-                // Shadow depends on live hover state (recipe can't animate it); set each render.
-                let hovered = entity
-                    .get::<PointerState>()
-                    .is_some_and(|pointer| pointer.hovered && !pointer.pressed);
-                match shadow(floating, interactive, hovered) {
-                    Some(shadow) => {
-                        entity.insert(shadow);
-                    }
-                    None => {
-                        entity.remove::<BoxShadow>();
-                    }
-                }
-            })
-            .children(card.children);
-        element.into()
-    }
+pub fn card(opts: CardOpts) -> impl Bundle {
+    let palette = palette(opts.intent);
+    let (floating, interactive) = (opts.floating, opts.interactive);
+    let style = card_style(&palette, floating, interactive, opts.compact).op(move |entity| {
+        let hovered =
+            entity.get::<Hovered>().is_some_and(Hovered::get) && entity.get::<Pressed>().is_none();
+        match shadow(floating, interactive, hovered) {
+            Some(shadow) => {
+                entity.insert(shadow);
+            }
+            None => {
+                entity.remove::<BoxShadow>();
+            }
+        }
+    });
+    (Node::default(), style, Pressable)
 }
 
 fn shadow(floating: bool, interactive: bool, hovered: bool) -> Option<BoxShadow> {

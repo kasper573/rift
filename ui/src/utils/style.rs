@@ -2,15 +2,15 @@ use std::sync::Arc;
 
 use bevy_color::Color;
 use bevy_ecs::bundle::Bundle;
+use bevy_ecs::prelude::*;
 use bevy_ecs::world::EntityWorldMut;
 use bevy_math::Vec2;
+use bevy_picking::hover::Hovered;
 use bevy_text::TextColor;
-use bevy_ui::{BackgroundColor, BorderColor, Node, UiTransform};
-use bevy_view::Element;
+use bevy_ui::{BackgroundColor, BorderColor, Checked, Node, Pressed, UiTransform};
 
-use crate::interaction::PointerState;
 use crate::motion::{Motion, Opacity, Paint as MotionPaint, Timing, Transform2d};
-use crate::theme::{ColorVar, active_theme};
+use crate::theme::{ColorVar, Theme};
 
 type Op = Arc<dyn Fn(&mut EntityWorldMut) + Send + Sync>;
 
@@ -33,18 +33,15 @@ impl From<Color> for Paint {
 }
 
 impl Paint {
-    fn resolve(self, entity: &mut EntityWorldMut) -> Color {
+    fn resolve(self, theme: &Theme) -> Color {
         match self {
             Paint::Literal(color) => color,
-            Paint::Var(var) => {
-                let id = entity.id();
-                entity.world_scope(|world| var.resolve(active_theme(world, id)))
-            }
+            Paint::Var(var) => var.resolve(theme),
         }
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Component, Clone, Default)]
 pub struct Style {
     ops: Vec<Op>,
     background: Option<Paint>,
@@ -58,6 +55,7 @@ pub struct Style {
     transition: Option<Timing>,
     hover: Option<Box<Style>>,
     active: Option<Box<Style>>,
+    checked: Option<Box<Style>>,
 }
 
 impl Style {
@@ -65,7 +63,6 @@ impl Style {
         Style::default()
     }
 
-    /// Patch `Node` fields in place without touching runtime-owned fields.
     pub fn node<F>(self, patch: F) -> Style
     where
         F: Fn(&mut Node) + Send + Sync + 'static,
@@ -123,7 +120,7 @@ impl Style {
         self
     }
 
-    /// Opacity in 0..=1, applied to node and descendants (bevy_ui has no subtree opacity).
+    // bevy_ui has no subtree opacity; `apply_opacity` propagates this down the tree.
     pub fn opacity(mut self, opacity: f32) -> Style {
         self.opacity = Some(opacity);
         self
@@ -144,7 +141,6 @@ impl Style {
         self
     }
 
-    /// Overlay style while pointer hovers (and while pressed, since press implies hover).
     pub fn hover(mut self, style: Style) -> Style {
         self.hover = Some(Box::new(style));
         self
@@ -152,6 +148,11 @@ impl Style {
 
     pub fn active(mut self, style: Style) -> Style {
         self.active = Some(Box::new(style));
+        self
+    }
+
+    pub fn checked(mut self, style: Style) -> Style {
+        self.checked = Some(Box::new(style));
         self
     }
 
@@ -163,7 +164,6 @@ impl Style {
         self
     }
 
-    /// Append another style; its instant ops run after this one's, tweenable fields win, state overlays compose.
     pub fn merge(mut self, other: Style) -> Style {
         self.ops.extend(other.ops);
         self.background = other.background.or(self.background);
@@ -177,19 +177,11 @@ impl Style {
         self.transition = other.transition.or(self.transition);
         self.hover = compose(self.hover, other.hover);
         self.active = compose(self.active, other.active);
+        self.checked = compose(self.checked, other.checked);
         self
     }
 
-    pub fn apply(&self, entity: &mut EntityWorldMut) {
-        if (self.hover.is_some() || self.active.is_some()) && entity.get::<PointerState>().is_none()
-        {
-            entity.insert(PointerState::default());
-        }
-        let pointer = entity.get::<PointerState>().copied().unwrap_or_default();
-        self.for_state(pointer).write(entity);
-    }
-
-    fn for_state(&self, pointer: PointerState) -> Style {
+    fn for_state(&self, hovered: bool, pressed: bool, checked: bool) -> Style {
         let mut style = Style {
             ops: self.ops.clone(),
             background: self.background,
@@ -203,28 +195,34 @@ impl Style {
             transition: self.transition,
             hover: None,
             active: None,
+            checked: None,
         };
-        if (pointer.hovered || pointer.pressed)
+        if checked && let Some(checked) = &self.checked {
+            style = style.merge((**checked).clone());
+        }
+        if (hovered || pressed)
             && let Some(hover) = &self.hover
         {
             style = style.merge((**hover).clone());
         }
-        if pointer.pressed
-            && let Some(active) = &self.active
-        {
+        if pressed && let Some(active) = &self.active {
             style = style.merge((**active).clone());
         }
         style
     }
 
-    fn write(&self, entity: &mut EntityWorldMut) {
+    fn stateful(&self) -> bool {
+        self.hover.is_some() || self.active.is_some() || self.checked.is_some()
+    }
+
+    fn write(&self, entity: &mut EntityWorldMut, theme: &Theme) {
         for op in &self.ops {
             op(entity);
         }
 
-        let background = self.background.map(|paint| paint.resolve(entity));
-        let border = self.border.map(|paint| paint.resolve(entity));
-        let text = self.text.map(|paint| paint.resolve(entity));
+        let background = self.background.map(|paint| paint.resolve(theme));
+        let border = self.border.map(|paint| paint.resolve(theme));
+        let text = self.text.map(|paint| paint.resolve(theme));
 
         if self.transition.is_none() && self.spin.is_none() {
             if let Some(color) = background {
@@ -296,111 +294,26 @@ fn compose(base: Option<Box<Style>>, over: Option<Box<Style>>) -> Option<Box<Sty
     }
 }
 
-/// Attaching a [`Style`] to an element — the single seam between styling and the view tree. The style
-/// re-applies every render, so it tracks theme and pointer state live.
-pub trait Styled {
-    fn style(self, style: Style) -> Self;
-}
-
-impl Styled for Element {
-    fn style(self, style: Style) -> Element {
-        self.attr(move |entity| style.apply(entity))
-    }
-}
-
-#[derive(Default)]
-pub struct Recipe {
-    base: Style,
-    variants: Vec<Dimension>,
-    compounds: Vec<Compound>,
-    defaults: Vec<(&'static str, &'static str)>,
-}
-
-impl Recipe {
-    pub fn new() -> Recipe {
-        Recipe::default()
-    }
-
-    pub fn base(mut self, style: Style) -> Recipe {
-        self.base = style;
-        self
-    }
-
-    pub fn variant<I>(mut self, name: &'static str, options: I) -> Recipe
-    where
-        I: IntoIterator<Item = (&'static str, Style)>,
-    {
-        self.variants.push(Dimension {
-            name,
-            options: options.into_iter().collect(),
-        });
-        self
-    }
-
-    pub fn compound<I>(mut self, selection: I, style: Style) -> Recipe
-    where
-        I: IntoIterator<Item = (&'static str, &'static str)>,
-    {
-        self.compounds.push(Compound {
-            selection: selection.into_iter().collect(),
-            style,
-        });
-        self
-    }
-
-    pub fn default_variant(mut self, dimension: &'static str, option: &'static str) -> Recipe {
-        self.defaults.push((dimension, option));
-        self
-    }
-
-    /// Merges the base, then each selected variant option (an explicit `selection` entry overriding the
-    /// [`default_variant`](Recipe::default_variant)), then every matching compound — later styles win.
-    pub fn resolve(&self, selection: &[(&str, &str)]) -> Style {
-        let chosen = |dimension: &str| -> Option<&str> {
-            selection
-                .iter()
-                .find(|(name, _)| *name == dimension)
-                .map(|(_, option)| *option)
-                .or_else(|| {
-                    self.defaults
-                        .iter()
-                        .find(|(name, _)| *name == dimension)
-                        .map(|(_, option)| *option)
-                })
+pub(crate) fn apply_styles(world: &mut World) {
+    let theme = world.resource::<Theme>().clone();
+    let entities: Vec<Entity> = world
+        .query_filtered::<Entity, With<Style>>()
+        .iter(world)
+        .collect();
+    for entity in entities {
+        let hovered = world.get::<Hovered>(entity).is_some_and(Hovered::get);
+        let pressed = world.get::<Pressed>(entity).is_some();
+        let checked = world.get::<Checked>(entity).is_some();
+        let Some(style) = world.get::<Style>(entity).cloned() else {
+            continue;
         };
-        let mut style = self.base.clone();
-        for dimension in &self.variants {
-            let Some(option) = chosen(dimension.name) else {
-                continue;
-            };
-            match dimension.options.iter().find(|(name, _)| *name == option) {
-                Some((_, variant)) => style = style.merge(variant.clone()),
-                None => debug_assert!(
-                    false,
-                    "no option `{option}` for variant `{}`",
-                    dimension.name
-                ),
-            }
-        }
-        for compound in &self.compounds {
-            if compound
-                .selection
-                .iter()
-                .all(|(name, option)| chosen(name) == Some(option))
-            {
-                style = style.merge(compound.style.clone());
-            }
+        let mut entity = world.entity_mut(entity);
+        // Track for picking so a hover change repaints the entity.
+        if style.stateful() && entity.get::<Hovered>().is_none() {
+            entity.insert(Hovered(false));
         }
         style
+            .for_state(hovered, pressed, checked)
+            .write(&mut entity, &theme);
     }
-}
-
-struct Dimension {
-    name: &'static str,
-    options: Vec<(&'static str, Style)>,
-}
-
-struct Compound {
-    selection: Vec<(&'static str, &'static str)>,
-    style: Style,
 }

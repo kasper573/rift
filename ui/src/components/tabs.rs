@@ -1,142 +1,65 @@
-use std::sync::Arc;
-
 use bevy_color::Color;
-use bevy_ecs::prelude::*;
-use bevy_ui::{AlignItems, JustifyContent, UiRect, Val};
-use bevy_view::{View, gate, node};
+use bevy_ecs::bundle::Bundle;
+use bevy_ui::{AlignItems, FlexDirection, JustifyContent, Node, UiRect, Val};
+use bevy_ui_widgets::Button;
 
-use crate::controlled::{OnChange, controlled, node_controller, noop, select, when_selected};
 use crate::motion::transition::STANDARD_ENTER;
-use crate::recipe::{Paint, Style, Styled};
+use crate::state::{Gated, SelectGroup, SelectItem, SelectTrigger};
+use crate::style::Style;
 use crate::theme::color;
 use crate::tokens::spacing;
 
-#[derive(Default)]
-pub struct Tabs {
-    value: Option<String>,
-    on_value_change: Option<OnChange<Option<String>>>,
-    children: Vec<View>,
+pub fn tabs(value: Option<String>) -> impl Bundle {
+    (
+        Node::default(),
+        SelectGroup {
+            exclusive: true,
+            toggleable: false,
+            initial: value.into_iter().collect(),
+        },
+        Style::new().node(|node| {
+            node.flex_direction = FlexDirection::Column;
+            node.width = Val::Percent(100.0);
+        }),
+    )
 }
 
-impl Tabs {
-    pub fn value(mut self, value: impl Into<Option<String>>) -> Tabs {
-        self.value = value.into();
-        self
-    }
-
-    pub fn on_value_change<F>(mut self, handler: F) -> Tabs
-    where
-        F: Fn(&mut World, Option<String>) + Send + Sync + 'static,
-    {
-        self.on_value_change = Some(Arc::new(handler));
-        self
-    }
-}
-
-children_builder!(Tabs);
-
-#[derive(Default)]
-pub struct TabsList {
-    children: Vec<View>,
-}
-
-children_builder!(TabsList);
-
-#[derive(Default)]
-pub struct TabsTrigger {
-    value: String,
-    children: Vec<View>,
-}
-
-impl TabsTrigger {
-    pub fn value(mut self, value: impl Into<String>) -> TabsTrigger {
-        self.value = value.into();
-        self
-    }
-}
-
-children_builder!(TabsTrigger);
-
-#[derive(Default)]
-pub struct TabsContent {
-    value: String,
-    children: Vec<View>,
-}
-
-impl TabsContent {
-    pub fn value(mut self, value: impl Into<String>) -> TabsContent {
-        self.value = value.into();
-        self
-    }
-}
-
-children_builder!(TabsContent);
-
-impl From<Tabs> for View {
-    fn from(tabs: Tabs) -> View {
-        node_controller(
-            tabs.value,
-            tabs.on_value_change.unwrap_or_else(noop),
-            tabs.children,
-        )
-    }
-}
-
-impl From<TabsList> for View {
-    fn from(list: TabsList) -> View {
-        let style = Style::new()
+pub fn tabs_list() -> impl Bundle {
+    (
+        Node::default(),
+        Style::new()
             .node(|node| {
-                node.flex_direction = bevy_ui::FlexDirection::Row;
-                node.width = bevy_ui::Val::Percent(100.0);
-                node.border = UiRect {
-                    left: bevy_ui::Val::Px(0.0),
-                    right: bevy_ui::Val::Px(0.0),
-                    top: bevy_ui::Val::Px(0.0),
-                    bottom: bevy_ui::Val::Px(1.0),
-                };
+                node.flex_direction = FlexDirection::Row;
+                node.width = Val::Percent(100.0);
+                node.border = UiRect::bottom(Val::Px(1.0));
             })
-            .border_color(color::surface_canvas_border_decorative);
-        node().style(style).children(list.children).into()
-    }
+            .border_color(color::surface_canvas_border_decorative),
+    )
 }
 
-impl From<TabsTrigger> for View {
-    fn from(trigger: TabsTrigger) -> View {
-        let value = trigger.value.clone();
-        node()
-            .attr(move |entity| {
-                let id = entity.id();
-                let selected = entity.world_scope(|world| is_selected(world, id, &value));
-                trigger_style(selected).apply(entity);
-            })
-            .on_click_with(select(trigger.value))
-            .children(trigger.children)
-            .into()
-    }
+pub fn tabs_trigger(value: impl Into<String>) -> impl Bundle {
+    (
+        Node::default(),
+        Button,
+        SelectItem {
+            value: value.into(),
+        },
+        SelectTrigger,
+        trigger_style(),
+    )
 }
 
-impl From<TabsContent> for View {
-    fn from(content: TabsContent) -> View {
-        gate(
-            when_selected(content.value),
-            node().children(content.children),
-        )
-    }
+pub fn tabs_content(value: impl Into<String>) -> impl Bundle {
+    (
+        Node::default(),
+        SelectItem {
+            value: value.into(),
+        },
+        Gated,
+    )
 }
 
-fn is_selected(world: &World, host: Entity, value: &str) -> bool {
-    controlled::<Option<String>>(world, host)
-        .and_then(|control| control.value)
-        .as_deref()
-        == Some(value)
-}
-
-fn trigger_style(selected: bool) -> Style {
-    let (text, underline): (Paint, Paint) = if selected {
-        (color::secondary_on.into(), color::primary_base.into())
-    } else {
-        (color::surface_canvas_on.into(), Color::NONE.into())
-    };
+fn trigger_style() -> Style {
     Style::new()
         .node(|node| {
             node.padding = UiRect::axes(Val::Px(spacing::XXXL), Val::Px(spacing::L));
@@ -145,9 +68,14 @@ fn trigger_style(selected: bool) -> Style {
             node.justify_content = JustifyContent::Center;
         })
         .background(color::surface_canvas_base)
-        .text_color(text)
-        .border_color(underline)
+        .text_color(color::surface_canvas_on)
+        .border_color(Color::NONE)
         .transition(STANDARD_ENTER)
         .hover(Style::new().background(color::surface_canvas_hover))
         .active(Style::new().background(color::surface_canvas_active))
+        .checked(
+            Style::new()
+                .text_color(color::secondary_on)
+                .border_color(color::primary_base),
+        )
 }

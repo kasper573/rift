@@ -1,53 +1,47 @@
-mod accordion;
-mod alert_dialog;
-mod avatar;
-mod button;
-mod card;
-mod checkbox;
-mod collapsible;
-mod dialog;
-mod popover;
-mod progress;
-mod radio_group;
-mod scroll_area;
-mod separator;
-mod slider;
-mod sonner;
-mod switch;
-mod tabs;
-mod text;
-mod tooltip;
+pub(crate) mod accordion;
+pub(crate) mod alert_dialog;
+pub(crate) mod avatar;
+pub(crate) mod button;
+pub(crate) mod card;
+pub(crate) mod checkbox;
+pub(crate) mod collapsible;
+pub(crate) mod dialog;
+pub(crate) mod popover;
+pub(crate) mod progress;
+pub(crate) mod radio_group;
+pub(crate) mod scroll_area;
+pub(crate) mod separator;
+pub(crate) mod slider;
+pub(crate) mod sonner;
+pub(crate) mod switch;
+pub(crate) mod tabs;
+pub(crate) mod text;
+pub(crate) mod tooltip;
 
 pub use accordion::{
-    Accordion, AccordionContent, AccordionHeader, AccordionItem, AccordionTrigger,
+    accordion, accordion_body, accordion_content, accordion_header, accordion_item,
+    accordion_trigger,
 };
 pub use alert_dialog::{
-    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-    AlertDialogOutlet, AlertDialogOverlay, AlertDialogTitle, AlertDialogTrigger,
+    alert_dialog, alert_dialog_action, alert_dialog_cancel, alert_dialog_content,
+    alert_dialog_modal, alert_dialog_scrim, alert_dialog_trigger,
 };
-pub use avatar::{Avatar, AvatarFallback, AvatarImage};
-pub use button::Button;
-pub use card::Card;
-pub use checkbox::{Check, Checkbox, CheckboxIndicator};
-pub use collapsible::{Collapsible, CollapsibleContent, CollapsibleTrigger};
+pub use avatar::{avatar, avatar_fallback, avatar_image};
+pub use button::{button, button_styled};
+pub use card::{CardOpts, card};
+pub use checkbox::{Check, checkbox, checkbox_indicator};
+pub use collapsible::{collapsible, collapsible_body, collapsible_content, collapsible_trigger};
 pub use dialog::{
-    Dialog, DialogClose, DialogContent, DialogDescription, DialogOutlet, DialogOverlay,
-    DialogTitle, DialogTrigger,
+    dialog, dialog_close, dialog_content, dialog_modal, dialog_scrim, dialog_trigger,
 };
-pub use popover::{Popover, PopoverClose, PopoverContent, PopoverOutlet, PopoverTrigger};
-pub use progress::{Progress, ProgressIndicator};
-pub use radio_group::{RadioGroup, RadioGroupIndicator, RadioGroupItem};
-pub(crate) use scroll_area::sync_scrollbars;
-pub use scroll_area::{
-    ScrollArea, ScrollAreaCorner, ScrollAreaScrollbar, ScrollAreaThumb, ScrollAreaViewport,
-};
-pub use separator::Separator;
-pub use slider::{Slider, SliderRange, SliderThumb, SliderTrack};
-pub use sonner::{SonnerClose, SonnerPosition, Toast, Toaster};
-pub use switch::{Switch, SwitchThumb};
-pub use tabs::{Tabs, TabsContent, TabsList, TabsTrigger};
-pub use text::Text;
-pub use tooltip::{
-    Tooltip, TooltipConfig, TooltipContent, TooltipOutlet, TooltipProvider, TooltipTrigger,
-    open_due_tooltips,
-};
+pub use popover::{popover, popover_close, popover_content, popover_trigger};
+pub use progress::{ProgressFraction, progress, progress_indicator};
+pub use radio_group::{radio_circle, radio_group, radio_indicator, radio_item};
+pub use scroll_area::{scroll_area, scroll_bar, scroll_corner, scroll_thumb, scroll_viewport};
+pub use separator::separator;
+pub use slider::{SliderState, slider, slider_range, slider_thumb, slider_track};
+pub use sonner::{SonnerPosition, Toast, Toaster, sonner_close, toast, toaster};
+pub use switch::{switch, switch_thumb};
+pub use tabs::{tabs, tabs_content, tabs_list, tabs_trigger};
+pub use text::{text, text_colored};
+pub use tooltip::{tooltip, tooltip_content};

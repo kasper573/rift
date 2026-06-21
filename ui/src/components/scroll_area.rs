@@ -2,122 +2,82 @@ use bevy_ecs::prelude::*;
 use bevy_ui::{
     BorderRadius, ComputedNode, FlexDirection, Node, Overflow, PositionType, ScrollPosition, Val,
 };
-use bevy_view::{View, node};
+use bevy_ui_widgets::ScrollArea;
 
-use crate::recipe::{Style, Styled};
+use crate::style::Style;
 use crate::theme::color;
 use crate::tokens::radius;
 
-#[derive(Component, Clone)]
+#[derive(Component)]
 pub(crate) struct ScrollRoot;
-#[derive(Component, Clone)]
+#[derive(Component)]
 pub(crate) struct ScrollViewport;
-#[derive(Component, Clone)]
+#[derive(Component)]
 pub(crate) struct ScrollBar;
-#[derive(Component, Clone)]
+#[derive(Component)]
 pub(crate) struct ScrollThumbMark;
 
-#[derive(Default)]
-pub struct ScrollArea {
-    children: Vec<View>,
+pub fn scroll_area() -> impl Bundle {
+    (
+        Node::default(),
+        ScrollRoot,
+        Style::new().node(|node| {
+            node.flex_direction = FlexDirection::Row;
+            node.overflow = Overflow::clip();
+            node.position_type = PositionType::Relative;
+        }),
+    )
 }
 
-children_builder!(ScrollArea);
-
-#[derive(Default)]
-pub struct ScrollAreaViewport {
-    children: Vec<View>,
+pub fn scroll_viewport() -> impl Bundle {
+    (
+        Node::default(),
+        ScrollViewport,
+        ScrollPosition::default(),
+        ScrollArea,
+        Style::new().node(|node| {
+            node.overflow = Overflow::scroll_y();
+            node.flex_grow = 1.0;
+            node.height = Val::Percent(100.0);
+            node.flex_direction = FlexDirection::Column;
+        }),
+    )
 }
 
-children_builder!(ScrollAreaViewport);
-
-#[derive(Default)]
-pub struct ScrollAreaScrollbar {
-    children: Vec<View>,
-}
-
-children_builder!(ScrollAreaScrollbar);
-
-#[derive(Default)]
-pub struct ScrollAreaThumb;
-
-#[derive(Default)]
-pub struct ScrollAreaCorner;
-
-impl From<ScrollArea> for View {
-    fn from(area: ScrollArea) -> View {
-        node()
-            .insert(ScrollRoot)
-            .style(Style::new().node(|node| {
-                node.flex_direction = FlexDirection::Row;
-                node.overflow = Overflow::clip();
-                node.position_type = PositionType::Relative;
-            }))
-            .children(area.children)
-            .into()
-    }
-}
-
-impl From<ScrollAreaViewport> for View {
-    fn from(viewport: ScrollAreaViewport) -> View {
-        node()
-            .insert(ScrollViewport)
-            .insert(ScrollPosition::default())
-            .style(Style::new().node(|node| {
-                node.overflow = Overflow::scroll_y();
-                node.flex_grow = 1.0;
+pub fn scroll_bar() -> impl Bundle {
+    (
+        Node::default(),
+        ScrollBar,
+        Style::new()
+            .background(color::surface_canvas_hover)
+            .node(|node| {
+                node.width = Val::Px(10.0);
                 node.height = Val::Percent(100.0);
-                node.flex_direction = FlexDirection::Column;
-            }))
-            .children(viewport.children)
-            .into()
-    }
+                node.position_type = PositionType::Relative;
+                node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
+            }),
+    )
 }
 
-impl From<ScrollAreaScrollbar> for View {
-    fn from(scrollbar: ScrollAreaScrollbar) -> View {
-        node()
-            .insert(ScrollBar)
-            .style(
-                Style::new()
-                    .background(color::surface_canvas_hover)
-                    .node(|node| {
-                        node.width = Val::Px(10.0);
-                        node.height = Val::Percent(100.0);
-                        node.position_type = PositionType::Relative;
-                        node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
-                    }),
-            )
-            .children(scrollbar.children)
-            .into()
-    }
+pub fn scroll_thumb() -> impl Bundle {
+    (
+        Node::default(),
+        ScrollThumbMark,
+        Style::new()
+            .background(color::surface_canvas_border)
+            .node(|node| {
+                node.position_type = PositionType::Absolute;
+                node.left = Val::Px(2.0);
+                node.width = Val::Px(6.0);
+                node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
+            }),
+    )
 }
 
-impl From<ScrollAreaThumb> for View {
-    fn from(_: ScrollAreaThumb) -> View {
-        node()
-            .insert(ScrollThumbMark)
-            .style(
-                Style::new()
-                    .background(color::surface_canvas_border)
-                    .node(|node| {
-                        node.position_type = PositionType::Absolute;
-                        node.left = Val::Px(2.0);
-                        node.width = Val::Px(6.0);
-                        node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
-                    }),
-            )
-            .into()
-    }
+pub fn scroll_corner() -> impl Bundle {
+    Node::default()
 }
 
-impl From<ScrollAreaCorner> for View {
-    fn from(_: ScrollAreaCorner) -> View {
-        node().into()
-    }
-}
-
-/// Sizes and positions thumbs from viewports. Runs after layout so measured sizes are current.
 pub(crate) fn sync_scrollbars(
     roots: Query<&Children, With<ScrollRoot>>,
     is_viewport: Query<(), With<ScrollViewport>>,

@@ -65,7 +65,7 @@ fn update(world: &mut World) {
 }
 
 fn desired(world: &mut World) -> (CursorIcon, Option<Pos<Tiles>>) {
-    if let Some(ui) = bevy_view::hovered_cursor(world) {
+    if let Some(ui) = crate::drag::hovered_cursor(world) {
         return (ui, None);
     }
     let (pointer, hover) = compute(world);

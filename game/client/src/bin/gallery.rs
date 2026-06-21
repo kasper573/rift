@@ -1,65 +1,113 @@
 use std::collections::HashSet;
 
 use bevy::prelude::*;
-use bevy::ui::{ComputedNode, UiGlobalTransform};
-use bevy_view::{View, ViewRoot, activate_click, activate_out, activate_over, image, node};
-use ui::Text;
-use ui::theme::{color, provide_theme};
+use bevy::ui::{ComputedNode, UiGlobalTransform, widget::Text as TextWidget};
+use bevy_picking::hover::Hovered;
+use ui::theme::color;
+use ui::themes;
 use ui::{
-    Accordion, AccordionContent, AccordionHeader, AccordionItem, AccordionTrigger, AlertDialog,
-    AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-    AlertDialogOutlet, AlertDialogOverlay, AlertDialogTitle, AlertDialogTrigger, Avatar,
-    AvatarFallback, Button, Card, Check, Checkbox, CheckboxIndicator, Collapsible,
-    CollapsibleContent, CollapsibleTrigger, Dialog, DialogClose, DialogContent, DialogDescription,
-    DialogOutlet, DialogOverlay, DialogTitle, DialogTrigger, PointerState, Popover, PopoverContent,
-    PopoverOutlet, PopoverTrigger, Progress, ProgressIndicator, RadioGroup, RadioGroupIndicator,
-    RadioGroupItem, ScrollArea, ScrollAreaScrollbar, ScrollAreaThumb, ScrollAreaViewport,
-    Separator, Side, Slider, SliderRange, SliderThumb, SliderTrack, SonnerClose, SonnerPosition,
-    Switch, SwitchThumb, Tabs, TabsList, TabsTrigger, Toast, Toaster, Tooltip, TooltipContent,
-    TooltipOutlet, TooltipTrigger, dismiss_overlays, themes,
+    Align, CardOpts, Check, Orientation, Side, SonnerPosition, accordion, accordion_body,
+    accordion_content, accordion_header, accordion_item, accordion_trigger, alert_dialog,
+    alert_dialog_action, alert_dialog_cancel, alert_dialog_content, alert_dialog_scrim,
+    alert_dialog_trigger, avatar, avatar_fallback, button, button_styled, card, checkbox,
+    checkbox_indicator, collapsible, collapsible_content, collapsible_trigger, dialog,
+    dialog_close, dialog_content, dialog_scrim, dialog_trigger, popover, popover_content,
+    popover_trigger, progress, progress_indicator, radio_circle, radio_group, radio_indicator,
+    radio_item, scroll_area, scroll_bar, scroll_thumb, scroll_viewport, separator, slider,
+    slider_range, slider_thumb, slider_track, sonner_close, switch, switch_thumb, tabs, tabs_list,
+    tabs_trigger, text, text_colored, toast, toaster, tooltip, tooltip_content,
 };
 
 const WINDOW: Vec2 = Vec2::new(1600.0, 900.0);
+const SETTLE: f32 = 0.4;
+const INTRO: f32 = 4.0;
+const STATIC_HOLD: f32 = 2.6;
 
-fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "rift ui gallery".to_owned(),
-                resolution: WINDOW.as_uvec2().into(),
-                decorations: false,
-                ..default()
-            }),
-            ..default()
-        }))
-        .insert_resource(ClearColor(
-            color::surface_inset_base.resolve(&themes::light::theme()),
-        ))
-        .init_resource::<Stage>()
-        .init_resource::<Director>()
-        .init_resource::<Fps>()
-        .add_plugins((bevy_view::ViewPlugin, ui::UiPlugin))
-        .add_systems(Startup, setup)
-        .add_systems(Update, (whiten_checkmark, update_fps))
-        .add_systems(Update, (expire_toasts, direct, place_cursor).chain())
-        .run();
+const TOAST_MESSAGES: &[(&str, &str)] = &[
+    ("Event created", "Monday, January 6 at 9:00 AM"),
+    ("Changes saved", "Your project is up to date."),
+    ("Copied to clipboard", "The share link is ready."),
+    ("Upload complete", "report-q3.pdf finished uploading."),
+];
+
+#[derive(Resource)]
+struct CaptureCfg {
+    dir: String,
+    frames: u32,
 }
 
-// bevy tints UI images by multiplying, so the solid-black checkmark can't be tinted; recolor it white.
-fn whiten_checkmark(mut images: ResMut<Assets<Image>>, stage: Res<Stage>, mut done: Local<bool>) {
-    if *done {
+fn main() {
+    // Same contract as the client/server: the asset directory is explicit, never a baked default.
+    let assets = std::fs::canonicalize(
+        std::env::var_os("RIFT_ASSETS_DIR").expect("RIFT_ASSETS_DIR must be set"),
+    )
+    .expect("RIFT_ASSETS_DIR must point to an existing directory");
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "rift ui gallery".to_owned(),
+                    resolution: WINDOW.as_uvec2().into(),
+                    decorations: false,
+                    ..default()
+                }),
+                ..default()
+            })
+            .set(bevy::asset::AssetPlugin {
+                file_path: assets.to_string_lossy().into_owned(),
+                ..default()
+            }),
+    )
+    .insert_resource(ClearColor(
+        color::surface_inset_base.resolve(&themes::light::theme()),
+    ))
+    .insert_resource(themes::light::theme())
+    .init_resource::<Fps>()
+    .init_resource::<Director>()
+    .init_resource::<ToastCounter>()
+    .add_plugins(ui::UiPlugin)
+    .add_systems(Startup, setup)
+    .add_systems(Update, (update_fps, update_fps_display).chain())
+    // Director runs in Update before the ui reactive pass (same schedule point as the original's
+    // render), so the state it sets (Open, Hovered) and the scene it rebuilds are seen the same frame.
+    .add_systems(
+        Update,
+        (direct, rebuild_scene, place_cursor)
+            .chain()
+            .before(ui::UiReactive),
+    );
+
+    capture_setup(&mut app);
+    app.run();
+}
+
+fn capture_setup(app: &mut App) {
+    let Ok(dir) = std::env::var("RIFT_CAPTURE_DIR") else {
         return;
+    };
+    let frames: u32 = std::env::var("RIFT_CAPTURE_FRAMES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(600);
+    let _ = std::fs::create_dir_all(&dir);
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_secs_f64(1.0 / 60.0),
+    ));
+    app.insert_resource(CaptureCfg { dir, frames });
+    app.add_systems(bevy::app::PostUpdate, capture_frame);
+}
+
+fn capture_frame(mut commands: Commands, cfg: Res<CaptureCfg>, mut n: Local<u32>) {
+    if *n < cfg.frames {
+        let path = format!("{}/f{:05}.png", cfg.dir, *n);
+        commands
+            .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+            .observe(bevy::render::view::screenshot::save_to_disk(path));
+    } else if *n > cfg.frames + 40 {
+        std::process::exit(0);
     }
-    if let Some(mut image) = images.get_mut(&stage.checkmark) {
-        if let Some(data) = image.data.as_mut() {
-            for pixel in data.chunks_exact_mut(4) {
-                pixel[0] = 255;
-                pixel[1] = 255;
-                pixel[2] = 255;
-            }
-        }
-        *done = true;
-    }
+    *n += 1;
 }
 
 #[derive(Resource, Default)]
@@ -70,93 +118,14 @@ fn update_fps(time: Res<Time>, mut fps: ResMut<Fps>) {
     fps.0 = fps.0 * 0.9 + instant * 0.1;
 }
 
-#[derive(Resource)]
-struct Stage {
-    checkbox: Check,
-    switch: bool,
-    radio: Option<String>,
-    tab: Option<String>,
-    accordion: HashSet<String>,
-    collapsible: bool,
-    slider: f32,
-    progress: f32,
-    dialog: bool,
-    alert: bool,
-    tooltip: Option<usize>,
-    popover: Option<usize>,
-    toasts: Vec<LiveToast>,
-    next_toast: u64,
-    sonner_expanded: bool,
-    sonner_position: SonnerPosition,
-    checkmark: Handle<Image>,
-}
-
-impl Default for Stage {
-    fn default() -> Stage {
-        Stage {
-            checkbox: Check::Off,
-            switch: false,
-            radio: Some("apple".to_owned()),
-            tab: Some("overview".to_owned()),
-            accordion: HashSet::from(["shipping".to_owned()]),
-            collapsible: false,
-            slider: 35.0,
-            progress: 0.0,
-            dialog: false,
-            alert: false,
-            tooltip: None,
-            popover: None,
-            toasts: Vec::new(),
-            next_toast: 0,
-            sonner_expanded: false,
-            sonner_position: SonnerPosition::BottomRight,
-            checkmark: Handle::default(),
-        }
+fn update_fps_display(fps: Res<Fps>, mut displays: Query<&mut TextWidget, With<FpsDisplay>>) {
+    for mut text in &mut displays {
+        text.0 = format!("{:.0} fps", fps.0);
     }
 }
 
-struct LiveToast {
-    id: u64,
-    title: &'static str,
-    body: &'static str,
-    born: f32,
-    leaving_at: Option<f32>,
-}
-
-const TOAST_TTL: f32 = 4.0;
-const TOAST_EXIT: f32 = 0.4;
-
-const TOAST_MESSAGES: &[(&str, &str)] = &[
-    ("Event created", "Monday, January 6 at 9:00 AM"),
-    ("Changes saved", "Your project is up to date."),
-    ("Copied to clipboard", "The share link is ready."),
-    ("Upload complete", "report-q3.pdf finished uploading."),
-];
-
-fn expire_toasts(time: Res<Time>, mut stage: ResMut<Stage>) {
-    let now = time.elapsed_secs();
-    let dt = time.delta_secs();
-    let expanded = stage.sonner_expanded;
-    for toast in &mut stage.toasts {
-        if toast.leaving_at.is_some() {
-            continue;
-        }
-        if expanded {
-            toast.born += dt;
-        } else if now - toast.born >= TOAST_TTL {
-            toast.leaving_at = Some(now);
-        }
-    }
-    stage
-        .toasts
-        .retain(|toast| toast.leaving_at.is_none_or(|at| now - at < TOAST_EXIT));
-}
-
-fn start_leaving(stage: &mut Stage, id: u64, now: f32) {
-    if let Some(toast) = stage.toasts.iter_mut().find(|toast| toast.id == id) {
-        toast.leaving_at.get_or_insert(now);
-    }
-}
+#[derive(Resource, Default)]
+struct ToastCounter(u64);
 
 #[derive(Component, Clone, Copy)]
 struct Demo {
@@ -171,13 +140,15 @@ enum Act {
     Close,
     Open,
     Drag,
-    Spawn,
-    Scroll,
     Fill,
+    Spawn,
 }
 
 #[derive(Component)]
 struct CursorDot;
+
+#[derive(Component)]
+struct ToasterEntity;
 
 #[derive(Resource, Default)]
 struct Director {
@@ -193,6 +164,14 @@ struct Director {
     anchor: Vec2,
     pressed: bool,
     idle: f32,
+    // Reproduce the original reconciler's overlay timing: when a scene is entered by an overlay
+    // closing (its Demo gating out), the original took one extra frame to swap the shared overlay
+    // outlet before the next overlay could paint. The retained ui has no outlet to swap, so the
+    // gallery re-adds that single frame here to keep the autoplay video frame-identical.
+    prev_targets: usize,
+    delay_open: bool,
+    pending_overlay: Option<(Entity, bool)>,
+    pending_advance: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -203,16 +182,14 @@ enum Beat {
     Up,
     Leave,
     Sweep,
-    Emit,
-    Hold,
     Filling,
-    ScrollDown,
-    ScrollUp,
-    SetPosition,
+    Hold,
+    Emit,
     Expand,
     DismissMiddle,
     DismissOne,
     Collapse,
+    SetPosition,
 }
 
 fn plan(act: Act) -> &'static [(Beat, f32)] {
@@ -244,20 +221,80 @@ fn plan(act: Act) -> &'static [(Beat, f32)] {
             (DismissOne, 1.4),
             (Collapse, 0.8),
         ],
-        Act::Scroll => &[(Approach, 0.4), (ScrollDown, 2.2), (ScrollUp, 2.2)],
     }
 }
 
-const SETTLE: f32 = 0.4;
-const INTRO: f32 = 4.0;
-const STATIC_HOLD: f32 = 2.6;
+fn ease(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
 
-fn setup(
-    mut commands: Commands,
-    mut director: ResMut<Director>,
-    mut stage: ResMut<Stage>,
-    assets: Res<AssetServer>,
-) {
+#[derive(Clone, Copy)]
+struct Target {
+    entity: Entity,
+    order: u32,
+    act: Act,
+    center: Vec2,
+}
+
+fn scene_targets(world: &mut World) -> Vec<Target> {
+    let mut query = world.query::<(Entity, &Demo, &ComputedNode, &UiGlobalTransform)>();
+    query
+        .iter(world)
+        // Skip hidden targets (zero-size, e.g. a closed dialog's Cancel button still mounted as
+        // Display::None). The original reconciler gated these out of the tree; the retained dialog
+        // keeps them mounted, so the Director must ignore them to advance at the same time.
+        .filter(|(_, _, computed, _)| computed.size.x > 0.0 && computed.size.y > 0.0)
+        .map(|(entity, demo, computed, transform)| Target {
+            entity,
+            order: demo.order,
+            act: demo.act,
+            center: transform.translation * computed.inverse_scale_factor,
+        })
+        .collect()
+}
+
+fn descendants(world: &World, root: Entity) -> Vec<Entity> {
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    while let Some(entity) = stack.pop() {
+        out.push(entity);
+        if let Some(children) = world.get::<Children>(entity) {
+            stack.extend(children.iter());
+        }
+    }
+    out
+}
+
+fn set_state(world: &mut World, root: Entity, hovered: bool, pressed: bool) {
+    for entity in descendants(world, root) {
+        if world.get::<Hovered>(entity).is_some() {
+            world.entity_mut(entity).insert(Hovered(hovered));
+        }
+        if pressed {
+            world.entity_mut(entity).insert(bevy::ui::Pressed);
+        } else {
+            world.entity_mut(entity).remove::<bevy::ui::Pressed>();
+        }
+    }
+}
+
+fn clear_all_states(world: &mut World) {
+    let entities: Vec<_> = world.query::<Entity>().iter(world).collect();
+    for entity in entities {
+        if world.get::<Hovered>(entity).is_some() {
+            world.entity_mut(entity).insert(Hovered(false));
+        }
+        world.entity_mut(entity).remove::<bevy::ui::Pressed>();
+    }
+}
+
+#[derive(Component)]
+struct SceneRoot;
+
+#[derive(Component)]
+struct FpsDisplay;
+
+fn setup(mut commands: Commands, mut director: ResMut<Director>) {
     director.cursor = WINDOW / 2.0;
     director.settle = INTRO;
     director.autoplay = std::env::var("RIFT_AUTOPLAY").is_ok();
@@ -266,19 +303,33 @@ fn setup(
         director.pinned = true;
         director.settle = SETTLE;
     }
-    stage.checkmark = assets.load("icons/misc/checkmark.png");
     commands.spawn((Camera2d, IsDefaultUiCamera));
-    commands.spawn((
-        Node {
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            ..default()
-        },
-        ViewRoot::new(gallery),
-    ));
+    spawn_scene(&mut commands, director.scene);
+
+    if director.autoplay {
+        let (scene_name, _) = SCENES[director.scene];
+        commands.spawn((
+            SceneLabel,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(40.0),
+                left: Val::Px(48.0),
+                ..default()
+            },
+            text(scene_name),
+        ));
+        commands.spawn((
+            FpsDisplay,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(12.0),
+                bottom: Val::Px(12.0),
+                ..default()
+            },
+            text("0 fps"),
+        ));
+    }
+
     commands.spawn((
         CursorDot,
         Node {
@@ -293,6 +344,68 @@ fn setup(
         BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.55)),
         GlobalZIndex(10_000),
     ));
+}
+
+// Despawns and respawns the scene tree whenever the Director advances to a new scene (the original
+// reconciler re-rendered on scene change; retained mode needs this explicit rebuild).
+fn rebuild_scene(
+    director: Res<Director>,
+    mut spawned: Local<Option<usize>>,
+    roots: Query<Entity, With<SceneRoot>>,
+    mut labels: Query<&mut TextWidget, With<SceneLabel>>,
+    mut commands: Commands,
+) {
+    if *spawned == Some(director.scene) {
+        return;
+    }
+    *spawned = Some(director.scene);
+    for root in &roots {
+        commands.entity(root).despawn();
+    }
+    spawn_scene(&mut commands, director.scene);
+    for mut label in &mut labels {
+        label.0 = SCENES[director.scene].0.to_owned();
+    }
+}
+
+#[derive(Component)]
+struct SceneLabel;
+
+fn spawn_scene(commands: &mut Commands, index: usize) {
+    let (_name, builder) = SCENES[index.min(SCENES.len() - 1)];
+    let mut scene_node = commands.spawn((
+        SceneRoot,
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+    ));
+    builder(&mut scene_node);
+}
+
+fn place_cursor(
+    director: Res<Director>,
+    mut cursors: Query<(&mut Node, &mut BackgroundColor), With<CursorDot>>,
+) {
+    let Ok((mut node, mut bg)) = cursors.single_mut() else {
+        return;
+    };
+    if !director.autoplay {
+        node.display = Display::None;
+        return;
+    }
+    node.display = Display::Flex;
+    node.left = Val::Px(director.cursor.x - 11.0);
+    node.top = Val::Px(director.cursor.y - 11.0);
+    *bg = BackgroundColor(if director.pressed {
+        Color::srgba(0.2, 0.45, 0.95, 0.65)
+    } else {
+        Color::srgba(1.0, 1.0, 1.0, 0.55)
+    });
 }
 
 fn direct(world: &mut World) {
@@ -315,9 +428,15 @@ fn direct(world: &mut World) {
     let mut targets = scene_targets(world);
     targets.sort_by_key(|t| t.order);
 
+    // A target gating out (e.g. a closing dialog's Cancel) shrinks the set mid-scene; that's the
+    // signal the next scene is entered by an overlay closing.
+    let shrank = !targets.is_empty() && targets.len() < dir.prev_targets;
+    dir.prev_targets = targets.len();
+
     if targets.is_empty() {
         dir.idle += dt;
         if dir.idle >= STATIC_HOLD {
+            dir.delay_open = false;
             advance_scene(&mut dir);
         }
         world.insert_resource(dir);
@@ -326,6 +445,14 @@ fn direct(world: &mut World) {
     dir.idle = 0.0;
 
     if dir.target >= targets.len() {
+        // A scene entered by an overlay closing also advances out one frame later in the original
+        // (the outlet swap again); hold one frame before advancing.
+        if dir.delay_open && !dir.pending_advance {
+            dir.pending_advance = true;
+            world.insert_resource(dir);
+            return;
+        }
+        dir.delay_open = shrank;
         advance_scene(&mut dir);
         world.insert_resource(dir);
         return;
@@ -369,58 +496,187 @@ fn direct(world: &mut World) {
 fn on_beat_enter(world: &mut World, dir: &mut Director, beat: Beat, target: Target) {
     use Beat::*;
     match beat {
-        Up if matches!(target.act, Act::Click | Act::Close | Act::Open) => {
-            dir.pressed = false;
-            for entity in descendants(world, target.entity) {
-                activate_over(world, entity);
-                activate_click(world, entity);
+        Up => match target.act {
+            // Overlays: `Pointer<Over>` opens hover-driven tooltips (via their real delay timer);
+            // click-driven dialogs/popovers (which carry an `OverlayAction`) open by setting `Open`
+            // directly — same one-system latency as hover, so they open on the same frame as the
+            // original (a synthetic click would add a frame via the observer/command hop).
+            Act::Open => {
+                for entity in descendants(world, target.entity) {
+                    fire_over(world, entity);
+                    if world.get::<ui::OverlayAction>(entity).is_some() {
+                        if dir.delay_open {
+                            dir.pending_overlay = Some((entity, true));
+                        } else {
+                            ui::set_overlay_open(world, entity, true);
+                        }
+                    }
+                }
             }
-        }
+            Act::Close => {
+                for entity in descendants(world, target.entity) {
+                    if matches!(
+                        world.get::<ui::OverlayAction>(entity),
+                        Some(ui::OverlayAction::Close)
+                    ) {
+                        if dir.delay_open {
+                            dir.pending_overlay = Some((entity, false));
+                        } else {
+                            ui::set_overlay_open(world, entity, false);
+                        }
+                    }
+                }
+            }
+            // Selection/toggle widgets (tabs/radio/accordion/collapsible) react to `Activate`.
+            Act::Click => {
+                for entity in descendants(world, target.entity) {
+                    world.trigger(ui::Activate { entity });
+                }
+            }
+            _ => {}
+        },
+        // Leaving closes tooltips (`Pointer<Out>`) and dismisses toggle popovers; dialogs stay open
+        // (they close via their own cancel button), matching the original.
         Leave => {
             for entity in descendants(world, target.entity) {
-                activate_out(world, entity);
+                fire_out(world, entity);
+                if matches!(
+                    world.get::<ui::OverlayAction>(entity),
+                    Some(ui::OverlayAction::Toggle)
+                ) {
+                    ui::set_overlay_open(world, entity, false);
+                }
             }
-            dismiss_overlays(world, None);
         }
-        Emit => spawn_toast(world),
-        Expand => {
-            let mut stage = world.resource_mut::<Stage>();
-            stage.sonner_position = SonnerPosition::BottomRight;
-            stage.sonner_expanded = true;
+        Emit => {
+            let mut counter = world.resource_mut::<ToastCounter>();
+            let id = counter.0;
+            counter.0 += 1;
+            let (title, body) = TOAST_MESSAGES[(id as usize) % TOAST_MESSAGES.len()];
+
+            if let Ok(toaster_entity) = world
+                .query_filtered::<Entity, With<ToasterEntity>>()
+                .single(world)
+            {
+                world.entity_mut(toaster_entity).with_children(|parent| {
+                    parent.spawn(toast()).with_children(|parent| {
+                        parent
+                            .spawn((Node {
+                                flex_direction: FlexDirection::Row,
+                                justify_content: JustifyContent::SpaceBetween,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(12.0),
+                                ..default()
+                            },))
+                            .with_children(|parent| {
+                                parent.spawn(text(title));
+                                parent.spawn(sonner_close()).with_children(|parent| {
+                                    parent.spawn(button_styled("secondary", "sm", "close"));
+                                });
+                            });
+                        parent.spawn(text_colored(body, color::surface_canvas_on_soft));
+                    });
+                });
+            }
         }
+        SetPosition => {
+            if let Some(toaster) = toaster_entity(world) {
+                for t in toast_children(world, toaster) {
+                    world.entity_mut(t).despawn();
+                }
+                set_toaster_expanded(world, false);
+            }
+        }
+        Expand => set_toaster_expanded(world, true),
+        Collapse => set_toaster_expanded(world, false),
         DismissMiddle => {
-            let now = world.resource::<Time>().elapsed_secs();
-            let mut stage = world.resource_mut::<Stage>();
-            let count = stage.toasts.len();
-            if count >= 2 {
-                let id = stage.toasts[count / 2].id;
-                start_leaving(&mut stage, id, now);
+            if let Some(toaster) = toaster_entity(world) {
+                let toasts = toast_children(world, toaster);
+                if toasts.len() >= 2 {
+                    let mid = toasts[toasts.len() / 2];
+                    if let Some(mut toast) = world.get_mut::<ui::Toast>(mid) {
+                        toast.leaving = true;
+                    }
+                }
             }
         }
         DismissOne => {
-            let now = world.resource::<Time>().elapsed_secs();
-            let mut stage = world.resource_mut::<Stage>();
-            if let Some(id) = stage
-                .toasts
-                .iter()
-                .rev()
-                .find(|toast| toast.leaving_at.is_none())
-                .map(|toast| toast.id)
-            {
-                start_leaving(&mut stage, id, now);
+            if let Some(toaster) = toaster_entity(world) {
+                let last = toast_children(world, toaster).into_iter().rev().find(|&t| {
+                    world
+                        .get::<ui::Toast>(t)
+                        .is_some_and(|toast| !toast.leaving)
+                });
+                if let Some(last) = last
+                    && let Some(mut toast) = world.get_mut::<ui::Toast>(last)
+                {
+                    toast.leaving = true;
+                }
             }
-        }
-        Collapse => {
-            world.resource_mut::<Stage>().sonner_expanded = false;
-        }
-        SetPosition => {
-            let mut stage = world.resource_mut::<Stage>();
-            stage.sonner_expanded = false;
-            stage.sonner_position = SonnerPosition::BottomRight;
-            stage.toasts.clear();
         }
         _ => {}
     }
+}
+
+fn toaster_entity(world: &mut World) -> Option<Entity> {
+    world
+        .query_filtered::<Entity, With<ToasterEntity>>()
+        .iter(world)
+        .next()
+}
+
+fn toast_children(world: &World, toaster: Entity) -> Vec<Entity> {
+    world
+        .get::<Children>(toaster)
+        .map(|children| {
+            children
+                .iter()
+                .filter(|&e| world.get::<ui::Toast>(e).is_some())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn set_toaster_expanded(world: &mut World, expanded: bool) {
+    if let Some(toaster) = toaster_entity(world)
+        && let Some(mut toaster) = world.get_mut::<ui::Toaster>(toaster)
+    {
+        toaster.expanded = expanded;
+    }
+}
+
+fn pointer_location() -> bevy_picking::pointer::Location {
+    bevy_picking::pointer::Location {
+        target: bevy::camera::NormalizedRenderTarget::None {
+            width: WINDOW.x as u32,
+            height: WINDOW.y as u32,
+        },
+        position: Vec2::ZERO,
+    }
+}
+
+fn fire_over(world: &mut World, entity: Entity) {
+    use bevy_picking::events::{Over, Pointer};
+    world.trigger(Pointer::new(
+        bevy_picking::pointer::PointerId::Mouse,
+        pointer_location(),
+        Over {
+            hit: bevy_picking::backend::HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+        },
+        entity,
+    ));
+}
+
+fn fire_out(world: &mut World, entity: Entity) {
+    use bevy_picking::events::{Out, Pointer};
+    world.trigger(Pointer::new(
+        bevy_picking::pointer::PointerId::Mouse,
+        pointer_location(),
+        Out {
+            hit: bevy_picking::backend::HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+        },
+        entity,
+    ));
 }
 
 fn drive_beat(world: &mut World, dir: &mut Director, beat: Beat, target: Target, progress: f32) {
@@ -444,46 +700,40 @@ fn drive_beat(world: &mut World, dir: &mut Director, beat: Beat, target: Target,
             dir.cursor.x = target.center.x - half + 2.0 * half * progress;
             dir.cursor.y = target.center.y;
             dir.pressed = true;
-            world.resource_mut::<Stage>().slider = progress * 100.0;
+            if let Some(mut state) = world.get_mut::<ui::SliderState>(target.entity) {
+                state.value = state.min + progress * (state.max - state.min);
+            }
         }
-
         Filling => {
             dir.cursor = target.center;
             dir.pressed = false;
-            world.resource_mut::<Stage>().progress = progress * 100.0;
+            world
+                .entity_mut(target.entity)
+                .insert(ui::ProgressFraction(progress));
         }
-        Emit | Hold => {
+        Hold | Emit => {
             dir.pressed = false;
         }
-        ScrollDown | ScrollUp => {
-            dir.cursor = target.center;
-            let frac = if beat == ScrollDown {
-                progress
-            } else {
-                1.0 - progress
-            };
-            set_scroll(world, target.entity, frac);
-        }
-        SetPosition => {
-            let position = world.resource::<Stage>().sonner_position;
-            dir.cursor = stack_cursor(position);
-            dir.pressed = false;
-        }
-        Expand | Collapse => {
-            let position = world.resource::<Stage>().sonner_position;
-            dir.cursor = stack_cursor(position);
+        SetPosition | Expand | Collapse => {
+            let pos = WINDOW * Vec2::new(0.87, 0.88);
+            dir.cursor = pos;
             dir.pressed = false;
         }
         DismissMiddle | DismissOne => {
-            let position = world.resource::<Stage>().sonner_position;
-            dir.cursor = stack_cursor(position);
+            let pos = WINDOW * Vec2::new(0.87, 0.88);
+            dir.cursor = pos;
             dir.pressed = true;
         }
     }
-}
 
-fn stack_cursor(_position: SonnerPosition) -> Vec2 {
-    Vec2::new(0.87 * WINDOW.x, 0.88 * WINDOW.y)
+    // Drive a delayed overlay open/close one frame after the Up beat begins, when this scene was
+    // entered by an overlay closing.
+    if beat == Beat::Up
+        && progress > 0.005
+        && let Some((entity, open)) = dir.pending_overlay.take()
+    {
+        ui::set_overlay_open(world, entity, open);
+    }
 }
 
 fn advance_scene(dir: &mut Director) {
@@ -497,116 +747,16 @@ fn advance_scene(dir: &mut Director) {
     dir.idle = 0.0;
     dir.settle = SETTLE;
     dir.pressed = false;
+    dir.prev_targets = 0;
+    dir.pending_overlay = None;
+    dir.pending_advance = false;
 }
 
-fn ease(t: f32) -> f32 {
-    t * t * (3.0 - 2.0 * t)
-}
+type SceneBuilder = fn(&mut EntityCommands);
 
-#[derive(Clone, Copy)]
-struct Target {
-    entity: Entity,
-    order: u32,
-    act: Act,
-    center: Vec2,
-}
-
-fn scene_targets(world: &mut World) -> Vec<Target> {
-    let mut query = world.query::<(Entity, &Demo, &ComputedNode, &UiGlobalTransform)>();
-    query
-        .iter(world)
-        .map(|(entity, demo, computed, transform)| Target {
-            entity,
-            order: demo.order,
-            act: demo.act,
-            center: transform.translation * computed.inverse_scale_factor,
-        })
-        .collect()
-}
-
-fn descendants(world: &World, root: Entity) -> Vec<Entity> {
-    let mut out = Vec::new();
-    let mut stack = vec![root];
-    while let Some(entity) = stack.pop() {
-        out.push(entity);
-        if let Some(children) = world.get::<Children>(entity) {
-            stack.extend(children.iter());
-        }
-    }
-    out
-}
-
-fn set_state(world: &mut World, root: Entity, hovered: bool, pressed: bool) {
-    for entity in descendants(world, root) {
-        if let Some(mut state) = world.get_mut::<PointerState>(entity) {
-            state.hovered = hovered;
-            state.pressed = pressed;
-        }
-    }
-}
-
-fn clear_all_states(world: &mut World) {
-    let mut query = world.query::<&mut PointerState>();
-    for mut state in query.iter_mut(world) {
-        state.hovered = false;
-        state.pressed = false;
-    }
-}
-
-fn set_scroll(world: &mut World, root: Entity, fraction: f32) {
-    for entity in descendants(world, root) {
-        let max = world
-            .get::<ComputedNode>(entity)
-            .map(|node| (node.content_size.y - node.size.y).max(0.0) * node.inverse_scale_factor);
-        if let (Some(max), Some(mut scroll)) =
-            (max, world.get_mut::<bevy::ui::ScrollPosition>(entity))
-        {
-            scroll.0.y = max * fraction;
-        }
-    }
-}
-
-fn spawn_toast(world: &mut World) {
-    let now = world.resource::<Time>().elapsed_secs();
-    let mut stage = world.resource_mut::<Stage>();
-    let id = stage.next_toast;
-    stage.next_toast += 1;
-    let (title, body) = TOAST_MESSAGES[(id as usize) % TOAST_MESSAGES.len()];
-    stage.toasts.push(LiveToast {
-        id,
-        title,
-        body,
-        born: now,
-        leaving_at: None,
-    });
-}
-
-fn place_cursor(
-    director: Res<Director>,
-    mut cursors: Query<(&mut Node, &mut BackgroundColor), With<CursorDot>>,
-) {
-    let Ok((mut node, mut bg)) = cursors.single_mut() else {
-        return;
-    };
-    // The synthetic cursor only exists for the scripted clickthrough; hide it in manual mode.
-    if !director.autoplay {
-        node.display = Display::None;
-        return;
-    }
-    node.display = Display::Flex;
-    node.left = Val::Px(director.cursor.x - 11.0);
-    node.top = Val::Px(director.cursor.y - 11.0);
-    *bg = BackgroundColor(if director.pressed {
-        Color::srgba(0.2, 0.45, 0.95, 0.65)
-    } else {
-        Color::srgba(1.0, 1.0, 1.0, 0.55)
-    });
-}
-
-type Build = fn(&World) -> View;
-const SCENES: &[(&str, Build)] = &[
-    ("Button intents", button_intents),
-    ("Button sizes", button_sizes),
+const SCENES: &[(&str, SceneBuilder)] = &[
+    ("Button intents", button_intents_scene),
+    ("Button sizes", button_sizes_scene),
     ("Tabs", tabs_scene),
     ("Checkbox", checkbox_scene),
     ("Switch", switch_scene),
@@ -624,822 +774,1069 @@ const SCENES: &[(&str, Build)] = &[
     ("Popover", popover_scene),
     ("Tooltip + card", tooltip_card_scene),
     ("Popover + card", popover_card_scene),
-    ("Toasts (sonner)", sonner_scene),
+    ("Toasts (sonner)", toasts_scene),
     ("Scroll area", scroll_area_scene),
 ];
 
-fn gallery(world: &World) -> View {
-    let scene = world.resource::<Director>().scene.min(SCENES.len() - 1);
-    let autoplay = world.resource::<Director>().autoplay;
-    let (title, build) = SCENES[scene];
-    let content = node().tag(0x5ce00 + scene as u64).children([build(world)]);
+fn button_intents_scene(scene: &mut EntityCommands) {
+    const INTENTS: &[&str] = &[
+        "primary",
+        "secondary",
+        "tonal",
+        "muted",
+        "soft",
+        "quiet",
+        "bare",
+        "danger",
+        "danger_soft",
+        "ghost",
+        "plain",
+        "accent",
+    ];
 
-    let body: Vec<View> = if autoplay {
-        let centered = node().attr(center_fill).children([content.into()]);
-        vec![
-            centered.into(),
-            outlets(),
-            toaster(world),
-            corner_label(title),
-        ]
-    } else {
-        let scene_area = node()
-            .attr(|entity| {
-                if let Some(mut node) = entity.get_mut::<Node>() {
-                    node.width = Val::Percent(100.0);
-                    node.flex_grow = 1.0;
-                    node.align_items = AlignItems::Center;
-                    node.justify_content = JustifyContent::Center;
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: Val::Px(18.0),
+                row_gap: Val::Px(18.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                max_width: Val::Px(1360.0),
+                ..default()
+            },))
+            .with_children(|parent| {
+                for (i, intent) in INTENTS.iter().enumerate() {
+                    parent.spawn((
+                        Demo {
+                            order: i as u32,
+                            act: Act::Press,
+                        },
+                        button_styled(intent, "md", *intent),
+                    ));
                 }
-            })
-            .children([content.into()]);
-        vec![
-            tabs_bar(world),
-            scene_area.into(),
-            outlets(),
-            toaster(world),
-        ]
-    };
+            });
+    });
+}
 
-    let mut body = body;
-    body.push(fps_overlay());
-
-    node()
-        .bind(provide_theme(themes::light::theme()))
-        .attr(move |entity| {
-            if let Some(mut node) = entity.get_mut::<Node>() {
-                node.width = Val::Percent(100.0);
-                node.height = Val::Percent(100.0);
-                node.flex_direction = FlexDirection::Column;
-                if autoplay {
-                    node.align_items = AlignItems::Center;
-                    node.justify_content = JustifyContent::Center;
+fn button_sizes_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: Val::Px(18.0),
+                row_gap: Val::Px(18.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                max_width: Val::Px(1360.0),
+                ..default()
+            },))
+            .with_children(|parent| {
+                for (i, size) in ["sm", "md", "lg"].iter().enumerate() {
+                    parent.spawn((
+                        Demo {
+                            order: i as u32,
+                            act: Act::Press,
+                        },
+                        button_styled("primary", size, *size),
+                    ));
                 }
-            }
-        })
-        .children(body)
-        .into()
+            });
+    });
 }
 
-fn fps_overlay() -> View {
-    node()
-        .attr(|entity| {
-            if let Some(mut node) = entity.get_mut::<Node>() {
-                node.position_type = PositionType::Absolute;
-                node.left = Val::Px(12.0);
-                node.bottom = Val::Px(12.0);
-            }
-        })
-        .child(
-            Text::dynamic(|world| format!("{:.0} fps", world.resource::<Fps>().0))
-                .color(Color::BLACK),
-        )
-        .into()
+fn tabs_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                width: Val::Px(520.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                ..default()
+            },))
+            .with_children(|parent| {
+                parent
+                    .spawn(tabs(Some("overview".to_owned())))
+                    .with_children(|parent| {
+                        parent.spawn(tabs_list()).with_children(|parent| {
+                            parent
+                                .spawn((
+                                    Demo {
+                                        order: 0,
+                                        act: Act::Click,
+                                    },
+                                    tabs_trigger("overview"),
+                                ))
+                                .with_children(|parent| {
+                                    parent.spawn(text("Overview"));
+                                });
+                            parent
+                                .spawn((
+                                    Demo {
+                                        order: 1,
+                                        act: Act::Click,
+                                    },
+                                    tabs_trigger("activity"),
+                                ))
+                                .with_children(|parent| {
+                                    parent.spawn(text("Activity"));
+                                });
+                            parent
+                                .spawn((
+                                    Demo {
+                                        order: 2,
+                                        act: Act::Click,
+                                    },
+                                    tabs_trigger("settings"),
+                                ))
+                                .with_children(|parent| {
+                                    parent.spawn(text("Settings"));
+                                });
+                        });
+                    });
+            });
+    });
 }
 
-fn center_fill(entity: &mut bevy::ecs::world::EntityWorldMut) {
-    if let Some(mut node) = entity.get_mut::<Node>() {
-        node.position_type = PositionType::Absolute;
-        node.width = Val::Percent(100.0);
-        node.height = Val::Percent(100.0);
-        node.align_items = AlignItems::Center;
-        node.justify_content = JustifyContent::Center;
-    }
+fn checkbox_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: Val::Px(18.0),
+                row_gap: Val::Px(18.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                max_width: Val::Px(1360.0),
+                ..default()
+            },))
+            .with_children(|parent| {
+                parent
+                    .spawn((
+                        Demo {
+                            order: 0,
+                            act: Act::Click,
+                        },
+                        checkbox(Check::Off),
+                    ))
+                    .with_children(|parent| {
+                        parent.spawn(checkbox_indicator()).with_children(|parent| {
+                            parent.spawn(text("✓"));
+                        });
+                    });
+                parent.spawn(checkbox(Check::On)).with_children(|parent| {
+                    parent.spawn(checkbox_indicator()).with_children(|parent| {
+                        parent.spawn(text("✓"));
+                    });
+                });
+                parent
+                    .spawn(checkbox(Check::Indeterminate))
+                    .with_children(|parent| {
+                        parent.spawn(checkbox_indicator()).with_children(|parent| {
+                            parent.spawn(text("−"));
+                        });
+                    });
+            });
+    });
 }
 
-fn tabs_bar(world: &World) -> View {
-    let current = world.resource::<Director>().scene;
-    let triggers: Vec<View> = SCENES
-        .iter()
-        .enumerate()
-        .map(|(i, (name, _))| {
-            TabsTrigger::default()
-                .value(i.to_string())
-                .child(Text::new(*name).intent("label"))
-                .into()
-        })
-        .collect();
-    let list = node()
-        .attr(|entity| {
-            if let Some(mut node) = entity.get_mut::<Node>() {
-                node.flex_direction = FlexDirection::Row;
-                node.flex_wrap = FlexWrap::Wrap;
-                node.width = Val::Percent(100.0);
-                node.justify_content = JustifyContent::Center;
-            }
-        })
-        .children(triggers);
-    Tabs::default()
-        .value(current.to_string())
-        .on_value_change(|world, value| {
-            if let Some(index) = value.and_then(|value| value.parse::<usize>().ok()) {
-                world.resource_mut::<Director>().scene = index.min(SCENES.len() - 1);
-            }
-        })
-        .child(list)
-        .into()
+fn switch_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: Val::Px(18.0),
+                row_gap: Val::Px(18.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                max_width: Val::Px(1360.0),
+                ..default()
+            },))
+            .with_children(|parent| {
+                parent
+                    .spawn((
+                        Demo {
+                            order: 0,
+                            act: Act::Click,
+                        },
+                        switch(false),
+                    ))
+                    .with_children(|parent| {
+                        parent.spawn(switch_thumb());
+                    });
+                parent.spawn(switch(true)).with_children(|parent| {
+                    parent.spawn(switch_thumb());
+                });
+            });
+    });
 }
 
-fn outlets() -> View {
-    View::fragment([
-        DialogOutlet.into(),
-        AlertDialogOutlet.into(),
-        TooltipOutlet.into(),
-        PopoverOutlet.into(),
-    ])
+fn radio_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                width: Val::Px(240.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                ..default()
+            },))
+            .with_children(|parent| {
+                parent
+                    .spawn(radio_group(Some("apple".to_owned())))
+                    .with_children(|parent| {
+                        parent
+                            .spawn((
+                                Demo {
+                                    order: 0,
+                                    act: Act::Click,
+                                },
+                                radio_item("apple"),
+                            ))
+                            .with_children(|parent| {
+                                parent.spawn(radio_circle()).with_children(|parent| {
+                                    parent.spawn(radio_indicator()).with_children(|parent| {
+                                        parent.spawn(text("●"));
+                                    });
+                                });
+                                parent.spawn(text("Apple"));
+                            });
+                        parent
+                            .spawn((
+                                Demo {
+                                    order: 1,
+                                    act: Act::Click,
+                                },
+                                radio_item("banana"),
+                            ))
+                            .with_children(|parent| {
+                                parent.spawn(radio_circle()).with_children(|parent| {
+                                    parent.spawn(radio_indicator()).with_children(|parent| {
+                                        parent.spawn(text("●"));
+                                    });
+                                });
+                                parent.spawn(text("Banana"));
+                            });
+                        parent
+                            .spawn((
+                                Demo {
+                                    order: 2,
+                                    act: Act::Click,
+                                },
+                                radio_item("cherry"),
+                            ))
+                            .with_children(|parent| {
+                                parent.spawn(radio_circle()).with_children(|parent| {
+                                    parent.spawn(radio_indicator()).with_children(|parent| {
+                                        parent.spawn(text("●"));
+                                    });
+                                });
+                                parent.spawn(text("Cherry"));
+                            });
+                    });
+            });
+    });
 }
 
-fn toaster(world: &World) -> View {
-    let stage = world.resource::<Stage>();
-    let toasts = stage
-        .toasts
-        .iter()
-        .map(|toast| {
-            let (title, body) = (toast.title, toast.body);
-            Toast::new(toast.id, move || toast_content(title, body))
-                .leaving(toast.leaving_at.is_some())
-        })
-        .collect();
-    Toaster::default()
-        .position(stage.sonner_position)
-        .expanded(stage.sonner_expanded)
-        .toasts(toasts)
-        .on_dismiss(|world, id| {
-            let now = world.resource::<Time>().elapsed_secs();
-            start_leaving(&mut world.resource_mut::<Stage>(), id, now);
-        })
-        .on_expand_change(|world, expanded| {
-            world.resource_mut::<Stage>().sonner_expanded = expanded;
-        })
-        .into()
+fn slider_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                width: Val::Px(360.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                ..default()
+            },))
+            .with_children(|parent| {
+                parent
+                    .spawn((
+                        Demo {
+                            order: 0,
+                            act: Act::Drag,
+                        },
+                        slider(35.0, 0.0, 100.0),
+                    ))
+                    .with_children(|parent| {
+                        parent.spawn(slider_track()).with_children(|parent| {
+                            parent.spawn(slider_range());
+                            parent.spawn(slider_thumb());
+                        });
+                    });
+            });
+    });
 }
 
-fn toast_content(title: &'static str, body: &'static str) -> View {
-    View::fragment([
-        node()
-            .attr(|entity| {
-                if let Some(mut node) = entity.get_mut::<Node>() {
-                    node.flex_direction = FlexDirection::Row;
-                    node.justify_content = JustifyContent::SpaceBetween;
-                    node.align_items = AlignItems::Center;
-                    node.column_gap = Val::Px(12.0);
+fn progress_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                width: Val::Px(360.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                ..default()
+            },))
+            .with_children(|parent| {
+                parent
+                    .spawn((
+                        Demo {
+                            order: 0,
+                            act: Act::Fill,
+                        },
+                        progress(0.0, 100.0),
+                    ))
+                    .with_children(|parent| {
+                        parent.spawn(progress_indicator());
+                    });
+            });
+    });
+}
+
+fn avatar_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: Val::Px(18.0),
+                row_gap: Val::Px(18.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                max_width: Val::Px(1360.0),
+                ..default()
+            },))
+            .with_children(|parent| {
+                parent.spawn(avatar()).with_children(|parent| {
+                    parent.spawn(avatar_fallback()).with_children(|parent| {
+                        parent.spawn(text_colored("KS", color::primary_on));
+                    });
+                });
+                parent.spawn(avatar()).with_children(|parent| {
+                    parent.spawn(avatar_fallback()).with_children(|parent| {
+                        parent.spawn(text_colored("AB", color::primary_on));
+                    });
+                });
+            });
+    });
+}
+
+fn separator_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                width: Val::Px(360.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                ..default()
+            },))
+            .with_children(|parent| {
+                parent.spawn(text("Above"));
+                parent.spawn(separator(Orientation::Horizontal));
+                parent.spawn(text("Below"));
+            });
+    });
+}
+
+fn accordion_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                width: Val::Px(440.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                ..default()
+            },))
+            .with_children(|parent| {
+                parent
+                    .spawn(accordion(HashSet::from(["shipping".to_owned()]), false))
+                    .with_children(|parent| {
+                        parent.spawn(accordion_item()).with_children(|parent| {
+                            parent.spawn(accordion_header()).with_children(|parent| {
+                                parent
+                                    .spawn((
+                                        Demo {
+                                            order: 0,
+                                            act: Act::Click,
+                                        },
+                                        accordion_trigger("shipping"),
+                                    ))
+                                    .with_children(|parent| {
+                                        parent.spawn(text("Is shipping free?"));
+                                    });
+                            });
+                            parent
+                                .spawn(accordion_content("shipping"))
+                                .with_children(|parent| {
+                                    parent.spawn(accordion_body()).with_children(|parent| {
+                                        parent.spawn(text_colored(
+                                            "Yes, on orders over $50.",
+                                            color::surface_canvas_on_soft,
+                                        ));
+                                    });
+                                });
+                        });
+                        parent.spawn(accordion_item()).with_children(|parent| {
+                            parent.spawn(accordion_header()).with_children(|parent| {
+                                parent
+                                    .spawn((
+                                        Demo {
+                                            order: 1,
+                                            act: Act::Click,
+                                        },
+                                        accordion_trigger("returns"),
+                                    ))
+                                    .with_children(|parent| {
+                                        parent.spawn(text("Can I return it?"));
+                                    });
+                            });
+                            parent
+                                .spawn(accordion_content("returns"))
+                                .with_children(|parent| {
+                                    parent.spawn(accordion_body()).with_children(|parent| {
+                                        parent.spawn(text_colored(
+                                            "Within 30 days, no questions.",
+                                            color::surface_canvas_on_soft,
+                                        ));
+                                    });
+                                });
+                        });
+                        parent.spawn(accordion_item()).with_children(|parent| {
+                            parent.spawn(accordion_header()).with_children(|parent| {
+                                parent
+                                    .spawn((
+                                        Demo {
+                                            order: 2,
+                                            act: Act::Click,
+                                        },
+                                        accordion_trigger("styled"),
+                                    ))
+                                    .with_children(|parent| {
+                                        parent.spawn(text("Is it themed?"));
+                                    });
+                            });
+                            parent
+                                .spawn(accordion_content("styled"))
+                                .with_children(|parent| {
+                                    parent.spawn(accordion_body()).with_children(|parent| {
+                                        parent.spawn(text_colored(
+                                            "Every color comes from the theme.",
+                                            color::surface_canvas_on_soft,
+                                        ));
+                                    });
+                                });
+                        });
+                    });
+            });
+    });
+}
+
+fn collapsible_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                width: Val::Px(360.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                ..default()
+            },))
+            .with_children(|parent| {
+                parent.spawn(collapsible(false)).with_children(|parent| {
+                    parent
+                        .spawn((
+                            Demo {
+                                order: 0,
+                                act: Act::Click,
+                            },
+                            collapsible_trigger(),
+                        ))
+                        .with_children(|parent| {
+                            parent.spawn(text("Notification settings"));
+                        });
+                    parent.spawn(collapsible_content()).with_children(|parent| {
+                        parent.spawn(text_colored(
+                            "Email me about replies and mentions.",
+                            color::surface_canvas_on_soft,
+                        ));
+                    });
+                });
+            });
+    });
+}
+
+fn dialog_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent.spawn(dialog(false)).with_children(|parent| {
+            parent
+                .spawn((
+                    Demo {
+                        order: 0,
+                        act: Act::Open,
+                    },
+                    dialog_trigger(),
+                ))
+                .with_children(|parent| {
+                    parent.spawn(button_styled("soft", "md", "Delete project"));
+                });
+            parent.spawn(ui::dialog_modal()).with_children(|parent| {
+                parent.spawn(dialog_scrim());
+                parent.spawn(dialog_content()).with_children(|parent| {
+                    parent.spawn(text("Delete project?"));
+                    parent.spawn(text_colored(
+                        "This permanently removes the project and its data.",
+                        color::surface_canvas_on_soft,
+                    ));
+                    parent
+                        .spawn((Node {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(12.0),
+                            row_gap: Val::Px(12.0),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::FlexEnd,
+                            flex_wrap: FlexWrap::Wrap,
+                            max_width: Val::Px(1360.0),
+                            ..default()
+                        },))
+                        .with_children(|parent| {
+                            parent
+                                .spawn((
+                                    Demo {
+                                        order: 1,
+                                        act: Act::Close,
+                                    },
+                                    dialog_close(),
+                                ))
+                                .with_children(|parent| {
+                                    parent.spawn(button_styled("plain", "md", "Cancel"));
+                                });
+                            parent.spawn(button_styled("danger", "md", "Delete"));
+                        });
+                });
+            });
+        });
+    });
+}
+
+fn alert_dialog_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent.spawn(alert_dialog(false)).with_children(|parent| {
+            parent
+                .spawn((
+                    Demo {
+                        order: 0,
+                        act: Act::Open,
+                    },
+                    alert_dialog_trigger(),
+                ))
+                .with_children(|parent| {
+                    parent.spawn(button_styled("danger", "md", "Reset everything"));
+                });
+            parent
+                .spawn(ui::alert_dialog_modal())
+                .with_children(|parent| {
+                    parent.spawn(alert_dialog_scrim());
+                    parent
+                        .spawn(alert_dialog_content())
+                        .with_children(|parent| {
+                            parent.spawn(text("Are you absolutely sure?"));
+                            parent.spawn(text_colored(
+                                "This action cannot be undone.",
+                                color::surface_canvas_on_soft,
+                            ));
+                            parent
+                                .spawn((Node {
+                                    flex_direction: FlexDirection::Row,
+                                    column_gap: Val::Px(12.0),
+                                    row_gap: Val::Px(12.0),
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::FlexEnd,
+                                    flex_wrap: FlexWrap::Wrap,
+                                    max_width: Val::Px(1360.0),
+                                    ..default()
+                                },))
+                                .with_children(|parent| {
+                                    parent
+                                        .spawn((
+                                            Demo {
+                                                order: 1,
+                                                act: Act::Close,
+                                            },
+                                            alert_dialog_cancel(),
+                                        ))
+                                        .with_children(|parent| {
+                                            parent.spawn(button_styled("plain", "md", "Cancel"));
+                                        });
+                                    parent.spawn(alert_dialog_action()).with_children(|parent| {
+                                        parent.spawn(button_styled("primary", "md", "Continue"));
+                                    });
+                                });
+                        });
+                });
+        });
+    });
+}
+
+fn card_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: Val::Px(18.0),
+                row_gap: Val::Px(18.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                max_width: Val::Px(1360.0),
+                ..default()
+            },))
+            .with_children(|parent| {
+                let variants = vec![
+                    (
+                        "Surface",
+                        "Default, bordered",
+                        color::surface_elevated_on,
+                        CardOpts::default(),
+                    ),
+                    (
+                        "Floating",
+                        "Elevation shadow",
+                        color::surface_elevated_on,
+                        CardOpts {
+                            floating: true,
+                            ..default()
+                        },
+                    ),
+                    (
+                        "Compact",
+                        "Tighter padding",
+                        color::surface_elevated_on,
+                        CardOpts {
+                            compact: true,
+                            ..default()
+                        },
+                    ),
+                    (
+                        "Interactive",
+                        "Hover & press me",
+                        color::surface_elevated_on,
+                        CardOpts {
+                            interactive: true,
+                            ..default()
+                        },
+                    ),
+                    (
+                        "Floating + interactive",
+                        "Lifts higher on hover",
+                        color::surface_elevated_on,
+                        CardOpts {
+                            floating: true,
+                            interactive: true,
+                            ..default()
+                        },
+                    ),
+                    (
+                        "Success",
+                        "Intent palette",
+                        color::success_soft_on,
+                        CardOpts {
+                            intent: "success",
+                            ..default()
+                        },
+                    ),
+                    (
+                        "Error",
+                        "Intent palette",
+                        color::error_soft_on,
+                        CardOpts {
+                            intent: "error",
+                            ..default()
+                        },
+                    ),
+                    (
+                        "Info",
+                        "Intent palette",
+                        color::info_soft_on,
+                        CardOpts {
+                            intent: "info",
+                            ..default()
+                        },
+                    ),
+                    (
+                        "Utility",
+                        "Intent palette",
+                        color::neutral_on,
+                        CardOpts {
+                            intent: "muted",
+                            ..default()
+                        },
+                    ),
+                ];
+                for (title, desc, on, opts) in variants {
+                    parent.spawn(card(opts)).with_children(|parent| {
+                        parent
+                            .spawn((Node {
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(4.0),
+                                width: Val::Px(150.0),
+                                ..default()
+                            },))
+                            .with_children(|parent| {
+                                parent.spawn(text_colored(title, on));
+                                parent.spawn(text_colored(desc, on));
+                            });
+                    });
                 }
+            });
+    });
+}
+
+fn tooltip_scene(scene: &mut EntityCommands) {
+    const SLOTS: [(f32, f32, Side); 5] = [
+        (0.5, 0.02, Side::Top),
+        (0.94, 0.5, Side::Right),
+        (0.5, 0.95, Side::Bottom),
+        (0.03, 0.5, Side::Left),
+        (0.5, 0.5, Side::Bottom),
+    ];
+    const FLIP_NOTE: &str = "This floating panel flips to the opposite side when its preferred side would overflow the viewport.";
+
+    let open: Option<usize> = None;
+
+    scene.with_children(|parent| {
+        parent
+            .spawn(Node {
+                position_type: PositionType::Relative,
+                ..default()
             })
-            .child(
-                Text::new(title)
-                    .intent("body_strong")
-                    .color(color::surface_elevated_on),
-            )
-            .child(
-                SonnerClose::default()
-                    .child(Button::default().variant("soft").size("sm").label("close")),
-            )
-            .into(),
-        Text::new(body)
-            .intent("body_small")
-            .color(color::surface_canvas_on_soft)
-            .into(),
-    ])
-}
-
-fn corner_label(title: &str) -> View {
-    node()
-        .attr(|entity| {
-            if let Some(mut node) = entity.get_mut::<Node>() {
-                node.position_type = PositionType::Absolute;
-                node.top = Val::Px(40.0);
-                node.left = Val::Px(48.0);
-            }
-        })
-        .child(
-            Text::new(title)
-                .intent("headline_small")
-                .color(color::surface_canvas_on),
-        )
-        .into()
-}
-
-fn demo(order: u32, act: Act, child: impl Into<View>) -> View {
-    node().insert(Demo { order, act }).child(child).into()
-}
-
-fn demo_wide(order: u32, act: Act, child: impl Into<View>) -> View {
-    node()
-        .insert(Demo { order, act })
-        .attr(|entity| {
-            if let Some(mut node) = entity.get_mut::<Node>() {
-                node.width = Val::Percent(100.0);
-            }
-        })
-        .child(child)
-        .into()
-}
-
-fn ink(content: &str) -> View {
-    Text::new(content).color(color::surface_canvas_on).into()
-}
-
-fn muted(content: &str) -> View {
-    Text::new(content)
-        .intent("body_small")
-        .color(color::surface_canvas_on_soft)
-        .into()
-}
-
-fn mark(content: &str) -> View {
-    Text::new(content).color(color::primary_on).into()
-}
-
-fn checkmark(world: &World) -> View {
-    let handle = world.resource::<Stage>().checkmark.clone();
-    let tint = color::primary_on.resolve(&themes::light::theme());
-    image(ImageNode {
-        color: tint,
-        ..ImageNode::new(handle)
-    })
-    .attr(|entity| {
-        if let Some(mut node) = entity.get_mut::<Node>() {
-            node.width = Val::Px(15.0);
-            node.height = Val::Px(15.0);
-        }
-    })
-    .into()
-}
-
-fn row(children: impl IntoIterator<Item = View>) -> View {
-    laid_out(children, FlexDirection::Row, 18.0, JustifyContent::Center)
-}
-
-fn column(children: impl IntoIterator<Item = View>) -> View {
-    laid_out(
-        children,
-        FlexDirection::Column,
-        12.0,
-        JustifyContent::Center,
-    )
-}
-
-fn laid_out(
-    children: impl IntoIterator<Item = View>,
-    direction: FlexDirection,
-    gap: f32,
-    justify: JustifyContent,
-) -> View {
-    node()
-        .attr(move |entity| {
-            if let Some(mut node) = entity.get_mut::<Node>() {
-                node.flex_direction = direction;
-                node.column_gap = Val::Px(gap);
-                node.row_gap = Val::Px(gap);
-                node.align_items = AlignItems::Center;
-                node.justify_content = justify;
-                node.flex_wrap = FlexWrap::Wrap;
-                node.max_width = Val::Px(1360.0);
-            }
-        })
-        .children(children)
-        .into()
-}
-
-fn framed(width: f32, child: impl Into<View>) -> View {
-    node()
-        .attr(move |entity| {
-            if let Some(mut node) = entity.get_mut::<Node>() {
-                node.width = Val::Px(width);
-                node.flex_direction = FlexDirection::Column;
-                node.align_items = AlignItems::Center;
-            }
-        })
-        .child(child)
-        .into()
-}
-
-const INTENTS: &[&str] = &[
-    "primary",
-    "secondary",
-    "tonal",
-    "muted",
-    "soft",
-    "quiet",
-    "bare",
-    "danger",
-    "danger_soft",
-    "ghost",
-    "plain",
-    "accent",
-];
-
-fn button_intents(_: &World) -> View {
-    row(INTENTS.iter().enumerate().map(|(i, intent)| {
-        demo(
-            i as u32,
-            Act::Press,
-            Button::default().variant(intent).label(*intent),
-        )
-    }))
-}
-
-fn button_sizes(_: &World) -> View {
-    row(["sm", "md", "lg"].into_iter().enumerate().map(|(i, size)| {
-        demo(
-            i as u32,
-            Act::Press,
-            Button::default().size(size).label(size),
-        )
-    }))
-}
-
-fn tabs_scene(world: &World) -> View {
-    let active = world.resource::<Stage>().tab.clone();
-    let trigger = |order: u32, value: &'static str, label: &'static str| {
-        demo(
-            order,
-            Act::Click,
-            TabsTrigger::default().value(value).child(ink(label)),
-        )
-    };
-    framed(
-        520.0,
-        Tabs::default()
-            .value(active)
-            .on_value_change(|world, next| world.resource_mut::<Stage>().tab = next)
-            .child(
-                TabsList::default()
-                    .child(trigger(0, "overview", "Overview"))
-                    .child(trigger(1, "activity", "Activity"))
-                    .child(trigger(2, "settings", "Settings")),
-            ),
-    )
-}
-
-fn checkbox_scene(world: &World) -> View {
-    let driven = world.resource::<Stage>().checkbox;
-    let still = |state: Check| {
-        Checkbox::default()
-            .checked(state)
-            .child(CheckboxIndicator::default().child(checkmark(world)))
-            .into()
-    };
-    row([
-        demo(
-            0,
-            Act::Click,
-            Checkbox::default()
-                .checked(driven)
-                .on_checked_change(|world, next| world.resource_mut::<Stage>().checkbox = next)
-                .child(CheckboxIndicator::default().child(checkmark(world))),
-        ),
-        still(Check::On),
-        still(Check::Indeterminate),
-    ])
-}
-
-fn switch_scene(world: &World) -> View {
-    let on = world.resource::<Stage>().switch;
-    row([
-        demo(
-            0,
-            Act::Click,
-            Switch::default()
-                .checked(on)
-                .on_checked_change(|world, next| world.resource_mut::<Stage>().switch = next)
-                .child(SwitchThumb),
-        ),
-        Switch::default().checked(true).child(SwitchThumb).into(),
-    ])
-}
-
-fn radio_scene(world: &World) -> View {
-    let selected = world.resource::<Stage>().radio.clone();
-    let item = |order: u32, value: &'static str, label: &'static str| {
-        demo(
-            order,
-            Act::Click,
-            RadioGroupItem::default()
-                .value(value)
-                .label(ink(label))
-                .child(RadioGroupIndicator::default().child(checkmark(world))),
-        )
-    };
-    framed(
-        240.0,
-        RadioGroup::default()
-            .value(selected)
-            .on_value_change(|world, next| world.resource_mut::<Stage>().radio = next)
-            .child(item(0, "apple", "Apple"))
-            .child(item(1, "banana", "Banana"))
-            .child(item(2, "cherry", "Cherry")),
-    )
-}
-
-fn slider_scene(world: &World) -> View {
-    let value = world.resource::<Stage>().slider;
-    framed(
-        360.0,
-        demo_wide(
-            0,
-            Act::Drag,
-            Slider::default()
-                .value(value)
-                .max(100.0)
-                .on_value_change(|world, next| world.resource_mut::<Stage>().slider = next)
-                .child(SliderTrack::default().child(SliderRange).child(SliderThumb)),
-        ),
-    )
-}
-
-fn progress_scene(world: &World) -> View {
-    let value = world.resource::<Stage>().progress;
-    framed(
-        360.0,
-        demo_wide(
-            0,
-            Act::Fill,
-            Progress::default()
-                .value(value)
-                .max(100.0)
-                .child(ProgressIndicator),
-        ),
-    )
-}
-
-fn avatar_scene(_: &World) -> View {
-    row([
-        Avatar::default()
-            .child(AvatarFallback::default().child(mark("KS")))
-            .into(),
-        Avatar::default()
-            .child(AvatarFallback::default().child(mark("AB")))
-            .into(),
-    ])
-}
-
-fn separator_scene(_: &World) -> View {
-    framed(
-        360.0,
-        column([ink("Above"), Separator::default().into(), ink("Below")]),
-    )
-}
-
-fn accordion_scene(world: &World) -> View {
-    let open = world.resource::<Stage>().accordion.clone();
-    let item = |order: u32, value: &'static str, header: &'static str, body: &'static str| {
-        AccordionItem::default()
-            .value(value)
-            .child(AccordionHeader::default().child(demo(
-                order,
-                Act::Click,
-                AccordionTrigger::default().child(ink(header)),
-            )))
-            .child(AccordionContent::default().child(muted(body)))
-    };
-    framed(
-        440.0,
-        Accordion::default()
-            .value(open)
-            .on_value_change(|world, next| world.resource_mut::<Stage>().accordion = next)
-            .child(item(
-                0,
-                "shipping",
-                "Is shipping free?",
-                "Yes, on orders over $50.",
-            ))
-            .child(item(
-                1,
-                "returns",
-                "Can I return it?",
-                "Within 30 days, no questions.",
-            ))
-            .child(item(
-                2,
-                "styled",
-                "Is it themed?",
-                "Every color comes from the theme.",
-            )),
-    )
-}
-
-fn collapsible_scene(world: &World) -> View {
-    let open = world.resource::<Stage>().collapsible;
-    framed(
-        360.0,
-        Collapsible::default()
-            .open(open)
-            .on_open_change(|world, next| world.resource_mut::<Stage>().collapsible = next)
-            .child(demo(
-                0,
-                Act::Click,
-                CollapsibleTrigger::default().child(ink("Notification settings")),
-            ))
-            .child(
-                CollapsibleContent::default().child(muted("Email me about replies and mentions.")),
-            ),
-    )
-}
-
-fn dialog_scene(world: &World) -> View {
-    let open = world.resource::<Stage>().dialog;
-    demo(
-        0,
-        Act::Open,
-        Dialog::default()
-            .open(open)
-            .on_open_change(|world, next| world.resource_mut::<Stage>().dialog = next)
-            .child(
-                DialogTrigger::default()
-                    .child(Button::default().variant("soft").label("Delete project")),
-            )
-            .child(DialogOverlay::default())
-            .child(
-                DialogContent::default()
-                    .child(DialogTitle::default().child(ink("Delete project?")))
-                    .child(
-                        DialogDescription::default()
-                            .child(muted("This permanently removes the project and its data.")),
-                    )
-                    .child(actions([
-                        demo(
-                            1,
-                            Act::Close,
-                            DialogClose::default()
-                                .child(Button::default().variant("plain").label("Cancel")),
-                        ),
-                        Button::default().variant("danger").label("Delete").into(),
-                    ])),
-            ),
-    )
-}
-
-fn alert_dialog_scene(world: &World) -> View {
-    let open = world.resource::<Stage>().alert;
-    demo(
-        0,
-        Act::Open,
-        AlertDialog::default()
-            .open(open)
-            .on_open_change(|world, next| world.resource_mut::<Stage>().alert = next)
-            .child(
-                AlertDialogTrigger::default().child(
-                    Button::default()
-                        .variant("danger")
-                        .label("Reset everything"),
-                ),
-            )
-            .child(AlertDialogOverlay::default())
-            .child(
-                AlertDialogContent::default()
-                    .child(AlertDialogTitle::default().child(ink("Are you absolutely sure?")))
-                    .child(
-                        AlertDialogDescription::default()
-                            .child(muted("This action cannot be undone.")),
-                    )
-                    .child(actions([
-                        demo(
-                            1,
-                            Act::Close,
-                            AlertDialogCancel::default()
-                                .child(Button::default().variant("plain").label("Cancel")),
-                        ),
-                        AlertDialogAction::default()
-                            .child(Button::default().variant("primary").label("Continue"))
-                            .into(),
-                    ])),
-            ),
-    )
-}
-
-/// The five trigger positions for the overlay scenes: one hugging each viewport edge (so its preferred
-/// side overflows and the overlay flips), plus one in the middle as the happy case.
-// Positions as fractions of the viewport, so the showcase adapts to any resolution or aspect ratio.
-const SLOTS: [(f32, f32, Side); 5] = [
-    (0.5, 0.02, Side::Top),
-    (0.94, 0.5, Side::Right),
-    (0.5, 0.95, Side::Bottom),
-    (0.03, 0.5, Side::Left),
-    (0.5, 0.5, Side::Bottom),
-];
-
-fn edged(open: Option<usize>, build: impl Fn(usize, Side, bool) -> View) -> View {
-    let mut layer = node();
-    for (i, (fx, fy, side)) in SLOTS.iter().enumerate() {
-        let (left, top) = ((fx - 0.5) * WINDOW.x, (fy - 0.5) * WINDOW.y);
-        let slot = node()
-            .attr(move |entity| {
-                if let Some(mut node) = entity.get_mut::<Node>() {
-                    node.position_type = PositionType::Absolute;
-                    node.left = Val::Px(left);
-                    node.top = Val::Px(top);
+            .with_children(|parent| {
+                for (i, (fx, fy, side)) in SLOTS.iter().enumerate() {
+                    let left = (fx - 0.5) * WINDOW.x;
+                    let top = (fy - 0.5) * WINDOW.y;
+                    parent
+                        .spawn(Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(left),
+                            top: Val::Px(top),
+                            ..default()
+                        })
+                        .with_children(|parent| {
+                            parent
+                                .spawn((
+                                    Node::default(),
+                                    Demo {
+                                        order: i as u32,
+                                        act: Act::Open,
+                                    },
+                                ))
+                                .with_children(|parent| {
+                                    parent
+                                        .spawn((Node::default(), tooltip(open == Some(i))))
+                                        .with_children(|parent| {
+                                            parent.spawn(button_styled("soft", "md", "Hover me"));
+                                            parent
+                                                .spawn(tooltip_content(*side, Align::Center, 8.0))
+                                                .with_children(|parent| {
+                                                    parent
+                                                        .spawn((Node {
+                                                            width: Val::Px(220.0),
+                                                            padding: UiRect::all(Val::Px(12.0)),
+                                                            ..default()
+                                                        },))
+                                                        .with_children(|parent| {
+                                                            parent.spawn(text(FLIP_NOTE));
+                                                        });
+                                                });
+                                        });
+                                });
+                        });
                 }
+            });
+    });
+}
+
+fn popover_scene(scene: &mut EntityCommands) {
+    const SLOTS: [(f32, f32, Side); 5] = [
+        (0.5, 0.02, Side::Top),
+        (0.94, 0.5, Side::Right),
+        (0.5, 0.95, Side::Bottom),
+        (0.03, 0.5, Side::Left),
+        (0.5, 0.5, Side::Bottom),
+    ];
+    const FLIP_NOTE: &str = "This floating panel flips to the opposite side when its preferred side would overflow the viewport.";
+
+    let open: Option<usize> = None;
+
+    scene.with_children(|parent| {
+        parent
+            .spawn(Node {
+                position_type: PositionType::Relative,
+                ..default()
             })
-            .child(demo(i as u32, Act::Open, build(i, *side, open == Some(i))));
-        layer = layer.child(slot);
-    }
-    layer.into()
+            .with_children(|parent| {
+                for (i, (fx, fy, side)) in SLOTS.iter().enumerate() {
+                    let left = (fx - 0.5) * WINDOW.x;
+                    let top = (fy - 0.5) * WINDOW.y;
+                    parent
+                        .spawn(Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(left),
+                            top: Val::Px(top),
+                            ..default()
+                        })
+                        .with_children(|parent| {
+                            parent
+                                .spawn((
+                                    Node::default(),
+                                    Demo {
+                                        order: i as u32,
+                                        act: Act::Open,
+                                    },
+                                ))
+                                .with_children(|parent| {
+                                    parent
+                                        .spawn((Node::default(), popover(open == Some(i))))
+                                        .with_children(|parent| {
+                                            parent.spawn(popover_trigger()).with_children(
+                                                |parent| {
+                                                    parent.spawn(button("Open"));
+                                                },
+                                            );
+                                            parent
+                                                .spawn(popover_content(*side, Align::Center, 8.0))
+                                                .with_children(|parent| {
+                                                    parent
+                                                        .spawn((Node {
+                                                            width: Val::Px(220.0),
+                                                            flex_direction: FlexDirection::Column,
+                                                            row_gap: Val::Px(8.0),
+                                                            padding: UiRect::all(Val::Px(12.0)),
+                                                            ..default()
+                                                        },))
+                                                        .with_children(|parent| {
+                                                            parent.spawn(text("Dimensions"));
+                                                            parent.spawn(text_colored(
+                                                                FLIP_NOTE,
+                                                                color::surface_canvas_on_soft,
+                                                            ));
+                                                        });
+                                                });
+                                        });
+                                });
+                        });
+                }
+            });
+    });
 }
 
-const FLIP_NOTE: &str = "This floating panel flips to the opposite side when its preferred side would overflow the viewport.";
+fn tooltip_card_scene(scene: &mut EntityCommands) {
+    const SLOTS: [(f32, f32, Side); 5] = [
+        (0.5, 0.02, Side::Top),
+        (0.94, 0.5, Side::Right),
+        (0.5, 0.95, Side::Bottom),
+        (0.03, 0.5, Side::Left),
+        (0.5, 0.5, Side::Bottom),
+    ];
+    const FLIP_NOTE: &str = "This floating panel flips to the opposite side when its preferred side would overflow the viewport.";
 
-fn tooltip_scene(world: &World) -> View {
-    let open = world.resource::<Stage>().tooltip;
-    edged(open, |index, side, is_open| {
-        Tooltip::default()
-            .open(is_open)
-            .on_open_change(move |world, opened| {
-                world.resource_mut::<Stage>().tooltip = opened.then_some(index);
+    let open: Option<usize> = None;
+
+    scene.with_children(|parent| {
+        parent
+            .spawn(Node {
+                position_type: PositionType::Relative,
+                ..default()
             })
-            .child(
-                TooltipTrigger::default()
-                    .child(Button::default().variant("soft").label("Hover me")),
-            )
-            .child(
-                TooltipContent::default()
-                    .side(side)
-                    .child(framed(220.0, ink(FLIP_NOTE))),
-            )
-            .into()
-    })
+            .with_children(|parent| {
+                for (i, (fx, fy, side)) in SLOTS.iter().enumerate() {
+                    let left = (fx - 0.5) * WINDOW.x;
+                    let top = (fy - 0.5) * WINDOW.y;
+                    parent
+                        .spawn(Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(left),
+                            top: Val::Px(top),
+                            ..default()
+                        })
+                        .with_children(|parent| {
+                            parent
+                                .spawn((
+                                    Node::default(),
+                                    Demo {
+                                        order: i as u32,
+                                        act: Act::Open,
+                                    },
+                                ))
+                                .with_children(|parent| {
+                                    parent
+                                        .spawn((Node::default(), tooltip(open == Some(i))))
+                                        .with_children(|parent| {
+                                            parent.spawn(button_styled("soft", "md", "Hover me"));
+                                            parent
+                                                .spawn(tooltip_content(*side, Align::Center, 8.0))
+                                                .with_children(|parent| {
+                                                    parent
+                                                        .spawn(card(CardOpts {
+                                                            floating: true,
+                                                            ..default()
+                                                        }))
+                                                        .with_children(|parent| {
+                                                            parent
+                                                                .spawn((Node {
+                                                                    width: Val::Px(220.0),
+                                                                    padding: UiRect::all(Val::Px(
+                                                                        12.0,
+                                                                    )),
+                                                                    ..default()
+                                                                },))
+                                                                .with_children(|parent| {
+                                                                    parent.spawn(text(FLIP_NOTE));
+                                                                });
+                                                        });
+                                                });
+                                        });
+                                });
+                        });
+                }
+            });
+    });
 }
 
-fn popover_scene(world: &World) -> View {
-    let open = world.resource::<Stage>().popover;
-    edged(open, |index, side, is_open| {
-        Popover::default()
-            .open(is_open)
-            .on_open_change(move |world, opened| {
-                world.resource_mut::<Stage>().popover = opened.then_some(index);
-            })
-            .child(PopoverTrigger::default().child(Button::default().label("Open")))
-            .child(
-                PopoverContent::default()
-                    .side(side)
-                    .child(framed(220.0, column([ink("Dimensions"), muted(FLIP_NOTE)]))),
-            )
-            .into()
-    })
-}
+fn popover_card_scene(scene: &mut EntityCommands) {
+    const SLOTS: [(f32, f32, Side); 5] = [
+        (0.5, 0.02, Side::Top),
+        (0.94, 0.5, Side::Right),
+        (0.5, 0.95, Side::Bottom),
+        (0.03, 0.5, Side::Left),
+        (0.5, 0.5, Side::Bottom),
+    ];
+    const FLIP_NOTE: &str = "This floating panel flips to the opposite side when its preferred side would overflow the viewport.";
 
-fn card_scene(_: &World) -> View {
-    use ui::theme::ColorVar;
-    // bevy has no text-colour inheritance, so the content takes the card's on-colour explicitly.
-    let variant = |title: &'static str, desc: &'static str, on: ColorVar, card: Card| {
-        card.child(
-            node()
-                .attr(|entity| {
-                    if let Some(mut node) = entity.get_mut::<Node>() {
-                        node.flex_direction = FlexDirection::Column;
-                        node.row_gap = Val::Px(4.0);
-                        node.width = Val::Px(150.0);
-                    }
-                })
-                .child(Text::new(title).intent("body_strong").color(on))
-                .child(Text::new(desc).intent("body_small").color(on)),
-        )
-        .into()
-    };
-    let surface_on = color::surface_elevated_on;
-    row([
-        variant("Surface", "Default, bordered", surface_on, Card::default()),
-        variant(
-            "Floating",
-            "Elevation shadow",
-            surface_on,
-            Card::default().floating(true),
-        ),
-        variant(
-            "Compact",
-            "Tighter padding",
-            surface_on,
-            Card::default().compact(true),
-        ),
-        variant(
-            "Interactive",
-            "Hover & press me",
-            surface_on,
-            Card::default().interactive(true),
-        ),
-        variant(
-            "Floating + interactive",
-            "Lifts higher on hover",
-            surface_on,
-            Card::default().floating(true).interactive(true),
-        ),
-        variant(
-            "Success",
-            "Intent palette",
-            color::success_soft_on,
-            Card::default().intent("success"),
-        ),
-        variant(
-            "Error",
-            "Intent palette",
-            color::error_soft_on,
-            Card::default().intent("error"),
-        ),
-        variant(
-            "Info",
-            "Intent palette",
-            color::info_soft_on,
-            Card::default().intent("info"),
-        ),
-        variant(
-            "Utility",
-            "Intent palette",
-            color::neutral_on,
-            Card::default().intent("muted"),
-        ),
-    ])
-}
+    let open: Option<usize> = None;
 
-// `Tooltip`/`Popover` carry no appearance: bare content floats next to the trigger (text in space). The
-// `+ card` scenes compose the same content inside a `Card` for a surface — the flexible split where the
-// popper only handles when to show, and the app composes what.
-
-fn tooltip_card_scene(world: &World) -> View {
-    let open = world.resource::<Stage>().tooltip;
-    edged(open, |index, side, is_open| {
-        Tooltip::default()
-            .open(is_open)
-            .on_open_change(move |world, opened| {
-                world.resource_mut::<Stage>().tooltip = opened.then_some(index);
-            })
-            .child(
-                TooltipTrigger::default()
-                    .child(Button::default().variant("soft").label("Hover me")),
-            )
-            .child(
-                TooltipContent::default().side(side).child(
-                    Card::default()
-                        .floating(true)
-                        .child(framed(220.0, ink(FLIP_NOTE))),
-                ),
-            )
-            .into()
-    })
-}
-
-fn popover_card_scene(world: &World) -> View {
-    let open = world.resource::<Stage>().popover;
-    edged(open, |index, side, is_open| {
-        Popover::default()
-            .open(is_open)
-            .on_open_change(move |world, opened| {
-                world.resource_mut::<Stage>().popover = opened.then_some(index);
-            })
-            .child(PopoverTrigger::default().child(Button::default().label("Open")))
-            .child(
-                PopoverContent::default().side(side).child(
-                    Card::default()
-                        .floating(true)
-                        .child(framed(220.0, column([ink("Dimensions"), muted(FLIP_NOTE)]))),
-                ),
-            )
-            .into()
-    })
-}
-
-fn sonner_scene(_: &World) -> View {
-    // The button spawns a toast on a real click; the director also spawns directly in autoplay.
-    demo(
-        0,
-        Act::Spawn,
-        node()
-            .on_click_with(|world, _| spawn_toast(world))
-            .child(Button::default().variant("soft").label("Show toast")),
-    )
-}
-
-fn scroll_area_scene(_: &World) -> View {
-    let list = node()
-        .attr(|entity| {
-            if let Some(mut node) = entity.get_mut::<Node>() {
-                node.flex_direction = FlexDirection::Column;
-                node.row_gap = Val::Px(10.0);
-                node.width = Val::Percent(100.0);
-                node.padding = UiRect::all(Val::Px(8.0));
+    scene.with_children(|parent| {
+        parent.spawn(Node {
+            position_type: PositionType::Relative,
+            ..default()
+        }).with_children(|parent| {
+            for (i, (fx, fy, side)) in SLOTS.iter().enumerate() {
+                let left = (fx - 0.5) * WINDOW.x;
+                let top = (fy - 0.5) * WINDOW.y;
+                parent.spawn(Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(left),
+                    top: Val::Px(top),
+                    ..default()
+                }).with_children(|parent| {
+                    parent
+                        .spawn((
+                            Node::default(),
+                            Demo {
+                                order: i as u32,
+                                act: Act::Open,
+                            },
+                        ))
+                        .with_children(|parent| {
+                            parent
+                                .spawn((Node::default(), popover(open == Some(i))))
+                                .with_children(|parent| {
+                                    parent.spawn(popover_trigger())
+                                        .with_children(|parent| {
+                                            parent.spawn(button("Open"));
+                                        });
+                                    parent
+                                        .spawn(popover_content(*side, Align::Center, 8.0))
+                                        .with_children(|parent| {
+                                            parent
+                                                .spawn(card(CardOpts {
+                                                    floating: true,
+                                                    ..default()
+                                                }))
+                                                .with_children(|parent| {
+                                                    parent
+                                                        .spawn((
+                                                            Node {
+                                                                width: Val::Px(220.0),
+                                                                flex_direction: FlexDirection::Column,
+                                                                row_gap: Val::Px(8.0),
+                                                                padding: UiRect::all(Val::Px(12.0)),
+                                                                ..default()
+                                                            },
+                                                        ))
+                                                        .with_children(|parent| {
+                                                            parent.spawn(text("Dimensions"));
+                                                            parent.spawn(text_colored(FLIP_NOTE, color::surface_canvas_on_soft));
+                                                        });
+                                                });
+                                        });
+                                });
+                        });
+                });
             }
-        })
-        .children((1..=16).map(|n| muted(&format!("Item {n}"))));
-    framed(
-        320.0,
-        demo(
-            0,
-            Act::Scroll,
-            node()
-                .attr(|entity| {
-                    if let Some(mut node) = entity.get_mut::<Node>() {
-                        node.width = Val::Px(300.0);
-                        node.height = Val::Px(220.0);
-                    }
-                })
-                .child(
-                    ScrollArea::default()
-                        .child(ScrollAreaViewport::default().child(list))
-                        .child(ScrollAreaScrollbar::default().child(ScrollAreaThumb)),
-                ),
-        ),
-    )
+        });
+    });
 }
 
-fn actions(children: impl IntoIterator<Item = View>) -> View {
-    laid_out(children, FlexDirection::Row, 12.0, JustifyContent::End)
+fn toasts_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent.spawn((
+            Demo {
+                order: 0,
+                act: Act::Spawn,
+            },
+            button("Show toast"),
+        ));
+        parent.spawn((ToasterEntity, toaster(SonnerPosition::BottomRight)));
+    });
+}
+
+fn scroll_area_scene(scene: &mut EntityCommands) {
+    scene.with_children(|parent| {
+        parent
+            .spawn((Node {
+                width: Val::Px(320.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                ..default()
+            },))
+            .with_children(|parent| {
+                parent
+                    .spawn((
+                        Demo {
+                            order: 0,
+                            act: Act::Click,
+                        },
+                        Node {
+                            width: Val::Px(300.0),
+                            height: Val::Px(220.0),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|parent| {
+                        parent.spawn(scroll_area()).with_children(|parent| {
+                            parent.spawn(scroll_viewport()).with_children(|parent| {
+                                parent
+                                    .spawn((Node {
+                                        flex_direction: FlexDirection::Column,
+                                        row_gap: Val::Px(10.0),
+                                        width: Val::Percent(100.0),
+                                        padding: UiRect::all(Val::Px(8.0)),
+                                        ..default()
+                                    },))
+                                    .with_children(|parent| {
+                                        for n in 1..=16 {
+                                            parent.spawn(text_colored(
+                                                format!("Item {n}"),
+                                                color::surface_canvas_on_soft,
+                                            ));
+                                        }
+                                    });
+                            });
+                            parent.spawn(scroll_bar()).with_children(|parent| {
+                                parent.spawn(scroll_thumb());
+                            });
+                        });
+                    });
+            });
+    });
 }

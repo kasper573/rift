@@ -5,6 +5,7 @@ use bevy::prelude::*;
 pub mod auth;
 pub mod cursor;
 pub mod debug;
+pub mod drag;
 pub mod fps;
 pub mod hud;
 pub mod input;
@@ -75,8 +76,8 @@ pub fn run() -> AppExit {
     .insert_resource(config)
     .init_state::<Screen>()
     .add_plugins((
-        bevy_view::ViewPlugin,
         ui::UiPlugin,
+        drag::DragPlugin,
         net::NetPlugin,
         auth::AuthPlugin,
         render::RenderPlugin,

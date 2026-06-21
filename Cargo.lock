@@ -1928,28 +1928,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bevy_view"
-version = "0.1.0"
-dependencies = [
- "bevy_app",
- "bevy_ecs",
- "bevy_math",
- "bevy_picking",
- "bevy_ui",
- "bevy_view_macro",
- "bevy_window",
-]
-
-[[package]]
-name = "bevy_view_macro"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "bevy_window"
 version = "0.19.0-rc.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2307,9 +2285,9 @@ dependencies = [
  "base64 0.22.1",
  "bevy",
  "bevy_kira_audio",
+ "bevy_picking",
  "bevy_replicon",
  "bevy_replicon_renet",
- "bevy_view",
  "dirs",
  "dotenvy",
  "envy",
@@ -8694,6 +8672,7 @@ version = "0.1.0"
 dependencies = [
  "bevy_app",
  "bevy_asset",
+ "bevy_camera",
  "bevy_color",
  "bevy_ecs",
  "bevy_input",
@@ -8702,7 +8681,7 @@ dependencies = [
  "bevy_text",
  "bevy_time",
  "bevy_ui",
- "bevy_view",
+ "bevy_ui_widgets",
  "bevy_window",
 ]
 

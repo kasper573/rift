@@ -1,11 +1,27 @@
-use bevy_ui::{AlignItems, BorderRadius, JustifyContent, UiRect, Val};
-use bevy_view::{Bind, View, button};
+use bevy_ecs::bundle::Bundle;
+use bevy_ecs::children;
+use bevy_ui::{AlignItems, BorderRadius, JustifyContent, Node, UiRect, Val};
+use bevy_ui_widgets::Button;
 
-use crate::Text;
+use crate::components::text::text_colored;
 use crate::motion::transition::STANDARD_ENTER;
-use crate::recipe::{Paint, Style, Styled};
+use crate::style::{Paint, Style};
 use crate::theme::{ColorVar, color};
 use crate::tokens::{radius, spacing};
+
+pub fn button(label: impl Into<String>) -> impl Bundle {
+    button_styled("primary", "md", label)
+}
+
+pub fn button_styled(variant: &str, size: &str, label: impl Into<String>) -> impl Bundle {
+    let intent = selected_intent(variant);
+    (
+        Node::default(),
+        Button,
+        intent_style(intent, sized(size)),
+        children![text_colored(label.into(), intent.on)],
+    )
+}
 
 #[derive(Clone, Copy)]
 enum Surface {
@@ -76,44 +92,6 @@ const INTENTS: &[Intent] = &[
     },
 ];
 
-#[derive(Default)]
-pub struct Button {
-    label: String,
-    variants: Vec<(&'static str, &'static str)>,
-    modify: Option<Bind>,
-    children: Vec<View>,
-}
-
-impl Button {
-    pub fn label(mut self, label: impl Into<String>) -> Button {
-        self.label = label.into();
-        self
-    }
-
-    pub fn modify(mut self, decorate: Bind) -> Button {
-        self.modify = Some(decorate);
-        self
-    }
-}
-
-variant_props!(Button { variant, size });
-children_builder!(Button);
-
-impl From<Button> for View {
-    fn from(button_component: Button) -> View {
-        let intent = selected_intent(&button_component.variants);
-        let mut element = button().style(intent_style(intent, sized(&button_component.variants)));
-        if !button_component.label.is_empty() {
-            element = element.child(caption(button_component.label, intent.on));
-        }
-        element = element.children(button_component.children);
-        if let Some(decorate) = button_component.modify {
-            element = element.bind(decorate);
-        }
-        element.into()
-    }
-}
-
 fn intent_style(intent: &Intent, size: Style) -> Style {
     let mut style = Style::new()
         .node(|node| {
@@ -135,8 +113,15 @@ fn intent_style(intent: &Intent, size: Style) -> Style {
     style
 }
 
-fn sized(variants: &[(&'static str, &'static str)]) -> Style {
-    let (height, padding) = match chosen(variants, "size").unwrap_or("md") {
+fn sized(size: &str) -> Style {
+    if size == "icon" {
+        return Style::new().node(|node| {
+            node.width = Val::Px(16.0);
+            node.height = Val::Px(16.0);
+            node.padding = UiRect::ZERO;
+        });
+    }
+    let (height, padding) = match size {
         "sm" => (32.0, spacing::L),
         "lg" => (48.0, spacing::XXL),
         _ => (40.0, spacing::XL),
@@ -147,22 +132,9 @@ fn sized(variants: &[(&'static str, &'static str)]) -> Style {
     })
 }
 
-fn selected_intent(variants: &[(&'static str, &'static str)]) -> &'static Intent {
-    let name = chosen(variants, "variant").unwrap_or("primary");
+fn selected_intent(name: &str) -> &'static Intent {
     INTENTS
         .iter()
         .find(|intent| intent.name == name)
         .unwrap_or(&INTENTS[0])
-}
-
-fn chosen<'a>(variants: &[(&'a str, &'a str)], dimension: &str) -> Option<&'a str> {
-    variants
-        .iter()
-        .find(|(name, _)| *name == dimension)
-        .map(|(_, option)| *option)
-}
-
-/// Button caption in intent's on-color. [`Text`] ignores picking so clicks reach the button.
-fn caption(label: String, on: ColorVar) -> View {
-    Text::new(label).intent("label").color(on).into()
 }

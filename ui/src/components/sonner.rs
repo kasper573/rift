@@ -1,15 +1,16 @@
-use std::sync::Arc;
+use std::time::Duration;
 
+use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
-use bevy_picking::prelude::Pickable;
-use bevy_ui::{BorderRadius, FlexDirection, Node, PositionType, UiRect, Val};
-use bevy_view::{View, context, each, node, provide};
+use bevy_picking::prelude::{Click, Out, Over, Pointer};
+use bevy_time::Time;
+use bevy_ui::{BorderRadius, FlexDirection, Node, PositionType, UiRect, UiTransform, Val};
 
-use crate::controlled::OnChange;
-use crate::motion::Transform2d;
 use crate::motion::transition::STANDARD_ENTER;
-use crate::recipe::{Style, Styled};
+use crate::motion::{Motion, Opacity, Transform2d};
+use crate::state::ancestor_with;
+use crate::style::Style;
 use crate::theme::color;
 use crate::tokens::{radius, spacing};
 
@@ -23,7 +24,6 @@ const MAX_VISIBLE: usize = 3;
 const STACK_HEIGHT: f32 = MAX_VISIBLE as f32 * (CARD_HEIGHT + GAP);
 const EDGE: f32 = 24.0;
 
-/// Where the stack pins. Only `BottomRight` implemented; extend [`SonnerPosition::place`] for others.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum SonnerPosition {
     #[default]
@@ -38,240 +38,193 @@ impl SonnerPosition {
     fn travel(self) -> Vec2 {
         Vec2::new(0.0, 1.0)
     }
-
-    fn place(self, node: &mut Node) {
-        node.position_type = PositionType::Absolute;
-        node.bottom = Val::Px(0.0);
-        node.right = Val::Px(0.0);
-    }
-
-    fn place_region(self, node: &mut Node) {
-        node.position_type = PositionType::Absolute;
-        node.bottom = Val::Px(EDGE);
-        node.right = Val::Px(EDGE);
-        node.width = Val::Px(CARD_WIDTH);
-        node.height = Val::Px(STACK_HEIGHT);
-    }
 }
 
-#[derive(Clone)]
+#[derive(Component)]
+pub struct Toaster {
+    pub position: SonnerPosition,
+    pub expanded: bool,
+}
+
+#[derive(Component)]
 pub struct Toast {
-    id: u64,
-    content: Arc<dyn Fn() -> View + Send + Sync>,
-    leaving: bool,
+    pub leaving: bool,
 }
 
-impl Toast {
-    pub fn new<F>(id: u64, content: F) -> Toast
-    where
-        F: Fn() -> View + Send + Sync + 'static,
+#[derive(Component)]
+pub struct ToastLeaving(Duration);
+
+#[derive(Component)]
+pub struct ToastClose;
+
+pub fn toaster(position: SonnerPosition) -> impl Bundle {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(EDGE),
+            right: Val::Px(EDGE),
+            width: Val::Px(CARD_WIDTH),
+            height: Val::Px(STACK_HEIGHT),
+            ..Node::default()
+        },
+        Toaster {
+            position,
+            expanded: false,
+        },
+    )
+}
+
+pub fn toast() -> impl Bundle {
+    (
+        card_node(),
+        Toast { leaving: false },
+        Motion::default(),
+        Opacity(0.0),
+        UiTransform::default(),
+        card_style(),
+    )
+}
+
+pub fn sonner_close() -> impl Bundle {
+    (Node::default(), ToastClose)
+}
+
+pub(crate) fn on_close(
+    click: On<Pointer<Click>>,
+    closes: Query<(), With<ToastClose>>,
+    parents: Query<&ChildOf>,
+    has_toast: Query<(), With<Toast>>,
+    mut toasts: Query<&mut Toast>,
+) {
+    if !closes.contains(click.entity) {
+        return;
+    }
+    if let Some(toast) = ancestor_with::<Toast>(click.entity, &parents, &has_toast)
+        && let Ok(mut toast) = toasts.get_mut(toast)
     {
-        Toast {
-            id,
-            content: Arc::new(content),
-            leaving: false,
+        toast.leaving = true;
+    }
+}
+
+pub(crate) fn toaster_hover(
+    over: On<Pointer<Over>>,
+    parents: Query<&ChildOf>,
+    is_toaster: Query<(), With<Toaster>>,
+    mut toasters: Query<&mut Toaster>,
+) {
+    if let Some(region) = ancestor_with::<Toaster>(over.entity, &parents, &is_toaster)
+        && let Ok(mut toaster) = toasters.get_mut(region)
+    {
+        toaster.expanded = true;
+    }
+}
+
+pub(crate) fn toaster_leave(
+    out: On<Pointer<Out>>,
+    parents: Query<&ChildOf>,
+    is_toaster: Query<(), With<Toaster>>,
+    mut toasters: Query<&mut Toaster>,
+) {
+    if let Some(region) = ancestor_with::<Toaster>(out.entity, &parents, &is_toaster)
+        && let Ok(mut toaster) = toasters.get_mut(region)
+    {
+        toaster.expanded = false;
+    }
+}
+
+pub(crate) fn layout_toasts(
+    toasters: Query<(&Toaster, &Children)>,
+    mut cards: Query<(&Toast, &mut Node, &mut Motion)>,
+) {
+    for (toaster, children) in &toasters {
+        let mut depth = 0usize;
+        for &entity in children.iter().rev().collect::<Vec<_>>().iter() {
+            let Ok((toast, mut node, mut motion)) = cards.get_mut(entity) else {
+                continue;
+            };
+            let here = depth;
+            if !toast.leaving {
+                depth += 1;
+            }
+            let visible = here < MAX_VISIBLE || toast.leaving || toaster.expanded;
+            node.display = if visible {
+                bevy_ui::Display::Flex
+            } else {
+                bevy_ui::Display::None
+            };
+
+            let grow = toaster.position.grow();
+            let off = toaster.position.travel() * TRAVEL;
+            let here = here as f32;
+            let rest = if toaster.expanded {
+                grow * here * (CARD_HEIGHT + GAP)
+            } else {
+                grow * here * PEEK
+            };
+            let scale = if toaster.expanded {
+                1.0
+            } else {
+                1.0 - here * PEEK_SCALE
+            };
+            let (translate, scale, opacity) = if toast.leaving {
+                (rest + off, scale * 0.9, 0.0)
+            } else {
+                (rest, scale, 1.0)
+            };
+            let enter = Transform2d {
+                translation: rest + off,
+                scale: Vec2::splat(0.9),
+                rotation: 0.0,
+            };
+            let target = Transform2d {
+                translation: translate,
+                scale: Vec2::splat(scale),
+                rotation: 0.0,
+            };
+            motion.aim_transform(enter, target, Some(STANDARD_ENTER));
+            motion.aim_opacity(0.0, opacity, Some(STANDARD_ENTER));
         }
     }
+}
 
-    pub fn leaving(mut self, leaving: bool) -> Toast {
-        self.leaving = leaving;
-        self
+pub(crate) fn reap_toasts(
+    time: Res<Time>,
+    mut commands: Commands,
+    leaving: Query<(Entity, &Toast, Option<&ToastLeaving>)>,
+) {
+    let now = time.elapsed();
+    for (entity, toast, marker) in &leaving {
+        match (toast.leaving, marker) {
+            (true, None) => {
+                commands.entity(entity).insert(ToastLeaving(now));
+            }
+            (true, Some(ToastLeaving(since)))
+                if now.saturating_sub(*since) >= STANDARD_ENTER.duration =>
+            {
+                commands.entity(entity).despawn();
+            }
+            _ => {}
+        }
     }
 }
 
-#[derive(Default)]
-pub struct Toaster {
-    position: Option<SonnerPosition>,
-    expanded: bool,
-    toasts: Vec<Toast>,
-    on_dismiss: Option<OnChange<u64>>,
-    on_expand_change: Option<OnChange<bool>>,
-}
-
-impl Toaster {
-    pub fn position(mut self, position: SonnerPosition) -> Toaster {
-        self.position = Some(position);
-        self
-    }
-    pub fn expanded(mut self, expanded: bool) -> Toaster {
-        self.expanded = expanded;
-        self
-    }
-    pub fn toasts(mut self, toasts: Vec<Toast>) -> Toaster {
-        self.toasts = toasts;
-        self
-    }
-    pub fn on_dismiss<F>(mut self, handler: F) -> Toaster
-    where
-        F: Fn(&mut World, u64) + Send + Sync + 'static,
-    {
-        self.on_dismiss = Some(Arc::new(handler));
-        self
-    }
-
-    pub fn on_expand_change<F>(mut self, handler: F) -> Toaster
-    where
-        F: Fn(&mut World, bool) + Send + Sync + 'static,
-    {
-        self.on_expand_change = Some(Arc::new(handler));
-        self
+fn card_node() -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        bottom: Val::Px(0.0),
+        right: Val::Px(0.0),
+        width: Val::Px(CARD_WIDTH),
+        flex_direction: FlexDirection::Column,
+        row_gap: Val::Px(spacing::S),
+        padding: UiRect::all(Val::Px(spacing::XL)),
+        border: UiRect::all(Val::Px(1.0)),
+        border_radius: BorderRadius::all(Val::Px(radius::M)),
+        ..Node::default()
     }
 }
 
-#[derive(Clone, Copy)]
-struct ToastId(u64);
-
-#[derive(Clone)]
-struct Dismiss(OnChange<u64>);
-
-#[derive(Default)]
-pub struct SonnerClose {
-    children: Vec<View>,
-}
-
-children_builder!(SonnerClose);
-
-impl From<Toaster> for View {
-    fn from(toaster: Toaster) -> View {
-        let position = toaster.position.unwrap_or(SonnerPosition::BottomRight);
-        let expanded = toaster.expanded;
-        let dismiss = toaster.on_dismiss.map(Dismiss);
-        // Depth counts only live toasts (newest = 0), so leaving toasts free slots immediately.
-        // Visit newest-first to assign depth; reverse so front card paints on top.
-        let mut depth_counter = 0;
-        let mut stacked: Vec<(Toast, usize)> = toaster
-            .toasts
-            .into_iter()
-            .rev()
-            .filter_map(|toast| {
-                let depth = depth_counter;
-                if !toast.leaving {
-                    depth_counter += 1;
-                }
-                (depth < MAX_VISIBLE || toast.leaving || expanded).then_some((toast, depth))
-            })
-            .collect();
-        stacked.reverse();
-
-        let cards = each(
-            move |_| stacked.clone(),
-            |(toast, _)| toast.id,
-            move |(toast, depth)| card(toast, *depth, position, expanded, dismiss.clone()),
-        );
-
-        // Hover region pinned over the stack; cards sit inside. Full-screen layer ignores picking.
-        let on_expand = toaster.on_expand_change;
-        let over = on_expand.clone();
-        let out = on_expand;
-        let region = node()
-            .attr(move |entity| {
-                if let Some(mut node) = entity.get_mut::<Node>() {
-                    position.place_region(&mut node);
-                }
-            })
-            .on_over_with(move |world, _| {
-                if let Some(handler) = &over {
-                    handler(world, true);
-                }
-            })
-            .on_out_with(move |world, _| {
-                if let Some(handler) = &out {
-                    handler(world, false);
-                }
-            })
-            .child(cards);
-
-        node()
-            .attr(fill)
-            .insert(Pickable::IGNORE)
-            .child(region)
-            .into()
-    }
-}
-
-impl From<SonnerClose> for View {
-    fn from(close: SonnerClose) -> View {
-        node()
-            .on_click_with(dismiss_toast)
-            .children(close.children)
-            .into()
-    }
-}
-
-fn dismiss_toast(world: &mut World, entity: Entity) {
-    let id = context::<ToastId>(world, entity).map(|toast| toast.0);
-    let dismiss = context::<Dismiss>(world, entity).map(|d| d.0.clone());
-    if let (Some(id), Some(dismiss)) = (id, dismiss) {
-        dismiss(world, id);
-    }
-}
-
-fn fill(entity: &mut bevy_ecs::world::EntityWorldMut) {
-    if let Some(mut node) = entity.get_mut::<Node>() {
-        node.position_type = PositionType::Absolute;
-        node.top = Val::Px(0.0);
-        node.left = Val::Px(0.0);
-        node.width = Val::Percent(100.0);
-        node.height = Val::Percent(100.0);
-    }
-}
-
-fn card(
-    toast: &Toast,
-    depth: usize,
-    position: SonnerPosition,
-    expanded: bool,
-    dismiss: Option<Dismiss>,
-) -> View {
-    let grow = position.grow();
-    let depth = depth as f32;
-    let rest = if expanded {
-        grow * depth * (CARD_HEIGHT + GAP)
-    } else {
-        grow * depth * PEEK
-    };
-    let scale = if expanded {
-        1.0
-    } else {
-        1.0 - depth * PEEK_SCALE
-    };
-    let off = position.travel() * TRAVEL;
-    let (translate, scale) = if toast.leaving {
-        (rest + off, scale * 0.9)
-    } else {
-        (rest, scale)
-    };
-
-    let style = card_style(position)
-        .translate(translate)
-        .scale(Vec2::splat(scale))
-        .opacity(if toast.leaving { 0.0 } else { 1.0 })
-        .enter_opacity(0.0)
-        .enter(Transform2d {
-            translation: rest + off,
-            scale: Vec2::splat(0.9),
-            rotation: 0.0,
-        })
-        .transition(STANDARD_ENTER);
-
-    let mut card = node().style(style);
-    if let Some(dismiss) = dismiss {
-        card = card.bind(provide(ToastId(toast.id))).bind(provide(dismiss));
-    }
-    card.child((toast.content)()).into()
-}
-
-fn card_style(position: SonnerPosition) -> Style {
+fn card_style() -> Style {
     Style::new()
         .background(color::surface_elevated_base)
         .border_color(color::surface_elevated_border)
-        .node(move |node| {
-            position.place(node);
-            node.width = Val::Px(CARD_WIDTH);
-            node.flex_direction = FlexDirection::Column;
-            node.row_gap = Val::Px(spacing::S);
-            node.padding = UiRect::all(Val::Px(spacing::XL));
-            node.border = UiRect::all(Val::Px(1.0));
-            node.border_radius = BorderRadius::all(Val::Px(radius::M));
-        })
 }
