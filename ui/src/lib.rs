@@ -67,6 +67,7 @@ impl Plugin for UiPlugin {
                     components::progress::sync_progress,
                     components::slider::sync_slider,
                     components::sonner::age_toasts,
+                    components::sonner::size_toaster,
                     components::sonner::layout_toasts,
                     components::sonner::reap_toasts,
                     components::scroll_area::animate_scroll,

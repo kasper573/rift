@@ -61,6 +61,9 @@ pub fn accordion_trigger(value: impl Into<String>) -> impl Bundle {
         SelectTrigger,
         Style::new()
             .text_color(color::surface_canvas_on)
+            // Resting background (matches the card) so the hover paint has a value to ease back to;
+            // without it the Motion is never re-aimed and the hover sticks after mouseout.
+            .background(color::surface_elevated_base)
             .transition(STANDARD_ENTER)
             .hover(Style::new().background(color::surface_canvas_hover))
             .node(|node| {

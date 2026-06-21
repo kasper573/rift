@@ -13,11 +13,18 @@ pub struct Placement {
     pub offset: f32,
 }
 
+// Set on placed content once it has been measured and positioned. The overlay enter animation waits
+// for it so the content never paints a frame at its un-flipped, pre-measurement position.
+#[derive(Component)]
+pub(crate) struct Placed;
+
 pub(crate) fn position_overlays(
     contents: Query<(Entity, &Placement, &ChildOf)>,
+    placed: Query<(), With<Placed>>,
     measured: Query<(&ComputedNode, &UiGlobalTransform)>,
     windows: Query<&Window>,
     mut nodes: Query<&mut Node>,
+    mut commands: Commands,
 ) {
     let Some(window) = windows.iter().next() else {
         return;
@@ -34,6 +41,14 @@ pub(crate) fn position_overlays(
         let anchor_center = anchor_transform.translation * anchor_node.inverse_scale_factor;
         let anchor_pos = anchor_center - anchor_size / 2.0;
         let content_size = content_node.size * content_node.inverse_scale_factor;
+        // Not laid out yet (closed, or the first frame after opening): leave it unplaced so it stays
+        // hidden until there's a real size to flip against.
+        if content_size.x < 1.0 || content_size.y < 1.0 {
+            if placed.contains(entity) {
+                commands.entity(entity).remove::<Placed>();
+            }
+            continue;
+        }
         let pos = place(
             anchor_pos,
             anchor_size,
@@ -46,6 +61,9 @@ pub(crate) fn position_overlays(
         if let Ok(mut node) = nodes.get_mut(entity) {
             node.left = Val::Px(pos.x - anchor_pos.x);
             node.top = Val::Px(pos.y - anchor_pos.y);
+        }
+        if !placed.contains(entity) {
+            commands.entity(entity).insert(Placed);
         }
     }
 }

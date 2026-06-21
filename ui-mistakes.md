@@ -128,3 +128,28 @@ I reproduced the original scroll area verbatim, limitations included: the wheel 
 appearance. Faithful, but a rough component carried over rather than finished. Replaced the instant
 native scroll with a `ScrollTarget` that `ScrollPosition` eases toward, added a thumb-drag observer
 (cursor position within the bar → offset), and gave the thumb hover/active styling.
+
+### The expanded toast stack collapsed when you reached past the visible cards
+
+The toaster's hover hit-box is a fixed `STACK_HEIGHT`, but an expanded stack of five or more toasts
+spreads well past it, and the gaps between those cards aren't pickable. Moving the cursor across a
+gap fired `Pointer<Out>`, which collapsed the stack — and the card you were reaching for animated
+back into the pile, so it never re-expanded. (I carried the fixed box straight over from the
+original.) Fixed by growing the toaster's box to span the expanded cards while expanded, so the
+whole spread — gaps included — holds the hover.
+
+### The accordion trigger's hover stuck after mouseout
+
+I gave the trigger a hover-only background and no resting one. Under a transition the paint goes
+through Motion, and `for_state` only re-aims the channels the current state actually sets — so on
+mouseout, with no base background, the background channel was never re-aimed and the Motion held the
+hover colour indefinitely. Fixed by giving the trigger a resting background (the card colour) for the
+hover to ease back to. Only the accordion hit this; tabs and checkbox already carry base backgrounds.
+
+### Tooltips and popovers flashed at the wrong side for one frame
+
+`position_overlays` measures the content and writes its `left`/`top` in PostUpdate *after* layout,
+so the change only lands on the next frame's layout — the content paints one frame at its preferred,
+pre-flip position before snapping to the resolved side. Fixed by keeping placed content invisible
+until it has been positioned: a `Placed` marker that `position_overlays` sets only once it has a real
+measurement, with the overlay enter animation withheld until then.

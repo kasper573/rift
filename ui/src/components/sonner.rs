@@ -141,6 +141,28 @@ pub(crate) fn age_toasts(
     }
 }
 
+// Grow the toaster's hit box to span the expanded toasts (collapsed it stays the stack height), so
+// hovering anywhere within the spread — including the gaps between cards — holds the expanded state
+// however many toasts there are. Without it the cards extend past a fixed box and crossing a gap
+// fires `Out`, collapsing the stack out from under the cursor.
+pub(crate) fn size_toaster(
+    mut toasters: Query<(&Toaster, &Children, &mut Node)>,
+    toasts: Query<&Toast>,
+) {
+    for (toaster, children, mut node) in &mut toasters {
+        let height = if toaster.expanded {
+            let live = children
+                .iter()
+                .filter(|&child| toasts.get(child).is_ok_and(|toast| !toast.leaving))
+                .count();
+            live.max(MAX_VISIBLE) as f32 * (CARD_HEIGHT + GAP)
+        } else {
+            STACK_HEIGHT
+        };
+        node.height = Val::Px(height);
+    }
+}
+
 pub(crate) fn toaster_hover(
     over: On<Pointer<Over>>,
     parents: Query<&ChildOf>,

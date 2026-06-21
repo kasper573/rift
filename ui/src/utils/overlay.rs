@@ -9,6 +9,7 @@ use bevy_ui::{Display, GlobalZIndex, Node, PositionType, UiTransform, Val};
 
 use crate::motion::transition::{EMPHASIZED_ENTER, EMPHASIZED_EXIT};
 use crate::motion::{Motion, Opacity, Transform2d};
+use crate::place::{Placed, Placement};
 use crate::state::ancestor_with;
 
 pub(crate) const OVERLAY_EXIT: Duration = Duration::from_millis(240);
@@ -222,12 +223,15 @@ fn contains(root: Entity, descendant: Entity, parents: &Query<&ChildOf>) -> bool
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn advance_overlays(
     time: Res<Time>,
     opens: Query<&Open>,
     parents: Query<&ChildOf>,
     is_open: Query<(), With<Open>>,
     owners: Query<&PortalOwner>,
+    placeable: Query<(), With<Placement>>,
+    placed: Query<(), With<Placed>>,
     mut contents: Query<(Entity, &mut OverlayContent, &mut Node, &mut Motion)>,
 ) {
     let now = time.elapsed();
@@ -260,7 +264,11 @@ pub(crate) fn advance_overlays(
             node.display = display;
         }
 
-        if open {
+        // Placed content (tooltip/popover) stays invisible until `position_overlays` has measured
+        // and placed it, so it never paints a frame at its un-flipped, pre-measurement position.
+        let awaiting_placement = placeable.contains(entity) && !placed.contains(entity);
+
+        if open && !awaiting_placement {
             motion.aim_opacity(0.0, 1.0, Some(EMPHASIZED_ENTER));
             motion.aim_transform(content.enter, Transform2d::IDENTITY, Some(EMPHASIZED_ENTER));
         } else if closing {
