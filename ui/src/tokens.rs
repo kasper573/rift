@@ -1,4 +1,3 @@
-#[rustfmt::skip]
 pub mod palette {
     use bevy_color::Color;
 

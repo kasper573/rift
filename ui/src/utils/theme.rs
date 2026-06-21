@@ -13,7 +13,6 @@ pub struct Family {
 }
 
 #[derive(Clone, Copy)]
-#[rustfmt::skip]
 pub struct Theme {
     pub scrim_light: Color,
     pub scrim_dark: Color,
