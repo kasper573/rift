@@ -68,24 +68,23 @@ impl Surfaces {
 
 impl ButtonIntent {
     fn surfaces(self) -> Surfaces {
-        let theme = theme();
         match self {
-            ButtonIntent::Primary => Surfaces::family(theme.primary),
-            ButtonIntent::Secondary => Surfaces::family(theme.secondary),
-            ButtonIntent::Danger => Surfaces::family(theme.error_solid),
+            ButtonIntent::Primary => Surfaces::family(theme().primary),
+            ButtonIntent::Secondary => Surfaces::family(theme().secondary),
+            ButtonIntent::Danger => Surfaces::family(theme().error_solid),
             // muted and plain deliberately blend slots from several families.
             ButtonIntent::Muted => Surfaces {
-                base: theme.surface_inset.base,
-                hover: theme.surface_elevated.hover,
-                active: theme.surface_elevated.active,
-                on: theme.surface_canvas.on,
+                base: theme().surface_inset.base,
+                hover: theme().surface_elevated.hover,
+                active: theme().surface_elevated.active,
+                on: theme().surface_canvas.on,
                 border: None,
             },
             ButtonIntent::Plain => Surfaces {
                 base: Color::NONE,
-                hover: theme.secondary.hover,
-                active: theme.secondary.active,
-                on: theme.surface_canvas.on,
+                hover: theme().secondary.hover,
+                active: theme().secondary.active,
+                on: theme().surface_canvas.on,
                 border: None,
             },
         }

@@ -63,27 +63,26 @@ struct CardColors {
 
 impl CardIntent {
     fn colors(self) -> CardColors {
-        let theme = theme();
         match self {
             CardIntent::Success => CardColors {
-                family: theme.success_soft,
+                family: theme().success_soft,
                 stroke: None,
             },
             CardIntent::Error => CardColors {
-                family: theme.error_soft,
+                family: theme().error_soft,
                 stroke: None,
             },
             CardIntent::Info => CardColors {
-                family: theme.info_soft,
+                family: theme().info_soft,
                 stroke: None,
             },
             CardIntent::Muted => CardColors {
-                family: theme.neutral,
+                family: theme().neutral,
                 stroke: None,
             },
             CardIntent::Default => CardColors {
-                family: theme.surface_elevated,
-                stroke: Some(theme.surface_elevated.border),
+                family: theme().surface_elevated,
+                stroke: Some(theme().surface_elevated.border),
             },
         }
     }
