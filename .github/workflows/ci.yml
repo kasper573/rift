@@ -82,9 +82,12 @@ jobs:
         with:
           key: deploy
       - name: Build the optimized server, website, and wasm bundle
+        # The server keeps the default opt-level for sim speed; the wasm alone is rebuilt for size —
+        # LTO + opt-level z + strip roughly halve it (~80MB to ~44MB) to fit mobile Safari's per-tab
+        # memory budget. This is prod-only: the dev loop and the gate build the wasm plain and fast.
         run: |
           just build
-          just wasm
+          CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_INCREMENTAL=0 just wasm
       - name: Build and push the stack images
         # The website image bakes in the wasm bundle; the game-server image its server binary.
         run: |

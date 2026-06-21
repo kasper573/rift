@@ -31,14 +31,12 @@ runs:
       shell: bash
       # `-sys` crates link system C libraries cargo can't supply; the repo's platform rule keeps them
       # here, the one platform-specific place. These cover the native `ui` gallery and `bevy_render`:
-      # mold (linker), the x11/gl libs, and cmake/g++ for their build systems. binaryen provides
-      # `wasm-opt`, which `just wasm` runs to shrink the shipped bundle for mobile Safari. The e2e
-      # browser and matching chromedriver come preinstalled on the runner, so `all` adds nothing beyond
-      # `build`. Drop the runner's microsoft/azure apt sources first: nothing installs from them, but
-      # they 403 intermittently and fail `apt-get update`.
+      # mold (linker), the x11/gl libs, and cmake/g++ for their build systems. The e2e browser and
+      # matching chromedriver come preinstalled on the runner, so `all` adds nothing beyond `build`.
+      # Drop the runner's microsoft/azure apt sources first: nothing installs from them, but they 403
+      # intermittently and fail `apt-get update`.
       run: |
         sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
         sudo apt-get update
-        sudo apt-get install -y mold cmake g++ binaryen libx11-dev libxext-dev libxft-dev \
-          libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpango1.0-dev libgl1-mesa-dev \
-          libglu1-mesa-dev
+        sudo apt-get install -y mold cmake g++ libx11-dev libxext-dev libxft-dev libxinerama-dev \
+          libxcursor-dev libxrender-dev libxfixes-dev libpango1.0-dev libgl1-mesa-dev libglu1-mesa-dev

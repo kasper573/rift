@@ -20,21 +20,13 @@ build:
     cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
 
 # The browser client: a wasm cdylib post-processed by wasm-bindgen into the bundle the website serves
-# (and bakes into its image). Assets are embedded in the binary, so there's nothing else to ship.
-# wasm-opt roughly halves the bundle (it strips the name section and shrinks the code), which keeps it
-# under mobile Safari's per-tab memory budget; it's skipped if binaryen isn't installed so the dev
-# loop's rebuilds stay fast, but CI and the deploy install it so the shipped bundle is optimised.
+# (and bakes into its image). Assets are embedded in the binary, so there's nothing else to ship. The
+# dev loop builds it plain and fast; the deploy alone re-runs this with LTO + size opt-level + strip
+# (env, see ci.yml) to roughly halve the bundle for mobile Safari's per-tab memory budget.
 wasm:
-    #!/usr/bin/env bash
-    set -euo pipefail
     cargo build --release -p client --target wasm32-unknown-unknown
     wasm-bindgen --target web --no-typescript --out-name rift --out-dir target/wasm \
       target/wasm32-unknown-unknown/release/rift.wasm
-    if command -v wasm-opt >/dev/null; then
-      wasm-opt -Oz --strip-debug --strip-producers target/wasm/rift_bg.wasm -o target/wasm/rift_bg.wasm
-    else
-      echo "wasm-opt not found — shipping the unoptimised wasm; install binaryen to shrink it (see README)"
-    fi
 
 stack: build wasm stack-up
 
