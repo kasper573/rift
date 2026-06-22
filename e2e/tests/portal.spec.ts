@@ -25,6 +25,6 @@ test("clicking the island portal crosses to the forest", async ({ page }) => {
     0,
     3,
     (scene) => resemblance(scene, forest) >= MAP_MATCH && resemblance(scene, forest) > resemblance(scene, island),
-    { message: "clicking the portal should cross into the forest", timeout: 45_000 },
+    { message: "clicking the portal should cross into the forest", timeout: 90_000 },
   );
 });

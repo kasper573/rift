@@ -56,16 +56,25 @@ export async function register(page: Page): Promise<void> {
   await page.waitForURL(/\/play(?:[?#]|$)/, { timeout: 60_000 });
 }
 
-// Waits until the game canvas is showing the world, not a blank or loading frame.
+// Waits until the world is on screen and the local player has spawned and is controllable — its
+// health bar is visible. On a slow renderer the player can take tens of seconds to appear after the
+// tiles do; waiting for it here (rather than letting a gameplay action burn its budget waiting)
+// keeps the action timeouts about the action itself.
 export async function waitForWorld(page: Page): Promise<void> {
   await canvas(page).waitFor({ state: "visible", timeout: WORLD_TIMEOUT });
   await expect
-    .poll(async () => sceneFraction(center(await captureScene(page))), {
-      message: "the game world never appeared (the canvas stayed blank)",
-      timeout: WORLD_TIMEOUT,
-      intervals: [500],
-    })
-    .toBeGreaterThanOrEqual(SCENE_CELLS);
+    .poll(
+      async () => {
+        const scene = await captureScene(page);
+        return sceneFraction(center(scene)) >= SCENE_CELLS && greenMarker(scene) !== null;
+      },
+      {
+        message: "the world and player never appeared (canvas stayed blank or the player never spawned)",
+        timeout: WORLD_TIMEOUT,
+        intervals: [500],
+      },
+    )
+    .toBe(true);
 }
 
 export async function captureScene(page: Page): Promise<Image> {

@@ -83,8 +83,9 @@ export default defineConfig({
   // One worker in CI: software WebGL is CPU-bound, and two heavy canvases sharing a runner drop the
   // client's frame rate enough that held clicks miss. Local runs (one browser) can parallelize.
   workers: process.env.CI ? Number(process.env.E2E_WORKERS ?? 1) : 2,
-  // SwiftShader brings up the canvas in tens of seconds, so a registration + spawn + walk needs room.
-  timeout: 120_000,
+  // Unoptimized software WebGL is slow: the canvas can take tens of seconds to come up and the player
+  // tens more to spawn, so a registration + spawn + gameplay action needs generous room.
+  timeout: 240_000,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
   use: {
     baseURL,

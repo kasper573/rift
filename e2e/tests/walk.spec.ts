@@ -18,6 +18,6 @@ test("clicking the map visibly walks the player", async ({ page }) => {
   // crossing, and the camera scroll repaints the frame.
   await clickUntil(page, before, 0, 2, (scene) => diffFraction(before, scene, MIN_DELTA) > WALKED, {
     message: "clicking the map should visibly walk the player",
-    timeout: 45_000,
+    timeout: 90_000,
   });
 });
