@@ -17,7 +17,7 @@ use world::table::Id;
 use world::tiling::{Cell, GridDims, TileSize, Tiles};
 use world::time::Seconds;
 
-use crate::gestures::{Gesture, GestureKind, Gestures};
+use crate::gestures::ActiveTileHighlight;
 use crate::screen::{ToScreen, ToTile};
 
 pub const TILE: WorldPx = WorldPx(16.0);
@@ -48,7 +48,7 @@ impl Plugin for RenderPlugin {
                     animate_tiles,
                     dead_tint,
                     healthbar,
-                    update_crosshair,
+                    update_tile_highlight,
                 )
                     .run_if(in_state(crate::GameScene::Playing)),
             );
@@ -88,28 +88,24 @@ pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
     Some(point.to_tile())
 }
 
-/// The move-target marker drawn on the hovered tile.
+/// The sprite entity that renders the active gesture's tile highlight.
 #[derive(Component)]
-struct Crosshair;
+struct TileHighlight;
 
-/// Shows the crosshair on the hovered tile while the walk gesture is the active one and the tile is
-/// walkable; the gesture system owns "is this a move", this owns the on-screen feedback.
-fn update_crosshair(world: &mut World) {
-    let gestures = world.remove_resource::<Gestures>().expect("gestures");
-    let target = match gestures.0.iter().find(|gesture| gesture.claims(world)) {
-        Some(GestureKind::Walk(walk)) => walk.target(world),
-        _ => None,
-    };
-    world.insert_resource(gestures);
-    let mut crosshairs =
-        world.query_filtered::<(&mut Transform, &mut Visibility), With<Crosshair>>();
-    let Ok((mut transform, mut visibility)) = crosshairs.single_mut(world) else {
+/// Renders the tile highlight the active gesture published — appearance and position both come from the
+/// gesture; this just mirrors them onto the sprite.
+fn update_tile_highlight(
+    highlight: Option<Res<ActiveTileHighlight>>,
+    mut sprite: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<TileHighlight>>,
+) {
+    let Ok((mut sprite, mut transform, mut visibility)) = sprite.single_mut() else {
         return;
     };
-    match target {
-        Some(tile) => {
+    match highlight {
+        Some(highlight) => {
             *visibility = Visibility::Visible;
-            let at = tile.to_screen();
+            sprite.image = highlight.image.clone();
+            let at = highlight.pos.to_screen();
             transform.translation.x = at.x;
             transform.translation.y = at.y;
         }
@@ -140,7 +136,6 @@ fn setup(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<Present>>,
-    assets: Res<AssetServer>,
 ) {
     let (target_w, target_h) = target_size(&window);
     let mut target =
@@ -212,9 +207,8 @@ fn setup(
         hidden(),
     ));
     commands.spawn((
-        Crosshair,
+        TileHighlight,
         Sprite {
-            image: assets.load("icons/crosshairs/white/crosshair026.png"),
             custom_size: Some(Vec2::splat(TILE.0)),
             ..default()
         },

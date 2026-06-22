@@ -7,7 +7,7 @@ use world::query;
 use world::session;
 use world::tiling::{TilePos, Tiles};
 
-use crate::gestures::{Gesture, image_cursor};
+use crate::gestures::{ActiveTileHighlight, Gesture, image_cursor};
 use crate::render;
 
 const MOVE_REPEAT: Duration = Duration::from_millis(333);
@@ -16,6 +16,7 @@ const MOVE_REPEAT: Duration = Duration::from_millis(333);
 pub struct WalkGesture {
     walk: Handle<Image>,
     walk_held: Handle<Image>,
+    highlight: Handle<Image>,
     last_tile: Option<Pos<Tiles>>,
     last_sent: Option<Duration>,
 }
@@ -25,6 +26,7 @@ impl WalkGesture {
         WalkGesture {
             walk: assets.load("icons/cursors/pointer010.png"),
             walk_held: assets.load("icons/cursors/pointer011.png"),
+            highlight: assets.load("icons/crosshairs/white/crosshair026.png"),
             last_tile: None,
             last_sent: None,
         }
@@ -92,5 +94,12 @@ impl Gesture for WalkGesture {
             self.walk.clone()
         };
         Some(image_cursor(handle, (32, 32)))
+    }
+
+    fn tile_highlight(&self, world: &mut World) -> Option<ActiveTileHighlight> {
+        Some(ActiveTileHighlight {
+            pos: self.target(world)?,
+            image: self.highlight.clone(),
+        })
     }
 }

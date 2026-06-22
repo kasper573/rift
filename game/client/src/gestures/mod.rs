@@ -11,6 +11,8 @@ pub use walk::WalkGesture;
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
 use enum_dispatch::enum_dispatch;
+use world::math::Pos;
+use world::tiling::Tiles;
 
 use crate::GameScene;
 
@@ -26,6 +28,10 @@ pub trait Gesture {
     fn drive(&mut self, world: &mut World, start: bool);
     /// The cursor to show while this would claim the press; `None` defers to the next gesture.
     fn cursor(&self, world: &mut World) -> Option<CursorIcon>;
+    /// The tile pos and image this gesture marks while it is the active gesture
+    fn tile_highlight(&self, _world: &mut World) -> Option<ActiveTileHighlight> {
+        None
+    }
 }
 
 /// The set of every gesture, most specific first. The one place that names them — both the active list
@@ -73,6 +79,15 @@ struct GestureIndex(usize);
 #[derive(Resource, Default)]
 struct AppliedCursor(Option<CursorIcon>);
 
+/// What the active gesture wants highlighted on the map — a tile and the image to mark it with. Lets a
+/// gesture own its on-map appearance, not just a position. Present as a resource exactly while there is
+/// a highlight, absent otherwise; the render layer just draws it.
+#[derive(Resource)]
+pub struct ActiveTileHighlight {
+    pub pos: Pos<Tiles>,
+    pub image: Handle<Image>,
+}
+
 fn setup(mut commands: Commands, assets: Res<AssetServer>) {
     commands.insert_resource(Gestures(GestureKind::all(&assets)));
     commands.init_resource::<Latched>();
@@ -106,17 +121,32 @@ fn update(world: &mut World) {
     }
     world.resource_mut::<Latched>().0 = active;
 
+    // One descending pass over the claimants: the first (the active gesture) owns the crosshair; the
+    // cursor falls through to the first claimant that supplies one (`DefaultGesture` always does).
     let mut cursor = None;
+    let mut highlight = None;
+    let mut first_claimant = true;
     for gesture in &gestures.0 {
-        if gesture.claims(world) {
-            cursor = gesture.cursor(world);
-            if cursor.is_some() {
-                break;
-            }
+        if !gesture.claims(world) {
+            continue;
+        }
+        if first_claimant {
+            highlight = gesture.tile_highlight(world);
+            first_claimant = false;
+        }
+        cursor = gesture.cursor(world);
+        if cursor.is_some() {
+            break;
         }
     }
 
     world.insert_resource(gestures);
+    match highlight {
+        Some(highlight) => world.insert_resource(highlight),
+        None => {
+            world.remove_resource::<ActiveTileHighlight>();
+        }
+    }
     apply_cursor(world, cursor);
 }
 
