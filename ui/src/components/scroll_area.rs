@@ -5,8 +5,8 @@ use bevy_picking::prelude::{Drag, Pointer, Scroll};
 use bevy_scene::{Scene, bsn, template_value};
 use bevy_time::Time;
 use bevy_ui::{
-    BorderRadius, ComputedNode, FlexDirection, Node, Overflow, PositionType, ScrollPosition,
-    UiGlobalTransform, Val,
+    BorderRadius, ComputedNode, Display, FlexDirection, Node, Overflow, PositionType,
+    ScrollPosition, UiGlobalTransform, Val,
 };
 use bevy_window::{PrimaryWindow, Window};
 
@@ -40,6 +40,7 @@ pub fn scroll_area() -> impl Scene {
             node.flex_direction = FlexDirection::Row;
             node.overflow = Overflow::clip();
             node.position_type = PositionType::Relative;
+            node.width = Val::Percent(100.0);
         }))
     }
 }
@@ -186,12 +187,16 @@ pub(crate) fn on_thumb_drag(
 }
 
 /// Sizes and positions thumbs from viewports. Runs after layout so measured sizes are current.
+#[allow(clippy::type_complexity)]
 pub(crate) fn sync_scrollbars(
     roots: Query<&Children, With<ScrollRoot>>,
     is_viewport: Query<(), With<ScrollViewport>>,
     is_bar: Query<(), With<ScrollBar>>,
     viewports: Query<&ComputedNode, With<ScrollViewport>>,
-    bars: Query<(&ComputedNode, &Children), With<ScrollBar>>,
+    mut bars: Query<
+        (&ComputedNode, &Children, &mut Node),
+        (With<ScrollBar>, Without<ScrollThumbMark>),
+    >,
     mut thumbs: Query<&mut Node, With<ScrollThumbMark>>,
 ) {
     for children in &roots {
@@ -202,19 +207,28 @@ pub(crate) fn sync_scrollbars(
         let (Some(viewport), Some(bar)) = (viewport, bar) else {
             continue;
         };
-        let (Ok(view), Ok((bar_node, bar_children))) = (viewports.get(viewport), bars.get(bar))
+        let (Ok(view), Ok((bar_node, bar_children, mut bar_style))) =
+            (viewports.get(viewport), bars.get_mut(bar))
         else {
-            continue;
-        };
-        let Some(thumb) = bar_children.iter().next() else {
             continue;
         };
         let scale = view.inverse_scale_factor;
         let visible = view.size.y * scale;
         let content = view.content_size.y * scale;
+
+        // Only act as a scroll area while the content overflows; otherwise drop the bar from layout so
+        // the viewport fills the full width and it reads as a plain container.
+        bar_style.display = if content > visible + 0.5 {
+            Display::Flex
+        } else {
+            Display::None
+        };
+
+        let Some(thumb) = bar_children.iter().next() else {
+            continue;
+        };
         let scrolled = view.scroll_position.y * scale;
         let track = bar_node.size.y * bar_node.inverse_scale_factor;
-
         let ratio = if content > 0.0 {
             (visible / content).min(1.0)
         } else {

@@ -8,15 +8,12 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
-# One platform-agnostic path: `enigo` feeds the client genuine OS input, `xcap` finds its window by
-# title and captures it, ureq polls the server's health endpoint. The client and server binaries are
-# located by env var (CI passes the same binaries it releases), so this crate never compiles them.
-# Standing up the display and browser the test drives is `just e2e`'s job; nothing here is OS-specific. This
-# crate is excluded from the workspace `default-members`, so a plain `cargo build`/`test` skips it
-# (xcap pulls heavy capture deps); build it via `just e2e`.
+# Drives the deployed stack through a real (headless) browser: `thirtyfour` speaks WebDriver to a
+# `chromedriver` that `just e2e` launches, navigates to `/play`, registers an account, and screenshots
+# the game canvas; the pixels are decoded with `png` and asserted on. Nothing here is OS-specific.
+# The crate is excluded from the workspace `default-members`, so a plain `cargo build`/`test` skips it
+# (it pulls a browser-automation stack); build it via `just e2e`.
 [dev-dependencies]
-arboard = "3"
-enigo = "0.6"
 png = "0.18"
-ureq = { workspace = true, features = ["rustls", "json"] }
-xcap = "0.9"
+thirtyfour = "0.37"
+tokio = { workspace = true, features = ["time"] }

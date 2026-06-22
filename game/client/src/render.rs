@@ -17,11 +17,15 @@ use world::table::Id;
 use world::tiling::{Cell, GridDims, TileSize, Tiles};
 use world::time::Seconds;
 
-use crate::screen::ToScreen;
+use crate::gestures::ActiveTileHighlight;
+use crate::screen::{ToScreen, ToTile};
 
 pub const TILE: WorldPx = WorldPx(16.0);
-const VIEW_TILES_TALL: f32 = 18.0;
-const VIEW_TALL: f32 = VIEW_TILES_TALL * TILE.0;
+// The fixed zoom: every tile is drawn this many logical pixels across on every device, so the world
+// looks the same size to every player. A larger display just frames more of the map — never bigger
+// tiles — and network AOI culling bounds what's actually streamed. (48 keeps a ~900px-tall view near
+// the game's long-standing 18-tiles-tall look, and being a multiple of TILE upscales crisply.)
+const TILE_SCREEN: f32 = 48.0;
 const PRESENT_LAYER: usize = 1;
 
 pub struct RenderPlugin;
@@ -34,7 +38,7 @@ impl Plugin for RenderPlugin {
             .init_resource::<Viewport>()
             .add_systems(Startup, setup)
             .add_observer(attach_sprite)
-            .add_systems(Update, fit)
+            .add_systems(Update, (match_display, fit).chain())
             .add_systems(
                 Update,
                 (
@@ -44,8 +48,9 @@ impl Plugin for RenderPlugin {
                     animate_tiles,
                     dead_tint,
                     healthbar,
+                    update_tile_highlight,
                 )
-                    .run_if(in_state(crate::Screen::Playing)),
+                    .run_if(in_state(crate::GameScene::Playing)),
             );
     }
 }
@@ -64,13 +69,59 @@ pub struct Viewport {
     pub scale: f32,
 }
 
+pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
+    let cursor = world
+        .query_filtered::<&Window, With<PrimaryWindow>>()
+        .single(world)
+        .ok()?
+        .cursor_position()?;
+    let viewport = *world.resource::<Viewport>();
+    if viewport.scale <= 0.0 {
+        return None;
+    }
+    let target = cursor / viewport.scale;
+    let (camera, transform) = world
+        .query_filtered::<(&Camera, &GlobalTransform), With<WorldCamera>>()
+        .single(world)
+        .ok()?;
+    let point = camera.viewport_to_world_2d(transform, target).ok()?;
+    Some(point.to_tile())
+}
+
+/// The sprite entity that renders the active gesture's tile highlight.
+#[derive(Component)]
+struct TileHighlight;
+
+/// Renders the tile highlight the active gesture published — appearance and position both come from the
+/// gesture; this just mirrors them onto the sprite.
+fn update_tile_highlight(
+    highlight: Option<Res<ActiveTileHighlight>>,
+    mut sprite: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<TileHighlight>>,
+) {
+    let Ok((mut sprite, mut transform, mut visibility)) = sprite.single_mut() else {
+        return;
+    };
+    match highlight {
+        Some(highlight) => {
+            *visibility = Visibility::Visible;
+            sprite.image = highlight.image.clone();
+            let at = highlight.pos.to_screen();
+            transform.translation.x = at.x;
+            transform.translation.y = at.y;
+        }
+        None => *visibility = Visibility::Hidden,
+    }
+}
+
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 struct Present {
     #[texture(0)]
     #[sampler(1)]
     world: Handle<Image>,
+    // WebGL2 requires uniform buffer bindings to be 16-byte aligned, so this death-tint flag rides in
+    // `.x` of a Vec4 rather than a bare f32 (which the browser's GL backend rejects at pipeline creation).
     #[uniform(2)]
-    dead: f32,
+    dead: Vec4,
 }
 
 impl Material2d for Present {
@@ -86,12 +137,9 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<Present>>,
 ) {
-    let mut target = Image::new_target_texture(
-        target_width(&window),
-        VIEW_TALL as u32,
-        TextureFormat::Rgba8UnormSrgb,
-        None,
-    );
+    let (target_w, target_h) = target_size(&window);
+    let mut target =
+        Image::new_target_texture(target_w, target_h, TextureFormat::Rgba8UnormSrgb, None);
     target.sampler = ImageSampler::linear();
     let target = images.add(target);
     commands.insert_resource(WorldTarget(target.clone()));
@@ -105,8 +153,8 @@ fn setup(
         RenderTarget::Image(target.clone().into()),
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::Fixed {
-                width: target_width(&window) as f32,
-                height: VIEW_TALL,
+                width: target_w as f32,
+                height: target_h as f32,
             },
             ..OrthographicProjection::default_2d()
         }),
@@ -128,7 +176,7 @@ fn setup(
         Mesh2d(meshes.add(Rectangle::new(1.0, 1.0))),
         MeshMaterial2d(materials.add(Present {
             world: target,
-            dead: 0.0,
+            dead: Vec4::ZERO,
         })),
         Transform::from_scale(Vec3::new(
             window.resolution.width(),
@@ -157,6 +205,15 @@ fn setup(
         bar_sprite(0x00_FF_00, inner),
         Anchor::CENTER_LEFT,
         hidden(),
+    ));
+    commands.spawn((
+        TileHighlight,
+        Sprite {
+            custom_size: Some(Vec2::splat(TILE.0)),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.0, 100.0),
+        Visibility::Hidden,
     ));
 }
 
@@ -214,6 +271,12 @@ fn healthbar(world: &mut World) {
     }
 }
 
+/// Re-runs the platform's window sync each frame so the render target tracks canvas resizes; `fit`
+/// then resizes the render target from the updated window size.
+fn match_display(mut window: Single<&mut Window, With<PrimaryWindow>>) {
+    crate::platform::sync_window(&mut window);
+}
+
 fn fit(
     window: Single<&Window, With<PrimaryWindow>>,
     target: Res<WorldTarget>,
@@ -223,14 +286,15 @@ fn fit(
     mut viewport: ResMut<Viewport>,
 ) {
     let (width, height) = (window.resolution.width(), window.resolution.height());
-    viewport.scale = height / VIEW_TALL;
-    let target_w = target_width(&window);
+    let (target_w, target_h) = target_size(&window);
+    viewport.scale = height / target_h as f32;
     if let Some(mut image) = images.get_mut(&target.0)
-        && image.texture_descriptor.size.width != target_w
+        && (image.texture_descriptor.size.width != target_w
+            || image.texture_descriptor.size.height != target_h)
     {
         image.resize(Extent3d {
             width: target_w,
-            height: VIEW_TALL as u32,
+            height: target_h,
             depth_or_array_layers: 1,
         });
         if let Ok(mut proj) = projection.single_mut()
@@ -238,7 +302,7 @@ fn fit(
         {
             ortho.scaling_mode = ScalingMode::Fixed {
                 width: target_w as f32,
-                height: VIEW_TALL,
+                height: target_h as f32,
             };
         }
     }
@@ -249,6 +313,7 @@ fn fit(
 
 fn dead_tint(world: &mut World) {
     let dead = if session::is_dead(world) { 1.0 } else { 0.0 };
+    let dead = Vec4::new(dead, 0.0, 0.0, 0.0);
     let Ok(handle) = world
         .query_filtered::<&MeshMaterial2d<Present>, With<Screen>>()
         .single(world)
@@ -367,16 +432,21 @@ fn camera_center(at: Pos<Tiles>, area_id: Id<AreaDef>, half: Vec2) -> Option<Pos
     Some(snap(at.clamp(lo, hi)))
 }
 
-// Even width keeps tile edges on whole texels; odd width would draw seams between tiles.
-fn target_width(window: &Window) -> u32 {
-    let aspect = window.resolution.width() / window.resolution.height();
-    let width = (VIEW_TALL * aspect).round().max(1.0) as u32;
-    width + (width & 1)
+// The render target is the visible world in native pixels: the window's logical size scaled down by
+// the fixed per-tile zoom, so the present step upscales each source pixel by the same factor on every
+// device. Even dimensions keep tile edges on whole texels; an odd one would draw seams between tiles.
+fn target_size(window: &Window) -> (u32, u32) {
+    let scaled = |logical: f32| {
+        let px = (logical * TILE.0 / TILE_SCREEN).round().max(2.0) as u32;
+        px + (px & 1)
+    };
+    let res = &window.resolution;
+    (scaled(res.width()), scaled(res.height()))
 }
 
 fn view_half(window: &Window) -> Vec2 {
-    let aspect = window.resolution.width() / window.resolution.height();
-    Vec2::new(0.5 * VIEW_TILES_TALL * aspect, 0.5 * VIEW_TILES_TALL)
+    let (w, h) = target_size(window);
+    Vec2::new(0.5 * w as f32 / TILE.0, 0.5 * h as f32 / TILE.0)
 }
 
 #[derive(Resource, Default)]

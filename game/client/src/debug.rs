@@ -5,7 +5,7 @@ use world::protocol::{Actor, AreaTag, Hitbox, Owner, Position};
 use world::session::MyClient;
 use world::tiling::{self, TilePos};
 
-use crate::Screen;
+use crate::GameScene;
 use crate::screen::ToScreen;
 
 pub struct DebugPlugin;
@@ -16,9 +16,9 @@ impl Plugin for DebugPlugin {
             .init_resource::<ShowHitboxes>()
             .add_systems(
                 Update,
-                (cycle, draw, toggle_hitboxes, draw_hitboxes).run_if(in_state(Screen::Playing)),
+                (cycle, draw, toggle_hitboxes, draw_hitboxes).run_if(in_state(GameScene::Playing)),
             )
-            .add_systems(OnExit(Screen::Playing), clear_hitboxes);
+            .add_systems(OnExit(GameScene::Playing), clear_hitboxes);
     }
 }
 

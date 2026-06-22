@@ -4,6 +4,6 @@
 target
 !target/release/website
 !target/release/server
-!target/release/installer-backend
+!target/wasm
 docker/.env*
 *.md

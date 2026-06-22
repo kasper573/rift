@@ -25,6 +25,11 @@ use movement::Speed;
 #[derive(Resource, Clone, Copy)]
 pub struct HostedArea(pub Id<AreaDef>);
 
+/// When inserted with `false`, an area starts empty of NPCs. The e2e disables them so its idle player
+/// can cross the island to a portal without being attacked; absent, areas populate as normal.
+#[derive(Resource, Clone, Copy)]
+pub struct SpawnNpcs(pub bool);
+
 #[derive(Bundle)]
 pub struct Character {
     pub replicated: Replicated,

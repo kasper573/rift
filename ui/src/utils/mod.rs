@@ -1,4 +1,5 @@
 pub mod collapse;
+pub mod drag;
 pub mod motion;
 pub mod overlay;
 pub mod place;

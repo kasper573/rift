@@ -6,12 +6,14 @@ pub mod items;
 pub mod math;
 pub mod nav;
 pub mod protocol;
+pub mod query;
 pub mod role;
 pub mod session;
 pub mod sfx;
 pub mod table;
 pub mod tiling;
 pub mod time;
+pub mod wire;
 
 #[cfg(feature = "host")]
 pub mod sim;

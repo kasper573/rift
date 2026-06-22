@@ -1,11 +1,8 @@
-//! The content loaders read the asset root injected via `assets::init`, not the environment — so
-//! `world` can load and validate content given only a path, with nothing set in the process env.
+//! Content is baked into the binary, so `world` loads and validates it with nothing set in the
+//! process environment and no path supplied.
 
 #[test]
-fn loads_content_from_an_injected_root() {
-    // No RIFT_ASSETS_DIR is read anywhere below; the root is the injected fixture path.
-    world::assets::init(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets"));
-
+fn loads_embedded_content() {
     assert!(!world::actors::models().is_empty());
     assert!(!world::area::areas().is_empty());
     assert!(!world::items::items().is_empty());

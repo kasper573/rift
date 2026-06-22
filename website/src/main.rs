@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use askama::Template;
@@ -8,6 +9,7 @@ use axum::routing::get;
 use axum_extra::extract::cookie::CookieJar;
 use openidconnect::RedirectUrl;
 use serde::Deserialize;
+use tower_http::services::ServeDir;
 
 mod auth;
 
@@ -17,18 +19,20 @@ service::heap_profiling!();
 struct Config {
     port: u16,
     redirect_uri: RedirectUrl,
+    /// The https:// game-server origin the embedded client posts to for a session, injected into `/play`.
+    game_server_url: String,
+    /// The wss:// game-server origin the embedded client dials for netcode, injected into `/play`.
+    game_server_ws_url: String,
+    /// Directory of the wasm client bundle, served at `/wasm` (baked into the image by `just wasm`).
+    wasm_dir: PathBuf,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
 }
 
-#[derive(Deserialize)]
-struct Installers {
-    installer_links: Vec<String>,
-}
-
 pub struct App {
     pub auth: auth::Auth,
-    downloads: Vec<Download>,
+    game_server_url: String,
+    game_server_ws_url: String,
 }
 
 #[tokio::main]
@@ -36,9 +40,6 @@ async fn main() {
     let config: Config = envy::prefixed("RIFT_WEBSITE_")
         .from_env()
         .expect("RIFT_WEBSITE_* environment");
-    let installers: Installers = envy::prefixed("RIFT_")
-        .from_env()
-        .expect("RIFT_INSTALLER_LINKS environment");
     let _profiler = service::profiler(
         "rift-website",
         config.pyroscope_enabled,
@@ -47,22 +48,17 @@ async fn main() {
     let port = config.port;
     let app = Arc::new(App {
         auth: auth::Auth::from_env(config.redirect_uri).await,
-        downloads: installers
-            .installer_links
-            .iter()
-            .map(|url| Download {
-                filename: filename_of(url),
-                url: url.clone(),
-            })
-            .collect(),
+        game_server_url: config.game_server_url,
+        game_server_ws_url: config.game_server_ws_url,
     });
     let router = axum::Router::new()
         .route("/", get(landing))
-        .route("/downloads", get(downloads))
+        .route("/play", get(play))
         .route("/auth/sign-in", get(auth::sign_in))
         .route("/auth/sign-out", get(auth::sign_out))
         .route("/auth-callback", get(auth::callback))
         .route("/site.css", get(css))
+        .nest_service("/wasm", ServeDir::new(config.wasm_dir))
         .with_state(app);
     service::serve("website", port, router).await;
 }
@@ -96,34 +92,27 @@ async fn landing(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
     })
 }
 
-#[derive(Clone)]
-struct Download {
-    filename: String,
-    url: String,
-}
-
 #[derive(Template)]
-#[template(path = "downloads.html")]
-struct Downloads {
+#[template(path = "play.html")]
+struct Play {
     nav: Nav,
-    downloads: Vec<Download>,
+    access_token: Option<String>,
+    game_server_url: String,
+    game_server_ws_url: String,
 }
 
-async fn downloads(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
-    page(Downloads {
-        nav: app.nav(&jar, "/downloads").await,
-        downloads: app.downloads.clone(),
+async fn play(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
+    let nav = app.nav(&jar, "/play").await;
+    let access_token = nav
+        .user
+        .as_ref()
+        .and_then(|_| jar.get("token").map(|cookie| cookie.value().to_owned()));
+    page(Play {
+        nav,
+        access_token,
+        game_server_url: app.game_server_url.clone(),
+        game_server_ws_url: app.game_server_ws_url.clone(),
     })
-}
-
-fn filename_of(url: &str) -> String {
-    url.rsplit('/')
-        .next()
-        .unwrap_or(url)
-        .split(['?', '#'])
-        .next()
-        .unwrap_or(url)
-        .to_owned()
 }
 
 fn page<T: Template>(template: T) -> Response {

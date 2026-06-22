@@ -10,7 +10,7 @@ use world::sfx::sfx_table;
 use world::tiling::{TilePos, Tiles};
 use world::time::Seconds;
 
-use crate::Screen;
+use crate::GameScene;
 use crate::render::Animator;
 
 const HALF_VIEW: Size<Tiles> = Size::new(12.0, 9.0);
@@ -22,7 +22,7 @@ impl Plugin for SfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(bevy_kira_audio::AudioPlugin)
             .add_systems(Startup, load)
-            .add_systems(Update, play_cues.run_if(in_state(Screen::Playing)));
+            .add_systems(Update, play_cues.run_if(in_state(GameScene::Playing)));
     }
 }
 

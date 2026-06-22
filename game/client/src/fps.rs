@@ -2,16 +2,16 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use ui::text_colored;
 
-use crate::Screen;
+use crate::GameScene;
 
 pub struct FpsPlugin;
 
 impl Plugin for FpsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
-            .add_systems(OnEnter(Screen::Playing), spawn)
-            .add_systems(OnExit(Screen::Playing), despawn)
-            .add_systems(Update, readout.run_if(in_state(Screen::Playing)));
+            .add_systems(OnEnter(GameScene::Playing), spawn)
+            .add_systems(OnExit(GameScene::Playing), despawn)
+            .add_systems(Update, readout.run_if(in_state(GameScene::Playing)));
     }
 }
 

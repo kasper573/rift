@@ -118,7 +118,11 @@ button.subtle:hover {
 
 #glcanvas {
   flex: 1;
-  width: 100%;
+  /* Bevy/winit pins an inline pixel width/height on the canvas (from the window resolution), which
+     overrides a plain `width: 100%` and leaves dead space or crops the game; `!important` beats the
+     inline style so it fills the content area. */
+  width: 100% !important;
+  height: 100% !important;
   min-height: 0;
   display: block;
   outline: none;
@@ -127,4 +131,27 @@ button.subtle:hover {
 
 .user-name {
   color: var(--text-subtle);
+}
+
+/* Client errors surfaced on the page (see play.html) — a blank canvas is invisible otherwise,
+   especially on mobile. Pinned to the bottom, scrollable, over the game. */
+#error-log {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 55%;
+  margin: 0;
+  padding: 12px 16px;
+  overflow: auto;
+  background: rgba(24, 4, 4, 0.94);
+  color: #ff9a9a;
+  font: 13px/1.45 ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  z-index: 9999;
+}
+
+#error-log[hidden] {
+  display: none;
 }

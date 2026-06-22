@@ -1,7 +1,7 @@
 mod auth;
 
 use std::collections::HashMap;
-use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -13,17 +13,18 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{ConnectedClient, RepliconChannels, ServerState};
 use bevy_replicon::shared::backend::server_messages::ServerMessages;
-use bevy_replicon_renet::RenetChannelsExt;
-use bevy_replicon_renet::netcode::{
-    ConnectToken, NETCODE_KEY_BYTES, NetcodeServerTransport, ServerAuthentication, ServerConfig,
-};
-use bevy_replicon_renet::renet::{ConnectionConfig, DisconnectReason, RenetServer, ServerEvent};
 use bevy_state::prelude::NextState;
 use metrics::{counter, gauge, histogram};
 use rand::RngCore;
+use renet2::{ConnectionConfig, DisconnectReason, RenetServer, ServerEvent};
+use renet2_netcode::{
+    ConnectToken, NETCODE_KEY_BYTES, NetcodeServerTransport, ServerAuthentication,
+    ServerSetupConfig, WebSocketAcceptor, WebSocketServer, WebSocketServerConfig,
+};
 use world::area::{self, AreaDef};
 use world::sim::transition;
 use world::table::Id;
+use world::wire::RenetChannelsExt;
 use world::{ClientId, Identity, TICK_HZ};
 
 service::heap_profiling!();
@@ -33,19 +34,30 @@ const TOKEN_EXPIRE: Duration = Duration::from_secs(30);
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_CLIENTS: usize = 256;
 
+/// The single netcode socket the WebSocket transport registers; with one socket its id is 0, and
+/// every connect token must name the same id.
+const NETCODE_SOCKET_ID: u8 = 0;
+
+/// Browsers reach the netcode WebSocket through Caddy by domain, never by IP, so the netcode server
+/// address is the wildcard placeholder renet2 requires for domain-routed clients — the socket config
+/// and every connect token must agree on it. netcode's own ConnectToken encryption secures the
+/// session regardless of address.
+const NETCODE_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
+
 #[derive(serde::Deserialize)]
 struct Config {
+    /// HTTP API (`/session`, `/health`) port.
     port: u16,
-    public_host: String,
+    /// WebSocket netcode transport port — a separate TCP listener from the HTTP API.
+    ws_port: u16,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
-    /// Optional override for the health players spawn with; e2e scenarios raise it so a player
-    /// can't die mid-test. Absent in real deployments, where players use the in-game default.
-    player_health: Option<f32>,
+    /// Whether areas populate with NPCs. The e2e turns them off so its idle player can cross the
+    /// island without being attacked; real deployments leave them on.
+    spawn_npcs: bool,
 }
 
 fn main() {
-    world::assets::init(std::env::var_os("RIFT_ASSETS_DIR").expect("RIFT_ASSETS_DIR must be set"));
     world::sim::validate();
     let config: Config = envy::prefixed("RIFT_GAME_SERVER_")
         .from_env()
@@ -55,17 +67,19 @@ fn main() {
         config.pyroscope_enabled,
         config.pyroscope_sample_hz,
     );
-    let bind: SocketAddr = format!("0.0.0.0:{}", config.port)
+    let http_bind: SocketAddr = format!("0.0.0.0:{}", config.port)
         .parse()
         .expect("server bind address");
-    let public: SocketAddr = format!("{}:{}", config.public_host, config.port)
-        .to_socket_addrs()
-        .expect("resolve RIFT_GAME_SERVER_PUBLIC_HOST")
-        .next()
-        .expect("RIFT_GAME_SERVER_PUBLIC_HOST resolves to an address");
+    let ws_bind: SocketAddr = format!("0.0.0.0:{}", config.ws_port)
+        .parse()
+        .expect("websocket bind address");
 
     let mut private_key = [0u8; NETCODE_KEY_BYTES];
     rand::rng().fill_bytes(&mut private_key);
+
+    // One multi-threaded tokio runtime backs both the HTTP API and the WebSocket transport's
+    // accept/read/write tasks; it outlives `main` because `simulate` never returns.
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
 
     let metrics = service::recorder();
     let sessions = Sessions::default();
@@ -73,52 +87,69 @@ fn main() {
         sessions: sessions.clone(),
         verifier: verifier(),
         private_key,
-        public,
     };
-    std::thread::spawn(move || serve_http(bind, http, metrics));
+    runtime.spawn(serve_http(http_bind, http, metrics));
 
-    simulate(bind, public, private_key, sessions, config.player_health);
+    simulate(
+        ws_bind,
+        private_key,
+        sessions,
+        config.spawn_npcs,
+        runtime.handle().clone(),
+    );
 }
 
 fn simulate(
-    bind: SocketAddr,
-    public: SocketAddr,
+    ws_bind: SocketAddr,
     private_key: [u8; NETCODE_KEY_BYTES],
     sessions: Sessions,
-    player_health: Option<f32>,
+    spawn_npcs: bool,
+    runtime: tokio::runtime::Handle,
 ) {
     let spawn = area::spawn_zone().index();
     let mut worlds: Vec<App> = area::areas()
         .iter()
-        .map(|a| build_world(a.id, player_health))
+        .map(|a| build_world(a.id, spawn_npcs))
         .collect();
 
     let (connection_config, client_channels) = {
         let channels = worlds[0].world().resource::<RepliconChannels>();
-        let config = ConnectionConfig {
-            server_channels_config: channels.server_configs(),
-            client_channels_config: channels.client_configs(),
-            ..Default::default()
-        };
+        let config =
+            ConnectionConfig::from_channels(channels.server_configs(), channels.client_configs());
         (config, channels.client_channels().len())
     };
     let mut server = RenetServer::new(connection_config);
-    let socket =
-        UdpSocket::bind(bind).unwrap_or_else(|error| panic!("cannot bind udp {bind}: {error}"));
+
+    // `has_tls_proxy: true`: Caddy terminates TLS in front, so the browser dials `wss://` and its
+    // socket reports the link encrypted, skipping netcode's own encryption. The server must report
+    // the same or the handshake's encryption expectations mismatch; the Caddy↔server hop stays
+    // plaintext ws on the internal network, the standard reverse-proxy arrangement.
+    let ws = WebSocketServer::new(
+        WebSocketServerConfig {
+            acceptor: WebSocketAcceptor::Plain {
+                has_tls_proxy: true,
+            },
+            listen: ws_bind,
+            max_clients: MAX_CLIENTS,
+        },
+        runtime,
+    )
+    .unwrap_or_else(|error| panic!("cannot bind websocket {ws_bind}: {error}"));
+
     let mut transport = NetcodeServerTransport::new(
-        ServerConfig {
+        ServerSetupConfig {
             current_time: unix_now(),
             max_clients: MAX_CLIENTS,
             protocol_id: PROTOCOL_ID,
-            public_addresses: vec![public],
+            socket_addresses: vec![vec![NETCODE_ADDR]],
             authentication: ServerAuthentication::Secure { private_key },
         },
-        socket,
+        ws,
     )
     .expect("netcode server transport");
 
     println!(
-        "mmo server listening: netcode udp {bind}, public {public} ({} area worlds)",
+        "mmo server listening: netcode websocket {ws_bind} ({} area worlds)",
         worlds.len()
     );
 
@@ -135,8 +166,10 @@ fn simulate(
         tick += 1;
 
         server.update(dt);
-        if let Err(error) = transport.update(dt, &mut server) {
-            eprintln!("netcode transport update failed: {error}");
+        if let Err(errors) = transport.update(dt, &mut server) {
+            for error in errors {
+                eprintln!("netcode transport update failed: {error}");
+            }
         }
 
         while let Some(event) = server.get_event() {
@@ -240,10 +273,12 @@ fn record_network_metrics(server: &RenetServer, conns: &HashMap<u64, Conn>) {
     let mut received_per_sec = 0.0;
     let mut max_packet_loss = 0.0;
     for &network_id in conns.keys() {
-        sent_per_sec += server.bytes_sent_per_sec(network_id);
-        received_per_sec += server.bytes_received_per_sec(network_id);
-        max_packet_loss = f64::max(max_packet_loss, server.packet_loss(network_id));
-        histogram!("rift_client_rtt_seconds").record(server.rtt(network_id));
+        if let Ok(info) = server.network_info(network_id) {
+            sent_per_sec += info.bytes_sent_per_second;
+            received_per_sec += info.bytes_received_per_second;
+            max_packet_loss = f64::max(max_packet_loss, info.packet_loss);
+            histogram!("rift_client_rtt_seconds").record(info.rtt);
+        }
     }
     gauge!("rift_net_bytes_sent_per_sec").set(sent_per_sec);
     gauge!("rift_net_bytes_received_per_sec").set(received_per_sec);
@@ -272,11 +307,9 @@ struct Conn {
 #[derive(Component)]
 struct Wire(u64);
 
-fn build_world(area: Id<AreaDef>, player_health: Option<f32>) -> App {
+fn build_world(area: Id<AreaDef>, spawn_npcs: bool) -> App {
     let mut app = world::sim::server_app(area);
-    if let Some(health) = player_health {
-        app.insert_resource(world::sim::player::PlayerHealth(health));
-    }
+    app.insert_resource(world::sim::SpawnNpcs(spawn_npcs));
     app.finish();
     app.cleanup();
     app.world_mut()
@@ -415,10 +448,8 @@ struct Http {
     sessions: Sessions,
     verifier: Arc<Mutex<auth::Verifier>>,
     private_key: [u8; NETCODE_KEY_BYTES],
-    public: SocketAddr,
 }
 
-#[tokio::main(flavor = "current_thread")]
 async fn serve_http(addr: SocketAddr, http: Http, metrics: service::PrometheusHandle) {
     let router = service::track(
         axum::Router::new()
@@ -453,7 +484,8 @@ async fn session(State(http): State<Http>, headers: HeaderMap) -> Response {
         TOKEN_EXPIRE.as_secs(),
         client_id,
         CONNECTION_TIMEOUT.as_secs() as i32,
-        vec![http.public],
+        NETCODE_SOCKET_ID,
+        vec![NETCODE_ADDR],
         None,
         &http.private_key,
     )

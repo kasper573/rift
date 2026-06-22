@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% if let Some(access_token) = access_token %}
+<canvas
+  id="glcanvas"
+  tabindex="0"
+  data-access-token="{{ access_token }}"
+  data-game-server-url="{{ game_server_url }}"
+  data-game-server-ws-url="{{ game_server_ws_url }}"
+></canvas>
+<pre id="error-log" hidden></pre>
+<script>
+  // A fatal crash leaves only a blank canvas, invisible on mobile where there's no console — so
+  // surface those, and only those, on the page. A Rust panic aborts the wasm and its hook logs it via
+  // console.error tagged "panicked"; recoverable hiccups (e.g. an error logged when backgrounding
+  // Safari) are left to the console. A failed startup is reported from the module's catch below.
+  (function () {
+    const log = document.getElementById("error-log");
+    const consoleError = console.error.bind(console);
+    console.error = (...args) => {
+      const message = args
+        .map((value) => (value && (value.stack || value.message)) || String(value))
+        .join(" ");
+      if (message.includes("panicked")) {
+        log.hidden = false;
+        log.textContent += message + "\n\n";
+      }
+      consoleError(...args);
+    };
+  })();
+</script>
+<script type="module">
+  import init, { run } from "/wasm/rift.js";
+  try {
+    await init();
+    run();
+  } catch (e) {
+    const log = document.getElementById("error-log");
+    log.hidden = false;
+    log.textContent += `startup failed: ${(e && e.stack) || e}\n\n`;
+  }
+</script>
+{% else %}
+<div class="centered">
+  <h1>Play Rift</h1>
+  <form method="get" action="/auth/sign-in">
+    <input type="hidden" name="return" value="/play">
+    <button>Sign in to play</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

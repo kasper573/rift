@@ -23,14 +23,14 @@ bevy_time = { workspace = true }
 bevy_scene = { workspace = true }
 bevy_opacity = { path = "../bevy_opacity" }
 # The `gallery` binary (a standalone showcase window) needs the full Bevy app — windowing, rendering,
-# winit — which the library half (built on the individual `bevy_*` crates above) does not.
+# winit — which the library half (built on the individual `bevy_*` crates above) does not. The wasm
+# client also depends on this crate; feature unification means anything here lands in its build too,
+# so the native-only desktop features live in the `not(wasm32)` block below.
 bevy = { workspace = true, features = [
     "std",
     "async_executor",
-    "multi_threaded",
     "bevy_log",
     "bevy_winit",
-    "x11",
     "bevy_window",
     "bevy_render",
     "bevy_core_pipeline",
@@ -50,6 +50,10 @@ bevy = { workspace = true, features = [
     "bevy_picking",
     "ui_picking",
 ] }
+
+# Desktop-only Bevy features for the native `gallery` binary; excluded from the wasm client build.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy = { workspace = true, features = ["x11", "multi_threaded"] }
 
 [dev-dependencies]
 bevy_app = { workspace = true }

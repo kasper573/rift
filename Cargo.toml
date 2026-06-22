@@ -8,20 +8,18 @@ members = [
     "game/client",
     "game/bench",
     "e2e",
-    "installer",
     "service",
     "website",
 ]
-# `e2e` pulls heavy screen-capture deps (and system libraries) only the CI needs, so a plain
-# `cargo build`/`test`/`clippy` skips it; build it explicitly with `just e2e` or `-p e2e`.
+# `e2e` pulls a browser-automation harness only the CI needs, and `game/client` only builds for
+# wasm, so a plain `cargo build`/`test`/`clippy` skips both; build them explicitly with `just e2e`
+# or `just wasm` (`cargo … -p client --target wasm32-unknown-unknown`).
 default-members = [
     "ui",
     "bevy_opacity",
     "game/world",
     "game/server",
-    "game/client",
     "game/bench",
-    "installer",
     "service",
     "website",
 ]
@@ -63,7 +61,13 @@ syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
 bevy_replicon = { version = "0.41.0-rc.1", default-features = false }
-bevy_replicon_renet = { git = "https://github.com/simgine/bevy_replicon_renet", branch = "bevy-0.19", default-features = false }
+# Browsers can't do UDP, so netcode rides a WebSocket (TCP, TLS-terminated by Caddy). `renet2` and
+# `renet2_netcode` are engine-agnostic (their `bevy` feature is off), so we drive them with a thin
+# Replicon bridge of our own (`world::wire`, `server::main`, `client::net`) instead of the
+# bevy-0.18-pinned `bevy_renet2`/`bevy_replicon_renet2` wrappers. Each binary picks its transport
+# feature: `ws_server_transport` (native server) or `ws_client_transport` (wasm client).
+renet2 = { version = "0.15", default-features = false }
+renet2_netcode = { version = "0.15", default-features = false }
 bevy_state = { version = "0.19.0", default-features = false, features = ["bevy_app"] }
 axum = "0.8"
 envy = "0.4"
