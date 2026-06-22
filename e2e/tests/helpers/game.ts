@@ -1,18 +1,23 @@
 import { expect, type Page } from "@playwright/test";
 
-import { center, decode, greenMarker, sceneFraction, type Image } from "./image";
+import { center, decode, diffFraction, greenMarker, sceneFraction, type Image } from "./image";
 
 // The game draws every tile at a fixed 48 CSS px on every screen (render.rs), and the health bar
 // sits 5 world px (×3) below the player's position.
 const TILE_PX = 48;
 const BAR_DROP_PX = 15;
 
-// How many rendered frames to hold the button down for. The client samples the mouse button once per
-// frame, so press and release must land in different frames to register a click. Waiting on the
-// page's own animation frames adapts to whatever rate software WebGL achieves — long enough to
-// register on a slow renderer, short enough that the player hasn't started moving, so a portal click
-// isn't re-aimed off the warp by the client's move-repeat. Two frames, not a wall-clock duration.
-const CLICK_FRAMES = 2;
+// Hold the button down for a single rendered frame: long enough that press and release land in
+// different frames (the client samples the button once per frame), short enough that only the
+// initial move fires and the client's move-repeat never does. That matters for the portal — a repeat
+// re-aims as the camera scrolls and cancels the cross. Registration can still lose the frame race on
+// a starved renderer, so callers re-click until the player actually moves (clickUntil).
+const CLICK_FRAMES = 1;
+
+// A frame difference above this means the player moved (the camera scrolled); below it the frame is
+// just idle water shimmer. Used to tell "the click hasn't taken yet, click again" from "it took,
+// stop clicking and let it play out".
+const MOVED = 0.08;
 
 // A rendered map lights up at least this fraction of the view; below it the canvas is still blank or
 // loading. The timeout is generous: wasm init, the netcode connect, and the first SwiftShader frame
@@ -84,8 +89,36 @@ export async function clickFromPlayer(page: Page, tilesEast: number, tilesNorth:
   await press(page, box.x + playerX + tilesEast * TILE_PX, box.y + playerY - tilesNorth * TILE_PX);
 }
 
-// Presses and holds the button at a viewport point across a couple of rendered frames so the client
-// samples it as a click (see CLICK_FRAMES).
+// Clicks a tile offset from the player and waits for `done` to hold, re-clicking each poll only while
+// the player still sits where it started (`before`). The single-frame click never triggers
+// move-repeat, so once one registers the player acts on it cleanly; re-clicking after it has moved
+// would re-aim and undo the action, so we stop then. This rides out the frame race on a slow renderer
+// without ever canceling the move.
+export async function clickUntil(
+  page: Page,
+  before: Image,
+  tilesEast: number,
+  tilesNorth: number,
+  done: (scene: Image) => boolean,
+  options: { message: string; timeout: number },
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const scene = await captureScene(page);
+        if (done(scene)) return true;
+        if (diffFraction(before, scene, 100) < MOVED) {
+          await clickFromPlayer(page, tilesEast, tilesNorth);
+        }
+        return false;
+      },
+      { message: options.message, timeout: options.timeout, intervals: [700] },
+    )
+    .toBe(true);
+}
+
+// Presses and holds the button at a viewport point across CLICK_FRAMES rendered frames so the client
+// samples it as a single click.
 async function press(page: Page, x: number, y: number): Promise<void> {
   await page.mouse.move(x, y);
   await page.mouse.down();
