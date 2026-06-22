@@ -58,9 +58,12 @@ pub struct SnapGrid(pub f32);
 #[derive(Resource, Default)]
 struct Dragged(bool);
 
-/// The viewport the panels were last laid out against, so a resize can rescale their positions.
 #[derive(Resource, Default)]
 struct LastViewport(Vec2);
+
+/// A panel's position as a fraction of the viewport (see `anchor_panels`).
+#[derive(Component)]
+struct Anchor(Vec2);
 
 /// The live drag. Its `raw` geometry accumulates the unsnapped pointer motion so snapping can render
 /// every frame without the per-event rounding drifting; the node shows the snapped value.
@@ -68,6 +71,7 @@ struct LastViewport(Vec2);
 struct DragState(Option<Active>);
 
 struct Active {
+    entity: Entity,
     root: Entity,
     raw: Geom,
     resize: bool,
@@ -88,7 +92,7 @@ impl Plugin for DragPlugin {
             .add_observer(on_drag)
             .add_observer(on_drag_end)
             .add_observer(on_click)
-            .add_systems(Update, scale_on_resize);
+            .add_systems(Update, anchor_panels);
     }
 }
 
@@ -121,6 +125,7 @@ fn on_drag_start(
         size: Vec2::ZERO,
     });
     state.0 = Some(Active {
+        entity,
         root,
         raw,
         resize: resize.is_some(),
@@ -139,6 +144,11 @@ fn on_drag(
     let Some(active) = state.0.as_mut() else {
         return;
     };
+    // The drag event bubbles to every ancestor; act only for the dragged entity, or the motion
+    // accumulates once per ancestor and the panel races away.
+    if drag.entity != active.entity {
+        return;
+    }
     if active.resize {
         active.raw.size = (active.raw.size + drag.delta).max(active.min);
         lock.0 = cursors.get(drag.entity).ok().map(|cursor| cursor.0.clone());
@@ -194,26 +204,34 @@ fn on_click(
     commands.queue(move |world: &mut World| tap(world));
 }
 
-/// Keeps panels at the same fractional spot when the viewport changes size, so they don't drift into
-/// a corner or off-screen on a resize.
-fn scale_on_resize(
+/// Keeps panels at a fixed fraction of the viewport across resizes. A resize re-derives exact pixels
+/// from the stored fraction (scaling pixels by each size ratio instead accumulates rounding and
+/// drifts); the fraction is refreshed from the node on steady frames, so dragging updates it.
+fn anchor_panels(
     window: Single<&Window, With<PrimaryWindow>>,
     mut last: ResMut<LastViewport>,
-    mut roots: Query<&mut Node, With<DragRoot>>,
+    mut roots: Query<(Entity, &mut Node, Option<&mut Anchor>), With<DragRoot>>,
+    mut commands: Commands,
 ) {
     let size = Vec2::new(window.resolution.width(), window.resolution.height());
     if size.x <= 0.0 || size.y <= 0.0 {
         return;
     }
-    if last.0 == Vec2::ZERO || last.0 == size {
-        last.0 = size;
-        return;
-    }
-    let ratio = size / last.0;
+    let resized = last.0 != Vec2::ZERO && last.0 != size;
     last.0 = size;
-    for mut node in &mut roots {
-        node.left = Val::Px(px(node.left) * ratio.x);
-        node.top = Val::Px(px(node.top) * ratio.y);
+    for (entity, mut node, anchor) in &mut roots {
+        let Some(mut anchor) = anchor else {
+            commands
+                .entity(entity)
+                .insert(Anchor(Vec2::new(px(node.left), px(node.top)) / size));
+            continue;
+        };
+        if resized {
+            node.left = Val::Px(anchor.0.x * size.x);
+            node.top = Val::Px(anchor.0.y * size.y);
+        } else {
+            anchor.0 = Vec2::new(px(node.left), px(node.top)) / size;
+        }
     }
 }
 
