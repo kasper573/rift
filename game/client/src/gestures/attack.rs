@@ -1,25 +1,41 @@
 use bevy::prelude::*;
+use bevy::window::CursorIcon;
 use world::query;
 use world::session;
 
-use crate::gestures::InputIntent;
+use crate::gestures::{Gesture, image_cursor};
 use crate::render;
 
-pub(super) struct Attack;
+/// Attack the actor under the cursor.
+pub struct AttackGesture {
+    attack: Handle<Image>,
+}
 
-impl InputIntent for Attack {
+impl AttackGesture {
+    pub fn new(assets: &AssetServer) -> AttackGesture {
+        AttackGesture {
+            attack: assets.load("icons/cursors/swords002.png"),
+        }
+    }
+}
+
+impl Gesture for AttackGesture {
     fn claims(&self, world: &mut World) -> bool {
         !session::is_dead(world)
             && render::cursor_tile(world)
                 .is_some_and(|point| query::enemy_at(world, point).is_some())
     }
 
-    fn drive(&self, world: &mut World, start: bool) {
+    fn drive(&mut self, world: &mut World, start: bool) {
         if start
             && let Some(point) = render::cursor_tile(world)
             && let Some(target) = query::enemy_at(world, point)
         {
             session::attack(world, target);
         }
+    }
+
+    fn cursor(&self, _world: &mut World) -> Option<CursorIcon> {
+        Some(image_cursor(self.attack.clone(), (32, 32)))
     }
 }

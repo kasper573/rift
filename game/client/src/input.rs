@@ -4,46 +4,20 @@ use bevy::prelude::*;
 use bevy::window::{CursorMoved, PrimaryWindow};
 use world::session;
 
-use crate::Screen;
+use crate::GameScene;
 use crate::gestures;
 
 pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        gestures::init(app);
-        app.init_resource::<Latched>();
+        gestures::plugin(app);
         app.add_systems(Update, touch_as_mouse);
-        app.add_systems(Update, drive_intents.run_if(in_state(Screen::Playing)));
-        app.add_systems(Update, respawn_when_dead.run_if(in_state(Screen::Playing)));
+        app.add_systems(
+            Update,
+            respawn_when_dead.run_if(in_state(GameScene::Playing)),
+        );
     }
-}
-
-/// Which active intent (if any) owns the press in progress. This is all the input layer is: pick the
-/// first intent to claim a press, drive it until release; the intents live in `gestures/`.
-#[derive(Resource, Default)]
-struct Latched(Option<usize>);
-
-fn drive_intents(world: &mut World) {
-    let mut active = world.resource::<Latched>().0;
-    let (pressed, just) = {
-        let buttons = world.resource::<ButtonInput<MouseButton>>();
-        (
-            buttons.pressed(MouseButton::Left),
-            buttons.just_pressed(MouseButton::Left),
-        )
-    };
-    if !pressed {
-        active = None;
-    } else if just {
-        active = gestures::ALL.iter().position(|intent| intent.claims(world));
-        if let Some(index) = active {
-            gestures::ALL[index].drive(world, true);
-        }
-    } else if let Some(index) = active {
-        gestures::ALL[index].drive(world, false);
-    }
-    world.resource_mut::<Latched>().0 = active;
 }
 
 /// Bridges touch to the mouse so taps act as left-clicks for both the map and the UI, without the

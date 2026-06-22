@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::{Activate, button, text_colored};
 
-use crate::{Screen, net};
+use crate::{GameScene, net};
 
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -11,21 +11,21 @@ pub enum Mode {
     Spectate,
 }
 
-pub struct ScreensPlugin;
+pub struct ScenesPlugin;
 
-impl Plugin for ScreensPlugin {
+impl Plugin for ScenesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Mode>()
-            .add_systems(OnEnter(Screen::ChooseMode), choose_mode)
-            .add_systems(OnExit(Screen::ChooseMode), despawn)
-            .add_systems(OnEnter(Screen::Playing), enter_game);
+            .add_systems(OnEnter(GameScene::ChooseMode), choose_mode)
+            .add_systems(OnExit(GameScene::ChooseMode), despawn)
+            .add_systems(OnEnter(GameScene::Playing), enter_game);
     }
 }
 
 #[derive(Component, Default, Clone)]
-struct ScreenUi;
+struct SceneUi;
 
-fn screen_node() -> Node {
+fn scene_node() -> Node {
     Node {
         width: Val::Percent(100.0),
         height: Val::Percent(100.0),
@@ -39,8 +39,8 @@ fn screen_node() -> Node {
 
 fn choose_mode(mut commands: Commands) {
     commands.spawn_scene(bsn! {
-        ScreenUi
-        template_value(screen_node())
+        SceneUi
+        template_value(scene_node())
         Children [
             {EntityScene(text_colored("Choose a mode", Color::WHITE))},
             ( {button("Play")} on(enter(Mode::Play)) ),
@@ -49,14 +49,14 @@ fn choose_mode(mut commands: Commands) {
     });
 }
 
-fn enter(mode: Mode) -> impl Fn(On<Activate>, ResMut<Mode>, ResMut<NextState<Screen>>) + Clone {
+fn enter(mode: Mode) -> impl Fn(On<Activate>, ResMut<Mode>, ResMut<NextState<GameScene>>) + Clone {
     move |_, mut current, mut next| {
         *current = mode;
-        next.set(Screen::Playing);
+        next.set(GameScene::Playing);
     }
 }
 
-fn despawn(ui: Query<Entity, With<ScreenUi>>, mut commands: Commands) {
+fn despawn(ui: Query<Entity, With<SceneUi>>, mut commands: Commands) {
     for entity in &ui {
         commands.entity(entity).despawn();
     }

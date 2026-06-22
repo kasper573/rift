@@ -1,16 +1,14 @@
 use bevy::prelude::*;
-use bevy::window::{CursorIcon, SystemCursorIcon};
 use bevy_scene::{EntityScene, Scene, bsn, template_value};
 use bevy_ui::widget::ImageNode;
 
 use crate::components::{text_colored, tooltip, tooltip_content};
-use crate::drag::{DragHandle, DragRoot, HoverCursor, OnSettle, OnTap};
+use crate::drag::{DragHandle, DragRoot, OnSettle, OnTap};
 use crate::style::Style;
 use crate::theme::theme;
 use crate::{Align, Side, component};
 
 const WIDGET: f32 = 48.0;
-const POINTER: CursorIcon = CursorIcon::System(SystemCursorIcon::Pointer);
 
 /// A draggable widget: an icon with a corner badge and a hover tooltip. A tap (press without a drag)
 /// runs `on_tap`; settling after a drag runs `on_settle`.
@@ -43,7 +41,6 @@ pub fn widget(opts: Widget) -> impl Scene {
         DragHandle
         component(opts.on_tap)
         component(opts.on_settle)
-        component(HoverCursor(POINTER))
         Children [
             (
                 Node {
@@ -56,7 +53,7 @@ pub fn widget(opts: Widget) -> impl Scene {
             ),
             {EntityScene(badge(opts.badge))},
             (
-                {tooltip_content(Side::Bottom, Align::Start, 0.0)}
+                {tooltip_content(Side::Left, Align::Center, 0.0)}
                 Children [ {EntityScene(label(opts.tooltip))} ]
             ),
         ]

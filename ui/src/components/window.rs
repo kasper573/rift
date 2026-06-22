@@ -1,18 +1,15 @@
 use bevy::prelude::*;
-use bevy::window::{CursorIcon, SystemCursorIcon};
 use bevy_scene::{EntityScene, Scene, bsn, on, template_value};
 
 use crate::components::button::{ButtonSize, button_styled, intent};
 use crate::components::{scroll_area, scroll_bar, scroll_thumb, scroll_viewport, text_colored};
-use crate::drag::{DragHandle, DragRoot, HoverCursor, OnSettle, OnTap, ResizeHandle};
+use crate::drag::{DragHandle, DragRoot, OnSettle, OnTap, ResizeHandle};
 use crate::style::Style;
 use crate::theme::theme;
 use crate::{Activate, component};
 
 const TITLE_H: f32 = 22.0;
 const MIN_WINDOW: Vec2 = Vec2::new(100.0, 100.0);
-const POINTER: CursorIcon = CursorIcon::System(SystemCursorIcon::Pointer);
-const RESIZE: CursorIcon = CursorIcon::System(SystemCursorIcon::NwseResize);
 
 /// A draggable, resizable window: a title bar (title + close), a scrolling content area, and a resize
 /// grip. Closing runs `on_close`; settling after a drag or resize runs `on_settle`.
@@ -74,7 +71,6 @@ fn close_button(on_close: OnTap) -> impl Scene {
     let close = on_close.0;
     bsn! {
         {button_styled(intent::PRIMARY, ButtonSize::Icon, "×")}
-        component(HoverCursor(POINTER))
         on(move |_: On<Activate>, mut commands: Commands| {
             let close = close.clone();
             commands.queue(move |world: &mut World| close(world));
@@ -114,6 +110,5 @@ fn resize_grip() -> impl Scene {
             node.height = Val::Px(16.0);
         }))
         ResizeHandle { min: {MIN_WINDOW} }
-        component(HoverCursor(RESIZE))
     }
 }

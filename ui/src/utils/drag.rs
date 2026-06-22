@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use bevy::ecs::hierarchy::ChildOf;
-use bevy::picking::hover::HoverMap;
 use bevy::prelude::*;
-use bevy::window::{CursorIcon, PrimaryWindow};
+use bevy::window::PrimaryWindow;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Geom {
@@ -43,12 +42,6 @@ impl OnTap {
     }
 }
 
-#[derive(Component, Clone)]
-pub struct HoverCursor(pub CursorIcon);
-
-#[derive(Resource, Default)]
-pub struct CursorLock(pub Option<CursorIcon>);
-
 /// The snap grid in logical pixels (0 disables); the hud keeps it in step with the user's setting.
 #[derive(Resource, Default)]
 pub struct SnapGrid(pub f32);
@@ -82,8 +75,7 @@ pub(crate) struct DragPlugin;
 
 impl Plugin for DragPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CursorLock>()
-            .init_resource::<SnapGrid>()
+        app.init_resource::<SnapGrid>()
             .init_resource::<Dragged>()
             .init_resource::<LastViewport>()
             .init_resource::<DragState>()
@@ -135,11 +127,9 @@ fn on_drag_start(
 
 fn on_drag(
     drag: On<Pointer<Drag>>,
-    cursors: Query<&HoverCursor>,
     snap: Res<SnapGrid>,
     mut state: ResMut<DragState>,
     mut nodes: Query<&mut Node>,
-    mut lock: ResMut<CursorLock>,
 ) {
     let Some(active) = state.0.as_mut() else {
         return;
@@ -151,7 +141,6 @@ fn on_drag(
     }
     if active.resize {
         active.raw.size = (active.raw.size + drag.delta).max(active.min);
-        lock.0 = cursors.get(drag.entity).ok().map(|cursor| cursor.0.clone());
     } else {
         active.raw.pos += drag.delta;
     }
@@ -168,11 +157,9 @@ fn on_drag_end(
     handles: Query<(), AnyHandle>,
     is_root: Query<(), With<DragRoot>>,
     parents: Query<&ChildOf>,
-    mut lock: ResMut<CursorLock>,
     mut state: ResMut<DragState>,
     mut commands: Commands,
 ) {
-    lock.0 = None;
     state.0 = None;
     if !handles.contains(drag.entity) {
         return;
@@ -233,27 +220,6 @@ fn anchor_panels(
             anchor.0 = Vec2::new(px(node.left), px(node.top)) / size;
         }
     }
-}
-
-pub fn hovered_cursor(world: &World) -> Option<CursorIcon> {
-    if let Some(locked) = world
-        .get_resource::<CursorLock>()
-        .and_then(|lock| lock.0.clone())
-    {
-        return Some(locked);
-    }
-    let hover_map = world.get_resource::<HoverMap>()?;
-    let mut topmost: Option<(f32, CursorIcon)> = None;
-    for hits in hover_map.values() {
-        for (&entity, hit) in hits.iter() {
-            if let Some(cursor) = world.get::<HoverCursor>(entity)
-                && topmost.as_ref().is_none_or(|(depth, _)| hit.depth > *depth)
-            {
-                topmost = Some((hit.depth, cursor.0.clone()));
-            }
-        }
-    }
-    topmost.map(|(_, cursor)| cursor)
 }
 
 fn nearest_root(

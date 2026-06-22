@@ -20,10 +20,7 @@ pub(crate) use utils::{collapse, drag, motion, overlay, place, state, style, sur
 
 pub use bevy_ui_widgets::{Activate, ValueChange, observe};
 pub use components::*;
-pub use utils::drag::{
-    DragHandle, DragRoot, Geom, HoverCursor, OnSettle, OnTap, ResizeHandle, SnapGrid,
-    hovered_cursor,
-};
+pub use utils::drag::{DragHandle, DragRoot, Geom, OnSettle, OnTap, ResizeHandle, SnapGrid};
 pub use utils::motion::{Easing, Timing, Transform2d, transition};
 pub use utils::overlay::{Dismissable, Open, OverlayAction, set_overlay_open};
 pub use utils::place::place;

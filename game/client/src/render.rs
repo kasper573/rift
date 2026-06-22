@@ -17,6 +17,7 @@ use world::table::Id;
 use world::tiling::{Cell, GridDims, TileSize, Tiles};
 use world::time::Seconds;
 
+use crate::gestures::{Gesture, GestureKind, Gestures};
 use crate::screen::{ToScreen, ToTile};
 
 pub const TILE: WorldPx = WorldPx(16.0);
@@ -47,8 +48,9 @@ impl Plugin for RenderPlugin {
                     animate_tiles,
                     dead_tint,
                     healthbar,
+                    update_crosshair,
                 )
-                    .run_if(in_state(crate::Screen::Playing)),
+                    .run_if(in_state(crate::GameScene::Playing)),
             );
     }
 }
@@ -86,6 +88,35 @@ pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
     Some(point.to_tile())
 }
 
+/// The move-target marker drawn on the hovered tile.
+#[derive(Component)]
+struct Crosshair;
+
+/// Shows the crosshair on the hovered tile while the walk gesture is the active one and the tile is
+/// walkable; the gesture system owns "is this a move", this owns the on-screen feedback.
+fn update_crosshair(world: &mut World) {
+    let gestures = world.remove_resource::<Gestures>().expect("gestures");
+    let target = match gestures.0.iter().find(|gesture| gesture.claims(world)) {
+        Some(GestureKind::Walk(walk)) => walk.target(world),
+        _ => None,
+    };
+    world.insert_resource(gestures);
+    let mut crosshairs =
+        world.query_filtered::<(&mut Transform, &mut Visibility), With<Crosshair>>();
+    let Ok((mut transform, mut visibility)) = crosshairs.single_mut(world) else {
+        return;
+    };
+    match target {
+        Some(tile) => {
+            *visibility = Visibility::Visible;
+            let at = tile.to_screen();
+            transform.translation.x = at.x;
+            transform.translation.y = at.y;
+        }
+        None => *visibility = Visibility::Hidden,
+    }
+}
+
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 struct Present {
     #[texture(0)]
@@ -109,6 +140,7 @@ fn setup(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<Present>>,
+    assets: Res<AssetServer>,
 ) {
     let (target_w, target_h) = target_size(&window);
     let mut target =
@@ -178,6 +210,16 @@ fn setup(
         bar_sprite(0x00_FF_00, inner),
         Anchor::CENTER_LEFT,
         hidden(),
+    ));
+    commands.spawn((
+        Crosshair,
+        Sprite {
+            image: assets.load("icons/crosshairs/white/crosshair026.png"),
+            custom_size: Some(Vec2::splat(TILE.0)),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.0, 100.0),
+        Visibility::Hidden,
     ));
 }
 

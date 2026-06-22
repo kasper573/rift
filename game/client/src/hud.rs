@@ -11,7 +11,6 @@ use crate::component;
 use world::protocol::{Inventory, Name, Vitals, Xp};
 use world::session;
 
-use crate::Screen;
 use crate::user_settings::{Placement, ScreenPx, ScreenVec, UserSettings};
 
 const WIDGET: ScreenPx = ScreenPx(48.0);
@@ -30,8 +29,8 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Settings>()
             .init_resource::<Open>()
-            .add_systems(OnEnter(Screen::Playing), spawn_hud)
-            .add_systems(OnExit(Screen::Playing), despawn::<Hud>)
+            .add_systems(OnEnter(crate::GameScene::Playing), spawn_hud)
+            .add_systems(OnExit(crate::GameScene::Playing), despawn::<Hud>)
             .add_systems(
                 Update,
                 (
@@ -43,7 +42,7 @@ impl Plugin for HudPlugin {
                     sync_snap_grid,
                     sync_death_banner,
                 )
-                    .run_if(in_state(Screen::Playing)),
+                    .run_if(in_state(crate::GameScene::Playing)),
             );
     }
 }

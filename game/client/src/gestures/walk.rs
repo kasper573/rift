@@ -1,67 +1,96 @@
 use std::time::Duration;
 
 use bevy::prelude::*;
+use bevy::window::CursorIcon;
 use world::math::Pos;
 use world::query;
 use world::session;
 use world::tiling::{TilePos, Tiles};
 
-use crate::gestures::InputIntent;
+use crate::gestures::{Gesture, image_cursor};
 use crate::render;
 
 const MOVE_REPEAT: Duration = Duration::from_millis(333);
 
-#[derive(Resource, Default)]
-pub(super) struct HeldMove {
+/// Walk toward the cursor's tile: move once on press, then re-issue while held as the cursor moves.
+pub struct WalkGesture {
+    walk: Handle<Image>,
+    walk_held: Handle<Image>,
     last_tile: Option<Pos<Tiles>>,
     last_sent: Option<Duration>,
 }
 
-pub(super) struct Walk;
+impl WalkGesture {
+    pub fn new(assets: &AssetServer) -> WalkGesture {
+        WalkGesture {
+            walk: assets.load("icons/cursors/pointer010.png"),
+            walk_held: assets.load("icons/cursors/pointer011.png"),
+            last_tile: None,
+            last_sent: None,
+        }
+    }
 
-impl InputIntent for Walk {
+    /// The walkable tile under the cursor — where a press moves to, what the cursor marks, and where the
+    /// crosshair sits. `None` when the cursor is off-map or over a blocked tile.
+    pub fn target(&self, world: &mut World) -> Option<Pos<Tiles>> {
+        let tile = render::cursor_tile(world)?.snap();
+        query::walkable(world, tile).then_some(tile)
+    }
+
+    fn repeat(&mut self, world: &mut World) {
+        let now = world.resource::<Time>().elapsed();
+        if self
+            .last_sent
+            .is_some_and(|sent| now.saturating_sub(sent) < MOVE_REPEAT)
+        {
+            return;
+        }
+        let Some(point) = render::cursor_tile(world) else {
+            return;
+        };
+        if query::enemy_at(world, point).is_some() {
+            return;
+        }
+        let tile = point.snap();
+        if !query::walkable(world, tile) || self.last_tile == Some(tile) {
+            return;
+        }
+        session::move_to(world, point);
+        self.stamp(world, Some(tile));
+    }
+
+    fn stamp(&mut self, world: &mut World, tile: Option<Pos<Tiles>>) {
+        self.last_sent = Some(world.resource::<Time>().elapsed());
+        self.last_tile = tile;
+    }
+}
+
+impl Gesture for WalkGesture {
     fn claims(&self, world: &mut World) -> bool {
         !session::is_dead(world) && render::cursor_tile(world).is_some()
     }
 
-    fn drive(&self, world: &mut World, start: bool) {
+    fn drive(&mut self, world: &mut World, start: bool) {
         if !start {
-            repeat_move(world);
+            self.repeat(world);
             return;
         }
         if let Some(point) = render::cursor_tile(world) {
             session::move_to(world, point);
-            stamp(world, Some(point.snap()));
+            self.stamp(world, Some(point.snap()));
         }
     }
-}
 
-fn repeat_move(world: &mut World) {
-    let now = world.resource::<Time>().elapsed();
-    if world
-        .resource::<HeldMove>()
-        .last_sent
-        .is_some_and(|sent| now.saturating_sub(sent) < MOVE_REPEAT)
-    {
-        return;
+    fn cursor(&self, world: &mut World) -> Option<CursorIcon> {
+        self.target(world)?;
+        let held = world
+            .resource::<ButtonInput<MouseButton>>()
+            .pressed(MouseButton::Left);
+        let handle = if held {
+            self.walk_held.clone()
+        } else {
+            self.walk.clone()
+        };
+        Some(image_cursor(handle, (32, 32)))
     }
-    let Some(point) = render::cursor_tile(world) else {
-        return;
-    };
-    if query::enemy_at(world, point).is_some() {
-        return;
-    }
-    let tile = point.snap();
-    if !query::walkable(world, tile) || world.resource::<HeldMove>().last_tile == Some(tile) {
-        return;
-    }
-    session::move_to(world, point);
-    stamp(world, Some(tile));
-}
-
-fn stamp(world: &mut World, tile: Option<Pos<Tiles>>) {
-    let now = world.resource::<Time>().elapsed();
-    let mut state = world.resource_mut::<HeldMove>();
-    state.last_tile = tile;
-    state.last_sent = Some(now);
 }

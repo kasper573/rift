@@ -5,7 +5,6 @@ use world::Role;
 
 pub mod assets;
 pub mod auth;
-pub mod cursor;
 pub mod debug;
 pub mod fps;
 pub mod gestures;
@@ -15,14 +14,14 @@ pub mod net;
 pub mod platform;
 pub mod render;
 pub mod replicon_renet;
+pub mod scenes;
 pub mod screen;
-pub mod screens;
 pub mod sfx;
 pub mod user_settings;
 
 #[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Screen {
-    /// Spectators choose whether to play or watch; players skip straight to [`Screen::Playing`].
+pub enum GameScene {
+    /// Spectators choose whether to play or watch; players skip straight to [`GameScene::Playing`].
     #[default]
     ChooseMode,
     Playing,
@@ -68,19 +67,18 @@ pub fn boot() {
     }
     app.insert_resource(params)
         .insert_state(if spectator {
-            Screen::ChooseMode
+            GameScene::ChooseMode
         } else {
-            Screen::Playing
+            GameScene::Playing
         })
         .add_plugins((
             ui::UiPlugin,
             net::NetPlugin,
             render::RenderPlugin,
             input::InputPlugin,
-            cursor::CursorPlugin,
             debug::DebugPlugin,
             sfx::SfxPlugin,
-            screens::ScreensPlugin,
+            scenes::ScenesPlugin,
             hud::HudPlugin,
             fps::FpsPlugin,
         ));
