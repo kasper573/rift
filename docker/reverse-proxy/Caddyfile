@@ -1,6 +1,8 @@
 {
 	order rate_limit before basicauth
     email admin@{$RIFT_DOMAIN}
+    # Empty in prod (real ACME); `local_certs` in test so a non-public domain gets an internal-CA cert.
+    {$CADDY_LOCAL_CERTS}
 }
 
 (common_rate_limit) {

@@ -8,7 +8,6 @@ use thirtyfour::prelude::*;
 
 const ARTIFACTS: &str = env!("CARGO_TARGET_TMPDIR");
 const CHROMEDRIVER: &str = "http://127.0.0.1:9515";
-const DEFAULT_URL: &str = "https://rift.localhost";
 
 // The reference snapshots were captured at this canvas size, and the portal template matches at that
 // exact pixel scale (the game upscales its fixed-height view to the canvas). The harness resizes the
@@ -145,7 +144,7 @@ async fn register_and_spawn() -> Session {
 
 async fn new_driver() -> WebDriver {
     let mut caps = DesiredCapabilities::chrome();
-    for arg in [
+    let mut args: Vec<String> = [
         "--headless=new",
         "--no-sandbox",
         "--disable-dev-shm-usage",
@@ -158,7 +157,19 @@ async fn new_driver() -> WebDriver {
         "--use-gl=angle",
         "--use-angle=swiftshader",
         "--enable-unsafe-swiftshader",
-    ] {
+    ]
+    .map(String::from)
+    .to_vec();
+    // Against the local stack the domain only resolves via the LAN router, so map it (and its
+    // subdomains) to loopback in the browser — the suite reaches the published ports without depending
+    // on DNS. A RIFT_E2E_URL deployment override keeps real resolution.
+    if std::env::var("RIFT_E2E_URL").is_err() {
+        let domain = domain();
+        args.push(format!(
+            "--host-resolver-rules=MAP {domain} 127.0.0.1,MAP *.{domain} 127.0.0.1"
+        ));
+    }
+    for arg in &args {
         caps.add_arg(arg).expect("chrome arg");
     }
     caps.set_logging_prefs("browser", LoggingPrefsLogLevel::All)
@@ -179,7 +190,13 @@ async fn dump_console(driver: &WebDriver) {
 }
 
 fn base_url() -> String {
-    std::env::var("RIFT_E2E_URL").unwrap_or_else(|_| DEFAULT_URL.to_owned())
+    std::env::var("RIFT_E2E_URL").unwrap_or_else(|_| format!("https://{}", domain()))
+}
+
+// The stack's domain is configured in one place (docker/.env.test's RIFT_DOMAIN); the suite derives
+// its URL and loopback resolver rule from it rather than hardcoding a host.
+fn domain() -> String {
+    std::env::var("RIFT_DOMAIN").expect("RIFT_DOMAIN must be set — `just e2e` exports it")
 }
 
 /// Signs in by registering a fresh throwaway account: from signed-out `/play`, follow the sign-in

@@ -57,8 +57,8 @@ dev: stack
     #!/usr/bin/env bash
     set -euo pipefail
     command -v cargo-watch >/dev/null || { echo "just dev needs cargo-watch: cargo install cargo-watch --locked"; exit 1; }
-    domain=$(grep -E '^RIFT_DOMAIN=' docker/.env.test | cut -d= -f2)
-    echo "sign in and play at https://${domain}/play"
+    set -a; source docker/.env.test; set +a
+    echo "sign in and play at https://${RIFT_DOMAIN}/play"
     cargo watch -w game/client -w game/world -w ui \
       -s 'just wasm && {{compose}} up -d --build --wait rift-website'
 
@@ -87,6 +87,7 @@ e2e-build:
 e2e-run filter="": e2e-build
     #!/usr/bin/env bash
     set -euo pipefail
+    set -a; source docker/.env.test; set +a
     command -v chromedriver >/dev/null || { echo "just e2e needs chromedriver: install the e2e system packages (see README)"; exit 1; }
 
     chromedriver --port=9515 >/dev/null 2>&1 &
