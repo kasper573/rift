@@ -7,11 +7,12 @@ import { center, decode, greenMarker, sceneFraction, type Image } from "./image"
 const TILE_PX = 48;
 const BAR_DROP_PX = 15;
 
-// A click holds the button down this long. The client samples the mouse button once per rendered
-// frame, so press and release must land in different frames for it to register a click — on software
-// WebGL under load (large canvases, headed Firefox) frames can be hundreds of ms apart, so the hold
-// is generous enough to span several. This is an input duration, not a wait for app state.
-const CLICK_HOLD = 1500;
+// How many rendered frames to hold the button down for. The client samples the mouse button once per
+// frame, so press and release must land in different frames to register a click. Waiting on the
+// page's own animation frames adapts to whatever rate software WebGL achieves — long enough to
+// register on a slow renderer, short enough that the player hasn't started moving, so a portal click
+// isn't re-aimed off the warp by the client's move-repeat. Two frames, not a wall-clock duration.
+const CLICK_FRAMES = 2;
 
 // A rendered map lights up at least this fraction of the view; below it the canvas is still blank or
 // loading. The timeout is generous: wasm init, the netcode connect, and the first SwiftShader frame
@@ -83,14 +84,28 @@ export async function clickFromPlayer(page: Page, tilesEast: number, tilesNorth:
   await press(page, box.x + playerX + tilesEast * TILE_PX, box.y + playerY - tilesNorth * TILE_PX);
 }
 
-// Presses and holds the button at a viewport point long enough for the client to sample it. The hold
-// outlasts a frame; an instant press+release can fall between frames on the software renderer. This
-// is an input duration, not a wait for app state.
+// Presses and holds the button at a viewport point across a couple of rendered frames so the client
+// samples it as a click (see CLICK_FRAMES).
 async function press(page: Page, x: number, y: number): Promise<void> {
   await page.mouse.move(x, y);
   await page.mouse.down();
-  await page.waitForTimeout(CLICK_HOLD);
+  await waitForFrames(page, CLICK_FRAMES);
   await page.mouse.up();
+}
+
+// Resolves after the page has painted `frames` animation frames — i.e. the game's render loop has
+// ticked that many times. Falls back to a wall-clock cap so a throttled tab can't hang the click.
+async function waitForFrames(page: Page, frames: number): Promise<void> {
+  await page.evaluate(
+    (n) =>
+      new Promise<void>((resolve) => {
+        let seen = 0;
+        const tick = () => (++seen >= n ? resolve() : requestAnimationFrame(tick));
+        requestAnimationFrame(tick);
+        setTimeout(resolve, 5000);
+      }),
+    frames,
+  );
 }
 
 async function canvasBox(page: Page) {

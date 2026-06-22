@@ -42,11 +42,16 @@ const browsers = {
     browserName: "firefox",
     headless: false,
     launchOptions: {
-      // Bypass the GPU blocklist and allow the software renderer so WebGL works under xvfb.
       firefoxUserPrefs: {
+        // Bypass the GPU blocklist and allow the software renderer so WebGL works under xvfb.
         "webgl.force-enabled": true,
         "webgl.disabled": false,
         "webgl.disable-fail-if-major-performance-caveat": true,
+        // Firefox can't take a host-resolver flag, so resolve the stack's domains to loopback here
+        // (the chromium equivalent of --host-resolver-rules).
+        "network.dns.localDomains": process.env.RIFT_E2E_URL
+          ? ""
+          : `${domain},auth.${domain},game-server.${domain}`,
       },
     },
   },
