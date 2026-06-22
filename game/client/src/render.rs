@@ -17,7 +17,7 @@ use world::table::Id;
 use world::tiling::{Cell, GridDims, TileSize, Tiles};
 use world::time::Seconds;
 
-use crate::screen::ToScreen;
+use crate::screen::{ToScreen, ToTile};
 
 pub const TILE: WorldPx = WorldPx(16.0);
 // The fixed zoom: every tile is drawn this many logical pixels across on every device, so the world
@@ -65,6 +65,25 @@ struct WorldTarget(Handle<Image>);
 #[derive(Resource, Default, Clone, Copy)]
 pub struct Viewport {
     pub scale: f32,
+}
+
+pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
+    let cursor = world
+        .query_filtered::<&Window, With<PrimaryWindow>>()
+        .single(world)
+        .ok()?
+        .cursor_position()?;
+    let viewport = *world.resource::<Viewport>();
+    if viewport.scale <= 0.0 {
+        return None;
+    }
+    let target = cursor / viewport.scale;
+    let (camera, transform) = world
+        .query_filtered::<(&Camera, &GlobalTransform), With<WorldCamera>>()
+        .single(world)
+        .ok()?;
+    let point = camera.viewport_to_world_2d(transform, target).ok()?;
+    Some(point.to_tile())
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]

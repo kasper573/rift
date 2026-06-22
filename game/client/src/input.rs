@@ -1,28 +1,49 @@
-use std::time::Duration;
-
 use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
-use bevy::picking::hover::HoverMap;
 use bevy::prelude::*;
 use bevy::window::{CursorMoved, PrimaryWindow};
-use world::math::Pos;
 use world::session;
-use world::tiling::{TilePos, Tiles};
 
 use crate::Screen;
-use crate::view;
-
-const MOVE_REPEAT: Duration = Duration::from_millis(333);
+use crate::gestures;
 
 pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HeldMove>();
+        gestures::init(app);
+        app.init_resource::<Latched>();
         app.add_systems(Update, touch_as_mouse);
-        app.add_systems(Update, click_to_act.run_if(in_state(Screen::Playing)));
+        app.add_systems(Update, drive_intents.run_if(in_state(Screen::Playing)));
         app.add_systems(Update, respawn_when_dead.run_if(in_state(Screen::Playing)));
     }
+}
+
+/// Which active intent (if any) owns the press in progress. This is all the input layer is: pick the
+/// first intent to claim a press, drive it until release; the intents live in `gestures/`.
+#[derive(Resource, Default)]
+struct Latched(Option<usize>);
+
+fn drive_intents(world: &mut World) {
+    let mut active = world.resource::<Latched>().0;
+    let (pressed, just) = {
+        let buttons = world.resource::<ButtonInput<MouseButton>>();
+        (
+            buttons.pressed(MouseButton::Left),
+            buttons.just_pressed(MouseButton::Left),
+        )
+    };
+    if !pressed {
+        active = None;
+    } else if just {
+        active = gestures::ALL.iter().position(|intent| intent.claims(world));
+        if let Some(index) = active {
+            gestures::ALL[index].drive(world, true);
+        }
+    } else if let Some(index) = active {
+        gestures::ALL[index].drive(world, false);
+    }
+    world.resource_mut::<Latched>().0 = active;
 }
 
 /// Bridges touch to the mouse so taps act as left-clicks for both the map and the UI, without the
@@ -63,81 +84,6 @@ fn touch_as_mouse(
             window: entity,
         });
     }
-}
-
-#[derive(Resource, Default)]
-struct HeldMove {
-    last_tile: Option<Pos<Tiles>>,
-    last_sent: Option<Duration>,
-}
-
-fn click_to_act(world: &mut World) {
-    if session::is_dead(world) || pointer_on_ui(world) {
-        return;
-    }
-    let buttons = world.resource::<ButtonInput<MouseButton>>();
-    if !buttons.pressed(MouseButton::Left) {
-        return;
-    }
-    if buttons.just_pressed(MouseButton::Left) {
-        press(world);
-    } else {
-        repeat_move(world);
-    }
-}
-
-fn press(world: &mut World) {
-    let Some(point) = view::cursor_tile(world) else {
-        return;
-    };
-    match view::enemy_at(world, point) {
-        Some(target) => {
-            session::attack(world, target);
-            stamp(world, None);
-        }
-        None => {
-            session::move_to(world, point);
-            stamp(world, Some(point.snap()));
-        }
-    }
-}
-
-fn repeat_move(world: &mut World) {
-    let now = world.resource::<Time>().elapsed();
-    if world
-        .resource::<HeldMove>()
-        .last_sent
-        .is_some_and(|sent| now.saturating_sub(sent) < MOVE_REPEAT)
-    {
-        return;
-    }
-    let Some(point) = view::cursor_tile(world) else {
-        return;
-    };
-    if view::enemy_at(world, point).is_some() {
-        return;
-    }
-    let tile = point.snap();
-    if !view::walkable(world, tile) || world.resource::<HeldMove>().last_tile == Some(tile) {
-        return;
-    }
-    session::move_to(world, point);
-    stamp(world, Some(tile));
-}
-
-fn stamp(world: &mut World, tile: Option<Pos<Tiles>>) {
-    let now = world.resource::<Time>().elapsed();
-    let mut state = world.resource_mut::<HeldMove>();
-    state.last_tile = tile;
-    state.last_sent = Some(now);
-}
-
-fn pointer_on_ui(world: &World) -> bool {
-    world
-        .resource::<HoverMap>()
-        .values()
-        .flat_map(|hits| hits.keys())
-        .any(|&entity| world.get::<Node>(entity).is_some())
 }
 
 fn respawn_when_dead(world: &mut World) {

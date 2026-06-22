@@ -16,10 +16,14 @@ use bevy_ui_widgets::{ButtonPlugin, CheckboxPlugin, ScrollAreaPlugin};
 use utils::motion::MotionPlugin;
 
 pub use utils::theme;
-pub(crate) use utils::{collapse, motion, overlay, place, state, style, surface};
+pub(crate) use utils::{collapse, drag, motion, overlay, place, state, style, surface};
 
 pub use bevy_ui_widgets::{Activate, ValueChange, observe};
 pub use components::*;
+pub use utils::drag::{
+    DragHandle, DragRoot, Geom, HoverCursor, OnSettle, OnTap, ResizeHandle, SnapGrid,
+    hovered_cursor,
+};
 pub use utils::motion::{Easing, Timing, Transform2d, transition};
 pub use utils::overlay::{Dismissable, Open, OverlayAction, set_overlay_open};
 pub use utils::place::place;
@@ -55,6 +59,7 @@ impl Plugin for UiPlugin {
         if !app.is_plugin_added::<ScenePlugin>() {
             app.add_plugins(ScenePlugin);
         }
+        app.add_plugins(drag::DragPlugin);
         app.init_resource::<overlay::TooltipClock>()
             .add_systems(Startup, (load_fonts, overlay::spawn_overlay_host))
             .add_systems(

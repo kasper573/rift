@@ -17,6 +17,8 @@ pub(crate) mod switch;
 pub(crate) mod tabs;
 pub(crate) mod text;
 pub(crate) mod tooltip;
+pub(crate) mod widget;
+pub(crate) mod window;
 
 pub use accordion::{
     accordion, accordion_body, accordion_content, accordion_header, accordion_item,
@@ -40,3 +42,5 @@ pub use switch::{switch, switch_thumb};
 pub use tabs::{tabs, tabs_content, tabs_list, tabs_trigger};
 pub use text::{text, text_colored};
 pub use tooltip::{tooltip, tooltip_content};
+pub use widget::{Widget, widget};
+pub use window::{Window, window};

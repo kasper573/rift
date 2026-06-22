@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
-use bevy::window::{CursorIcon, SystemCursorIcon};
 use serde::{Deserialize, Serialize};
 use ui::button::intent as button_intent;
 use ui::{
-    Activate, Align, ButtonSize, Side, button_styled, text_colored, tooltip, tooltip_content,
+    Activate, Align, ButtonSize, DragHandle, DragRoot, Geom, OnSettle, OnTap, Side, SnapGrid,
+    Widget, Window, button_styled, text_colored, tooltip, tooltip_content, widget, window,
 };
 
 use crate::component;
@@ -12,25 +12,17 @@ use world::protocol::{Inventory, Name, Vitals, Xp};
 use world::session;
 
 use crate::Screen;
-use crate::drag::{
-    DragHandle, DragRoot, Geom, HoverCursor, OnSettle, OnTap, ResizeHandle, SnapGrid,
-};
 use crate::user_settings::{Placement, ScreenPx, ScreenVec, UserSettings};
 
 const WIDGET: ScreenPx = ScreenPx(48.0);
 const SLOT: ScreenPx = ScreenPx(36.0);
-const TITLE_H: ScreenPx = ScreenPx(22.0);
 const SCREEN_W: f32 = 1152.0;
-const MIN_WINDOW: Vec2 = Vec2::new(100.0, 100.0);
 const WINDOW_SIZE: Vec2 = Vec2::new(400.0, 200.0);
 
 const PANEL_BG: Color = Color::srgb(0.1, 0.1, 0.1);
 const TITLE_BG: Color = Color::srgb(0.18, 0.18, 0.18);
 const BORDER: Color = Color::srgb(0.31, 0.31, 0.31);
 const TOOLTIP_BG: Color = Color::BLACK;
-
-const POINTER: CursorIcon = CursorIcon::System(SystemCursorIcon::Pointer);
-const RESIZE: CursorIcon = CursorIcon::System(SystemCursorIcon::NwseResize);
 
 pub struct HudPlugin;
 
@@ -137,6 +129,10 @@ struct Cell {
     slot: u32,
 }
 
+/// A reconciled child's identity within its list (see `reconcile_children`).
+#[derive(Component)]
+struct Keyed(u64);
+
 #[derive(Component, Default, Clone)]
 struct SnappingButton;
 
@@ -185,8 +181,16 @@ fn rebuild_panes(
 
 fn character_panel(settings: &Settings) -> impl Scene {
     let (pos, _) = resolve(settings, Panel::Character, Vec2::new(8.0, 8.0), None);
-    let mut node = panel_node(pos, Vec2::new(140.0, 64.0), false);
-    node.padding = UiRect::all(Val::Px(6.0));
+    let node = Node {
+        position_type: PositionType::Absolute,
+        left: Val::Px(pos.x),
+        top: Val::Px(pos.y),
+        width: Val::Px(140.0),
+        height: Val::Px(64.0),
+        border: UiRect::all(Val::Px(1.0)),
+        padding: UiRect::all(Val::Px(6.0)),
+        ..default()
+    };
     bsn! {
         template_value(node)
         BackgroundColor({PANEL_BG})
@@ -201,32 +205,16 @@ fn character_panel(settings: &Settings) -> impl Scene {
 fn widget_panel(pane: Pane, settings: &Settings, assets: &AssetServer) -> impl Scene {
     let info = pane.info();
     let (pos, _) = resolve(settings, Panel::Widget(pane), widget_fallback(pane), None);
-    let icon = assets.load(info.icon.to_owned());
-    let keybind = info.keybind;
-    let title = info.title;
     bsn! {
-        template_value(panel_node(pos, Vec2::splat(WIDGET.0), false))
-        BackgroundColor({PANEL_BG})
-        component(BorderColor::all(BORDER))
-        {tooltip(false)}
-        DragRoot
-        DragHandle
-        component(OnTap::new(move |world| open_pane(world, pane)))
-        component(OnSettle::new(move |world, geom| persist(world, Panel::Widget(pane), geom)))
-        component(HoverCursor(POINTER))
+        {widget(Widget {
+            pos,
+            icon: assets.load(info.icon.to_owned()),
+            badge: info.keybind.to_owned(),
+            tooltip: info.title.to_owned(),
+            on_tap: OnTap::new(move |world| open_pane(world, pane)),
+            on_settle: OnSettle::new(move |world, geom| persist(world, Panel::Widget(pane), geom)),
+        })}
         component(PaneView { pane, open: false })
-        Children [
-            (
-                Node { width: Val::Px(32.0), height: Val::Px(32.0), margin: {UiRect::all(Val::Px(8.0))} }
-                component(ImageNode::new(icon))
-                Pickable { should_block_lower: false, is_hoverable: false }
-            ),
-            {EntityScene(badge(keybind))},
-            (
-                {tooltip_content(Side::Bottom, Align::Start, 0.0)}
-                Children [ {EntityScene(tooltip_label(title))} ]
-            ),
-        ]
     }
 }
 
@@ -239,42 +227,21 @@ fn window_panel(pane: Pane, settings: &Settings) -> impl Scene {
         Some(WINDOW_SIZE),
     );
     let size = size.unwrap_or(WINDOW_SIZE);
-    let title = info.title;
     bsn! {
-        template_value(panel_node(pos, size, true))
-        BackgroundColor({PANEL_BG})
-        component(BorderColor::all(BORDER))
-        DragRoot
-        component(OnSettle::new(move |world, geom| persist(world, Panel::Window(pane), geom)))
+        {window(Window {
+            pos,
+            size,
+            title: info.title.to_owned(),
+            on_close: OnTap::new(move |world| close_pane(world, pane)),
+            on_settle: OnSettle::new(move |world, geom| persist(world, Panel::Window(pane), geom)),
+            content: content(pane),
+        })}
         component(PaneView { pane, open: true })
-        Children [
-            {EntityScene(title_bar(title, pane))},
-            {EntityScene(content_area(pane))},
-            {EntityScene(resize_grip())},
-        ]
     }
 }
 
-fn title_bar(title: &'static str, pane: Pane) -> impl Scene {
-    bsn! {
-        Node {
-            width: Val::Percent(100.0),
-            height: Val::Px({TITLE_H.0}),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::SpaceBetween,
-            padding: {UiRect::horizontal(Val::Px(6.0))},
-        }
-        BackgroundColor({TITLE_BG})
-        DragHandle
-        Children [
-            {EntityScene(text_colored(title, Color::WHITE))},
-            {EntityScene(close_button(pane))},
-        ]
-    }
-}
-
-fn content_area(pane: Pane) -> impl Scene {
-    let inner: Box<dyn Scene> = match pane {
+fn content(pane: Pane) -> Box<dyn Scene> {
+    match pane {
         Pane::Inventory => Box::new(bsn! {
             Node {
                 width: Val::Percent(100.0),
@@ -290,47 +257,11 @@ fn content_area(pane: Pane) -> impl Scene {
                 commands.queue(toggle_snapping);
             })
         }),
-    };
-    bsn! {
-        Node {
-            flex_grow: 1.0,
-            padding: {UiRect::all(Val::Px(4.0))},
-        }
-        Children [ {EntityScene(inner)} ]
     }
 }
 
-fn resize_grip() -> impl Scene {
-    bsn! {
-        Node {
-            position_type: PositionType::Absolute,
-            right: Val::Px(0.0),
-            bottom: Val::Px(0.0),
-            width: Val::Px(16.0),
-            height: Val::Px(16.0),
-        }
-        BackgroundColor({BORDER})
-        ResizeHandle { min: {MIN_WINDOW} }
-        component(HoverCursor(RESIZE))
-    }
-}
-
-fn close_button(pane: Pane) -> impl Scene {
-    bsn! {
-        {button_styled(button_intent::PRIMARY, ButtonSize::Icon, "×")}
-        component(HoverCursor(POINTER))
-        on(move |_: On<Activate>, mut open: ResMut<Open>| {
-            open.0.remove(&pane);
-        })
-    }
-}
-
-fn badge(keybind: &'static str) -> impl Scene {
-    bsn! {
-        Node { position_type: PositionType::Absolute, right: Val::Px(2.0), bottom: Val::Px(2.0) }
-        Pickable { should_block_lower: false, is_hoverable: false }
-        Children [ {EntityScene(text_colored(keybind, Color::WHITE))} ]
-    }
+fn close_pane(world: &mut World, pane: Pane) {
+    world.resource_mut::<Open>().0.remove(&pane);
 }
 
 fn tooltip_label(text: impl Into<String>) -> impl Scene {
@@ -372,23 +303,6 @@ fn slot(cell: &CellData) -> impl Scene {
     }
 }
 
-fn panel_node(pos: Vec2, size: Vec2, window: bool) -> Node {
-    let mut node = Node {
-        position_type: PositionType::Absolute,
-        left: Val::Px(pos.x),
-        top: Val::Px(pos.y),
-        width: Val::Px(size.x),
-        height: Val::Px(size.y),
-        border: UiRect::all(Val::Px(1.0)),
-        ..default()
-    };
-    if window {
-        node.flex_direction = FlexDirection::Column;
-        node.overflow = Overflow::clip();
-    }
-    node
-}
-
 struct CellData {
     icon: Handle<Image>,
     name: String,
@@ -398,38 +312,49 @@ struct CellData {
 
 fn sync_inventory(world: &mut World) {
     let cells = inventory_cells(world);
-    let desired: std::collections::HashSet<u64> = cells.iter().map(|cell| cell.kind).collect();
-
     let mut grids = world.query_filtered::<Entity, With<InventoryGrid>>();
     let Some(grid) = grids.iter(world).next() else {
         return;
     };
-
-    let existing: Vec<(Entity, u64)> = world
-        .get::<Children>(grid)
-        .map(|children| children.iter().collect::<Vec<_>>())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|child| world.get::<Cell>(child).map(|cell| (child, cell.kind)))
+    let keys: Vec<u64> = cells
+        .iter()
+        .map(|cell| (cell.slot as u64) << 32 | cell.kind)
         .collect();
+    reconcile_children(world, grid, &keys, |index| {
+        Box::new(slot(&cells[index])) as Box<dyn Scene>
+    });
+}
 
-    for (entity, kind) in &existing {
-        if !desired.contains(kind) {
-            world.entity_mut(*entity).despawn();
-        } else if let Some(cell) = cells.iter().find(|cell| cell.kind == *kind)
-            && let Some(mut existing) = world.get_mut::<Cell>(*entity)
-        {
-            existing.slot = cell.slot;
-        }
+/// Keeps `container`'s keyed children equal to `keys`: when the live keys differ (in value or order)
+/// the keyed children are despawned and rebuilt from `build`, in order. The rendered list is re-derived
+/// from `keys` whenever they change, so it can't go stale, duplicate, or fall out of order — dynamic
+/// lists stay correct here instead of via a hand-written diff at each call site.
+fn reconcile_children(
+    world: &mut World,
+    container: Entity,
+    keys: &[u64],
+    build: impl Fn(usize) -> Box<dyn Scene>,
+) {
+    let current: Vec<(Entity, u64)> = world
+        .get::<Children>(container)
+        .map(|children| {
+            children
+                .iter()
+                .filter_map(|child| world.get::<Keyed>(child).map(|keyed| (child, keyed.0)))
+                .collect()
+        })
+        .unwrap_or_default();
+    if current.iter().map(|(_, key)| *key).eq(keys.iter().copied()) {
+        return;
     }
-
-    let present: std::collections::HashSet<u64> = existing.iter().map(|(_, kind)| *kind).collect();
-    for cell in &cells {
-        if !present.contains(&cell.kind)
-            && let Ok(spawned) = world.spawn_scene(slot(cell))
-        {
+    for (entity, _) in current {
+        world.entity_mut(entity).despawn();
+    }
+    for (index, &key) in keys.iter().enumerate() {
+        if let Ok(mut spawned) = world.spawn_scene(build(index)) {
+            spawned.insert(Keyed(key));
             let child = spawned.id();
-            world.entity_mut(grid).add_child(child);
+            world.entity_mut(container).add_child(child);
         }
     }
 }

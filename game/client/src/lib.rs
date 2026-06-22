@@ -7,8 +7,8 @@ pub mod assets;
 pub mod auth;
 pub mod cursor;
 pub mod debug;
-pub mod drag;
 pub mod fps;
+pub mod gestures;
 pub mod hud;
 pub mod input;
 pub mod net;
@@ -19,7 +19,6 @@ pub mod screen;
 pub mod screens;
 pub mod sfx;
 pub mod user_settings;
-pub mod view;
 
 #[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Screen {
@@ -75,7 +74,6 @@ pub fn boot() {
         })
         .add_plugins((
             ui::UiPlugin,
-            drag::DragPlugin,
             net::NetPlugin,
             render::RenderPlugin,
             input::InputPlugin,

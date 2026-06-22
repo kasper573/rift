@@ -78,7 +78,7 @@ struct Active {
     min: Vec2,
 }
 
-pub struct DragPlugin;
+pub(crate) struct DragPlugin;
 
 impl Plugin for DragPlugin {
     fn build(&self, app: &mut App) {

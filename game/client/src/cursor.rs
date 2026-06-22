@@ -5,9 +5,9 @@ use world::session;
 use world::tiling::{TilePos, Tiles};
 
 use crate::Screen;
-use crate::render::TILE;
+use crate::render::{self, TILE};
 use crate::screen::ToScreen;
-use crate::view;
+use world::query;
 
 pub struct CursorPlugin;
 
@@ -65,7 +65,7 @@ fn update(world: &mut World) {
 }
 
 fn desired(world: &mut World) -> (CursorIcon, Option<Pos<Tiles>>) {
-    if let Some(ui) = crate::drag::hovered_cursor(world) {
+    if let Some(ui) = ui::hovered_cursor(world) {
         return (ui, None);
     }
     let (pointer, hover) = compute(world);
@@ -76,14 +76,14 @@ fn compute(world: &mut World) -> (Pointer, Option<Pos<Tiles>>) {
     if session::is_dead(world) {
         return (Pointer::Default, None);
     }
-    let Some(point) = view::cursor_tile(world) else {
+    let Some(point) = render::cursor_tile(world) else {
         return (Pointer::Default, None);
     };
-    if view::enemy_at(world, point).is_some() {
+    if query::enemy_at(world, point).is_some() {
         return (Pointer::Attack, None);
     }
     let tile = point.snap();
-    if !view::walkable(world, tile) {
+    if !query::walkable(world, tile) {
         return (Pointer::Default, None);
     }
     let held = world

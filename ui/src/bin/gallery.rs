@@ -6,15 +6,16 @@ use ui::button::intent as button_intent;
 use ui::card::intent as card_intent;
 use ui::theme::theme;
 use ui::{
-    Align, ButtonIntent, ButtonSize, CardOpts, Check, Orientation, Side, SonnerPosition, accordion,
-    accordion_body, accordion_content, accordion_header, accordion_item, accordion_trigger,
-    alert_dialog, alert_dialog_action, alert_dialog_cancel, avatar, avatar_fallback, button,
-    button_styled, card, checkbox, checkbox_indicator, collapsible, collapsible_content,
-    collapsible_trigger, dialog, dialog_close, popover, popover_content, popover_trigger, progress,
-    progress_indicator, radio_circle, radio_group, radio_indicator, radio_item, scroll_area,
-    scroll_bar, scroll_thumb, scroll_viewport, separator, slider, slider_range, slider_thumb,
-    slider_track, sonner_close, switch, switch_thumb, tabs, tabs_list, tabs_trigger, text,
-    text_colored, toast, toaster, tooltip, tooltip_content,
+    Align, ButtonIntent, ButtonSize, CardOpts, Check, OnSettle, OnTap, Orientation, Side,
+    SonnerPosition, Widget, accordion, accordion_body, accordion_content, accordion_header,
+    accordion_item, accordion_trigger, alert_dialog, alert_dialog_action, alert_dialog_cancel,
+    avatar, avatar_fallback, button, button_styled, card, checkbox, checkbox_indicator,
+    collapsible, collapsible_content, collapsible_trigger, dialog, dialog_close, popover,
+    popover_content, popover_trigger, progress, progress_indicator, radio_circle, radio_group,
+    radio_indicator, radio_item, scroll_area, scroll_bar, scroll_thumb, scroll_viewport, separator,
+    slider, slider_range, slider_thumb, slider_track, sonner_close, switch, switch_thumb, tabs,
+    tabs_list, tabs_trigger, text, text_colored, toast, toaster, tooltip, tooltip_content, widget,
+    window,
 };
 
 const WINDOW: Vec2 = Vec2::new(1600.0, 900.0);
@@ -226,6 +227,8 @@ const SCENES: &[(&str, SceneBuilder)] = &[
     ("Popover + card", popover_card_scene),
     ("Toasts (sonner)", toasts_scene),
     ("Scroll area", scroll_area_scene),
+    ("Widget", widget_scene),
+    ("Window", window_scene),
 ];
 
 const BUTTON_INTENTS: &[(ButtonIntent, &str)] = &[
@@ -677,6 +680,67 @@ fn toasts_scene() -> Box<dyn Scene> {
             ( {toaster(SonnerPosition::BottomRight)} ToasterEntity )
         ]
     })
+}
+
+fn widget_scene() -> Box<dyn Scene> {
+    col(
+        160.0,
+        vec![boxed(bsn! {
+            Node {
+                width: Val::Px(160.0),
+                height: Val::Px(120.0),
+                position_type: PositionType::Relative,
+            }
+            Children [
+                {EntityScene(widget(Widget {
+                    pos: Vec2::new(56.0, 36.0),
+                    icon: Handle::default(),
+                    badge: "I".into(),
+                    tooltip: "Inventory".into(),
+                    on_tap: OnTap::new(|_| {}),
+                    on_settle: OnSettle::new(|_, geom| geom),
+                }))}
+            ]
+        })],
+    )
+}
+
+fn window_scene() -> Box<dyn Scene> {
+    let items: Vec<Box<dyn Scene>> = (1..=12)
+        .map(|n| {
+            boxed(text_colored(
+                format!("Item {n}"),
+                theme().surface_floating.on,
+            ))
+        })
+        .collect();
+    col(
+        360.0,
+        vec![boxed(bsn! {
+            Node {
+                width: Val::Px(340.0),
+                height: Val::Px(260.0),
+                position_type: PositionType::Relative,
+            }
+            Children [
+                {EntityScene(window(ui::Window {
+                    pos: Vec2::ZERO,
+                    size: Vec2::new(340.0, 260.0),
+                    title: "Inventory".into(),
+                    on_close: OnTap::new(|_| {}),
+                    on_settle: OnSettle::new(|_, geom| geom),
+                    content: Box::new(bsn! {
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(6.0),
+                            width: Val::Percent(100.0),
+                        }
+                        Children [ {items} ]
+                    }),
+                }))}
+            ]
+        })],
+    )
 }
 
 fn scroll_area_scene() -> Box<dyn Scene> {
