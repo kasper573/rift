@@ -71,7 +71,14 @@ jobs:
           E2E_ALL_BROWSERS: "1"
         run: |
           echo "127.0.0.1 rift.lan auth.rift.lan game-server.rift.lan grafana.rift.lan" | sudo tee -a /etc/hosts
-          just e2e-stack-up
+          # The stack pulls public images from Docker Hub, which rate-limits anonymous CI runners
+          # intermittently; retry the bring-up so a transient pull error doesn't fail the run.
+          for attempt in 1 2 3; do
+            just e2e-stack-up && break
+            [ "$attempt" = 3 ] && { echo "::error::stack failed to start after $attempt attempts"; exit 1; }
+            echo "::warning::stack-up attempt $attempt failed (likely a transient Docker Hub pull); retrying"
+            sleep 20
+          done
           just e2e-run
       - name: Save e2e artifacts
         if: failure()

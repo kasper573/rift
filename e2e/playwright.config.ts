@@ -75,7 +75,9 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? Number(process.env.E2E_WORKERS ?? 2) : 2,
+  // One worker in CI: software WebGL is CPU-bound, and two heavy canvases sharing a runner drop the
+  // client's frame rate enough that held clicks miss. Local runs (one browser) can parallelize.
+  workers: process.env.CI ? Number(process.env.E2E_WORKERS ?? 1) : 2,
   // SwiftShader brings up the canvas in tens of seconds, so a registration + spawn + walk needs room.
   timeout: 120_000,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],

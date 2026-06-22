@@ -7,11 +7,11 @@ import { center, decode, greenMarker, sceneFraction, type Image } from "./image"
 const TILE_PX = 48;
 const BAR_DROP_PX = 15;
 
-// A click holds the button down this long. The client only acts on a press it samples held during a
-// frame; an instant press+release can fall between frames on the software renderer, so the hold
-// outlasts a frame while staying short of the move-repeat interval. This is an input duration, not a
-// wait for app state.
-const CLICK_HOLD = 300;
+// A click holds the button down this long. The client samples the mouse button once per rendered
+// frame, so press and release must land in different frames for it to register a click — on software
+// WebGL under load (large canvases, headed Firefox) frames can be hundreds of ms apart, so the hold
+// is generous enough to span several. This is an input duration, not a wait for app state.
+const CLICK_HOLD = 1500;
 
 // A rendered map lights up at least this fraction of the view; below it the canvas is still blank or
 // loading. The timeout is generous: wasm init, the netcode connect, and the first SwiftShader frame
