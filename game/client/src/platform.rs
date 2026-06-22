@@ -22,10 +22,17 @@ pub struct StartParams {
 
 const CANVAS: &str = "#glcanvas";
 
+// Side-effect import (see audio-unlock.js); calling the marker keeps wasm-bindgen emitting the import.
+#[wasm_bindgen(module = "/audio-unlock.js")]
+unsafe extern "C" {
+    fn audio_unlock();
+}
+
 /// The entry point the host invokes (the page's loader calls this, exported as `run`, after `init()`).
 #[wasm_bindgen]
 pub fn run() {
     set_panic_hook();
+    audio_unlock();
     crate::boot();
 }
 
