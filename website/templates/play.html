@@ -9,10 +9,39 @@
   data-game-server-url="{{ game_server_url }}"
   data-game-server-ws-url="{{ game_server_ws_url }}"
 ></canvas>
+<pre id="error-log" hidden></pre>
+<script>
+  // A failed wasm start or render leaves only a blank canvas, which is invisible on mobile where
+  // there's no console. Surface those errors on the page so they're reportable from any device.
+  (function () {
+    const log = document.getElementById("error-log");
+    const report = (label, detail) => {
+      log.hidden = false;
+      log.textContent += `${label}: ${detail}\n\n`;
+    };
+    const text = (value) => (value && (value.stack || value.message)) || String(value);
+    addEventListener("error", (e) =>
+      report("error", `${text(e.error ?? e.message)}${e.filename ? ` (${e.filename}:${e.lineno})` : ""}`));
+    addEventListener("unhandledrejection", (e) => report("unhandled rejection", text(e.reason)));
+    for (const level of ["error", "warn"]) {
+      const original = console[level].bind(console);
+      console[level] = (...args) => {
+        report(`console.${level}`, args.map(text).join(" "));
+        original(...args);
+      };
+    }
+  })();
+</script>
 <script type="module">
   import init, { run } from "/wasm/rift.js";
-  await init();
-  run();
+  try {
+    await init();
+    run();
+  } catch (e) {
+    const log = document.getElementById("error-log");
+    log.hidden = false;
+    log.textContent += `startup failed: ${(e && e.stack) || e}\n\n`;
+  }
 </script>
 {% else %}
 <div class="centered">

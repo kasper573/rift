@@ -20,8 +20,11 @@ use world::time::Seconds;
 use crate::screen::ToScreen;
 
 pub const TILE: WorldPx = WorldPx(16.0);
-const VIEW_TILES_TALL: f32 = 18.0;
-const VIEW_TALL: f32 = VIEW_TILES_TALL * TILE.0;
+// The fixed zoom: every tile is drawn this many logical pixels across on every device, so the world
+// looks the same size to every player. A larger display just frames more of the map — never bigger
+// tiles — and network AOI culling bounds what's actually streamed. (48 keeps a ~900px-tall view near
+// the game's long-standing 18-tiles-tall look, and being a multiple of TILE upscales crisply.)
+const TILE_SCREEN: f32 = 48.0;
 const PRESENT_LAYER: usize = 1;
 
 pub struct RenderPlugin;
@@ -88,12 +91,9 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<Present>>,
 ) {
-    let mut target = Image::new_target_texture(
-        target_width(&window),
-        VIEW_TALL as u32,
-        TextureFormat::Rgba8UnormSrgb,
-        None,
-    );
+    let (target_w, target_h) = target_size(&window);
+    let mut target =
+        Image::new_target_texture(target_w, target_h, TextureFormat::Rgba8UnormSrgb, None);
     target.sampler = ImageSampler::linear();
     let target = images.add(target);
     commands.insert_resource(WorldTarget(target.clone()));
@@ -107,8 +107,8 @@ fn setup(
         RenderTarget::Image(target.clone().into()),
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::Fixed {
-                width: target_width(&window) as f32,
-                height: VIEW_TALL,
+                width: target_w as f32,
+                height: target_h as f32,
             },
             ..OrthographicProjection::default_2d()
         }),
@@ -222,28 +222,43 @@ fn healthbar(world: &mut World) {
 /// upscale crisply (and picks up window resizes).
 fn track_canvas_size(mut window: Single<&mut Window, With<PrimaryWindow>>) {
     use wasm_bindgen::JsCast;
-    let Some(canvas) = web_sys::window()
-        .and_then(|window| window.document())
+    let Some(web) = web_sys::window() else {
+        return;
+    };
+    let Some(canvas) = web
+        .document()
         .and_then(|document| document.query_selector("#glcanvas").ok().flatten())
         .and_then(|element| element.dyn_into::<web_sys::HtmlCanvasElement>().ok())
     else {
         return;
     };
-    let (width, height) = (canvas.client_width(), canvas.client_height());
-    if width <= 0 || height <= 0 {
+    let (logical_w, logical_h) = (canvas.client_width(), canvas.client_height());
+    if logical_w <= 0 || logical_h <= 0 {
         return;
     }
-    // winit doesn't resize a canvas we hand it, so set the backing buffer to the displayed pixels
-    // ourselves; the matching `window.resolution` keeps bevy's render surface and camera in step.
-    if canvas.width() != width as u32 {
-        canvas.set_width(width as u32);
+    // winit doesn't resize a canvas we hand it, so we drive the backing buffer ourselves. bevy lays
+    // the UI and cameras out in logical pixels but renders at physical pixels (logical × scale
+    // factor), so the backing must be physical-pixel sized: a logical-sized backing on a high-DPI
+    // display is both blurry and too small, and bevy's physical-pixel render then gets clipped to a
+    // corner, throwing the whole view (game and UI alike) off-centre. On the web the scale factor is
+    // the device pixel ratio, so the backing is logical × DPR and we pin the override to match.
+    let dpr = web.device_pixel_ratio().max(1.0);
+    let physical_w = (logical_w as f64 * dpr).round() as u32;
+    let physical_h = (logical_h as f64 * dpr).round() as u32;
+    if canvas.width() != physical_w {
+        canvas.set_width(physical_w);
     }
-    if canvas.height() != height as u32 {
-        canvas.set_height(height as u32);
+    if canvas.height() != physical_h {
+        canvas.set_height(physical_h);
     }
-    let (width, height) = (width as f32, height as f32);
-    if window.resolution.width() != width || window.resolution.height() != height {
-        window.resolution.set(width, height);
+    if window.resolution.scale_factor() != dpr as f32 {
+        window
+            .resolution
+            .set_scale_factor_override(Some(dpr as f32));
+    }
+    let (logical_w, logical_h) = (logical_w as f32, logical_h as f32);
+    if window.resolution.width() != logical_w || window.resolution.height() != logical_h {
+        window.resolution.set(logical_w, logical_h);
     }
 }
 
@@ -256,14 +271,15 @@ fn fit(
     mut viewport: ResMut<Viewport>,
 ) {
     let (width, height) = (window.resolution.width(), window.resolution.height());
-    viewport.scale = height / VIEW_TALL;
-    let target_w = target_width(&window);
+    let (target_w, target_h) = target_size(&window);
+    viewport.scale = height / target_h as f32;
     if let Some(mut image) = images.get_mut(&target.0)
-        && image.texture_descriptor.size.width != target_w
+        && (image.texture_descriptor.size.width != target_w
+            || image.texture_descriptor.size.height != target_h)
     {
         image.resize(Extent3d {
             width: target_w,
-            height: VIEW_TALL as u32,
+            height: target_h,
             depth_or_array_layers: 1,
         });
         if let Ok(mut proj) = projection.single_mut()
@@ -271,7 +287,7 @@ fn fit(
         {
             ortho.scaling_mode = ScalingMode::Fixed {
                 width: target_w as f32,
-                height: VIEW_TALL,
+                height: target_h as f32,
             };
         }
     }
@@ -401,16 +417,21 @@ fn camera_center(at: Pos<Tiles>, area_id: Id<AreaDef>, half: Vec2) -> Option<Pos
     Some(snap(at.clamp(lo, hi)))
 }
 
-// Even width keeps tile edges on whole texels; odd width would draw seams between tiles.
-fn target_width(window: &Window) -> u32 {
-    let aspect = window.resolution.width() / window.resolution.height();
-    let width = (VIEW_TALL * aspect).round().max(1.0) as u32;
-    width + (width & 1)
+// The render target is the visible world in native pixels: the window's logical size scaled down by
+// the fixed per-tile zoom, so the present step upscales each source pixel by the same factor on every
+// device. Even dimensions keep tile edges on whole texels; an odd one would draw seams between tiles.
+fn target_size(window: &Window) -> (u32, u32) {
+    let scaled = |logical: f32| {
+        let px = (logical * TILE.0 / TILE_SCREEN).round().max(2.0) as u32;
+        px + (px & 1)
+    };
+    let res = &window.resolution;
+    (scaled(res.width()), scaled(res.height()))
 }
 
 fn view_half(window: &Window) -> Vec2 {
-    let aspect = window.resolution.width() / window.resolution.height();
-    Vec2::new(0.5 * VIEW_TILES_TALL * aspect, 0.5 * VIEW_TILES_TALL)
+    let (w, h) = target_size(window);
+    Vec2::new(0.5 * w as f32 / TILE.0, 0.5 * h as f32 / TILE.0)
 }
 
 #[derive(Resource, Default)]
