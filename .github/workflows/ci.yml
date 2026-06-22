@@ -26,9 +26,7 @@ jobs:
     env:
       # mold is a native linker; scope it to the host target so the wasm build (rust-lld) ignores it.
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
-      # TEMPORARY: bevy-web included to verify the reworked CI end to end (build → e2e → deploy →
-      # prod) before merge. Revert to main-only before merging.
-      DEPLOY: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bevy-web' }}
+      DEPLOY: ${{ github.ref == 'refs/heads/main'  }}
       DOCKER_REGISTRY: ghcr.io
       DOCKER_USERNAME: ${{ github.repository_owner }}
       DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
