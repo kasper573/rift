@@ -1,6 +1,11 @@
 import { expect, type Page } from "@playwright/test";
 
-import { center, decode, sceneFraction, type Image } from "./image";
+import { center, decode, greenMarker, sceneFraction, type Image } from "./image";
+
+// The game draws every tile at a fixed 48 CSS px on every screen (render.rs), and the health bar
+// sits 5 world px (×3) below the player's position.
+const TILE_PX = 48;
+const BAR_DROP_PX = 15;
 
 // A click holds the button down this long. The client only acts on a press it samples held during a
 // frame; an instant press+release can fall between frames on the software renderer, so the hold
@@ -61,18 +66,21 @@ export async function captureScene(page: Page): Promise<Image> {
   return decode(await canvas(page).screenshot());
 }
 
-// Clicks the canvas at a fractional position (0,0 top-left to 1,1 bottom-right).
-export async function holdClick(page: Page, xFraction: number, yFraction: number): Promise<void> {
+// Clicks a tile offset from the player (east = +x, north = +y). Locates the player by its health bar
+// and clicks the given number of tiles away — well-known coordinates relative to the character,
+// robust to where the view happens to place it. The camera centers the player, so these tiles are
+// always in view for small offsets.
+export async function clickFromPlayer(page: Page, tilesEast: number, tilesNorth: number): Promise<void> {
   const box = await canvasBox(page);
-  await press(page, box.x + box.width * xFraction, box.y + box.height * yFraction);
-}
-
-// Clicks a point offset from the canvas center, in CSS pixels. The camera centers the player and the
-// game draws a fixed 48 px per tile on every screen (render.rs), so a pixel offset maps to the same
-// tiles north/east of the player on any resolution — well-known coordinates instead of pixel hunting.
-export async function clickFromCenter(page: Page, dxPx: number, dyPx: number): Promise<void> {
-  const box = await canvasBox(page);
-  await press(page, box.x + box.width / 2 + dxPx, box.y + box.height / 2 + dyPx);
+  const scene = await captureScene(page);
+  const marker = greenMarker(scene);
+  if (!marker) throw new Error("could not find the local player's health bar on the canvas");
+  // The screenshot is in backing pixels; map to the element's CSS pixels, where clicks are aimed.
+  const scaleX = box.width / scene.width;
+  const scaleY = box.height / scene.height;
+  const playerX = marker.x * scaleX;
+  const playerY = marker.y * scaleY - BAR_DROP_PX;
+  await press(page, box.x + playerX + tilesEast * TILE_PX, box.y + playerY - tilesNorth * TILE_PX);
 }
 
 // Presses and holds the button at a viewport point long enough for the client to sample it. The hold

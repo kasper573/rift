@@ -60,9 +60,10 @@ export function center(image: Image): Image {
   return { width, height, data };
 }
 
-// Fraction of pixels whose color changed appreciably between two same-sized frames. A camera scroll
-// (the player walking) repaints most of the frame; idle shimmer barely moves it.
-export function diffFraction(a: Image, b: Image): number {
+// Fraction of pixels whose color changed by more than `minDelta` (summed over RGB) between two
+// same-sized frames. A camera scroll (the player walking) sweeps high-contrast features across the
+// frame and trips a high threshold; animated-water shimmer only nudges colors and stays under it.
+export function diffFraction(a: Image, b: Image, minDelta = 24): number {
   if (a.width !== b.width || a.height !== b.height) {
     throw new Error(`frame size mismatch: ${a.width}x${a.height} vs ${b.width}x${b.height}`);
   }
@@ -74,9 +75,30 @@ export function diffFraction(a: Image, b: Image): number {
       Math.abs(a.data[i] - b.data[i]) +
       Math.abs(a.data[i + 1] - b.data[i + 1]) +
       Math.abs(a.data[i + 2] - b.data[i + 2]);
-    if (delta > 24) changed++;
+    if (delta > minDelta) changed++;
   }
   return changed / pixels;
+}
+
+// Centroid of the bright-green health-bar pixels. The client draws this strip only for the local
+// player (render.rs `healthbar`), so it pinpoints your own character on screen even when other
+// players are nearby — no template matching needed. Returns null when no health bar is visible.
+export function greenMarker(image: Image): { x: number; y: number } | null {
+  const { width, height, data } = image;
+  let sx = 0;
+  let sy = 0;
+  let n = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = 4 * (y * width + x);
+      if (data[i + 1] > 180 && data[i] < 120 && data[i + 2] < 120) {
+        sx += x;
+        sy += y;
+        n++;
+      }
+    }
+  }
+  return n > 0 ? { x: sx / n, y: sy / n } : null;
 }
 
 const HIST_BINS = 8;
