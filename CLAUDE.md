@@ -28,11 +28,9 @@
 ## Comments
 
 - The default mindset should be: Do not write comments. Write code that is self explanatory.
-- The only exception is: You need to explain WHY, not WHAT some code does.
-- However, even then, you should consider refactoring the code so both the WHAT and the WHY becomes obvious.
-- Only use comments as a final excape hatch.
+- The only exception is: You need to explain WHY, not WHAT some code does. However, even then, you should consider refactoring the code so both the WHAT and the WHY becomes obvious. Only use comments as a final excape hatch.
 - Never use comments as a way to give feedback to the prompter. This means comments should never refer to prompt specific details. Comments should be timeless and not rely on the reader being the person who prompted you to do some work.
-- Don't scatter comments describing how a specific mechanism works all over the codebase. Keep it in one place, ideally at the implementation of that mechanism. A common source of this type of bad hygiene is re-explaining a mechanism in the workflow, in env files, in call sites, and finally also in the source code implementation of the mechanism.
+- Don't scatter duplicate comments describing how a specific mechanism works all over the codebase. Keep it in one place, ideally at the implementation of that mechanism. A common source of this type of bad hygiene is re-explaining a mechanism in the workflow, in env files, in call sites, and finally also in the source code implementation of the mechanism.
 
 
 ## Verification
