@@ -120,8 +120,7 @@ button.subtle:hover {
   flex: 1;
   /* Bevy/winit pins an inline pixel width/height on the canvas (from the window resolution), which
      overrides a plain `width: 100%` and leaves dead space or crops the game; `!important` beats the
-     inline style so it fills the content area. The client tracks the displayed size for its backing
-     buffer (client/src/render.rs::track_canvas_size), so the render stays sharp at any size. */
+     inline style so it fills the content area. */
   width: 100% !important;
   height: 100% !important;
   min-height: 0;

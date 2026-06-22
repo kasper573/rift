@@ -46,6 +46,23 @@ impl OnTap {
 #[derive(Resource, Default)]
 pub struct SnapGrid(pub f32);
 
+pub(crate) struct DragPlugin;
+
+impl Plugin for DragPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<SnapGrid>()
+            .init_resource::<Dragged>()
+            .init_resource::<LastViewport>()
+            .init_resource::<DragState>()
+            .add_observer(on_press)
+            .add_observer(on_drag_start)
+            .add_observer(on_drag)
+            .add_observer(on_drag_end)
+            .add_observer(on_click)
+            .add_systems(Update, anchor_panels);
+    }
+}
+
 /// Whether the press in progress has become a drag. A `Pointer<Click>` still fires when a drag ends,
 /// so without this a drag would also trigger the tap (and open the widget's window).
 #[derive(Resource, Default)]
@@ -69,23 +86,6 @@ struct Active {
     raw: Geom,
     resize: bool,
     min: Vec2,
-}
-
-pub(crate) struct DragPlugin;
-
-impl Plugin for DragPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<SnapGrid>()
-            .init_resource::<Dragged>()
-            .init_resource::<LastViewport>()
-            .init_resource::<DragState>()
-            .add_observer(on_press)
-            .add_observer(on_drag_start)
-            .add_observer(on_drag)
-            .add_observer(on_drag_end)
-            .add_observer(on_click)
-            .add_systems(Update, anchor_panels);
-    }
 }
 
 fn on_press(_: On<Pointer<Press>>, mut dragged: ResMut<Dragged>) {

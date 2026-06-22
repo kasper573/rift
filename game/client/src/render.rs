@@ -271,9 +271,8 @@ fn healthbar(world: &mut World) {
     }
 }
 
-/// Keeps the window's resolution and scale factor matched to the display surface each frame (so it
-/// also picks up resizes); `fit` then resizes the render target from it. The platform owns the
-/// surface specifics — bevy doesn't size the backing buffer of a surface it was handed.
+/// Re-runs the platform's window sync each frame so the render target tracks canvas resizes; `fit`
+/// then resizes the render target from the updated window size.
 fn match_display(mut window: Single<&mut Window, With<PrimaryWindow>>) {
     crate::platform::sync_window(&mut window);
 }
