@@ -11,25 +11,23 @@
 ></canvas>
 <pre id="error-log" hidden></pre>
 <script>
-  // A failed wasm start or render leaves only a blank canvas, which is invisible on mobile where
-  // there's no console. Surface those errors on the page so they're reportable from any device.
+  // A fatal crash leaves only a blank canvas, invisible on mobile where there's no console — so
+  // surface those, and only those, on the page. A Rust panic aborts the wasm and its hook logs it via
+  // console.error tagged "panicked"; recoverable hiccups (e.g. an error logged when backgrounding
+  // Safari) are left to the console. A failed startup is reported from the module's catch below.
   (function () {
     const log = document.getElementById("error-log");
-    const report = (label, detail) => {
-      log.hidden = false;
-      log.textContent += `${label}: ${detail}\n\n`;
+    const consoleError = console.error.bind(console);
+    console.error = (...args) => {
+      const message = args
+        .map((value) => (value && (value.stack || value.message)) || String(value))
+        .join(" ");
+      if (message.includes("panicked")) {
+        log.hidden = false;
+        log.textContent += message + "\n\n";
+      }
+      consoleError(...args);
     };
-    const text = (value) => (value && (value.stack || value.message)) || String(value);
-    addEventListener("error", (e) =>
-      report("error", `${text(e.error ?? e.message)}${e.filename ? ` (${e.filename}:${e.lineno})` : ""}`));
-    addEventListener("unhandledrejection", (e) => report("unhandled rejection", text(e.reason)));
-    for (const level of ["error", "warn"]) {
-      const original = console[level].bind(console);
-      console[level] = (...args) => {
-        report(`console.${level}`, args.map(text).join(" "));
-        original(...args);
-      };
-    }
   })();
 </script>
 <script type="module">
