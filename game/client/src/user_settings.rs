@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::hud::Panel;
 
+const KEY: &str = "rift.user_settings";
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct ScreenPx(pub f32);
 
@@ -56,24 +58,19 @@ pub struct Placement {
 
 impl UserSettings {
     pub fn load() -> UserSettings {
-        imp::load()
+        crate::platform::load(KEY)
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default()
     }
 
     pub fn save(&self) {
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            imp::save(&json);
+            crate::platform::save(KEY, &json);
         }
     }
 
-    pub fn snap(&self, value: ScreenPx) -> ScreenPx {
-        let grid = self.ui.snap.0;
-        if grid <= 0.0 {
-            value
-        } else {
-            ScreenPx((value.0 / grid).round() * grid)
-        }
+    pub fn snap_grid(&self) -> f32 {
+        self.ui.snap.0
     }
 
     pub fn placement(&self, panel: Panel) -> Option<Placement> {
@@ -115,22 +112,4 @@ impl Default for UiSettings {
 
 fn default_snap() -> ScreenPx {
     DEFAULT_SNAP
-}
-
-mod imp {
-    const KEY: &str = "rift.user_settings";
-
-    pub fn load() -> Option<String> {
-        storage()?.get_item(KEY).ok()?
-    }
-
-    pub fn save(json: &str) {
-        if let Some(storage) = storage() {
-            let _ = storage.set_item(KEY, json);
-        }
-    }
-
-    fn storage() -> Option<web_sys::Storage> {
-        web_sys::window()?.local_storage().ok()?
-    }
 }

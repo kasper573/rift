@@ -12,7 +12,9 @@ use world::protocol::{Inventory, Name, Vitals, Xp};
 use world::session;
 
 use crate::Screen;
-use crate::drag::{DragHandle, DragRoot, Geom, HoverCursor, OnSettle, OnTap, ResizeHandle};
+use crate::drag::{
+    DragHandle, DragRoot, Geom, HoverCursor, OnSettle, OnTap, ResizeHandle, SnapGrid,
+};
 use crate::user_settings::{Placement, ScreenPx, ScreenVec, UserSettings};
 
 const WIDGET: ScreenPx = ScreenPx(48.0);
@@ -46,6 +48,7 @@ impl Plugin for HudPlugin {
                     sync_character,
                     sync_inventory,
                     sync_snapping,
+                    sync_snap_grid,
                     sync_death_banner,
                 )
                     .run_if(in_state(Screen::Playing)),
@@ -272,7 +275,14 @@ fn title_bar(title: &'static str, pane: Pane) -> impl Scene {
 
 fn content_area(pane: Pane) -> impl Scene {
     let inner: Box<dyn Scene> = match pane {
-        Pane::Inventory => Box::new(bsn! { Node InventoryGrid }),
+        Pane::Inventory => Box::new(bsn! {
+            Node {
+                width: Val::Percent(100.0),
+                flex_wrap: FlexWrap::Wrap,
+                align_content: AlignContent::FlexStart,
+            }
+            InventoryGrid
+        }),
         Pane::Settings => Box::new(bsn! {
             {button_styled(button_intent::PRIMARY, ButtonSize::Md, "ui snapping disabled")}
             SnappingButton
@@ -284,8 +294,6 @@ fn content_area(pane: Pane) -> impl Scene {
     bsn! {
         Node {
             flex_grow: 1.0,
-            flex_wrap: FlexWrap::Wrap,
-            align_content: AlignContent::FlexStart,
             padding: {UiRect::all(Val::Px(4.0))},
         }
         Children [ {EntityScene(inner)} ]
@@ -539,30 +547,18 @@ fn resolve(
     (pos, size)
 }
 
+// The live drag already renders (and clamps) the snapped geometry, so settling just records it.
 fn persist(world: &mut World, panel: Panel, geom: Geom) -> Geom {
     let mut settings = world.resource_mut::<Settings>();
-    let snapped = snap(&settings.0, geom, panel.resizable());
-    let pos = ScreenVec::from_vec2(snapped.pos);
-    let size = panel
-        .resizable()
-        .then_some(ScreenVec::from_vec2(snapped.size));
+    let pos = ScreenVec::from_vec2(geom.pos);
+    let size = panel.resizable().then_some(ScreenVec::from_vec2(geom.size));
     settings.0.set_placement(panel, Placement { pos, size });
     settings.0.save();
-    snapped
+    geom
 }
 
-fn snap(settings: &UserSettings, geom: Geom, resizable: bool) -> Geom {
-    let snap = |value: f32| settings.snap(ScreenPx(value)).0;
-    let pos = Vec2::new(snap(geom.pos.x), snap(geom.pos.y));
-    let size = if resizable {
-        Vec2::new(
-            snap(geom.size.x).max(MIN_WINDOW.x),
-            snap(geom.size.y).max(MIN_WINDOW.y),
-        )
-    } else {
-        geom.size
-    };
-    Geom { pos, size }
+fn sync_snap_grid(settings: Res<Settings>, mut grid: ResMut<SnapGrid>) {
+    grid.0 = settings.0.snap_grid();
 }
 
 fn widget_fallback(pane: Pane) -> Vec2 {

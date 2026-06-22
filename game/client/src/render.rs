@@ -37,7 +37,7 @@ impl Plugin for RenderPlugin {
             .init_resource::<Viewport>()
             .add_systems(Startup, setup)
             .add_observer(attach_sprite)
-            .add_systems(Update, (track_canvas_size, fit).chain())
+            .add_systems(Update, (match_display, fit).chain())
             .add_systems(
                 Update,
                 (
@@ -216,50 +216,11 @@ fn healthbar(world: &mut World) {
     }
 }
 
-/// Keeps the render resolution matched to the canvas's displayed size. Bevy binds to the existing
-/// canvas but never sizes its backing buffer, so without this it stays the 300x150 HTML default and
-/// the browser stretches it (blurry); driving the backing to the displayed pixels lets the pixel art
-/// upscale crisply (and picks up window resizes).
-fn track_canvas_size(mut window: Single<&mut Window, With<PrimaryWindow>>) {
-    use wasm_bindgen::JsCast;
-    let Some(web) = web_sys::window() else {
-        return;
-    };
-    let Some(canvas) = web
-        .document()
-        .and_then(|document| document.query_selector("#glcanvas").ok().flatten())
-        .and_then(|element| element.dyn_into::<web_sys::HtmlCanvasElement>().ok())
-    else {
-        return;
-    };
-    let (logical_w, logical_h) = (canvas.client_width(), canvas.client_height());
-    if logical_w <= 0 || logical_h <= 0 {
-        return;
-    }
-    // winit doesn't resize a canvas we hand it, so we drive the backing buffer ourselves. bevy lays
-    // the UI and cameras out in logical pixels but renders at physical pixels (logical × scale
-    // factor), so the backing must be physical-pixel sized: a logical-sized backing on a high-DPI
-    // display is both blurry and too small, and bevy's physical-pixel render then gets clipped to a
-    // corner, throwing the whole view (game and UI alike) off-centre. On the web the scale factor is
-    // the device pixel ratio, so the backing is logical × DPR and we pin the override to match.
-    let dpr = web.device_pixel_ratio().max(1.0);
-    let physical_w = (logical_w as f64 * dpr).round() as u32;
-    let physical_h = (logical_h as f64 * dpr).round() as u32;
-    if canvas.width() != physical_w {
-        canvas.set_width(physical_w);
-    }
-    if canvas.height() != physical_h {
-        canvas.set_height(physical_h);
-    }
-    if window.resolution.scale_factor() != dpr as f32 {
-        window
-            .resolution
-            .set_scale_factor_override(Some(dpr as f32));
-    }
-    let (logical_w, logical_h) = (logical_w as f32, logical_h as f32);
-    if window.resolution.width() != logical_w || window.resolution.height() != logical_h {
-        window.resolution.set(logical_w, logical_h);
-    }
+/// Keeps the window's resolution and scale factor matched to the display surface each frame (so it
+/// also picks up resizes); `fit` then resizes the render target from it. The platform owns the
+/// surface specifics — bevy doesn't size the backing buffer of a surface it was handed.
+fn match_display(mut window: Single<&mut Window, With<PrimaryWindow>>) {
+    crate::platform::sync_window(&mut window);
 }
 
 fn fit(

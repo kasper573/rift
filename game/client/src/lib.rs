@@ -1,7 +1,6 @@
 use bevy::asset::AssetApp;
 use bevy::asset::io::AssetSourceId;
 use bevy::prelude::*;
-use wasm_bindgen::prelude::wasm_bindgen;
 use world::Role;
 
 pub mod assets;
@@ -13,12 +12,12 @@ pub mod fps;
 pub mod hud;
 pub mod input;
 pub mod net;
+pub mod platform;
 pub mod render;
 pub mod replicon_renet;
 pub mod screen;
 pub mod screens;
 pub mod sfx;
-pub mod start;
 pub mod user_settings;
 pub mod view;
 
@@ -39,12 +38,10 @@ pub(crate) fn component<C: Component + Clone>(value: C) -> impl bevy::scene::Sce
     })
 }
 
-/// The page's loader calls this after `init()`. Reads the start params the website wrote onto
-/// `#glcanvas`, builds the session from the access token, and runs the Bevy app on that canvas.
-#[wasm_bindgen]
-pub fn run() {
-    console_error_panic_hook::set_once();
-    let params = start::read();
+/// Builds and runs the Bevy app: reads the boot params from the platform, builds the session from the
+/// access token, and starts the app. The platform's entry point calls this.
+pub fn boot() {
+    let params = platform::read_start_params();
     let session = params
         .access_token
         .as_deref()
@@ -62,11 +59,7 @@ pub fn run() {
                     ..default()
                 })
                 .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "rift mmo".to_owned(),
-                        canvas: Some("#glcanvas".to_owned()),
-                        ..default()
-                    }),
+                    primary_window: Some(platform::primary_window()),
                     ..default()
                 })
                 .set(ImagePlugin::default_nearest()),

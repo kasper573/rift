@@ -2,17 +2,13 @@ use bevy::prelude::*;
 use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
 use bevy_replicon::prelude::RepliconChannels;
 use renet2::{ConnectionConfig, RenetClient};
-use renet2_netcode::{
-    ClientAuthentication, ClientSocket, ConnectToken, NetcodeClientTransport, WebSocketClient,
-    WebSocketClientConfig,
-};
-use web_time::{SystemTime, UNIX_EPOCH};
+use renet2_netcode::{ClientAuthentication, ClientSocket, ConnectToken, NetcodeClientTransport};
 use world::session::ClientSessionPlugin;
 use world::wire::RenetChannelsExt;
 
 use crate::auth::Session;
+use crate::platform::StartParams;
 use crate::replicon_renet::{Client, RepliconRenetClientPlugin, Transport};
-use crate::start::StartParams;
 
 pub struct NetPlugin;
 
@@ -63,15 +59,7 @@ fn poll_session(world: &mut World) {
 }
 
 async fn fetch_token(game_server_url: String, authorization: String) -> Result<Vec<u8>, String> {
-    let response = gloo_net::http::Request::post(&format!("{game_server_url}/session"))
-        .header("Authorization", &authorization)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    if !response.ok() {
-        return Err(format!("session request failed: {}", response.status()));
-    }
-    response.binary().await.map_err(|error| error.to_string())
+    crate::platform::fetch(&format!("{game_server_url}/session"), &authorization).await
 }
 
 fn connect(world: &mut World, token: &[u8]) {
@@ -81,15 +69,10 @@ fn connect(world: &mut World, token: &[u8]) {
     let connect_token =
         ConnectToken::read(&mut std::io::Cursor::new(token)).expect("read connect token");
     let server_url = world.resource::<StartParams>().game_server_ws_url.clone();
-    let socket = WebSocketClient::new(WebSocketClientConfig {
-        server_url: url::Url::parse(&server_url).expect("game server ws url"),
-    })
-    .expect("websocket client");
+    let socket = crate::platform::client_socket(&server_url);
     let client = RenetClient::new(connection_config, socket.is_reliable());
     let transport = NetcodeClientTransport::new(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock"),
+        crate::platform::now(),
         ClientAuthentication::Secure { connect_token },
         socket,
     )
