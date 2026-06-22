@@ -63,11 +63,14 @@ jobs:
             CARGO_PROFILE_RELEASE_OPT_LEVEL=0 just wasm
           fi
       - name: End-to-end test
-        # Packages the binaries built above into the stack images and drives headless Chrome through
-        # registration and gameplay. Only the e2e harness compiles here, so build it unoptimized.
+        # Packages the binaries built above into the stack images, then drives every browser through
+        # registration and gameplay. E2E_ALL_BROWSERS fans out the full matrix; the run is xvfb-wrapped
+        # for the headed Firefox/WebKit projects (see e2e/README.md). rift.lan only resolves on a LAN,
+        # so map it and its subdomains to loopback for the browsers that can't take a host-resolver flag.
         env:
-          CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
+          E2E_ALL_BROWSERS: "1"
         run: |
+          echo "127.0.0.1 rift.lan auth.rift.lan game-server.rift.lan grafana.rift.lan" | sudo tee -a /etc/hosts
           just e2e-stack-up
           just e2e-run
       - name: Save e2e artifacts
@@ -75,7 +78,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: e2e-artifacts
-          path: target/tmp/
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
       - name: Save stack logs
         if: failure()
         run: just logs > /tmp/stack.log 2>&1 || true

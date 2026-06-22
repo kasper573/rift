@@ -67,8 +67,8 @@ dev: stack
 reset:
     {{compose}} down -v
 
-# An optional FILTER runs only matching tests (e.g. `just e2e portal`); omit it to run the whole
-# suite. Either way it's the one command — never reach for cargo/chromedriver by hand.
+# The Playwright suite in e2e/. An optional FILTER runs only matching tests (e.g. `just e2e portal`);
+# omit it to run the whole suite. Either way it's the one command — never reach for npx by hand.
 e2e filter="": build wasm e2e-stack-up (e2e-run filter)
 
 # The e2e walks an idle player across the island to a portal; with NPCs present they attack it (and a
@@ -78,24 +78,19 @@ e2e filter="": build wasm e2e-stack-up (e2e-run filter)
 e2e-stack-up:
     RIFT_GAME_SERVER_SPAWN_NPCS=false just stack-up
 
-e2e-build:
-    cargo test --release -p e2e --no-run
-
-# Drives the live stack through a headless browser via chromedriver, so `just e2e` behaves the same
-# here and in CI. `--test-threads=1`: the tests register fresh accounts against the one shared
-# Keycloak, so they run one at a time. Override RIFT_E2E_URL to point the suite at a deployment.
-e2e-run filter="": e2e-build
+# Drives the live stack through Playwright, reading the stack's domain from docker/.env.test. Locally
+# this runs one browser+resolution (chrome-desktop) headless and needs only Google Chrome installed.
+# CI sets E2E_ALL_BROWSERS=1 to fan out across every browser × resolution; Firefox and WebKit can't
+# do WebGL headless on Linux, so that run is wrapped in xvfb-run (see e2e/README.md). Override
+# RIFT_E2E_URL to point the suite at a deployment.
+e2e-run filter="":
     #!/usr/bin/env bash
     set -euo pipefail
     set -a; source docker/.env.test; set +a
-    command -v chromedriver >/dev/null || { echo "just e2e needs chromedriver: install the e2e system packages (see README)"; exit 1; }
-
-    chromedriver --port=9515 >/dev/null 2>&1 &
-    driver=$!
-    trap 'kill "$driver" 2>/dev/null || true' EXIT
-    for _ in $(seq 1 30); do
-      curl -fsS http://127.0.0.1:9515/status >/dev/null 2>&1 && break
-      sleep 0.5
-    done
-
-    cargo test --release -p e2e -- --ignored --nocapture --test-threads=1 {{filter}}
+    cd e2e
+    [ -d node_modules ] || npm ci
+    if [ "${E2E_ALL_BROWSERS:-}" = "1" ]; then
+      xvfb-run -a npx playwright test {{filter}}
+    else
+      npx playwright test {{filter}}
+    fi
