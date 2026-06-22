@@ -12,18 +12,26 @@ concurrency:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
-  # The quality gate on every push: lint, unit tests, and the browser e2e against the full stack.
-  gate:
+  # One job for every push: lint, test, build, and e2e. The branch decides two things and nothing
+  # else — how hard to optimize, and whether to deploy. main builds the optimized artifacts, runs the
+  # e2e against those exact binaries, then packages and ships them; branches build unoptimized and stop
+  # after the e2e. The images only package the host-built crates, so the deploy reuses the e2e build —
+  # no second compile, no artifact hand-off between jobs, and the e2e always ran on what we deploy.
+  ci:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       # mold is a native linker; scope it to the host target so the wasm build (rust-lld) ignores it.
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
-      # Build unoptimized: far faster, and the e2e asserts on what the game renders, not framerate.
-      # The deploy job rebuilds at full opt for the images it ships.
-      CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
+      DEPLOY: ${{ github.ref == 'refs/heads/main' }}
+      DOCKER_REGISTRY: ghcr.io
+      DOCKER_USERNAME: ${{ github.repository_owner }}
+      DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      DOCKER_REGISTRY_URL: ghcr.io/${{ github.repository_owner }}
+      DOCKER_IMAGE_VERSION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: ./.github/actions/setup
@@ -31,16 +39,37 @@ jobs:
           deps: all
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          key: gate
-          save-if: ${{ github.ref_name == 'main' }}
+          # main builds optimized and branches don't, so they keep separate caches to avoid rebuilding
+          # dependencies at the other's opt-level on every run.
+          key: ci-${{ github.ref == 'refs/heads/main' && 'main' || 'branch' }}
       - name: Lint and test
+        # Unoptimized: lint and unit tests don't ship, so build them fast regardless of branch.
+        env:
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
         run: |
           just lint
           just test
+      - name: Build
+        # The only branch-dependent step: main builds what it deploys — the server at the release
+        # default for sim speed, the wasm alone shrunk with z + LTO + strip (~80MB to ~44MB) to fit
+        # mobile Safari's per-tab memory. Branches build unoptimized for speed (the e2e asserts on what
+        # the game renders, not framerate).
+        run: |
+          if [ "$DEPLOY" = "true" ]; then
+            just build
+            CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_INCREMENTAL=0 just wasm
+          else
+            CARGO_PROFILE_RELEASE_OPT_LEVEL=0 just build
+            CARGO_PROFILE_RELEASE_OPT_LEVEL=0 just wasm
+          fi
       - name: End-to-end test
-        # `just e2e` builds the binaries and the wasm bundle, brings the stack up (website serving the
-        # baked wasm), then drives headless Chrome through registration and gameplay.
-        run: just e2e
+        # Packages the binaries built above into the stack images and drives headless Chrome through
+        # registration and gameplay. Only the e2e harness compiles here, so build it unoptimized.
+        env:
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
+        run: |
+          just e2e-stack-up
+          just e2e-run
       - name: Save e2e artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -56,44 +85,15 @@ jobs:
         with:
           name: stack-logs
           path: /tmp/stack.log
-
-  # main only: rebuild at full opt, build and push the stack images, and deploy to production.
-  deploy:
-    needs: gate
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      packages: write
-    env:
-      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
-      DOCKER_REGISTRY: ghcr.io
-      DOCKER_USERNAME: ${{ github.repository_owner }}
-      DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-      DOCKER_REGISTRY_URL: ghcr.io/${{ github.repository_owner }}
-      DOCKER_IMAGE_VERSION: ${{ github.sha }}
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: ./.github/actions/setup
-        with:
-          deps: build
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          key: deploy
-      - name: Build the optimized server, website, and wasm bundle
-        # The server keeps the default opt-level for sim speed; the wasm alone is rebuilt for size —
-        # LTO + opt-level z + strip roughly halve it (~80MB to ~44MB) to fit mobile Safari's per-tab
-        # memory budget. This is prod-only: the dev loop and the gate build the wasm plain and fast.
-        run: |
-          just build
-          CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_INCREMENTAL=0 just wasm
       - name: Build and push the stack images
-        # The website image bakes in the wasm bundle; the game-server image its server binary.
+        if: ${{ env.DEPLOY == 'true' }}
+        # The website image bakes in the wasm bundle; the game-server image its server binary — both the
+        # exact artifacts the e2e just ran against, repackaged for the prod registry (a docker cache hit).
         run: |
-          echo "${{ env.DOCKER_PASSWORD }}" | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
+          echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
           just push-images
       - name: Upload docker runtime dependencies
+        if: ${{ env.DEPLOY == 'true' }}
         uses: burnett01/rsync-deployments@796cf0d5e4b535745ce49d7429f77cf39e25ef39 # 7.0.1
         with:
           switches: -avz --delete
@@ -103,6 +103,7 @@ jobs:
           remote_user: ${{ secrets.PROD_SSH_USERNAME }}
           remote_key: ${{ secrets.PROD_SSH_KEY }}
       - name: Deploy via SSH action
+        if: ${{ env.DEPLOY == 'true' }}
         id: deploy
         uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
         continue-on-error: true
@@ -135,7 +136,7 @@ jobs:
             fi
             docker image prune -f
       - name: Download deployment logs from server
-        if: steps.deploy.outcome == 'failure'
+        if: ${{ env.DEPLOY == 'true' && steps.deploy.outcome == 'failure' }}
         uses: nicklasfrahm/scp-action@ff9723c16c864e37adf7ef4111362b86905bfb04 # v1.0.1
         with:
           direction: download
@@ -146,13 +147,13 @@ jobs:
           target: ./deploy-failure-logs.tar.gz
           insecure_ignore_fingerprint: true
       - name: Save deployment logs
-        if: steps.deploy.outcome == 'failure'
+        if: ${{ env.DEPLOY == 'true' && steps.deploy.outcome == 'failure' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: deploy-failure-logs
           path: ./deploy-failure-logs.tar.gz
       - name: Fail workflow on deploy error
-        if: steps.deploy.outcome == 'failure'
+        if: ${{ env.DEPLOY == 'true' && steps.deploy.outcome == 'failure' }}
         run: |
           echo "🚨 Deployment failed — see deploy-failure-logs artifact for details."
           exit 1
