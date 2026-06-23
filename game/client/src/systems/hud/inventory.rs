@@ -8,7 +8,7 @@ use world::systems::items::Inventory;
 use world::systems::player::session;
 
 use crate::component;
-use crate::hud::settings::ScreenPx;
+use crate::systems::hud::settings::ScreenPx;
 
 const SLOT: ScreenPx = ScreenPx(36.0);
 const TITLE_BG: Color = Color::srgb(0.18, 0.18, 0.18);

@@ -11,10 +11,21 @@ use world::systems::area::{self, AreaDef, TileRef};
 use world::systems::player::Owner;
 use world::systems::player::session::MyClient;
 
-use super::{TILE, atlas_rect, dynamic_z, sprite_transform};
+use crate::core::render::{TILE, atlas_rect, dynamic_z, sprite_transform};
+
+pub struct AreaPlugin;
+
+impl Plugin for AreaPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<SpawnedArea>().add_systems(
+            Update,
+            (spawn_area_tiles, animate_tiles).run_if(in_state(crate::GameScene::Playing)),
+        );
+    }
+}
 
 #[derive(Resource, Default)]
-pub(super) struct SpawnedArea(Option<Id<AreaDef>>);
+struct SpawnedArea(Option<Id<AreaDef>>);
 
 #[derive(Component)]
 pub(super) struct AreaTile;
@@ -22,7 +33,7 @@ pub(super) struct AreaTile;
 #[derive(Component)]
 pub(super) struct Animated(TileRef);
 
-pub(super) fn spawn_area_tiles(
+fn spawn_area_tiles(
     me: Res<MyClient>,
     players: Query<(&Owner, &AreaTag)>,
     assets: Res<AssetServer>,
@@ -105,7 +116,7 @@ pub(super) fn spawn_area_tiles(
     }
 }
 
-pub(super) fn animate_tiles(
+fn animate_tiles(
     time: Res<Time>,
     spawned: Res<SpawnedArea>,
     mut tiles: Query<(&Animated, &mut Sprite)>,

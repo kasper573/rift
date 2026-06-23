@@ -3,15 +3,8 @@ use bevy::asset::io::AssetSourceId;
 use bevy::prelude::*;
 use world::systems::account::Role;
 
-pub mod assets;
-pub mod debug;
-pub mod hud;
-pub mod input;
-pub mod net;
-pub mod platform;
-pub mod render;
-pub mod sfx;
-pub mod testing;
+pub mod core;
+pub mod systems;
 
 #[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum GameScene {
@@ -33,17 +26,17 @@ pub(crate) fn component<C: Component + Clone>(value: C) -> impl bevy::scene::Sce
 /// Builds and runs the Bevy app: reads the boot params from the platform, builds the session from the
 /// access token, and starts the app. The platform's entry point calls this.
 pub fn boot() {
-    let params = platform::read_start_params();
+    let params = core::platform::read_start_params();
     let session = params
         .access_token
         .as_deref()
-        .map(net::auth::Session::from_access_token);
+        .map(core::net::auth::Session::from_access_token);
     let spectator = session
         .as_ref()
         .is_some_and(|session| session.roles.contains(&Role::Spectate));
 
     let mut app = App::new();
-    app.register_asset_source(AssetSourceId::Default, assets::embedded_source())
+    app.register_asset_source(AssetSourceId::Default, core::assets::embedded_source())
         .add_plugins(
             DefaultPlugins
                 .set(bevy::log::LogPlugin {
@@ -51,7 +44,7 @@ pub fn boot() {
                     ..default()
                 })
                 .set(WindowPlugin {
-                    primary_window: Some(platform::primary_window()),
+                    primary_window: Some(core::platform::primary_window()),
                     ..default()
                 })
                 .set(ImagePlugin::default_nearest()),
@@ -67,16 +60,18 @@ pub fn boot() {
         })
         .add_plugins((
             ui::UiPlugin,
-            net::NetPlugin,
-            render::RenderPlugin,
-            input::InputPlugin,
-            debug::DebugPlugin,
-            sfx::SfxPlugin,
-            hud::scenes::ScenesPlugin,
-            hud::connection::ConnectionPlugin,
-            hud::HudPlugin,
-            hud::fps::FpsPlugin,
-            testing::TestingPlugin,
+            core::net::NetPlugin,
+            core::render::RenderPlugin,
+            core::audio::SfxPlugin,
+            core::debug::DebugPlugin,
+            core::testing::TestingPlugin,
+            systems::actor::ActorPlugin,
+            systems::area::AreaPlugin,
+            systems::input::InputPlugin,
+            systems::hud::scenes::ScenesPlugin,
+            systems::hud::connection::ConnectionPlugin,
+            systems::hud::HudPlugin,
+            systems::hud::fps::FpsPlugin,
         ));
     ui::theme::set_theme(ui::themes::dark::THEME);
     app.run();

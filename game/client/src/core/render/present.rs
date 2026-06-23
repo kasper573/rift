@@ -111,7 +111,7 @@ pub(super) fn setup(
 /// Re-runs the platform's window sync each frame so the render target tracks canvas resizes; `fit`
 /// then resizes the render target from the updated window size.
 pub(super) fn match_display(mut window: Single<&mut Window, With<PrimaryWindow>>) {
-    crate::platform::sync_window(&mut window);
+    crate::core::platform::sync_window(&mut window);
 }
 
 pub(super) fn fit(

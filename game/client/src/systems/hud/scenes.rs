@@ -2,7 +2,8 @@ use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::{Activate, button, text_colored};
 
-use crate::{GameScene, net};
+use crate::GameScene;
+use crate::core::net;
 
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {

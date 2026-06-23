@@ -14,7 +14,7 @@ use world::systems::player::session;
 use world::systems::sfx::sfx_table;
 
 use crate::GameScene;
-use crate::render::Animator;
+use crate::core::render::Animator;
 
 const HALF_VIEW: Size<Tiles> = Size::new(12.0, 9.0);
 const STACK_WINDOW: Seconds = Seconds(0.1);

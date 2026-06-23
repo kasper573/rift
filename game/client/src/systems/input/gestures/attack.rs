@@ -3,8 +3,8 @@ use bevy::window::CursorIcon;
 use world::systems::combat;
 use world::systems::player::session;
 
-use crate::input::gestures::{Gesture, image_cursor};
-use crate::render;
+use crate::core::render;
+use crate::systems::input::gestures::{Gesture, image_cursor};
 
 /// Attack the actor under the cursor.
 pub struct AttackGesture {

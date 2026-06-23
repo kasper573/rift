@@ -1,7 +1,7 @@
 use bevy::math::Vec2;
 use serde::{Deserialize, Serialize};
 
-use crate::hud::Panel;
+use crate::systems::hud::Panel;
 
 const KEY: &str = "rift.user_settings";
 
@@ -58,14 +58,14 @@ pub struct Placement {
 
 impl UserSettings {
     pub fn load() -> UserSettings {
-        crate::platform::load(KEY)
+        crate::core::platform::load(KEY)
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default()
     }
 
     pub fn save(&self) {
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            crate::platform::save(KEY, &json);
+            crate::core::platform::save(KEY, &json);
         }
     }
 

@@ -7,8 +7,8 @@ use world::core::tiling::{TilePos, Tiles};
 use world::systems::player::session;
 use world::systems::{area, combat};
 
-use crate::input::gestures::{ActiveTileHighlight, Gesture, image_cursor};
-use crate::render;
+use crate::core::render;
+use crate::systems::input::gestures::{ActiveTileHighlight, Gesture, image_cursor};
 
 const MOVE_REPEAT: Duration = Duration::from_millis(333);
 

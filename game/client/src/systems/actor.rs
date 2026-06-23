@@ -1,37 +1,29 @@
 //! Renders replicated [`Actor`]s: attaches a sprite when one appears, then each frame samples its
-//! model's animation (tracked by [`Animator`]), tints it, and depth-sorts it within its area.
-
-use std::collections::HashMap;
+//! model's animation (timed by the shared [`Animator`]), tints it, and depth-sorts it within its area.
 
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use world::core::tiling::Tiles;
 use world::core::time::Seconds;
-use world::systems::actor::{Action, Actor, Rgba};
+use world::systems::actor::{Actor, Rgba};
 use world::systems::area;
 use world::systems::area::AreaTag;
 use world::systems::movement::Position;
 
-use super::{atlas_rect, dynamic_z, sprite_transform};
+use crate::core::render::{Animator, atlas_rect, dynamic_z, sprite_transform};
 
-#[derive(Resource, Default)]
-pub struct Animator {
-    anchors: HashMap<Entity, (Action, Seconds)>,
-}
+pub struct ActorPlugin;
 
-impl Animator {
-    pub fn elapsed(&mut self, entity: Entity, action: Action, time: Seconds) -> Seconds {
-        match self.anchors.get(&entity) {
-            Some(&(seen, start)) if seen == action => time - start,
-            _ => {
-                self.anchors.insert(entity, (action, time));
-                Seconds(0.0)
-            }
-        }
+impl Plugin for ActorPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_observer(attach_sprite).add_systems(
+            Update,
+            sync_actors.run_if(in_state(crate::GameScene::Playing)),
+        );
     }
 }
 
-pub(super) fn attach_sprite(
+fn attach_sprite(
     add: On<Add, Actor>,
     actors: Query<&Actor>,
     assets: Res<AssetServer>,
@@ -49,7 +41,7 @@ pub(super) fn attach_sprite(
     ));
 }
 
-pub(super) fn sync_actors(
+fn sync_actors(
     time: Res<Time>,
     mut animator: ResMut<Animator>,
     mut actors: Query<(
@@ -62,9 +54,7 @@ pub(super) fn sync_actors(
     )>,
 ) {
     let clock = Seconds(time.elapsed_secs());
-    animator
-        .anchors
-        .retain(|entity, _| actors.contains(*entity));
+    animator.retain(|entity| actors.contains(entity));
     for (entity, actor, position, tag, mut sprite, mut transform) in &mut actors {
         let elapsed = animator.elapsed(entity, actor.action, clock);
         let region =

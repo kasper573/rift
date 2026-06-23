@@ -1,8 +1,8 @@
-//! Architecture lint for the workspace. A crate opts in with
+//! Custom lint rules for the game crates. A crate opts in with
 //!
 //! ```toml
 //! [package.metadata.lint]
-//! layers = true
+//! game = true
 //! ```
 //!
 //! and is then held to the layering convention:
@@ -10,9 +10,7 @@
 //! 1. Rust source lives only under `src/core/`, `src/systems/`, or `src/bin/` (plus the crate root
 //!    `src/lib.rs` / `src/main.rs`). Tests live in `tests/`, outside `src/`.
 //! 2. `tests/` and `src/bin/` may depend on both `core` and `systems`.
-//! 3. `core` and `systems` may not depend on `tests` or `bin` — Rust enforces this already (a lib
-//!    cannot import its own integration tests or binaries), so there is nothing to check.
-//! 4. `core` may not depend on `systems`.
+//! 3. `core` may not depend on `systems`.
 //!
 //! Run from the workspace root (`cargo run -p lint`); exits non-zero on any violation.
 
@@ -58,7 +56,7 @@ fn main() {
 fn opted_in(metadata: &serde_json::Value) -> bool {
     metadata
         .get("lint")
-        .and_then(|lint| lint.get("layers"))
+        .and_then(|lint| lint.get("game"))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false)
 }

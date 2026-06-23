@@ -8,13 +8,11 @@ pub use default::DefaultGesture;
 pub use drag::DragGesture;
 pub use walk::WalkGesture;
 
+use crate::GameScene;
+use crate::core::render::ActiveTileHighlight;
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
 use enum_dispatch::enum_dispatch;
-use world::core::math::Pos;
-use world::core::tiling::Tiles;
-
-use crate::GameScene;
 
 /// One way the primary button can be used. The input layer tries the active gestures in order and the
 /// first to claim a press owns it until release, so two never run at once; a press no gesture claims is
@@ -78,15 +76,6 @@ struct GestureIndex(usize);
 /// The cursor currently applied to the window, so the same one isn't re-inserted every frame.
 #[derive(Resource, Default)]
 struct AppliedCursor(Option<CursorIcon>);
-
-/// What the active gesture wants highlighted on the map — a tile and the image to mark it with. Lets a
-/// gesture own its on-map appearance, not just a position. Present as a resource exactly while there is
-/// a highlight, absent otherwise; the render layer just draws it.
-#[derive(Resource)]
-pub struct ActiveTileHighlight {
-    pub pos: Pos<Tiles>,
-    pub image: Handle<Image>,
-}
 
 fn setup(mut commands: Commands, assets: Res<AssetServer>) {
     commands.insert_resource(Gestures(GestureKind::all(&assets)));

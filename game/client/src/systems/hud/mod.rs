@@ -19,9 +19,9 @@ use ui::{
 };
 
 use crate::component;
-use crate::hud::character::CharacterText;
-use crate::hud::inventory::InventoryGrid;
-use crate::hud::settings::{Placement, ScreenPx, ScreenVec, UserSettings};
+use crate::systems::hud::character::CharacterText;
+use crate::systems::hud::inventory::InventoryGrid;
+use crate::systems::hud::settings::{Placement, ScreenPx, ScreenVec, UserSettings};
 
 const WIDGET: ScreenPx = ScreenPx(48.0);
 const SCREEN_W: f32 = 1152.0;

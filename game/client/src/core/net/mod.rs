@@ -9,9 +9,9 @@ use renet2_netcode::{ClientAuthentication, ClientSocket, ConnectToken, NetcodeCl
 use world::core::channels::RenetChannelsExt;
 use world::systems::player::session::ClientSessionPlugin;
 
-use crate::net::auth::Session;
-use crate::net::transport::{Client, RepliconRenetClientPlugin, Transport};
-use crate::platform::StartParams;
+use crate::core::net::auth::Session;
+use crate::core::net::transport::{Client, RepliconRenetClientPlugin, Transport};
+use crate::core::platform::StartParams;
 
 pub struct NetPlugin;
 
@@ -63,7 +63,7 @@ fn poll_session(world: &mut World) {
 }
 
 async fn fetch_token(game_server_url: String, authorization: String) -> Result<Vec<u8>, String> {
-    crate::platform::fetch(&format!("{game_server_url}/session"), &authorization).await
+    crate::core::platform::fetch(&format!("{game_server_url}/session"), &authorization).await
 }
 
 fn connect(world: &mut World, token: &[u8]) {
@@ -73,10 +73,10 @@ fn connect(world: &mut World, token: &[u8]) {
     let connect_token =
         ConnectToken::read(&mut std::io::Cursor::new(token)).expect("read connect token");
     let server_url = world.resource::<StartParams>().game_server_ws_url.clone();
-    let socket = crate::platform::client_socket(&server_url);
+    let socket = crate::core::platform::client_socket(&server_url);
     let client = RenetClient::new(connection_config, socket.is_reliable());
     let transport = NetcodeClientTransport::new(
-        crate::platform::now(),
+        crate::core::platform::now(),
         ClientAuthentication::Secure { connect_token },
         socket,
     )

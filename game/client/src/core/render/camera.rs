@@ -14,7 +14,7 @@ use world::systems::player::session::MyClient;
 
 use super::TILE;
 use super::present::{Viewport, target_size};
-use crate::render::screen::{ToScreen, ToTile};
+use crate::core::render::screen::{ToScreen, ToTile};
 
 #[derive(Component)]
 pub(super) struct WorldCamera;

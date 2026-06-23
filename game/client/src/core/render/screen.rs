@@ -4,7 +4,7 @@ use bevy::math::Vec2;
 use world::core::math::{Pos, Size};
 use world::core::tiling::Tiles;
 
-use crate::render::TILE;
+use crate::core::render::TILE;
 
 pub trait ToScreen {
     fn to_screen(self) -> Vec2;

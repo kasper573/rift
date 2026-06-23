@@ -8,9 +8,8 @@ use world::systems::combat::Vitals;
 use world::systems::movement::Position;
 use world::systems::player::session;
 
-use super::TILE;
-use crate::input::gestures::ActiveTileHighlight;
-use crate::render::screen::ToScreen;
+use super::screen::ToScreen;
+use super::{ActiveTileHighlight, TILE};
 
 #[derive(Component, Clone, Copy)]
 enum Bar {

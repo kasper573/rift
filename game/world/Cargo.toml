@@ -2,10 +2,10 @@
 name = "world"
 version.workspace = true
 edition.workspace = true
-description = "The MMORPG game, headless: the wire protocol (replicated components + messages), content tables, and the simulation systems — organized by feature. The client wraps a frontend around this and the server a backend; a benchmark consumes it standalone to measure the headless tick."
+description = "The game, headless and isomophic: contains no frontend and backend specific concerns"
 
 [package.metadata.lint]
-layers = true
+game = true
 
 [[bin]]
 name = "kc-roles"

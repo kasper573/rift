@@ -7,7 +7,7 @@ members = [
     "game/server",
     "game/client",
     "game/bench",
-    "lint",
+    "game/lint",
     "service",
     "website",
 ]
@@ -20,7 +20,7 @@ default-members = [
     "game/world",
     "game/server",
     "game/bench",
-    "lint",
+    "game/lint",
     "service",
     "website",
 ]

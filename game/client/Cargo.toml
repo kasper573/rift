@@ -2,9 +2,12 @@
 name = "client"
 version.workspace = true
 edition.workspace = true
-description = "In-browser MMORPG client: a wasm Bevy app rendering the replicated `world` over a WebSocket netcode transport, with a bevy_ui HUD. The website hands it an access token; it does no auth itself."
+description = "frontend client for the game"
 repository = "https://github.com/kasper573/rift"
 authors = ["kasper573"]
+
+[package.metadata.lint]
+game = true
 
 # A wasm `cdylib` whose exported `run` the page's loader calls; `rlib` keeps it usable from tests.
 [lib]

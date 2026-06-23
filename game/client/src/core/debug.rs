@@ -9,7 +9,7 @@ use world::systems::player::Owner;
 use world::systems::player::session::MyClient;
 
 use crate::GameScene;
-use crate::render::screen::ToScreen;
+use crate::core::render::screen::ToScreen;
 
 pub struct DebugPlugin;
 
