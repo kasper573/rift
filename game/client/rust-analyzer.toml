@@ -1,7 +1,0 @@
-# This crate is wasm-only: it uses browser APIs (e.g. `renet2_netcode::WebSocketClient`) and
-# single-threaded `JsFuture`s that only exist / only satisfy their bounds on `wasm32`. The CLI only
-# ever builds it with `--target wasm32-unknown-unknown` (`just wasm`). This per-crate rust-analyzer
-# config makes the editor analyze it for that target instead of the host target the native crates use,
-# so the browser-only code resolves correctly rather than showing phantom errors.
-[cargo]
-target = "wasm32-unknown-unknown"
