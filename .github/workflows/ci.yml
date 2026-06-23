@@ -50,36 +50,32 @@ jobs:
           just lint
           just test
       - name: Build
-        # The only branch-dependent step: main builds what it deploys — the server at the release
-        # default for sim speed, the wasm alone shrunk with z + LTO + strip (~80MB to ~44MB) to fit
-        # mobile Safari's per-tab memory. Branches build unoptimized for speed (the e2e asserts on what
-        # the game renders, not framerate).
+        # main deploys the server at the release default and the wasm shrunk with z + LTO + strip
+        # (~44MB) for mobile Safari's per-tab memory. Branches build the server unoptimized (not the
+        # e2e bottleneck) but the wasm at opt-3 — the e2e's software-rendered browsers need a client
+        # fast enough to keep up, and opt-3 wasm costs only seconds more to build than opt-0.
         run: |
           if [ "$DEPLOY" = "true" ]; then
             just build
             CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_INCREMENTAL=0 just wasm
           else
             CARGO_PROFILE_RELEASE_OPT_LEVEL=0 just build
-            CARGO_PROFILE_RELEASE_OPT_LEVEL=0 just wasm
+            CARGO_PROFILE_RELEASE_OPT_LEVEL=3 just wasm
           fi
       - name: Start the stack
-        # Packages the binaries built above into the stack images and brings the stack up. rift.lan
-        # only resolves on a LAN, so map it and its subdomains to loopback for the browsers that can't
-        # take a host-resolver flag (Firefox/WebKit).
+        # rift.lan only resolves on a LAN; map it to loopback for the browsers that take no
+        # host-resolver flag (Firefox/WebKit).
         run: |
           echo "127.0.0.1 rift.lan auth.rift.lan game-server.rift.lan grafana.rift.lan" | sudo tee -a /etc/hosts
-          # The stack pulls public images from Docker Hub, which rate-limits anonymous CI runners
-          # intermittently; retry the bring-up so a transient pull error doesn't fail the run.
+          # Docker Hub rate-limits anonymous CI pulls intermittently; retry past a transient failure.
           for attempt in 1 2 3; do
             just e2e-stack-up && break
             [ "$attempt" = 3 ] && { echo "::error::stack failed to start after $attempt attempts"; exit 1; }
             echo "::warning::stack-up attempt $attempt failed (likely a transient Docker Hub pull); retrying"
             sleep 20
           done
+      # Its own step so the duration reflects the tests, not the stack build.
       - name: End-to-end test
-        # Drives every browser × resolution through registration and gameplay (E2E_ALL_BROWSERS fans
-        # out the full matrix; the run is xvfb-wrapped for the headed Firefox/WebKit projects — see
-        # e2e/README.md). This step is just the tests, so its duration reflects the test time.
         env:
           E2E_ALL_BROWSERS: "1"
         run: just e2e-run

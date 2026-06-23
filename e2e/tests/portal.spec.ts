@@ -1,11 +1,15 @@
 import { expect, test } from "@playwright/test";
 
-import { captureScene, clickUntil, register, waitForWorld } from "./helpers/game";
+import { captureScene, clickWorldTile, register, waitForWorld } from "./helpers/game";
 import { loadReference, resemblance } from "./helpers/image";
 
 const MAP_MATCH = 0.5;
 
-test("clicking the island portal crosses to the forest", async ({ page }) => {
+// The island's warp tile to the forest (assets/maps/island.tmx warp #7); its rect is tiles
+// x[38.5, 39.5] y[25.5, 26.5], so (39, 26) is squarely inside.
+const WARP_TILE = { x: 39, y: 26 };
+
+test("clicking the island warp crosses to the forest", async ({ page }) => {
   await register(page);
   await waitForWorld(page);
 
@@ -17,14 +21,19 @@ test("clicking the island portal crosses to the forest", async ({ page }) => {
     resemblance(spawn, forest),
   );
 
-  // The warp sits three tiles due north of the spawn. Clicking inside its rect makes the client send
-  // MoveToPortal, so the server walks the player onto the warp and crosses to the forest.
-  await clickUntil(
-    page,
-    spawn,
-    0,
-    3,
-    (scene) => resemblance(scene, forest) >= MAP_MATCH && resemblance(scene, forest) > resemblance(scene, island),
-    { message: "clicking the portal should cross into the forest", timeout: 90_000 },
-  );
+  // Re-click the warp until the forest renders. The fixed-tile click is idempotent, so repeats just
+  // re-issue the (deterministic) crossing; the long timeout is only room for a slow renderer.
+  await expect
+    .poll(
+      async () => {
+        const scene = await captureScene(page);
+        if (resemblance(scene, forest) >= MAP_MATCH && resemblance(scene, forest) > resemblance(scene, island)) {
+          return true;
+        }
+        await clickWorldTile(page, WARP_TILE.x, WARP_TILE.y);
+        return false;
+      },
+      { message: "clicking the warp should cross into the forest", timeout: 120_000, intervals: [1000] },
+    )
+    .toBe(true);
 });

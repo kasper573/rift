@@ -22,9 +22,8 @@ export function loadReference(name: string): Image {
 const GRID = 8;
 const CELL_COLORS = 4;
 
-// What fraction of an 8×8 grid of cells shows scenery — a cell counts when it holds more than a
-// handful of distinct colors. A rendered map lights up most cells; a blank or still-loading canvas
-// almost none. Used to wait until the world is actually on screen, independent of which map it is.
+// Fraction of an 8×8 grid of cells holding scenery (a cell counts when it has more than a few distinct
+// colors). A rendered map lights up most cells; a blank or still-loading canvas almost none.
 export function sceneFraction(image: Image): number {
   const cellW = Math.floor(image.width / GRID);
   const cellH = Math.floor(image.height / GRID);
@@ -45,8 +44,7 @@ export function sceneFraction(image: Image): number {
   return busy / (GRID * GRID);
 }
 
-// The center half of a frame, where the map fills the view — crops away the corner HUD and fps
-// counter so they don't inflate the scenery measurement.
+// The center half of a frame, cropping the corner HUD and fps counter out of the scenery measure.
 export function center(image: Image): Image {
   const width = Math.floor(image.width / 2);
   const height = Math.floor(image.height / 2);
@@ -60,35 +58,12 @@ export function center(image: Image): Image {
   return { width, height, data };
 }
 
-// Fraction of pixels whose color changed by more than `minDelta` (summed over RGB) between two
-// same-sized frames. A camera scroll (the player walking) sweeps high-contrast features across the
-// frame and trips a high threshold; animated-water shimmer only nudges colors and stays under it.
-export function diffFraction(a: Image, b: Image, minDelta = 24): number {
-  if (a.width !== b.width || a.height !== b.height) {
-    throw new Error(`frame size mismatch: ${a.width}x${a.height} vs ${b.width}x${b.height}`);
-  }
-  const pixels = a.width * a.height;
-  let changed = 0;
-  for (let p = 0; p < pixels; p++) {
-    const i = 4 * p;
-    const delta =
-      Math.abs(a.data[i] - b.data[i]) +
-      Math.abs(a.data[i + 1] - b.data[i + 1]) +
-      Math.abs(a.data[i + 2] - b.data[i + 2]);
-    if (delta > minDelta) changed++;
-  }
-  return changed / pixels;
-}
-
-// The health bar is a solid strip (~150–320 px in practice); require clearly more than a stray green
-// pixel or two so noise never yields a bogus centroid, while staying well under a real bar's size so
-// a thin bar on a slow renderer is still accepted.
+// A real health bar is ~150–320 px; require clearly more than a stray green pixel or two.
 const MIN_MARKER_PIXELS = 20;
 
-// Centroid of the bright-green health-bar pixels. The client draws this strip only for the local
-// player (render.rs `healthbar`), so it pinpoints your own character on screen even when other
-// players are nearby — no template matching needed. Returns null when no solid health bar is visible
-// (treated as "player not ready / not found" by callers, which then wait and retry).
+// Centroid of the bright-green health-bar pixels — only the local player draws one (render.rs
+// `healthbar`), so this pinpoints your own character. Null when no solid bar is visible (callers
+// treat that as "not ready" and retry).
 export function greenMarker(image: Image): { x: number; y: number } | null {
   const { width, height, data } = image;
   let sx = 0;
@@ -120,10 +95,7 @@ function histogram(image: Image): Float64Array {
       const sx = Math.min(Math.floor((tx * width) / HIST_SAMPLES), width - 1);
       const sy = Math.min(Math.floor((ty * height) / HIST_SAMPLES), height - 1);
       const i = 4 * (sy * width + sx);
-      const r = bin(data[i]);
-      const g = bin(data[i + 1]);
-      const b = bin(data[i + 2]);
-      hist[(r * HIST_BINS + g) * HIST_BINS + b] += 1;
+      hist[(bin(data[i]) * HIST_BINS + bin(data[i + 1])) * HIST_BINS + bin(data[i + 2])] += 1;
     }
   }
   const total = HIST_SAMPLES * HIST_SAMPLES;
@@ -131,10 +103,9 @@ function histogram(image: Image): Float64Array {
   return hist;
 }
 
-// Color-histogram intersection in [0, 1]: 1 is an identical color distribution, 0 no overlap.
-// Coarsely samples both frames so it answers "is this the same place" — tolerant of the player's
-// exact position, animation, resolution, and a browser's rendering quirks rather than demanding
-// exact pixels. This is what lets a single reference snapshot match across every browser project.
+// Color-histogram intersection in [0, 1] (1 identical, 0 no overlap): answers "is this the same
+// place" tolerant of the player's position, animation, resolution, and a browser's rendering quirks,
+// so one reference snapshot matches across every browser.
 export function resemblance(a: Image, b: Image): number {
   const ha = histogram(a);
   const hb = histogram(b);

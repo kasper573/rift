@@ -67,32 +67,21 @@ dev: stack
 reset:
     {{compose}} down -v
 
-# The Playwright suite in e2e/. An optional FILTER runs only matching tests (e.g. `just e2e portal`);
-# omit it to run the whole suite. Either way it's the one command — never reach for npx by hand.
+# Build, bring up a fresh stack, and run the Playwright suite (e2e/). FILTER limits which tests run.
 e2e filter="": build wasm e2e-stack-up (e2e-run filter)
 
-# The e2e walks an idle player across the island to a portal; with NPCs present they attack it (and a
-# move click can land on one as an attack), so the e2e stack alone starts areas empty of NPCs. Every
-# other stack — `just dev`, production — keeps them.
+# NPCs off so the idle e2e player isn't attacked and a move-click can't land on one as an attack.
 [private]
 e2e-stack-up:
     RIFT_GAME_SERVER_SPAWN_NPCS=false just stack-up
 
-# Drives the live stack through Playwright, reading the stack's domain from docker/.env.test. Locally
-# this runs one browser+resolution (chrome-desktop) headless and needs only Google Chrome installed.
-# CI sets E2E_ALL_BROWSERS=1 to fan out across every browser × resolution; Firefox and WebKit can't
-# do WebGL headless on Linux, so that run is wrapped in xvfb-run (see e2e/README.md). Override
-# RIFT_E2E_URL to point the suite at a deployment.
 e2e-run filter="":
     #!/usr/bin/env bash
     set -euo pipefail
     set -a; source docker/.env.test; set +a
     cd e2e
     [ -d node_modules ] || npm ci
-    # Cap each Firefox/WebKit instance's Mesa render threads so that, paired with the config's 50%
-    # workers, total render threads stay near the core count instead of every browser grabbing them
-    # all and thrashing. Harmless for the Chromium projects (SwiftShader ignores it).
-    export LP_NUM_THREADS=2
+    export LP_NUM_THREADS=2 # bound each headed browser's Mesa threads so parallel workers don't thrash
     if [ "${E2E_ALL_BROWSERS:-}" = "1" ]; then
       xvfb-run -a npx playwright test {{filter}}
     else

@@ -24,12 +24,10 @@ runs:
     - name: Install Linux system libraries
       if: runner.os == 'Linux' && inputs.deps != 'none'
       shell: bash
-      # `-sys` crates link system C libraries cargo can't supply; the repo's platform rule keeps them
-      # here, the one platform-specific place. These cover the native `ui` gallery and `bevy_render`:
-      # mold (linker), the x11/gl libs, and cmake/g++ for their build systems. `xvfb` and the Mesa DRI
-      # driver are the e2e's: Firefox and WebKit can't drive WebGL headless, so they run headed against
-      # a virtual display with software GL (see e2e/README.md). Drop the runner's microsoft/azure apt
-      # sources first: nothing installs from them, but they 403 intermittently and fail `apt-get update`.
+      # `-sys` crates link system C libraries cargo can't supply (the one platform-specific place, per
+      # the repo's platform rule): mold, the x11/gl libs, and cmake/g++ for the native `ui` gallery and
+      # `bevy_render`. xvfb + the Mesa DRI driver are for the e2e's headed Firefox/WebKit (software
+      # WebGL). Drop the runner's microsoft/azure apt sources first — unused, and they 403 intermittently.
       run: |
         sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
         sudo apt-get update
@@ -45,9 +43,6 @@ runs:
       if: runner.os == 'Linux' && inputs.deps == 'all'
       shell: bash
       working-directory: e2e
-      # The Playwright suite and the browsers it drives (with their OS deps). Only Chrome and Edge are
-      # installed: Firefox and WebKit are disabled in CI until we have faster runners (see the comment
-      # in e2e/playwright.config.ts). Re-add `firefox webkit` here when re-enabling them there.
       run: |
         npm ci
-        npx playwright install --with-deps chrome msedge
+        npx playwright install --with-deps chrome msedge firefox webkit
