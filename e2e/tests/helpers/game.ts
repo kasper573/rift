@@ -81,13 +81,15 @@ export async function captureScene(page: Page): Promise<Image> {
   return decode(await canvas(page).screenshot());
 }
 
-// Clicks a tile offset from the player (east = +x, north = +y). Locates the player by its health bar
-// and clicks the given number of tiles away — well-known coordinates relative to the character,
-// robust to where the view happens to place it. The camera centers the player, so these tiles are
-// always in view for small offsets.
-export async function clickFromPlayer(page: Page, tilesEast: number, tilesNorth: number): Promise<void> {
+// Clicks a tile offset from the player (east = +x, north = +y), aiming from the player's position in
+// the given frame (located via its health bar) — well-known coordinates relative to the character,
+// robust to where the view happens to place it. The camera centers the player, so these tiles are in
+// view for small offsets. Crucially the aim comes from the caller's own frame: the caller decides to
+// click based on a frame, and we aim from that same frame, so the player can't shift between the
+// decision and the aim. On a slow renderer a second capture could show the player already moving,
+// which for a portal click would re-aim past the warp and cancel the crossing.
+async function clickFromPlayer(page: Page, scene: Image, tilesEast: number, tilesNorth: number): Promise<void> {
   const box = await canvasBox(page);
-  const scene = await captureScene(page);
   const marker = greenMarker(scene);
   if (!marker) throw new Error("could not find the local player's health bar on the canvas");
   // The screenshot is in backing pixels; map to the element's CSS pixels, where clicks are aimed.
@@ -98,11 +100,13 @@ export async function clickFromPlayer(page: Page, tilesEast: number, tilesNorth:
   await press(page, box.x + playerX + tilesEast * TILE_PX, box.y + playerY - tilesNorth * TILE_PX);
 }
 
-// Clicks a tile offset from the player and waits for `done` to hold, re-clicking each poll only while
-// the player still sits where it started (`before`). The single-frame click never triggers
-// move-repeat, so once one registers the player acts on it cleanly; re-clicking after it has moved
-// would re-aim and undo the action, so we stop then. This rides out the frame race on a slow renderer
-// without ever canceling the move.
+// Clicks a tile offset from the player and waits for `done` to hold, re-clicking only while the
+// player still sits where it started (`before`). Each poll takes one frame and uses it for both the
+// decision and the aim: if that frame shows the player hasn't moved, we click from that frame's
+// player position. So every re-click aims at the same intended tile regardless of render speed —
+// there's no window where the player has moved but we re-aim relative to a stale position. The
+// single-frame click never triggers the client's move-repeat either, so a registered click is acted
+// on cleanly and is never undone by a follow-up.
 export async function clickUntil(
   page: Page,
   before: Image,
@@ -117,7 +121,7 @@ export async function clickUntil(
         const scene = await captureScene(page);
         if (done(scene)) return true;
         if (diffFraction(before, scene, 100) < MOVED) {
-          await clickFromPlayer(page, tilesEast, tilesNorth);
+          await clickFromPlayer(page, scene, tilesEast, tilesNorth);
         }
         return false;
       },
