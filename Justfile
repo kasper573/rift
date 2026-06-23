@@ -30,10 +30,10 @@ wasm:
 
 stack: build wasm stack-up
 
-# --profile observability adds the grafana/loki/tempo/... stack (opt-in; see the e2e-stack-up note).
+# --profile dev adds the grafana/loki/tempo/... stack (opt-in; see the e2e-stack-up note).
 stack-up:
     docker network inspect rift >/dev/null 2>&1 || docker network create rift
-    {{compose}} --profile observability up -d --build --wait
+    {{compose}} --profile dev up -d --build --wait
 
 prewarm:
     {{compose}} pull --ignore-buildable || true
@@ -71,14 +71,13 @@ reset:
 # Build, bring up a fresh stack, and run the Playwright suite (e2e/). FILTER limits which tests run.
 e2e filter="": build wasm e2e-stack-up (e2e-run filter)
 
-# The "test" profile leaves out the observability stack (it's opt-in via the "observability" profile,
-# which only stack-up activates) — the e2e doesn't exercise it, and pulling/starting it is the bulk of
-# the stack's startup. Everything else comes up, so new game services are picked up automatically.
-# NPCs off so the idle e2e player isn't attacked and a move-click can't hit one.
+# The "test" profile leaves out the observability stack (it's opt-in via the "dev" profile, which
+# only stack-up activates) — the e2e doesn't exercise it, and pulling/starting it is the bulk of the
+# stack's startup. Everything else comes up, so new game services are picked up automatically.
 [private]
 e2e-stack-up:
     docker network inspect rift >/dev/null 2>&1 || docker network create rift
-    RIFT_GAME_SERVER_SPAWN_NPCS=false {{compose}} up -d --build --wait
+    {{compose}} up -d --build --wait
 
 e2e-run filter="":
     #!/usr/bin/env bash

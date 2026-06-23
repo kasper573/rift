@@ -52,9 +52,6 @@ struct Config {
     ws_port: u16,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
-    /// Whether areas populate with NPCs. The e2e turns them off so its idle player can cross the
-    /// island without being attacked; real deployments leave them on.
-    spawn_npcs: bool,
 }
 
 fn main() {
@@ -90,27 +87,17 @@ fn main() {
     };
     runtime.spawn(serve_http(http_bind, http, metrics));
 
-    simulate(
-        ws_bind,
-        private_key,
-        sessions,
-        config.spawn_npcs,
-        runtime.handle().clone(),
-    );
+    simulate(ws_bind, private_key, sessions, runtime.handle().clone());
 }
 
 fn simulate(
     ws_bind: SocketAddr,
     private_key: [u8; NETCODE_KEY_BYTES],
     sessions: Sessions,
-    spawn_npcs: bool,
     runtime: tokio::runtime::Handle,
 ) {
     let spawn = area::spawn_zone().index();
-    let mut worlds: Vec<App> = area::areas()
-        .iter()
-        .map(|a| build_world(a.id, spawn_npcs))
-        .collect();
+    let mut worlds: Vec<App> = area::areas().iter().map(|a| build_world(a.id)).collect();
 
     let (connection_config, client_channels) = {
         let channels = worlds[0].world().resource::<RepliconChannels>();
@@ -307,9 +294,8 @@ struct Conn {
 #[derive(Component)]
 struct Wire(u64);
 
-fn build_world(area: Id<AreaDef>, spawn_npcs: bool) -> App {
+fn build_world(area: Id<AreaDef>) -> App {
     let mut app = world::sim::server_app(area);
-    app.insert_resource(world::sim::SpawnNpcs(spawn_npcs));
     app.finish();
     app.cleanup();
     app.world_mut()

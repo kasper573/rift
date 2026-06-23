@@ -105,7 +105,7 @@ services:
     env_file: *env_files
     logging: *logging
     image: grafana/mimir:2.15.2
-    profiles: ["prod", "observability"]
+    profiles: ["prod", "dev"]
     volumes:
       - ./grafana/mimir.yaml:/etc/mimir/config.yaml
       - mimir-data:/data
@@ -115,7 +115,7 @@ services:
     env_file: *env_files
     logging: *logging
     image: grafana/tempo:2.6.1
-    profiles: ["prod", "observability"]
+    profiles: ["prod", "dev"]
     volumes:
       - ./grafana/tempo.yaml:/etc/tempo-config/tempo.yaml
       - tempo-data:/var/tempo
@@ -127,7 +127,7 @@ services:
     env_file: *env_files
     logging: *logging
     image: grafana/pyroscope:1.21.1
-    profiles: ["prod", "observability"]
+    profiles: ["prod", "dev"]
     volumes:
       - pyroscope-data:/data
 
@@ -135,7 +135,7 @@ services:
     env_file: *env_files
     logging: *logging
     image: grafana/alloy:v1.8.3
-    profiles: ["prod", "observability"]
+    profiles: ["prod", "dev"]
     volumes:
       - ./grafana/alloy.alloy:/etc/alloy/config.alloy
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -155,7 +155,7 @@ services:
   loki:
     logging: *logging
     image: grafana/loki:3.5.0
-    profiles: ["prod", "observability"]
+    profiles: ["prod", "dev"]
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
       - ./grafana/loki.yaml:/etc/loki/local-config.yaml
@@ -165,13 +165,13 @@ services:
     env_file: *env_files
     logging: *logging
     image: prom/node-exporter:v1.8.2
-    profiles: ["prod", "observability"]
+    profiles: ["prod", "dev"]
 
   postgres_exporter:
     env_file: *env_files
     logging: *logging
     image: prometheuscommunity/postgres-exporter:v0.18.1
-    profiles: ["prod", "observability"]
+    profiles: ["prod", "dev"]
     environment:
       DATA_SOURCE_URI: postgres:5432/postgres?sslmode=disable
     depends_on:
@@ -181,7 +181,7 @@ services:
     env_file: *env_files
     logging: *logging
     image: grafana/grafana:11.6.1
-    profiles: ["prod", "observability"]
+    profiles: ["prod", "dev"]
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
@@ -212,7 +212,7 @@ services:
     env_file: *env_files
     logging: *logging
     image: boky/postfix:v4.3.0
-    profiles: ["prod", "observability"]
+    profiles: ["prod", "dev"]
     restart: always
 
   # Bans abusive ips at the host firewall, fed by caddy's access log (the stack's public edge)

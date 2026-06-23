@@ -107,19 +107,14 @@ pub fn spawns() -> &'static [SpawnRow] {
 
 pub fn spawn_all(world: &mut World) {
     let mut rng = Rng(RNG_SEED | 1);
-    if world
-        .get_resource::<super::SpawnNpcs>()
-        .is_none_or(|spawn| spawn.0)
-    {
-        let hosted = world.resource::<super::HostedArea>().0;
-        let area = &area::areas()[hosted.index()];
-        for (group, row) in spawns().iter().enumerate() {
-            if row.area != hosted {
-                continue;
-            }
-            for _ in 0..row.population {
-                spawn_npc(world, &mut rng, area, row.npc, group as u32);
-            }
+    let hosted = world.resource::<super::HostedArea>().0;
+    let area = &area::areas()[hosted.index()];
+    for (group, row) in spawns().iter().enumerate() {
+        if row.area != hosted {
+            continue;
+        }
+        for _ in 0..row.population {
+            spawn_npc(world, &mut rng, area, row.npc, group as u32);
         }
     }
     world.insert_resource(GameRng(rng));
