@@ -8,12 +8,12 @@ use world::content::area::{self, Area};
 use world::core::math::{Direction, Pos};
 use world::core::table::Id;
 use world::core::tiling::Tiles;
-use world::sim::Character;
-use world::sim::combat::Stats;
-use world::sim::movement::Speed;
-use world::sim::npc::{self, Npc, NpcDef};
-use world::sim::player::Players;
-use world::sim::visibility::OwnedBy;
+use world::simulation::Character;
+use world::simulation::combat::Stats;
+use world::simulation::movement::Speed;
+use world::simulation::npc::{self, Npc, NpcDef};
+use world::simulation::player::Players;
+use world::simulation::visibility::OwnedBy;
 use world::{
     ACTION_IDLE, Actor, AreaTag, ClientId, Hitbox, Inventory, Name, Owner, Position, Vitals, Xp,
 };
@@ -27,7 +27,7 @@ const MEASURE: usize = 200;
 
 fn main() {
     area::configure_areas(MAX_AREAS);
-    world::sim::validate();
+    world::simulation::validate();
 
     println!("[bench] finding the highest A sustained within the {BUDGET_MS:.0}ms budget...");
 
@@ -166,7 +166,7 @@ fn point(areas: usize, warmup: usize, ticks: usize) -> Point {
 }
 
 fn build_world(area: &Area, npc: Id<NpcDef>) -> (App, Vec<(ClientId, Entity)>) {
-    let mut app = world::sim::server_app(area.id);
+    let mut app = world::simulation::server_app(area.id);
     app.finish();
     app.cleanup();
     app.world_mut()

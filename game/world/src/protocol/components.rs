@@ -1,12 +1,7 @@
-pub mod channels;
-pub mod query;
-pub mod session;
+//! The replicated world state: the components the host simulates and the client renders, plus the
+//! small accessors that read and mutate them.
 
-use bevy_app::App;
-use bevy_ecs::entity::MapEntities;
-use bevy_ecs::message::Message;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::content::actors::ActorModel;
@@ -16,28 +11,6 @@ use crate::core::math::{Pos, Size};
 use crate::core::table::Id;
 use crate::core::tiling::Tiles;
 use crate::core::time::PlaybackRate;
-
-pub fn protocol(app: &mut App) {
-    app.replicate::<Position>()
-        .replicate::<Actor>()
-        .replicate::<Hitbox>()
-        .replicate::<Vitals>()
-        .replicate::<AreaTag>()
-        .replicate::<Owner>()
-        .replicate::<Name>()
-        .replicate::<Spectate>()
-        .replicate::<Xp>()
-        .replicate::<Inventory>()
-        .add_client_message::<JoinRequest>(Channel::Ordered)
-        .add_client_message::<RespawnRequest>(Channel::Ordered)
-        .add_client_message::<MoveRequest>(Channel::Ordered)
-        .add_client_message::<MoveToPortal>(Channel::Ordered)
-        .add_mapped_client_message::<AttackRequest>(Channel::Ordered)
-        .add_client_message::<UseItemRequest>(Channel::Ordered)
-        .add_client_message::<SpectateRequest>(Channel::Ordered)
-        .add_server_message::<Welcome>(Channel::Ordered)
-        .add_mapped_server_message::<ItemConsumed>(Channel::Ordered);
-}
 
 #[derive(
     Component,
@@ -158,51 +131,6 @@ impl Xp {
     pub fn gain(&mut self, amount: u32) {
         self.amount += amount;
     }
-}
-
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct JoinRequest;
-
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct RespawnRequest;
-
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct MoveRequest {
-    pub pos: Pos<Tiles>,
-}
-
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct MoveToPortal {
-    pub pos: Pos<Tiles>,
-    pub portal: u32,
-}
-
-#[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
-pub struct AttackRequest {
-    #[entities]
-    pub target: Entity,
-}
-
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct UseItemRequest {
-    pub slot: u32,
-}
-
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct SpectateRequest {
-    pub watch: Option<ClientId>,
-}
-
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
-pub struct Welcome {
-    pub id: ClientId,
-}
-
-#[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
-pub struct ItemConsumed {
-    pub item: Id<ItemDef>,
-    #[entities]
-    pub actor: Entity,
 }
 
 pub fn rgba_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Rgba, D::Error> {

@@ -4,7 +4,7 @@ pub mod core;
 pub mod protocol;
 
 #[cfg(feature = "host")]
-pub mod sim;
+pub mod simulation;
 
 pub use bevy_ecs::entity::Entity;
 pub use bevy_ecs::query::With;

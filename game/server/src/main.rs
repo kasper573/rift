@@ -24,7 +24,7 @@ use renet2_netcode::{
 use world::content::area::{self, AreaDef};
 use world::core::table::Id;
 use world::protocol::channels::RenetChannelsExt;
-use world::sim::transition;
+use world::simulation::transition;
 use world::{ClientId, Identity, TICK_HZ};
 
 service::heap_profiling!();
@@ -55,7 +55,7 @@ struct Config {
 }
 
 fn main() {
-    world::sim::validate();
+    world::simulation::validate();
     let config: Config = envy::prefixed("RIFT_GAME_SERVER_")
         .from_env()
         .expect("RIFT_GAME_SERVER_* environment");
@@ -319,7 +319,7 @@ struct Conn {
 struct Wire(u64);
 
 fn build_world(area: Id<AreaDef>) -> App {
-    let mut app = world::sim::server_app(area);
+    let mut app = world::simulation::server_app(area);
     app.finish();
     app.cleanup();
     app.world_mut()

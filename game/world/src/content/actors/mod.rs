@@ -1,8 +1,14 @@
+//! Actor models: a sprite sheet's per-direction animation strips, hitbox, and sound cues, with the
+//! runtime that samples a frame, attack timing, and step/apex cues. Loading from a Tiled `.tsx`
+//! tileset lives in [`load`].
+
+pub mod load;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 use serde::Deserialize;
-use tiled::{Frame, PropertyValue, TileId};
+use tiled::{Frame, TileId};
 
 use crate::core::assets;
 use crate::core::math::{Pos, Rect, Size, WorldPx};
@@ -153,7 +159,7 @@ pub fn models() -> &'static [ActorModel] {
         let mut all: Vec<ActorModel> = assets::list(assets::ACTORS)
             .iter()
             .filter(|path| path.ends_with(".tsx"))
-            .map(|path| load(assets::stem(path)))
+            .map(|path| load::load(assets::stem(path)))
             .collect();
         all.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         all
@@ -163,71 +169,6 @@ pub fn models() -> &'static [ActorModel] {
 const IDLE: &str = "idle";
 const ATTACK: &str = "attack";
 const DEATH: &str = "death";
-
-fn load(name: &str) -> ActorModel {
-    let tileset = tiled::Loader::with_reader(assets::tiled_reader)
-        .load_tsx_tileset(format!("{}/{name}.tsx", assets::ACTORS))
-        .unwrap_or_else(|error| panic!("actor model {name}: {error}"));
-    let source = tileset
-        .image
-        .as_ref()
-        .and_then(|image| image.source.file_name()?.to_str())
-        .unwrap_or_else(|| panic!("actor model {name} declares no sheet image"));
-    let sheet = assets::find(assets::ACTORS, source)
-        .unwrap_or_else(|| panic!("actor model {name} has no sheet {source}"));
-
-    let mut strips: HashMap<String, [Vec<Frame>; 8]> = HashMap::new();
-    let mut sounds = HashMap::new();
-    let mut steps = HashSet::new();
-    let mut apexes = HashSet::new();
-    for (id, tile) in tileset.tiles() {
-        if let Some(PropertyValue::StringValue(sfx)) = tile.properties.get("sfx") {
-            sounds.insert(id, SfxId(sfx.clone()));
-        }
-        if let Some(PropertyValue::BoolValue(true)) = tile.properties.get("step") {
-            steps.insert(id);
-        }
-        if let Some(PropertyValue::BoolValue(true)) = tile.properties.get("apex") {
-            apexes.insert(id);
-        }
-        if let Some(PropertyValue::StringValue(action)) = tile.properties.get("action") {
-            let dir = match tile.properties.get("dir") {
-                Some(PropertyValue::IntValue(dir)) if (0..8).contains(dir) => *dir as usize,
-                _ => panic!("actor model {name}: '{action}' tile {id} needs a dir in 0..8"),
-            };
-            let strip = tile
-                .animation
-                .clone()
-                .filter(|frames| !frames.is_empty())
-                .unwrap_or_else(|| panic!("actor model {name}: '{action}' dir {dir} is empty"));
-            strips.entry(action.clone()).or_default()[dir] = strip;
-        }
-    }
-    for (action, dirs) in &strips {
-        if dirs.iter().any(Vec::is_empty) {
-            panic!("actor model {name}: action '{action}' is missing a direction strip");
-        }
-    }
-    if !strips.contains_key(IDLE) {
-        panic!("actor model {name} must declare an idle action");
-    }
-
-    let dimension = |key: &str| match tileset.properties.get(key) {
-        Some(PropertyValue::FloatValue(value)) => *value,
-        _ => panic!("actor model {name} needs a float '{key}' tileset property"),
-    };
-    ActorModel {
-        name: name.to_owned(),
-        sheet,
-        frame: Size::new(tileset.tile_width as f32, tileset.tile_height as f32),
-        columns: tileset.columns.max(1),
-        hitbox: Size::new(dimension("hitbox_width"), dimension("hitbox_height")),
-        strips,
-        sounds,
-        steps,
-        apexes,
-    }
-}
 
 fn dir_slot(dir: u8) -> usize {
     if dir > 7 { 0 } else { dir as usize }

@@ -1,32 +1,34 @@
+//! The in-game HUD: draggable, dockable panes (a character readout, inventory, and settings) built on
+//! the `ui` widget toolkit, their layout persisted to [`settings`]. Each pane's content lives in its
+//! own module ([`character`], [`inventory`]); [`death`] overlays the respawn prompt.
+
+pub mod character;
 pub mod connection;
+pub mod death;
 pub mod fps;
+pub mod inventory;
 pub mod scenes;
 pub mod settings;
 
 use bevy::prelude::*;
-use bevy::scene::EntityScene;
 use serde::{Deserialize, Serialize};
 use ui::button::intent as button_intent;
 use ui::{
-    Activate, Align, ButtonSize, DragHandle, DragRoot, Geom, OnSettle, OnTap, Side, SnapGrid,
-    Widget, Window, button_styled, text_colored, tooltip, tooltip_content, widget, window,
+    Activate, ButtonSize, DragHandle, DragRoot, Geom, OnSettle, OnTap, SnapGrid, Widget, Window,
+    button_styled, text_colored, widget, window,
 };
 
 use crate::component;
-use world::protocol::session;
-use world::protocol::{Inventory, Name, Vitals, Xp};
-
+use crate::hud::character::CharacterText;
+use crate::hud::inventory::InventoryGrid;
 use crate::hud::settings::{Placement, ScreenPx, ScreenVec, UserSettings};
 
 const WIDGET: ScreenPx = ScreenPx(48.0);
-const SLOT: ScreenPx = ScreenPx(36.0);
 const SCREEN_W: f32 = 1152.0;
 const WINDOW_SIZE: Vec2 = Vec2::new(400.0, 200.0);
 
 const PANEL_BG: Color = Color::srgb(0.1, 0.1, 0.1);
-const TITLE_BG: Color = Color::srgb(0.18, 0.18, 0.18);
 const BORDER: Color = Color::srgb(0.31, 0.31, 0.31);
-const TOOLTIP_BG: Color = Color::BLACK;
 
 pub struct HudPlugin;
 
@@ -41,11 +43,11 @@ impl Plugin for HudPlugin {
                 (
                     toggle_keys,
                     rebuild_panes,
-                    sync_character,
-                    sync_inventory,
+                    character::sync_character,
+                    inventory::sync_inventory,
                     sync_snapping,
                     sync_snap_grid,
-                    sync_death_banner,
+                    death::sync_death_banner,
                 )
                     .run_if(in_state(crate::GameScene::Playing)),
             );
@@ -122,26 +124,7 @@ struct PaneView {
 }
 
 #[derive(Component, Default, Clone)]
-struct CharacterText;
-
-#[derive(Component, Default, Clone)]
-struct InventoryGrid;
-
-#[derive(Component, Default, Clone)]
-struct Cell {
-    kind: u64,
-    slot: u32,
-}
-
-/// A reconciled child's identity within its list (see `reconcile_children`).
-#[derive(Component)]
-struct Keyed(u64);
-
-#[derive(Component, Default, Clone)]
 struct SnappingButton;
-
-#[derive(Component, Default, Clone)]
-struct DeathBanner;
 
 fn spawn_hud(mut commands: Commands, settings: Res<Settings>, assets: Res<AssetServer>) {
     let mut panels: Vec<Box<dyn Scene>> = vec![Box::new(character_panel(&settings))];
@@ -268,140 +251,6 @@ fn close_pane(world: &mut World, pane: Pane) {
     world.resource_mut::<Open>().0.remove(&pane);
 }
 
-fn tooltip_label(text: impl Into<String>) -> impl Scene {
-    bsn! {
-        Node { padding: {UiRect::axes(Val::Px(6.0), Val::Px(3.0))} }
-        BackgroundColor({TOOLTIP_BG})
-        Pickable { should_block_lower: false, is_hoverable: false }
-        Children [ {EntityScene(text_colored(text.into(), Color::WHITE))} ]
-    }
-}
-
-fn slot(cell: &CellData) -> impl Scene {
-    bsn! {
-        Node {
-            width: Val::Px({SLOT.0}),
-            height: Val::Px({SLOT.0}),
-            margin: {UiRect::all(Val::Px(1.0))},
-        }
-        BackgroundColor({TITLE_BG})
-        {tooltip(false)}
-        Cell { kind: {cell.kind}, slot: {cell.slot} }
-        on(|click: On<Pointer<Click>>, cells: Query<&Cell>, mut commands: Commands| {
-            if let Ok(cell) = cells.get(click.entity) {
-                let slot = cell.slot;
-                commands.queue(move |world: &mut World| session::use_item(world, slot));
-            }
-        })
-        Children [
-            (
-                Node { width: Val::Px(32.0), height: Val::Px(32.0) }
-                component(ImageNode::new(cell.icon.clone()))
-                Pickable { should_block_lower: false, is_hoverable: false }
-            ),
-            (
-                {tooltip_content(Side::Bottom, Align::Start, 0.0)}
-                Children [ {EntityScene(tooltip_label(cell.name.clone()))} ]
-            ),
-        ]
-    }
-}
-
-struct CellData {
-    icon: Handle<Image>,
-    name: String,
-    kind: u64,
-    slot: u32,
-}
-
-fn sync_inventory(world: &mut World) {
-    let cells = inventory_cells(world);
-    let mut grids = world.query_filtered::<Entity, With<InventoryGrid>>();
-    let Some(grid) = grids.iter(world).next() else {
-        return;
-    };
-    let keys: Vec<u64> = cells
-        .iter()
-        .map(|cell| (cell.slot as u64) << 32 | cell.kind)
-        .collect();
-    reconcile_children(world, grid, &keys, |index| {
-        Box::new(slot(&cells[index])) as Box<dyn Scene>
-    });
-}
-
-/// Keeps `container`'s keyed children equal to `keys`: when the live keys differ (in value or order)
-/// the keyed children are despawned and rebuilt from `build`, in order. The rendered list is re-derived
-/// from `keys` whenever they change, so it can't go stale, duplicate, or fall out of order — dynamic
-/// lists stay correct here instead of via a hand-written diff at each call site.
-fn reconcile_children(
-    world: &mut World,
-    container: Entity,
-    keys: &[u64],
-    build: impl Fn(usize) -> Box<dyn Scene>,
-) {
-    let current: Vec<(Entity, u64)> = world
-        .get::<Children>(container)
-        .map(|children| {
-            children
-                .iter()
-                .filter_map(|child| world.get::<Keyed>(child).map(|keyed| (child, keyed.0)))
-                .collect()
-        })
-        .unwrap_or_default();
-    if current.iter().map(|(_, key)| *key).eq(keys.iter().copied()) {
-        return;
-    }
-    for (entity, _) in current {
-        world.entity_mut(entity).despawn();
-    }
-    for (index, &key) in keys.iter().enumerate() {
-        if let Ok(mut spawned) = world.spawn_scene(build(index)) {
-            spawned.insert(Keyed(key));
-            let child = spawned.id();
-            world.entity_mut(container).add_child(child);
-        }
-    }
-}
-
-fn inventory_cells(world: &World) -> Vec<CellData> {
-    let items = session::me(world)
-        .and_then(|me| me.get::<Inventory>())
-        .map_or_else(Vec::new, |inventory| inventory.items.clone());
-    let assets = world.resource::<AssetServer>();
-    items
-        .iter()
-        .enumerate()
-        .map(|(slot, item)| {
-            let def = item.get();
-            CellData {
-                icon: assets.load(def.icon.0.clone()),
-                name: def.display_name.clone(),
-                kind: item.index() as u64,
-                slot: slot as u32,
-            }
-        })
-        .collect()
-}
-
-fn sync_character(world: &mut World) {
-    let text = character_text(world);
-    let mut query = world.query_filtered::<&mut Text, With<CharacterText>>();
-    for mut node in query.iter_mut(world) {
-        node.0 = text.clone();
-    }
-}
-
-fn character_text(world: &World) -> String {
-    session::me(world).map_or_else(String::new, |me| {
-        let (health, max) = me.get::<Vitals>().map_or((0.0, 0.0), |v| (v.health, v.max));
-        let name = me
-            .get::<Name>()
-            .map_or_else(String::new, |n| n.name.clone());
-        let xp = me.get::<Xp>().map_or(0, |x| x.amount);
-        format!("{name}\n{health:.0} / {max:.0}\nxp {xp}")
-    })
-}
-
 fn sync_snapping(
     settings: Res<Settings>,
     buttons: Query<&Children, With<SnappingButton>>,
@@ -418,45 +267,6 @@ fn sync_snapping(
                 text.0 = label.to_owned();
             }
         }
-    }
-}
-
-fn sync_death_banner(world: &mut World) {
-    let dead = session::is_dead(world);
-    let banner = world
-        .query_filtered::<Entity, With<DeathBanner>>()
-        .iter(world)
-        .next();
-    match (dead, banner) {
-        (true, None) => {
-            if let Some(hud) = world
-                .query_filtered::<Entity, With<Hud>>()
-                .iter(world)
-                .next()
-                && let Ok(spawned) = world.spawn_scene(death_banner())
-            {
-                let banner = spawned.id();
-                world.entity_mut(hud).add_child(banner);
-            }
-        }
-        (false, Some(banner)) => world.entity_mut(banner).despawn(),
-        _ => {}
-    }
-}
-
-fn death_banner() -> impl Scene {
-    bsn! {
-        DeathBanner
-        Node {
-            position_type: PositionType::Absolute,
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-        }
-        GlobalZIndex({50})
-        Pickable { should_block_lower: false, is_hoverable: false }
-        Children [ {EntityScene(text_colored("You died! Press any key to respawn", Color::WHITE))} ]
     }
 }
 
