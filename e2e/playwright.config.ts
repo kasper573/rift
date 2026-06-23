@@ -21,7 +21,9 @@ const chromiumArgs = [
 
 const browsers = {
   chrome: { browserName: "chromium", channel: "chrome", launchOptions: { args: chromiumArgs } },
-  edge: { browserName: "chromium", channel: "msedge", launchOptions: { args: chromiumArgs } },
+  // Edge is the same engine as Chrome (Chromium) — off for now to save a CI project. Re-add for
+  // Edge-channel-specific coverage.
+  // edge: { browserName: "chromium", channel: "msedge", launchOptions: { args: chromiumArgs } },
   // Headed: Firefox/WebKit can't do WebGL headless on Linux, so they run software WebGL under xvfb.
   firefox: {
     browserName: "firefox",

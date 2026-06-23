@@ -2,7 +2,7 @@
 
 End-to-end tests that drive the deployed stack through a real browser, register an account, and
 assert on the pixels the game renders. Written in [Playwright](https://playwright.dev) so the same
-tests run across Chrome, Firefox, Safari (WebKit), and Edge — locally and in CI.
+tests run across Chrome, Firefox, and Safari (WebKit) — locally and in CI.
 
 ## Running
 
@@ -15,8 +15,9 @@ Locally this runs one combination — **chrome at desktop size, headless** — f
 Google Chrome; the stack runs on `rift.lan`, which Chrome maps to loopback via a launch flag, so
 there's no DNS or `/etc/hosts` setup.
 
-CI sets `E2E_ALL_BROWSERS=1` to fan out across every browser (chrome/edge/firefox/safari) at desktop
-size. (A mobile-portrait resolution is wired up but commented out in the config for now.)
+CI sets `E2E_ALL_BROWSERS=1` to fan out across every browser (chrome/firefox/safari) at desktop size.
+(Edge — same engine as Chrome — and a mobile-portrait resolution are wired up but commented out for
+now.)
 
 ## The tests
 
@@ -39,13 +40,14 @@ on screen, no mouse timing.
 
 The game is WebGL2, and headless WebGL on Linux differs by engine:
 
-- **Chrome / Edge** render headless with SwiftShader (the launch flags request it explicitly).
+- **Chrome** renders headless with SwiftShader (the launch flags request it explicitly).
 - **Firefox / WebKit** can't do WebGL headless, so they run **headed under a virtual display**
   (`xvfb-run`) with Mesa's software GL. An all-browser run is wrapped in `xvfb-run` (the Justfile does
   this when `E2E_ALL_BROWSERS=1`).
 
 The suite runs at `workers: '50%'`, so it parallelizes with the runner's cores; `LP_NUM_THREADS=2`
 (set in `just e2e-run`) caps each headed browser's render threads so parallel workers don't thrash.
-Software-rendered WebGL is CPU-bound and the branch wasm is unoptimized, so the slow engines (Firefox,
-WebKit) need real cores per worker — the standard 4-core GitHub runner is not enough for the full
-matrix; run it on a runner with plenty of cores and memory bandwidth.
+Software-rendered WebGL is CPU-bound, so the slow engines (Firefox, WebKit) need real cores per
+worker. Bringing up only the game-path services (not the observability stack) leaves them that
+headroom, so the suite runs green on the standard GitHub runner; a bigger runner lets `workers: '50%'`
+parallelize further for speed.

@@ -53,4 +53,4 @@ runs:
       working-directory: e2e
       run: |
         npm ci
-        npx playwright install --with-deps chrome msedge firefox webkit
+        npx playwright install --with-deps chrome firefox webkit
