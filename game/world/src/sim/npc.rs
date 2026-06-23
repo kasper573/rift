@@ -10,17 +10,18 @@ use super::Character;
 use super::combat::{AttackTarget, Attackers, Stats};
 use super::movement::{MoveTarget, Path, Speed, forget};
 use super::player::Players;
-use crate::actors::ActorModel;
-use crate::area::{self, AreaDef};
-use crate::math::{Direction, Pos, Rng};
+use crate::content::actors::ActorModel;
+use crate::content::area::{self, AreaDef};
+use crate::core::math::{Direction, Pos, Rng};
+use crate::core::table;
+use crate::core::table::{Content, Id};
+use crate::core::tiling::{TilePos, Tiles, TilesPerSec};
+use crate::core::time::{Millis, PlaybackRate, Seconds};
+use crate::protocol;
 use crate::protocol::{
     ACTION_IDLE, Actor, AreaTag, Hitbox, Name, Position, Rgba, Vitals, is_dead, position,
     set_action,
 };
-use crate::table::{Content, Id};
-use crate::tiling::{TilePos, Tiles, TilesPerSec};
-use crate::time::{Millis, PlaybackRate, Seconds};
-use crate::{protocol, table};
 
 const FILE: &str = "npc_table.json";
 const SPAWN_FILE: &str = "spawn_table.json";

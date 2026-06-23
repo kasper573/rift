@@ -11,8 +11,8 @@ pub use walk::WalkGesture;
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
 use enum_dispatch::enum_dispatch;
-use world::math::Pos;
-use world::tiling::Tiles;
+use world::core::math::Pos;
+use world::core::tiling::Tiles;
 
 use crate::GameScene;
 

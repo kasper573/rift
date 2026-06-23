@@ -1,6 +1,6 @@
 use bevy_ecs::component::Component;
 
-use crate::role::Role;
+use crate::account::role::Role;
 
 #[derive(Component, Clone, Debug, PartialEq, Eq)]
 #[component(immutable)]

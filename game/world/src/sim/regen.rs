@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use bevy_time::Time;
 
+use crate::core::time::Seconds;
 use crate::protocol::{Owner, Vitals};
-use crate::time::Seconds;
 
 const HP_REGEN_INTERVAL: Seconds = Seconds(10.0);
 const HP_REGEN_AMOUNT: f32 = 5.0;

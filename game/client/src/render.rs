@@ -1,3 +1,5 @@
+pub mod screen;
+
 use std::collections::HashMap;
 
 use bevy::camera::visibility::RenderLayers;
@@ -9,16 +11,16 @@ use bevy::shader::ShaderRef;
 use bevy::sprite::Anchor;
 use bevy::sprite_render::{Material2d, Material2dPlugin};
 use bevy::window::PrimaryWindow;
-use world::area::{self, AreaDef, TileRef};
-use world::math::{Pos, Size, WorldPx};
+use world::content::area::{self, AreaDef, TileRef};
+use world::core::math::{Pos, Size, WorldPx};
+use world::core::table::Id;
+use world::core::tiling::{Cell, GridDims, TileSize, Tiles};
+use world::core::time::Seconds;
+use world::protocol::session::{self, MyClient};
 use world::protocol::{Actor, AreaTag, Owner, Position, Rgba, Vitals, action_name};
-use world::session::{self, MyClient};
-use world::table::Id;
-use world::tiling::{Cell, GridDims, TileSize, Tiles};
-use world::time::Seconds;
 
-use crate::gestures::ActiveTileHighlight;
-use crate::screen::{ToScreen, ToTile};
+use crate::input::gestures::ActiveTileHighlight;
+use crate::render::screen::{ToScreen, ToTile};
 
 pub const TILE: WorldPx = WorldPx(16.0);
 // The fixed zoom: every tile is drawn this many logical pixels across on every device, so the world
@@ -577,7 +579,7 @@ fn tile_sprite(assets: &AssetServer, sprite: &area::TileSprite, size: Vec2) -> S
     }
 }
 
-fn atlas_rect(region: world::math::Rect<WorldPx>) -> Rect {
+fn atlas_rect(region: world::core::math::Rect<WorldPx>) -> Rect {
     Rect::new(
         region.min().x,
         region.min().y,

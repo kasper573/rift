@@ -13,11 +13,11 @@ use bevy_replicon::shared::replication::registry::ReplicationRegistry;
 
 use super::player::Players;
 use super::spectate::Spectators;
-use crate::area::AreaDef;
-use crate::math::Pos;
+use crate::content::area::AreaDef;
+use crate::core::math::Pos;
+use crate::core::table::Id;
+use crate::core::tiling::{TilePos, Tiles};
 use crate::protocol::{AreaTag, ClientId, Inventory, Position, Spectate, position};
-use crate::table::Id;
-use crate::tiling::{TilePos, Tiles};
 
 pub const VIEW_DISTANCE: Tiles = Tiles(24.0);
 

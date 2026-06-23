@@ -21,10 +21,10 @@ use renet2_netcode::{
     ConnectToken, NETCODE_KEY_BYTES, NetcodeServerTransport, ServerAuthentication,
     ServerSetupConfig, WebSocketAcceptor, WebSocketServer, WebSocketServerConfig,
 };
-use world::area::{self, AreaDef};
+use world::content::area::{self, AreaDef};
+use world::core::table::Id;
+use world::protocol::channels::RenetChannelsExt;
 use world::sim::transition;
-use world::table::Id;
-use world::wire::RenetChannelsExt;
 use world::{ClientId, Identity, TICK_HZ};
 
 service::heap_profiling!();

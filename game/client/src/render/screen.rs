@@ -1,8 +1,8 @@
 //! Projection between tile space and the rendered screen: scale by the tile size and flip the y-axis.
 
 use bevy::math::Vec2;
-use world::math::{Pos, Size};
-use world::tiling::Tiles;
+use world::core::math::{Pos, Size};
+use world::core::tiling::Tiles;
 
 use crate::render::TILE;
 

@@ -1,14 +1,17 @@
+pub mod auth;
+pub mod transport;
+
 use bevy::prelude::*;
 use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
 use bevy_replicon::prelude::RepliconChannels;
 use renet2::{ConnectionConfig, RenetClient};
 use renet2_netcode::{ClientAuthentication, ClientSocket, ConnectToken, NetcodeClientTransport};
-use world::session::ClientSessionPlugin;
-use world::wire::RenetChannelsExt;
+use world::protocol::channels::RenetChannelsExt;
+use world::protocol::session::ClientSessionPlugin;
 
-use crate::auth::Session;
+use crate::net::auth::Session;
+use crate::net::transport::{Client, RepliconRenetClientPlugin, Transport};
 use crate::platform::StartParams;
-use crate::replicon_renet::{Client, RepliconRenetClientPlugin, Transport};
 
 pub struct NetPlugin;
 
@@ -84,7 +87,9 @@ fn connect(world: &mut World, token: &[u8]) {
 }
 
 fn announce(world: &mut World) {
-    if world.get_resource::<Announce>().is_none() || world::session::my_id(world).is_none() {
+    if world.get_resource::<Announce>().is_none()
+        || world::protocol::session::my_id(world).is_none()
+    {
         return;
     }
     let spectate = world.resource::<Announce>().spectate;
@@ -93,9 +98,9 @@ fn announce(world: &mut World) {
         if spectate { "spectate" } else { "join" }
     );
     if spectate {
-        world::session::spectate(world, None);
+        world::protocol::session::spectate(world, None);
     } else {
-        world::session::join(world);
+        world::protocol::session::join(world);
     }
     world.remove_resource::<Announce>();
 }

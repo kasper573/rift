@@ -1,12 +1,12 @@
 use bevy::prelude::*;
-use world::area;
-use world::math::Offset;
+use world::content::area;
+use world::core::math::Offset;
+use world::core::tiling::{self, TilePos};
+use world::protocol::session::MyClient;
 use world::protocol::{Actor, AreaTag, Hitbox, Owner, Position};
-use world::session::MyClient;
-use world::tiling::{self, TilePos};
 
 use crate::GameScene;
-use crate::screen::ToScreen;
+use crate::render::screen::ToScreen;
 
 pub struct DebugPlugin;
 

@@ -2,12 +2,12 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy::window::CursorIcon;
-use world::math::Pos;
-use world::query;
-use world::session;
-use world::tiling::{TilePos, Tiles};
+use world::core::math::Pos;
+use world::core::tiling::{TilePos, Tiles};
+use world::protocol::query;
+use world::protocol::session;
 
-use crate::gestures::{ActiveTileHighlight, Gesture, image_cursor};
+use crate::input::gestures::{ActiveTileHighlight, Gesture, image_cursor};
 use crate::render;
 
 const MOVE_REPEAT: Duration = Duration::from_millis(333);

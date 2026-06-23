@@ -1,3 +1,8 @@
+pub mod connection;
+pub mod fps;
+pub mod scenes;
+pub mod settings;
+
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use serde::{Deserialize, Serialize};
@@ -8,10 +13,10 @@ use ui::{
 };
 
 use crate::component;
+use world::protocol::session;
 use world::protocol::{Inventory, Name, Vitals, Xp};
-use world::session;
 
-use crate::user_settings::{Placement, ScreenPx, ScreenVec, UserSettings};
+use crate::hud::settings::{Placement, ScreenPx, ScreenVec, UserSettings};
 
 const WIDGET: ScreenPx = ScreenPx(48.0);
 const SLOT: ScreenPx = ScreenPx(36.0);

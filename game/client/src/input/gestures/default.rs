@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::window::CursorIcon;
 
-use crate::gestures::{Gesture, image_cursor};
+use crate::input::gestures::{Gesture, image_cursor};
 
 /// The catch-all gesture: it claims any press the more specific gestures pass on, but does nothing with
 /// it. It exists so the pointer always has a cursor (the idle one) and a press always has an owner.

@@ -1,13 +1,13 @@
 use std::sync::OnceLock;
 
-use crate::actors::SfxId;
+use crate::content::actors::SfxId;
 use serde::Deserialize;
 
-use crate::actors;
-use crate::area;
-use crate::assets;
-use crate::items;
-use crate::table;
+use crate::content::actors;
+use crate::content::area;
+use crate::content::items;
+use crate::core::assets;
+use crate::core::table;
 
 const FILE: &str = "sfx_table.json";
 

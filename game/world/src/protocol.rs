@@ -1,3 +1,7 @@
+pub mod channels;
+pub mod query;
+pub mod session;
+
 use bevy_app::App;
 use bevy_ecs::entity::MapEntities;
 use bevy_ecs::message::Message;
@@ -5,13 +9,13 @@ use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::actors::ActorModel;
-use crate::area::AreaDef;
-use crate::items::ItemDef;
-use crate::math::{Pos, Size};
-use crate::table::Id;
-use crate::tiling::Tiles;
-use crate::time::PlaybackRate;
+use crate::content::actors::ActorModel;
+use crate::content::area::AreaDef;
+use crate::content::items::ItemDef;
+use crate::core::math::{Pos, Size};
+use crate::core::table::Id;
+use crate::core::tiling::Tiles;
+use crate::core::time::PlaybackRate;
 
 pub fn protocol(app: &mut App) {
     app.replicate::<Position>()

@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy::window::{CursorIcon, SystemCursorIcon};
 use ui::ResizeHandle;
 
-use crate::gestures::Gesture;
+use crate::input::gestures::Gesture;
 
 /// Claims a press that lands on the HUD so the world ignores it; bevy's picking drives the actual drag,
 /// so there is nothing to do once it is claimed. Its cursor marks the hovered surface as draggable, or

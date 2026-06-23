@@ -4,15 +4,15 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Deserializer};
 use tiled::{LayerType, PropertyValue};
 
-use crate::actors::SfxId;
-use crate::assets;
-use crate::math::{Offset, Pos, Rect, Size, WorldPx};
-use crate::nav;
-use crate::table::{self, Content, Id};
-use crate::tiling::{
+use crate::content::actors::SfxId;
+use crate::core::assets;
+use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
+use crate::core::nav;
+use crate::core::table::{self, Content, Id};
+use crate::core::tiling::{
     self, Cell, CellPos, GridDims, GridSize, PixelsPerTile, TileRect, TileSize, Tiles,
 };
-use crate::time::{Millis, Seconds};
+use crate::core::time::{Millis, Seconds};
 
 const FILE: &str = "area_table.json";
 

@@ -15,9 +15,9 @@ pub mod visibility;
 use bevy_ecs::prelude::{Bundle, Resource};
 use bevy_replicon::prelude::Replicated;
 
-use crate::area::AreaDef;
+use crate::content::area::AreaDef;
+use crate::core::table::Id;
 use crate::protocol::{Actor, AreaTag, Hitbox, Name, Position, Vitals};
-use crate::table::Id;
 use combat::Stats;
 use movement::Speed;
 
@@ -39,13 +39,13 @@ pub struct Character {
 }
 
 pub fn validate() {
-    crate::actors::models();
-    crate::area::areas();
-    crate::items::items();
+    crate::content::actors::models();
+    crate::content::area::areas();
+    crate::content::items::items();
     npc::defs();
     npc::spawns();
     rewards::all();
-    crate::sfx::sfx_table();
+    crate::content::sfx::sfx_table();
 }
 
 pub fn server_app(area: Id<AreaDef>) -> bevy_app::App {

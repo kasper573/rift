@@ -1,7 +1,7 @@
 use bevy_ecs::message::Messages;
 use bevy_replicon::prelude::{FromClient, SendTargets, ToClients};
 
-use crate::items::ItemKind;
+use crate::content::items::ItemKind;
 use crate::protocol::{Inventory, ItemConsumed, UseItemRequest, Vitals, is_dead};
 
 use super::player::sender_player;

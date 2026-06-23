@@ -2,11 +2,11 @@
 
 use bevy_ecs::prelude::*;
 
-use crate::area::AreaDef;
-use crate::math::Pos;
+use crate::content::area::AreaDef;
+use crate::core::math::Pos;
+use crate::core::table::Id;
+use crate::core::tiling::Tiles;
 use crate::protocol::{ClientId, Inventory, Name, Owner, Vitals, Xp};
-use crate::table::Id;
-use crate::tiling::Tiles;
 
 /// Not replicated: it never leaves the server and the entity is gone within the tick.
 #[derive(Component, Clone, Copy)]

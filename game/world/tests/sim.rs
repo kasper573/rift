@@ -5,5 +5,5 @@
 #[test]
 fn assembles_the_authoritative_app() {
     world::sim::validate();
-    let _app = world::sim::server_app(world::area::spawn_zone());
+    let _app = world::sim::server_app(world::content::area::spawn_zone());
 }

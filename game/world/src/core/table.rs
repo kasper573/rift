@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::assets;
+use crate::core::assets;
 
 pub trait Content: Sized + 'static {
     fn table() -> &'static [Self];

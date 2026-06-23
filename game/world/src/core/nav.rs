@@ -1,7 +1,7 @@
 //! Pathfinding with fixed-point costs for determinism.
 
-use crate::math::Pos;
-use crate::tiling::{self, Cell, CellPos, GridSize, TilePos, Tiles};
+use crate::core::math::Pos;
+use crate::core::tiling::{self, Cell, CellPos, GridSize, TilePos, Tiles};
 
 const ORTHOGONAL: u32 = 1000;
 const DIAGONAL: u32 = 1414;

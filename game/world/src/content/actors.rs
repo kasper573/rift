@@ -4,11 +4,11 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 use tiled::{Frame, PropertyValue, TileId};
 
-use crate::assets;
-use crate::math::{Pos, Rect, Size, WorldPx};
-use crate::table::Content;
-use crate::tiling::Tiles;
-use crate::time::{Millis, PlaybackRate, Seconds};
+use crate::core::assets;
+use crate::core::math::{Pos, Rect, Size, WorldPx};
+use crate::core::table::Content;
+use crate::core::tiling::Tiles;
+use crate::core::time::{Millis, PlaybackRate, Seconds};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
 pub struct SfxId(pub String);

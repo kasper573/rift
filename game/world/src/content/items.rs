@@ -2,9 +2,9 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Deserializer};
 
-use crate::actors::SfxId;
-use crate::assets;
-use crate::table::{self, Content};
+use crate::content::actors::SfxId;
+use crate::core::assets;
+use crate::core::table::{self, Content};
 
 const FILE: &str = "item_table.json";
 

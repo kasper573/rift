@@ -1,7 +1,7 @@
 //! `me` resolves the local client's character from its [`Owner`] and reads its components like any
 //! other entity — no bespoke per-field accessors, no special "me" character.
 
-use world::session::{self, MyClient};
+use world::protocol::session::{self, MyClient};
 use world::{ClientId, Owner, Vitals, World};
 
 #[test]

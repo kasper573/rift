@@ -1,11 +1,12 @@
+pub mod gestures;
+
 use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use bevy::window::{CursorMoved, PrimaryWindow};
-use world::session;
+use world::protocol::session;
 
 use crate::GameScene;
-use crate::gestures;
 
 pub struct InputPlugin;
 

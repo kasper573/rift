@@ -7,10 +7,10 @@ use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{FromClient, Replicated};
 
 use super::player::Players;
-use crate::area;
-use crate::identity::Identity;
+use crate::account::identity::Identity;
+use crate::account::role::Role;
+use crate::content::area;
 use crate::protocol::{AreaTag, ClientId, Owner, Position, Spectate, SpectateRequest};
-use crate::role::Role;
 
 #[derive(Resource, Default)]
 pub struct Spectators(pub HashMap<ClientId, Entity>);

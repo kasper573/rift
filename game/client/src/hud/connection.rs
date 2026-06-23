@@ -7,9 +7,9 @@ use bevy_replicon::prelude::ClientState;
 use ui::{Activate, button, text_colored};
 
 use crate::GameScene;
+use crate::hud::scenes::Mode;
+use crate::net::transport::Client;
 use crate::net::{self, PendingSession};
-use crate::replicon_renet::Client;
-use crate::scenes::Mode;
 
 const OVERLAY_BG: Color = Color::srgb(0.07, 0.07, 0.07);
 

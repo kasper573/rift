@@ -4,16 +4,16 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{ConnectedClient, Replicated, ServerState};
 use bevy_state::prelude::NextState;
-use world::area::{self, Area};
-use world::math::{Direction, Pos};
+use world::content::area::{self, Area};
+use world::core::math::{Direction, Pos};
+use world::core::table::Id;
+use world::core::tiling::Tiles;
 use world::sim::Character;
 use world::sim::combat::Stats;
 use world::sim::movement::Speed;
 use world::sim::npc::{self, Npc, NpcDef};
 use world::sim::player::Players;
 use world::sim::visibility::OwnedBy;
-use world::table::Id;
-use world::tiling::Tiles;
 use world::{
     ACTION_IDLE, Actor, AreaTag, ClientId, Hitbox, Inventory, Name, Owner, Position, Vitals, Xp,
 };

@@ -1,10 +1,10 @@
 use bevy_ecs::prelude::*;
 
-use crate::area;
-use crate::math::Pos;
+use crate::content::area;
+use crate::core::math::Pos;
+use crate::core::tiling::{TilePos, Tiles};
+use crate::protocol::session;
 use crate::protocol::{Actor, AreaTag, Hitbox, Position, Vitals};
-use crate::session;
-use crate::tiling::{TilePos, Tiles};
 
 pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
     session::me(world)

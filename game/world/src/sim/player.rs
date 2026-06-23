@@ -11,18 +11,18 @@ use super::combat::Stats;
 use super::movement::{Speed, forget};
 use super::spectate::Spectators;
 use super::visibility::OwnedBy;
-use crate::actors::ActorModel;
-use crate::area::{self, AreaDef};
-use crate::identity::Identity;
-use crate::math::{Direction, Pos};
+use crate::account::identity::Identity;
+use crate::content::actors::ActorModel;
+use crate::content::area::{self, AreaDef};
+use crate::core::math::{Direction, Pos};
+use crate::core::table::Id;
+use crate::core::tiling::{Tiles, TilesPerSec};
+use crate::core::time::{Millis, PlaybackRate};
 use crate::protocol;
 use crate::protocol::{
     ACTION_IDLE, Actor, AreaTag, ClientId, Hitbox, Inventory, JoinRequest, Name, Owner, Position,
     RespawnRequest, Rgba, Vitals, Welcome, Xp, is_dead, set_action,
 };
-use crate::table::Id;
-use crate::tiling::{Tiles, TilesPerSec};
-use crate::time::{Millis, PlaybackRate};
 
 const PLAYER_MAX_HEALTH: f32 = 30.0;
 const PLAYER_SPEED: TilesPerSec = TilesPerSec(Tiles(4.0));

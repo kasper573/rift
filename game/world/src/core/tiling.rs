@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::math::{Offset, Pos, Rect, Size, WorldPx};
-use crate::time::Seconds;
+use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
+use crate::core::time::Seconds;
 
 #[derive(
     Serialize,

@@ -5,15 +5,15 @@ use bevy_time::Time;
 
 use super::movement::{MoveTarget, Path, forget, halt, on_tile};
 use super::player::sender_player;
-use crate::math::Direction;
+use crate::core::math::Direction;
+use crate::core::table::Id;
+use crate::core::tiling::{TilePos, Tiles};
+use crate::core::time::{Millis, PlaybackRate, Seconds};
 use crate::protocol;
 use crate::protocol::{
     ACTION_ATTACK, ACTION_DEAD, Actor, AreaTag, AttackRequest, Vitals, action_name, is_dead,
     position, set_action, set_facing,
 };
-use crate::table::Id;
-use crate::tiling::{TilePos, Tiles};
-use crate::time::{Millis, PlaybackRate, Seconds};
 
 const TILE_DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
 const CHASE_RETARGET_THRESHOLD: Tiles = Tiles(1.5);
@@ -214,7 +214,7 @@ fn stats(world: &World, entity: Entity) -> Stats {
 }
 
 // Manifest the client animates from, so the felt hit and applied hit coincide.
-fn attack_timing(world: &World, entity: Entity, dir: u8) -> crate::actors::Timing {
+fn attack_timing(world: &World, entity: Entity, dir: u8) -> crate::content::actors::Timing {
     let model = world
         .get::<protocol::Actor>(entity)
         .map_or(Id::new(0), |a| a.model);

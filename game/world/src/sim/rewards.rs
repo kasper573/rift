@@ -6,9 +6,9 @@ use serde::{Deserialize, Deserializer};
 
 use super::combat::Died;
 use super::npc::{GameRng, Npc, NpcDef};
-use crate::items::ItemDef;
+use crate::content::items::ItemDef;
+use crate::core::table::{self, Id};
 use crate::protocol::{Inventory, Owner, Xp};
-use crate::table::{self, Id};
 
 const FILE: &str = "reward_table.json";
 

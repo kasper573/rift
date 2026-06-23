@@ -5,15 +5,15 @@ use bevy_time::Time;
 
 use super::combat::AttackTarget;
 use super::player::sender_player;
-use crate::area;
-use crate::math::{Direction, Offset, Pos};
+use crate::content::area;
+use crate::core::math::{Direction, Offset, Pos};
+use crate::core::table::Id;
+use crate::core::tiling::{Cell, CellPos, TilePos, Tiles, TilesPerSec};
+use crate::core::time::Seconds;
 use crate::protocol::{
     ACTION_RUN, ACTION_WALK, AreaTag, MoveRequest, MoveToPortal, Position, is_dead, position,
     set_facing,
 };
-use crate::table::Id;
-use crate::tiling::{Cell, CellPos, TilePos, Tiles, TilesPerSec};
-use crate::time::Seconds;
 
 const RUN_SPEED: TilesPerSec = TilesPerSec(Tiles(2.0));
 
@@ -199,7 +199,7 @@ fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<Cell
     let area = &area::areas()[area_id.index()];
     let at = position(world, entity)?;
     let goal = area.grid.nearest_walkable(goal)?;
-    let mut path = crate::nav::astar(&area.grid, at, goal)?;
+    let mut path = crate::core::nav::astar(&area.grid, at, goal)?;
     if path.len() > 1 {
         path.remove(0);
     }

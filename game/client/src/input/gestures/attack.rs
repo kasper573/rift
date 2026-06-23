@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 use bevy::window::CursorIcon;
-use world::query;
-use world::session;
+use world::protocol::query;
+use world::protocol::session;
 
-use crate::gestures::{Gesture, image_cursor};
+use crate::input::gestures::{Gesture, image_cursor};
 use crate::render;
 
 /// Attack the actor under the cursor.

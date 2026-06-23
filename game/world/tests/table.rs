@@ -3,7 +3,7 @@
 //! so the contract holds for any game's content, not just rift's. The real loaders (and their
 //! serde by-name wiring) are covered by the `assets` and `sim` tests.
 
-use world::table::{Content, Id};
+use world::core::table::{Content, Id};
 
 struct Color {
     name: &'static str,

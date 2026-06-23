@@ -4,22 +4,14 @@ use bevy::prelude::*;
 use world::Role;
 
 pub mod assets;
-pub mod auth;
-pub mod connection;
 pub mod debug;
-pub mod fps;
-pub mod gestures;
 pub mod hud;
 pub mod input;
 pub mod net;
 pub mod platform;
 pub mod render;
-pub mod replicon_renet;
-pub mod scenes;
-pub mod screen;
 pub mod sfx;
 pub mod testing;
-pub mod user_settings;
 
 #[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum GameScene {
@@ -45,7 +37,7 @@ pub fn boot() {
     let session = params
         .access_token
         .as_deref()
-        .map(auth::Session::from_access_token);
+        .map(net::auth::Session::from_access_token);
     let spectator = session
         .as_ref()
         .is_some_and(|session| session.roles.contains(&Role::Spectate));
@@ -80,10 +72,10 @@ pub fn boot() {
             input::InputPlugin,
             debug::DebugPlugin,
             sfx::SfxPlugin,
-            scenes::ScenesPlugin,
-            connection::ConnectionPlugin,
+            hud::scenes::ScenesPlugin,
+            hud::connection::ConnectionPlugin,
             hud::HudPlugin,
-            fps::FpsPlugin,
+            hud::fps::FpsPlugin,
             testing::TestingPlugin,
         ));
     ui::theme::set_theme(ui::themes::dark::THEME);

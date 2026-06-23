@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_kira_audio::prelude::{Audio, AudioControl, AudioSource, Decibels};
-use world::area;
-use world::math::{Pos, Size};
+use world::content::area;
+use world::content::sfx::sfx_table;
+use world::core::math::{Pos, Size};
+use world::core::tiling::{TilePos, Tiles};
+use world::core::time::Seconds;
+use world::protocol::session;
 use world::protocol::{Actor, AreaTag, ItemConsumed, Position, action_name, position};
-use world::session;
-use world::sfx::sfx_table;
-use world::tiling::{TilePos, Tiles};
-use world::time::Seconds;
 
 use crate::GameScene;
 use crate::render::Animator;
