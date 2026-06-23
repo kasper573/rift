@@ -39,6 +39,14 @@ runs:
       uses: actions/setup-node@v4
       with:
         node-version: lts/*
+    # Cache the engines Playwright downloads (Firefox/WebKit, ~180MB) keyed on the lockfile, which
+    # pins their versions; `playwright install` then skips them on a hit. Chrome/Edge are apt channels.
+    - name: Cache Playwright browsers
+      if: runner.os == 'Linux' && inputs.deps == 'all'
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json') }}
     - name: Install the e2e suite and its browsers
       if: runner.os == 'Linux' && inputs.deps == 'all'
       shell: bash

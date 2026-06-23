@@ -26,6 +26,11 @@ jobs:
     env:
       # mold is a native linker; scope it to the host target so the wasm build (rust-lld) ignores it.
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
+      # Cache compilation across runs with sccache (rust-cache keeps the registry + dep .rlibs; sccache
+      # caches the workspace crates' codegen that rust-cache cleans). Incremental off — sccache needs it.
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      CARGO_INCREMENTAL: "0"
       DEPLOY: ${{ github.ref == 'refs/heads/main'  }}
       DOCKER_REGISTRY: ghcr.io
       DOCKER_USERNAME: ${{ github.repository_owner }}
@@ -42,6 +47,7 @@ jobs:
           # main builds optimized and branches don't, so they keep separate caches to avoid rebuilding
           # dependencies at the other's opt-level on every run.
           key: ci-${{ github.ref == 'refs/heads/main' && 'main' || 'branch' }}
+      - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
       - name: Lint and test
         # Unoptimized: lint and unit tests don't ship, so build them fast regardless of branch.
         env:

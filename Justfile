@@ -70,10 +70,13 @@ reset:
 # Build, bring up a fresh stack, and run the Playwright suite (e2e/). FILTER limits which tests run.
 e2e filter="": build wasm e2e-stack-up (e2e-run filter)
 
-# NPCs off so the idle e2e player isn't attacked and a move-click can't land on one as an attack.
+# Only the game-path services (their deps pull in keycloak/postgres). The e2e doesn't exercise
+# observability, and pulling + starting it (grafana, loki, tempo, mimir, ...) is the bulk of the
+# stack's startup. NPCs off so the idle e2e player isn't attacked and a move-click can't hit one.
 [private]
 e2e-stack-up:
-    RIFT_GAME_SERVER_SPAWN_NPCS=false just stack-up
+    docker network inspect rift >/dev/null 2>&1 || docker network create rift
+    RIFT_GAME_SERVER_SPAWN_NPCS=false {{compose}} up -d --build --wait rift-website rift-game-server reverse-proxy keycloak keycloak-healthcheck postgres
 
 e2e-run filter="":
     #!/usr/bin/env bash
