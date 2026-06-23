@@ -1,9 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-import { captureScene, clickWorldTile, register, waitForWorld } from "./helpers/game";
-import { loadReference, resemblance } from "./helpers/image";
-
-const MAP_MATCH = 0.5;
+import { captureScene, clickWorldTile, MAP_MATCH, register, waitForWorld } from "../helpers/game";
+import { loadReference, resemblance } from "../helpers/image";
 
 // The island's warp tile to the forest (assets/maps/island.tmx warp #7); its rect is tiles
 // x[38.5, 39.5] y[25.5, 26.5], so (39, 26) is squarely inside.
@@ -11,10 +9,9 @@ const WARP_TILE = { x: 39, y: 26 };
 
 test("clicking the island warp crosses to the forest", async ({ page }) => {
   await register(page);
-  await waitForWorld(page);
-
   const island = loadReference("island.png");
   const forest = loadReference("forest.png");
+  await waitForWorld(page, island);
 
   const spawn = await captureScene(page);
   expect(resemblance(spawn, island), "the player should start on the island").toBeGreaterThan(

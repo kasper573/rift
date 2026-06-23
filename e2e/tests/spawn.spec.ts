@@ -1,19 +1,17 @@
 import { expect, test } from "@playwright/test";
 
-import { captureScene, register, waitForWorld } from "./helpers/game";
-import { loadReference, resemblance } from "./helpers/image";
-
-// "Basically the same place" as a reference. The matching map scores ~0.83 and the other ~0.03, so
-// 0.5 is a wide margin; the island > forest comparison is the real, never-close discriminator.
-const MAP_MATCH = 0.5;
+import { captureScene, MAP_MATCH, register, waitForWorld } from "../helpers/game";
+import { loadReference, resemblance } from "../helpers/image";
 
 test("a new player spawns into the island scene", async ({ page }) => {
   await register(page);
-  await waitForWorld(page);
+  const island = loadReference("island.png");
+  const forest = loadReference("forest.png");
+  await waitForWorld(page, island);
 
   const scene = await captureScene(page);
-  const onIsland = resemblance(scene, loadReference("island.png"));
-  const onForest = resemblance(scene, loadReference("forest.png"));
+  const onIsland = resemblance(scene, island);
+  const onForest = resemblance(scene, forest);
 
   expect(
     onIsland,

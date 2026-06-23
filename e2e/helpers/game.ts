@@ -1,9 +1,11 @@
 import { expect, type Page } from "@playwright/test";
 
-import { center, decode, greenMarker, sceneFraction, type Image } from "./image";
+import { decode, resemblance, type Image } from "./image";
 
-const SCENE_CELLS = 0.3;
-// Unoptimized software WebGL is slow to bring up a canvas and spawn the player.
+// "Basically the same place" as a reference: the matching map scores ~0.83, the other ~0.03, so 0.5
+// is a wide margin. waitForWorld waits for the spawn map to cross it; the tests assert against it.
+export const MAP_MATCH = 0.5;
+// Unoptimized software WebGL is slow to bring up a canvas and render the first frames.
 const WORLD_TIMEOUT = 120_000;
 
 let counter = 0;
@@ -27,23 +29,16 @@ export async function register(page: Page): Promise<void> {
   await page.getByRole("button", { name: /register/i }).click();
 }
 
-// Waits for the world and the local player's health bar — the click hook can only act once the
-// player exists, so tests wait for both.
-export async function waitForWorld(page: Page): Promise<void> {
+// Waits until the world is on screen — polls until the captured frame resembles the spawn map.
+export async function waitForWorld(page: Page, spawnMap: Image): Promise<void> {
   await canvas(page).waitFor({ state: "visible", timeout: WORLD_TIMEOUT });
   await expect
-    .poll(
-      async () => {
-        const scene = await captureScene(page);
-        return sceneFraction(center(scene)) >= SCENE_CELLS && greenMarker(scene) !== null;
-      },
-      {
-        message: "the world and player never appeared (canvas stayed blank or the player never spawned)",
-        timeout: WORLD_TIMEOUT,
-        intervals: [500],
-      },
-    )
-    .toBe(true);
+    .poll(async () => resemblance(await captureScene(page), spawnMap), {
+      message: "the world never rendered (the canvas stayed blank)",
+      timeout: WORLD_TIMEOUT,
+      intervals: [500],
+    })
+    .toBeGreaterThanOrEqual(MAP_MATCH);
 }
 
 export async function captureScene(page: Page): Promise<Image> {
