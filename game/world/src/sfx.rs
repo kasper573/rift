@@ -1,13 +1,15 @@
+//! Sound: the [`SfxId`] that actor models, items, and area tiles reference, and the [`SfxDef`]
+//! catalog the client plays them from.
+
 use std::sync::OnceLock;
 
-use crate::content::actors::SfxId;
 use serde::Deserialize;
 
-use crate::content::actors;
-use crate::content::area;
-use crate::content::items;
-use crate::core::assets;
-use crate::core::table;
+use crate::core::{assets, table};
+use crate::{actor, area, items};
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
+pub struct SfxId(pub String);
 
 const FILE: &str = "sfx_table.json";
 
@@ -105,7 +107,7 @@ pub fn sfx_table() -> &'static [SfxDef] {
             }
         }
 
-        for id in actors::models().iter().flat_map(|m| m.sfx_ids()) {
+        for id in actor::models().iter().flat_map(|m| m.sfx_ids()) {
             if !defs.iter().any(|def| def.id == *id) {
                 panic!(
                     "{FILE}: cue '{}' referenced by an actor model but not in sfx table",

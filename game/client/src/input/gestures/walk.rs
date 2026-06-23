@@ -4,8 +4,8 @@ use bevy::prelude::*;
 use bevy::window::CursorIcon;
 use world::core::math::Pos;
 use world::core::tiling::{TilePos, Tiles};
-use world::protocol::query;
-use world::protocol::session;
+use world::player::session;
+use world::{area, combat};
 
 use crate::input::gestures::{ActiveTileHighlight, Gesture, image_cursor};
 use crate::render;
@@ -36,7 +36,7 @@ impl WalkGesture {
     /// crosshair sits. `None` when the cursor is off-map or over a blocked tile.
     pub fn target(&self, world: &mut World) -> Option<Pos<Tiles>> {
         let tile = render::cursor_tile(world)?.snap();
-        query::walkable(world, tile).then_some(tile)
+        area::walkable(world, tile).then_some(tile)
     }
 
     fn repeat(&mut self, world: &mut World) {
@@ -50,11 +50,11 @@ impl WalkGesture {
         let Some(point) = render::cursor_tile(world) else {
             return;
         };
-        if query::enemy_at(world, point).is_some() {
+        if combat::enemy_at(world, point).is_some() {
             return;
         }
         let tile = point.snap();
-        if !query::walkable(world, tile) || self.last_tile == Some(tile) {
+        if !area::walkable(world, tile) || self.last_tile == Some(tile) {
             return;
         }
         session::move_to(world, point);

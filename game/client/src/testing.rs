@@ -11,7 +11,7 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
 use world::core::math::Pos;
 use world::core::tiling::Tiles;
-use world::protocol::session;
+use world::player::session;
 
 use crate::GameScene;
 

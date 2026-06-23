@@ -4,11 +4,11 @@ use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Deserializer};
 
-use super::combat::Died;
-use super::npc::{GameRng, Npc, NpcDef};
-use crate::content::items::ItemDef;
+use crate::combat::Died;
 use crate::core::table::{self, Id};
-use crate::protocol::{Inventory, Owner, Xp};
+use crate::items::{Inventory, ItemDef};
+use crate::npc::{GameRng, Npc, NpcDef};
+use crate::player::{Owner, Xp};
 
 const FILE: &str = "reward_table.json";
 

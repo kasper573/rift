@@ -1,23 +1,105 @@
-//! Actor models: a sprite sheet's per-direction animation strips, hitbox, and sound cues, with the
-//! runtime that samples a frame, attack timing, and step/apex cues. Loading from a Tiled `.tsx`
-//! tileset lives in [`load`].
+//! Actors: the replicated [`Actor`]/[`Hitbox`]/[`Name`] an entity shows in the world, the actions it
+//! can play, and the [`ActorModel`] sprite-sheet catalog that drives its animation, frame timing, and
+//! sound cues. Loading a model from a Tiled `.tsx` tileset lives in [`load`].
 
 pub mod load;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-use serde::Deserialize;
+use bevy_app::App;
+use bevy_ecs::prelude::*;
+use serde::{Deserialize, Deserializer, Serialize};
 use tiled::{Frame, TileId};
 
+#[cfg(feature = "systems")]
+use crate::combat::Vitals;
 use crate::core::assets;
 use crate::core::math::{Pos, Rect, Size, WorldPx};
-use crate::core::table::Content;
+use crate::core::table::{Content, Id};
 use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
+use crate::sfx::SfxId;
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
-pub struct SfxId(pub String);
+pub fn register(app: &mut App) {
+    use bevy_replicon::prelude::*;
+
+    app.replicate::<Actor>()
+        .replicate::<Hitbox>()
+        .replicate::<Name>();
+}
+
+pub const ACTION_IDLE: u8 = 0;
+pub const ACTION_WALK: u8 = 1;
+pub const ACTION_RUN: u8 = 2;
+pub const ACTION_ATTACK: u8 = 3;
+pub const ACTION_DEAD: u8 = 4;
+
+pub fn action_name(action: u8) -> &'static str {
+    match action {
+        ACTION_WALK => "walk",
+        ACTION_RUN => "run",
+        ACTION_ATTACK => "attack",
+        ACTION_DEAD => "death",
+        _ => "idle",
+    }
+}
+
+#[derive(
+    Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default,
+)]
+pub struct Rgba(pub u32);
+
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Actor {
+    pub color: Rgba,
+    pub dir: u8,
+    pub action: u8,
+    pub model: Id<ActorModel>,
+    pub attack_rate: PlaybackRate,
+}
+
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Hitbox {
+    pub size: Size<Tiles>,
+}
+
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Name {
+    pub name: String,
+}
+
+pub fn rgba_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Rgba, D::Error> {
+    let hex = String::deserialize(deserializer)?;
+    hex.strip_prefix('#')
+        .filter(|digits| digits.len() == 8)
+        .and_then(|digits| u32::from_str_radix(digits, 16).ok())
+        .map(Rgba)
+        .ok_or_else(|| serde::de::Error::custom(format!("a color is #rrggbbaa, got '{hex}'")))
+}
+
+pub fn set_action(actor: &mut Mut<Actor>, action: u8) {
+    if actor.action != action {
+        actor.action = action;
+    }
+}
+
+pub fn set_facing(actor: &mut Mut<Actor>, dir: u8, action: u8) {
+    if actor.dir != dir || actor.action != action {
+        actor.dir = dir;
+        actor.action = action;
+    }
+}
+
+/// Each tick, settle every actor back to idle (or dead) so a one-frame action set by a system this
+/// tick wins; movement/combat re-assert walk/run/attack afterwards.
+#[cfg(feature = "systems")]
+pub fn reset(mut actors: Query<(&mut Actor, Option<&Vitals>)>) {
+    for (mut actor, vitals) in &mut actors {
+        let dead = vitals.is_some_and(|v| v.health <= 0.0);
+        set_action(&mut actor, if dead { ACTION_DEAD } else { ACTION_IDLE });
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Timing {

@@ -5,13 +5,14 @@ use bevy_ecs::world::EntityRef;
 use bevy_replicon::prelude::{AuthMethod, ClientState, RepliconPlugins, RepliconSharedPlugin};
 use bevy_state::prelude::OnEnter;
 
-use crate::content::area;
+use super::{ClientId, JoinRequest, Owner, RespawnRequest, Welcome};
+use crate::area::{self, AreaTag};
+use crate::combat::AttackRequest;
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
-use crate::protocol::{
-    self, AreaTag, AttackRequest, ClientId, JoinRequest, MoveRequest, MoveToPortal, Owner,
-    RespawnRequest, SpectateRequest, UseItemRequest, Welcome,
-};
+use crate::items::UseItemRequest;
+use crate::movement::{MoveRequest, MoveToPortal};
+use crate::spectate::SpectateRequest;
 
 pub struct ClientSessionPlugin;
 
@@ -22,7 +23,7 @@ impl Plugin for ClientSessionPlugin {
                 auth_method: AuthMethod::None,
             }),
         );
-        protocol::protocol(app);
+        crate::protocol(app);
         app.init_resource::<MyClient>();
         app.add_systems(Update, record_welcome);
         app.add_systems(OnEnter(ClientState::Disconnected), forget_me);
@@ -46,7 +47,7 @@ pub fn me(world: &World) -> Option<EntityRef<'_>> {
 }
 
 pub fn is_dead(world: &World) -> bool {
-    me(world).is_some_and(|entity| protocol::is_dead(world, entity.id()))
+    me(world).is_some_and(|entity| crate::combat::is_dead(world, entity.id()))
 }
 
 pub fn join(world: &mut World) {

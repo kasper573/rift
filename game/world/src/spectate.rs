@@ -1,20 +1,58 @@
+//! Spectating: the replicated [`Spectate`] anchor that follows a watched player, the request to start
+//! or change who's watched, and the server systems that spawn anchors and keep them on their target.
+
+use bevy_app::App;
+use bevy_ecs::component::Component;
+use bevy_ecs::message::Message;
+use serde::{Deserialize, Serialize};
+
+use crate::player::ClientId;
+
+#[cfg(feature = "systems")]
+use crate::account::identity::Identity;
+#[cfg(feature = "systems")]
+use crate::account::role::Role;
+#[cfg(feature = "systems")]
+use crate::area::{self, AreaTag};
+#[cfg(feature = "systems")]
+use crate::movement::Position;
+#[cfg(feature = "systems")]
+use crate::player::{Owner, Players};
+#[cfg(feature = "systems")]
+use bevy_ecs::lifecycle::Remove;
+#[cfg(feature = "systems")]
+use bevy_ecs::message::Messages;
+#[cfg(feature = "systems")]
+use bevy_ecs::observer::On;
+#[cfg(feature = "systems")]
+use bevy_ecs::prelude::*;
+#[cfg(feature = "systems")]
+use bevy_replicon::prelude::{FromClient, Replicated};
+#[cfg(feature = "systems")]
 use std::collections::HashMap;
 
-use bevy_ecs::lifecycle::Remove;
-use bevy_ecs::message::Messages;
-use bevy_ecs::observer::On;
-use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{FromClient, Replicated};
+pub fn register(app: &mut App) {
+    use bevy_replicon::prelude::*;
 
-use super::player::Players;
-use crate::account::identity::Identity;
-use crate::account::role::Role;
-use crate::content::area;
-use crate::protocol::{AreaTag, ClientId, Owner, Position, Spectate, SpectateRequest};
+    app.replicate::<Spectate>()
+        .add_client_message::<SpectateRequest>(Channel::Ordered);
+}
 
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Spectate {
+    pub watch: Option<ClientId>,
+}
+
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SpectateRequest {
+    pub watch: Option<ClientId>,
+}
+
+#[cfg(feature = "systems")]
 #[derive(Resource, Default)]
 pub struct Spectators(pub HashMap<ClientId, Entity>);
 
+#[cfg(feature = "systems")]
 pub fn requests(world: &mut World) {
     let requests: Vec<FromClient<SpectateRequest>> = world
         .resource_mut::<Messages<FromClient<SpectateRequest>>>()
@@ -42,6 +80,7 @@ pub fn requests(world: &mut World) {
     }
 }
 
+#[cfg(feature = "systems")]
 fn allowed(world: &World, client_entity: Entity, client: ClientId) -> bool {
     let playing = world.resource::<Players>().0.contains_key(&client);
     let entitled = world
@@ -50,8 +89,9 @@ fn allowed(world: &World, client_entity: Entity, client: ClientId) -> bool {
     !playing && entitled
 }
 
+#[cfg(feature = "systems")]
 fn spawn_anchor(world: &mut World, client: ClientId, watch: Option<ClientId>) {
-    let zone = world.resource::<super::HomeArea>().0;
+    let zone = world.resource::<crate::WorldArea>().0;
     let spawn = area::areas()[zone.index()].spawn;
     let entity = world
         .spawn((
@@ -65,6 +105,7 @@ fn spawn_anchor(world: &mut World, client: ClientId, watch: Option<ClientId>) {
     world.resource_mut::<Spectators>().0.insert(client, entity);
 }
 
+#[cfg(feature = "systems")]
 pub fn follow(world: &mut World) {
     let anchors: Vec<Entity> = world.resource::<Spectators>().0.values().copied().collect();
     for anchor in anchors {
@@ -93,6 +134,7 @@ pub fn follow(world: &mut World) {
     }
 }
 
+#[cfg(feature = "systems")]
 pub fn client_left(
     remove: On<Remove, ClientId>,
     clients: Query<(Entity, &ClientId)>,

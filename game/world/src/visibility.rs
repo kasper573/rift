@@ -11,13 +11,14 @@ use bevy_replicon::server::visibility::filters_mask::FilterBit;
 use bevy_replicon::server::visibility::registry::FilterRegistry;
 use bevy_replicon::shared::replication::registry::ReplicationRegistry;
 
-use super::player::Players;
-use super::spectate::Spectators;
-use crate::content::area::AreaDef;
+use crate::area::{AreaDef, AreaTag};
 use crate::core::math::Pos;
 use crate::core::table::Id;
 use crate::core::tiling::{TilePos, Tiles};
-use crate::protocol::{AreaTag, ClientId, Inventory, Position, Spectate, position};
+use crate::items::Inventory;
+use crate::movement::{Position, position};
+use crate::player::{ClientId, Players};
+use crate::spectate::{Spectate, Spectators};
 
 pub const VIEW_DISTANCE: Tiles = Tiles(24.0);
 

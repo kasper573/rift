@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::text_colored;
-use world::protocol::session;
+use world::player::session;
 
 use super::Hud;
 

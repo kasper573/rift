@@ -1,23 +1,111 @@
+//! Combat: an entity's replicated [`Vitals`] and the attack request, plus the server systems that
+//! engage targets, swing on the model's timing, deal damage, regenerate health, and emit deaths.
+
+use bevy_app::App;
+use bevy_ecs::component::Component;
+use bevy_ecs::entity::{Entity, MapEntities};
+use bevy_ecs::message::Message;
+use bevy_ecs::query::With;
+use bevy_ecs::world::World;
+use serde::{Deserialize, Serialize};
+
+use crate::actor::{Actor, Hitbox};
+use crate::core::math::Pos;
+use crate::core::tiling::{TilePos, Tiles};
+use crate::movement::Position;
+use crate::player::session;
+
+#[cfg(feature = "systems")]
+use crate::actor::{ACTION_ATTACK, ACTION_DEAD, action_name, set_action, set_facing};
+#[cfg(feature = "systems")]
+use crate::area::AreaTag;
+#[cfg(feature = "systems")]
+use crate::core::math::Direction;
+#[cfg(feature = "systems")]
+use crate::core::table::Id;
+#[cfg(feature = "systems")]
+use crate::core::time::{Millis, PlaybackRate, Seconds};
+#[cfg(feature = "systems")]
+use crate::movement::{MoveTarget, Path, forget, halt, on_tile, position};
+#[cfg(feature = "systems")]
+use crate::player::{Owner, sender_player};
+#[cfg(feature = "systems")]
 use bevy_ecs::message::Messages;
+#[cfg(feature = "systems")]
 use bevy_ecs::prelude::*;
+#[cfg(feature = "systems")]
 use bevy_replicon::prelude::FromClient;
+#[cfg(feature = "systems")]
 use bevy_time::Time;
 
-use super::movement::{MoveTarget, Path, forget, halt, on_tile};
-use super::player::sender_player;
-use crate::core::math::Direction;
-use crate::core::table::Id;
-use crate::core::tiling::{TilePos, Tiles};
-use crate::core::time::{Millis, PlaybackRate, Seconds};
-use crate::protocol;
-use crate::protocol::{
-    ACTION_ATTACK, ACTION_DEAD, Actor, AreaTag, AttackRequest, Vitals, action_name, is_dead,
-    position, set_action, set_facing,
-};
+pub fn register(app: &mut App) {
+    use bevy_replicon::prelude::*;
 
+    app.replicate::<Vitals>()
+        .add_mapped_client_message::<AttackRequest>(Channel::Ordered);
+}
+
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Vitals {
+    pub health: f32,
+    pub max: f32,
+}
+
+impl Vitals {
+    pub fn heal(&mut self, amount: f32) {
+        self.health = (self.health + amount).min(self.max);
+    }
+
+    pub fn damage(&mut self, amount: f32) {
+        self.health = (self.health - amount).max(0.0);
+    }
+
+    pub fn refill(&mut self) {
+        self.health = self.max;
+    }
+
+    pub fn fraction(&self) -> f32 {
+        (self.health / self.max).clamp(0.0, 1.0)
+    }
+
+    pub fn is_dead(&self) -> bool {
+        self.health <= 0.0
+    }
+}
+
+#[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
+pub struct AttackRequest {
+    #[entities]
+    pub target: Entity,
+}
+
+pub fn is_dead(world: &World, entity: Entity) -> bool {
+    world.get::<Vitals>(entity).is_some_and(Vitals::is_dead)
+}
+
+/// The living enemy (not the local player) whose hitbox covers `point` — the client's attack target.
+pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
+    let me = session::me(world).map(|entity| entity.id());
+    let mut actors =
+        world.query_filtered::<(Entity, &Position, &Hitbox, Option<&Vitals>), With<Actor>>();
+    actors.iter(world).find_map(|(entity, at, hitbox, vitals)| {
+        if Some(entity) == me || vitals.is_some_and(Vitals::is_dead) {
+            return None;
+        }
+        at.pos.hitbox(hitbox.size).contains(point).then_some(entity)
+    })
+}
+
+#[cfg(feature = "systems")]
 const TILE_DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
+#[cfg(feature = "systems")]
 const CHASE_RETARGET_THRESHOLD: Tiles = Tiles(1.5);
+#[cfg(feature = "systems")]
+const HP_REGEN_INTERVAL: Seconds = Seconds(10.0);
+#[cfg(feature = "systems")]
+const HP_REGEN_AMOUNT: f32 = 5.0;
 
+#[cfg(feature = "systems")]
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Stats {
     pub damage: f32,
@@ -26,27 +114,32 @@ pub struct Stats {
     pub range: Tiles,
 }
 
+#[cfg(feature = "systems")]
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct AttackTarget {
     pub target: Entity,
 }
 
+#[cfg(feature = "systems")]
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct LastAttack {
     pub at: Seconds,
 }
 
+#[cfg(feature = "systems")]
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Attackers {
     pub ids: Vec<Entity>,
 }
 
+#[cfg(feature = "systems")]
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct Died {
     pub entity: Entity,
     pub killer: Entity,
 }
 
+#[cfg(feature = "systems")]
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Swing {
     pub target: Entity,
@@ -55,6 +148,29 @@ pub struct Swing {
     pub struck: bool,
 }
 
+#[cfg(feature = "systems")]
+#[derive(Resource, Default)]
+pub struct RegenAt(Seconds);
+
+#[cfg(feature = "systems")]
+pub fn regen(
+    time: Res<Time>,
+    mut last: ResMut<RegenAt>,
+    mut players: Query<&mut Vitals, With<Owner>>,
+) {
+    let now = Seconds(time.elapsed_secs());
+    if now - last.0 < HP_REGEN_INTERVAL {
+        return;
+    }
+    last.0 = now;
+    for mut vitals in &mut players {
+        if !vitals.is_dead() {
+            vitals.heal(HP_REGEN_AMOUNT);
+        }
+    }
+}
+
+#[cfg(feature = "systems")]
 pub fn request(world: &mut World) {
     let requests: Vec<FromClient<AttackRequest>> = world
         .resource_mut::<Messages<FromClient<AttackRequest>>>()
@@ -72,6 +188,7 @@ pub fn request(world: &mut World) {
     }
 }
 
+#[cfg(feature = "systems")]
 pub fn combat(world: &mut World) {
     let time = Seconds(world.resource::<Time>().elapsed_secs());
     let mut deaths = Vec::new();
@@ -82,6 +199,7 @@ pub fn combat(world: &mut World) {
     }
 }
 
+#[cfg(feature = "systems")]
 fn engage(world: &mut World, time: Seconds) {
     let ids: Vec<Entity> = world
         .query_filtered::<Entity, With<AttackTarget>>()
@@ -147,6 +265,7 @@ fn engage(world: &mut World, time: Seconds) {
     }
 }
 
+#[cfg(feature = "systems")]
 fn progress_swings(world: &mut World, time: Seconds, deaths: &mut Vec<(Entity, Entity)>) {
     let ids: Vec<Entity> = world
         .query_filtered::<Entity, With<Swing>>()
@@ -183,6 +302,7 @@ fn progress_swings(world: &mut World, time: Seconds, deaths: &mut Vec<(Entity, E
     }
 }
 
+#[cfg(feature = "systems")]
 fn strike(world: &mut World, attacker: Entity, target: Entity, deaths: &mut Vec<(Entity, Entity)>) {
     let same_area = world.get::<AreaTag>(attacker).map(|t| t.area)
         == world.get::<AreaTag>(target).map(|t| t.area);
@@ -204,6 +324,7 @@ fn strike(world: &mut World, attacker: Entity, target: Entity, deaths: &mut Vec<
     }
 }
 
+#[cfg(feature = "systems")]
 fn stats(world: &World, entity: Entity) -> Stats {
     world.get::<Stats>(entity).cloned().unwrap_or(Stats {
         damage: 0.0,
@@ -214,13 +335,13 @@ fn stats(world: &World, entity: Entity) -> Stats {
 }
 
 // Manifest the client animates from, so the felt hit and applied hit coincide.
-fn attack_timing(world: &World, entity: Entity, dir: u8) -> crate::content::actors::Timing {
-    let model = world
-        .get::<protocol::Actor>(entity)
-        .map_or(Id::new(0), |a| a.model);
+#[cfg(feature = "systems")]
+fn attack_timing(world: &World, entity: Entity, dir: u8) -> crate::actor::Timing {
+    let model = world.get::<Actor>(entity).map_or(Id::new(0), |a| a.model);
     model.get().timing(action_name(ACTION_ATTACK), dir)
 }
 
+#[cfg(feature = "systems")]
 fn add_attacker(world: &mut World, target: Entity, by: Entity) {
     match world.get_mut::<Attackers>(target) {
         Some(mut attackers) => {

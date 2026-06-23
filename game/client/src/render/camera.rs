@@ -3,12 +3,14 @@
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use world::content::area::{self, AreaDef};
+use world::area::AreaTag;
+use world::area::{self, AreaDef};
 use world::core::math::Pos;
 use world::core::table::Id;
 use world::core::tiling::{TileSize, Tiles};
-use world::protocol::session::MyClient;
-use world::protocol::{AreaTag, Owner, Position};
+use world::movement::Position;
+use world::player::Owner;
+use world::player::session::MyClient;
 
 use super::TILE;
 use super::present::{Viewport, target_size};

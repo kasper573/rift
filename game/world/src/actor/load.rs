@@ -5,9 +5,10 @@ use std::collections::{HashMap, HashSet};
 
 use tiled::{Frame, PropertyValue};
 
-use super::{ActorModel, IDLE, SfxId};
+use super::{ActorModel, IDLE};
 use crate::core::assets;
 use crate::core::math::Size;
+use crate::sfx::SfxId;
 
 pub(super) fn load(name: &str) -> ActorModel {
     let tileset = tiled::Loader::with_reader(assets::tiled_reader)

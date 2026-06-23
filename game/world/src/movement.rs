@@ -1,42 +1,97 @@
+//! Movement: an entity's replicated [`Position`] and the client's move requests, plus the server
+//! systems that path-find, advance movers along tiles, snap them to centers, and cross portals.
+
+use bevy_app::App;
+use bevy_ecs::component::Component;
+use bevy_ecs::entity::Entity;
+use bevy_ecs::message::Message;
+use bevy_ecs::world::World;
+use serde::{Deserialize, Serialize};
+
+use crate::core::math::Pos;
+use crate::core::tiling::Tiles;
+
+#[cfg(feature = "systems")]
+use crate::actor::{ACTION_RUN, ACTION_WALK, set_facing};
+#[cfg(feature = "systems")]
+use crate::area::{self, AreaTag};
+#[cfg(feature = "systems")]
+use crate::combat::{AttackTarget, is_dead};
+#[cfg(feature = "systems")]
+use crate::core::math::{Direction, Offset};
+#[cfg(feature = "systems")]
+use crate::core::table::Id;
+#[cfg(feature = "systems")]
+use crate::core::tiling::{Cell, CellPos, TilePos, TilesPerSec};
+#[cfg(feature = "systems")]
+use crate::core::time::Seconds;
+#[cfg(feature = "systems")]
+use crate::player::sender_player;
+#[cfg(feature = "systems")]
 use bevy_ecs::message::Messages;
+#[cfg(feature = "systems")]
 use bevy_ecs::prelude::*;
+#[cfg(feature = "systems")]
 use bevy_replicon::prelude::FromClient;
+#[cfg(feature = "systems")]
 use bevy_time::Time;
 
-use super::combat::AttackTarget;
-use super::player::sender_player;
-use crate::content::area;
-use crate::core::math::{Direction, Offset, Pos};
-use crate::core::table::Id;
-use crate::core::tiling::{Cell, CellPos, TilePos, Tiles, TilesPerSec};
-use crate::core::time::Seconds;
-use crate::protocol::{
-    ACTION_RUN, ACTION_WALK, AreaTag, MoveRequest, MoveToPortal, Position, is_dead, position,
-    set_facing,
-};
+pub fn register(app: &mut App) {
+    use bevy_replicon::prelude::*;
 
+    app.replicate::<Position>()
+        .add_client_message::<MoveRequest>(Channel::Ordered)
+        .add_client_message::<MoveToPortal>(Channel::Ordered);
+}
+
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Position {
+    pub pos: Pos<Tiles>,
+}
+
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct MoveRequest {
+    pub pos: Pos<Tiles>,
+}
+
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct MoveToPortal {
+    pub pos: Pos<Tiles>,
+    pub portal: u32,
+}
+
+pub fn position(world: &World, entity: Entity) -> Option<Pos<Tiles>> {
+    world.get::<Position>(entity).map(|p| p.pos)
+}
+
+#[cfg(feature = "systems")]
 const RUN_SPEED: TilesPerSec = TilesPerSec(Tiles(2.0));
 
+#[cfg(feature = "systems")]
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Path {
     pub tiles: Vec<CellPos>,
 }
 
+#[cfg(feature = "systems")]
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct MoveTarget {
     pub pos: Pos<Tiles>,
 }
 
+#[cfg(feature = "systems")]
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Speed {
     pub value: TilesPerSec,
 }
 
+#[cfg(feature = "systems")]
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct DesiredPortal {
     pub index: u32,
 }
 
+#[cfg(feature = "systems")]
 pub fn move_request(world: &mut World) {
     let requests: Vec<FromClient<MoveRequest>> = world
         .resource_mut::<Messages<FromClient<MoveRequest>>>()
@@ -49,6 +104,7 @@ pub fn move_request(world: &mut World) {
     }
 }
 
+#[cfg(feature = "systems")]
 pub fn move_to_portal(world: &mut World) {
     let requests: Vec<FromClient<MoveToPortal>> = world
         .resource_mut::<Messages<FromClient<MoveToPortal>>>()
@@ -63,6 +119,7 @@ pub fn move_to_portal(world: &mut World) {
     }
 }
 
+#[cfg(feature = "systems")]
 pub fn forget(world: &mut World, entity: Entity) {
     world
         .entity_mut(entity)
@@ -73,6 +130,7 @@ pub fn forget(world: &mut World, entity: Entity) {
 
 /// Mid-step it keeps only the entering tile so it lands on that tile's center; else snaps to exact center.
 /// A resting actor always lands on an exact tile via this funnel.
+#[cfg(feature = "systems")]
 pub fn halt(world: &mut World, entity: Entity) {
     world.entity_mut(entity).remove::<MoveTarget>();
     if on_tile(world, entity) {
@@ -85,10 +143,12 @@ pub fn halt(world: &mut World, entity: Entity) {
     }
 }
 
+#[cfg(feature = "systems")]
 pub fn on_tile(world: &World, entity: Entity) -> bool {
     position(world, entity).is_some_and(|p| p.on_center())
 }
 
+#[cfg(feature = "systems")]
 fn retarget(
     world: &mut World,
     sender: bevy_replicon::prelude::ClientId,
@@ -106,6 +166,7 @@ fn retarget(
     Some(entity)
 }
 
+#[cfg(feature = "systems")]
 pub fn advance(world: &mut World) {
     let dt = Seconds(world.resource::<Time>().delta_secs());
     let movers: Vec<Entity> = world
@@ -171,7 +232,7 @@ pub fn advance(world: &mut World) {
 
         world.entity_mut(id).insert(Position { pos: at });
         if let Some(step) = heading
-            && let Some(mut actor) = world.get_mut::<crate::protocol::Actor>(id)
+            && let Some(mut actor) = world.get_mut::<crate::actor::Actor>(id)
         {
             set_facing(
                 &mut actor,
@@ -192,6 +253,7 @@ pub fn advance(world: &mut World) {
     }
 }
 
+#[cfg(feature = "systems")]
 fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
     let area_id = world
         .get::<AreaTag>(entity)
@@ -206,6 +268,7 @@ fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<Cell
     Some(path)
 }
 
+#[cfg(feature = "systems")]
 fn cross_portal(world: &mut World, entity: Entity) {
     let Some(want) = world.get::<DesiredPortal>(entity).map(|d| d.index as usize) else {
         return;
@@ -232,7 +295,7 @@ fn cross_portal(world: &mut World, entity: Entity) {
     } else {
         world
             .entity_mut(entity)
-            .insert(super::transition::Crossing { dest_area, dest });
+            .insert(crate::area::transition::Crossing { dest_area, dest });
         forget(world, entity);
     }
 }

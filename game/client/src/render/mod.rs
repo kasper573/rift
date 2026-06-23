@@ -13,7 +13,7 @@ pub use camera::cursor_tile;
 
 use bevy::prelude::*;
 use bevy::sprite_render::Material2dPlugin;
-use world::content::area;
+use world::area;
 use world::core::math::{Pos, WorldPx};
 use world::core::tiling::Tiles;
 

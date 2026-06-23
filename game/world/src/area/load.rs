@@ -6,7 +6,6 @@ use std::collections::HashSet;
 use tiled::{LayerType, PropertyValue};
 
 use super::{Area, AreaDef, Flip, Group, Portal, RenderLayer, TileDef, TileRef, cell_overlap};
-use crate::content::actors::SfxId;
 use crate::core::assets;
 use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
 use crate::core::nav;
@@ -15,6 +14,7 @@ use crate::core::tiling::{
     self, Cell, CellPos, GridDims, GridSize, PixelsPerTile, TileRect, TileSize, Tiles,
 };
 use crate::core::time::Millis;
+use crate::sfx::SfxId;
 
 const OBSCURING_CUTOFF: f32 = 0.4;
 

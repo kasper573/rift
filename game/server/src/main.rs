@@ -21,11 +21,12 @@ use renet2_netcode::{
     ConnectToken, NETCODE_KEY_BYTES, NetcodeServerTransport, ServerAuthentication,
     ServerSetupConfig, WebSocketAcceptor, WebSocketServer, WebSocketServerConfig,
 };
-use world::content::area::{self, AreaDef};
+use world::TICK_HZ;
+use world::account::Identity;
+use world::area::{self, AreaDef, transition};
+use world::channels::RenetChannelsExt;
 use world::core::table::Id;
-use world::protocol::channels::RenetChannelsExt;
-use world::systems::transition;
-use world::{ClientId, Identity, TICK_HZ};
+use world::player::ClientId;
 
 service::heap_profiling!();
 
@@ -55,7 +56,7 @@ struct Config {
 }
 
 fn main() {
-    world::systems::validate();
+    world::validate();
     let config: Config = envy::prefixed("RIFT_GAME_SERVER_")
         .from_env()
         .expect("RIFT_GAME_SERVER_* environment");
@@ -319,7 +320,7 @@ struct Conn {
 struct Wire(u64);
 
 fn build_world(area: Id<AreaDef>) -> App {
-    let mut app = world::systems::server_app(area);
+    let mut app = world::server_app(area);
     app.finish();
     app.cleanup();
     app.world_mut()
@@ -518,7 +519,7 @@ fn resolve(http: &Http, authorization: &str) -> Result<Identity, StatusCode> {
         roles: claims
             .roles
             .iter()
-            .filter_map(|role| world::Role::parse(role))
+            .filter_map(|role| world::account::Role::parse(role))
             .collect(),
     })
 }

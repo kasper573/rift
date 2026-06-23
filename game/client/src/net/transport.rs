@@ -6,7 +6,7 @@
 //! are still pinned to bevy 0.18; once they publish a bevy-0.19 build this whole module can be
 //! deleted and `NetPlugin` can add `bevy_replicon_renet2::RepliconRenetPlugins` instead, inserting
 //! `RenetClient`/`NetcodeClientTransport` directly (they become `Resource`s under that crate's
-//! `bevy` feature, which is why we wrap them here). See [`world::protocol::channels`] for the matching channel seam.
+//! `bevy` feature, which is why we wrap them here). See [`world::channels`] for the matching channel seam.
 
 use bevy::prelude::*;
 use bevy::time::{Real, Time};
