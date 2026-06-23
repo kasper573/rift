@@ -38,24 +38,30 @@ const browsers = {
     channel: "msedge",
     launchOptions: { args: chromiumArgs },
   },
-  firefox: {
-    browserName: "firefox",
-    headless: false,
-    launchOptions: {
-      firefoxUserPrefs: {
-        // Bypass the GPU blocklist and allow the software renderer so WebGL works under xvfb.
-        "webgl.force-enabled": true,
-        "webgl.disabled": false,
-        "webgl.disable-fail-if-major-performance-caveat": true,
-        // Firefox can't take a host-resolver flag, so resolve the stack's domains to loopback here
-        // (the chromium equivalent of --host-resolver-rules).
-        "network.dns.localDomains": process.env.RIFT_E2E_URL
-          ? ""
-          : `${domain},auth.${domain},game-server.${domain}`,
-      },
-    },
-  },
-  safari: { browserName: "webkit", headless: false },
+  // Firefox and WebKit are DISABLED in CI for now. They can only do WebGL headed (under xvfb) on
+  // software rendering (Mesa llvmpipe), which on the standard GitHub runner is too slow for the
+  // gameplay tests against the unoptimized branch wasm — the player spawns and moves far too slowly,
+  // so walk/portal time out (Chrome/Edge use SwiftShader and stay fast). The tests themselves pass on
+  // adequate hardware; re-enable these (and their install in .github/actions/setup) once the suite
+  // runs on a faster runner with enough cores per worker. See e2e/README.md.
+  // firefox: {
+  //   browserName: "firefox",
+  //   headless: false,
+  //   launchOptions: {
+  //     firefoxUserPrefs: {
+  //       // Bypass the GPU blocklist and allow the software renderer so WebGL works under xvfb.
+  //       "webgl.force-enabled": true,
+  //       "webgl.disabled": false,
+  //       "webgl.disable-fail-if-major-performance-caveat": true,
+  //       // Firefox can't take a host-resolver flag, so resolve the stack's domains to loopback here
+  //       // (the chromium equivalent of --host-resolver-rules).
+  //       "network.dns.localDomains": process.env.RIFT_E2E_URL
+  //         ? ""
+  //         : `${domain},auth.${domain},game-server.${domain}`,
+  //     },
+  //   },
+  // },
+  // safari: { browserName: "webkit", headless: false },
 } as const;
 
 const resolutions = {

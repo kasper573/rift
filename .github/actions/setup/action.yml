@@ -45,8 +45,9 @@ runs:
       if: runner.os == 'Linux' && inputs.deps == 'all'
       shell: bash
       working-directory: e2e
-      # The Playwright suite and the four browsers it drives (with their OS deps). Chrome and Edge are
-      # branded channels; Firefox and WebKit are Playwright's own engines.
+      # The Playwright suite and the browsers it drives (with their OS deps). Only Chrome and Edge are
+      # installed: Firefox and WebKit are disabled in CI until we have faster runners (see the comment
+      # in e2e/playwright.config.ts). Re-add `firefox webkit` here when re-enabling them there.
       run: |
         npm ci
-        npx playwright install --with-deps chrome msedge firefox webkit
+        npx playwright install --with-deps chrome msedge
