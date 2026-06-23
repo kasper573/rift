@@ -2,7 +2,7 @@
 name = "ui"
 version.workspace = true
 edition.workspace = true
-description = "A small retained-mode UI component library over bevy_ui: Radix-inspired components with declarative styling, theming, motion, and collision-aware floating overlays."
+description = "UI component library built on bevy_ui"
 repository = "https://github.com/kasper573/rift"
 authors = ["kasper573"]
 
