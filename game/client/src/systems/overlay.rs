@@ -1,15 +1,38 @@
-//! World-space overlays drawn over the map: the local player's floating health bar and the active
-//! gesture's tile highlight.
+//! Bespoke world- and screen-space effects: the local player's floating health bar, the active
+//! gesture's tile highlight, and the death screen tint. All specific to this game, drawn on top of the
+//! generic render pipeline in [`crate::core::render`].
 
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
-use world::core::math::{Size, WorldPx};
+use world::core::math::{Pos, Size, WorldPx};
+use world::core::tiling::Tiles;
 use world::systems::combat::Vitals;
 use world::systems::movement::Position;
 use world::systems::player::session;
 
-use super::screen::ToScreen;
-use super::{ActiveTileHighlight, TILE};
+use crate::core::render::TILE;
+use crate::core::render::present::ScreenTint;
+use crate::core::render::screen::ToScreen;
+
+pub struct OverlayPlugin;
+
+impl Plugin for OverlayPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, setup).add_systems(
+            Update,
+            (healthbar, update_tile_highlight, death_tint)
+                .run_if(in_state(crate::GameScene::Playing)),
+        );
+    }
+}
+
+/// What the active gesture wants highlighted on the map — a tile and the image to mark it with. The
+/// gesture system (`crate::systems::input`) sets it; [`update_tile_highlight`] draws it.
+#[derive(Resource)]
+pub struct ActiveTileHighlight {
+    pub pos: Pos<Tiles>,
+    pub image: Handle<Image>,
+}
 
 #[derive(Component, Clone, Copy)]
 enum Bar {
@@ -21,11 +44,10 @@ enum Bar {
 const BAR: Size<WorldPx> = Size::new(20.0, 4.0);
 const BAR_DROP: WorldPx = WorldPx(5.0);
 
-/// The sprite entity that renders the active gesture's tile highlight.
 #[derive(Component)]
-pub(super) struct TileHighlight;
+struct TileHighlight;
 
-pub(super) fn setup(mut commands: Commands) {
+fn setup(mut commands: Commands) {
     commands.spawn((
         Bar::Border,
         bar_sprite(0x14_0A_28, BAR),
@@ -69,7 +91,7 @@ fn hidden() -> (Transform, Visibility) {
     (Transform::from_xyz(0.0, 0.0, 200.0), Visibility::Hidden)
 }
 
-pub(super) fn healthbar(world: &mut World) {
+fn healthbar(world: &mut World) {
     let shown = session::me(world).and_then(|me| {
         // Whole pixels: avoid floor/ceil alternation on fractional offsets during movement.
         let at = me.get::<Position>()?.pos;
@@ -102,7 +124,7 @@ pub(super) fn healthbar(world: &mut World) {
 
 /// Renders the tile highlight the active gesture published — appearance and position both come from the
 /// gesture; this just mirrors them onto the sprite.
-pub(super) fn update_tile_highlight(
+fn update_tile_highlight(
     highlight: Option<Res<ActiveTileHighlight>>,
     mut sprite: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<TileHighlight>>,
 ) {
@@ -119,4 +141,14 @@ pub(super) fn update_tile_highlight(
         }
         None => *visibility = Visibility::Hidden,
     }
+}
+
+/// Washes the whole screen on the local player's death by driving the generic [`ScreenTint`].
+fn death_tint(world: &mut World) {
+    let tint = if session::is_dead(world) {
+        Vec4::new(1.0, 0.0, 0.0, 0.0)
+    } else {
+        Vec4::ZERO
+    };
+    world.resource_mut::<ScreenTint>().0 = tint;
 }

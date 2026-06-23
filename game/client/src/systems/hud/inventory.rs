@@ -7,8 +7,8 @@ use ui::{Align, Side, text_colored, tooltip, tooltip_content};
 use world::systems::items::Inventory;
 use world::systems::player::session;
 
-use ui::component;
 use crate::systems::hud::settings::ScreenPx;
+use ui::component;
 
 const SLOT: ScreenPx = ScreenPx(36.0);
 const TITLE_BG: Color = Color::srgb(0.18, 0.18, 0.18);

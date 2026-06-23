@@ -11,7 +11,9 @@
 - No hardcoded environment defaults: Panic if an env var is missing or invalid. Makes mistakes loud and obvious and forces environments to be well and explicitly configured. Also aids with the "build once, run everywhere" principle.
 - While we currently deploy only to web for the forseeable future, the deploy target must still be abstracted away. Do not hard couple the codebase with any specific platform or environment. Ideally you only use abstractions provided by bevy and don't have to worry about this. But if you physically cannot avoid platform specific code, you must encapsulate it behind a single platform adapter so that it's easy to swap out the implementation for a different platform in the future.
 
-## Code style
+## Layering (core vs systems)
+
+- Each game crate's `src/` is organized into `core/`, `systems/`, and `bin/`, with no loose source files. `core/` is general-purpose code that is not specific to this game and that any system may depend on; `systems/` is our bespoke, game-specific code. A module belongs in `core/` only if it would be equally at home in an unrelated game — anything tied to this game's particular rules, content, or presentation belongs in `systems/`. `core/` must never depend on `systems/`. This is enforced by the `lint` crate (opt in via `[package.metadata.lint] game = true`).
 
 - Prioritize simplicity, stability (extensible, not brittle), readability — then performance.
 - small `macro_rules!` codegen is allowed where it removes boilerplate.

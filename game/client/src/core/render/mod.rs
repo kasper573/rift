@@ -1,10 +1,9 @@
 //! The render pipeline: the world draws to a fixed-zoom offscreen texture ([`present`]) a [`camera`]
-//! follows, in screen space ([`screen`]); [`overlay`] draws the world-space health bar and the active
-//! gesture's tile highlight. Per-feature drawing — actors, tiles — lives in the feature modules under
-//! `crate::systems`, sharing the [`Animator`] clock and the transform helpers here.
+//! follows, in screen space ([`screen`]), with a generic [`present::ScreenTint`] hook. All actual
+//! drawing — actors, tiles, the health bar, the death wash — is bespoke and lives in the feature
+//! modules under `crate::systems`, sharing the [`Animator`] clock and the transform helpers here.
 
 pub mod camera;
-pub mod overlay;
 pub mod present;
 pub mod screen;
 
@@ -30,17 +29,13 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<present::Present>::default())
             .init_resource::<Animator>()
+            .init_resource::<present::ScreenTint>()
             .init_resource::<present::Viewport>()
-            .add_systems(Startup, (present::setup, overlay::setup))
+            .add_systems(Startup, present::setup)
             .add_systems(Update, (present::match_display, present::fit).chain())
             .add_systems(
                 Update,
-                (
-                    camera::follow_camera,
-                    present::dead_tint,
-                    overlay::healthbar,
-                    overlay::update_tile_highlight,
-                )
+                (camera::follow_camera, present::apply_tint)
                     .run_if(in_state(crate::GameScene::Playing)),
             );
     }
@@ -67,14 +62,6 @@ impl Animator {
     pub fn retain(&mut self, mut alive: impl FnMut(Entity) -> bool) {
         self.anchors.retain(|entity, _| alive(*entity));
     }
-}
-
-/// What the active gesture wants highlighted on the map. Present exactly while there is a highlight:
-/// the gesture system (`crate::systems::input`) sets it, [`overlay`] draws it.
-#[derive(Resource)]
-pub struct ActiveTileHighlight {
-    pub pos: Pos<Tiles>,
-    pub image: Handle<Image>,
 }
 
 pub(crate) fn sprite_transform(pos: Pos<Tiles>, z: f32) -> Transform {

@@ -9,7 +9,7 @@ pub use drag::DragGesture;
 pub use walk::WalkGesture;
 
 use crate::GameScene;
-use crate::core::render::ActiveTileHighlight;
+use crate::systems::overlay::ActiveTileHighlight;
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
 use enum_dispatch::enum_dispatch;

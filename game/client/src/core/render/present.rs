@@ -1,6 +1,6 @@
 //! The pixel-art present pipeline: the world renders to a fixed-zoom offscreen texture, which a
 //! fullscreen quad then upscales to the window. `fit` keeps the texture sized to the window, and the
-//! `Present` material applies the death tint.
+//! `Present` material applies a whole-screen [`ScreenTint`] any system can set.
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{RenderTarget, ScalingMode};
@@ -10,7 +10,6 @@ use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureFormat};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::Material2d;
 use bevy::window::PrimaryWindow;
-use world::systems::player::session;
 
 use super::TILE;
 use super::camera::WorldCamera;
@@ -33,15 +32,20 @@ pub struct Viewport {
     pub scale: f32,
 }
 
+/// A whole-screen tint the present pass applies — a generic post-process hook. What sets it, and why,
+/// is up to the game systems (`crate::systems`).
+#[derive(Resource, Default)]
+pub struct ScreenTint(pub Vec4);
+
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub(super) struct Present {
     #[texture(0)]
     #[sampler(1)]
     world: Handle<Image>,
-    // WebGL2 requires uniform buffer bindings to be 16-byte aligned, so this death-tint flag rides in
-    // `.x` of a Vec4 rather than a bare f32 (which the browser's GL backend rejects at pipeline creation).
+    // WebGL2 requires uniform buffer bindings to be 16-byte aligned, so the tint rides in a Vec4
+    // rather than a bare f32 (which the browser's GL backend rejects at pipeline creation).
     #[uniform(2)]
-    dead: Vec4,
+    tint: Vec4,
 }
 
 impl Material2d for Present {
@@ -96,7 +100,7 @@ pub(super) fn setup(
         Mesh2d(meshes.add(Rectangle::new(1.0, 1.0))),
         MeshMaterial2d(materials.add(Present {
             world: target,
-            dead: Vec4::ZERO,
+            tint: Vec4::ZERO,
         })),
         Transform::from_scale(Vec3::new(
             window.resolution.width(),
@@ -148,19 +152,18 @@ pub(super) fn fit(
     }
 }
 
-pub(super) fn dead_tint(world: &mut World) {
-    let dead = if session::is_dead(world) { 1.0 } else { 0.0 };
-    let dead = Vec4::new(dead, 0.0, 0.0, 0.0);
-    let Ok(handle) = world
-        .query_filtered::<&MeshMaterial2d<Present>, With<Screen>>()
-        .single(world)
-        .map(|material| material.0.clone())
-    else {
+/// Copies the current [`ScreenTint`] onto the present material each frame, so any system can tint the
+/// whole screen by setting the resource without reaching into the material.
+pub(super) fn apply_tint(
+    tint: Res<ScreenTint>,
+    screen: Query<&MeshMaterial2d<Present>, With<Screen>>,
+    mut materials: ResMut<Assets<Present>>,
+) {
+    let Ok(handle) = screen.single().map(|material| material.0.clone()) else {
         return;
     };
-    let mut materials = world.resource_mut::<Assets<Present>>();
     if let Some(mut material) = materials.get_mut(&handle) {
-        material.dead = dead;
+        material.tint = tint.0;
     }
 }
 
