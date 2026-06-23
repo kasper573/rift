@@ -33,9 +33,9 @@ impl Plugin for RepliconRenetClientPlugin {
             PreUpdate,
             (
                 drive,
-                set_connecting.run_if(resource_added::<Client>),
+                set_connecting.run_if(in_state(ClientState::Disconnected).and_then(connecting)),
                 set_connected.run_if(in_state(ClientState::Connecting).and_then(connected)),
-                set_disconnected.run_if(just_disconnected),
+                set_disconnected.run_if(connection_lost),
                 receive_packets.run_if(connected),
             )
                 .chain()
@@ -109,13 +109,17 @@ fn send_packets(
     }
 }
 
+fn connecting(client: Option<Res<Client>>) -> bool {
+    client.is_some_and(|client| client.0.is_connecting())
+}
+
 fn connected(client: Option<Res<Client>>) -> bool {
     client.is_some_and(|client| client.0.is_connected())
 }
 
-fn just_disconnected(mut was_connected: Local<bool>, client: Option<Res<Client>>) -> bool {
-    let disconnected = client.is_none_or(|client| client.0.is_disconnected());
-    let just = *was_connected && disconnected;
-    *was_connected = !disconnected;
-    just
+/// True the moment a live link drops — whether an established connection was lost or the initial
+/// handshake timed out without ever connecting. Idempotent once [`ClientState::Disconnected`] is set.
+fn connection_lost(state: Res<State<ClientState>>, client: Option<Res<Client>>) -> bool {
+    !matches!(state.get(), ClientState::Disconnected)
+        && client.is_some_and(|client| client.0.is_disconnected())
 }

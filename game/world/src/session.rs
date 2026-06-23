@@ -2,7 +2,8 @@ use bevy_app::{App, Plugin, Update};
 use bevy_ecs::message::MessageReader;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::EntityRef;
-use bevy_replicon::prelude::{AuthMethod, RepliconPlugins, RepliconSharedPlugin};
+use bevy_replicon::prelude::{AuthMethod, ClientState, RepliconPlugins, RepliconSharedPlugin};
+use bevy_state::prelude::OnEnter;
 
 use crate::area;
 use crate::math::Pos;
@@ -24,6 +25,7 @@ impl Plugin for ClientSessionPlugin {
         protocol::protocol(app);
         app.init_resource::<MyClient>();
         app.add_systems(Update, record_welcome);
+        app.add_systems(OnEnter(ClientState::Disconnected), forget_me);
     }
 }
 
@@ -93,4 +95,10 @@ fn record_welcome(mut welcomes: MessageReader<Welcome>, mut me: ResMut<MyClient>
     for welcome in welcomes.read() {
         me.0 = Some(welcome.id);
     }
+}
+
+/// A dropped link makes "me" unknown again, so a reconnect waits for a fresh [`Welcome`] before
+/// announcing — exactly like a first connection — rather than acting on the stale id.
+fn forget_me(mut me: ResMut<MyClient>) {
+    me.0 = None;
 }
