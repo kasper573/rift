@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 
-use crate::actor::{ACTION_RUN, ACTION_WALK, set_facing};
+use crate::actor::{Action, set_facing};
 use crate::area::{self, AreaTag};
 use crate::combat::{AttackTarget, is_dead};
 use crate::core::math::{Direction, Offset};
@@ -212,11 +212,11 @@ pub fn advance(world: &mut World) {
         {
             set_facing(
                 &mut actor,
-                Direction::from(step) as u8,
+                Direction::from(step),
                 if speed >= RUN_SPEED {
-                    ACTION_RUN
+                    Action::Run
                 } else {
-                    ACTION_WALK
+                    Action::Walk
                 },
             );
         }

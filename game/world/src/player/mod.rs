@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Character;
 use crate::account::identity::Identity;
-use crate::actor::{ACTION_IDLE, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
+use crate::actor::{Action, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
 use crate::area::{self, AreaDef, AreaTag};
 use crate::combat::{Stats, Vitals, is_dead};
 use crate::core::math::{Direction, Pos};
@@ -206,8 +206,8 @@ pub(crate) fn place(
                 name: Name { name },
                 actor: Actor {
                     color: PLAYER_TINT,
-                    dir: Direction::S as u8,
-                    action: ACTION_IDLE,
+                    dir: Direction::S,
+                    action: Action::Idle,
                     model,
                     attack_rate: PLAYER_ATTACK_SPEED,
                 },
@@ -260,7 +260,7 @@ pub fn respawn(world: &mut World) {
             tag.area = zone;
         }
         if let Some(mut actor) = world.get_mut::<Actor>(entity) {
-            set_action(&mut actor, ACTION_IDLE);
+            set_action(&mut actor, Action::Idle);
         }
         forget(world, entity);
     }

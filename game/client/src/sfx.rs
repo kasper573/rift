@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_kira_audio::prelude::{Audio, AudioControl, AudioSource, Decibels};
-use world::actor::{Actor, action_name};
+use world::actor::{Action, Actor};
 use world::area;
 use world::area::AreaTag;
 use world::core::math::{Pos, Size};
@@ -33,7 +33,7 @@ impl Plugin for SfxPlugin {
 struct Sfx {
     sources: Vec<Handle<AudioSource>>,
     index: HashMap<String, usize>,
-    seen: HashMap<Entity, (u8, Seconds)>,
+    seen: HashMap<Entity, (Action, Seconds)>,
     played: HashMap<usize, Seconds>,
 }
 
@@ -86,13 +86,8 @@ fn play_cues(world: &mut World) {
             Seconds(-1.0)
         };
         let model = actor.model.get();
-        let (cues, stepped) = model.cues(
-            action_name(actor.action),
-            actor.dir,
-            prev,
-            now,
-            actor.attack_rate,
-        );
+        let (cues, stepped) =
+            model.cues(actor.action.name(), actor.dir, prev, now, actor.attack_rate);
         for id in cues {
             collect(&sfx.index, &mut frame, &id.0, volume, pan);
         }

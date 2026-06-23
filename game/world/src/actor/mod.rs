@@ -14,7 +14,7 @@ use tiled::{Frame, TileId};
 
 use crate::combat::Vitals;
 use crate::core::assets;
-use crate::core::math::{Pos, Rect, Size, WorldPx};
+use crate::core::math::{Direction, Pos, Rect, Size, WorldPx};
 use crate::core::table::{Content, Id};
 use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
@@ -28,19 +28,26 @@ pub fn register(app: &mut App) {
         .replicate::<Name>();
 }
 
-pub const ACTION_IDLE: u8 = 0;
-pub const ACTION_WALK: u8 = 1;
-pub const ACTION_RUN: u8 = 2;
-pub const ACTION_ATTACK: u8 = 3;
-pub const ACTION_DEAD: u8 = 4;
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Action {
+    #[default]
+    Idle,
+    Walk,
+    Run,
+    Attack,
+    Dead,
+}
 
-pub fn action_name(action: u8) -> &'static str {
-    match action {
-        ACTION_WALK => "walk",
-        ACTION_RUN => "run",
-        ACTION_ATTACK => "attack",
-        ACTION_DEAD => "death",
-        _ => "idle",
+impl Action {
+    /// The animation strip an actor model plays for this action.
+    pub fn name(self) -> &'static str {
+        match self {
+            Action::Idle => "idle",
+            Action::Walk => "walk",
+            Action::Run => "run",
+            Action::Attack => "attack",
+            Action::Dead => "death",
+        }
     }
 }
 
@@ -52,8 +59,8 @@ pub struct Rgba(pub u32);
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Actor {
     pub color: Rgba,
-    pub dir: u8,
-    pub action: u8,
+    pub dir: Direction,
+    pub action: Action,
     pub model: Id<ActorModel>,
     pub attack_rate: PlaybackRate,
 }
@@ -77,13 +84,13 @@ pub fn rgba_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Rgba, D::E
         .ok_or_else(|| serde::de::Error::custom(format!("a color is #rrggbbaa, got '{hex}'")))
 }
 
-pub fn set_action(actor: &mut Mut<Actor>, action: u8) {
+pub fn set_action(actor: &mut Mut<Actor>, action: Action) {
     if actor.action != action {
         actor.action = action;
     }
 }
 
-pub fn set_facing(actor: &mut Mut<Actor>, dir: u8, action: u8) {
+pub fn set_facing(actor: &mut Mut<Actor>, dir: Direction, action: Action) {
     if actor.dir != dir || actor.action != action {
         actor.dir = dir;
         actor.action = action;
@@ -95,7 +102,7 @@ pub fn set_facing(actor: &mut Mut<Actor>, dir: u8, action: u8) {
 pub fn reset(mut actors: Query<(&mut Actor, Option<&Vitals>)>) {
     for (mut actor, vitals) in &mut actors {
         let dead = vitals.is_some_and(|v| v.health <= 0.0);
-        set_action(&mut actor, if dead { ACTION_DEAD } else { ACTION_IDLE });
+        set_action(&mut actor, if dead { Action::Dead } else { Action::Idle });
     }
 }
 
@@ -133,7 +140,7 @@ impl ActorModel {
     pub fn frame(
         &self,
         action: &str,
-        dir: u8,
+        dir: Direction,
         t: Seconds,
         attack_speed: PlaybackRate,
     ) -> Rect<WorldPx> {
@@ -155,7 +162,7 @@ impl ActorModel {
         self.region(strip[strip.len() - 1].tile_id)
     }
 
-    pub fn timing(&self, action: &str, dir: u8) -> Timing {
+    pub fn timing(&self, action: &str, dir: Direction) -> Timing {
         let strip = self.strip(action, dir);
         let mut apex = Millis(0.0);
         let mut cursor = Millis(0.0);
@@ -174,7 +181,7 @@ impl ActorModel {
     pub fn cues(
         &self,
         action: &str,
-        dir: u8,
+        dir: Direction,
         prev: Seconds,
         now: Seconds,
         attack_speed: PlaybackRate,
@@ -204,7 +211,7 @@ impl ActorModel {
         self.sounds.values()
     }
 
-    fn strip(&self, action: &str, dir: u8) -> &[Frame] {
+    fn strip(&self, action: &str, dir: Direction) -> &[Frame] {
         let spec = self.strips.get(action).unwrap_or_else(|| {
             self.strips
                 .get(IDLE)
@@ -250,8 +257,8 @@ const IDLE: &str = "idle";
 const ATTACK: &str = "attack";
 const DEATH: &str = "death";
 
-fn dir_slot(dir: u8) -> usize {
-    if dir > 7 { 0 } else { dir as usize }
+fn dir_slot(dir: Direction) -> usize {
+    dir as usize
 }
 
 fn rate(action: &str, attack_speed: PlaybackRate) -> PlaybackRate {

@@ -7,7 +7,7 @@ use bevy_time::Time;
 use serde::Deserialize;
 
 use crate::Character;
-use crate::actor::{ACTION_IDLE, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
+use crate::actor::{Action, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
 use crate::area::{self, AreaDef, AreaTag};
 use crate::combat::{AttackTarget, Attackers, Stats, Vitals, is_dead};
 use crate::core::math::{Direction, Pos, Rng};
@@ -145,8 +145,8 @@ pub fn character(def: &NpcDef, at: Pos<Tiles>, area: Id<AreaDef>) -> Character {
         },
         actor: Actor {
             color: def.tint,
-            dir: Direction::S as u8,
-            action: ACTION_IDLE,
+            dir: Direction::S,
+            action: Action::Idle,
             model: def.model,
             attack_rate: def.attack_speed,
         },
@@ -335,7 +335,7 @@ pub fn run_respawn(world: &mut World) {
             position.pos = at;
         }
         if let Some(mut actor) = world.get_mut::<Actor>(id) {
-            set_action(&mut actor, ACTION_IDLE);
+            set_action(&mut actor, Action::Idle);
         }
         world.entity_mut(id).remove::<DeadAt>();
         forget(world, id);

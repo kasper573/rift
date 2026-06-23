@@ -15,7 +15,7 @@ use crate::core::tiling::{TilePos, Tiles};
 use crate::movement::Position;
 use crate::player::session;
 
-use crate::actor::{ACTION_ATTACK, ACTION_DEAD, action_name, set_action, set_facing};
+use crate::actor::{Action, set_action, set_facing};
 use crate::area::AreaTag;
 use crate::core::math::Direction;
 use crate::core::table::Id;
@@ -224,9 +224,9 @@ fn engage(world: &mut World, time: Seconds) {
         {
             continue;
         }
-        let dir = Direction::from(target_at - at) as u8;
+        let dir = Direction::from(target_at - at);
         if let Some(mut actor) = world.get_mut::<Actor>(id) {
-            set_facing(&mut actor, dir, ACTION_ATTACK);
+            set_facing(&mut actor, dir, Action::Attack);
         }
         let timing = attack_timing(world, id, dir);
         let speed = stats.attack_speed.at_least(0.01);
@@ -270,7 +270,7 @@ fn progress_swings(world: &mut World, time: Seconds, deaths: &mut Vec<(Entity, E
                 .remove::<Swing>()
                 .insert(LastAttack { at: swing.ends_at });
         } else if let Some(mut actor) = world.get_mut::<Actor>(id) {
-            set_action(&mut actor, ACTION_ATTACK);
+            set_action(&mut actor, Action::Attack);
         }
     }
 }
@@ -288,7 +288,7 @@ fn strike(world: &mut World, attacker: Entity, target: Entity, deaths: &mut Vec<
     }
     if is_dead(world, target) {
         if let Some(mut actor) = world.get_mut::<Actor>(target) {
-            set_action(&mut actor, ACTION_DEAD);
+            set_action(&mut actor, Action::Dead);
         }
         forget(world, target);
         world.entity_mut(target).remove::<Attackers>();
@@ -306,9 +306,9 @@ fn stats(world: &World, entity: Entity) -> Stats {
 }
 
 // Manifest the client animates from, so the felt hit and applied hit coincide.
-fn attack_timing(world: &World, entity: Entity, dir: u8) -> crate::actor::Timing {
+fn attack_timing(world: &World, entity: Entity, dir: Direction) -> crate::actor::Timing {
     let model = world.get::<Actor>(entity).map_or(Id::new(0), |a| a.model);
-    model.get().timing(action_name(ACTION_ATTACK), dir)
+    model.get().timing(Action::Attack.name(), dir)
 }
 
 fn add_attacker(world: &mut World, target: Entity, by: Entity) {

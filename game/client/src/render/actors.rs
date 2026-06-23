@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
-use world::actor::{Actor, Rgba, action_name};
+use world::actor::{Action, Actor, Rgba};
 use world::area;
 use world::area::AreaTag;
 use world::core::tiling::Tiles;
@@ -16,11 +16,11 @@ use super::{atlas_rect, dynamic_z, sprite_transform};
 
 #[derive(Resource, Default)]
 pub struct Animator {
-    anchors: HashMap<Entity, (u8, Seconds)>,
+    anchors: HashMap<Entity, (Action, Seconds)>,
 }
 
 impl Animator {
-    pub fn elapsed(&mut self, entity: Entity, action: u8, time: Seconds) -> Seconds {
+    pub fn elapsed(&mut self, entity: Entity, action: Action, time: Seconds) -> Seconds {
         match self.anchors.get(&entity) {
             Some(&(seen, start)) if seen == action => time - start,
             _ => {
@@ -67,12 +67,11 @@ pub(super) fn sync_actors(
         .retain(|entity, _| actors.contains(*entity));
     for (entity, actor, position, tag, mut sprite, mut transform) in &mut actors {
         let elapsed = animator.elapsed(entity, actor.action, clock);
-        let region = actor.model.get().frame(
-            action_name(actor.action),
-            actor.dir,
-            elapsed,
-            actor.attack_rate,
-        );
+        let region =
+            actor
+                .model
+                .get()
+                .frame(actor.action.name(), actor.dir, elapsed, actor.attack_rate);
         sprite.rect = Some(atlas_rect(region));
         sprite.custom_size = Some(Vec2::new(region.size.width, region.size.height));
         sprite.color = rgba(actor.color);
