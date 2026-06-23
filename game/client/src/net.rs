@@ -24,8 +24,9 @@ pub struct Announce {
     pub spectate: bool,
 }
 
+/// Present while a connect token is being fetched — i.e. a connection attempt is in flight.
 #[derive(Resource)]
-struct PendingSession {
+pub struct PendingSession {
     task: Task<Result<Vec<u8>, String>>,
     spectate: bool,
 }

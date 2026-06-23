@@ -5,6 +5,7 @@ use world::Role;
 
 pub mod assets;
 pub mod auth;
+pub mod connection;
 pub mod debug;
 pub mod fps;
 pub mod gestures;
@@ -80,6 +81,7 @@ pub fn boot() {
             debug::DebugPlugin,
             sfx::SfxPlugin,
             scenes::ScenesPlugin,
+            connection::ConnectionPlugin,
             hud::HudPlugin,
             fps::FpsPlugin,
             testing::TestingPlugin,
