@@ -29,6 +29,7 @@ const RNG_SEED: u64 = 0x1234_5678_9abc_def0;
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Npc {
     pub def: Id<NpcDef>,
+    /// Spawn-table row this NPC came from; protective NPCs defend others sharing their group.
     pub group: u32,
 }
 
@@ -123,43 +124,48 @@ fn spawn_npc(
     def_index: Id<NpcDef>,
     group: u32,
 ) {
-    let def = def_index.get();
     let at = random_walkable(rng, area.id).unwrap_or(area.spawn);
     world.spawn((
-        Character {
-            replicated: Replicated,
-            position: Position { pos: at },
-            name: Name {
-                name: def.display_name.clone(),
-            },
-            actor: Actor {
-                color: def.tint,
-                dir: Direction::S as u8,
-                action: ACTION_IDLE,
-                model: def.model,
-                attack_rate: def.attack_speed,
-            },
-            hitbox: Hitbox {
-                size: def.model.get().hitbox(),
-            },
-            vitals: Vitals {
-                health: def.health,
-                max: def.health,
-            },
-            area: AreaTag { area: area.id },
-            stats: Stats {
-                damage: def.damage,
-                attack_speed: def.attack_speed,
-                attack_delay: def.attack_delay,
-                range: def.range,
-            },
-            speed: Speed { value: def.speed },
-        },
+        character(def_index.get(), at, area.id),
         Npc {
             def: def_index,
             group,
         },
     ));
+}
+
+/// The replicated [`Character`] bundle an [`NpcDef`] spawns as. Shared by the spawner and the
+/// in-process benchmark so the two can't drift as `Character` or `NpcDef` gain fields.
+pub fn character(def: &NpcDef, at: Pos<Tiles>, area: Id<AreaDef>) -> Character {
+    Character {
+        replicated: Replicated,
+        position: Position { pos: at },
+        name: Name {
+            name: def.display_name.clone(),
+        },
+        actor: Actor {
+            color: def.tint,
+            dir: Direction::S as u8,
+            action: ACTION_IDLE,
+            model: def.model,
+            attack_rate: def.attack_speed,
+        },
+        hitbox: Hitbox {
+            size: def.model.get().hitbox(),
+        },
+        vitals: Vitals {
+            health: def.health,
+            max: def.health,
+        },
+        area: AreaTag { area },
+        stats: Stats {
+            damage: def.damage,
+            attack_speed: def.attack_speed,
+            attack_delay: def.attack_delay,
+            range: def.range,
+        },
+        speed: Speed { value: def.speed },
+    }
 }
 
 pub fn run_ai(world: &mut World) {

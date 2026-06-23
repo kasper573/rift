@@ -2,17 +2,13 @@ use std::time::Instant;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{ConnectedClient, Replicated, ServerState};
+use bevy_replicon::prelude::{ConnectedClient, ServerState};
 use bevy_state::prelude::NextState;
-use world::Character;
-use world::actor::{ACTION_IDLE, Actor, Hitbox, Name};
-use world::area::{self, Area, AreaTag};
-use world::combat::{Stats, Vitals};
-use world::core::math::{Direction, Pos};
+use world::area::{self, Area};
+use world::core::math::Pos;
 use world::core::table::Id;
 use world::core::tiling::Tiles;
 use world::items::Inventory;
-use world::movement::{Position, Speed};
 use world::npc::{self, Npc, NpcDef};
 use world::player::{ClientId, Owner, Players, Xp};
 use world::visibility::OwnedBy;
@@ -233,36 +229,5 @@ fn wander_pos(area: &Area) -> Pos<Tiles> {
 }
 
 fn spawn_character(world: &mut World, area: &Area, def_id: Id<NpcDef>, at: Pos<Tiles>) -> Entity {
-    let def = def_id.get();
-    world
-        .spawn(Character {
-            replicated: Replicated,
-            position: Position { pos: at },
-            name: Name {
-                name: def.display_name.clone(),
-            },
-            actor: Actor {
-                color: def.tint,
-                dir: Direction::S as u8,
-                action: ACTION_IDLE,
-                model: def.model,
-                attack_rate: def.attack_speed,
-            },
-            hitbox: Hitbox {
-                size: def.model.get().hitbox(),
-            },
-            vitals: Vitals {
-                health: def.health,
-                max: def.health,
-            },
-            area: AreaTag { area: area.id },
-            stats: Stats {
-                damage: def.damage,
-                attack_speed: def.attack_speed,
-                attack_delay: def.attack_delay,
-                range: def.range,
-            },
-            speed: Speed { value: def.speed },
-        })
-        .id()
+    world.spawn(npc::character(def_id.get(), at, area.id)).id()
 }
