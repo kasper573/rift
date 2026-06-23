@@ -15,8 +15,8 @@ Locally this runs one combination — **chrome at desktop size, headless** — f
 Google Chrome; the stack runs on `rift.lan`, which Chrome maps to loopback via a launch flag, so
 there's no DNS or `/etc/hosts` setup.
 
-CI sets `E2E_ALL_BROWSERS=1` to fan out across every browser × resolution (chrome/edge/firefox/safari
-× desktop/portrait).
+CI sets `E2E_ALL_BROWSERS=1` to fan out across every browser (chrome/edge/firefox/safari) at desktop
+size. (A mobile-portrait resolution is wired up but commented out in the config for now.)
 
 ## The tests
 

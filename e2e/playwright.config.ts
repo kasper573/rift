@@ -44,7 +44,8 @@ const browsers = {
 
 const resolutions = {
   desktop: { width: 1280, height: 800 },
-  portrait: { width: 480, height: 844 },
+  // Mobile portrait is off for now (halves the matrix). Re-add for mobile-viewport coverage.
+  // portrait: { width: 480, height: 844 },
 } as const;
 
 type BrowserName = keyof typeof browsers;
