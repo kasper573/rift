@@ -7,13 +7,12 @@ members = [
     "game/server",
     "game/client",
     "game/bench",
-    "e2e",
     "service",
     "website",
 ]
-# `e2e` pulls a browser-automation harness only the CI needs, and `game/client` only builds for
-# wasm, so a plain `cargo build`/`test`/`clippy` skips both; build them explicitly with `just e2e`
-# or `just wasm` (`cargo … -p client --target wasm32-unknown-unknown`).
+# `game/client` only builds for wasm, so a plain `cargo build`/`test`/`clippy` skips it; build it
+# explicitly with `just wasm` (`cargo … -p client --target wasm32-unknown-unknown`). The end-to-end
+# suite is no longer a cargo crate — it's a Playwright project in `e2e/`, run via `just e2e`.
 default-members = [
     "ui",
     "bevy_opacity",

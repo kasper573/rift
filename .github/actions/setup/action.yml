@@ -21,22 +21,36 @@ runs:
         curl -sSfL "https://github.com/rustwasm/wasm-bindgen/releases/download/${version}/wasm-bindgen-${version}-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C /tmp
         sudo install "/tmp/wasm-bindgen-${version}-x86_64-unknown-linux-musl/wasm-bindgen" /usr/local/bin/wasm-bindgen
         wasm-bindgen --version
-    - name: Ensure chromedriver is on PATH for the e2e
-      if: runner.os == 'Linux' && inputs.deps == 'all'
-      shell: bash
-      # The runner preinstalls a matched Chrome + chromedriver, but chromedriver isn't always on PATH.
-      run: command -v chromedriver >/dev/null || echo "${CHROMEWEBDRIVER}" >> "$GITHUB_PATH"
     - name: Install Linux system libraries
       if: runner.os == 'Linux' && inputs.deps != 'none'
       shell: bash
-      # `-sys` crates link system C libraries cargo can't supply; the repo's platform rule keeps them
-      # here, the one platform-specific place. These cover the native `ui` gallery and `bevy_render`:
-      # mold (linker), the x11/gl libs, and cmake/g++ for their build systems. The e2e browser and
-      # matching chromedriver come preinstalled on the runner, so `all` adds nothing beyond `build`.
-      # Drop the runner's microsoft/azure apt sources first: nothing installs from them, but they 403
-      # intermittently and fail `apt-get update`.
+      # `-sys` crates link system C libraries cargo can't supply (the one platform-specific place, per
+      # the repo's platform rule): mold, the x11/gl libs, and cmake/g++ for the native `ui` gallery and
+      # `bevy_render`. xvfb + the Mesa DRI driver are for the e2e's headed Firefox/WebKit (software
+      # WebGL). Drop the runner's microsoft/azure apt sources first — unused, and they 403 intermittently.
       run: |
         sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
         sudo apt-get update
         sudo apt-get install -y mold cmake g++ libx11-dev libxext-dev libxft-dev libxinerama-dev \
-          libxcursor-dev libxrender-dev libxfixes-dev libpango1.0-dev libgl1-mesa-dev libglu1-mesa-dev
+          libxcursor-dev libxrender-dev libxfixes-dev libpango1.0-dev libgl1-mesa-dev libglu1-mesa-dev \
+          xvfb libgl1-mesa-dri
+    - name: Set up Node for the e2e
+      if: inputs.deps == 'all'
+      uses: actions/setup-node@v4
+      with:
+        node-version: lts/*
+    # Cache the engines Playwright downloads (Firefox/WebKit, ~180MB) keyed on the lockfile, which
+    # pins their versions; `playwright install` then skips them on a hit. Chrome/Edge are apt channels.
+    - name: Cache Playwright browsers
+      if: runner.os == 'Linux' && inputs.deps == 'all'
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json') }}
+    - name: Install the e2e suite and its browsers
+      if: runner.os == 'Linux' && inputs.deps == 'all'
+      shell: bash
+      working-directory: e2e
+      run: |
+        npm ci
+        npx playwright install --with-deps chrome firefox webkit
