@@ -19,7 +19,7 @@ use crate::core::nav;
 use crate::core::table::{self, Content, Id};
 use crate::core::tiling::{Cell, CellPos, GridSize, TileSize, Tiles};
 use crate::core::time::{Millis, Seconds};
-use crate::sfx::SfxId;
+use crate::systems::sfx::SfxId;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -34,7 +34,7 @@ pub struct AreaTag {
 
 /// Whether the local player can step onto `tile` in its current area — client-side path validation.
 pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
-    crate::player::session::me(world)
+    crate::systems::player::session::me(world)
         .and_then(|me| me.get::<AreaTag>())
         .map(|tag| tag.area)
         .and_then(|id| areas().get(id.index()))

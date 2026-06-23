@@ -3,13 +3,13 @@
 use bevy_ecs::prelude::*;
 
 use super::AreaDef;
-use crate::actor::Name;
-use crate::combat::Vitals;
 use crate::core::math::Pos;
 use crate::core::table::Id;
 use crate::core::tiling::Tiles;
-use crate::items::Inventory;
-use crate::player::{ClientId, Owner, Xp};
+use crate::systems::actor::Name;
+use crate::systems::combat::Vitals;
+use crate::systems::items::Inventory;
+use crate::systems::player::{ClientId, Owner, Xp};
 
 /// Not replicated: it never leaves the server and the entity is gone within the tick.
 #[derive(Component, Clone, Copy)]
@@ -54,7 +54,7 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
         .collect();
     for (entity, traveler) in &leaving {
         world
-            .resource_mut::<crate::player::Players>()
+            .resource_mut::<crate::systems::player::Players>()
             .0
             .remove(&traveler.client);
         world.despawn(*entity);
@@ -63,7 +63,7 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
 }
 
 pub fn arrive(world: &mut World, traveler: Traveler) -> Entity {
-    crate::player::place(
+    crate::systems::player::place(
         world,
         traveler.client,
         traveler.dest_area,

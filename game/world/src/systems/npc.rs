@@ -6,17 +6,17 @@ use bevy_replicon::prelude::Replicated;
 use bevy_time::Time;
 use serde::Deserialize;
 
-use crate::Character;
-use crate::actor::{Action, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
-use crate::area::{self, AreaDef, AreaTag};
-use crate::combat::{AttackTarget, Attackers, Stats, Vitals, is_dead};
 use crate::core::math::{Direction, Pos, Rng};
 use crate::core::table;
 use crate::core::table::{Content, Id};
 use crate::core::tiling::{TilePos, Tiles, TilesPerSec};
 use crate::core::time::{Millis, PlaybackRate, Seconds};
-use crate::movement::{MoveTarget, Path, Position, Speed, forget, position};
-use crate::player::Players;
+use crate::systems::Character;
+use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
+use crate::systems::area::{self, AreaDef, AreaTag};
+use crate::systems::combat::{AttackTarget, Attackers, Stats, Vitals, is_dead};
+use crate::systems::movement::{MoveTarget, Path, Position, Speed, forget, position};
+use crate::systems::player::Players;
 
 const FILE: &str = "npc_table.json";
 const SPAWN_FILE: &str = "spawn_table.json";
@@ -48,7 +48,7 @@ pub struct NpcDef {
     pub display_name: String,
     #[serde(deserialize_with = "Id::<ActorModel>::deserialize_named")]
     pub model: Id<ActorModel>,
-    #[serde(deserialize_with = "crate::actor::rgba_hex")]
+    #[serde(deserialize_with = "crate::systems::actor::rgba_hex")]
     pub tint: Rgba,
     pub ai: Ai,
     pub health: f32,
@@ -104,7 +104,7 @@ pub fn spawns() -> &'static [SpawnRow] {
 
 pub fn spawn_all(world: &mut World) {
     let mut rng = Rng(RNG_SEED | 1);
-    let area_id = world.resource::<crate::WorldArea>().0;
+    let area_id = world.resource::<crate::systems::WorldArea>().0;
     let area = &area::areas()[area_id.index()];
     for (group, row) in spawns().iter().enumerate() {
         if row.area != area_id {

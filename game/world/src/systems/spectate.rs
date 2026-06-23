@@ -6,13 +6,13 @@ use bevy_ecs::component::Component;
 use bevy_ecs::message::Message;
 use serde::{Deserialize, Serialize};
 
-use crate::player::ClientId;
+use crate::systems::player::ClientId;
 
-use crate::account::identity::Identity;
-use crate::account::role::Role;
-use crate::area::{self, AreaTag};
-use crate::movement::Position;
-use crate::player::{Owner, Players};
+use crate::systems::account::identity::Identity;
+use crate::systems::account::role::Role;
+use crate::systems::area::{self, AreaTag};
+use crate::systems::movement::Position;
+use crate::systems::player::{Owner, Players};
 use bevy_ecs::lifecycle::Remove;
 use bevy_ecs::message::Messages;
 use bevy_ecs::observer::On;
@@ -76,7 +76,7 @@ fn allowed(world: &World, client_entity: Entity, client: ClientId) -> bool {
 }
 
 fn spawn_anchor(world: &mut World, client: ClientId, watch: Option<ClientId>) {
-    let zone = world.resource::<crate::WorldArea>().0;
+    let zone = world.resource::<crate::systems::WorldArea>().0;
     let spawn = area::areas()[zone.index()].spawn;
     let entity = world
         .spawn((

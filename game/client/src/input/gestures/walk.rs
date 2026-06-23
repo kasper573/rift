@@ -4,8 +4,8 @@ use bevy::prelude::*;
 use bevy::window::CursorIcon;
 use world::core::math::Pos;
 use world::core::tiling::{TilePos, Tiles};
-use world::player::session;
-use world::{area, combat};
+use world::systems::player::session;
+use world::systems::{area, combat};
 
 use crate::input::gestures::{ActiveTileHighlight, Gesture, image_cursor};
 use crate::render;

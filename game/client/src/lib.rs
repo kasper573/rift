@@ -1,7 +1,7 @@
 use bevy::asset::AssetApp;
 use bevy::asset::io::AssetSourceId;
 use bevy::prelude::*;
-use world::account::Role;
+use world::systems::account::Role;
 
 pub mod assets;
 pub mod debug;

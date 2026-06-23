@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::window::CursorIcon;
-use world::combat;
-use world::player::session;
+use world::systems::combat;
+use world::systems::player::session;
 
 use crate::input::gestures::{Gesture, image_cursor};
 use crate::render;

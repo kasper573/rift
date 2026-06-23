@@ -3,13 +3,13 @@
 
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
-use world::area::AreaTag;
-use world::area::{self, AreaDef, TileRef};
 use world::core::table::Id;
 use world::core::tiling::{Cell, GridDims, TileSize, Tiles};
 use world::core::time::Seconds;
-use world::player::Owner;
-use world::player::session::MyClient;
+use world::systems::area::AreaTag;
+use world::systems::area::{self, AreaDef, TileRef};
+use world::systems::player::Owner;
+use world::systems::player::session::MyClient;
 
 use super::{TILE, atlas_rect, dynamic_z, sprite_transform};
 

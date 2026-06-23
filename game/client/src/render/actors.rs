@@ -5,12 +5,12 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
-use world::actor::{Action, Actor, Rgba};
-use world::area;
-use world::area::AreaTag;
 use world::core::tiling::Tiles;
 use world::core::time::Seconds;
-use world::movement::Position;
+use world::systems::actor::{Action, Actor, Rgba};
+use world::systems::area;
+use world::systems::area::AreaTag;
+use world::systems::movement::Position;
 
 use super::{atlas_rect, dynamic_z, sprite_transform};
 

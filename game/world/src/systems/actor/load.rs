@@ -8,7 +8,7 @@ use tiled::{Frame, PropertyValue};
 use super::{ActorModel, IDLE};
 use crate::core::assets;
 use crate::core::math::Size;
-use crate::sfx::SfxId;
+use crate::systems::sfx::SfxId;
 
 pub(super) fn load(name: &str) -> ActorModel {
     let tileset = tiled::Loader::with_reader(assets::tiled_reader)

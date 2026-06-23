@@ -1,10 +1,10 @@
 //! The character panel readout: the local player's name, health, and xp.
 
 use bevy::prelude::*;
-use world::actor::Name;
-use world::combat::Vitals;
-use world::player::Xp;
-use world::player::session;
+use world::systems::actor::Name;
+use world::systems::combat::Vitals;
+use world::systems::player::Xp;
+use world::systems::player::session;
 
 #[derive(Component, Default, Clone)]
 pub(super) struct CharacterText;

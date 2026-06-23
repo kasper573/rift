@@ -13,9 +13,9 @@ pub use camera::cursor_tile;
 
 use bevy::prelude::*;
 use bevy::sprite_render::Material2dPlugin;
-use world::area;
 use world::core::math::{Pos, WorldPx};
 use world::core::tiling::Tiles;
+use world::systems::area;
 
 use crate::render::screen::ToScreen;
 

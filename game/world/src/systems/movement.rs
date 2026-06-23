@@ -11,14 +11,14 @@ use serde::{Deserialize, Serialize};
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 
-use crate::actor::{Action, set_facing};
-use crate::area::{self, AreaTag};
-use crate::combat::{AttackTarget, is_dead};
 use crate::core::math::{Direction, Offset};
 use crate::core::table::Id;
 use crate::core::tiling::{Cell, CellPos, TilePos, TilesPerSec};
 use crate::core::time::Seconds;
-use crate::player::sender_player;
+use crate::systems::actor::{Action, set_facing};
+use crate::systems::area::{self, AreaTag};
+use crate::systems::combat::{AttackTarget, is_dead};
+use crate::systems::player::sender_player;
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::FromClient;
@@ -208,7 +208,7 @@ pub fn advance(world: &mut World) {
 
         world.entity_mut(id).insert(Position { pos: at });
         if let Some(step) = heading
-            && let Some(mut actor) = world.get_mut::<crate::actor::Actor>(id)
+            && let Some(mut actor) = world.get_mut::<crate::systems::actor::Actor>(id)
         {
             set_facing(
                 &mut actor,
@@ -269,7 +269,7 @@ fn cross_portal(world: &mut World, entity: Entity) {
     } else {
         world
             .entity_mut(entity)
-            .insert(crate::area::transition::Crossing { dest_area, dest });
+            .insert(crate::systems::area::transition::Crossing { dest_area, dest });
         forget(world, entity);
     }
 }

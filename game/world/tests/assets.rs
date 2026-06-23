@@ -3,8 +3,8 @@
 
 #[test]
 fn loads_embedded_content() {
-    assert!(!world::actor::models().is_empty());
-    assert!(!world::area::areas().is_empty());
-    assert!(!world::items::items().is_empty());
-    assert!(!world::sfx::sfx_table().is_empty());
+    assert!(!world::systems::actor::models().is_empty());
+    assert!(!world::systems::area::areas().is_empty());
+    assert!(!world::systems::items::items().is_empty());
+    assert!(!world::systems::sfx::sfx_table().is_empty());
 }

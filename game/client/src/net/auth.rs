@@ -1,6 +1,6 @@
 use base64::Engine;
 use bevy::prelude::Resource;
-use world::account::Role;
+use world::systems::account::Role;
 
 /// The signed-in player's session, built from the access token the website injects into the page.
 /// The client does no auth itself: it decodes the token's roles and presents the token to the game

@@ -10,7 +10,7 @@ use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureFormat};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::Material2d;
 use bevy::window::PrimaryWindow;
-use world::player::session;
+use world::systems::player::session;
 
 use super::TILE;
 use super::camera::WorldCamera;

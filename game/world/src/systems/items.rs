@@ -11,11 +11,11 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::core::assets;
 use crate::core::table::{self, Content, Id};
-use crate::sfx::SfxId;
+use crate::systems::sfx::SfxId;
 
-use crate::combat::{Vitals, is_dead};
-use crate::player::sender_player;
-use crate::visibility::seen_by;
+use crate::systems::combat::{Vitals, is_dead};
+use crate::systems::player::sender_player;
+use crate::systems::visibility::seen_by;
 use bevy_ecs::message::Messages;
 use bevy_ecs::world::World;
 use bevy_replicon::prelude::{FromClient, SendTargets, ToClients};

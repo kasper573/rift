@@ -9,19 +9,19 @@ use bevy_ecs::query::With;
 use bevy_ecs::world::World;
 use serde::{Deserialize, Serialize};
 
-use crate::actor::{Actor, Hitbox};
 use crate::core::math::Pos;
 use crate::core::tiling::{TilePos, Tiles};
-use crate::movement::Position;
-use crate::player::session;
+use crate::systems::actor::{Actor, Hitbox};
+use crate::systems::movement::Position;
+use crate::systems::player::session;
 
-use crate::actor::{Action, set_action, set_facing};
-use crate::area::AreaTag;
 use crate::core::math::Direction;
 use crate::core::table::Id;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
-use crate::movement::{MoveTarget, Path, forget, halt, on_tile, position};
-use crate::player::{Owner, sender_player};
+use crate::systems::actor::{Action, set_action, set_facing};
+use crate::systems::area::AreaTag;
+use crate::systems::movement::{MoveTarget, Path, forget, halt, on_tile, position};
+use crate::systems::player::{Owner, sender_player};
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::FromClient;
@@ -306,7 +306,7 @@ fn stats(world: &World, entity: Entity) -> Stats {
 }
 
 // Manifest the client animates from, so the felt hit and applied hit coincide.
-fn attack_timing(world: &World, entity: Entity, dir: Direction) -> crate::actor::Timing {
+fn attack_timing(world: &World, entity: Entity, dir: Direction) -> crate::systems::actor::Timing {
     let model = world.get::<Actor>(entity).map_or(Id::new(0), |a| a.model);
     model.get().timing(Action::Attack.name(), dir)
 }

@@ -4,7 +4,7 @@ use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use bevy::window::{CursorMoved, PrimaryWindow};
-use world::player::session;
+use world::systems::player::session;
 
 use crate::GameScene;
 

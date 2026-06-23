@@ -9,19 +9,19 @@ use bevy_ecs::component::Component;
 use bevy_ecs::message::Message;
 use serde::{Deserialize, Serialize};
 
-use crate::Character;
-use crate::account::identity::Identity;
-use crate::actor::{Action, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
-use crate::area::{self, AreaDef, AreaTag};
-use crate::combat::{Stats, Vitals, is_dead};
 use crate::core::math::{Direction, Pos};
 use crate::core::table::Id;
 use crate::core::tiling::{Tiles, TilesPerSec};
 use crate::core::time::{Millis, PlaybackRate};
-use crate::items::Inventory;
-use crate::movement::{Position, Speed, forget};
-use crate::spectate::Spectators;
-use crate::visibility::OwnedBy;
+use crate::systems::Character;
+use crate::systems::account::identity::Identity;
+use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
+use crate::systems::area::{self, AreaDef, AreaTag};
+use crate::systems::combat::{Stats, Vitals, is_dead};
+use crate::systems::items::Inventory;
+use crate::systems::movement::{Position, Speed, forget};
+use crate::systems::spectate::Spectators;
+use crate::systems::visibility::OwnedBy;
 use bevy_ecs::lifecycle::{Add, Remove};
 use bevy_ecs::message::Messages;
 use bevy_ecs::observer::On;
@@ -140,7 +140,7 @@ pub fn client_left(
 }
 
 pub fn join(world: &mut World) {
-    let zone = world.resource::<crate::WorldArea>().0;
+    let zone = world.resource::<crate::systems::WorldArea>().0;
     let spawn = area::areas()[zone.index()].spawn;
     let requests: Vec<FromClient<JoinRequest>> = world
         .resource_mut::<Messages<FromClient<JoinRequest>>>()
@@ -237,7 +237,7 @@ pub(crate) fn place(
 }
 
 pub fn respawn(world: &mut World) {
-    let zone = world.resource::<crate::WorldArea>().0;
+    let zone = world.resource::<crate::systems::WorldArea>().0;
     let spawn = area::areas()[zone.index()].spawn;
     let requests: Vec<FromClient<RespawnRequest>> = world
         .resource_mut::<Messages<FromClient<RespawnRequest>>>()

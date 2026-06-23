@@ -4,6 +4,6 @@
 
 #[test]
 fn assembles_the_authoritative_app() {
-    world::validate();
-    let _app = world::server_app(world::area::spawn_zone());
+    world::systems::validate();
+    let _app = world::systems::server_app(world::systems::area::spawn_zone());
 }

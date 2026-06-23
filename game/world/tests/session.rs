@@ -2,9 +2,9 @@
 //! other entity — no bespoke per-field accessors, no special "me" character.
 
 use bevy_ecs::world::World;
-use world::combat::Vitals;
-use world::player::session::{self, MyClient};
-use world::player::{ClientId, Owner};
+use world::systems::combat::Vitals;
+use world::systems::player::session::{self, MyClient};
+use world::systems::player::{ClientId, Owner};
 
 #[test]
 fn me_is_none_before_the_welcome_assigns_a_client_id() {

@@ -1,12 +1,12 @@
 use bevy::prelude::*;
-use world::actor::{Actor, Hitbox};
-use world::area;
-use world::area::AreaTag;
 use world::core::math::Offset;
 use world::core::tiling::{self, TilePos};
-use world::movement::Position;
-use world::player::Owner;
-use world::player::session::MyClient;
+use world::systems::actor::{Actor, Hitbox};
+use world::systems::area;
+use world::systems::area::AreaTag;
+use world::systems::movement::Position;
+use world::systems::player::Owner;
+use world::systems::player::session::MyClient;
 
 use crate::GameScene;
 use crate::render::screen::ToScreen;

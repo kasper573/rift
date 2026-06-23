@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 use crate::core::{assets, table};
-use crate::{actor, area, items};
+use crate::systems::{actor, area, items};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
 pub struct SfxId(pub String);

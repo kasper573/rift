@@ -12,13 +12,13 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 use tiled::{Frame, TileId};
 
-use crate::combat::Vitals;
 use crate::core::assets;
 use crate::core::math::{Direction, Pos, Rect, Size, WorldPx};
 use crate::core::table::{Content, Id};
 use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
-use crate::sfx::SfxId;
+use crate::systems::combat::Vitals;
+use crate::systems::sfx::SfxId;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;

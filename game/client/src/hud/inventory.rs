@@ -4,8 +4,8 @@
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::{Align, Side, text_colored, tooltip, tooltip_content};
-use world::items::Inventory;
-use world::player::session;
+use world::systems::items::Inventory;
+use world::systems::player::session;
 
 use crate::component;
 use crate::hud::settings::ScreenPx;

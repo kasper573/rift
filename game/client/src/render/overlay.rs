@@ -3,10 +3,10 @@
 
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
-use world::combat::Vitals;
 use world::core::math::{Size, WorldPx};
-use world::movement::Position;
-use world::player::session;
+use world::systems::combat::Vitals;
+use world::systems::movement::Position;
+use world::systems::player::session;
 
 use super::TILE;
 use crate::input::gestures::ActiveTileHighlight;

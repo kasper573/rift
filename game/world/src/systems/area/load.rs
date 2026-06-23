@@ -14,7 +14,7 @@ use crate::core::tiling::{
     self, Cell, CellPos, GridDims, GridSize, PixelsPerTile, TileRect, TileSize, Tiles,
 };
 use crate::core::time::Millis;
-use crate::sfx::SfxId;
+use crate::systems::sfx::SfxId;
 
 const OBSCURING_CUTOFF: f32 = 0.4;
 
