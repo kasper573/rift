@@ -80,9 +80,12 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  // One worker in CI: software WebGL is CPU-bound, and two heavy canvases sharing a runner drop the
-  // client's frame rate enough that held clicks miss. Local runs (one browser) can parallelize.
-  workers: process.env.CI ? Number(process.env.E2E_WORKERS ?? 1) : 2,
+  // Scale with the hardware: half the runner's cores. Each software-WebGL browser is CPU-bound, so
+  // pairing this with LP_NUM_THREADS=2 (set by `just e2e-run`) keeps the total Mesa render threads at
+  // roughly the core count on any machine — add cores and the suite parallelizes further, no config
+  // change. The number of cores per worker is what makes the slow (Firefox/WebKit) browsers pass, so
+  // the suite wants a runner with enough cores; see e2e/README.md.
+  workers: process.env.E2E_WORKERS ?? "50%",
   // Unoptimized software WebGL is slow: the canvas can take tens of seconds to come up and the player
   // tens more to spawn, so a registration + spawn + gameplay action needs generous room.
   timeout: 240_000,

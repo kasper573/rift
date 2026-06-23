@@ -89,6 +89,10 @@ e2e-run filter="":
     set -a; source docker/.env.test; set +a
     cd e2e
     [ -d node_modules ] || npm ci
+    # Cap each Firefox/WebKit instance's Mesa render threads so that, paired with the config's 50%
+    # workers, total render threads stay near the core count instead of every browser grabbing them
+    # all and thrashing. Harmless for the Chromium projects (SwiftShader ignores it).
+    export LP_NUM_THREADS=2
     if [ "${E2E_ALL_BROWSERS:-}" = "1" ]; then
       xvfb-run -a npx playwright test {{filter}}
     else

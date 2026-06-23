@@ -33,6 +33,19 @@ The game is WebGL2, and headless WebGL on Linux differs by engine:
 Because of WebKit/Firefox, an all-browser run must be wrapped in `xvfb-run` — the Justfile does this
 when `E2E_ALL_BROWSERS=1`. A local chrome-only run needs none of it.
 
+## Parallelism and hardware
+
+The suite runs at `workers: '50%'` — half the runner's cores — so it parallelizes further as you give
+it bigger hardware, with no config change. `just e2e-run` sets `LP_NUM_THREADS=2` so each headed
+Firefox/WebKit caps its Mesa render threads; paired with 50% workers that keeps total render threads
+near the core count instead of every browser grabbing them all and thrashing.
+
+Software-rendered WebGL is CPU-bound, and the client wasm is large and unoptimized on branch builds,
+so the slow engines (Firefox, WebKit especially) need **real cores per worker** to finish in time.
+The standard 4-core GitHub-hosted runner is not enough for the full matrix; run it on a powerful
+runner (a self-hosted machine, or a managed/large runner with plenty of cores and memory bandwidth)
+and point the job's `runs-on` at it. Chrome and Edge are cheap enough to pass on modest hardware.
+
 ## How the assertions work
 
 The tests resist cross-contamination by construction: each registers its own throwaway account, so

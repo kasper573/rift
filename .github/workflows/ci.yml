@@ -62,13 +62,10 @@ jobs:
             CARGO_PROFILE_RELEASE_OPT_LEVEL=0 just build
             CARGO_PROFILE_RELEASE_OPT_LEVEL=0 just wasm
           fi
-      - name: End-to-end test
-        # Packages the binaries built above into the stack images, then drives every browser through
-        # registration and gameplay. E2E_ALL_BROWSERS fans out the full matrix; the run is xvfb-wrapped
-        # for the headed Firefox/WebKit projects (see e2e/README.md). rift.lan only resolves on a LAN,
-        # so map it and its subdomains to loopback for the browsers that can't take a host-resolver flag.
-        env:
-          E2E_ALL_BROWSERS: "1"
+      - name: Start the stack
+        # Packages the binaries built above into the stack images and brings the stack up. rift.lan
+        # only resolves on a LAN, so map it and its subdomains to loopback for the browsers that can't
+        # take a host-resolver flag (Firefox/WebKit).
         run: |
           echo "127.0.0.1 rift.lan auth.rift.lan game-server.rift.lan grafana.rift.lan" | sudo tee -a /etc/hosts
           # The stack pulls public images from Docker Hub, which rate-limits anonymous CI runners
@@ -79,7 +76,13 @@ jobs:
             echo "::warning::stack-up attempt $attempt failed (likely a transient Docker Hub pull); retrying"
             sleep 20
           done
-          just e2e-run
+      - name: End-to-end test
+        # Drives every browser × resolution through registration and gameplay (E2E_ALL_BROWSERS fans
+        # out the full matrix; the run is xvfb-wrapped for the headed Firefox/WebKit projects — see
+        # e2e/README.md). This step is just the tests, so its duration reflects the test time.
+        env:
+          E2E_ALL_BROWSERS: "1"
+        run: just e2e-run
       - name: Save e2e artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

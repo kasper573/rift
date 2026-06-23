@@ -12,10 +12,11 @@ One-time setup:
 - `wasm-bindgen-cli` for building the wasm client:
   `cargo install wasm-bindgen-cli --locked`
 - `cargo-watch` for the dev loop: `cargo install cargo-watch --locked`
-- To run the end-to-end suite (`just e2e`): chromedriver and Google Chrome — the `all` set in
-  [`.github/actions/setup`](.github/actions/setup/action.yml) is the canonical list. `just e2e` is
-  then zero-config: it drives a headless browser through a real sign-in, so it never touches your
-  desktop and needs no display or browser flags.
+- To run the end-to-end suite (`just e2e`): [Node.js](https://nodejs.org/) and Google Chrome. The
+  suite is [Playwright](https://playwright.dev) (in [`e2e/`](e2e/README.md)); `just e2e` installs its
+  npm deps on first run and drives a headless Chrome through a real sign-in, so it's zero-config and
+  never touches your desktop. CI fans out across Chrome, Firefox, Safari, and Edge — see
+  [`e2e/README.md`](e2e/README.md).
 
 Then:
 
