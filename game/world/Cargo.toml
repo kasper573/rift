@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 description = "The MMORPG game, headless: the wire protocol (replicated components + messages), content tables, and the simulation systems — organized by feature. The client wraps a frontend around this and the server a backend; a benchmark consumes it standalone to measure the headless tick."
 
+[package.metadata.lint]
+layers = true
+
 [[bin]]
 name = "kc-roles"
 path = "src/bin/kc_roles.rs"

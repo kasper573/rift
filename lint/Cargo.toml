@@ -1,0 +1,10 @@
+[package]
+name = "lint"
+version.workspace = true
+edition.workspace = true
+description = "Workspace architecture lint. Crates opt in with `[package.metadata.lint] layers = true`; it then enforces that Rust source lives only under src/core/, src/systems/, or src/bin/ (with lib.rs/main.rs at the root), and that core/ never depends on systems/."
+
+[dependencies]
+cargo_metadata = "0.19"
+serde_json.workspace = true
+syn = { workspace = true, features = ["visit"] }
