@@ -2,7 +2,7 @@
 name = "server"
 version.workspace = true
 edition.workspace = true
-description = "backend server for the game"
+description = "Backend for the game"
 
 [dependencies]
 axum.workspace = true

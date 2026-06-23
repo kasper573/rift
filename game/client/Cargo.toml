@@ -2,7 +2,7 @@
 name = "client"
 version.workspace = true
 edition.workspace = true
-description = "frontend client for the game"
+description = "Frontend for the game"
 repository = "https://github.com/kasper573/rift"
 authors = ["kasper573"]
 
