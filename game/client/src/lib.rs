@@ -17,6 +17,7 @@ pub mod replicon_renet;
 pub mod scenes;
 pub mod screen;
 pub mod sfx;
+pub mod testing;
 pub mod user_settings;
 
 #[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
@@ -81,6 +82,7 @@ pub fn boot() {
             scenes::ScenesPlugin,
             hud::HudPlugin,
             fps::FpsPlugin,
+            testing::TestingPlugin,
         ));
     ui::theme::set_theme(ui::themes::dark::THEME);
     app.run();
