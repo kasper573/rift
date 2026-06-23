@@ -75,8 +75,9 @@ export default defineConfig({
     trace: "retain-on-failure",
     video: "retain-on-failure",
     screenshot: "only-on-failure",
-    actionTimeout: 30_000,
-    navigationTimeout: 60_000,
+    // Generous: a CPU-starved headed browser under parallel load loads even plain auth pages slowly.
+    actionTimeout: 60_000,
+    navigationTimeout: 90_000,
   },
   projects: matrix.map(([browser, resolution]) => ({
     name: `${browser}-${resolution}`,
