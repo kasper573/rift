@@ -4,8 +4,8 @@ import { captureScene, clickUntil, register, waitForWorld } from "./helpers/game
 import { diffFraction } from "./helpers/image";
 
 // A short walk sweeps high-contrast scenery across the frame. Measured at a high per-pixel threshold
-// so animated-water shimmer — which only nudges colors — stays far below it, leaving a wide margin
-// between an idle frame and a walked one.
+// so animated-water shimmer — which only nudges colors — stays far below it. In practice a two-tile
+// walk scores ~0.37 here while an idle frame is ~0.04, so 0.15 sits with a wide margin between them.
 const MIN_DELTA = 100;
 const WALKED = 0.15;
 

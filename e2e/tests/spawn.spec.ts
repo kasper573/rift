@@ -3,7 +3,9 @@ import { expect, test } from "@playwright/test";
 import { captureScene, register, waitForWorld } from "./helpers/game";
 import { loadReference, resemblance } from "./helpers/image";
 
-// At or above this, a frame "shows basically the same place" as a reference snapshot.
+// At or above this, a frame "shows basically the same place" as a reference snapshot. In practice the
+// matching map scores ~0.83 and the other ~0.03, so 0.5 sits with a wide margin on both sides; the
+// island > forest check below is the real discriminator and is never close.
 const MAP_MATCH = 0.5;
 
 test("a new player spawns into the island scene", async ({ page }) => {

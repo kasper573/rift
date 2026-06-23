@@ -16,7 +16,8 @@ const CLICK_FRAMES = 1;
 
 // A frame difference above this means the player moved (the camera scrolled); below it the frame is
 // just idle water shimmer. Used to tell "the click hasn't taken yet, click again" from "it took,
-// stop clicking and let it play out".
+// stop clicking and let it play out". In practice idle shimmer is ~0.04 here and a one-tile move
+// ~0.18, so 0.08 cleanly separates rest from motion.
 const MOVED = 0.08;
 
 // A rendered map lights up at least this fraction of the view; below it the canvas is still blank or

@@ -80,9 +80,15 @@ export function diffFraction(a: Image, b: Image, minDelta = 24): number {
   return changed / pixels;
 }
 
+// The health bar is a solid strip (~150–320 px in practice); require clearly more than a stray green
+// pixel or two so noise never yields a bogus centroid, while staying well under a real bar's size so
+// a thin bar on a slow renderer is still accepted.
+const MIN_MARKER_PIXELS = 20;
+
 // Centroid of the bright-green health-bar pixels. The client draws this strip only for the local
 // player (render.rs `healthbar`), so it pinpoints your own character on screen even when other
-// players are nearby — no template matching needed. Returns null when no health bar is visible.
+// players are nearby — no template matching needed. Returns null when no solid health bar is visible
+// (treated as "player not ready / not found" by callers, which then wait and retry).
 export function greenMarker(image: Image): { x: number; y: number } | null {
   const { width, height, data } = image;
   let sx = 0;
@@ -98,7 +104,7 @@ export function greenMarker(image: Image): { x: number; y: number } | null {
       }
     }
   }
-  return n > 0 ? { x: sx / n, y: sy / n } : null;
+  return n >= MIN_MARKER_PIXELS ? { x: sx / n, y: sy / n } : null;
 }
 
 const HIST_BINS = 8;
