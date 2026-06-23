@@ -18,7 +18,7 @@ use ui::{
     button_styled, text_colored, widget, window,
 };
 
-use crate::component;
+use ui::component;
 use crate::systems::hud::character::CharacterText;
 use crate::systems::hud::inventory::InventoryGrid;
 use crate::systems::hud::settings::{Placement, ScreenPx, ScreenVec, UserSettings};

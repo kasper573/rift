@@ -14,15 +14,6 @@ pub enum GameScene {
     Playing,
 }
 
-/// Inserts an already-built [`Component`] value into a `bsn!` scene — the bridge for our builder-style
-/// helpers and `FromTemplate`/`Arc`-backed components (e.g. `ImageNode`, `OnSettle`) that `bsn!`'s
-/// `template_value` (which needs plain `Default + Clone`) can't take.
-pub(crate) fn component<C: Component + Clone>(value: C) -> impl bevy::scene::Scene {
-    bevy::ecs::template::FnTemplate(move |_: &mut bevy::ecs::template::TemplateContext| {
-        Ok(value.clone())
-    })
-}
-
 /// Builds and runs the Bevy app: reads the boot params from the platform, builds the session from the
 /// access token, and starts the app. The platform's entry point calls this.
 pub fn boot() {

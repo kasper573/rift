@@ -7,7 +7,7 @@ use ui::{Align, Side, text_colored, tooltip, tooltip_content};
 use world::systems::items::Inventory;
 use world::systems::player::session;
 
-use crate::component;
+use ui::component;
 use crate::systems::hud::settings::ScreenPx;
 
 const SLOT: ScreenPx = ScreenPx(36.0);
