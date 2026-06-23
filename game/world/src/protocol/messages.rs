@@ -1,4 +1,4 @@
-//! The client⇄host messages: client requests (join, move, attack, …) and server announcements
+//! The client⇄server messages: client requests (join, move, attack, …) and server announcements
 //! (welcome, item consumed). Registered onto their channels in [`super::protocol`].
 
 use bevy_ecs::entity::{Entity, MapEntities};

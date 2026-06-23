@@ -1,4 +1,5 @@
-//! Host-only simulation layer; gated behind the `host` feature so the protocol cannot depend on server logic.
+//! The authoritative server-side systems that advance the world each tick; gated behind the
+//! `systems` feature so the client can build the protocol and content without pulling in server logic.
 
 pub mod actions;
 pub mod combat;
@@ -21,9 +22,9 @@ use crate::protocol::{Actor, AreaTag, Hitbox, Name, Position, Vitals};
 use combat::Stats;
 use movement::Speed;
 
-/// Each world hosts exactly one area; crossing a portal hands the player off to the world hosting the destination area.
+/// Each world runs exactly one area; crossing a portal hands the player off to the world running the destination area.
 #[derive(Resource, Clone, Copy)]
-pub struct HostedArea(pub Id<AreaDef>);
+pub struct HomeArea(pub Id<AreaDef>);
 
 #[derive(Bundle)]
 pub struct Character {
@@ -54,7 +55,7 @@ pub fn server_app(area: Id<AreaDef>) -> bevy_app::App {
     use bevy_replicon::prelude::{AuthMethod, RepliconSharedPlugin};
 
     let mut app = bevy_app::App::new();
-    app.insert_resource(HostedArea(area));
+    app.insert_resource(HomeArea(area));
     app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));
     app.add_plugins(
         bevy_app::PluginGroup::build(bevy_replicon::prelude::RepliconPlugins)

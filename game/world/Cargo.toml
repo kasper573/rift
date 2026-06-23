@@ -2,11 +2,11 @@
 name = "world"
 version.workspace = true
 edition.workspace = true
-description = "The MMORPG game library: wire protocol, content tables, and world simulation (NPC AI, combat, movement, portals) — organized by domain. The server and client are thin composition roots over this."
+description = "The MMORPG game library: the wire protocol, content tables, and the authoritative server-side systems (NPC AI, combat, movement, portals) — organized by domain. The server and client are thin composition roots over this."
 
 [features]
-default = ["host"]
-host = ["bevy_replicon/server", "dep:bevy_time"]
+default = ["systems"]
+systems = ["bevy_replicon/server", "dep:bevy_time"]
 
 [[bin]]
 name = "kc-roles"

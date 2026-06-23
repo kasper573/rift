@@ -1,4 +1,4 @@
-//! The replicated world state: the components the host simulates and the client renders, plus the
+//! The replicated world state: the components the server simulates and the client renders, plus the
 //! small accessors that read and mutate them.
 
 use bevy_ecs::prelude::*;

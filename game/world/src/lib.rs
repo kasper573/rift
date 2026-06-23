@@ -3,8 +3,8 @@ pub mod content;
 pub mod core;
 pub mod protocol;
 
-#[cfg(feature = "host")]
-pub mod simulation;
+#[cfg(feature = "systems")]
+pub mod systems;
 
 pub use bevy_ecs::entity::Entity;
 pub use bevy_ecs::query::With;

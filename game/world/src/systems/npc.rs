@@ -108,10 +108,10 @@ pub fn spawns() -> &'static [SpawnRow] {
 
 pub fn spawn_all(world: &mut World) {
     let mut rng = Rng(RNG_SEED | 1);
-    let hosted = world.resource::<super::HostedArea>().0;
-    let area = &area::areas()[hosted.index()];
+    let home = world.resource::<super::HomeArea>().0;
+    let area = &area::areas()[home.index()];
     for (group, row) in spawns().iter().enumerate() {
-        if row.area != hosted {
+        if row.area != home {
             continue;
         }
         for _ in 0..row.population {

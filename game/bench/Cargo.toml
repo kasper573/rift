@@ -2,7 +2,7 @@
 name = "bench"
 version.workspace = true
 edition.workspace = true
-description = "Isolated in-process load benchmark for the authoritative `world` simulation: scales the world across areas and times each server tick (sim + replication), to baseline server cost and compare optimizations."
+description = "Isolated in-process load benchmark for the authoritative `world` simulation: scales the world across areas and times each server tick (simulation + replication), to baseline server cost and compare optimizations."
 
 [[bin]]
 name = "bench"

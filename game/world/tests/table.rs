@@ -1,7 +1,7 @@
 //! The content-table generic: a typed [`Id`] resolves a row by its string id, indexes back to the
 //! row, and compares purely by index — independent of the row type. Exercised against a local table
 //! so the contract holds for any game's content, not just rift's. The real loaders (and their
-//! serde by-name wiring) are covered by the `assets` and `sim` tests.
+//! serde by-name wiring) are covered by the `assets` and `systems` tests.
 
 use world::core::table::{Content, Id};
 

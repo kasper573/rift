@@ -81,7 +81,7 @@ pub fn client_left(
 }
 
 pub fn join(world: &mut World) {
-    let zone = world.resource::<super::HostedArea>().0;
+    let zone = world.resource::<super::HomeArea>().0;
     let spawn = area::areas()[zone.index()].spawn;
     let requests: Vec<FromClient<JoinRequest>> = world
         .resource_mut::<Messages<FromClient<JoinRequest>>>()
@@ -178,7 +178,7 @@ pub(crate) fn place(
 }
 
 pub fn respawn(world: &mut World) {
-    let zone = world.resource::<super::HostedArea>().0;
+    let zone = world.resource::<super::HomeArea>().0;
     let spawn = area::areas()[zone.index()].spawn;
     let requests: Vec<FromClient<RespawnRequest>> = world
         .resource_mut::<Messages<FromClient<RespawnRequest>>>()

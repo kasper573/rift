@@ -51,7 +51,7 @@ fn allowed(world: &World, client_entity: Entity, client: ClientId) -> bool {
 }
 
 fn spawn_anchor(world: &mut World, client: ClientId, watch: Option<ClientId>) {
-    let zone = world.resource::<super::HostedArea>().0;
+    let zone = world.resource::<super::HomeArea>().0;
     let spawn = area::areas()[zone.index()].spawn;
     let entity = world
         .spawn((
