@@ -2,11 +2,7 @@
 name = "world"
 version.workspace = true
 edition.workspace = true
-description = "The MMORPG game library: the wire protocol, content tables, and the authoritative server-side systems (NPC AI, combat, movement, portals) — organized by domain. The server and client are thin composition roots over this."
-
-[features]
-default = ["systems"]
-systems = ["bevy_replicon/server", "dep:bevy_time"]
+description = "The MMORPG game library: the isomorphic core both server and client share — the wire protocol (replicated components + messages), content tables, and the game-agnostic substrate — organized by feature. The authoritative simulation is in the `server` crate, the client view in `client`."
 
 [[bin]]
 name = "kc-roles"
@@ -16,8 +12,6 @@ path = "src/bin/kc_roles.rs"
 bevy_app.workspace = true
 bevy_ecs.workspace = true
 bevy_replicon = { workspace = true, features = ["client"] }
-bevy_state.workspace = true
-bevy_time = { workspace = true, features = ["std"], optional = true }
 derive_more = { version = "2", features = ["add", "add_assign"] }
 euclid = { version = "0.22", features = ["serde"] }
 include_dir = "0.7"

@@ -6,12 +6,12 @@
 
 use std::cell::RefCell;
 
+use crate::session;
 use bevy::prelude::*;
 use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
 use world::core::math::Pos;
 use world::core::tiling::Tiles;
-use world::player::session;
 
 use crate::GameScene;
 

@@ -21,9 +21,10 @@ use renet2_netcode::{
     ConnectToken, NETCODE_KEY_BYTES, NetcodeServerTransport, ServerAuthentication,
     ServerSetupConfig, WebSocketAcceptor, WebSocketServer, WebSocketServerConfig,
 };
+use server::transition;
 use world::TICK_HZ;
 use world::account::Identity;
-use world::area::{self, AreaDef, transition};
+use world::area::{self, AreaDef};
 use world::channels::RenetChannelsExt;
 use world::core::table::Id;
 use world::player::ClientId;
@@ -56,7 +57,7 @@ struct Config {
 }
 
 fn main() {
-    world::validate();
+    server::validate();
     let config: Config = envy::prefixed("RIFT_GAME_SERVER_")
         .from_env()
         .expect("RIFT_GAME_SERVER_* environment");
@@ -320,7 +321,7 @@ struct Conn {
 struct Wire(u64);
 
 fn build_world(area: Id<AreaDef>) -> App {
-    let mut app = world::server_app(area);
+    let mut app = server::server_app(area);
     app.finish();
     app.cleanup();
     app.world_mut()

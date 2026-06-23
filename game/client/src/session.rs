@@ -1,29 +1,33 @@
-use bevy_app::{App, Plugin, Update};
-use bevy_ecs::message::MessageReader;
-use bevy_ecs::prelude::*;
-use bevy_ecs::world::EntityRef;
-use bevy_replicon::prelude::{AuthMethod, ClientState, RepliconPlugins, RepliconSharedPlugin};
-use bevy_state::prelude::OnEnter;
+//! The client's view of the replicated world: who "me" is, the intents the player issues (join, move,
+//! attack, …), and the spatial queries (`walkable`, `enemy_at`) the input gestures read. The server's
+//! authoritative reaction to these lives in the `server` crate.
 
-use super::{ClientId, JoinRequest, Owner, RespawnRequest, Welcome};
-use crate::area::{self, AreaTag};
-use crate::combat::AttackRequest;
-use crate::core::math::Pos;
-use crate::core::tiling::Tiles;
-use crate::items::UseItemRequest;
-use crate::movement::{MoveRequest, MoveToPortal};
-use crate::spectate::SpectateRequest;
+use bevy::app::{App, Plugin, Update};
+use bevy::ecs::message::MessageReader;
+use bevy::ecs::prelude::*;
+use bevy::ecs::world::EntityRef;
+use bevy::state::prelude::OnEnter;
+use bevy_replicon::prelude::{AuthMethod, ClientState, RepliconPlugins, RepliconSharedPlugin};
+use world::actor::{Actor, Hitbox};
+use world::area::{self, AreaTag};
+use world::combat::{AttackRequest, Vitals};
+use world::core::math::Pos;
+use world::core::tiling::{TilePos, Tiles};
+use world::items::UseItemRequest;
+use world::movement::{MoveRequest, MoveToPortal, Position};
+use world::player::{ClientId, JoinRequest, Owner, RespawnRequest, Welcome};
+use world::spectate::SpectateRequest;
 
 pub struct ClientSessionPlugin;
 
 impl Plugin for ClientSessionPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(
-            bevy_app::PluginGroup::build(RepliconPlugins).set(RepliconSharedPlugin {
+            bevy::app::PluginGroup::build(RepliconPlugins).set(RepliconSharedPlugin {
                 auth_method: AuthMethod::None,
             }),
         );
-        crate::protocol(app);
+        world::protocol(app);
         app.init_resource::<MyClient>();
         app.add_systems(Update, record_welcome);
         app.add_systems(OnEnter(ClientState::Disconnected), forget_me);
@@ -47,7 +51,7 @@ pub fn me(world: &World) -> Option<EntityRef<'_>> {
 }
 
 pub fn is_dead(world: &World) -> bool {
-    me(world).is_some_and(|entity| crate::combat::is_dead(world, entity.id()))
+    me(world).is_some_and(|entity| world::combat::is_dead(world, entity.id()))
 }
 
 pub fn join(world: &mut World) {
@@ -90,6 +94,28 @@ pub fn move_to(world: &mut World, pos: Pos<Tiles>) {
             world.write_message(MoveRequest { pos });
         }
     }
+}
+
+/// Whether the local player can step onto `tile` in its current area — client-side path validation.
+pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
+    me(world)
+        .and_then(|me| me.get::<AreaTag>())
+        .map(|tag| tag.area)
+        .and_then(|id| area::areas().get(id.index()))
+        .is_some_and(|area| area.grid.walkable(tile))
+}
+
+/// The living enemy (not the local player) whose hitbox covers `point` — the click's attack target.
+pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
+    let me = me(world).map(|entity| entity.id());
+    let mut actors =
+        world.query_filtered::<(Entity, &Position, &Hitbox, Option<&Vitals>), With<Actor>>();
+    actors.iter(world).find_map(|(entity, at, hitbox, vitals)| {
+        if Some(entity) == me || vitals.is_some_and(Vitals::is_dead) {
+            return None;
+        }
+        at.pos.hitbox(hitbox.size).contains(point).then_some(entity)
+    })
 }
 
 fn record_welcome(mut welcomes: MessageReader<Welcome>, mut me: ResMut<MyClient>) {

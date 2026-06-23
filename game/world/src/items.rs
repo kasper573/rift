@@ -1,5 +1,5 @@
-//! Items: the [`ItemDef`] catalog, the replicated [`Inventory`] a character carries, and the
-//! use-item request/consumed messages with the server system that applies them.
+//! Items: the [`ItemDef`] catalog and the replicated [`Inventory`] a character carries, with the
+//! use-item request/consumed messages. The server system that applies them lives in the `server` crate.
 
 use std::sync::OnceLock;
 
@@ -12,19 +12,6 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::core::assets;
 use crate::core::table::{self, Content, Id};
 use crate::sfx::SfxId;
-
-#[cfg(feature = "systems")]
-use crate::combat::{Vitals, is_dead};
-#[cfg(feature = "systems")]
-use crate::player::sender_player;
-#[cfg(feature = "systems")]
-use crate::visibility::seen_by;
-#[cfg(feature = "systems")]
-use bevy_ecs::message::Messages;
-#[cfg(feature = "systems")]
-use bevy_ecs::world::World;
-#[cfg(feature = "systems")]
-use bevy_replicon::prelude::{FromClient, SendTargets, ToClients};
 
 const FILE: &str = "item_table.json";
 
@@ -99,48 +86,4 @@ pub fn items() -> &'static [ItemDef] {
         table::unique_ids(items.iter().map(|item| item.id.as_str()), FILE);
         items
     })
-}
-
-#[cfg(feature = "systems")]
-pub fn use_item(world: &mut World) {
-    let requests: Vec<FromClient<UseItemRequest>> = world
-        .resource_mut::<Messages<FromClient<UseItemRequest>>>()
-        .drain()
-        .collect();
-    for request in requests {
-        let Some(entity) = sender_player(world, request.client_id) else {
-            continue;
-        };
-        if is_dead(world, entity) {
-            continue;
-        }
-        let slot = request.message.slot as usize;
-        let Some(slotted) = world
-            .get::<Inventory>(entity)
-            .and_then(|inventory| inventory.items.get(slot).copied())
-        else {
-            continue;
-        };
-        match slotted.get().kind {
-            ItemKind::Consumable { health_bonus } => {
-                if let Some(mut vitals) = world.get_mut::<Vitals>(entity) {
-                    vitals.heal(health_bonus);
-                }
-                if let Some(mut inventory) = world.get_mut::<Inventory>(entity) {
-                    inventory.items.remove(slot);
-                }
-            }
-            ItemKind::Resource | ItemKind::Equipment => continue,
-        }
-        // Announced per beholder: a mapped message only decodes for clients that see the actor.
-        for client in seen_by(world, entity) {
-            world.write_message(ToClients {
-                targets: SendTargets::Single(bevy_replicon::prelude::ClientId::Client(client)),
-                message: ItemConsumed {
-                    item: slotted,
-                    actor: entity,
-                },
-            });
-        }
-    }
 }

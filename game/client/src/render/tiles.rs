@@ -1,6 +1,7 @@
 //! Renders the area's static map: when the local player's area changes it respawns the tile sprites
 //! layer by layer (depth-sorting the dynamic layer's groups against actors), and animates flagged tiles.
 
+use crate::session::MyClient;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use world::area::AreaTag;
@@ -9,7 +10,6 @@ use world::core::table::Id;
 use world::core::tiling::{Cell, GridDims, TileSize, Tiles};
 use world::core::time::Seconds;
 use world::player::Owner;
-use world::player::session::MyClient;
 
 use super::{TILE, atlas_rect, dynamic_z, sprite_transform};
 

@@ -1,12 +1,12 @@
 //! World-space overlays drawn over the map: the local player's floating health bar and the active
 //! gesture's tile highlight.
 
+use crate::session;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use world::combat::Vitals;
 use world::core::math::{Size, WorldPx};
 use world::movement::Position;
-use world::player::session;
 
 use super::TILE;
 use crate::input::gestures::ActiveTileHighlight;

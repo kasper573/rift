@@ -6,14 +6,13 @@ compose := "docker compose -f " + compose_file + " --profile test"
 lint:
     cargo fmt --check
     cargo clippy --release --all-targets -- -D warnings
-    cargo clippy --release -p world --no-default-features -- -D warnings
     cargo clippy --release -p client --target wasm32-unknown-unknown -- -D warnings
 
 test:
-    cargo test --release -p world
+    cargo test --release -p world -p server
 
 bench:
-    cargo run --release -p bench
+    cargo run --release -p server --bin bench
 
 build:
     cargo build --release -p website -p server

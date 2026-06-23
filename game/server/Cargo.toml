@@ -2,13 +2,14 @@
 name = "server"
 version.workspace = true
 edition.workspace = true
-description = "Authoritative MMORPG server binary: mints session tokens and runs the `world` simulation over an encrypted WebSocket netcode transport at a fixed tick."
+description = "The authoritative MMORPG server: the world simulation (combat, movement, NPC AI, items, portals) as a library over the isomorphic `world` crate, plus the binary that mints session tokens and runs it over an encrypted WebSocket netcode transport at a fixed tick."
 
 [dependencies]
 axum.workspace = true
 bevy_app.workspace = true
 bevy_ecs.workspace = true
 bevy_replicon = { workspace = true, features = ["server"] }
+bevy_time = { workspace = true, features = ["std"] }
 renet2.workspace = true
 renet2_netcode = { workspace = true, features = ["ws_server_transport"] }
 bevy_state.workspace = true
