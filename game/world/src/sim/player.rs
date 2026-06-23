@@ -58,15 +58,23 @@ pub fn greet(
     });
 }
 
+/// A character outlives any single connection: the same account can hold several sockets (one per
+/// open tab). Only the departure of the last socket retires the character.
 pub fn client_left(
     remove: On<Remove, ClientId>,
-    clients: Query<&ClientId>,
+    clients: Query<(Entity, &ClientId)>,
     mut players: ResMut<Players>,
     mut commands: Commands,
 ) {
-    let Ok(id) = clients.get(remove.entity) else {
+    let Ok((_, id)) = clients.get(remove.entity) else {
         return;
     };
+    if clients
+        .iter()
+        .any(|(entity, other)| entity != remove.entity && other == id)
+    {
+        return;
+    }
     if let Some(entity) = players.0.remove(id) {
         commands.entity(entity).despawn();
     }
@@ -94,14 +102,13 @@ pub fn join(world: &mut World) {
         let name = world
             .get::<Identity>(client_entity)
             .map_or_else(|| format!("player {}", client.0), |id| id.name.clone());
-        spawn_player(world, client, client_entity, zone, spawn, name);
+        spawn_player(world, client, zone, spawn, name);
     }
 }
 
 fn spawn_player(
     world: &mut World,
     client: ClientId,
-    client_entity: Entity,
     zone: Id<AreaDef>,
     at: Pos<Tiles>,
     name: String,
@@ -110,7 +117,6 @@ fn spawn_player(
     place(
         world,
         client,
-        client_entity,
         zone,
         at,
         name,
@@ -125,7 +131,6 @@ fn spawn_player(
 pub(crate) fn place(
     world: &mut World,
     client: ClientId,
-    client_entity: Entity,
     zone: Id<AreaDef>,
     at: Pos<Tiles>,
     name: String,
@@ -162,7 +167,7 @@ pub(crate) fn place(
                     value: PLAYER_SPEED,
                 },
             },
-            OwnedBy(client_entity),
+            OwnedBy(client),
             Owner { client },
             inventory,
             xp,

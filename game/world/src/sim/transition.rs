@@ -59,11 +59,10 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
     leaving.into_iter().map(|(_, traveler)| traveler).collect()
 }
 
-pub fn arrive(world: &mut World, client_entity: Entity, traveler: Traveler) -> Entity {
+pub fn arrive(world: &mut World, traveler: Traveler) -> Entity {
     super::player::place(
         world,
         traveler.client,
-        client_entity,
         traveler.dest_area,
         traveler.dest,
         traveler.name,

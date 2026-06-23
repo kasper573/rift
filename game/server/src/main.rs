@@ -141,6 +141,7 @@ fn simulate(
     );
 
     let mut conns: HashMap<u64, Conn> = HashMap::new();
+    let mut accounts: HashMap<String, ClientId> = HashMap::new();
     let mut transfers: Vec<Transfer> = Vec::new();
     let mut next_client = 1u32;
     let mut tick = 0u64;
@@ -162,15 +163,35 @@ fn simulate(
         while let Some(event) = server.get_event() {
             match event {
                 ServerEvent::ClientConnected { client_id } => {
-                    let client = ClientId(next_client);
-                    next_client += 1;
                     counter!("rift_client_connections_opened_total").increment(1);
                     let identity = sessions.take(client_id);
-                    let entity = spawn_conn(&mut worlds[spawn], client, client_id, identity);
+                    let account = identity.as_ref().map(|identity| identity.id.clone());
+                    let (client, area) =
+                        match account.as_ref().and_then(|account| accounts.get(account)) {
+                            // Another tab of this account is already connected: share its player id and
+                            // join in whichever area that player currently occupies, so both sockets
+                            // drive the one character (last input wins).
+                            Some(&client) => {
+                                let area = conns
+                                    .values()
+                                    .find(|conn| conn.client == client)
+                                    .map_or(spawn, |conn| conn.area);
+                                (client, area)
+                            }
+                            None => {
+                                let client = ClientId(next_client);
+                                next_client += 1;
+                                if let Some(account) = account {
+                                    accounts.insert(account, client);
+                                }
+                                (client, spawn)
+                            }
+                        };
+                    let entity = spawn_conn(&mut worlds[area], client, client_id, identity);
                     conns.insert(
                         client_id,
                         Conn {
-                            area: spawn,
+                            area,
                             entity,
                             client,
                         },
@@ -181,6 +202,9 @@ fn simulate(
                         .increment(1);
                     if let Some(conn) = conns.remove(&client_id) {
                         worlds[conn.area].world_mut().despawn(conn.entity);
+                        if !conns.values().any(|other| other.client == conn.client) {
+                            accounts.retain(|_, &mut client| client != conn.client);
+                        }
                     }
                 }
             }
@@ -203,7 +227,7 @@ fn simulate(
             app.update();
         }
 
-        begin_transfers(&mut worlds, &conns, &mut transfers, tick);
+        begin_transfers(&mut worlds, &mut transfers, tick);
 
         for app in worlds.iter_mut() {
             let world = app.world_mut();
@@ -319,34 +343,23 @@ fn spawn_conn(
     entity.id()
 }
 
-/// A connection whose character left its world (despawned) and is waiting to be re-created in the
-/// destination world. The one-tick wait lets the source world's despawns reach the client first, so
-/// its replication state is empty before the destination's fresh snapshot arrives over the same
-/// connection — no entity-id or tick collision between the two worlds.
+/// A player (and all its connections) whose character left its world (despawned) and is waiting to be
+/// re-created in the destination world. The one-tick wait lets the source world's despawns reach the
+/// connections first, so their replication state is empty before the destination's fresh snapshot
+/// arrives over the same connections — no entity-id or tick collision between the two worlds.
 struct Transfer {
-    network_id: u64,
+    client: ClientId,
     traveler: transition::Traveler,
     departed_tick: u64,
 }
 
 /// Phase 1: despawn the character of everyone who stepped through a cross-area portal this tick (so
-/// replicon despawns this world's entities for their client), and queue the connection to move.
-fn begin_transfers(
-    worlds: &mut [App],
-    conns: &HashMap<u64, Conn>,
-    transfers: &mut Vec<Transfer>,
-    tick: u64,
-) {
-    for (area, app) in worlds.iter_mut().enumerate() {
+/// replicon despawns this world's entities for their connections), and queue the move.
+fn begin_transfers(worlds: &mut [App], transfers: &mut Vec<Transfer>, tick: u64) {
+    for app in worlds.iter_mut() {
         for traveler in transition::departing(app.world_mut()) {
-            let Some((&network_id, _)) = conns
-                .iter()
-                .find(|(_, conn)| conn.area == area && conn.client == traveler.client)
-            else {
-                continue;
-            };
             transfers.push(Transfer {
-                network_id,
+                client: traveler.client,
                 traveler,
                 departed_tick: tick,
             });
@@ -354,8 +367,8 @@ fn begin_transfers(
     }
 }
 
-/// Phase 2: a tick after departing — once the source world's despawns have been sent — move the
-/// connection to the destination world and re-create the character there.
+/// Phase 2: a tick after departing — once the source world's despawns have been sent — move every
+/// socket of the moving player to the destination world and re-create the character there.
 fn finish_transfers(
     worlds: &mut [App],
     conns: &mut HashMap<u64, Conn>,
@@ -369,30 +382,31 @@ fn finish_transfers(
             continue;
         }
         let Transfer {
-            network_id,
-            traveler,
-            ..
+            client, traveler, ..
         } = transfers.remove(index);
-        let Some(conn) = conns.remove(&network_id) else {
-            continue;
-        };
-        let client = traveler.client;
         let dest = traveler.dest_area.index();
-        let identity = worlds[conn.area]
-            .world()
-            .get::<Identity>(conn.entity)
-            .cloned();
-        worlds[conn.area].world_mut().despawn(conn.entity);
-        let entity = spawn_conn(&mut worlds[dest], client, network_id, identity);
-        transition::arrive(worlds[dest].world_mut(), entity, traveler);
-        conns.insert(
-            network_id,
-            Conn {
-                area: dest,
-                entity,
-                client,
-            },
-        );
+        let movers: Vec<(u64, usize, Entity)> = conns
+            .iter()
+            .filter(|(_, conn)| conn.client == client)
+            .map(|(&network_id, conn)| (network_id, conn.area, conn.entity))
+            .collect();
+        if movers.is_empty() {
+            continue;
+        }
+        for (network_id, area, entity) in movers {
+            let identity = worlds[area].world().get::<Identity>(entity).cloned();
+            worlds[area].world_mut().despawn(entity);
+            let entity = spawn_conn(&mut worlds[dest], client, network_id, identity);
+            conns.insert(
+                network_id,
+                Conn {
+                    area: dest,
+                    entity,
+                    client,
+                },
+            );
+        }
+        transition::arrive(worlds[dest].world_mut(), traveler);
     }
 }
 

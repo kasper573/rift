@@ -150,10 +150,8 @@ fn point(areas: usize, warmup: usize, ticks: usize) -> Point {
     for (app, roster) in worlds.iter_mut().zip(&rosters) {
         let world = app.world_mut();
         for &(client, player) in roster {
-            let client_entity = world
-                .spawn((ConnectedClient { max_size: 1200 }, client))
-                .id();
-            world.entity_mut(player).insert(OwnedBy(client_entity));
+            world.spawn((ConnectedClient { max_size: 1200 }, client));
+            world.entity_mut(player).insert(OwnedBy(client));
         }
     }
 

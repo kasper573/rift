@@ -5,9 +5,7 @@ use std::collections::HashSet;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{
-    AppVisibilityExt, AuthorizedClient, Replicated, SingleComponent, VisibilityFilter,
-};
+use bevy_replicon::prelude::{AppVisibilityExt, Replicated, SingleComponent, VisibilityFilter};
 use bevy_replicon::server::visibility::client_visibility::ClientVisibility;
 use bevy_replicon::server::visibility::filters_mask::FilterBit;
 use bevy_replicon::server::visibility::registry::FilterRegistry;
@@ -80,16 +78,18 @@ pub fn seen_by(world: &mut World, entity: Entity) -> Vec<Entity> {
         .collect()
 }
 
+/// The account a character belongs to. Inventory replicates to every connection of that account, so
+/// the same player opened in two tabs sees their items in both.
 #[derive(Component)]
 #[component(immutable)]
-pub struct OwnedBy(pub Entity);
+pub struct OwnedBy(pub ClientId);
 
 impl VisibilityFilter for OwnedBy {
-    type ClientComponent = AuthorizedClient;
+    type ClientComponent = ClientId;
     type Scope = SingleComponent<Inventory>;
 
-    fn is_visible(&self, client: Entity, _: Option<&AuthorizedClient>) -> bool {
-        self.0 == client
+    fn is_visible(&self, _: Entity, client: Option<&ClientId>) -> bool {
+        client == Some(&self.0)
     }
 }
 

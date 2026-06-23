@@ -95,13 +95,19 @@ pub fn follow(world: &mut World) {
 
 pub fn client_left(
     remove: On<Remove, ClientId>,
-    clients: Query<&ClientId>,
+    clients: Query<(Entity, &ClientId)>,
     mut spectators: ResMut<Spectators>,
     mut commands: Commands,
 ) {
-    let Ok(id) = clients.get(remove.entity) else {
+    let Ok((_, id)) = clients.get(remove.entity) else {
         return;
     };
+    if clients
+        .iter()
+        .any(|(entity, other)| entity != remove.entity && other == id)
+    {
+        return;
+    }
     if let Some(entity) = spectators.0.remove(id) {
         commands.entity(entity).despawn();
     }
