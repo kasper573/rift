@@ -6,6 +6,7 @@ members = [
     "game/world",
     "game/server",
     "game/client",
+    "game/bench",
     "service",
     "website",
 ]
@@ -17,6 +18,7 @@ default-members = [
     "bevy_opacity",
     "game/world",
     "game/server",
+    "game/bench",
     "service",
     "website",
 ]

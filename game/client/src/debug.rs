@@ -1,4 +1,3 @@
-use crate::session::MyClient;
 use bevy::prelude::*;
 use world::actor::{Actor, Hitbox};
 use world::area;
@@ -7,6 +6,7 @@ use world::core::math::Offset;
 use world::core::tiling::{self, TilePos};
 use world::movement::Position;
 use world::player::Owner;
+use world::player::session::MyClient;
 
 use crate::GameScene;
 use crate::render::screen::ToScreen;

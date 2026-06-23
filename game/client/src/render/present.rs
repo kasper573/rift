@@ -2,7 +2,6 @@
 //! fullscreen quad then upscales to the window. `fit` keeps the texture sized to the window, and the
 //! `Present` material applies the death tint.
 
-use crate::session;
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{RenderTarget, ScalingMode};
 use bevy::image::ImageSampler;
@@ -11,6 +10,7 @@ use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureFormat};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::Material2d;
 use bevy::window::PrimaryWindow;
+use world::player::session;
 
 use super::TILE;
 use super::camera::WorldCamera;

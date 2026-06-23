@@ -1,7 +1,6 @@
 //! The world camera: it follows the local player, clamped to the area's bounds, and un-projects the
 //! cursor back into tile space for the input gestures.
 
-use crate::session::MyClient;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use world::area::AreaTag;
@@ -11,6 +10,7 @@ use world::core::table::Id;
 use world::core::tiling::{TileSize, Tiles};
 use world::movement::Position;
 use world::player::Owner;
+use world::player::session::MyClient;
 
 use super::TILE;
 use super::present::{Viewport, target_size};

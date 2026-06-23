@@ -8,10 +8,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 use bevy_app::App;
-use bevy_ecs::component::Component;
+use bevy_ecs::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 use tiled::{Frame, TileId};
 
+use crate::combat::Vitals;
 use crate::core::assets;
 use crate::core::math::{Pos, Rect, Size, WorldPx};
 use crate::core::table::{Content, Id};
@@ -74,6 +75,28 @@ pub fn rgba_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Rgba, D::E
         .and_then(|digits| u32::from_str_radix(digits, 16).ok())
         .map(Rgba)
         .ok_or_else(|| serde::de::Error::custom(format!("a color is #rrggbbaa, got '{hex}'")))
+}
+
+pub fn set_action(actor: &mut Mut<Actor>, action: u8) {
+    if actor.action != action {
+        actor.action = action;
+    }
+}
+
+pub fn set_facing(actor: &mut Mut<Actor>, dir: u8, action: u8) {
+    if actor.dir != dir || actor.action != action {
+        actor.dir = dir;
+        actor.action = action;
+    }
+}
+
+/// Each tick, settle every actor back to idle (or dead) so a one-frame action set by a system this
+/// tick wins; movement/combat re-assert walk/run/attack afterwards.
+pub fn reset(mut actors: Query<(&mut Actor, Option<&Vitals>)>) {
+    for (mut actor, vitals) in &mut actors {
+        let dead = vitals.is_some_and(|v| v.health <= 0.0);
+        set_action(&mut actor, if dead { ACTION_DEAD } else { ACTION_IDLE });
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -1,14 +1,16 @@
 //! Areas: the runtime map an [`Area`] exposes — render layers, depth groups, nav grid, portals, and
 //! tile sound — the [`AreaDef`] table, and the [`AreaTag`] marking which area an entity is in. Map
-//! construction from Tiled lives in [`load`].
+//! construction from Tiled lives in [`load`]; the cross-area player handoff in [`transition`].
 
 pub mod load;
+pub mod transition;
 
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use bevy_app::App;
 use bevy_ecs::component::Component;
+use bevy_ecs::world::World;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::core::assets;
@@ -28,6 +30,15 @@ pub fn register(app: &mut App) {
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AreaTag {
     pub area: Id<AreaDef>,
+}
+
+/// Whether the local player can step onto `tile` in its current area — client-side path validation.
+pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
+    crate::player::session::me(world)
+        .and_then(|me| me.get::<AreaTag>())
+        .map(|tag| tag.area)
+        .and_then(|id| areas().get(id.index()))
+        .is_some_and(|area| area.grid.walkable(tile))
 }
 
 const FILE: &str = "area_table.json";

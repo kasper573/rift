@@ -1,9 +1,9 @@
 //! The death banner: a full-screen prompt shown while the local player is dead, cleared on respawn.
 
-use crate::session;
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::text_colored;
+use world::player::session;
 
 use super::Hud;
 

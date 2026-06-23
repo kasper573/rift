@@ -10,7 +10,6 @@ pub mod input;
 pub mod net;
 pub mod platform;
 pub mod render;
-pub mod session;
 pub mod sfx;
 pub mod testing;
 

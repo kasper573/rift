@@ -7,19 +7,16 @@ use bevy_time::Time;
 use serde::Deserialize;
 
 use crate::Character;
-use crate::actor::set_action;
-use crate::combat::{AttackTarget, Attackers, Stats};
-use crate::movement::{MoveTarget, Path, Speed, forget};
+use crate::actor::{ACTION_IDLE, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
+use crate::area::{self, AreaDef, AreaTag};
+use crate::combat::{AttackTarget, Attackers, Stats, Vitals, is_dead};
+use crate::core::math::{Direction, Pos, Rng};
+use crate::core::table;
+use crate::core::table::{Content, Id};
+use crate::core::tiling::{TilePos, Tiles, TilesPerSec};
+use crate::core::time::{Millis, PlaybackRate, Seconds};
+use crate::movement::{MoveTarget, Path, Position, Speed, forget, position};
 use crate::player::Players;
-use world::actor::{ACTION_IDLE, Actor, ActorModel, Hitbox, Name, Rgba};
-use world::area::{self, AreaDef, AreaTag};
-use world::combat::{Vitals, is_dead};
-use world::core::math::{Direction, Pos, Rng};
-use world::core::table;
-use world::core::table::{Content, Id};
-use world::core::tiling::{TilePos, Tiles, TilesPerSec};
-use world::core::time::{Millis, PlaybackRate, Seconds};
-use world::movement::{Position, position};
 
 const FILE: &str = "npc_table.json";
 const SPAWN_FILE: &str = "spawn_table.json";
@@ -50,7 +47,7 @@ pub struct NpcDef {
     pub display_name: String,
     #[serde(deserialize_with = "Id::<ActorModel>::deserialize_named")]
     pub model: Id<ActorModel>,
-    #[serde(deserialize_with = "world::actor::rgba_hex")]
+    #[serde(deserialize_with = "crate::actor::rgba_hex")]
     pub tint: Rgba,
     pub ai: Ai,
     pub health: f32,

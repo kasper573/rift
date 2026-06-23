@@ -9,10 +9,10 @@ lint:
     cargo clippy --release -p client --target wasm32-unknown-unknown -- -D warnings
 
 test:
-    cargo test --release -p world -p server
+    cargo test --release -p world
 
 bench:
-    cargo run --release -p server --bin bench
+    cargo run --release -p bench
 
 build:
     cargo build --release -p website -p server

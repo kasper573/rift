@@ -12,7 +12,7 @@ name = "rift"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-world = { path = "../world", default-features = false }
+world = { path = "../world" }
 ui = { path = "../../ui" }
 # Bevy's `2d` + `ui` feature bundles for the browser: `webgl2` (far more reliable than `webgpu` under
 # headless Chrome for e2e) and `web` for the browser platform integration. No `x11`/`multi_threaded`/

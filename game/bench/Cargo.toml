@@ -1,0 +1,16 @@
+[package]
+name = "bench"
+version.workspace = true
+edition.workspace = true
+description = "Isolated in-process load benchmark for the authoritative `world` simulation: scales the world across areas and times each server tick (simulation + replication), to baseline server cost and compare optimizations."
+
+[[bin]]
+name = "bench"
+path = "src/main.rs"
+
+[dependencies]
+bevy_app.workspace = true
+bevy_ecs.workspace = true
+bevy_state.workspace = true
+bevy_replicon = { workspace = true, features = ["server"] }
+world = { path = "../world" }

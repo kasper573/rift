@@ -5,10 +5,10 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Deserializer};
 
 use crate::combat::Died;
+use crate::core::table::{self, Id};
+use crate::items::{Inventory, ItemDef};
 use crate::npc::{GameRng, Npc, NpcDef};
-use world::core::table::{self, Id};
-use world::items::{Inventory, ItemDef};
-use world::player::{Owner, Xp};
+use crate::player::{Owner, Xp};
 
 const FILE: &str = "reward_table.json";
 

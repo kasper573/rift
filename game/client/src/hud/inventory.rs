@@ -1,11 +1,11 @@
 //! The inventory pane: a grid of item slots reconciled against the player's replicated inventory,
 //! each slot showing the item icon, a name tooltip, and using the item on click.
 
-use crate::session;
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::{Align, Side, text_colored, tooltip, tooltip_content};
 use world::items::Inventory;
+use world::player::session;
 
 use crate::component;
 use crate::hud::settings::ScreenPx;

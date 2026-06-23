@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::session;
 use bevy::prelude::*;
 use bevy_kira_audio::prelude::{Audio, AudioControl, AudioSource, Decibels};
 use world::actor::{Actor, action_name};
@@ -11,6 +10,7 @@ use world::core::tiling::{TilePos, Tiles};
 use world::core::time::Seconds;
 use world::items::ItemConsumed;
 use world::movement::{Position, position};
+use world::player::session;
 use world::sfx::sfx_table;
 
 use crate::GameScene;

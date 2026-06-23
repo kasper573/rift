@@ -2,14 +2,14 @@
 
 use bevy_ecs::prelude::*;
 
-use world::actor::Name;
-use world::area::AreaDef;
-use world::combat::Vitals;
-use world::core::math::Pos;
-use world::core::table::Id;
-use world::core::tiling::Tiles;
-use world::items::Inventory;
-use world::player::{ClientId, Owner, Xp};
+use super::AreaDef;
+use crate::actor::Name;
+use crate::combat::Vitals;
+use crate::core::math::Pos;
+use crate::core::table::Id;
+use crate::core::tiling::Tiles;
+use crate::items::Inventory;
+use crate::player::{ClientId, Owner, Xp};
 
 /// Not replicated: it never leaves the server and the entity is gone within the tick.
 #[derive(Component, Clone, Copy)]

@@ -4,21 +4,18 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{ConnectedClient, Replicated, ServerState};
 use bevy_state::prelude::NextState;
-use server::Character;
-use server::combat::Stats;
-use server::movement::Speed;
-use server::npc::{self, Npc, NpcDef};
-use server::player::Players;
-use server::visibility::OwnedBy;
+use world::Character;
 use world::actor::{ACTION_IDLE, Actor, Hitbox, Name};
 use world::area::{self, Area, AreaTag};
-use world::combat::Vitals;
+use world::combat::{Stats, Vitals};
 use world::core::math::{Direction, Pos};
 use world::core::table::Id;
 use world::core::tiling::Tiles;
 use world::items::Inventory;
-use world::movement::Position;
-use world::player::{ClientId, Owner, Xp};
+use world::movement::{Position, Speed};
+use world::npc::{self, Npc, NpcDef};
+use world::player::{ClientId, Owner, Players, Xp};
+use world::visibility::OwnedBy;
 
 const NPCS_PER_AREA: usize = 25;
 const PLAYERS_PER_AREA: usize = 25;
@@ -29,7 +26,7 @@ const MEASURE: usize = 200;
 
 fn main() {
     area::configure_areas(MAX_AREAS);
-    server::validate();
+    world::validate();
 
     println!("[bench] finding the highest A sustained within the {BUDGET_MS:.0}ms budget...");
 
@@ -168,7 +165,7 @@ fn point(areas: usize, warmup: usize, ticks: usize) -> Point {
 }
 
 fn build_world(area: &Area, npc: Id<NpcDef>) -> (App, Vec<(ClientId, Entity)>) {
-    let mut app = server::server_app(area.id);
+    let mut app = world::server_app(area.id);
     app.finish();
     app.cleanup();
     app.world_mut()

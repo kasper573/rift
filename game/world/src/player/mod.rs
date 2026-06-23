@@ -1,32 +1,87 @@
-//! Player systems: greet a new connection with its [`world::player::Welcome`], admit joins (one
-//! character per account, shared across sockets), retire an account when its last socket leaves, and
-//! respawn the dead. [`place`] is the spawn template shared with portal arrivals in [`crate::transition`].
+//! Players: the replicated [`Owner`]/[`Xp`] of a player character and the [`ClientId`] keying a
+//! connection, the join/respawn/welcome messages, and the server systems that admit joins, retire
+//! disconnected accounts, and respawn the dead. [`session`] is the client's view of all this.
 
-use std::collections::HashMap;
+pub mod session;
 
+use bevy_app::App;
+use bevy_ecs::component::Component;
+use bevy_ecs::message::Message;
+use serde::{Deserialize, Serialize};
+
+use crate::Character;
+use crate::account::identity::Identity;
+use crate::actor::{ACTION_IDLE, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
+use crate::area::{self, AreaDef, AreaTag};
+use crate::combat::{Stats, Vitals, is_dead};
+use crate::core::math::{Direction, Pos};
+use crate::core::table::Id;
+use crate::core::tiling::{Tiles, TilesPerSec};
+use crate::core::time::{Millis, PlaybackRate};
+use crate::items::Inventory;
+use crate::movement::{Position, Speed, forget};
+use crate::spectate::Spectators;
+use crate::visibility::OwnedBy;
 use bevy_ecs::lifecycle::{Add, Remove};
 use bevy_ecs::message::Messages;
 use bevy_ecs::observer::On;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{FromClient, Replicated, SendTargets, ToClients};
-use world::account::identity::Identity;
-use world::actor::{ACTION_IDLE, Actor, ActorModel, Hitbox, Name, Rgba};
-use world::area::{self, AreaDef, AreaTag};
-use world::combat::{Vitals, is_dead};
-use world::core::math::{Direction, Pos};
-use world::core::table::Id;
-use world::core::tiling::{Tiles, TilesPerSec};
-use world::core::time::{Millis, PlaybackRate};
-use world::items::Inventory;
-use world::movement::Position;
-use world::player::{ClientId, JoinRequest, Owner, RespawnRequest, Welcome, Xp};
+use std::collections::HashMap;
 
-use crate::actor::set_action;
-use crate::combat::Stats;
-use crate::movement::{Speed, forget};
-use crate::spectate::Spectators;
-use crate::visibility::OwnedBy;
-use crate::{Character, WorldArea};
+pub fn register(app: &mut App) {
+    use bevy_replicon::prelude::*;
+
+    app.replicate::<Owner>()
+        .replicate::<Xp>()
+        .add_client_message::<JoinRequest>(Channel::Ordered)
+        .add_client_message::<RespawnRequest>(Channel::Ordered)
+        .add_server_message::<Welcome>(Channel::Ordered);
+}
+
+#[derive(
+    Component,
+    Serialize,
+    Deserialize,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
+    Default,
+)]
+#[component(immutable)]
+pub struct ClientId(pub u32);
+
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Owner {
+    pub client: ClientId,
+}
+
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Xp {
+    pub amount: u32,
+}
+
+impl Xp {
+    pub fn gain(&mut self, amount: u32) {
+        self.amount += amount;
+    }
+}
+
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct JoinRequest;
+
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct RespawnRequest;
+
+#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct Welcome {
+    pub id: ClientId,
+}
 
 const PLAYER_MAX_HEALTH: f32 = 30.0;
 const PLAYER_SPEED: TilesPerSec = TilesPerSec(Tiles(4.0));
@@ -85,7 +140,7 @@ pub fn client_left(
 }
 
 pub fn join(world: &mut World) {
-    let zone = world.resource::<WorldArea>().0;
+    let zone = world.resource::<crate::WorldArea>().0;
     let spawn = area::areas()[zone.index()].spawn;
     let requests: Vec<FromClient<JoinRequest>> = world
         .resource_mut::<Messages<FromClient<JoinRequest>>>()
@@ -182,7 +237,7 @@ pub(crate) fn place(
 }
 
 pub fn respawn(world: &mut World) {
-    let zone = world.resource::<WorldArea>().0;
+    let zone = world.resource::<crate::WorldArea>().0;
     let spawn = area::areas()[zone.index()].spawn;
     let requests: Vec<FromClient<RespawnRequest>> = world
         .resource_mut::<Messages<FromClient<RespawnRequest>>>()
