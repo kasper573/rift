@@ -1,3 +1,4 @@
+use base64::Engine;
 use bevy::asset::AssetApp;
 use bevy::asset::io::AssetSourceId;
 use bevy::prelude::*;
@@ -25,7 +26,7 @@ pub fn boot() {
     let spectator = params
         .access_token
         .as_deref()
-        .is_some_and(|token| systems::account::roles(token).contains(&Role::Spectate));
+        .is_some_and(|token| roles(token).contains(&Role::Spectate));
 
     let mut app = App::new();
     app.register_asset_source(AssetSourceId::Default, core::assets::embedded_source())
@@ -57,9 +58,6 @@ pub fn boot() {
             core::audio::SfxPlugin,
         ))
         .add_plugins((
-            systems::net::SessionPlugin,
-            systems::camera::CameraPlugin,
-            systems::audio::CuePlugin,
             systems::actor::ActorPlugin,
             systems::area::AreaPlugin,
             systems::overlay::OverlayPlugin,
@@ -73,4 +71,27 @@ pub fn boot() {
         ));
     ui::theme::set_theme(ui::themes::dark::THEME);
     app.run();
+}
+
+/// Decodes the player's roles from the access token's JWT claims — client-side and presentation-only
+/// (it just decides whether to offer the spectate choice); the server remains the source of truth.
+fn roles(access_token: &str) -> Vec<Role> {
+    let Some(payload) = access_token.split('.').nth(1) else {
+        return Vec::new();
+    };
+    let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload) else {
+        return Vec::new();
+    };
+    let Ok(claims) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Vec::new();
+    };
+    claims["realm_access"]["roles"]
+        .as_array()
+        .map(|roles| {
+            roles
+                .iter()
+                .filter_map(|role| role.as_str().and_then(Role::parse))
+                .collect()
+        })
+        .unwrap_or_default()
 }

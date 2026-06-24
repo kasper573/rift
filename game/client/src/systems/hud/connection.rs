@@ -6,9 +6,11 @@ use bevy::scene::EntityScene;
 use bevy_replicon::prelude::ClientState;
 use ui::{Activate, button, text_colored};
 
+use world::systems::player::session::{self, ClientSessionPlugin};
+
 use crate::GameScene;
 use crate::core::net::transport::Client;
-use crate::core::net::{self, PendingSession};
+use crate::core::net::{self, Announce, PendingSession};
 use crate::systems::hud::scenes::Mode;
 
 const OVERLAY_BG: Color = Color::srgb(0.07, 0.07, 0.07);
@@ -17,13 +19,33 @@ pub struct ConnectionPlugin;
 
 impl Plugin for ConnectionPlugin {
     fn build(&self, app: &mut App) {
-        app.init_state::<Link>()
-            .add_systems(Update, track)
+        app.add_plugins(ClientSessionPlugin)
+            .init_state::<Link>()
+            .add_systems(Update, (track, announce))
             .add_systems(OnEnter(Link::Connecting), connecting)
             .add_systems(OnEnter(Link::Lost), lost)
             .add_systems(OnExit(Link::Connecting), despawn)
             .add_systems(OnExit(Link::Lost), despawn);
     }
+}
+
+/// Once the netcode connection is welcomed, tell the server to join or spectate (the mode the
+/// connection was opened in). The transport itself, in `core::net`, stays mode-agnostic.
+fn announce(world: &mut World) {
+    if world.get_resource::<Announce>().is_none() || session::my_id(world).is_none() {
+        return;
+    }
+    let spectate = world.resource::<Announce>().spectate;
+    info!(
+        "connection welcomed; announcing {}",
+        if spectate { "spectate" } else { "join" }
+    );
+    if spectate {
+        session::spectate(world, None);
+    } else {
+        session::join(world);
+    }
+    world.remove_resource::<Announce>();
 }
 
 /// State of the link to the game server, as far as the overlay cares. `Idle` covers both "no mode
