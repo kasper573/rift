@@ -7,7 +7,6 @@ use bevy_replicon::prelude::RepliconChannels;
 use renet2::{ConnectionConfig, RenetClient};
 use renet2_netcode::{ClientAuthentication, ClientSocket, ConnectToken, NetcodeClientTransport};
 use world::core::channels::RenetChannelsExt;
-use world::systems::player::session::ClientSessionPlugin;
 
 use crate::core::net::auth::Session;
 use crate::core::net::transport::{Client, RepliconRenetClientPlugin, Transport};
@@ -17,11 +16,13 @@ pub struct NetPlugin;
 
 impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((ClientSessionPlugin, RepliconRenetClientPlugin))
-            .add_systems(Update, (poll_session, announce));
+        app.add_plugins(RepliconRenetClientPlugin)
+            .add_systems(Update, poll_session);
     }
 }
 
+/// Set once a connection is welcomed, carrying the mode the connection was opened in. A game system
+/// watches for it and announces join/spectate; the transport itself stays mode-agnostic.
 #[derive(Resource)]
 pub struct Announce {
     pub spectate: bool,
@@ -84,23 +85,4 @@ fn connect(world: &mut World, token: &[u8]) {
     world.insert_resource(Client(client));
     world.insert_resource(Transport(transport));
     info!("netcode connection opened");
-}
-
-fn announce(world: &mut World) {
-    if world.get_resource::<Announce>().is_none()
-        || world::systems::player::session::my_id(world).is_none()
-    {
-        return;
-    }
-    let spectate = world.resource::<Announce>().spectate;
-    info!(
-        "connection welcomed; announcing {}",
-        if spectate { "spectate" } else { "join" }
-    );
-    if spectate {
-        world::systems::player::session::spectate(world, None);
-    } else {
-        world::systems::player::session::join(world);
-    }
-    world.remove_resource::<Announce>();
 }

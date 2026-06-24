@@ -22,9 +22,10 @@ pub fn boot() {
         .access_token
         .as_deref()
         .map(core::net::auth::Session::from_access_token);
-    let spectator = session
-        .as_ref()
-        .is_some_and(|session| session.roles.contains(&Role::Spectate));
+    let spectator = params
+        .access_token
+        .as_deref()
+        .is_some_and(|token| systems::account::roles(token).contains(&Role::Spectate));
 
     let mut app = App::new();
     app.register_asset_source(AssetSourceId::Default, core::assets::embedded_source())
@@ -54,12 +55,17 @@ pub fn boot() {
             core::net::NetPlugin,
             core::render::RenderPlugin,
             core::audio::SfxPlugin,
-            core::debug::DebugPlugin,
-            core::testing::TestingPlugin,
+        ))
+        .add_plugins((
+            systems::net::SessionPlugin,
+            systems::camera::CameraPlugin,
+            systems::audio::CuePlugin,
             systems::actor::ActorPlugin,
             systems::area::AreaPlugin,
             systems::overlay::OverlayPlugin,
             systems::input::InputPlugin,
+            systems::debug::DebugPlugin,
+            systems::testing::TestingPlugin,
             systems::hud::scenes::ScenesPlugin,
             systems::hud::connection::ConnectionPlugin,
             systems::hud::HudPlugin,

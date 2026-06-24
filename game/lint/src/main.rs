@@ -10,7 +10,9 @@
 //! 1. Rust source lives only under `src/core/`, `src/systems/`, or `src/bin/` (plus the crate root
 //!    `src/lib.rs` / `src/main.rs`). Tests live in `tests/`, outside `src/`.
 //! 2. `tests/` and `src/bin/` may depend on both `core` and `systems`.
-//! 3. `core` may not depend on `systems`.
+//! 3. `core` may not depend on *any* systems layer — neither its own crate's `systems/` nor another
+//!    crate's (e.g. `world::systems` from the client). Code in `core` must be abstract enough that
+//!    systems plug into it, not the other way round.
 //!
 //! Run from the workspace root (`cargo run -p lint`); exits non-zero on any violation.
 
@@ -82,7 +84,7 @@ fn check_crate(name: &str, src: &Path, out: &mut Vec<String>) {
         if in_core {
             for reference in core_to_systems(&file) {
                 out.push(format!(
-                    "[{name}] src/{rel}: `{reference}` — core may not depend on systems"
+                    "[{name}] src/{rel}: `{reference}` — core may not depend on a systems layer (any crate's)"
                 ));
             }
         }
@@ -103,7 +105,7 @@ fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Every distinct `crate::systems…` reference (in any path or `use`) in a `core/` file.
+/// Every distinct `…::systems` reference (in any path or `use`, any crate) in a `core/` file.
 fn core_to_systems(file: &Path) -> BTreeSet<String> {
     let mut found = SystemsRefs::default();
     if let Ok(source) = fs::read_to_string(file)
@@ -122,7 +124,9 @@ struct SystemsRefs {
 impl<'ast> Visit<'ast> for SystemsRefs {
     fn visit_path(&mut self, path: &'ast syn::Path) {
         let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
-        if segments.len() >= 2 && segments[0] == "crate" && segments[1] == "systems" {
+        // `<crate>::systems::…` for any crate root (crate / world / client / …) — core must not reach
+        // into a systems layer, in its own crate or across a crate boundary.
+        if segments.len() >= 2 && segments[1] == "systems" {
             self.hits.insert(segments.join("::"));
         }
         visit::visit_path(self, path);
@@ -130,10 +134,9 @@ impl<'ast> Visit<'ast> for SystemsRefs {
 
     fn visit_use_tree(&mut self, tree: &'ast UseTree) {
         if let UseTree::Path(path) = tree
-            && path.ident == "crate"
             && use_reaches_systems(&path.tree)
         {
-            self.hits.insert("use crate::systems::…".to_string());
+            self.hits.insert(format!("use {}::systems::…", path.ident));
         }
         visit::visit_use_tree(self, tree);
     }

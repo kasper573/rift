@@ -83,7 +83,7 @@ fn spawn_area_tiles(
             continue;
         }
         for group in &area.groups {
-            let z = dynamic_z(area, z, group.bottom);
+            let z = dynamic_z(area.size.height, z, group.bottom);
             for &(c, cell) in &group.tiles {
                 let Some(sprite) = area.resolve(cell, Seconds(0.0)) else {
                     continue;
@@ -107,7 +107,7 @@ fn spawn_area_tiles(
                 AreaTile,
                 tile_sprite(&assets, &sprite, size),
                 Anchor::BOTTOM_LEFT,
-                sprite_transform(pos, dynamic_z(area, z, Tiles(pos.y))),
+                sprite_transform(pos, dynamic_z(area.size.height, z, Tiles(pos.y))),
             ));
             if area.animated(cell) {
                 tile.insert(Animated(cell));

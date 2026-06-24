@@ -56,7 +56,7 @@ fn sync_actors(
     let clock = Seconds(time.elapsed_secs());
     animator.retain(|entity| actors.contains(entity));
     for (entity, actor, position, tag, mut sprite, mut transform) in &mut actors {
-        let elapsed = animator.elapsed(entity, actor.action, clock);
+        let elapsed = animator.elapsed(entity, actor.action as u64, clock);
         let region =
             actor
                 .model
@@ -70,7 +70,11 @@ fn sync_actors(
         };
         *transform = sprite_transform(
             position.pos,
-            dynamic_z(area, area.dynamic_layer() as f32, Tiles(position.pos.y)),
+            dynamic_z(
+                area.size.height,
+                area.dynamic_layer() as f32,
+                Tiles(position.pos.y),
+            ),
         );
     }
 }

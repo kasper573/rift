@@ -170,7 +170,7 @@ pub(super) fn apply_tint(
 // The render target is the visible world in native pixels: the window's logical size scaled down by
 // the fixed per-tile zoom, so the present step upscales each source pixel by the same factor on every
 // device. Even dimensions keep tile edges on whole texels; an odd one would draw seams between tiles.
-pub(super) fn target_size(window: &Window) -> (u32, u32) {
+pub(crate) fn target_size(window: &Window) -> (u32, u32) {
     let scaled = |logical: f32| {
         let px = (logical * TILE.0 / TILE_SCREEN).round().max(2.0) as u32;
         px + (px & 1)
