@@ -2,11 +2,10 @@
 name = "world"
 version.workspace = true
 edition.workspace = true
-description = "The MMORPG game library: wire protocol, content tables, and world simulation (NPC AI, combat, movement, portals) — organized by domain. The server and client are thin composition roots over this."
+description = "The game, headless and isomophic: contains no frontend and backend specific concerns"
 
-[features]
-default = ["host"]
-host = ["bevy_replicon/server", "dep:bevy_time"]
+[package.metadata.lint]
+game = true
 
 [[bin]]
 name = "kc-roles"
@@ -15,9 +14,9 @@ path = "src/bin/kc_roles.rs"
 [dependencies]
 bevy_app.workspace = true
 bevy_ecs.workspace = true
-bevy_replicon = { workspace = true, features = ["client"] }
+bevy_replicon = { workspace = true, features = ["client", "server"] }
 bevy_state.workspace = true
-bevy_time = { workspace = true, features = ["std"], optional = true }
+bevy_time = { workspace = true, features = ["std"] }
 derive_more = { version = "2", features = ["add", "add_assign"] }
 euclid = { version = "0.22", features = ["serde"] }
 include_dir = "0.7"

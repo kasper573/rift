@@ -2,7 +2,7 @@
 name = "bevy_opacity"
 version.workspace = true
 edition.workspace = true
-description = "Hierarchical opacity for bevy_ui: one Opacity component fades an entity and its descendants, with a built-in linear fade and despawn-on-fade-out."
+description = "Hierarchical opacity for bevy_ui"
 repository = "https://github.com/kasper573/rift"
 authors = ["kasper573"]
 

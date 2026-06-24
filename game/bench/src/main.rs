@@ -2,21 +2,16 @@ use std::time::Instant;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{ConnectedClient, Replicated, ServerState};
+use bevy_replicon::prelude::{ConnectedClient, ServerState};
 use bevy_state::prelude::NextState;
-use world::area::{self, Area};
-use world::math::{Direction, Pos};
-use world::sim::Character;
-use world::sim::combat::Stats;
-use world::sim::movement::Speed;
-use world::sim::npc::{self, Npc, NpcDef};
-use world::sim::player::Players;
-use world::sim::visibility::OwnedBy;
-use world::table::Id;
-use world::tiling::Tiles;
-use world::{
-    ACTION_IDLE, Actor, AreaTag, ClientId, Hitbox, Inventory, Name, Owner, Position, Vitals, Xp,
-};
+use world::core::math::Pos;
+use world::core::table::Id;
+use world::core::tiling::Tiles;
+use world::systems::area::{self, Area};
+use world::systems::items::Inventory;
+use world::systems::npc::{self, Npc, NpcDef};
+use world::systems::player::{ClientId, Owner, Players, Xp};
+use world::systems::visibility::OwnedBy;
 
 const NPCS_PER_AREA: usize = 25;
 const PLAYERS_PER_AREA: usize = 25;
@@ -27,7 +22,7 @@ const MEASURE: usize = 200;
 
 fn main() {
     area::configure_areas(MAX_AREAS);
-    world::sim::validate();
+    world::systems::validate();
 
     println!("[bench] finding the highest A sustained within the {BUDGET_MS:.0}ms budget...");
 
@@ -166,7 +161,7 @@ fn point(areas: usize, warmup: usize, ticks: usize) -> Point {
 }
 
 fn build_world(area: &Area, npc: Id<NpcDef>) -> (App, Vec<(ClientId, Entity)>) {
-    let mut app = world::sim::server_app(area.id);
+    let mut app = world::systems::server_app(area.id);
     app.finish();
     app.cleanup();
     app.world_mut()
@@ -219,7 +214,7 @@ fn measure(worlds: &mut [App], warmup: usize, ticks: usize) -> (f64, f64, f64, f
         }
         samples.push(started.elapsed().as_secs_f64() * 1000.0);
     }
-    samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    samples.sort_by(f64::total_cmp);
     let n = samples.len();
     (
         samples.iter().sum::<f64>() / n as f64,
@@ -234,36 +229,5 @@ fn wander_pos(area: &Area) -> Pos<Tiles> {
 }
 
 fn spawn_character(world: &mut World, area: &Area, def_id: Id<NpcDef>, at: Pos<Tiles>) -> Entity {
-    let def = def_id.get();
-    world
-        .spawn(Character {
-            replicated: Replicated,
-            position: Position { pos: at },
-            name: Name {
-                name: def.display_name.clone(),
-            },
-            actor: Actor {
-                color: def.tint,
-                dir: Direction::S as u8,
-                action: ACTION_IDLE,
-                model: def.model,
-                attack_rate: def.attack_speed,
-            },
-            hitbox: Hitbox {
-                size: def.model.get().hitbox(),
-            },
-            vitals: Vitals {
-                health: def.health,
-                max: def.health,
-            },
-            area: AreaTag { area: area.id },
-            stats: Stats {
-                damage: def.damage,
-                attack_speed: def.attack_speed,
-                attack_delay: def.attack_delay,
-                range: def.range,
-            },
-            speed: Speed { value: def.speed },
-        })
-        .id()
+    world.spawn(npc::character(def_id.get(), at, area.id)).id()
 }

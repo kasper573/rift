@@ -137,7 +137,7 @@ struct DesignFonts(#[allow(dead_code)] Vec<Handle<Font>>);
 /// Inserts an already-built [`Component`] value into a `bsn!` scene. Our component helpers build
 /// whole component values; `bsn!`'s `template_value` only accepts plain `Default + Clone` templates,
 /// so `FromTemplate` components (e.g. `TextFont`) reach a scene through this instead.
-pub(crate) fn component<C: Component + Clone>(value: C) -> impl Scene {
+pub fn component<C: Component + Clone>(value: C) -> impl Scene {
     FnTemplate(move |_: &mut TemplateContext| Ok(value.clone()))
 }
 

@@ -2,9 +2,12 @@
 name = "client"
 version.workspace = true
 edition.workspace = true
-description = "In-browser MMORPG client: a wasm Bevy app rendering the replicated `world` over a WebSocket netcode transport, with a bevy_ui HUD. The website hands it an access token; it does no auth itself."
+description = "Frontend for the game"
 repository = "https://github.com/kasper573/rift"
 authors = ["kasper573"]
+
+[package.metadata.lint]
+game = true
 
 # A wasm `cdylib` whose exported `run` the page's loader calls; `rlib` keeps it usable from tests.
 [lib]
@@ -12,7 +15,7 @@ name = "rift"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-world = { path = "../world", default-features = false }
+world = { path = "../world" }
 ui = { path = "../../ui" }
 # Bevy's `2d` + `ui` feature bundles for the browser: `webgl2` (far more reliable than `webgpu` under
 # headless Chrome for e2e) and `web` for the browser platform integration. No `x11`/`multi_threaded`/

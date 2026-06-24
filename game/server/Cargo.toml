@@ -2,7 +2,7 @@
 name = "server"
 version.workspace = true
 edition.workspace = true
-description = "Authoritative MMORPG server binary: mints session tokens and runs the `world` simulation over an encrypted WebSocket netcode transport at a fixed tick."
+description = "Backend for the game"
 
 [dependencies]
 axum.workspace = true

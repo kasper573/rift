@@ -25,6 +25,21 @@
 - Don't use #[must_use]. Only when clippy recommends it or when it's absolutely critical.
 - Use serde and envy for all json/env serialization and deserialization. No custom parsing code. And use the derive macros, not the imperative APIs.
 
+## Architecture
+
+- Each game crate's `src/` is organized into `core/`, `systems/`:
+
+`core/`:
+- code that may be reused by all systems
+- typically low level systems and primitives
+- may not depend on high level systems (not its own crate's `systems`, nor another crate's — e.g. the client's `core` must not touch `world::systems`)
+- must be abstract and pluggable: systems integrate with core, core never reaches into a system. Never create a `systems::x` that mirrors a `core::x`. If core code seems to need a system, that's a sign core isn't abstract enough — make it extensible (traits, messages, registries, callbacks) and put the game-specific glue in the relevant feature.
+
+`systems/`:
+- high level systems and compositions of core primitives
+- the majority of our game content and mechanics goes here
+- may depend on other high level systems
+
 ## Comments
 
 - The default mindset should be: Do not write comments. Write code that is self explanatory.
