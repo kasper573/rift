@@ -4,20 +4,67 @@ use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use bevy::window::{CursorMoved, PrimaryWindow};
+use world::core::math::Pos;
+use world::core::tiling::Tiles;
 use world::systems::player::session;
 
 use crate::GameScene;
+use crate::core::render::TILE;
+use crate::core::render::screen::ToScreen;
 
 pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         gestures::plugin(app);
-        app.add_systems(Update, touch_as_mouse);
-        app.add_systems(
-            Update,
-            respawn_when_dead.run_if(in_state(GameScene::Playing)),
-        );
+        app.add_systems(Startup, setup_highlight)
+            .add_systems(Update, touch_as_mouse)
+            .add_systems(
+                Update,
+                (respawn_when_dead, update_tile_highlight).run_if(in_state(GameScene::Playing)),
+            );
+    }
+}
+
+/// What the active gesture wants highlighted on the map — a tile and the image to mark it with. The
+/// gesture dispatch sets it as a resource; [`update_tile_highlight`] mirrors it onto the sprite.
+#[derive(Resource)]
+pub struct ActiveTileHighlight {
+    pub pos: Pos<Tiles>,
+    pub image: Handle<Image>,
+}
+
+#[derive(Component)]
+struct TileHighlight;
+
+fn setup_highlight(mut commands: Commands) {
+    commands.spawn((
+        TileHighlight,
+        Sprite {
+            custom_size: Some(Vec2::splat(TILE.0)),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.0, 100.0),
+        Visibility::Hidden,
+    ));
+}
+
+fn update_tile_highlight(
+    highlight: Option<Res<ActiveTileHighlight>>,
+    mut sprite: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<TileHighlight>>,
+) {
+    let Ok((mut sprite, mut transform, mut visibility)) = sprite.single_mut() else {
+        return;
+    };
+    match highlight {
+        Some(highlight) => {
+            *visibility = Visibility::Visible;
+            sprite.image = highlight.image.clone();
+            let at = highlight.pos.to_screen();
+            transform.translation.x = at.x;
+            transform.translation.y = at.y;
+        }
+        None => *visibility = Visibility::Hidden,
     }
 }
 

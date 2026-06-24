@@ -1,6 +1,7 @@
-//! The spatial sfx mixer: plays sounds positioned in the world, attenuated and panned relative to a
-//! [`Listener`], with brief de-duplication so one sound can't stack on itself. Game systems load the
-//! catalogue and emit [`PlaySfx`] anonymously — this knows nothing about what triggers a sound.
+//! The spatial sfx system: holds the loaded sound catalogue (registered once via [`SfxCatalog`]) and
+//! plays a sound by id at a world position — attenuated and panned relative to a [`Listener`], and
+//! de-duplicated within a short window. Game systems just emit [`PlaySfx`]; this knows nothing about
+//! what triggers a sound or where the catalogue comes from.
 
 use std::collections::HashMap;
 
@@ -19,37 +20,81 @@ impl Plugin for SfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(bevy_kira_audio::AudioPlugin)
             .init_resource::<Listener>()
+            .init_resource::<SfxCatalog>()
+            .init_resource::<Catalog>()
             .init_resource::<Played>()
             .add_message::<PlaySfx>()
+            .add_systems(Startup, load)
             .add_systems(Update, mix);
     }
 }
 
-/// Where the player hears from; a game system keeps it on the local player. Sounds are attenuated and
-/// panned relative to it, and nothing plays while it is absent.
+/// Where the player hears from; a game system keeps it on the local player. Sounds attenuate and pan
+/// relative to it, and nothing plays while it is absent.
 #[derive(Resource, Default)]
 pub struct Listener(pub Option<Pos<Tiles>>);
 
-/// A request to play a sound at a world position. Any system emits these anonymously. `key` identifies
-/// the sound so it can't restack within [`STACK_WINDOW`]; `volume`/`pitch` are the pre-attenuation
-/// values the caller chose.
+/// Plays a catalogued sound at a world position. Any system emits these anonymously.
 #[derive(Message)]
 pub struct PlaySfx {
-    pub sound: Handle<AudioSource>,
+    pub id: String,
     pub at: Pos<Tiles>,
-    pub volume: f32,
-    pub pitch: f32,
-    pub key: u64,
+}
+
+/// The sound catalogue the app registers once before startup, keeping this module free of game content:
+/// each entry's id, asset path, and inclusive volume/pitch range.
+#[derive(Resource, Default)]
+pub struct SfxCatalog(pub Vec<SfxSpec>);
+
+pub struct SfxSpec {
+    pub id: String,
+    pub path: String,
+    pub volume: (f32, f32),
+    pub pitch: (f32, f32),
+}
+
+#[derive(Resource, Default)]
+struct Catalog(HashMap<String, Sound>);
+
+struct Sound {
+    handle: Handle<AudioSource>,
+    volume: (f32, f32),
+    pitch: (f32, f32),
+    key: u64,
 }
 
 #[derive(Resource, Default)]
 struct Played(HashMap<u64, Seconds>);
+
+#[derive(Clone)]
+struct Cue {
+    proximity: f32,
+    pan: f32,
+    handle: Handle<AudioSource>,
+    volume: (f32, f32),
+    pitch: (f32, f32),
+}
+
+fn load(specs: Res<SfxCatalog>, assets: Res<AssetServer>, mut catalog: ResMut<Catalog>) {
+    for (key, spec) in specs.0.iter().enumerate() {
+        catalog.0.insert(
+            spec.id.clone(),
+            Sound {
+                handle: assets.load(spec.path.clone()),
+                volume: spec.volume,
+                pitch: spec.pitch,
+                key: key as u64,
+            },
+        );
+    }
+}
 
 fn mix(
     mut requests: MessageReader<PlaySfx>,
     listener: Res<Listener>,
     time: Res<Time>,
     audio: Res<Audio>,
+    catalog: Res<Catalog>,
     mut played: ResMut<Played>,
 ) {
     let Some(listener) = listener.0 else {
@@ -57,30 +102,39 @@ fn mix(
         return;
     };
     let clock = Seconds(time.elapsed_secs());
-    // Collapse this frame's requests to the loudest per sound, after spatial attenuation.
-    let mut frame: HashMap<u64, (f32, f32, Handle<AudioSource>, f32)> = HashMap::new();
+    // Collapse this frame's requests to the loudest play of each sound, after spatial attenuation.
+    let mut frame: HashMap<u64, Cue> = HashMap::new();
     for req in requests.read() {
-        let volume = req.volume * proximity_volume(listener, req.at);
-        if volume <= 0.0 {
+        let Some(sound) = catalog.0.get(&req.id) else {
+            continue;
+        };
+        let proximity = proximity_volume(listener, req.at);
+        if proximity <= 0.0 {
             continue;
         }
-        let pan = proximity_pan(listener, req.at);
-        let slot = frame
-            .entry(req.key)
-            .or_insert((volume, pan, req.sound.clone(), req.pitch));
-        if volume > slot.0 {
-            *slot = (volume, pan, req.sound.clone(), req.pitch);
+        let cue = Cue {
+            proximity,
+            pan: proximity_pan(listener, req.at),
+            handle: sound.handle.clone(),
+            volume: sound.volume,
+            pitch: sound.pitch,
+        };
+        let slot = frame.entry(sound.key).or_insert_with(|| cue.clone());
+        if cue.proximity > slot.proximity {
+            *slot = cue;
         }
     }
-    for (key, (volume, pan, sound, pitch)) in frame {
+    for (key, cue) in frame {
         if !ready(&mut played.0, key, clock) {
             continue;
         }
+        let volume = resolve(cue.volume, roll(clock, key)) * cue.proximity;
+        let pitch = resolve(cue.pitch, roll(clock, key.wrapping_add(7)));
         audio
-            .play(sound)
+            .play(cue.handle)
             .with_volume(Decibels(20.0 * volume.max(1e-4).log10()))
             .with_playback_rate(f64::from(pitch))
-            .with_panning(pan);
+            .with_panning(cue.pan);
     }
 }
 
@@ -93,6 +147,17 @@ fn ready(played: &mut HashMap<u64, Seconds>, key: u64, clock: Seconds) -> bool {
     }
     played.insert(key, clock);
     true
+}
+
+fn resolve((min, max): (f32, f32), roll: f32) -> f32 {
+    min + roll.clamp(0.0, 1.0) * (max - min)
+}
+
+fn roll(clock: Seconds, salt: u64) -> f32 {
+    let bits = (clock.0.to_bits() as u64)
+        .wrapping_mul(2654435761)
+        .wrapping_add(salt.wrapping_mul(40503));
+    (bits % 1000) as f32 / 1000.0
 }
 
 fn proximity_volume(listener: Pos<Tiles>, source: Pos<Tiles>) -> f32 {

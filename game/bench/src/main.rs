@@ -214,7 +214,7 @@ fn measure(worlds: &mut [App], warmup: usize, ticks: usize) -> (f64, f64, f64, f
         }
         samples.push(started.elapsed().as_secs_f64() * 1000.0);
     }
-    samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    samples.sort_by(f64::total_cmp);
     let n = samples.len();
     (
         samples.iter().sum::<f64>() / n as f64,

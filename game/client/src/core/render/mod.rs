@@ -27,13 +27,15 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<present::Present>::default())
             .init_resource::<Animator>()
+            .init_resource::<camera::CameraTarget>()
             .init_resource::<present::ScreenTint>()
             .init_resource::<present::Viewport>()
             .add_systems(Startup, present::setup)
             .add_systems(Update, (present::match_display, present::fit).chain())
             .add_systems(
                 Update,
-                present::apply_tint.run_if(in_state(crate::GameScene::Playing)),
+                (camera::follow_camera, present::apply_tint)
+                    .run_if(in_state(crate::GameScene::Playing)),
             );
     }
 }

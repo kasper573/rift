@@ -46,6 +46,7 @@ pub fn boot() {
         app.insert_resource(session);
     }
     app.insert_resource(params)
+        .insert_resource(sfx_catalog())
         .insert_state(if spectator {
             GameScene::ChooseMode
         } else {
@@ -60,7 +61,10 @@ pub fn boot() {
         .add_plugins((
             systems::actor::ActorPlugin,
             systems::area::AreaPlugin,
-            systems::overlay::OverlayPlugin,
+            systems::combat::CombatPlugin,
+            systems::items::ItemsPlugin,
+            systems::view::ViewPlugin,
+            systems::session::SessionPlugin,
             systems::input::InputPlugin,
             systems::debug::DebugPlugin,
             systems::testing::TestingPlugin,
@@ -71,6 +75,22 @@ pub fn boot() {
         ));
     ui::theme::set_theme(ui::themes::dark::THEME);
     app.run();
+}
+
+/// Builds the core audio mixer's sound catalogue from `world`'s sfx table — the one place the client
+/// bridges game content into the game-agnostic mixer.
+fn sfx_catalog() -> core::audio::SfxCatalog {
+    core::audio::SfxCatalog(
+        world::systems::sfx::sfx_table()
+            .iter()
+            .map(|def| core::audio::SfxSpec {
+                id: def.id.0.clone(),
+                path: def.src.clone(),
+                volume: (def.volume.resolve(0.0), def.volume.resolve(1.0)),
+                pitch: (def.pitch.resolve(0.0), def.pitch.resolve(1.0)),
+            })
+            .collect(),
+    )
 }
 
 /// Decodes the player's roles from the access token's JWT claims — client-side and presentation-only

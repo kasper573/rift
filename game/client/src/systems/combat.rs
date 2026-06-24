@@ -1,37 +1,26 @@
-//! Bespoke world- and screen-space effects: the local player's floating health bar, the active
-//! gesture's tile highlight, and the death screen tint. All specific to this game, drawn on top of the
-//! generic render pipeline in [`crate::core::render`].
+//! The local player's combat status, shown over the world: a floating health bar and a full-screen
+//! death tint. Reads the player's vitals; draws via the generic render pipeline and its screen-tint
+//! hook in `crate::core::render`.
 
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
-use world::core::math::{Pos, Size, WorldPx};
-use world::core::tiling::Tiles;
+use world::core::math::{Size, WorldPx};
 use world::systems::combat::Vitals;
 use world::systems::movement::Position;
 use world::systems::player::session;
 
-use crate::core::render::TILE;
 use crate::core::render::present::ScreenTint;
 use crate::core::render::screen::ToScreen;
 
-pub struct OverlayPlugin;
+pub struct CombatPlugin;
 
-impl Plugin for OverlayPlugin {
+impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup).add_systems(
+        app.add_systems(Startup, spawn_bar).add_systems(
             Update,
-            (healthbar, update_tile_highlight, death_tint)
-                .run_if(in_state(crate::GameScene::Playing)),
+            (healthbar, death_tint).run_if(in_state(crate::GameScene::Playing)),
         );
     }
-}
-
-/// What the active gesture wants highlighted on the map — a tile and the image to mark it with. The
-/// gesture system (`crate::systems::input`) sets it; [`update_tile_highlight`] draws it.
-#[derive(Resource)]
-pub struct ActiveTileHighlight {
-    pub pos: Pos<Tiles>,
-    pub image: Handle<Image>,
 }
 
 #[derive(Component, Clone, Copy)]
@@ -44,10 +33,7 @@ enum Bar {
 const BAR: Size<WorldPx> = Size::new(20.0, 4.0);
 const BAR_DROP: WorldPx = WorldPx(5.0);
 
-#[derive(Component)]
-struct TileHighlight;
-
-fn setup(mut commands: Commands) {
+fn spawn_bar(mut commands: Commands) {
     commands.spawn((
         Bar::Border,
         bar_sprite(0x14_0A_28, BAR),
@@ -66,15 +52,6 @@ fn setup(mut commands: Commands) {
         bar_sprite(0x00_FF_00, inner),
         Anchor::CENTER_LEFT,
         hidden(),
-    ));
-    commands.spawn((
-        TileHighlight,
-        Sprite {
-            custom_size: Some(Vec2::splat(TILE.0)),
-            ..default()
-        },
-        Transform::from_xyz(0.0, 0.0, 100.0),
-        Visibility::Hidden,
     ));
 }
 
@@ -119,27 +96,6 @@ fn healthbar(world: &mut World) {
                 transform.translation = Vec3::new(center.x - inner / 2.0, center.y, 200.2);
             }
         }
-    }
-}
-
-/// Renders the tile highlight the active gesture published — appearance and position both come from the
-/// gesture; this just mirrors them onto the sprite.
-fn update_tile_highlight(
-    highlight: Option<Res<ActiveTileHighlight>>,
-    mut sprite: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<TileHighlight>>,
-) {
-    let Ok((mut sprite, mut transform, mut visibility)) = sprite.single_mut() else {
-        return;
-    };
-    match highlight {
-        Some(highlight) => {
-            *visibility = Visibility::Visible;
-            sprite.image = highlight.image.clone();
-            let at = highlight.pos.to_screen();
-            transform.translation.x = at.x;
-            transform.translation.y = at.y;
-        }
-        None => *visibility = Visibility::Hidden,
     }
 }
 

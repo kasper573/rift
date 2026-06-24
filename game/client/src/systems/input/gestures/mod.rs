@@ -8,8 +8,8 @@ pub use default::DefaultGesture;
 pub use drag::DragGesture;
 pub use walk::WalkGesture;
 
+use super::ActiveTileHighlight;
 use crate::GameScene;
-use crate::systems::overlay::ActiveTileHighlight;
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
 use enum_dispatch::enum_dispatch;
