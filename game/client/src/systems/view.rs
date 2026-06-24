@@ -1,6 +1,8 @@
-//! The local player's audiovisual viewpoint: each frame it points the world camera and the audio
-//! listener at the local player (the camera clamped to the area's bounds). The camera and audio
-//! engines that consume this live in `crate::core`.
+//! The local player's audiovisual viewpoint: each frame it centres the world camera on the local
+//! player (clamped to the area's bounds) and keeps the audio listener there. It reads the player's
+//! position and drives the core camera + audio engines in one pass, so the camera and the player's
+//! sprite always derive from the same position — a frame of lag between them makes the pixel-art view
+//! jitter.
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -14,8 +16,9 @@ use world::systems::player::session::MyClient;
 
 use crate::core::audio::Listener;
 use crate::core::render::TILE;
-use crate::core::render::camera::CameraTarget;
+use crate::core::render::camera::WorldCamera;
 use crate::core::render::present::target_size;
+use crate::core::render::screen::ToScreen;
 
 pub struct ViewPlugin;
 
@@ -32,7 +35,7 @@ fn track_player(
     me: Res<MyClient>,
     players: Query<(&Owner, &Position, &AreaTag)>,
     window: Single<&Window, With<PrimaryWindow>>,
-    mut target: ResMut<CameraTarget>,
+    mut camera: Query<&mut Transform, With<WorldCamera>>,
     mut listener: ResMut<Listener>,
 ) {
     let Some(my) = me.0 else {
@@ -42,7 +45,14 @@ fn track_player(
         return;
     };
     listener.0 = Some(position.pos);
-    target.0 = camera_center(position.pos, tag.area, view_half(&window));
+    let Some(center) = camera_center(position.pos, tag.area, view_half(&window)) else {
+        return;
+    };
+    if let Ok(mut transform) = camera.single_mut() {
+        let at = center.to_screen();
+        transform.translation.x = at.x;
+        transform.translation.y = at.y;
+    }
 }
 
 fn camera_center(at: Pos<Tiles>, area_id: Id<AreaDef>, half: Vec2) -> Option<Pos<Tiles>> {
