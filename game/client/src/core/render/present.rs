@@ -18,7 +18,7 @@ use super::camera::WorldCamera;
 // looks the same size to every player. A larger display just frames more of the map — never bigger
 // tiles — and network AOI culling bounds what's actually streamed. (48 keeps a ~900px-tall view near
 // the game's long-standing 18-tiles-tall look, and being a multiple of TILE upscales crisply.)
-const TILE_SCREEN: f32 = 48.0;
+const TILE_SCREEN: f32 = 96.0;
 const PRESENT_LAYER: usize = 1;
 
 #[derive(Component)]
