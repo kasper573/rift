@@ -1,0 +1,36 @@
+[package]
+name = "bevy_tiled"
+version.workspace = true
+edition.workspace = true
+description = "Renders our Tiled-built areas as Bevy sprites, plus a headless map-preview tool"
+repository = "https://github.com/kasper573/rift"
+authors = ["kasper573"]
+
+# The library is the bevy<->tiled integration the client renders with; the `render` bin reuses it to
+# rasterize a whole map to a PNG offscreen (its own headless app, never linked into the wasm client).
+[[bin]]
+name = "render"
+path = "src/bin/render.rs"
+
+[dependencies]
+world = { path = "../../game/world" }
+include_dir = "0.7"
+# The render bin needs the full offscreen render stack (no winit/audio/ui/web); the library half only
+# uses the sprite components, but one feature set serves both and unifies with the client's anyway.
+bevy = { workspace = true, features = [
+    "std",
+    "bevy_asset",
+    "bevy_color",
+    "bevy_image",
+    "bevy_sprite",
+    "bevy_sprite_render",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_camera",
+    "bevy_mesh",
+    "bevy_shader",
+    "bevy_material",
+    "bevy_window",
+    "bevy_log",
+    "png",
+] }

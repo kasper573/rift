@@ -1776,6 +1776,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_tiled"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "include_dir",
+ "world",
+]
+
+[[package]]
 name = "bevy_time"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2291,6 +2300,7 @@ dependencies = [
  "bevy_kira_audio",
  "bevy_picking",
  "bevy_replicon",
+ "bevy_tiled",
  "console_error_panic_hook",
  "enum_dispatch",
  "getrandom 0.2.17",

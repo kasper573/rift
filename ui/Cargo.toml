@@ -21,7 +21,7 @@ bevy_window = { workspace = true }
 bevy_math = { workspace = true }
 bevy_time = { workspace = true }
 bevy_scene = { workspace = true }
-bevy_opacity = { path = "../bevy_opacity" }
+bevy_opacity = { path = "../bevy/opacity" }
 # The `gallery` binary (a standalone showcase window) needs the full Bevy app — windowing, rendering,
 # winit — which the library half (built on the individual `bevy_*` crates above) does not. The wasm
 # client also depends on this crate; feature unification means anything here lands in its build too,
