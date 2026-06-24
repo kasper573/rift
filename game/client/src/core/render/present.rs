@@ -1,5 +1,6 @@
-//! The pixel-art present pipeline: the world renders to a fixed-zoom offscreen texture, which a
-//! fullscreen quad then upscales to the window. `fit` keeps the texture sized to the window, and the
+//! The pixel-art present pipeline: the world renders to a native-resolution offscreen texture (the
+//! camera's [`SCALE`] zoom magnifies the art, so motion stays smooth to the screen pixel), which a
+//! fullscreen quad then copies to the window. `fit` keeps the texture sized to the window, and the
 //! `Present` material applies a whole-screen [`ScreenTint`] any system can set.
 
 use bevy::camera::visibility::RenderLayers;
@@ -16,9 +17,13 @@ use super::camera::WorldCamera;
 
 // The fixed zoom: every tile is drawn this many logical pixels across on every device, so the world
 // looks the same size to every player. A larger display just frames more of the map — never bigger
-// tiles — and network AOI culling bounds what's actually streamed. (48 keeps a ~900px-tall view near
-// the game's long-standing 18-tiles-tall look, and being a multiple of TILE upscales crisply.)
+// tiles — and network AOI culling bounds what's actually streamed. A multiple of TILE keeps each
+// art-pixel an exact whole number of screen pixels, so nearest-neighbour magnification stays crisp.
 const TILE_SCREEN: f32 = 96.0;
+// Screen pixels per art-pixel — the camera's magnification. The world renders at native resolution and
+// the camera zooms by this, rather than rendering small and upscaling, so on-screen motion advances a
+// screen pixel at a time instead of a whole art-pixel (which staircased diagonal movement).
+pub(crate) const SCALE: f32 = TILE_SCREEN / TILE.0;
 const PRESENT_LAYER: usize = 1;
 
 #[derive(Component)]
@@ -77,8 +82,8 @@ pub(super) fn setup(
         RenderTarget::Image(target.clone().into()),
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::Fixed {
-                width: target_w as f32,
-                height: target_h as f32,
+                width: target_w as f32 / SCALE,
+                height: target_h as f32 / SCALE,
             },
             ..OrthographicProjection::default_2d()
         }),
@@ -142,8 +147,8 @@ pub(super) fn fit(
             && let Projection::Orthographic(ortho) = proj.as_mut()
         {
             ortho.scaling_mode = ScalingMode::Fixed {
-                width: target_w as f32,
-                height: target_h as f32,
+                width: target_w as f32 / SCALE,
+                height: target_h as f32 / SCALE,
             };
         }
     }
@@ -167,12 +172,12 @@ pub(super) fn apply_tint(
     }
 }
 
-// The render target is the visible world in native pixels: the window's logical size scaled down by
-// the fixed per-tile zoom, so the present step upscales each source pixel by the same factor on every
-// device. Even dimensions keep tile edges on whole texels; an odd one would draw seams between tiles.
+// The render target matches the window 1:1 (native resolution), so on-screen motion is smooth to the
+// pixel and the camera's SCALE zoom does the magnification. Even dimensions keep the centred view on
+// whole pixels; an odd one would split the centre pixel.
 pub(crate) fn target_size(window: &Window) -> (u32, u32) {
     let scaled = |logical: f32| {
-        let px = (logical * TILE.0 / TILE_SCREEN).round().max(2.0) as u32;
+        let px = logical.round().max(2.0) as u32;
         px + (px & 1)
     };
     let res = &window.resolution;
