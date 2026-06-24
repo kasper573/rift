@@ -17,7 +17,7 @@ use world::systems::player::session::MyClient;
 use crate::core::audio::Listener;
 use crate::core::render::TILE;
 use crate::core::render::camera::WorldCamera;
-use crate::core::render::present::target_size;
+use crate::core::render::present::{SCALE, target_size};
 use crate::core::render::screen::ToScreen;
 
 pub struct ViewPlugin;
@@ -49,9 +49,12 @@ fn track_player(
         return;
     };
     if let Ok(mut transform) = camera.single_mut() {
+        // Snap the camera to whole screen pixels so static tiles never shimmer. At native resolution one
+        // screen pixel is 1/SCALE of an art-pixel — far finer than the old whole-art-pixel snap, which
+        // is why the world no longer staircases under the camera.
         let at = center.to_screen();
-        transform.translation.x = at.x;
-        transform.translation.y = at.y;
+        transform.translation.x = (at.x * SCALE).round() / SCALE;
+        transform.translation.y = (at.y * SCALE).round() / SCALE;
     }
 }
 
@@ -63,15 +66,11 @@ fn camera_center(at: Pos<Tiles>, area_id: Id<AreaDef>, half: Vec2) -> Option<Pos
         (bounds.max().x - half.x).max(lo.x),
         (bounds.max().y - half.y).max(lo.y),
     );
-    Some(snap(at.clamp(lo, hi)))
+    Some(at.clamp(lo, hi))
 }
 
 fn view_half(window: &Window) -> Vec2 {
     let (w, h) = target_size(window);
-    Vec2::new(0.5 * w as f32 / TILE.0, 0.5 * h as f32 / TILE.0)
-}
-
-fn snap(p: Pos<Tiles>) -> Pos<Tiles> {
-    let axis = |t: f32| (t * TILE.0).round() / TILE.0;
-    Pos::new(axis(p.x), axis(p.y))
+    let per_tile = TILE.0 * SCALE;
+    Vec2::new(0.5 * w as f32 / per_tile, 0.5 * h as f32 / per_tile)
 }
