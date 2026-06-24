@@ -11,9 +11,7 @@
 - No hardcoded environment defaults: Panic if an env var is missing or invalid. Makes mistakes loud and obvious and forces environments to be well and explicitly configured. Also aids with the "build once, run everywhere" principle.
 - While we currently deploy only to web for the forseeable future, the deploy target must still be abstracted away. Do not hard couple the codebase with any specific platform or environment. Ideally you only use abstractions provided by bevy and don't have to worry about this. But if you physically cannot avoid platform specific code, you must encapsulate it behind a single platform adapter so that it's easy to swap out the implementation for a different platform in the future.
 
-## Layering (core vs systems)
-
-- Each game crate's `src/` is organized into `core/`, `systems/`, and `bin/`, with no loose source files. `core/` is general-purpose code that is not specific to this game and that any system may depend on; `systems/` is our bespoke, game-specific code. A module belongs in `core/` only if it would be equally at home in an unrelated game — anything tied to this game's particular rules, content, or presentation belongs in `systems/`. `core/` must never depend on `systems/`. This is enforced by the `lint` crate (opt in via `[package.metadata.lint] game = true`).
+## Code style
 
 - Prioritize simplicity, stability (extensible, not brittle), readability — then performance.
 - small `macro_rules!` codegen is allowed where it removes boilerplate.
@@ -26,6 +24,20 @@
   Plain primitives are fine only for obvious-to-everyone concepts (e.g. `health: f32`).
 - Don't use #[must_use]. Only when clippy recommends it or when it's absolutely critical.
 - Use serde and envy for all json/env serialization and deserialization. No custom parsing code. And use the derive macros, not the imperative APIs.
+
+## Architecture
+
+- Each game crate's `src/` is organized into `core/`, `systems/`:
+
+`core/`:
+- code that may be reused by all systems
+- typically low level systems and primitives
+- may not depend on high level systems
+
+`systems/`:
+- high level systems and compositions of core primitives
+- the majority of our game content and mechanics goes here
+- may depend on other high level systems
 
 ## Comments
 
