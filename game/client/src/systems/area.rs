@@ -3,12 +3,13 @@
 
 use bevy::prelude::*;
 use world::core::table::Id;
-use world::core::tiling::CellPos;
+use world::core::tiling::{CellPos, TileSize};
 use world::systems::area::{self, AreaDef, AreaTag};
 use world::systems::player::Owner;
 use world::systems::player::session::MyClient;
 
 use crate::core::render::dynamic_z;
+use crate::core::render::screen::ToScreen;
 
 pub struct AreaPlugin;
 
@@ -54,7 +55,8 @@ fn spawn_area_tiles(
     spawned.0 = Some(area_id);
     let area = &area::areas()[area_id.index()];
     let mut hooks = AreaHooks::new(area, assets.clone());
-    bevy_tiled::spawn_map(&mut commands, &mut images, &area.map, &mut hooks);
+    let origin = area.size.bounds().min().to_screen();
+    bevy_tiled::spawn_map(&mut commands, &mut images, &area.map, &mut hooks, origin);
 }
 
 struct AreaHooks {
@@ -108,7 +110,7 @@ impl bevy_tiled::MapHooks for AreaHooks {
         dynamic_z(
             self.height,
             self.dynamic_layer as f32,
-            world::core::tiling::Tiles(y / bevy_tiled::TILE),
+            world::core::tiling::Tiles(y / bevy_tiled::TILE - 0.5),
         )
     }
 }

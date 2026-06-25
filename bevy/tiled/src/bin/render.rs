@@ -133,7 +133,13 @@ fn setup(mut commands: Commands, map: Res<Map>, job: Res<Job>, mut images: ResMu
         Msaa::Off,
     ));
 
-    spawn_map(&mut commands, &mut images, &map.0, &mut Files::default());
+    spawn_map(
+        &mut commands,
+        &mut images,
+        &map.0,
+        &mut Files::default(),
+        Vec2::ZERO,
+    );
 }
 
 fn capture_when_ready(mut job: ResMut<Job>, target: Res<Target>, mut commands: Commands) {

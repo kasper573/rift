@@ -49,12 +49,14 @@ pub trait MapHooks {
 
 /// Draws every tile-layer cell and tile-object of `map` as a [`MapTile`] sprite, taking image handles
 /// and depths from `hooks`. Animated tiles get an [`Animated`] component that [`TileAnimationPlugin`]
-/// then drives.
+/// then drives. `origin` translates every sprite: the map is laid out in Tiled's corner-origin pixel
+/// space, so a caller passes the screen position of that origin (pass [`Vec2::ZERO`] to draw raw).
 pub fn spawn_map(
     commands: &mut Commands,
     images: &mut Assets<Image>,
     map: &tiled::Map,
     hooks: &mut impl MapHooks,
+    origin: Vec2,
 ) {
     let map_height = map.height as f32;
     let mut layer = 0;
@@ -72,8 +74,8 @@ pub fn spawn_map(
                         };
                         let z = hooks.tile_z(layer, x, y);
                         let transform = Transform::from_xyz(
-                            (x as f32 + 0.5) * TILE,
-                            -(y as f32 + 0.5) * TILE,
+                            origin.x + (x as f32 + 0.5) * TILE,
+                            origin.y - (y as f32 + 0.5) * TILE,
                             z,
                         );
                         spawn(
@@ -104,7 +106,8 @@ pub fn spawn_map(
                     };
                     let size = Vec2::new(tileset.tile_width as f32, tileset.tile_height as f32);
                     let z = hooks.object_z(layer, object.x, object.y, map_height);
-                    let transform = Transform::from_xyz(object.x, -object.y, z);
+                    let transform =
+                        Transform::from_xyz(origin.x + object.x, origin.y - object.y, z);
                     spawn(
                         commands,
                         sheet,
