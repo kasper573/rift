@@ -14,11 +14,10 @@ use bevy_ecs::world::World;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::core::assets;
-use crate::core::math::{Pos, Rect, Size, WorldPx};
+use crate::core::math::{Pos, Rect, Size};
 use crate::core::nav;
 use crate::core::table::{self, Content, Id};
 use crate::core::tiling::{Cell, CellPos, GridSize, TileSize, Tiles};
-use crate::core::time::{Millis, Seconds};
 use crate::systems::sfx::SfxId;
 
 pub fn register(app: &mut App) {
@@ -113,6 +112,7 @@ impl TileRef {
         }
     }
 
+    #[allow(dead_code)]
     fn flip(self) -> Flip {
         Flip {
             x: self.0 & FLIP_H != 0,
@@ -132,13 +132,6 @@ impl RenderLayer {
     pub fn at(&self, c: CellPos) -> TileRef {
         c.index(self.size).map_or(TileRef::EMPTY, |i| self.cells[i])
     }
-}
-
-#[derive(Clone)]
-struct TileDef {
-    sheet: String,
-    frames: Vec<(Rect<WorldPx>, Millis)>,
-    total: Millis,
 }
 
 #[derive(Clone)]
@@ -162,51 +155,16 @@ pub struct Area {
 
     pub obscuring_rects: Vec<Rect<Tiles>>,
 
-    pub objects: Vec<(Pos<Tiles>, TileRef)>,
-
     pub groups: Vec<Group>,
 
     pub grouped_cells: HashSet<CellPos>,
 
     pub layers: Vec<RenderLayer>,
-    tiles: Vec<TileDef>,
-}
 
-pub struct TileSprite<'a> {
-    pub sheet: &'a str,
-    pub region: Rect<WorldPx>,
-    pub flip: Flip,
+    pub map: std::sync::Arc<tiled::Map>,
 }
 
 impl Area {
-    pub fn resolve(&self, cell: TileRef, time: Seconds) -> Option<TileSprite<'_>> {
-        let def = &self.tiles[cell.index()?];
-        let region = if def.total.0 == 0.0 {
-            def.frames[0].0
-        } else {
-            let mut remaining = time.millis().max(Millis(0.0)) % def.total;
-            let mut region = def.frames[0].0;
-            for &(frame, duration) in &def.frames {
-                if remaining < duration {
-                    region = frame;
-                    break;
-                }
-                remaining -= duration;
-            }
-            region
-        };
-        Some(TileSprite {
-            sheet: &def.sheet,
-            region,
-            flip: cell.flip(),
-        })
-    }
-
-    pub fn animated(&self, cell: TileRef) -> bool {
-        cell.index()
-            .is_some_and(|index| self.tiles[index].total.0 > 0.0)
-    }
-
     pub fn obscured_amount(&self, c: CellPos) -> f32 {
         self.obscuring_rects
             .iter()
@@ -252,6 +210,23 @@ pub fn areas() -> &'static [Area] {
         }
         areas
     })
+}
+
+/// Builds a one-off [`Area`] straight from an embedded map file, bypassing the [`AreaDef`] table —
+/// for devtools that render an arbitrary map by name (the `render` preview binary). Panics the same
+/// way the table path does if the map is missing or malformed.
+pub fn preview(map_name: &str) -> Area {
+    load::build_area(Id::new(0), map_name, map_name)
+}
+
+/// Like [`preview`] but reads the `.tmx` straight from a filesystem path, so devtools can render maps
+/// that aren't in the embed or the area table — instant iteration with no rebuild.
+pub fn preview_path(path: &std::path::Path) -> Area {
+    let name = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("preview");
+    load::build_from_map(Id::new(0), name, load::load_map_path(path))
 }
 
 pub fn defs() -> &'static [AreaDef] {

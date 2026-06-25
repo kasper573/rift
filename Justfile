@@ -15,6 +15,11 @@ test:
 bench:
     cargo run --release -p bench
 
+# Rasterize a whole map to an image to preview it (e.g. `just render island island.png`). Defaults
+# the output to `<map>.png`.
+render map out="":
+    cargo run -p bevy_tiled --bin render -- {{map}} {{out}}
+
 build:
     cargo build --release -p website -p server
     cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
@@ -60,7 +65,7 @@ dev: stack
     command -v cargo-watch >/dev/null || { echo "just dev needs cargo-watch: cargo install cargo-watch --locked"; exit 1; }
     set -a; source docker/.env.test; set +a
     echo "sign in and play at https://${RIFT_DOMAIN}/play"
-    cargo watch -w game/client -w game/world -w ui \
+    cargo watch -w game/client -w game/world -w ui -w bevy \
       -s 'just wasm && {{compose}} up -d --build --wait rift-website'
 
 # `down -v` wipes volumes: keycloak only imports its realm on first boot, so realm changes

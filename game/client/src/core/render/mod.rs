@@ -1,7 +1,8 @@
 //! The render pipeline: the world draws to a fixed-zoom offscreen texture ([`present`]) a [`camera`]
 //! follows, in screen space ([`screen`]), with a generic [`present::ScreenTint`] hook. All actual
 //! drawing — actors, tiles, the health bar, the death wash — is bespoke and lives in the feature
-//! modules under `crate::systems`, sharing the [`Animator`] clock and the transform helpers here.
+//! modules under `crate::systems`, sharing the [`Animator`] clock and the [`maprender`] tile
+//! projection and transform helpers re-exported below.
 
 pub mod camera;
 pub mod present;
@@ -13,13 +14,44 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy::sprite_render::Material2dPlugin;
-use world::core::math::{Pos, WorldPx};
+use world::core::math::{Pos, Size, WorldPx};
 use world::core::tiling::Tiles;
 use world::core::time::Seconds;
 
-use self::screen::ToScreen;
-
 pub const TILE: WorldPx = WorldPx(16.0);
+
+pub trait ToScreen {
+    fn to_screen(self) -> Vec2;
+}
+
+impl ToScreen for Pos<Tiles> {
+    fn to_screen(self) -> Vec2 {
+        Vec2::new(self.x * TILE.0, -self.y * TILE.0)
+    }
+}
+
+impl ToScreen for Size<Tiles> {
+    fn to_screen(self) -> Vec2 {
+        Vec2::new(self.width * TILE.0, self.height * TILE.0)
+    }
+}
+
+pub fn sprite_transform(pos: Pos<Tiles>, z: f32) -> Transform {
+    Transform::from_translation(pos.to_screen().extend(z))
+}
+
+pub fn dynamic_z(area_height: f32, base: f32, y: Tiles) -> f32 {
+    base + (y + Tiles(1.0)).ratio(Tiles(area_height + 2.0))
+}
+
+pub fn atlas_rect(region: world::core::math::Rect<WorldPx>) -> Rect {
+    Rect::new(
+        region.min().x,
+        region.min().y,
+        region.max().x,
+        region.max().y,
+    )
+}
 
 pub struct RenderPlugin;
 
@@ -60,21 +92,4 @@ impl Animator {
     pub fn retain(&mut self, mut alive: impl FnMut(Entity) -> bool) {
         self.anchors.retain(|entity, _| alive(*entity));
     }
-}
-
-pub(crate) fn sprite_transform(pos: Pos<Tiles>, z: f32) -> Transform {
-    Transform::from_translation(pos.to_screen().extend(z))
-}
-
-pub(crate) fn dynamic_z(area_height: f32, base: f32, y: Tiles) -> f32 {
-    base + (y + Tiles(1.0)).ratio(Tiles(area_height + 2.0))
-}
-
-pub(crate) fn atlas_rect(region: world::core::math::Rect<WorldPx>) -> Rect {
-    Rect::new(
-        region.min().x,
-        region.min().y,
-        region.max().x,
-        region.max().y,
-    )
 }

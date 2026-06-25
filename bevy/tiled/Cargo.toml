@@ -1,0 +1,36 @@
+[package]
+name = "bevy_tiled"
+version.workspace = true
+edition.workspace = true
+description = "Generic Bevy renderer for Tiled maps"
+repository = "https://github.com/kasper573/rift"
+authors = ["kasper573"]
+
+[[bin]]
+name = "render"
+path = "src/bin/render.rs"
+
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
+
+[dependencies]
+tiled = { version = "0.15", default-features = false }
+image = "0.25"
+bevy = { workspace = true, features = [
+    "std",
+    "bevy_asset",
+    "bevy_color",
+    "bevy_image",
+    "bevy_sprite",
+    "bevy_sprite_render",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_camera",
+    "bevy_mesh",
+    "bevy_shader",
+    "bevy_material",
+    "bevy_window",
+    "bevy_log",
+    "png",
+] }

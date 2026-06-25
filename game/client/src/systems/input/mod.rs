@@ -6,7 +6,9 @@ use bevy::prelude::*;
 use bevy::window::{CursorMoved, PrimaryWindow};
 use world::core::math::Pos;
 use world::core::tiling::Tiles;
-use world::systems::player::session;
+use world::systems::area::{self, AreaTag};
+use world::systems::player::Owner;
+use world::systems::player::session::{self, MyClient};
 
 use crate::GameScene;
 use crate::core::render::TILE;
@@ -44,28 +46,39 @@ fn setup_highlight(mut commands: Commands) {
             custom_size: Some(Vec2::splat(TILE.0)),
             ..default()
         },
-        Transform::from_xyz(0.0, 0.0, 100.0),
+        Transform::default(),
         Visibility::Hidden,
     ));
 }
 
 fn update_tile_highlight(
     highlight: Option<Res<ActiveTileHighlight>>,
+    me: Res<MyClient>,
+    players: Query<(&Owner, &AreaTag)>,
     mut sprite: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<TileHighlight>>,
 ) {
     let Ok((mut sprite, mut transform, mut visibility)) = sprite.single_mut() else {
         return;
     };
-    match highlight {
-        Some(highlight) => {
-            *visibility = Visibility::Visible;
-            sprite.image = highlight.image.clone();
-            let at = highlight.pos.to_screen();
-            transform.translation.x = at.x;
-            transform.translation.y = at.y;
-        }
-        None => *visibility = Visibility::Hidden,
-    }
+    let Some(highlight) = highlight else {
+        *visibility = Visibility::Hidden;
+        return;
+    };
+    let Some(z) = highlight_z(&me, &players) else {
+        *visibility = Visibility::Hidden;
+        return;
+    };
+    *visibility = Visibility::Visible;
+    sprite.image = highlight.image.clone();
+    transform.translation = highlight.pos.to_screen().extend(z);
+}
+
+/// The base depth of the local player's area dynamic layer — every actor sorts strictly above it, so
+/// the highlight shares the actors' layer yet always renders behind them.
+fn highlight_z(me: &MyClient, players: &Query<(&Owner, &AreaTag)>) -> Option<f32> {
+    let my = me.0?;
+    let (_, tag) = players.iter().find(|(owner, _)| owner.client == my)?;
+    Some(area::areas().get(tag.area.index())?.dynamic_layer() as f32)
 }
 
 /// Bridges touch to the mouse so taps act as left-clicks for both the map and the UI, without the

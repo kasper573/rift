@@ -2,7 +2,8 @@
 resolver = "3"
 members = [
     "ui",
-    "bevy_opacity",
+    "bevy/opacity",
+    "bevy/tiled",
     "game/world",
     "game/server",
     "game/client",
@@ -16,7 +17,8 @@ members = [
 # suite is no longer a cargo crate — it's a Playwright project in `e2e/`, run via `just e2e`.
 default-members = [
     "ui",
-    "bevy_opacity",
+    "bevy/opacity",
+    "bevy/tiled",
     "game/world",
     "game/server",
     "game/bench",

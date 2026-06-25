@@ -27,7 +27,7 @@
 
 ## Architecture
 
-- Each game crate's `src/` is organized into `core/`, `systems/`:
+1. Each game crate's `src/` is organized into `core/`, `systems/`:
 
 `core/`:
 - code that may be reused by all systems
@@ -39,6 +39,8 @@
 - high level systems and compositions of core primitives
 - the majority of our game content and mechanics goes here
 - may depend on other high level systems
+
+2. The ui and bevy/* crates may not depend on other crates in this repo. They may depend on third party crates.
 
 ## Comments
 

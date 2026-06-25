@@ -1,44 +1,42 @@
-//! Renders the area's static map: when the local player's area changes it respawns the tile sprites
-//! layer by layer (depth-sorting the dynamic layer's groups against actors), and animates flagged tiles.
+//! Renders the local player's area: when their area changes it clears the old map sprites and spawns
+//! the new one via bevy_tiled, which also handles animation.
 
 use bevy::prelude::*;
-use bevy::sprite::Anchor;
 use world::core::table::Id;
-use world::core::tiling::{Cell, GridDims, TileSize, Tiles};
-use world::core::time::Seconds;
-use world::systems::area::AreaTag;
-use world::systems::area::{self, AreaDef, TileRef};
+use world::core::tiling::{CellPos, TileSize};
+use world::systems::area::{self, AreaDef, AreaTag};
 use world::systems::player::Owner;
 use world::systems::player::session::MyClient;
 
-use crate::core::render::{TILE, atlas_rect, dynamic_z, sprite_transform};
+use crate::core::render::dynamic_z;
+use crate::core::render::screen::ToScreen;
 
 pub struct AreaPlugin;
 
 impl Plugin for AreaPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SpawnedArea>().add_systems(
-            Update,
-            (spawn_area_tiles, animate_tiles).run_if(in_state(crate::GameScene::Playing)),
-        );
+        app.init_resource::<SpawnedArea>()
+            .add_plugins(bevy_tiled::TileAnimationPlugin)
+            .add_systems(
+                Update,
+                spawn_area_tiles.run_if(in_state(crate::GameScene::Playing)),
+            );
     }
 }
 
 #[derive(Resource, Default)]
 struct SpawnedArea(Option<Id<AreaDef>>);
 
-#[derive(Component)]
-pub(super) struct AreaTile;
-
-#[derive(Component)]
-pub(super) struct Animated(TileRef);
-
+#[allow(clippy::too_many_arguments)]
 fn spawn_area_tiles(
     me: Res<MyClient>,
     players: Query<(&Owner, &AreaTag)>,
     assets: Res<AssetServer>,
     mut spawned: ResMut<SpawnedArea>,
-    tiles: Query<Entity, With<AreaTile>>,
+    tiles: Query<Entity, With<bevy_tiled::MapTile>>,
+    mut images: ResMut<bevy::asset::Assets<Image>>,
+    mut meshes: ResMut<bevy::asset::Assets<Mesh>>,
+    mut tilemaps: ResMut<bevy::asset::Assets<bevy_tiled::TilemapMaterial>>,
     mut commands: Commands,
 ) {
     let Some(my) = me.0 else {
@@ -58,88 +56,69 @@ fn spawn_area_tiles(
         commands.entity(tile).despawn();
     }
     spawned.0 = Some(area_id);
-
     let area = &area::areas()[area_id.index()];
-    for (index, layer) in area.layers.iter().enumerate() {
-        let z = index as f32;
-        for c in area.size.grid().cells() {
-            if layer.dynamic && area.grouped_cells.contains(&c) {
-                continue;
-            }
-            let cell = layer.at(c);
-            let Some(sprite) = area.resolve(cell, Seconds(0.0)) else {
-                continue;
-            };
-            let mut tile = commands.spawn((
-                AreaTile,
-                tile_sprite(&assets, &sprite, Vec2::splat(TILE.0)),
-                sprite_transform(c.center(), z),
-            ));
-            if area.animated(cell) {
-                tile.insert(Animated(cell));
-            }
-        }
-        if !layer.dynamic {
-            continue;
-        }
+    let mut hooks = AreaHooks::new(area, assets.clone());
+    let origin = area.size.bounds().min().to_screen();
+    bevy_tiled::spawn_map(
+        &mut commands,
+        &mut images,
+        &mut meshes,
+        &mut tilemaps,
+        &area.map,
+        &mut hooks,
+        origin,
+    );
+}
+
+struct AreaHooks {
+    assets: AssetServer,
+    dynamic_layer: usize,
+    height: f32,
+    group_z: std::collections::HashMap<CellPos, f32>,
+}
+
+impl AreaHooks {
+    fn new(area: &area::Area, assets: AssetServer) -> Self {
+        let mut group_z = std::collections::HashMap::new();
+        let dynamic_layer = area.dynamic_layer();
         for group in &area.groups {
-            let z = dynamic_z(area.size.height, z, group.bottom);
-            for &(c, cell) in &group.tiles {
-                let Some(sprite) = area.resolve(cell, Seconds(0.0)) else {
-                    continue;
-                };
-                let mut tile = commands.spawn((
-                    AreaTile,
-                    tile_sprite(&assets, &sprite, Vec2::splat(TILE.0)),
-                    sprite_transform(c.center(), z),
-                ));
-                if area.animated(cell) {
-                    tile.insert(Animated(cell));
-                }
+            let z = dynamic_z(area.size.height, dynamic_layer as f32, group.bottom);
+            for &(cell, _) in &group.tiles {
+                group_z.insert(cell, z);
             }
         }
-        for &(pos, cell) in &area.objects {
-            let Some(sprite) = area.resolve(cell, Seconds(0.0)) else {
-                continue;
-            };
-            let size = Vec2::new(sprite.region.size.width, sprite.region.size.height);
-            let mut tile = commands.spawn((
-                AreaTile,
-                tile_sprite(&assets, &sprite, size),
-                Anchor::BOTTOM_LEFT,
-                sprite_transform(pos, dynamic_z(area.size.height, z, Tiles(pos.y))),
-            ));
-            if area.animated(cell) {
-                tile.insert(Animated(cell));
-            }
+        AreaHooks {
+            assets,
+            dynamic_layer,
+            height: area.size.height,
+            group_z,
         }
     }
 }
 
-fn animate_tiles(
-    time: Res<Time>,
-    spawned: Res<SpawnedArea>,
-    mut tiles: Query<(&Animated, &mut Sprite)>,
-) {
-    let Some(area_id) = spawned.0 else {
-        return;
-    };
-    let area = &area::areas()[area_id.index()];
-    let now = Seconds(time.elapsed_secs());
-    for (animated, mut sprite) in &mut tiles {
-        if let Some(resolved) = area.resolve(animated.0, now) {
-            sprite.rect = Some(atlas_rect(resolved.region));
-        }
+impl bevy_tiled::MapHooks for AreaHooks {
+    fn image(
+        &mut self,
+        tileset: &tiled::Tileset,
+        _images: &mut bevy::asset::Assets<Image>,
+    ) -> Option<Handle<Image>> {
+        let name = tileset.image.as_ref()?.source.file_name()?.to_str()?;
+        let path = world::core::assets::find(world::core::assets::TILESETS, name)?;
+        Some(self.assets.load(path))
     }
-}
 
-fn tile_sprite(assets: &AssetServer, sprite: &area::TileSprite, size: Vec2) -> Sprite {
-    Sprite {
-        image: assets.load(sprite.sheet.to_owned()),
-        rect: Some(atlas_rect(sprite.region)),
-        custom_size: Some(size),
-        flip_x: sprite.flip.x,
-        flip_y: sprite.flip.y,
-        ..default()
+    fn tile_z(&mut self, layer: usize, x: i32, y: i32) -> Option<f32> {
+        if layer == self.dynamic_layer {
+            return self.group_z.get(&CellPos::new(x, y)).copied();
+        }
+        None
+    }
+
+    fn object_z(&mut self, _above: usize, _x: f32, y: f32, _map_height: f32) -> f32 {
+        dynamic_z(
+            self.height,
+            self.dynamic_layer as f32,
+            world::core::tiling::Tiles(y / bevy_tiled::TILE - 0.5),
+        )
     }
 }

@@ -1,10 +1,10 @@
-//! Projection between tile space and the rendered screen: scale by the tile size and flip the y-axis.
+//! Projection between tile space and the rendered screen.
 
-use bevy::math::Vec2;
+use bevy::prelude::Vec2;
 use world::core::math::{Pos, Size};
 use world::core::tiling::Tiles;
 
-use crate::core::render::TILE;
+use super::TILE;
 
 pub trait ToScreen {
     fn to_screen(self) -> Vec2;

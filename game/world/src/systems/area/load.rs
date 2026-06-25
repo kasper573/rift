@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use tiled::{LayerType, PropertyValue};
 
-use super::{Area, AreaDef, Flip, Group, Portal, RenderLayer, TileDef, TileRef, cell_overlap};
+use super::{Area, AreaDef, Flip, Group, Portal, RenderLayer, TileRef, cell_overlap};
 use crate::core::assets;
 use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
 use crate::core::nav;
@@ -13,19 +13,20 @@ use crate::core::table::Id;
 use crate::core::tiling::{
     self, Cell, CellPos, GridDims, GridSize, PixelsPerTile, TileRect, TileSize, Tiles,
 };
-use crate::core::time::Millis;
 use crate::systems::sfx::SfxId;
 
 const OBSCURING_CUTOFF: f32 = 0.4;
 
 pub(super) fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
-    let map = load_map(map_name);
+    build_from_map(id, name, load_map(map_name))
+}
+
+pub(super) fn build_from_map(id: Id<AreaDef>, name: &str, map: tiled::Map) -> Area {
     let tiling = PixelsPerTile::new(Size::new(map.tile_width as f32, map.tile_height as f32));
     let size = Size::new(map.width as f32, map.height as f32);
 
     let mut tiles = TilePalette::default();
     let mut layers = Vec::new();
-    let mut objects = Vec::new();
     let mut start = None;
     let mut portals = Vec::new();
     let mut obscuring_rects = Vec::new();
@@ -57,17 +58,6 @@ pub(super) fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
                 for object in object_layer.objects() {
                     let pos = Pos::new(object.x, object.y);
                     if let Some(object_tile) = object.get_tile() {
-                        let data = object.tile_data().expect("tile object has tile data");
-                        let tileset = object_tile.get_tileset();
-                        let cell = tiles.add(
-                            tileset,
-                            data.id(),
-                            Flip {
-                                x: data.flip_h,
-                                y: data.flip_v,
-                            },
-                        );
-                        objects.push((tiling.point(pos), cell));
                         let obscuring = object_tile.get_tile().is_some_and(|tile| {
                             tile.properties.get("Walkable") != Some(&PropertyValue::BoolValue(true))
                         });
@@ -124,11 +114,10 @@ pub(super) fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
         portals,
         walkable_nodes,
         obscuring_rects,
-        objects,
         groups,
         grouped_cells,
         layers,
-        tiles: tiles.defs,
+        map: std::sync::Arc::new(map),
     }
 }
 
@@ -138,10 +127,17 @@ fn load_map(name: &str) -> tiled::Map {
         .unwrap_or_else(|error| panic!("map '{name}': {error}"))
 }
 
+/// Loads a `.tmx` from the filesystem (resolving its tilesets relative to the file) rather than the
+/// embed — for devtools previewing maps that aren't baked into the binary.
+pub(super) fn load_map_path(path: &std::path::Path) -> tiled::Map {
+    tiled::Loader::with_reader(|path: &std::path::Path| std::fs::File::open(path))
+        .load_tmx_map(path)
+        .unwrap_or_else(|error| panic!("map '{}': {error}", path.display()))
+}
+
 #[derive(Default)]
 struct TilePalette {
     keys: Vec<(usize, u32)>,
-    defs: Vec<TileDef>,
     walkable: Vec<Option<bool>>,
     group: Vec<Option<i64>>,
     sfx: Vec<Option<SfxId>>,
@@ -155,7 +151,6 @@ impl TilePalette {
             Some(index) => index,
             None => {
                 self.keys.push(key);
-                self.defs.push(tile_def(tileset, id));
                 let properties = tileset
                     .get_tile(id)
                     .map(|tile| tile.properties.clone())
@@ -174,7 +169,7 @@ impl TilePalette {
                     Some(PropertyValue::StringValue(sfx)) => Some(SfxId(sfx.clone())),
                     _ => None,
                 });
-                self.defs.len() - 1
+                self.keys.len() - 1
             }
         };
         TileRef::new(index, flip)
@@ -190,46 +185,6 @@ impl TilePalette {
 
     fn sfx_of(&self, cell: TileRef) -> Option<&SfxId> {
         self.sfx[cell.index()?].as_ref()
-    }
-}
-
-fn tile_def(tileset: &tiled::Tileset, id: u32) -> TileDef {
-    let image = tileset
-        .image
-        .as_ref()
-        .unwrap_or_else(|| panic!("tileset {} must be atlas-based", tileset.name));
-    let source = image
-        .source
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_else(|| panic!("tileset {} image source", tileset.name));
-    let sheet = assets::find(assets::TILESETS, source)
-        .unwrap_or_else(|| panic!("unknown tileset image {source}"));
-
-    let region = |id: u32| {
-        let columns = tileset.columns.max(1);
-        Rect::new(
-            Pos::new(
-                (tileset.margin + (id % columns) * (tileset.tile_width + tileset.spacing)) as f32,
-                (tileset.margin + (id / columns) * (tileset.tile_height + tileset.spacing)) as f32,
-            ),
-            Size::new(tileset.tile_width as f32, tileset.tile_height as f32),
-        )
-    };
-
-    let animation = tileset.get_tile(id).and_then(|tile| tile.animation.clone());
-    let frames: Vec<(Rect<WorldPx>, Millis)> = match animation {
-        Some(frames) if !frames.is_empty() => frames
-            .iter()
-            .map(|frame| (region(frame.tile_id), Millis(frame.duration as f32)))
-            .collect(),
-        _ => vec![(region(id), Millis(0.0))],
-    };
-    let total = Millis(frames.iter().map(|&(_, duration)| duration.0).sum());
-    TileDef {
-        sheet,
-        frames,
-        total,
     }
 }
 

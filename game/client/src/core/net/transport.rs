@@ -9,7 +9,6 @@
 //! `bevy` feature, which is why we wrap them here). See [`world::core::channels`] for the matching channel seam.
 
 use bevy::prelude::*;
-use bevy::time::{Real, Time};
 use bevy_replicon::prelude::{
     ClientMessages, ClientState, ClientStats, ClientSystems, RepliconChannels,
 };
@@ -50,12 +49,11 @@ impl Plugin for RepliconRenetClientPlugin {
     }
 }
 
-/// Advances the client and lets the transport deliver inbound packets into it.
-fn drive(
-    client: Option<ResMut<Client>>,
-    transport: Option<ResMut<Transport>>,
-    time: Res<Time<Real>>,
-) {
+/// Advances the client and lets the transport deliver inbound packets into it. Driven by virtual time,
+/// not `Time<Real>`: its delta is clamped (`max_delta`), so a long first-render frame (pipeline
+/// builds and uploads, slow on software GPUs) can't be charged to netcode's liveness timer as a network
+/// gap and trip the connection timeout — the stall is the client being busy, not the link being dead.
+fn drive(client: Option<ResMut<Client>>, transport: Option<ResMut<Transport>>, time: Res<Time>) {
     let Some(mut client) = client else {
         return;
     };

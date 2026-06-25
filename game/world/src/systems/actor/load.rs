@@ -68,6 +68,10 @@ pub(super) fn load(name: &str) -> ActorModel {
         frame: Size::new(tileset.tile_width as f32, tileset.tile_height as f32),
         columns: tileset.columns.max(1),
         hitbox: Size::new(dimension("hitbox_width"), dimension("hitbox_height")),
+        airborne: matches!(
+            tileset.properties.get("airborne"),
+            Some(PropertyValue::BoolValue(true))
+        ),
         strips,
         sounds,
         steps,
