@@ -259,7 +259,7 @@ fn progress_swings(world: &mut World, time: Seconds, deaths: &mut Vec<(Entity, E
             continue;
         };
         if !swing.struck && time >= swing.hit_at {
-            strike(world, id, swing.target, deaths);
+            strike(world, id, swing.target, deaths, time);
             if let Some(mut swing) = world.get_mut::<Swing>(id) {
                 swing.struck = true;
             }
@@ -275,7 +275,13 @@ fn progress_swings(world: &mut World, time: Seconds, deaths: &mut Vec<(Entity, E
     }
 }
 
-fn strike(world: &mut World, attacker: Entity, target: Entity, deaths: &mut Vec<(Entity, Entity)>) {
+fn strike(
+    world: &mut World,
+    attacker: Entity,
+    target: Entity,
+    deaths: &mut Vec<(Entity, Entity)>,
+    time: Seconds,
+) {
     let same_area = world.get::<AreaTag>(attacker).map(|t| t.area)
         == world.get::<AreaTag>(target).map(|t| t.area);
     if world.get_entity(target).is_err() || is_dead(world, target) || !same_area {
@@ -283,6 +289,7 @@ fn strike(world: &mut World, attacker: Entity, target: Entity, deaths: &mut Vec<
     }
     let damage = stats(world, attacker).damage;
     add_attacker(world, target, attacker);
+    crate::systems::items::reserve(world, target, attacker, time);
     if let Some(mut vitals) = world.get_mut::<Vitals>(target) {
         vitals.damage(damage);
     }

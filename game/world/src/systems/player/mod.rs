@@ -180,7 +180,7 @@ fn spawn_player(
         at,
         name,
         Vitals { health: max, max },
-        Inventory { items: Vec::new() },
+        Inventory::empty(),
         Xp { amount: 0 },
     );
 }

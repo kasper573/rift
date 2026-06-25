@@ -1,11 +1,13 @@
 mod attack;
 mod default;
 mod drag;
+mod pickup;
 mod walk;
 
 pub use attack::AttackGesture;
 pub use default::DefaultGesture;
 pub use drag::DragGesture;
+pub use pickup::PickupGesture;
 pub use walk::WalkGesture;
 
 use super::ActiveTileHighlight;
@@ -39,6 +41,7 @@ pub trait Gesture {
 pub enum GestureKind {
     Drag(DragGesture),
     Attack(AttackGesture),
+    Pickup(PickupGesture),
     Walk(WalkGesture),
     Default(DefaultGesture),
 }
@@ -49,6 +52,7 @@ impl GestureKind {
         vec![
             DragGesture.into(),
             AttackGesture::new(assets).into(),
+            PickupGesture::new(assets).into(),
             WalkGesture::new(assets).into(),
             DefaultGesture::new(assets).into(),
         ]

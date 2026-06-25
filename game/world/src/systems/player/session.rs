@@ -10,7 +10,7 @@ use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::combat::AttackRequest;
-use crate::systems::items::UseItemRequest;
+use crate::systems::items::{DropItemRequest, PickupRequest, UseItemRequest};
 use crate::systems::movement::{MoveRequest, MoveToPortal};
 use crate::systems::spectate::SpectateRequest;
 
@@ -68,6 +68,14 @@ pub fn respawn(world: &mut World) {
 
 pub fn use_item(world: &mut World, slot: u32) {
     world.write_message(UseItemRequest { slot });
+}
+
+pub fn drop_item(world: &mut World, slot: u32) {
+    world.write_message(DropItemRequest { slot });
+}
+
+pub fn pickup(world: &mut World, target: Entity) {
+    world.write_message(PickupRequest { target });
 }
 
 pub fn move_to(world: &mut World, pos: Pos<Tiles>) {

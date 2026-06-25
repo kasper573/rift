@@ -135,12 +135,18 @@ fn retarget(
     if is_dead(world, entity) {
         return None;
     }
+    goto(world, entity, pos);
+    Some(entity)
+}
+
+/// Sends `entity` walking to `pos`: abandons any attack and stale path so [`advance`] re-routes from
+/// here. The single funnel for "go there", shared by client move requests and item pickup.
+pub fn goto(world: &mut World, entity: Entity, pos: Pos<Tiles>) {
     world
         .entity_mut(entity)
         .remove::<AttackTarget>()
         .remove::<Path>()
         .insert(MoveTarget { pos });
-    Some(entity)
 }
 
 pub fn advance(world: &mut World) {

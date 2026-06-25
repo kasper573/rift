@@ -189,11 +189,9 @@ fn build_world(area: &Area, npc: Id<NpcDef>) -> (App, Vec<(ClientId, Entity)>) {
     for index in 0..PLAYERS_PER_AREA {
         let client = ClientId(index as u32 + 1);
         let player = spawn_character(world, area, npc, area.spawn);
-        world.entity_mut(player).insert((
-            Owner { client },
-            Inventory { items: Vec::new() },
-            Xp { amount: 0 },
-        ));
+        world
+            .entity_mut(player)
+            .insert((Owner { client }, Inventory::empty(), Xp { amount: 0 }));
         world.resource_mut::<Players>().0.insert(client, player);
         roster.push((client, player));
     }

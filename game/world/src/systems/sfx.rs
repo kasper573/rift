@@ -117,13 +117,13 @@ pub fn sfx_table() -> &'static [SfxDef] {
         }
 
         for item in items::items() {
-            if let Some(id) = &item.sfx
-                && !defs.iter().any(|def| def.id == *id)
-            {
-                panic!(
-                    "{FILE}: sfx '{}' referenced by item '{}' but not in sfx table",
-                    id.0, item.id
-                );
+            for id in [&item.sfx.on_use, &item.sfx.drop].into_iter().flatten() {
+                if !defs.iter().any(|def| def.id == *id) {
+                    panic!(
+                        "{FILE}: sfx '{}' referenced by item '{}' but not in sfx table",
+                        id.0, item.id
+                    );
+                }
             }
         }
 

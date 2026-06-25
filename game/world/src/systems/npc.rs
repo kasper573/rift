@@ -15,6 +15,7 @@ use crate::systems::Character;
 use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
 use crate::systems::area::{self, AreaDef, AreaTag};
 use crate::systems::combat::{AttackTarget, Attackers, Stats, Vitals, is_dead};
+use crate::systems::items::Reservation;
 use crate::systems::movement::{MoveTarget, Path, Position, Speed, forget, position};
 use crate::systems::player::Players;
 
@@ -337,7 +338,10 @@ pub fn run_respawn(world: &mut World) {
         if let Some(mut actor) = world.get_mut::<Actor>(id) {
             set_action(&mut actor, Action::Idle);
         }
-        world.entity_mut(id).remove::<DeadAt>();
+        world
+            .entity_mut(id)
+            .remove::<DeadAt>()
+            .remove::<Reservation>();
         forget(world, id);
         if let Some(speed) = world.get::<Npc>(id).map(|npc| npc.def.get().speed) {
             world.entity_mut(id).insert(Speed { value: speed });
