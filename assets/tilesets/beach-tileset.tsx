@@ -1881,6 +1881,18 @@
    <property name="Group" value="1"/>
   </properties>
  </tile>
+ <tile id="480">
+  <properties>
+   <property name="Walkable" type="bool" value="true"/>
+   <property name="sfx" value="step_rock01"/>
+  </properties>
+ </tile>
+ <tile id="481">
+  <properties>
+   <property name="Walkable" type="bool" value="true"/>
+   <property name="sfx" value="step_rock01"/>
+  </properties>
+ </tile>
  <tile id="482">
   <properties>
    <property name="Walkable" type="bool" value="true"/>
@@ -1958,6 +1970,18 @@
  <tile id="513">
   <properties>
    <property name="Group" value="1"/>
+  </properties>
+ </tile>
+ <tile id="516">
+  <properties>
+   <property name="Walkable" type="bool" value="true"/>
+   <property name="sfx" value="step_rock01"/>
+  </properties>
+ </tile>
+ <tile id="517">
+  <properties>
+   <property name="Walkable" type="bool" value="true"/>
+   <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
  <tile id="518">
