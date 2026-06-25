@@ -10,6 +10,10 @@ authors = ["kasper573"]
 name = "render"
 path = "src/bin/render.rs"
 
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
+
 [dependencies]
 tiled = { version = "0.15", default-features = false }
 image = "0.25"

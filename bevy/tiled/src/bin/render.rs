@@ -107,7 +107,14 @@ fn load_map(arg: &str) -> tiled::Map {
         })
 }
 
-fn setup(mut commands: Commands, map: Res<Map>, job: Res<Job>, mut images: ResMut<Assets<Image>>) {
+fn setup(
+    mut commands: Commands,
+    map: Res<Map>,
+    job: Res<Job>,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
     let mut texture =
         Image::new_target_texture(job.width, job.height, TextureFormat::Rgba8UnormSrgb, None);
     texture.sampler = ImageSampler::nearest();
@@ -136,6 +143,8 @@ fn setup(mut commands: Commands, map: Res<Map>, job: Res<Job>, mut images: ResMu
     spawn_map(
         &mut commands,
         &mut images,
+        &mut meshes,
+        &mut materials,
         &map.0,
         &mut Files::default(),
         Vec2::ZERO,

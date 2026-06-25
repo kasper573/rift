@@ -27,6 +27,7 @@ impl Plugin for AreaPlugin {
 #[derive(Resource, Default)]
 struct SpawnedArea(Option<Id<AreaDef>>);
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_area_tiles(
     me: Res<MyClient>,
     players: Query<(&Owner, &AreaTag)>,
@@ -34,6 +35,8 @@ fn spawn_area_tiles(
     mut spawned: ResMut<SpawnedArea>,
     tiles: Query<Entity, With<bevy_tiled::MapTile>>,
     mut images: ResMut<bevy::asset::Assets<Image>>,
+    mut meshes: ResMut<bevy::asset::Assets<Mesh>>,
+    mut materials: ResMut<bevy::asset::Assets<ColorMaterial>>,
     mut commands: Commands,
 ) {
     let Some(my) = me.0 else {
@@ -56,7 +59,15 @@ fn spawn_area_tiles(
     let area = &area::areas()[area_id.index()];
     let mut hooks = AreaHooks::new(area, assets.clone());
     let origin = area.size.bounds().min().to_screen();
-    bevy_tiled::spawn_map(&mut commands, &mut images, &area.map, &mut hooks, origin);
+    bevy_tiled::spawn_map(
+        &mut commands,
+        &mut images,
+        &mut meshes,
+        &mut materials,
+        &area.map,
+        &mut hooks,
+        origin,
+    );
 }
 
 struct AreaHooks {
