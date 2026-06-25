@@ -15,7 +15,7 @@ use bevy::render::settings::{Backends, RenderCreation, WgpuSettings};
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
 use bevy::window::ExitCondition;
 
-use bevy_tiled::{Files, TileAnimationPlugin, spawn_map};
+use bevy_tiled::{Files, TileAnimationPlugin, TilemapMaterial, spawn_map};
 
 const SETTLE_FRAMES: u32 = 12;
 const MAX_FRAMES: u32 = 2000;
@@ -113,7 +113,7 @@ fn setup(
     job: Res<Job>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut tilemaps: ResMut<Assets<TilemapMaterial>>,
 ) {
     let mut texture =
         Image::new_target_texture(job.width, job.height, TextureFormat::Rgba8UnormSrgb, None);
@@ -144,7 +144,7 @@ fn setup(
         &mut commands,
         &mut images,
         &mut meshes,
-        &mut materials,
+        &mut tilemaps,
         &map.0,
         &mut Files::default(),
         Vec2::ZERO,

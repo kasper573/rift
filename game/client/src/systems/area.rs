@@ -36,7 +36,7 @@ fn spawn_area_tiles(
     tiles: Query<Entity, With<bevy_tiled::MapTile>>,
     mut images: ResMut<bevy::asset::Assets<Image>>,
     mut meshes: ResMut<bevy::asset::Assets<Mesh>>,
-    mut materials: ResMut<bevy::asset::Assets<ColorMaterial>>,
+    mut tilemaps: ResMut<bevy::asset::Assets<bevy_tiled::TilemapMaterial>>,
     mut commands: Commands,
 ) {
     let Some(my) = me.0 else {
@@ -63,7 +63,7 @@ fn spawn_area_tiles(
         &mut commands,
         &mut images,
         &mut meshes,
-        &mut materials,
+        &mut tilemaps,
         &area.map,
         &mut hooks,
         origin,
@@ -107,14 +107,11 @@ impl bevy_tiled::MapHooks for AreaHooks {
         Some(self.assets.load(path))
     }
 
-    fn tile_z(&mut self, layer: usize, x: i32, y: i32) -> f32 {
+    fn tile_z(&mut self, layer: usize, x: i32, y: i32) -> Option<f32> {
         if layer == self.dynamic_layer {
-            let cell = CellPos::new(x, y);
-            if let Some(&z) = self.group_z.get(&cell) {
-                return z;
-            }
+            return self.group_z.get(&CellPos::new(x, y)).copied();
         }
-        layer as f32
+        None
     }
 
     fn object_z(&mut self, _above: usize, _x: f32, y: f32, _map_height: f32) -> f32 {

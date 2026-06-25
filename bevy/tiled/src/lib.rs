@@ -1,16 +1,24 @@
-//! A small, game-agnostic renderer for a [`tiled::Map`]: tile layers, tile-objects, flips, and per-tile
-//! animation. Cells are merged into meshes (one per tileset+depth, animated ones per animation) so cost
-//! scales with distinct depths, not tile count. A caller supplies image loading and per-tile depth
-//! through [`MapHooks`]; [`Files`] is a ready hook for off-disk tools.
+//! A small, game-agnostic renderer for a [`tiled::Map`] for Bevy. Flat tile layers are drawn the way
+//! every engine draws them — one quad per layer with a tile-index texture sampled in a shader, so cost
+//! is O(1) in map size and only on-screen fragments shade. Anything that must y-sort against the game's
+//! actors (tall props, the rift "occluder" cells) is a sprite, like Tiled objects — Bevy batches them
+//! by atlas and sorts them against actors in one pass. The caller chooses per cell via [`MapHooks`]:
+//! [`MapHooks::tile_z`] returns `None` for a flat cell or `Some(z)` for a y-sorted sprite. [`Files`] is
+//! a ready hook for off-disk tools (everything flat).
 
 use std::collections::HashMap;
 
-use bevy::asset::RenderAssetUsages;
+use bevy::asset::{RenderAssetUsages, load_internal_asset, uuid_handle};
 use bevy::image::ImageSampler;
-use bevy::math::Affine2;
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::render_resource::{
+    AsBindGroup, Extent3d, ShaderType, TextureDimension, TextureFormat, TextureUsages,
+};
+use bevy::shader::{Shader, ShaderRef};
 use bevy::sprite::Anchor;
+use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
+
+const TILEMAP_SHADER: Handle<Shader> = uuid_handle!("9d3c6e1a-4b2f-4a8c-9e7d-1f2a3b4c5d6e");
 
 /// Logical pixels per tile — the art's native size.
 pub const TILE: f32 = 16.0;
@@ -19,7 +27,7 @@ pub const TILE: f32 = 16.0;
 #[derive(Component)]
 pub struct MapTile;
 
-/// The caller-supplied integration points: image loading and per-tile/object depth.
+/// The caller-supplied integration points: image loading and per-cell/object depth.
 pub trait MapHooks {
     /// Resolves a tileset's image to a loaded handle.
     fn image(
@@ -28,10 +36,11 @@ pub trait MapHooks {
         images: &mut Assets<Image>,
     ) -> Option<Handle<Image>>;
 
-    /// Depth of a tile-layer cell; `layer` is the layer's file-order index.
-    fn tile_z(&mut self, layer: usize, x: i32, y: i32) -> f32 {
-        let _ = (x, y);
-        layer as f32
+    /// Depth of a tile-layer cell: `None` draws it as part of the layer's flat tilemap (at the layer's
+    /// file-order index); `Some(z)` draws it as a y-sorted sprite at `z`, interleaving with actors.
+    fn tile_z(&mut self, layer: usize, x: i32, y: i32) -> Option<f32> {
+        let _ = (layer, x, y);
+        None
     }
 
     /// Depth of a tile-object at its foot (`y` in downward pixels).
@@ -41,27 +50,31 @@ pub trait MapHooks {
     }
 }
 
-/// Draws `map`'s tile-layer cells (merged) and tile-objects via `hooks`. `origin` is the screen
-/// position of the map's top-left corner ([`Vec2::ZERO`] draws raw).
+/// Draws every tile-layer cell and tile-object of `map`, taking image handles and depths from `hooks`.
+/// Flat cells merge into one [`TilemapMaterial`] quad per (layer, tileset); y-sorted cells and objects
+/// become [`MapTile`] sprites. `origin` is the screen position of the map's top-left corner
+/// ([`Vec2::ZERO`] draws raw).
 pub fn spawn_map(
     commands: &mut Commands,
     images: &mut Assets<Image>,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<ColorMaterial>,
+    tilemaps: &mut Assets<TilemapMaterial>,
     map: &tiled::Map,
     hooks: &mut impl MapHooks,
     origin: Vec2,
 ) {
+    let map_w = map.width as i32;
+    let map_h = map.height as i32;
     let map_height = map.height as f32;
-    let mut statics: HashMap<(AssetId<Image>, u32), Batch> = HashMap::new();
-    let mut animated: HashMap<(AssetId<Image>, u32, u32), AnimBatch> = HashMap::new();
+    let quad = meshes.add(Rectangle::new(1.0, 1.0));
     let mut sheets: HashMap<usize, Option<Handle<Image>>> = HashMap::new();
     let mut layer = 0;
     for tiled_layer in map.layers() {
         match tiled_layer.layer_type() {
             tiled::LayerType::Tiles(tiles) => {
-                for y in 0..map.height as i32 {
-                    for x in 0..map.width as i32 {
+                let mut flats: HashMap<usize, IndexBuilder> = HashMap::new();
+                for y in 0..map_h {
+                    for x in 0..map_w {
                         let Some(tile) = tiles.get_tile(x, y) else {
                             continue;
                         };
@@ -69,31 +82,40 @@ pub fn spawn_map(
                         let Some(sheet) = resolve_sheet(&mut sheets, hooks, images, tileset) else {
                             continue;
                         };
-                        let z = hooks.tile_z(layer, x, y);
-                        let center = Vec2::new(
-                            origin.x + (x as f32 + 0.5) * TILE,
-                            origin.y - (y as f32 + 0.5) * TILE,
-                        );
-                        let atlas = atlas_size(tileset);
-                        let cells = frames(tileset, tile.id());
-                        if cells.len() > 1 {
-                            animated
-                                .entry((sheet.id(), z.to_bits(), tile.id()))
-                                .or_insert_with(|| AnimBatch::new(sheet, z, atlas, cells))
-                                .push(center, Vec2::splat(TILE), tile.flip_h, tile.flip_v);
-                        } else {
-                            statics
-                                .entry((sheet.id(), z.to_bits()))
-                                .or_insert_with(|| Batch::new(sheet, z, atlas))
-                                .push(
-                                    cells[0].0,
-                                    center,
+                        match hooks.tile_z(layer, x, y) {
+                            None => flats
+                                .entry(tileset as *const tiled::Tileset as usize)
+                                .or_insert_with(|| IndexBuilder::new(map_w, map_h, sheet, tileset))
+                                .set(x, y, tile.id(), tile.flip_h, tile.flip_v),
+                            Some(z) => {
+                                let center = Vec2::new(
+                                    origin.x + (x as f32 + 0.5) * TILE,
+                                    origin.y - (y as f32 + 0.5) * TILE,
+                                );
+                                spawn(
+                                    commands,
+                                    sheet,
+                                    frames(tileset, tile.id()),
                                     Vec2::splat(TILE),
+                                    Transform::from_xyz(center.x, center.y, z),
                                     tile.flip_h,
                                     tile.flip_v,
+                                    None,
                                 );
+                            }
                         }
                     }
+                }
+                for builder in flats.into_values() {
+                    spawn_tilemap(
+                        commands,
+                        images,
+                        &quad,
+                        tilemaps,
+                        builder,
+                        origin,
+                        layer as f32,
+                    );
                 }
                 layer += 1;
             }
@@ -128,144 +150,170 @@ pub fn spawn_map(
             _ => {}
         }
     }
-    for batch in statics.into_values() {
-        let (sheet, z) = (batch.sheet.clone(), batch.z);
-        commands.spawn((
-            MapTile,
-            Mesh2d(meshes.add(batch.mesh())),
-            MeshMaterial2d(materials.add(ColorMaterial {
-                texture: Some(sheet),
-                ..default()
-            })),
-            Transform::from_xyz(0.0, 0.0, z),
-        ));
+}
+
+/// One flat tile layer drawn as a single textured quad. Its fragment shader reads the tile id and flips
+/// for each cell from `index`, remaps the id through `frame_map` (which animation rewrites), and samples
+/// `atlas`; `data` carries the grid/atlas dimensions.
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct TilemapMaterial {
+    #[texture(0, sample_type = "u_int")]
+    index: Handle<Image>,
+    #[texture(1)]
+    #[sampler(2)]
+    atlas: Handle<Image>,
+    #[texture(3, sample_type = "u_int")]
+    frame_map: Handle<Image>,
+    #[uniform(4)]
+    data: Tilemap,
+}
+
+impl Material2d for TilemapMaterial {
+    fn fragment_shader() -> ShaderRef {
+        ShaderRef::Handle(TILEMAP_SHADER)
     }
-    for batch in animated.into_values() {
-        let (sheet, z) = (batch.sheet.clone(), batch.z);
-        let (mesh, animation) = batch.build();
-        commands.spawn((
-            MapTile,
-            Mesh2d(meshes.add(mesh)),
-            MeshMaterial2d(materials.add(ColorMaterial {
-                texture: Some(sheet),
-                uv_transform: animation.frames[0].0,
-                ..default()
-            })),
-            Transform::from_xyz(0.0, 0.0, z),
-            animation,
-        ));
+
+    fn alpha_mode(&self) -> AlphaMode2d {
+        AlphaMode2d::Blend
     }
 }
 
-struct Batch {
-    sheet: Handle<Image>,
-    z: f32,
-    atlas: Vec2,
-    positions: Vec<[f32; 3]>,
-    uvs: Vec<[f32; 2]>,
-    indices: Vec<u32>,
+#[derive(Clone, ShaderType)]
+struct Tilemap {
+    grid: Vec4,
+    sheet: Vec4,
+    params: Vec4,
 }
 
-impl Batch {
-    fn new(sheet: Handle<Image>, z: f32, atlas: Vec2) -> Batch {
-        Batch {
-            sheet,
-            z,
-            atlas,
-            positions: Vec::new(),
-            uvs: Vec::new(),
-            indices: Vec::new(),
-        }
-    }
-
-    fn push(&mut self, region: Rect, center: Vec2, size: Vec2, flip_x: bool, flip_y: bool) {
-        let base = self.positions.len() as u32;
-        self.positions.extend(quad_positions(center, size));
-        self.uvs
-            .extend(quad_uvs(region, self.atlas, flip_x, flip_y));
-        self.indices
-            .extend([base, base + 2, base + 1, base, base + 3, base + 2]);
-    }
-
-    fn mesh(self) -> Mesh {
-        Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::default(),
-        )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs)
-        .with_inserted_indices(Indices::U32(self.indices))
-    }
-}
-
-struct AnimBatch {
-    sheet: Handle<Image>,
-    z: f32,
-    atlas: Vec2,
-    frames: Vec<(Rect, f32)>,
-    positions: Vec<[f32; 3]>,
-    flips: Vec<(bool, bool)>,
-    indices: Vec<u32>,
-}
-
-impl AnimBatch {
-    fn new(sheet: Handle<Image>, z: f32, atlas: Vec2, frames: Vec<(Rect, f32)>) -> AnimBatch {
-        AnimBatch {
-            sheet,
-            z,
-            atlas,
-            frames,
-            positions: Vec::new(),
-            flips: Vec::new(),
-            indices: Vec::new(),
-        }
-    }
-
-    fn push(&mut self, center: Vec2, size: Vec2, flip_x: bool, flip_y: bool) {
-        let base = self.positions.len() as u32;
-        self.positions.extend(quad_positions(center, size));
-        self.flips.push((flip_x, flip_y));
-        self.indices
-            .extend([base, base + 2, base + 1, base, base + 3, base + 2]);
-    }
-
-    fn build(self) -> (Mesh, Animated) {
-        let total = self.frames.iter().map(|&(_, duration)| duration).sum();
-        let uvs: Vec<[f32; 2]> = self
-            .flips
-            .iter()
-            .flat_map(|&(flip_x, flip_y)| unit_quad_uvs(flip_x, flip_y))
-            .collect();
-        let mesh = Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::default(),
-        )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_indices(Indices::U32(self.indices));
-        let frames = self
-            .frames
-            .iter()
-            .map(|&(region, duration)| (frame_transform(region, self.atlas), duration))
-            .collect();
-        (
-            mesh,
-            Animated {
-                frames,
-                total,
-                current: 0,
-            },
-        )
-    }
-}
-
+/// Animation timeline for a flat tilemap: per animated tile id, the atlas ids of its frames. The shared
+/// `frame_map` texture is rewritten when a frame advances, so animating costs one tiny texture write
+/// rather than touching the layer's geometry.
 #[derive(Component)]
-struct Animated {
-    frames: Vec<(Affine2, f32)>,
+struct TilemapAnim {
+    frame_map: Handle<Image>,
+    anims: Vec<Anim>,
+}
+
+struct Anim {
+    tile_id: u32,
+    frames: Vec<(u32, f32)>,
     total: f32,
     current: usize,
 }
 
+/// Accumulates a flat layer's cells (for one tileset) into the index-texture bytes plus the atlas
+/// dimensions the shader needs.
+struct IndexBuilder {
+    sheet: Handle<Image>,
+    width: i32,
+    height: i32,
+    data: Vec<u8>,
+    cols: u32,
+    atlas: Vec2,
+    tile: Vec2,
+    margin: f32,
+    spacing: f32,
+    tilecount: u32,
+    anims: Vec<Anim>,
+}
+
+impl IndexBuilder {
+    fn new(
+        width: i32,
+        height: i32,
+        sheet: Handle<Image>,
+        tileset: &tiled::Tileset,
+    ) -> IndexBuilder {
+        IndexBuilder {
+            sheet,
+            width,
+            height,
+            data: vec![0u8; (width * height * 4) as usize],
+            cols: tileset.columns.max(1),
+            atlas: atlas_size(tileset),
+            tile: Vec2::new(tileset.tile_width as f32, tileset.tile_height as f32),
+            margin: tileset.margin as f32,
+            spacing: tileset.spacing as f32,
+            tilecount: tileset.tilecount,
+            anims: tileset_anims(tileset),
+        }
+    }
+
+    fn set(&mut self, x: i32, y: i32, id: u32, flip_x: bool, flip_y: bool) {
+        let i = ((y * self.width + x) * 4) as usize;
+        self.data[i] = (id & 0xff) as u8;
+        self.data[i + 1] = (id >> 8) as u8;
+        self.data[i + 2] = u8::from(flip_x) | (u8::from(flip_y) << 1);
+        self.data[i + 3] = 255;
+    }
+
+    fn uniform(&self) -> Tilemap {
+        Tilemap {
+            grid: Vec4::new(self.width as f32, self.height as f32, self.cols as f32, 0.0),
+            sheet: Vec4::new(self.atlas.x, self.atlas.y, self.tile.x, self.tile.y),
+            params: Vec4::new(self.margin, self.spacing, 0.0, 0.0),
+        }
+    }
+
+    fn frame_map_data(&self) -> Vec<u8> {
+        let mut data = vec![0u8; (self.tilecount.max(1) * 4) as usize];
+        for id in 0..self.tilecount {
+            let i = (id * 4) as usize;
+            data[i] = (id & 0xff) as u8;
+            data[i + 1] = (id >> 8) as u8;
+        }
+        data
+    }
+}
+
+fn spawn_tilemap(
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    quad: &Handle<Mesh>,
+    tilemaps: &mut Assets<TilemapMaterial>,
+    builder: IndexBuilder,
+    origin: Vec2,
+    z: f32,
+) {
+    let width_px = builder.width as f32 * TILE;
+    let height_px = builder.height as f32 * TILE;
+    let uniform = builder.uniform();
+    let frame_map = images.add(uint_image(
+        builder.tilecount.max(1),
+        1,
+        builder.frame_map_data(),
+        RenderAssetUsages::default(),
+    ));
+    let index = images.add(uint_image(
+        builder.width as u32,
+        builder.height as u32,
+        builder.data,
+        RenderAssetUsages::RENDER_WORLD,
+    ));
+    let material = tilemaps.add(TilemapMaterial {
+        index,
+        atlas: builder.sheet,
+        frame_map: frame_map.clone(),
+        data: uniform,
+    });
+    commands.spawn((
+        MapTile,
+        Mesh2d(quad.clone()),
+        MeshMaterial2d(material),
+        Transform {
+            translation: Vec3::new(origin.x + width_px / 2.0, origin.y - height_px / 2.0, z),
+            scale: Vec3::new(width_px, height_px, 1.0),
+            ..default()
+        },
+        TilemapAnim {
+            frame_map,
+            anims: builder.anims,
+        },
+    ));
+}
+
+/// An individually-spawned sprite tile — a tile-object or a y-sorted cell. It animates by swapping its
+/// own atlas rect.
 #[derive(Component)]
 struct AnimatedSprite {
     frames: Vec<(Rect, f32)>,
@@ -277,28 +325,9 @@ pub struct TileAnimationPlugin;
 
 impl Plugin for TileAnimationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (animate, animate_sprites));
-    }
-}
-
-fn animate(
-    time: Res<Time>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    mut tiles: Query<(&mut Animated, &MeshMaterial2d<ColorMaterial>)>,
-) {
-    let now = time.elapsed_secs();
-    for (mut anim, material) in &mut tiles {
-        if anim.total <= 0.0 {
-            continue;
-        }
-        let frame = frame_at(&anim.frames, anim.total, now);
-        if frame == anim.current {
-            continue;
-        }
-        anim.current = frame;
-        if let Some(mut material) = materials.get_mut(&material.0) {
-            material.uv_transform = anim.frames[frame].0;
-        }
+        load_internal_asset!(app, TILEMAP_SHADER, "tilemap.wgsl", Shader::from_wgsl);
+        app.add_plugins(Material2dPlugin::<TilemapMaterial>::default())
+            .add_systems(Update, (animate_sprites, animate_tilemaps));
     }
 }
 
@@ -311,47 +340,42 @@ fn animate_sprites(time: Res<Time>, mut sprites: Query<(&AnimatedSprite, &mut Sp
     }
 }
 
-fn frame_at<T>(frames: &[(T, f32)], total: f32, now: f32) -> usize {
-    let mut remaining = now % total;
-    for (index, (_, duration)) in frames.iter().enumerate() {
-        if remaining < *duration {
-            return index;
+fn animate_tilemaps(
+    time: Res<Time>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<TilemapMaterial>>,
+    mut maps: Query<(&mut TilemapAnim, &MeshMaterial2d<TilemapMaterial>)>,
+) {
+    let now = time.elapsed_secs();
+    for (mut map, material) in &mut maps {
+        let mut dirty = false;
+        for anim in &mut map.anims {
+            if anim.total <= 0.0 {
+                continue;
+            }
+            let frame = frame_at(&anim.frames, anim.total, now);
+            if frame != anim.current {
+                anim.current = frame;
+                dirty = true;
+            }
         }
-        remaining -= *duration;
+        if !dirty {
+            continue;
+        }
+        if let Some(mut image) = images.get_mut(&map.frame_map)
+            && let Some(data) = image.data.as_mut()
+        {
+            for anim in &map.anims {
+                let atlas_id = anim.frames[anim.current].0;
+                let i = anim.tile_id as usize * 4;
+                data[i] = (atlas_id & 0xff) as u8;
+                data[i + 1] = (atlas_id >> 8) as u8;
+            }
+        }
+        // The frame_map texture re-uploads to a fresh GpuImage, so touch the material to rebuild its
+        // bind group against it — a Material2d bind group isn't refreshed by a bound image changing.
+        materials.get_mut(&material.0);
     }
-    frames.len() - 1
-}
-
-fn frame_transform(region: Rect, atlas: Vec2) -> Affine2 {
-    Affine2::from_scale_angle_translation(region.size() / atlas, 0.0, region.min / atlas)
-}
-
-fn unit_quad_uvs(flip_x: bool, flip_y: bool) -> [[f32; 2]; 4] {
-    let (u0, u1) = if flip_x { (1.0, 0.0) } else { (0.0, 1.0) };
-    let (v0, v1) = if flip_y { (1.0, 0.0) } else { (0.0, 1.0) };
-    [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]
-}
-
-fn quad_positions(center: Vec2, size: Vec2) -> [[f32; 3]; 4] {
-    let half = size / 2.0;
-    [
-        [center.x - half.x, center.y + half.y, 0.0],
-        [center.x + half.x, center.y + half.y, 0.0],
-        [center.x + half.x, center.y - half.y, 0.0],
-        [center.x - half.x, center.y - half.y, 0.0],
-    ]
-}
-
-fn quad_uvs(region: Rect, atlas: Vec2, flip_x: bool, flip_y: bool) -> [[f32; 2]; 4] {
-    let (mut u0, mut u1) = (region.min.x / atlas.x, region.max.x / atlas.x);
-    let (mut v0, mut v1) = (region.min.y / atlas.y, region.max.y / atlas.y);
-    if flip_x {
-        std::mem::swap(&mut u0, &mut u1);
-    }
-    if flip_y {
-        std::mem::swap(&mut v0, &mut v1);
-    }
-    [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -383,6 +407,17 @@ fn spawn(
     }
 }
 
+fn frame_at<T>(frames: &[(T, f32)], total: f32, now: f32) -> usize {
+    let mut remaining = now % total;
+    for (index, (_, duration)) in frames.iter().enumerate() {
+        if remaining < *duration {
+            return index;
+        }
+        remaining -= *duration;
+    }
+    frames.len() - 1
+}
+
 /// Memoized per tileset: the hook's image lookup is too costly to repeat per cell.
 fn resolve_sheet(
     sheets: &mut HashMap<usize, Option<Handle<Image>>>,
@@ -397,6 +432,29 @@ fn resolve_sheet(
     let resolved = hooks.image(tileset, images);
     sheets.insert(key, resolved.clone());
     resolved
+}
+
+fn tileset_anims(tileset: &tiled::Tileset) -> Vec<Anim> {
+    (0..tileset.tilecount)
+        .filter_map(|id| {
+            let tile = tileset.get_tile(id)?;
+            let animation = tile.animation.as_ref()?;
+            if animation.len() <= 1 {
+                return None;
+            }
+            let frames: Vec<(u32, f32)> = animation
+                .iter()
+                .map(|frame| (frame.tile_id, frame.duration as f32 / 1000.0))
+                .collect();
+            let total = frames.iter().map(|&(_, duration)| duration).sum();
+            Some(Anim {
+                tile_id: id,
+                frames,
+                total,
+                current: 0,
+            })
+        })
+        .collect()
 }
 
 fn atlas_size(tileset: &tiled::Tileset) -> Vec2 {
@@ -436,7 +494,24 @@ fn frames(tileset: &tiled::Tileset, id: u32) -> Vec<(Rect, f32)> {
     }
 }
 
-/// A [`MapHooks`] for off-disk tools: loads tileset images from the filesystem.
+fn uint_image(width: u32, height: u32, data: Vec<u8>, usage: RenderAssetUsages) -> Image {
+    let mut image = Image::new(
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8Uint,
+        usage,
+    );
+    image.texture_descriptor.usage = TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST;
+    image.sampler = ImageSampler::nearest();
+    image
+}
+
+/// A [`MapHooks`] for off-disk tools: loads tileset images from the filesystem (everything flat).
 #[derive(Default)]
 pub struct Files {
     sheets: HashMap<usize, Handle<Image>>,

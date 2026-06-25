@@ -14,7 +14,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use bevy::window::ExitCondition;
 
-use bevy_tiled::{Files, MapTile, TILE, TileAnimationPlugin, spawn_map};
+use bevy_tiled::{Files, MapTile, TILE, TileAnimationPlugin, TilemapMaterial, spawn_map};
 
 const BUDGET: Duration = Duration::from_secs(5);
 const TILE_SCREEN: f32 = 96.0;
@@ -160,14 +160,14 @@ fn spawn_tiles(
     map: Res<MapRes>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut tilemaps: ResMut<Assets<TilemapMaterial>>,
     mut commands: Commands,
 ) {
     spawn_map(
         &mut commands,
         &mut images,
         &mut meshes,
-        &mut materials,
+        &mut tilemaps,
         &map.0,
         &mut Files::default(),
         Vec2::ZERO,
