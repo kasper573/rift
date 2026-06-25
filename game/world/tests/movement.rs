@@ -32,7 +32,11 @@ fn approach_stops_within_range_beside_a_far_target() {
         .get::<MoveTarget>(mover)
         .expect("a far mover heads toward the target")
         .pos;
-    assert_ne!(goal.cell(), target.cell(), "it stops beside the target, not on it");
+    assert_ne!(
+        goal.cell(),
+        target.cell(),
+        "it stops beside the target, not on it"
+    );
     assert!(goal.distance(target) <= RANGE, "the goal is within range");
 }
 
