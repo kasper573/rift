@@ -118,6 +118,7 @@ pub struct ActorModel {
     frame: Size<WorldPx>,
     columns: u32,
     hitbox: Size<Tiles>,
+    pub airborne: bool,
     strips: HashMap<String, [Vec<Frame>; 8]>,
     sounds: HashMap<TileId, SfxId>,
     steps: HashSet<TileId>,

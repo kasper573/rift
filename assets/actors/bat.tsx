@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<tileset version="1.10" tiledversion="1.10.2" name="bat" tilewidth="32" tileheight="32" tilecount="440" columns="11">
+<tileset version="1.10" tiledversion="1.12.2" name="bat" tilewidth="32" tileheight="32" tilecount="440" columns="11">
  <properties>
-  <property name="hitbox_width" type="float" value="1.0"/>
-  <property name="hitbox_height" type="float" value="1.0"/>
+  <property name="airborne" type="bool" value="true"/>
+  <property name="hitbox_height" type="float" value="1"/>
+  <property name="hitbox_width" type="float" value="1"/>
  </properties>
  <image source="bat.png" width="352" height="1280"/>
  <tile id="0">

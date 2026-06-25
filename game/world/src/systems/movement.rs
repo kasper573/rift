@@ -15,7 +15,7 @@ use crate::core::math::{Direction, Offset};
 use crate::core::table::Id;
 use crate::core::tiling::{Cell, CellPos, TilePos, TilesPerSec};
 use crate::core::time::Seconds;
-use crate::systems::actor::{Action, set_facing};
+use crate::systems::actor::{Action, Actor, set_facing};
 use crate::systems::area::{self, AreaTag};
 use crate::systems::combat::{AttackTarget, is_dead};
 use crate::systems::player::sender_player;
@@ -208,7 +208,7 @@ pub fn advance(world: &mut World) {
 
         world.entity_mut(id).insert(Position { pos: at });
         if let Some(step) = heading
-            && let Some(mut actor) = world.get_mut::<crate::systems::actor::Actor>(id)
+            && let Some(mut actor) = world.get_mut::<Actor>(id)
         {
             set_facing(
                 &mut actor,
@@ -230,6 +230,12 @@ pub fn advance(world: &mut World) {
 }
 
 fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
+    if world
+        .get::<Actor>(entity)
+        .is_some_and(|actor| actor.model.get().airborne)
+    {
+        return Some(vec![goal.cell()]);
+    }
     let area_id = world
         .get::<AreaTag>(entity)
         .map_or(Id::new(0), |tag| tag.area);
