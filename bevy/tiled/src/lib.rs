@@ -9,14 +9,16 @@
 //! Tile-layer cells are merged into meshes so a whole layer is a handful of entities and draw calls
 //! rather than one sprite per cell — the cost of bringing a large map on screen scales with distinct
 //! depths and animations, not tile count. Static cells merge by (tileset, depth); animated cells merge
-//! by (tileset, depth, animation) and a frame advance just rewrites the shared mesh's UVs. Tile-objects
-//! can't be merged, so they stay individual sprites. A merged mesh still sorts against sprites (and the
-//! game's own sprites) by its depth, so a caller's grouped-occluder model keeps interleaving with actors.
+//! by (tileset, depth, animation) and a frame advance just swaps the material's UV transform — the
+//! geometry never moves. Tile-objects can't be merged, so they stay individual sprites. A merged mesh
+//! still sorts against sprites (and the game's own sprites) by its depth, so a caller's grouped-occluder
+//! model keeps interleaving with actors.
 
 use std::collections::HashMap;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
+use bevy::math::Affine2;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::sprite::Anchor;
@@ -58,10 +60,10 @@ pub trait MapHooks {
 /// Draws every tile-layer cell and tile-object of `map`, taking image handles and depths from `hooks`.
 /// Tile-layer cells are merged into [`MapTile`] meshes — static cells one mesh per (tileset, depth),
 /// animated cells one mesh per (tileset, depth, animation) carrying an [`Animated`] component that
-/// [`TileAnimationPlugin`] drives by rewriting the shared UVs. Tile-objects, which can't be merged,
-/// stay individual [`MapTile`] sprites. `origin` translates everything: the map is laid out in Tiled's
-/// corner-origin pixel space, so a caller passes the screen position of that origin ([`Vec2::ZERO`]
-/// draws raw).
+/// [`TileAnimationPlugin`] drives by swapping the material's UV transform. Tile-objects, which can't be
+/// merged, stay individual [`MapTile`] sprites. `origin` translates everything: the map is laid out in
+/// Tiled's corner-origin pixel space, so a caller passes the screen position of that origin
+/// ([`Vec2::ZERO`] draws raw).
 pub fn spawn_map(
     commands: &mut Commands,
     images: &mut Assets<Image>,
@@ -74,6 +76,9 @@ pub fn spawn_map(
     let map_height = map.height as f32;
     let mut statics: HashMap<(AssetId<Image>, u32), Batch> = HashMap::new();
     let mut animated: HashMap<(AssetId<Image>, u32, u32), AnimBatch> = HashMap::new();
+    // A hook's `image` resolution (path lookup, asset load) can be costly, so call it once per tileset
+    // rather than once per cell — a large map has tens of thousands of cells but a handful of tilesets.
+    let mut sheets: HashMap<usize, Option<Handle<Image>>> = HashMap::new();
     let mut layer = 0;
     for tiled_layer in map.layers() {
         match tiled_layer.layer_type() {
@@ -84,7 +89,7 @@ pub fn spawn_map(
                             continue;
                         };
                         let tileset = tile.get_tileset();
-                        let Some(sheet) = hooks.image(tileset, images) else {
+                        let Some(sheet) = resolve_sheet(&mut sheets, hooks, images, tileset) else {
                             continue;
                         };
                         let z = hooks.tile_z(layer, x, y);
@@ -124,7 +129,7 @@ pub fn spawn_map(
                         continue;
                     };
                     let tileset = object_tile.get_tileset();
-                    let Some(sheet) = hooks.image(tileset, images) else {
+                    let Some(sheet) = resolve_sheet(&mut sheets, hooks, images, tileset) else {
                         continue;
                     };
                     let size = Vec2::new(tileset.tile_width as f32, tileset.tile_height as f32);
@@ -166,6 +171,7 @@ pub fn spawn_map(
             Mesh2d(meshes.add(mesh)),
             MeshMaterial2d(materials.add(ColorMaterial {
                 texture: Some(sheet),
+                uv_transform: animation.frames[0].0,
                 ..default()
             })),
             Transform::from_xyz(0.0, 0.0, z),
@@ -254,7 +260,13 @@ impl AnimBatch {
 
     fn build(self) -> (Mesh, Animated) {
         let total = self.frames.iter().map(|&(_, duration)| duration).sum();
-        let uvs = frame_uvs(self.frames[0].0, self.atlas, &self.flips);
+        // Unit UVs (per-cell flips baked in); the material's `uv_transform` maps them onto the current
+        // frame's atlas rect, so animating moves a transform — not the geometry.
+        let uvs: Vec<[f32; 2]> = self
+            .flips
+            .iter()
+            .flat_map(|&(flip_x, flip_y)| unit_quad_uvs(flip_x, flip_y))
+            .collect();
         let mesh = Mesh::new(
             PrimitiveTopology::TriangleList,
             RenderAssetUsages::default(),
@@ -262,25 +274,28 @@ impl AnimBatch {
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
         .with_inserted_indices(Indices::U32(self.indices));
-        let animated = Animated {
-            frames: self.frames,
-            total,
-            atlas: self.atlas,
-            flips: self.flips,
-            current: 0,
-        };
-        (mesh, animated)
+        let frames = self
+            .frames
+            .iter()
+            .map(|&(region, duration)| (frame_transform(region, self.atlas), duration))
+            .collect();
+        (
+            mesh,
+            Animated {
+                frames,
+                total,
+                current: 0,
+            },
+        )
     }
 }
 
-/// Drives one merged animated tile mesh: the shared frame timeline plus what's needed to rewrite its
-/// UVs when the frame advances.
+/// Drives one merged animated tile mesh: each frame's atlas rect as a UV transform, plus the timeline.
+/// A frame advance just swaps the mesh material's `uv_transform` — no geometry re-upload.
 #[derive(Component)]
 struct Animated {
-    frames: Vec<(Rect, f32)>,
+    frames: Vec<(Affine2, f32)>,
     total: f32,
-    atlas: Vec2,
-    flips: Vec<(bool, bool)>,
     current: usize,
 }
 
@@ -311,15 +326,16 @@ fn animate_sprites(time: Res<Time>, mut sprites: Query<(&AnimatedSprite, &mut Sp
     }
 }
 
-/// Repaints each merged animated mesh's UVs onto the current frame, but only when the frame index
-/// actually changes — so a still-running animation costs one modulo and a comparison per mesh.
+/// Points each merged animated mesh at its current frame by swapping the material's `uv_transform` —
+/// only when the frame index changes, and never touching the geometry. A still-running animation costs
+/// one modulo and a comparison per mesh; a frame advance costs one small uniform write.
 fn animate(
     time: Res<Time>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut tiles: Query<(&mut Animated, &Mesh2d)>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut tiles: Query<(&mut Animated, &MeshMaterial2d<ColorMaterial>)>,
 ) {
     let now = time.elapsed_secs();
-    for (mut anim, mesh) in &mut tiles {
+    for (mut anim, material) in &mut tiles {
         if anim.total <= 0.0 {
             continue;
         }
@@ -328,32 +344,34 @@ fn animate(
             continue;
         }
         anim.current = frame;
-        if let Some(mut mesh) = meshes.get_mut(&mesh.0) {
-            let uvs = frame_uvs(anim.frames[frame].0, anim.atlas, &anim.flips);
-            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+        if let Some(mut material) = materials.get_mut(&material.0) {
+            material.uv_transform = anim.frames[frame].0;
         }
     }
 }
 
-/// The frame showing at `now` for a looping timeline of `(region, duration)`s totalling `total`.
-fn frame_at(frames: &[(Rect, f32)], total: f32, now: f32) -> usize {
+/// The frame showing at `now` for a looping timeline of `(_, duration)`s totalling `total`.
+fn frame_at<T>(frames: &[(T, f32)], total: f32, now: f32) -> usize {
     let mut remaining = now % total;
-    for (index, &(_, duration)) in frames.iter().enumerate() {
-        if remaining < duration {
+    for (index, (_, duration)) in frames.iter().enumerate() {
+        if remaining < *duration {
             return index;
         }
-        remaining -= duration;
+        remaining -= *duration;
     }
     frames.len() - 1
 }
 
-/// Every cell's UVs for one frame's atlas region, each with its own flip — the layout [`AnimBatch`]
-/// builds and [`animate`] rewrites.
-fn frame_uvs(region: Rect, atlas: Vec2, flips: &[(bool, bool)]) -> Vec<[f32; 2]> {
-    flips
-        .iter()
-        .flat_map(|&(flip_x, flip_y)| quad_uvs(region, atlas, flip_x, flip_y))
-        .collect()
+/// The UV transform that maps a unit quad onto a frame's atlas region (origin + size in UV space).
+fn frame_transform(region: Rect, atlas: Vec2) -> Affine2 {
+    Affine2::from_scale_angle_translation(region.size() / atlas, 0.0, region.min / atlas)
+}
+
+/// A tile quad's four unit UVs (corner order matching [`quad_positions`]), with its flip applied.
+fn unit_quad_uvs(flip_x: bool, flip_y: bool) -> [[f32; 2]; 4] {
+    let (u0, u1) = if flip_x { (1.0, 0.0) } else { (0.0, 1.0) };
+    let (v0, v1) = if flip_y { (1.0, 0.0) } else { (0.0, 1.0) };
+    [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]
 }
 
 /// A tile quad's four corners (top-left, top-right, bottom-right, bottom-left) centred on `center`.
@@ -407,6 +425,23 @@ fn spawn(
     if total > 0.0 {
         tile.insert(AnimatedSprite { frames, total });
     }
+}
+
+/// Resolves a tileset's image handle through the hook, memoized per tileset so the hook's lookup runs
+/// once rather than once per cell. `None` (a tileset the hook can't resolve) is cached too.
+fn resolve_sheet(
+    sheets: &mut HashMap<usize, Option<Handle<Image>>>,
+    hooks: &mut impl MapHooks,
+    images: &mut Assets<Image>,
+    tileset: &tiled::Tileset,
+) -> Option<Handle<Image>> {
+    let key = tileset as *const tiled::Tileset as usize;
+    if let Some(cached) = sheets.get(&key) {
+        return cached.clone();
+    }
+    let resolved = hooks.image(tileset, images);
+    sheets.insert(key, resolved.clone());
+    resolved
 }
 
 /// The tileset sheet's pixel dimensions, for normalizing tile regions to UVs. Falls back to the grid
