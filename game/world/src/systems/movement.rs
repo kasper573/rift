@@ -140,13 +140,77 @@ fn retarget(
 }
 
 /// Sends `entity` walking to `pos`: abandons any attack and stale path so [`advance`] re-routes from
-/// here. The single funnel for "go there", shared by client move requests and item pickup.
+/// here. The single funnel for a client's "go there" move request.
 pub fn goto(world: &mut World, entity: Entity, pos: Pos<Tiles>) {
     world
         .entity_mut(entity)
         .remove::<AttackTarget>()
         .remove::<Path>()
         .insert(MoveTarget { pos });
+}
+
+/// Heads `entity` toward `target`, aiming for the nearest reachable tile from which it stands within
+/// `range` of the target — never the target's own tile — so movers halt beside their target instead
+/// of on top of it. Returns whether `entity` is already within `range` (so the caller can act this
+/// tick with no movement); otherwise it sets a [`MoveTarget`], leaving an in-progress approach
+/// untouched so it is cheap to call every tick. Preserves any [`AttackTarget`]: combat reaches its
+/// foe, item pickup reaches its drop, both through here.
+pub fn approach(world: &mut World, entity: Entity, target: Pos<Tiles>, range: Tiles) -> bool {
+    let Some(at) = position(world, entity) else {
+        return false;
+    };
+    if at.distance(target) <= range {
+        return true;
+    }
+    let heading = world
+        .get::<MoveTarget>(entity)
+        .is_some_and(|goal| goal.pos.distance(target) <= range);
+    if !heading {
+        let dest = approach_tile(world, entity, at, target, range).unwrap_or(target);
+        world
+            .entity_mut(entity)
+            .remove::<Path>()
+            .insert(MoveTarget { pos: dest });
+    }
+    false
+}
+
+/// The walkable tile nearest `from`, within `range` of `target` but not the target's own tile, that
+/// `entity` may stand on (airborne movers ignore walkability). `None` if no such tile exists.
+fn approach_tile(
+    world: &World,
+    entity: Entity,
+    from: Pos<Tiles>,
+    target: Pos<Tiles>,
+    range: Tiles,
+) -> Option<Pos<Tiles>> {
+    let area_id = world
+        .get::<AreaTag>(entity)
+        .map_or(Id::new(0), |tag| tag.area);
+    let grid = &area::areas()[area_id.index()].grid;
+    let airborne = world
+        .get::<Actor>(entity)
+        .is_some_and(|actor| actor.model.get().airborne);
+    let goal = target.cell();
+    let reach = range.0.ceil() as i32;
+    let mut best: Option<(Pos<Tiles>, Tiles)> = None;
+    for dy in -reach..=reach {
+        for dx in -reach..=reach {
+            let cell = goal.step((dx, dy));
+            if cell == goal {
+                continue;
+            }
+            let center = cell.center();
+            if center.distance(target) > range || (!airborne && !grid.walkable(center)) {
+                continue;
+            }
+            let distance = from.distance(center);
+            if best.is_none_or(|(_, best)| distance < best) {
+                best = Some((center, distance));
+            }
+        }
+    }
+    best.map(|(center, _)| center)
 }
 
 pub fn advance(world: &mut World) {
@@ -247,7 +311,6 @@ fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<Cell
         .map_or(Id::new(0), |tag| tag.area);
     let area = &area::areas()[area_id.index()];
     let at = position(world, entity)?;
-    let goal = area.grid.nearest_walkable(goal)?;
     let mut path = crate::core::nav::astar(&area.grid, at, goal)?;
     if path.len() > 1 {
         path.remove(0);

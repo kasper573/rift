@@ -19,7 +19,7 @@ use crate::systems::sfx::SfxId;
 
 use crate::systems::area::{self, AreaTag};
 use crate::systems::combat::{Vitals, is_dead};
-use crate::systems::movement::{MoveTarget, Position, goto, position};
+use crate::systems::movement::{MoveTarget, Position, approach, forget, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, sender_player};
 use crate::systems::visibility::seen_by;
@@ -35,7 +35,8 @@ pub const INVENTORY_MAX: u32 = 25;
 const RESERVATION_TTL: Seconds = Seconds(60.0);
 const DROP_TTL: Seconds = Seconds(120.0);
 const DROP_RADIUS: Tiles = Tiles(1.0);
-const PICKUP_RANGE: i32 = 1;
+/// One tile away, diagonals included — the same reach a melee attacker stops at.
+const PICKUP_RANGE: Tiles = Tiles(std::f32::consts::SQRT_2);
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -332,7 +333,8 @@ pub fn pickup_request(world: &mut World) {
         let Some(at) = position(world, target) else {
             continue;
         };
-        goto(world, player, at);
+        forget(world, player);
+        approach(world, player, at, PICKUP_RANGE);
         world.entity_mut(player).insert(PickupIntent { target });
     }
 }
@@ -357,12 +359,12 @@ pub fn pickups(world: &mut World) {
             world.entity_mut(player).remove::<PickupIntent>();
             continue;
         };
-        if chebyshev(at, item_at) <= PICKUP_RANGE {
+        if at.distance(item_at) <= PICKUP_RANGE {
             collect(world, player, target);
             world.entity_mut(player).remove::<PickupIntent>();
         } else if world
             .get::<MoveTarget>(player)
-            .is_none_or(|goal| goal.pos.cell() != item_at.cell())
+            .is_none_or(|goal| goal.pos.distance(item_at) > PICKUP_RANGE)
         {
             world.entity_mut(player).remove::<PickupIntent>();
         }
@@ -494,9 +496,4 @@ fn scatter_pos(from: Pos<Tiles>, index: usize, count: usize, area: &area::Area) 
     let angle = std::f32::consts::TAU * index as f32 / count as f32;
     let spread = from + Offset::new(angle.cos() * DROP_RADIUS.0, angle.sin() * DROP_RADIUS.0);
     area.grid.nearest_walkable(spread).unwrap_or(rest)
-}
-
-fn chebyshev(a: Pos<Tiles>, b: Pos<Tiles>) -> i32 {
-    let (a, b) = (a.cell(), b.cell());
-    (a.x - b.x).abs().max((a.y - b.y).abs())
 }

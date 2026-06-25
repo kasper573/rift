@@ -57,7 +57,7 @@ impl WalkGesture {
         if !area::walkable(world, tile) || self.last_tile == Some(tile) {
             return;
         }
-        session::move_to(world, point);
+        session::move_to(world, tile);
         self.stamp(world, Some(tile));
     }
 
@@ -69,7 +69,7 @@ impl WalkGesture {
 
 impl Gesture for WalkGesture {
     fn claims(&self, world: &mut World) -> bool {
-        !session::is_dead(world) && render::cursor_tile(world).is_some()
+        !session::is_dead(world) && self.target(world).is_some()
     }
 
     fn drive(&mut self, world: &mut World, start: bool) {
@@ -77,9 +77,9 @@ impl Gesture for WalkGesture {
             self.repeat(world);
             return;
         }
-        if let Some(point) = render::cursor_tile(world) {
-            session::move_to(world, point);
-            self.stamp(world, Some(point.snap()));
+        if let Some(tile) = self.target(world) {
+            session::move_to(world, tile);
+            self.stamp(world, Some(tile));
         }
     }
 

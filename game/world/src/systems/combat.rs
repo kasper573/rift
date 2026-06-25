@@ -20,7 +20,7 @@ use crate::core::table::Id;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
 use crate::systems::actor::{Action, set_action, set_facing};
 use crate::systems::area::AreaTag;
-use crate::systems::movement::{MoveTarget, Path, forget, halt, on_tile, position};
+use crate::systems::movement::{MoveTarget, Path, approach, forget, halt, on_tile, position};
 use crate::systems::player::{Owner, sender_player};
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
@@ -86,7 +86,6 @@ pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
 }
 
 const TILE_DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
-const CHASE_RETARGET_THRESHOLD: Tiles = Tiles(1.5);
 const HP_REGEN_INTERVAL: Seconds = Seconds(10.0);
 const HP_REGEN_AMOUNT: f32 = 5.0;
 
@@ -201,16 +200,7 @@ fn engage(world: &mut World, time: Seconds) {
         };
         let stats = stats(world, id);
 
-        if at.distance(target_at) > stats.range + TILE_DIAGONAL_MARGIN {
-            let heading = world
-                .get::<MoveTarget>(id)
-                .is_some_and(|goal| goal.pos.distance(target_at) <= CHASE_RETARGET_THRESHOLD);
-            if !heading {
-                world
-                    .entity_mut(id)
-                    .remove::<Path>()
-                    .insert(MoveTarget { pos: target_at });
-            }
+        if !approach(world, id, target_at, stats.range + TILE_DIAGONAL_MARGIN) {
             continue;
         }
 
