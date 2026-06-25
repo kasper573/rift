@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<tileset version="1.10" tiledversion="1.11.0" name="beach-tileset" tilewidth="16" tileheight="16" tilecount="936" columns="36">
+<tileset version="1.10" tiledversion="1.12.2" name="beach-tileset" tilewidth="16" tileheight="16" tilecount="936" columns="36">
  <image source="beach-tileset.png" width="576" height="416"/>
  <tile id="37">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
   <animation>
@@ -25,6 +26,7 @@
  </tile>
  <tile id="39">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
   <animation>
@@ -42,6 +44,7 @@
  </tile>
  <tile id="41">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
   <animation>
@@ -64,6 +67,7 @@
  </tile>
  <tile id="43">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
   <animation>
@@ -85,6 +89,7 @@
  </tile>
  <tile id="46">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -95,6 +100,7 @@
  </tile>
  <tile id="48">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -106,6 +112,7 @@
  </tile>
  <tile id="50">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -116,6 +123,7 @@
  </tile>
  <tile id="52">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -131,6 +139,7 @@
  </tile>
  <tile id="55">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -141,6 +150,7 @@
  </tile>
  <tile id="57">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -152,6 +162,7 @@
  </tile>
  <tile id="59">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -162,6 +173,7 @@
  </tile>
  <tile id="61">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -177,6 +189,7 @@
  </tile>
  <tile id="64">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -187,6 +200,7 @@
  </tile>
  <tile id="66">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -198,6 +212,7 @@
  </tile>
  <tile id="68">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -208,6 +223,7 @@
  </tile>
  <tile id="70">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -413,6 +429,7 @@
  </tile>
  <tile id="109">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
   <animation>
@@ -461,6 +478,7 @@
  </tile>
  <tile id="115">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
   <animation>
@@ -482,6 +500,7 @@
  </tile>
  <tile id="118">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -512,6 +531,7 @@
  </tile>
  <tile id="124">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -527,6 +547,7 @@
  </tile>
  <tile id="127">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -557,6 +578,7 @@
  </tile>
  <tile id="133">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -572,6 +594,7 @@
  </tile>
  <tile id="136">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -602,6 +625,7 @@
  </tile>
  <tile id="142">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -802,6 +826,7 @@
  </tile>
  <tile id="181">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
   <animation>
@@ -850,6 +875,7 @@
  </tile>
  <tile id="187">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
   <animation>
@@ -871,6 +897,7 @@
  </tile>
  <tile id="190">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -901,6 +928,7 @@
  </tile>
  <tile id="196">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -916,6 +944,7 @@
  </tile>
  <tile id="199">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -946,6 +975,7 @@
  </tile>
  <tile id="205">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -961,6 +991,7 @@
  </tile>
  <tile id="208">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -991,6 +1022,7 @@
  </tile>
  <tile id="214">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -1196,6 +1228,7 @@
  </tile>
  <tile id="253">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
   <animation>
@@ -1218,6 +1251,7 @@
  </tile>
  <tile id="255">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
   <animation>
@@ -1235,6 +1269,7 @@
  </tile>
  <tile id="257">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
   <animation>
@@ -1257,6 +1292,7 @@
  </tile>
  <tile id="259">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
   <animation>
@@ -1278,6 +1314,7 @@
  </tile>
  <tile id="262">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -1288,16 +1325,19 @@
  </tile>
  <tile id="264">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
  <tile id="265">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
  <tile id="266">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -1308,6 +1348,7 @@
  </tile>
  <tile id="268">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -1323,6 +1364,7 @@
  </tile>
  <tile id="271">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -1333,6 +1375,7 @@
  </tile>
  <tile id="273">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -1344,6 +1387,7 @@
  </tile>
  <tile id="275">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -1354,6 +1398,7 @@
  </tile>
  <tile id="277">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -1369,6 +1414,7 @@
  </tile>
  <tile id="280">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -1379,6 +1425,7 @@
  </tile>
  <tile id="282">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -1390,6 +1437,7 @@
  </tile>
  <tile id="284">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -1400,6 +1448,7 @@
  </tile>
  <tile id="286">
   <properties>
+   <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
@@ -1486,6 +1535,31 @@
   </properties>
  </tile>
  <tile id="341">
+  <properties>
+   <property name="Walkable" type="bool" value="false"/>
+  </properties>
+ </tile>
+ <tile id="342">
+  <properties>
+   <property name="Walkable" type="bool" value="false"/>
+  </properties>
+ </tile>
+ <tile id="343">
+  <properties>
+   <property name="Walkable" type="bool" value="false"/>
+  </properties>
+ </tile>
+ <tile id="344">
+  <properties>
+   <property name="Walkable" type="bool" value="false"/>
+  </properties>
+ </tile>
+ <tile id="345">
+  <properties>
+   <property name="Walkable" type="bool" value="false"/>
+  </properties>
+ </tile>
+ <tile id="346">
   <properties>
    <property name="Walkable" type="bool" value="false"/>
   </properties>
@@ -1892,7 +1966,19 @@
    <property name="sfx" value="step_rock01"/>
   </properties>
  </tile>
+ <tile id="519">
+  <properties>
+   <property name="Walkable" type="bool" value="true"/>
+   <property name="sfx" value="step_wood01"/>
+  </properties>
+ </tile>
  <tile id="520">
+  <properties>
+   <property name="Walkable" type="bool" value="true"/>
+   <property name="sfx" value="step_wood01"/>
+  </properties>
+ </tile>
+ <tile id="521">
   <properties>
    <property name="Walkable" type="bool" value="true"/>
    <property name="sfx" value="step_wood01"/>
@@ -2032,31 +2118,6 @@
  <tile id="585">
   <properties>
    <property name="Group" value="1"/>
-  </properties>
- </tile>
- <tile id="586">
-  <properties>
-   <property name="Walkable" type="bool" value="false"/>
-  </properties>
- </tile>
- <tile id="587">
-  <properties>
-   <property name="Walkable" type="bool" value="false"/>
-  </properties>
- </tile>
- <tile id="588">
-  <properties>
-   <property name="Walkable" type="bool" value="false"/>
-  </properties>
- </tile>
- <tile id="589">
-  <properties>
-   <property name="Walkable" type="bool" value="false"/>
-  </properties>
- </tile>
- <tile id="590">
-  <properties>
-   <property name="Walkable" type="bool" value="false"/>
   </properties>
  </tile>
  <tile id="624">

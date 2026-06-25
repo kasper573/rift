@@ -18,6 +18,7 @@ crate-type = ["cdylib", "rlib"]
 world = { path = "../world" }
 ui = { path = "../../ui" }
 bevy_tiled = { path = "../../bevy/tiled" }
+tiled = { version = "0.15", default-features = false }
 # Bevy's `2d` + `ui` feature bundles for the browser: `webgl2` (far more reliable than `webgpu` under
 # headless Chrome for e2e) and `web` for the browser platform integration. No `x11`/`multi_threaded`/
 # `sysinfo_plugin` — those are native-only and wasm is single-threaded.
