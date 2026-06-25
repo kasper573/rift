@@ -1,18 +1,7 @@
-//! A small, general-purpose renderer that draws a [`tiled::Map`] for Bevy — finite tile layers
-//! (stacked by file order), tile-objects, flips, and per-tile animation. It is deliberately
-//! game-agnostic: it knows nothing about any particular world model. Callers plug in the two things
-//! that *are* theirs — how to load a tileset's image, and what depth (`z`) each tile and object gets —
-//! through [`MapHooks`], so a game can layer its own depth model (e.g. grouped occluders) and asset
-//! source (e.g. an embed) on top without this crate ever depending on the game. [`Files`] is a ready
-//! hook for tools that read maps straight off disk.
-//!
-//! Tile-layer cells are merged into meshes so a whole layer is a handful of entities and draw calls
-//! rather than one sprite per cell — the cost of bringing a large map on screen scales with distinct
-//! depths and animations, not tile count. Static cells merge by (tileset, depth); animated cells merge
-//! by (tileset, depth, animation) and a frame advance just swaps the material's UV transform — the
-//! geometry never moves. Tile-objects can't be merged, so they stay individual sprites. A merged mesh
-//! still sorts against sprites (and the game's own sprites) by its depth, so a caller's grouped-occluder
-//! model keeps interleaving with actors.
+//! A small, game-agnostic renderer for a [`tiled::Map`]: tile layers, tile-objects, flips, and per-tile
+//! animation. Cells are merged into meshes (one per tileset+depth, animated ones per animation) so cost
+//! scales with distinct depths, not tile count. A caller supplies image loading and per-tile depth
+//! through [`MapHooks`]; [`Files`] is a ready hook for off-disk tools.
 
 use std::collections::HashMap;
 
@@ -23,47 +12,37 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::sprite::Anchor;
 
-/// Logical pixels per tile, fixed at the art's native size so nearest-neighbour magnification keeps
-/// each art-pixel a whole number of screen pixels.
+/// Logical pixels per tile — the art's native size.
 pub const TILE: f32 = 16.0;
 
-/// Tags every sprite a map spawns, so a caller can despawn the lot to swap maps.
+/// Tags every entity a map spawns, so a caller can despawn them all to swap maps.
 #[derive(Component)]
 pub struct MapTile;
 
-/// The caller-supplied integration points: this crate draws the map and asks the hook for the bits
-/// that are the caller's business. The `tile_z`/`object_z` defaults stack layers by index and y-sort
-/// objects just above them — enough for previews; a game overrides them with its own depth model.
+/// The caller-supplied integration points: image loading and per-tile/object depth.
 pub trait MapHooks {
-    /// Resolve a tileset's image to a loaded handle. The caller owns the asset source (filesystem,
-    /// an embed, a network reader…); `images` is offered for callers that decode into it directly.
+    /// Resolves a tileset's image to a loaded handle.
     fn image(
         &mut self,
         tileset: &tiled::Tileset,
         images: &mut Assets<Image>,
     ) -> Option<Handle<Image>>;
 
-    /// Depth of a tile-layer cell. `layer` is the tile layer's index in file order.
+    /// Depth of a tile-layer cell; `layer` is the layer's file-order index.
     fn tile_z(&mut self, layer: usize, x: i32, y: i32) -> f32 {
         let _ = (x, y);
         layer as f32
     }
 
-    /// Depth of a tile-object at its foot. `above` is the number of tile layers drawn before it; `y`
-    /// is the foot in pixels (downward); `map_height` is the map height in tiles.
+    /// Depth of a tile-object at its foot (`y` in downward pixels).
     fn object_z(&mut self, above: usize, x: f32, y: f32, map_height: f32) -> f32 {
         let _ = x;
         above as f32 + (y / TILE + 1.0) / (map_height + 2.0)
     }
 }
 
-/// Draws every tile-layer cell and tile-object of `map`, taking image handles and depths from `hooks`.
-/// Tile-layer cells are merged into [`MapTile`] meshes — static cells one mesh per (tileset, depth),
-/// animated cells one mesh per (tileset, depth, animation) carrying an [`Animated`] component that
-/// [`TileAnimationPlugin`] drives by swapping the material's UV transform. Tile-objects, which can't be
-/// merged, stay individual [`MapTile`] sprites. `origin` translates everything: the map is laid out in
-/// Tiled's corner-origin pixel space, so a caller passes the screen position of that origin
-/// ([`Vec2::ZERO`] draws raw).
+/// Draws `map`'s tile-layer cells (merged) and tile-objects via `hooks`. `origin` is the screen
+/// position of the map's top-left corner ([`Vec2::ZERO`] draws raw).
 pub fn spawn_map(
     commands: &mut Commands,
     images: &mut Assets<Image>,
@@ -76,8 +55,6 @@ pub fn spawn_map(
     let map_height = map.height as f32;
     let mut statics: HashMap<(AssetId<Image>, u32), Batch> = HashMap::new();
     let mut animated: HashMap<(AssetId<Image>, u32, u32), AnimBatch> = HashMap::new();
-    // A hook's `image` resolution (path lookup, asset load) can be costly, so call it once per tileset
-    // rather than once per cell — a large map has tens of thousands of cells but a handful of tilesets.
     let mut sheets: HashMap<usize, Option<Handle<Image>>> = HashMap::new();
     let mut layer = 0;
     for tiled_layer in map.layers() {
@@ -180,9 +157,6 @@ pub fn spawn_map(
     }
 }
 
-/// Accumulates the quads of every static tile that shares one tileset and depth into a single mesh, so
-/// a layer becomes one draw call. Tile centers are baked into the vertices; the mesh entity carries the
-/// shared depth as its `z`, so it sorts against sprites exactly as the tiles would have individually.
 struct Batch {
     sheet: Handle<Image>,
     z: f32,
@@ -224,9 +198,6 @@ impl Batch {
     }
 }
 
-/// Like [`Batch`], but for tiles sharing one *animation* (so one frame timeline drives them all). The
-/// geometry is fixed; advancing a frame just rewrites the shared mesh's UVs — a handful of meshes a few
-/// times a second, rather than one sprite per cell touched every frame.
 struct AnimBatch {
     sheet: Handle<Image>,
     z: f32,
@@ -260,8 +231,6 @@ impl AnimBatch {
 
     fn build(self) -> (Mesh, Animated) {
         let total = self.frames.iter().map(|&(_, duration)| duration).sum();
-        // Unit UVs (per-cell flips baked in); the material's `uv_transform` maps them onto the current
-        // frame's atlas rect, so animating moves a transform — not the geometry.
         let uvs: Vec<[f32; 2]> = self
             .flips
             .iter()
@@ -290,8 +259,6 @@ impl AnimBatch {
     }
 }
 
-/// Drives one merged animated tile mesh: each frame's atlas rect as a UV transform, plus the timeline.
-/// A frame advance just swaps the mesh material's `uv_transform` — no geometry re-upload.
 #[derive(Component)]
 struct Animated {
     frames: Vec<(Affine2, f32)>,
@@ -299,15 +266,13 @@ struct Animated {
     current: usize,
 }
 
-/// An individually-spawned animated tile — a tile-object, which (unlike a tile-layer cell) can't be
-/// merged, so it animates by swapping its own sprite's atlas rect.
 #[derive(Component)]
 struct AnimatedSprite {
     frames: Vec<(Rect, f32)>,
     total: f32,
 }
 
-/// Advances animated tiles through their frames. Add it wherever a map is shown.
+/// Drives tile animation; add it wherever a map is shown.
 pub struct TileAnimationPlugin;
 
 impl Plugin for TileAnimationPlugin {
@@ -316,19 +281,6 @@ impl Plugin for TileAnimationPlugin {
     }
 }
 
-/// The tile-object counterpart to [`animate`]: points each animated object sprite at its current frame.
-fn animate_sprites(time: Res<Time>, mut sprites: Query<(&AnimatedSprite, &mut Sprite)>) {
-    let now = time.elapsed_secs();
-    for (anim, mut sprite) in &mut sprites {
-        if anim.total > 0.0 {
-            sprite.rect = Some(anim.frames[frame_at(&anim.frames, anim.total, now)].0);
-        }
-    }
-}
-
-/// Points each merged animated mesh at its current frame by swapping the material's `uv_transform` —
-/// only when the frame index changes, and never touching the geometry. A still-running animation costs
-/// one modulo and a comparison per mesh; a frame advance costs one small uniform write.
 fn animate(
     time: Res<Time>,
     mut materials: ResMut<Assets<ColorMaterial>>,
@@ -350,7 +302,15 @@ fn animate(
     }
 }
 
-/// The frame showing at `now` for a looping timeline of `(_, duration)`s totalling `total`.
+fn animate_sprites(time: Res<Time>, mut sprites: Query<(&AnimatedSprite, &mut Sprite)>) {
+    let now = time.elapsed_secs();
+    for (anim, mut sprite) in &mut sprites {
+        if anim.total > 0.0 {
+            sprite.rect = Some(anim.frames[frame_at(&anim.frames, anim.total, now)].0);
+        }
+    }
+}
+
 fn frame_at<T>(frames: &[(T, f32)], total: f32, now: f32) -> usize {
     let mut remaining = now % total;
     for (index, (_, duration)) in frames.iter().enumerate() {
@@ -362,19 +322,16 @@ fn frame_at<T>(frames: &[(T, f32)], total: f32, now: f32) -> usize {
     frames.len() - 1
 }
 
-/// The UV transform that maps a unit quad onto a frame's atlas region (origin + size in UV space).
 fn frame_transform(region: Rect, atlas: Vec2) -> Affine2 {
     Affine2::from_scale_angle_translation(region.size() / atlas, 0.0, region.min / atlas)
 }
 
-/// A tile quad's four unit UVs (corner order matching [`quad_positions`]), with its flip applied.
 fn unit_quad_uvs(flip_x: bool, flip_y: bool) -> [[f32; 2]; 4] {
     let (u0, u1) = if flip_x { (1.0, 0.0) } else { (0.0, 1.0) };
     let (v0, v1) = if flip_y { (1.0, 0.0) } else { (0.0, 1.0) };
     [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]
 }
 
-/// A tile quad's four corners (top-left, top-right, bottom-right, bottom-left) centred on `center`.
 fn quad_positions(center: Vec2, size: Vec2) -> [[f32; 3]; 4] {
     let half = size / 2.0;
     [
@@ -385,7 +342,6 @@ fn quad_positions(center: Vec2, size: Vec2) -> [[f32; 3]; 4] {
     ]
 }
 
-/// A tile quad's four UVs into the atlas region, in the same corner order as [`quad_positions`].
 fn quad_uvs(region: Rect, atlas: Vec2, flip_x: bool, flip_y: bool) -> [[f32; 2]; 4] {
     let (mut u0, mut u1) = (region.min.x / atlas.x, region.max.x / atlas.x);
     let (mut v0, mut v1) = (region.min.y / atlas.y, region.max.y / atlas.y);
@@ -427,8 +383,7 @@ fn spawn(
     }
 }
 
-/// Resolves a tileset's image handle through the hook, memoized per tileset so the hook's lookup runs
-/// once rather than once per cell. `None` (a tileset the hook can't resolve) is cached too.
+/// Memoized per tileset: the hook's image lookup is too costly to repeat per cell.
 fn resolve_sheet(
     sheets: &mut HashMap<usize, Option<Handle<Image>>>,
     hooks: &mut impl MapHooks,
@@ -444,8 +399,6 @@ fn resolve_sheet(
     resolved
 }
 
-/// The tileset sheet's pixel dimensions, for normalizing tile regions to UVs. Falls back to the grid
-/// extent when a tileset declares no image (a collection of images, which this renderer doesn't merge).
 fn atlas_size(tileset: &tiled::Tileset) -> Vec2 {
     match &tileset.image {
         Some(image) => Vec2::new(image.width as f32, image.height as f32),
@@ -483,9 +436,7 @@ fn frames(tileset: &tiled::Tileset, id: u32) -> Vec<(Rect, f32)> {
     }
 }
 
-/// A [`MapHooks`] for off-disk tools: decodes each tileset image from its file with the `image` crate
-/// (so absolute or relative paths both work) and uses the default layer/y-sort depth. Caches by
-/// tileset so each sheet decodes once.
+/// A [`MapHooks`] for off-disk tools: loads tileset images from the filesystem.
 #[derive(Default)]
 pub struct Files {
     sheets: HashMap<usize, Handle<Image>>,

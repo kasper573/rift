@@ -1,15 +1,7 @@
-//! `bench [map]` — measures the tiled renderer phase by phase so a change can be compared before and
-//! after. `[map]` is a `.tmx` path or a bare name under `assets/maps/<name>.tmx` (default `island`,
-//! the largest). It reports:
-//!   - **load**: parsing the `.tmx` and its tilesets off disk.
-//!   - **spawn**: turning the map into entities (meshes merged by tileset/depth/animation) + the count.
-//!   - **render fps**: frames rendered in a fixed budget, timed from the first frame so load/spawn are
-//!     excluded, with the loop driving `app.update()` flat out (no window, so no vsync caps the rate).
-//!
-//! Two camera scenarios separate the costs: a *game view* (zoomed, most tiles culled — the per-frame
-//! CPU cost the running game actually pays) and a *whole map* (everything on screen — raw draw cost).
-//!
-//! Headless with a real render device, no window. `WGPU_BACKEND=gl` forces software GL to mirror CI.
+//! `bench [map]` — phase-by-phase timing for the tiled renderer (default map `island`): map load,
+//! entity spawn, and render throughput under two cameras — a zoomed "game view" (most tiles culled) and
+//! a "whole map" (everything drawn). Headless with a real render device; `WGPU_BACKEND=gl` forces
+//! software GL to mirror CI.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -25,8 +17,6 @@ use bevy::window::ExitCondition;
 use bevy_tiled::{Files, MapTile, TILE, TileAnimationPlugin, spawn_map};
 
 const BUDGET: Duration = Duration::from_secs(5);
-// The game draws art at its native size and zooms the camera by this so a slice of the map fills a
-// desktop viewport — replicated here so the "game view" scenario culls and pays per-frame like the game.
 const TILE_SCREEN: f32 = 96.0;
 const SCALE: f32 = TILE_SCREEN / TILE;
 const VIEW_W: u32 = 1280;
@@ -70,11 +60,8 @@ fn main() {
 
     app.finish();
     app.cleanup();
-    // Bring up the render device and the (empty) camera before timing anything tile-related.
     app.update();
 
-    // Spawn phase: build every tile entity. run_system_once flushes the queued commands, so the timing
-    // covers the entity creation itself, not just queueing it.
     let started = Instant::now();
     app.world_mut()
         .run_system_once(spawn_tiles)
@@ -111,9 +98,6 @@ struct Fps {
     max_ms: f64,
 }
 
-/// Drives `app.update()` flat out for [`BUDGET`], timing from the first frame, and reports throughput.
-/// Calls out the first frame (the one-off pipeline compile + initial extract of every tile) and the
-/// worst frame separately, since those one-off stalls — not the average — are what trips a net timeout.
 fn render_fps(app: &mut App) -> Fps {
     let start = Instant::now();
     let mut frames = 0u64;
@@ -190,7 +174,6 @@ fn spawn_tiles(
     );
 }
 
-/// Reframes the camera to show the entire map, so the next scenario draws every tile rather than culling.
 fn aim_camera_at_whole_map(app: &mut App, map_w: u32, map_h: u32) {
     let world = app.world_mut();
     let mut cameras =
