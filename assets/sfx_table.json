@@ -81,6 +81,12 @@
 		"pitch": [0.8, 1.2]
 	},
 	{
+		"id": "step_sand01",
+		"src": "sfx/movement/step_sand01.wav",
+		"volume": [0.8, 1.0],
+		"pitch": [0.8, 1.2]
+	},
+	{
 		"id": "teleport01",
 		"src": "sfx/movement/teleport01.wav",
 		"volume": [0.8, 1.0]
