@@ -40,6 +40,13 @@ pub fn sprite_transform(pos: Pos<Tiles>, z: f32) -> Transform {
     Transform::from_translation(pos.to_screen().extend(z))
 }
 
+/// Snaps a screen-space point to whole device pixels — one is 1/[`present::SCALE`] of an art-pixel.
+/// The camera snaps to this grid, so anything pinned to it (the health bar) must snap the same way or
+/// it shimmers against the camera as the player moves — worst on diagonals, where both axes drift.
+pub fn snap_to_screen(at: Vec2) -> Vec2 {
+    (at * present::SCALE).round() / present::SCALE
+}
+
 pub fn dynamic_z(area_height: f32, base: f32, y: Tiles) -> f32 {
     base + (y + Tiles(1.0)).ratio(Tiles(area_height + 2.0))
 }

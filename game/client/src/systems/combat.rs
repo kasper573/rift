@@ -11,6 +11,7 @@ use world::systems::player::session;
 
 use crate::core::render::present::ScreenTint;
 use crate::core::render::screen::ToScreen;
+use crate::core::render::snap_to_screen;
 
 pub struct CombatPlugin;
 
@@ -70,12 +71,13 @@ fn hidden() -> (Transform, Visibility) {
 
 fn healthbar(world: &mut World) {
     let shown = session::me(world).and_then(|me| {
-        // Whole pixels: avoid floor/ceil alternation on fractional offsets during movement.
+        // Snap to the camera's screen-pixel grid (not whole art-pixels): the camera does the same, so
+        // the bar holds a fixed offset from the player instead of shimmering against it while moving.
         let at = me.get::<Position>()?.pos;
         let vitals = me.get::<Vitals>()?;
         (!vitals.is_dead() && vitals.max > 0.0).then(|| {
             (
-                (at.to_screen() - Vec2::new(0.0, BAR_DROP.0)).round(),
+                snap_to_screen(at.to_screen() - Vec2::new(0.0, BAR_DROP.0)),
                 vitals.fraction(),
             )
         })

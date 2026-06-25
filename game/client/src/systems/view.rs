@@ -15,10 +15,10 @@ use world::systems::player::Owner;
 use world::systems::player::session::MyClient;
 
 use crate::core::audio::Listener;
-use crate::core::render::TILE;
 use crate::core::render::camera::WorldCamera;
 use crate::core::render::present::{SCALE, target_size};
 use crate::core::render::screen::ToScreen;
+use crate::core::render::{TILE, snap_to_screen};
 
 pub struct ViewPlugin;
 
@@ -52,9 +52,9 @@ fn track_player(
         // Snap the camera to whole screen pixels so static tiles never shimmer. At native resolution one
         // screen pixel is 1/SCALE of an art-pixel — far finer than the old whole-art-pixel snap, which
         // is why the world no longer staircases under the camera.
-        let at = center.to_screen();
-        transform.translation.x = (at.x * SCALE).round() / SCALE;
-        transform.translation.y = (at.y * SCALE).round() / SCALE;
+        let at = snap_to_screen(center.to_screen());
+        transform.translation.x = at.x;
+        transform.translation.y = at.y;
     }
 }
 
