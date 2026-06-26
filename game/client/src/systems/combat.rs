@@ -19,7 +19,7 @@ impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_bar).add_systems(
             Update,
-            (healthbar, death_tint).run_if(in_state(crate::GameScene::Playing)),
+            (healthbar, death_tint).run_if(in_state(crate::Scene::Area)),
         );
     }
 }

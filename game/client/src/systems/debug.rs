@@ -8,7 +8,7 @@ use world::systems::movement::Position;
 use world::systems::player::Owner;
 use world::systems::player::session::MyClient;
 
-use crate::GameScene;
+use crate::Scene;
 use crate::core::render::screen::ToScreen;
 
 pub struct DebugPlugin;
@@ -19,9 +19,9 @@ impl Plugin for DebugPlugin {
             .init_resource::<ShowHitboxes>()
             .add_systems(
                 Update,
-                (cycle, draw, toggle_hitboxes, draw_hitboxes).run_if(in_state(GameScene::Playing)),
+                (cycle, draw, toggle_hitboxes, draw_hitboxes).run_if(in_state(Scene::Area)),
             )
-            .add_systems(OnExit(GameScene::Playing), clear_hitboxes);
+            .add_systems(OnExit(Scene::Area), clear_hitboxes);
     }
 }
 

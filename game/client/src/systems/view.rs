@@ -24,10 +24,7 @@ pub struct ViewPlugin;
 
 impl Plugin for ViewPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            track_player.run_if(in_state(crate::GameScene::Playing)),
-        );
+        app.add_systems(Update, track_player.run_if(in_state(crate::Scene::Area)));
     }
 }
 

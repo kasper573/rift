@@ -11,7 +11,7 @@ pub use pickup::PickupGesture;
 pub use walk::WalkGesture;
 
 use super::ActiveTileHighlight;
-use crate::GameScene;
+use crate::Scene;
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
 use enum_dispatch::enum_dispatch;
@@ -62,7 +62,7 @@ impl GestureKind {
 /// Registers the whole gesture system; `input.rs` only wires this into the schedule.
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, setup)
-        .add_systems(Update, update.run_if(in_state(GameScene::Playing)));
+        .add_systems(Update, update.run_if(in_state(Scene::Area)));
 }
 
 /// The active gestures, built once at startup. The systems lift this out of the world to run

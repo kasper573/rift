@@ -13,7 +13,7 @@ use world::core::math::Pos;
 use world::core::tiling::Tiles;
 use world::systems::player::session;
 
-use crate::GameScene;
+use crate::Scene;
 
 thread_local! {
     static PENDING: RefCell<Vec<Pos<Tiles>>> = const { RefCell::new(Vec::new()) };
@@ -24,7 +24,7 @@ pub struct TestingPlugin;
 impl Plugin for TestingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, install_hook)
-            .add_systems(Update, drain.run_if(in_state(GameScene::Playing)));
+            .add_systems(Update, drain.run_if(in_state(Scene::Area)));
     }
 }
 

@@ -30,7 +30,7 @@ impl Plugin for ItemsPlugin {
                     use_sounds,
                     (recv_drops, start_drops, place_drops, animate_drops).chain(),
                 )
-                    .run_if(in_state(crate::GameScene::Playing)),
+                    .run_if(in_state(crate::Scene::Area)),
             );
     }
 }

@@ -1,16 +1,15 @@
-//! The in-game HUD: draggable, dockable panes (a character readout, inventory, equipment, stats, an
-//! always-on active-effects row, and settings) built on the `ui` widget toolkit, their layout
-//! persisted to [`settings`]. Each pane's content lives in its own module ([`character`],
-//! [`inventory`], [`equipment`], [`stats`], [`effects`]); [`death`] overlays the respawn prompt.
+//! The in-game UI: the HUD's draggable, dockable panes (a character readout, inventory, equipment,
+//! stats, an always-on active-effects row, and settings) built on the `ui` widget toolkit, their
+//! layout persisted to [`settings`], plus the [`fps`] readout. Each pane's content lives in its own
+//! module ([`character`], [`inventory`], [`equipment`], [`stats`], [`effects`]); [`death`] overlays
+//! the respawn prompt.
 
 pub mod character;
-pub mod connection;
 pub mod death;
 pub mod effects;
 pub mod equipment;
 pub mod fps;
 pub mod inventory;
-pub mod scenes;
 pub mod settings;
 pub mod stats;
 
@@ -23,12 +22,12 @@ use ui::{
     button_styled, text_colored, widget, window,
 };
 
-use crate::systems::hud::character::CharacterText;
-use crate::systems::hud::effects::EffectsGrid;
-use crate::systems::hud::equipment::EquipmentGrid;
-use crate::systems::hud::inventory::InventoryGrid;
-use crate::systems::hud::settings::{Placement, ScreenPx, ScreenVec, UserSettings};
-use crate::systems::hud::stats::StatsText;
+use crate::systems::ui::character::CharacterText;
+use crate::systems::ui::effects::EffectsGrid;
+use crate::systems::ui::equipment::EquipmentGrid;
+use crate::systems::ui::inventory::InventoryGrid;
+use crate::systems::ui::settings::{Placement, ScreenPx, ScreenVec, UserSettings};
+use crate::systems::ui::stats::StatsText;
 use ui::component;
 
 const WIDGET: ScreenPx = ScreenPx(48.0);
@@ -45,9 +44,9 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Settings>()
             .init_resource::<Open>()
-            .add_systems(OnEnter(crate::GameScene::Playing), spawn_hud)
+            .add_systems(OnEnter(crate::Scene::Area), spawn_hud)
             .add_systems(
-                OnExit(crate::GameScene::Playing),
+                OnExit(crate::Scene::Area),
                 crate::systems::despawn_all::<Hud>,
             )
             .add_systems(
@@ -64,7 +63,7 @@ impl Plugin for HudPlugin {
                     sync_snap_grid,
                     death::sync_death_banner,
                 )
-                    .run_if(in_state(crate::GameScene::Playing)),
+                    .run_if(in_state(crate::Scene::Area)),
             );
     }
 }

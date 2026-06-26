@@ -10,7 +10,7 @@ use world::systems::area::{self, AreaTag};
 use world::systems::player::Owner;
 use world::systems::player::session::{self, MyClient};
 
-use crate::GameScene;
+use crate::Scene;
 use crate::core::render::TILE;
 use crate::core::render::screen::ToScreen;
 
@@ -23,7 +23,7 @@ impl Plugin for InputPlugin {
             .add_systems(Update, touch_as_mouse)
             .add_systems(
                 Update,
-                (respawn_when_dead, update_tile_highlight).run_if(in_state(GameScene::Playing)),
+                (respawn_when_dead, update_tile_highlight).run_if(in_state(Scene::Area)),
             );
     }
 }

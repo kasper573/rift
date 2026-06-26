@@ -1,7 +1,7 @@
 use bevy::math::Vec2;
 use serde::{Deserialize, Serialize};
 
-use crate::systems::hud::Panel;
+use crate::systems::ui::Panel;
 
 const KEY: &str = "rift.user_settings";
 

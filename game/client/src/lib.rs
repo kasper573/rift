@@ -7,13 +7,7 @@ use world::systems::account::Role;
 pub mod core;
 pub mod systems;
 
-#[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
-pub enum GameScene {
-    /// Spectators choose whether to play or watch; players skip straight to [`GameScene::Playing`].
-    #[default]
-    ChooseMode,
-    Playing,
-}
+pub use systems::scene::Scene;
 
 /// Builds and runs the Bevy app: reads the boot params from the platform, builds the session from the
 /// access token, and starts the app. The platform's entry point calls this.
@@ -47,11 +41,6 @@ pub fn boot() {
     }
     app.insert_resource(params)
         .insert_resource(sfx_catalog())
-        .insert_state(if spectator {
-            GameScene::ChooseMode
-        } else {
-            GameScene::Playing
-        })
         .add_plugins((
             ui::UiPlugin,
             core::net::NetPlugin,
@@ -59,8 +48,8 @@ pub fn boot() {
             core::audio::SfxPlugin,
         ))
         .add_plugins((
+            systems::scene::ScenePlugin { spectator },
             systems::actor::ActorPlugin,
-            systems::area::AreaPlugin,
             systems::combat::CombatPlugin,
             systems::item::ItemsPlugin,
             systems::view::ViewPlugin,
@@ -68,10 +57,8 @@ pub fn boot() {
             systems::input::InputPlugin,
             systems::debug::DebugPlugin,
             systems::testing::TestingPlugin,
-            systems::hud::scenes::ScenesPlugin,
-            systems::hud::connection::ConnectionPlugin,
-            systems::hud::HudPlugin,
-            systems::hud::fps::FpsPlugin,
+            systems::ui::HudPlugin,
+            systems::ui::fps::FpsPlugin,
         ));
     ui::theme::set_theme(ui::themes::dark::THEME);
     app.run();

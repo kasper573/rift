@@ -23,7 +23,7 @@ impl Plugin for ActorPlugin {
             .add_observer(attach_sprite)
             .add_systems(
                 Update,
-                (sync_actors, actor_cues).run_if(in_state(crate::GameScene::Playing)),
+                (sync_actors, actor_cues).run_if(in_state(crate::Scene::Area)),
             );
     }
 }

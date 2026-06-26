@@ -56,10 +56,7 @@ impl Plugin for RenderPlugin {
             .init_resource::<present::Viewport>()
             .add_systems(Startup, present::setup)
             .add_systems(Update, (present::match_display, present::fit).chain())
-            .add_systems(
-                Update,
-                present::apply_tint.run_if(in_state(crate::GameScene::Playing)),
-            );
+            .add_systems(Update, present::apply_tint);
     }
 }
 

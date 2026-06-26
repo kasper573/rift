@@ -19,7 +19,7 @@ impl Plugin for AreaPlugin {
             .add_plugins(bevy_tiled::TileAnimationPlugin)
             .add_systems(
                 Update,
-                spawn_area_tiles.run_if(in_state(crate::GameScene::Playing)),
+                spawn_area_tiles.run_if(in_state(super::Scene::Area)),
             );
     }
 }
