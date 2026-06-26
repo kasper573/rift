@@ -4,7 +4,7 @@
 
 use world::core::table::Id;
 use world::core::time::Seconds;
-use world::systems::items::{Inventory, ItemDef, Reservation, ReservedBy, Slot};
+use world::systems::item::{Inventory, ItemDef, Reservation, ReservedBy, Slot};
 use world::systems::player::ClientId;
 
 fn item(name: &str) -> Id<ItemDef> {

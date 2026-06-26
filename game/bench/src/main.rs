@@ -8,7 +8,7 @@ use world::core::math::Pos;
 use world::core::table::Id;
 use world::core::tiling::Tiles;
 use world::systems::area::{self, Area};
-use world::systems::items::Inventory;
+use world::systems::item::Inventory;
 use world::systems::npc::{self, Npc, NpcDef};
 use world::systems::player::{ClientId, Owner, Players, Xp};
 use world::systems::visibility::OwnedBy;

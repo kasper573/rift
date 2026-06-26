@@ -1,55 +1,51 @@
 //! Stats: the single representation of an actor's combat numbers. Each stat is a per-file ECS
-//! component (see [`definitions`]) dispatched by [`StatKind`] (`enum_dispatch`); there is no lumped
-//! base/effective struct. A *scalar* stat stores its base in a component; a *computed* stat derives
-//! its base from the entity. The effective value combat reads is the base plus every active effect's
-//! delta for that stat — summed here, on read, so effects stay immutable sets the stats system owns.
+//! component dispatched by [`StatKind`] (`enum_dispatch`); there is no lumped base/effective struct.
+//! A *scalar* stat stores its base in a component; a *computed* stat derives its base from the entity.
+//! The effective value combat reads is the base plus every active effect's delta for that stat —
+//! summed here, on read, so effects stay immutable sets the stats system owns. Adding a stat is a new
+//! file plus a [`StatKind`] variant; the registry iterates itself.
 
-pub mod definitions;
+mod etc;
+mod health;
 
-use std::collections::HashMap;
+pub use etc::*;
+pub use health::*;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::EntityRef;
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use strum::{EnumIter, IntoEnumIterator};
 
 use crate::systems::effect::{self, EffectContext};
 
-pub use definitions::{
-    AttackDelay, AttackDelayStat, AttackSpeed, AttackSpeedStat, Damage, DamageStat, Health,
-    HealthStat, MaxHealth, MaxHealthStat, MovementSpeed, MovementSpeedStat, Range, RangeStat,
-};
-
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
-    app.replicate::<Health>()
-        .replicate::<MaxHealth>()
-        .replicate::<Damage>()
-        .replicate::<AttackSpeed>()
-        .replicate::<AttackDelay>()
-        .replicate::<Range>()
-        .replicate::<MovementSpeed>();
+    for stat in StatKind::all() {
+        stat.replicate(app);
+    }
 }
 
 /// One stat. Scalar stats back [`base`](Stat::base) with a component and [`set`](Stat::set) it;
-/// computed stats derive `base` from the entity and ignore `set`.
+/// computed stats derive `base` from the entity and ignore `set`/`replicate`.
 #[enum_dispatch]
 pub trait Stat {
-    /// Id equal to the snake_case name used in tables and effect args.
+    /// Id equal to the component name; used in tables and effect args.
     fn name(&self) -> &str;
     fn label(&self) -> &str;
     fn computed(&self) -> bool;
     /// The intrinsic value before effects.
     fn base(&self, entity: EntityRef) -> f32;
-    /// Writes a scalar stat's base; a no-op for computed stats.
+    /// Writes a scalar stat's base.
     fn set(&self, world: &mut World, entity: Entity, value: f32);
+    /// Registers the stat's component for replication.
+    fn replicate(&self, app: &mut App);
 }
 
-/// Every stat. `enum_dispatch` forwards [`Stat`] to the variant; a new stat is a new file plus a
-/// variant here (and a `replicate` line above for a scalar one).
+/// Every stat. `enum_dispatch` forwards [`Stat`] to the variant; `EnumIter` lets the registry iterate
+/// itself, so adding a stat is just a new file plus a variant here.
 #[enum_dispatch(Stat)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
 pub enum StatKind {
     Health(HealthStat),
     MaxHealth(MaxHealthStat),
@@ -61,20 +57,13 @@ pub enum StatKind {
 }
 
 impl StatKind {
-    pub fn all() -> [StatKind; 7] {
-        [
-            HealthStat.into(),
-            MaxHealthStat.into(),
-            DamageStat.into(),
-            AttackSpeedStat.into(),
-            AttackDelayStat.into(),
-            RangeStat.into(),
-            MovementSpeedStat.into(),
-        ]
+    /// Every stat, so callers iterate the set without importing the iteration trait.
+    pub fn all() -> impl Iterator<Item = StatKind> {
+        StatKind::iter()
     }
 
     fn by_name(name: &str) -> Option<StatKind> {
-        StatKind::all().into_iter().find(|stat| stat.name() == name)
+        StatKind::all().find(|stat| stat.name() == name)
     }
 }
 
@@ -91,8 +80,6 @@ impl<'de> Deserialize<'de> for StatKind {
             .ok_or_else(|| serde::de::Error::custom(format!("unknown stat '{name}'")))
     }
 }
-
-// --- StatSet: an immutable set of stat values, summed by the stats system ---
 
 /// A set of stat values: an authored base (every scalar stat) or a delta an effect contributes. The
 /// stats system sums these; effects just return them, so an effect's contribution drops out cleanly
@@ -151,7 +138,6 @@ impl StatSet {
             |entity| {
                 StatSet(
                     StatKind::all()
-                        .into_iter()
                         .filter(|stat| !stat.computed())
                         .map(|stat| (stat, stat.base(entity)))
                         .collect(),
@@ -164,7 +150,7 @@ impl StatSet {
 impl<'de> Deserialize<'de> for StatSet {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use serde::de::Error;
-        let map = HashMap::<StatKind, f32>::deserialize(deserializer)?;
+        let map = std::collections::HashMap::<StatKind, f32>::deserialize(deserializer)?;
         for stat in StatKind::all() {
             if stat.computed() {
                 if map.contains_key(&stat) {
@@ -180,8 +166,6 @@ impl<'de> Deserialize<'de> for StatSet {
         Ok(StatSet(map.into_iter().collect()))
     }
 }
-
-// --- reading effective stats (base + active effect deltas) ---
 
 /// The intrinsic value of `stat` on `entity`, before effects.
 pub fn base(world: &World, entity: Entity, stat: StatKind) -> f32 {
@@ -214,7 +198,6 @@ pub fn effective_all(world: &World, entity: Entity) -> StatSet {
     };
     let mut set = StatSet(
         StatKind::all()
-            .into_iter()
             .map(|stat| (stat, base(world, entity, stat)))
             .collect(),
     );
@@ -224,53 +207,11 @@ pub fn effective_all(world: &World, entity: Entity) -> StatSet {
     set
 }
 
-// --- health: a stat by convention paired with max_health (current HP, mutated directly) ---
-
-pub fn current_health(world: &World, entity: Entity) -> f32 {
-    base(world, entity, HealthStat.into())
-}
-
-pub fn max_health(world: &World, entity: Entity) -> f32 {
-    effective(world, entity, MaxHealthStat.into())
-}
-
-pub fn is_dead(world: &World, entity: Entity) -> bool {
-    world.get::<Health>(entity).is_some_and(|h| h.0 <= 0.0)
-}
-
-pub fn fraction(world: &World, entity: Entity) -> f32 {
-    let max = max_health(world, entity);
-    if max <= 0.0 {
-        0.0
-    } else {
-        (current_health(world, entity) / max).clamp(0.0, 1.0)
-    }
-}
-
-pub fn apply_damage(world: &mut World, entity: Entity, amount: f32) {
-    if let Some(mut health) = world.get_mut::<Health>(entity) {
-        health.0 = (health.0 - amount).max(0.0);
-    }
-}
-
-pub fn heal(world: &mut World, entity: Entity, amount: f32) {
-    let max = max_health(world, entity);
-    if let Some(mut health) = world.get_mut::<Health>(entity) {
-        health.0 = (health.0 + amount).min(max);
-    }
-}
-
-pub fn refill(world: &mut World, entity: Entity) {
-    let max = max_health(world, entity);
-    if let Some(mut health) = world.get_mut::<Health>(entity) {
-        health.0 = max;
-    }
-}
-
-// --- codegen for the scalar stats (component + marker + Stat impl) ---
-
+/// Generates a scalar stat: a value component, a unit marker, and its [`Stat`] impl (`base`/`set` use
+/// the component, `replicate` registers it). The stat's id is the component name. See the per-stat
+/// files in this folder.
 macro_rules! scalar_stat {
-    ($component:ident, $marker:ident, $name:literal, $label:literal) => {
+    ($component:ident, $marker:ident, $label:literal) => {
         #[derive(
             bevy_ecs::component::Component,
             Clone,
@@ -282,12 +223,12 @@ macro_rules! scalar_stat {
         )]
         pub struct $component(pub f32);
 
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
         pub struct $marker;
 
         impl $crate::systems::stat::Stat for $marker {
             fn name(&self) -> &str {
-                $name
+                stringify!($component)
             }
             fn label(&self) -> &str {
                 $label
@@ -305,6 +246,10 @@ macro_rules! scalar_stat {
                 value: f32,
             ) {
                 world.entity_mut(entity).insert($component(value));
+            }
+            fn replicate(&self, app: &mut bevy_app::App) {
+                use bevy_replicon::prelude::*;
+                app.replicate::<$component>();
             }
         }
     };

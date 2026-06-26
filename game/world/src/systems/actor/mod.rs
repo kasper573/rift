@@ -101,7 +101,7 @@ pub fn set_facing(actor: &mut Mut<Actor>, dir: Direction, action: Action) {
 /// tick wins; movement/combat re-assert walk/run/attack afterwards.
 pub fn reset(mut actors: Query<(&mut Actor, Option<&Health>)>) {
     for (mut actor, health) in &mut actors {
-        let dead = health.is_some_and(|health| health.0 <= 0.0);
+        let dead = health.is_some_and(Health::depleted);
         set_action(&mut actor, if dead { Action::Dead } else { Action::Idle });
     }
 }

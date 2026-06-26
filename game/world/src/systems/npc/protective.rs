@@ -4,10 +4,10 @@ use super::{Ai, Hunt};
 use crate::core::math::Rng;
 
 /// Defends its spawn group: chases anyone attacking a fellow group member.
-#[derive(Clone, Copy)]
-pub struct Protective;
+#[derive(Clone, Copy, Default)]
+pub struct ProtectiveAi;
 
-impl Ai for Protective {
+impl Ai for ProtectiveAi {
     fn name(&self) -> &str {
         "protective"
     }

@@ -15,7 +15,7 @@ use crate::core::math::Pos;
 use crate::core::table::Id;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::systems::area::{AreaDef, AreaTag};
-use crate::systems::items::Inventory;
+use crate::systems::item::Inventory;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::{ClientId, Players};
 use crate::systems::spectate::{Spectate, Spectators};

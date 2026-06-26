@@ -6,10 +6,10 @@ use crate::core::math::Rng;
 /// Never attacks; wanders only sometimes, so a field of them isn't constantly milling.
 const WANDER_CHANCE: f32 = 0.4;
 
-#[derive(Clone, Copy)]
-pub struct Pacifist;
+#[derive(Clone, Copy, Default)]
+pub struct PacifistAi;
 
-impl Ai for Pacifist {
+impl Ai for PacifistAi {
     fn name(&self) -> &str {
         "pacifist"
     }

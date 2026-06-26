@@ -1,26 +1,30 @@
-//! Effects: the source-code-driven effect "table". Each effect is one struct per file in
-//! [`definitions`], dispatched by `enum_dispatch` — there is no `effect_table.json` because effects
-//! are code. Assets never embed an effect, only an [`EffectCommand`] (an effect's struct-name id plus
-//! its parameters), validated against the chosen effect when the table loads. An effect just
-//! `compute`s an immutable [`StatSet`](crate::systems::stat::StatSet); the stats system sums it.
-//! Effects are condition-free; each *condition* (equipped, carried, level, timed, an npc's chase) is
-//! a [`Source`] its own feature registers, so the effect module names none of them.
+//! Effects: the source-code-driven effect "table". Each effect is one struct per file here
+//! implementing the [`Effect`] trait, dispatched by `enum_dispatch` — there is no
+//! `effect_table.json` because effects are code. Assets never embed an effect, only an
+//! [`EffectCommand`] (an effect's struct-name id plus its parameters), validated against the chosen
+//! effect when the table loads. An effect just `compute`s an immutable
+//! [`StatSet`](crate::systems::stat::StatSet); the stats system sums it. Effects are condition-free;
+//! each *condition* (equipped, carried, level, timed, an npc's chase) is a [`Source`] its own feature
+//! registers, so the effect module names none of them.
 
-pub mod definitions;
+mod chasing;
+mod stat_modifier;
+
+pub use chasing::Chasing;
+pub use stat_modifier::StatModifier;
 
 use std::sync::OnceLock;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_time::Time;
+use enum_dispatch::enum_dispatch;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
+use strum::{EnumIter, IntoEnumIterator};
 
 use crate::core::time::Seconds;
 use crate::systems::stat::StatSet;
-
-pub use definitions::{Effect, EffectCategory, EffectKind};
-
-use definitions::Definition;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -54,9 +58,6 @@ impl EffectCommand {
     pub fn icon(&self) -> Option<&'static str> {
         self.def().icon()
     }
-    pub fn category(&self) -> EffectCategory {
-        self.def().category()
-    }
     pub fn compute(&self, ctx: &EffectContext) -> StatSet {
         self.def().compute(ctx, &self.args)
     }
@@ -70,14 +71,14 @@ impl EffectCommand {
 
 /// Builds a command for a known effect, for systems that raise effects in code (an npc's chase)
 /// rather than from a table.
-pub fn command<E: Effect>(effect: &E, args: E::Args) -> EffectCommand {
+pub fn command(effect: &impl Effect, args: &impl Serialize) -> EffectCommand {
     EffectCommand {
-        effect: effect_id(Effect::name(effect)).expect("a registered effect"),
-        args: postcard::to_allocvec(&args).expect("args serialize"),
+        effect: effect_id(effect.name()).expect("a registered effect"),
+        args: postcard::to_allocvec(args).expect("args serialize"),
     }
 }
 
-/// Table-field reader: turns `[{ "StatModifier": { "stat": "damage", "amount": 3 } }]` into validated
+/// Table-field reader: turns `[{ "StatModifier": { "stat": "Damage", "amount": 3 } }]` into validated
 /// commands — the single key is the effect, the value its args — panicking through the loader if an
 /// effect is unknown or its args don't fit it.
 pub fn commands<'de, D: Deserializer<'de>>(
@@ -104,20 +105,20 @@ pub fn commands<'de, D: Deserializer<'de>>(
         .collect()
 }
 
-fn effect_id(name: &str) -> Option<EffectId> {
-    registry()
-        .iter()
-        .position(|effect| effect.name() == name)
-        .map(|index| EffectId(index as u32))
-}
-
-fn registry() -> &'static [EffectKind] {
-    static REGISTRY: OnceLock<Vec<EffectKind>> = OnceLock::new();
-    REGISTRY.get_or_init(|| {
-        let effects = EffectKind::all();
-        crate::core::table::unique_ids(effects.iter().map(|effect| effect.name()), "effects");
-        effects
-    })
+/// The interface every effect file implements, dispatched by [`EffectKind`]. Args ride as json at
+/// table load and postcard bytes at runtime; an effect validates+stores them with [`encode_args`] and
+/// reads them back with [`decode`]. It only reads `ctx`; applying the stats is the stats system's job.
+#[enum_dispatch]
+pub trait Effect {
+    fn name(&self) -> &str;
+    fn icon(&self) -> Option<&str>;
+    fn encode(&self, args: serde_json::Value) -> Result<Vec<u8>, String>;
+    fn compute(&self, ctx: &EffectContext, args: &[u8]) -> StatSet;
+    /// Tooltip text; the default reads the computed stat delta, which suits any plain modifier. An
+    /// effect with a richer story overrides it.
+    fn describe(&self, ctx: &EffectContext, args: &[u8]) -> String {
+        self.compute(ctx, args).describe()
+    }
 }
 
 /// Timed effect instances on an actor, each lasting until its deadline. Any system can add to this;
@@ -156,19 +157,6 @@ pub fn active_effects(world: &World, entity: Entity) -> Vec<EffectCommand> {
         .collect()
 }
 
-fn timed(world: &World, entity: Entity) -> Vec<EffectCommand> {
-    world
-        .get::<TimedEffects>(entity)
-        .map(|timed| {
-            timed
-                .0
-                .iter()
-                .map(|effect| effect.command.clone())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// Drops finished timed effects; effective stats are read fresh, so nothing else need happen.
 pub fn expire(world: &mut World) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());
@@ -183,4 +171,56 @@ pub fn expire(world: &mut World) {
             timed.0.retain(|effect| effect.until > now);
         }
     }
+}
+
+/// Every effect, one variant per file. `enum_dispatch` forwards [`Effect`] to the variant; `EnumIter`
+/// lets [`registry`] build itself, so adding an effect is just a new file plus a variant here.
+#[enum_dispatch(Effect)]
+#[derive(EnumIter)]
+enum EffectKind {
+    StatModifier(StatModifier),
+    Chasing(Chasing),
+}
+
+/// Validates `args` (json from a table) against `A` and re-encodes them as the postcard bytes an
+/// [`EffectCommand`] stores. An effect's `encode` is a one-liner naming its args type.
+fn encode_args<A: Serialize + DeserializeOwned>(
+    args: serde_json::Value,
+) -> Result<Vec<u8>, String> {
+    let args: A = serde_json::from_value(args).map_err(|error| error.to_string())?;
+    postcard::to_allocvec(&args).map_err(|error| error.to_string())
+}
+
+/// Reads back args an effect stored with [`encode_args`] or [`command`].
+fn decode<A: DeserializeOwned>(bytes: &[u8]) -> A {
+    postcard::from_bytes(bytes).expect("args were validated and encoded at load")
+}
+
+fn effect_id(name: &str) -> Option<EffectId> {
+    registry()
+        .iter()
+        .position(|effect| effect.name() == name)
+        .map(|index| EffectId(index as u32))
+}
+
+fn registry() -> &'static [EffectKind] {
+    static REGISTRY: OnceLock<Vec<EffectKind>> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let effects: Vec<EffectKind> = EffectKind::iter().collect();
+        crate::core::table::unique_ids(effects.iter().map(|effect| effect.name()), "effects");
+        effects
+    })
+}
+
+fn timed(world: &World, entity: Entity) -> Vec<EffectCommand> {
+    world
+        .get::<TimedEffects>(entity)
+        .map(|timed| {
+            timed
+                .0
+                .iter()
+                .map(|effect| effect.command.clone())
+                .collect()
+        })
+        .unwrap_or_default()
 }

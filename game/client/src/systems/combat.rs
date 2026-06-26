@@ -1,5 +1,5 @@
 //! The local player's combat status, shown over the world: a floating health bar and a full-screen
-//! death tint. Reads the player's vitals; draws via the generic render pipeline and its screen-tint
+//! death tint. Reads the player's health; draws via the generic render pipeline and its screen-tint
 //! hook in `crate::core::render`.
 
 use bevy::prelude::*;
@@ -71,8 +71,6 @@ fn hidden() -> (Transform, Visibility) {
 
 fn healthbar(world: &mut World) {
     let shown = session::me(world)
-        // Snap to the camera's screen-pixel grid (not whole art-pixels): the camera does the same, so
-        // the bar holds a fixed offset from the player instead of shimmering against it while moving.
         .and_then(|me| Some((me.id(), me.get::<Position>()?.pos)))
         .and_then(|(entity, at)| {
             (!stat::is_dead(world, entity) && stat::max_health(world, entity) > 0.0).then(|| {

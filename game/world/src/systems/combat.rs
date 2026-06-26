@@ -38,10 +38,6 @@ pub struct AttackRequest {
     pub target: Entity,
 }
 
-pub fn is_dead(world: &World, entity: Entity) -> bool {
-    stat::is_dead(world, entity)
-}
-
 /// The living enemy (not the local player) whose hitbox covers `point` — the client's attack target.
 pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
     let me = session::me(world).map(|entity| entity.id());
@@ -124,7 +120,10 @@ pub fn request(world: &mut World) {
             continue;
         };
         let target = request.message.target;
-        if is_dead(world, entity) || world.get_entity(target).is_err() || is_dead(world, target) {
+        if stat::is_dead(world, entity)
+            || world.get_entity(target).is_err()
+            || stat::is_dead(world, target)
+        {
             continue;
         }
         world.entity_mut(entity).insert(AttackTarget { target });
@@ -147,7 +146,7 @@ fn engage(world: &mut World, time: Seconds) {
         .iter(world)
         .collect();
     for id in ids {
-        if is_dead(world, id) {
+        if stat::is_dead(world, id) {
             forget(world, id);
             continue;
         }
@@ -159,7 +158,7 @@ fn engage(world: &mut World, time: Seconds) {
         };
         let same_area = world.get::<AreaTag>(id).map(|t| t.area)
             == world.get::<AreaTag>(target).map(|t| t.area);
-        if world.get_entity(target).is_err() || is_dead(world, target) || !same_area {
+        if world.get_entity(target).is_err() || stat::is_dead(world, target) || !same_area {
             forget(world, id);
             continue;
         }
@@ -206,7 +205,7 @@ fn progress_swings(world: &mut World, time: Seconds, deaths: &mut Vec<(Entity, E
         .iter(world)
         .collect();
     for id in ids {
-        if is_dead(world, id)
+        if stat::is_dead(world, id)
             || world.get::<MoveTarget>(id).is_some()
             || world.get::<Path>(id).is_some()
         {
@@ -245,14 +244,14 @@ fn strike(
 ) {
     let same_area = world.get::<AreaTag>(attacker).map(|t| t.area)
         == world.get::<AreaTag>(target).map(|t| t.area);
-    if world.get_entity(target).is_err() || is_dead(world, target) || !same_area {
+    if world.get_entity(target).is_err() || stat::is_dead(world, target) || !same_area {
         return;
     }
     let damage = stat::effective(world, attacker, DamageStat.into());
     add_attacker(world, target, attacker);
-    crate::systems::items::reserve(world, target, attacker, time);
+    crate::systems::item::reserve(world, target, attacker, time);
     stat::apply_damage(world, target, damage);
-    if is_dead(world, target) {
+    if stat::is_dead(world, target) {
         if let Some(mut actor) = world.get_mut::<Actor>(target) {
             set_action(&mut actor, Action::Dead);
         }

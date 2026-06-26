@@ -5,10 +5,10 @@ use crate::core::math::Rng;
 use crate::systems::combat::Attackers;
 
 /// Peaceful until hit; then chases whoever has attacked it.
-#[derive(Clone, Copy)]
-pub struct Defensive;
+#[derive(Clone, Copy, Default)]
+pub struct DefensiveAi;
 
-impl Ai for Defensive {
+impl Ai for DefensiveAi {
     fn name(&self) -> &str {
         "defensive"
     }

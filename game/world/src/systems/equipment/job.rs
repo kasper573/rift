@@ -7,12 +7,12 @@ use crate::systems::job::{self, JobDef};
 
 /// Requires the player to be of a particular job.
 #[derive(Deserialize, Clone, Debug)]
-pub struct Job {
+pub struct JobRequirement {
     #[serde(deserialize_with = "Id::<JobDef>::deserialize_named")]
     pub job: Id<JobDef>,
 }
 
-impl Requirement for Job {
+impl Requirement for JobRequirement {
     fn met(&self, world: &World, player: Entity) -> bool {
         world
             .get::<job::Job>(player)

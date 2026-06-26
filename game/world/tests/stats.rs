@@ -8,9 +8,10 @@ use std::collections::BTreeMap;
 use bevy_ecs::world::World;
 use world::core::table::Id;
 use world::systems::combat::AttackTarget;
-use world::systems::equipment::requirements::{self, RequirementKind};
-use world::systems::equipment::{EquipSlot, Equipment};
-use world::systems::items::ItemDef;
+use world::systems::equipment::{
+    self, EquipSlot, Equipment, JobRequirement, LevelRequirement, RequirementKind, StatRequirement,
+};
+use world::systems::item::ItemDef;
 use world::systems::job::{self, Job};
 use world::systems::npc::Npc;
 use world::systems::player::{self, Xp};
@@ -89,22 +90,22 @@ fn requirements_gate_on_job_level_and_stat() {
         .id();
     player::player_stats().apply(world, player);
 
-    let level = |level| RequirementKind::Level(requirements::Level { level });
+    let level = |level| RequirementKind::Level(LevelRequirement { level });
     let damage_at_least = |min| {
-        RequirementKind::Stat(requirements::Stat {
+        RequirementKind::Stat(StatRequirement {
             stat: DamageStat.into(),
             min,
         })
     };
-    let job = RequirementKind::Job(requirements::Job {
+    let job = RequirementKind::Job(JobRequirement {
         job: job::default_job(),
     });
 
-    assert!(requirements::met(world, player, &[level(2)]));
-    assert!(!requirements::met(world, player, &[level(3)]));
-    assert!(requirements::met(world, player, &[damage_at_least(9.0)]));
-    assert!(!requirements::met(world, player, &[damage_at_least(10.0)]));
-    assert!(requirements::met(world, player, &[job]));
+    assert!(equipment::met(world, player, &[level(2)]));
+    assert!(!equipment::met(world, player, &[level(3)]));
+    assert!(equipment::met(world, player, &[damage_at_least(9.0)]));
+    assert!(!equipment::met(world, player, &[damage_at_least(10.0)]));
+    assert!(equipment::met(world, player, &[job]));
 }
 
 #[test]

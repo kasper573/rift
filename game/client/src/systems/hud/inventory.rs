@@ -6,7 +6,7 @@
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::{Align, Side, text_colored, tooltip, tooltip_content};
-use world::systems::items::{INVENTORY_MAX, Inventory};
+use world::systems::item::{INVENTORY_MAX, Inventory};
 use world::systems::player::session;
 
 use super::{SLOT_BG, SLOT_BORDER, reconcile_children, slot_node, tooltip_label};
@@ -17,7 +17,6 @@ pub(super) struct InventoryGrid;
 
 #[derive(Component, Default, Clone)]
 struct Cell {
-    kind: u64,
     slot: u32,
 }
 
@@ -99,7 +98,7 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
         BackgroundColor({SLOT_BG})
         component(BorderColor::all(SLOT_BORDER))
         {tooltip(false)}
-        Cell { kind: {filled.kind}, slot: {slot} }
+        Cell { slot: {slot} }
         on(|click: On<Pointer<Click>>, cells: Query<&Cell>, keys: Res<ButtonInput<KeyCode>>, mut commands: Commands| {
             if let Ok(cell) = cells.get(click.entity) {
                 let slot = cell.slot;

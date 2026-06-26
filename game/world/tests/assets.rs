@@ -5,6 +5,6 @@
 fn loads_embedded_content() {
     assert!(!world::systems::actor::models().is_empty());
     assert!(!world::systems::area::areas().is_empty());
-    assert!(!world::systems::items::items().is_empty());
+    assert!(!world::systems::item::items().is_empty());
     assert!(!world::systems::sfx::sfx_table().is_empty());
 }

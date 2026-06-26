@@ -7,7 +7,7 @@ use world::core::time::Seconds;
 use world::systems::effect::{EffectCommand, TimedEffect, TimedEffects};
 
 fn buff_command() -> EffectCommand {
-    world::systems::items::items()
+    world::systems::item::items()
         .iter()
         .find(|item| item.id.as_str() == "greater_health_potion")
         .expect("the buff potion exists")
@@ -41,7 +41,7 @@ fn equipment_round_trips_through_postcard() {
     use std::collections::BTreeMap;
     use world::core::table::Id;
     use world::systems::equipment::{EquipSlot, Equipment};
-    use world::systems::items::ItemDef;
+    use world::systems::item::ItemDef;
 
     let sword = Id::<ItemDef>::by_name("rusty_sword").expect("the sword exists");
     let equipment = Equipment {

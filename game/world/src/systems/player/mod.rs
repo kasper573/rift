@@ -17,10 +17,9 @@ use crate::systems::Character;
 use crate::systems::account::identity::Identity;
 use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
 use crate::systems::area::{self, AreaDef, AreaTag};
-use crate::systems::combat::is_dead;
 use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
-use crate::systems::items::Inventory;
+use crate::systems::item::Inventory;
 use crate::systems::job::{self, Job};
 use crate::systems::movement::{Position, forget};
 use crate::systems::spectate::Spectators;
@@ -268,7 +267,7 @@ pub fn respawn(world: &mut World) {
         let Some(entity) = sender_player(world, request.client_id) else {
             continue;
         };
-        if !is_dead(world, entity) {
+        if !stat::is_dead(world, entity) {
             continue;
         }
         stat::refill(world, entity);

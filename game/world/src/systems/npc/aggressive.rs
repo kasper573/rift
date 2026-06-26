@@ -4,10 +4,10 @@ use super::{Ai, Hunt};
 use crate::core::math::Rng;
 
 /// Chases the nearest player on sight.
-#[derive(Clone, Copy)]
-pub struct Aggressive;
+#[derive(Clone, Copy, Default)]
+pub struct AggressiveAi;
 
-impl Ai for Aggressive {
+impl Ai for AggressiveAi {
     fn name(&self) -> &str {
         "aggressive"
     }

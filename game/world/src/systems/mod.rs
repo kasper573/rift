@@ -10,7 +10,7 @@ pub mod area;
 pub mod combat;
 pub mod effect;
 pub mod equipment;
-pub mod items;
+pub mod item;
 pub mod job;
 pub mod movement;
 pub mod npc;
@@ -41,7 +41,7 @@ pub fn protocol(app: &mut App) {
     stat::register(app);
     effect::register(app);
     equipment::register(app);
-    items::register(app);
+    item::register(app);
     job::register(app);
     movement::register(app);
     npc::register(app);
@@ -70,7 +70,7 @@ pub struct Character {
 pub fn validate() {
     actor::models();
     area::areas();
-    items::items();
+    item::items();
     job::defs();
     npc::defs();
     npc::spawns();
@@ -117,9 +117,9 @@ pub fn server_app(area: Id<AreaDef>) -> App {
                     movement::move_request,
                     movement::move_to_portal,
                     combat::request,
-                    items::use_item,
-                    items::drop_item,
-                    items::pickup_request,
+                    item::use_item,
+                    item::drop_item,
+                    item::pickup_request,
                     equipment::unequip,
                     effect::expire,
                     combat::combat,
@@ -128,8 +128,8 @@ pub fn server_app(area: Id<AreaDef>) -> App {
                 (
                     rewards::grant,
                     movement::advance,
-                    items::pickups,
-                    items::expire_drops,
+                    item::pickups,
+                    item::expire_drops,
                     player::join,
                     player::respawn,
                     spectate::requests,

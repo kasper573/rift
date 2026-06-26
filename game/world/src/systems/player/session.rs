@@ -11,7 +11,7 @@ use crate::core::tiling::Tiles;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::combat::AttackRequest;
 use crate::systems::equipment::{EquipSlot, UnequipRequest};
-use crate::systems::items::{DropItemRequest, PickupRequest, UseItemRequest};
+use crate::systems::item::{DropItemRequest, PickupRequest, UseItemRequest};
 use crate::systems::movement::{MoveRequest, MoveToPortal};
 use crate::systems::spectate::SpectateRequest;
 
@@ -48,7 +48,7 @@ pub fn me(world: &World) -> Option<EntityRef<'_>> {
 }
 
 pub fn is_dead(world: &World) -> bool {
-    me(world).is_some_and(|entity| crate::systems::combat::is_dead(world, entity.id()))
+    me(world).is_some_and(|entity| crate::systems::stat::is_dead(world, entity.id()))
 }
 
 pub fn join(world: &mut World) {

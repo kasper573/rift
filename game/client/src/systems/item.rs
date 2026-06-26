@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use world::core::math::Pos;
 use world::core::tiling::Tiles;
 use world::systems::area::{self, AreaTag};
-use world::systems::items::{DroppedItem, ItemConsumed, ItemsDropped};
+use world::systems::item::{DroppedItem, ItemConsumed, ItemsDropped};
 use world::systems::movement::Position;
 
 use crate::core::audio::PlaySfx;

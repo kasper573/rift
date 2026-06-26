@@ -17,7 +17,7 @@ use crate::core::tiling::{Cell, CellPos, TilePos, TilesPerSec};
 use crate::core::time::Seconds;
 use crate::systems::actor::{Action, Actor, set_facing};
 use crate::systems::area::{self, AreaTag};
-use crate::systems::combat::{AttackTarget, is_dead};
+use crate::systems::combat::AttackTarget;
 use crate::systems::player::sender_player;
 use crate::systems::stat::{self, MovementSpeedStat};
 use bevy_ecs::message::Messages;
@@ -128,7 +128,7 @@ fn retarget(
     pos: Pos<Tiles>,
 ) -> Option<Entity> {
     let entity = sender_player(world, sender)?;
-    if is_dead(world, entity) {
+    if stat::is_dead(world, entity) {
         return None;
     }
     goto(world, entity, pos);
@@ -216,7 +216,7 @@ pub fn advance(world: &mut World) {
         .iter(world)
         .collect();
     for id in movers {
-        if world.get_entity(id).is_err() || is_dead(world, id) {
+        if world.get_entity(id).is_err() || stat::is_dead(world, id) {
             if world.get_entity(id).is_ok() {
                 world.entity_mut(id).remove::<(MoveTarget, Path)>();
             }

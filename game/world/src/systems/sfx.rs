@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 use crate::core::{assets, table};
-use crate::systems::{actor, area, items};
+use crate::systems::{actor, area, item};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
 pub struct SfxId(pub String);
@@ -116,7 +116,7 @@ pub fn sfx_table() -> &'static [SfxDef] {
             }
         }
 
-        for item in items::items() {
+        for item in item::items() {
             for id in [&item.sfx.on_use, &item.sfx.drop].into_iter().flatten() {
                 if !defs.iter().any(|def| def.id == *id) {
                     panic!(

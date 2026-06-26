@@ -34,8 +34,10 @@ edition = "2024"
 [workspace.dependencies]
 askama = "0.14"
 axum-prometheus = "0.10"
-# Zero-cost static dispatch over a closed set of trait impls (effect definitions/impacts, client gestures).
+# Zero-cost static dispatch over a closed set of trait impls — the variant-set enums across the game crates.
 enum_dispatch = "0.3"
+# Derives iteration over a variant set's enum so its registry needs no hand-maintained list.
+strum = { version = "0.27", features = ["derive"] }
 # Cross-platform termination handling (SIGTERM/SIGHUP on Unix, console + shutdown events on Windows).
 ctrlc = { version = "3", features = ["termination"] }
 # Continuous profiling agent that samples the process with pprof-rs and pushes to Pyroscope. Default

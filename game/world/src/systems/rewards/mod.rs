@@ -5,8 +5,8 @@
 mod item;
 mod xp;
 
-pub use item::Item;
-pub use xp::Xp;
+pub use item::ItemGrant;
+pub use xp::XpGrant;
 
 use std::sync::OnceLock;
 
@@ -20,7 +20,7 @@ use crate::core::math::Rng;
 use crate::core::table::{self, Id};
 use crate::core::time::Seconds;
 use crate::systems::combat::Died;
-use crate::systems::items::{ItemDef, Reservation, ReservedBy, scatter_drop};
+use crate::systems::item::{ItemDef, Reservation, ReservedBy, scatter_drop};
 use crate::systems::npc::{GameRng, Npc, NpcDef};
 use crate::systems::player::Players;
 
@@ -53,8 +53,8 @@ pub trait Grant {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RewardKind {
-    Xp(Xp),
-    Item(Item),
+    Xp(XpGrant),
+    Item(ItemGrant),
 }
 
 #[derive(Clone, Copy)]
@@ -82,7 +82,7 @@ pub fn rewards_for(npc: Id<NpcDef>) -> impl Iterator<Item = &'static Reward> {
 }
 
 /// Loot goes to the player who reserved the kill — usually the killer, but the reservation (set on
-/// first attack, see [`crate::systems::items::reserve`]) makes it the player who engaged it, not
+/// first attack, see [`crate::systems::item::reserve`]) makes it the player who engaged it, not
 /// whoever lands the last hit. Each reward grants itself; items scatter onto the map for pickup.
 pub fn grant(world: &mut World) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());

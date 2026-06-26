@@ -6,11 +6,11 @@ use crate::systems::job;
 
 /// Requires the player to have reached a job level.
 #[derive(Deserialize, Clone, Debug)]
-pub struct Level {
+pub struct LevelRequirement {
     pub level: u32,
 }
 
-impl Requirement for Level {
+impl Requirement for LevelRequirement {
     fn met(&self, world: &World, player: Entity) -> bool {
         job::level(world, player) >= self.level
     }

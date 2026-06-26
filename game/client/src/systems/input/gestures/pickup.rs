@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::window::CursorIcon;
 use world::core::math::Pos;
 use world::core::tiling::{TilePos, Tiles};
-use world::systems::items::{DroppedItem, Reservation, ReservedBy};
+use world::systems::item::{DroppedItem, Reservation, ReservedBy};
 use world::systems::movement::Position;
 use world::systems::player::session;
 

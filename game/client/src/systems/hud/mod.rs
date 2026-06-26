@@ -1,6 +1,7 @@
-//! The in-game HUD: draggable, dockable panes (a character readout, inventory, and settings) built on
-//! the `ui` widget toolkit, their layout persisted to [`settings`]. Each pane's content lives in its
-//! own module ([`character`], [`inventory`]); [`death`] overlays the respawn prompt.
+//! The in-game HUD: draggable, dockable panes (a character readout, inventory, equipment, stats, an
+//! always-on active-effects row, and settings) built on the `ui` widget toolkit, their layout
+//! persisted to [`settings`]. Each pane's content lives in its own module ([`character`],
+//! [`inventory`], [`equipment`], [`stats`], [`effects`]); [`death`] overlays the respawn prompt.
 
 pub mod character;
 pub mod connection;

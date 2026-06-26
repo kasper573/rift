@@ -9,7 +9,7 @@ use crate::core::tiling::Tiles;
 use crate::systems::actor::Name;
 use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
-use crate::systems::items::Inventory;
+use crate::systems::item::Inventory;
 use crate::systems::job::Job;
 use crate::systems::player::{ClientId, Owner, Xp};
 use crate::systems::stat::StatSet;

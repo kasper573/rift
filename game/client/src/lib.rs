@@ -62,7 +62,7 @@ pub fn boot() {
             systems::actor::ActorPlugin,
             systems::area::AreaPlugin,
             systems::combat::CombatPlugin,
-            systems::items::ItemsPlugin,
+            systems::item::ItemsPlugin,
             systems::view::ViewPlugin,
             systems::session::SessionPlugin,
             systems::input::InputPlugin,

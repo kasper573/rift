@@ -6,7 +6,7 @@ use bevy::scene::EntityScene;
 use ui::{Align, Side, tooltip, tooltip_content};
 use world::core::table::Id;
 use world::systems::equipment::{EquipSlot, Equipment};
-use world::systems::items::ItemDef;
+use world::systems::item::ItemDef;
 use world::systems::player::session;
 
 use super::{SLOT_BG, SLOT_BORDER, reconcile_children, slot_node, tooltip_label};

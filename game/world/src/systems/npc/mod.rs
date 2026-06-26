@@ -1,14 +1,23 @@
-pub mod ai;
+mod aggressive;
+mod defensive;
+mod pacifist;
+mod protective;
+
+pub use aggressive::AggressiveAi;
+pub use defensive::DefensiveAi;
+pub use pacifist::PacifistAi;
+pub use protective::ProtectiveAi;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use ai::{Ai, AiKind, Hunt};
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::Replicated;
 use bevy_time::Time;
-use serde::Deserialize;
+use enum_dispatch::enum_dispatch;
+use serde::{Deserialize, Deserializer};
+use strum::{EnumIter, IntoEnumIterator};
 
 use crate::core::math::{Direction, Pos, Rng};
 use crate::core::table;
@@ -18,10 +27,10 @@ use crate::core::time::{PlaybackRate, Seconds};
 use crate::systems::Character;
 use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
 use crate::systems::area::{self, AreaDef, AreaTag};
-use crate::systems::combat::{AttackTarget, Attackers, is_dead};
-use crate::systems::effect::definitions::Chasing;
+use crate::systems::combat::{AttackTarget, Attackers};
+use crate::systems::effect::Chasing;
 use crate::systems::effect::{self, EffectCommand, TimedEffects};
-use crate::systems::items::Reservation;
+use crate::systems::item::Reservation;
 use crate::systems::movement::{MoveTarget, Path, Position, forget, position};
 use crate::systems::player::Players;
 use crate::systems::stat::{self, AttackSpeedStat, StatSet};
@@ -41,7 +50,7 @@ pub fn register(app: &mut App) {
 pub fn chase(world: &World, entity: Entity) -> Vec<EffectCommand> {
     if world.get::<Npc>(entity).is_some() && world.get::<AttackTarget>(entity).is_some() {
         static CHASE: OnceLock<EffectCommand> = OnceLock::new();
-        vec![CHASE.get_or_init(|| effect::command(&Chasing, ())).clone()]
+        vec![CHASE.get_or_init(|| effect::command(&Chasing, &())).clone()]
     } else {
         Vec::new()
     }
@@ -182,6 +191,76 @@ fn character(def: &NpcDef, at: Pos<Tiles>, area: Id<AreaDef>) -> Character {
     }
 }
 
+/// An npc aggro/wander strategy: one file per kind implementing this, dispatched by [`AiKind`].
+/// An [`NpcDef`] names its strategy; adding one is a new file plus a variant — `run_ai` matches none.
+#[enum_dispatch]
+pub trait Ai {
+    /// The id this strategy is named by in `npc_table.json`.
+    fn name(&self) -> &str;
+    /// Whether the npc wanders when it has nothing to chase.
+    fn wanders(&self, rng: &mut Rng) -> bool;
+    /// The entity to engage, if any.
+    fn target(&self, hunt: &Hunt) -> Option<Entity>;
+}
+
+/// `enum_dispatch` forwards [`Ai`] to the variant; `EnumIter` lets the by-name [`Deserialize`] map a
+/// table string to its variant, so adding a strategy is just a new file plus a variant here.
+#[enum_dispatch(Ai)]
+#[derive(Clone, Copy, EnumIter)]
+pub enum AiKind {
+    Pacifist(PacifistAi),
+    Defensive(DefensiveAi),
+    Aggressive(AggressiveAi),
+    Protective(ProtectiveAi),
+}
+
+impl<'de> Deserialize<'de> for AiKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        AiKind::iter()
+            .find(|kind| kind.name() == name)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown ai '{name}'")))
+    }
+}
+
+/// What an [`Ai`] selects a target from: the npc, its surroundings, and the candidate lists.
+pub struct Hunt<'a> {
+    pub world: &'a World,
+    pub players: &'a [Entity],
+    pub by_group: &'a HashMap<u32, Vec<Entity>>,
+    pub id: Entity,
+    pub group: u32,
+    pub at: Pos<Tiles>,
+    pub area: Id<AreaDef>,
+    pub aggro: Tiles,
+}
+
+impl Hunt<'_> {
+    /// The nearest accepted, living, same-area candidate within aggro range.
+    pub fn nearest(
+        &self,
+        candidates: &[Entity],
+        accept: impl Fn(Entity) -> bool,
+    ) -> Option<Entity> {
+        let mut best: Option<(Entity, Tiles)> = None;
+        for &candidate in candidates {
+            if stat::is_dead(self.world, candidate)
+                || self.world.get::<AreaTag>(candidate).map(|t| t.area) != Some(self.area)
+                || !accept(candidate)
+            {
+                continue;
+            }
+            if let Some(at) = position(self.world, candidate) {
+                let distance = self.at.distance(at);
+                if distance <= self.aggro && best.is_none_or(|(_, best)| distance < best) {
+                    best = Some((candidate, distance));
+                }
+            }
+        }
+        best.map(|(entity, _)| entity)
+    }
+}
+
 pub fn run_ai(world: &mut World) {
     let players: Vec<Entity> = world.resource::<Players>().0.values().copied().collect();
     let mut rng = world.resource::<GameRng>().0;
@@ -191,7 +270,7 @@ pub fn run_ai(world: &mut World) {
         .iter(world)
         .collect();
     for id in ids {
-        if is_dead(world, id) {
+        if stat::is_dead(world, id) {
             forget(world, id);
             continue;
         }
@@ -264,7 +343,7 @@ fn in_aggro(
     area: Id<AreaDef>,
     aggro: Tiles,
 ) -> bool {
-    !is_dead(world, target)
+    !stat::is_dead(world, target)
         && world.get::<AreaTag>(target).map(|t| t.area) == Some(area)
         && position(world, target).is_some_and(|p| at.distance(p) <= aggro)
 }
@@ -277,7 +356,7 @@ pub fn run_respawn(world: &mut World) {
         .iter(world)
         .collect();
     for id in ids {
-        if !is_dead(world, id) {
+        if !stat::is_dead(world, id) {
             world.entity_mut(id).remove::<DeadAt>();
             continue;
         }

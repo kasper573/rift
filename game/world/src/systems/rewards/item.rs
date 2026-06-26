@@ -2,17 +2,17 @@ use serde::Deserialize;
 
 use super::{Chance, Grant, GrantCtx};
 use crate::core::table::Id;
-use crate::systems::items::ItemDef;
+use crate::systems::item::ItemDef;
 
 /// Drops an item, optionally gated by a percentage `chance` (absent = a guaranteed drop).
 #[derive(Deserialize)]
-pub struct Item {
+pub struct ItemGrant {
     #[serde(deserialize_with = "Id::<ItemDef>::deserialize_named")]
     pub item: Id<ItemDef>,
     pub chance: Option<Chance>,
 }
 
-impl Grant for Item {
+impl Grant for ItemGrant {
     fn grant(&self, ctx: &mut GrantCtx) {
         if self
             .chance

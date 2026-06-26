@@ -2,7 +2,13 @@
 //! carries, the [`DroppedItem`] entities loot spawns onto the map, the [`Reservation`] that makes a
 //! kill's loot fair, and the use/drop/pickup request/announce messages with their server systems.
 
-pub mod kinds;
+mod consumable;
+mod equipment;
+mod resource;
+
+pub use consumable::ConsumableItem;
+pub use equipment::EquipmentItem;
+pub use resource::ResourceItem;
 
 use std::sync::OnceLock;
 
@@ -10,7 +16,8 @@ use bevy_app::App;
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::{Entity, MapEntities};
 use bevy_ecs::message::Message;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use enum_dispatch::enum_dispatch;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::core::assets;
 use crate::core::math::{Offset, Pos};
@@ -20,9 +27,8 @@ use crate::core::time::Seconds;
 use crate::systems::sfx::SfxId;
 
 use crate::systems::area::{self, AreaTag};
-use crate::systems::combat::is_dead;
 use crate::systems::effect::{self, EffectCommand, TimedEffect, TimedEffects};
-use crate::systems::equipment::{self, EquipSlot, RequirementKind};
+use crate::systems::equipment::{EquipSlot, RequirementKind};
 use crate::systems::movement::{MoveTarget, Position, approach, forget, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, sender_player};
@@ -33,8 +39,26 @@ use bevy_ecs::query::With;
 use bevy_ecs::world::World;
 use bevy_replicon::prelude::{FromClient, Replicated, SendTargets, ToClients};
 use bevy_time::Time;
-pub use kinds::ItemKind;
-use kinds::Kind;
+
+/// What an item kind does, one file per kind implementing this, dispatched by [`ItemKind`].
+/// `use_item` calls [`Item::use_from`] and the carried-effects source calls [`Item::carried`]; adding
+/// a kind is a new file plus a variant — neither path matches on a specific kind.
+#[enum_dispatch]
+pub trait Item {
+    /// Acts on the item when used from an inventory slot, via the high-level ops on [`UseCtx`].
+    fn use_from(&self, ctx: &mut UseCtx);
+    /// Whether the item's effects are active merely from being carried (true only for resources).
+    fn carried(&self) -> bool;
+}
+
+#[enum_dispatch(Item)]
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ItemKind {
+    Consumable(ConsumableItem),
+    Resource(ResourceItem),
+    Equipment(EquipmentItem),
+}
 
 const FILE: &str = "item_table.json";
 
@@ -252,19 +276,9 @@ pub struct Stackable {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Icon(pub String);
 
-impl Serialize for Icon {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.serialize(serializer)
-    }
-}
-
 impl<'de> Deserialize<'de> for Icon {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        // A table gives a short name to resolve; the wire (replication) gives the resolved path back.
-        if assets::exists(&name) {
-            return Ok(Icon(name));
-        }
         assets::find(assets::ICONS, &format!("{name}.png"))
             .map(Icon)
             .ok_or_else(|| serde::de::Error::custom(format!("unknown icon '{name}'")))
@@ -281,7 +295,7 @@ pub fn items() -> &'static [ItemDef] {
 }
 
 /// The high-level operations an [`ItemKind`] performs when its item is used, so each kind file calls
-/// these rather than reaching into items/equipment internals.
+/// these rather than reaching into item/equipment internals.
 pub struct UseCtx<'a> {
     world: &'a mut World,
     actor: Entity,
@@ -302,7 +316,7 @@ impl UseCtx<'_> {
         instantiate_effects(self.world, self.actor, self.item, duration);
     }
     pub fn equip(&mut self, into: EquipSlot, requirements: &[RequirementKind]) {
-        equipment::equip(self.world, self.actor, self.slot, into, requirements);
+        crate::systems::equipment::equip(self.world, self.actor, self.slot, into, requirements);
     }
 }
 
@@ -325,7 +339,7 @@ pub fn use_item(world: &mut World) {
         let Some(entity) = sender_player(world, request.client_id) else {
             continue;
         };
-        if is_dead(world, entity) {
+        if stat::is_dead(world, entity) {
             continue;
         }
         let slot = request.message.slot as usize;
@@ -353,7 +367,7 @@ pub fn drop_item(world: &mut World) {
         let Some(player) = sender_player(world, request.client_id) else {
             continue;
         };
-        if is_dead(world, player) {
+        if stat::is_dead(world, player) {
             continue;
         }
         let slot = request.message.slot as usize;
@@ -380,7 +394,7 @@ pub fn pickup_request(world: &mut World) {
             continue;
         };
         let target = request.message.target;
-        if is_dead(world, player) || world.get::<DroppedItem>(target).is_none() {
+        if stat::is_dead(world, player) || world.get::<DroppedItem>(target).is_none() {
             continue;
         }
         let Some(at) = position(world, target) else {
@@ -404,7 +418,7 @@ pub fn pickups(world: &mut World) {
         else {
             continue;
         };
-        if is_dead(world, player) || world.get::<DroppedItem>(target).is_none() {
+        if stat::is_dead(world, player) || world.get::<DroppedItem>(target).is_none() {
             world.entity_mut(player).remove::<PickupIntent>();
             continue;
         }

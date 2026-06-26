@@ -25,6 +25,7 @@ pathfinding = "4"
 renet2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+strum.workspace = true
 tiled = { version = "0.15", default-features = false }
 # Effect args are stored type-erased as postcard bytes (the same wire format bevy_replicon uses), so
 # an EffectCommand is one uniform, replicable value whatever effect it names.

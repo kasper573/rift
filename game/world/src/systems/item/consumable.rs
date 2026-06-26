@@ -1,18 +1,17 @@
 use serde::Deserialize;
 
-use super::Kind;
+use super::{Item, UseCtx};
 use crate::core::time::Seconds;
-use crate::systems::items::UseCtx;
 
 /// A potion or food: heals, applies its timed effects, and is used up.
 #[derive(Deserialize)]
-pub struct Consumable {
+pub struct ConsumableItem {
     pub health_bonus: f32,
     #[serde(default)]
     pub duration: Seconds,
 }
 
-impl Kind for Consumable {
+impl Item for ConsumableItem {
     fn use_from(&self, ctx: &mut UseCtx) {
         ctx.heal(self.health_bonus);
         ctx.consume();
