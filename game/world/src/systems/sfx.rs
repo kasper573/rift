@@ -19,67 +19,37 @@ pub struct SfxDef {
     pub id: SfxId,
     pub src: String,
     #[serde(default)]
-    pub volume: SfxVolume,
+    pub volume: Varying,
     #[serde(default)]
-    pub pitch: SfxPitch,
+    pub pitch: Varying,
 }
 
+/// A scalar that is either fixed or rolled uniformly within an inclusive `[min, max]` range — the
+/// shape of both sfx volume and pitch. Each field's own bounds are checked by the table loader.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(untagged)]
-pub enum SfxVolume {
+pub enum Varying {
     Fixed(f32),
     Random(f32, f32),
 }
 
-impl Default for SfxVolume {
-    fn default() -> SfxVolume {
-        SfxVolume::Fixed(1.0)
+impl Default for Varying {
+    fn default() -> Varying {
+        Varying::Fixed(1.0)
     }
 }
 
-impl SfxVolume {
+impl Varying {
     pub fn resolve(self, roll: f32) -> f32 {
         match self {
-            SfxVolume::Fixed(volume) => volume,
-            SfxVolume::Random(min, max) => min + roll.clamp(0.0, 1.0) * (max - min),
+            Varying::Fixed(value) => value,
+            Varying::Random(min, max) => min + roll.clamp(0.0, 1.0) * (max - min),
         }
     }
 
-    fn valid(self) -> bool {
-        let unit = |v: f32| (0.0..=1.0).contains(&v);
-        match self {
-            SfxVolume::Fixed(v) => unit(v),
-            SfxVolume::Random(min, max) => unit(min) && unit(max) && min <= max,
-        }
-    }
-}
-
-#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
-#[serde(untagged)]
-pub enum SfxPitch {
-    Fixed(f32),
-    Random(f32, f32),
-}
-
-impl Default for SfxPitch {
-    fn default() -> SfxPitch {
-        SfxPitch::Fixed(1.0)
-    }
-}
-
-impl SfxPitch {
-    pub fn resolve(self, roll: f32) -> f32 {
-        match self {
-            SfxPitch::Fixed(pitch) => pitch,
-            SfxPitch::Random(min, max) => min + roll.clamp(0.0, 1.0) * (max - min),
-        }
-    }
-
-    fn valid(self) -> bool {
-        match self {
-            SfxPitch::Fixed(p) => p > 0.0,
-            SfxPitch::Random(min, max) => min > 0.0 && max > 0.0 && min <= max,
-        }
+    /// The inclusive `(min, max)` endpoints this resolves between.
+    pub fn range(self) -> (f32, f32) {
+        (self.resolve(0.0), self.resolve(1.0))
     }
 }
 
@@ -93,13 +63,15 @@ pub fn sfx_table() -> &'static [SfxDef] {
             if !assets::exists(&def.src) {
                 panic!("{FILE}: sfx '{}' src '{}' not found", def.id.0, def.src);
             }
-            if !def.volume.valid() {
+            let (vmin, vmax) = def.volume.range();
+            if !((0.0..=1.0).contains(&vmin) && (0.0..=1.0).contains(&vmax) && vmin <= vmax) {
                 panic!(
                     "{FILE}: sfx '{}' volume must be within 0..=1 with min <= max",
                     def.id.0
                 );
             }
-            if !def.pitch.valid() {
+            let (pmin, pmax) = def.pitch.range();
+            if !(pmin > 0.0 && pmax > 0.0 && pmin <= pmax) {
                 panic!(
                     "{FILE}: sfx '{}' pitch must be > 0 with min <= max",
                     def.id.0

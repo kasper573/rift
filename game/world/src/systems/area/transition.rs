@@ -11,7 +11,7 @@ use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::Inventory;
 use crate::systems::job::Job;
-use crate::systems::player::{ClientId, Owner, Xp};
+use crate::systems::player::{CharacterState, ClientId, Owner, Xp};
 use crate::systems::stat::StatSet;
 
 /// Not replicated: it never leaves the server and the entity is gone within the tick.
@@ -21,18 +21,13 @@ pub struct Crossing {
     pub dest: Pos<Tiles>,
 }
 
-/// Transient movement, combat and pathing are dropped and rebuilt fresh on arrival.
+/// A player handed between per-area worlds: where they're headed plus the [`CharacterState`] they
+/// carry. Transient movement, combat and pathing are dropped and rebuilt fresh on arrival.
 pub struct Traveler {
     pub client: ClientId,
     pub dest_area: Id<AreaDef>,
     pub dest: Pos<Tiles>,
-    pub name: String,
-    pub stats: StatSet,
-    pub inventory: Inventory,
-    pub xp: Xp,
-    pub equipment: Equipment,
-    pub job: Job,
-    pub timed: TimedEffects,
+    pub state: CharacterState,
 }
 
 /// Collects everyone leaving this world and despawns their character, leaving the connection behind.
@@ -55,16 +50,18 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
                     client: world.get::<Owner>(entity)?.client,
                     dest_area: crossing.dest_area,
                     dest: crossing.dest,
-                    name: world.get::<Name>(entity)?.name.clone(),
-                    stats: StatSet::snapshot(world, entity),
-                    inventory: world.get::<Inventory>(entity)?.clone(),
-                    xp: world.get::<Xp>(entity)?.clone(),
-                    equipment: world.get::<Equipment>(entity)?.clone(),
-                    job: *world.get::<Job>(entity)?,
-                    timed: world
-                        .get::<TimedEffects>(entity)
-                        .cloned()
-                        .unwrap_or_default(),
+                    state: CharacterState {
+                        name: world.get::<Name>(entity)?.name.clone(),
+                        stats: StatSet::snapshot(world, entity),
+                        inventory: world.get::<Inventory>(entity)?.clone(),
+                        xp: world.get::<Xp>(entity)?.clone(),
+                        equipment: world.get::<Equipment>(entity)?.clone(),
+                        job: *world.get::<Job>(entity)?,
+                        timed: world
+                            .get::<TimedEffects>(entity)
+                            .cloned()
+                            .unwrap_or_default(),
+                    },
                 },
             ))
         })
@@ -85,12 +82,6 @@ pub fn arrive(world: &mut World, traveler: Traveler) -> Entity {
         traveler.client,
         traveler.dest_area,
         traveler.dest,
-        traveler.name,
-        traveler.stats,
-        traveler.inventory,
-        traveler.xp,
-        traveler.equipment,
-        traveler.job,
-        traveler.timed,
+        traveler.state,
     )
 }

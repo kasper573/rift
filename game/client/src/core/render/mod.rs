@@ -14,27 +14,13 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy::sprite_render::Material2dPlugin;
-use world::core::math::{Pos, Size, WorldPx};
+use world::core::math::{Pos, WorldPx};
 use world::core::tiling::Tiles;
 use world::core::time::Seconds;
 
+pub use screen::ToScreen;
+
 pub const TILE: WorldPx = WorldPx(16.0);
-
-pub trait ToScreen {
-    fn to_screen(self) -> Vec2;
-}
-
-impl ToScreen for Pos<Tiles> {
-    fn to_screen(self) -> Vec2 {
-        Vec2::new(self.x * TILE.0, -self.y * TILE.0)
-    }
-}
-
-impl ToScreen for Size<Tiles> {
-    fn to_screen(self) -> Vec2 {
-        Vec2::new(self.width * TILE.0, self.height * TILE.0)
-    }
-}
 
 pub fn sprite_transform(pos: Pos<Tiles>, z: f32) -> Transform {
     Transform::from_translation(pos.to_screen().extend(z))

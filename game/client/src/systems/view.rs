@@ -59,7 +59,7 @@ fn track_player(
 }
 
 fn camera_center(at: Pos<Tiles>, area_id: Id<AreaDef>, half: Vec2) -> Option<Pos<Tiles>> {
-    let area = area::areas().get(area_id.index())?;
+    let area = area::get(area_id)?;
     let bounds = area.size.bounds();
     let lo = Pos::new(bounds.min().x + half.x, bounds.min().y + half.y);
     let hi = Pos::new(

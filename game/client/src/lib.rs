@@ -86,8 +86,8 @@ fn sfx_catalog() -> core::audio::SfxCatalog {
             .map(|def| core::audio::SfxSpec {
                 id: def.id.0.clone(),
                 path: def.src.clone(),
-                volume: (def.volume.resolve(0.0), def.volume.resolve(1.0)),
-                pitch: (def.pitch.resolve(0.0), def.pitch.resolve(1.0)),
+                volume: def.volume.range(),
+                pitch: def.pitch.range(),
             })
             .collect(),
     )

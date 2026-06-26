@@ -1,9 +1,9 @@
 //! Stats: the single representation of an actor's combat numbers. Each stat is a per-file ECS
 //! component dispatched by [`StatKind`] (`enum_dispatch`); there is no lumped base/effective struct.
-//! A *scalar* stat stores its base in a component; a *computed* stat derives its base from the entity.
-//! The effective value combat reads is the base plus every active effect's delta for that stat —
-//! summed here, on read, so effects stay immutable sets the stats system owns. Adding a stat is a new
-//! file plus a [`StatKind`] variant; the registry iterates itself.
+//! A stat stores its base in a component (see [`Scalar`]); the effective value combat reads is the
+//! base plus every active effect's delta for that stat — summed here, on read, so effects stay
+//! immutable sets the stats system owns. Adding a stat is a new file plus a [`StatKind`] variant; the
+//! registry iterates itself.
 
 mod etc;
 mod health;
@@ -12,9 +12,11 @@ pub use etc::*;
 pub use health::*;
 
 use bevy_app::App;
+use bevy_ecs::component::Mutable;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::EntityRef;
 use enum_dispatch::enum_dispatch;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use strum::{EnumIter, IntoEnumIterator};
 
@@ -26,17 +28,16 @@ pub fn register(app: &mut App) {
     }
 }
 
-/// One stat. Scalar stats back [`base`](Stat::base) with a component and [`set`](Stat::set) it;
-/// computed stats derive `base` from the entity and ignore `set`/`replicate`.
+/// One stat: how its base value is named, labelled, read, written, and replicated. The blanket impl
+/// over [`Scalar`] provides this for every stat, so [`StatKind`] just lists them.
 #[enum_dispatch]
 pub trait Stat {
     /// Id equal to the component name; used in tables and effect args.
     fn name(&self) -> &str;
     fn label(&self) -> &str;
-    fn computed(&self) -> bool;
     /// The intrinsic value before effects.
     fn base(&self, entity: EntityRef) -> f32;
-    /// Writes a scalar stat's base.
+    /// Writes the stat's base.
     fn set(&self, world: &mut World, entity: Entity, value: f32);
     /// Registers the stat's component for replication.
     fn replicate(&self, app: &mut App);
@@ -121,24 +122,21 @@ impl StatSet {
             .join(", ")
     }
 
-    /// Writes each scalar stat onto `entity` (computed stats derive themselves and are skipped).
+    /// Writes each stat's base onto `entity`.
     pub fn apply(&self, world: &mut World, entity: Entity) {
         for &(stat, value) in &self.0 {
-            if !stat.computed() {
-                stat.set(world, entity, value);
-            }
+            stat.set(world, entity, value);
         }
     }
 
-    /// Every scalar stat's current base on `entity` — the actor's whole stat state, e.g. to carry it
-    /// across a portal and re-`apply` it on arrival.
+    /// Every stat's current base on `entity` — the actor's whole stat state, e.g. to carry it across a
+    /// portal and re-`apply` it on arrival.
     pub fn snapshot(world: &World, entity: Entity) -> StatSet {
         world.get_entity(entity).map_or_else(
             |_| StatSet::default(),
             |entity| {
                 StatSet(
                     StatKind::all()
-                        .filter(|stat| !stat.computed())
                         .map(|stat| (stat, stat.base(entity)))
                         .collect(),
                 )
@@ -152,14 +150,7 @@ impl<'de> Deserialize<'de> for StatSet {
         use serde::de::Error;
         let map = std::collections::HashMap::<StatKind, f32>::deserialize(deserializer)?;
         for stat in StatKind::all() {
-            if stat.computed() {
-                if map.contains_key(&stat) {
-                    return Err(Error::custom(format!(
-                        "computed stat '{}' cannot be authored",
-                        stat.name()
-                    )));
-                }
-            } else if !map.contains_key(&stat) {
+            if !map.contains_key(&stat) {
                 return Err(Error::custom(format!("missing stat '{}'", stat.name())));
             }
         }
@@ -207,51 +198,36 @@ pub fn effective_all(world: &World, entity: Entity) -> StatSet {
     set
 }
 
-/// Generates a scalar stat: a value component, a unit marker, and its [`Stat`] impl (`base`/`set` use
-/// the component, `replicate` registers it). The stat's id is the component name. See the per-stat
-/// files in this folder.
-macro_rules! scalar_stat {
-    ($component:ident, $marker:ident, $label:literal) => {
-        #[derive(
-            bevy_ecs::component::Component,
-            Clone,
-            Copy,
-            Debug,
-            PartialEq,
-            serde::Serialize,
-            serde::Deserialize,
-        )]
-        pub struct $component(pub f32);
-
-        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-        pub struct $marker;
-
-        impl $crate::systems::stat::Stat for $marker {
-            fn name(&self) -> &str {
-                stringify!($component)
-            }
-            fn label(&self) -> &str {
-                $label
-            }
-            fn computed(&self) -> bool {
-                false
-            }
-            fn base(&self, entity: bevy_ecs::world::EntityRef) -> f32 {
-                entity.get::<$component>().map_or(0.0, |stat| stat.0)
-            }
-            fn set(
-                &self,
-                world: &mut bevy_ecs::world::World,
-                entity: bevy_ecs::prelude::Entity,
-                value: f32,
-            ) {
-                world.entity_mut(entity).insert($component(value));
-            }
-            fn replicate(&self, app: &mut bevy_app::App) {
-                use bevy_replicon::prelude::*;
-                app.replicate::<$component>();
-            }
-        }
-    };
+/// A scalar stat: a marker type naming its storage [`Component`](Scalar::Component) and its display
+/// label. The blanket [`Stat`] impl below turns any `Scalar` into a full stat — reading the base from
+/// its component, writing it, and registering it for replication — so the dispatch logic lives once
+/// here, and a new scalar stat is just a component newtype, a marker, and a small `Scalar` impl (see
+/// the per-stat files in this folder).
+pub trait Scalar: Copy + 'static {
+    /// The component holding this stat's base value on an entity.
+    type Component: Component<Mutability = Mutable> + Clone + Serialize + DeserializeOwned;
+    /// Id equal to the component name; used in tables and effect args.
+    const NAME: &'static str;
+    const LABEL: &'static str;
+    fn read(component: &Self::Component) -> f32;
+    fn make(value: f32) -> Self::Component;
 }
-pub(crate) use scalar_stat;
+
+impl<S: Scalar> Stat for S {
+    fn name(&self) -> &str {
+        S::NAME
+    }
+    fn label(&self) -> &str {
+        S::LABEL
+    }
+    fn base(&self, entity: EntityRef) -> f32 {
+        entity.get::<S::Component>().map_or(0.0, S::read)
+    }
+    fn set(&self, world: &mut World, entity: Entity, value: f32) {
+        world.entity_mut(entity).insert(S::make(value));
+    }
+    fn replicate(&self, app: &mut App) {
+        use bevy_replicon::prelude::*;
+        app.replicate::<S::Component>();
+    }
+}

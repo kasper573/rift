@@ -46,7 +46,10 @@ impl Plugin for HudPlugin {
         app.init_resource::<Settings>()
             .init_resource::<Open>()
             .add_systems(OnEnter(crate::GameScene::Playing), spawn_hud)
-            .add_systems(OnExit(crate::GameScene::Playing), despawn::<Hud>)
+            .add_systems(
+                OnExit(crate::GameScene::Playing),
+                crate::systems::despawn_all::<Hud>,
+            )
             .add_systems(
                 Update,
                 (
@@ -458,11 +461,5 @@ fn toggle_keys(keys: Res<ButtonInput<KeyCode>>, mut open: ResMut<Open>) {
         if keys.just_pressed(pane.info().toggle) && !open.0.remove(&pane) {
             open.0.insert(pane);
         }
-    }
-}
-
-fn despawn<M: Component>(panels: Query<Entity, With<M>>, mut commands: Commands) {
-    for entity in &panels {
-        commands.entity(entity).despawn();
     }
 }

@@ -12,7 +12,6 @@ pub use stat::StatRequirement;
 use std::collections::BTreeMap;
 
 use bevy_app::App;
-use bevy_ecs::message::{Message, Messages};
 use bevy_ecs::prelude::*;
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
@@ -21,7 +20,6 @@ use crate::core::table::Id;
 use crate::systems::effect::{self, EffectCommand};
 use crate::systems::item::{Inventory, ItemDef};
 use crate::systems::player::sender_player;
-use bevy_replicon::prelude::FromClient;
 
 /// A gate on equipping an item, one file per kind implementing [`Requirement`], dispatched by
 /// [`RequirementKind`]. Adding a gate kind is a new file plus a variant — [`met`] matches none.
@@ -135,7 +133,7 @@ pub fn equip(
 }
 
 pub fn unequip(world: &mut World) {
-    for request in drain::<UnequipRequest>(world) {
+    for request in crate::systems::requests::<UnequipRequest>(world) {
         let Some(player) = sender_player(world, request.client_id) else {
             continue;
         };
@@ -159,11 +157,4 @@ pub fn unequip(world: &mut World) {
             inventory.add(item, 1);
         }
     }
-}
-
-fn drain<M: Message>(world: &mut World) -> Vec<FromClient<M>> {
-    world
-        .resource_mut::<Messages<FromClient<M>>>()
-        .drain()
-        .collect()
 }

@@ -78,7 +78,7 @@ fn update_tile_highlight(
 fn highlight_z(me: &MyClient, players: &Query<(&Owner, &AreaTag)>) -> Option<f32> {
     let my = me.0?;
     let (_, tag) = players.iter().find(|(owner, _)| owner.client == my)?;
-    Some(area::areas().get(tag.area.index())?.dynamic_layer() as f32)
+    Some(area::get(tag.area)?.dynamic_layer() as f32)
 }
 
 /// Bridges touch to the mouse so taps act as left-clicks for both the map and the UI, without the

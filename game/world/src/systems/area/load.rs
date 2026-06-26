@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use tiled::{LayerType, PropertyValue};
 
-use super::{Area, AreaDef, Flip, Group, Portal, RenderLayer, TileRef, cell_overlap};
+use super::{Area, AreaDef, Group, Portal, RenderLayer, TileRef, cell_overlap};
 use crate::core::assets;
 use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
 use crate::core::nav;
@@ -38,14 +38,7 @@ pub(super) fn build_from_map(id: Id<AreaDef>, name: &str, map: tiled::Map) -> Ar
                 let mut cells = vec![TileRef::EMPTY; (dims.width * dims.height) as usize];
                 for (i, cell) in dims.cells().enumerate() {
                     if let Some(tile) = tile_layer.get_tile(cell.x, cell.y) {
-                        cells[i] = tiles.add(
-                            tile.get_tileset(),
-                            tile.id(),
-                            Flip {
-                                x: tile.flip_h,
-                                y: tile.flip_v,
-                            },
-                        );
+                        cells[i] = tiles.add(tile.get_tileset(), tile.id());
                     }
                 }
                 layers.push(RenderLayer {
@@ -144,7 +137,7 @@ struct TilePalette {
 }
 
 impl TilePalette {
-    fn add(&mut self, tileset: &tiled::Tileset, id: u32, flip: Flip) -> TileRef {
+    fn add(&mut self, tileset: &tiled::Tileset, id: u32) -> TileRef {
         let identity = tileset as *const tiled::Tileset as usize;
         let key = (identity, id);
         let index = match self.keys.iter().position(|&k| k == key) {
@@ -172,7 +165,7 @@ impl TilePalette {
                 self.keys.len() - 1
             }
         };
-        TileRef::new(index, flip)
+        TileRef::new(index)
     }
 
     fn walkable_of(&self, cell: TileRef) -> Option<bool> {
@@ -241,7 +234,7 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TilePalette) -> (Vec<Group>, H
         let mut cells = Vec::new();
         let mut bottom = start.y;
         while let Some(c) = stack.pop() {
-            cells.push((c, dynamic.at(c)));
+            cells.push(c);
             grouped_cells.insert(c);
             bottom = bottom.max(c.y);
             for step in tiling::NEIGHBORS_4 {

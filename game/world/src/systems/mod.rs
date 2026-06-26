@@ -22,8 +22,9 @@ pub mod stat;
 pub mod visibility;
 
 use bevy_app::App;
-use bevy_ecs::prelude::{Bundle, Resource};
-use bevy_replicon::prelude::Replicated;
+use bevy_ecs::message::{Message, Messages};
+use bevy_ecs::prelude::{Bundle, Resource, World};
+use bevy_replicon::prelude::{FromClient, Replicated};
 
 use crate::core::table::Id;
 use actor::{Actor, Hitbox, Name};
@@ -31,6 +32,15 @@ use area::{AreaDef, AreaTag};
 use movement::Position;
 
 pub const TICK_HZ: crate::core::time::Hertz = crate::core::time::Hertz(30.0);
+
+/// Drains this tick's buffered client requests of message type `M`. Every request-handling system
+/// funnels through here, so the drain-and-collect incantation has one home.
+pub(crate) fn requests<M: Message>(world: &mut World) -> Vec<FromClient<M>> {
+    world
+        .resource_mut::<Messages<FromClient<M>>>()
+        .drain()
+        .collect()
+}
 
 /// Registers every feature's replicated components and client⇄server messages. Both the client
 /// session and the server app call this so the two sides agree on the wire.

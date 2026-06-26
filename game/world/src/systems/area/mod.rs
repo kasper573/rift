@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 
 use bevy_app::App;
 use bevy_ecs::component::Component;
+use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -78,45 +79,23 @@ pub struct Portal {
     pub dest: Pos<Tiles>,
 }
 
+/// A cell's tile as an index into the area's tile palette (`0` is empty). Tile *rendering* reads the
+/// raw `tiled::Map`; this index only resolves a cell's gameplay metadata (walkable/group/sfx), which a
+/// horizontal/vertical flip never changes, so flips are not stored.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct TileRef(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct Flip {
-    pub x: bool,
-    pub y: bool,
-}
-
-const FLIP_H: u32 = 0x8000_0000;
-const FLIP_V: u32 = 0x4000_0000;
-const FLIP_MASK: u32 = FLIP_H | FLIP_V;
 
 impl TileRef {
     const EMPTY: TileRef = TileRef(0);
 
-    fn new(index: usize, flip: Flip) -> TileRef {
-        let mut bits = index as u32 + 1;
-        if flip.x {
-            bits |= FLIP_H;
-        }
-        if flip.y {
-            bits |= FLIP_V;
-        }
-        TileRef(bits)
+    fn new(index: usize) -> TileRef {
+        TileRef(index as u32 + 1)
     }
 
     fn index(self) -> Option<usize> {
-        match self.0 & !FLIP_MASK {
+        match self.0 {
             0 => None,
             index => Some(index as usize - 1),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn flip(self) -> Flip {
-        Flip {
-            x: self.0 & FLIP_H != 0,
-            y: self.0 & FLIP_V != 0,
         }
     }
 }
@@ -137,7 +116,7 @@ impl RenderLayer {
 #[derive(Clone)]
 pub struct Group {
     pub bottom: Tiles,
-    pub tiles: Vec<(CellPos, TileRef)>,
+    pub tiles: Vec<CellPos>,
 }
 
 #[derive(Clone)]
@@ -210,6 +189,16 @@ pub fn areas() -> &'static [Area] {
         }
         areas
     })
+}
+
+/// The area with this id, or `None` if it is out of range.
+pub fn get(id: Id<AreaDef>) -> Option<&'static Area> {
+    areas().get(id.index())
+}
+
+/// The area an entity currently stands in, resolved from its [`AreaTag`].
+pub fn of(world: &World, entity: Entity) -> Option<&'static Area> {
+    get(world.get::<AreaTag>(entity)?.area)
 }
 
 /// Builds a one-off [`Area`] straight from an embedded map file, bypassing the [`AreaDef`] table —

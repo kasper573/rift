@@ -84,7 +84,7 @@ pub fn spawn_map(
                         };
                         match hooks.tile_z(layer, x, y) {
                             None => flats
-                                .entry(tileset as *const tiled::Tileset as usize)
+                                .entry(tileset_key(tileset))
                                 .or_insert_with(|| IndexBuilder::new(map_w, map_h, sheet, tileset))
                                 .set(x, y, tile.id(), tile.flip_h, tile.flip_v),
                             Some(z) => {
@@ -418,6 +418,12 @@ fn frame_at<T>(frames: &[(T, f32)], total: f32, now: f32) -> usize {
     frames.len() - 1
 }
 
+/// A tileset's identity for memoization. A `&Tileset` lives inside its `tiled::Map` for the map's
+/// whole lifetime, so its address is a stable key — cheaper than hashing the tileset.
+fn tileset_key(tileset: &tiled::Tileset) -> usize {
+    tileset as *const tiled::Tileset as usize
+}
+
 /// Memoized per tileset: the hook's image lookup is too costly to repeat per cell.
 fn resolve_sheet(
     sheets: &mut HashMap<usize, Option<Handle<Image>>>,
@@ -425,7 +431,7 @@ fn resolve_sheet(
     images: &mut Assets<Image>,
     tileset: &tiled::Tileset,
 ) -> Option<Handle<Image>> {
-    let key = tileset as *const tiled::Tileset as usize;
+    let key = tileset_key(tileset);
     if let Some(cached) = sheets.get(&key) {
         return cached.clone();
     }
@@ -523,7 +529,7 @@ impl MapHooks for Files {
         tileset: &tiled::Tileset,
         images: &mut Assets<Image>,
     ) -> Option<Handle<Image>> {
-        let key = tileset as *const tiled::Tileset as usize;
+        let key = tileset_key(tileset);
         if let Some(handle) = self.sheets.get(&key) {
             return Some(handle.clone());
         }

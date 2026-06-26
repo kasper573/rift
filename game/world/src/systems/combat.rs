@@ -2,30 +2,22 @@
 //! timing, deal damage, regenerate health, and emit deaths. Health is a stat (see [`crate::systems::stat`]).
 
 use bevy_app::App;
-use bevy_ecs::entity::{Entity, MapEntities};
-use bevy_ecs::message::Message;
-use bevy_ecs::query::With;
-use bevy_ecs::world::World;
+use bevy_ecs::entity::MapEntities;
+use bevy_ecs::prelude::*;
+use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
-use crate::core::math::Pos;
-use crate::core::tiling::{TilePos, Tiles};
-use crate::systems::actor::{Actor, Hitbox};
-use crate::systems::movement::Position;
-use crate::systems::player::session;
-
-use crate::core::math::Direction;
+use crate::core::math::{Direction, Pos};
 use crate::core::table::Id;
+use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{Millis, PlaybackRate, Seconds};
-use crate::systems::actor::{Action, set_action, set_facing};
+use crate::systems::actor::{Action, Actor, Hitbox, set_action, set_facing};
 use crate::systems::area::AreaTag;
-use crate::systems::movement::{MoveTarget, Path, approach, forget, halt, on_tile, position};
-use crate::systems::player::{Owner, sender_player};
+use crate::systems::movement::{
+    MoveTarget, Path, Position, approach, forget, halt, on_tile, position,
+};
+use crate::systems::player::{Owner, sender_player, session};
 use crate::systems::stat::{self, AttackDelayStat, AttackSpeedStat, DamageStat, RangeStat};
-use bevy_ecs::message::Messages;
-use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::FromClient;
-use bevy_time::Time;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -111,11 +103,7 @@ pub fn regen(world: &mut World) {
 }
 
 pub fn request(world: &mut World) {
-    let requests: Vec<FromClient<AttackRequest>> = world
-        .resource_mut::<Messages<FromClient<AttackRequest>>>()
-        .drain()
-        .collect();
-    for request in requests {
+    for request in crate::systems::requests::<AttackRequest>(world) {
         let Some(entity) = sender_player(world, request.client_id) else {
             continue;
         };

@@ -2,11 +2,45 @@
 //! they pair, and the helpers that read/spend health live here with them.
 
 use bevy_ecs::prelude::*;
+use serde::{Deserialize, Serialize};
 
-use super::{base, effective, scalar_stat};
+use super::{Scalar, base, effective};
 
-scalar_stat!(Health, HealthStat, "Health");
-scalar_stat!(MaxHealth, MaxHealthStat, "Max Health");
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct Health(pub f32);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct HealthStat;
+
+impl Scalar for HealthStat {
+    type Component = Health;
+    const NAME: &'static str = "Health";
+    const LABEL: &'static str = "Health";
+    fn read(health: &Health) -> f32 {
+        health.0
+    }
+    fn make(value: f32) -> Health {
+        Health(value)
+    }
+}
+
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct MaxHealth(pub f32);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct MaxHealthStat;
+
+impl Scalar for MaxHealthStat {
+    type Component = MaxHealth;
+    const NAME: &'static str = "MaxHealth";
+    const LABEL: &'static str = "Max Health";
+    fn read(max: &MaxHealth) -> f32 {
+        max.0
+    }
+    fn make(value: f32) -> MaxHealth {
+        MaxHealth(value)
+    }
+}
 
 impl Health {
     /// An empty pool is death — the one definition of it, so callers with a `&Health` in hand (a

@@ -29,10 +29,9 @@ use crate::systems::stat::{
 };
 use crate::systems::visibility::OwnedBy;
 use bevy_ecs::lifecycle::{Add, Remove};
-use bevy_ecs::message::Messages;
 use bevy_ecs::observer::On;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{FromClient, Replicated, SendTargets, ToClients};
+use bevy_replicon::prelude::{Replicated, SendTargets, ToClients};
 use std::collections::HashMap;
 
 pub fn register(app: &mut App) {
@@ -148,11 +147,7 @@ pub fn client_left(
 pub fn join(world: &mut World) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
     let spawn = area::areas()[zone.index()].spawn;
-    let requests: Vec<FromClient<JoinRequest>> = world
-        .resource_mut::<Messages<FromClient<JoinRequest>>>()
-        .drain()
-        .collect();
-    for request in requests {
+    for request in crate::systems::requests::<JoinRequest>(world) {
         let Some(client_entity) = request.client_id.entity() else {
             continue;
         };
@@ -171,6 +166,18 @@ pub fn join(world: &mut World) {
     }
 }
 
+/// The persistent state a player character carries: what a portal crossing hands to the destination
+/// world, and what a fresh join supplies from defaults.
+pub struct CharacterState {
+    pub name: String,
+    pub stats: StatSet,
+    pub inventory: Inventory,
+    pub xp: Xp,
+    pub equipment: Equipment,
+    pub job: Job,
+    pub timed: TimedEffects,
+}
+
 fn spawn_player(
     world: &mut World,
     client: ClientId,
@@ -183,15 +190,17 @@ fn spawn_player(
         client,
         zone,
         at,
-        name,
-        player_stats(),
-        Inventory::empty(),
-        Xp { amount: 0 },
-        Equipment::default(),
-        Job {
-            def: job::default_job(),
+        CharacterState {
+            name,
+            stats: player_stats(),
+            inventory: Inventory::empty(),
+            xp: Xp { amount: 0 },
+            equipment: Equipment::default(),
+            job: Job {
+                def: job::default_job(),
+            },
+            timed: TimedEffects::default(),
         },
-        TimedEffects::default(),
     );
 }
 
@@ -209,19 +218,12 @@ pub fn player_stats() -> StatSet {
 }
 
 /// Fresh joins pass starting state; portals pass carried state from the previous world.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn place(
     world: &mut World,
     client: ClientId,
     zone: Id<AreaDef>,
     at: Pos<Tiles>,
-    name: String,
-    stats: StatSet,
-    inventory: Inventory,
-    xp: Xp,
-    equipment: Equipment,
-    job: Job,
-    timed: TimedEffects,
+    state: CharacterState,
 ) -> Entity {
     let model = Id::<ActorModel>::by_name(PLAYER_MODEL).expect("the player model exists");
     let entity = world
@@ -229,7 +231,7 @@ pub(crate) fn place(
             Character {
                 replicated: Replicated,
                 position: Position { pos: at },
-                name: Name { name },
+                name: Name { name: state.name },
                 actor: Actor {
                     color: PLAYER_TINT,
                     dir: Direction::S,
@@ -244,14 +246,14 @@ pub(crate) fn place(
             },
             OwnedBy(client),
             Owner { client },
-            inventory,
-            xp,
-            equipment,
-            job,
-            timed,
+            state.inventory,
+            state.xp,
+            state.equipment,
+            state.job,
+            state.timed,
         ))
         .id();
-    stats.apply(world, entity);
+    state.stats.apply(world, entity);
     world.resource_mut::<Players>().0.insert(client, entity);
     entity
 }
@@ -259,11 +261,7 @@ pub(crate) fn place(
 pub fn respawn(world: &mut World) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
     let spawn = area::areas()[zone.index()].spawn;
-    let requests: Vec<FromClient<RespawnRequest>> = world
-        .resource_mut::<Messages<FromClient<RespawnRequest>>>()
-        .drain()
-        .collect();
-    for request in requests {
+    for request in crate::systems::requests::<RespawnRequest>(world) {
         let Some(entity) = sender_player(world, request.client_id) else {
             continue;
         };

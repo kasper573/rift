@@ -15,3 +15,13 @@ pub mod item;
 pub mod session;
 pub mod testing;
 pub mod view;
+
+use bevy::prelude::*;
+
+/// Despawns every entity carrying marker component `M` — the shared teardown a scene or overlay root
+/// registers on an `OnExit`/state change, monomorphized per marker at the call site.
+pub(crate) fn despawn_all<M: Component>(entities: Query<Entity, With<M>>, mut commands: Commands) {
+    for entity in &entities {
+        commands.entity(entity).despawn();
+    }
+}

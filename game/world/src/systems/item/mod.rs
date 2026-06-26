@@ -34,10 +34,9 @@ use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, sender_player};
 use crate::systems::stat;
 use crate::systems::visibility::seen_by;
-use bevy_ecs::message::Messages;
 use bevy_ecs::query::With;
 use bevy_ecs::world::World;
-use bevy_replicon::prelude::{FromClient, Replicated, SendTargets, ToClients};
+use bevy_replicon::prelude::{Replicated, SendTargets, ToClients};
 use bevy_time::Time;
 
 /// What an item kind does, one file per kind implementing this, dispatched by [`ItemKind`].
@@ -331,11 +330,7 @@ fn announce_consumed(world: &mut World, actor: Entity, item: Id<ItemDef>) {
 }
 
 pub fn use_item(world: &mut World) {
-    let requests: Vec<FromClient<UseItemRequest>> = world
-        .resource_mut::<Messages<FromClient<UseItemRequest>>>()
-        .drain()
-        .collect();
-    for request in requests {
+    for request in crate::systems::requests::<UseItemRequest>(world) {
         let Some(entity) = sender_player(world, request.client_id) else {
             continue;
         };
@@ -359,11 +354,7 @@ pub fn use_item(world: &mut World) {
 }
 
 pub fn drop_item(world: &mut World) {
-    let requests: Vec<FromClient<DropItemRequest>> = world
-        .resource_mut::<Messages<FromClient<DropItemRequest>>>()
-        .drain()
-        .collect();
-    for request in requests {
+    for request in crate::systems::requests::<DropItemRequest>(world) {
         let Some(player) = sender_player(world, request.client_id) else {
             continue;
         };
@@ -385,11 +376,7 @@ pub fn drop_item(world: &mut World) {
 }
 
 pub fn pickup_request(world: &mut World) {
-    let requests: Vec<FromClient<PickupRequest>> = world
-        .resource_mut::<Messages<FromClient<PickupRequest>>>()
-        .drain()
-        .collect();
-    for request in requests {
+    for request in crate::systems::requests::<PickupRequest>(world) {
         let Some(player) = sender_player(world, request.client_id) else {
             continue;
         };
@@ -490,10 +477,10 @@ pub fn scatter_drop(
     let Some(from) = position(world, source) else {
         return;
     };
-    let area_id = world
-        .get::<AreaTag>(source)
-        .map_or(Id::new(0), |tag| tag.area);
-    let area = &area::areas()[area_id.index()];
+    let Some(area) = area::of(world, source) else {
+        return;
+    };
+    let area_id = area.id;
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let count = drops.len();
     let mut items = Vec::with_capacity(count);

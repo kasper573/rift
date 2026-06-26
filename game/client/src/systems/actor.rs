@@ -70,7 +70,7 @@ fn sync_actors(
         sprite.rect = Some(atlas_rect(region));
         sprite.custom_size = Some(Vec2::new(region.size.width, region.size.height));
         sprite.color = rgba(actor.color);
-        let Some(area) = area::areas().get(tag.area.index()) else {
+        let Some(area) = area::get(tag.area) else {
             continue;
         };
         *transform = sprite_transform(
@@ -127,7 +127,7 @@ fn actor_cues(
             });
         }
         if stepped
-            && let Some(area) = area::areas().get(tag.area.index())
+            && let Some(area) = area::get(tag.area)
             && let Some(id) = area.tile_sfx_at(position.pos.cell())
         {
             play.write(PlaySfx {

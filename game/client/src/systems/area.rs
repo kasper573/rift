@@ -83,7 +83,7 @@ impl AreaHooks {
         let dynamic_layer = area.dynamic_layer();
         for group in &area.groups {
             let z = dynamic_z(area.size.height, dynamic_layer as f32, group.bottom);
-            for &(cell, _) in &group.tiles {
+            for &cell in &group.tiles {
                 group_z.insert(cell, z);
             }
         }

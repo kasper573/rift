@@ -10,7 +10,10 @@ impl Plugin for FpsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
             .add_systems(OnEnter(GameScene::Playing), spawn)
-            .add_systems(OnExit(GameScene::Playing), despawn)
+            .add_systems(
+                OnExit(GameScene::Playing),
+                crate::systems::despawn_all::<FpsHud>,
+            )
             .add_systems(Update, readout.run_if(in_state(GameScene::Playing)));
     }
 }
@@ -43,11 +46,5 @@ fn readout(diagnostics: Res<DiagnosticsStore>, mut texts: Query<&mut Text, With<
         .map_or_else(|| "-- fps".to_owned(), |fps| format!("{fps:.0} fps"));
     for mut text in &mut texts {
         text.0 = reading.clone();
-    }
-}
-
-fn despawn(huds: Query<Entity, With<FpsHud>>, mut commands: Commands) {
-    for entity in &huds {
-        commands.entity(entity).despawn();
     }
 }

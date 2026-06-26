@@ -21,8 +21,14 @@ impl Plugin for ConnectionPlugin {
             .add_systems(Update, track)
             .add_systems(OnEnter(Link::Connecting), connecting)
             .add_systems(OnEnter(Link::Lost), lost)
-            .add_systems(OnExit(Link::Connecting), despawn)
-            .add_systems(OnExit(Link::Lost), despawn);
+            .add_systems(
+                OnExit(Link::Connecting),
+                crate::systems::despawn_all::<ConnectionUi>,
+            )
+            .add_systems(
+                OnExit(Link::Lost),
+                crate::systems::despawn_all::<ConnectionUi>,
+            );
     }
 }
 
@@ -91,12 +97,6 @@ fn lost(mut commands: Commands) {
 fn reconnect(_: On<Activate>, mode: Res<Mode>, mut commands: Commands) {
     let spectate = *mode == Mode::Spectate;
     commands.queue(move |world: &mut World| net::open_session(world, spectate));
-}
-
-fn despawn(ui: Query<Entity, With<ConnectionUi>>, mut commands: Commands) {
-    for entity in &ui {
-        commands.entity(entity).despawn();
-    }
 }
 
 fn overlay_node() -> Node {

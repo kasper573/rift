@@ -14,10 +14,9 @@ use crate::systems::area::{self, AreaTag};
 use crate::systems::movement::Position;
 use crate::systems::player::{Owner, Players};
 use bevy_ecs::lifecycle::Remove;
-use bevy_ecs::message::Messages;
 use bevy_ecs::observer::On;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{FromClient, Replicated};
+use bevy_replicon::prelude::Replicated;
 use std::collections::HashMap;
 
 pub fn register(app: &mut App) {
@@ -41,11 +40,7 @@ pub struct SpectateRequest {
 pub struct Spectators(pub HashMap<ClientId, Entity>);
 
 pub fn requests(world: &mut World) {
-    let requests: Vec<FromClient<SpectateRequest>> = world
-        .resource_mut::<Messages<FromClient<SpectateRequest>>>()
-        .drain()
-        .collect();
-    for request in requests {
+    for request in crate::systems::requests::<SpectateRequest>(world) {
         let Some(client_entity) = request.client_id.entity() else {
             continue;
         };

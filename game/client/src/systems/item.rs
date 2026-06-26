@@ -177,7 +177,7 @@ fn animate_drops(
 }
 
 fn drop_z(tag: &AreaTag, pos: Pos<Tiles>) -> f32 {
-    area::areas().get(tag.area.index()).map_or(0.0, |area| {
+    area::get(tag.area).map_or(0.0, |area| {
         dynamic_z(area.size.height, area.dynamic_layer() as f32, Tiles(pos.y))
     })
 }

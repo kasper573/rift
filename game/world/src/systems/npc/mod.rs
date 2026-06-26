@@ -281,7 +281,9 @@ pub fn run_ai(world: &mut World) {
             continue;
         };
         let def = npc.def.get();
-        let area = world.get::<AreaTag>(id).map_or(Id::new(0), |tag| tag.area);
+        let Some(area) = area::of(world, id).map(|area| area.id) else {
+            continue;
+        };
 
         if let Some(target) = world.get::<AttackTarget>(id).map(|t| t.target) {
             if in_aggro(world, target, at, area, def.aggro) {
@@ -370,9 +372,10 @@ pub fn run_respawn(world: &mut World) {
         if time - since < NPC_RESPAWN_DELAY {
             continue;
         }
-        let area_id = world.get::<AreaTag>(id).map_or(Id::new(0), |tag| tag.area);
-        let at = random_walkable(&mut rng, area_id)
-            .unwrap_or_else(|| area::areas()[area_id.index()].spawn);
+        let Some(region) = area::of(world, id) else {
+            continue;
+        };
+        let at = random_walkable(&mut rng, region.id).unwrap_or(region.spawn);
         if let Some(mut position) = world.get_mut::<Position>(id) {
             position.pos = at;
         }

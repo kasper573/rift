@@ -18,7 +18,10 @@ impl Plugin for ScenesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Mode>()
             .add_systems(OnEnter(GameScene::ChooseMode), choose_mode)
-            .add_systems(OnExit(GameScene::ChooseMode), despawn)
+            .add_systems(
+                OnExit(GameScene::ChooseMode),
+                crate::systems::despawn_all::<SceneUi>,
+            )
             .add_systems(OnEnter(GameScene::Playing), enter_game);
     }
 }
@@ -54,12 +57,6 @@ fn enter(mode: Mode) -> impl Fn(On<Activate>, ResMut<Mode>, ResMut<NextState<Gam
     move |_, mut current, mut next| {
         *current = mode;
         next.set(GameScene::Playing);
-    }
-}
-
-fn despawn(ui: Query<Entity, With<SceneUi>>, mut commands: Commands) {
-    for entity in &ui {
-        commands.entity(entity).despawn();
     }
 }
 
