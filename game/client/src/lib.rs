@@ -57,8 +57,8 @@ pub fn boot() {
             systems::input::InputPlugin,
             systems::debug::DebugPlugin,
             systems::testing::TestingPlugin,
-            systems::ui::HudPlugin,
-            systems::ui::fps::FpsPlugin,
+            systems::widget::HudPlugin,
+            systems::widget::fps::FpsPlugin,
         ));
     ui::theme::set_theme(ui::themes::dark::THEME);
     app.run();

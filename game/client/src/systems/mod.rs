@@ -3,7 +3,7 @@
 //! bar + death tint), [`item`] (item-use sounds + dropped-item rendering), [`view`] (the local
 //! player's camera + audio listener), [`session`] (client session wiring + join/spectate announce),
 //! [`input`] gestures (with the active-gesture tile highlight), the [`scene`]s (mode picker,
-//! connection overlay, the live area), the [`ui`] (HUD panes + fps), and [`debug`]/[`testing`].
+//! connection overlay, the live area), the [`widget`]s (HUD panes + fps), and [`debug`]/[`testing`].
 
 pub mod actor;
 pub mod combat;
@@ -13,8 +13,8 @@ pub mod item;
 pub mod scene;
 pub mod session;
 pub mod testing;
-pub mod ui;
 pub mod view;
+pub mod widget;
 
 use bevy::prelude::*;
 

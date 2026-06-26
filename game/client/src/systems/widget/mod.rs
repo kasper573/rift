@@ -1,11 +1,9 @@
-//! The in-game UI: the HUD's draggable, dockable panes (a character readout, inventory, equipment,
-//! stats, an always-on active-effects row, and settings) built on the `ui` widget toolkit, their
-//! layout persisted to [`settings`], plus the [`fps`] readout. Each pane's content lives in its own
-//! module ([`character`], [`inventory`], [`equipment`], [`stats`], [`effects`]); [`death`] overlays
-//! the respawn prompt.
+//! The in-game widgets: the HUD's draggable, dockable panes (a character readout, inventory,
+//! equipment, stats, an always-on active-effects row, and settings) built on the `ui` widget toolkit,
+//! their layout persisted to [`settings`], plus the [`fps`] readout. Each pane's content lives in its
+//! own module ([`character`], [`inventory`], [`equipment`], [`stats`], [`effects`]).
 
 pub mod character;
-pub mod death;
 pub mod effects;
 pub mod equipment;
 pub mod fps;
@@ -22,12 +20,12 @@ use ui::{
     button_styled, text_colored, widget, window,
 };
 
-use crate::systems::ui::character::CharacterText;
-use crate::systems::ui::effects::EffectsGrid;
-use crate::systems::ui::equipment::EquipmentGrid;
-use crate::systems::ui::inventory::InventoryGrid;
-use crate::systems::ui::settings::{Placement, ScreenPx, ScreenVec, UserSettings};
-use crate::systems::ui::stats::StatsText;
+use crate::systems::widget::character::CharacterText;
+use crate::systems::widget::effects::EffectsGrid;
+use crate::systems::widget::equipment::EquipmentGrid;
+use crate::systems::widget::inventory::InventoryGrid;
+use crate::systems::widget::settings::{Placement, ScreenPx, ScreenVec, UserSettings};
+use crate::systems::widget::stats::StatsText;
 use ui::component;
 
 const WIDGET: ScreenPx = ScreenPx(48.0);
@@ -61,7 +59,6 @@ impl Plugin for HudPlugin {
                     effects::sync_effects,
                     sync_snapping,
                     sync_snap_grid,
-                    death::sync_death_banner,
                 )
                     .run_if(in_state(crate::Scene::Area)),
             );

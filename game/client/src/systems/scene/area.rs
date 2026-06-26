@@ -1,12 +1,14 @@
-//! Renders the local player's area: when their area changes it clears the old map sprites and spawns
-//! the new one via bevy_tiled, which also handles animation.
+//! The live area scene: renders the local player's map (clearing and respawning it via bevy_tiled when
+//! their area changes, which also handles animation) and overlays the death banner while they're dead.
 
 use bevy::prelude::*;
+use bevy::scene::EntityScene;
+use ui::text_colored;
 use world::core::table::Id;
 use world::core::tiling::{CellPos, TileSize};
 use world::systems::area::{self, AreaDef, AreaTag};
 use world::systems::player::Owner;
-use world::systems::player::session::MyClient;
+use world::systems::player::session::{self, MyClient};
 
 use crate::core::render::dynamic_z;
 use crate::core::render::screen::ToScreen;
@@ -19,7 +21,11 @@ impl Plugin for AreaPlugin {
             .add_plugins(bevy_tiled::TileAnimationPlugin)
             .add_systems(
                 Update,
-                spawn_area_tiles.run_if(in_state(super::Scene::Area)),
+                (spawn_area_tiles, sync_death_banner).run_if(in_state(super::Scene::Area)),
+            )
+            .add_systems(
+                OnExit(super::Scene::Area),
+                crate::systems::despawn_all::<DeathBanner>,
             );
     }
 }
@@ -120,5 +126,40 @@ impl bevy_tiled::MapHooks for AreaHooks {
             self.dynamic_layer as f32,
             world::core::tiling::Tiles(y / bevy_tiled::TILE - 0.5),
         )
+    }
+}
+
+/// A full-screen prompt shown over the area while the local player is dead, cleared on respawn.
+#[derive(Component, Default, Clone)]
+struct DeathBanner;
+
+fn sync_death_banner(world: &mut World) {
+    let dead = session::is_dead(world);
+    let banner = world
+        .query_filtered::<Entity, With<DeathBanner>>()
+        .iter(world)
+        .next();
+    match (dead, banner) {
+        (true, None) => {
+            let _ = world.spawn_scene(death_banner());
+        }
+        (false, Some(banner)) => world.entity_mut(banner).despawn(),
+        _ => {}
+    }
+}
+
+fn death_banner() -> impl Scene {
+    bsn! {
+        DeathBanner
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+        }
+        GlobalZIndex({50})
+        Pickable { should_block_lower: false, is_hoverable: false }
+        Children [ {EntityScene(text_colored("You died! Press any key to respawn", Color::WHITE))} ]
     }
 }
