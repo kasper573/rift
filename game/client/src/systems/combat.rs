@@ -5,9 +5,9 @@
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use world::core::math::{Size, WorldPx};
-use world::systems::combat::Vitals;
 use world::systems::movement::Position;
 use world::systems::player::session;
+use world::systems::stat;
 
 use crate::core::render::present::ScreenTint;
 use crate::core::render::screen::ToScreen;
@@ -70,18 +70,18 @@ fn hidden() -> (Transform, Visibility) {
 }
 
 fn healthbar(world: &mut World) {
-    let shown = session::me(world).and_then(|me| {
+    let shown = session::me(world)
         // Snap to the camera's screen-pixel grid (not whole art-pixels): the camera does the same, so
         // the bar holds a fixed offset from the player instead of shimmering against it while moving.
-        let at = me.get::<Position>()?.pos;
-        let vitals = me.get::<Vitals>()?;
-        (!vitals.is_dead() && vitals.max > 0.0).then(|| {
-            (
-                snap_to_screen(at.to_screen() - Vec2::new(0.0, BAR_DROP.0)),
-                vitals.fraction(),
-            )
-        })
-    });
+        .and_then(|me| Some((me.id(), me.get::<Position>()?.pos)))
+        .and_then(|(entity, at)| {
+            (!stat::is_dead(world, entity) && stat::max_health(world, entity) > 0.0).then(|| {
+                (
+                    snap_to_screen(at.to_screen() - Vec2::new(0.0, BAR_DROP.0)),
+                    stat::fraction(world, entity),
+                )
+            })
+        });
     let mut bars = world.query::<(&Bar, &mut Transform, &mut Visibility, &mut Sprite)>();
     for (bar, mut transform, mut visibility, mut sprite) in bars.iter_mut(world) {
         let Some((center, fraction)) = shown else {

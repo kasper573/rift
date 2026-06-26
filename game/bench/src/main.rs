@@ -227,5 +227,5 @@ fn wander_pos(area: &Area) -> Pos<Tiles> {
 }
 
 fn spawn_character(world: &mut World, area: &Area, def_id: Id<NpcDef>, at: Pos<Tiles>) -> Entity {
-    world.spawn(npc::character(def_id.get(), at, area.id)).id()
+    npc::spawn_actor(world, def_id.get(), at, area.id)
 }

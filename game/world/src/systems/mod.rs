@@ -8,13 +8,17 @@ pub mod account;
 pub mod actor;
 pub mod area;
 pub mod combat;
+pub mod effect;
+pub mod equipment;
 pub mod items;
+pub mod job;
 pub mod movement;
 pub mod npc;
 pub mod player;
 pub mod rewards;
 pub mod sfx;
 pub mod spectate;
+pub mod stat;
 pub mod visibility;
 
 use bevy_app::App;
@@ -24,8 +28,7 @@ use bevy_replicon::prelude::Replicated;
 use crate::core::table::Id;
 use actor::{Actor, Hitbox, Name};
 use area::{AreaDef, AreaTag};
-use combat::{Stats, Vitals};
-use movement::{Position, Speed};
+use movement::Position;
 
 pub const TICK_HZ: crate::core::time::Hertz = crate::core::time::Hertz(30.0);
 
@@ -35,8 +38,13 @@ pub fn protocol(app: &mut App) {
     actor::register(app);
     area::register(app);
     combat::register(app);
+    stat::register(app);
+    effect::register(app);
+    equipment::register(app);
     items::register(app);
+    job::register(app);
     movement::register(app);
+    npc::register(app);
     player::register(app);
     spectate::register(app);
 }
@@ -46,6 +54,8 @@ pub fn protocol(app: &mut App) {
 #[derive(Resource, Clone, Copy)]
 pub struct WorldArea(pub Id<AreaDef>);
 
+/// The common, non-stat components every actor replicates. Stats are separate per-stat components
+/// authored from a [`stat::StatSet`] right after spawn (see `npc::spawn`/`player::place`).
 #[derive(Bundle)]
 pub struct Character {
     pub replicated: Replicated,
@@ -53,10 +63,7 @@ pub struct Character {
     pub name: Name,
     pub actor: Actor,
     pub hitbox: Hitbox,
-    pub vitals: Vitals,
     pub area: AreaTag,
-    pub stats: Stats,
-    pub speed: Speed,
 }
 
 /// Forces every content table to load and validate, independent of any running app.
@@ -64,6 +71,7 @@ pub fn validate() {
     actor::models();
     area::areas();
     items::items();
+    job::defs();
     npc::defs();
     npc::spawns();
     rewards::all();
@@ -99,27 +107,37 @@ pub fn server_app(area: Id<AreaDef>) -> App {
         .add_systems(Startup, npc::spawn_all)
         .add_systems(
             Update,
+            // Split into two chained groups: a tick has more systems than `chain` takes in one tuple.
+            // Effective stats are read on demand, so combat/movement need no recompute pass.
             (
-                actor::reset,
-                combat::regen,
-                npc::run_ai,
-                movement::move_request,
-                movement::move_to_portal,
-                combat::request,
-                combat::combat,
-                items::use_item,
-                items::drop_item,
-                items::pickup_request,
-                rewards::grant,
-                movement::advance,
-                items::pickups,
-                items::expire_drops,
-                player::join,
-                player::respawn,
-                spectate::requests,
-                spectate::follow,
-                npc::run_respawn,
-                visibility::update,
+                (
+                    actor::reset,
+                    combat::regen,
+                    npc::run_ai,
+                    movement::move_request,
+                    movement::move_to_portal,
+                    combat::request,
+                    items::use_item,
+                    items::drop_item,
+                    items::pickup_request,
+                    equipment::unequip,
+                    effect::expire,
+                    combat::combat,
+                )
+                    .chain(),
+                (
+                    rewards::grant,
+                    movement::advance,
+                    items::pickups,
+                    items::expire_drops,
+                    player::join,
+                    player::respawn,
+                    spectate::requests,
+                    spectate::follow,
+                    npc::run_respawn,
+                    visibility::update,
+                )
+                    .chain(),
             )
                 .chain(),
         );

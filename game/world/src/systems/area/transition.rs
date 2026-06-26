@@ -7,9 +7,12 @@ use crate::core::math::Pos;
 use crate::core::table::Id;
 use crate::core::tiling::Tiles;
 use crate::systems::actor::Name;
-use crate::systems::combat::Vitals;
+use crate::systems::effect::TimedEffects;
+use crate::systems::equipment::Equipment;
 use crate::systems::items::Inventory;
+use crate::systems::job::Job;
 use crate::systems::player::{ClientId, Owner, Xp};
+use crate::systems::stat::StatSet;
 
 /// Not replicated: it never leaves the server and the entity is gone within the tick.
 #[derive(Component, Clone, Copy)]
@@ -24,9 +27,12 @@ pub struct Traveler {
     pub dest_area: Id<AreaDef>,
     pub dest: Pos<Tiles>,
     pub name: String,
-    pub vitals: Vitals,
+    pub stats: StatSet,
     pub inventory: Inventory,
     pub xp: Xp,
+    pub equipment: Equipment,
+    pub job: Job,
+    pub timed: TimedEffects,
 }
 
 /// Collects everyone leaving this world and despawns their character, leaving the connection behind.
@@ -34,22 +40,33 @@ pub struct Traveler {
 /// every entity it held here — clearing its replication state before [`arrive`] rebuilds it in the
 /// destination world over the same connection (see `game/server/src/main.rs`).
 pub fn departing(world: &mut World) -> Vec<Traveler> {
-    let leaving: Vec<(Entity, Traveler)> = world
-        .query::<(Entity, &Owner, &Crossing, &Name, &Vitals, &Inventory, &Xp)>()
+    let ids: Vec<Entity> = world
+        .query_filtered::<Entity, With<Crossing>>()
         .iter(world)
-        .map(|(entity, owner, crossing, name, vitals, inventory, xp)| {
-            (
+        .collect();
+    // Snapshot needs `&World`, so read each crosser's components individually rather than in a query.
+    let leaving: Vec<(Entity, Traveler)> = ids
+        .into_iter()
+        .filter_map(|entity| {
+            let crossing = *world.get::<Crossing>(entity)?;
+            Some((
                 entity,
                 Traveler {
-                    client: owner.client,
+                    client: world.get::<Owner>(entity)?.client,
                     dest_area: crossing.dest_area,
                     dest: crossing.dest,
-                    name: name.name.clone(),
-                    vitals: vitals.clone(),
-                    inventory: inventory.clone(),
-                    xp: xp.clone(),
+                    name: world.get::<Name>(entity)?.name.clone(),
+                    stats: StatSet::snapshot(world, entity),
+                    inventory: world.get::<Inventory>(entity)?.clone(),
+                    xp: world.get::<Xp>(entity)?.clone(),
+                    equipment: world.get::<Equipment>(entity)?.clone(),
+                    job: *world.get::<Job>(entity)?,
+                    timed: world
+                        .get::<TimedEffects>(entity)
+                        .cloned()
+                        .unwrap_or_default(),
                 },
-            )
+            ))
         })
         .collect();
     for (entity, traveler) in &leaving {
@@ -69,8 +86,11 @@ pub fn arrive(world: &mut World, traveler: Traveler) -> Entity {
         traveler.dest_area,
         traveler.dest,
         traveler.name,
-        traveler.vitals,
+        traveler.stats,
         traveler.inventory,
         traveler.xp,
+        traveler.equipment,
+        traveler.job,
+        traveler.timed,
     )
 }

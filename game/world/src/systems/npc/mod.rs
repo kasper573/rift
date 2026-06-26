@@ -1,6 +1,10 @@
+pub mod ai;
+
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use ai::{Ai, AiKind, Hunt};
+use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::Replicated;
 use bevy_time::Time;
@@ -9,23 +13,39 @@ use serde::Deserialize;
 use crate::core::math::{Direction, Pos, Rng};
 use crate::core::table;
 use crate::core::table::{Content, Id};
-use crate::core::tiling::{TilePos, Tiles, TilesPerSec};
-use crate::core::time::{Millis, PlaybackRate, Seconds};
+use crate::core::tiling::{TilePos, Tiles};
+use crate::core::time::{PlaybackRate, Seconds};
 use crate::systems::Character;
 use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
 use crate::systems::area::{self, AreaDef, AreaTag};
-use crate::systems::combat::{AttackTarget, Attackers, Stats, Vitals, is_dead};
+use crate::systems::combat::{AttackTarget, Attackers, is_dead};
+use crate::systems::effect::definitions::Chasing;
+use crate::systems::effect::{self, EffectCommand, TimedEffects};
 use crate::systems::items::Reservation;
-use crate::systems::movement::{MoveTarget, Path, Position, Speed, forget, position};
+use crate::systems::movement::{MoveTarget, Path, Position, forget, position};
 use crate::systems::player::Players;
+use crate::systems::stat::{self, AttackSpeedStat, StatSet};
 
 const FILE: &str = "npc_table.json";
 const SPAWN_FILE: &str = "spawn_table.json";
 
 const NPC_RESPAWN_DELAY: Seconds = Seconds(5.0);
-const CHASE_SPEED_MULTIPLIER: f32 = 2.0;
-const PACIFIST_WANDER_CHANCE: f32 = 0.4;
 const RNG_SEED: u64 = 0x1234_5678_9abc_def0;
+
+pub fn register(app: &mut App) {
+    effect::source(app, chase);
+}
+
+/// Effect source: the [`Chasing`] boost while an npc has a target. The argument-less command is built
+/// once; the per-npc boost comes from the chaser's base speed at evaluation time.
+pub fn chase(world: &World, entity: Entity) -> Vec<EffectCommand> {
+    if world.get::<Npc>(entity).is_some() && world.get::<AttackTarget>(entity).is_some() {
+        static CHASE: OnceLock<EffectCommand> = OnceLock::new();
+        vec![CHASE.get_or_init(|| effect::command(&Chasing, ())).clone()]
+    } else {
+        Vec::new()
+    }
+}
 
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Npc {
@@ -51,13 +71,8 @@ pub struct NpcDef {
     pub model: Id<ActorModel>,
     #[serde(deserialize_with = "crate::systems::actor::rgba_hex")]
     pub tint: Rgba,
-    pub ai: Ai,
-    pub health: f32,
-    pub damage: f32,
-    pub attack_speed: PlaybackRate,
-    pub attack_delay: Millis,
-    pub range: Tiles,
-    pub speed: TilesPerSec,
+    pub ai: AiKind,
+    pub stats: StatSet,
     pub aggro: Tiles,
 }
 
@@ -68,15 +83,6 @@ impl Content for NpcDef {
     fn id(&self) -> &str {
         &self.id
     }
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum Ai {
-    Pacifist,
-    Defensive,
-    Aggressive,
-    Protective,
 }
 
 #[derive(Deserialize)]
@@ -126,18 +132,36 @@ fn spawn_npc(
     group: u32,
 ) {
     let at = random_walkable(rng, area.id).unwrap_or(area.spawn);
-    world.spawn((
-        character(def_index.get(), at, area.id),
-        Npc {
-            def: def_index,
-            group,
-        },
-    ));
+    spawn(world, def_index, at, area.id, group);
 }
 
-/// The replicated [`Character`] bundle an [`NpcDef`] spawns as. Shared by the spawner and the
-/// in-process benchmark so the two can't drift as `Character` or `NpcDef` gain fields.
-pub fn character(def: &NpcDef, at: Pos<Tiles>, area: Id<AreaDef>) -> Character {
+/// Spawns a fully-statted actor from a def, without any role component. Shared by npc spawning and
+/// the in-process benchmark so the `Character` bundle + stat application can't drift.
+pub fn spawn_actor(world: &mut World, def: &NpcDef, at: Pos<Tiles>, area: Id<AreaDef>) -> Entity {
+    let entity = world.spawn(character(def, at, area)).id();
+    def.stats.apply(world, entity);
+    entity
+}
+
+/// Spawns an npc: a statted actor plus its [`Npc`] role.
+pub fn spawn(
+    world: &mut World,
+    def_index: Id<NpcDef>,
+    at: Pos<Tiles>,
+    area: Id<AreaDef>,
+    group: u32,
+) -> Entity {
+    let entity = spawn_actor(world, def_index.get(), at, area);
+    world.entity_mut(entity).insert(Npc {
+        def: def_index,
+        group,
+    });
+    entity
+}
+
+/// The replicated non-stat [`Character`] bundle for an [`NpcDef`]; stats are applied from `def.stats`
+/// by [`spawn`].
+fn character(def: &NpcDef, at: Pos<Tiles>, area: Id<AreaDef>) -> Character {
     Character {
         replicated: Replicated,
         position: Position { pos: at },
@@ -149,23 +173,12 @@ pub fn character(def: &NpcDef, at: Pos<Tiles>, area: Id<AreaDef>) -> Character {
             dir: Direction::S,
             action: Action::Idle,
             model: def.model,
-            attack_rate: def.attack_speed,
+            attack_rate: PlaybackRate(def.stats.get(AttackSpeedStat.into())),
         },
         hitbox: Hitbox {
             size: def.model.get().hitbox(),
         },
-        vitals: Vitals {
-            health: def.health,
-            max: def.health,
-        },
         area: AreaTag { area },
-        stats: Stats {
-            damage: def.damage,
-            attack_speed: def.attack_speed,
-            attack_delay: def.attack_delay,
-            range: def.range,
-        },
-        speed: Speed { value: def.speed },
     }
 }
 
@@ -196,15 +209,22 @@ pub fn run_ai(world: &mut World) {
                 continue;
             }
             forget(world, id);
-            world.entity_mut(id).insert(Speed { value: def.speed });
         }
-        if let Some(target) = find_aggro(world, &players, &by_group, id, &npc, def, at, area) {
-            world.entity_mut(id).insert((
-                AttackTarget { target },
-                Speed {
-                    value: def.speed * CHASE_SPEED_MULTIPLIER,
-                },
-            ));
+        let target = {
+            let hunt = Hunt {
+                world,
+                players: &players,
+                by_group: &by_group,
+                id,
+                group: npc.group,
+                at,
+                area,
+                aggro: def.aggro,
+            };
+            def.ai.target(&hunt)
+        };
+        if let Some(target) = target {
+            world.entity_mut(id).insert(AttackTarget { target });
             continue;
         }
         idle_wander(world, &mut rng, id, def, area);
@@ -216,66 +236,11 @@ fn idle_wander(world: &mut World, rng: &mut Rng, id: Entity, def: &NpcDef, area:
     if world.get::<MoveTarget>(id).is_some() || world.get::<Path>(id).is_some() {
         return;
     }
-    let wander = match def.ai {
-        Ai::Pacifist => rng.unit() < PACIFIST_WANDER_CHANCE,
-        _ => true,
-    };
-    if wander && let Some(node) = random_walkable(rng, area) {
-        world
-            .entity_mut(id)
-            .insert((MoveTarget { pos: node }, Speed { value: def.speed }));
+    if def.ai.wanders(rng)
+        && let Some(node) = random_walkable(rng, area)
+    {
+        world.entity_mut(id).insert(MoveTarget { pos: node });
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn find_aggro(
-    world: &World,
-    players: &[Entity],
-    by_group: &HashMap<u32, Vec<Entity>>,
-    id: Entity,
-    npc: &Npc,
-    def: &NpcDef,
-    at: Pos<Tiles>,
-    area: Id<AreaDef>,
-) -> Option<Entity> {
-    match def.ai {
-        Ai::Pacifist => None,
-        Ai::Aggressive => nearest(world, players, at, area, def.aggro, |_| true),
-        Ai::Defensive => nearest(world, players, at, area, def.aggro, |player| {
-            world
-                .get::<Attackers>(id)
-                .is_some_and(|a| a.ids.contains(&player))
-        }),
-        Ai::Protective => by_group
-            .get(&npc.group)
-            .and_then(|enemies| nearest(world, enemies, at, area, def.aggro, |_| true)),
-    }
-}
-
-fn nearest(
-    world: &World,
-    candidates: &[Entity],
-    at: Pos<Tiles>,
-    area: Id<AreaDef>,
-    range: Tiles,
-    accept: impl Fn(Entity) -> bool,
-) -> Option<Entity> {
-    let mut best: Option<(Entity, Tiles)> = None;
-    for &candidate in candidates {
-        if is_dead(world, candidate)
-            || world.get::<AreaTag>(candidate).map(|t| t.area) != Some(area)
-            || !accept(candidate)
-        {
-            continue;
-        }
-        if let Some(p) = position(world, candidate) {
-            let distance = at.distance(p);
-            if distance <= range && best.is_none_or(|(_, b)| distance < b) {
-                best = Some((candidate, distance));
-            }
-        }
-    }
-    best.map(|(entity, _)| entity)
 }
 
 fn enemies_by_group(world: &mut World) -> HashMap<u32, Vec<Entity>> {
@@ -329,9 +294,6 @@ pub fn run_respawn(world: &mut World) {
         let area_id = world.get::<AreaTag>(id).map_or(Id::new(0), |tag| tag.area);
         let at = random_walkable(&mut rng, area_id)
             .unwrap_or_else(|| area::areas()[area_id.index()].spawn);
-        if let Some(mut vitals) = world.get_mut::<Vitals>(id) {
-            vitals.refill();
-        }
         if let Some(mut position) = world.get_mut::<Position>(id) {
             position.pos = at;
         }
@@ -341,11 +303,11 @@ pub fn run_respawn(world: &mut World) {
         world
             .entity_mut(id)
             .remove::<DeadAt>()
-            .remove::<Reservation>();
+            .remove::<Reservation>()
+            .remove::<TimedEffects>();
+        // After clearing buffs, refill to full base max health.
+        stat::refill(world, id);
         forget(world, id);
-        if let Some(speed) = world.get::<Npc>(id).map(|npc| npc.def.get().speed) {
-            world.entity_mut(id).insert(Speed { value: speed });
-        }
     }
     world.resource_mut::<GameRng>().0 = rng;
 }

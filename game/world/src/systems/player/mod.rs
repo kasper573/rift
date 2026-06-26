@@ -17,10 +17,17 @@ use crate::systems::Character;
 use crate::systems::account::identity::Identity;
 use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
 use crate::systems::area::{self, AreaDef, AreaTag};
-use crate::systems::combat::{Stats, Vitals, is_dead};
+use crate::systems::combat::is_dead;
+use crate::systems::effect::TimedEffects;
+use crate::systems::equipment::Equipment;
 use crate::systems::items::Inventory;
-use crate::systems::movement::{Position, Speed, forget};
+use crate::systems::job::{self, Job};
+use crate::systems::movement::{Position, forget};
 use crate::systems::spectate::Spectators;
+use crate::systems::stat::{
+    self, AttackDelayStat, AttackSpeedStat, DamageStat, HealthStat, MaxHealthStat,
+    MovementSpeedStat, RangeStat, StatSet,
+};
 use crate::systems::visibility::OwnedBy;
 use bevy_ecs::lifecycle::{Add, Remove};
 use bevy_ecs::message::Messages;
@@ -172,17 +179,34 @@ fn spawn_player(
     at: Pos<Tiles>,
     name: String,
 ) {
-    let max = PLAYER_MAX_HEALTH;
     place(
         world,
         client,
         zone,
         at,
         name,
-        Vitals { health: max, max },
+        player_stats(),
         Inventory::empty(),
         Xp { amount: 0 },
+        Equipment::default(),
+        Job {
+            def: job::default_job(),
+        },
+        TimedEffects::default(),
     );
+}
+
+/// The player's authored base stats — the single source of the player's numbers.
+pub fn player_stats() -> StatSet {
+    let mut stats = StatSet::default();
+    stats.add(HealthStat.into(), PLAYER_MAX_HEALTH);
+    stats.add(MaxHealthStat.into(), PLAYER_MAX_HEALTH);
+    stats.add(DamageStat.into(), PLAYER_DAMAGE);
+    stats.add(AttackSpeedStat.into(), PLAYER_ATTACK_SPEED.0);
+    stats.add(AttackDelayStat.into(), PLAYER_ATTACK_DELAY.0);
+    stats.add(RangeStat.into(), PLAYER_RANGE.0);
+    stats.add(MovementSpeedStat.into(), PLAYER_SPEED.0.0);
+    stats
 }
 
 /// Fresh joins pass starting state; portals pass carried state from the previous world.
@@ -193,9 +217,12 @@ pub(crate) fn place(
     zone: Id<AreaDef>,
     at: Pos<Tiles>,
     name: String,
-    vitals: Vitals,
+    stats: StatSet,
     inventory: Inventory,
     xp: Xp,
+    equipment: Equipment,
+    job: Job,
+    timed: TimedEffects,
 ) -> Entity {
     let model = Id::<ActorModel>::by_name(PLAYER_MODEL).expect("the player model exists");
     let entity = world
@@ -214,24 +241,18 @@ pub(crate) fn place(
                 hitbox: Hitbox {
                     size: model.get().hitbox(),
                 },
-                vitals,
                 area: AreaTag { area: zone },
-                stats: Stats {
-                    damage: PLAYER_DAMAGE,
-                    attack_speed: PLAYER_ATTACK_SPEED,
-                    attack_delay: PLAYER_ATTACK_DELAY,
-                    range: PLAYER_RANGE,
-                },
-                speed: Speed {
-                    value: PLAYER_SPEED,
-                },
             },
             OwnedBy(client),
             Owner { client },
             inventory,
             xp,
+            equipment,
+            job,
+            timed,
         ))
         .id();
+    stats.apply(world, entity);
     world.resource_mut::<Players>().0.insert(client, entity);
     entity
 }
@@ -250,9 +271,7 @@ pub fn respawn(world: &mut World) {
         if !is_dead(world, entity) {
             continue;
         }
-        if let Some(mut vitals) = world.get_mut::<Vitals>(entity) {
-            vitals.health = vitals.max;
-        }
+        stat::refill(world, entity);
         if let Some(mut position) = world.get_mut::<Position>(entity) {
             position.pos = spawn;
         }

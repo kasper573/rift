@@ -1,16 +1,28 @@
+//! Loot tables: each row names an npc, an amount, and a [`RewardKind`]. The kind is a variant set
+//! (one file per [`Grant`], dispatched by `enum_dispatch`), so adding a reward kind is a new file
+//! plus a `RewardKind` variant — `grant` never matches on a specific kind.
+
+mod item;
+mod xp;
+
+pub use item::Item;
+pub use xp::Xp;
+
 use std::sync::OnceLock;
 
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use bevy_time::Time;
+use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Deserializer};
 
+use crate::core::math::Rng;
 use crate::core::table::{self, Id};
 use crate::core::time::Seconds;
 use crate::systems::combat::Died;
 use crate::systems::items::{ItemDef, Reservation, ReservedBy, scatter_drop};
 use crate::systems::npc::{GameRng, Npc, NpcDef};
-use crate::systems::player::{Players, Xp};
+use crate::systems::player::Players;
 
 const FILE: &str = "reward_table.json";
 
@@ -23,16 +35,26 @@ pub struct Reward {
     pub kind: RewardKind,
 }
 
+/// What a reward applies on a kill: it may mutate the rewardee and/or add to the drop pile.
+pub struct GrantCtx<'a> {
+    pub world: &'a mut World,
+    pub amount: u32,
+    pub rewardee: Option<Entity>,
+    pub rng: &'a mut Rng,
+    pub drops: &'a mut Vec<(Id<ItemDef>, u32)>,
+}
+
+#[enum_dispatch]
+pub trait Grant {
+    fn grant(&self, ctx: &mut GrantCtx);
+}
+
+#[enum_dispatch(Grant)]
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RewardKind {
-    Xp,
-    /// An absent `chance` is a guaranteed drop.
-    Item {
-        #[serde(deserialize_with = "Id::<ItemDef>::deserialize_named")]
-        item: Id<ItemDef>,
-        chance: Option<Chance>,
-    },
+    Xp(Xp),
+    Item(Item),
 }
 
 #[derive(Clone, Copy)]
@@ -61,7 +83,7 @@ pub fn rewards_for(npc: Id<NpcDef>) -> impl Iterator<Item = &'static Reward> {
 
 /// Loot goes to the player who reserved the kill — usually the killer, but the reservation (set on
 /// first attack, see [`crate::systems::items::reserve`]) makes it the player who engaged it, not
-/// whoever lands the last hit. XP is granted directly; items scatter onto the map for pickup.
+/// whoever lands the last hit. Each reward grants itself; items scatter onto the map for pickup.
 pub fn grant(world: &mut World) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let deaths: Vec<Died> = world.resource_mut::<Messages<Died>>().drain().collect();
@@ -80,20 +102,13 @@ pub fn grant(world: &mut World) {
         let mut rng = world.resource::<GameRng>().0;
         let mut drops: Vec<(Id<ItemDef>, u32)> = Vec::new();
         for reward in rewards_for(def) {
-            match reward.kind {
-                RewardKind::Xp => {
-                    if let Some(entity) = rewardee
-                        && let Some(mut xp) = world.get_mut::<Xp>(entity)
-                    {
-                        xp.gain(reward.amount);
-                    }
-                }
-                RewardKind::Item { item, chance } => {
-                    if chance.is_none_or(|percent| rng.unit() * 100.0 < percent.0) {
-                        drops.push((item, reward.amount));
-                    }
-                }
-            }
+            reward.kind.grant(&mut GrantCtx {
+                world,
+                amount: reward.amount,
+                rewardee,
+                rng: &mut rng,
+                drops: &mut drops,
+            });
         }
         world.resource_mut::<GameRng>().0 = rng;
         scatter_drop(world, died.entity, &drops, reserved_by);

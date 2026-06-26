@@ -2,13 +2,15 @@
 //! carries, the [`DroppedItem`] entities loot spawns onto the map, the [`Reservation`] that makes a
 //! kill's loot fair, and the use/drop/pickup request/announce messages with their server systems.
 
+pub mod kinds;
+
 use std::sync::OnceLock;
 
 use bevy_app::App;
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::{Entity, MapEntities};
 use bevy_ecs::message::Message;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::core::assets;
 use crate::core::math::{Offset, Pos};
@@ -18,16 +20,21 @@ use crate::core::time::Seconds;
 use crate::systems::sfx::SfxId;
 
 use crate::systems::area::{self, AreaTag};
-use crate::systems::combat::{Vitals, is_dead};
+use crate::systems::combat::is_dead;
+use crate::systems::effect::{self, EffectCommand, TimedEffect, TimedEffects};
+use crate::systems::equipment::{self, EquipSlot, RequirementKind};
 use crate::systems::movement::{MoveTarget, Position, approach, forget, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, sender_player};
+use crate::systems::stat;
 use crate::systems::visibility::seen_by;
 use bevy_ecs::message::Messages;
 use bevy_ecs::query::With;
 use bevy_ecs::world::World;
 use bevy_replicon::prelude::{FromClient, Replicated, SendTargets, ToClients};
 use bevy_time::Time;
+pub use kinds::ItemKind;
+use kinds::Kind;
 
 const FILE: &str = "item_table.json";
 
@@ -49,6 +56,24 @@ pub fn register(app: &mut App) {
         .add_mapped_client_message::<PickupRequest>(Channel::Ordered)
         .add_mapped_server_message::<ItemConsumed>(Channel::Ordered)
         .add_mapped_server_message::<ItemsDropped>(Channel::Ordered);
+    effect::source(app, carried);
+}
+
+/// Effect source: every carried item whose kind is active while carried (resources), its effects on
+/// while in the inventory.
+fn carried(world: &World, entity: Entity) -> Vec<EffectCommand> {
+    world
+        .get::<Inventory>(entity)
+        .map(|inventory| {
+            inventory
+                .slots
+                .iter()
+                .map(|slot| slot.item.get())
+                .filter(|def| def.kind.carried())
+                .flat_map(|def| def.effects.iter().cloned())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -190,6 +215,8 @@ pub struct ItemDef {
     pub sfx: ItemSfx,
     #[serde(default)]
     pub stackable: Option<Stackable>,
+    #[serde(default, deserialize_with = "crate::systems::effect::commands")]
+    pub effects: Vec<EffectCommand>,
     #[serde(flatten)]
     pub kind: ItemKind,
 }
@@ -222,19 +249,22 @@ pub struct Stackable {
     pub max: u32,
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ItemKind {
-    Consumable { health_bonus: f32 },
-    Resource,
-    Equipment,
-}
-
+#[derive(Clone, Debug, PartialEq)]
 pub struct Icon(pub String);
+
+impl Serialize for Icon {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
 
 impl<'de> Deserialize<'de> for Icon {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
+        // A table gives a short name to resolve; the wire (replication) gives the resolved path back.
+        if assets::exists(&name) {
+            return Ok(Icon(name));
+        }
         assets::find(assets::ICONS, &format!("{name}.png"))
             .map(Icon)
             .ok_or_else(|| serde::de::Error::custom(format!("unknown icon '{name}'")))
@@ -248,6 +278,42 @@ pub fn items() -> &'static [ItemDef] {
         table::unique_ids(items.iter().map(|item| item.id.as_str()), FILE);
         items
     })
+}
+
+/// The high-level operations an [`ItemKind`] performs when its item is used, so each kind file calls
+/// these rather than reaching into items/equipment internals.
+pub struct UseCtx<'a> {
+    world: &'a mut World,
+    actor: Entity,
+    slot: usize,
+    item: Id<ItemDef>,
+}
+
+impl UseCtx<'_> {
+    pub fn heal(&mut self, amount: f32) {
+        stat::heal(self.world, self.actor, amount);
+    }
+    /// Removes one of the item from its slot and announces the use to onlookers.
+    pub fn consume(&mut self) {
+        consume_slot(self.world, self.actor, self.slot);
+        announce_consumed(self.world, self.actor, self.item);
+    }
+    pub fn apply_effects(&mut self, duration: Seconds) {
+        instantiate_effects(self.world, self.actor, self.item, duration);
+    }
+    pub fn equip(&mut self, into: EquipSlot, requirements: &[RequirementKind]) {
+        equipment::equip(self.world, self.actor, self.slot, into, requirements);
+    }
+}
+
+fn announce_consumed(world: &mut World, actor: Entity, item: Id<ItemDef>) {
+    // Announced per beholder: a mapped message only decodes for clients that see the actor.
+    for client in seen_by(world, actor) {
+        world.write_message(ToClients {
+            targets: SendTargets::Single(bevy_replicon::prelude::ClientId::Client(client)),
+            message: ItemConsumed { item, actor },
+        });
+    }
 }
 
 pub fn use_item(world: &mut World) {
@@ -269,25 +335,12 @@ pub fn use_item(world: &mut World) {
         else {
             continue;
         };
-        match item.get().kind {
-            ItemKind::Consumable { health_bonus } => {
-                if let Some(mut vitals) = world.get_mut::<Vitals>(entity) {
-                    vitals.heal(health_bonus);
-                }
-                consume_slot(world, entity, slot);
-            }
-            ItemKind::Resource | ItemKind::Equipment => continue,
-        }
-        // Announced per beholder: a mapped message only decodes for clients that see the actor.
-        for client in seen_by(world, entity) {
-            world.write_message(ToClients {
-                targets: SendTargets::Single(bevy_replicon::prelude::ClientId::Client(client)),
-                message: ItemConsumed {
-                    item,
-                    actor: entity,
-                },
-            });
-        }
+        item.get().kind.use_from(&mut UseCtx {
+            world,
+            actor: entity,
+            slot,
+            item,
+        });
     }
 }
 
@@ -486,6 +539,28 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
         inventory.add(drop.item, drop.count);
     }
     world.entity_mut(item).despawn();
+}
+
+/// Applies a used consumable's effect commands to `actor` for `duration`, as timed instances.
+fn instantiate_effects(world: &mut World, actor: Entity, item: Id<ItemDef>, duration: Seconds) {
+    let commands = &item.get().effects;
+    if commands.is_empty() {
+        return;
+    }
+    let until = Seconds(world.resource::<Time>().elapsed_secs()) + duration;
+    let entries = commands
+        .iter()
+        .map(|command| TimedEffect {
+            command: command.clone(),
+            until,
+        })
+        .collect::<Vec<_>>();
+    match world.get_mut::<TimedEffects>(actor) {
+        Some(mut timed) => timed.0.extend(entries),
+        None => {
+            world.entity_mut(actor).insert(TimedEffects(entries));
+        }
+    }
 }
 
 fn scatter_pos(from: Pos<Tiles>, index: usize, count: usize, area: &area::Area) -> Pos<Tiles> {

@@ -1,8 +1,7 @@
-//! Combat: an entity's replicated [`Vitals`] and the attack request, plus the server systems that
-//! engage targets, swing on the model's timing, deal damage, regenerate health, and emit deaths.
+//! Combat: the attack request plus the server systems that engage targets, swing on the model's
+//! timing, deal damage, regenerate health, and emit deaths. Health is a stat (see [`crate::systems::stat`]).
 
 use bevy_app::App;
-use bevy_ecs::component::Component;
 use bevy_ecs::entity::{Entity, MapEntities};
 use bevy_ecs::message::Message;
 use bevy_ecs::query::With;
@@ -22,6 +21,7 @@ use crate::systems::actor::{Action, set_action, set_facing};
 use crate::systems::area::AreaTag;
 use crate::systems::movement::{MoveTarget, Path, approach, forget, halt, on_tile, position};
 use crate::systems::player::{Owner, sender_player};
+use crate::systems::stat::{self, AttackDelayStat, AttackSpeedStat, DamageStat, RangeStat};
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::FromClient;
@@ -29,37 +29,7 @@ use bevy_time::Time;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
-
-    app.replicate::<Vitals>()
-        .add_mapped_client_message::<AttackRequest>(Channel::Ordered);
-}
-
-#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Vitals {
-    pub health: f32,
-    pub max: f32,
-}
-
-impl Vitals {
-    pub fn heal(&mut self, amount: f32) {
-        self.health = (self.health + amount).min(self.max);
-    }
-
-    pub fn damage(&mut self, amount: f32) {
-        self.health = (self.health - amount).max(0.0);
-    }
-
-    pub fn refill(&mut self) {
-        self.health = self.max;
-    }
-
-    pub fn fraction(&self) -> f32 {
-        (self.health / self.max).clamp(0.0, 1.0)
-    }
-
-    pub fn is_dead(&self) -> bool {
-        self.health <= 0.0
-    }
+    app.add_mapped_client_message::<AttackRequest>(Channel::Ordered);
 }
 
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
@@ -69,33 +39,28 @@ pub struct AttackRequest {
 }
 
 pub fn is_dead(world: &World, entity: Entity) -> bool {
-    world.get::<Vitals>(entity).is_some_and(Vitals::is_dead)
+    stat::is_dead(world, entity)
 }
 
 /// The living enemy (not the local player) whose hitbox covers `point` — the client's attack target.
 pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
     let me = session::me(world).map(|entity| entity.id());
-    let mut actors =
-        world.query_filtered::<(Entity, &Position, &Hitbox, Option<&Vitals>), With<Actor>>();
-    actors.iter(world).find_map(|(entity, at, hitbox, vitals)| {
-        if Some(entity) == me || vitals.is_some_and(Vitals::is_dead) {
+    let hitboxes: Vec<(Entity, _)> = world
+        .query_filtered::<(Entity, &Position, &Hitbox), With<Actor>>()
+        .iter(world)
+        .map(|(entity, at, hitbox)| (entity, at.pos.hitbox(hitbox.size)))
+        .collect();
+    hitboxes.into_iter().find_map(|(entity, hitbox)| {
+        if Some(entity) == me || stat::is_dead(world, entity) {
             return None;
         }
-        at.pos.hitbox(hitbox.size).contains(point).then_some(entity)
+        hitbox.contains(point).then_some(entity)
     })
 }
 
 const TILE_DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
 const HP_REGEN_INTERVAL: Seconds = Seconds(10.0);
 const HP_REGEN_AMOUNT: f32 = 5.0;
-
-#[derive(Component, Clone, Debug, PartialEq)]
-pub struct Stats {
-    pub damage: f32,
-    pub attack_speed: PlaybackRate,
-    pub attack_delay: Millis,
-    pub range: Tiles,
-}
 
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct AttackTarget {
@@ -129,19 +94,22 @@ pub struct Swing {
 #[derive(Resource, Default)]
 pub struct RegenAt(Seconds);
 
-pub fn regen(
-    time: Res<Time>,
-    mut last: ResMut<RegenAt>,
-    mut players: Query<&mut Vitals, With<Owner>>,
-) {
-    let now = Seconds(time.elapsed_secs());
-    if now - last.0 < HP_REGEN_INTERVAL {
-        return;
+pub fn regen(world: &mut World) {
+    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    {
+        let mut last = world.resource_mut::<RegenAt>();
+        if now - last.0 < HP_REGEN_INTERVAL {
+            return;
+        }
+        last.0 = now;
     }
-    last.0 = now;
-    for mut vitals in &mut players {
-        if !vitals.is_dead() {
-            vitals.heal(HP_REGEN_AMOUNT);
+    let players: Vec<Entity> = world
+        .query_filtered::<Entity, With<Owner>>()
+        .iter(world)
+        .collect();
+    for player in players {
+        if !stat::is_dead(world, player) {
+            stat::heal(world, player, HP_REGEN_AMOUNT);
         }
     }
 }
@@ -198,9 +166,12 @@ fn engage(world: &mut World, time: Seconds) {
         let (Some(at), Some(target_at)) = (position(world, id), position(world, target)) else {
             continue;
         };
-        let stats = stats(world, id);
+        let stats = stat::effective_all(world, id);
+        let range = Tiles(stats.get(RangeStat.into()));
+        let attack_delay = Millis(stats.get(AttackDelayStat.into()));
+        let attack_speed = PlaybackRate(stats.get(AttackSpeedStat.into()));
 
-        if !approach(world, id, target_at, stats.range + TILE_DIAGONAL_MARGIN) {
+        if !approach(world, id, target_at, range + TILE_DIAGONAL_MARGIN) {
             continue;
         }
 
@@ -210,7 +181,7 @@ fn engage(world: &mut World, time: Seconds) {
         }
         if world
             .get::<LastAttack>(id)
-            .is_some_and(|l| time - l.at < stats.attack_delay.seconds())
+            .is_some_and(|l| time - l.at < attack_delay.seconds())
         {
             continue;
         }
@@ -219,7 +190,7 @@ fn engage(world: &mut World, time: Seconds) {
             set_facing(&mut actor, dir, Action::Attack);
         }
         let timing = attack_timing(world, id, dir);
-        let speed = stats.attack_speed.at_least(0.01);
+        let speed = attack_speed.at_least(0.01);
         world.entity_mut(id).insert(Swing {
             target,
             hit_at: time + timing.apex / speed,
@@ -277,12 +248,10 @@ fn strike(
     if world.get_entity(target).is_err() || is_dead(world, target) || !same_area {
         return;
     }
-    let damage = stats(world, attacker).damage;
+    let damage = stat::effective(world, attacker, DamageStat.into());
     add_attacker(world, target, attacker);
     crate::systems::items::reserve(world, target, attacker, time);
-    if let Some(mut vitals) = world.get_mut::<Vitals>(target) {
-        vitals.damage(damage);
-    }
+    stat::apply_damage(world, target, damage);
     if is_dead(world, target) {
         if let Some(mut actor) = world.get_mut::<Actor>(target) {
             set_action(&mut actor, Action::Dead);
@@ -291,15 +260,6 @@ fn strike(
         world.entity_mut(target).remove::<Attackers>();
         deaths.push((target, attacker));
     }
-}
-
-fn stats(world: &World, entity: Entity) -> Stats {
-    world.get::<Stats>(entity).cloned().unwrap_or(Stats {
-        damage: 0.0,
-        attack_speed: PlaybackRate(1.0),
-        attack_delay: Millis(0.0),
-        range: Tiles(1.0),
-    })
 }
 
 // Manifest the client animates from, so the felt hit and applied hit coincide.

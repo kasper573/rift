@@ -17,8 +17,8 @@ use crate::core::math::{Direction, Pos, Rect, Size, WorldPx};
 use crate::core::table::{Content, Id};
 use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
-use crate::systems::combat::Vitals;
 use crate::systems::sfx::SfxId;
+use crate::systems::stat::Health;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -99,9 +99,9 @@ pub fn set_facing(actor: &mut Mut<Actor>, dir: Direction, action: Action) {
 
 /// Each tick, settle every actor back to idle (or dead) so a one-frame action set by a system this
 /// tick wins; movement/combat re-assert walk/run/attack afterwards.
-pub fn reset(mut actors: Query<(&mut Actor, Option<&Vitals>)>) {
-    for (mut actor, vitals) in &mut actors {
-        let dead = vitals.is_some_and(|v| v.health <= 0.0);
+pub fn reset(mut actors: Query<(&mut Actor, Option<&Health>)>) {
+    for (mut actor, health) in &mut actors {
+        let dead = health.is_some_and(|health| health.0 <= 0.0);
         set_action(&mut actor, if dead { Action::Dead } else { Action::Idle });
     }
 }

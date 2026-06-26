@@ -1,7 +1,7 @@
 //! The inventory pane: a fixed grid of `max` slots reconciled against the player's replicated
 //! inventory. Every slot draws a subtle cell so the grid shows through behind the icons; a filled
-//! slot adds the item icon, its stack count, a name tooltip, and uses (or Ctrl-drops) the item on
-//! click.
+//! slot adds the item icon, its stack count, a name tooltip, and acts on click — Ctrl drops, else the
+//! slot is "used" and the server acts on the item's kind (drink a consumable, equip gear).
 
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
@@ -9,13 +9,8 @@ use ui::{Align, Side, text_colored, tooltip, tooltip_content};
 use world::systems::items::{INVENTORY_MAX, Inventory};
 use world::systems::player::session;
 
-use crate::systems::hud::settings::ScreenPx;
+use super::{SLOT_BG, SLOT_BORDER, reconcile_children, slot_node, tooltip_label};
 use ui::component;
-
-const SLOT: ScreenPx = ScreenPx(36.0);
-const SLOT_BG: Color = Color::srgb(0.14, 0.14, 0.14);
-const SLOT_BORDER: Color = Color::srgb(0.24, 0.24, 0.24);
-const TOOLTIP_BG: Color = Color::BLACK;
 
 #[derive(Component, Default, Clone)]
 pub(super) struct InventoryGrid;
@@ -25,10 +20,6 @@ struct Cell {
     kind: u64,
     slot: u32,
 }
-
-/// A reconciled child's identity within its list (see `reconcile_children`).
-#[derive(Component)]
-struct Keyed(u64);
 
 struct CellData {
     slot: u32,
@@ -50,40 +41,6 @@ pub(super) fn sync_inventory(world: &mut World) {
     };
     let keys: Vec<u64> = cells.iter().map(cell_key).collect();
     reconcile_children(world, grid, &keys, |index| slot(&cells[index]));
-}
-
-/// Keeps `container`'s keyed children equal to `keys`: when the live keys differ (in value or order)
-/// the keyed children are despawned and rebuilt from `build`, in order. The rendered list is re-derived
-/// from `keys` whenever they change, so it can't go stale, duplicate, or fall out of order — dynamic
-/// lists stay correct here instead of via a hand-written diff at each call site.
-fn reconcile_children(
-    world: &mut World,
-    container: Entity,
-    keys: &[u64],
-    build: impl Fn(usize) -> Box<dyn Scene>,
-) {
-    let current: Vec<(Entity, u64)> = world
-        .get::<Children>(container)
-        .map(|children| {
-            children
-                .iter()
-                .filter_map(|child| world.get::<Keyed>(child).map(|keyed| (child, keyed.0)))
-                .collect()
-        })
-        .unwrap_or_default();
-    if current.iter().map(|(_, key)| *key).eq(keys.iter().copied()) {
-        return;
-    }
-    for (entity, _) in current {
-        world.entity_mut(entity).despawn();
-    }
-    for (index, &key) in keys.iter().enumerate() {
-        if let Ok(mut spawned) = world.spawn_scene(build(index)) {
-            spawned.insert(Keyed(key));
-            let child = spawned.id();
-            world.entity_mut(container).add_child(child);
-        }
-    }
 }
 
 fn inventory_cells(world: &World) -> Vec<CellData> {
@@ -125,7 +82,7 @@ fn slot(cell: &CellData) -> Box<dyn Scene> {
 
 fn empty_slot() -> impl Scene {
     bsn! {
-        template_value(cell_node())
+        template_value(slot_node())
         BackgroundColor({SLOT_BG})
         component(BorderColor::all(SLOT_BORDER))
     }
@@ -138,7 +95,7 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
         String::new()
     };
     bsn! {
-        template_value(cell_node())
+        template_value(slot_node())
         BackgroundColor({SLOT_BG})
         component(BorderColor::all(SLOT_BORDER))
         {tooltip(false)}
@@ -147,13 +104,7 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
             if let Ok(cell) = cells.get(click.entity) {
                 let slot = cell.slot;
                 let drop = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-                commands.queue(move |world: &mut World| {
-                    if drop {
-                        session::drop_item(world, slot);
-                    } else {
-                        session::use_item(world, slot);
-                    }
-                });
+                commands.queue(move |world: &mut World| act(world, slot, drop));
             }
         })
         Children [
@@ -179,21 +130,11 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
     }
 }
 
-fn cell_node() -> Node {
-    Node {
-        width: Val::Px(SLOT.0),
-        height: Val::Px(SLOT.0),
-        margin: UiRect::all(Val::Px(1.0)),
-        border: UiRect::all(Val::Px(1.0)),
-        ..default()
-    }
-}
-
-fn tooltip_label(text: impl Into<String>) -> impl Scene {
-    bsn! {
-        Node { padding: {UiRect::axes(Val::Px(6.0), Val::Px(3.0))} }
-        BackgroundColor({TOOLTIP_BG})
-        Pickable { should_block_lower: false, is_hoverable: false }
-        Children [ {EntityScene(text_colored(text.into(), Color::WHITE))} ]
+/// Ctrl-click drops; otherwise the slot is used and the server acts on the item's kind.
+fn act(world: &mut World, slot: u32, drop: bool) {
+    if drop {
+        session::drop_item(world, slot);
+    } else {
+        session::use_item(world, slot);
     }
 }

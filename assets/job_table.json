@@ -1,0 +1,18 @@
+[
+	{
+		"id": "adventurer",
+		"name": "Adventurer",
+		"levels": [
+			{ "exp": 0 },
+			{ "exp": 30, "effects": [ { "StatModifier": { "stat": "max_health", "amount": 10 } } ] },
+			{ "exp": 90, "effects": [ { "StatModifier": { "stat": "damage", "amount": 2 } } ] },
+			{
+				"exp": 200,
+				"effects": [
+					{ "StatModifier": { "stat": "max_health", "amount": 15 } },
+					{ "StatModifier": { "stat": "damage", "amount": 2 } }
+				]
+			}
+		]
+	}
+]

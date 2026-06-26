@@ -14,7 +14,7 @@
 ## Code style
 
 - Prioritize simplicity, stability (extensible, not brittle), readability — then performance.
-- small `macro_rules!` codegen is allowed where it removes boilerplate.
+- small, simple `macro_rules!` codegen is allowed to reduce boilerplate, but complex macros are entirely forbidden.
 - Files read consumer-first: public API at top, private helpers at the bottom.
 - No inline tests: every test lives in its crate's `tests/` folder, against the public API.
 - Use `Option`/`Result` and sum types over sentinels/casts. No `unsafe` without a justifying comment.

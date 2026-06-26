@@ -19,6 +19,7 @@ use crate::systems::actor::{Action, Actor, set_facing};
 use crate::systems::area::{self, AreaTag};
 use crate::systems::combat::{AttackTarget, is_dead};
 use crate::systems::player::sender_player;
+use crate::systems::stat::{self, MovementSpeedStat};
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::FromClient;
@@ -62,11 +63,6 @@ pub struct Path {
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct MoveTarget {
     pub pos: Pos<Tiles>,
-}
-
-#[derive(Component, Clone, Debug, PartialEq)]
-pub struct Speed {
-    pub value: TilesPerSec,
 }
 
 #[derive(Component, Clone, Debug, PartialEq)]
@@ -241,9 +237,7 @@ pub fn advance(world: &mut World) {
             }
         }
 
-        let speed = world
-            .get::<Speed>(id)
-            .map_or(TilesPerSec(Tiles(1.0)), |s| s.value);
+        let speed = TilesPerSec(Tiles(stat::effective(world, id, MovementSpeedStat.into())));
         let Some(mut at) = position(world, id) else {
             continue;
         };
