@@ -25,6 +25,7 @@
 - Don't use #[must_use]. Only when clippy recommends it or when it's absolutely critical.
 - Use serde and envy for all json/env serialization and deserialization. No custom parsing code. And use the derive macros, not the imperative APIs.
 - Aim for single source of truth (however do not conflate this with DRY. Code duplication is allowed and is not the same thing as SSoT).
+- Any and all public type names must be intuitive and not ambigious if listed alongside other public types. Do not rely on crate namespacing to disambiguate. 
 
 ## Architecture
 
