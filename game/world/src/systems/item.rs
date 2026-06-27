@@ -61,12 +61,12 @@ fn carried(world: &World, entity: Entity) -> Vec<Effect> {
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Inventory {
-    pub slots: Vec<Slot>,
+    pub slots: Vec<InventorySlot>,
     pub max: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Slot {
+pub struct InventorySlot {
     pub item: Id,
     pub count: u32,
 }
@@ -103,7 +103,7 @@ impl Inventory {
         }
         while count > 0 && (self.slots.len() as u32) < self.max {
             let take = stack_max.min(count);
-            self.slots.push(Slot { item, count: take });
+            self.slots.push(InventorySlot { item, count: take });
             count -= take;
         }
     }
