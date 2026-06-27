@@ -22,7 +22,6 @@ use crate::systems::widget::settings::{Placement, ScreenPx, ScreenVec, UserSetti
 use ui::component;
 
 const WIDGET: ScreenPx = ScreenPx(48.0);
-const SCREEN_W: f32 = 1152.0;
 const WINDOW_SIZE: Vec2 = Vec2::new(400.0, 200.0);
 
 const PANEL_BG: Color = Color::srgb(0.1, 0.1, 0.1);
@@ -120,13 +119,24 @@ struct WindowView {
     open: bool,
 }
 
-fn spawn_hud(mut commands: Commands, settings: Res<Settings>, assets: Res<AssetServer>) {
+fn spawn_hud(
+    mut commands: Commands,
+    settings: Res<Settings>,
+    assets: Res<AssetServer>,
+    screen: Single<&bevy::window::Window>,
+) {
+    let screen_w = screen.resolution.width();
     let mut widgets: Vec<Box<dyn Scene>> = vec![
         Box::new(character_widget(&settings)),
         Box::new(effects_widget(&settings)),
     ];
     for def in ::inventory::iter::<WindowDef>() {
-        widgets.push(Box::new(launcher(Window(def.id), &settings, &assets)));
+        widgets.push(Box::new(launcher(
+            Window(def.id),
+            screen_w,
+            &settings,
+            &assets,
+        )));
     }
     commands.spawn_scene(bsn! {
         Hud
@@ -138,15 +148,17 @@ fn spawn_hud(mut commands: Commands, settings: Res<Settings>, assets: Res<AssetS
 
 fn rebuild_windows(
     open: Res<Open>,
-    windows: Query<(Entity, &WindowView, &ChildOf)>,
+    views: Query<(Entity, &WindowView, &ChildOf)>,
     settings: Res<Settings>,
     assets: Res<AssetServer>,
+    screen: Single<&bevy::window::Window>,
     mut commands: Commands,
 ) {
     if !open.is_changed() {
         return;
     }
-    for (entity, view, child_of) in &windows {
+    let screen_w = screen.resolution.width();
+    for (entity, view, child_of) in &views {
         let should_open = open.0.contains(&view.window);
         if should_open == view.open {
             continue;
@@ -157,7 +169,7 @@ fn rebuild_windows(
         let panel: Box<dyn Scene> = if should_open {
             Box::new(window_scene(window, &settings))
         } else {
-            Box::new(launcher(window, &settings, &assets))
+            Box::new(launcher(window, screen_w, &settings, &assets))
         };
         commands.spawn_scene(panel).insert(ChildOf(hud));
     }
@@ -209,9 +221,14 @@ fn effects_widget(settings: &Settings) -> impl Scene {
     }
 }
 
-fn launcher(window: Window, settings: &Settings, assets: &AssetServer) -> impl Scene {
+fn launcher(
+    window: Window,
+    screen_w: f32,
+    settings: &Settings,
+    assets: &AssetServer,
+) -> impl Scene {
     let def = window.def();
-    let pos = widget_pos(settings, window.0, launcher_pos(window));
+    let pos = widget_pos(settings, window.0, launcher_pos(window, screen_w));
     bsn! {
         {widget(ui::Widget {
             pos,
@@ -294,8 +311,8 @@ fn sync_snap_grid(settings: Res<Settings>, mut grid: ResMut<SnapGrid>) {
     grid.0 = settings.0.snap_grid();
 }
 
-fn launcher_pos(window: Window) -> Vec2 {
-    let x = SCREEN_W - 8.0 - WIDGET.0;
+fn launcher_pos(window: Window, screen_w: f32) -> Vec2 {
+    let x = screen_w - 8.0 - WIDGET.0;
     Vec2::new(x, 8.0 + window.def().order as f32 * (WIDGET.0 + 8.0))
 }
 
