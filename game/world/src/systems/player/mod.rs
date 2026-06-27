@@ -220,7 +220,7 @@ pub(crate) fn place(
                     attack_rate: PLAYER_ATTACK_SPEED,
                 },
                 hitbox: Hitbox {
-                    size: model.get().hitbox(),
+                    size: crate::systems::actor::resolve_model(model).hitbox(),
                 },
                 area: AreaTag { area: zone },
             },

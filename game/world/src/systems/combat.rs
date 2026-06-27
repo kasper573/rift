@@ -247,7 +247,7 @@ fn strike(
 fn attack_timing(world: &World, entity: Entity, dir: Direction) -> crate::systems::actor::Timing {
     world
         .get::<Actor>(entity)
-        .map(|a| a.model.get().timing(Action::Attack.name(), dir))
+        .map(|a| crate::systems::actor::resolve_model(a.model).timing(Action::Attack.name(), dir))
         .unwrap_or_default()
 }
 

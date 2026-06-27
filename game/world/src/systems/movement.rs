@@ -150,7 +150,7 @@ fn approach_tile(
     let grid = &area::of(world, entity)?.grid;
     let airborne = world
         .get::<Actor>(entity)
-        .is_some_and(|actor| actor.model.get().airborne);
+        .is_some_and(|actor| crate::systems::actor::resolve_model(actor.model).airborne);
     let goal = target.cell();
     let reach = range.0.ceil() as i32;
     let mut best: Option<(Pos<Tiles>, Tiles)> = None;
@@ -260,7 +260,7 @@ pub fn advance(world: &mut World) {
 fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
     if world
         .get::<Actor>(entity)
-        .is_some_and(|actor| actor.model.get().airborne)
+        .is_some_and(|actor| crate::systems::actor::resolve_model(actor.model).airborne)
     {
         return Some(vec![goal.cell()]);
     }

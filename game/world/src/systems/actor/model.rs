@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 
 use tiled::{Frame, PropertyValue, TileId};
 
@@ -8,9 +9,22 @@ use crate::core::assets::AssetRef;
 use crate::core::math::{Direction, Pos, Rect, Size, WorldPx};
 use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
+use crate::data;
 use crate::systems::sfx::SfxId;
 
-pub fn load(source: AssetRef) -> ActorModel {
+pub fn resolve(id: data::model::Id) -> &'static ActorModel {
+    static CACHE: OnceLock<Mutex<HashMap<data::model::Id, &'static ActorModel>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().expect("actor model cache");
+    if let Some(&built) = guard.get(&id) {
+        return built;
+    }
+    let built: &'static ActorModel = Box::leak(Box::new(load(*id.get())));
+    guard.insert(id, built);
+    built
+}
+
+fn load(source: AssetRef) -> ActorModel {
     let name = source.0;
     let bytes = source
         .resolve()

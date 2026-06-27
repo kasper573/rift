@@ -75,9 +75,10 @@ pub fn validate() {
             item.icon.0
         );
     }
-    let _ = crate::data::model::TABLE.len()
-        + crate::data::npc::TABLE.len()
-        + crate::data::job::TABLE.len();
+    for &id in crate::data::model::TABLE.keys() {
+        actor::resolve_model(id);
+    }
+    let _ = crate::data::npc::TABLE.len() + crate::data::job::TABLE.len();
 }
 
 pub fn server_app(area: area::Id) -> App {

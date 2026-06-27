@@ -20,7 +20,7 @@ use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::data;
 use crate::systems::Character;
-use crate::systems::actor::{Action, Actor, Hitbox, Name, Rgba, set_action};
+use crate::systems::actor::{self, Action, Actor, Hitbox, Name, Rgba, set_action};
 use crate::systems::area::{self, AreaTag};
 use crate::systems::combat::{AttackTarget, Attackers};
 use crate::systems::effect::{self, Effect, TimedEffects};
@@ -118,7 +118,7 @@ fn character(def: &NpcDef, at: Pos<Tiles>, area: area::Id) -> Character {
             attack_rate: PlaybackRate(def.stats.get(StatKind::AttackSpeed)),
         },
         hitbox: Hitbox {
-            size: def.model.get().hitbox(),
+            size: actor::resolve_model(def.model).hitbox(),
         },
         area: AreaTag { area },
     }

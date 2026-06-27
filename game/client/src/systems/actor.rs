@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use world::core::tiling::{TilePos, Tiles};
 use world::core::time::Seconds;
-use world::systems::actor::{Action, Actor, Rgba};
+use world::systems::actor::{Action, Actor, Rgba, resolve_model};
 use world::systems::area::{self, AreaTag};
 use world::systems::movement::Position;
 
@@ -33,7 +33,7 @@ fn attach_sprite(
     let Ok(actor) = actors.get(add.entity) else {
         return;
     };
-    let image = assets.load(actor.model.get().sheet().to_owned());
+    let image = assets.load(resolve_model(actor.model).sheet().to_owned());
     commands.entity(add.entity).insert((
         Sprite { image, ..default() },
         Anchor(Vec2::new(0.0, -1.0 / 6.0)),
@@ -58,11 +58,12 @@ fn sync_actors(
     animator.retain(|entity| actors.contains(entity));
     for (entity, actor, position, tag, mut sprite, mut transform) in &mut actors {
         let elapsed = animator.elapsed(entity, actor.action as u64, clock);
-        let region =
-            actor
-                .model
-                .get()
-                .frame(actor.action.name(), actor.dir, elapsed, actor.attack_rate);
+        let region = resolve_model(actor.model).frame(
+            actor.action.name(),
+            actor.dir,
+            elapsed,
+            actor.attack_rate,
+        );
         sprite.rect = Some(atlas_rect(region));
         sprite.custom_size = Some(Vec2::new(region.size.width, region.size.height));
         sprite.color = rgba(actor.color);
@@ -107,7 +108,7 @@ fn actor_cues(
         } else {
             Seconds(-1.0)
         };
-        let model = actor.model.get();
+        let model = resolve_model(actor.model);
         let (cues, stepped) = model.cues(
             actor.action.name(),
             actor.dir,
