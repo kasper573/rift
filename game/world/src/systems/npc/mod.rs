@@ -31,7 +31,6 @@ use crate::systems::player::Players;
 use crate::systems::stat::{self, Stat, StatKind, Stats};
 
 const NPC_RESPAWN_DELAY: Seconds = Seconds(5.0);
-const RNG_SEED: u64 = 0x1234_5678_9abc_def0;
 
 pub fn register(app: &mut App) {
     effect::source(app, chase);
@@ -56,9 +55,6 @@ pub struct DeadAt {
     pub at: Seconds,
 }
 
-#[derive(Resource)]
-pub struct GameRng(pub Rng);
-
 pub struct NpcDef {
     pub display_name: &'static str,
     pub model: data::model::Id,
@@ -70,15 +66,15 @@ pub struct NpcDef {
 }
 
 pub fn spawn_all(world: &mut World) {
-    let mut rng = Rng::new(RNG_SEED);
     let area_id = world.resource::<crate::systems::WorldArea>().0;
     let assets = world.resource::<AssetService>().clone();
-    for (group, spawn) in area_id.get().spawns.iter().enumerate() {
-        for _ in 0..spawn.population {
-            spawn_npc(world, &assets, &mut rng, area_id, spawn.npc, group as u32);
+    world.resource_scope(|world, mut rng: Mut<Rng>| {
+        for (group, spawn) in area_id.get().spawns.iter().enumerate() {
+            for _ in 0..spawn.population {
+                spawn_npc(world, &assets, &mut rng, area_id, spawn.npc, group as u32);
+            }
         }
-    }
-    world.insert_resource(GameRng(rng));
+    });
 }
 
 fn spawn_npc(
@@ -176,55 +172,55 @@ impl Hunt<'_> {
 
 pub fn run_ai(world: &mut World) {
     let players: Vec<Entity> = world.resource::<Players>().0.values().copied().collect();
-    let mut rng = world.resource::<GameRng>().0;
     let assets = world.resource::<AssetService>().clone();
     let by_group = enemies_by_group(world);
     let ids: Vec<Entity> = world
         .query_filtered::<Entity, With<Npc>>()
         .iter(world)
         .collect();
-    for id in ids {
-        if stat::is_dead(world, id) {
-            forget(world, id);
-            continue;
-        }
-        let Some(npc) = world.get::<Npc>(id).copied() else {
-            continue;
-        };
-        let Some(at) = position(world, id) else {
-            continue;
-        };
-        let def = npc.def.get();
-        let Some(area) = world.get::<AreaTag>(id).map(|tag| tag.area) else {
-            continue;
-        };
-
-        if let Some(target) = world.get::<AttackTarget>(id).map(|t| t.target) {
-            if in_aggro(world, target, at, area, def.aggro) {
+    world.resource_scope(|world, mut rng: Mut<Rng>| {
+        for id in ids {
+            if stat::is_dead(world, id) {
+                forget(world, id);
                 continue;
             }
-            forget(world, id);
-        }
-        let target = {
-            let hunt = Hunt {
-                world,
-                players: &players,
-                by_group: &by_group,
-                id,
-                group: npc.group,
-                at,
-                area,
-                aggro: def.aggro,
+            let Some(npc) = world.get::<Npc>(id).copied() else {
+                continue;
             };
-            def.ai.target(&hunt)
-        };
-        if let Some(target) = target {
-            world.entity_mut(id).insert(AttackTarget { target });
-            continue;
+            let Some(at) = position(world, id) else {
+                continue;
+            };
+            let def = npc.def.get();
+            let Some(area) = world.get::<AreaTag>(id).map(|tag| tag.area) else {
+                continue;
+            };
+
+            if let Some(target) = world.get::<AttackTarget>(id).map(|t| t.target) {
+                if in_aggro(world, target, at, area, def.aggro) {
+                    continue;
+                }
+                forget(world, id);
+            }
+            let target = {
+                let hunt = Hunt {
+                    world,
+                    players: &players,
+                    by_group: &by_group,
+                    id,
+                    group: npc.group,
+                    at,
+                    area,
+                    aggro: def.aggro,
+                };
+                def.ai.target(&hunt)
+            };
+            if let Some(target) = target {
+                world.entity_mut(id).insert(AttackTarget { target });
+                continue;
+            }
+            idle_wander(world, &assets, &mut rng, id, def, area);
         }
-        idle_wander(world, &assets, &mut rng, id, def, area);
-    }
-    world.resource_mut::<GameRng>().0 = rng;
+    });
 }
 
 fn idle_wander(
@@ -267,45 +263,45 @@ fn in_aggro(world: &World, target: Entity, at: Pos<Tiles>, area: area::Id, aggro
 
 pub fn run_respawn(world: &mut World) {
     let time = Seconds(world.resource::<Time>().elapsed_secs());
-    let mut rng = world.resource::<GameRng>().0;
     let ids: Vec<Entity> = world
         .query_filtered::<Entity, With<Npc>>()
         .iter(world)
         .collect();
-    for id in ids {
-        if !stat::is_dead(world, id) {
-            world.entity_mut(id).remove::<DeadAt>();
-            continue;
-        }
-        let since = match world.get::<DeadAt>(id) {
-            Some(dead) => dead.at,
-            None => {
-                world.entity_mut(id).insert(DeadAt { at: time });
-                time
+    world.resource_scope(|world, mut rng: Mut<Rng>| {
+        for id in ids {
+            if !stat::is_dead(world, id) {
+                world.entity_mut(id).remove::<DeadAt>();
+                continue;
             }
-        };
-        if time - since < NPC_RESPAWN_DELAY {
-            continue;
+            let since = match world.get::<DeadAt>(id) {
+                Some(dead) => dead.at,
+                None => {
+                    world.entity_mut(id).insert(DeadAt { at: time });
+                    time
+                }
+            };
+            if time - since < NPC_RESPAWN_DELAY {
+                continue;
+            }
+            let Some(region) = area::of(world, id) else {
+                continue;
+            };
+            let at = random_walkable(&mut rng, region).unwrap_or(region.spawn);
+            if let Some(mut position) = world.get_mut::<Position>(id) {
+                position.pos = at;
+            }
+            if let Some(mut actor) = world.get_mut::<Actor>(id) {
+                set_action(&mut actor, Action::Idle);
+            }
+            world
+                .entity_mut(id)
+                .remove::<DeadAt>()
+                .remove::<Reservation>()
+                .remove::<TimedEffects>();
+            stat::refill(world, id);
+            forget(world, id);
         }
-        let Some(region) = area::of(world, id) else {
-            continue;
-        };
-        let at = random_walkable(&mut rng, region).unwrap_or(region.spawn);
-        if let Some(mut position) = world.get_mut::<Position>(id) {
-            position.pos = at;
-        }
-        if let Some(mut actor) = world.get_mut::<Actor>(id) {
-            set_action(&mut actor, Action::Idle);
-        }
-        world
-            .entity_mut(id)
-            .remove::<DeadAt>()
-            .remove::<Reservation>()
-            .remove::<TimedEffects>();
-        stat::refill(world, id);
-        forget(world, id);
-    }
-    world.resource_mut::<GameRng>().0 = rng;
+    });
 }
 
 fn random_walkable(rng: &mut Rng, area: &area::Area) -> Option<Pos<Tiles>> {

@@ -21,6 +21,7 @@ derive_more = { version = "2", features = ["add", "add_assign"] }
 euclid = { version = "0.22", features = ["serde"] }
 pathfinding = "4"
 oorandom = "11"
+getrandom = "0.2"
 strum = { workspace = true, features = ["derive"] }
 seq-macro = "0.3"
 renet2.workspace = true

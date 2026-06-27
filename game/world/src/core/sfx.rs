@@ -1,4 +1,5 @@
 use crate::core::assets::AssetRef;
+use crate::core::math::Rng;
 
 pub use crate::data::sfx::Id as SfxId;
 
@@ -21,14 +22,10 @@ impl Default for SfxScalar {
 }
 
 impl SfxScalar {
-    pub fn resolve(self, roll: f32) -> f32 {
+    pub fn resolve(self, rng: &mut Rng) -> f32 {
         match self {
             SfxScalar::Fixed(value) => value,
-            SfxScalar::Random(min, max) => min + roll.clamp(0.0, 1.0) * (max - min),
+            SfxScalar::Random(min, max) => min + rng.rand_float() * (max - min),
         }
-    }
-
-    pub fn range(self) -> (f32, f32) {
-        (self.resolve(0.0), self.resolve(1.0))
     }
 }

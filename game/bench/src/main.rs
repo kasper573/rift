@@ -172,6 +172,7 @@ fn build_world(
 ) -> (App, Vec<(ClientId, Entity)>) {
     let mut app = world::systems::server_app(id);
     app.insert_resource(assets.clone());
+    app.insert_resource(world::core::math::Rng::from_entropy());
     app.finish();
     app.cleanup();
     app.world_mut()

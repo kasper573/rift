@@ -2,6 +2,7 @@ use base64::Engine;
 use bevy::asset::AssetApp;
 use bevy::asset::io::AssetSourceId;
 use bevy::prelude::*;
+use world::core::math::Rng;
 use world::systems::account::Role;
 
 pub mod core;
@@ -22,6 +23,7 @@ pub fn boot() {
 
     let mut app = App::new();
     app.insert_resource(core::assets::service());
+    app.insert_resource(Rng::from_entropy());
     app.register_asset_source(AssetSourceId::Default, core::assets::bevy_source())
         .add_plugins(
             DefaultPlugins

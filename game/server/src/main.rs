@@ -342,6 +342,7 @@ struct Wire(u64);
 fn build_world(area: world::systems::area::Id, assets: &AssetService) -> App {
     let mut app = world::systems::server_app(area);
     app.insert_resource(assets.clone());
+    app.insert_resource(world::core::math::Rng::from_entropy());
     app.finish();
     app.cleanup();
     app.world_mut()

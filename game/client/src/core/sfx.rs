@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy_kira_audio::prelude::{Audio, AudioControl, AudioSource, Decibels};
 use strum::VariantArray;
-use world::core::math::{Pos, Size};
-use world::core::sfx::SfxId;
+use world::core::math::{Pos, Rng, Size};
+use world::core::sfx::{SfxId, SfxScalar};
 use world::core::tiling::Tiles;
 use world::core::time::Seconds;
 
@@ -39,8 +39,8 @@ struct Catalog(Vec<Sound>);
 
 struct Sound {
     handle: Handle<AudioSource>,
-    volume: (f32, f32),
-    pitch: (f32, f32),
+    volume: SfxScalar,
+    pitch: SfxScalar,
 }
 
 #[derive(Resource, Default)]
@@ -51,8 +51,8 @@ struct Cue {
     proximity: f32,
     pan: f32,
     handle: Handle<AudioSource>,
-    volume: (f32, f32),
-    pitch: (f32, f32),
+    volume: SfxScalar,
+    pitch: SfxScalar,
 }
 
 fn load(assets: Res<AssetServer>, mut catalog: ResMut<Catalog>) {
@@ -62,8 +62,8 @@ fn load(assets: Res<AssetServer>, mut catalog: ResMut<Catalog>) {
             let def = id.get();
             Sound {
                 handle: assets.load(def.src.0),
-                volume: def.volume.range(),
-                pitch: def.pitch.range(),
+                volume: def.volume,
+                pitch: def.pitch,
             }
         })
         .collect();
@@ -76,6 +76,7 @@ fn mix(
     audio: Res<Audio>,
     catalog: Res<Catalog>,
     mut played: ResMut<Played>,
+    mut rng: ResMut<Rng>,
 ) {
     let Some(listener) = listener.0 else {
         requests.clear();
@@ -107,9 +108,8 @@ fn mix(
         if !ready(&mut played.0, id, clock) {
             continue;
         }
-        let salt = id.index() as u64;
-        let volume = resolve(cue.volume, roll(clock, salt)) * cue.proximity;
-        let pitch = resolve(cue.pitch, roll(clock, salt.wrapping_add(7)));
+        let volume = cue.volume.resolve(&mut rng) * cue.proximity;
+        let pitch = cue.pitch.resolve(&mut rng);
         audio
             .play(cue.handle)
             .with_volume(Decibels(20.0 * volume.max(1e-4).log10()))
@@ -127,17 +127,6 @@ fn ready(played: &mut HashMap<SfxId, Seconds>, id: SfxId, clock: Seconds) -> boo
     }
     played.insert(id, clock);
     true
-}
-
-fn resolve((min, max): (f32, f32), roll: f32) -> f32 {
-    min + roll.clamp(0.0, 1.0) * (max - min)
-}
-
-fn roll(clock: Seconds, salt: u64) -> f32 {
-    let bits = (clock.0.to_bits() as u64)
-        .wrapping_mul(2654435761)
-        .wrapping_add(salt.wrapping_mul(40503));
-    (bits % 1000) as f32 / 1000.0
 }
 
 fn proximity_volume(listener: Pos<Tiles>, source: Pos<Tiles>) -> f32 {

@@ -7,7 +7,7 @@ use crate::core::time::Seconds;
 use crate::data;
 use crate::systems::combat::Died;
 use crate::systems::item::{Reservation, ReservedBy, scatter_drop};
-use crate::systems::npc::{GameRng, Npc};
+use crate::systems::npc::Npc;
 use crate::systems::player::{Players, Xp};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -51,32 +51,32 @@ fn apply(reward: Reward, ctx: &mut RewardCtx) {
 pub fn grant(world: &mut World) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let deaths: Vec<Died> = world.resource_mut::<Messages<Died>>().drain().collect();
-    for died in deaths {
-        let Some(npc) = world.get::<Npc>(died.entity).map(|npc| npc.def) else {
-            continue;
-        };
-        let reserved_by = match world.get::<Reservation>(died.entity) {
-            Some(reservation) if !reservation.expired(now) => reservation.by,
-            _ => ReservedBy::None,
-        };
-        let rewardee = match reserved_by {
-            ReservedBy::Account(client) => world.resource::<Players>().0.get(&client).copied(),
-            ReservedBy::None => None,
-        };
-        let mut rng = world.resource::<GameRng>().0;
-        let mut drops: Vec<(data::item::Id, u32)> = Vec::new();
-        for &reward in npc.get().rewards {
-            apply(
-                reward,
-                &mut RewardCtx {
-                    world,
-                    rewardee,
-                    rng: &mut rng,
-                    drops: &mut drops,
-                },
-            );
+    world.resource_scope(|world, mut rng: Mut<Rng>| {
+        for died in deaths {
+            let Some(npc) = world.get::<Npc>(died.entity).map(|npc| npc.def) else {
+                continue;
+            };
+            let reserved_by = match world.get::<Reservation>(died.entity) {
+                Some(reservation) if !reservation.expired(now) => reservation.by,
+                _ => ReservedBy::None,
+            };
+            let rewardee = match reserved_by {
+                ReservedBy::Account(client) => world.resource::<Players>().0.get(&client).copied(),
+                ReservedBy::None => None,
+            };
+            let mut drops: Vec<(data::item::Id, u32)> = Vec::new();
+            for &reward in npc.get().rewards {
+                apply(
+                    reward,
+                    &mut RewardCtx {
+                        world,
+                        rewardee,
+                        rng: &mut rng,
+                        drops: &mut drops,
+                    },
+                );
+            }
+            scatter_drop(world, died.entity, &drops, reserved_by);
         }
-        world.resource_mut::<GameRng>().0 = rng;
-        scatter_drop(world, died.entity, &drops, reserved_by);
-    }
+    });
 }

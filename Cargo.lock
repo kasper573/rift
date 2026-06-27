@@ -9356,6 +9356,7 @@ dependencies = [
  "bevy_time",
  "derive_more",
  "euclid",
+ "getrandom 0.2.17",
  "oorandom",
  "pathfinding",
  "postcard",

@@ -1,5 +1,6 @@
 use std::f32::consts::FRAC_1_SQRT_2;
 
+use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
@@ -51,4 +52,25 @@ impl<U> From<Offset<U>> for Direction {
     }
 }
 
-pub use oorandom::Rand32 as Rng;
+#[derive(Resource)]
+pub struct Rng(oorandom::Rand32);
+
+impl Rng {
+    pub fn new(seed: u64) -> Rng {
+        Rng(oorandom::Rand32::new(seed))
+    }
+
+    pub fn from_entropy() -> Rng {
+        let mut seed = [0u8; 8];
+        getrandom::getrandom(&mut seed).expect("os entropy for rng seed");
+        Rng::new(u64::from_le_bytes(seed))
+    }
+
+    pub fn rand_float(&mut self) -> f32 {
+        self.0.rand_float()
+    }
+
+    pub fn rand_range(&mut self, range: std::ops::Range<u32>) -> u32 {
+        self.0.rand_range(range)
+    }
+}
