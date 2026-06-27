@@ -65,22 +65,13 @@ pub struct NpcDef {
     pub ai: &'static dyn Ai,
     pub stats: Stats,
     pub aggro: Tiles,
-}
-
-pub struct SpawnRow {
-    pub npc: data::npc::Id,
-    pub area: area::Id,
-    pub population: u32,
+    pub rewards: &'static [crate::systems::rewards::Reward],
 }
 
 pub fn spawn_all(world: &mut World) {
     let mut rng = Rng(RNG_SEED | 1);
     let area_id = world.resource::<crate::systems::WorldArea>().0;
-    for (group, spawn) in data::spawn::TABLE
-        .values()
-        .filter(|spawn| spawn.area == area_id)
-        .enumerate()
-    {
+    for (group, spawn) in area_id.get().spawns.iter().enumerate() {
         for _ in 0..spawn.population {
             spawn_npc(world, &mut rng, area_id, spawn.npc, group as u32);
         }

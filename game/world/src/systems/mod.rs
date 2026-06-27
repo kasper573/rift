@@ -72,10 +72,7 @@ pub fn validate() {
     for item in crate::data::item::TABLE.values() {
         item.icon.path();
     }
-    let _ = crate::data::npc::TABLE.len()
-        + crate::data::job::TABLE.len()
-        + crate::data::spawn::TABLE.len()
-        + crate::data::reward::TABLE.len();
+    let _ = crate::data::npc::TABLE.len() + crate::data::job::TABLE.len();
 }
 
 pub fn server_app(area: area::Id) -> App {

@@ -10,8 +10,7 @@ use crate::systems::item::{Reservation, ReservedBy, scatter_drop};
 use crate::systems::npc::{GameRng, Npc};
 use crate::systems::player::{Players, Xp};
 
-pub struct RewardDef {
-    pub npc: data::npc::Id,
+pub struct Reward {
     pub amount: u32,
     pub grant: Grant,
 }
@@ -32,7 +31,7 @@ struct GrantCtx<'a> {
     drops: &'a mut Vec<(data::item::Id, u32)>,
 }
 
-fn apply(reward: &RewardDef, ctx: &mut GrantCtx) {
+fn apply(reward: &Reward, ctx: &mut GrantCtx) {
     match reward.grant {
         Grant::Xp => {
             if let Some(entity) = ctx.rewardee
@@ -66,10 +65,7 @@ pub fn grant(world: &mut World) {
         };
         let mut rng = world.resource::<GameRng>().0;
         let mut drops: Vec<(data::item::Id, u32)> = Vec::new();
-        for reward in data::reward::TABLE
-            .values()
-            .filter(|reward| reward.npc == npc)
-        {
+        for reward in npc.get().rewards {
             apply(
                 reward,
                 &mut GrantCtx {

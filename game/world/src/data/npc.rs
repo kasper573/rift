@@ -1,6 +1,8 @@
 use crate::core::tiling::Tiles;
+use crate::data::item::Id as ItemId;
 use crate::systems::actor::Rgba;
 use crate::systems::npc::{Aggressive, Defensive, NpcDef, Pacifist, Protective};
+use crate::systems::rewards::{Grant, Reward};
 use crate::systems::stat::{Stat, Stats};
 
 crate::table! {
@@ -15,6 +17,23 @@ crate::table! {
             Stat::MovementSpeed(1.0),
         ]),
         aggro: Tiles(7.0),
+        rewards: &[
+            Reward { amount: 12, grant: Grant::Xp },
+            Reward {
+                amount: 1,
+                grant: Grant::Item {
+                    item: ItemId::HealthPotion,
+                    chance: None,
+                },
+            },
+            Reward {
+                amount: 1,
+                grant: Grant::Item {
+                    item: ItemId::OrcTusk,
+                    chance: Some(50.0),
+                },
+            },
+        ],
     },
     OrcChief: NpcDef {
         display_name: "Orc Chief",
@@ -27,6 +46,30 @@ crate::table! {
             Stat::MovementSpeed(1.2),
         ]),
         aggro: Tiles(9.0),
+        rewards: &[
+            Reward { amount: 40, grant: Grant::Xp },
+            Reward {
+                amount: 1,
+                grant: Grant::Item {
+                    item: ItemId::GreaterHealthPotion,
+                    chance: Some(75.0),
+                },
+            },
+            Reward {
+                amount: 2,
+                grant: Grant::Item {
+                    item: ItemId::OrcTusk,
+                    chance: None,
+                },
+            },
+            Reward {
+                amount: 1,
+                grant: Grant::Item {
+                    item: ItemId::TribalHelmet,
+                    chance: Some(10.0),
+                },
+            },
+        ],
     },
     Skeleton: NpcDef {
         display_name: "Skeleton",
@@ -39,6 +82,30 @@ crate::table! {
             Stat::MovementSpeed(1.0),
         ]),
         aggro: Tiles(8.0),
+        rewards: &[
+            Reward { amount: 10, grant: Grant::Xp },
+            Reward {
+                amount: 2,
+                grant: Grant::Item {
+                    item: ItemId::Bone,
+                    chance: Some(80.0),
+                },
+            },
+            Reward {
+                amount: 1,
+                grant: Grant::Item {
+                    item: ItemId::RustySword,
+                    chance: Some(15.0),
+                },
+            },
+            Reward {
+                amount: 1,
+                grant: Grant::Item {
+                    item: ItemId::BoneShield,
+                    chance: Some(2.5),
+                },
+            },
+        ],
     },
     Bat: NpcDef {
         display_name: "Bat",
@@ -51,6 +118,16 @@ crate::table! {
             Stat::MovementSpeed(1.25),
         ]),
         aggro: Tiles(5.0),
+        rewards: &[
+            Reward { amount: 4, grant: Grant::Xp },
+            Reward {
+                amount: 1,
+                grant: Grant::Item {
+                    item: ItemId::BatWing,
+                    chance: Some(65.0),
+                },
+            },
+        ],
     },
     VampireBat: NpcDef {
         display_name: "Vampire Bat",
@@ -63,5 +140,22 @@ crate::table! {
             Stat::MovementSpeed(1.5),
         ]),
         aggro: Tiles(8.0),
+        rewards: &[
+            Reward { amount: 8, grant: Grant::Xp },
+            Reward {
+                amount: 2,
+                grant: Grant::Item {
+                    item: ItemId::BatWing,
+                    chance: Some(65.0),
+                },
+            },
+            Reward {
+                amount: 1,
+                grant: Grant::Item {
+                    item: ItemId::HealthPotion,
+                    chance: Some(25.0),
+                },
+            },
+        ],
     },
 }

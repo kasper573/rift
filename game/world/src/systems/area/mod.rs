@@ -32,6 +32,12 @@ pub struct AreaTag {
 pub struct AreaDef {
     pub map: &'static str,
     pub bench: bool,
+    pub spawns: &'static [Spawn],
+}
+
+pub struct Spawn {
+    pub npc: data::npc::Id,
+    pub population: u32,
 }
 
 pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
