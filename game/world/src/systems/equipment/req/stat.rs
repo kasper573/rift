@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use serde::Deserialize;
 
-use super::Requirement;
+use super::{Registered, Requirement, build};
 use crate::systems::stat::{self, StatId};
 
 #[derive(Deserialize, Clone, Debug)]
@@ -10,7 +10,10 @@ pub struct StatRequirement {
     pub min: f32,
 }
 
-#[typetag::deserialize(name = "stat")]
+inventory::submit! {
+    Registered { name: "stat", build: build::<StatRequirement> }
+}
+
 impl Requirement for StatRequirement {
     fn met(&self, world: &World, player: Entity) -> bool {
         stat::effective(world, player, self.stat) >= self.min

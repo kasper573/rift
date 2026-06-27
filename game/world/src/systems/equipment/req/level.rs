@@ -1,17 +1,18 @@
 use bevy_ecs::prelude::*;
 use serde::Deserialize;
 
-use super::Requirement;
+use super::{Registered, Requirement, build};
 use crate::systems::job;
 
 #[derive(Deserialize, Clone, Debug)]
-pub struct LevelRequirement {
-    pub level: u32,
+pub struct LevelRequirement(pub u32);
+
+inventory::submit! {
+    Registered { name: "level", build: build::<LevelRequirement> }
 }
 
-#[typetag::deserialize(name = "level")]
 impl Requirement for LevelRequirement {
     fn met(&self, world: &World, player: Entity) -> bool {
-        job::level(world, player) >= self.level
+        job::level(world, player) >= self.0
     }
 }

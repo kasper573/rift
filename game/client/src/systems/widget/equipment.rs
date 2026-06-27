@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::{Align, Side, tooltip, tooltip_content};
 use world::core::table::Id;
-use world::systems::equipment::{EquipSlot, Equipment};
+use world::systems::equipment::{self, Equipment, SlotId};
 use world::systems::item::ItemDef;
 use world::systems::player::session;
 
@@ -38,11 +38,11 @@ fn content() -> Box<dyn Scene> {
 
 #[derive(Component, Default, Clone)]
 struct Cell {
-    slot: EquipSlot,
+    slot: SlotId,
 }
 
 struct CellData {
-    slot: EquipSlot,
+    slot: SlotId,
     item: Option<Id<ItemDef>>,
     icon: Option<Handle<Image>>,
 }
@@ -53,15 +53,18 @@ pub(super) fn sync_equipment(world: &mut World) {
     let Some(grid) = grids.iter(world).next() else {
         return;
     };
-    let keys: Vec<u64> = cells.iter().map(cell_key).collect();
-    reconcile_children(world, grid, &keys, |index| slot(&cells[index]));
+    let keys: Vec<u64> = cells
+        .iter()
+        .enumerate()
+        .map(|(index, cell)| cell_key(index, cell))
+        .collect();
+    reconcile_children(world, grid, &keys, |index| cell_scene(&cells[index]));
 }
 
 fn equipment_cells(world: &World) -> Vec<CellData> {
     let equipment = session::me(world).and_then(|me| me.get::<Equipment>());
     let assets = world.resource::<AssetServer>();
-    EquipSlot::ALL
-        .into_iter()
+    equipment::slot::all()
         .map(|slot| {
             let item = equipment.and_then(|equipment| equipment.slots.get(&slot).copied());
             CellData {
@@ -73,12 +76,12 @@ fn equipment_cells(world: &World) -> Vec<CellData> {
         .collect()
 }
 
-fn cell_key(cell: &CellData) -> u64 {
+fn cell_key(index: usize, cell: &CellData) -> u64 {
     let content = cell.item.map_or(0, |item| item.index() as u64 + 1);
-    ((cell.slot as u64) << 48) | content
+    ((index as u64) << 48) | content
 }
 
-fn slot(cell: &CellData) -> Box<dyn Scene> {
+fn cell_scene(cell: &CellData) -> Box<dyn Scene> {
     match &cell.icon {
         Some(icon) => Box::new(worn_slot(
             cell.slot,
@@ -89,7 +92,7 @@ fn slot(cell: &CellData) -> Box<dyn Scene> {
     }
 }
 
-fn empty_slot(slot: EquipSlot) -> impl Scene {
+fn empty_slot(slot: SlotId) -> impl Scene {
     bsn! {
         template_value(slot_node())
         BackgroundColor({SLOT_BG})
@@ -104,7 +107,7 @@ fn empty_slot(slot: EquipSlot) -> impl Scene {
     }
 }
 
-fn worn_slot(slot: EquipSlot, item: Id<ItemDef>, icon: Handle<Image>) -> impl Scene {
+fn worn_slot(slot: SlotId, item: Id<ItemDef>, icon: Handle<Image>) -> impl Scene {
     let name = item.get().display_name.clone();
     bsn! {
         template_value(slot_node())

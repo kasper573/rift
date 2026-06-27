@@ -9,7 +9,8 @@ use bevy_ecs::world::World;
 use world::core::table::Id;
 use world::systems::combat::AttackTarget;
 use world::systems::equipment::{
-    self, EquipSlot, Equipment, JobRequirement, LevelRequirement, Requirement, StatRequirement,
+    self, Equipment, JobRequirement, LevelRequirement, OffhandSlot, Requirement, SlotId,
+    StatRequirement, WeaponSlot,
 };
 use world::systems::item::ItemDef;
 use world::systems::job::{self, Job};
@@ -22,7 +23,7 @@ fn item(name: &str) -> Id<ItemDef> {
     Id::<ItemDef>::by_name(name).expect("a known item")
 }
 
-fn equipped(items: &[(EquipSlot, &str)]) -> Equipment {
+fn equipped(items: &[(SlotId, &str)]) -> Equipment {
     Equipment {
         slots: items
             .iter()
@@ -37,8 +38,8 @@ fn effective_sums_equipped_effects_onto_base() {
     let world = app.world_mut();
     let player = world
         .spawn(equipped(&[
-            (EquipSlot::Weapon, "rusty_sword"),  // +3 damage
-            (EquipSlot::Offhand, "bone_shield"), // +5 max health
+            (WeaponSlot.into(), "rusty_sword"),  // +3 damage
+            (OffhandSlot.into(), "bone_shield"), // +5 max health
         ]))
         .id();
     player::player_stats().apply(world, player);
@@ -85,21 +86,19 @@ fn requirements_gate_on_job_level_and_stat() {
                 def: job::default_job(),
             },
             Xp { amount: 30 },                               // level 2
-            equipped(&[(EquipSlot::Weapon, "rusty_sword")]), // damage 9
+            equipped(&[(WeaponSlot.into(), "rusty_sword")]), // damage 9
         ))
         .id();
     player::player_stats().apply(world, player);
 
-    let level = |level| -> Box<dyn Requirement> { Box::new(LevelRequirement { level }) };
+    let level = |level| -> Box<dyn Requirement> { Box::new(LevelRequirement(level)) };
     let damage_at_least = |min| -> Box<dyn Requirement> {
         Box::new(StatRequirement {
             stat: DamageStat.into(),
             min,
         })
     };
-    let job: Box<dyn Requirement> = Box::new(JobRequirement {
-        job: job::default_job(),
-    });
+    let job: Box<dyn Requirement> = Box::new(JobRequirement(job::default_job()));
 
     assert!(equipment::met(world, player, &[level(2)]));
     assert!(!equipment::met(world, player, &[level(3)]));

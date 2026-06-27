@@ -12,8 +12,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::core::time::Seconds;
 use crate::systems::stat::StatSet;
 
-inventory::collect!(&'static dyn Effect);
-
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
     app.replicate::<TimedEffects>().init_resource::<Sources>();
@@ -105,6 +103,8 @@ pub trait Effect: Send + Sync {
         self.compute(ctx, args).describe()
     }
 }
+
+inventory::collect!(&'static dyn Effect);
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct TimedEffects(pub Vec<TimedEffect>);

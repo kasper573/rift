@@ -5,6 +5,6 @@
 	{ "id": "bone", "type": "resource", "display_name": "Bone", "icon": "bone", "sfx": { "drop": "landing01" }, "stackable": { "max": 50 } },
 	{ "id": "orc_tusk", "type": "resource", "display_name": "Orc Tusk", "icon": "skull", "sfx": { "drop": "landing01" }, "stackable": { "max": 50 } },
 	{ "id": "rusty_sword", "type": "equipment", "slot": "weapon", "display_name": "Rusty Sword", "icon": "iron_sword", "sfx": { "drop": "block01" }, "effects": [ { "StatModifier": { "stat": "Damage", "amount": 3 } } ] },
-	{ "id": "bone_shield", "type": "equipment", "slot": "offhand", "display_name": "Bone Shield", "icon": "wooden_shield", "sfx": { "drop": "block01" }, "requirements": [ { "type": "level", "level": 2 } ], "effects": [ { "StatModifier": { "stat": "MaxHealth", "amount": 5 } } ] },
-	{ "id": "tribal_helmet", "type": "equipment", "slot": "head", "display_name": "Tribal Helmet", "icon": "leather_helmet", "sfx": { "drop": "block01" }, "requirements": [ { "type": "level", "level": 3 } ], "effects": [ { "StatModifier": { "stat": "MaxHealth", "amount": 8 } }, { "StatModifier": { "stat": "Range", "amount": 0.2 } } ] }
+	{ "id": "bone_shield", "type": "equipment", "slot": "offhand", "display_name": "Bone Shield", "icon": "wooden_shield", "sfx": { "drop": "block01" }, "requirements": { "level": 2 }, "effects": [ { "StatModifier": { "stat": "MaxHealth", "amount": 5 } } ] },
+	{ "id": "tribal_helmet", "type": "equipment", "slot": "head", "display_name": "Tribal Helmet", "icon": "leather_helmet", "sfx": { "drop": "block01" }, "requirements": { "level": 3 }, "effects": [ { "StatModifier": { "stat": "MaxHealth", "amount": 8 } }, { "StatModifier": { "stat": "Range", "amount": 0.2 } } ] }
 ]

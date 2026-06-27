@@ -28,8 +28,6 @@ use crate::systems::movement::{MoveTarget, Path, Position, forget, position};
 use crate::systems::player::Players;
 use crate::systems::stat::{self, AttackSpeedStat, StatSet};
 
-inventory::collect!(&'static dyn Ai);
-
 const FILE: &str = "npc_table.json";
 const SPAWN_FILE: &str = "spawn_table.json";
 
@@ -184,6 +182,8 @@ pub trait Ai: Send + Sync {
     fn wanders(&self, rng: &mut Rng) -> bool;
     fn target(&self, hunt: &Hunt) -> Option<Entity>;
 }
+
+inventory::collect!(&'static dyn Ai);
 
 fn deserialize_ai<'de, D: Deserializer<'de>>(deserializer: D) -> Result<&'static dyn Ai, D::Error> {
     let name = String::deserialize(deserializer)?;

@@ -1,12 +1,12 @@
 use serde::Deserialize;
 
 use super::{Item, UseCtx};
-use crate::systems::equipment::{EquipSlot, Requirement};
+use crate::systems::equipment::{Requirement, SlotId};
 
 #[derive(Deserialize)]
 pub struct EquipmentItem {
-    pub slot: EquipSlot,
-    #[serde(default)]
+    pub slot: SlotId,
+    #[serde(default, deserialize_with = "crate::systems::equipment::req::parse")]
     pub requirements: Vec<Box<dyn Requirement>>,
 }
 

@@ -1,10 +1,8 @@
-mod job;
-mod level;
-mod stat;
+pub mod req;
+pub mod slot;
 
-pub use job::JobRequirement;
-pub use level::LevelRequirement;
-pub use stat::StatRequirement;
+pub use req::{JobRequirement, LevelRequirement, Requirement, StatRequirement, met};
+pub use slot::{HeadSlot, OffhandSlot, Slot, SlotId, WeaponSlot};
 
 use std::collections::BTreeMap;
 
@@ -16,17 +14,6 @@ use crate::core::table::Id;
 use crate::systems::effect::{self, EffectCommand};
 use crate::systems::item::{Inventory, ItemDef};
 use crate::systems::player::sender_player;
-
-#[typetag::deserialize(tag = "type")]
-pub trait Requirement: Send + Sync {
-    fn met(&self, world: &World, player: Entity) -> bool;
-}
-
-pub fn met(world: &World, player: Entity, requirements: &[Box<dyn Requirement>]) -> bool {
-    requirements
-        .iter()
-        .all(|requirement| requirement.met(world, player))
-}
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -48,44 +35,21 @@ fn equipped(world: &World, entity: Entity) -> Vec<EffectCommand> {
         .unwrap_or_default()
 }
 
-#[derive(
-    Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum EquipSlot {
-    #[default]
-    Weapon,
-    Offhand,
-    Head,
-}
-
-impl EquipSlot {
-    pub const ALL: [EquipSlot; 3] = [EquipSlot::Weapon, EquipSlot::Offhand, EquipSlot::Head];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            EquipSlot::Weapon => "Weapon",
-            EquipSlot::Offhand => "Offhand",
-            EquipSlot::Head => "Head",
-        }
-    }
-}
-
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Equipment {
-    pub slots: BTreeMap<EquipSlot, Id<ItemDef>>,
+    pub slots: BTreeMap<SlotId, Id<ItemDef>>,
 }
 
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UnequipRequest {
-    pub slot: EquipSlot,
+    pub slot: SlotId,
 }
 
 pub fn equip(
     world: &mut World,
     player: Entity,
     inv_slot: usize,
-    into: EquipSlot,
+    into: SlotId,
     requirements: &[Box<dyn Requirement>],
 ) {
     let Some(item) = world

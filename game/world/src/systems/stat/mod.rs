@@ -21,8 +21,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::systems::effect::{self, EffectContext};
 
-inventory::collect!(&'static dyn Stat);
-
 pub fn register(app: &mut App) {
     // Replicate stats name-sorted, so the native server and the wasm client assign each stat component
     // the same replication id despite their differing inventory link order.
@@ -41,6 +39,8 @@ pub trait Stat: Send + Sync {
     fn set(&self, world: &mut World, entity: Entity, value: f32);
     fn replicate(&self, app: &mut App);
 }
+
+inventory::collect!(&'static dyn Stat);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StatId(&'static str);

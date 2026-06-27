@@ -40,12 +40,12 @@ fn timed_effects_round_trip_through_postcard() {
 fn equipment_round_trips_through_postcard() {
     use std::collections::BTreeMap;
     use world::core::table::Id;
-    use world::systems::equipment::{EquipSlot, Equipment};
+    use world::systems::equipment::{Equipment, WeaponSlot};
     use world::systems::item::ItemDef;
 
     let sword = Id::<ItemDef>::by_name("rusty_sword").expect("the sword exists");
     let equipment = Equipment {
-        slots: BTreeMap::from([(EquipSlot::Weapon, sword)]),
+        slots: BTreeMap::from([(WeaponSlot.into(), sword)]),
     };
     let bytes = postcard::to_allocvec(&equipment).expect("serialize Equipment");
     let back: Equipment = postcard::from_bytes(&bytes).expect("deserialize Equipment");

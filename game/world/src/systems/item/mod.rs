@@ -19,7 +19,7 @@ use crate::systems::sfx::SfxId;
 
 use crate::systems::area::{self, AreaTag};
 use crate::systems::effect::{self, EffectCommand, TimedEffect, TimedEffects};
-use crate::systems::equipment::{EquipSlot, Requirement};
+use crate::systems::equipment::{Requirement, SlotId};
 use crate::systems::movement::{MoveTarget, Position, approach, forget, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, sender_player};
@@ -273,7 +273,7 @@ impl UseCtx<'_> {
     pub fn apply_effects(&mut self, duration: Seconds) {
         instantiate_effects(self.world, self.actor, self.item, duration);
     }
-    pub fn equip(&mut self, into: EquipSlot, requirements: &[Box<dyn Requirement>]) {
+    pub fn equip(&mut self, into: SlotId, requirements: &[Box<dyn Requirement>]) {
         crate::systems::equipment::equip(self.world, self.actor, self.slot, into, requirements);
     }
 }
