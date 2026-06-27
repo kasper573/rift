@@ -3,7 +3,6 @@ use bevy_ecs::prelude::Entity;
 use super::{Ai, Hunt};
 use crate::core::math::Rng;
 
-/// Defends its spawn group: chases anyone attacking a fellow group member.
 pub struct ProtectiveAi;
 
 inventory::submit! {

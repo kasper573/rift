@@ -120,14 +120,10 @@ pub type Source = fn(&World, Entity) -> Vec<EffectCommand>;
 #[derive(Resource, Default)]
 pub struct Sources(Vec<Source>);
 
-/// Registers an effect source. Call from a feature's `register`, after [`register`] has created the
-/// resource (it runs early in `protocol`).
 pub fn source(app: &mut App, source: Source) {
     app.world_mut().resource_mut::<Sources>().0.push(source);
 }
 
-/// Every effect command currently active on `entity`, summed from the registered [`Source`]s. Pure
-/// read, so the server (for combat) and the client (for the local player's UI) get identical results.
 pub fn active_effects(world: &World, entity: Entity) -> Vec<EffectCommand> {
     world
         .resource::<Sources>()
@@ -137,7 +133,6 @@ pub fn active_effects(world: &World, entity: Entity) -> Vec<EffectCommand> {
         .collect()
 }
 
-/// Drops finished timed effects; effective stats are read fresh, so nothing else need happen.
 pub fn expire(world: &mut World) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let ids: Vec<Entity> = world
@@ -153,8 +148,6 @@ pub fn expire(world: &mut World) {
     }
 }
 
-/// Validates `args` (json from a table) against `A` and re-encodes them as the postcard bytes an
-/// [`EffectCommand`] stores. An effect's `encode` is a one-liner naming its args type.
 fn encode_args<A: Serialize + DeserializeOwned>(
     args: serde_json::Value,
 ) -> Result<Vec<u8>, String> {
@@ -162,7 +155,6 @@ fn encode_args<A: Serialize + DeserializeOwned>(
     postcard::to_allocvec(&args).map_err(|error| error.to_string())
 }
 
-/// Reads back args an effect stored with [`encode_args`] or [`command`].
 fn decode<A: DeserializeOwned>(bytes: &[u8]) -> A {
     postcard::from_bytes(bytes).expect("args were validated and encoded at load")
 }

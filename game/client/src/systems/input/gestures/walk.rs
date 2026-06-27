@@ -12,15 +12,12 @@ use crate::systems::input::gestures::{ActiveTileHighlight, Gesture, image_cursor
 
 const MOVE_REPEAT: Duration = Duration::from_millis(333);
 
-/// Walk toward the cursor's tile: move once on press, then re-issue while held as the cursor moves.
 pub struct WalkGesture;
 
 inventory::submit! {
     &WalkGesture as &dyn Gesture
 }
 
-/// The last issued walk target and when it was sent, so a held press only re-issues a move once the
-/// cursor reaches a new tile and `MOVE_REPEAT` has elapsed.
 #[derive(Resource, Default)]
 struct WalkState {
     last_tile: Option<Pos<Tiles>>,
@@ -70,8 +67,6 @@ impl Gesture for WalkGesture {
     }
 }
 
-/// The walkable tile under the cursor — where a press moves to, what the cursor marks, and where the
-/// crosshair sits. `None` when the cursor is off-map or over a blocked tile.
 fn target(world: &mut World) -> Option<Pos<Tiles>> {
     let tile = render::cursor_tile(world)?.snap();
     area::walkable(world, tile).then_some(tile)

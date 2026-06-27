@@ -1,6 +1,3 @@
-//! Sound: the [`SfxId`] that actor models, items, and area tiles reference, and the [`SfxDef`]
-//! catalog the client plays them from.
-
 use std::sync::OnceLock;
 
 use serde::Deserialize;
@@ -24,8 +21,6 @@ pub struct SfxDef {
     pub pitch: Varying,
 }
 
-/// A scalar that is either fixed or rolled uniformly within an inclusive `[min, max]` range — the
-/// shape of both sfx volume and pitch. Each field's own bounds are checked by the table loader.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(untagged)]
 pub enum Varying {
@@ -47,7 +42,6 @@ impl Varying {
         }
     }
 
-    /// The inclusive `(min, max)` endpoints this resolves between.
     pub fn range(self) -> (f32, f32) {
         (self.resolve(0.0), self.resolve(1.0))
     }

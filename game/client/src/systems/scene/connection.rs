@@ -1,7 +1,3 @@
-//! The connection overlay scenes shown while the game-server link is not up: [`Scene::Connecting`]
-//! reports the attempt in progress, and [`Scene::Lost`] reports a dropped link and offers a reconnect.
-//! Which one is active is decided by the scene driver in [`super`]; this module owns only their UI.
-
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::{Activate, button, text_colored};

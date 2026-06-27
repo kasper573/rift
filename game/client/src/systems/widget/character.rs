@@ -1,5 +1,3 @@
-//! The character readout widget: the local player's name, health, and xp.
-
 use bevy::prelude::*;
 use ui::component;
 use ui::{DragHandle, DragRoot, OnSettle, text_colored};

@@ -1,7 +1,3 @@
-//! The mode-picker scene: on entering [`Scene::Mode`] it offers Play/Spectate; choosing one records
-//! the [`Mode`] (so a later reconnect uses it), opens the game-server session in that mode, and hands
-//! off to [`Scene::Connecting`]. Only spectators reach this scene; players connect straight away.
-
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::{Activate, button, text_colored};
@@ -41,7 +37,6 @@ fn choose_mode(mut commands: Commands) {
     });
 }
 
-/// Commits the chosen mode, opens the session in it, and advances to the connection scene.
 fn enter(
     mode: Mode,
 ) -> impl Fn(On<Activate>, ResMut<Mode>, ResMut<NextState<Scene>>, Commands) + Clone {

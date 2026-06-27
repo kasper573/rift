@@ -1,6 +1,3 @@
-//! Health is a current resource (mutated directly by combat) and max_health its cap; by convention
-//! they pair, and the helpers that read/spend health live here with them.
-
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -51,8 +48,6 @@ impl Scalar for MaxHealthStat {
 }
 
 impl Health {
-    /// An empty pool is death — the one definition of it, so callers with a `&Health` in hand (a
-    /// query) and those with only an entity ([`is_dead`]) agree.
     pub fn depleted(&self) -> bool {
         self.0 <= 0.0
     }

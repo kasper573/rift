@@ -1,8 +1,3 @@
-//! `render <map> <out.png>` — rasterizes a Tiled map to a PNG with an offscreen Bevy app, so maps can
-//! be previewed without running the game. `<map>` is a `.tmx` path, or a bare name resolved against
-//! `assets/maps/<name>.tmx`. Headless: a Vulkan render device, no window, a camera drawing the whole
-//! map to an image target that gets screenshotted once the GPU has settled.
-
 use std::path::{Path, PathBuf};
 
 use bevy::camera::{RenderTarget, ScalingMode};
@@ -135,7 +130,6 @@ fn setup(
             },
             ..OrthographicProjection::default_2d()
         }),
-        // Tiles are centred in [0, width] x [-height, 0]; centre the camera on that box.
         Transform::from_xyz(job.width as f32 / 2.0, -(job.height as f32) / 2.0, 0.0),
         Msaa::Off,
     ));

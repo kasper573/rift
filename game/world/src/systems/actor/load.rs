@@ -1,6 +1,3 @@
-//! Parses an [`ActorModel`] from its Tiled `.tsx` tileset: per-action/direction animation strips,
-//! the sound/step/apex tile flags, and the sheet image and hitbox dimensions.
-
 use std::collections::{HashMap, HashSet};
 
 use tiled::{Frame, PropertyValue};

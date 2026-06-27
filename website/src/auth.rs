@@ -180,7 +180,6 @@ impl Auth {
             jwks_url: config.jwks_uri,
             jwks: RwLock::new(CoreJsonWebKeySet::new(Vec::new())),
             last_jwks_fetch: Mutex::new(None),
-            // The token endpoint must answer directly: following a redirect could leak the code.
             http: reqwest::ClientBuilder::new()
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(5))

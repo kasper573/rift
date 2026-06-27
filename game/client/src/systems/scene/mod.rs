@@ -1,9 +1,3 @@
-//! The client's top-level scenes — the single screen the player sees at any moment, collected here so
-//! the whole flow reads in one place. Exactly one [`Scene`] is active: the [`mode`] picker, the
-//! [`connection`] overlay (while the link is [`Connecting`](Scene::Connecting) or [`Lost`](Scene::Lost)),
-//! or the live [`area`]. [`Scene`] is the single source of truth for which screen is up, [`drive`]n
-//! from the netcode connection.
-
 pub mod area;
 pub mod connection;
 pub mod mode;
@@ -15,19 +9,13 @@ use crate::core::net::{self, PendingSession};
 
 #[derive(States, Default, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Scene {
-    /// Spectators choose to play or watch here; players skip straight to connecting.
     #[default]
     Mode,
-    /// Opening (or re-opening) the game-server session.
     Connecting,
-    /// The link dropped or never came up; offers a reconnect.
     Lost,
-    /// Connected and in the world — the game itself.
     Area,
 }
 
-/// Wires the scene state machine: the per-scene plugins, the [`drive`] that reflects the connection
-/// into the [`Scene`], and the player's immediate connect (spectators wait for the [`mode`] pick).
 pub struct ScenePlugin {
     pub spectator: bool,
 }
@@ -51,10 +39,6 @@ impl Plugin for ScenePlugin {
     }
 }
 
-/// Reflects the live connection into the [`Scene`]: once past the [`Mode`](Scene::Mode) picker the
-/// scene is the [`Area`](Scene::Area) when connected, [`Connecting`](Scene::Connecting) while an attempt
-/// is in flight, else [`Lost`](Scene::Lost). Leaving [`Scene::Mode`] is the picker's job, so the driver
-/// leaves it untouched. Reads the client directly rather than replicon's frame-late `ClientState`.
 fn drive(
     pending: Option<Res<PendingSession>>,
     client: Option<Res<Client>>,
@@ -83,12 +67,10 @@ fn drive(
     }
 }
 
-/// A player connects the instant the app boots — there is no mode to choose.
 fn begin(world: &mut World) {
     net::open_session(world, false);
 }
 
-/// The shared root layout for a scene's full-screen content: a centered column covering the viewport.
 fn screen_node() -> Node {
     Node {
         position_type: PositionType::Absolute,

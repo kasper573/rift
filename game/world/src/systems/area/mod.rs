@@ -1,6 +1,3 @@
-//! Areas: the runtime map an [`Area`] exposes, its [`AreaDef`] table, and the [`AreaTag`] marking
-//! which area an entity is in.
-
 pub mod load;
 pub mod transition;
 
@@ -31,7 +28,6 @@ pub struct AreaTag {
     pub area: Id<AreaDef>,
 }
 
-/// Whether the local player can step onto `tile` in its current area — client-side path validation.
 pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
     crate::systems::player::session::me(world)
         .and_then(|me| me.get::<AreaTag>())
@@ -78,9 +74,6 @@ pub struct Portal {
     pub dest: Pos<Tiles>,
 }
 
-/// A cell's tile as an index into the area's tile palette (`0` is empty). Tile *rendering* reads the
-/// raw `tiled::Map`; this index only resolves a cell's gameplay metadata (walkable/group/sfx), which a
-/// horizontal/vertical flip never changes, so flips are not stored.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct TileRef(u32);
 
@@ -190,25 +183,18 @@ pub fn areas() -> &'static [Area] {
     })
 }
 
-/// The area with this id, or `None` if it is out of range.
 pub fn get(id: Id<AreaDef>) -> Option<&'static Area> {
     areas().get(id.index())
 }
 
-/// The area an entity currently stands in, resolved from its [`AreaTag`].
 pub fn of(world: &World, entity: Entity) -> Option<&'static Area> {
     get(world.get::<AreaTag>(entity)?.area)
 }
 
-/// Builds a one-off [`Area`] straight from an embedded map file, bypassing the [`AreaDef`] table —
-/// for devtools that render an arbitrary map by name (the `render` preview binary). Panics the same
-/// way the table path does if the map is missing or malformed.
 pub fn preview(map_name: &str) -> Area {
     load::build_area(Id::new(0), map_name, map_name)
 }
 
-/// Like [`preview`] but reads the `.tmx` straight from a filesystem path, so devtools can render maps
-/// that aren't in the embed or the area table — instant iteration with no rebuild.
 pub fn preview_path(path: &std::path::Path) -> Area {
     let name = path
         .file_stem()

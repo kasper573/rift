@@ -1,6 +1,3 @@
-//! Builds an [`Area`] from its Tiled `.tmx` map: render layers, the tile palette, depth groups,
-//! the nav grid, portals, and per-tile sound.
-
 use std::collections::HashSet;
 
 use tiled::{LayerType, PropertyValue};
@@ -120,8 +117,6 @@ fn load_map(name: &str) -> tiled::Map {
         .unwrap_or_else(|error| panic!("map '{name}': {error}"))
 }
 
-/// Loads a `.tmx` from the filesystem (resolving its tilesets relative to the file) rather than the
-/// embed — for devtools previewing maps that aren't baked into the binary.
 pub(super) fn load_map_path(path: &std::path::Path) -> tiled::Map {
     tiled::Loader::with_reader(|path: &std::path::Path| std::fs::File::open(path))
         .load_tmx_map(path)
@@ -245,8 +240,6 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TilePalette) -> (Vec<Group>, H
             }
         }
         groups.push(Group {
-            // Depth sorts against actor/object centers (see tiling.rs); anchoring at the
-            // bottom row's near edge keeps a player on that row in front, never tying.
             bottom: Tiles(CellPos::new(0, bottom).bounds().min().y),
             tiles: cells,
         });

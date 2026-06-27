@@ -5,9 +5,6 @@ use ui::ResizeHandle;
 
 use crate::systems::input::gestures::Gesture;
 
-/// Claims a press that lands on the HUD so the world ignores it; bevy's picking drives the actual drag,
-/// so there is nothing to do once it is claimed. Its cursor marks the hovered surface as draggable, or
-/// as resizable over a resize grip.
 pub struct DragGesture;
 
 inventory::submit! {
@@ -35,7 +32,6 @@ impl Gesture for DragGesture {
     }
 }
 
-/// Whether any entity under the pointer carries component `C`.
 fn hovered_has<C: Component>(world: &World) -> bool {
     world
         .resource::<HoverMap>()

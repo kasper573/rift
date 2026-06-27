@@ -1,6 +1,3 @@
-//! Wires the world's client session and, once the netcode connection is welcomed, announces the mode
-//! the connection was opened in (join or spectate). The generic transport lives in `crate::core::net`.
-
 use bevy::prelude::*;
 use world::systems::player::session::{self, ClientSessionPlugin};
 

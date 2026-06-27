@@ -33,7 +33,6 @@ pub mod intent {
         family: |t: &Theme| t.error_solid,
     };
 
-    // muted and plain deliberately blend slots from several families.
     pub const MUTED: ButtonIntent = ButtonIntent {
         family: |t: &Theme| t.neutral,
     };

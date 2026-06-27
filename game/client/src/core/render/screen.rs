@@ -1,5 +1,3 @@
-//! Projection between tile space and the rendered screen.
-
 use bevy::prelude::Vec2;
 use world::core::math::{Pos, Size};
 use world::core::tiling::Tiles;

@@ -1,7 +1,3 @@
-//! The effects widget: an always-on row of icons, one per active effect command that declares an
-//! icon. The icon and tooltip come from the effect itself (via the command), recomputed from the
-//! player's active effects each frame.
-
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use bevy::prelude::*;

@@ -1,13 +1,3 @@
-//! The Replicon ↔ renet2 client backend, hand-rolled.
-//!
-//! This is the in-repo stand-in for `bevy_replicon_renet2`'s `RepliconRenetClientPlugin` plus
-//! `bevy_renet2`'s client/netcode driving systems — it pumps messages between [`RenetClient`] and
-//! Replicon's [`ClientMessages`] and tracks [`ClientState`]. We carry it only because those crates
-//! are still pinned to bevy 0.18; once they publish a bevy-0.19 build this whole module can be
-//! deleted and `NetPlugin` can add `bevy_replicon_renet2::RepliconRenetPlugins` instead, inserting
-//! `RenetClient`/`NetcodeClientTransport` directly (they become `Resource`s under that crate's
-//! `bevy` feature, which is why we wrap them here). See [`world::core::channels`] for the matching channel seam.
-
 use bevy::prelude::*;
 use bevy_replicon::prelude::{
     ClientMessages, ClientState, ClientStats, ClientSystems, RepliconChannels,
@@ -15,12 +5,9 @@ use bevy_replicon::prelude::{
 use renet2::RenetClient;
 use renet2_netcode::NetcodeClientTransport;
 
-/// Wraps renet2's client so Bevy can hold it as a resource (renet2's own `bevy` feature, which would
-/// derive `Resource`, is off because it pulls an incompatible bevy_ecs).
 #[derive(Resource)]
 pub struct Client(pub RenetClient);
 
-/// Wraps the netcode transport as a resource, for the same reason as [`Client`].
 #[derive(Resource)]
 pub struct Transport(pub NetcodeClientTransport);
 
@@ -49,10 +36,6 @@ impl Plugin for RepliconRenetClientPlugin {
     }
 }
 
-/// Advances the client and lets the transport deliver inbound packets into it. Driven by virtual time,
-/// not `Time<Real>`: its delta is clamped (`max_delta`), so a long first-render frame (pipeline
-/// builds and uploads, slow on software GPUs) can't be charged to netcode's liveness timer as a network
-/// gap and trip the connection timeout — the stall is the client being busy, not the link being dead.
 fn drive(client: Option<ResMut<Client>>, transport: Option<ResMut<Transport>>, time: Res<Time>) {
     let Some(mut client) = client else {
         return;
@@ -115,8 +98,6 @@ fn connected(client: Option<Res<Client>>) -> bool {
     client.is_some_and(|client| client.0.is_connected())
 }
 
-/// True the moment a live link drops — whether an established connection was lost or the initial
-/// handshake timed out without ever connecting. Idempotent once [`ClientState::Disconnected`] is set.
 fn connection_lost(state: Res<State<ClientState>>, client: Option<Res<Client>>) -> bool {
     !matches!(state.get(), ClientState::Disconnected)
         && client.is_some_and(|client| client.0.is_disconnected())

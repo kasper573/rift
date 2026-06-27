@@ -8,8 +8,6 @@ use crate::{Align, Side};
 
 pub(crate) const ANCHORED_Z: i32 = 900;
 
-// No `Node` (like `tooltip`): the trigger/anchor node carries it so the floating content anchors to
-// the trigger, and the consumer positions that node.
 pub fn popover(open: bool) -> impl Scene {
     bsn! {
         Open({open})

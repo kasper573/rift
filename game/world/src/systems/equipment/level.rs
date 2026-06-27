@@ -4,7 +4,6 @@ use serde::Deserialize;
 use super::Requirement;
 use crate::systems::job;
 
-/// Requires the player to have reached a job level.
 #[derive(Deserialize, Clone, Debug)]
 pub struct LevelRequirement {
     pub level: u32,

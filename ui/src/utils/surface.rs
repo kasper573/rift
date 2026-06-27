@@ -1,8 +1,6 @@
 use bevy_color::Color;
 use bevy_ui::{BoxShadow, ShadowStyle, Val};
 
-/// Elevation shadow for surface cards. A card's depth is a shadow, never a 1px border — a border on
-/// a rounded box leaks white at the corners. `level` scales offset and blur (1 = resting, 2 = raised).
 pub(crate) fn elevation(level: u8) -> BoxShadow {
     let scale = level as f32;
     BoxShadow(vec![

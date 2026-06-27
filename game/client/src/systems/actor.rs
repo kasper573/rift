@@ -1,7 +1,3 @@
-//! Presents replicated actors: their sprites (sampled from the model's animation, tinted, depth-sorted)
-//! and the sounds their own animation makes (animation cues + footsteps), emitted into the core audio
-//! mixer by id. The generic render/audio engines live in `crate::core`.
-
 use std::collections::HashMap;
 
 use bevy::prelude::*;
@@ -89,7 +85,6 @@ fn rgba(tint: Rgba) -> Color {
     Color::srgba_u8(r, g, b, a)
 }
 
-/// Each actor's last seen action and elapsed time, so a cue fires once as the animation crosses it.
 #[derive(Resource, Default)]
 struct Seen(HashMap<Entity, (Action, Seconds)>);
 

@@ -4,7 +4,6 @@ use super::{Ai, Hunt};
 use crate::core::math::Rng;
 use crate::systems::combat::Attackers;
 
-/// Peaceful until hit; then chases whoever has attacked it.
 pub struct DefensiveAi;
 
 inventory::submit! {

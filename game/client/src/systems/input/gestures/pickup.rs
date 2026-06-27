@@ -9,7 +9,6 @@ use world::systems::player::session;
 use crate::core::render;
 use crate::systems::input::gestures::{Gesture, image_cursor};
 
-/// Pick up the item under the cursor: walk to it, then grab it once in range (server-side).
 pub struct PickupGesture;
 
 inventory::submit! {
@@ -45,7 +44,6 @@ impl Gesture for PickupGesture {
     }
 }
 
-/// The reachable item on the cursor's tile: a dropped item the local account is allowed to take.
 fn item_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
     let me = session::my_id(world);
     let cell = point.cell();

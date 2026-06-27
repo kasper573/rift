@@ -2,7 +2,6 @@ use std::sync::RwLock;
 
 use bevy_color::Color;
 
-/// A themed color family: every family has exactly these five slots.
 #[derive(Clone, Copy)]
 pub struct Family {
     pub base: Color,
@@ -33,8 +32,6 @@ pub struct Theme {
     pub neutral: Family,
 }
 
-/// The active theme. Components read it directly when they build their styles, so a theme is applied
-/// at spawn — [`change_theme`] affects everything spawned after it, not already-built UI.
 static ACTIVE: RwLock<Theme> = RwLock::new(crate::themes::light::THEME);
 
 pub fn theme() -> Theme {

@@ -4,7 +4,6 @@ use serde::Deserialize;
 use super::Requirement;
 use crate::systems::stat::{self, StatId};
 
-/// Requires one of the player's effective stats to be at least `min`.
 #[derive(Deserialize, Clone, Debug)]
 pub struct StatRequirement {
     pub stat: StatId,

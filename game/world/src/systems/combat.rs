@@ -1,6 +1,3 @@
-//! Combat: the attack request plus the server systems that engage targets, swing on the model's
-//! timing, deal damage, regenerate health, and emit deaths. Health is a stat (see [`crate::systems::stat`]).
-
 use bevy_app::App;
 use bevy_ecs::entity::MapEntities;
 use bevy_ecs::prelude::*;
@@ -30,7 +27,6 @@ pub struct AttackRequest {
     pub target: Entity,
 }
 
-/// The living enemy (not the local player) whose hitbox covers `point` — the client's attack target.
 pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
     let me = session::me(world).map(|entity| entity.id());
     let hitboxes: Vec<(Entity, _)> = world
@@ -249,7 +245,6 @@ fn strike(
     }
 }
 
-// Manifest the client animates from, so the felt hit and applied hit coincide.
 fn attack_timing(world: &World, entity: Entity, dir: Direction) -> crate::systems::actor::Timing {
     let model = world.get::<Actor>(entity).map_or(Id::new(0), |a| a.model);
     model.get().timing(Action::Attack.name(), dir)

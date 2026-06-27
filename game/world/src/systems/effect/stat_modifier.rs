@@ -9,8 +9,6 @@ struct Args {
     amount: f32,
 }
 
-/// The catch-all effect for a flat stat delta. Every plain bonus or penalty uses this; effects that
-/// need their own icon, scaling, or several stats get their own file instead.
 pub struct StatModifier;
 
 inventory::submit! {

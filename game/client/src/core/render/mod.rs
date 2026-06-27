@@ -1,9 +1,3 @@
-//! The render pipeline: the world draws to a fixed-zoom offscreen texture ([`present`]) a [`camera`]
-//! follows, in screen space ([`screen`]), with a generic [`present::ScreenTint`] hook. All actual
-//! drawing — actors, tiles, the health bar, the death wash — is bespoke and lives in the feature
-//! modules under `crate::systems`, sharing the [`Animator`] clock and the [`maprender`] tile
-//! projection and transform helpers re-exported below.
-
 pub mod camera;
 pub mod present;
 pub mod screen;
@@ -26,9 +20,6 @@ pub fn sprite_transform(pos: Pos<Tiles>, z: f32) -> Transform {
     Transform::from_translation(pos.to_screen().extend(z))
 }
 
-/// Snaps a screen-space point to whole device pixels — one is 1/[`present::SCALE`] of an art-pixel.
-/// The camera snaps to this grid, so anything pinned to it (the health bar) must snap the same way or
-/// it shimmers against the camera as the player moves — worst on diagonals, where both axes drift.
 pub fn snap_to_screen(at: Vec2) -> Vec2 {
     (at * present::SCALE).round() / present::SCALE
 }
@@ -60,9 +51,6 @@ impl Plugin for RenderPlugin {
     }
 }
 
-/// Per-entity animation clock: how long an entity has held its current state (an opaque `u64` key the
-/// caller supplies, e.g. an action discriminant), so the renderer and the audio cue scheduler sample
-/// the same frame. The key is opaque on purpose — this stays free of any game-specific type.
 #[derive(Resource, Default)]
 pub struct Animator {
     anchors: HashMap<Entity, (u64, Seconds)>,

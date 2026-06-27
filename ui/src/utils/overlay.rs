@@ -66,8 +66,6 @@ impl OverlayContent {
     }
 }
 
-// Full-screen modal layers (dialog scrim + panel) re-parent here so they fill the viewport and paint
-// above the rest of the UI, independent of where the component sits in the tree.
 #[derive(Component, Default, Clone, Copy)]
 #[require(Node)]
 pub struct Portal;
@@ -145,9 +143,6 @@ fn open_holder(
     }
 }
 
-/// Opens/closes the overlay that owns `entity` (a trigger, close button, or content node),
-/// following portal re-parenting to the `Open` root. Setting it directly (rather than through a
-/// synthetic click) avoids the one-frame observer/command latency.
 pub fn set_overlay_open(world: &mut World, entity: Entity, open: bool) {
     let mut current = entity;
     loop {
@@ -274,9 +269,6 @@ pub(crate) fn advance_overlays(
             node.display = display;
         }
 
-        // Placed content stays hidden until `position_overlays` has measured and positioned it, so
-        // it never paints a frame at its pre-flip position. `Visibility::Hidden` hides it without
-        // taking it out of layout, so it can still be measured.
         let awaiting_placement = placeable.contains(entity) && !placed.contains(entity);
         let wanted = if awaiting_placement {
             Visibility::Hidden
@@ -294,8 +286,6 @@ pub(crate) fn advance_overlays(
             motion.aim_opacity(0.0, 0.0, Some(EMPHASIZED_EXIT));
             motion.aim_transform(Transform2d::IDENTITY, content.exit, Some(EMPHASIZED_EXIT));
         } else {
-            // Resting closed: hold the pre-enter pose so the next open animates from scratch
-            // instead of snapping (the Motion would otherwise reach full opacity while hidden).
             motion.aim_opacity(0.0, 0.0, None);
             motion.aim_transform(content.enter, content.enter, None);
         }

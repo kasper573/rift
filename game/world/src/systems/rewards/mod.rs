@@ -1,6 +1,3 @@
-//! Loot tables: each row names an npc, an amount, and a reward kind — one file per [`Grant`], so
-//! adding a reward kind is a new file; `grant` never matches on a specific kind.
-
 mod item;
 mod xp;
 
@@ -30,7 +27,6 @@ pub struct Reward {
     pub kind: Box<dyn Grant>,
 }
 
-/// What a reward applies on a kill: it may mutate the rewardee and/or add to the drop pile.
 pub struct GrantCtx<'a> {
     pub world: &'a mut World,
     pub amount: u32,
@@ -39,8 +35,6 @@ pub struct GrantCtx<'a> {
     pub drops: &'a mut Vec<(Id<ItemDef>, u32)>,
 }
 
-/// One reward kind per file, each registering itself for `type`-tagged deserialization with
-/// `#[typetag::deserialize(name = …)]`; `grant` never matches on a specific kind.
 #[typetag::deserialize(tag = "type")]
 pub trait Grant: Send + Sync {
     fn grant(&self, ctx: &mut GrantCtx);
@@ -70,9 +64,6 @@ pub fn rewards_for(npc: Id<NpcDef>) -> impl Iterator<Item = &'static Reward> {
     all().iter().filter(move |reward| reward.npc == npc)
 }
 
-/// Loot goes to the player who reserved the kill — usually the killer, but the reservation (set on
-/// first attack, see [`crate::systems::item::reserve`]) makes it the player who engaged it, not
-/// whoever lands the last hit. Each reward grants itself; items scatter onto the map for pickup.
 pub fn grant(world: &mut World) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let deaths: Vec<Died> = world.resource_mut::<Messages<Died>>().drain().collect();

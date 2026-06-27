@@ -1,7 +1,3 @@
-//! The local player's combat status, shown over the world: a floating health bar and a full-screen
-//! death tint. Reads the player's health; draws via the generic render pipeline and its screen-tint
-//! hook in `crate::core::render`.
-
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use world::core::math::{Size, WorldPx};
@@ -99,7 +95,6 @@ fn healthbar(world: &mut World) {
     }
 }
 
-/// Washes the whole screen on the local player's death by driving the generic [`ScreenTint`].
 fn death_tint(world: &mut World) {
     let tint = if session::is_dead(world) {
         Vec4::new(1.0, 0.0, 0.0, 0.0)

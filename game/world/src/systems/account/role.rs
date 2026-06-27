@@ -1,5 +1,3 @@
-/// The single source of truth for authorization: keycloak provisioning is generated from here,
-/// and token roles parse into this enum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     Admin,

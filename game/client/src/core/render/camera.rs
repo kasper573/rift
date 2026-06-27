@@ -1,7 +1,3 @@
-//! The world camera marker and cursor un-projection into tile space (for the input gestures). Moving
-//! the camera (following the player, clamped to the area) is a game concern and lives in
-//! `crate::systems::view`.
-
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use world::core::math::Pos;

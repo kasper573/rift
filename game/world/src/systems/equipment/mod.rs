@@ -1,6 +1,3 @@
-//! Equipment: the gear a player wears per [`EquipSlot`], its effects active only while worn. Items
-//! declare a slot and optional [`Requirement`]s (job, level, or a stat floor) checked on equip.
-
 mod job;
 mod level;
 mod stat;
@@ -20,15 +17,11 @@ use crate::systems::effect::{self, EffectCommand};
 use crate::systems::item::{Inventory, ItemDef};
 use crate::systems::player::sender_player;
 
-/// A gate on equipping an item, one file per kind implementing [`Requirement`]; [`met`] matches none.
-/// Each kind registers itself for `type`-tagged deserialization with `#[typetag::deserialize(name)]`.
 #[typetag::deserialize(tag = "type")]
 pub trait Requirement: Send + Sync {
-    /// Whether `player` satisfies this gate.
     fn met(&self, world: &World, player: Entity) -> bool;
 }
 
-/// Whether `player` satisfies every gate.
 pub fn met(world: &World, player: Entity, requirements: &[Box<dyn Requirement>]) -> bool {
     requirements
         .iter()
@@ -42,7 +35,6 @@ pub fn register(app: &mut App) {
     effect::source(app, equipped);
 }
 
-/// Effect source: every equipped item's effects, active while worn.
 fn equipped(world: &World, entity: Entity) -> Vec<EffectCommand> {
     world
         .get::<Equipment>(entity)
@@ -89,8 +81,6 @@ pub struct UnequipRequest {
     pub slot: EquipSlot,
 }
 
-/// Moves the inventory item at `inv_slot` into equipment slot `into` if `requirements` pass, sending
-/// any occupant back to the inventory. Called by `items::use_item` when an equipment item is used.
 pub fn equip(
     world: &mut World,
     player: Entity,

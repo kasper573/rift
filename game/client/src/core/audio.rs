@@ -1,8 +1,3 @@
-//! The spatial sfx system: holds the loaded sound catalogue (registered once via [`SfxCatalog`]) and
-//! plays a sound by id at a world position — attenuated and panned relative to a [`Listener`], and
-//! de-duplicated within a short window. Game systems just emit [`PlaySfx`]; this knows nothing about
-//! what triggers a sound or where the catalogue comes from.
-
 use std::collections::HashMap;
 
 use bevy::prelude::*;
@@ -29,20 +24,15 @@ impl Plugin for SfxPlugin {
     }
 }
 
-/// Where the player hears from; a game system keeps it on the local player. Sounds attenuate and pan
-/// relative to it, and nothing plays while it is absent.
 #[derive(Resource, Default)]
 pub struct Listener(pub Option<Pos<Tiles>>);
 
-/// Plays a catalogued sound at a world position. Any system emits these anonymously.
 #[derive(Message)]
 pub struct PlaySfx {
     pub id: String,
     pub at: Pos<Tiles>,
 }
 
-/// The sound catalogue the app registers once before startup, keeping this module free of game content:
-/// each entry's id, asset path, and inclusive volume/pitch range.
 #[derive(Resource, Default)]
 pub struct SfxCatalog(pub Vec<SfxSpec>);
 
@@ -102,7 +92,6 @@ fn mix(
         return;
     };
     let clock = Seconds(time.elapsed_secs());
-    // Collapse this frame's requests to the loudest play of each sound, after spatial attenuation.
     let mut frame: HashMap<u64, Cue> = HashMap::new();
     for req in requests.read() {
         let Some(sound) = catalog.0.get(&req.id) else {

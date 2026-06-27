@@ -1,6 +1,3 @@
-//! The equipment window: one cell per [`EquipSlot`] showing the worn item (or the empty slot's name).
-//! Clicking a worn slot unequips it back to the inventory.
-
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::{Align, Side, tooltip, tooltip_content};

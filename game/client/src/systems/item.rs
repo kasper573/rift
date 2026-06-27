@@ -1,7 +1,3 @@
-//! Item presentation: plays an item's use sound when the server confirms a use, renders the
-//! [`DroppedItem`] entities loot leaves on the map, and fountains a fresh drop out from its origin —
-//! each item arcing up and out to its tile, thudding with the item's drop sound on landing.
-
 use bevy::prelude::*;
 use world::core::math::Pos;
 use world::core::tiling::Tiles;
@@ -35,7 +31,6 @@ impl Plugin for ItemsPlugin {
     }
 }
 
-/// The in-flight fountain arc of one freshly dropped item, in screen space.
 #[derive(Component)]
 struct DropAnim {
     from: Vec2,
@@ -45,8 +40,6 @@ struct DropAnim {
     drop_sfx: Option<String>,
 }
 
-/// Drops named by an [`ItemsDropped`] whose entities haven't replicated in yet; retried for a few
-/// frames so the fountain still plays through any replication/message ordering lag.
 #[derive(Resource, Default)]
 struct PendingDrops(Vec<Pending>);
 
@@ -141,16 +134,12 @@ fn start_drops(
     });
 }
 
-/// Rests every dropped item at its tile. An item mid-fountain is then overridden by [`animate_drops`]
-/// (which runs after), so this is its landing spot once the arc finishes.
 fn place_drops(mut drops: Query<(&Position, &AreaTag, &mut Transform), With<DroppedItem>>) {
     for (position, tag, mut transform) in &mut drops {
         *transform = sprite_transform(position.pos, drop_z(tag, position.pos));
     }
 }
 
-/// Arcs a freshly dropped item out from its origin, then on landing thuds with its drop sound and
-/// stops animating (handing the rest position back to [`place_drops`]).
 fn animate_drops(
     time: Res<Time>,
     mut drops: Query<(Entity, &Position, &AreaTag, &mut DropAnim, &mut Transform)>,

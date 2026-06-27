@@ -5,7 +5,6 @@ use super::Requirement;
 use crate::core::table::Id;
 use crate::systems::job::{self, JobDef};
 
-/// Requires the player to be of a particular job.
 #[derive(Deserialize, Clone, Debug)]
 pub struct JobRequirement {
     #[serde(deserialize_with = "Id::<JobDef>::deserialize_named")]

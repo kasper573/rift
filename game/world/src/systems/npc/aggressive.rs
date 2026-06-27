@@ -3,7 +3,6 @@ use bevy_ecs::prelude::Entity;
 use super::{Ai, Hunt};
 use crate::core::math::Rng;
 
-/// Chases the nearest player on sight.
 pub struct AggressiveAi;
 
 inventory::submit! {

@@ -1,6 +1,3 @@
-//! The live area scene: renders the local player's map (clearing and respawning it via bevy_tiled when
-//! their area changes, which also handles animation) and overlays the death banner while they're dead.
-
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::text_colored;
@@ -129,7 +126,6 @@ impl bevy_tiled::MapHooks for AreaHooks {
     }
 }
 
-/// A full-screen prompt shown over the area while the local player is dead, cleared on respawn.
 #[derive(Component, Default, Clone)]
 struct DeathBanner;
 

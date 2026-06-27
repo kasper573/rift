@@ -51,7 +51,6 @@ impl<U> From<Offset<U>> for Direction {
     }
 }
 
-// The exact sequence is part of the game: it fixes every boot's npc layout, so it cannot move to a crate rng.
 #[derive(Clone, Copy)]
 pub struct Rng(pub u64);
 

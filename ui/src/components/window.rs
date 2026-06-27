@@ -11,8 +11,6 @@ use crate::{Activate, component};
 const TITLE_H: f32 = 22.0;
 const MIN_WINDOW: Vec2 = Vec2::new(100.0, 100.0);
 
-/// A draggable, resizable window: a title bar (title + close), a scrolling content area, and a resize
-/// grip. Closing runs `on_close`; settling after a drag or resize runs `on_settle`.
 pub struct WindowOptions {
     pub pos: Vec2,
     pub size: Vec2,

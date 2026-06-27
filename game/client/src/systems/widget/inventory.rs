@@ -1,8 +1,3 @@
-//! The inventory window: a fixed grid of `max` slots reconciled against the player's replicated
-//! inventory. Every slot draws a subtle cell so the grid shows through behind the icons; a filled
-//! slot adds the item icon, its stack count, a name tooltip, and acts on click — Ctrl drops, else the
-//! slot is "used" and the server acts on the item's kind (drink a consumable, equip gear).
-
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::{Align, Side, text_colored, tooltip, tooltip_content};
@@ -153,7 +148,6 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
     }
 }
 
-/// Ctrl-click drops; otherwise the slot is used and the server acts on the item's kind.
 fn act(world: &mut World, slot: u32, drop: bool) {
     if drop {
         session::drop_item(world, slot);

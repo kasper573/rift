@@ -21,22 +21,17 @@ impl Plugin for NetPlugin {
     }
 }
 
-/// Set once a connection is welcomed, carrying the mode the connection was opened in. A game system
-/// watches for it and announces join/spectate; the transport itself stays mode-agnostic.
 #[derive(Resource)]
 pub struct Announce {
     pub spectate: bool,
 }
 
-/// Present while a connect token is being fetched — i.e. a connection attempt is in flight.
 #[derive(Resource)]
 pub struct PendingSession {
     task: Task<Result<Vec<u8>, String>>,
     spectate: bool,
 }
 
-/// Begins joining: asks the game server for a connect token over the browser network (non-blocking),
-/// finished by [`poll_session`] once it resolves.
 pub fn open_session(world: &mut World, spectate: bool) {
     let Some(session) = world.get_resource::<Session>().cloned() else {
         error!("no access token; cannot open a session");

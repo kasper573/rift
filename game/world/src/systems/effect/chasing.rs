@@ -1,11 +1,8 @@
 use super::{Effect, EffectContext, encode_args};
 use crate::systems::stat::{self, MovementSpeedStat, StatSet};
 
-/// An npc moves this much faster while it has a target.
 const CHASE_SPEED_MULTIPLIER: f32 = 2.0;
 
-/// Raised on an npc while it chases (see `npc::chase`); takes no args and reads the chaser's base
-/// speed from the context, so the boost scales with each npc.
 pub struct Chasing;
 
 inventory::submit! {

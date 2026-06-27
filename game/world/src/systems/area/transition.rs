@@ -1,5 +1,3 @@
-//! Portal crossing hands players between per-area worlds: this crate raises the intent; the server harness moves them.
-
 use bevy_ecs::prelude::*;
 
 use super::AreaDef;
@@ -14,15 +12,12 @@ use crate::systems::job::Job;
 use crate::systems::player::{CharacterState, ClientId, Owner, Xp};
 use crate::systems::stat::StatSet;
 
-/// Not replicated: it never leaves the server and the entity is gone within the tick.
 #[derive(Component, Clone, Copy)]
 pub struct Crossing {
     pub dest_area: Id<AreaDef>,
     pub dest: Pos<Tiles>,
 }
 
-/// A player handed between per-area worlds: where they're headed plus the [`CharacterState`] they
-/// carry. Transient movement, combat and pathing are dropped and rebuilt fresh on arrival.
 pub struct Traveler {
     pub client: ClientId,
     pub dest_area: Id<AreaDef>,
@@ -30,16 +25,11 @@ pub struct Traveler {
     pub state: CharacterState,
 }
 
-/// Collects everyone leaving this world and despawns their character, leaving the connection behind.
-/// With its character gone the connection sees nothing, so replicon sends the client a despawn for
-/// every entity it held here — clearing its replication state before [`arrive`] rebuilds it in the
-/// destination world over the same connection (see `game/server/src/main.rs`).
 pub fn departing(world: &mut World) -> Vec<Traveler> {
     let ids: Vec<Entity> = world
         .query_filtered::<Entity, With<Crossing>>()
         .iter(world)
         .collect();
-    // Snapshot needs `&World`, so read each crosser's components individually rather than in a query.
     let leaving: Vec<(Entity, Traveler)> = ids
         .into_iter()
         .filter_map(|entity| {

@@ -1,6 +1,3 @@
-//! Movement: an entity's replicated [`Position`] and the client's move requests, plus the server
-//! systems that path-find, advance movers along tiles, snap them to centers, and cross portals.
-
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_time::Time;
@@ -86,8 +83,6 @@ pub fn forget(world: &mut World, entity: Entity) {
     halt(world, entity);
 }
 
-/// Mid-step it keeps only the entering tile so it lands on that tile's center; else snaps to exact center.
-/// A resting actor always lands on an exact tile via this funnel.
 pub fn halt(world: &mut World, entity: Entity) {
     world.entity_mut(entity).remove::<MoveTarget>();
     if on_tile(world, entity) {
@@ -117,8 +112,6 @@ fn retarget(
     Some(entity)
 }
 
-/// Sends `entity` walking to `pos`: abandons any attack and stale path so [`advance`] re-routes from
-/// here. The single funnel for a client's "go there" move request.
 pub fn goto(world: &mut World, entity: Entity, pos: Pos<Tiles>) {
     world
         .entity_mut(entity)
@@ -127,12 +120,6 @@ pub fn goto(world: &mut World, entity: Entity, pos: Pos<Tiles>) {
         .insert(MoveTarget { pos });
 }
 
-/// Heads `entity` toward `target`, aiming for the nearest reachable tile from which it stands within
-/// `range` of the target — never the target's own tile — so movers halt beside their target instead
-/// of on top of it. Returns whether `entity` is already within `range` (so the caller can act this
-/// tick with no movement); otherwise it sets a [`MoveTarget`], leaving an in-progress approach
-/// untouched so it is cheap to call every tick. Preserves any [`AttackTarget`]: combat reaches its
-/// foe, item pickup reaches its drop, both through here.
 pub fn approach(world: &mut World, entity: Entity, target: Pos<Tiles>, range: Tiles) -> bool {
     let Some(at) = position(world, entity) else {
         return false;
@@ -153,8 +140,6 @@ pub fn approach(world: &mut World, entity: Entity, target: Pos<Tiles>, range: Ti
     false
 }
 
-/// The walkable tile nearest `from`, within `range` of `target` but not the target's own tile, that
-/// `entity` may stand on (airborne movers ignore walkability). `None` if no such tile exists.
 fn approach_tile(
     world: &World,
     entity: Entity,

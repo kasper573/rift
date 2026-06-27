@@ -1,6 +1,3 @@
-//! Visibility rules: players see nearby entities in their area; spectators see their watched player
-//! and the full roster for UI; spectator anchors stay invisible; inventories replicate only to owners.
-
 use std::collections::HashSet;
 
 use bevy_app::App;
@@ -79,8 +76,6 @@ pub fn seen_by(world: &mut World, entity: Entity) -> Vec<Entity> {
         .collect()
 }
 
-/// The account a character belongs to. Inventory replicates to every connection of that account, so
-/// the same player opened in two tabs sees their items in both.
 #[derive(Component)]
 #[component(immutable)]
 pub struct OwnedBy(pub ClientId);

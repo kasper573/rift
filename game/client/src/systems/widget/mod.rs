@@ -1,7 +1,3 @@
-//! The in-game HUD: always-on docked widgets ([`WidgetDef`]) and toggleable windows ([`WindowDef`],
-//! each a draggable launcher that opens a draggable, titled window), with their layout persisted. Each
-//! widget and window registers itself from its own module; this module only iterates the registrations.
-
 pub mod character;
 pub mod effects;
 pub mod equipment;
@@ -47,8 +43,6 @@ impl Plugin for HudPlugin {
     }
 }
 
-/// An always-on docked widget: its default position, how to build its scene at a resolved position,
-/// and how to reconcile it each frame.
 pub struct WidgetDef {
     pub id: &'static str,
     pub fallback: Vec2,
@@ -58,13 +52,9 @@ pub struct WidgetDef {
 
 ::inventory::collect!(WidgetDef);
 
-/// A HUD window, identified by the stable id its [`WindowDef`] registers under (also its persisted
-/// placement key).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Window(&'static str);
 
-/// Everything the HUD needs to show and drive a window: `content` builds the open window's body, `sync`
-/// reconciles it each frame, and `order` is its place down the docked widget column.
 pub struct WindowDef {
     pub id: &'static str,
     pub title: &'static str,
@@ -381,7 +371,6 @@ fn window_geom(
     (pos, size)
 }
 
-// The live drag already renders (and clamps) the snapped geometry, so settling just records it.
 fn persist_widget(world: &mut World, id: &str, geom: Geom) -> Geom {
     let mut settings = world.resource_mut::<Settings>();
     settings
@@ -413,9 +402,6 @@ fn launcher_pos(window: Window, screen_w: f32) -> Vec2 {
     Vec2::new(x, 8.0 + window.def().order as f32 * (WIDGET.0 + 8.0))
 }
 
-/// Keeps `container`'s keyed children equal to `keys`: when the live keys differ (in value or order)
-/// they are despawned and rebuilt from `build`, in order — so dynamic lists (inventory, equipment,
-/// effects) stay correct here instead of via a hand-written diff at each call site.
 pub(super) fn reconcile_children(
     world: &mut World,
     container: Entity,
@@ -446,7 +432,6 @@ pub(super) fn reconcile_children(
     }
 }
 
-/// A reconciled child's identity within its list (see [`reconcile_children`]).
 #[derive(Component)]
 struct Keyed(u64);
 
@@ -454,7 +439,6 @@ pub(super) const SLOT: f32 = 36.0;
 pub(super) const SLOT_BG: Color = Color::srgb(0.14, 0.14, 0.14);
 pub(super) const SLOT_BORDER: Color = Color::srgb(0.24, 0.24, 0.24);
 
-/// A square cell node shared by the inventory, equipment, and effects grids.
 pub(super) fn slot_node() -> Node {
     Node {
         width: Val::Px(SLOT),
@@ -465,7 +449,6 @@ pub(super) fn slot_node() -> Node {
     }
 }
 
-/// The small black label shown inside a hovered slot/icon's tooltip.
 pub(super) fn tooltip_label(text: impl Into<String>) -> impl Scene {
     bsn! {
         Node { padding: {UiRect::axes(Val::Px(6.0), Val::Px(3.0))} }

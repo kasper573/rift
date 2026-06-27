@@ -3,7 +3,6 @@ use serde::Deserialize;
 use super::{Item, UseCtx};
 use crate::systems::equipment::{EquipSlot, Requirement};
 
-/// Wearable gear: using it from the inventory equips it (if its requirements pass).
 #[derive(Deserialize)]
 pub struct EquipmentItem {
     pub slot: EquipSlot,

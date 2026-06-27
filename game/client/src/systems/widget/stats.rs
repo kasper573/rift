@@ -1,6 +1,3 @@
-//! The stats window: a readout of the local player's level and effective stats, recomputed on the
-//! client from the same base and effects the server aggregates, so the two always agree.
-
 use bevy::prelude::*;
 use ui::text_colored;
 use world::systems::job;

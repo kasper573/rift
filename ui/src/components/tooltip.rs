@@ -13,8 +13,6 @@ use crate::{Align, Side};
 const DELAY: Duration = Duration::from_millis(400);
 const SKIP_DELAY: Duration = Duration::from_millis(300);
 
-// No `Node`: the trigger node carries this so the floating content anchors directly to the trigger,
-// which matters when the trigger is absolutely positioned (e.g. a draggable HUD widget).
 pub fn tooltip(open: bool) -> impl Scene {
     bsn! {
         Open({open})

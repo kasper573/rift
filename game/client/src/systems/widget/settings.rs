@@ -1,5 +1,3 @@
-//! The settings window: a toggle for UI snapping.
-
 use bevy::prelude::*;
 use ui::button::intent as button_intent;
 use ui::{Activate, ButtonSize, button_styled};

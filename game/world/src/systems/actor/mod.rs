@@ -1,7 +1,3 @@
-//! Actors: the replicated [`Actor`]/[`Hitbox`]/[`Name`] an entity shows in the world, the actions it
-//! can play, and the [`ActorModel`] sprite-sheet catalog that drives its animation, frame timing, and
-//! sound cues. Loading a model from a Tiled `.tsx` tileset lives in [`load`].
-
 pub mod load;
 
 use std::collections::{HashMap, HashSet};
@@ -39,7 +35,6 @@ pub enum Action {
 }
 
 impl Action {
-    /// The animation strip an actor model plays for this action.
     pub fn name(self) -> &'static str {
         match self {
             Action::Idle => "idle",
@@ -97,8 +92,6 @@ pub fn set_facing(actor: &mut Mut<Actor>, dir: Direction, action: Action) {
     }
 }
 
-/// Each tick, settle every actor back to idle (or dead) so a one-frame action set by a system this
-/// tick wins; movement/combat re-assert walk/run/attack afterwards.
 pub fn reset(mut actors: Query<(&mut Actor, Option<&Health>)>) {
     for (mut actor, health) in &mut actors {
         let dead = health.is_some_and(Health::depleted);

@@ -3,7 +3,6 @@ use bevy_ecs::prelude::Entity;
 use super::{Ai, Hunt};
 use crate::core::math::Rng;
 
-/// Never attacks; wanders only sometimes, so a field of them isn't constantly milling.
 const WANDER_CHANCE: f32 = 0.4;
 
 pub struct PacifistAi;

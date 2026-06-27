@@ -3,7 +3,6 @@ use serde::Deserialize;
 use super::{Item, UseCtx};
 use crate::core::time::Seconds;
 
-/// A potion or food: heals, applies its timed effects, and is used up.
 #[derive(Deserialize)]
 pub struct ConsumableItem {
     pub health_bonus: f32,

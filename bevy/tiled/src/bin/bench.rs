@@ -1,8 +1,3 @@
-//! `bench [map]` — phase-by-phase timing for the tiled renderer (default map `island`): map load,
-//! entity spawn, and render throughput under two cameras — a zoomed "game view" (most tiles culled) and
-//! a "whole map" (everything drawn). Headless with a real render device; `WGPU_BACKEND=gl` forces
-//! software GL to mirror CI.
-
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 

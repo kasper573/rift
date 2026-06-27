@@ -26,7 +26,6 @@ pub(crate) fn advance_collapse(
         if (collapse.height - target).abs() < 0.5 {
             collapse.height = target;
         }
-        // Fractional clip heights make 1px dividers flicker.
         node.height = Val::Px(collapse.height.round());
     }
 }

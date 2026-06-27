@@ -1,6 +1,3 @@
-//! Spectating: the replicated [`Spectate`] anchor that follows a watched player, the request to start
-//! or change who's watched, and the server systems that spawn anchors and keep them on their target.
-
 use bevy_app::App;
 use bevy_ecs::component::Component;
 use bevy_ecs::message::Message;

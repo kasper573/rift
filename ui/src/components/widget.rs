@@ -10,8 +10,6 @@ use crate::{Align, Side, component};
 
 const WIDGET: f32 = 48.0;
 
-/// A draggable widget: an icon with a corner badge and a hover tooltip. A tap (press without a drag)
-/// runs `on_tap`; settling after a drag runs `on_settle`.
 pub struct WidgetOptions {
     pub pos: Vec2,
     pub icon: Handle<Image>,

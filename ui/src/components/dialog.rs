@@ -14,10 +14,6 @@ use crate::style::Style;
 use crate::theme::theme;
 use crate::tokens::{radius, spacing};
 
-/// A modal dialog: `trigger` opens it, `content` fills the centered panel. The full-screen layer,
-/// scrim, and panel scaffolding are owned here, so a caller can't omit a part or forget to make the
-/// layer click-through (the soft-lock). Clicking the scrim closes the dialog; pass close buttons in
-/// `content` via [`dialog_close`].
 pub fn dialog(open: bool, trigger: impl Scene, content: impl Scene) -> impl Scene {
     modal(open, true, trigger, content)
 }
@@ -26,10 +22,8 @@ pub fn dialog_close() -> impl Scene {
     bsn! { component(OverlayAction::Close) }
 }
 
-// The modal is a full-screen centering container that must not capture input itself (the scrim child
-// does that) — without `Pickable::IGNORE` it sits at the overlay z-index over the whole UI and
-// swallows every click (a soft-lock). `dismiss` makes the scrim close the dialog on click; an alert
-// passes `false` so only its buttons can close it.
+// Without `Pickable::IGNORE` this full-screen centering container sits over the whole UI at the
+// overlay z-index and swallows every click — a soft-lock; only the scrim child should capture input.
 pub(crate) fn modal(
     open: bool,
     dismiss: bool,

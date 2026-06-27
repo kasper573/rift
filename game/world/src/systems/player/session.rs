@@ -111,8 +111,6 @@ fn record_welcome(mut welcomes: MessageReader<Welcome>, mut me: ResMut<MyClient>
     }
 }
 
-/// A dropped link makes "me" unknown again, so a reconnect waits for a fresh [`Welcome`] before
-/// announcing — exactly like a first connection — rather than acting on the stale id.
 fn forget_me(mut me: ResMut<MyClient>) {
     me.0 = None;
 }

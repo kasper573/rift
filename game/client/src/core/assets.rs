@@ -3,9 +3,6 @@ use std::path::PathBuf;
 use bevy::asset::io::memory::{Dir, MemoryAssetReader};
 use bevy::asset::io::{AssetSourceBuilder, ErasedAssetReader};
 
-/// A Bevy asset source backed by the same `include_dir` embed `world::core::assets` uses, so the browser
-/// client loads sprites, fonts, and audio straight from the binary — no HTTP asset fetches, no
-/// asset-path configuration. Registered as the default source before `AssetPlugin`.
 pub fn embedded_source() -> AssetSourceBuilder {
     let root = Dir::new(PathBuf::new());
     fill(&root, world::core::assets::dir());

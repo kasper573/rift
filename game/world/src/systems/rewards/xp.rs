@@ -3,7 +3,6 @@ use serde::Deserialize;
 use super::{Grant, GrantCtx};
 use crate::systems::player::Xp;
 
-/// Grants experience to the player who reserved the kill.
 #[derive(Deserialize)]
 pub struct XpGrant {}
 

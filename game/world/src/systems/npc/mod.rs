@@ -40,8 +40,6 @@ pub fn register(app: &mut App) {
     effect::source(app, chase);
 }
 
-/// Effect source: the [`Chasing`] boost while an npc has a target. The argument-less command is built
-/// once; the per-npc boost comes from the chaser's base speed at evaluation time.
 pub fn chase(world: &World, entity: Entity) -> Vec<EffectCommand> {
     if world.get::<Npc>(entity).is_some() && world.get::<AttackTarget>(entity).is_some() {
         static CHASE: OnceLock<EffectCommand> = OnceLock::new();
@@ -54,7 +52,6 @@ pub fn chase(world: &World, entity: Entity) -> Vec<EffectCommand> {
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Npc {
     pub def: Id<NpcDef>,
-    /// Spawn-table row this NPC came from; NPCs from the same row share a group.
     pub group: u32,
 }
 
@@ -140,15 +137,12 @@ fn spawn_npc(
     spawn(world, def_index, at, area.id, group);
 }
 
-/// Spawns a fully-statted actor from a def, without any role component. Shared by npc spawning and
-/// the in-process benchmark so the `Character` bundle + stat application can't drift.
 pub fn spawn_actor(world: &mut World, def: &NpcDef, at: Pos<Tiles>, area: Id<AreaDef>) -> Entity {
     let entity = world.spawn(character(def, at, area)).id();
     def.stats.apply(world, entity);
     entity
 }
 
-/// Spawns an npc: a statted actor plus its [`Npc`] role.
 pub fn spawn(
     world: &mut World,
     def_index: Id<NpcDef>,
@@ -164,8 +158,6 @@ pub fn spawn(
     entity
 }
 
-/// The replicated non-stat [`Character`] bundle for an [`NpcDef`]; stats are applied from `def.stats`
-/// by [`spawn`].
 fn character(def: &NpcDef, at: Pos<Tiles>, area: Id<AreaDef>) -> Character {
     Character {
         replicated: Replicated,
@@ -187,14 +179,9 @@ fn character(def: &NpcDef, at: Pos<Tiles>, area: Id<AreaDef>) -> Character {
     }
 }
 
-/// An npc aggro/wander strategy: one file per kind implementing this. An [`NpcDef`] names its
-/// strategy; `run_ai` matches none of them.
 pub trait Ai: Send + Sync {
-    /// The id this strategy is named by in `npc_table.json`.
     fn name(&self) -> &str;
-    /// Whether the npc wanders when it has nothing to chase.
     fn wanders(&self, rng: &mut Rng) -> bool;
-    /// The entity to engage, if any.
     fn target(&self, hunt: &Hunt) -> Option<Entity>;
 }
 
@@ -206,7 +193,6 @@ fn deserialize_ai<'de, D: Deserializer<'de>>(deserializer: D) -> Result<&'static
         .ok_or_else(|| serde::de::Error::custom(format!("unknown ai '{name}'")))
 }
 
-/// What an [`Ai`] selects a target from: the npc, its surroundings, and the candidate lists.
 pub struct Hunt<'a> {
     pub world: &'a World,
     pub players: &'a [Entity],
@@ -219,7 +205,6 @@ pub struct Hunt<'a> {
 }
 
 impl Hunt<'_> {
-    /// The nearest accepted, living, same-area candidate within aggro range.
     pub fn nearest(
         &self,
         candidates: &[Entity],
@@ -370,7 +355,6 @@ pub fn run_respawn(world: &mut World) {
             .remove::<DeadAt>()
             .remove::<Reservation>()
             .remove::<TimedEffects>();
-        // After clearing buffs, refill to full base max health.
         stat::refill(world, id);
         forget(world, id);
     }

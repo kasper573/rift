@@ -28,9 +28,6 @@ pub use utils::state::{SelectionChanged, selected};
 pub use utils::style::{StatefulPaint, Style};
 pub use utils::theme::{Family, Theme};
 
-/// The `Update` system set holding the ui crate's reactive pass (styling, selection, overlays).
-/// Consumers that mutate ui state from their own systems should order them `.before(UiReactive)`
-/// so the change is seen the same frame instead of one frame late.
 #[derive(bevy_ecs::schedule::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UiReactive;
 
@@ -40,8 +37,6 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(bevy_opacity::OpacityPlugin);
         app.add_plugins(MotionPlugin);
-        // Bevy's `DefaultPlugins` already register these when the `bevy_ui_widgets` feature is on;
-        // headless apps (tests) don't, so add only what's missing.
         if !app.is_plugin_added::<ButtonPlugin>() {
             app.add_plugins(ButtonPlugin);
         }
@@ -51,8 +46,6 @@ impl Plugin for UiPlugin {
         if !app.is_plugin_added::<ScrollAreaPlugin>() {
             app.add_plugins(ScrollAreaPlugin);
         }
-        // bsn!/spawn_scene needs ScenePlugin (asset-backed scene patches). DefaultPlugins already
-        // registers it when the umbrella's `bevy_scene` feature is on; add it otherwise.
         if !app.is_plugin_added::<ScenePlugin>() {
             app.add_plugins(ScenePlugin);
         }
@@ -134,9 +127,6 @@ pub enum Orientation {
 #[derive(Resource)]
 struct DesignFonts(#[allow(dead_code)] Vec<Handle<Font>>);
 
-/// Inserts an already-built [`Component`] value into a `bsn!` scene. Our component helpers build
-/// whole component values; `bsn!`'s `template_value` only accepts plain `Default + Clone` templates,
-/// so `FromTemplate` components (e.g. `TextFont`) reach a scene through this instead.
 pub fn component<C: Component + Clone>(value: C) -> impl Scene {
     FnTemplate(move |_: &mut TemplateContext| Ok(value.clone()))
 }

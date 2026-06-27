@@ -3,19 +3,13 @@ use std::time::Duration;
 use bevy_replicon::prelude::{Channel, RepliconChannels};
 use renet2::{ChannelConfig, SendType};
 
-/// Converts Replicon's channels into renet2 channel configs for a
-/// [`ConnectionConfig`](renet2::ConnectionConfig).
-///
-/// This is a byte-for-byte copy of the trait `bevy_replicon_renet2` exposes under the same name and
-/// signature. We carry it ourselves only because that crate is still pinned to bevy 0.18; once it
-/// publishes a bevy-0.19 build this trait can be deleted and the import swapped to
-/// `bevy_replicon_renet2::RenetChannelsExt` with no call-site changes (server and client already use
-/// the upstream `channels.server_configs()` / `channels.client_configs()` idiom). See
-/// `client::net` for the matching client-plugin seam.
+// A byte-for-byte copy of the trait `bevy_replicon_renet2` exposes under the same name and signature.
+// We carry it ourselves only because that crate is still pinned to bevy 0.18; once it publishes a
+// bevy-0.19 build this trait can be deleted and the import swapped to
+// `bevy_replicon_renet2::RenetChannelsExt` with no call-site changes (server and client already use
+// the upstream `channels.server_configs()` / `channels.client_configs()` idiom).
 pub trait RenetChannelsExt {
-    /// Server channel configs.
     fn server_configs(&self) -> Vec<ChannelConfig>;
-    /// Client channel configs.
     fn client_configs(&self) -> Vec<ChannelConfig>;
 }
 

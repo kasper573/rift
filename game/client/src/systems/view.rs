@@ -1,9 +1,3 @@
-//! The local player's audiovisual viewpoint: each frame it centres the world camera on the local
-//! player (clamped to the area's bounds) and keeps the audio listener there. It reads the player's
-//! position and drives the core camera + audio engines in one pass, so the camera and the player's
-//! sprite always derive from the same position — a frame of lag between them makes the pixel-art view
-//! jitter.
-
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use world::core::math::Pos;
@@ -46,9 +40,6 @@ fn track_player(
         return;
     };
     if let Ok(mut transform) = camera.single_mut() {
-        // Snap the camera to whole screen pixels so static tiles never shimmer. At native resolution one
-        // screen pixel is 1/SCALE of an art-pixel — far finer than the old whole-art-pixel snap, which
-        // is why the world no longer staircases under the camera.
         let at = snap_to_screen(center.to_screen());
         transform.translation.x = at.x;
         transform.translation.y = at.y;

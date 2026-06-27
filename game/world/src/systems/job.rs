@@ -1,7 +1,3 @@
-//! Jobs: the [`JobDef`] catalog and the [`Job`] a player carries. Each job is a ladder of levels,
-//! every level an exp threshold plus the effects reaching it grants. A player always has a job; for
-//! now jobs are just id/name/levels, but skills will later reference them.
-
 use std::sync::OnceLock;
 
 use bevy_app::App;
@@ -20,7 +16,6 @@ pub fn register(app: &mut App) {
     effect::source(app, level_effects);
 }
 
-/// Effect source: every effect from the job levels the actor's [`Xp`] has reached.
 fn level_effects(world: &World, entity: Entity) -> Vec<EffectCommand> {
     let Some(job) = world.get::<Job>(entity) else {
         return Vec::new();
@@ -75,14 +70,11 @@ pub fn defs() -> &'static [JobDef] {
     })
 }
 
-/// The job every fresh player starts in: the first row of the table.
 pub fn default_job() -> Id<JobDef> {
     defs();
     Id::new(0)
 }
 
-/// An actor's level: how many of its job's level tiers its [`Xp`] has reached. Players carry a job;
-/// anything else (npcs) is level 0.
 pub fn level(world: &World, entity: Entity) -> u32 {
     let Some(job) = world.get::<Job>(entity) else {
         return 0;

@@ -28,8 +28,6 @@ impl Plugin for InputPlugin {
     }
 }
 
-/// What the active gesture wants highlighted on the map — a tile and the image to mark it with. The
-/// gesture dispatch sets it as a resource; [`update_tile_highlight`] mirrors it onto the sprite.
 #[derive(Resource)]
 pub struct ActiveTileHighlight {
     pub pos: Pos<Tiles>,
@@ -73,17 +71,12 @@ fn update_tile_highlight(
     transform.translation = highlight.pos.to_screen().extend(z);
 }
 
-/// The base depth of the local player's area dynamic layer — every actor sorts strictly above it, so
-/// the highlight shares the actors' layer yet always renders behind them.
 fn highlight_z(me: &MyClient, players: &Query<(&Owner, &AreaTag)>) -> Option<f32> {
     let my = me.0?;
     let (_, tag) = players.iter().find(|(owner, _)| owner.client == my)?;
     Some(area::get(tag.area)?.dynamic_layer() as f32)
 }
 
-/// Bridges touch to the mouse so taps act as left-clicks for both the map and the UI, without the
-/// rest of the game (or bevy's picking) needing to know about touch: the first active finger drives
-/// the cursor, and a touch beginning/ending becomes a left-button press/release.
 fn touch_as_mouse(
     touches: Res<Touches>,
     window: Single<(Entity, &mut Window), With<PrimaryWindow>>,

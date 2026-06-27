@@ -1,7 +1,3 @@
-//! Items: the [`ItemDef`] catalog, the replicated [`Inventory`] of stacked [`Slot`]s a character
-//! carries, the [`DroppedItem`] entities loot spawns onto the map, the [`Reservation`] that makes a
-//! kill's loot fair, and the use/drop/pickup request/announce messages with their server systems.
-
 mod consumable;
 mod equipment;
 mod resource;
@@ -34,14 +30,9 @@ use bevy_ecs::world::World;
 use bevy_replicon::prelude::{Replicated, SendTargets, ToClients};
 use bevy_time::Time;
 
-/// What an item kind does, one file per kind implementing this. `use_item` calls [`Item::use_from`]
-/// and the carried-effects source calls [`Item::carried`]; neither matches on a specific kind. Each
-/// kind registers itself for `type`-tagged deserialization with `#[typetag::deserialize(name = …)]`.
 #[typetag::deserialize(tag = "type")]
 pub trait Item: Send + Sync {
-    /// Acts on the item when used from an inventory slot, via the high-level ops on [`UseCtx`].
     fn use_from(&self, ctx: &mut UseCtx);
-    /// Whether the item's effects are active merely from being carried.
     fn carried(&self) -> bool;
 }
 
@@ -51,7 +42,6 @@ pub const INVENTORY_MAX: u32 = 25;
 const RESERVATION_TTL: Seconds = Seconds(60.0);
 const DROP_TTL: Seconds = Seconds(120.0);
 const DROP_RADIUS: Tiles = Tiles(1.0);
-/// One tile away, diagonals included — the same reach a melee attacker stops at.
 const PICKUP_RANGE: Tiles = Tiles(std::f32::consts::SQRT_2);
 
 pub fn register(app: &mut App) {
@@ -68,8 +58,6 @@ pub fn register(app: &mut App) {
     effect::source(app, carried);
 }
 
-/// Effect source: every carried item whose kind stays active while carried, contributing its effects
-/// from the inventory.
 fn carried(world: &World, entity: Entity) -> Vec<EffectCommand> {
     world
         .get::<Inventory>(entity)
@@ -105,7 +93,6 @@ impl Inventory {
         }
     }
 
-    /// How many more of `item` the inventory can take across its existing stacks and free slots.
     pub fn capacity_for(&self, item: Id<ItemDef>) -> u32 {
         let stack_max = item.get().stack_max();
         let in_existing: u32 = self
@@ -118,8 +105,6 @@ impl Inventory {
         in_existing + free_slots * stack_max
     }
 
-    /// Adds `count` of `item`, filling matching stacks before opening new slots. The caller is
-    /// responsible for first checking [`Inventory::capacity_for`]; any overflow is dropped.
     pub fn add(&mut self, item: Id<ItemDef>, mut count: u32) {
         let stack_max = item.get().stack_max();
         for slot in self.slots.iter_mut().filter(|slot| slot.item == item) {
@@ -138,8 +123,6 @@ impl Inventory {
     }
 }
 
-/// Who a [`Reservation`] belongs to. [`ClientId`] is the account, so a reserved drop is reachable
-/// from any of that account's connections.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReservedBy {
     None,
@@ -155,10 +138,6 @@ impl ReservedBy {
     }
 }
 
-/// A timed claim, replicated so a client can tell which drops it may take. On an NPC it's the loot
-/// reservation: the first attacker claims it, the reserved player's attacks refresh `at`, and it
-/// lapses (for reward purposes) after [`RESERVATION_TTL`]. On a [`DroppedItem`] `at` is when it was
-/// dropped, so [`expire_drops`] can clear it once it has lain unclaimed for [`DROP_TTL`].
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Reservation {
     pub by: ReservedBy,
@@ -177,7 +156,6 @@ pub struct DroppedItem {
     pub count: u32,
 }
 
-/// A player walking to a clicked [`DroppedItem`] to pick it up. Server-only.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct PickupIntent {
     pub target: Entity,
@@ -206,8 +184,6 @@ pub struct ItemConsumed {
     pub actor: Entity,
 }
 
-/// Announces a fresh scatter of drops to the observers present, so their clients fountain the items
-/// out from `from`. The drops themselves arrive by replication, so a late observer still sees them.
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
 pub struct ItemsDropped {
     #[entities]
@@ -279,8 +255,6 @@ pub fn items() -> &'static [ItemDef] {
     })
 }
 
-/// The high-level operations an [`Item`] kind performs when its item is used, so each kind file calls
-/// these rather than reaching into item/equipment internals.
 pub struct UseCtx<'a> {
     world: &'a mut World,
     actor: Entity,
@@ -292,7 +266,6 @@ impl UseCtx<'_> {
     pub fn heal(&mut self, amount: f32) {
         stat::heal(self.world, self.actor, amount);
     }
-    /// Removes one of the item from its slot and announces the use to onlookers.
     pub fn consume(&mut self) {
         consume_slot(self.world, self.actor, self.slot);
         announce_consumed(self.world, self.actor, self.item);
@@ -306,7 +279,6 @@ impl UseCtx<'_> {
 }
 
 fn announce_consumed(world: &mut World, actor: Entity, item: Id<ItemDef>) {
-    // Announced per beholder: a mapped message only decodes for clients that see the actor.
     for client in seen_by(world, actor) {
         world.write_message(ToClients {
             targets: SendTargets::Single(bevy_replicon::prelude::ClientId::Client(client)),
@@ -411,8 +383,6 @@ pub fn pickups(world: &mut World) {
     }
 }
 
-/// Despawns dropped items that have lain on the ground past [`DROP_TTL`], measured from when the
-/// drop stamped its [`Reservation`].
 pub fn expire_drops(world: &mut World) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let stale: Vec<Entity> = world
@@ -426,8 +396,6 @@ pub fn expire_drops(world: &mut World) {
     }
 }
 
-/// Claims or refreshes `npc`'s reservation for `attacker`'s account: a fresh, lapsed, or
-/// already-held reservation goes to the attacker; a live reservation held by someone else stands.
 pub fn reserve(world: &mut World, npc: Entity, attacker: Entity, now: Seconds) {
     let Some(account) = world.get::<Owner>(attacker).map(|owner| owner.client) else {
         return;
@@ -449,8 +417,6 @@ pub fn reserve(world: &mut World, npc: Entity, attacker: Entity, now: Seconds) {
     }
 }
 
-/// Scatters `drops` onto walkable tiles in a circle around `source`, then tells every observer of
-/// `source` to fountain them out. Each entry becomes one [`DroppedItem`] entity carrying its count.
 pub fn scatter_drop(
     world: &mut World,
     source: Entity,
@@ -528,7 +494,6 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
     world.entity_mut(item).despawn();
 }
 
-/// Applies a used item's effect commands to `actor` for `duration`, as timed instances.
 fn instantiate_effects(world: &mut World, actor: Entity, item: Id<ItemDef>, duration: Seconds) {
     let commands = &item.get().effects;
     if commands.is_empty() {

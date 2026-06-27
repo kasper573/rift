@@ -1,7 +1,3 @@
-//! Players: the replicated [`Owner`]/[`Xp`] of a player character and the [`ClientId`] keying a
-//! connection, the join/respawn/welcome messages, and the server systems that admit joins, retire
-//! disconnected accounts, and respawn the dead. [`session`] is the client's view of all this.
-
 pub mod session;
 
 use bevy_app::App;
@@ -122,8 +118,6 @@ pub fn greet(
     });
 }
 
-/// A character outlives any single connection: the same account can hold several sockets (one per
-/// open tab). Only the departure of the last socket retires the character.
 pub fn client_left(
     remove: On<Remove, ClientId>,
     clients: Query<(Entity, &ClientId)>,
@@ -166,8 +160,6 @@ pub fn join(world: &mut World) {
     }
 }
 
-/// The persistent state a player character carries: what a portal crossing hands to the destination
-/// world, and what a fresh join supplies from defaults.
 pub struct CharacterState {
     pub name: String,
     pub stats: StatSet,
@@ -204,7 +196,6 @@ fn spawn_player(
     );
 }
 
-/// The player's authored base stats — the single source of the player's numbers.
 pub fn player_stats() -> StatSet {
     let mut stats = StatSet::default();
     stats.add(HealthStat.into(), PLAYER_MAX_HEALTH);
@@ -217,7 +208,6 @@ pub fn player_stats() -> StatSet {
     stats
 }
 
-/// Fresh joins pass starting state; portals pass carried state from the previous world.
 pub(crate) fn place(
     world: &mut World,
     client: ClientId,

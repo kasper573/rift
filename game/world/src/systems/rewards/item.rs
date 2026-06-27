@@ -4,7 +4,6 @@ use super::{Chance, Grant, GrantCtx};
 use crate::core::table::Id;
 use crate::systems::item::ItemDef;
 
-/// Drops an item, optionally gated by a percentage `chance` (absent = a guaranteed drop).
 #[derive(Deserialize)]
 pub struct ItemGrant {
     #[serde(deserialize_with = "Id::<ItemDef>::deserialize_named")]

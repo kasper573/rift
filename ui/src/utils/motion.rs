@@ -119,7 +119,6 @@ impl<T: Copy + PartialEq> Tween<T> {
         }
     }
 
-    /// Aim tween at target: snap if no timing or already there; restart from current eased value so in-flight tweens redirect smoothly.
     fn retarget(&mut self, current: T, target: T, timing: Option<Timing>) {
         if self.target == target {
             return;
@@ -249,8 +248,6 @@ impl Motion {
     }
 }
 
-/// The paints and transform a [`Motion`] writes into — all optional, since an element animates only
-/// the channels its styling set.
 type Painted = (
     &'static mut Motion,
     Option<&'static mut BackgroundColor>,
