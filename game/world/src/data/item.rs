@@ -1,7 +1,7 @@
 use crate::core::time::Seconds;
 use crate::data::sfx::Id as SfxId;
 use crate::systems::effect::Effect;
-use crate::systems::equipment::{Requirement, EquipmentSlot};
+use crate::systems::equipment::{EquipmentSlot, Requirement};
 use crate::systems::item::{Icon, ItemDef, ItemKind, ItemSfx, Stackable};
 use crate::systems::stat::Stat;
 

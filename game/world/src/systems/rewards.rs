@@ -36,8 +36,12 @@ fn apply(reward: Reward, ctx: &mut RewardCtx) {
                 xp.gain(amount);
             }
         }
-        Reward::Item { amount, item, chance } => {
-            if chance.is_none_or(|percent| ctx.rng.unit() * 100.0 < percent) {
+        Reward::Item {
+            amount,
+            item,
+            chance,
+        } => {
+            if chance.is_none_or(|percent| ctx.rng.rand_float() * 100.0 < percent) {
                 ctx.drops.push((item, amount));
             }
         }

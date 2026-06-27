@@ -9,7 +9,7 @@ pub struct Pacifist;
 
 impl Ai for Pacifist {
     fn wanders(&self, rng: &mut Rng) -> bool {
-        rng.unit() < WANDER_CHANCE
+        rng.rand_float() < WANDER_CHANCE
     }
     fn target(&self, _hunt: &Hunt) -> Option<Entity> {
         None

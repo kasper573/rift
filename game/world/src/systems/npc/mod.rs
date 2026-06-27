@@ -69,7 +69,7 @@ pub struct NpcDef {
 }
 
 pub fn spawn_all(world: &mut World) {
-    let mut rng = Rng(RNG_SEED | 1);
+    let mut rng = Rng::new(RNG_SEED);
     let area_id = world.resource::<crate::systems::WorldArea>().0;
     for (group, spawn) in area_id.get().spawns.iter().enumerate() {
         for _ in 0..spawn.population {
@@ -299,5 +299,5 @@ fn random_walkable(rng: &mut Rng, area_id: area::Id) -> Option<Pos<Tiles>> {
     if nodes.is_empty() {
         return None;
     }
-    Some(nodes[(rng.roll() % nodes.len() as u64) as usize])
+    Some(nodes[rng.rand_range(0..nodes.len() as u32) as usize])
 }

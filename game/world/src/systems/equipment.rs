@@ -48,7 +48,11 @@ impl EquipmentSlot {
     }
 
     pub fn all() -> [EquipmentSlot; 3] {
-        [EquipmentSlot::Weapon, EquipmentSlot::Offhand, EquipmentSlot::Head]
+        [
+            EquipmentSlot::Weapon,
+            EquipmentSlot::Offhand,
+            EquipmentSlot::Head,
+        ]
     }
 }
 
