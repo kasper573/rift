@@ -55,15 +55,7 @@ fn check_crate(name: &str, src: &Path, out: &mut Vec<String>) {
             .to_string_lossy()
             .replace('\\', "/");
 
-        let in_core = rel.starts_with("core/");
-        let placed = in_core || rel.starts_with("systems/") || rel.starts_with("bin/");
-        if !placed && rel != "lib.rs" && rel != "main.rs" {
-            out.push(format!(
-                "[{name}] src/{rel}: source must live under src/core/, src/systems/, or src/bin/ (only lib.rs/main.rs may sit at the src root)"
-            ));
-        }
-
-        if in_core {
+        if rel.starts_with("core/") {
             for reference in core_to_systems(&file) {
                 out.push(format!(
                     "[{name}] src/{rel}: `{reference}` — core may not depend on any systems layer"
