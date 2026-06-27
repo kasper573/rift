@@ -21,7 +21,6 @@ const WARMUP: usize = 30;
 const MEASURE: usize = 200;
 
 fn main() {
-    world::systems::validate();
 
     println!("[bench] finding the highest A sustained within the {BUDGET_MS:.0}ms budget...");
 

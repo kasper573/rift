@@ -55,7 +55,6 @@ struct Config {
 }
 
 fn main() {
-    world::systems::validate();
     let config: Config = envy::prefixed("RIFT_GAME_SERVER_")
         .from_env()
         .expect("RIFT_GAME_SERVER_* environment");

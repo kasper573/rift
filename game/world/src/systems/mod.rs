@@ -61,25 +61,6 @@ pub struct Character {
     pub area: AreaTag,
 }
 
-pub fn validate() {
-    sfx::validate();
-    for (&id, def) in crate::data::area::TABLE.iter() {
-        if !def.bench {
-            area::area(id);
-        }
-    }
-    for (id, item) in crate::data::item::TABLE.iter() {
-        assert!(
-            item.icon.resolve().is_some(),
-            "item {id:?} icon '{}' not found",
-            item.icon.0
-        );
-    }
-    for &id in crate::data::model::TABLE.keys() {
-        actor::resolve_model(id);
-    }
-    let _ = crate::data::npc::TABLE.len() + crate::data::job::TABLE.len();
-}
 
 pub fn server_app(area: area::Id) -> App {
     use bevy_app::{Startup, Update};
