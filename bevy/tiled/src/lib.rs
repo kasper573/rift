@@ -1,11 +1,3 @@
-//! A small, game-agnostic renderer for a [`tiled::Map`] for Bevy. Flat tile layers are drawn the way
-//! every engine draws them — one quad per layer with a tile-index texture sampled in a shader, so cost
-//! is O(1) in map size and only on-screen fragments shade. Anything that must y-sort against the game's
-//! actors (tall props, the rift "occluder" cells) is a sprite, like Tiled objects — Bevy batches them
-//! by atlas and sorts them against actors in one pass. The caller chooses per cell via [`MapHooks`]:
-//! [`MapHooks::tile_z`] returns `None` for a flat cell or `Some(z)` for a y-sorted sprite. [`Files`] is
-//! a ready hook for off-disk tools (everything flat).
-
 use std::collections::HashMap;
 
 use bevy::asset::{RenderAssetUsages, load_internal_asset, uuid_handle};
@@ -20,40 +12,28 @@ use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
 
 const TILEMAP_SHADER: Handle<Shader> = uuid_handle!("9d3c6e1a-4b2f-4a8c-9e7d-1f2a3b4c5d6e");
 
-/// Logical pixels per tile — the art's native size.
 pub const TILE: f32 = 16.0;
 
-/// Tags every entity a map spawns, so a caller can despawn them all to swap maps.
 #[derive(Component)]
 pub struct MapTile;
 
-/// The caller-supplied integration points: image loading and per-cell/object depth.
 pub trait MapHooks {
-    /// Resolves a tileset's image to a loaded handle.
     fn image(
         &mut self,
         tileset: &tiled::Tileset,
         images: &mut Assets<Image>,
     ) -> Option<Handle<Image>>;
 
-    /// Depth of a tile-layer cell: `None` draws it as part of the layer's flat tilemap (at the layer's
-    /// file-order index); `Some(z)` draws it as a y-sorted sprite at `z`, interleaving with actors.
     fn tile_z(&mut self, layer: usize, x: i32, y: i32) -> Option<f32> {
         let _ = (layer, x, y);
         None
     }
 
-    /// Depth of a tile-object at its foot (`y` in downward pixels).
     fn object_z(&mut self, above: usize, x: f32, y: f32, map_height: f32) -> f32 {
         let _ = x;
         above as f32 + (y / TILE + 1.0) / (map_height + 2.0)
     }
 }
-
-/// Draws every tile-layer cell and tile-object of `map`, taking image handles and depths from `hooks`.
-/// Flat cells merge into one [`TilemapMaterial`] quad per (layer, tileset); y-sorted cells and objects
-/// become [`MapTile`] sprites. `origin` is the screen position of the map's top-left corner
-/// ([`Vec2::ZERO`] draws raw).
 pub fn spawn_map(
     commands: &mut Commands,
     images: &mut Assets<Image>,
@@ -84,7 +64,7 @@ pub fn spawn_map(
                         };
                         match hooks.tile_z(layer, x, y) {
                             None => flats
-                                .entry(tileset as *const tiled::Tileset as usize)
+                                .entry(tileset_key(tileset))
                                 .or_insert_with(|| IndexBuilder::new(map_w, map_h, sheet, tileset))
                                 .set(x, y, tile.id(), tile.flip_h, tile.flip_v),
                             Some(z) => {
@@ -152,9 +132,6 @@ pub fn spawn_map(
     }
 }
 
-/// One flat tile layer drawn as a single textured quad. Its fragment shader reads the tile id and flips
-/// for each cell from `index`, remaps the id through `frame_map` (which animation rewrites), and samples
-/// `atlas`; `data` carries the grid/atlas dimensions.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct TilemapMaterial {
     #[texture(0, sample_type = "u_int")]
@@ -185,9 +162,6 @@ struct Tilemap {
     params: Vec4,
 }
 
-/// Animation timeline for a flat tilemap: per animated tile id, the atlas ids of its frames. The shared
-/// `frame_map` texture is rewritten when a frame advances, so animating costs one tiny texture write
-/// rather than touching the layer's geometry.
 #[derive(Component)]
 struct TilemapAnim {
     frame_map: Handle<Image>,
@@ -201,8 +175,6 @@ struct Anim {
     current: usize,
 }
 
-/// Accumulates a flat layer's cells (for one tileset) into the index-texture bytes plus the atlas
-/// dimensions the shader needs.
 struct IndexBuilder {
     sheet: Handle<Image>,
     width: i32,
@@ -312,15 +284,12 @@ fn spawn_tilemap(
     ));
 }
 
-/// An individually-spawned sprite tile — a tile-object or a y-sorted cell. It animates by swapping its
-/// own atlas rect.
 #[derive(Component)]
 struct AnimatedSprite {
     frames: Vec<(Rect, f32)>,
     total: f32,
 }
 
-/// Drives tile animation; add it wherever a map is shown.
 pub struct TileAnimationPlugin;
 
 impl Plugin for TileAnimationPlugin {
@@ -372,8 +341,6 @@ fn animate_tilemaps(
                 data[i + 1] = (atlas_id >> 8) as u8;
             }
         }
-        // The frame_map texture re-uploads to a fresh GpuImage, so touch the material to rebuild its
-        // bind group against it — a Material2d bind group isn't refreshed by a bound image changing.
         materials.get_mut(&material.0);
     }
 }
@@ -418,14 +385,17 @@ fn frame_at<T>(frames: &[(T, f32)], total: f32, now: f32) -> usize {
     frames.len() - 1
 }
 
-/// Memoized per tileset: the hook's image lookup is too costly to repeat per cell.
+fn tileset_key(tileset: &tiled::Tileset) -> usize {
+    tileset as *const tiled::Tileset as usize
+}
+
 fn resolve_sheet(
     sheets: &mut HashMap<usize, Option<Handle<Image>>>,
     hooks: &mut impl MapHooks,
     images: &mut Assets<Image>,
     tileset: &tiled::Tileset,
 ) -> Option<Handle<Image>> {
-    let key = tileset as *const tiled::Tileset as usize;
+    let key = tileset_key(tileset);
     if let Some(cached) = sheets.get(&key) {
         return cached.clone();
     }
@@ -511,7 +481,6 @@ fn uint_image(width: u32, height: u32, data: Vec<u8>, usage: RenderAssetUsages) 
     image
 }
 
-/// A [`MapHooks`] for off-disk tools: loads tileset images from the filesystem (everything flat).
 #[derive(Default)]
 pub struct Files {
     sheets: HashMap<usize, Handle<Image>>,
@@ -523,7 +492,7 @@ impl MapHooks for Files {
         tileset: &tiled::Tileset,
         images: &mut Assets<Image>,
     ) -> Option<Handle<Image>> {
-        let key = tileset as *const tiled::Tileset as usize;
+        let key = tileset_key(tileset);
         if let Some(handle) = self.sheets.get(&key) {
             return Some(handle.clone());
         }

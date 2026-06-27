@@ -1,9 +1,3 @@
-//! Test hook: the client installs `click_world_tile(x, y)` on the JS global so the e2e suite can
-//! click a world tile directly rather than compute canvas pixels and drive the mouse (slow and
-//! frame-rate sensitive on software-rendered CI). It issues exactly a player's click — a warp tile
-//! crosses, any other walks — so it grants no ability a player lacks. The client installs it, not the
-//! page, keeping the page's contract with the wasm to just `init()` + `run()`.
-
 use std::cell::RefCell;
 
 use bevy::prelude::*;
@@ -13,7 +7,7 @@ use world::core::math::Pos;
 use world::core::tiling::Tiles;
 use world::systems::player::session;
 
-use crate::GameScene;
+use crate::Scene;
 
 thread_local! {
     static PENDING: RefCell<Vec<Pos<Tiles>>> = const { RefCell::new(Vec::new()) };
@@ -24,7 +18,7 @@ pub struct TestingPlugin;
 impl Plugin for TestingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, install_hook)
-            .add_systems(Update, drain.run_if(in_state(GameScene::Playing)));
+            .add_systems(Update, drain.run_if(in_state(Scene::Area)));
     }
 }
 

@@ -26,8 +26,6 @@ pub fn checkbox(checked: Check) -> impl Scene {
     }
 }
 
-// A checkmark drawn as a right+bottom border corner rotated 45° (the design fonts have no ✓ glyph).
-// Painted in the face color so it reads on the filled box.
 pub fn checkbox_indicator() -> impl Scene {
     bsn! {
         Node {

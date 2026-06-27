@@ -14,9 +14,6 @@ use bevy_opacity::Opacity;
 
 type Op = Arc<dyn Fn(&mut EntityWorldMut) + Send + Sync>;
 
-/// A color that may change with interaction state. The `base` is required, so a hover/active/checked
-/// color can never exist without a resting value to ease back to — the class of bug where a color
-/// set only on hover sticks after mouseout, or a checked control washes its fill on hover.
 #[derive(Clone, Copy)]
 pub struct StatefulPaint {
     base: Color,
@@ -88,9 +85,6 @@ impl Channel {
     }
 }
 
-// Every styled element is a UI node: the builder's `.node(..)` patches and the color channels it
-// writes only make sense on an entity with a `Node`, so guarantee one rather than relying on every
-// caller to pair `Node` with `Style`.
 #[derive(Component, Clone, Default)]
 #[require(Node)]
 pub struct Style {
@@ -149,8 +143,6 @@ impl Style {
         self
     }
 
-    // Expand a stateful paint into the resting field plus the matching state sub-styles, so the
-    // existing `for_state` resolution is unchanged — but the base is always present.
     fn put(&mut self, channel: Channel, paint: StatefulPaint) {
         channel.set(self, paint.base);
         if let Some(p) = paint.hover {
@@ -206,7 +198,6 @@ impl Style {
         self
     }
 
-    // bevy_ui has no subtree opacity; `apply_opacity` propagates this down the tree.
     pub fn opacity(mut self, opacity: f32) -> Style {
         self.opacity = Some(opacity);
         self
@@ -269,9 +260,6 @@ impl Style {
 
     fn for_state(&self, hovered: bool, pressed: bool, checked: bool) -> Style {
         let mut style = self.flat();
-        // When checked, the `checked` sub-style overrides the base paints AND supplies the
-        // hover/active for the checked state — so a checked+hovered control uses e.g. `primary_hover`
-        // rather than the base's unchecked hover (which would wash the fill away).
         let (hover, active) = if checked && let Some(checked) = &self.checked {
             style = style.merge(checked.flat());
             (
@@ -338,8 +326,6 @@ impl Style {
         }
         let timing = self.transition;
         let transformed = self.transform.is_some() || self.enter.is_some();
-        // Aim each channel and read back this frame's value, so the paint is right immediately (no
-        // first-frame flash) while `advance_motion` keeps easing it on later frames.
         let (background, border, text, transform, opacity) = {
             let mut motion = entity.get_mut::<Motion>().expect("just inserted");
             let background =
@@ -397,7 +383,6 @@ pub(crate) fn apply_styles(world: &mut World) {
             continue;
         };
         let mut entity = world.entity_mut(entity);
-        // Track for picking so a hover change repaints the entity.
         if style.stateful() && entity.get::<Hovered>().is_none() {
             entity.insert(Hovered(false));
         }

@@ -19,11 +19,8 @@ service::heap_profiling!();
 struct Config {
     port: u16,
     redirect_uri: RedirectUrl,
-    /// The https:// game-server origin the embedded client posts to for a session, injected into `/play`.
     game_server_url: String,
-    /// The wss:// game-server origin the embedded client dials for netcode, injected into `/play`.
     game_server_ws_url: String,
-    /// Directory of the wasm client bundle, served at `/wasm` (baked into the image by `just wasm`).
     wasm_dir: PathBuf,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,

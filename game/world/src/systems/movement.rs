@@ -1,28 +1,17 @@
-//! Movement: an entity's replicated [`Position`] and the client's move requests, plus the server
-//! systems that path-find, advance movers along tiles, snap them to centers, and cross portals.
-
 use bevy_app::App;
-use bevy_ecs::component::Component;
-use bevy_ecs::entity::Entity;
-use bevy_ecs::message::Message;
-use bevy_ecs::world::World;
+use bevy_ecs::prelude::*;
+use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
-use crate::core::math::Pos;
-use crate::core::tiling::Tiles;
-
-use crate::core::math::{Direction, Offset};
-use crate::core::table::Id;
-use crate::core::tiling::{Cell, CellPos, TilePos, TilesPerSec};
+use crate::core::assets::AssetService;
+use crate::core::math::{Direction, Offset, Pos};
+use crate::core::tiling::{Cell, CellPos, TilePos, Tiles, TilesPerSec};
 use crate::core::time::Seconds;
 use crate::systems::actor::{Action, Actor, set_facing};
-use crate::systems::area::{self, AreaTag};
-use crate::systems::combat::{AttackTarget, is_dead};
+use crate::systems::area;
+use crate::systems::combat::AttackTarget;
 use crate::systems::player::sender_player;
-use bevy_ecs::message::Messages;
-use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::FromClient;
-use bevy_time::Time;
+use crate::systems::stat::{self, StatKind};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -65,21 +54,12 @@ pub struct MoveTarget {
 }
 
 #[derive(Component, Clone, Debug, PartialEq)]
-pub struct Speed {
-    pub value: TilesPerSec,
-}
-
-#[derive(Component, Clone, Debug, PartialEq)]
 pub struct DesiredPortal {
     pub index: u32,
 }
 
 pub fn move_request(world: &mut World) {
-    let requests: Vec<FromClient<MoveRequest>> = world
-        .resource_mut::<Messages<FromClient<MoveRequest>>>()
-        .drain()
-        .collect();
-    for request in requests {
+    for request in crate::systems::requests::<MoveRequest>(world) {
         if let Some(entity) = retarget(world, request.client_id, request.message.pos) {
             world.entity_mut(entity).remove::<DesiredPortal>();
         }
@@ -87,11 +67,7 @@ pub fn move_request(world: &mut World) {
 }
 
 pub fn move_to_portal(world: &mut World) {
-    let requests: Vec<FromClient<MoveToPortal>> = world
-        .resource_mut::<Messages<FromClient<MoveToPortal>>>()
-        .drain()
-        .collect();
-    for request in requests {
+    for request in crate::systems::requests::<MoveToPortal>(world) {
         if let Some(entity) = retarget(world, request.client_id, request.message.pos) {
             world.entity_mut(entity).insert(DesiredPortal {
                 index: request.message.portal,
@@ -108,8 +84,6 @@ pub fn forget(world: &mut World, entity: Entity) {
     halt(world, entity);
 }
 
-/// Mid-step it keeps only the entering tile so it lands on that tile's center; else snaps to exact center.
-/// A resting actor always lands on an exact tile via this funnel.
 pub fn halt(world: &mut World, entity: Entity) {
     world.entity_mut(entity).remove::<MoveTarget>();
     if on_tile(world, entity) {
@@ -132,15 +106,75 @@ fn retarget(
     pos: Pos<Tiles>,
 ) -> Option<Entity> {
     let entity = sender_player(world, sender)?;
-    if is_dead(world, entity) {
+    if stat::is_dead(world, entity) {
         return None;
     }
+    goto(world, entity, pos);
+    Some(entity)
+}
+
+pub fn goto(world: &mut World, entity: Entity, pos: Pos<Tiles>) {
     world
         .entity_mut(entity)
         .remove::<AttackTarget>()
         .remove::<Path>()
         .insert(MoveTarget { pos });
-    Some(entity)
+}
+
+pub fn approach(world: &mut World, entity: Entity, target: Pos<Tiles>, range: Tiles) -> bool {
+    let Some(at) = position(world, entity) else {
+        return false;
+    };
+    if at.distance(target) <= range {
+        return true;
+    }
+    let heading = world
+        .get::<MoveTarget>(entity)
+        .is_some_and(|goal| goal.pos.distance(target) <= range);
+    if !heading {
+        let dest = approach_tile(world, entity, at, target, range).unwrap_or(target);
+        world
+            .entity_mut(entity)
+            .remove::<Path>()
+            .insert(MoveTarget { pos: dest });
+    }
+    false
+}
+
+fn approach_tile(
+    world: &World,
+    entity: Entity,
+    from: Pos<Tiles>,
+    target: Pos<Tiles>,
+    range: Tiles,
+) -> Option<Pos<Tiles>> {
+    let grid = &area::of(world, entity)?.grid;
+    let assets = world.resource::<AssetService>();
+    let airborne = world.get::<Actor>(entity).is_some_and(|actor| {
+        assets
+            .resolve(*actor.model.get(), crate::systems::actor::build_model)
+            .airborne
+    });
+    let goal = target.cell();
+    let reach = range.0.ceil() as i32;
+    let mut best: Option<(Pos<Tiles>, Tiles)> = None;
+    for dy in -reach..=reach {
+        for dx in -reach..=reach {
+            let cell = goal.step((dx, dy));
+            if cell == goal {
+                continue;
+            }
+            let center = cell.center();
+            if center.distance(target) > range || (!airborne && !grid.walkable(center)) {
+                continue;
+            }
+            let distance = from.distance(center);
+            if best.is_none_or(|(_, best)| distance < best) {
+                best = Some((center, distance));
+            }
+        }
+    }
+    best.map(|(center, _)| center)
 }
 
 pub fn advance(world: &mut World) {
@@ -150,7 +184,7 @@ pub fn advance(world: &mut World) {
         .iter(world)
         .collect();
     for id in movers {
-        if world.get_entity(id).is_err() || is_dead(world, id) {
+        if world.get_entity(id).is_err() || stat::is_dead(world, id) {
             if world.get_entity(id).is_ok() {
                 world.entity_mut(id).remove::<(MoveTarget, Path)>();
             }
@@ -171,9 +205,7 @@ pub fn advance(world: &mut World) {
             }
         }
 
-        let speed = world
-            .get::<Speed>(id)
-            .map_or(TilesPerSec(Tiles(1.0)), |s| s.value);
+        let speed = TilesPerSec(Tiles(stat::effective(world, id, StatKind::MovementSpeed)));
         let Some(mut at) = position(world, id) else {
             continue;
         };
@@ -230,18 +262,16 @@ pub fn advance(world: &mut World) {
 }
 
 fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
-    if world
-        .get::<Actor>(entity)
-        .is_some_and(|actor| actor.model.get().airborne)
-    {
+    let assets = world.resource::<AssetService>();
+    if world.get::<Actor>(entity).is_some_and(|actor| {
+        assets
+            .resolve(*actor.model.get(), crate::systems::actor::build_model)
+            .airborne
+    }) {
         return Some(vec![goal.cell()]);
     }
-    let area_id = world
-        .get::<AreaTag>(entity)
-        .map_or(Id::new(0), |tag| tag.area);
-    let area = &area::areas()[area_id.index()];
+    let area = area::of(world, entity)?;
     let at = position(world, entity)?;
-    let goal = area.grid.nearest_walkable(goal)?;
     let mut path = crate::core::nav::astar(&area.grid, at, goal)?;
     if path.len() > 1 {
         path.remove(0);
@@ -253,10 +283,13 @@ fn cross_portal(world: &mut World, entity: Entity) {
     let Some(want) = world.get::<DesiredPortal>(entity).map(|d| d.index as usize) else {
         return;
     };
-    let area_id = world
-        .get::<AreaTag>(entity)
-        .map_or(Id::new(0), |tag| tag.area);
-    let Some(portal) = area::areas()[area_id.index()].portals.get(want) else {
+    let Some(area_id) = world.get::<area::AreaTag>(entity).map(|tag| tag.area) else {
+        return;
+    };
+    let area = world
+        .resource::<AssetService>()
+        .resolve(area_id.get().map, area::build_area);
+    let Some(portal) = area.portals.get(want) else {
         world.entity_mut(entity).remove::<DesiredPortal>();
         return;
     };

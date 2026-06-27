@@ -144,7 +144,6 @@ pub(crate) fn on_thumb_drag(
     let Ok((track_node, track_transform)) = measured.get(track) else {
         return;
     };
-    // Physical pixels (cursor and track) so display scale doesn't affect the mapping.
     let width = track_node.size.x;
     let left = track_transform.translation.x - width / 2.0;
     let Some(cursor) = windows.iter().next().and_then(Window::cursor_position) else {

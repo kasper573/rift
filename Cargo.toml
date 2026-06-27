@@ -12,13 +12,11 @@ members = [
     "service",
     "website",
 ]
-# `game/client` only builds for wasm, so a plain `cargo build`/`test`/`clippy` skips it; build it
-# explicitly with `just wasm` (`cargo … -p client --target wasm32-unknown-unknown`). The end-to-end
-# suite is no longer a cargo crate — it's a Playwright project in `e2e/`, run via `just e2e`.
+# bevy/tiled is a workspace member but excluded from the default build: its bench bin
+# would otherwise collide with the bench bin in game/bench (shared target dir).
 default-members = [
     "ui",
     "bevy/opacity",
-    "bevy/tiled",
     "game/world",
     "game/server",
     "game/bench",
@@ -34,13 +32,10 @@ edition = "2024"
 [workspace.dependencies]
 askama = "0.14"
 axum-prometheus = "0.10"
-# Cross-platform termination handling (SIGTERM/SIGHUP on Unix, console + shutdown events on Windows).
+inventory = "0.3"
+typetag = "0.2"
 ctrlc = { version = "3", features = ["termination"] }
-# Continuous profiling agent that samples the process with pprof-rs and pushes to Pyroscope. Default
-# features keep rustls (no openssl system dep); only the backend services link it, never the client.
 pyroscope = { version = "2", features = ["backend-pprof-rs"] }
-# pprof-rs only profiles CPU; heap profiles come from jemalloc's sampling allocator, dumped as pprof
-# by jemalloc_pprof and scraped by alloy. Linux-only, which is where the backend services run.
 tikv-jemallocator = { version = "0.6", features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
 jemalloc_pprof = { version = "0.8", features = ["symbolize"] }
 bevy_app = { version = "0.19.0", default-features = false }
@@ -57,18 +52,11 @@ bevy_math = { version = "0.19.0", default-features = false }
 bevy_time = { version = "0.19.0", default-features = false }
 bevy_camera = "0.19.0"
 bevy_scene = { version = "0.19.0", default-features = false }
-# The umbrella crate, used by the windowed binaries (client, ui gallery) for the full app
-# (windowing/rendering/winit). Each crate opts into its own feature set on top of this base.
 bevy = { version = "0.19.0", default-features = false }
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
 bevy_replicon = { version = "0.41.0-rc.1", default-features = false }
-# Browsers can't do UDP, so netcode rides a WebSocket (TCP, TLS-terminated by Caddy). `renet2` and
-# `renet2_netcode` are engine-agnostic (their `bevy` feature is off), so we drive them with a thin
-# Replicon bridge of our own (`world::wire`, `server::main`, `client::net`) instead of the
-# bevy-0.18-pinned `bevy_renet2`/`bevy_replicon_renet2` wrappers. Each binary picks its transport
-# feature: `ws_server_transport` (native server) or `ws_client_transport` (wasm client).
 renet2 = { version = "0.15", default-features = false }
 renet2_netcode = { version = "0.15", default-features = false }
 bevy_state = { version = "0.19.0", default-features = false, features = ["bevy_app"] }
@@ -77,20 +65,15 @@ envy = "0.4"
 metrics-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+strum = { version = "0.27" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
 tower-http = { version = "0.6", features = ["fs", "set-header"] }
 ureq = { version = "3", default-features = false }
 
-# LTO + a single codegen unit were traded away to keep CI/image builds fast (and cacheable);
-# re-enable them for deploy-grade optimization once runtime performance matters.
 [profile.release]
 lto = false
-# Serves the dev loop's rebuilds; CI is unaffected (rust-cache pins CARGO_INCREMENTAL=0, which
-# takes precedence over this setting).
 incremental = true
 
-# The dev client is playable: our code builds fast at opt-level 1, dependencies (Bevy) at 3 so the
-# simulation and rendering keep up.
 [profile.dev]
 opt-level = 1
 

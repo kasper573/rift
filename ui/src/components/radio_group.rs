@@ -47,7 +47,6 @@ pub fn radio_circle() -> impl Scene {
     }
 }
 
-// Selected dot, painted in the face color (the design fonts have no ● glyph).
 pub fn radio_indicator() -> impl Scene {
     bsn! {
         Node {

@@ -1,5 +1,3 @@
-//! Tile coordinates and tile↔pixel conversion.
-
 use serde::{Deserialize, Serialize};
 
 use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
@@ -58,11 +56,6 @@ impl std::ops::Mul<Seconds> for TilesPerSec {
     }
 }
 
-// Tile coordinates, single source of truth. An integer `CellPos` names a tile; its
-// center sits at the same numbers in continuous `Tiles` space, and the tile fills the
-// unit square around it. Nothing outside this module may add or subtract half-tiles:
-// "tile 0,0" is where you stand, and ".5" is only the transient state between tiles.
-
 pub trait Cell {
     fn center(self) -> Pos<Tiles>;
     fn bounds(self) -> Rect<Tiles>;
@@ -99,7 +92,6 @@ pub trait TilePos {
     fn on_center(self) -> bool;
     fn distance(self, other: Pos<Tiles>) -> Tiles;
     fn toward(self, target: Pos<Tiles>, by: Tiles) -> Pos<Tiles>;
-    /// An actor's hitbox in tile space: feet half a tile below its center, rising by its height.
     fn hitbox(self, size: Size<Tiles>) -> Rect<Tiles>;
 }
 
@@ -185,7 +177,6 @@ impl PixelsPerTile {
         }
     }
 
-    // Source maps put a tile's origin at its top-left corner; ours is the center, half a tile in.
     pub fn point(self, p: Pos<WorldPx>) -> Pos<Tiles> {
         Pos::new(
             self.x.transform_point(p).x - 0.5,

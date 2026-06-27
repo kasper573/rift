@@ -4,13 +4,14 @@ use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use bevy::window::{CursorMoved, PrimaryWindow};
+use world::core::assets::AssetService;
 use world::core::math::Pos;
 use world::core::tiling::Tiles;
 use world::systems::area::{self, AreaTag};
 use world::systems::player::Owner;
 use world::systems::player::session::{self, MyClient};
 
-use crate::GameScene;
+use crate::Scene;
 use crate::core::render::TILE;
 use crate::core::render::screen::ToScreen;
 
@@ -23,13 +24,11 @@ impl Plugin for InputPlugin {
             .add_systems(Update, touch_as_mouse)
             .add_systems(
                 Update,
-                (respawn_when_dead, update_tile_highlight).run_if(in_state(GameScene::Playing)),
+                (respawn_when_dead, update_tile_highlight).run_if(in_state(Scene::Area)),
             );
     }
 }
 
-/// What the active gesture wants highlighted on the map — a tile and the image to mark it with. The
-/// gesture dispatch sets it as a resource; [`update_tile_highlight`] mirrors it onto the sprite.
 #[derive(Resource)]
 pub struct ActiveTileHighlight {
     pub pos: Pos<Tiles>,
@@ -54,6 +53,7 @@ fn setup_highlight(mut commands: Commands) {
 fn update_tile_highlight(
     highlight: Option<Res<ActiveTileHighlight>>,
     me: Res<MyClient>,
+    service: Res<AssetService>,
     players: Query<(&Owner, &AreaTag)>,
     mut sprite: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<TileHighlight>>,
 ) {
@@ -64,7 +64,7 @@ fn update_tile_highlight(
         *visibility = Visibility::Hidden;
         return;
     };
-    let Some(z) = highlight_z(&me, &players) else {
+    let Some(z) = highlight_z(&service, &me, &players) else {
         *visibility = Visibility::Hidden;
         return;
     };
@@ -73,17 +73,20 @@ fn update_tile_highlight(
     transform.translation = highlight.pos.to_screen().extend(z);
 }
 
-/// The base depth of the local player's area dynamic layer — every actor sorts strictly above it, so
-/// the highlight shares the actors' layer yet always renders behind them.
-fn highlight_z(me: &MyClient, players: &Query<(&Owner, &AreaTag)>) -> Option<f32> {
+fn highlight_z(
+    service: &AssetService,
+    me: &MyClient,
+    players: &Query<(&Owner, &AreaTag)>,
+) -> Option<f32> {
     let my = me.0?;
     let (_, tag) = players.iter().find(|(owner, _)| owner.client == my)?;
-    Some(area::areas().get(tag.area.index())?.dynamic_layer() as f32)
+    Some(
+        service
+            .resolve(tag.area.get().map, area::build_area)
+            .dynamic_layer() as f32,
+    )
 }
 
-/// Bridges touch to the mouse so taps act as left-clicks for both the map and the UI, without the
-/// rest of the game (or bevy's picking) needing to know about touch: the first active finger drives
-/// the cursor, and a touch beginning/ending becomes a left-button press/release.
 fn touch_as_mouse(
     touches: Res<Touches>,
     window: Single<(Entity, &mut Window), With<PrimaryWindow>>,

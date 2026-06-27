@@ -42,7 +42,6 @@ impl OnTap {
     }
 }
 
-/// The snap grid in logical pixels (0 disables); the hud keeps it in step with the user's setting.
 #[derive(Resource, Default)]
 pub struct SnapGrid(pub f32);
 
@@ -63,20 +62,15 @@ impl Plugin for DragPlugin {
     }
 }
 
-/// Whether the press in progress has become a drag. A `Pointer<Click>` still fires when a drag ends,
-/// so without this a drag would also trigger the tap (and open the widget's window).
 #[derive(Resource, Default)]
 struct Dragged(bool);
 
 #[derive(Resource, Default)]
 struct LastViewport(Vec2);
 
-/// A panel's position as a fraction of the viewport (see `anchor_panels`).
 #[derive(Component)]
 struct Anchor(Vec2);
 
-/// The live drag. Its `raw` geometry accumulates the unsnapped pointer motion so snapping can render
-/// every frame without the per-event rounding drifting; the node shows the snapped value.
 #[derive(Resource, Default)]
 struct DragState(Option<Active>);
 
@@ -134,8 +128,6 @@ fn on_drag(
     let Some(active) = state.0.as_mut() else {
         return;
     };
-    // The drag event bubbles to every ancestor; act only for the dragged entity, or the motion
-    // accumulates once per ancestor and the panel races away.
     if drag.entity != active.entity {
         return;
     }
@@ -191,9 +183,6 @@ fn on_click(
     commands.queue(move |world: &mut World| tap(world));
 }
 
-/// Keeps panels at a fixed fraction of the viewport across resizes. A resize re-derives exact pixels
-/// from the stored fraction (scaling pixels by each size ratio instead accumulates rounding and
-/// drifts); the fraction is refreshed from the node on steady frames, so dragging updates it.
 fn anchor_panels(
     window: Single<&Window, With<PrimaryWindow>>,
     mut last: ResMut<LastViewport>,

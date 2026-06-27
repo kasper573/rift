@@ -1,5 +1,3 @@
-//! Pathfinding with fixed-point costs for determinism.
-
 use crate::core::math::Pos;
 use crate::core::tiling::{self, Cell, CellPos, GridSize, TilePos, Tiles};
 

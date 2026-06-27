@@ -1,20 +1,45 @@
-use std::path::PathBuf;
+use std::io::{self, Cursor, Read};
+use std::path::{Path, PathBuf};
 
+use bevy::asset::AssetPath;
 use bevy::asset::io::memory::{Dir, MemoryAssetReader};
 use bevy::asset::io::{AssetSourceBuilder, ErasedAssetReader};
+use include_dir::{Dir as Embedded, include_dir};
+use world::core::assets::{AssetService, AssetSource};
 
-/// A Bevy asset source backed by the same `include_dir` embed `world::core::assets` uses, so the browser
-/// client loads sprites, fonts, and audio straight from the binary — no HTTP asset fetches, no
-/// asset-path configuration. Registered as the default source before `AssetPlugin`.
-pub fn embedded_source() -> AssetSourceBuilder {
+static ASSETS: Embedded<'static> = include_dir!("$CARGO_MANIFEST_DIR/../../assets");
+
+pub fn service() -> AssetService {
+    AssetService::new(EmbeddedSource)
+}
+
+pub fn bevy_source() -> AssetSourceBuilder {
     let root = Dir::new(PathBuf::new());
-    fill(&root, world::core::assets::dir());
+    fill(&root, &ASSETS);
     AssetSourceBuilder::new(move || {
         Box::new(MemoryAssetReader { root: root.clone() }) as Box<dyn ErasedAssetReader>
     })
 }
 
-fn fill(dir: &Dir, embedded: &'static include_dir::Dir<'static>) {
+struct EmbeddedSource;
+
+impl AssetSource for EmbeddedSource {
+    fn open(&self, path: &Path) -> io::Result<Box<dyn Read>> {
+        let name = path.to_string_lossy();
+        let resolved = AssetPath::from("").resolve(&AssetPath::parse(&name));
+        ASSETS
+            .get_file(resolved.path())
+            .map(|file| Box::new(Cursor::new(file.contents())) as Box<dyn Read>)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("missing asset {}", resolved.path().display()),
+                )
+            })
+    }
+}
+
+fn fill(dir: &Dir, embedded: &'static Embedded<'static>) {
     for file in embedded.files() {
         dir.insert_asset(file.path(), file.contents());
     }

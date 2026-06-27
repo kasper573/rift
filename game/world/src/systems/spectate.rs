@@ -1,6 +1,3 @@
-//! Spectating: the replicated [`Spectate`] anchor that follows a watched player, the request to start
-//! or change who's watched, and the server systems that spawn anchors and keep them on their target.
-
 use bevy_app::App;
 use bevy_ecs::component::Component;
 use bevy_ecs::message::Message;
@@ -8,16 +5,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::systems::player::ClientId;
 
+use crate::core::assets::AssetService;
 use crate::systems::account::identity::Identity;
 use crate::systems::account::role::Role;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::movement::Position;
 use crate::systems::player::{Owner, Players};
 use bevy_ecs::lifecycle::Remove;
-use bevy_ecs::message::Messages;
 use bevy_ecs::observer::On;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{FromClient, Replicated};
+use bevy_replicon::prelude::Replicated;
 use std::collections::HashMap;
 
 pub fn register(app: &mut App) {
@@ -41,11 +38,7 @@ pub struct SpectateRequest {
 pub struct Spectators(pub HashMap<ClientId, Entity>);
 
 pub fn requests(world: &mut World) {
-    let requests: Vec<FromClient<SpectateRequest>> = world
-        .resource_mut::<Messages<FromClient<SpectateRequest>>>()
-        .drain()
-        .collect();
-    for request in requests {
+    for request in crate::systems::requests::<SpectateRequest>(world) {
         let Some(client_entity) = request.client_id.entity() else {
             continue;
         };
@@ -77,7 +70,8 @@ fn allowed(world: &World, client_entity: Entity, client: ClientId) -> bool {
 
 fn spawn_anchor(world: &mut World, client: ClientId, watch: Option<ClientId>) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
-    let spawn = area::areas()[zone.index()].spawn;
+    let assets = world.resource::<AssetService>().clone();
+    let spawn = assets.resolve(zone.get().map, area::build_area).spawn;
     let entity = world
         .spawn((
             Replicated,

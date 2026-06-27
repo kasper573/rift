@@ -413,6 +413,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73e8ed45f88ed32e6827a96b62d8fd4086d72defc754c5c6bd08470c1aaf648e"
 
 [[package]]
+name = "atomic-polyfill"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cf2bce30dfe09ef0bfaef228b9d414faaf7e563035494d7fe092dba54b300f4"
+dependencies = [
+ "critical-section",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -653,6 +662,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_replicon",
  "bevy_state",
+ "strum",
  "world",
 ]
 
@@ -1820,7 +1830,7 @@ dependencies = [
  "crossbeam-queue",
  "derive_more",
  "futures-lite",
- "heapless",
+ "heapless 0.9.3",
  "web-task",
 ]
 
@@ -2401,7 +2411,6 @@ dependencies = [
  "bevy_replicon",
  "bevy_tiled",
  "console_error_panic_hook",
- "enum_dispatch",
  "getrandom 0.2.17",
  "gloo-net",
  "include_dir",
@@ -2410,6 +2419,7 @@ dependencies = [
  "renet2_netcode",
  "serde",
  "serde_json",
+ "strum",
  "tiled",
  "ui",
  "url",
@@ -3100,6 +3110,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-io"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
+
+[[package]]
+name = "embedded-io"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
+
+[[package]]
 name = "encase"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3137,18 +3159,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "enum_dispatch"
-version = "0.3.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa18ce2bc66555b3218614519ac839ddb759a7d6720732f979ef8d13be147ecd"
-dependencies = [
- "once_cell",
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -3822,6 +3832,15 @@ dependencies = [
 
 [[package]]
 name = "hash32"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0c35f58762feb77d74ebe43bdbc3210f09be9fe6742234d573bacc26ed92b67"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
+name = "hash32"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
@@ -3874,11 +3893,25 @@ dependencies = [
 
 [[package]]
 name = "heapless"
+version = "0.7.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdc6457c0eb62c71aac4bc17216026d8410337c4126773b9c5daba343f17964f"
+dependencies = [
+ "atomic-polyfill",
+ "hash32 0.2.1",
+ "rustc_version",
+ "serde",
+ "spin 0.9.8",
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "heapless"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
 dependencies = [
- "hash32",
+ "hash32 0.3.1",
  "portable-atomic",
  "stable_deref_trait",
 ]
@@ -5611,6 +5644,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "oorandom"
+version = "11.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
+
+[[package]]
 name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5974,6 +6013,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6764c3b5dd454e283a30e6dfe78e9b31096d9e32036b5d1eaac7a6119ccb9a24"
 dependencies = [
  "cobs",
+ "embedded-io 0.4.0",
+ "embedded-io 0.6.1",
+ "heapless 0.7.17",
  "postcard-derive",
  "serde",
 ]
@@ -7071,6 +7113,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd0b0ec5f1c1ca621c432a25813d8d60c88abe6d3e08a3eb9cf37d97a0fe3d73"
 
 [[package]]
+name = "seq-macro"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bc711410fbe7399f390ca1c3b60ad0f53f80e95c5eb935e52268a0e2cd49acc"
+
+[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7206,6 +7254,7 @@ dependencies = [
  "serde",
  "serde_json",
  "service",
+ "strum",
  "tokio",
  "ureq",
  "world",
@@ -7395,6 +7444,9 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+dependencies = [
+ "lock_api",
+]
 
 [[package]]
 name = "spin"
@@ -7459,6 +7511,27 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "strum"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "subtle"
@@ -9283,11 +9356,15 @@ dependencies = [
  "bevy_time",
  "derive_more",
  "euclid",
- "include_dir",
+ "getrandom 0.2.17",
+ "oorandom",
  "pathfinding",
+ "postcard",
  "renet2",
+ "seq-macro",
  "serde",
  "serde_json",
+ "strum",
  "tiled",
 ]
 

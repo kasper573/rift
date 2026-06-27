@@ -1,8 +1,3 @@
-//! The deploy-target adapter. The rest of the client is platform-agnostic Bevy; everything specific
-//! to *how* it is shipped — here, a wasm app in a browser tab — is concentrated in this one module.
-//! Retargeting (a native window, a different host) is a matter of swapping this module's body, not
-//! touching the engine code, which talks only to the functions below.
-
 use std::time::Duration;
 
 use bevy::prelude::*;
@@ -10,9 +5,6 @@ use renet2_netcode::{ClientSocket, WebSocketClient, WebSocketClientConfig};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::wasm_bindgen;
 
-/// Boot parameters the host hands the client: the player's access token (absent only if the page
-/// somehow loaded signed-out), the game server's HTTPS API origin (for the session request) and its
-/// WebSocket origin (for the netcode connection). On the web the host writes them onto the canvas.
 #[derive(Resource)]
 pub struct StartParams {
     pub access_token: Option<String>,
@@ -22,13 +14,11 @@ pub struct StartParams {
 
 const CANVAS: &str = "#glcanvas";
 
-// Side-effect import (see audio-unlock.js); calling the marker keeps wasm-bindgen emitting the import.
 #[wasm_bindgen(module = "/audio-unlock.js")]
 unsafe extern "C" {
     fn audio_unlock();
 }
 
-/// The entry point the host invokes (the page's loader calls this, exported as `run`, after `init()`).
 #[wasm_bindgen]
 pub fn run() {
     set_panic_hook();
@@ -36,12 +26,10 @@ pub fn run() {
     crate::boot();
 }
 
-/// Routes panics somewhere visible — the browser console, which the page also surfaces on a crash.
 fn set_panic_hook() {
     console_error_panic_hook::set_once();
 }
 
-/// The primary window the app binds to: the host's existing canvas element.
 pub fn primary_window() -> Window {
     Window {
         title: "rift mmo".to_owned(),
@@ -69,13 +57,6 @@ pub fn read_start_params() -> StartParams {
     }
 }
 
-/// Keeps the window's resolution and scale factor matched to the display surface. bevy binds to the
-/// host's existing canvas but never sizes its backing buffer, so without this it stays the 300x150
-/// HTML default and the browser stretches it (blurry). bevy lays the UI and cameras out in logical
-/// pixels but renders at physical pixels (logical x scale factor), so the backing must be physical-
-/// pixel sized: a logical-sized backing on a high-DPI display is both blurry and too small, and bevy's
-/// physical-pixel render then gets clipped to a corner, throwing the whole view off-centre. On the web
-/// the scale factor is the device pixel ratio, so the backing is logical x DPR and the override matches.
 pub fn sync_window(window: &mut Window) {
     let Some(web) = web_sys::window() else {
         return;
@@ -111,7 +92,6 @@ pub fn sync_window(window: &mut Window) {
     }
 }
 
-/// Persistent key/value storage for user settings (the browser's local storage).
 pub fn load(key: &str) -> Option<String> {
     storage()?.get_item(key).ok()?
 }
@@ -126,8 +106,6 @@ fn storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok()?
 }
 
-/// POSTs to `url` with the given authorization and returns the raw response body — the host's network
-/// stack (the browser's fetch).
 pub async fn fetch(url: &str, authorization: &str) -> Result<Vec<u8>, String> {
     let response = gloo_net::http::Request::post(url)
         .header("Authorization", authorization)
@@ -140,15 +118,12 @@ pub async fn fetch(url: &str, authorization: &str) -> Result<Vec<u8>, String> {
     response.binary().await.map_err(|error| error.to_string())
 }
 
-/// Wall-clock time since the unix epoch, for the netcode handshake.
 pub fn now() -> Duration {
     web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
         .expect("system clock")
 }
 
-/// The netcode transport socket to the game server. Returns `impl ClientSocket` so the concrete
-/// transport (here a browser WebSocket) stays inside the adapter — the netcode wiring stays generic.
 pub fn client_socket(ws_url: &str) -> impl ClientSocket {
     WebSocketClient::new(WebSocketClientConfig {
         server_url: url::Url::parse(ws_url).expect("game server ws url"),

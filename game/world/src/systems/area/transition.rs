@@ -1,55 +1,58 @@
-//! Portal crossing hands players between per-area worlds: this crate raises the intent; the server harness moves them.
-
 use bevy_ecs::prelude::*;
 
-use super::AreaDef;
+use super::Id;
 use crate::core::math::Pos;
-use crate::core::table::Id;
 use crate::core::tiling::Tiles;
 use crate::systems::actor::Name;
-use crate::systems::combat::Vitals;
-use crate::systems::items::Inventory;
-use crate::systems::player::{ClientId, Owner, Xp};
+use crate::systems::effect::TimedEffects;
+use crate::systems::equipment::Equipment;
+use crate::systems::item::Inventory;
+use crate::systems::job::Job;
+use crate::systems::player::{CharacterState, ClientId, Owner, Xp};
+use crate::systems::stat;
 
-/// Not replicated: it never leaves the server and the entity is gone within the tick.
 #[derive(Component, Clone, Copy)]
 pub struct Crossing {
-    pub dest_area: Id<AreaDef>,
+    pub dest_area: Id,
     pub dest: Pos<Tiles>,
 }
 
-/// Transient movement, combat and pathing are dropped and rebuilt fresh on arrival.
 pub struct Traveler {
     pub client: ClientId,
-    pub dest_area: Id<AreaDef>,
+    pub dest_area: Id,
     pub dest: Pos<Tiles>,
-    pub name: String,
-    pub vitals: Vitals,
-    pub inventory: Inventory,
-    pub xp: Xp,
+    pub state: CharacterState,
 }
 
-/// Collects everyone leaving this world and despawns their character, leaving the connection behind.
-/// With its character gone the connection sees nothing, so replicon sends the client a despawn for
-/// every entity it held here — clearing its replication state before [`arrive`] rebuilds it in the
-/// destination world over the same connection (see `game/server/src/main.rs`).
 pub fn departing(world: &mut World) -> Vec<Traveler> {
-    let leaving: Vec<(Entity, Traveler)> = world
-        .query::<(Entity, &Owner, &Crossing, &Name, &Vitals, &Inventory, &Xp)>()
+    let ids: Vec<Entity> = world
+        .query_filtered::<Entity, With<Crossing>>()
         .iter(world)
-        .map(|(entity, owner, crossing, name, vitals, inventory, xp)| {
-            (
+        .collect();
+    let leaving: Vec<(Entity, Traveler)> = ids
+        .into_iter()
+        .filter_map(|entity| {
+            let crossing = *world.get::<Crossing>(entity)?;
+            Some((
                 entity,
                 Traveler {
-                    client: owner.client,
+                    client: world.get::<Owner>(entity)?.client,
                     dest_area: crossing.dest_area,
                     dest: crossing.dest,
-                    name: name.name.clone(),
-                    vitals: vitals.clone(),
-                    inventory: inventory.clone(),
-                    xp: xp.clone(),
+                    state: CharacterState {
+                        name: world.get::<Name>(entity)?.name.clone(),
+                        stats: stat::snapshot(world, entity),
+                        inventory: world.get::<Inventory>(entity)?.clone(),
+                        xp: world.get::<Xp>(entity)?.clone(),
+                        equipment: world.get::<Equipment>(entity)?.clone(),
+                        job: *world.get::<Job>(entity)?,
+                        timed: world
+                            .get::<TimedEffects>(entity)
+                            .cloned()
+                            .unwrap_or_default(),
+                    },
                 },
-            )
+            ))
         })
         .collect();
     for (entity, traveler) in &leaving {
@@ -68,9 +71,6 @@ pub fn arrive(world: &mut World, traveler: Traveler) -> Entity {
         traveler.client,
         traveler.dest_area,
         traveler.dest,
-        traveler.name,
-        traveler.vitals,
-        traveler.inventory,
-        traveler.xp,
+        traveler.state,
     )
 }

@@ -6,8 +6,8 @@ use ui::button::intent as button_intent;
 use ui::card::intent as card_intent;
 use ui::theme::theme;
 use ui::{
-    Align, ButtonIntent, ButtonSize, CardOpts, Check, OnSettle, OnTap, Orientation, Side,
-    SonnerPosition, Widget, accordion, accordion_body, accordion_content, accordion_header,
+    Align, ButtonIntent, ButtonSize, CardOptions, Check, OnSettle, OnTap, Orientation, Side,
+    SonnerPosition, WidgetOptions, accordion, accordion_body, accordion_content, accordion_header,
     accordion_item, accordion_trigger, alert_dialog, alert_dialog_action, alert_dialog_cancel,
     avatar, avatar_fallback, button, button_styled, card, checkbox, checkbox_indicator,
     collapsible, collapsible_content, collapsible_trigger, dialog, dialog_close, popover,
@@ -27,8 +27,6 @@ const TOAST_MESSAGES: &[(&str, &str)] = &[
     ("Upload complete", "report-q3.pdf finished uploading."),
 ];
 
-// Five anchor positions (four edges + center) used by the floating-overlay demos to show how a
-// popper flips to the opposite side when its preferred side would overflow the viewport.
 const SLOTS: [(f32, f32, Side); 5] = [
     (0.5, 0.02, Side::Top),
     (0.94, 0.5, Side::Right),
@@ -66,8 +64,6 @@ fn main() {
                     ..default()
                 })
                 .set(bevy::asset::AssetPlugin {
-                    // The gallery's only assets are the design fonts under the repo's `assets/`,
-                    // resolved relative to this crate so `cargo run -p ui` just works from anywhere.
                     file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../assets").to_owned(),
                     ..default()
                 }),
@@ -120,7 +116,6 @@ fn setup(mut commands: Commands) {
     });
 }
 
-// Loop the progress bars 0→100% so the scene is a live demo rather than a frozen empty bar.
 fn animate_progress(time: Res<Time>, mut fractions: Query<&mut ui::ProgressFraction>) {
     let fraction = (time.elapsed_secs() % 2.5) / 2.5;
     for mut progress in &mut fractions {
@@ -128,7 +123,6 @@ fn animate_progress(time: Res<Time>, mut fractions: Query<&mut ui::ProgressFract
     }
 }
 
-// Clicking a tab records its scene index; `rebuild_scene` rebuilds the scene tree when it changes.
 fn on_tab(event: On<ui::Activate>, tabs: Query<&SceneTab>, mut current: ResMut<CurrentScene>) {
     if let Ok(tab) = tabs.get(event.entity) {
         current.0 = tab.0;
@@ -168,7 +162,6 @@ fn rebuild_scene(
         .insert(ChildOf(root));
 }
 
-// The toasts scene spawns a real toast on each "Show toast" press, cycling the example messages.
 fn show_toast(
     _event: On<ui::Activate>,
     toasters: Query<Entity, With<ToasterEntity>>,
@@ -245,7 +238,6 @@ const BUTTON_SIZES: &[(ButtonSize, &str)] = &[
     (ButtonSize::Lg, "lg"),
 ];
 
-// A wrapping, centered row — the common showcase container for a set of variants.
 fn wrap(kids: Vec<Box<dyn Scene>>) -> Box<dyn Scene> {
     boxed(bsn! {
         Node {
@@ -261,7 +253,6 @@ fn wrap(kids: Vec<Box<dyn Scene>>) -> Box<dyn Scene> {
     })
 }
 
-// A fixed-width centered column.
 fn col(width: f32, kids: Vec<Box<dyn Scene>>) -> Box<dyn Scene> {
     boxed(bsn! {
         Node { width: Val::Px({width}), flex_direction: FlexDirection::Column, align_items: AlignItems::Center }
@@ -436,7 +427,6 @@ fn collapsible_scene() -> Box<dyn Scene> {
     )
 }
 
-// A row of dialog action buttons, aligned to the trailing edge.
 fn dialog_actions(kids: Vec<Box<dyn Scene>>) -> Box<dyn Scene> {
     boxed(bsn! {
         Node {
@@ -496,18 +486,18 @@ fn alert_dialog_scene() -> Box<dyn Scene> {
 }
 
 fn card_scene() -> Box<dyn Scene> {
-    let variants: [(&str, &str, Color, CardOpts); 8] = [
+    let variants: [(&str, &str, Color, CardOptions); 8] = [
         (
             "Surface",
             "Default, bordered",
             theme().surface_elevated.on,
-            CardOpts::default(),
+            CardOptions::default(),
         ),
         (
             "Floating",
             "Elevation shadow",
             theme().surface_elevated.on,
-            CardOpts {
+            CardOptions {
                 floating: true,
                 ..default()
             },
@@ -516,7 +506,7 @@ fn card_scene() -> Box<dyn Scene> {
             "Compact",
             "Tighter padding",
             theme().surface_elevated.on,
-            CardOpts {
+            CardOptions {
                 compact: true,
                 ..default()
             },
@@ -525,7 +515,7 @@ fn card_scene() -> Box<dyn Scene> {
             "Interactive",
             "Hover & press me",
             theme().surface_elevated.on,
-            CardOpts {
+            CardOptions {
                 interactive: true,
                 ..default()
             },
@@ -534,7 +524,7 @@ fn card_scene() -> Box<dyn Scene> {
             "Floating + interactive",
             "Lifts higher on hover",
             theme().surface_elevated.on,
-            CardOpts {
+            CardOptions {
                 floating: true,
                 interactive: true,
                 ..default()
@@ -544,7 +534,7 @@ fn card_scene() -> Box<dyn Scene> {
             "Success",
             "Intent color",
             theme().success_soft.on,
-            CardOpts {
+            CardOptions {
                 intent: card_intent::SUCCESS,
                 ..default()
             },
@@ -553,7 +543,7 @@ fn card_scene() -> Box<dyn Scene> {
             "Error",
             "Intent color",
             theme().error_soft.on,
-            CardOpts {
+            CardOptions {
                 intent: card_intent::ERROR,
                 ..default()
             },
@@ -562,7 +552,7 @@ fn card_scene() -> Box<dyn Scene> {
             "Info",
             "Intent color",
             theme().info_soft.on,
-            CardOpts {
+            CardOptions {
                 intent: card_intent::INFO,
                 ..default()
             },
@@ -586,7 +576,6 @@ fn card_scene() -> Box<dyn Scene> {
         .collect())
 }
 
-// Builds the five-position floating-overlay demo grid; `make` produces the anchored content per slot.
 fn floating(make: impl Fn(Side) -> Box<dyn Scene>) -> Box<dyn Scene> {
     let slots: Vec<Box<dyn Scene>> = SLOTS
         .iter()
@@ -644,7 +633,7 @@ fn dimensions_panel() -> Box<dyn Scene> {
 
 fn in_card(panel: Box<dyn Scene>) -> Box<dyn Scene> {
     boxed(bsn! {
-        {card(CardOpts { floating: true, ..default() })}
+        {card(CardOptions { floating: true, ..default() })}
         Children [ {EntityScene(panel)} ]
     })
 }
@@ -666,8 +655,6 @@ fn popover_card_scene() -> Box<dyn Scene> {
 }
 
 fn toasts_scene() -> Box<dyn Scene> {
-    // Fill the scene area so the toaster's absolute bottom-right anchors to the screen, not to a
-    // content-sized box.
     boxed(bsn! {
         Node {
             width: Val::Percent(100.0),
@@ -692,7 +679,7 @@ fn widget_scene() -> Box<dyn Scene> {
                 position_type: PositionType::Relative,
             }
             Children [
-                {EntityScene(widget(Widget {
+                {EntityScene(widget(WidgetOptions {
                     pos: Vec2::new(56.0, 36.0),
                     icon: Handle::default(),
                     badge: "I".into(),
@@ -723,7 +710,7 @@ fn window_scene() -> Box<dyn Scene> {
                 position_type: PositionType::Relative,
             }
             Children [
-                {EntityScene(window(ui::Window {
+                {EntityScene(window(ui::WindowOptions {
                     pos: Vec2::ZERO,
                     size: Vec2::new(340.0, 260.0),
                     title: "Inventory".into(),

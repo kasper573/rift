@@ -1,6 +1,3 @@
-//! Visibility rules: players see nearby entities in their area; spectators see their watched player
-//! and the full roster for UI; spectator anchors stay invisible; inventories replicate only to owners.
-
 use std::collections::HashSet;
 
 use bevy_app::App;
@@ -12,10 +9,9 @@ use bevy_replicon::server::visibility::registry::FilterRegistry;
 use bevy_replicon::shared::replication::registry::ReplicationRegistry;
 
 use crate::core::math::Pos;
-use crate::core::table::Id;
 use crate::core::tiling::{TilePos, Tiles};
-use crate::systems::area::{AreaDef, AreaTag};
-use crate::systems::items::Inventory;
+use crate::systems::area::{self, AreaTag};
+use crate::systems::item::Inventory;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::{ClientId, Players};
 use crate::systems::spectate::{Spectate, Spectators};
@@ -79,8 +75,6 @@ pub fn seen_by(world: &mut World, entity: Entity) -> Vec<Entity> {
         .collect()
 }
 
-/// The account a character belongs to. Inventory replicates to every connection of that account, so
-/// the same player opened in two tabs sees their items in both.
 #[derive(Component)]
 #[component(immutable)]
 pub struct OwnedBy(pub ClientId);
@@ -111,14 +105,14 @@ impl FromWorld for RangeBit {
 struct Subject {
     entity: Entity,
     pos: Pos<Tiles>,
-    area: Option<Id<AreaDef>>,
+    area: Option<area::Id>,
     anchor: bool,
 }
 
 struct Sight {
     focus: Entity,
     pos: Option<Pos<Tiles>>,
-    area: Option<Id<AreaDef>>,
+    area: Option<area::Id>,
     spectating: bool,
 }
 

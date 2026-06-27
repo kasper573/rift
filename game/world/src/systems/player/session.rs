@@ -8,9 +8,10 @@ use bevy_state::prelude::OnEnter;
 use super::{ClientId, JoinRequest, Owner, RespawnRequest, Welcome};
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
-use crate::systems::area::{self, AreaTag};
+use crate::systems::area;
 use crate::systems::combat::AttackRequest;
-use crate::systems::items::UseItemRequest;
+use crate::systems::equipment::{EquipmentSlot, UnequipRequest};
+use crate::systems::item::{DropItemRequest, PickupRequest, UseItemRequest};
 use crate::systems::movement::{MoveRequest, MoveToPortal};
 use crate::systems::spectate::SpectateRequest;
 
@@ -47,7 +48,7 @@ pub fn me(world: &World) -> Option<EntityRef<'_>> {
 }
 
 pub fn is_dead(world: &World) -> bool {
-    me(world).is_some_and(|entity| crate::systems::combat::is_dead(world, entity.id()))
+    me(world).is_some_and(|entity| crate::systems::stat::is_dead(world, entity.id()))
 }
 
 pub fn join(world: &mut World) {
@@ -70,10 +71,22 @@ pub fn use_item(world: &mut World, slot: u32) {
     world.write_message(UseItemRequest { slot });
 }
 
+pub fn drop_item(world: &mut World, slot: u32) {
+    world.write_message(DropItemRequest { slot });
+}
+
+pub fn pickup(world: &mut World, target: Entity) {
+    world.write_message(PickupRequest { target });
+}
+
+pub fn unequip(world: &mut World, slot: EquipmentSlot) {
+    world.write_message(UnequipRequest { slot });
+}
+
 pub fn move_to(world: &mut World, pos: Pos<Tiles>) {
     let portal = me(world)
-        .and_then(|entity| entity.get::<AreaTag>())
-        .and_then(|tag| area::areas().get(tag.area.index()))
+        .map(|entity| entity.id())
+        .and_then(|entity| area::of(world, entity))
         .and_then(|area| {
             area.portals
                 .iter()
@@ -98,8 +111,6 @@ fn record_welcome(mut welcomes: MessageReader<Welcome>, mut me: ResMut<MyClient>
     }
 }
 
-/// A dropped link makes "me" unknown again, so a reconnect waits for a fresh [`Welcome`] before
-/// announcing — exactly like a first connection — rather than acting on the stale id.
 fn forget_me(mut me: ResMut<MyClient>) {
     me.0 = None;
 }

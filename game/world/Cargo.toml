@@ -19,9 +19,13 @@ bevy_state.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 derive_more = { version = "2", features = ["add", "add_assign"] }
 euclid = { version = "0.22", features = ["serde"] }
-include_dir = "0.7"
 pathfinding = "4"
+oorandom = "11"
+getrandom = "0.2"
+strum = { workspace = true, features = ["derive"] }
+seq-macro = "0.3"
 renet2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tiled = { version = "0.15", default-features = false }
+postcard = { version = "1", features = ["alloc"] }

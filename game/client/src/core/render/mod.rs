@@ -1,9 +1,3 @@
-//! The render pipeline: the world draws to a fixed-zoom offscreen texture ([`present`]) a [`camera`]
-//! follows, in screen space ([`screen`]), with a generic [`present::ScreenTint`] hook. All actual
-//! drawing — actors, tiles, the health bar, the death wash — is bespoke and lives in the feature
-//! modules under `crate::systems`, sharing the [`Animator`] clock and the [`maprender`] tile
-//! projection and transform helpers re-exported below.
-
 pub mod camera;
 pub mod present;
 pub mod screen;
@@ -14,30 +8,20 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy::sprite_render::Material2dPlugin;
-use world::core::math::{Pos, Size, WorldPx};
+use world::core::math::{Pos, WorldPx};
 use world::core::tiling::Tiles;
 use world::core::time::Seconds;
 
+pub use screen::ToScreen;
+
 pub const TILE: WorldPx = WorldPx(16.0);
-
-pub trait ToScreen {
-    fn to_screen(self) -> Vec2;
-}
-
-impl ToScreen for Pos<Tiles> {
-    fn to_screen(self) -> Vec2 {
-        Vec2::new(self.x * TILE.0, -self.y * TILE.0)
-    }
-}
-
-impl ToScreen for Size<Tiles> {
-    fn to_screen(self) -> Vec2 {
-        Vec2::new(self.width * TILE.0, self.height * TILE.0)
-    }
-}
 
 pub fn sprite_transform(pos: Pos<Tiles>, z: f32) -> Transform {
     Transform::from_translation(pos.to_screen().extend(z))
+}
+
+pub fn snap_to_screen(at: Vec2) -> Vec2 {
+    (at * present::SCALE).round() / present::SCALE
 }
 
 pub fn dynamic_z(area_height: f32, base: f32, y: Tiles) -> f32 {
@@ -63,16 +47,10 @@ impl Plugin for RenderPlugin {
             .init_resource::<present::Viewport>()
             .add_systems(Startup, present::setup)
             .add_systems(Update, (present::match_display, present::fit).chain())
-            .add_systems(
-                Update,
-                present::apply_tint.run_if(in_state(crate::GameScene::Playing)),
-            );
+            .add_systems(Update, present::apply_tint);
     }
 }
 
-/// Per-entity animation clock: how long an entity has held its current state (an opaque `u64` key the
-/// caller supplies, e.g. an action discriminant), so the renderer and the audio cue scheduler sample
-/// the same frame. The key is opaque on purpose — this stays free of any game-specific type.
 #[derive(Resource, Default)]
 pub struct Animator {
     anchors: HashMap<Entity, (u64, Seconds)>,

@@ -1,19 +1,16 @@
-//! Presents replicated actors: their sprites (sampled from the model's animation, tinted, depth-sorted)
-//! and the sounds their own animation makes (animation cues + footsteps), emitted into the core audio
-//! mixer by id. The generic render/audio engines live in `crate::core`.
-
 use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
+use world::core::assets::AssetService;
 use world::core::tiling::{TilePos, Tiles};
 use world::core::time::Seconds;
-use world::systems::actor::{Action, Actor, Rgba};
+use world::systems::actor::{Action, Actor, Rgba, build_model};
 use world::systems::area::{self, AreaTag};
 use world::systems::movement::Position;
 
-use crate::core::audio::PlaySfx;
 use crate::core::render::{Animator, atlas_rect, dynamic_z, sprite_transform};
+use crate::core::sfx::PlaySfx;
 
 pub struct ActorPlugin;
 
@@ -23,7 +20,7 @@ impl Plugin for ActorPlugin {
             .add_observer(attach_sprite)
             .add_systems(
                 Update,
-                (sync_actors, actor_cues).run_if(in_state(crate::GameScene::Playing)),
+                (sync_actors, actor_cues).run_if(in_state(crate::Scene::Area)),
             );
     }
 }
@@ -32,12 +29,18 @@ fn attach_sprite(
     add: On<Add, Actor>,
     actors: Query<&Actor>,
     assets: Res<AssetServer>,
+    service: Res<AssetService>,
     mut commands: Commands,
 ) {
     let Ok(actor) = actors.get(add.entity) else {
         return;
     };
-    let image = assets.load(actor.model.get().sheet().to_owned());
+    let image = assets.load(
+        service
+            .resolve(*actor.model.get(), build_model)
+            .sheet()
+            .to_owned(),
+    );
     commands.entity(add.entity).insert((
         Sprite { image, ..default() },
         Anchor(Vec2::new(0.0, -1.0 / 6.0)),
@@ -48,6 +51,7 @@ fn attach_sprite(
 
 fn sync_actors(
     time: Res<Time>,
+    service: Res<AssetService>,
     mut animator: ResMut<Animator>,
     mut actors: Query<(
         Entity,
@@ -62,17 +66,16 @@ fn sync_actors(
     animator.retain(|entity| actors.contains(entity));
     for (entity, actor, position, tag, mut sprite, mut transform) in &mut actors {
         let elapsed = animator.elapsed(entity, actor.action as u64, clock);
-        let region =
-            actor
-                .model
-                .get()
-                .frame(actor.action.name(), actor.dir, elapsed, actor.attack_rate);
+        let region = service.resolve(*actor.model.get(), build_model).frame(
+            actor.action.name(),
+            actor.dir,
+            elapsed,
+            actor.attack_rate,
+        );
         sprite.rect = Some(atlas_rect(region));
         sprite.custom_size = Some(Vec2::new(region.size.width, region.size.height));
         sprite.color = rgba(actor.color);
-        let Some(area) = area::areas().get(tag.area.index()) else {
-            continue;
-        };
+        let area = service.resolve(tag.area.get().map, area::build_area);
         *transform = sprite_transform(
             position.pos,
             dynamic_z(
@@ -89,12 +92,12 @@ fn rgba(tint: Rgba) -> Color {
     Color::srgba_u8(r, g, b, a)
 }
 
-/// Each actor's last seen action and elapsed time, so a cue fires once as the animation crosses it.
 #[derive(Resource, Default)]
 struct Seen(HashMap<Entity, (Action, Seconds)>);
 
 fn actor_cues(
     time: Res<Time>,
+    service: Res<AssetService>,
     mut animator: ResMut<Animator>,
     mut seen: ResMut<Seen>,
     actors: Query<(Entity, &Actor, &Position, &AreaTag)>,
@@ -112,7 +115,7 @@ fn actor_cues(
         } else {
             Seconds(-1.0)
         };
-        let model = actor.model.get();
+        let model = service.resolve(*actor.model.get(), build_model);
         let (cues, stepped) = model.cues(
             actor.action.name(),
             actor.dir,
@@ -122,16 +125,17 @@ fn actor_cues(
         );
         for id in cues {
             play.write(PlaySfx {
-                id: id.0.clone(),
+                id: *id,
                 at: position.pos,
             });
         }
         if stepped
-            && let Some(area) = area::areas().get(tag.area.index())
-            && let Some(id) = area.tile_sfx_at(position.pos.cell())
+            && let Some(id) = service
+                .resolve(tag.area.get().map, area::build_area)
+                .tile_sfx_at(position.pos.cell())
         {
             play.write(PlaySfx {
-                id: id.0.clone(),
+                id: *id,
                 at: position.pos,
             });
         }

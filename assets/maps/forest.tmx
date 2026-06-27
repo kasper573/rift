@@ -105,7 +105,7 @@
   </object>
   <object id="39" name="Warp" type="warp" x="47.3917636363636" y="335.847727272727" width="16.2697" height="16.75">
    <properties>
-    <property name="goto" value="island,39,28"/>
+    <property name="goto" value="Island,39,28"/>
    </properties>
   </object>
  </objectgroup>

@@ -16,7 +16,6 @@ use crate::style::{StatefulPaint, Style};
 use crate::theme::theme;
 use crate::tokens::radius;
 
-// Exponential approach rate: higher snaps faster. Frame-rate independent via `dt`.
 const SCROLL_SMOOTHING: f32 = 16.0;
 
 #[derive(Component, Clone, Default)]
@@ -28,8 +27,6 @@ pub(crate) struct ScrollBar;
 #[derive(Component, Clone, Default)]
 pub(crate) struct ScrollThumbMark;
 
-// The scroll offset the viewport is heading toward; `ScrollPosition` eases to it so wheel and drag
-// scrolling animate instead of snapping.
 #[derive(Component, Default, Clone)]
 pub(crate) struct ScrollTarget(f32);
 
@@ -96,7 +93,6 @@ pub fn scroll_corner() -> impl Scene {
     bsn! { Node }
 }
 
-// Wheel/trackpad over a viewport nudges its target; `animate_scroll` carries the real offset there.
 pub(crate) fn on_scroll(
     mut scroll: On<Pointer<Scroll>>,
     mut viewports: Query<(&ComputedNode, &mut ScrollTarget), With<ScrollViewport>>,
@@ -130,8 +126,6 @@ pub(crate) fn animate_scroll(
     }
 }
 
-// Dragging the thumb maps the cursor's position within the bar straight onto the scroll offset, and
-// sets the live position too so the thumb tracks the cursor without the easing lag.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn on_thumb_drag(
     drag: On<Pointer<Drag>>,
@@ -186,7 +180,6 @@ pub(crate) fn on_thumb_drag(
     }
 }
 
-/// Sizes and positions thumbs from viewports. Runs after layout so measured sizes are current.
 #[allow(clippy::type_complexity)]
 pub(crate) fn sync_scrollbars(
     roots: Query<&Children, With<ScrollRoot>>,
@@ -216,8 +209,6 @@ pub(crate) fn sync_scrollbars(
         let visible = view.size.y * scale;
         let content = view.content_size.y * scale;
 
-        // Only act as a scroll area while the content overflows; otherwise drop the bar from layout so
-        // the viewport fills the full width and it reads as a plain container.
         bar_style.display = if content > visible + 0.5 {
             Display::Flex
         } else {

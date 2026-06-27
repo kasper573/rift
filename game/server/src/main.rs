@@ -1,7 +1,9 @@
+mod assets;
 mod auth;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -21,11 +23,12 @@ use renet2_netcode::{
     ConnectToken, NETCODE_KEY_BYTES, NetcodeServerTransport, ServerAuthentication,
     ServerSetupConfig, WebSocketAcceptor, WebSocketServer, WebSocketServerConfig,
 };
+use strum::VariantArray;
+use world::core::assets::AssetService;
 use world::core::channels::RenetChannelsExt;
-use world::core::table::Id;
 use world::systems::TICK_HZ;
 use world::systems::account::Identity;
-use world::systems::area::{self, AreaDef, transition};
+use world::systems::area::transition;
 use world::systems::player::ClientId;
 
 service::heap_profiling!();
@@ -51,12 +54,13 @@ struct Config {
     port: u16,
     /// WebSocket netcode transport port — a separate TCP listener from the HTTP API.
     ws_port: u16,
+    /// Directory the game assets (maps, models, ...) are read from.
+    assets_dir: PathBuf,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
 }
 
 fn main() {
-    world::systems::validate();
     let config: Config = envy::prefixed("RIFT_GAME_SERVER_")
         .from_env()
         .expect("RIFT_GAME_SERVER_* environment");
@@ -88,7 +92,14 @@ fn main() {
     };
     runtime.spawn(serve_http(http_bind, http, metrics));
 
-    simulate(ws_bind, private_key, sessions, runtime.handle().clone());
+    let assets = assets::service(config.assets_dir);
+    simulate(
+        ws_bind,
+        private_key,
+        sessions,
+        runtime.handle().clone(),
+        assets,
+    );
 }
 
 fn simulate(
@@ -96,9 +107,18 @@ fn simulate(
     private_key: [u8; NETCODE_KEY_BYTES],
     sessions: Sessions,
     runtime: tokio::runtime::Handle,
+    assets: AssetService,
 ) {
-    let spawn = area::spawn_zone().index();
-    let mut worlds: Vec<App> = area::areas().iter().map(|a| build_world(a.id)).collect();
+    let spawn = world::data::area::SPAWN_ID.index();
+    let real_areas: Vec<_> = world::data::area::Id::VARIANTS
+        .iter()
+        .copied()
+        .filter(|id| !id.get().bench)
+        .collect();
+    let mut worlds: Vec<App> = real_areas
+        .into_iter()
+        .map(|id| build_world(id, &assets))
+        .collect();
 
     let (connection_config, client_channels) = {
         let channels = worlds[0].world().resource::<RepliconChannels>();
@@ -319,8 +339,10 @@ struct Conn {
 #[derive(Component)]
 struct Wire(u64);
 
-fn build_world(area: Id<AreaDef>) -> App {
+fn build_world(area: world::systems::area::Id, assets: &AssetService) -> App {
     let mut app = world::systems::server_app(area);
+    app.insert_resource(assets.clone());
+    app.insert_resource(world::core::math::Rng::from_entropy());
     app.finish();
     app.cleanup();
     app.world_mut()
@@ -519,7 +541,7 @@ fn resolve(http: &Http, authorization: &str) -> Result<Identity, StatusCode> {
         roles: claims
             .roles
             .iter()
-            .filter_map(|role| world::systems::account::Role::parse(role))
+            .filter_map(|role| role.parse::<world::systems::account::Role>().ok())
             .collect(),
     })
 }

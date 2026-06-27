@@ -1,27 +1,24 @@
-//! Builds an [`Area`] from its Tiled `.tmx` map: render layers, the tile palette, depth groups,
-//! the nav grid, portals, and per-tile sound.
-
 use std::collections::HashSet;
+use std::path::Path;
 
 use tiled::{LayerType, PropertyValue};
 
-use super::{Area, AreaDef, Flip, Group, Portal, RenderLayer, TileRef, cell_overlap};
-use crate::core::assets;
+use super::{Area, Group, Portal, RenderLayer, TileRef, cell_overlap};
+use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
 use crate::core::nav;
-use crate::core::table::Id;
+use crate::core::sfx::SfxId;
 use crate::core::tiling::{
     self, Cell, CellPos, GridDims, GridSize, PixelsPerTile, TileRect, TileSize, Tiles,
 };
-use crate::systems::sfx::SfxId;
 
 const OBSCURING_CUTOFF: f32 = 0.4;
 
-pub(super) fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
-    build_from_map(id, name, load_map(map_name))
+pub fn build_area(svc: &AssetService, map: AssetRef) -> Area {
+    build_from_map(map.0, load_map(svc, map))
 }
 
-pub(super) fn build_from_map(id: Id<AreaDef>, name: &str, map: tiled::Map) -> Area {
+pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
     let tiling = PixelsPerTile::new(Size::new(map.tile_width as f32, map.tile_height as f32));
     let size = Size::new(map.width as f32, map.height as f32);
 
@@ -38,14 +35,7 @@ pub(super) fn build_from_map(id: Id<AreaDef>, name: &str, map: tiled::Map) -> Ar
                 let mut cells = vec![TileRef::EMPTY; (dims.width * dims.height) as usize];
                 for (i, cell) in dims.cells().enumerate() {
                     if let Some(tile) = tile_layer.get_tile(cell.x, cell.y) {
-                        cells[i] = tiles.add(
-                            tile.get_tileset(),
-                            tile.id(),
-                            Flip {
-                                x: tile.flip_h,
-                                y: tile.flip_v,
-                            },
-                        );
+                        cells[i] = tiles.add(tile.get_tileset(), tile.id());
                     }
                 }
                 layers.push(RenderLayer {
@@ -105,8 +95,6 @@ pub(super) fn build_from_map(id: Id<AreaDef>, name: &str, map: tiled::Map) -> Ar
     let tile_sfx = tile_sfx(size, &layers, &tiles);
 
     Area {
-        id,
-        name: name.to_owned(),
         size,
         grid,
         tile_sfx,
@@ -121,18 +109,10 @@ pub(super) fn build_from_map(id: Id<AreaDef>, name: &str, map: tiled::Map) -> Ar
     }
 }
 
-fn load_map(name: &str) -> tiled::Map {
-    tiled::Loader::with_reader(assets::tiled_reader)
-        .load_tmx_map(format!("{}/{name}.tmx", assets::MAPS))
-        .unwrap_or_else(|error| panic!("map '{name}': {error}"))
-}
-
-/// Loads a `.tmx` from the filesystem (resolving its tilesets relative to the file) rather than the
-/// embed — for devtools previewing maps that aren't baked into the binary.
-pub(super) fn load_map_path(path: &std::path::Path) -> tiled::Map {
-    tiled::Loader::with_reader(|path: &std::path::Path| std::fs::File::open(path))
-        .load_tmx_map(path)
-        .unwrap_or_else(|error| panic!("map '{}': {error}", path.display()))
+fn load_map(svc: &AssetService, map: AssetRef) -> tiled::Map {
+    tiled::Loader::with_reader(|path: &Path| svc.open(path))
+        .load_tmx_map(map.0)
+        .unwrap_or_else(|error| panic!("map '{}': {error}", map.0))
 }
 
 #[derive(Default)]
@@ -144,7 +124,7 @@ struct TilePalette {
 }
 
 impl TilePalette {
-    fn add(&mut self, tileset: &tiled::Tileset, id: u32, flip: Flip) -> TileRef {
+    fn add(&mut self, tileset: &tiled::Tileset, id: u32) -> TileRef {
         let identity = tileset as *const tiled::Tileset as usize;
         let key = (identity, id);
         let index = match self.keys.iter().position(|&k| k == key) {
@@ -166,13 +146,16 @@ impl TilePalette {
                     _ => None,
                 });
                 self.sfx.push(match properties.get("sfx") {
-                    Some(PropertyValue::StringValue(sfx)) => Some(SfxId(sfx.clone())),
+                    Some(PropertyValue::StringValue(sfx)) => Some(
+                        sfx.parse::<crate::core::sfx::SfxId>()
+                            .unwrap_or_else(|error| panic!("tile sfx '{sfx}': {error}")),
+                    ),
                     _ => None,
                 });
                 self.keys.len() - 1
             }
         };
-        TileRef::new(index, flip)
+        TileRef::new(index)
     }
 
     fn walkable_of(&self, cell: TileRef) -> Option<bool> {
@@ -206,8 +189,9 @@ fn portal(
     let malformed = || -> ! { panic!("map '{name}': goto '{goto}' must be '<area>, x, y'") };
     let mut parts = goto.split(',');
     let dest = parts.next().unwrap_or_else(|| malformed()).trim();
-    let dest_area = Id::<AreaDef>::by_name(dest)
-        .unwrap_or_else(|| panic!("map '{name}': unknown area '{dest}'"));
+    let dest_area = dest
+        .parse::<super::Id>()
+        .unwrap_or_else(|error| panic!("map '{name}': {error}"));
     let mut coord = || -> f32 {
         parts
             .next()
@@ -241,7 +225,7 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TilePalette) -> (Vec<Group>, H
         let mut cells = Vec::new();
         let mut bottom = start.y;
         while let Some(c) = stack.pop() {
-            cells.push((c, dynamic.at(c)));
+            cells.push(c);
             grouped_cells.insert(c);
             bottom = bottom.max(c.y);
             for step in tiling::NEIGHBORS_4 {
@@ -252,8 +236,6 @@ fn compute_groups(layers: &[RenderLayer], tiles: &TilePalette) -> (Vec<Group>, H
             }
         }
         groups.push(Group {
-            // Depth sorts against actor/object centers (see tiling.rs); anchoring at the
-            // bottom row's near edge keeps a player on that row in front, never tying.
             bottom: Tiles(CellPos::new(0, bottom).bounds().min().y),
             tiles: cells,
         });
@@ -267,7 +249,7 @@ fn tile_sfx(size: Size<Tiles>, layers: &[RenderLayer], tiles: &TilePalette) -> V
     for layer in layers {
         for (i, cell) in grid.cells().enumerate() {
             if let Some(id) = tiles.sfx_of(layer.at(cell)) {
-                sfx[i] = Some(id.clone());
+                sfx[i] = Some(*id);
             }
         }
     }

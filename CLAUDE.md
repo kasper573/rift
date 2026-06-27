@@ -14,7 +14,7 @@
 ## Code style
 
 - Prioritize simplicity, stability (extensible, not brittle), readability — then performance.
-- small `macro_rules!` codegen is allowed where it removes boilerplate.
+- small, simple `macro_rules!` codegen is allowed to reduce boilerplate, but complex macros are entirely forbidden.
 - Files read consumer-first: public API at top, private helpers at the bottom.
 - No inline tests: every test lives in its crate's `tests/` folder, against the public API.
 - Use `Option`/`Result` and sum types over sentinels/casts. No `unsafe` without a justifying comment.
@@ -24,6 +24,8 @@
   Plain primitives are fine only for obvious-to-everyone concepts (e.g. `health: f32`).
 - Don't use #[must_use]. Only when clippy recommends it or when it's absolutely critical.
 - Use serde and envy for all json/env serialization and deserialization. No custom parsing code. And use the derive macros, not the imperative APIs.
+- Aim for single source of truth (however do not conflate this with DRY. Code duplication is allowed and is not the same thing as SSoT).
+- Any and all public type names must be intuitive and not ambigious if listed alongside other public types. Do not rely on crate namespacing to disambiguate. 
 
 ## Architecture
 
@@ -41,6 +43,8 @@
 - may depend on other high level systems
 
 2. The ui and bevy/* crates may not depend on other crates in this repo. They may depend on third party crates.
+
+3. `world`'s `src/data/` is the content layer: one normalized table per file, each built with the `table!` macro the single source of truth for a table's `enum Id`, its `TABLE`, and `Id::get()`. Tables stay separate and reference each other only loosely by `data::*::Id`, never by embedding another table's rows (a row may still nest its own data). Table row structs live in core/* or systems/*, while `data/` only declares the rows. The idea is that the content layer can be swapped for a runtime loaded format in the future without too much hassle.
 
 ## Comments
 

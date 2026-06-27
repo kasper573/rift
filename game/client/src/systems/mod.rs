@@ -1,16 +1,19 @@
-//! The high-level client systems — the game itself, each plugging into the `crate::core` engines:
-//! [`actor`] (sprites + the actor's own animation/footstep sounds), [`area`] tile rendering,
-//! [`combat`] (the player's health bar + death tint), [`items`] (item-use sounds), [`view`] (the local
-//! player's camera + audio listener), [`session`] (client session wiring + join/spectate announce),
-//! [`input`] gestures (with the active-gesture tile highlight), the [`hud`], and [`debug`]/[`testing`].
-
 pub mod actor;
-pub mod area;
 pub mod combat;
 pub mod debug;
-pub mod hud;
+pub mod fps;
 pub mod input;
-pub mod items;
+pub mod item;
+pub mod scene;
 pub mod session;
 pub mod testing;
 pub mod view;
+pub mod widget;
+
+use bevy::prelude::*;
+
+pub(crate) fn despawn_all<M: Component>(entities: Query<Entity, With<M>>, mut commands: Commands) {
+    for entity in &entities {
+        commands.entity(entity).despawn();
+    }
+}

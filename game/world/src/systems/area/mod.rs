@@ -1,122 +1,74 @@
-//! Areas: the runtime map an [`Area`] exposes — render layers, depth groups, nav grid, portals, and
-//! tile sound — the [`AreaDef`] table, and the [`AreaTag`] marking which area an entity is in. Map
-//! construction from Tiled lives in [`load`]; the cross-area player handoff in [`transition`].
-
 pub mod load;
 pub mod transition;
 
+pub use load::build_area;
+
 use std::collections::HashSet;
-use std::sync::OnceLock;
 
 use bevy_app::App;
 use bevy_ecs::component::Component;
+use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
-use crate::core::assets;
+use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::nav;
-use crate::core::table::{self, Content, Id};
+use crate::core::sfx::SfxId;
 use crate::core::tiling::{Cell, CellPos, GridSize, TileSize, Tiles};
-use crate::systems::sfx::SfxId;
+use crate::data;
+
+pub use crate::data::area::Id;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
-
     app.replicate::<AreaTag>();
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AreaTag {
-    pub area: Id<AreaDef>,
+    pub area: Id,
 }
 
-/// Whether the local player can step onto `tile` in its current area — client-side path validation.
+pub struct AreaDef {
+    pub map: AssetRef,
+    pub bench: bool,
+    pub spawns: &'static [Spawn],
+}
+
+pub struct Spawn {
+    pub npc: data::npc::Id,
+    pub population: u32,
+}
+
 pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
     crate::systems::player::session::me(world)
-        .and_then(|me| me.get::<AreaTag>())
-        .map(|tag| tag.area)
-        .and_then(|id| areas().get(id.index()))
+        .map(|me| me.id())
+        .and_then(|entity| of(world, entity))
         .is_some_and(|area| area.grid.walkable(tile))
-}
-
-const FILE: &str = "area_table.json";
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AreaDef {
-    pub id: String,
-    pub map: MapRef,
-    pub spawn: Option<bool>,
-}
-
-impl Content for AreaDef {
-    fn table() -> &'static [AreaDef] {
-        defs()
-    }
-    fn id(&self) -> &str {
-        &self.id
-    }
-}
-
-pub struct MapRef(pub String);
-
-impl<'de> Deserialize<'de> for MapRef {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let name = String::deserialize(deserializer)?;
-        if assets::find(assets::MAPS, &format!("{name}.tmx")).is_none() {
-            return Err(serde::de::Error::custom(format!("unknown map '{name}'")));
-        }
-        Ok(MapRef(name))
-    }
 }
 
 #[derive(Clone)]
 pub struct Portal {
     pub rect: Rect<Tiles>,
-    pub dest_area: Id<AreaDef>,
+    pub dest_area: Id,
     pub dest: Pos<Tiles>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct TileRef(u32);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct Flip {
-    pub x: bool,
-    pub y: bool,
-}
-
-const FLIP_H: u32 = 0x8000_0000;
-const FLIP_V: u32 = 0x4000_0000;
-const FLIP_MASK: u32 = FLIP_H | FLIP_V;
-
 impl TileRef {
     const EMPTY: TileRef = TileRef(0);
 
-    fn new(index: usize, flip: Flip) -> TileRef {
-        let mut bits = index as u32 + 1;
-        if flip.x {
-            bits |= FLIP_H;
-        }
-        if flip.y {
-            bits |= FLIP_V;
-        }
-        TileRef(bits)
+    fn new(index: usize) -> TileRef {
+        TileRef(index as u32 + 1)
     }
 
     fn index(self) -> Option<usize> {
-        match self.0 & !FLIP_MASK {
+        match self.0 {
             0 => None,
             index => Some(index as usize - 1),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn flip(self) -> Flip {
-        Flip {
-            x: self.0 & FLIP_H != 0,
-            y: self.0 & FLIP_V != 0,
         }
     }
 }
@@ -137,30 +89,21 @@ impl RenderLayer {
 #[derive(Clone)]
 pub struct Group {
     pub bottom: Tiles,
-    pub tiles: Vec<(CellPos, TileRef)>,
+    pub tiles: Vec<CellPos>,
 }
 
 #[derive(Clone)]
 pub struct Area {
-    pub id: Id<AreaDef>,
-    pub name: String,
     pub size: Size<Tiles>,
-
     pub grid: nav::Grid,
     pub tile_sfx: Vec<Option<SfxId>>,
     pub spawn: Pos<Tiles>,
     pub portals: Vec<Portal>,
-
     pub walkable_nodes: Vec<Pos<Tiles>>,
-
     pub obscuring_rects: Vec<Rect<Tiles>>,
-
     pub groups: Vec<Group>,
-
     pub grouped_cells: HashSet<CellPos>,
-
     pub layers: Vec<RenderLayer>,
-
     pub map: std::sync::Arc<tiled::Map>,
 }
 
@@ -185,69 +128,9 @@ impl Area {
     }
 }
 
-static AREA_COUNT: OnceLock<usize> = OnceLock::new();
-
-pub fn configure_areas(count: usize) {
-    let _ = AREA_COUNT.set(count);
-}
-
-pub fn areas() -> &'static [Area] {
-    static AREAS: OnceLock<Vec<Area>> = OnceLock::new();
-    AREAS.get_or_init(|| {
-        let defs = defs();
-        let base = defs.len() as u32;
-        let count = AREA_COUNT.get().copied().unwrap_or(0).max(defs.len());
-        let mut areas: Vec<Area> = defs
-            .iter()
-            .enumerate()
-            .map(|(id, def)| load::build_area(Id::new(id as u32), &def.id, &def.map.0))
-            .collect();
-        for id in base..count as u32 {
-            let mut clone = areas[(id % base) as usize].clone();
-            clone.id = Id::new(id);
-            clone.portals.clear();
-            areas.push(clone);
-        }
-        areas
-    })
-}
-
-/// Builds a one-off [`Area`] straight from an embedded map file, bypassing the [`AreaDef`] table —
-/// for devtools that render an arbitrary map by name (the `render` preview binary). Panics the same
-/// way the table path does if the map is missing or malformed.
-pub fn preview(map_name: &str) -> Area {
-    load::build_area(Id::new(0), map_name, map_name)
-}
-
-/// Like [`preview`] but reads the `.tmx` straight from a filesystem path, so devtools can render maps
-/// that aren't in the embed or the area table — instant iteration with no rebuild.
-pub fn preview_path(path: &std::path::Path) -> Area {
-    let name = path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("preview");
-    load::build_from_map(Id::new(0), name, load::load_map_path(path))
-}
-
-pub fn defs() -> &'static [AreaDef] {
-    static DEFS: OnceLock<Vec<AreaDef>> = OnceLock::new();
-    DEFS.get_or_init(|| {
-        let defs: Vec<AreaDef> = table::load(FILE);
-        table::unique_ids(defs.iter().map(|def| def.id.as_str()), FILE);
-        match defs.iter().filter(|def| def.spawn == Some(true)).count() {
-            1 => {}
-            n => panic!("{FILE}: exactly one area must set \"spawn\": true, found {n}"),
-        }
-        defs
-    })
-}
-
-pub fn spawn_zone() -> Id<AreaDef> {
-    let index = defs()
-        .iter()
-        .position(|def| def.spawn == Some(true))
-        .expect("defs() validates exactly one spawn area");
-    Id::new(index as u32)
+pub fn of(world: &World, entity: Entity) -> Option<&'static Area> {
+    let map = world.get::<AreaTag>(entity)?.area.get().map;
+    Some(world.resource::<AssetService>().resolve(map, build_area))
 }
 
 fn cell_overlap(rect: &Rect<Tiles>, c: CellPos) -> f32 {

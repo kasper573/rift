@@ -1,38 +1,30 @@
-//! The local player's audiovisual viewpoint: each frame it centres the world camera on the local
-//! player (clamped to the area's bounds) and keeps the audio listener there. It reads the player's
-//! position and drives the core camera + audio engines in one pass, so the camera and the player's
-//! sprite always derive from the same position — a frame of lag between them makes the pixel-art view
-//! jitter.
-
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use world::core::assets::AssetService;
 use world::core::math::Pos;
-use world::core::table::Id;
 use world::core::tiling::{TileSize, Tiles};
-use world::systems::area::{self, AreaDef, AreaTag};
+use world::systems::area::{self, AreaTag};
 use world::systems::movement::Position;
 use world::systems::player::Owner;
 use world::systems::player::session::MyClient;
 
-use crate::core::audio::Listener;
-use crate::core::render::TILE;
 use crate::core::render::camera::WorldCamera;
 use crate::core::render::present::{SCALE, target_size};
 use crate::core::render::screen::ToScreen;
+use crate::core::render::{TILE, snap_to_screen};
+use crate::core::sfx::Listener;
 
 pub struct ViewPlugin;
 
 impl Plugin for ViewPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            track_player.run_if(in_state(crate::GameScene::Playing)),
-        );
+        app.add_systems(Update, track_player.run_if(in_state(crate::Scene::Area)));
     }
 }
 
 fn track_player(
     me: Res<MyClient>,
+    service: Res<AssetService>,
     players: Query<(&Owner, &Position, &AreaTag)>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut camera: Query<&mut Transform, With<WorldCamera>>,
@@ -45,21 +37,23 @@ fn track_player(
         return;
     };
     listener.0 = Some(position.pos);
-    let Some(center) = camera_center(position.pos, tag.area, view_half(&window)) else {
+    let Some(center) = camera_center(&service, position.pos, tag.area, view_half(&window)) else {
         return;
     };
     if let Ok(mut transform) = camera.single_mut() {
-        // Snap the camera to whole screen pixels so static tiles never shimmer. At native resolution one
-        // screen pixel is 1/SCALE of an art-pixel — far finer than the old whole-art-pixel snap, which
-        // is why the world no longer staircases under the camera.
-        let at = center.to_screen();
-        transform.translation.x = (at.x * SCALE).round() / SCALE;
-        transform.translation.y = (at.y * SCALE).round() / SCALE;
+        let at = snap_to_screen(center.to_screen());
+        transform.translation.x = at.x;
+        transform.translation.y = at.y;
     }
 }
 
-fn camera_center(at: Pos<Tiles>, area_id: Id<AreaDef>, half: Vec2) -> Option<Pos<Tiles>> {
-    let area = area::areas().get(area_id.index())?;
+fn camera_center(
+    service: &AssetService,
+    at: Pos<Tiles>,
+    area_id: world::systems::area::Id,
+    half: Vec2,
+) -> Option<Pos<Tiles>> {
+    let area = service.resolve(area_id.get().map, area::build_area);
     let bounds = area.size.bounds();
     let lo = Pos::new(bounds.min().x + half.x, bounds.min().y + half.y);
     let hi = Pos::new(

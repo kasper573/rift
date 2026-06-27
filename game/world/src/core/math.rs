@@ -1,7 +1,6 @@
-//! Euclid geometry with unit tags to prevent type confusion.
-
 use std::f32::consts::FRAC_1_SQRT_2;
 
+use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
@@ -53,20 +52,25 @@ impl<U> From<Offset<U>> for Direction {
     }
 }
 
-// The exact sequence is part of the game: it fixes every boot's npc layout, so it cannot move to a crate rng.
-#[derive(Clone, Copy)]
-pub struct Rng(pub u64);
+#[derive(Resource)]
+pub struct Rng(oorandom::Rand32);
 
 impl Rng {
-    pub fn roll(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
+    pub fn new(seed: u64) -> Rng {
+        Rng(oorandom::Rand32::new(seed))
     }
 
-    pub fn unit(&mut self) -> f32 {
-        (self.roll() >> 40) as f32 / (1u64 << 24) as f32
+    pub fn from_entropy() -> Rng {
+        let mut seed = [0u8; 8];
+        getrandom::getrandom(&mut seed).expect("os entropy for rng seed");
+        Rng::new(u64::from_le_bytes(seed))
+    }
+
+    pub fn rand_float(&mut self) -> f32 {
+        self.0.rand_float()
+    }
+
+    pub fn rand_range(&mut self, range: std::ops::Range<u32>) -> u32 {
+        self.0.rand_range(range)
     }
 }
