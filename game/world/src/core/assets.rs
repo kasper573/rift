@@ -1,8 +1,7 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::hash::Hash;
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use bevy_ecs::prelude::Resource;
@@ -11,14 +10,15 @@ use bevy_ecs::prelude::Resource;
 pub struct AssetRef(pub &'static str);
 
 pub trait AssetSource: Send + Sync {
-    fn abs(&self, asset_ref: AssetRef) -> io::Result<PathBuf>;
     fn open(&self, path: &Path) -> io::Result<Box<dyn Read>>;
 }
+
+type Cache = Mutex<HashMap<(AssetRef, TypeId), &'static (dyn Any + Send + Sync)>>;
 
 #[derive(Resource, Clone)]
 pub struct AssetService {
     source: Arc<dyn AssetSource>,
-    cache: Arc<Mutex<HashMap<TypeId, Box<dyn Any + Send + Sync>>>>,
+    cache: Arc<Cache>,
 }
 
 impl AssetService {
@@ -29,39 +29,29 @@ impl AssetService {
         }
     }
 
-    pub fn abs(&self, asset_ref: AssetRef) -> io::Result<PathBuf> {
-        self.source.abs(asset_ref)
-    }
-
     pub fn open(&self, path: &Path) -> io::Result<Box<dyn Read>> {
         self.source.open(path)
     }
 
-    pub fn resolve<K, T>(&self, key: K, build: impl FnOnce(&AssetService) -> T) -> &'static T
-    where
-        K: Copy + Eq + Hash + Send + Sync + 'static,
-        T: Send + Sync + 'static,
-    {
-        let slot = TypeId::of::<(K, T)>();
-        {
-            let cache = self.cache.lock().expect("asset cache");
-            if let Some(value) = cache
-                .get(&slot)
-                .and_then(|map| map.downcast_ref::<HashMap<K, &'static T>>())
-                .and_then(|map| map.get(&key).copied())
-            {
-                return value;
-            }
+    /// Builds the `T` that `asset_ref` produces (the builder reads it, and anything
+    /// it references, back through the service), then caches and returns it. Keyed
+    /// by reference and output type, so refs to the same file share one result.
+    pub fn resolve<T: Send + Sync + 'static>(
+        &self,
+        asset_ref: AssetRef,
+        build: impl FnOnce(&AssetService, AssetRef) -> T,
+    ) -> &'static T {
+        let slot = (asset_ref, TypeId::of::<T>());
+        if let Some(&cached) = self.cache.lock().expect("asset cache").get(&slot) {
+            return cached
+                .downcast_ref::<T>()
+                .expect("asset resolved under one type");
         }
-        let value: &'static T = Box::leak(Box::new(build(self)));
+        let value: &'static T = Box::leak(Box::new(build(self, asset_ref)));
         self.cache
             .lock()
             .expect("asset cache")
             .entry(slot)
-            .or_insert_with(|| Box::new(HashMap::<K, &'static T>::new()))
-            .downcast_mut::<HashMap<K, &'static T>>()
-            .expect("asset cache type")
-            .entry(key)
             .or_insert(value);
         value
     }

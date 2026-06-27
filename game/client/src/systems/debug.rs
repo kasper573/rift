@@ -64,7 +64,7 @@ fn draw(
     else {
         return;
     };
-    let area = service.resolve(area_id, |a| area::build_area(a, area_id));
+    let area = service.resolve(area_id.get().map, area::build_area);
     let red = Color::srgb(1.0, 0.0, 0.0);
     match *mode {
         DebugMode::Nodes => {

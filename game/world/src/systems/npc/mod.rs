@@ -89,10 +89,8 @@ fn spawn_npc(
     def: data::npc::Id,
     group: u32,
 ) {
-    let spawn_pos = assets
-        .resolve(area_id, |a| area::build_area(a, area_id))
-        .spawn;
-    let at = random_walkable(assets, rng, area_id).unwrap_or(spawn_pos);
+    let area = assets.resolve(area_id.get().map, area::build_area);
+    let at = random_walkable(rng, area).unwrap_or(area.spawn);
     spawn(world, def, at, area_id, group);
 }
 
@@ -131,7 +129,7 @@ fn character(assets: &AssetService, def: &NpcDef, at: Pos<Tiles>, area: area::Id
         },
         hitbox: Hitbox {
             size: assets
-                .resolve(def.model, |a| actor::build_model(a, def.model))
+                .resolve(*def.model.get(), actor::build_model)
                 .hitbox(),
         },
         area: AreaTag { area },
@@ -200,7 +198,7 @@ pub fn run_ai(world: &mut World) {
             continue;
         };
         let def = npc.def.get();
-        let Some(area) = area::of(world, id).map(|area| area.id) else {
+        let Some(area) = world.get::<AreaTag>(id).map(|tag| tag.area) else {
             continue;
         };
 
@@ -244,7 +242,7 @@ fn idle_wander(
         return;
     }
     if def.ai.wanders(rng)
-        && let Some(node) = random_walkable(assets, rng, area)
+        && let Some(node) = random_walkable(rng, assets.resolve(area.get().map, area::build_area))
     {
         world.entity_mut(id).insert(MoveTarget { pos: node });
     }
@@ -273,7 +271,6 @@ fn in_aggro(world: &World, target: Entity, at: Pos<Tiles>, area: area::Id, aggro
 pub fn run_respawn(world: &mut World) {
     let time = Seconds(world.resource::<Time>().elapsed_secs());
     let mut rng = world.resource::<GameRng>().0;
-    let assets = world.resource::<AssetService>().clone();
     let ids: Vec<Entity> = world
         .query_filtered::<Entity, With<Npc>>()
         .iter(world)
@@ -296,9 +293,7 @@ pub fn run_respawn(world: &mut World) {
         let Some(region) = area::of(world, id) else {
             continue;
         };
-        let region_id = region.id;
-        let spawn_pos = region.spawn;
-        let at = random_walkable(&assets, &mut rng, region_id).unwrap_or(spawn_pos);
+        let at = random_walkable(&mut rng, region).unwrap_or(region.spawn);
         if let Some(mut position) = world.get_mut::<Position>(id) {
             position.pos = at;
         }
@@ -316,10 +311,8 @@ pub fn run_respawn(world: &mut World) {
     world.resource_mut::<GameRng>().0 = rng;
 }
 
-fn random_walkable(assets: &AssetService, rng: &mut Rng, area_id: area::Id) -> Option<Pos<Tiles>> {
-    let nodes = &assets
-        .resolve(area_id, |a| area::build_area(a, area_id))
-        .walkable_nodes;
+fn random_walkable(rng: &mut Rng, area: &area::Area) -> Option<Pos<Tiles>> {
+    let nodes = &area.walkable_nodes;
     if nodes.is_empty() {
         return None;
     }

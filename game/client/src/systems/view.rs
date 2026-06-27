@@ -53,7 +53,7 @@ fn camera_center(
     area_id: world::systems::area::Id,
     half: Vec2,
 ) -> Option<Pos<Tiles>> {
-    let area = service.resolve(area_id, |a| area::build_area(a, area_id));
+    let area = service.resolve(area_id.get().map, area::build_area);
     let bounds = area.size.bounds();
     let lo = Pos::new(bounds.min().x + half.x, bounds.min().y + half.y);
     let hi = Pos::new(

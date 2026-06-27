@@ -82,7 +82,7 @@ fn highlight_z(
     let (_, tag) = players.iter().find(|(owner, _)| owner.client == my)?;
     Some(
         service
-            .resolve(tag.area, |a| area::build_area(a, tag.area))
+            .resolve(tag.area.get().map, area::build_area)
             .dynamic_layer() as f32,
     )
 }

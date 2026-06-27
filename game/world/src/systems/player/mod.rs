@@ -138,7 +138,7 @@ pub fn client_left(
 pub fn join(world: &mut World) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
     let assets = world.resource::<AssetService>().clone();
-    let spawn = assets.resolve(zone, |a| area::build_area(a, zone)).spawn;
+    let spawn = assets.resolve(zone.get().map, area::build_area).spawn;
     for request in crate::systems::requests::<JoinRequest>(world) {
         let Some(client_entity) = request.client_id.entity() else {
             continue;
@@ -224,7 +224,7 @@ pub(crate) fn place(
                 },
                 hitbox: Hitbox {
                     size: assets
-                        .resolve(model, |a| crate::systems::actor::build_model(a, model))
+                        .resolve(*model.get(), crate::systems::actor::build_model)
                         .hitbox(),
                 },
                 area: AreaTag { area: zone },
@@ -246,7 +246,7 @@ pub(crate) fn place(
 pub fn respawn(world: &mut World) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
     let assets = world.resource::<AssetService>().clone();
-    let spawn = assets.resolve(zone, |a| area::build_area(a, zone)).spawn;
+    let spawn = assets.resolve(zone.get().map, area::build_area).spawn;
     for request in crate::systems::requests::<RespawnRequest>(world) {
         let Some(entity) = sender_player(world, request.client_id) else {
             continue;

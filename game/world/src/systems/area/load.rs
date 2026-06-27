@@ -3,7 +3,6 @@ use std::path::Path;
 
 use tiled::{LayerType, PropertyValue};
 
-use super::Id;
 use super::{Area, Group, Portal, RenderLayer, TileRef, cell_overlap};
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
@@ -15,12 +14,11 @@ use crate::systems::sfx::SfxId;
 
 const OBSCURING_CUTOFF: f32 = 0.4;
 
-pub fn build_area(svc: &AssetService, id: Id) -> Area {
-    let name = format!("{id:?}");
-    build_from_map(id, &name, load_map(svc, id.get().map))
+pub fn build_area(svc: &AssetService, map: AssetRef) -> Area {
+    build_from_map(map.0, load_map(svc, map))
 }
 
-pub(super) fn build_from_map(id: Id, name: &str, map: tiled::Map) -> Area {
+pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
     let tiling = PixelsPerTile::new(Size::new(map.tile_width as f32, map.tile_height as f32));
     let size = Size::new(map.width as f32, map.height as f32);
 
@@ -97,8 +95,6 @@ pub(super) fn build_from_map(id: Id, name: &str, map: tiled::Map) -> Area {
     let tile_sfx = tile_sfx(size, &layers, &tiles);
 
     Area {
-        id,
-        name: name.to_owned(),
         size,
         grid,
         tile_sfx,
@@ -114,11 +110,8 @@ pub(super) fn build_from_map(id: Id, name: &str, map: tiled::Map) -> Area {
 }
 
 fn load_map(svc: &AssetService, map: AssetRef) -> tiled::Map {
-    let path = svc
-        .abs(map)
-        .unwrap_or_else(|error| panic!("map '{}': {error}", map.0));
     tiled::Loader::with_reader(|path: &Path| svc.open(path))
-        .load_tmx_map(path)
+        .load_tmx_map(map.0)
         .unwrap_or_else(|error| panic!("map '{}': {error}", map.0))
 }
 

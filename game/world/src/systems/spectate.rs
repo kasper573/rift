@@ -71,7 +71,7 @@ fn allowed(world: &World, client_entity: Entity, client: ClientId) -> bool {
 fn spawn_anchor(world: &mut World, client: ClientId, watch: Option<ClientId>) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
     let assets = world.resource::<AssetService>().clone();
-    let spawn = assets.resolve(zone, |a| area::build_area(a, zone)).spawn;
+    let spawn = assets.resolve(zone.get().map, area::build_area).spawn;
     let entity = world
         .spawn((
             Replicated,

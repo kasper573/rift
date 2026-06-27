@@ -4,7 +4,7 @@ use bevy_ecs::entity::{Entity, MapEntities};
 use bevy_ecs::message::Message;
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::AssetRef;
+use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Offset, Pos};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
@@ -412,10 +412,12 @@ pub fn scatter_drop(
     let Some(from) = position(world, source) else {
         return;
     };
-    let Some(area) = area::of(world, source) else {
+    let Some(area_id) = world.get::<AreaTag>(source).map(|tag| tag.area) else {
         return;
     };
-    let area_id = area.id;
+    let area = world
+        .resource::<AssetService>()
+        .resolve(area_id.get().map, area::build_area);
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let count = drops.len();
     let mut items = Vec::with_capacity(count);

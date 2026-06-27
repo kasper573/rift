@@ -7,17 +7,12 @@ use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Direction, Pos, Rect, Size, WorldPx};
 use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
-use crate::data;
 use crate::systems::sfx::SfxId;
 
-pub fn build_model(svc: &AssetService, id: data::model::Id) -> ActorModel {
-    let source: AssetRef = *id.get();
+pub fn build_model(svc: &AssetService, source: AssetRef) -> ActorModel {
     let name = source.0;
-    let path = svc
-        .abs(source)
-        .unwrap_or_else(|error| panic!("actor model {name}: {error}"));
     let tileset = tiled::Loader::with_reader(|path: &Path| svc.open(path))
-        .load_tsx_tileset(path)
+        .load_tsx_tileset(source.0)
         .unwrap_or_else(|error| panic!("actor model {name}: {error}"));
     let sheet = tileset
         .image

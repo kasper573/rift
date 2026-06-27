@@ -37,7 +37,7 @@ fn attach_sprite(
     };
     let image = assets.load(
         service
-            .resolve(actor.model, |a| build_model(a, actor.model))
+            .resolve(*actor.model.get(), build_model)
             .sheet()
             .to_owned(),
     );
@@ -66,13 +66,16 @@ fn sync_actors(
     animator.retain(|entity| actors.contains(entity));
     for (entity, actor, position, tag, mut sprite, mut transform) in &mut actors {
         let elapsed = animator.elapsed(entity, actor.action as u64, clock);
-        let region = service
-            .resolve(actor.model, |a| build_model(a, actor.model))
-            .frame(actor.action.name(), actor.dir, elapsed, actor.attack_rate);
+        let region = service.resolve(*actor.model.get(), build_model).frame(
+            actor.action.name(),
+            actor.dir,
+            elapsed,
+            actor.attack_rate,
+        );
         sprite.rect = Some(atlas_rect(region));
         sprite.custom_size = Some(Vec2::new(region.size.width, region.size.height));
         sprite.color = rgba(actor.color);
-        let area = service.resolve(tag.area, |a| area::build_area(a, tag.area));
+        let area = service.resolve(tag.area.get().map, area::build_area);
         *transform = sprite_transform(
             position.pos,
             dynamic_z(
@@ -112,7 +115,7 @@ fn actor_cues(
         } else {
             Seconds(-1.0)
         };
-        let model = service.resolve(actor.model, |a| build_model(a, actor.model));
+        let model = service.resolve(*actor.model.get(), build_model);
         let (cues, stepped) = model.cues(
             actor.action.name(),
             actor.dir,
@@ -128,7 +131,7 @@ fn actor_cues(
         }
         if stepped
             && let Some(id) = service
-                .resolve(tag.area, |a| area::build_area(a, tag.area))
+                .resolve(tag.area.get().map, area::build_area)
                 .tile_sfx_at(position.pos.cell())
         {
             play.write(PlaySfx {

@@ -60,7 +60,7 @@ fn spawn_area_tiles(
         commands.entity(tile).despawn();
     }
     spawned.0 = Some(area_id);
-    let area = service.resolve(area_id, |a| area::build_area(a, area_id));
+    let area = service.resolve(area_id.get().map, area::build_area);
     let mut hooks = AreaHooks::new(area, assets.clone());
     let origin = area.size.bounds().min().to_screen();
     bevy_tiled::spawn_map(

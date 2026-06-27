@@ -178,7 +178,7 @@ fn build_world(
         .set(ServerState::Running);
     app.update();
 
-    let area = assets.resolve(id, |a| area::build_area(a, id));
+    let area = assets.resolve(id.get().map, area::build_area);
     let world = app.world_mut();
     let content: Vec<Entity> = world
         .query_filtered::<Entity, With<Npc>>()
@@ -190,15 +190,15 @@ fn build_world(
 
     let mut roster = Vec::with_capacity(PLAYERS_PER_AREA);
     for _ in 0..NPCS_PER_AREA {
-        let entity = spawn_character(world, area, npc, wander_pos(area));
+        let entity = spawn_character(world, id, npc, wander_pos(area));
         world.entity_mut(entity).insert(Npc {
             def: npc,
-            group: area.id.index() as u32,
+            group: id.index() as u32,
         });
     }
     for index in 0..PLAYERS_PER_AREA {
         let client = ClientId(index as u32 + 1);
-        let player = spawn_character(world, area, npc, area.spawn);
+        let player = spawn_character(world, id, npc, area.spawn);
         world
             .entity_mut(player)
             .insert((Owner { client }, Inventory::empty(), Xp { amount: 0 }));
@@ -238,9 +238,9 @@ fn wander_pos(area: &Area) -> Pos<Tiles> {
 
 fn spawn_character(
     world: &mut World,
-    area: &Area,
+    id: area::Id,
     def_id: data::npc::Id,
     at: Pos<Tiles>,
 ) -> Entity {
-    world::systems::npc::spawn_actor(world, def_id.get(), at, area.id)
+    world::systems::npc::spawn_actor(world, def_id.get(), at, id)
 }

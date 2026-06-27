@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use bevy::asset::io::memory::{Dir, MemoryAssetReader};
 use bevy::asset::io::{AssetSourceBuilder, ErasedAssetReader};
 use include_dir::{Dir as Embedded, include_dir};
-use world::core::assets::{AssetRef, AssetService, AssetSource};
+use world::core::assets::{AssetService, AssetSource};
 
 static ASSETS: Embedded<'static> = include_dir!("$CARGO_MANIFEST_DIR/../../assets");
 
@@ -28,15 +28,6 @@ pub fn key(path: &Path) -> Option<String> {
 struct EmbeddedSource;
 
 impl AssetSource for EmbeddedSource {
-    fn abs(&self, asset_ref: AssetRef) -> io::Result<PathBuf> {
-        let path = normalize(asset_ref.0);
-        if ASSETS.get_file(&path).is_some() {
-            Ok(PathBuf::from(path))
-        } else {
-            Err(missing(&path))
-        }
-    }
-
     fn open(&self, path: &Path) -> io::Result<Box<dyn Read>> {
         ASSETS
             .get_file(normalize(&path.to_string_lossy()))

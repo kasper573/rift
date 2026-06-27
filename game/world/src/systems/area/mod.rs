@@ -94,8 +94,6 @@ pub struct Group {
 
 #[derive(Clone)]
 pub struct Area {
-    pub id: Id,
-    pub name: String,
     pub size: Size<Tiles>,
     pub grid: nav::Grid,
     pub tile_sfx: Vec<Option<SfxId>>,
@@ -131,9 +129,8 @@ impl Area {
 }
 
 pub fn of(world: &World, entity: Entity) -> Option<&'static Area> {
-    let id = world.get::<AreaTag>(entity)?.area;
-    let svc = world.resource::<AssetService>();
-    Some(svc.resolve(id, |svc| build_area(svc, id)))
+    let map = world.get::<AreaTag>(entity)?.area.get().map;
+    Some(world.resource::<AssetService>().resolve(map, build_area))
 }
 
 fn cell_overlap(rect: &Rect<Tiles>, c: CellPos) -> f32 {

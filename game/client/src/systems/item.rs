@@ -175,7 +175,7 @@ fn animate_drops(
 }
 
 fn drop_z(service: &AssetService, tag: &AreaTag, pos: Pos<Tiles>) -> f32 {
-    let area = service.resolve(tag.area, |a| area::build_area(a, tag.area));
+    let area = service.resolve(tag.area.get().map, area::build_area);
     dynamic_z(area.size.height, area.dynamic_layer() as f32, Tiles(pos.y))
 }
 

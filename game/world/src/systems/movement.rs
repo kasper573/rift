@@ -152,9 +152,7 @@ fn approach_tile(
     let assets = world.resource::<AssetService>();
     let airborne = world.get::<Actor>(entity).is_some_and(|actor| {
         assets
-            .resolve(actor.model, |a| {
-                crate::systems::actor::build_model(a, actor.model)
-            })
+            .resolve(*actor.model.get(), crate::systems::actor::build_model)
             .airborne
     });
     let goal = target.cell();
@@ -267,9 +265,7 @@ fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<Cell
     let assets = world.resource::<AssetService>();
     if world.get::<Actor>(entity).is_some_and(|actor| {
         assets
-            .resolve(actor.model, |a| {
-                crate::systems::actor::build_model(a, actor.model)
-            })
+            .resolve(*actor.model.get(), crate::systems::actor::build_model)
             .airborne
     }) {
         return Some(vec![goal.cell()]);
@@ -287,10 +283,12 @@ fn cross_portal(world: &mut World, entity: Entity) {
     let Some(want) = world.get::<DesiredPortal>(entity).map(|d| d.index as usize) else {
         return;
     };
-    let Some(area) = area::of(world, entity) else {
+    let Some(area_id) = world.get::<area::AreaTag>(entity).map(|tag| tag.area) else {
         return;
     };
-    let area_id = area.id;
+    let area = world
+        .resource::<AssetService>()
+        .resolve(area_id.get().map, area::build_area);
     let Some(portal) = area.portals.get(want) else {
         world.entity_mut(entity).remove::<DesiredPortal>();
         return;
