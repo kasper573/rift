@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::{Align, Side, tooltip, tooltip_content};
-use world::systems::equipment::{self, Equipment, Slot};
+use world::systems::equipment::{self, Equipment, EquipmentSlot};
 use world::systems::player::session;
 
 use super::{SLOT_BG, SLOT_BORDER, Window, reconcile_children, slot_node, tooltip_label};
@@ -49,11 +49,11 @@ fn content() -> Box<dyn Scene> {
 
 #[derive(Component, Default, Clone)]
 struct Cell {
-    slot: Slot,
+    slot: EquipmentSlot,
 }
 
 struct CellData {
-    slot: Slot,
+    slot: EquipmentSlot,
     item: Option<world::data::item::Id>,
     icon: Option<Handle<Image>>,
 }
@@ -75,7 +75,7 @@ pub(super) fn sync_equipment(world: &mut World) {
 fn equipment_cells(world: &World) -> Vec<CellData> {
     let equipment = session::me(world).and_then(|me| me.get::<Equipment>());
     let assets = world.resource::<AssetServer>();
-    equipment::Slot::all()
+    equipment::EquipmentSlot::all()
         .into_iter()
         .map(|slot| {
             let item = equipment.and_then(|equipment| equipment.slots.get(&slot).copied());
@@ -104,7 +104,7 @@ fn cell_scene(cell: &CellData) -> Box<dyn Scene> {
     }
 }
 
-fn empty_slot(slot: Slot) -> impl Scene {
+fn empty_slot(slot: EquipmentSlot) -> impl Scene {
     bsn! {
         template_value(slot_node())
         BackgroundColor({SLOT_BG})
@@ -119,7 +119,7 @@ fn empty_slot(slot: Slot) -> impl Scene {
     }
 }
 
-fn worn_slot(slot: Slot, item: world::data::item::Id, icon: Handle<Image>) -> impl Scene {
+fn worn_slot(slot: EquipmentSlot, item: world::data::item::Id, icon: Handle<Image>) -> impl Scene {
     let name = item.get().display_name.to_owned();
     bsn! {
         template_value(slot_node())

@@ -10,7 +10,7 @@ use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::combat::AttackRequest;
-use crate::systems::equipment::{Slot, UnequipRequest};
+use crate::systems::equipment::{EquipmentSlot, UnequipRequest};
 use crate::systems::item::{DropItemRequest, PickupRequest, UseItemRequest};
 use crate::systems::movement::{MoveRequest, MoveToPortal};
 use crate::systems::spectate::SpectateRequest;
@@ -79,7 +79,7 @@ pub fn pickup(world: &mut World, target: Entity) {
     world.write_message(PickupRequest { target });
 }
 
-pub fn unequip(world: &mut World, slot: Slot) {
+pub fn unequip(world: &mut World, slot: EquipmentSlot) {
     world.write_message(UnequipRequest { slot });
 }
 

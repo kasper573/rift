@@ -215,7 +215,7 @@ pub enum ItemKind {
         duration: Seconds,
     },
     Equipment {
-        slot: equipment::Slot,
+        slot: equipment::EquipmentSlot,
         requirements: &'static [Requirement],
     },
     Resource,
@@ -266,7 +266,7 @@ impl UseCtx<'_> {
     pub fn apply_effects(&mut self, duration: Seconds) {
         instantiate_effects(self.world, self.actor, self.item, duration);
     }
-    pub fn equip(&mut self, into: equipment::Slot, requirements: &[Requirement]) {
+    pub fn equip(&mut self, into: equipment::EquipmentSlot, requirements: &[Requirement]) {
         equipment::equip(self.world, self.actor, self.slot, into, requirements);
     }
 }

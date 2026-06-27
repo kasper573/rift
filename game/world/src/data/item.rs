@@ -1,7 +1,7 @@
 use crate::core::time::Seconds;
 use crate::data::sfx::Id as SfxId;
 use crate::systems::effect::Effect;
-use crate::systems::equipment::{Requirement, Slot};
+use crate::systems::equipment::{Requirement, EquipmentSlot};
 use crate::systems::item::{Icon, ItemDef, ItemKind, ItemSfx, Stackable};
 use crate::systems::stat::Stat;
 
@@ -52,7 +52,7 @@ crate::table! {
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
         stackable: None,
         effects: &[Effect::StatModifier(Stat::Damage(3.0))],
-        kind: ItemKind::Equipment { slot: Slot::Weapon, requirements: &[] },
+        kind: ItemKind::Equipment { slot: EquipmentSlot::Weapon, requirements: &[] },
     },
     BoneShield: ItemDef {
         display_name: "Bone Shield",
@@ -61,7 +61,7 @@ crate::table! {
         stackable: None,
         effects: &[Effect::StatModifier(Stat::MaxHealth(5.0))],
         kind: ItemKind::Equipment {
-            slot: Slot::Offhand,
+            slot: EquipmentSlot::Offhand,
             requirements: &[Requirement::Level(2)],
         },
     },
@@ -75,7 +75,7 @@ crate::table! {
             Effect::StatModifier(Stat::Range(0.2)),
         ],
         kind: ItemKind::Equipment {
-            slot: Slot::Head,
+            slot: EquipmentSlot::Head,
             requirements: &[Requirement::Level(3)],
         },
     },

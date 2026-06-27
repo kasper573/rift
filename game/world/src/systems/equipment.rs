@@ -20,35 +20,35 @@ pub fn register(app: &mut App) {
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Equipment {
-    pub slots: BTreeMap<Slot, data::item::Id>,
+    pub slots: BTreeMap<EquipmentSlot, data::item::Id>,
 }
 
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UnequipRequest {
-    pub slot: Slot,
+    pub slot: EquipmentSlot,
 }
 
 #[derive(
     Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default,
 )]
-pub enum Slot {
+pub enum EquipmentSlot {
     #[default]
     Weapon,
     Offhand,
     Head,
 }
 
-impl Slot {
+impl EquipmentSlot {
     pub fn label(self) -> &'static str {
         match self {
-            Slot::Weapon => "Weapon",
-            Slot::Offhand => "Offhand",
-            Slot::Head => "Head",
+            EquipmentSlot::Weapon => "Weapon",
+            EquipmentSlot::Offhand => "Offhand",
+            EquipmentSlot::Head => "Head",
         }
     }
 
-    pub fn all() -> [Slot; 3] {
-        [Slot::Weapon, Slot::Offhand, Slot::Head]
+    pub fn all() -> [EquipmentSlot; 3] {
+        [EquipmentSlot::Weapon, EquipmentSlot::Offhand, EquipmentSlot::Head]
     }
 }
 
@@ -81,7 +81,7 @@ pub fn equip(
     world: &mut World,
     player: Entity,
     inv_slot: usize,
-    into: Slot,
+    into: EquipmentSlot,
     requirements: &[Requirement],
 ) {
     let Some(item) = world
