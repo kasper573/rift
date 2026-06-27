@@ -3,6 +3,7 @@ use bevy_ecs::prelude::*;
 use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
+use crate::core::assets::AssetService;
 use crate::core::math::{Direction, Offset, Pos};
 use crate::core::tiling::{Cell, CellPos, TilePos, Tiles, TilesPerSec};
 use crate::core::time::Seconds;
@@ -148,9 +149,14 @@ fn approach_tile(
     range: Tiles,
 ) -> Option<Pos<Tiles>> {
     let grid = &area::of(world, entity)?.grid;
-    let airborne = world
-        .get::<Actor>(entity)
-        .is_some_and(|actor| crate::systems::actor::resolve_model(actor.model).airborne);
+    let assets = world.resource::<AssetService>();
+    let airborne = world.get::<Actor>(entity).is_some_and(|actor| {
+        assets
+            .resolve(actor.model, |a| {
+                crate::systems::actor::build_model(a, actor.model)
+            })
+            .airborne
+    });
     let goal = target.cell();
     let reach = range.0.ceil() as i32;
     let mut best: Option<(Pos<Tiles>, Tiles)> = None;
@@ -258,10 +264,14 @@ pub fn advance(world: &mut World) {
 }
 
 fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
-    if world
-        .get::<Actor>(entity)
-        .is_some_and(|actor| crate::systems::actor::resolve_model(actor.model).airborne)
-    {
+    let assets = world.resource::<AssetService>();
+    if world.get::<Actor>(entity).is_some_and(|actor| {
+        assets
+            .resolve(actor.model, |a| {
+                crate::systems::actor::build_model(a, actor.model)
+            })
+            .airborne
+    }) {
         return Some(vec![goal.cell()]);
     }
     let area = area::of(world, entity)?;

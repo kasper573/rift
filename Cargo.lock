@@ -9353,7 +9353,6 @@ dependencies = [
  "bevy_time",
  "derive_more",
  "euclid",
- "include_dir",
  "oorandom",
  "pathfinding",
  "postcard",

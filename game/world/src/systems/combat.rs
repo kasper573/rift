@@ -4,6 +4,7 @@ use bevy_ecs::prelude::*;
 use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
+use crate::core::assets::AssetService;
 use crate::core::math::{Direction, Pos};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{Millis, PlaybackRate, Seconds};
@@ -245,9 +246,14 @@ fn strike(
 }
 
 fn attack_timing(world: &World, entity: Entity, dir: Direction) -> crate::systems::actor::Timing {
+    let assets = world.resource::<AssetService>();
     world
         .get::<Actor>(entity)
-        .map(|a| crate::systems::actor::resolve_model(a.model).timing(Action::Attack.name(), dir))
+        .map(|a| {
+            assets
+                .resolve(a.model, |s| crate::systems::actor::build_model(s, a.model))
+                .timing(Action::Attack.name(), dir)
+        })
         .unwrap_or_default()
 }
 

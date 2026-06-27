@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use world::core::assets::AssetService;
 use world::core::math::Pos;
 use world::core::tiling::Tiles;
 use world::systems::area::{self, AreaTag};
@@ -134,14 +135,18 @@ fn start_drops(
     });
 }
 
-fn place_drops(mut drops: Query<(&Position, &AreaTag, &mut Transform), With<DroppedItem>>) {
+fn place_drops(
+    service: Res<AssetService>,
+    mut drops: Query<(&Position, &AreaTag, &mut Transform), With<DroppedItem>>,
+) {
     for (position, tag, mut transform) in &mut drops {
-        *transform = sprite_transform(position.pos, drop_z(tag, position.pos));
+        *transform = sprite_transform(position.pos, drop_z(&service, tag, position.pos));
     }
 }
 
 fn animate_drops(
     time: Res<Time>,
+    service: Res<AssetService>,
     mut drops: Query<(Entity, &Position, &AreaTag, &mut DropAnim, &mut Transform)>,
     mut play: MessageWriter<PlaySfx>,
     mut commands: Commands,
@@ -152,7 +157,11 @@ fn animate_drops(
         let t = ((anim.elapsed - anim.delay) / DROP_DURATION).clamp(0.0, 1.0);
         let ground = anim.from.lerp(anim.to, ease_out(t));
         let hop = DROP_HOP * (std::f32::consts::PI * t).sin();
-        transform.translation = Vec3::new(ground.x, ground.y + hop, drop_z(tag, position.pos));
+        transform.translation = Vec3::new(
+            ground.x,
+            ground.y + hop,
+            drop_z(&service, tag, position.pos),
+        );
         if anim.elapsed - anim.delay >= DROP_DURATION {
             if let Some(id) = &anim.drop_sfx {
                 play.write(PlaySfx {
@@ -165,10 +174,9 @@ fn animate_drops(
     }
 }
 
-fn drop_z(tag: &AreaTag, pos: Pos<Tiles>) -> f32 {
-    area::get(tag.area).map_or(0.0, |area| {
-        dynamic_z(area.size.height, area.dynamic_layer() as f32, Tiles(pos.y))
-    })
+fn drop_z(service: &AssetService, tag: &AreaTag, pos: Pos<Tiles>) -> f32 {
+    let area = service.resolve(tag.area, |a| area::build_area(a, tag.area));
+    dynamic_z(area.size.height, area.dynamic_layer() as f32, Tiles(pos.y))
 }
 
 fn ease_out(t: f32) -> f32 {

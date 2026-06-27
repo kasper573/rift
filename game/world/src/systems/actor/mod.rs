@@ -10,7 +10,7 @@ use crate::core::time::PlaybackRate;
 use crate::data;
 use crate::systems::stat::{StatKind, Stats};
 
-pub use model::{ActorModel, Timing, resolve as resolve_model};
+pub use model::{ActorModel, Timing, build_model};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;

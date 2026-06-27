@@ -1,9 +1,9 @@
 pub mod load;
 pub mod transition;
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
-use std::sync::OnceLock;
+pub use load::build_area;
+
+use std::collections::HashSet;
 
 use bevy_app::App;
 use bevy_ecs::component::Component;
@@ -11,7 +11,7 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::AssetRef;
+use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::nav;
 use crate::core::tiling::{Cell, CellPos, GridSize, TileSize, Tiles};
@@ -43,9 +43,8 @@ pub struct Spawn {
 
 pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
     crate::systems::player::session::me(world)
-        .and_then(|me| me.get::<AreaTag>())
-        .map(|tag| tag.area)
-        .and_then(get)
+        .map(|me| me.id())
+        .and_then(|entity| of(world, entity))
         .is_some_and(|area| area.grid.walkable(tile))
 }
 
@@ -131,26 +130,10 @@ impl Area {
     }
 }
 
-pub fn area(id: Id) -> &'static Area {
-    static CACHE: OnceLock<Mutex<HashMap<Id, &'static Area>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().expect("area cache");
-    if let Some(&area) = guard.get(&id) {
-        return area;
-    }
-    let def = id.get();
-    let name = format!("{id:?}");
-    let built: &'static Area = Box::leak(Box::new(load::build_area(id, &name, def.map)));
-    guard.insert(id, built);
-    built
-}
-
-pub fn get(id: Id) -> Option<&'static Area> {
-    Some(area(id))
-}
-
 pub fn of(world: &World, entity: Entity) -> Option<&'static Area> {
-    get(world.get::<AreaTag>(entity)?.area)
+    let id = world.get::<AreaTag>(entity)?.area;
+    let svc = world.resource::<AssetService>();
+    Some(svc.resolve(id, |svc| build_area(svc, id)))
 }
 
 fn cell_overlap(rect: &Rect<Tiles>, c: CellPos) -> f32 {

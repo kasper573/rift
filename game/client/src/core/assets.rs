@@ -1,52 +1,73 @@
-use std::collections::HashMap;
-use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::io::{self, Cursor, Read};
+use std::path::{Path, PathBuf};
 
-use bevy::asset::io::{
-    AssetReader, AssetReaderError, AssetSourceBuilder, ErasedAssetReader, PathStream, Reader,
-    VecReader,
-};
-use world::core::assets::AssetRef;
+use bevy::asset::io::memory::{Dir, MemoryAssetReader};
+use bevy::asset::io::{AssetSourceBuilder, ErasedAssetReader};
+use include_dir::{Dir as Embedded, include_dir};
+use world::core::assets::{AssetRef, AssetService, AssetSource};
 
-pub fn embedded_source() -> AssetSourceBuilder {
-    AssetSourceBuilder::new(|| Box::new(EmbeddedReader) as Box<dyn ErasedAssetReader>)
+static ASSETS: Embedded<'static> = include_dir!("$CARGO_MANIFEST_DIR/../../assets");
+
+pub fn service() -> AssetService {
+    AssetService::new(EmbeddedSource)
 }
 
-struct EmbeddedReader;
+pub fn bevy_source() -> AssetSourceBuilder {
+    let root = Dir::new(PathBuf::new());
+    fill(&root, &ASSETS);
+    AssetSourceBuilder::new(move || {
+        Box::new(MemoryAssetReader { root: root.clone() }) as Box<dyn ErasedAssetReader>
+    })
+}
 
-impl AssetReader for EmbeddedReader {
-    async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
-        intern(path)
-            .resolve()
-            .map(|file| VecReader::new(file.contents().to_vec()))
-            .ok_or_else(|| AssetReaderError::NotFound(path.to_path_buf()))
+pub fn key(path: &Path) -> Option<String> {
+    let normalized = normalize(&path.to_string_lossy());
+    ASSETS.get_file(&normalized).map(|_| normalized)
+}
+
+struct EmbeddedSource;
+
+impl AssetSource for EmbeddedSource {
+    fn abs(&self, asset_ref: AssetRef) -> io::Result<PathBuf> {
+        let path = normalize(asset_ref.0);
+        if ASSETS.get_file(&path).is_some() {
+            Ok(PathBuf::from(path))
+        } else {
+            Err(missing(&path))
+        }
     }
 
-    async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
-        Err::<VecReader, _>(AssetReaderError::NotFound(path.to_path_buf()))
-    }
-
-    async fn read_directory<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> Result<Box<PathStream>, AssetReaderError> {
-        Err(AssetReaderError::NotFound(path.to_path_buf()))
-    }
-
-    async fn is_directory<'a>(&'a self, _path: &'a Path) -> Result<bool, AssetReaderError> {
-        Ok(false)
+    fn open(&self, path: &Path) -> io::Result<Box<dyn Read>> {
+        ASSETS
+            .get_file(normalize(&path.to_string_lossy()))
+            .map(|file| Box::new(Cursor::new(file.contents())) as Box<dyn Read>)
+            .ok_or_else(|| missing(&path.to_string_lossy()))
     }
 }
 
-pub(crate) fn intern(path: &Path) -> AssetRef {
-    static POOL: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
-    let pool = POOL.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = path.to_string_lossy().into_owned();
-    let mut guard = pool.lock().expect("asset path pool");
-    if let Some(&interned) = guard.get(&key) {
-        return AssetRef(interned);
+fn fill(dir: &Dir, embedded: &'static Embedded<'static>) {
+    for file in embedded.files() {
+        dir.insert_asset(file.path(), file.contents());
     }
-    let interned: &'static str = Box::leak(key.clone().into_boxed_str());
-    guard.insert(key, interned);
-    AssetRef(interned)
+    for sub in embedded.dirs() {
+        fill(dir, sub);
+    }
+}
+
+fn normalize(path: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            part => parts.push(part),
+        }
+    }
+    parts.join("/")
+}
+
+fn missing(path: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::NotFound, format!("missing asset {path}"))
 }

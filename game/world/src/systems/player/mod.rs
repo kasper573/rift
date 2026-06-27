@@ -5,6 +5,7 @@ use bevy_ecs::component::Component;
 use bevy_ecs::message::Message;
 use serde::{Deserialize, Serialize};
 
+use crate::core::assets::AssetService;
 use crate::core::math::{Direction, Pos};
 use crate::core::tiling::{Tiles, TilesPerSec};
 use crate::core::time::{Millis, PlaybackRate};
@@ -136,7 +137,8 @@ pub fn client_left(
 
 pub fn join(world: &mut World) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
-    let spawn = area::area(zone).spawn;
+    let assets = world.resource::<AssetService>().clone();
+    let spawn = assets.resolve(zone, |a| area::build_area(a, zone)).spawn;
     for request in crate::systems::requests::<JoinRequest>(world) {
         let Some(client_entity) = request.client_id.entity() else {
             continue;
@@ -206,6 +208,7 @@ pub(crate) fn place(
     state: CharacterState,
 ) -> Entity {
     let model = PLAYER_MODEL;
+    let assets = world.resource::<AssetService>().clone();
     let entity = world
         .spawn((
             Character {
@@ -220,7 +223,9 @@ pub(crate) fn place(
                     attack_rate: PLAYER_ATTACK_SPEED,
                 },
                 hitbox: Hitbox {
-                    size: crate::systems::actor::resolve_model(model).hitbox(),
+                    size: assets
+                        .resolve(model, |a| crate::systems::actor::build_model(a, model))
+                        .hitbox(),
                 },
                 area: AreaTag { area: zone },
             },
@@ -240,7 +245,8 @@ pub(crate) fn place(
 
 pub fn respawn(world: &mut World) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
-    let spawn = area::area(zone).spawn;
+    let assets = world.resource::<AssetService>().clone();
+    let spawn = assets.resolve(zone, |a| area::build_area(a, zone)).spawn;
     for request in crate::systems::requests::<RespawnRequest>(world) {
         let Some(entity) = sender_player(world, request.client_id) else {
             continue;

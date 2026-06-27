@@ -1,13 +1,11 @@
-use std::collections::{HashMap, HashSet};
-use std::io::Cursor;
+use std::collections::HashSet;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
 
 use tiled::{LayerType, PropertyValue};
 
 use super::Id;
 use super::{Area, Group, Portal, RenderLayer, TileRef, cell_overlap};
-use crate::core::assets::AssetRef;
+use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
 use crate::core::nav;
 use crate::core::tiling::{
@@ -17,8 +15,9 @@ use crate::systems::sfx::SfxId;
 
 const OBSCURING_CUTOFF: f32 = 0.4;
 
-pub(super) fn build_area(id: Id, name: &str, map: AssetRef) -> Area {
-    build_from_map(id, name, load_map(map))
+pub fn build_area(svc: &AssetService, id: Id) -> Area {
+    let name = format!("{id:?}");
+    build_from_map(id, &name, load_map(svc, id.get().map))
 }
 
 pub(super) fn build_from_map(id: Id, name: &str, map: tiled::Map) -> Area {
@@ -114,35 +113,13 @@ pub(super) fn build_from_map(id: Id, name: &str, map: tiled::Map) -> Area {
     }
 }
 
-fn load_map(map: AssetRef) -> tiled::Map {
-    tiled::Loader::with_reader(embedded_reader)
-        .load_tmx_map(map.0)
+fn load_map(svc: &AssetService, map: AssetRef) -> tiled::Map {
+    let path = svc
+        .abs(map)
+        .unwrap_or_else(|error| panic!("map '{}': {error}", map.0));
+    tiled::Loader::with_reader(|path: &Path| svc.open(path))
+        .load_tmx_map(path)
         .unwrap_or_else(|error| panic!("map '{}': {error}", map.0))
-}
-
-fn embedded_reader(path: &Path) -> std::io::Result<Cursor<&'static [u8]>> {
-    AssetRef(intern(path))
-        .resolve()
-        .map(|file| Cursor::new(file.contents()))
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("missing asset {}", path.display()),
-            )
-        })
-}
-
-fn intern(path: &Path) -> &'static str {
-    static POOL: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
-    let pool = POOL.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = path.to_string_lossy().into_owned();
-    let mut guard = pool.lock().expect("asset path pool");
-    if let Some(&interned) = guard.get(&key) {
-        return interned;
-    }
-    let interned: &'static str = Box::leak(key.clone().into_boxed_str());
-    guard.insert(key, interned);
-    interned
 }
 
 #[derive(Default)]

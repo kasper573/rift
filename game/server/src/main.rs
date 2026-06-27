@@ -1,7 +1,9 @@
+mod assets;
 mod auth;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -21,6 +23,7 @@ use renet2_netcode::{
     ConnectToken, NETCODE_KEY_BYTES, NetcodeServerTransport, ServerAuthentication,
     ServerSetupConfig, WebSocketAcceptor, WebSocketServer, WebSocketServerConfig,
 };
+use world::core::assets::AssetService;
 use world::core::channels::RenetChannelsExt;
 use world::systems::TICK_HZ;
 use world::systems::account::Identity;
@@ -50,6 +53,8 @@ struct Config {
     port: u16,
     /// WebSocket netcode transport port — a separate TCP listener from the HTTP API.
     ws_port: u16,
+    /// Directory the game assets (maps, models, ...) are read from.
+    assets_dir: PathBuf,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
 }
@@ -86,7 +91,14 @@ fn main() {
     };
     runtime.spawn(serve_http(http_bind, http, metrics));
 
-    simulate(ws_bind, private_key, sessions, runtime.handle().clone());
+    let assets = assets::service(config.assets_dir);
+    simulate(
+        ws_bind,
+        private_key,
+        sessions,
+        runtime.handle().clone(),
+        assets,
+    );
 }
 
 fn simulate(
@@ -94,6 +106,7 @@ fn simulate(
     private_key: [u8; NETCODE_KEY_BYTES],
     sessions: Sessions,
     runtime: tokio::runtime::Handle,
+    assets: AssetService,
 ) {
     let spawn = world::data::area::SPAWN_ID.index();
     let mut real_areas: Vec<_> = world::data::area::TABLE
@@ -102,7 +115,10 @@ fn simulate(
         .map(|(&id, _)| id)
         .collect();
     real_areas.sort_by_key(|id| id.index());
-    let mut worlds: Vec<App> = real_areas.into_iter().map(build_world).collect();
+    let mut worlds: Vec<App> = real_areas
+        .into_iter()
+        .map(|id| build_world(id, &assets))
+        .collect();
 
     let (connection_config, client_channels) = {
         let channels = worlds[0].world().resource::<RepliconChannels>();
@@ -323,8 +339,9 @@ struct Conn {
 #[derive(Component)]
 struct Wire(u64);
 
-fn build_world(area: world::systems::area::Id) -> App {
+fn build_world(area: world::systems::area::Id, assets: &AssetService) -> App {
     let mut app = world::systems::server_app(area);
+    app.insert_resource(assets.clone());
     app.finish();
     app.cleanup();
     app.world_mut()

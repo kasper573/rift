@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::text_colored;
+use world::core::assets::AssetService;
 use world::core::tiling::{CellPos, TileSize};
 use world::systems::area::{self, AreaTag};
 use world::systems::player::Owner;
@@ -34,6 +35,7 @@ fn spawn_area_tiles(
     me: Res<MyClient>,
     players: Query<(&Owner, &AreaTag)>,
     assets: Res<AssetServer>,
+    service: Res<AssetService>,
     mut spawned: ResMut<SpawnedArea>,
     tiles: Query<Entity, With<bevy_tiled::MapTile>>,
     mut images: ResMut<bevy::asset::Assets<Image>>,
@@ -58,7 +60,7 @@ fn spawn_area_tiles(
         commands.entity(tile).despawn();
     }
     spawned.0 = Some(area_id);
-    let area = area::area(area_id);
+    let area = service.resolve(area_id, |a| area::build_area(a, area_id));
     let mut hooks = AreaHooks::new(area, assets.clone());
     let origin = area.size.bounds().min().to_screen();
     bevy_tiled::spawn_map(
@@ -105,11 +107,8 @@ impl bevy_tiled::MapHooks for AreaHooks {
         _images: &mut bevy::asset::Assets<Image>,
     ) -> Option<Handle<Image>> {
         let source = &tileset.image.as_ref()?.source;
-        let key = crate::core::assets::intern(source)
-            .resolve()?
-            .path()
-            .to_str()?;
-        Some(self.assets.load(key.to_owned()))
+        let key = crate::core::assets::key(source)?;
+        Some(self.assets.load(key))
     }
 
     fn tile_z(&mut self, layer: usize, x: i32, y: i32) -> Option<f32> {

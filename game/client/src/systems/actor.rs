@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
+use world::core::assets::AssetService;
 use world::core::tiling::{TilePos, Tiles};
 use world::core::time::Seconds;
-use world::systems::actor::{Action, Actor, Rgba, resolve_model};
+use world::systems::actor::{Action, Actor, Rgba, build_model};
 use world::systems::area::{self, AreaTag};
 use world::systems::movement::Position;
 
@@ -28,12 +29,18 @@ fn attach_sprite(
     add: On<Add, Actor>,
     actors: Query<&Actor>,
     assets: Res<AssetServer>,
+    service: Res<AssetService>,
     mut commands: Commands,
 ) {
     let Ok(actor) = actors.get(add.entity) else {
         return;
     };
-    let image = assets.load(resolve_model(actor.model).sheet().to_owned());
+    let image = assets.load(
+        service
+            .resolve(actor.model, |a| build_model(a, actor.model))
+            .sheet()
+            .to_owned(),
+    );
     commands.entity(add.entity).insert((
         Sprite { image, ..default() },
         Anchor(Vec2::new(0.0, -1.0 / 6.0)),
@@ -44,6 +51,7 @@ fn attach_sprite(
 
 fn sync_actors(
     time: Res<Time>,
+    service: Res<AssetService>,
     mut animator: ResMut<Animator>,
     mut actors: Query<(
         Entity,
@@ -58,18 +66,13 @@ fn sync_actors(
     animator.retain(|entity| actors.contains(entity));
     for (entity, actor, position, tag, mut sprite, mut transform) in &mut actors {
         let elapsed = animator.elapsed(entity, actor.action as u64, clock);
-        let region = resolve_model(actor.model).frame(
-            actor.action.name(),
-            actor.dir,
-            elapsed,
-            actor.attack_rate,
-        );
+        let region = service
+            .resolve(actor.model, |a| build_model(a, actor.model))
+            .frame(actor.action.name(), actor.dir, elapsed, actor.attack_rate);
         sprite.rect = Some(atlas_rect(region));
         sprite.custom_size = Some(Vec2::new(region.size.width, region.size.height));
         sprite.color = rgba(actor.color);
-        let Some(area) = area::get(tag.area) else {
-            continue;
-        };
+        let area = service.resolve(tag.area, |a| area::build_area(a, tag.area));
         *transform = sprite_transform(
             position.pos,
             dynamic_z(
@@ -91,6 +94,7 @@ struct Seen(HashMap<Entity, (Action, Seconds)>);
 
 fn actor_cues(
     time: Res<Time>,
+    service: Res<AssetService>,
     mut animator: ResMut<Animator>,
     mut seen: ResMut<Seen>,
     actors: Query<(Entity, &Actor, &Position, &AreaTag)>,
@@ -108,7 +112,7 @@ fn actor_cues(
         } else {
             Seconds(-1.0)
         };
-        let model = resolve_model(actor.model);
+        let model = service.resolve(actor.model, |a| build_model(a, actor.model));
         let (cues, stepped) = model.cues(
             actor.action.name(),
             actor.dir,
@@ -123,8 +127,9 @@ fn actor_cues(
             });
         }
         if stepped
-            && let Some(area) = area::get(tag.area)
-            && let Some(id) = area.tile_sfx_at(position.pos.cell())
+            && let Some(id) = service
+                .resolve(tag.area, |a| area::build_area(a, tag.area))
+                .tile_sfx_at(position.pos.cell())
         {
             play.write(PlaySfx {
                 id: id.name().to_owned(),

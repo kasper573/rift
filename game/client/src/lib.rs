@@ -21,7 +21,8 @@ pub fn boot() {
         .is_some_and(|token| roles(token).contains(&Role::Spectate));
 
     let mut app = App::new();
-    app.register_asset_source(AssetSourceId::Default, core::assets::embedded_source())
+    app.insert_resource(core::assets::service());
+    app.register_asset_source(AssetSourceId::Default, core::assets::bevy_source())
         .add_plugins(
             DefaultPlugins
                 .set(bevy::log::LogPlugin {

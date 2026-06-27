@@ -61,7 +61,6 @@ pub struct Character {
     pub area: AreaTag,
 }
 
-
 pub fn server_app(area: area::Id) -> App {
     use bevy_app::{Startup, Update};
     use bevy_ecs::schedule::IntoScheduleConfigs;

@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use world::core::assets::AssetService;
 use world::core::math::Offset;
 use world::core::tiling::{self, TilePos};
 use world::systems::actor::{Actor, Hitbox};
@@ -46,6 +47,7 @@ fn cycle(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<DebugMode>) {
 fn draw(
     mode: Res<DebugMode>,
     me: Res<MyClient>,
+    service: Res<AssetService>,
     players: Query<(&Owner, &AreaTag)>,
     mut gizmos: Gizmos,
 ) {
@@ -62,7 +64,7 @@ fn draw(
     else {
         return;
     };
-    let area = area::area(area_id);
+    let area = service.resolve(area_id, |a| area::build_area(a, area_id));
     let red = Color::srgb(1.0, 0.0, 0.0);
     match *mode {
         DebugMode::Nodes => {

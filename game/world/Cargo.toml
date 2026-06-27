@@ -19,7 +19,6 @@ bevy_state.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 derive_more = { version = "2", features = ["add", "add_assign"] }
 euclid = { version = "0.22", features = ["serde"] }
-include_dir = "0.7"
 pathfinding = "4"
 oorandom = "11"
 strum = { version = "0.27", features = ["derive"] }

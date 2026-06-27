@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use world::core::assets::AssetService;
 use world::core::math::Pos;
 use world::core::tiling::{TileSize, Tiles};
 use world::systems::area::{self, AreaTag};
@@ -23,6 +24,7 @@ impl Plugin for ViewPlugin {
 
 fn track_player(
     me: Res<MyClient>,
+    service: Res<AssetService>,
     players: Query<(&Owner, &Position, &AreaTag)>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut camera: Query<&mut Transform, With<WorldCamera>>,
@@ -35,7 +37,7 @@ fn track_player(
         return;
     };
     listener.0 = Some(position.pos);
-    let Some(center) = camera_center(position.pos, tag.area, view_half(&window)) else {
+    let Some(center) = camera_center(&service, position.pos, tag.area, view_half(&window)) else {
         return;
     };
     if let Ok(mut transform) = camera.single_mut() {
@@ -46,11 +48,12 @@ fn track_player(
 }
 
 fn camera_center(
+    service: &AssetService,
     at: Pos<Tiles>,
     area_id: world::systems::area::Id,
     half: Vec2,
 ) -> Option<Pos<Tiles>> {
-    let area = area::get(area_id)?;
+    let area = service.resolve(area_id, |a| area::build_area(a, area_id));
     let bounds = area.size.bounds();
     let lo = Pos::new(bounds.min().x + half.x, bounds.min().y + half.y);
     let hi = Pos::new(

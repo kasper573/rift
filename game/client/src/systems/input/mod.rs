@@ -4,6 +4,7 @@ use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use bevy::window::{CursorMoved, PrimaryWindow};
+use world::core::assets::AssetService;
 use world::core::math::Pos;
 use world::core::tiling::Tiles;
 use world::systems::area::{self, AreaTag};
@@ -52,6 +53,7 @@ fn setup_highlight(mut commands: Commands) {
 fn update_tile_highlight(
     highlight: Option<Res<ActiveTileHighlight>>,
     me: Res<MyClient>,
+    service: Res<AssetService>,
     players: Query<(&Owner, &AreaTag)>,
     mut sprite: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<TileHighlight>>,
 ) {
@@ -62,7 +64,7 @@ fn update_tile_highlight(
         *visibility = Visibility::Hidden;
         return;
     };
-    let Some(z) = highlight_z(&me, &players) else {
+    let Some(z) = highlight_z(&service, &me, &players) else {
         *visibility = Visibility::Hidden;
         return;
     };
@@ -71,10 +73,18 @@ fn update_tile_highlight(
     transform.translation = highlight.pos.to_screen().extend(z);
 }
 
-fn highlight_z(me: &MyClient, players: &Query<(&Owner, &AreaTag)>) -> Option<f32> {
+fn highlight_z(
+    service: &AssetService,
+    me: &MyClient,
+    players: &Query<(&Owner, &AreaTag)>,
+) -> Option<f32> {
     let my = me.0?;
     let (_, tag) = players.iter().find(|(owner, _)| owner.client == my)?;
-    Some(area::get(tag.area)?.dynamic_layer() as f32)
+    Some(
+        service
+            .resolve(tag.area, |a| area::build_area(a, tag.area))
+            .dynamic_layer() as f32,
+    )
 }
 
 fn touch_as_mouse(

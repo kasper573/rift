@@ -8,7 +8,7 @@ use bevy_state::prelude::OnEnter;
 use super::{ClientId, JoinRequest, Owner, RespawnRequest, Welcome};
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
-use crate::systems::area::{self, AreaTag};
+use crate::systems::area;
 use crate::systems::combat::AttackRequest;
 use crate::systems::equipment::{EquipmentSlot, UnequipRequest};
 use crate::systems::item::{DropItemRequest, PickupRequest, UseItemRequest};
@@ -85,8 +85,8 @@ pub fn unequip(world: &mut World, slot: EquipmentSlot) {
 
 pub fn move_to(world: &mut World, pos: Pos<Tiles>) {
     let portal = me(world)
-        .and_then(|entity| entity.get::<AreaTag>())
-        .and_then(|tag| area::get(tag.area))
+        .map(|entity| entity.id())
+        .and_then(|entity| area::of(world, entity))
         .and_then(|area| {
             area.portals
                 .iter()

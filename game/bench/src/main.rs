@@ -1,9 +1,12 @@
+mod assets;
+
 use std::time::Instant;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{ConnectedClient, ServerState};
 use bevy_state::prelude::NextState;
+use world::core::assets::AssetService;
 use world::core::math::Pos;
 use world::core::tiling::Tiles;
 use world::data;
@@ -21,7 +24,6 @@ const WARMUP: usize = 30;
 const MEASURE: usize = 200;
 
 fn main() {
-
     println!("[bench] finding the highest A sustained within the {BUDGET_MS:.0}ms budget...");
 
     let mut best: Option<(usize, Point)> = None;
@@ -128,6 +130,7 @@ struct Point {
 
 fn point(areas: usize, warmup: usize, ticks: usize) -> Point {
     let npc = data::npc::Id::Orc;
+    let assets = assets::service();
     let mut worlds: Vec<App> = Vec::with_capacity(areas);
     let mut rosters: Vec<Vec<(ClientId, Entity)>> = Vec::with_capacity(areas);
     for id in world::data::area::TABLE
@@ -136,8 +139,7 @@ fn point(areas: usize, warmup: usize, ticks: usize) -> Point {
         .map(|(&id, _)| id)
         .take(areas)
     {
-        let area = area::area(id);
-        let (app, roster) = build_world(area, npc);
+        let (app, roster) = build_world(id, npc, &assets);
         worlds.push(app);
         rosters.push(roster);
     }
@@ -162,8 +164,13 @@ fn point(areas: usize, warmup: usize, ticks: usize) -> Point {
     }
 }
 
-fn build_world(area: &Area, npc: data::npc::Id) -> (App, Vec<(ClientId, Entity)>) {
-    let mut app = world::systems::server_app(area.id);
+fn build_world(
+    id: area::Id,
+    npc: data::npc::Id,
+    assets: &AssetService,
+) -> (App, Vec<(ClientId, Entity)>) {
+    let mut app = world::systems::server_app(id);
+    app.insert_resource(assets.clone());
     app.finish();
     app.cleanup();
     app.world_mut()
@@ -171,6 +178,7 @@ fn build_world(area: &Area, npc: data::npc::Id) -> (App, Vec<(ClientId, Entity)>
         .set(ServerState::Running);
     app.update();
 
+    let area = assets.resolve(id, |a| area::build_area(a, id));
     let world = app.world_mut();
     let content: Vec<Entity> = world
         .query_filtered::<Entity, With<Npc>>()
