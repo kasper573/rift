@@ -23,8 +23,7 @@ pub enum StatKind {
 }
 
 impl StatKind {
-    #[allow(clippy::new_ret_no_self)]
-    pub const fn new(self, value: f32) -> Stat {
+    pub const fn of(self, value: f32) -> Stat {
         Stat { kind: self, value }
     }
 }
@@ -37,6 +36,7 @@ pub struct Stat {
 
 impl Stat {
     pub fn label(self) -> &'static str {
+        // Future proofing. Replace with i18n system
         self.kind.into()
     }
 }
@@ -91,7 +91,7 @@ pub fn effective_all(world: &World, entity: Entity) -> Stats {
     Stats(
         StatKind::VARIANTS
             .iter()
-            .map(|&kind| kind.new(effective(world, entity, kind)))
+            .map(|&kind| kind.of(effective(world, entity, kind)))
             .collect(),
     )
 }

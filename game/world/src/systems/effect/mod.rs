@@ -39,7 +39,7 @@ impl Effect {
             Effect::StatModifier(stat) => vec![stat],
             Effect::Chasing => {
                 let base = stat::base(ctx.world, ctx.source, StatKind::MovementSpeed);
-                vec![StatKind::MovementSpeed.new(base * (CHASE_SPEED_MULTIPLIER - 1.0))]
+                vec![StatKind::MovementSpeed.of(base * (CHASE_SPEED_MULTIPLIER - 1.0))]
             }
         }
     }
