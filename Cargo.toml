@@ -12,10 +12,11 @@ members = [
     "service",
     "website",
 ]
+# bevy/tiled is a workspace member but excluded from the default build: its bench bin
+# would otherwise collide with the bench bin in game/bench (shared target dir).
 default-members = [
     "ui",
     "bevy/opacity",
-    "bevy/tiled",
     "game/world",
     "game/server",
     "game/bench",
