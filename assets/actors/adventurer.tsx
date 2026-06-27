@@ -24,7 +24,7 @@
  <tile id="5">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash03"/>
+   <property name="sfx" value="Slash03"/>
   </properties>
  </tile>
  <tile id="8">
@@ -46,7 +46,7 @@
  <tile id="13">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash03"/>
+   <property name="sfx" value="Slash03"/>
   </properties>
  </tile>
  <tile id="16">
@@ -68,7 +68,7 @@
  <tile id="21">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash03"/>
+   <property name="sfx" value="Slash03"/>
   </properties>
  </tile>
  <tile id="24">
@@ -90,7 +90,7 @@
  <tile id="29">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash03"/>
+   <property name="sfx" value="Slash03"/>
   </properties>
  </tile>
  <tile id="32">
@@ -112,7 +112,7 @@
  <tile id="37">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash03"/>
+   <property name="sfx" value="Slash03"/>
   </properties>
  </tile>
  <tile id="40">
@@ -134,7 +134,7 @@
  <tile id="45">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash03"/>
+   <property name="sfx" value="Slash03"/>
   </properties>
  </tile>
  <tile id="48">
@@ -156,7 +156,7 @@
  <tile id="53">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash03"/>
+   <property name="sfx" value="Slash03"/>
   </properties>
  </tile>
  <tile id="56">
@@ -178,7 +178,7 @@
  <tile id="61">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash03"/>
+   <property name="sfx" value="Slash03"/>
   </properties>
  </tile>
  <tile id="64">

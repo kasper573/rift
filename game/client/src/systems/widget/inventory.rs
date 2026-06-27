@@ -10,16 +10,29 @@ use ui::component;
 #[derive(Component, Default, Clone)]
 pub(super) struct InventoryGrid;
 
-::inventory::submit! {
-    Window {
-        id: "Inventory",
-        title: "Inventory",
-        toggle: KeyCode::KeyI,
-        keybind: "I",
-        icon: "icons/equipment/bag.png",
-        order: 0,
-        content,
-        sync: sync_inventory,
+pub struct InventoryWindow;
+
+impl Window for InventoryWindow {
+    fn title(&self) -> &'static str {
+        "Inventory"
+    }
+    fn toggle(&self) -> KeyCode {
+        KeyCode::KeyI
+    }
+    fn keybind(&self) -> &'static str {
+        "I"
+    }
+    fn icon(&self) -> &'static str {
+        "icons/equipment/bag.png"
+    }
+    fn order(&self) -> u32 {
+        0
+    }
+    fn content(&self) -> Box<dyn Scene> {
+        content()
+    }
+    fn sync(&self, world: &mut World) {
+        sync_inventory(world)
     }
 }
 
@@ -73,8 +86,8 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
                 .map(|stack| {
                     let def = stack.item.get();
                     Filled {
-                        icon: assets.load(def.icon.0.clone()),
-                        name: def.display_name.clone(),
+                        icon: assets.load(def.icon.path()),
+                        name: def.display_name.to_owned(),
                         kind: stack.item.index() as u64,
                         count: stack.count,
                     }

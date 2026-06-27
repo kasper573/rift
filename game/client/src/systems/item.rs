@@ -63,7 +63,7 @@ fn use_sounds(
             continue;
         };
         play.write(PlaySfx {
-            id: id.0.clone(),
+            id: id.name().to_owned(),
             at: position.pos,
         });
     }
@@ -78,7 +78,7 @@ fn attach_drop_sprite(
     let Ok(dropped) = drops.get(add.entity) else {
         return;
     };
-    let image = assets.load(dropped.item.get().icon.0.clone());
+    let image = assets.load(dropped.item.get().icon.path());
     commands.entity(add.entity).insert((
         Sprite {
             image,
@@ -123,7 +123,7 @@ fn start_drops(
                     .sfx
                     .drop
                     .as_ref()
-                    .map(|sfx| sfx.0.clone()),
+                    .map(|sfx| sfx.name().to_owned()),
             });
             false
         }

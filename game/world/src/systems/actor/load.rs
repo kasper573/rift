@@ -5,7 +5,6 @@ use tiled::{Frame, PropertyValue};
 use super::{ActorModel, IDLE};
 use crate::core::assets;
 use crate::core::math::Size;
-use crate::systems::sfx::SfxId;
 
 pub(super) fn load(name: &str) -> ActorModel {
     let tileset = tiled::Loader::with_reader(assets::tiled_reader)
@@ -25,7 +24,11 @@ pub(super) fn load(name: &str) -> ActorModel {
     let mut apexes = HashSet::new();
     for (id, tile) in tileset.tiles() {
         if let Some(PropertyValue::StringValue(sfx)) = tile.properties.get("sfx") {
-            sounds.insert(id, SfxId(sfx.clone()));
+            sounds.insert(
+                id,
+                crate::systems::sfx::SfxId::by_name(sfx)
+                    .unwrap_or_else(|error| panic!("actor sfx '{sfx}': {error}")),
+            );
         }
         if let Some(PropertyValue::BoolValue(true)) = tile.properties.get("step") {
             steps.insert(id);

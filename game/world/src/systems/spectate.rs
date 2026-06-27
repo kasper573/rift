@@ -69,7 +69,7 @@ fn allowed(world: &World, client_entity: Entity, client: ClientId) -> bool {
 
 fn spawn_anchor(world: &mut World, client: ClientId, watch: Option<ClientId>) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
-    let spawn = area::areas()[zone.index()].spawn;
+    let spawn = area::area(zone).spawn;
     let entity = world
         .spawn((
             Replicated,

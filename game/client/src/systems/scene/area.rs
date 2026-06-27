@@ -1,9 +1,8 @@
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::text_colored;
-use world::core::table::Id;
 use world::core::tiling::{CellPos, TileSize};
-use world::systems::area::{self, AreaDef, AreaTag};
+use world::systems::area::{self, AreaTag};
 use world::systems::player::Owner;
 use world::systems::player::session::{self, MyClient};
 
@@ -28,7 +27,7 @@ impl Plugin for AreaPlugin {
 }
 
 #[derive(Resource, Default)]
-struct SpawnedArea(Option<Id<AreaDef>>);
+struct SpawnedArea(Option<world::systems::area::Id>);
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_area_tiles(
@@ -59,7 +58,7 @@ fn spawn_area_tiles(
         commands.entity(tile).despawn();
     }
     spawned.0 = Some(area_id);
-    let area = &area::areas()[area_id.index()];
+    let area = area::area(area_id);
     let mut hooks = AreaHooks::new(area, assets.clone());
     let origin = area.size.bounds().min().to_screen();
     bevy_tiled::spawn_map(

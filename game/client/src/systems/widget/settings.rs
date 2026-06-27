@@ -7,16 +7,29 @@ use super::{Settings, Window};
 #[derive(Component, Default, Clone)]
 struct SnappingButton;
 
-inventory::submit! {
-    Window {
-        id: "Settings",
-        title: "Settings",
-        toggle: KeyCode::KeyO,
-        keybind: "O",
-        icon: "icons/misc/gear.png",
-        order: 3,
-        content,
-        sync: sync_snapping,
+pub struct SettingsWindow;
+
+impl Window for SettingsWindow {
+    fn title(&self) -> &'static str {
+        "Settings"
+    }
+    fn toggle(&self) -> KeyCode {
+        KeyCode::KeyO
+    }
+    fn keybind(&self) -> &'static str {
+        "O"
+    }
+    fn icon(&self) -> &'static str {
+        "icons/misc/gear.png"
+    }
+    fn order(&self) -> u32 {
+        3
+    }
+    fn content(&self) -> Box<dyn Scene> {
+        content()
+    }
+    fn sync(&self, world: &mut World) {
+        sync_snapping(world)
     }
 }
 

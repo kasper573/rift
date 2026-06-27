@@ -20,9 +20,8 @@ use bevy_ecs::message::{Message, Messages};
 use bevy_ecs::prelude::{Bundle, Resource, World};
 use bevy_replicon::prelude::{FromClient, Replicated};
 
-use crate::core::table::Id;
 use actor::{Actor, Hitbox, Name};
-use area::{AreaDef, AreaTag};
+use area::AreaTag;
 use movement::Position;
 
 pub const TICK_HZ: crate::core::time::Hertz = crate::core::time::Hertz(30.0);
@@ -50,7 +49,7 @@ pub fn protocol(app: &mut App) {
 }
 
 #[derive(Resource, Clone, Copy)]
-pub struct WorldArea(pub Id<AreaDef>);
+pub struct WorldArea(pub area::Id);
 
 #[derive(Bundle)]
 pub struct Character {
@@ -64,16 +63,22 @@ pub struct Character {
 
 pub fn validate() {
     actor::models();
-    area::areas();
-    item::items();
-    job::defs();
-    npc::defs();
-    npc::spawns();
-    rewards::all();
-    sfx::sfx_table();
+    sfx::validate();
+    for (&id, def) in crate::data::area::TABLE.iter() {
+        if !def.bench {
+            area::area(id);
+        }
+    }
+    for item in crate::data::item::TABLE.values() {
+        item.icon.path();
+    }
+    let _ = crate::data::npc::TABLE.len()
+        + crate::data::job::TABLE.len()
+        + crate::data::spawn::TABLE.len()
+        + crate::data::reward::TABLE.len();
 }
 
-pub fn server_app(area: Id<AreaDef>) -> App {
+pub fn server_app(area: area::Id) -> App {
     use bevy_app::{Startup, Update};
     use bevy_ecs::schedule::IntoScheduleConfigs;
     use bevy_replicon::prelude::{AuthMethod, RepliconSharedPlugin};

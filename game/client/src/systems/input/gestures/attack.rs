@@ -8,10 +8,6 @@ use crate::systems::input::gestures::{Gesture, image_cursor};
 
 pub struct AttackGesture;
 
-inventory::submit! {
-    &AttackGesture as &dyn Gesture
-}
-
 impl Gesture for AttackGesture {
     fn priority(&self) -> i32 {
         1

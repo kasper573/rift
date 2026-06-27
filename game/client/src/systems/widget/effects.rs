@@ -12,12 +12,17 @@ use ui::component;
 #[derive(Component, Default, Clone)]
 struct EffectsGrid;
 
-inventory::submit! {
-    super::Widget {
-        id: "effects",
-        fallback: Vec2::new(8.0, 80.0),
-        build,
-        sync: sync_effects,
+pub struct EffectsWidget;
+
+impl super::Widget for EffectsWidget {
+    fn fallback(&self) -> Vec2 {
+        Vec2::new(8.0, 80.0)
+    }
+    fn build(&self, pos: Vec2, id: &'static str) -> Box<dyn Scene> {
+        build(pos, id)
+    }
+    fn sync(&self, world: &mut World) {
+        sync_effects(world)
     }
 }
 

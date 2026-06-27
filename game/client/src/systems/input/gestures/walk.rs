@@ -14,10 +14,6 @@ const MOVE_REPEAT: Duration = Duration::from_millis(333);
 
 pub struct WalkGesture;
 
-inventory::submit! {
-    &WalkGesture as &dyn Gesture
-}
-
 #[derive(Resource, Default)]
 struct WalkState {
     last_tile: Option<Pos<Tiles>>,

@@ -11,10 +11,6 @@ use crate::systems::input::gestures::{Gesture, image_cursor};
 
 pub struct PickupGesture;
 
-inventory::submit! {
-    &PickupGesture as &dyn Gesture
-}
-
 impl Gesture for PickupGesture {
     fn priority(&self) -> i32 {
         2

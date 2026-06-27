@@ -60,7 +60,6 @@ renet2 = { workspace = true }
 renet2_netcode = { workspace = true, features = ["ws_client_transport"] }
 bevy_kira_audio = { version = "0.26.0-rc.1", features = ["wav"] }
 base64 = "0.22"
-inventory.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 gloo-net = { version = "0.6", default-features = false, features = ["http"] }

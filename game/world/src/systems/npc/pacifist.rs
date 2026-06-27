@@ -5,16 +5,9 @@ use crate::core::math::Rng;
 
 const WANDER_CHANCE: f32 = 0.4;
 
-pub struct PacifistAi;
+pub struct Pacifist;
 
-inventory::submit! {
-    &PacifistAi as &dyn Ai
-}
-
-impl Ai for PacifistAi {
-    fn name(&self) -> &str {
-        "pacifist"
-    }
+impl Ai for Pacifist {
     fn wanders(&self, rng: &mut Rng) -> bool {
         rng.unit() < WANDER_CHANCE
     }

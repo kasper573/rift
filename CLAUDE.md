@@ -44,6 +44,8 @@
 
 2. The ui and bevy/* crates may not depend on other crates in this repo. They may depend on third party crates.
 
+3. `world`'s `src/data/` is the content layer: one normalized table per file, each built with the `table!` macro the single source of truth for a table's `enum Id`, its `TABLE`, and `Id::get()`. Tables stay separate and reference each other only loosely by `data::*::Id`, never by embedding another table's rows (a row may still nest its own data). Table row structs live in core/* or systems/*, while `data/` only declares the rows. The idea is that the content layer can be swapped for a runtime loaded format in the future without too much hassle.
+
 ## Comments
 
 - The default mindset should be: Do not write comments. Write code that is self explanatory.

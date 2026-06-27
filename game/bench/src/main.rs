@@ -5,11 +5,11 @@ use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{ConnectedClient, ServerState};
 use bevy_state::prelude::NextState;
 use world::core::math::Pos;
-use world::core::table::Id;
 use world::core::tiling::Tiles;
+use world::data;
 use world::systems::area::{self, Area};
 use world::systems::item::Inventory;
-use world::systems::npc::{self, Npc, NpcDef};
+use world::systems::npc::Npc;
 use world::systems::player::{ClientId, Owner, Players, Xp};
 use world::systems::visibility::OwnedBy;
 
@@ -21,7 +21,6 @@ const WARMUP: usize = 30;
 const MEASURE: usize = 200;
 
 fn main() {
-    area::configure_areas(MAX_AREAS);
     world::systems::validate();
 
     println!("[bench] finding the highest A sustained within the {BUDGET_MS:.0}ms budget...");
@@ -129,12 +128,16 @@ struct Point {
 }
 
 fn point(areas: usize, warmup: usize, ticks: usize) -> Point {
-    let npc = Id::<NpcDef>::by_name(&npc::defs()[0].id).expect("first npc def exists");
-    let pool = area::areas();
-
+    let npc = data::npc::Id::Orc;
     let mut worlds: Vec<App> = Vec::with_capacity(areas);
     let mut rosters: Vec<Vec<(ClientId, Entity)>> = Vec::with_capacity(areas);
-    for area in pool.iter().take(areas) {
+    for id in world::data::area::TABLE
+        .iter()
+        .filter(|(_, def)| def.bench)
+        .map(|(&id, _)| id)
+        .take(areas)
+    {
+        let area = area::area(id);
         let (app, roster) = build_world(area, npc);
         worlds.push(app);
         rosters.push(roster);
@@ -160,7 +163,7 @@ fn point(areas: usize, warmup: usize, ticks: usize) -> Point {
     }
 }
 
-fn build_world(area: &Area, npc: Id<NpcDef>) -> (App, Vec<(ClientId, Entity)>) {
+fn build_world(area: &Area, npc: data::npc::Id) -> (App, Vec<(ClientId, Entity)>) {
     let mut app = world::systems::server_app(area.id);
     app.finish();
     app.cleanup();
@@ -226,6 +229,11 @@ fn wander_pos(area: &Area) -> Pos<Tiles> {
     area.walkable_nodes.first().copied().unwrap_or(area.spawn)
 }
 
-fn spawn_character(world: &mut World, area: &Area, def_id: Id<NpcDef>, at: Pos<Tiles>) -> Entity {
-    npc::spawn_actor(world, def_id.get(), at, area.id)
+fn spawn_character(
+    world: &mut World,
+    area: &Area,
+    def_id: data::npc::Id,
+    at: Pos<Tiles>,
+) -> Entity {
+    world::systems::npc::spawn_actor(world, def_id.get(), at, area.id)
 }

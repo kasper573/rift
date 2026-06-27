@@ -10,11 +10,10 @@ use tiled::{Frame, TileId};
 
 use crate::core::assets;
 use crate::core::math::{Direction, Pos, Rect, Size, WorldPx};
-use crate::core::table::{Content, Id};
 use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
 use crate::systems::sfx::SfxId;
-use crate::systems::stat::Health;
+use crate::systems::stat::{Stat, Stats};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -56,7 +55,7 @@ pub struct Actor {
     pub color: Rgba,
     pub dir: Direction,
     pub action: Action,
-    pub model: Id<ActorModel>,
+    pub model: ModelId,
     pub attack_rate: PlaybackRate,
 }
 
@@ -92,9 +91,9 @@ pub fn set_facing(actor: &mut Mut<Actor>, dir: Direction, action: Action) {
     }
 }
 
-pub fn reset(mut actors: Query<(&mut Actor, Option<&Health>)>) {
-    for (mut actor, health) in &mut actors {
-        let dead = health.is_some_and(Health::depleted);
+pub fn reset(mut actors: Query<(&mut Actor, Option<&Stats>)>) {
+    for (mut actor, stats) in &mut actors {
+        let dead = stats.is_some_and(|stats| stats.get(Stat::Health) <= 0.0);
         set_action(&mut actor, if dead { Action::Dead } else { Action::Idle });
     }
 }
@@ -225,13 +224,21 @@ impl ActorModel {
     }
 }
 
-impl Content for ActorModel {
-    fn table() -> &'static [ActorModel] {
-        models()
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub struct ModelId(u32);
+
+impl ModelId {
+    pub fn get(self) -> &'static ActorModel {
+        &models()[self.0 as usize]
     }
-    fn id(&self) -> &str {
-        &self.name
-    }
+}
+
+pub fn model_id(name: &str) -> ModelId {
+    models()
+        .iter()
+        .position(|model| model.name == name)
+        .map(|index| ModelId(index as u32))
+        .unwrap_or_else(|| panic!("unknown actor model {name}"))
 }
 
 pub fn models() -> &'static [ActorModel] {

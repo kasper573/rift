@@ -1,16 +1,12 @@
-mod chasing;
-mod stat_modifier;
-
-pub use chasing::Chasing;
-
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_time::Time;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::core::time::Seconds;
-use crate::systems::stat::StatSet;
+use crate::systems::stat::{self, Stat};
+
+const CHASE_SPEED_MULTIPLIER: f32 = 2.0;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -25,97 +21,48 @@ pub struct EffectContext<'a> {
     pub target: Entity,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct EffectId(&'static str);
-
-impl Serialize for EffectId {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.serialize(serializer)
-    }
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub enum Effect {
+    StatModifier(Stat),
+    Chasing,
 }
 
-impl<'de> Deserialize<'de> for EffectId {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let name = String::deserialize(deserializer)?;
-        effect_id(&name).ok_or_else(|| serde::de::Error::custom(format!("unknown effect '{name}'")))
+impl Effect {
+    pub fn icon(self) -> Option<&'static str> {
+        match self {
+            Effect::StatModifier(_) | Effect::Chasing => None,
+        }
     }
-}
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct EffectCommand {
-    effect: EffectId,
-    args: Vec<u8>,
-}
-
-impl EffectCommand {
-    pub fn icon(&self) -> Option<&'static str> {
-        self.def().icon()
-    }
-    pub fn compute(&self, ctx: &EffectContext) -> StatSet {
-        self.def().compute(ctx, &self.args)
-    }
-    pub fn describe(&self, ctx: &EffectContext) -> String {
-        self.def().describe(ctx, &self.args)
-    }
-    fn def(&self) -> &'static dyn Effect {
-        lookup(self.effect.0).expect("a registered effect")
-    }
-}
-
-pub fn command(effect: &impl Effect, args: &impl Serialize) -> EffectCommand {
-    EffectCommand {
-        effect: effect_id(effect.name()).expect("a registered effect"),
-        args: postcard::to_allocvec(args).expect("args serialize"),
-    }
-}
-
-pub fn commands<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<EffectCommand>, D::Error> {
-    use serde::de::Error;
-    Vec::<serde_json::Map<String, serde_json::Value>>::deserialize(deserializer)?
-        .into_iter()
-        .map(|spec| {
-            let mut entries = spec.into_iter();
-            let (name, args) = entries
-                .next()
-                .ok_or_else(|| Error::custom("effect command must name one effect"))?;
-            if entries.next().is_some() {
-                return Err(Error::custom("effect command must name exactly one effect"));
+    pub fn compute(self, ctx: &EffectContext) -> Vec<Stat> {
+        match self {
+            Effect::StatModifier(stat) => vec![stat],
+            Effect::Chasing => {
+                let base = stat::base(ctx.world, ctx.source, Stat::MovementSpeed);
+                vec![Stat::MovementSpeed(base * (CHASE_SPEED_MULTIPLIER - 1.0))]
             }
-            let effect =
-                lookup(&name).ok_or_else(|| Error::custom(format!("unknown effect '{name}'")))?;
-            let args = effect.encode(args).map_err(Error::custom)?;
-            Ok(EffectCommand {
-                effect: EffectId(effect.name()),
-                args,
-            })
-        })
-        .collect()
-}
+        }
+    }
 
-pub trait Effect: Send + Sync {
-    fn name(&self) -> &str;
-    fn icon(&self) -> Option<&str>;
-    fn encode(&self, args: serde_json::Value) -> Result<Vec<u8>, String>;
-    fn compute(&self, ctx: &EffectContext, args: &[u8]) -> StatSet;
-    fn describe(&self, ctx: &EffectContext, args: &[u8]) -> String {
-        self.compute(ctx, args).describe()
+    pub fn describe(self, ctx: &EffectContext) -> String {
+        self.compute(ctx)
+            .iter()
+            .map(|stat| format!("{:+} {}", stat.value(), stat.label()))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
-
-inventory::collect!(&'static dyn Effect);
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct TimedEffects(pub Vec<TimedEffect>);
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct TimedEffect {
-    pub command: EffectCommand,
+    pub effect: Effect,
     pub until: Seconds,
 }
 
-pub type Source = fn(&World, Entity) -> Vec<EffectCommand>;
+pub type Source = fn(&World, Entity) -> Vec<Effect>;
 
 #[derive(Resource, Default)]
 pub struct Sources(Vec<Source>);
@@ -124,7 +71,7 @@ pub fn source(app: &mut App, source: Source) {
     app.world_mut().resource_mut::<Sources>().0.push(source);
 }
 
-pub fn active_effects(world: &World, entity: Entity) -> Vec<EffectCommand> {
+pub fn active_effects(world: &World, entity: Entity) -> Vec<Effect> {
     world
         .resource::<Sources>()
         .0
@@ -148,36 +95,9 @@ pub fn expire(world: &mut World) {
     }
 }
 
-fn encode_args<A: Serialize + DeserializeOwned>(
-    args: serde_json::Value,
-) -> Result<Vec<u8>, String> {
-    let args: A = serde_json::from_value(args).map_err(|error| error.to_string())?;
-    postcard::to_allocvec(&args).map_err(|error| error.to_string())
-}
-
-fn decode<A: DeserializeOwned>(bytes: &[u8]) -> A {
-    postcard::from_bytes(bytes).expect("args were validated and encoded at load")
-}
-
-fn lookup(name: &str) -> Option<&'static dyn Effect> {
-    inventory::iter::<&'static dyn Effect>()
-        .copied()
-        .find(|effect| effect.name() == name)
-}
-
-fn effect_id(name: &str) -> Option<EffectId> {
-    lookup(name).map(|effect| EffectId(effect.name()))
-}
-
-fn timed(world: &World, entity: Entity) -> Vec<EffectCommand> {
+fn timed(world: &World, entity: Entity) -> Vec<Effect> {
     world
         .get::<TimedEffects>(entity)
-        .map(|timed| {
-            timed
-                .0
-                .iter()
-                .map(|effect| effect.command.clone())
-                .collect()
-        })
+        .map(|timed| timed.0.iter().map(|timed| timed.effect).collect())
         .unwrap_or_default()
 }

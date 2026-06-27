@@ -322,7 +322,7 @@
   </object>
   <object id="7" name="Warp" type="warp" x="623.838" y="415.8125" width="15.8322" height="16">
    <properties>
-    <property name="goto" value="forest,3,18"/>
+    <property name="goto" value="Forest,3,18"/>
    </properties>
   </object>
   <object id="12" type="npc" x="565.155" y="446.5">
@@ -339,17 +339,17 @@
   </object>
   <object id="14" name="Warp" type="warp" x="1551.5839" y="416" width="15.8322" height="16">
    <properties>
-    <property name="goto" value="forest,3,18"/>
+    <property name="goto" value="Forest,3,18"/>
    </properties>
   </object>
   <object id="16" name="Warp" type="warp" x="624.0839" y="1168" width="15.8322" height="16">
    <properties>
-    <property name="goto" value="forest,3,18"/>
+    <property name="goto" value="Forest,3,18"/>
    </properties>
   </object>
   <object id="17" name="Warp" type="warp" x="1553.0839" y="1170" width="15.8322" height="16">
    <properties>
-    <property name="goto" value="forest,3,18"/>
+    <property name="goto" value="Forest,3,18"/>
    </properties>
   </object>
  </objectgroup>

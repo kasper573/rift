@@ -9,16 +9,29 @@ use super::Window;
 #[derive(Component, Default, Clone)]
 pub(super) struct StatsText;
 
-inventory::submit! {
-    Window {
-        id: "Stats",
-        title: "Stats",
-        toggle: KeyCode::KeyK,
-        keybind: "K",
-        icon: "icons/misc/book.png",
-        order: 2,
-        content,
-        sync: sync_stats,
+pub struct StatsWindow;
+
+impl Window for StatsWindow {
+    fn title(&self) -> &'static str {
+        "Stats"
+    }
+    fn toggle(&self) -> KeyCode {
+        KeyCode::KeyK
+    }
+    fn keybind(&self) -> &'static str {
+        "K"
+    }
+    fn icon(&self) -> &'static str {
+        "icons/misc/book.png"
+    }
+    fn order(&self) -> u32 {
+        2
+    }
+    fn content(&self) -> Box<dyn Scene> {
+        content()
+    }
+    fn sync(&self, world: &mut World) {
+        sync_stats(world)
     }
 }
 
@@ -44,8 +57,8 @@ fn stats_text(world: &World) -> String {
     let entity = me.id();
     let stats = stat::effective_all(world, entity);
     let mut lines = vec![format!("Level {}", job::level(world, entity))];
-    for kind in stat::all() {
-        lines.push(format!("{}: {:.1}", kind.label(), stats.get(kind)));
+    for stat in &stats.0 {
+        lines.push(format!("{}: {:.1}", stat.label(), stat.value()));
     }
     lines.join("\n")
 }

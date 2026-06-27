@@ -1,9 +1,7 @@
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::{Align, Side, tooltip, tooltip_content};
-use world::core::table::Id;
-use world::systems::equipment::{self, Equipment, SlotId};
-use world::systems::item::ItemDef;
+use world::systems::equipment::{self, Equipment, Slot};
 use world::systems::player::session;
 
 use super::{SLOT_BG, SLOT_BORDER, Window, reconcile_children, slot_node, tooltip_label};
@@ -12,16 +10,29 @@ use ui::component;
 #[derive(Component, Default, Clone)]
 pub(super) struct EquipmentGrid;
 
-inventory::submit! {
-    Window {
-        id: "Equipment",
-        title: "Equipment",
-        toggle: KeyCode::KeyE,
-        keybind: "E",
-        icon: "icons/equipment/helm.png",
-        order: 1,
-        content,
-        sync: sync_equipment,
+pub struct EquipmentWindow;
+
+impl Window for EquipmentWindow {
+    fn title(&self) -> &'static str {
+        "Equipment"
+    }
+    fn toggle(&self) -> KeyCode {
+        KeyCode::KeyE
+    }
+    fn keybind(&self) -> &'static str {
+        "E"
+    }
+    fn icon(&self) -> &'static str {
+        "icons/equipment/helm.png"
+    }
+    fn order(&self) -> u32 {
+        1
+    }
+    fn content(&self) -> Box<dyn Scene> {
+        content()
+    }
+    fn sync(&self, world: &mut World) {
+        sync_equipment(world)
     }
 }
 
@@ -38,12 +49,12 @@ fn content() -> Box<dyn Scene> {
 
 #[derive(Component, Default, Clone)]
 struct Cell {
-    slot: SlotId,
+    slot: Slot,
 }
 
 struct CellData {
-    slot: SlotId,
-    item: Option<Id<ItemDef>>,
+    slot: Slot,
+    item: Option<world::data::item::Id>,
     icon: Option<Handle<Image>>,
 }
 
@@ -64,13 +75,14 @@ pub(super) fn sync_equipment(world: &mut World) {
 fn equipment_cells(world: &World) -> Vec<CellData> {
     let equipment = session::me(world).and_then(|me| me.get::<Equipment>());
     let assets = world.resource::<AssetServer>();
-    equipment::slot::all()
+    equipment::Slot::all()
+        .into_iter()
         .map(|slot| {
             let item = equipment.and_then(|equipment| equipment.slots.get(&slot).copied());
             CellData {
                 slot,
                 item,
-                icon: item.map(|item| assets.load(item.get().icon.0.clone())),
+                icon: item.map(|item| assets.load(item.get().icon.path())),
             }
         })
         .collect()
@@ -92,7 +104,7 @@ fn cell_scene(cell: &CellData) -> Box<dyn Scene> {
     }
 }
 
-fn empty_slot(slot: SlotId) -> impl Scene {
+fn empty_slot(slot: Slot) -> impl Scene {
     bsn! {
         template_value(slot_node())
         BackgroundColor({SLOT_BG})
@@ -107,8 +119,8 @@ fn empty_slot(slot: SlotId) -> impl Scene {
     }
 }
 
-fn worn_slot(slot: SlotId, item: Id<ItemDef>, icon: Handle<Image>) -> impl Scene {
-    let name = item.get().display_name.clone();
+fn worn_slot(slot: Slot, item: world::data::item::Id, icon: Handle<Image>) -> impl Scene {
+    let name = item.get().display_name.to_owned();
     bsn! {
         template_value(slot_node())
         BackgroundColor({SLOT_BG})

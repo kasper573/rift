@@ -6,23 +6,19 @@ use bevy_ecs::message::Message;
 use serde::{Deserialize, Serialize};
 
 use crate::core::math::{Direction, Pos};
-use crate::core::table::Id;
 use crate::core::tiling::{Tiles, TilesPerSec};
 use crate::core::time::{Millis, PlaybackRate};
 use crate::systems::Character;
 use crate::systems::account::identity::Identity;
-use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Rgba, set_action};
-use crate::systems::area::{self, AreaDef, AreaTag};
+use crate::systems::actor::{Action, Actor, Hitbox, Name, Rgba, set_action};
+use crate::systems::area::{self, AreaTag};
 use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::Inventory;
 use crate::systems::job::{self, Job};
 use crate::systems::movement::{Position, forget};
 use crate::systems::spectate::Spectators;
-use crate::systems::stat::{
-    self, AttackDelayStat, AttackSpeedStat, DamageStat, HealthStat, MaxHealthStat,
-    MovementSpeedStat, RangeStat, StatSet,
-};
+use crate::systems::stat::{self, Stat, Stats};
 use crate::systems::visibility::OwnedBy;
 use bevy_ecs::lifecycle::{Add, Remove};
 use bevy_ecs::observer::On;
@@ -140,7 +136,7 @@ pub fn client_left(
 
 pub fn join(world: &mut World) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
-    let spawn = area::areas()[zone.index()].spawn;
+    let spawn = area::area(zone).spawn;
     for request in crate::systems::requests::<JoinRequest>(world) {
         let Some(client_entity) = request.client_id.entity() else {
             continue;
@@ -162,7 +158,7 @@ pub fn join(world: &mut World) {
 
 pub struct CharacterState {
     pub name: String,
-    pub stats: StatSet,
+    pub stats: Stats,
     pub inventory: Inventory,
     pub xp: Xp,
     pub equipment: Equipment,
@@ -170,13 +166,7 @@ pub struct CharacterState {
     pub timed: TimedEffects,
 }
 
-fn spawn_player(
-    world: &mut World,
-    client: ClientId,
-    zone: Id<AreaDef>,
-    at: Pos<Tiles>,
-    name: String,
-) {
+fn spawn_player(world: &mut World, client: ClientId, zone: area::Id, at: Pos<Tiles>, name: String) {
     place(
         world,
         client,
@@ -196,26 +186,26 @@ fn spawn_player(
     );
 }
 
-pub fn player_stats() -> StatSet {
-    let mut stats = StatSet::default();
-    stats.add(HealthStat.into(), PLAYER_MAX_HEALTH);
-    stats.add(MaxHealthStat.into(), PLAYER_MAX_HEALTH);
-    stats.add(DamageStat.into(), PLAYER_DAMAGE);
-    stats.add(AttackSpeedStat.into(), PLAYER_ATTACK_SPEED.0);
-    stats.add(AttackDelayStat.into(), PLAYER_ATTACK_DELAY.0);
-    stats.add(RangeStat.into(), PLAYER_RANGE.0);
-    stats.add(MovementSpeedStat.into(), PLAYER_SPEED.0.0);
-    stats
+pub fn player_stats() -> Stats {
+    Stats(vec![
+        Stat::Health(PLAYER_MAX_HEALTH),
+        Stat::MaxHealth(PLAYER_MAX_HEALTH),
+        Stat::Damage(PLAYER_DAMAGE),
+        Stat::AttackSpeed(PLAYER_ATTACK_SPEED.0),
+        Stat::AttackDelay(PLAYER_ATTACK_DELAY.0),
+        Stat::Range(PLAYER_RANGE.0),
+        Stat::MovementSpeed(PLAYER_SPEED.0.0),
+    ])
 }
 
 pub(crate) fn place(
     world: &mut World,
     client: ClientId,
-    zone: Id<AreaDef>,
+    zone: area::Id,
     at: Pos<Tiles>,
     state: CharacterState,
 ) -> Entity {
-    let model = Id::<ActorModel>::by_name(PLAYER_MODEL).expect("the player model exists");
+    let model = crate::systems::actor::model_id(PLAYER_MODEL);
     let entity = world
         .spawn((
             Character {
@@ -250,7 +240,7 @@ pub(crate) fn place(
 
 pub fn respawn(world: &mut World) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
-    let spawn = area::areas()[zone.index()].spawn;
+    let spawn = area::area(zone).spawn;
     for request in crate::systems::requests::<RespawnRequest>(world) {
         let Some(entity) = sender_player(world, request.client_id) else {
             continue;

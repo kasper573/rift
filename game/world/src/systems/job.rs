@@ -1,14 +1,10 @@
-use std::sync::OnceLock;
-
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::core::table::{self, Content, Id};
-use crate::systems::effect::{self, EffectCommand};
+use crate::data;
+use crate::systems::effect::{self, Effect};
 use crate::systems::player::Xp;
-
-const FILE: &str = "job_table.json";
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -16,7 +12,7 @@ pub fn register(app: &mut App) {
     effect::source(app, level_effects);
 }
 
-fn level_effects(world: &World, entity: Entity) -> Vec<EffectCommand> {
+fn level_effects(world: &World, entity: Entity) -> Vec<Effect> {
     let Some(job) = world.get::<Job>(entity) else {
         return Vec::new();
     };
@@ -26,53 +22,27 @@ fn level_effects(world: &World, entity: Entity) -> Vec<EffectCommand> {
         .levels
         .iter()
         .take(level)
-        .flat_map(|tier| tier.effects.iter().cloned())
+        .flat_map(|tier| tier.effects.iter().copied())
         .collect()
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Job {
-    pub def: Id<JobDef>,
+    pub def: data::job::Id,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct JobDef {
-    pub id: String,
-    pub name: String,
-    pub levels: Vec<JobLevel>,
+    pub name: &'static str,
+    pub levels: &'static [JobLevel],
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct JobLevel {
     pub exp: u32,
-    #[serde(default, deserialize_with = "crate::systems::effect::commands")]
-    pub effects: Vec<EffectCommand>,
+    pub effects: &'static [Effect],
 }
 
-impl Content for JobDef {
-    fn table() -> &'static [JobDef] {
-        defs()
-    }
-    fn id(&self) -> &str {
-        &self.id
-    }
-}
-
-pub fn defs() -> &'static [JobDef] {
-    static DEFS: OnceLock<Vec<JobDef>> = OnceLock::new();
-    DEFS.get_or_init(|| {
-        let defs: Vec<JobDef> = table::load(FILE);
-        table::unique_ids(defs.iter().map(|def| def.id.as_str()), FILE);
-        assert!(!defs.is_empty(), "{FILE}: at least one job is required");
-        defs
-    })
-}
-
-pub fn default_job() -> Id<JobDef> {
-    defs();
-    Id::new(0)
+pub fn default_job() -> data::job::Id {
+    data::job::Id::Adventurer
 }
 
 pub fn level(world: &World, entity: Entity) -> u32 {

@@ -1,42 +1,28 @@
-mod consumable;
-mod equipment;
-mod resource;
-
-use std::sync::OnceLock;
-
 use bevy_app::App;
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::{Entity, MapEntities};
 use bevy_ecs::message::Message;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::core::assets;
 use crate::core::math::{Offset, Pos};
-use crate::core::table::{self, Content, Id};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
-use crate::systems::sfx::SfxId;
+use crate::data::item::Id;
 
 use crate::systems::area::{self, AreaTag};
-use crate::systems::effect::{self, EffectCommand, TimedEffect, TimedEffects};
-use crate::systems::equipment::{Requirement, SlotId};
+use crate::systems::effect::{self, Effect, TimedEffect, TimedEffects};
+use crate::systems::equipment::{self, Requirement};
 use crate::systems::movement::{MoveTarget, Position, approach, forget, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, sender_player};
+use crate::systems::sfx::SfxId;
 use crate::systems::stat;
 use crate::systems::visibility::seen_by;
 use bevy_ecs::query::With;
 use bevy_ecs::world::World;
 use bevy_replicon::prelude::{Replicated, SendTargets, ToClients};
 use bevy_time::Time;
-
-#[typetag::deserialize(tag = "type")]
-pub trait Item: Send + Sync {
-    fn use_from(&self, ctx: &mut UseCtx);
-    fn carried(&self) -> bool;
-}
-
-const FILE: &str = "item_table.json";
 
 pub const INVENTORY_MAX: u32 = 25;
 const RESERVATION_TTL: Seconds = Seconds(60.0);
@@ -58,7 +44,7 @@ pub fn register(app: &mut App) {
     effect::source(app, carried);
 }
 
-fn carried(world: &World, entity: Entity) -> Vec<EffectCommand> {
+fn carried(world: &World, entity: Entity) -> Vec<Effect> {
     world
         .get::<Inventory>(entity)
         .map(|inventory| {
@@ -67,7 +53,7 @@ fn carried(world: &World, entity: Entity) -> Vec<EffectCommand> {
                 .iter()
                 .map(|slot| slot.item.get())
                 .filter(|def| def.kind.carried())
-                .flat_map(|def| def.effects.iter().cloned())
+                .flat_map(|def| def.effects.iter().copied())
                 .collect()
         })
         .unwrap_or_default()
@@ -81,7 +67,7 @@ pub struct Inventory {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Slot {
-    pub item: Id<ItemDef>,
+    pub item: Id,
     pub count: u32,
 }
 
@@ -93,7 +79,7 @@ impl Inventory {
         }
     }
 
-    pub fn capacity_for(&self, item: Id<ItemDef>) -> u32 {
+    pub fn capacity_for(&self, item: Id) -> u32 {
         let stack_max = item.get().stack_max();
         let in_existing: u32 = self
             .slots
@@ -105,7 +91,7 @@ impl Inventory {
         in_existing + free_slots * stack_max
     }
 
-    pub fn add(&mut self, item: Id<ItemDef>, mut count: u32) {
+    pub fn add(&mut self, item: Id, mut count: u32) {
         let stack_max = item.get().stack_max();
         for slot in self.slots.iter_mut().filter(|slot| slot.item == item) {
             if count == 0 {
@@ -152,7 +138,7 @@ impl Reservation {
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DroppedItem {
-    pub item: Id<ItemDef>,
+    pub item: Id,
     pub count: u32,
 }
 
@@ -179,7 +165,7 @@ pub struct PickupRequest {
 
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
 pub struct ItemConsumed {
-    pub item: Id<ItemDef>,
+    pub item: Id,
     #[entities]
     pub actor: Entity,
 }
@@ -191,75 +177,82 @@ pub struct ItemsDropped {
     pub from: Pos<Tiles>,
 }
 
-#[derive(Deserialize)]
 pub struct ItemDef {
-    pub id: String,
-    pub display_name: String,
+    pub display_name: &'static str,
     pub icon: Icon,
-    #[serde(default)]
     pub sfx: ItemSfx,
-    #[serde(default)]
     pub stackable: Option<Stackable>,
-    #[serde(default, deserialize_with = "crate::systems::effect::commands")]
-    pub effects: Vec<EffectCommand>,
-    #[serde(flatten)]
-    pub kind: Box<dyn Item>,
+    pub effects: &'static [Effect],
+    pub kind: ItemKind,
 }
 
 impl ItemDef {
     pub fn stack_max(&self) -> u32 {
         self.stackable.map_or(1, |stackable| stackable.max)
     }
+
+    fn use_from(&self, ctx: &mut UseCtx) {
+        match &self.kind {
+            ItemKind::Consumable {
+                health_bonus,
+                duration,
+            } => {
+                ctx.heal(*health_bonus);
+                ctx.consume();
+                ctx.apply_effects(*duration);
+            }
+            ItemKind::Equipment { slot, requirements } => {
+                ctx.equip(*slot, requirements);
+            }
+            ItemKind::Resource => {}
+        }
+    }
 }
 
-impl Content for ItemDef {
-    fn table() -> &'static [ItemDef] {
-        items()
-    }
-    fn id(&self) -> &str {
-        &self.id
+pub enum ItemKind {
+    Consumable {
+        health_bonus: f32,
+        duration: Seconds,
+    },
+    Equipment {
+        slot: equipment::Slot,
+        requirements: &'static [Requirement],
+    },
+    Resource,
+}
+
+impl ItemKind {
+    fn carried(&self) -> bool {
+        matches!(self, ItemKind::Resource)
     }
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Default)]
 pub struct ItemSfx {
-    #[serde(default, rename = "use")]
     pub on_use: Option<SfxId>,
-    #[serde(default)]
     pub drop: Option<SfxId>,
 }
 
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Stackable {
     pub max: u32,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Icon(pub String);
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Icon(pub &'static str);
 
-impl<'de> Deserialize<'de> for Icon {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let name = String::deserialize(deserializer)?;
-        assets::find(assets::ICONS, &format!("{name}.png"))
-            .map(Icon)
-            .ok_or_else(|| serde::de::Error::custom(format!("unknown icon '{name}'")))
+impl Icon {
+    pub fn path(self) -> String {
+        assets::find(assets::ICONS, &format!("{}.png", self.0))
+            .unwrap_or_else(|| panic!("unknown icon '{}'", self.0))
     }
-}
-
-pub fn items() -> &'static [ItemDef] {
-    static ITEMS: OnceLock<Vec<ItemDef>> = OnceLock::new();
-    ITEMS.get_or_init(|| {
-        let items: Vec<ItemDef> = table::load(FILE);
-        table::unique_ids(items.iter().map(|item| item.id.as_str()), FILE);
-        items
-    })
 }
 
 pub struct UseCtx<'a> {
     world: &'a mut World,
     actor: Entity,
     slot: usize,
-    item: Id<ItemDef>,
+    item: Id,
 }
 
 impl UseCtx<'_> {
@@ -273,12 +266,12 @@ impl UseCtx<'_> {
     pub fn apply_effects(&mut self, duration: Seconds) {
         instantiate_effects(self.world, self.actor, self.item, duration);
     }
-    pub fn equip(&mut self, into: SlotId, requirements: &[Box<dyn Requirement>]) {
-        crate::systems::equipment::equip(self.world, self.actor, self.slot, into, requirements);
+    pub fn equip(&mut self, into: equipment::Slot, requirements: &[Requirement]) {
+        equipment::equip(self.world, self.actor, self.slot, into, requirements);
     }
 }
 
-fn announce_consumed(world: &mut World, actor: Entity, item: Id<ItemDef>) {
+fn announce_consumed(world: &mut World, actor: Entity, item: Id) {
     for client in seen_by(world, actor) {
         world.write_message(ToClients {
             targets: SendTargets::Single(bevy_replicon::prelude::ClientId::Client(client)),
@@ -302,7 +295,7 @@ pub fn use_item(world: &mut World) {
         else {
             continue;
         };
-        item.get().kind.use_from(&mut UseCtx {
+        item.get().use_from(&mut UseCtx {
             world,
             actor: entity,
             slot,
@@ -420,7 +413,7 @@ pub fn reserve(world: &mut World, npc: Entity, attacker: Entity, now: Seconds) {
 pub fn scatter_drop(
     world: &mut World,
     source: Entity,
-    drops: &[(Id<ItemDef>, u32)],
+    drops: &[(Id, u32)],
     reserved_by: ReservedBy,
 ) {
     if drops.is_empty() {
@@ -494,18 +487,15 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
     world.entity_mut(item).despawn();
 }
 
-fn instantiate_effects(world: &mut World, actor: Entity, item: Id<ItemDef>, duration: Seconds) {
-    let commands = &item.get().effects;
-    if commands.is_empty() {
+fn instantiate_effects(world: &mut World, actor: Entity, item: Id, duration: Seconds) {
+    let effects = item.get().effects;
+    if effects.is_empty() {
         return;
     }
     let until = Seconds(world.resource::<Time>().elapsed_secs()) + duration;
-    let entries = commands
+    let entries = effects
         .iter()
-        .map(|command| TimedEffect {
-            command: command.clone(),
-            until,
-        })
+        .map(|&effect| TimedEffect { effect, until })
         .collect::<Vec<_>>();
     match world.get_mut::<TimedEffects>(actor) {
         Some(mut timed) => timed.0.extend(entries),

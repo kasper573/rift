@@ -2,11 +2,11 @@ use std::collections::HashSet;
 
 use tiled::{LayerType, PropertyValue};
 
-use super::{Area, AreaDef, Group, Portal, RenderLayer, TileRef, cell_overlap};
+use super::Id;
+use super::{Area, Group, Portal, RenderLayer, TileRef, cell_overlap};
 use crate::core::assets;
 use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
 use crate::core::nav;
-use crate::core::table::Id;
 use crate::core::tiling::{
     self, Cell, CellPos, GridDims, GridSize, PixelsPerTile, TileRect, TileSize, Tiles,
 };
@@ -14,11 +14,11 @@ use crate::systems::sfx::SfxId;
 
 const OBSCURING_CUTOFF: f32 = 0.4;
 
-pub(super) fn build_area(id: Id<AreaDef>, name: &str, map_name: &str) -> Area {
+pub(super) fn build_area(id: Id, name: &str, map_name: &str) -> Area {
     build_from_map(id, name, load_map(map_name))
 }
 
-pub(super) fn build_from_map(id: Id<AreaDef>, name: &str, map: tiled::Map) -> Area {
+pub(super) fn build_from_map(id: Id, name: &str, map: tiled::Map) -> Area {
     let tiling = PixelsPerTile::new(Size::new(map.tile_width as f32, map.tile_height as f32));
     let size = Size::new(map.width as f32, map.height as f32);
 
@@ -154,7 +154,10 @@ impl TilePalette {
                     _ => None,
                 });
                 self.sfx.push(match properties.get("sfx") {
-                    Some(PropertyValue::StringValue(sfx)) => Some(SfxId(sfx.clone())),
+                    Some(PropertyValue::StringValue(sfx)) => Some(
+                        crate::systems::sfx::SfxId::by_name(sfx)
+                            .unwrap_or_else(|error| panic!("tile sfx '{sfx}': {error}")),
+                    ),
                     _ => None,
                 });
                 self.keys.len() - 1
@@ -194,8 +197,8 @@ fn portal(
     let malformed = || -> ! { panic!("map '{name}': goto '{goto}' must be '<area>, x, y'") };
     let mut parts = goto.split(',');
     let dest = parts.next().unwrap_or_else(|| malformed()).trim();
-    let dest_area = Id::<AreaDef>::by_name(dest)
-        .unwrap_or_else(|| panic!("map '{name}': unknown area '{dest}'"));
+    let dest_area =
+        super::Id::by_name(dest).unwrap_or_else(|error| panic!("map '{name}': {error}"));
     let mut coord = || -> f32 {
         parts
             .next()
@@ -253,7 +256,7 @@ fn tile_sfx(size: Size<Tiles>, layers: &[RenderLayer], tiles: &TilePalette) -> V
     for layer in layers {
         for (i, cell) in grid.cells().enumerate() {
             if let Some(id) = tiles.sfx_of(layer.at(cell)) {
-                sfx[i] = Some(id.clone());
+                sfx[i] = Some(*id);
             }
         }
     }

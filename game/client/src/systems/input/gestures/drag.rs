@@ -7,10 +7,6 @@ use crate::systems::input::gestures::Gesture;
 
 pub struct DragGesture;
 
-inventory::submit! {
-    &DragGesture as &dyn Gesture
-}
-
 impl Gesture for DragGesture {
     fn priority(&self) -> i32 {
         0

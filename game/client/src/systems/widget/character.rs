@@ -9,12 +9,17 @@ use world::systems::stat;
 #[derive(Component, Default, Clone)]
 struct CharacterText;
 
-inventory::submit! {
-    super::Widget {
-        id: "character",
-        fallback: Vec2::new(8.0, 8.0),
-        build,
-        sync: sync_character,
+pub struct CharacterWidget;
+
+impl super::Widget for CharacterWidget {
+    fn fallback(&self) -> Vec2 {
+        Vec2::new(8.0, 8.0)
+    }
+    fn build(&self, pos: Vec2, id: &'static str) -> Box<dyn Scene> {
+        build(pos, id)
+    }
+    fn sync(&self, world: &mut World) {
+        sync_character(world)
     }
 }
 

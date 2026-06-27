@@ -5,7 +5,6 @@ use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
 use crate::core::math::{Direction, Pos};
-use crate::core::table::Id;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{Millis, PlaybackRate, Seconds};
 use crate::systems::actor::{Action, Actor, Hitbox, set_action, set_facing};
@@ -14,7 +13,7 @@ use crate::systems::movement::{
     MoveTarget, Path, Position, approach, forget, halt, on_tile, position,
 };
 use crate::systems::player::{Owner, sender_player, session};
-use crate::systems::stat::{self, AttackDelayStat, AttackSpeedStat, DamageStat, RangeStat};
+use crate::systems::stat::{self, Stat};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -150,9 +149,9 @@ fn engage(world: &mut World, time: Seconds) {
             continue;
         };
         let stats = stat::effective_all(world, id);
-        let range = Tiles(stats.get(RangeStat.into()));
-        let attack_delay = Millis(stats.get(AttackDelayStat.into()));
-        let attack_speed = PlaybackRate(stats.get(AttackSpeedStat.into()));
+        let range = Tiles(stats.get(Stat::Range));
+        let attack_delay = Millis(stats.get(Stat::AttackDelay));
+        let attack_speed = PlaybackRate(stats.get(Stat::AttackSpeed));
 
         if !approach(world, id, target_at, range + TILE_DIAGONAL_MARGIN) {
             continue;
@@ -231,7 +230,7 @@ fn strike(
     if world.get_entity(target).is_err() || stat::is_dead(world, target) || !same_area {
         return;
     }
-    let damage = stat::effective(world, attacker, DamageStat.into());
+    let damage = stat::effective(world, attacker, Stat::Damage);
     add_attacker(world, target, attacker);
     crate::systems::item::reserve(world, target, attacker, time);
     stat::apply_damage(world, target, damage);
@@ -246,7 +245,10 @@ fn strike(
 }
 
 fn attack_timing(world: &World, entity: Entity, dir: Direction) -> crate::systems::actor::Timing {
-    let model = world.get::<Actor>(entity).map_or(Id::new(0), |a| a.model);
+    let model = world
+        .get::<Actor>(entity)
+        .map(|a| a.model)
+        .unwrap_or_default();
     model.get().timing(Action::Attack.name(), dir)
 }
 

@@ -32,7 +32,7 @@
  <tile id="8">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash01"/>
+   <property name="sfx" value="Slash01"/>
   </properties>
  </tile>
  <tile id="16">
@@ -62,7 +62,7 @@
  <tile id="24">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash01"/>
+   <property name="sfx" value="Slash01"/>
   </properties>
  </tile>
  <tile id="32">
@@ -92,7 +92,7 @@
  <tile id="40">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash01"/>
+   <property name="sfx" value="Slash01"/>
   </properties>
  </tile>
  <tile id="48">
@@ -122,7 +122,7 @@
  <tile id="56">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash01"/>
+   <property name="sfx" value="Slash01"/>
   </properties>
  </tile>
  <tile id="64">
@@ -152,7 +152,7 @@
  <tile id="72">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash01"/>
+   <property name="sfx" value="Slash01"/>
   </properties>
  </tile>
  <tile id="80">
@@ -182,7 +182,7 @@
  <tile id="88">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash01"/>
+   <property name="sfx" value="Slash01"/>
   </properties>
  </tile>
  <tile id="96">
@@ -212,7 +212,7 @@
  <tile id="104">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash01"/>
+   <property name="sfx" value="Slash01"/>
   </properties>
  </tile>
  <tile id="112">
@@ -242,14 +242,14 @@
  <tile id="120">
   <properties>
    <property name="apex" type="bool" value="true"/>
-   <property name="sfx" value="slash01"/>
+   <property name="sfx" value="Slash01"/>
   </properties>
  </tile>
  <tile id="128">
   <properties>
    <property name="action" value="death"/>
    <property name="dir" type="int" value="0"/>
-   <property name="sfx" value="death01"/>
+   <property name="sfx" value="Death01"/>
   </properties>
   <animation>
    <frame tileid="128" duration="100"/>
@@ -264,7 +264,7 @@
   <properties>
    <property name="action" value="death"/>
    <property name="dir" type="int" value="1"/>
-   <property name="sfx" value="death01"/>
+   <property name="sfx" value="Death01"/>
   </properties>
   <animation>
    <frame tileid="144" duration="100"/>
@@ -279,7 +279,7 @@
   <properties>
    <property name="action" value="death"/>
    <property name="dir" type="int" value="2"/>
-   <property name="sfx" value="death01"/>
+   <property name="sfx" value="Death01"/>
   </properties>
   <animation>
    <frame tileid="160" duration="100"/>
@@ -294,7 +294,7 @@
   <properties>
    <property name="action" value="death"/>
    <property name="dir" type="int" value="3"/>
-   <property name="sfx" value="death01"/>
+   <property name="sfx" value="Death01"/>
   </properties>
   <animation>
    <frame tileid="176" duration="100"/>
@@ -309,7 +309,7 @@
   <properties>
    <property name="action" value="death"/>
    <property name="dir" type="int" value="4"/>
-   <property name="sfx" value="death01"/>
+   <property name="sfx" value="Death01"/>
   </properties>
   <animation>
    <frame tileid="192" duration="100"/>
@@ -324,7 +324,7 @@
   <properties>
    <property name="action" value="death"/>
    <property name="dir" type="int" value="5"/>
-   <property name="sfx" value="death01"/>
+   <property name="sfx" value="Death01"/>
   </properties>
   <animation>
    <frame tileid="208" duration="100"/>
@@ -339,7 +339,7 @@
   <properties>
    <property name="action" value="death"/>
    <property name="dir" type="int" value="6"/>
-   <property name="sfx" value="death01"/>
+   <property name="sfx" value="Death01"/>
   </properties>
   <animation>
    <frame tileid="224" duration="100"/>
@@ -354,7 +354,7 @@
   <properties>
    <property name="action" value="death"/>
    <property name="dir" type="int" value="7"/>
-   <property name="sfx" value="death01"/>
+   <property name="sfx" value="Death01"/>
   </properties>
   <animation>
    <frame tileid="240" duration="100"/>

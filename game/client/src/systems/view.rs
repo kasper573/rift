@@ -1,9 +1,8 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use world::core::math::Pos;
-use world::core::table::Id;
 use world::core::tiling::{TileSize, Tiles};
-use world::systems::area::{self, AreaDef, AreaTag};
+use world::systems::area::{self, AreaTag};
 use world::systems::movement::Position;
 use world::systems::player::Owner;
 use world::systems::player::session::MyClient;
@@ -46,7 +45,11 @@ fn track_player(
     }
 }
 
-fn camera_center(at: Pos<Tiles>, area_id: Id<AreaDef>, half: Vec2) -> Option<Pos<Tiles>> {
+fn camera_center(
+    at: Pos<Tiles>,
+    area_id: world::systems::area::Id,
+    half: Vec2,
+) -> Option<Pos<Tiles>> {
     let area = area::get(area_id)?;
     let bounds = area.size.bounds();
     let lo = Pos::new(bounds.min().x + half.x, bounds.min().y + half.y);

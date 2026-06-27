@@ -5,10 +5,6 @@ use crate::systems::input::gestures::{Gesture, image_cursor};
 
 pub struct DefaultGesture;
 
-inventory::submit! {
-    &DefaultGesture as &dyn Gesture
-}
-
 impl Gesture for DefaultGesture {
     fn priority(&self) -> i32 {
         4

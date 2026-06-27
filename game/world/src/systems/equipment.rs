@@ -1,19 +1,15 @@
-pub mod req;
-pub mod slot;
-
-pub use req::{JobRequirement, LevelRequirement, Requirement, StatRequirement, met};
-pub use slot::{HeadSlot, OffhandSlot, Slot, SlotId, WeaponSlot};
-
 use std::collections::BTreeMap;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::core::table::Id;
-use crate::systems::effect::{self, EffectCommand};
-use crate::systems::item::{Inventory, ItemDef};
+use crate::data;
+use crate::systems::effect::{self, Effect};
+use crate::systems::item::Inventory;
+use crate::systems::job;
 use crate::systems::player::sender_player;
+use crate::systems::stat::{self, Stat};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -22,35 +18,71 @@ pub fn register(app: &mut App) {
     effect::source(app, equipped);
 }
 
-fn equipped(world: &World, entity: Entity) -> Vec<EffectCommand> {
-    world
-        .get::<Equipment>(entity)
-        .map(|equipment| {
-            equipment
-                .slots
-                .values()
-                .flat_map(|item| item.get().effects.iter().cloned())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Equipment {
-    pub slots: BTreeMap<SlotId, Id<ItemDef>>,
+    pub slots: BTreeMap<Slot, data::item::Id>,
 }
 
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UnequipRequest {
-    pub slot: SlotId,
+    pub slot: Slot,
+}
+
+#[derive(
+    Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default,
+)]
+pub enum Slot {
+    #[default]
+    Weapon,
+    Offhand,
+    Head,
+}
+
+impl Slot {
+    pub fn label(self) -> &'static str {
+        match self {
+            Slot::Weapon => "Weapon",
+            Slot::Offhand => "Offhand",
+            Slot::Head => "Head",
+        }
+    }
+
+    pub fn all() -> [Slot; 3] {
+        [Slot::Weapon, Slot::Offhand, Slot::Head]
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Requirement {
+    Level(u32),
+    Job(data::job::Id),
+    Stat { stat: fn(f32) -> Stat, min: f32 },
+}
+
+impl Requirement {
+    pub fn met(self, world: &World, player: Entity) -> bool {
+        match self {
+            Requirement::Level(level) => job::level(world, player) >= level,
+            Requirement::Job(job) => world
+                .get::<job::Job>(player)
+                .is_some_and(|held| held.def == job),
+            Requirement::Stat { stat, min } => stat::effective(world, player, stat) >= min,
+        }
+    }
+}
+
+pub fn met(world: &World, player: Entity, requirements: &[Requirement]) -> bool {
+    requirements
+        .iter()
+        .all(|requirement| requirement.met(world, player))
 }
 
 pub fn equip(
     world: &mut World,
     player: Entity,
     inv_slot: usize,
-    into: SlotId,
-    requirements: &[Box<dyn Requirement>],
+    into: Slot,
+    requirements: &[Requirement],
 ) {
     let Some(item) = world
         .get::<Inventory>(player)
@@ -100,4 +132,17 @@ pub fn unequip(world: &mut World) {
             inventory.add(item, 1);
         }
     }
+}
+
+fn equipped(world: &World, entity: Entity) -> Vec<Effect> {
+    world
+        .get::<Equipment>(entity)
+        .map(|equipment| {
+            equipment
+                .slots
+                .values()
+                .flat_map(|item| item.get().effects.iter().copied())
+                .collect()
+        })
+        .unwrap_or_default()
 }

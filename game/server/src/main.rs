@@ -22,10 +22,9 @@ use renet2_netcode::{
     ServerSetupConfig, WebSocketAcceptor, WebSocketServer, WebSocketServerConfig,
 };
 use world::core::channels::RenetChannelsExt;
-use world::core::table::Id;
 use world::systems::TICK_HZ;
 use world::systems::account::Identity;
-use world::systems::area::{self, AreaDef, transition};
+use world::systems::area::transition;
 use world::systems::player::ClientId;
 
 service::heap_profiling!();
@@ -97,8 +96,14 @@ fn simulate(
     sessions: Sessions,
     runtime: tokio::runtime::Handle,
 ) {
-    let spawn = area::spawn_zone().index();
-    let mut worlds: Vec<App> = area::areas().iter().map(|a| build_world(a.id)).collect();
+    let spawn = world::data::area::SPAWN_ID.index();
+    let mut real_areas: Vec<_> = world::data::area::TABLE
+        .iter()
+        .filter(|(_, def)| !def.bench)
+        .map(|(&id, _)| id)
+        .collect();
+    real_areas.sort_by_key(|id| id.index());
+    let mut worlds: Vec<App> = real_areas.into_iter().map(build_world).collect();
 
     let (connection_config, client_channels) = {
         let channels = worlds[0].world().resource::<RepliconChannels>();
@@ -319,7 +324,7 @@ struct Conn {
 #[derive(Component)]
 struct Wire(u64);
 
-fn build_world(area: Id<AreaDef>) -> App {
+fn build_world(area: world::systems::area::Id) -> App {
     let mut app = world::systems::server_app(area);
     app.finish();
     app.cleanup();

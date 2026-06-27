@@ -9,9 +9,8 @@ use bevy_replicon::server::visibility::registry::FilterRegistry;
 use bevy_replicon::shared::replication::registry::ReplicationRegistry;
 
 use crate::core::math::Pos;
-use crate::core::table::Id;
 use crate::core::tiling::{TilePos, Tiles};
-use crate::systems::area::{AreaDef, AreaTag};
+use crate::systems::area::{self, AreaTag};
 use crate::systems::item::Inventory;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::{ClientId, Players};
@@ -106,14 +105,14 @@ impl FromWorld for RangeBit {
 struct Subject {
     entity: Entity,
     pos: Pos<Tiles>,
-    area: Option<Id<AreaDef>>,
+    area: Option<area::Id>,
     anchor: bool,
 }
 
 struct Sight {
     focus: Entity,
     pos: Option<Pos<Tiles>>,
-    area: Option<Id<AreaDef>>,
+    area: Option<area::Id>,
     spectating: bool,
 }
 

@@ -3,16 +3,9 @@ use bevy_ecs::prelude::Entity;
 use super::{Ai, Hunt};
 use crate::core::math::Rng;
 
-pub struct AggressiveAi;
+pub struct Aggressive;
 
-inventory::submit! {
-    &AggressiveAi as &dyn Ai
-}
-
-impl Ai for AggressiveAi {
-    fn name(&self) -> &str {
-        "aggressive"
-    }
+impl Ai for Aggressive {
     fn wanders(&self, _rng: &mut Rng) -> bool {
         true
     }

@@ -1,8 +1,7 @@
 use bevy_ecs::prelude::*;
 
-use super::AreaDef;
+use super::Id;
 use crate::core::math::Pos;
-use crate::core::table::Id;
 use crate::core::tiling::Tiles;
 use crate::systems::actor::Name;
 use crate::systems::effect::TimedEffects;
@@ -10,17 +9,17 @@ use crate::systems::equipment::Equipment;
 use crate::systems::item::Inventory;
 use crate::systems::job::Job;
 use crate::systems::player::{CharacterState, ClientId, Owner, Xp};
-use crate::systems::stat::StatSet;
+use crate::systems::stat;
 
 #[derive(Component, Clone, Copy)]
 pub struct Crossing {
-    pub dest_area: Id<AreaDef>,
+    pub dest_area: Id,
     pub dest: Pos<Tiles>,
 }
 
 pub struct Traveler {
     pub client: ClientId,
-    pub dest_area: Id<AreaDef>,
+    pub dest_area: Id,
     pub dest: Pos<Tiles>,
     pub state: CharacterState,
 }
@@ -42,7 +41,7 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
                     dest: crossing.dest,
                     state: CharacterState {
                         name: world.get::<Name>(entity)?.name.clone(),
-                        stats: StatSet::snapshot(world, entity),
+                        stats: stat::snapshot(world, entity),
                         inventory: world.get::<Inventory>(entity)?.clone(),
                         xp: world.get::<Xp>(entity)?.clone(),
                         equipment: world.get::<Equipment>(entity)?.clone(),

@@ -4,16 +4,9 @@ use super::{Ai, Hunt};
 use crate::core::math::Rng;
 use crate::systems::combat::Attackers;
 
-pub struct DefensiveAi;
+pub struct Defensive;
 
-inventory::submit! {
-    &DefensiveAi as &dyn Ai
-}
-
-impl Ai for DefensiveAi {
-    fn name(&self) -> &str {
-        "defensive"
-    }
+impl Ai for Defensive {
     fn wanders(&self, _rng: &mut Rng) -> bool {
         true
     }

@@ -3,16 +3,9 @@ use bevy_ecs::prelude::Entity;
 use super::{Ai, Hunt};
 use crate::core::math::Rng;
 
-pub struct ProtectiveAi;
+pub struct Protective;
 
-inventory::submit! {
-    &ProtectiveAi as &dyn Ai
-}
-
-impl Ai for ProtectiveAi {
-    fn name(&self) -> &str {
-        "protective"
-    }
+impl Ai for Protective {
     fn wanders(&self, _rng: &mut Rng) -> bool {
         true
     }

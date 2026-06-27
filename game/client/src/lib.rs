@@ -64,11 +64,11 @@ pub fn boot() {
 
 fn sfx_catalog() -> core::audio::SfxCatalog {
     core::audio::SfxCatalog(
-        world::systems::sfx::sfx_table()
+        world::data::sfx::TABLE
             .iter()
-            .map(|def| core::audio::SfxSpec {
-                id: def.id.0.clone(),
-                path: def.src.clone(),
+            .map(|(id, def)| core::audio::SfxSpec {
+                id: id.name().to_owned(),
+                path: def.src.to_owned(),
                 volume: def.volume.range(),
                 pitch: def.pitch.range(),
             })

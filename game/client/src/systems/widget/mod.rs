@@ -7,7 +7,7 @@ pub mod stats;
 
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use ui::component;
 use ui::{Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
@@ -43,53 +43,40 @@ impl Plugin for HudPlugin {
     }
 }
 
-pub struct Widget {
-    pub id: &'static str,
-    pub fallback: Vec2,
-    pub build: fn(Vec2, &'static str) -> Box<dyn Scene>,
-    pub sync: fn(&mut World),
+pub trait Widget: Send + Sync {
+    fn fallback(&self) -> Vec2;
+    fn build(&self, pos: Vec2, id: &'static str) -> Box<dyn Scene>;
+    fn sync(&self, world: &mut World);
 }
 
-::inventory::collect!(Widget);
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct WindowId(&'static str);
-
-pub struct Window {
-    pub id: &'static str,
-    pub title: &'static str,
-    pub toggle: KeyCode,
-    pub keybind: &'static str,
-    pub icon: &'static str,
-    pub order: u32,
-    pub content: fn() -> Box<dyn Scene>,
-    pub sync: fn(&mut World),
+pub trait Window: Send + Sync {
+    fn title(&self) -> &'static str;
+    fn toggle(&self) -> KeyCode;
+    fn keybind(&self) -> &'static str;
+    fn icon(&self) -> &'static str;
+    fn order(&self) -> u32;
+    fn content(&self) -> Box<dyn Scene>;
+    fn sync(&self, world: &mut World);
 }
 
-::inventory::collect!(Window);
+static WIDGETS: &[(&str, &dyn Widget)] = &[
+    ("character", &character::CharacterWidget),
+    ("effects", &effects::EffectsWidget),
+];
 
-impl WindowId {
-    fn def(self) -> &'static Window {
-        ::inventory::iter::<Window>()
-            .find(|def| def.id == self.0)
-            .expect("a registered window")
-    }
-}
+static WINDOWS: &[(&str, &dyn Window)] = &[
+    ("Inventory", &inventory::InventoryWindow),
+    ("Equipment", &equipment::EquipmentWindow),
+    ("Stats", &stats::StatsWindow),
+    ("Settings", &settings::SettingsWindow),
+];
 
-impl Serialize for WindowId {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for WindowId {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let id = String::deserialize(deserializer)?;
-        ::inventory::iter::<Window>()
-            .find(|def| def.id == id)
-            .map(|def| WindowId(def.id))
-            .ok_or_else(|| serde::de::Error::custom(format!("unknown window '{id}'")))
-    }
+fn window_def(id: &str) -> &'static dyn Window {
+    WINDOWS
+        .iter()
+        .find(|(name, _)| *name == id)
+        .map(|(_, window)| *window)
+        .expect("a registered window")
 }
 
 #[derive(Resource)]
@@ -234,14 +221,14 @@ fn default_snap() -> ScreenPx {
 }
 
 #[derive(Resource, Default)]
-struct Open(std::collections::HashSet<WindowId>);
+struct Open(std::collections::HashSet<&'static str>);
 
 #[derive(Component, Default, Clone)]
 struct Hud;
 
 #[derive(Component, Clone)]
 struct WindowView {
-    window: WindowId,
+    window: &'static str,
     open: bool,
 }
 
@@ -253,17 +240,12 @@ fn spawn_hud(
 ) {
     let screen_w = screen.resolution.width();
     let mut scenes: Vec<Box<dyn Scene>> = Vec::new();
-    for def in ::inventory::iter::<Widget>() {
-        let pos = widget_pos(&settings, def.id, def.fallback);
-        scenes.push((def.build)(pos, def.id));
+    for &(name, widget) in WIDGETS {
+        let pos = widget_pos(&settings, name, widget.fallback());
+        scenes.push(widget.build(pos, name));
     }
-    for def in ::inventory::iter::<Window>() {
-        scenes.push(Box::new(launcher(
-            WindowId(def.id),
-            screen_w,
-            &settings,
-            &assets,
-        )));
+    for &(window, _) in WINDOWS {
+        scenes.push(Box::new(launcher(window, screen_w, &settings, &assets)));
     }
     commands.spawn_scene(bsn! {
         Hud
@@ -303,55 +285,55 @@ fn rebuild_windows(
 }
 
 fn sync_widgets(world: &mut World) {
-    for def in ::inventory::iter::<Widget>() {
-        (def.sync)(world);
+    for &(_, widget) in WIDGETS {
+        widget.sync(world);
     }
 }
 
 fn launcher(
-    window: WindowId,
+    window: &'static str,
     screen_w: f32,
     settings: &Settings,
     assets: &AssetServer,
 ) -> impl Scene {
-    let def = window.def();
-    let pos = widget_pos(settings, window.0, launcher_pos(window, screen_w));
+    let def = window_def(window);
+    let pos = widget_pos(settings, window, launcher_pos(window, screen_w));
     bsn! {
         {widget(ui::WidgetOptions {
             pos,
-            icon: assets.load(def.icon.to_owned()),
-            badge: def.keybind.to_owned(),
-            tooltip: def.title.to_owned(),
+            icon: assets.load(def.icon().to_owned()),
+            badge: def.keybind().to_owned(),
+            tooltip: def.title().to_owned(),
             on_tap: OnTap::new(move |world| open_window(world, window)),
-            on_settle: OnSettle::new(move |world, geom| persist_widget(world, window.0, geom)),
+            on_settle: OnSettle::new(move |world, geom| persist_widget(world, window, geom)),
         })}
         component(WindowView { window, open: false })
     }
 }
 
-fn window_scene(window: WindowId, settings: &Settings) -> impl Scene {
-    let def = window.def();
-    let (pos, size) = window_geom(settings, window.0, Vec2::new(376.0, 332.0), WINDOW_SIZE);
+fn window_scene(window: &'static str, settings: &Settings) -> impl Scene {
+    let def = window_def(window);
+    let (pos, size) = window_geom(settings, window, Vec2::new(376.0, 332.0), WINDOW_SIZE);
     bsn! {
         {ui::window(ui::WindowOptions {
             pos,
             size,
-            title: def.title.to_owned(),
+            title: def.title().to_owned(),
             on_close: OnTap::new(move |world| close_window(world, window)),
-            on_settle: OnSettle::new(move |world, geom| persist_window(world, window.0, geom)),
-            content: (def.content)(),
+            on_settle: OnSettle::new(move |world, geom| persist_window(world, window, geom)),
+            content: def.content(),
         })}
         component(WindowView { window, open: true })
     }
 }
 
-fn close_window(world: &mut World, window: WindowId) {
+fn close_window(world: &mut World, window: &'static str) {
     world.resource_mut::<Open>().0.remove(&window);
 }
 
 fn sync_windows(world: &mut World) {
-    for def in ::inventory::iter::<Window>() {
-        (def.sync)(world);
+    for &(_, window) in WINDOWS {
+        window.sync(world);
     }
 }
 
@@ -397,9 +379,12 @@ fn sync_snap_grid(settings: Res<Settings>, mut grid: ResMut<SnapGrid>) {
     grid.0 = settings.0.snap_grid();
 }
 
-fn launcher_pos(window: WindowId, screen_w: f32) -> Vec2 {
+fn launcher_pos(window: &'static str, screen_w: f32) -> Vec2 {
     let x = screen_w - 8.0 - WIDGET.0;
-    Vec2::new(x, 8.0 + window.def().order as f32 * (WIDGET.0 + 8.0))
+    Vec2::new(
+        x,
+        8.0 + window_def(window).order() as f32 * (WIDGET.0 + 8.0),
+    )
 }
 
 pub(super) fn reconcile_children(
@@ -458,14 +443,13 @@ pub(super) fn tooltip_label(text: impl Into<String>) -> impl Scene {
     }
 }
 
-fn open_window(world: &mut World, window: WindowId) {
+fn open_window(world: &mut World, window: &'static str) {
     world.resource_mut::<Open>().0.insert(window);
 }
 
 fn toggle_keys(keys: Res<ButtonInput<KeyCode>>, mut open: ResMut<Open>) {
-    for def in ::inventory::iter::<Window>() {
-        let window = WindowId(def.id);
-        if keys.just_pressed(def.toggle) && !open.0.remove(&window) {
+    for &(window, def) in WINDOWS {
+        if keys.just_pressed(def.toggle()) && !open.0.remove(&window) {
             open.0.insert(window);
         }
     }

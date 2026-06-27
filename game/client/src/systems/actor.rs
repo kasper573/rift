@@ -117,7 +117,7 @@ fn actor_cues(
         );
         for id in cues {
             play.write(PlaySfx {
-                id: id.0.clone(),
+                id: id.name().to_owned(),
                 at: position.pos,
             });
         }
@@ -126,7 +126,7 @@ fn actor_cues(
             && let Some(id) = area.tile_sfx_at(position.pos.cell())
         {
             play.write(PlaySfx {
-                id: id.0.clone(),
+                id: id.name().to_owned(),
                 at: position.pos,
             });
         }

@@ -19,7 +19,13 @@ pub trait Gesture: Send + Sync {
     }
 }
 
-inventory::collect!(&'static dyn Gesture);
+static GESTURES: &[&dyn Gesture] = &[
+    &attack::AttackGesture,
+    &default::DefaultGesture,
+    &drag::DragGesture,
+    &pickup::PickupGesture,
+    &walk::WalkGesture,
+];
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, setup)
@@ -39,8 +45,7 @@ struct GestureIndex(usize);
 struct AppliedCursor(Option<CursorIcon>);
 
 fn setup(mut commands: Commands) {
-    let mut gestures: Vec<&'static dyn Gesture> =
-        inventory::iter::<&'static dyn Gesture>().copied().collect();
+    let mut gestures: Vec<&'static dyn Gesture> = GESTURES.to_vec();
     gestures.sort_by_key(|gesture| gesture.priority());
     commands.insert_resource(Gestures(gestures));
     commands.init_resource::<Latched>();
