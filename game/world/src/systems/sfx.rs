@@ -1,10 +1,10 @@
-use crate::core::assets;
+use crate::core::assets::AssetRef;
 use crate::data;
 
 pub use crate::data::sfx::Id as SfxId;
 
 pub struct SfxDef {
-    pub src: &'static str,
+    pub src: AssetRef,
     pub volume: Varying,
     pub pitch: Varying,
 }
@@ -39,9 +39,9 @@ impl Varying {
 pub fn validate() {
     for (id, def) in data::sfx::TABLE.iter() {
         assert!(
-            assets::exists(def.src),
+            def.src.resolve().is_some(),
             "sfx {id:?} src '{}' not found",
-            def.src
+            def.src.0
         );
         let (vmin, vmax) = def.volume.range();
         assert!(

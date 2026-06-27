@@ -83,7 +83,7 @@ fn equipment_cells(world: &World) -> Vec<CellData> {
             CellData {
                 slot,
                 item,
-                icon: item.map(|item| assets.load(item.get().icon.path())),
+                icon: item.map(|item| assets.load(item.get().icon.0)),
             }
         })
         .collect()

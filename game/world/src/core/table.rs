@@ -3,34 +3,52 @@
 /// key — so it can't disagree with itself, every reference (`Id::Goblin`) is checked at compile time,
 /// and `Id` derives serde so rows ride the wire as their key name.
 ///
+/// Rows can be written as struct literals, taking the value type from each row:
+///
 /// ```ignore
 /// table! {
 ///     Goblin: NpcDef { display_name: "Goblin", ai: &Aggressive, .. },
 ///     Orc:    NpcDef { .. },
 /// }
-/// // -> pub enum Id { Goblin, Orc }, pub static TABLE: HashMap<Id, NpcDef>, Id::Goblin.get()
+/// ```
+///
+/// Or built from an expression, with the value type stated once — useful when rows are produced by a
+/// function rather than a literal:
+///
+/// ```ignore
+/// table! { ActorModel {
+///     Orc: load(AssetRef("models/orc.tsx")),
+///     Bat: load(AssetRef("models/bat.tsx")),
+/// }}
 /// ```
 #[macro_export]
 macro_rules! table {
+    ( $def:ty { $($key:ident : $value:expr),* $(,)? } ) => {
+        $crate::table!(@build $def; $($key => $value),*);
+    };
     (
         $first:ident : $def:ident { $($first_field:tt)* }
         $(, $key:ident : $row:ident { $($field:tt)* })*
         $(,)?
     ) => {
+        $crate::table!(@build $def;
+            $first => $def { $($first_field)* }
+            $(, $key => $row { $($field)* })*
+        );
+    };
+    (@build $def:ty; $($key:ident => $value:expr),* $(,)?) => {
         #[derive(
             Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord,
             serde::Serialize, serde::Deserialize,
         )]
         pub enum Id {
-            $first
-            $(, $key)*
+            $($key),*
         }
 
         pub static TABLE: ::std::sync::LazyLock<::std::collections::HashMap<Id, $def>> =
             ::std::sync::LazyLock::new(|| {
                 ::std::collections::HashMap::from([
-                    (Id::$first, $def { $($first_field)* }),
-                    $((Id::$key, $row { $($field)* }),)*
+                    $((Id::$key, $value),)*
                 ])
             });
 
@@ -43,7 +61,6 @@ macro_rules! table {
             }
             pub fn name(self) -> &'static str {
                 match self {
-                    Id::$first => stringify!($first),
                     $(Id::$key => stringify!($key),)*
                 }
             }

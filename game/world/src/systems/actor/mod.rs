@@ -1,19 +1,16 @@
-pub mod load;
-
-use std::collections::{HashMap, HashSet};
-use std::sync::OnceLock;
+mod model;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
-use tiled::{Frame, TileId};
 
-use crate::core::assets;
-use crate::core::math::{Direction, Pos, Rect, Size, WorldPx};
+use crate::core::math::{Direction, Size};
 use crate::core::tiling::Tiles;
-use crate::core::time::{Millis, PlaybackRate, Seconds};
-use crate::systems::sfx::SfxId;
+use crate::core::time::PlaybackRate;
+use crate::data;
 use crate::systems::stat::{StatKind, Stats};
+
+pub use model::{ActorModel, Timing, load};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -55,7 +52,7 @@ pub struct Actor {
     pub color: Rgba,
     pub dir: Direction,
     pub action: Action,
-    pub model: ModelId,
+    pub model: data::model::Id,
     pub attack_rate: PlaybackRate,
 }
 
@@ -96,193 +93,4 @@ pub fn reset(mut actors: Query<(&mut Actor, Option<&Stats>)>) {
         let dead = stats.is_some_and(|stats| stats.get(StatKind::Health) <= 0.0);
         set_action(&mut actor, if dead { Action::Dead } else { Action::Idle });
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Timing {
-    pub duration: Seconds,
-    pub apex: Seconds,
-}
-
-pub struct ActorModel {
-    name: String,
-    sheet: String,
-    frame: Size<WorldPx>,
-    columns: u32,
-    hitbox: Size<Tiles>,
-    pub airborne: bool,
-    strips: HashMap<String, [Vec<Frame>; 8]>,
-    sounds: HashMap<TileId, SfxId>,
-    steps: HashSet<TileId>,
-    apexes: HashSet<TileId>,
-}
-
-impl ActorModel {
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn hitbox(&self) -> Size<Tiles> {
-        self.hitbox
-    }
-
-    pub fn sheet(&self) -> &str {
-        &self.sheet
-    }
-
-    pub fn frame(
-        &self,
-        action: &str,
-        dir: Direction,
-        t: Seconds,
-        attack_speed: PlaybackRate,
-    ) -> Rect<WorldPx> {
-        let strip = self.strip(action, dir);
-        let elapsed = (t.millis() * rate(action, attack_speed)).max(Millis(0.0));
-        let total = total_ms(strip);
-        let position = if action == DEATH {
-            elapsed.min(total - Millis(1.0))
-        } else {
-            elapsed % total
-        };
-        let mut cursor = Millis(0.0);
-        for frame in strip {
-            cursor += Millis(frame.duration as f32);
-            if position < cursor {
-                return self.region(frame.tile_id);
-            }
-        }
-        self.region(strip[strip.len() - 1].tile_id)
-    }
-
-    pub fn timing(&self, action: &str, dir: Direction) -> Timing {
-        let strip = self.strip(action, dir);
-        let mut apex = Millis(0.0);
-        let mut cursor = Millis(0.0);
-        for frame in strip {
-            if self.apexes.contains(&frame.tile_id) {
-                apex = cursor;
-            }
-            cursor += Millis(frame.duration as f32);
-        }
-        Timing {
-            duration: cursor.seconds(),
-            apex: apex.seconds(),
-        }
-    }
-
-    pub fn cues(
-        &self,
-        action: &str,
-        dir: Direction,
-        prev: Seconds,
-        now: Seconds,
-        attack_speed: PlaybackRate,
-    ) -> (Vec<&SfxId>, bool) {
-        let strip = self
-            .strips
-            .get(action)
-            .map(|dirs| dirs[dir_slot(dir)].as_slice())
-            .unwrap_or_default();
-        let rate = rate(action, attack_speed);
-        let authored = |t: Seconds| t.millis() * rate;
-        let total = total_ms(strip);
-        let once = action == DEATH;
-        let (mut sfx, mut stepped) = (Vec::new(), false);
-        let mut cursor = Millis(0.0);
-        for frame in strip {
-            if crossed(once, total, cursor, authored(prev), authored(now)) {
-                sfx.extend(self.sounds.get(&frame.tile_id));
-                stepped |= self.steps.contains(&frame.tile_id);
-            }
-            cursor += Millis(frame.duration as f32);
-        }
-        (sfx, stepped)
-    }
-
-    pub fn sfx_ids(&self) -> impl Iterator<Item = &SfxId> {
-        self.sounds.values()
-    }
-
-    fn strip(&self, action: &str, dir: Direction) -> &[Frame] {
-        let spec = self.strips.get(action).unwrap_or_else(|| {
-            self.strips
-                .get(IDLE)
-                .expect("validated at load: every actor model declares idle")
-        });
-        &spec[dir_slot(dir)]
-    }
-
-    fn region(&self, tile: TileId) -> Rect<WorldPx> {
-        Rect::new(
-            Pos::new(
-                (tile % self.columns) as f32 * self.frame.width,
-                (tile / self.columns) as f32 * self.frame.height,
-            ),
-            self.frame,
-        )
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub struct ModelId(u32);
-
-impl ModelId {
-    pub fn get(self) -> &'static ActorModel {
-        &models()[self.0 as usize]
-    }
-}
-
-pub fn model_id(name: &str) -> ModelId {
-    models()
-        .iter()
-        .position(|model| model.name == name)
-        .map(|index| ModelId(index as u32))
-        .unwrap_or_else(|| panic!("unknown actor model {name}"))
-}
-
-pub fn models() -> &'static [ActorModel] {
-    static MODELS: OnceLock<Vec<ActorModel>> = OnceLock::new();
-    MODELS.get_or_init(|| {
-        let mut all: Vec<ActorModel> = assets::list(assets::ACTORS)
-            .iter()
-            .filter(|path| path.ends_with(".tsx"))
-            .map(|path| load::load(assets::stem(path)))
-            .collect();
-        all.sort_unstable_by(|a, b| a.name.cmp(&b.name));
-        all
-    })
-}
-
-const IDLE: &str = "idle";
-const ATTACK: &str = "attack";
-const DEATH: &str = "death";
-
-fn dir_slot(dir: Direction) -> usize {
-    dir as usize
-}
-
-fn rate(action: &str, attack_speed: PlaybackRate) -> PlaybackRate {
-    if action == ATTACK {
-        attack_speed.at_least(0.01)
-    } else {
-        PlaybackRate(1.0)
-    }
-}
-
-fn total_ms(strip: &[Frame]) -> Millis {
-    Millis(strip.iter().map(|frame| frame.duration as f32).sum())
-}
-
-fn crossed(once: bool, total: Millis, at: Millis, prev: Millis, now: Millis) -> bool {
-    let count = |t: Millis| {
-        if t < at {
-            0
-        } else if once {
-            1
-        } else {
-            (t - at).ratio(total) as i64 + 1
-        }
-    };
-    count(now) > count(prev)
 }

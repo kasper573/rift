@@ -87,7 +87,7 @@ const PLAYER_ATTACK_SPEED: PlaybackRate = PlaybackRate(1.2);
 const PLAYER_ATTACK_DELAY: Millis = Millis(200.0);
 const PLAYER_RANGE: Tiles = Tiles(1.5);
 const PLAYER_TINT: Rgba = Rgba(0xFFFF_FFFF);
-const PLAYER_MODEL: &str = "adventurer";
+const PLAYER_MODEL: crate::data::model::Id = crate::data::model::Id::Adventurer;
 
 #[derive(Resource, Default)]
 pub struct Players(pub HashMap<ClientId, Entity>);
@@ -188,13 +188,13 @@ fn spawn_player(world: &mut World, client: ClientId, zone: area::Id, at: Pos<Til
 
 pub fn player_stats() -> Stats {
     Stats(vec![
-        StatKind::Health.new(PLAYER_MAX_HEALTH),
-        StatKind::MaxHealth.new(PLAYER_MAX_HEALTH),
-        StatKind::Damage.new(PLAYER_DAMAGE),
-        StatKind::AttackSpeed.new(PLAYER_ATTACK_SPEED.0),
-        StatKind::AttackDelay.new(PLAYER_ATTACK_DELAY.0),
-        StatKind::Range.new(PLAYER_RANGE.0),
-        StatKind::MovementSpeed.new(PLAYER_SPEED.0.0),
+        StatKind::Health.of(PLAYER_MAX_HEALTH),
+        StatKind::MaxHealth.of(PLAYER_MAX_HEALTH),
+        StatKind::Damage.of(PLAYER_DAMAGE),
+        StatKind::AttackSpeed.of(PLAYER_ATTACK_SPEED.0),
+        StatKind::AttackDelay.of(PLAYER_ATTACK_DELAY.0),
+        StatKind::Range.of(PLAYER_RANGE.0),
+        StatKind::MovementSpeed.of(PLAYER_SPEED.0.0),
     ])
 }
 
@@ -205,7 +205,7 @@ pub(crate) fn place(
     at: Pos<Tiles>,
     state: CharacterState,
 ) -> Entity {
-    let model = crate::systems::actor::model_id(PLAYER_MODEL);
+    let model = PLAYER_MODEL;
     let entity = world
         .spawn((
             Character {

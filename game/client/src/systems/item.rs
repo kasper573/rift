@@ -78,7 +78,7 @@ fn attach_drop_sprite(
     let Ok(dropped) = drops.get(add.entity) else {
         return;
     };
-    let image = assets.load(dropped.item.get().icon.path());
+    let image = assets.load(dropped.item.get().icon.0);
     commands.entity(add.entity).insert((
         Sprite {
             image,

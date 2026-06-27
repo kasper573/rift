@@ -245,11 +245,10 @@ fn strike(
 }
 
 fn attack_timing(world: &World, entity: Entity, dir: Direction) -> crate::systems::actor::Timing {
-    let model = world
+    world
         .get::<Actor>(entity)
-        .map(|a| a.model)
-        .unwrap_or_default();
-    model.get().timing(Action::Attack.name(), dir)
+        .map(|a| a.model.get().timing(Action::Attack.name(), dir))
+        .unwrap_or_default()
 }
 
 fn add_attacker(world: &mut World, target: Entity, by: Entity) {

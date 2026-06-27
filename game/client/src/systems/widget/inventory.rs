@@ -86,7 +86,7 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
                 .map(|stack| {
                     let def = stack.item.get();
                     Filled {
-                        icon: assets.load(def.icon.path()),
+                        icon: assets.load(def.icon.0),
                         name: def.display_name.to_owned(),
                         kind: stack.item.index() as u64,
                         count: stack.count,

@@ -11,6 +11,7 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use serde::{Deserialize, Serialize};
 
+use crate::core::assets::AssetRef;
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::nav;
 use crate::core::tiling::{Cell, CellPos, GridSize, TileSize, Tiles};
@@ -30,7 +31,7 @@ pub struct AreaTag {
 }
 
 pub struct AreaDef {
-    pub map: &'static str,
+    pub map: AssetRef,
     pub bench: bool,
     pub spawns: &'static [Spawn],
 }
@@ -97,22 +98,15 @@ pub struct Area {
     pub id: Id,
     pub name: String,
     pub size: Size<Tiles>,
-
     pub grid: nav::Grid,
     pub tile_sfx: Vec<Option<SfxId>>,
     pub spawn: Pos<Tiles>,
     pub portals: Vec<Portal>,
-
     pub walkable_nodes: Vec<Pos<Tiles>>,
-
     pub obscuring_rects: Vec<Rect<Tiles>>,
-
     pub groups: Vec<Group>,
-
     pub grouped_cells: HashSet<CellPos>,
-
     pub layers: Vec<RenderLayer>,
-
     pub map: std::sync::Arc<tiled::Map>,
 }
 
@@ -157,18 +151,6 @@ pub fn get(id: Id) -> Option<&'static Area> {
 
 pub fn of(world: &World, entity: Entity) -> Option<&'static Area> {
     get(world.get::<AreaTag>(entity)?.area)
-}
-
-pub fn preview(map_name: &str) -> Area {
-    load::build_area(data::area::SPAWN_ID, map_name, map_name)
-}
-
-pub fn preview_path(path: &std::path::Path) -> Area {
-    let name = path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("preview");
-    load::build_from_map(data::area::SPAWN_ID, name, load::load_map_path(path))
 }
 
 fn cell_overlap(rect: &Rect<Tiles>, c: CellPos) -> f32 {

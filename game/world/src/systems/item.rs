@@ -4,7 +4,7 @@ use bevy_ecs::entity::{Entity, MapEntities};
 use bevy_ecs::message::Message;
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets;
+use crate::core::assets::AssetRef;
 use crate::core::math::{Offset, Pos};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
@@ -179,7 +179,7 @@ pub struct ItemsDropped {
 
 pub struct ItemDef {
     pub display_name: &'static str,
-    pub icon: Icon,
+    pub icon: AssetRef,
     pub sfx: ItemSfx,
     pub stackable: Option<Stackable>,
     pub effects: &'static [Effect],
@@ -236,16 +236,6 @@ pub struct ItemSfx {
 #[derive(Clone, Copy)]
 pub struct Stackable {
     pub max: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Icon(pub &'static str);
-
-impl Icon {
-    pub fn path(self) -> String {
-        assets::find(assets::ICONS, &format!("{}.png", self.0))
-            .unwrap_or_else(|| panic!("unknown icon '{}'", self.0))
-    }
 }
 
 pub struct UseCtx<'a> {

@@ -1,14 +1,15 @@
+use crate::core::assets::AssetRef;
 use crate::core::time::Seconds;
 use crate::data::sfx::Id as SfxId;
 use crate::systems::effect::Effect;
 use crate::systems::equipment::{EquipmentSlot, Requirement};
-use crate::systems::item::{Icon, ItemDef, ItemKind, ItemSfx, Stackable};
+use crate::systems::item::{ItemDef, ItemKind, ItemSfx, Stackable};
 use crate::systems::stat::{Stat, StatKind};
 
 crate::table! {
     HealthPotion: ItemDef {
         display_name: "Health Potion",
-        icon: Icon("red_potion"),
+        icon: AssetRef("icons/potion/red_potion.png"),
         sfx: ItemSfx { on_use: Some(SfxId::Heal01), drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 10 }),
         effects: &[],
@@ -16,7 +17,7 @@ crate::table! {
     },
     GreaterHealthPotion: ItemDef {
         display_name: "Greater Health Potion",
-        icon: Icon("red_potion_3"),
+        icon: AssetRef("icons/potion/red_potion_3.png"),
         sfx: ItemSfx { on_use: Some(SfxId::Heal01), drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 10 }),
         effects: &[Effect::StatModifier(Stat { kind: StatKind::Damage, value: 3.0 })],
@@ -24,7 +25,7 @@ crate::table! {
     },
     BatWing: ItemDef {
         display_name: "Bat Wing",
-        icon: Icon("feather"),
+        icon: AssetRef("icons/monster_part/feather.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 50 }),
         effects: &[Effect::StatModifier(Stat { kind: StatKind::MovementSpeed, value: 0.5 })],
@@ -32,7 +33,7 @@ crate::table! {
     },
     Bone: ItemDef {
         display_name: "Bone",
-        icon: Icon("bone"),
+        icon: AssetRef("icons/monster_part/bone.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 50 }),
         effects: &[],
@@ -40,7 +41,7 @@ crate::table! {
     },
     OrcTusk: ItemDef {
         display_name: "Orc Tusk",
-        icon: Icon("skull"),
+        icon: AssetRef("icons/monster_part/skull.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 50 }),
         effects: &[],
@@ -48,7 +49,7 @@ crate::table! {
     },
     RustySword: ItemDef {
         display_name: "Rusty Sword",
-        icon: Icon("iron_sword"),
+        icon: AssetRef("icons/weapon_and_tool/iron_sword.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
         stackable: None,
         effects: &[Effect::StatModifier(Stat { kind: StatKind::Damage, value: 3.0 })],
@@ -56,7 +57,7 @@ crate::table! {
     },
     BoneShield: ItemDef {
         display_name: "Bone Shield",
-        icon: Icon("wooden_shield"),
+        icon: AssetRef("icons/weapon_and_tool/wooden_shield.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
         stackable: None,
         effects: &[Effect::StatModifier(Stat { kind: StatKind::MaxHealth, value: 5.0 })],
@@ -67,7 +68,7 @@ crate::table! {
     },
     TribalHelmet: ItemDef {
         display_name: "Tribal Helmet",
-        icon: Icon("leather_helmet"),
+        icon: AssetRef("icons/equipment/leather_helmet.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
         stackable: None,
         effects: &[

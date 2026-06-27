@@ -104,9 +104,12 @@ impl bevy_tiled::MapHooks for AreaHooks {
         tileset: &tiled::Tileset,
         _images: &mut bevy::asset::Assets<Image>,
     ) -> Option<Handle<Image>> {
-        let name = tileset.image.as_ref()?.source.file_name()?.to_str()?;
-        let path = world::core::assets::find(world::core::assets::TILESETS, name)?;
-        Some(self.assets.load(path))
+        let source = &tileset.image.as_ref()?.source;
+        let key = crate::core::assets::intern(source)
+            .resolve()?
+            .path()
+            .to_str()?;
+        Some(self.assets.load(key.to_owned()))
     }
 
     fn tile_z(&mut self, layer: usize, x: i32, y: i32) -> Option<f32> {

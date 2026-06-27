@@ -1,21 +1,52 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 
-use bevy::asset::io::memory::{Dir, MemoryAssetReader};
-use bevy::asset::io::{AssetSourceBuilder, ErasedAssetReader};
+use bevy::asset::io::{
+    AssetReader, AssetReaderError, AssetSourceBuilder, ErasedAssetReader, PathStream, Reader,
+    VecReader,
+};
+use world::core::assets::AssetRef;
 
 pub fn embedded_source() -> AssetSourceBuilder {
-    let root = Dir::new(PathBuf::new());
-    fill(&root, world::core::assets::dir());
-    AssetSourceBuilder::new(move || {
-        Box::new(MemoryAssetReader { root: root.clone() }) as Box<dyn ErasedAssetReader>
-    })
+    AssetSourceBuilder::new(|| Box::new(EmbeddedReader) as Box<dyn ErasedAssetReader>)
 }
 
-fn fill(dir: &Dir, embedded: &'static include_dir::Dir<'static>) {
-    for file in embedded.files() {
-        dir.insert_asset(file.path(), file.contents());
+struct EmbeddedReader;
+
+impl AssetReader for EmbeddedReader {
+    async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
+        intern(path)
+            .resolve()
+            .map(|file| VecReader::new(file.contents().to_vec()))
+            .ok_or_else(|| AssetReaderError::NotFound(path.to_path_buf()))
     }
-    for sub in embedded.dirs() {
-        fill(dir, sub);
+
+    async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
+        Err::<VecReader, _>(AssetReaderError::NotFound(path.to_path_buf()))
     }
+
+    async fn read_directory<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> Result<Box<PathStream>, AssetReaderError> {
+        Err(AssetReaderError::NotFound(path.to_path_buf()))
+    }
+
+    async fn is_directory<'a>(&'a self, _path: &'a Path) -> Result<bool, AssetReaderError> {
+        Ok(false)
+    }
+}
+
+pub(crate) fn intern(path: &Path) -> AssetRef {
+    static POOL: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+    let pool = POOL.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = path.to_string_lossy().into_owned();
+    let mut guard = pool.lock().expect("asset path pool");
+    if let Some(&interned) = guard.get(&key) {
+        return AssetRef(interned);
+    }
+    let interned: &'static str = Box::leak(key.clone().into_boxed_str());
+    guard.insert(key, interned);
+    AssetRef(interned)
 }

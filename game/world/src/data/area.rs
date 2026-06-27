@@ -1,3 +1,4 @@
+use crate::core::assets::AssetRef;
 use crate::data::npc::Id as NpcId;
 use crate::systems::area::{AreaDef, Spawn};
 
@@ -8,7 +9,7 @@ use crate::systems::area::{AreaDef, Spawn};
 seq_macro::seq!(N in 1..=256 {
     crate::table! {
         Island: AreaDef {
-            map: "island",
+            map: AssetRef("maps/island.tmx"),
             bench: false,
             spawns: &[
                 Spawn { npc: NpcId::Orc, population: 6 },
@@ -19,7 +20,7 @@ seq_macro::seq!(N in 1..=256 {
             ],
         },
         Forest: AreaDef {
-            map: "forest",
+            map: AssetRef("maps/forest.tmx"),
             bench: false,
             spawns: &[
                 Spawn { npc: NpcId::Orc, population: 8 },
@@ -30,7 +31,7 @@ seq_macro::seq!(N in 1..=256 {
         },
         #(
             BenchArea~N: AreaDef {
-                map: "island",
+                map: AssetRef("maps/island.tmx"),
                 bench: true,
                 spawns: &[],
             },

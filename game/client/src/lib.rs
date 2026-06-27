@@ -68,7 +68,7 @@ fn sfx_catalog() -> core::audio::SfxCatalog {
             .iter()
             .map(|(id, def)| core::audio::SfxSpec {
                 id: id.name().to_owned(),
-                path: def.src.to_owned(),
+                path: def.src.0.to_owned(),
                 volume: def.volume.range(),
                 pitch: def.pitch.range(),
             })

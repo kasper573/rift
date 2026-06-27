@@ -20,7 +20,7 @@ use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::data;
 use crate::systems::Character;
-use crate::systems::actor::{self, Action, Actor, Hitbox, Name, Rgba, set_action};
+use crate::systems::actor::{Action, Actor, Hitbox, Name, Rgba, set_action};
 use crate::systems::area::{self, AreaTag};
 use crate::systems::combat::{AttackTarget, Attackers};
 use crate::systems::effect::{self, Effect, TimedEffects};
@@ -60,7 +60,7 @@ pub struct GameRng(pub Rng);
 
 pub struct NpcDef {
     pub display_name: &'static str,
-    pub model: &'static str,
+    pub model: data::model::Id,
     pub tint: Rgba,
     pub ai: &'static dyn Ai,
     pub stats: Stats,
@@ -104,7 +104,6 @@ pub fn spawn(
 }
 
 fn character(def: &NpcDef, at: Pos<Tiles>, area: area::Id) -> Character {
-    let model = actor::model_id(def.model);
     Character {
         replicated: Replicated,
         position: Position { pos: at },
@@ -115,11 +114,11 @@ fn character(def: &NpcDef, at: Pos<Tiles>, area: area::Id) -> Character {
             color: def.tint,
             dir: Direction::S,
             action: Action::Idle,
-            model,
+            model: def.model,
             attack_rate: PlaybackRate(def.stats.get(StatKind::AttackSpeed)),
         },
         hitbox: Hitbox {
-            size: model.get().hitbox(),
+            size: def.model.get().hitbox(),
         },
         area: AreaTag { area },
     }

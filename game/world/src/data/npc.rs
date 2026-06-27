@@ -1,5 +1,6 @@
 use crate::core::tiling::Tiles;
 use crate::data::item::Id as ItemId;
+use crate::data::model::Id as ModelId;
 use crate::systems::actor::Rgba;
 use crate::systems::npc::{Aggressive, Defensive, NpcDef, Pacifist, Protective};
 use crate::systems::rewards::Reward;
@@ -8,7 +9,7 @@ use crate::systems::stat::{StatKind, Stats};
 crate::table! {
     Orc: NpcDef {
         display_name: "Orc",
-        model: "orc",
+        model: ModelId::Orc,
         tint: Rgba(0xffffffff),
         ai: &Defensive,
         stats: Stats(vec![
@@ -29,7 +30,7 @@ crate::table! {
     },
     OrcChief: NpcDef {
         display_name: "Orc Chief",
-        model: "orc",
+        model: ModelId::Orc,
         tint: Rgba(0xffb070ff),
         ai: &Protective,
         stats: Stats(vec![
@@ -51,7 +52,7 @@ crate::table! {
     },
     Skeleton: NpcDef {
         display_name: "Skeleton",
-        model: "skeleton",
+        model: ModelId::Skeleton,
         tint: Rgba(0xffffffff),
         ai: &Aggressive,
         stats: Stats(vec![
@@ -73,7 +74,7 @@ crate::table! {
     },
     Bat: NpcDef {
         display_name: "Bat",
-        model: "bat",
+        model: ModelId::Bat,
         tint: Rgba(0xffffffff),
         ai: &Pacifist,
         stats: Stats(vec![
@@ -93,7 +94,7 @@ crate::table! {
     },
     VampireBat: NpcDef {
         display_name: "Vampire Bat",
-        model: "bat",
+        model: ModelId::Bat,
         tint: Rgba(0xff7788ff),
         ai: &Aggressive,
         stats: Stats(vec![

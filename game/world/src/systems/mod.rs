@@ -62,17 +62,22 @@ pub struct Character {
 }
 
 pub fn validate() {
-    actor::models();
     sfx::validate();
     for (&id, def) in crate::data::area::TABLE.iter() {
         if !def.bench {
             area::area(id);
         }
     }
-    for item in crate::data::item::TABLE.values() {
-        item.icon.path();
+    for (id, item) in crate::data::item::TABLE.iter() {
+        assert!(
+            item.icon.resolve().is_some(),
+            "item {id:?} icon '{}' not found",
+            item.icon.0
+        );
     }
-    let _ = crate::data::npc::TABLE.len() + crate::data::job::TABLE.len();
+    let _ = crate::data::model::TABLE.len()
+        + crate::data::npc::TABLE.len()
+        + crate::data::job::TABLE.len();
 }
 
 pub fn server_app(area: area::Id) -> App {
