@@ -13,7 +13,7 @@ const MIN_WINDOW: Vec2 = Vec2::new(100.0, 100.0);
 
 /// A draggable, resizable window: a title bar (title + close), a scrolling content area, and a resize
 /// grip. Closing runs `on_close`; settling after a drag or resize runs `on_settle`.
-pub struct Window {
+pub struct WindowOptions {
     pub pos: Vec2,
     pub size: Vec2,
     pub title: String,
@@ -22,7 +22,7 @@ pub struct Window {
     pub content: Box<dyn Scene>,
 }
 
-pub fn window(opts: Window) -> impl Scene {
+pub fn window(opts: WindowOptions) -> impl Scene {
     let family = theme().surface_floating;
     let node = Node {
         position_type: PositionType::Absolute,

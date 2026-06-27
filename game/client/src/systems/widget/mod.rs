@@ -246,7 +246,7 @@ fn window_scene(window: Window, settings: &Settings) -> impl Scene {
     let def = window.def();
     let (pos, size) = window_geom(settings, window.0, Vec2::new(376.0, 332.0), WINDOW_SIZE);
     bsn! {
-        {ui::window(ui::Window {
+        {ui::window(ui::WindowOptions {
             pos,
             size,
             title: def.title.to_owned(),

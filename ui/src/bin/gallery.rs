@@ -723,7 +723,7 @@ fn window_scene() -> Box<dyn Scene> {
                 position_type: PositionType::Relative,
             }
             Children [
-                {EntityScene(window(ui::Window {
+                {EntityScene(window(ui::WindowOptions {
                     pos: Vec2::ZERO,
                     size: Vec2::new(340.0, 260.0),
                     title: "Inventory".into(),

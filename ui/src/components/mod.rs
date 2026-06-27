@@ -43,4 +43,4 @@ pub use tabs::{tabs, tabs_content, tabs_list, tabs_trigger};
 pub use text::{text, text_colored};
 pub use tooltip::{tooltip, tooltip_content};
 pub use widget::{Widget, widget};
-pub use window::{Window, window};
+pub use window::{WindowOptions, window};
