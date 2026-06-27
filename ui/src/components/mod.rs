@@ -27,7 +27,7 @@ pub use accordion::{
 pub use alert_dialog::{alert_dialog, alert_dialog_action, alert_dialog_cancel};
 pub use avatar::{avatar, avatar_fallback, avatar_image};
 pub use button::{ButtonIntent, ButtonSize, button, button_styled};
-pub use card::{CardIntent, CardOpts, card};
+pub use card::{CardIntent, CardOptions, card};
 pub use checkbox::{Check, checkbox, checkbox_indicator};
 pub use collapsible::{collapsible, collapsible_body, collapsible_content, collapsible_trigger};
 pub use dialog::{dialog, dialog_close};
@@ -42,5 +42,5 @@ pub use switch::{switch, switch_thumb};
 pub use tabs::{tabs, tabs_content, tabs_list, tabs_trigger};
 pub use text::{text, text_colored};
 pub use tooltip::{tooltip, tooltip_content};
-pub use widget::{Widget, widget};
+pub use widget::{WidgetOptions, widget};
 pub use window::{WindowOptions, window};

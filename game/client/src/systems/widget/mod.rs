@@ -230,7 +230,7 @@ fn launcher(
     let def = window.def();
     let pos = widget_pos(settings, window.0, launcher_pos(window, screen_w));
     bsn! {
-        {widget(ui::Widget {
+        {widget(ui::WidgetOptions {
             pos,
             icon: assets.load(def.icon.to_owned()),
             badge: def.keybind.to_owned(),

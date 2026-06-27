@@ -51,14 +51,14 @@ pub mod intent {
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct CardOpts {
+pub struct CardOptions {
     pub intent: CardIntent,
     pub floating: bool,
     pub interactive: bool,
     pub compact: bool,
 }
 
-pub fn card(opts: CardOpts) -> impl Scene {
+pub fn card(opts: CardOptions) -> impl Scene {
     let (floating, interactive) = (opts.floating, opts.interactive);
     let style = card_style(opts.intent, floating, interactive, opts.compact).op(move |entity| {
         let hovered =

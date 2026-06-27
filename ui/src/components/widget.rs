@@ -12,7 +12,7 @@ const WIDGET: f32 = 48.0;
 
 /// A draggable widget: an icon with a corner badge and a hover tooltip. A tap (press without a drag)
 /// runs `on_tap`; settling after a drag runs `on_settle`.
-pub struct Widget {
+pub struct WidgetOptions {
     pub pos: Vec2,
     pub icon: Handle<Image>,
     pub badge: String,
@@ -21,7 +21,7 @@ pub struct Widget {
     pub on_settle: OnSettle,
 }
 
-pub fn widget(opts: Widget) -> impl Scene {
+pub fn widget(opts: WidgetOptions) -> impl Scene {
     let family = theme().surface_floating;
     let node = Node {
         position_type: PositionType::Absolute,

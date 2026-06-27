@@ -6,8 +6,8 @@ use ui::button::intent as button_intent;
 use ui::card::intent as card_intent;
 use ui::theme::theme;
 use ui::{
-    Align, ButtonIntent, ButtonSize, CardOpts, Check, OnSettle, OnTap, Orientation, Side,
-    SonnerPosition, Widget, accordion, accordion_body, accordion_content, accordion_header,
+    Align, ButtonIntent, ButtonSize, CardOptions, Check, OnSettle, OnTap, Orientation, Side,
+    SonnerPosition, WidgetOptions, accordion, accordion_body, accordion_content, accordion_header,
     accordion_item, accordion_trigger, alert_dialog, alert_dialog_action, alert_dialog_cancel,
     avatar, avatar_fallback, button, button_styled, card, checkbox, checkbox_indicator,
     collapsible, collapsible_content, collapsible_trigger, dialog, dialog_close, popover,
@@ -496,18 +496,18 @@ fn alert_dialog_scene() -> Box<dyn Scene> {
 }
 
 fn card_scene() -> Box<dyn Scene> {
-    let variants: [(&str, &str, Color, CardOpts); 8] = [
+    let variants: [(&str, &str, Color, CardOptions); 8] = [
         (
             "Surface",
             "Default, bordered",
             theme().surface_elevated.on,
-            CardOpts::default(),
+            CardOptions::default(),
         ),
         (
             "Floating",
             "Elevation shadow",
             theme().surface_elevated.on,
-            CardOpts {
+            CardOptions {
                 floating: true,
                 ..default()
             },
@@ -516,7 +516,7 @@ fn card_scene() -> Box<dyn Scene> {
             "Compact",
             "Tighter padding",
             theme().surface_elevated.on,
-            CardOpts {
+            CardOptions {
                 compact: true,
                 ..default()
             },
@@ -525,7 +525,7 @@ fn card_scene() -> Box<dyn Scene> {
             "Interactive",
             "Hover & press me",
             theme().surface_elevated.on,
-            CardOpts {
+            CardOptions {
                 interactive: true,
                 ..default()
             },
@@ -534,7 +534,7 @@ fn card_scene() -> Box<dyn Scene> {
             "Floating + interactive",
             "Lifts higher on hover",
             theme().surface_elevated.on,
-            CardOpts {
+            CardOptions {
                 floating: true,
                 interactive: true,
                 ..default()
@@ -544,7 +544,7 @@ fn card_scene() -> Box<dyn Scene> {
             "Success",
             "Intent color",
             theme().success_soft.on,
-            CardOpts {
+            CardOptions {
                 intent: card_intent::SUCCESS,
                 ..default()
             },
@@ -553,7 +553,7 @@ fn card_scene() -> Box<dyn Scene> {
             "Error",
             "Intent color",
             theme().error_soft.on,
-            CardOpts {
+            CardOptions {
                 intent: card_intent::ERROR,
                 ..default()
             },
@@ -562,7 +562,7 @@ fn card_scene() -> Box<dyn Scene> {
             "Info",
             "Intent color",
             theme().info_soft.on,
-            CardOpts {
+            CardOptions {
                 intent: card_intent::INFO,
                 ..default()
             },
@@ -644,7 +644,7 @@ fn dimensions_panel() -> Box<dyn Scene> {
 
 fn in_card(panel: Box<dyn Scene>) -> Box<dyn Scene> {
     boxed(bsn! {
-        {card(CardOpts { floating: true, ..default() })}
+        {card(CardOptions { floating: true, ..default() })}
         Children [ {EntityScene(panel)} ]
     })
 }
@@ -692,7 +692,7 @@ fn widget_scene() -> Box<dyn Scene> {
                 position_type: PositionType::Relative,
             }
             Children [
-                {EntityScene(widget(Widget {
+                {EntityScene(widget(WidgetOptions {
                     pos: Vec2::new(56.0, 36.0),
                     icon: Handle::default(),
                     badge: "I".into(),
