@@ -1,12 +1,10 @@
-//! The in-game HUD: a row of draggable launcher widgets that each open a draggable, titled [`Window`]
-//! (inventory, equipment, stats, settings), their layout persisted to [`settings`], plus the [`fps`]
-//! readout and the always-on character readout and active-effects row. Each window registers its
-//! [`WindowDef`] from its own module; this module iterates the registrations rather than naming any.
+//! The in-game HUD: always-on docked widgets ([`WidgetDef`]) and toggleable windows ([`WindowDef`],
+//! each a draggable launcher that opens a draggable, titled window), with their layout persisted. Each
+//! widget and window registers itself from its own module; this module only iterates the registrations.
 
 pub mod character;
 pub mod effects;
 pub mod equipment;
-pub mod fps;
 pub mod inventory;
 pub mod settings;
 pub mod stats;
@@ -14,12 +12,8 @@ pub mod stats;
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use ui::{DragHandle, DragRoot, Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
-
-use crate::systems::widget::character::CharacterText;
-use crate::systems::widget::effects::EffectsGrid;
-use crate::systems::widget::settings::{Placement, ScreenPx, ScreenVec, UserSettings};
 use ui::component;
+use ui::{Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
 const WIDGET: ScreenPx = ScreenPx(48.0);
 const WINDOW_SIZE: Vec2 = Vec2::new(400.0, 200.0);
@@ -44,8 +38,7 @@ impl Plugin for HudPlugin {
                 (
                     toggle_keys,
                     rebuild_windows,
-                    character::sync_character,
-                    effects::sync_effects,
+                    sync_widgets,
                     sync_windows,
                     sync_snap_grid,
                 )
@@ -53,6 +46,17 @@ impl Plugin for HudPlugin {
             );
     }
 }
+
+/// An always-on docked widget: its default position, how to build its scene at a resolved position,
+/// and how to reconcile it each frame.
+pub struct WidgetDef {
+    pub id: &'static str,
+    pub fallback: Vec2,
+    pub build: fn(Vec2, &'static str) -> Box<dyn Scene>,
+    pub sync: fn(&mut World),
+}
+
+::inventory::collect!(WidgetDef);
 
 /// A HUD window, identified by the stable id its [`WindowDef`] registers under (also its persisted
 /// placement key).
@@ -107,6 +111,138 @@ impl Default for Settings {
     }
 }
 
+impl Settings {
+    fn snapping_enabled(&self) -> bool {
+        self.0.snapping_enabled()
+    }
+
+    fn toggle_snapping(&mut self) {
+        self.0.toggle_snapping();
+        self.0.save();
+    }
+}
+
+const KEY: &str = "rift.user_settings";
+const DEFAULT_SNAP: ScreenPx = ScreenPx(16.0);
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+struct ScreenPx(f32);
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
+struct ScreenVec {
+    x: ScreenPx,
+    y: ScreenPx,
+}
+
+impl ScreenVec {
+    fn to_vec2(self) -> Vec2 {
+        Vec2::new(self.x.0, self.y.0)
+    }
+
+    fn from_vec2(v: Vec2) -> ScreenVec {
+        ScreenVec {
+            x: ScreenPx(v.x),
+            y: ScreenPx(v.y),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
+struct Placement {
+    pos: ScreenVec,
+    size: ScreenVec,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct UserSettings {
+    #[serde(default)]
+    ui: UiSettings,
+}
+
+#[derive(Serialize, Deserialize)]
+struct UiSettings {
+    #[serde(default = "default_snap")]
+    snap: ScreenPx,
+    #[serde(default)]
+    widgets: Vec<(String, ScreenVec)>,
+    #[serde(default)]
+    windows: Vec<(String, Placement)>,
+}
+
+impl UserSettings {
+    fn load() -> UserSettings {
+        crate::core::platform::load(KEY)
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default()
+    }
+
+    fn save(&self) {
+        if let Ok(json) = serde_json::to_string_pretty(self) {
+            crate::core::platform::save(KEY, &json);
+        }
+    }
+
+    fn snap_grid(&self) -> f32 {
+        self.ui.snap.0
+    }
+
+    fn widget_pos(&self, id: &str) -> Option<ScreenVec> {
+        self.ui
+            .widgets
+            .iter()
+            .find(|(key, _)| key == id)
+            .map(|(_, pos)| *pos)
+    }
+
+    fn set_widget_pos(&mut self, id: &str, pos: ScreenVec) {
+        match self.ui.widgets.iter_mut().find(|(key, _)| key == id) {
+            Some(entry) => entry.1 = pos,
+            None => self.ui.widgets.push((id.to_owned(), pos)),
+        }
+    }
+
+    fn window_placement(&self, id: &str) -> Option<Placement> {
+        self.ui
+            .windows
+            .iter()
+            .find(|(key, _)| key == id)
+            .map(|(_, placement)| *placement)
+    }
+
+    fn set_window_placement(&mut self, id: &str, placement: Placement) {
+        match self.ui.windows.iter_mut().find(|(key, _)| key == id) {
+            Some(entry) => entry.1 = placement,
+            None => self.ui.windows.push((id.to_owned(), placement)),
+        }
+    }
+
+    fn snapping_enabled(&self) -> bool {
+        self.ui.snap.0 > 0.0
+    }
+
+    fn toggle_snapping(&mut self) {
+        self.ui.snap = if self.ui.snap.0 > 0.0 {
+            ScreenPx(0.0)
+        } else {
+            DEFAULT_SNAP
+        };
+    }
+}
+
+impl Default for UiSettings {
+    fn default() -> UiSettings {
+        UiSettings {
+            snap: default_snap(),
+            widgets: Vec::new(),
+            windows: Vec::new(),
+        }
+    }
+}
+
+fn default_snap() -> ScreenPx {
+    DEFAULT_SNAP
+}
+
 #[derive(Resource, Default)]
 struct Open(std::collections::HashSet<Window>);
 
@@ -126,12 +262,13 @@ fn spawn_hud(
     screen: Single<&bevy::window::Window>,
 ) {
     let screen_w = screen.resolution.width();
-    let mut widgets: Vec<Box<dyn Scene>> = vec![
-        Box::new(character_widget(&settings)),
-        Box::new(effects_widget(&settings)),
-    ];
+    let mut scenes: Vec<Box<dyn Scene>> = Vec::new();
+    for def in ::inventory::iter::<WidgetDef>() {
+        let pos = widget_pos(&settings, def.id, def.fallback);
+        scenes.push((def.build)(pos, def.id));
+    }
     for def in ::inventory::iter::<WindowDef>() {
-        widgets.push(Box::new(launcher(
+        scenes.push(Box::new(launcher(
             Window(def.id),
             screen_w,
             &settings,
@@ -142,7 +279,7 @@ fn spawn_hud(
         Hud
         Node { width: Val::Percent(100.0), height: Val::Percent(100.0) }
         Pickable { should_block_lower: false, is_hoverable: false }
-        Children [ {widgets} ]
+        Children [ {scenes} ]
     });
 }
 
@@ -175,49 +312,9 @@ fn rebuild_windows(
     }
 }
 
-fn character_widget(settings: &Settings) -> impl Scene {
-    let pos = widget_pos(settings, "character", Vec2::new(8.0, 8.0));
-    let node = Node {
-        position_type: PositionType::Absolute,
-        left: Val::Px(pos.x),
-        top: Val::Px(pos.y),
-        width: Val::Px(140.0),
-        height: Val::Px(64.0),
-        border: UiRect::all(Val::Px(1.0)),
-        padding: UiRect::all(Val::Px(6.0)),
-        ..default()
-    };
-    bsn! {
-        template_value(node)
-        BackgroundColor({PANEL_BG})
-        component(BorderColor::all(BORDER))
-        DragRoot
-        DragHandle
-        component(OnSettle::new(move |world, geom| persist_widget(world, "character", geom)))
-        Children [ ( {text_colored(String::new(), Color::WHITE)} CharacterText ) ]
-    }
-}
-
-/// Always-on row of active-effect icons (those whose effect declares a widget). `sync_effects`
-/// reconciles its children; it is empty until the player has a visible effect.
-fn effects_widget(settings: &Settings) -> impl Scene {
-    let pos = widget_pos(settings, "effects", Vec2::new(8.0, 80.0));
-    let node = Node {
-        position_type: PositionType::Absolute,
-        left: Val::Px(pos.x),
-        top: Val::Px(pos.y),
-        min_width: Val::Px(WIDGET.0),
-        min_height: Val::Px(WIDGET.0 / 2.0),
-        padding: UiRect::all(Val::Px(2.0)),
-        ..default()
-    };
-    bsn! {
-        template_value(node)
-        BackgroundColor({PANEL_BG})
-        DragRoot
-        DragHandle
-        EffectsGrid
-        component(OnSettle::new(move |world, geom| persist_widget(world, "effects", geom)))
+fn sync_widgets(world: &mut World) {
+    for def in ::inventory::iter::<WidgetDef>() {
+        (def.sync)(world);
     }
 }
 

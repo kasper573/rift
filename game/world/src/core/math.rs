@@ -1,5 +1,3 @@
-//! Euclid geometry with unit tags to prevent type confusion.
-
 use std::f32::consts::FRAC_1_SQRT_2;
 
 use serde::{Deserialize, Serialize};

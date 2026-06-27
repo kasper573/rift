@@ -1,5 +1,3 @@
-//! Assertive loading: malformed content or dangling references panic immediately.
-
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 

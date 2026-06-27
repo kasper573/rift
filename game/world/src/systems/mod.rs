@@ -1,8 +1,6 @@
-//! The game itself: every gameplay feature ([`actor`], [`movement`], [`combat`], [`npc`], [`player`],
-//! [`items`], [`rewards`], [`spectate`], [`area`], [`visibility`], plus [`account`] identity and the
-//! [`sfx`] catalog), each owning its replicated components, client⇄server messages, content, and the
-//! systems that drive it. This module also composes them into the headless [`server_app`]. Built on
-//! the game-agnostic [`crate::core`] substrate.
+//! The game itself: every gameplay feature owns its replicated components, client⇄server messages,
+//! content, and driving systems, composed into the headless [`server_app`]. Built on the
+//! game-agnostic [`crate::core`] substrate.
 
 pub mod account;
 pub mod actor;

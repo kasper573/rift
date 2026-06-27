@@ -1,12 +1,3 @@
-//! Effects: the source-code-driven effect "table". Each effect is one struct per file here
-//! implementing the [`Effect`] trait, submitted to an inventory from its own module — there is no
-//! `effect_table.json` because effects are code. Assets never embed an effect, only an
-//! [`EffectCommand`] (an effect's struct-name id plus its parameters), validated against the chosen
-//! effect when the table loads. An effect just `compute`s an immutable
-//! [`StatSet`](crate::systems::stat::StatSet); the stats system sums it. Effects are condition-free;
-//! each *condition* (equipped, carried, level, timed, an npc's chase) is a [`Source`] its own feature
-//! registers, so the effect module names none of them.
-
 mod chasing;
 mod stat_modifier;
 
@@ -26,13 +17,9 @@ inventory::collect!(&'static dyn Effect);
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
     app.replicate::<TimedEffects>().init_resource::<Sources>();
-    // Timed effects live here, so their source does too; every other source is registered by the
-    // feature that owns its condition (gear, carrying, level, an npc's chase).
     source(app, timed);
 }
 
-/// The actors an effect is computed against — read access only, so it returns a predictable set of
-/// stats and the stats system stays the one that applies them. For a self-buff `source == target`.
 #[derive(Clone, Copy)]
 pub struct EffectContext<'a> {
     pub world: &'a World,
@@ -40,8 +27,6 @@ pub struct EffectContext<'a> {
     pub target: Entity,
 }
 
-/// An effect's id: the name its file reports, which every binary that links the same effects agrees
-/// on (so it is stable on the wire without a sorted registry).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EffectId(&'static str);
 
@@ -58,8 +43,6 @@ impl<'de> Deserialize<'de> for EffectId {
     }
 }
 
-/// An effect chosen by id plus its parameters. Args are kept already-encoded, so a command is one
-/// uniform, replicable value no matter which effect it names.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct EffectCommand {
     effect: EffectId,
@@ -81,8 +64,6 @@ impl EffectCommand {
     }
 }
 
-/// Builds a command for a known effect, for systems that raise effects in code (an npc's chase)
-/// rather than from a table.
 pub fn command(effect: &impl Effect, args: &impl Serialize) -> EffectCommand {
     EffectCommand {
         effect: effect_id(effect.name()).expect("a registered effect"),
@@ -90,9 +71,6 @@ pub fn command(effect: &impl Effect, args: &impl Serialize) -> EffectCommand {
     }
 }
 
-/// Table-field reader: turns `[{ "StatModifier": { "stat": "Damage", "amount": 3 } }]` into validated
-/// commands — the single key is the effect, the value its args — panicking through the loader if an
-/// effect is unknown or its args don't fit it.
 pub fn commands<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<EffectCommand>, D::Error> {
@@ -118,23 +96,16 @@ pub fn commands<'de, D: Deserializer<'de>>(
         .collect()
 }
 
-/// The interface every effect file implements. Args ride as json at table load and postcard bytes at
-/// runtime; an effect validates+stores them with [`encode_args`] and reads them back with [`decode`].
-/// It only reads `ctx`; applying the stats is the stats system's job.
 pub trait Effect: Send + Sync {
     fn name(&self) -> &str;
     fn icon(&self) -> Option<&str>;
     fn encode(&self, args: serde_json::Value) -> Result<Vec<u8>, String>;
     fn compute(&self, ctx: &EffectContext, args: &[u8]) -> StatSet;
-    /// Tooltip text; the default reads the computed stat delta, which suits any plain modifier. An
-    /// effect with a richer story overrides it.
     fn describe(&self, ctx: &EffectContext, args: &[u8]) -> String {
         self.compute(ctx, args).describe()
     }
 }
 
-/// Timed effect instances on an actor, each lasting until its deadline. Any system can add to this;
-/// [`expire`] prunes finished ones. Replicated so the client can show a player's active effects.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct TimedEffects(pub Vec<TimedEffect>);
 
@@ -144,9 +115,6 @@ pub struct TimedEffect {
     pub until: Seconds,
 }
 
-/// A feature's contributor of an actor's active effect commands — equipped gear, a level, an npc's
-/// chase, a timed buff. Each feature registers its own via [`source`]; the effect module knows none
-/// of them specifically, so a new condition is a new source in its own feature, not a patch here.
 pub type Source = fn(&World, Entity) -> Vec<EffectCommand>;
 
 #[derive(Resource, Default)]

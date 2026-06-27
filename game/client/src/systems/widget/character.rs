@@ -1,15 +1,48 @@
-//! The character panel readout: the local player's name, health, and xp.
+//! The character readout widget: the local player's name, health, and xp.
 
 use bevy::prelude::*;
+use ui::component;
+use ui::{DragHandle, DragRoot, OnSettle, text_colored};
 use world::systems::actor::Name;
 use world::systems::player::Xp;
 use world::systems::player::session;
 use world::systems::stat;
 
 #[derive(Component, Default, Clone)]
-pub(super) struct CharacterText;
+struct CharacterText;
 
-pub(super) fn sync_character(world: &mut World) {
+inventory::submit! {
+    super::WidgetDef {
+        id: "character",
+        fallback: Vec2::new(8.0, 8.0),
+        build,
+        sync: sync_character,
+    }
+}
+
+fn build(pos: Vec2, id: &'static str) -> Box<dyn Scene> {
+    let node = Node {
+        position_type: PositionType::Absolute,
+        left: Val::Px(pos.x),
+        top: Val::Px(pos.y),
+        width: Val::Px(140.0),
+        height: Val::Px(64.0),
+        border: UiRect::all(Val::Px(1.0)),
+        padding: UiRect::all(Val::Px(6.0)),
+        ..default()
+    };
+    Box::new(bsn! {
+        template_value(node)
+        BackgroundColor({super::PANEL_BG})
+        component(BorderColor::all(super::BORDER))
+        DragRoot
+        DragHandle
+        component(OnSettle::new(move |world, geom| super::persist_widget(world, id, geom)))
+        Children [ ( {text_colored(String::new(), Color::WHITE)} CharacterText ) ]
+    })
+}
+
+fn sync_character(world: &mut World) {
     let text = character_text(world);
     let mut query = world.query_filtered::<&mut Text, With<CharacterText>>();
     for mut node in query.iter_mut(world) {

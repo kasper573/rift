@@ -1,5 +1,3 @@
-//! Temporal units and rates.
-
 use serde::{Deserialize, Serialize};
 
 #[derive(

@@ -9,8 +9,6 @@ pub mod systems;
 
 pub use systems::scene::Scene;
 
-/// Builds and runs the Bevy app: reads the boot params from the platform, builds the session from the
-/// access token, and starts the app. The platform's entry point calls this.
 pub fn boot() {
     let params = core::platform::read_start_params();
     let session = params
@@ -58,14 +56,12 @@ pub fn boot() {
             systems::debug::DebugPlugin,
             systems::testing::TestingPlugin,
             systems::widget::HudPlugin,
-            systems::widget::fps::FpsPlugin,
+            systems::fps::FpsPlugin,
         ));
     ui::theme::set_theme(ui::themes::dark::THEME);
     app.run();
 }
 
-/// Builds the core audio mixer's sound catalogue from `world`'s sfx table — the one place the client
-/// bridges game content into the game-agnostic mixer.
 fn sfx_catalog() -> core::audio::SfxCatalog {
     core::audio::SfxCatalog(
         world::systems::sfx::sfx_table()
@@ -80,8 +76,6 @@ fn sfx_catalog() -> core::audio::SfxCatalog {
     )
 }
 
-/// Decodes the player's roles from the access token's JWT claims — client-side and presentation-only
-/// (it just decides whether to offer the spectate choice); the server remains the source of truth.
 fn roles(access_token: &str) -> Vec<Role> {
     let Some(payload) = access_token.split('.').nth(1) else {
         return Vec::new();

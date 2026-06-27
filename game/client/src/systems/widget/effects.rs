@@ -6,7 +6,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
-use ui::{Align, Side, tooltip, tooltip_content};
+use ui::{Align, DragHandle, DragRoot, OnSettle, Side, tooltip, tooltip_content};
 use world::systems::effect::{EffectContext, active_effects};
 use world::systems::player::session;
 
@@ -14,7 +14,36 @@ use super::{reconcile_children, slot_node, tooltip_label};
 use ui::component;
 
 #[derive(Component, Default, Clone)]
-pub(super) struct EffectsGrid;
+struct EffectsGrid;
+
+inventory::submit! {
+    super::WidgetDef {
+        id: "effects",
+        fallback: Vec2::new(8.0, 80.0),
+        build,
+        sync: sync_effects,
+    }
+}
+
+fn build(pos: Vec2, id: &'static str) -> Box<dyn Scene> {
+    let node = Node {
+        position_type: PositionType::Absolute,
+        left: Val::Px(pos.x),
+        top: Val::Px(pos.y),
+        min_width: Val::Px(super::WIDGET.0),
+        min_height: Val::Px(super::WIDGET.0 / 2.0),
+        padding: UiRect::all(Val::Px(2.0)),
+        ..default()
+    };
+    Box::new(bsn! {
+        template_value(node)
+        BackgroundColor({super::PANEL_BG})
+        DragRoot
+        DragHandle
+        EffectsGrid
+        component(OnSettle::new(move |world, geom| super::persist_widget(world, id, geom)))
+    })
+}
 
 struct IconData {
     icon: Handle<Image>,
@@ -22,7 +51,7 @@ struct IconData {
     key: u64,
 }
 
-pub(super) fn sync_effects(world: &mut World) {
+fn sync_effects(world: &mut World) {
     let icons = effect_icons(world);
     let mut grids = world.query_filtered::<Entity, With<EffectsGrid>>();
     let Some(grid) = grids.iter(world).next() else {

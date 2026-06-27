@@ -8,13 +8,8 @@ pub const TILESETS: &str = "tilesets";
 pub const ACTORS: &str = "actors";
 pub const ICONS: &str = "icons";
 
-/// The game content, baked into the binary at build time. Embedding (rather than reading a runtime
-/// directory) is what lets the same `world` library back both the native server and the wasm client,
-/// which has no filesystem — and removes every asset-path env var. The client also serves this same
-/// embed to Bevy's `AssetServer` (see `client::assets`), so media is loaded from one source.
 static ASSETS: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/../../assets");
 
-/// The embedded asset tree, for backends that read it directly (e.g. the client's Bevy asset source).
 pub fn dir() -> &'static Dir<'static> {
     &ASSETS
 }
@@ -48,8 +43,6 @@ pub fn find(dir: &str, reference: &str) -> Option<String> {
     list(dir).into_iter().find(|name| file_name(name) == wanted)
 }
 
-/// A reader for the `tiled` crate. tiled hands back map-relative paths (e.g. `maps/../tilesets/x.tsx`)
-/// that the OS would resolve on open; the embed has no such resolution, so we normalize `.`/`..` first.
 pub fn tiled_reader(path: &Path) -> std::io::Result<Cursor<&'static [u8]>> {
     let key = normalize(path);
     ASSETS

@@ -1,6 +1,5 @@
-//! Areas: the runtime map an [`Area`] exposes — render layers, depth groups, nav grid, portals, and
-//! tile sound — the [`AreaDef`] table, and the [`AreaTag`] marking which area an entity is in. Map
-//! construction from Tiled lives in [`load`]; the cross-area player handoff in [`transition`].
+//! Areas: the runtime map an [`Area`] exposes, its [`AreaDef`] table, and the [`AreaTag`] marking
+//! which area an entity is in.
 
 pub mod load;
 pub mod transition;
