@@ -34,10 +34,12 @@ edition = "2024"
 [workspace.dependencies]
 askama = "0.14"
 axum-prometheus = "0.10"
-# Zero-cost static dispatch over a closed set of trait impls — the variant-set enums across the game crates.
-enum_dispatch = "0.3"
-# Derives iteration over a variant set's enum so its registry needs no hand-maintained list.
-strum = { version = "0.27", features = ["derive"] }
+# Decentralized registries: each variant submits itself from its own module and the owning system
+# iterates the submissions, so no central enum lists them.
+inventory = "0.3"
+# Serde tag dispatch for trait objects, on top of inventory: each impl registers itself by its `type`
+# name, so a `Box<dyn Trait>` deserializes straight into the right kind with no hand-written glue.
+typetag = "0.2"
 # Cross-platform termination handling (SIGTERM/SIGHUP on Unix, console + shutdown events on Windows).
 ctrlc = { version = "3", features = ["termination"] }
 # Continuous profiling agent that samples the process with pprof-rs and pushes to Pyroscope. Default

@@ -1,9 +1,61 @@
-use bevy::math::Vec2;
+use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use ui::button::intent as button_intent;
+use ui::{Activate, ButtonSize, button_styled};
 
-use crate::systems::widget::Panel;
+use super::{Settings, WindowDef};
 
 const KEY: &str = "rift.user_settings";
+
+#[derive(Component, Default, Clone)]
+struct SnappingButton;
+
+inventory::submit! {
+    WindowDef {
+        id: "Settings",
+        title: "Settings",
+        toggle: KeyCode::KeyO,
+        keybind: "O",
+        icon: "icons/misc/gear.png",
+        order: 3,
+        content,
+        sync: sync_snapping,
+    }
+}
+
+fn content() -> Box<dyn Scene> {
+    Box::new(bsn! {
+        {button_styled(button_intent::PRIMARY, ButtonSize::Md, "ui snapping disabled")}
+        SnappingButton
+        on(|_: On<Activate>, mut commands: Commands| {
+            commands.queue(toggle_snapping);
+        })
+    })
+}
+
+fn sync_snapping(world: &mut World) {
+    let label = if world.resource::<Settings>().0.snapping_enabled() {
+        "ui snapping enabled"
+    } else {
+        "ui snapping disabled"
+    };
+    let texts: Vec<Entity> = world
+        .query_filtered::<&Children, With<SnappingButton>>()
+        .iter(world)
+        .flat_map(|children| children.iter())
+        .collect();
+    for entity in texts {
+        if let Some(mut text) = world.get_mut::<Text>(entity) {
+            text.0 = label.to_owned();
+        }
+    }
+}
+
+fn toggle_snapping(world: &mut World) {
+    let mut settings = world.resource_mut::<Settings>();
+    settings.0.toggle_snapping();
+    settings.0.save();
+}
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct ScreenPx(pub f32);
@@ -46,14 +98,19 @@ pub struct UserSettings {
 pub struct UiSettings {
     #[serde(default = "default_snap")]
     pub snap: ScreenPx,
+    /// Each docked widget's saved position, by id ("character", "effects", or a window's id for its
+    /// launcher).
     #[serde(default)]
-    pub placements: Vec<(Panel, Placement)>,
+    pub widgets: Vec<(String, ScreenVec)>,
+    /// Each open window's saved position and size, by the window's id.
+    #[serde(default)]
+    pub windows: Vec<(String, Placement)>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct Placement {
     pub pos: ScreenVec,
-    pub size: Option<ScreenVec>,
+    pub size: ScreenVec,
 }
 
 impl UserSettings {
@@ -73,18 +130,33 @@ impl UserSettings {
         self.ui.snap.0
     }
 
-    pub fn placement(&self, panel: Panel) -> Option<Placement> {
+    pub fn widget_pos(&self, id: &str) -> Option<ScreenVec> {
         self.ui
-            .placements
+            .widgets
             .iter()
-            .find(|(key, _)| *key == panel)
+            .find(|(key, _)| key == id)
+            .map(|(_, pos)| *pos)
+    }
+
+    pub fn set_widget_pos(&mut self, id: &str, pos: ScreenVec) {
+        match self.ui.widgets.iter_mut().find(|(key, _)| key == id) {
+            Some(entry) => entry.1 = pos,
+            None => self.ui.widgets.push((id.to_owned(), pos)),
+        }
+    }
+
+    pub fn window_placement(&self, id: &str) -> Option<Placement> {
+        self.ui
+            .windows
+            .iter()
+            .find(|(key, _)| key == id)
             .map(|(_, placement)| *placement)
     }
 
-    pub fn set_placement(&mut self, panel: Panel, placement: Placement) {
-        match self.ui.placements.iter_mut().find(|(key, _)| *key == panel) {
+    pub fn set_window_placement(&mut self, id: &str, placement: Placement) {
+        match self.ui.windows.iter_mut().find(|(key, _)| key == id) {
             Some(entry) => entry.1 = placement,
-            None => self.ui.placements.push((panel, placement)),
+            None => self.ui.windows.push((id.to_owned(), placement)),
         }
     }
 
@@ -105,7 +177,8 @@ impl Default for UiSettings {
     fn default() -> UiSettings {
         UiSettings {
             snap: default_snap(),
-            placements: Vec::new(),
+            widgets: Vec::new(),
+            windows: Vec::new(),
         }
     }
 }

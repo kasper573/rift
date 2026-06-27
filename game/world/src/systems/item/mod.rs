@@ -6,17 +6,12 @@ mod consumable;
 mod equipment;
 mod resource;
 
-pub use consumable::ConsumableItem;
-pub use equipment::EquipmentItem;
-pub use resource::ResourceItem;
-
 use std::sync::OnceLock;
 
 use bevy_app::App;
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::{Entity, MapEntities};
 use bevy_ecs::message::Message;
-use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::core::assets;
@@ -28,7 +23,7 @@ use crate::systems::sfx::SfxId;
 
 use crate::systems::area::{self, AreaTag};
 use crate::systems::effect::{self, EffectCommand, TimedEffect, TimedEffects};
-use crate::systems::equipment::{EquipSlot, RequirementKind};
+use crate::systems::equipment::{EquipSlot, Requirement};
 use crate::systems::movement::{MoveTarget, Position, approach, forget, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, sender_player};
@@ -39,24 +34,15 @@ use bevy_ecs::world::World;
 use bevy_replicon::prelude::{Replicated, SendTargets, ToClients};
 use bevy_time::Time;
 
-/// What an item kind does, one file per kind implementing this, dispatched by [`ItemKind`].
-/// `use_item` calls [`Item::use_from`] and the carried-effects source calls [`Item::carried`]; adding
-/// a kind is a new file plus a variant — neither path matches on a specific kind.
-#[enum_dispatch]
-pub trait Item {
+/// What an item kind does, one file per kind implementing this. `use_item` calls [`Item::use_from`]
+/// and the carried-effects source calls [`Item::carried`]; neither matches on a specific kind. Each
+/// kind registers itself for `type`-tagged deserialization with `#[typetag::deserialize(name = …)]`.
+#[typetag::deserialize(tag = "type")]
+pub trait Item: Send + Sync {
     /// Acts on the item when used from an inventory slot, via the high-level ops on [`UseCtx`].
     fn use_from(&self, ctx: &mut UseCtx);
-    /// Whether the item's effects are active merely from being carried (true only for resources).
+    /// Whether the item's effects are active merely from being carried.
     fn carried(&self) -> bool;
-}
-
-#[enum_dispatch(Item)]
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ItemKind {
-    Consumable(ConsumableItem),
-    Resource(ResourceItem),
-    Equipment(EquipmentItem),
 }
 
 const FILE: &str = "item_table.json";
@@ -82,8 +68,8 @@ pub fn register(app: &mut App) {
     effect::source(app, carried);
 }
 
-/// Effect source: every carried item whose kind is active while carried (resources), its effects on
-/// while in the inventory.
+/// Effect source: every carried item whose kind stays active while carried, contributing its effects
+/// from the inventory.
 fn carried(world: &World, entity: Entity) -> Vec<EffectCommand> {
     world
         .get::<Inventory>(entity)
@@ -241,7 +227,7 @@ pub struct ItemDef {
     #[serde(default, deserialize_with = "crate::systems::effect::commands")]
     pub effects: Vec<EffectCommand>,
     #[serde(flatten)]
-    pub kind: ItemKind,
+    pub kind: Box<dyn Item>,
 }
 
 impl ItemDef {
@@ -293,7 +279,7 @@ pub fn items() -> &'static [ItemDef] {
     })
 }
 
-/// The high-level operations an [`ItemKind`] performs when its item is used, so each kind file calls
+/// The high-level operations an [`Item`] kind performs when its item is used, so each kind file calls
 /// these rather than reaching into item/equipment internals.
 pub struct UseCtx<'a> {
     world: &'a mut World,
@@ -314,7 +300,7 @@ impl UseCtx<'_> {
     pub fn apply_effects(&mut self, duration: Seconds) {
         instantiate_effects(self.world, self.actor, self.item, duration);
     }
-    pub fn equip(&mut self, into: EquipSlot, requirements: &[RequirementKind]) {
+    pub fn equip(&mut self, into: EquipSlot, requirements: &[Box<dyn Requirement>]) {
         crate::systems::equipment::equip(self.world, self.actor, self.slot, into, requirements);
     }
 }
@@ -542,7 +528,7 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
     world.entity_mut(item).despawn();
 }
 
-/// Applies a used consumable's effect commands to `actor` for `duration`, as timed instances.
+/// Applies a used item's effect commands to `actor` for `duration`, as timed instances.
 fn instantiate_effects(world: &mut World, actor: Entity, item: Id<ItemDef>, duration: Seconds) {
     let commands = &item.get().effects;
     if commands.is_empty() {

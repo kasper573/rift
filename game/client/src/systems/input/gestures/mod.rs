@@ -4,60 +4,30 @@ mod drag;
 mod pickup;
 mod walk;
 
-pub use attack::AttackGesture;
-pub use default::DefaultGesture;
-pub use drag::DragGesture;
-pub use pickup::PickupGesture;
-pub use walk::WalkGesture;
-
 use super::ActiveTileHighlight;
 use crate::Scene;
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
-use enum_dispatch::enum_dispatch;
 
 /// One way the primary button can be used. The input layer tries the active gestures in order and the
 /// first to claim a press owns it until release, so two never run at once; a press no gesture claims is
-/// left untouched. A new gesture is a new file here plus a [`GestureKind`] variant — this module never
-/// learns a gesture's specifics.
-#[enum_dispatch]
-pub trait Gesture {
+/// left untouched.
+pub trait Gesture: Send + Sync {
+    /// Where this sits in the claim order — lower is tried first, so the most specific gesture wins.
+    fn priority(&self) -> i32;
     /// Does this claim the press starting now? Reads the world — the cursor and what is under it.
     fn claims(&self, world: &mut World) -> bool;
     /// Drive the claimed press: `start` is true on the down-frame, false on each held frame after.
-    fn drive(&mut self, world: &mut World, start: bool);
+    fn drive(&self, world: &mut World, start: bool);
     /// The cursor to show while this would claim the press; `None` defers to the next gesture.
     fn cursor(&self, world: &mut World) -> Option<CursorIcon>;
-    /// The tile pos and image this gesture marks while it is the active gesture
+    /// The tile pos and image this gesture marks while it is the active gesture.
     fn tile_highlight(&self, _world: &mut World) -> Option<ActiveTileHighlight> {
         None
     }
 }
 
-/// The set of every gesture, most specific first. The one place that names them — both the active list
-/// and the type discriminant systems match on (e.g. the crosshair). `enum_dispatch` forwards [`Gesture`]
-/// to the active variant.
-#[enum_dispatch(Gesture)]
-pub enum GestureKind {
-    Drag(DragGesture),
-    Attack(AttackGesture),
-    Pickup(PickupGesture),
-    Walk(WalkGesture),
-    Default(DefaultGesture),
-}
-
-impl GestureKind {
-    /// Every gesture, constructed (each loads whatever assets it needs), most specific first.
-    fn all(assets: &AssetServer) -> Vec<GestureKind> {
-        vec![
-            DragGesture.into(),
-            AttackGesture::new(assets).into(),
-            PickupGesture::new(assets).into(),
-            WalkGesture::new(assets).into(),
-            DefaultGesture::new(assets).into(),
-        ]
-    }
-}
+inventory::collect!(&'static dyn Gesture);
 
 /// Registers the whole gesture system; `input.rs` only wires this into the schedule.
 pub fn plugin(app: &mut App) {
@@ -65,10 +35,9 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, update.run_if(in_state(Scene::Area)));
 }
 
-/// The active gestures, built once at startup. The systems lift this out of the world to run
-/// claims/drive/cursor against `&mut World`.
+/// Every gesture, ordered most-specific-first (by [`Gesture::priority`]), built once at startup.
 #[derive(Resource)]
-pub(crate) struct Gestures(pub Vec<GestureKind>);
+pub(crate) struct Gestures(pub Vec<&'static dyn Gesture>);
 
 /// Which gesture in [`Gestures`] owns the press in progress.
 #[derive(Resource, Default)]
@@ -81,8 +50,11 @@ struct GestureIndex(usize);
 #[derive(Resource, Default)]
 struct AppliedCursor(Option<CursorIcon>);
 
-fn setup(mut commands: Commands, assets: Res<AssetServer>) {
-    commands.insert_resource(Gestures(GestureKind::all(&assets)));
+fn setup(mut commands: Commands) {
+    let mut gestures: Vec<&'static dyn Gesture> =
+        inventory::iter::<&'static dyn Gesture>().copied().collect();
+    gestures.sort_by_key(|gesture| gesture.priority());
+    commands.insert_resource(Gestures(gestures));
     commands.init_resource::<Latched>();
     commands.init_resource::<AppliedCursor>();
 }
@@ -90,7 +62,7 @@ fn setup(mut commands: Commands, assets: Res<AssetServer>) {
 /// The whole gesture step in one pass: latch the first gesture to claim the press and drive it until
 /// release, then show the first claiming gesture's cursor (`DefaultGesture` always supplies one).
 fn update(world: &mut World) {
-    let mut gestures = world.remove_resource::<Gestures>().expect("gestures");
+    let gestures = world.resource::<Gestures>().0.clone();
 
     let mut active = world.resource::<Latched>().0;
     let (pressed, just) = {
@@ -104,13 +76,12 @@ fn update(world: &mut World) {
         active = None;
     } else if just {
         active = gestures
-            .0
             .iter()
             .position(|gesture| gesture.claims(world))
             .map(GestureIndex);
     }
     if let Some(GestureIndex(index)) = active {
-        gestures.0[index].drive(world, just);
+        gestures[index].drive(world, just);
     }
     world.resource_mut::<Latched>().0 = active;
 
@@ -119,7 +90,7 @@ fn update(world: &mut World) {
     let mut cursor = None;
     let mut highlight = None;
     let mut first_claimant = true;
-    for gesture in &gestures.0 {
+    for gesture in &gestures {
         if !gesture.claims(world) {
             continue;
         }
@@ -133,7 +104,6 @@ fn update(world: &mut World) {
         }
     }
 
-    world.insert_resource(gestures);
     match highlight {
         Some(highlight) => world.insert_resource(highlight),
         None => {

@@ -9,7 +9,7 @@ use bevy_ecs::world::World;
 use world::core::table::Id;
 use world::systems::combat::AttackTarget;
 use world::systems::equipment::{
-    self, EquipSlot, Equipment, JobRequirement, LevelRequirement, RequirementKind, StatRequirement,
+    self, EquipSlot, Equipment, JobRequirement, LevelRequirement, Requirement, StatRequirement,
 };
 use world::systems::item::ItemDef;
 use world::systems::job::{self, Job};
@@ -90,14 +90,14 @@ fn requirements_gate_on_job_level_and_stat() {
         .id();
     player::player_stats().apply(world, player);
 
-    let level = |level| RequirementKind::Level(LevelRequirement { level });
-    let damage_at_least = |min| {
-        RequirementKind::Stat(StatRequirement {
+    let level = |level| -> Box<dyn Requirement> { Box::new(LevelRequirement { level }) };
+    let damage_at_least = |min| -> Box<dyn Requirement> {
+        Box::new(StatRequirement {
             stat: DamageStat.into(),
             min,
         })
     };
-    let job = RequirementKind::Job(JobRequirement {
+    let job: Box<dyn Requirement> = Box::new(JobRequirement {
         job: job::default_job(),
     });
 

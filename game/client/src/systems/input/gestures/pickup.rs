@@ -10,19 +10,17 @@ use crate::core::render;
 use crate::systems::input::gestures::{Gesture, image_cursor};
 
 /// Pick up the item under the cursor: walk to it, then grab it once in range (server-side).
-pub struct PickupGesture {
-    hand: Handle<Image>,
-}
+pub struct PickupGesture;
 
-impl PickupGesture {
-    pub fn new(assets: &AssetServer) -> PickupGesture {
-        PickupGesture {
-            hand: assets.load("icons/cursors/hand001.png"),
-        }
-    }
+inventory::submit! {
+    &PickupGesture as &dyn Gesture
 }
 
 impl Gesture for PickupGesture {
+    fn priority(&self) -> i32 {
+        2
+    }
+
     fn claims(&self, world: &mut World) -> bool {
         !session::is_dead(world)
             && render::cursor_tile(world)
@@ -30,7 +28,7 @@ impl Gesture for PickupGesture {
                 .is_some()
     }
 
-    fn drive(&mut self, world: &mut World, start: bool) {
+    fn drive(&self, world: &mut World, start: bool) {
         if start
             && let Some(point) = render::cursor_tile(world)
             && let Some(target) = item_at(world, point)
@@ -39,8 +37,11 @@ impl Gesture for PickupGesture {
         }
     }
 
-    fn cursor(&self, _world: &mut World) -> Option<CursorIcon> {
-        Some(image_cursor(self.hand.clone(), (8, 8)))
+    fn cursor(&self, world: &mut World) -> Option<CursorIcon> {
+        let handle = world
+            .resource::<AssetServer>()
+            .load("icons/cursors/hand001.png");
+        Some(image_cursor(handle, (8, 8)))
     }
 }
 

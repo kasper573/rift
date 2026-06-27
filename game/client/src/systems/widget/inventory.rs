@@ -1,4 +1,4 @@
-//! The inventory pane: a fixed grid of `max` slots reconciled against the player's replicated
+//! The inventory window: a fixed grid of `max` slots reconciled against the player's replicated
 //! inventory. Every slot draws a subtle cell so the grid shows through behind the icons; a filled
 //! slot adds the item icon, its stack count, a name tooltip, and acts on click — Ctrl drops, else the
 //! slot is "used" and the server acts on the item's kind (drink a consumable, equip gear).
@@ -9,11 +9,35 @@ use ui::{Align, Side, text_colored, tooltip, tooltip_content};
 use world::systems::item::{INVENTORY_MAX, Inventory};
 use world::systems::player::session;
 
-use super::{SLOT_BG, SLOT_BORDER, reconcile_children, slot_node, tooltip_label};
+use super::{SLOT_BG, SLOT_BORDER, WindowDef, reconcile_children, slot_node, tooltip_label};
 use ui::component;
 
 #[derive(Component, Default, Clone)]
 pub(super) struct InventoryGrid;
+
+::inventory::submit! {
+    WindowDef {
+        id: "Inventory",
+        title: "Inventory",
+        toggle: KeyCode::KeyI,
+        keybind: "I",
+        icon: "icons/equipment/bag.png",
+        order: 0,
+        content,
+        sync: sync_inventory,
+    }
+}
+
+fn content() -> Box<dyn Scene> {
+    Box::new(bsn! {
+        Node {
+            width: Val::Percent(100.0),
+            flex_wrap: FlexWrap::Wrap,
+            align_content: AlignContent::FlexStart,
+        }
+        InventoryGrid
+    })
+}
 
 #[derive(Component, Default, Clone)]
 struct Cell {

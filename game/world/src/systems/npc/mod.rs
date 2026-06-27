@@ -3,11 +3,6 @@ mod defensive;
 mod pacifist;
 mod protective;
 
-pub use aggressive::AggressiveAi;
-pub use defensive::DefensiveAi;
-pub use pacifist::PacifistAi;
-pub use protective::ProtectiveAi;
-
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -15,9 +10,7 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::Replicated;
 use bevy_time::Time;
-use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Deserializer};
-use strum::{EnumIter, IntoEnumIterator};
 
 use crate::core::math::{Direction, Pos, Rng};
 use crate::core::table;
@@ -34,6 +27,8 @@ use crate::systems::item::Reservation;
 use crate::systems::movement::{MoveTarget, Path, Position, forget, position};
 use crate::systems::player::Players;
 use crate::systems::stat::{self, AttackSpeedStat, StatSet};
+
+inventory::collect!(&'static dyn Ai);
 
 const FILE: &str = "npc_table.json";
 const SPAWN_FILE: &str = "spawn_table.json";
@@ -59,7 +54,7 @@ pub fn chase(world: &World, entity: Entity) -> Vec<EffectCommand> {
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Npc {
     pub def: Id<NpcDef>,
-    /// Spawn-table row this NPC came from; protective NPCs defend others sharing their group.
+    /// Spawn-table row this NPC came from; NPCs from the same row share a group.
     pub group: u32,
 }
 
@@ -80,7 +75,8 @@ pub struct NpcDef {
     pub model: Id<ActorModel>,
     #[serde(deserialize_with = "crate::systems::actor::rgba_hex")]
     pub tint: Rgba,
-    pub ai: AiKind,
+    #[serde(deserialize_with = "deserialize_ai")]
+    pub ai: &'static dyn Ai,
     pub stats: StatSet,
     pub aggro: Tiles,
 }
@@ -191,10 +187,9 @@ fn character(def: &NpcDef, at: Pos<Tiles>, area: Id<AreaDef>) -> Character {
     }
 }
 
-/// An npc aggro/wander strategy: one file per kind implementing this, dispatched by [`AiKind`].
-/// An [`NpcDef`] names its strategy; adding one is a new file plus a variant — `run_ai` matches none.
-#[enum_dispatch]
-pub trait Ai {
+/// An npc aggro/wander strategy: one file per kind implementing this. An [`NpcDef`] names its
+/// strategy; `run_ai` matches none of them.
+pub trait Ai: Send + Sync {
     /// The id this strategy is named by in `npc_table.json`.
     fn name(&self) -> &str;
     /// Whether the npc wanders when it has nothing to chase.
@@ -203,24 +198,12 @@ pub trait Ai {
     fn target(&self, hunt: &Hunt) -> Option<Entity>;
 }
 
-/// `enum_dispatch` forwards [`Ai`] to the variant; `EnumIter` lets the by-name [`Deserialize`] map a
-/// table string to its variant, so adding a strategy is just a new file plus a variant here.
-#[enum_dispatch(Ai)]
-#[derive(Clone, Copy, EnumIter)]
-pub enum AiKind {
-    Pacifist(PacifistAi),
-    Defensive(DefensiveAi),
-    Aggressive(AggressiveAi),
-    Protective(ProtectiveAi),
-}
-
-impl<'de> Deserialize<'de> for AiKind {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let name = String::deserialize(deserializer)?;
-        AiKind::iter()
-            .find(|kind| kind.name() == name)
-            .ok_or_else(|| serde::de::Error::custom(format!("unknown ai '{name}'")))
-    }
+fn deserialize_ai<'de, D: Deserializer<'de>>(deserializer: D) -> Result<&'static dyn Ai, D::Error> {
+    let name = String::deserialize(deserializer)?;
+    inventory::iter::<&'static dyn Ai>()
+        .copied()
+        .find(|ai| ai.name() == name)
+        .ok_or_else(|| serde::de::Error::custom(format!("unknown ai '{name}'")))
 }
 
 /// What an [`Ai`] selects a target from: the npc, its surroundings, and the candidate lists.

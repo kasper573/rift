@@ -11,6 +11,7 @@ pub struct ConsumableItem {
     pub duration: Seconds,
 }
 
+#[typetag::deserialize(name = "consumable")]
 impl Item for ConsumableItem {
     fn use_from(&self, ctx: &mut UseCtx) {
         ctx.heal(self.health_bonus);

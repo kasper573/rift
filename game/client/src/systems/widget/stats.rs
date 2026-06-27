@@ -1,13 +1,36 @@
-//! The stats pane: a readout of the local player's level and effective stats, recomputed on the
+//! The stats window: a readout of the local player's level and effective stats, recomputed on the
 //! client from the same base and effects the server aggregates, so the two always agree.
 
 use bevy::prelude::*;
+use ui::text_colored;
 use world::systems::job;
 use world::systems::player::session;
-use world::systems::stat::{self, Stat, StatKind};
+use world::systems::stat;
+
+use super::WindowDef;
 
 #[derive(Component, Default, Clone)]
 pub(super) struct StatsText;
+
+inventory::submit! {
+    WindowDef {
+        id: "Stats",
+        title: "Stats",
+        toggle: KeyCode::KeyK,
+        keybind: "K",
+        icon: "icons/misc/book.png",
+        order: 2,
+        content,
+        sync: sync_stats,
+    }
+}
+
+fn content() -> Box<dyn Scene> {
+    Box::new(bsn! {
+        Node { width: Val::Percent(100.0) }
+        Children [ ( {text_colored(String::new(), Color::WHITE)} StatsText ) ]
+    })
+}
 
 pub(super) fn sync_stats(world: &mut World) {
     let text = stats_text(world);
@@ -24,7 +47,7 @@ fn stats_text(world: &World) -> String {
     let entity = me.id();
     let stats = stat::effective_all(world, entity);
     let mut lines = vec![format!("Level {}", job::level(world, entity))];
-    for kind in StatKind::all() {
+    for kind in stat::all() {
         lines.push(format!("{}: {:.1}", kind.label(), stats.get(kind)));
     }
     lines.join("\n")

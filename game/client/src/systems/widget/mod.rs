@@ -1,7 +1,7 @@
-//! The in-game widgets: the HUD's draggable, dockable panes (a character readout, inventory,
-//! equipment, stats, an always-on active-effects row, and settings) built on the `ui` widget toolkit,
-//! their layout persisted to [`settings`], plus the [`fps`] readout. Each pane's content lives in its
-//! own module ([`character`], [`inventory`], [`equipment`], [`stats`], [`effects`]).
+//! The in-game HUD: a row of draggable launcher widgets that each open a draggable, titled [`Window`]
+//! (inventory, equipment, stats, settings), their layout persisted to [`settings`], plus the [`fps`]
+//! readout and the always-on character readout and active-effects row. Each window registers its
+//! [`WindowDef`] from its own module; this module iterates the registrations rather than naming any.
 
 pub mod character;
 pub mod effects;
@@ -13,19 +13,12 @@ pub mod stats;
 
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
-use serde::{Deserialize, Serialize};
-use ui::button::intent as button_intent;
-use ui::{
-    Activate, ButtonSize, DragHandle, DragRoot, Geom, OnSettle, OnTap, SnapGrid, Widget, Window,
-    button_styled, text_colored, widget, window,
-};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use ui::{DragHandle, DragRoot, Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
 use crate::systems::widget::character::CharacterText;
 use crate::systems::widget::effects::EffectsGrid;
-use crate::systems::widget::equipment::EquipmentGrid;
-use crate::systems::widget::inventory::InventoryGrid;
 use crate::systems::widget::settings::{Placement, ScreenPx, ScreenVec, UserSettings};
-use crate::systems::widget::stats::StatsText;
 use ui::component;
 
 const WIDGET: ScreenPx = ScreenPx(48.0);
@@ -51,13 +44,10 @@ impl Plugin for HudPlugin {
                 Update,
                 (
                     toggle_keys,
-                    rebuild_panes,
+                    rebuild_windows,
                     character::sync_character,
-                    inventory::sync_inventory,
-                    equipment::sync_equipment,
-                    stats::sync_stats,
                     effects::sync_effects,
-                    sync_snapping,
+                    sync_windows,
                     sync_snap_grid,
                 )
                     .run_if(in_state(crate::Scene::Area)),
@@ -65,71 +55,47 @@ impl Plugin for HudPlugin {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Pane {
-    Inventory,
-    Equipment,
-    Stats,
-    Settings,
+/// A HUD window, identified by the stable id its [`WindowDef`] registers under (also its persisted
+/// placement key).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Window(&'static str);
+
+/// Everything the HUD needs to show and drive a window: `content` builds the open window's body, `sync`
+/// reconciles it each frame, and `order` is its place down the docked widget column.
+pub struct WindowDef {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub toggle: KeyCode,
+    pub keybind: &'static str,
+    pub icon: &'static str,
+    pub order: u32,
+    pub content: fn() -> Box<dyn Scene>,
+    pub sync: fn(&mut World),
 }
 
-#[derive(Clone, Copy)]
-struct PaneInfo {
-    title: &'static str,
-    toggle: KeyCode,
-    keybind: &'static str,
-    icon: &'static str,
-}
+::inventory::collect!(WindowDef);
 
-impl Pane {
-    const ALL: [Pane; 4] = [
-        Pane::Inventory,
-        Pane::Equipment,
-        Pane::Stats,
-        Pane::Settings,
-    ];
-
-    fn info(self) -> PaneInfo {
-        match self {
-            Pane::Inventory => PaneInfo {
-                title: "Inventory",
-                toggle: KeyCode::KeyI,
-                keybind: "I",
-                icon: "icons/equipment/bag.png",
-            },
-            Pane::Equipment => PaneInfo {
-                title: "Equipment",
-                toggle: KeyCode::KeyE,
-                keybind: "E",
-                icon: "icons/equipment/helm.png",
-            },
-            Pane::Stats => PaneInfo {
-                title: "Stats",
-                toggle: KeyCode::KeyK,
-                keybind: "K",
-                icon: "icons/misc/book.png",
-            },
-            Pane::Settings => PaneInfo {
-                title: "Settings",
-                toggle: KeyCode::KeyO,
-                keybind: "O",
-                icon: "icons/misc/gear.png",
-            },
-        }
+impl Window {
+    fn def(self) -> &'static WindowDef {
+        ::inventory::iter::<WindowDef>()
+            .find(|def| def.id == self.0)
+            .expect("a registered window")
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Panel {
-    Character,
-    Effects,
-    Widget(Pane),
-    Window(Pane),
+impl Serialize for Window {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
 }
 
-impl Panel {
-    fn resizable(self) -> bool {
-        matches!(self, Panel::Window(_))
+impl<'de> Deserialize<'de> for Window {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let id = String::deserialize(deserializer)?;
+        ::inventory::iter::<WindowDef>()
+            .find(|def| def.id == id)
+            .map(|def| Window(def.id))
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown window '{id}'")))
     }
 }
 
@@ -143,39 +109,36 @@ impl Default for Settings {
 }
 
 #[derive(Resource, Default)]
-struct Open(std::collections::HashSet<Pane>);
+struct Open(std::collections::HashSet<Window>);
 
 #[derive(Component, Default, Clone)]
 struct Hud;
 
 #[derive(Component, Clone)]
-struct PaneView {
-    pane: Pane,
+struct WindowView {
+    window: Window,
     open: bool,
 }
 
-#[derive(Component, Default, Clone)]
-struct SnappingButton;
-
 fn spawn_hud(mut commands: Commands, settings: Res<Settings>, assets: Res<AssetServer>) {
-    let mut panels: Vec<Box<dyn Scene>> = vec![
-        Box::new(character_panel(&settings)),
-        Box::new(effects_panel(&settings)),
+    let mut widgets: Vec<Box<dyn Scene>> = vec![
+        Box::new(character_widget(&settings)),
+        Box::new(effects_widget(&settings)),
     ];
-    for pane in Pane::ALL {
-        panels.push(Box::new(widget_panel(pane, &settings, &assets)));
+    for def in ::inventory::iter::<WindowDef>() {
+        widgets.push(Box::new(launcher(Window(def.id), &settings, &assets)));
     }
     commands.spawn_scene(bsn! {
         Hud
         Node { width: Val::Percent(100.0), height: Val::Percent(100.0) }
         Pickable { should_block_lower: false, is_hoverable: false }
-        Children [ {panels} ]
+        Children [ {widgets} ]
     });
 }
 
-fn rebuild_panes(
+fn rebuild_windows(
     open: Res<Open>,
-    panes: Query<(Entity, &PaneView, &ChildOf)>,
+    windows: Query<(Entity, &WindowView, &ChildOf)>,
     settings: Res<Settings>,
     assets: Res<AssetServer>,
     mut commands: Commands,
@@ -183,25 +146,25 @@ fn rebuild_panes(
     if !open.is_changed() {
         return;
     }
-    for (entity, view, child_of) in &panes {
-        let should_open = open.0.contains(&view.pane);
+    for (entity, view, child_of) in &windows {
+        let should_open = open.0.contains(&view.window);
         if should_open == view.open {
             continue;
         }
         let hud = child_of.parent();
-        let pane = view.pane;
+        let window = view.window;
         commands.entity(entity).despawn();
         let panel: Box<dyn Scene> = if should_open {
-            Box::new(window_panel(pane, &settings))
+            Box::new(window_scene(window, &settings))
         } else {
-            Box::new(widget_panel(pane, &settings, &assets))
+            Box::new(launcher(window, &settings, &assets))
         };
         commands.spawn_scene(panel).insert(ChildOf(hud));
     }
 }
 
-fn character_panel(settings: &Settings) -> impl Scene {
-    let (pos, _) = resolve(settings, Panel::Character, Vec2::new(8.0, 8.0), None);
+fn character_widget(settings: &Settings) -> impl Scene {
+    let pos = widget_pos(settings, "character", Vec2::new(8.0, 8.0));
     let node = Node {
         position_type: PositionType::Absolute,
         left: Val::Px(pos.x),
@@ -218,15 +181,15 @@ fn character_panel(settings: &Settings) -> impl Scene {
         component(BorderColor::all(BORDER))
         DragRoot
         DragHandle
-        component(OnSettle::new(move |world, geom| persist(world, Panel::Character, geom)))
+        component(OnSettle::new(move |world, geom| persist_widget(world, "character", geom)))
         Children [ ( {text_colored(String::new(), Color::WHITE)} CharacterText ) ]
     }
 }
 
 /// Always-on row of active-effect icons (those whose effect declares a widget). `sync_effects`
 /// reconciles its children; it is empty until the player has a visible effect.
-fn effects_panel(settings: &Settings) -> impl Scene {
-    let (pos, _) = resolve(settings, Panel::Effects, Vec2::new(8.0, 80.0), None);
+fn effects_widget(settings: &Settings) -> impl Scene {
+    let pos = widget_pos(settings, "effects", Vec2::new(8.0, 80.0));
     let node = Node {
         position_type: PositionType::Absolute,
         left: Val::Px(pos.x),
@@ -242,125 +205,87 @@ fn effects_panel(settings: &Settings) -> impl Scene {
         DragRoot
         DragHandle
         EffectsGrid
-        component(OnSettle::new(move |world, geom| persist(world, Panel::Effects, geom)))
+        component(OnSettle::new(move |world, geom| persist_widget(world, "effects", geom)))
     }
 }
 
-fn widget_panel(pane: Pane, settings: &Settings, assets: &AssetServer) -> impl Scene {
-    let info = pane.info();
-    let (pos, _) = resolve(settings, Panel::Widget(pane), widget_fallback(pane), None);
+fn launcher(window: Window, settings: &Settings, assets: &AssetServer) -> impl Scene {
+    let def = window.def();
+    let pos = widget_pos(settings, window.0, launcher_pos(window));
     bsn! {
-        {widget(Widget {
+        {widget(ui::Widget {
             pos,
-            icon: assets.load(info.icon.to_owned()),
-            badge: info.keybind.to_owned(),
-            tooltip: info.title.to_owned(),
-            on_tap: OnTap::new(move |world| open_pane(world, pane)),
-            on_settle: OnSettle::new(move |world, geom| persist(world, Panel::Widget(pane), geom)),
+            icon: assets.load(def.icon.to_owned()),
+            badge: def.keybind.to_owned(),
+            tooltip: def.title.to_owned(),
+            on_tap: OnTap::new(move |world| open_window(world, window)),
+            on_settle: OnSettle::new(move |world, geom| persist_widget(world, window.0, geom)),
         })}
-        component(PaneView { pane, open: false })
+        component(WindowView { window, open: false })
     }
 }
 
-fn window_panel(pane: Pane, settings: &Settings) -> impl Scene {
-    let info = pane.info();
-    let (pos, size) = resolve(
-        settings,
-        Panel::Window(pane),
-        Vec2::new(376.0, 332.0),
-        Some(WINDOW_SIZE),
-    );
-    let size = size.unwrap_or(WINDOW_SIZE);
+fn window_scene(window: Window, settings: &Settings) -> impl Scene {
+    let def = window.def();
+    let (pos, size) = window_geom(settings, window.0, Vec2::new(376.0, 332.0), WINDOW_SIZE);
     bsn! {
-        {window(Window {
+        {ui::window(ui::Window {
             pos,
             size,
-            title: info.title.to_owned(),
-            on_close: OnTap::new(move |world| close_pane(world, pane)),
-            on_settle: OnSettle::new(move |world, geom| persist(world, Panel::Window(pane), geom)),
-            content: content(pane),
+            title: def.title.to_owned(),
+            on_close: OnTap::new(move |world| close_window(world, window)),
+            on_settle: OnSettle::new(move |world, geom| persist_window(world, window.0, geom)),
+            content: (def.content)(),
         })}
-        component(PaneView { pane, open: true })
+        component(WindowView { window, open: true })
     }
 }
 
-fn content(pane: Pane) -> Box<dyn Scene> {
-    match pane {
-        Pane::Inventory => Box::new(bsn! {
-            Node {
-                width: Val::Percent(100.0),
-                flex_wrap: FlexWrap::Wrap,
-                align_content: AlignContent::FlexStart,
-            }
-            InventoryGrid
-        }),
-        Pane::Equipment => Box::new(bsn! {
-            Node {
-                width: Val::Percent(100.0),
-                flex_wrap: FlexWrap::Wrap,
-                align_content: AlignContent::FlexStart,
-            }
-            EquipmentGrid
-        }),
-        Pane::Stats => Box::new(bsn! {
-            Node { width: Val::Percent(100.0) }
-            Children [ ( {text_colored(String::new(), Color::WHITE)} StatsText ) ]
-        }),
-        Pane::Settings => Box::new(bsn! {
-            {button_styled(button_intent::PRIMARY, ButtonSize::Md, "ui snapping disabled")}
-            SnappingButton
-            on(|_: On<Activate>, mut commands: Commands| {
-                commands.queue(toggle_snapping);
-            })
-        }),
+fn close_window(world: &mut World, window: Window) {
+    world.resource_mut::<Open>().0.remove(&window);
+}
+
+fn sync_windows(world: &mut World) {
+    for def in ::inventory::iter::<WindowDef>() {
+        (def.sync)(world);
     }
 }
 
-fn close_pane(world: &mut World, pane: Pane) {
-    world.resource_mut::<Open>().0.remove(&pane);
+fn widget_pos(settings: &Settings, id: &str, fallback: Vec2) -> Vec2 {
+    settings.0.widget_pos(id).map_or(fallback, |p| p.to_vec2())
 }
 
-fn sync_snapping(
-    settings: Res<Settings>,
-    buttons: Query<&Children, With<SnappingButton>>,
-    mut texts: Query<&mut Text>,
-) {
-    let label = if settings.0.snapping_enabled() {
-        "ui snapping enabled"
-    } else {
-        "ui snapping disabled"
-    };
-    for children in &buttons {
-        for child in children.iter() {
-            if let Ok(mut text) = texts.get_mut(child) {
-                text.0 = label.to_owned();
-            }
-        }
-    }
-}
-
-fn resolve(
+fn window_geom(
     settings: &Settings,
-    panel: Panel,
+    id: &str,
     fallback_pos: Vec2,
-    fallback_size: Option<Vec2>,
-) -> (Vec2, Option<Vec2>) {
-    let placement = settings.0.placement(panel);
+    fallback_size: Vec2,
+) -> (Vec2, Vec2) {
+    let placement = settings.0.window_placement(id);
     let pos = placement.map_or(fallback_pos, |p| p.pos.to_vec2());
-    let size = fallback_size.map(|fallback| {
-        placement
-            .and_then(|p| p.size)
-            .map_or(fallback, ScreenVec::to_vec2)
-    });
+    let size = placement.map_or(fallback_size, |p| p.size.to_vec2());
     (pos, size)
 }
 
 // The live drag already renders (and clamps) the snapped geometry, so settling just records it.
-fn persist(world: &mut World, panel: Panel, geom: Geom) -> Geom {
+fn persist_widget(world: &mut World, id: &str, geom: Geom) -> Geom {
     let mut settings = world.resource_mut::<Settings>();
-    let pos = ScreenVec::from_vec2(geom.pos);
-    let size = panel.resizable().then_some(ScreenVec::from_vec2(geom.size));
-    settings.0.set_placement(panel, Placement { pos, size });
+    settings
+        .0
+        .set_widget_pos(id, ScreenVec::from_vec2(geom.pos));
+    settings.0.save();
+    geom
+}
+
+fn persist_window(world: &mut World, id: &str, geom: Geom) -> Geom {
+    let mut settings = world.resource_mut::<Settings>();
+    settings.0.set_window_placement(
+        id,
+        Placement {
+            pos: ScreenVec::from_vec2(geom.pos),
+            size: ScreenVec::from_vec2(geom.size),
+        },
+    );
     settings.0.save();
     geom
 }
@@ -369,15 +294,9 @@ fn sync_snap_grid(settings: Res<Settings>, mut grid: ResMut<SnapGrid>) {
     grid.0 = settings.0.snap_grid();
 }
 
-fn widget_fallback(pane: Pane) -> Vec2 {
+fn launcher_pos(window: Window) -> Vec2 {
     let x = SCREEN_W - 8.0 - WIDGET.0;
-    let row = |n: f32| Vec2::new(x, 8.0 + n * (WIDGET.0 + 8.0));
-    match pane {
-        Pane::Inventory => row(0.0),
-        Pane::Equipment => row(1.0),
-        Pane::Stats => row(2.0),
-        Pane::Settings => row(3.0),
-    }
+    Vec2::new(x, 8.0 + window.def().order as f32 * (WIDGET.0 + 8.0))
 }
 
 /// Keeps `container`'s keyed children equal to `keys`: when the live keys differ (in value or order)
@@ -442,20 +361,15 @@ pub(super) fn tooltip_label(text: impl Into<String>) -> impl Scene {
     }
 }
 
-fn open_pane(world: &mut World, pane: Pane) {
-    world.resource_mut::<Open>().0.insert(pane);
-}
-
-fn toggle_snapping(world: &mut World) {
-    let mut settings = world.resource_mut::<Settings>();
-    settings.0.toggle_snapping();
-    settings.0.save();
+fn open_window(world: &mut World, window: Window) {
+    world.resource_mut::<Open>().0.insert(window);
 }
 
 fn toggle_keys(keys: Res<ButtonInput<KeyCode>>, mut open: ResMut<Open>) {
-    for pane in Pane::ALL {
-        if keys.just_pressed(pane.info().toggle) && !open.0.remove(&pane) {
-            open.0.insert(pane);
+    for def in ::inventory::iter::<WindowDef>() {
+        let window = Window(def.id);
+        if keys.just_pressed(def.toggle) && !open.0.remove(&window) {
+            open.0.insert(window);
         }
     }
 }

@@ -10,12 +10,20 @@ use crate::systems::input::gestures::Gesture;
 /// as resizable over a resize grip.
 pub struct DragGesture;
 
+inventory::submit! {
+    &DragGesture as &dyn Gesture
+}
+
 impl Gesture for DragGesture {
+    fn priority(&self) -> i32 {
+        0
+    }
+
     fn claims(&self, world: &mut World) -> bool {
         hovered_has::<Node>(world)
     }
 
-    fn drive(&mut self, _world: &mut World, _start: bool) {}
+    fn drive(&self, _world: &mut World, _start: bool) {}
 
     fn cursor(&self, world: &mut World) -> Option<CursorIcon> {
         let icon = if hovered_has::<ResizeHandle>(world) {

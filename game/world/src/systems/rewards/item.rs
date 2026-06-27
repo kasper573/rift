@@ -12,6 +12,7 @@ pub struct ItemGrant {
     pub chance: Option<Chance>,
 }
 
+#[typetag::deserialize(name = "item")]
 impl Grant for ItemGrant {
     fn grant(&self, ctx: &mut GrantCtx) {
         if self

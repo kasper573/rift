@@ -4,13 +4,17 @@
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{Scalar, base, effective};
+use super::{Scalar, Stat, base, effective};
 
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Health(pub f32);
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy)]
 pub struct HealthStat;
+
+inventory::submit! {
+    &HealthStat as &dyn Stat
+}
 
 impl Scalar for HealthStat {
     type Component = Health;
@@ -27,8 +31,12 @@ impl Scalar for HealthStat {
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct MaxHealth(pub f32);
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy)]
 pub struct MaxHealthStat;
+
+inventory::submit! {
+    &MaxHealthStat as &dyn Stat
+}
 
 impl Scalar for MaxHealthStat {
     type Component = MaxHealth;

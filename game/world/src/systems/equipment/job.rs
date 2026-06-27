@@ -12,6 +12,7 @@ pub struct JobRequirement {
     pub job: Id<JobDef>,
 }
 
+#[typetag::deserialize(name = "job")]
 impl Requirement for JobRequirement {
     fn met(&self, world: &World, player: Entity) -> bool {
         world

@@ -18,14 +18,14 @@ bevy_replicon = { workspace = true, features = ["client", "server"] }
 bevy_state.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 derive_more = { version = "2", features = ["add", "add_assign"] }
-enum_dispatch.workspace = true
 euclid = { version = "0.22", features = ["serde"] }
 include_dir = "0.7"
+inventory.workspace = true
 pathfinding = "4"
+typetag.workspace = true
 renet2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-strum.workspace = true
 tiled = { version = "0.15", default-features = false }
 # Effect args are stored type-erased as postcard bytes (the same wire format bevy_replicon uses), so
 # an EffectCommand is one uniform, replicable value whatever effect it names.

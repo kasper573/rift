@@ -5,26 +5,27 @@ use crate::systems::input::gestures::{Gesture, image_cursor};
 
 /// The catch-all gesture: it claims any press the more specific gestures pass on, but does nothing with
 /// it. It exists so the pointer always has a cursor (the idle one) and a press always has an owner.
-pub struct DefaultGesture {
-    image: Handle<Image>,
-}
+pub struct DefaultGesture;
 
-impl DefaultGesture {
-    pub fn new(assets: &AssetServer) -> DefaultGesture {
-        DefaultGesture {
-            image: assets.load("icons/cursors/pointer003.png"),
-        }
-    }
+inventory::submit! {
+    &DefaultGesture as &dyn Gesture
 }
 
 impl Gesture for DefaultGesture {
+    fn priority(&self) -> i32 {
+        4
+    }
+
     fn claims(&self, _world: &mut World) -> bool {
         true
     }
 
-    fn drive(&mut self, _world: &mut World, _start: bool) {}
+    fn drive(&self, _world: &mut World, _start: bool) {}
 
-    fn cursor(&self, _world: &mut World) -> Option<CursorIcon> {
-        Some(image_cursor(self.image.clone(), (0, 0)))
+    fn cursor(&self, world: &mut World) -> Option<CursorIcon> {
+        let handle = world
+            .resource::<AssetServer>()
+            .load("icons/cursors/pointer003.png");
+        Some(image_cursor(handle, (0, 0)))
     }
 }

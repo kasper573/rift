@@ -1,19 +1,14 @@
-//! Loot tables: each row names an npc, an amount, and a [`RewardKind`]. The kind is a variant set
-//! (one file per [`Grant`], dispatched by `enum_dispatch`), so adding a reward kind is a new file
-//! plus a `RewardKind` variant — `grant` never matches on a specific kind.
+//! Loot tables: each row names an npc, an amount, and a reward kind — one file per [`Grant`], so
+//! adding a reward kind is a new file; `grant` never matches on a specific kind.
 
 mod item;
 mod xp;
-
-pub use item::ItemGrant;
-pub use xp::XpGrant;
 
 use std::sync::OnceLock;
 
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use bevy_time::Time;
-use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Deserializer};
 
 use crate::core::math::Rng;
@@ -32,7 +27,7 @@ pub struct Reward {
     pub npc: Id<NpcDef>,
     pub amount: u32,
     #[serde(flatten)]
-    pub kind: RewardKind,
+    pub kind: Box<dyn Grant>,
 }
 
 /// What a reward applies on a kill: it may mutate the rewardee and/or add to the drop pile.
@@ -44,17 +39,11 @@ pub struct GrantCtx<'a> {
     pub drops: &'a mut Vec<(Id<ItemDef>, u32)>,
 }
 
-#[enum_dispatch]
-pub trait Grant {
+/// One reward kind per file, each registering itself for `type`-tagged deserialization with
+/// `#[typetag::deserialize(name = …)]`; `grant` never matches on a specific kind.
+#[typetag::deserialize(tag = "type")]
+pub trait Grant: Send + Sync {
     fn grant(&self, ctx: &mut GrantCtx);
-}
-
-#[enum_dispatch(Grant)]
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum RewardKind {
-    Xp(XpGrant),
-    Item(ItemGrant),
 }
 
 #[derive(Clone, Copy)]

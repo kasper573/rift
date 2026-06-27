@@ -7,26 +7,24 @@ use crate::core::render;
 use crate::systems::input::gestures::{Gesture, image_cursor};
 
 /// Attack the actor under the cursor.
-pub struct AttackGesture {
-    attack: Handle<Image>,
-}
+pub struct AttackGesture;
 
-impl AttackGesture {
-    pub fn new(assets: &AssetServer) -> AttackGesture {
-        AttackGesture {
-            attack: assets.load("icons/cursors/swords002.png"),
-        }
-    }
+inventory::submit! {
+    &AttackGesture as &dyn Gesture
 }
 
 impl Gesture for AttackGesture {
+    fn priority(&self) -> i32 {
+        1
+    }
+
     fn claims(&self, world: &mut World) -> bool {
         !session::is_dead(world)
             && render::cursor_tile(world)
                 .is_some_and(|point| combat::enemy_at(world, point).is_some())
     }
 
-    fn drive(&mut self, world: &mut World, start: bool) {
+    fn drive(&self, world: &mut World, start: bool) {
         if start
             && let Some(point) = render::cursor_tile(world)
             && let Some(target) = combat::enemy_at(world, point)
@@ -35,7 +33,10 @@ impl Gesture for AttackGesture {
         }
     }
 
-    fn cursor(&self, _world: &mut World) -> Option<CursorIcon> {
-        Some(image_cursor(self.attack.clone(), (32, 32)))
+    fn cursor(&self, world: &mut World) -> Option<CursorIcon> {
+        let handle = world
+            .resource::<AssetServer>()
+            .load("icons/cursors/swords002.png");
+        Some(image_cursor(handle, (32, 32)))
     }
 }

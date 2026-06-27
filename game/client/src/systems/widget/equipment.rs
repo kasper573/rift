@@ -1,4 +1,4 @@
-//! The equipment pane: one cell per [`EquipSlot`] showing the worn item (or the empty slot's name).
+//! The equipment window: one cell per [`EquipSlot`] showing the worn item (or the empty slot's name).
 //! Clicking a worn slot unequips it back to the inventory.
 
 use bevy::prelude::*;
@@ -9,11 +9,35 @@ use world::systems::equipment::{EquipSlot, Equipment};
 use world::systems::item::ItemDef;
 use world::systems::player::session;
 
-use super::{SLOT_BG, SLOT_BORDER, reconcile_children, slot_node, tooltip_label};
+use super::{SLOT_BG, SLOT_BORDER, WindowDef, reconcile_children, slot_node, tooltip_label};
 use ui::component;
 
 #[derive(Component, Default, Clone)]
 pub(super) struct EquipmentGrid;
+
+inventory::submit! {
+    WindowDef {
+        id: "Equipment",
+        title: "Equipment",
+        toggle: KeyCode::KeyE,
+        keybind: "E",
+        icon: "icons/equipment/helm.png",
+        order: 1,
+        content,
+        sync: sync_equipment,
+    }
+}
+
+fn content() -> Box<dyn Scene> {
+    Box::new(bsn! {
+        Node {
+            width: Val::Percent(100.0),
+            flex_wrap: FlexWrap::Wrap,
+            align_content: AlignContent::FlexStart,
+        }
+        EquipmentGrid
+    })
+}
 
 #[derive(Component, Default, Clone)]
 struct Cell {

@@ -1,5 +1,5 @@
 //! Equipment: the gear a player wears per [`EquipSlot`], its effects active only while worn. Items
-//! declare a slot and optional [`RequirementKind`]s (job, level, or a stat floor) checked on equip.
+//! declare a slot and optional [`Requirement`]s (job, level, or a stat floor) checked on equip.
 
 mod job;
 mod level;
@@ -13,7 +13,6 @@ use std::collections::BTreeMap;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
-use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
 
 use crate::core::table::Id;
@@ -21,26 +20,16 @@ use crate::systems::effect::{self, EffectCommand};
 use crate::systems::item::{Inventory, ItemDef};
 use crate::systems::player::sender_player;
 
-/// A gate on equipping an item, one file per kind implementing [`Requirement`], dispatched by
-/// [`RequirementKind`]. Adding a gate kind is a new file plus a variant — [`met`] matches none.
-#[enum_dispatch]
-pub trait Requirement {
+/// A gate on equipping an item, one file per kind implementing [`Requirement`]; [`met`] matches none.
+/// Each kind registers itself for `type`-tagged deserialization with `#[typetag::deserialize(name)]`.
+#[typetag::deserialize(tag = "type")]
+pub trait Requirement: Send + Sync {
     /// Whether `player` satisfies this gate.
     fn met(&self, world: &World, player: Entity) -> bool;
 }
 
-/// Stored in item defs (json only, never replicated), so the tagged representation is fine.
-#[enum_dispatch(Requirement)]
-#[derive(Deserialize, Clone, Debug)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum RequirementKind {
-    Job(JobRequirement),
-    Level(LevelRequirement),
-    Stat(StatRequirement),
-}
-
 /// Whether `player` satisfies every gate.
-pub fn met(world: &World, player: Entity, requirements: &[RequirementKind]) -> bool {
+pub fn met(world: &World, player: Entity, requirements: &[Box<dyn Requirement>]) -> bool {
     requirements
         .iter()
         .all(|requirement| requirement.met(world, player))
@@ -107,7 +96,7 @@ pub fn equip(
     player: Entity,
     inv_slot: usize,
     into: EquipSlot,
-    requirements: &[RequirementKind],
+    requirements: &[Box<dyn Requirement>],
 ) {
     let Some(item) = world
         .get::<Inventory>(player)

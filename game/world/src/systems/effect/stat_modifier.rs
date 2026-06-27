@@ -1,18 +1,21 @@
 use serde::{Deserialize, Serialize};
 
 use super::{Effect, EffectContext, decode, encode_args};
-use crate::systems::stat::{StatKind, StatSet};
+use crate::systems::stat::{StatId, StatSet};
 
 #[derive(Serialize, Deserialize)]
 struct Args {
-    stat: StatKind,
+    stat: StatId,
     amount: f32,
 }
 
 /// The catch-all effect for a flat stat delta. Every plain bonus or penalty uses this; effects that
 /// need their own icon, scaling, or several stats get their own file instead.
-#[derive(Default)]
 pub struct StatModifier;
+
+inventory::submit! {
+    &StatModifier as &dyn Effect
+}
 
 impl Effect for StatModifier {
     fn name(&self) -> &str {

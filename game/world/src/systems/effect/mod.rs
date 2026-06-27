@@ -1,5 +1,5 @@
 //! Effects: the source-code-driven effect "table". Each effect is one struct per file here
-//! implementing the [`Effect`] trait, dispatched by `enum_dispatch` — there is no
+//! implementing the [`Effect`] trait, submitted to an inventory from its own module — there is no
 //! `effect_table.json` because effects are code. Assets never embed an effect, only an
 //! [`EffectCommand`] (an effect's struct-name id plus its parameters), validated against the chosen
 //! effect when the table loads. An effect just `compute`s an immutable
@@ -11,20 +11,17 @@ mod chasing;
 mod stat_modifier;
 
 pub use chasing::Chasing;
-pub use stat_modifier::StatModifier;
-
-use std::sync::OnceLock;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_time::Time;
-use enum_dispatch::enum_dispatch;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, Serialize};
-use strum::{EnumIter, IntoEnumIterator};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::core::time::Seconds;
 use crate::systems::stat::StatSet;
+
+inventory::collect!(&'static dyn Effect);
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -43,8 +40,23 @@ pub struct EffectContext<'a> {
     pub target: Entity,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct EffectId(u32);
+/// An effect's id: the name its file reports, which every binary that links the same effects agrees
+/// on (so it is stable on the wire without a sorted registry).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct EffectId(&'static str);
+
+impl Serialize for EffectId {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for EffectId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        effect_id(&name).ok_or_else(|| serde::de::Error::custom(format!("unknown effect '{name}'")))
+    }
+}
 
 /// An effect chosen by id plus its parameters. Args are kept already-encoded, so a command is one
 /// uniform, replicable value no matter which effect it names.
@@ -64,8 +76,8 @@ impl EffectCommand {
     pub fn describe(&self, ctx: &EffectContext) -> String {
         self.def().describe(ctx, &self.args)
     }
-    fn def(&self) -> &'static EffectKind {
-        &registry()[self.effect.0 as usize]
+    fn def(&self) -> &'static dyn Effect {
+        lookup(self.effect.0).expect("a registered effect")
     }
 }
 
@@ -95,21 +107,21 @@ pub fn commands<'de, D: Deserializer<'de>>(
             if entries.next().is_some() {
                 return Err(Error::custom("effect command must name exactly one effect"));
             }
-            let effect = effect_id(&name)
-                .ok_or_else(|| Error::custom(format!("unknown effect '{name}'")))?;
-            let args = registry()[effect.0 as usize]
-                .encode(args)
-                .map_err(Error::custom)?;
-            Ok(EffectCommand { effect, args })
+            let effect =
+                lookup(&name).ok_or_else(|| Error::custom(format!("unknown effect '{name}'")))?;
+            let args = effect.encode(args).map_err(Error::custom)?;
+            Ok(EffectCommand {
+                effect: EffectId(effect.name()),
+                args,
+            })
         })
         .collect()
 }
 
-/// The interface every effect file implements, dispatched by [`EffectKind`]. Args ride as json at
-/// table load and postcard bytes at runtime; an effect validates+stores them with [`encode_args`] and
-/// reads them back with [`decode`]. It only reads `ctx`; applying the stats is the stats system's job.
-#[enum_dispatch]
-pub trait Effect {
+/// The interface every effect file implements. Args ride as json at table load and postcard bytes at
+/// runtime; an effect validates+stores them with [`encode_args`] and reads them back with [`decode`].
+/// It only reads `ctx`; applying the stats is the stats system's job.
+pub trait Effect: Send + Sync {
     fn name(&self) -> &str;
     fn icon(&self) -> Option<&str>;
     fn encode(&self, args: serde_json::Value) -> Result<Vec<u8>, String>;
@@ -173,15 +185,6 @@ pub fn expire(world: &mut World) {
     }
 }
 
-/// Every effect, one variant per file. `enum_dispatch` forwards [`Effect`] to the variant; `EnumIter`
-/// lets [`registry`] build itself, so adding an effect is just a new file plus a variant here.
-#[enum_dispatch(Effect)]
-#[derive(EnumIter)]
-enum EffectKind {
-    StatModifier(StatModifier),
-    Chasing(Chasing),
-}
-
 /// Validates `args` (json from a table) against `A` and re-encodes them as the postcard bytes an
 /// [`EffectCommand`] stores. An effect's `encode` is a one-liner naming its args type.
 fn encode_args<A: Serialize + DeserializeOwned>(
@@ -196,20 +199,14 @@ fn decode<A: DeserializeOwned>(bytes: &[u8]) -> A {
     postcard::from_bytes(bytes).expect("args were validated and encoded at load")
 }
 
-fn effect_id(name: &str) -> Option<EffectId> {
-    registry()
-        .iter()
-        .position(|effect| effect.name() == name)
-        .map(|index| EffectId(index as u32))
+fn lookup(name: &str) -> Option<&'static dyn Effect> {
+    inventory::iter::<&'static dyn Effect>()
+        .copied()
+        .find(|effect| effect.name() == name)
 }
 
-fn registry() -> &'static [EffectKind] {
-    static REGISTRY: OnceLock<Vec<EffectKind>> = OnceLock::new();
-    REGISTRY.get_or_init(|| {
-        let effects: Vec<EffectKind> = EffectKind::iter().collect();
-        crate::core::table::unique_ids(effects.iter().map(|effect| effect.name()), "effects");
-        effects
-    })
+fn effect_id(name: &str) -> Option<EffectId> {
+    lookup(name).map(|effect| EffectId(effect.name()))
 }
 
 fn timed(world: &World, entity: Entity) -> Vec<EffectCommand> {

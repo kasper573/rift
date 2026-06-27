@@ -6,8 +6,11 @@ const CHASE_SPEED_MULTIPLIER: f32 = 2.0;
 
 /// Raised on an npc while it chases (see `npc::chase`); takes no args and reads the chaser's base
 /// speed from the context, so the boost scales with each npc.
-#[derive(Default)]
 pub struct Chasing;
+
+inventory::submit! {
+    &Chasing as &dyn Effect
+}
 
 impl Effect for Chasing {
     fn name(&self) -> &str {
