@@ -53,7 +53,7 @@ pub struct WidgetDef {
 ::inventory::collect!(WidgetDef);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Window(&'static str);
+pub struct WindowId(&'static str);
 
 pub struct WindowDef {
     pub id: &'static str,
@@ -68,7 +68,7 @@ pub struct WindowDef {
 
 ::inventory::collect!(WindowDef);
 
-impl Window {
+impl WindowId {
     fn def(self) -> &'static WindowDef {
         ::inventory::iter::<WindowDef>()
             .find(|def| def.id == self.0)
@@ -76,18 +76,18 @@ impl Window {
     }
 }
 
-impl Serialize for Window {
+impl Serialize for WindowId {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.0.serialize(serializer)
     }
 }
 
-impl<'de> Deserialize<'de> for Window {
+impl<'de> Deserialize<'de> for WindowId {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let id = String::deserialize(deserializer)?;
         ::inventory::iter::<WindowDef>()
             .find(|def| def.id == id)
-            .map(|def| Window(def.id))
+            .map(|def| WindowId(def.id))
             .ok_or_else(|| serde::de::Error::custom(format!("unknown window '{id}'")))
     }
 }
@@ -234,14 +234,14 @@ fn default_snap() -> ScreenPx {
 }
 
 #[derive(Resource, Default)]
-struct Open(std::collections::HashSet<Window>);
+struct Open(std::collections::HashSet<WindowId>);
 
 #[derive(Component, Default, Clone)]
 struct Hud;
 
 #[derive(Component, Clone)]
 struct WindowView {
-    window: Window,
+    window: WindowId,
     open: bool,
 }
 
@@ -259,7 +259,7 @@ fn spawn_hud(
     }
     for def in ::inventory::iter::<WindowDef>() {
         scenes.push(Box::new(launcher(
-            Window(def.id),
+            WindowId(def.id),
             screen_w,
             &settings,
             &assets,
@@ -309,7 +309,7 @@ fn sync_widgets(world: &mut World) {
 }
 
 fn launcher(
-    window: Window,
+    window: WindowId,
     screen_w: f32,
     settings: &Settings,
     assets: &AssetServer,
@@ -329,7 +329,7 @@ fn launcher(
     }
 }
 
-fn window_scene(window: Window, settings: &Settings) -> impl Scene {
+fn window_scene(window: WindowId, settings: &Settings) -> impl Scene {
     let def = window.def();
     let (pos, size) = window_geom(settings, window.0, Vec2::new(376.0, 332.0), WINDOW_SIZE);
     bsn! {
@@ -345,7 +345,7 @@ fn window_scene(window: Window, settings: &Settings) -> impl Scene {
     }
 }
 
-fn close_window(world: &mut World, window: Window) {
+fn close_window(world: &mut World, window: WindowId) {
     world.resource_mut::<Open>().0.remove(&window);
 }
 
@@ -397,7 +397,7 @@ fn sync_snap_grid(settings: Res<Settings>, mut grid: ResMut<SnapGrid>) {
     grid.0 = settings.0.snap_grid();
 }
 
-fn launcher_pos(window: Window, screen_w: f32) -> Vec2 {
+fn launcher_pos(window: WindowId, screen_w: f32) -> Vec2 {
     let x = screen_w - 8.0 - WIDGET.0;
     Vec2::new(x, 8.0 + window.def().order as f32 * (WIDGET.0 + 8.0))
 }
@@ -458,13 +458,13 @@ pub(super) fn tooltip_label(text: impl Into<String>) -> impl Scene {
     }
 }
 
-fn open_window(world: &mut World, window: Window) {
+fn open_window(world: &mut World, window: WindowId) {
     world.resource_mut::<Open>().0.insert(window);
 }
 
 fn toggle_keys(keys: Res<ButtonInput<KeyCode>>, mut open: ResMut<Open>) {
     for def in ::inventory::iter::<WindowDef>() {
-        let window = Window(def.id);
+        let window = WindowId(def.id);
         if keys.just_pressed(def.toggle) && !open.0.remove(&window) {
             open.0.insert(window);
         }
