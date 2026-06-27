@@ -10,13 +10,13 @@ use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
 use crate::data::item::Id;
 
+use crate::core::sfx::SfxId;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::effect::{self, Effect, TimedEffect, TimedEffects};
 use crate::systems::equipment::{self, Requirement};
 use crate::systems::movement::{MoveTarget, Position, approach, forget, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, sender_player};
-use crate::systems::sfx::SfxId;
 use crate::systems::stat;
 use crate::systems::visibility::seen_by;
 use bevy_ecs::query::With;

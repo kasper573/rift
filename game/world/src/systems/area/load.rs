@@ -7,10 +7,10 @@ use super::{Area, Group, Portal, RenderLayer, TileRef, cell_overlap};
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
 use crate::core::nav;
+use crate::core::sfx::SfxId;
 use crate::core::tiling::{
     self, Cell, CellPos, GridDims, GridSize, PixelsPerTile, TileRect, TileSize, Tiles,
 };
-use crate::systems::sfx::SfxId;
 
 const OBSCURING_CUTOFF: f32 = 0.4;
 
@@ -147,7 +147,7 @@ impl TilePalette {
                 });
                 self.sfx.push(match properties.get("sfx") {
                     Some(PropertyValue::StringValue(sfx)) => Some(
-                        sfx.parse::<crate::systems::sfx::SfxId>()
+                        sfx.parse::<crate::core::sfx::SfxId>()
                             .unwrap_or_else(|error| panic!("tile sfx '{sfx}': {error}")),
                     ),
                     _ => None,

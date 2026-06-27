@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::nav;
+use crate::core::sfx::SfxId;
 use crate::core::tiling::{Cell, CellPos, GridSize, TileSize, Tiles};
 use crate::data;
-use crate::systems::sfx::SfxId;
 
 pub use crate::data::area::Id;
 

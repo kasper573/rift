@@ -1,13 +1,14 @@
 use bevy::prelude::*;
 use world::core::assets::AssetService;
 use world::core::math::Pos;
+use world::core::sfx::SfxId;
 use world::core::tiling::Tiles;
 use world::systems::area::{self, AreaTag};
 use world::systems::item::{DroppedItem, ItemConsumed, ItemsDropped};
 use world::systems::movement::Position;
 
-use crate::core::audio::{PlaySfx, SfxKey};
 use crate::core::render::{ToScreen, dynamic_z, sprite_transform};
+use crate::core::sfx::PlaySfx;
 
 const DROP_SIZE: f32 = 12.0;
 const DROP_STAGGER: f32 = 0.06;
@@ -38,7 +39,7 @@ struct DropAnim {
     to: Vec2,
     delay: f32,
     elapsed: f32,
-    drop_sfx: Option<SfxKey>,
+    drop_sfx: Option<SfxId>,
 }
 
 #[derive(Resource, Default)]
@@ -64,7 +65,7 @@ fn use_sounds(
             continue;
         };
         play.write(PlaySfx {
-            key: SfxKey(id.index()),
+            id,
             at: position.pos,
         });
     }
@@ -118,7 +119,7 @@ fn start_drops(
                 to: position.pos.to_screen(),
                 delay: drop.index as f32 * DROP_STAGGER,
                 elapsed: 0.0,
-                drop_sfx: dropped.item.get().sfx.drop.map(|sfx| SfxKey(sfx.index())),
+                drop_sfx: dropped.item.get().sfx.drop,
             });
             false
         }
@@ -157,9 +158,9 @@ fn animate_drops(
             drop_z(&service, tag, position.pos),
         );
         if anim.elapsed - anim.delay >= DROP_DURATION {
-            if let Some(key) = anim.drop_sfx {
+            if let Some(id) = anim.drop_sfx {
                 play.write(PlaySfx {
-                    key,
+                    id,
                     at: position.pos,
                 });
             }

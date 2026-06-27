@@ -2,7 +2,6 @@ use base64::Engine;
 use bevy::asset::AssetApp;
 use bevy::asset::io::AssetSourceId;
 use bevy::prelude::*;
-use strum::VariantArray;
 use world::systems::account::Role;
 
 pub mod core;
@@ -40,12 +39,11 @@ pub fn boot() {
         app.insert_resource(session);
     }
     app.insert_resource(params)
-        .insert_resource(sfx_catalog())
         .add_plugins((
             ui::UiPlugin,
             core::net::NetPlugin,
             core::render::RenderPlugin,
-            core::audio::SfxPlugin,
+            core::sfx::SfxPlugin,
         ))
         .add_plugins((
             systems::scene::ScenePlugin { spectator },
@@ -62,22 +60,6 @@ pub fn boot() {
         ));
     ui::theme::set_theme(ui::themes::dark::THEME);
     app.run();
-}
-
-fn sfx_catalog() -> core::audio::SfxCatalog {
-    core::audio::SfxCatalog(
-        world::data::sfx::Id::VARIANTS
-            .iter()
-            .map(|id| {
-                let def = id.get();
-                core::audio::SfxSpec {
-                    path: def.src.0.to_owned(),
-                    volume: def.volume.range(),
-                    pitch: def.pitch.range(),
-                }
-            })
-            .collect(),
-    )
 }
 
 fn roles(access_token: &str) -> Vec<Role> {

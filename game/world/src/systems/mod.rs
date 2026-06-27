@@ -10,7 +10,6 @@ pub mod movement;
 pub mod npc;
 pub mod player;
 pub mod rewards;
-pub mod sfx;
 pub mod spectate;
 pub mod stat;
 pub mod visibility;

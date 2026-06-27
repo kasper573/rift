@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_kira_audio::prelude::{Audio, AudioControl, AudioSource, Decibels};
+use strum::VariantArray;
 use world::core::math::{Pos, Size};
+use world::core::sfx::SfxId;
 use world::core::tiling::Tiles;
 use world::core::time::Seconds;
 
@@ -15,7 +17,6 @@ impl Plugin for SfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(bevy_kira_audio::AudioPlugin)
             .init_resource::<Listener>()
-            .init_resource::<SfxCatalog>()
             .init_resource::<Catalog>()
             .init_resource::<Played>()
             .add_message::<PlaySfx>()
@@ -29,22 +30,8 @@ pub struct Listener(pub Option<Pos<Tiles>>);
 
 #[derive(Message)]
 pub struct PlaySfx {
-    pub key: SfxKey,
+    pub id: SfxId,
     pub at: Pos<Tiles>,
-}
-
-/// An opaque handle into the [`SfxCatalog`] — a sound's position in the spec list. Keeps the mixer
-/// agnostic of what the sounds mean; callers map their own ids onto a key.
-#[derive(Clone, Copy)]
-pub struct SfxKey(pub usize);
-
-#[derive(Resource, Default)]
-pub struct SfxCatalog(pub Vec<SfxSpec>);
-
-pub struct SfxSpec {
-    pub path: String,
-    pub volume: (f32, f32),
-    pub pitch: (f32, f32),
 }
 
 #[derive(Resource, Default)]
@@ -57,7 +44,7 @@ struct Sound {
 }
 
 #[derive(Resource, Default)]
-struct Played(HashMap<usize, Seconds>);
+struct Played(HashMap<SfxId, Seconds>);
 
 #[derive(Clone)]
 struct Cue {
@@ -68,14 +55,16 @@ struct Cue {
     pitch: (f32, f32),
 }
 
-fn load(specs: Res<SfxCatalog>, assets: Res<AssetServer>, mut catalog: ResMut<Catalog>) {
-    catalog.0 = specs
-        .0
+fn load(assets: Res<AssetServer>, mut catalog: ResMut<Catalog>) {
+    catalog.0 = SfxId::VARIANTS
         .iter()
-        .map(|spec| Sound {
-            handle: assets.load(spec.path.clone()),
-            volume: spec.volume,
-            pitch: spec.pitch,
+        .map(|id| {
+            let def = id.get();
+            Sound {
+                handle: assets.load(def.src.0),
+                volume: def.volume.range(),
+                pitch: def.pitch.range(),
+            }
         })
         .collect();
 }
@@ -93,9 +82,9 @@ fn mix(
         return;
     };
     let clock = Seconds(time.elapsed_secs());
-    let mut frame: HashMap<usize, Cue> = HashMap::new();
+    let mut frame: HashMap<SfxId, Cue> = HashMap::new();
     for req in requests.read() {
-        let Some(sound) = catalog.0.get(req.key.0) else {
+        let Some(sound) = catalog.0.get(req.id.index()) else {
             continue;
         };
         let proximity = proximity_volume(listener, req.at);
@@ -109,16 +98,16 @@ fn mix(
             volume: sound.volume,
             pitch: sound.pitch,
         };
-        let slot = frame.entry(req.key.0).or_insert_with(|| cue.clone());
+        let slot = frame.entry(req.id).or_insert_with(|| cue.clone());
         if cue.proximity > slot.proximity {
             *slot = cue;
         }
     }
-    for (key, cue) in frame {
-        if !ready(&mut played.0, key, clock) {
+    for (id, cue) in frame {
+        if !ready(&mut played.0, id, clock) {
             continue;
         }
-        let salt = key as u64;
+        let salt = id.index() as u64;
         let volume = resolve(cue.volume, roll(clock, salt)) * cue.proximity;
         let pitch = resolve(cue.pitch, roll(clock, salt.wrapping_add(7)));
         audio
@@ -129,14 +118,14 @@ fn mix(
     }
 }
 
-fn ready(played: &mut HashMap<usize, Seconds>, key: usize, clock: Seconds) -> bool {
+fn ready(played: &mut HashMap<SfxId, Seconds>, id: SfxId, clock: Seconds) -> bool {
     if played
-        .get(&key)
+        .get(&id)
         .is_some_and(|&last| clock - last < STACK_WINDOW)
     {
         return false;
     }
-    played.insert(key, clock);
+    played.insert(id, clock);
     true
 }
 
