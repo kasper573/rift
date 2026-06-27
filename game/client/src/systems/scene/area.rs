@@ -1,3 +1,4 @@
+use bevy::asset::AssetPath;
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::text_colored;
@@ -106,9 +107,11 @@ impl bevy_tiled::MapHooks for AreaHooks {
         tileset: &tiled::Tileset,
         _images: &mut bevy::asset::Assets<Image>,
     ) -> Option<Handle<Image>> {
-        let source = &tileset.image.as_ref()?.source;
-        let key = crate::core::assets::key(source)?;
-        Some(self.assets.load(key))
+        let source = tileset.image.as_ref()?.source.to_str()?;
+        Some(
+            self.assets
+                .load(AssetPath::from("").resolve(&AssetPath::parse(source))),
+        )
     }
 
     fn tile_z(&mut self, layer: usize, x: i32, y: i32) -> Option<f32> {

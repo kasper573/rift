@@ -1,6 +1,7 @@
 use std::io::{self, Cursor, Read};
 use std::path::{Path, PathBuf};
 
+use bevy::asset::AssetPath;
 use bevy::asset::io::memory::{Dir, MemoryAssetReader};
 use bevy::asset::io::{AssetSourceBuilder, ErasedAssetReader};
 use include_dir::{Dir as Embedded, include_dir};
@@ -20,19 +21,21 @@ pub fn bevy_source() -> AssetSourceBuilder {
     })
 }
 
-pub fn key(path: &Path) -> Option<String> {
-    let normalized = normalize(&path.to_string_lossy());
-    ASSETS.get_file(&normalized).map(|_| normalized)
-}
-
 struct EmbeddedSource;
 
 impl AssetSource for EmbeddedSource {
     fn open(&self, path: &Path) -> io::Result<Box<dyn Read>> {
+        let name = path.to_string_lossy();
+        let resolved = AssetPath::from("").resolve(&AssetPath::parse(&name));
         ASSETS
-            .get_file(normalize(&path.to_string_lossy()))
+            .get_file(resolved.path())
             .map(|file| Box::new(Cursor::new(file.contents())) as Box<dyn Read>)
-            .ok_or_else(|| missing(&path.to_string_lossy()))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("missing asset {}", resolved.path().display()),
+                )
+            })
     }
 }
 
@@ -43,22 +46,4 @@ fn fill(dir: &Dir, embedded: &'static Embedded<'static>) {
     for sub in embedded.dirs() {
         fill(dir, sub);
     }
-}
-
-fn normalize(path: &str) -> String {
-    let mut parts: Vec<&str> = Vec::new();
-    for part in path.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            part => parts.push(part),
-        }
-    }
-    parts.join("/")
-}
-
-fn missing(path: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::NotFound, format!("missing asset {path}"))
 }
