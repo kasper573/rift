@@ -13,7 +13,7 @@ use ui::component;
 struct EffectsGrid;
 
 inventory::submit! {
-    super::WidgetDef {
+    super::Widget {
         id: "effects",
         fallback: Vec2::new(8.0, 80.0),
         build,

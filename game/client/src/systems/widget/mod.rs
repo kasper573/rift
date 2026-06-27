@@ -43,19 +43,19 @@ impl Plugin for HudPlugin {
     }
 }
 
-pub struct WidgetDef {
+pub struct Widget {
     pub id: &'static str,
     pub fallback: Vec2,
     pub build: fn(Vec2, &'static str) -> Box<dyn Scene>,
     pub sync: fn(&mut World),
 }
 
-::inventory::collect!(WidgetDef);
+::inventory::collect!(Widget);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WindowId(&'static str);
 
-pub struct WindowDef {
+pub struct Window {
     pub id: &'static str,
     pub title: &'static str,
     pub toggle: KeyCode,
@@ -66,11 +66,11 @@ pub struct WindowDef {
     pub sync: fn(&mut World),
 }
 
-::inventory::collect!(WindowDef);
+::inventory::collect!(Window);
 
 impl WindowId {
-    fn def(self) -> &'static WindowDef {
-        ::inventory::iter::<WindowDef>()
+    fn def(self) -> &'static Window {
+        ::inventory::iter::<Window>()
             .find(|def| def.id == self.0)
             .expect("a registered window")
     }
@@ -85,7 +85,7 @@ impl Serialize for WindowId {
 impl<'de> Deserialize<'de> for WindowId {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let id = String::deserialize(deserializer)?;
-        ::inventory::iter::<WindowDef>()
+        ::inventory::iter::<Window>()
             .find(|def| def.id == id)
             .map(|def| WindowId(def.id))
             .ok_or_else(|| serde::de::Error::custom(format!("unknown window '{id}'")))
@@ -253,11 +253,11 @@ fn spawn_hud(
 ) {
     let screen_w = screen.resolution.width();
     let mut scenes: Vec<Box<dyn Scene>> = Vec::new();
-    for def in ::inventory::iter::<WidgetDef>() {
+    for def in ::inventory::iter::<Widget>() {
         let pos = widget_pos(&settings, def.id, def.fallback);
         scenes.push((def.build)(pos, def.id));
     }
-    for def in ::inventory::iter::<WindowDef>() {
+    for def in ::inventory::iter::<Window>() {
         scenes.push(Box::new(launcher(
             WindowId(def.id),
             screen_w,
@@ -303,7 +303,7 @@ fn rebuild_windows(
 }
 
 fn sync_widgets(world: &mut World) {
-    for def in ::inventory::iter::<WidgetDef>() {
+    for def in ::inventory::iter::<Widget>() {
         (def.sync)(world);
     }
 }
@@ -350,7 +350,7 @@ fn close_window(world: &mut World, window: WindowId) {
 }
 
 fn sync_windows(world: &mut World) {
-    for def in ::inventory::iter::<WindowDef>() {
+    for def in ::inventory::iter::<Window>() {
         (def.sync)(world);
     }
 }
@@ -463,7 +463,7 @@ fn open_window(world: &mut World, window: WindowId) {
 }
 
 fn toggle_keys(keys: Res<ButtonInput<KeyCode>>, mut open: ResMut<Open>) {
-    for def in ::inventory::iter::<WindowDef>() {
+    for def in ::inventory::iter::<Window>() {
         let window = WindowId(def.id);
         if keys.just_pressed(def.toggle) && !open.0.remove(&window) {
             open.0.insert(window);

@@ -6,14 +6,14 @@ use world::systems::equipment::{EquipSlot, Equipment};
 use world::systems::item::ItemDef;
 use world::systems::player::session;
 
-use super::{SLOT_BG, SLOT_BORDER, WindowDef, reconcile_children, slot_node, tooltip_label};
+use super::{SLOT_BG, SLOT_BORDER, Window, reconcile_children, slot_node, tooltip_label};
 use ui::component;
 
 #[derive(Component, Default, Clone)]
 pub(super) struct EquipmentGrid;
 
 inventory::submit! {
-    WindowDef {
+    Window {
         id: "Equipment",
         title: "Equipment",
         toggle: KeyCode::KeyE,

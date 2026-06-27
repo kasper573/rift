@@ -4,14 +4,14 @@ use ui::{Align, Side, text_colored, tooltip, tooltip_content};
 use world::systems::item::{INVENTORY_MAX, Inventory};
 use world::systems::player::session;
 
-use super::{SLOT_BG, SLOT_BORDER, WindowDef, reconcile_children, slot_node, tooltip_label};
+use super::{SLOT_BG, SLOT_BORDER, Window, reconcile_children, slot_node, tooltip_label};
 use ui::component;
 
 #[derive(Component, Default, Clone)]
 pub(super) struct InventoryGrid;
 
 ::inventory::submit! {
-    WindowDef {
+    Window {
         id: "Inventory",
         title: "Inventory",
         toggle: KeyCode::KeyI,

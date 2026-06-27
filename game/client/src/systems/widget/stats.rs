@@ -4,13 +4,13 @@ use world::systems::job;
 use world::systems::player::session;
 use world::systems::stat;
 
-use super::WindowDef;
+use super::Window;
 
 #[derive(Component, Default, Clone)]
 pub(super) struct StatsText;
 
 inventory::submit! {
-    WindowDef {
+    Window {
         id: "Stats",
         title: "Stats",
         toggle: KeyCode::KeyK,

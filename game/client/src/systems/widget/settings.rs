@@ -2,13 +2,13 @@ use bevy::prelude::*;
 use ui::button::intent as button_intent;
 use ui::{Activate, ButtonSize, button_styled};
 
-use super::{Settings, WindowDef};
+use super::{Settings, Window};
 
 #[derive(Component, Default, Clone)]
 struct SnappingButton;
 
 inventory::submit! {
-    WindowDef {
+    Window {
         id: "Settings",
         title: "Settings",
         toggle: KeyCode::KeyO,

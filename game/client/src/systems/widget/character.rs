@@ -10,7 +10,7 @@ use world::systems::stat;
 struct CharacterText;
 
 inventory::submit! {
-    super::WidgetDef {
+    super::Widget {
         id: "character",
         fallback: Vec2::new(8.0, 8.0),
         build,
