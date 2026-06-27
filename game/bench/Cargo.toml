@@ -13,4 +13,5 @@ bevy_app.workspace = true
 bevy_ecs.workspace = true
 bevy_state.workspace = true
 bevy_replicon = { workspace = true, features = ["server"] }
+strum.workspace = true
 world = { path = "../world" }

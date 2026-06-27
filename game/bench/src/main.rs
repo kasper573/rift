@@ -6,6 +6,7 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{ConnectedClient, ServerState};
 use bevy_state::prelude::NextState;
+use strum::VariantArray;
 use world::core::assets::AssetService;
 use world::core::math::Pos;
 use world::core::tiling::Tiles;
@@ -133,10 +134,10 @@ fn point(areas: usize, warmup: usize, ticks: usize) -> Point {
     let assets = assets::service();
     let mut worlds: Vec<App> = Vec::with_capacity(areas);
     let mut rosters: Vec<Vec<(ClientId, Entity)>> = Vec::with_capacity(areas);
-    for id in world::data::area::TABLE
+    for id in world::data::area::Id::VARIANTS
         .iter()
-        .filter(|(_, def)| def.bench)
-        .map(|(&id, _)| id)
+        .copied()
+        .filter(|id| id.get().bench)
         .take(areas)
     {
         let (app, roster) = build_world(id, npc, &assets);

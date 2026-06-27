@@ -214,7 +214,6 @@ pub(crate) fn place(
             Character {
                 replicated: Replicated,
                 position: Position { pos: at },
-                name: Name { name: state.name },
                 actor: Actor {
                     color: PLAYER_TINT,
                     dir: Direction::S,
@@ -229,6 +228,7 @@ pub(crate) fn place(
                 },
                 area: AreaTag { area: zone },
             },
+            Name { name: state.name },
             OwnedBy(client),
             Owner { client },
             state.inventory,

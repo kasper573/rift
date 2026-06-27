@@ -6,7 +6,7 @@ use world::systems::area::{self, AreaTag};
 use world::systems::item::{DroppedItem, ItemConsumed, ItemsDropped};
 use world::systems::movement::Position;
 
-use crate::core::audio::PlaySfx;
+use crate::core::audio::{PlaySfx, SfxKey};
 use crate::core::render::{ToScreen, dynamic_z, sprite_transform};
 
 const DROP_SIZE: f32 = 12.0;
@@ -38,7 +38,7 @@ struct DropAnim {
     to: Vec2,
     delay: f32,
     elapsed: f32,
-    drop_sfx: Option<String>,
+    drop_sfx: Option<SfxKey>,
 }
 
 #[derive(Resource, Default)]
@@ -57,14 +57,14 @@ fn use_sounds(
     mut play: MessageWriter<PlaySfx>,
 ) {
     for consumed in consumed.read() {
-        let Some(id) = consumed.item.get().sfx.on_use.as_ref() else {
+        let Some(id) = consumed.item.get().sfx.on_use else {
             continue;
         };
         let Ok(position) = positions.get(consumed.actor) else {
             continue;
         };
         play.write(PlaySfx {
-            id: id.name().to_owned(),
+            key: SfxKey(id.index()),
             at: position.pos,
         });
     }
@@ -118,13 +118,7 @@ fn start_drops(
                 to: position.pos.to_screen(),
                 delay: drop.index as f32 * DROP_STAGGER,
                 elapsed: 0.0,
-                drop_sfx: dropped
-                    .item
-                    .get()
-                    .sfx
-                    .drop
-                    .as_ref()
-                    .map(|sfx| sfx.name().to_owned()),
+                drop_sfx: dropped.item.get().sfx.drop.map(|sfx| SfxKey(sfx.index())),
             });
             false
         }
@@ -163,9 +157,9 @@ fn animate_drops(
             drop_z(&service, tag, position.pos),
         );
         if anim.elapsed - anim.delay >= DROP_DURATION {
-            if let Some(id) = &anim.drop_sfx {
+            if let Some(key) = anim.drop_sfx {
                 play.write(PlaySfx {
-                    id: id.clone(),
+                    key,
                     at: position.pos,
                 });
             }

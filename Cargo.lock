@@ -662,6 +662,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_replicon",
  "bevy_state",
+ "strum",
  "world",
 ]
 
@@ -2418,6 +2419,7 @@ dependencies = [
  "renet2_netcode",
  "serde",
  "serde_json",
+ "strum",
  "tiled",
  "ui",
  "url",
@@ -7252,6 +7254,7 @@ dependencies = [
  "serde",
  "serde_json",
  "service",
+ "strum",
  "tokio",
  "ureq",
  "world",

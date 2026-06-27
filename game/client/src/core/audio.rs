@@ -29,32 +29,35 @@ pub struct Listener(pub Option<Pos<Tiles>>);
 
 #[derive(Message)]
 pub struct PlaySfx {
-    pub id: String,
+    pub key: SfxKey,
     pub at: Pos<Tiles>,
 }
+
+/// An opaque handle into the [`SfxCatalog`] — a sound's position in the spec list. Keeps the mixer
+/// agnostic of what the sounds mean; callers map their own ids onto a key.
+#[derive(Clone, Copy)]
+pub struct SfxKey(pub usize);
 
 #[derive(Resource, Default)]
 pub struct SfxCatalog(pub Vec<SfxSpec>);
 
 pub struct SfxSpec {
-    pub id: String,
     pub path: String,
     pub volume: (f32, f32),
     pub pitch: (f32, f32),
 }
 
 #[derive(Resource, Default)]
-struct Catalog(HashMap<String, Sound>);
+struct Catalog(Vec<Sound>);
 
 struct Sound {
     handle: Handle<AudioSource>,
     volume: (f32, f32),
     pitch: (f32, f32),
-    key: u64,
 }
 
 #[derive(Resource, Default)]
-struct Played(HashMap<u64, Seconds>);
+struct Played(HashMap<usize, Seconds>);
 
 #[derive(Clone)]
 struct Cue {
@@ -66,17 +69,15 @@ struct Cue {
 }
 
 fn load(specs: Res<SfxCatalog>, assets: Res<AssetServer>, mut catalog: ResMut<Catalog>) {
-    for (key, spec) in specs.0.iter().enumerate() {
-        catalog.0.insert(
-            spec.id.clone(),
-            Sound {
-                handle: assets.load(spec.path.clone()),
-                volume: spec.volume,
-                pitch: spec.pitch,
-                key: key as u64,
-            },
-        );
-    }
+    catalog.0 = specs
+        .0
+        .iter()
+        .map(|spec| Sound {
+            handle: assets.load(spec.path.clone()),
+            volume: spec.volume,
+            pitch: spec.pitch,
+        })
+        .collect();
 }
 
 fn mix(
@@ -92,9 +93,9 @@ fn mix(
         return;
     };
     let clock = Seconds(time.elapsed_secs());
-    let mut frame: HashMap<u64, Cue> = HashMap::new();
+    let mut frame: HashMap<usize, Cue> = HashMap::new();
     for req in requests.read() {
-        let Some(sound) = catalog.0.get(&req.id) else {
+        let Some(sound) = catalog.0.get(req.key.0) else {
             continue;
         };
         let proximity = proximity_volume(listener, req.at);
@@ -108,7 +109,7 @@ fn mix(
             volume: sound.volume,
             pitch: sound.pitch,
         };
-        let slot = frame.entry(sound.key).or_insert_with(|| cue.clone());
+        let slot = frame.entry(req.key.0).or_insert_with(|| cue.clone());
         if cue.proximity > slot.proximity {
             *slot = cue;
         }
@@ -117,8 +118,9 @@ fn mix(
         if !ready(&mut played.0, key, clock) {
             continue;
         }
-        let volume = resolve(cue.volume, roll(clock, key)) * cue.proximity;
-        let pitch = resolve(cue.pitch, roll(clock, key.wrapping_add(7)));
+        let salt = key as u64;
+        let volume = resolve(cue.volume, roll(clock, salt)) * cue.proximity;
+        let pitch = resolve(cue.pitch, roll(clock, salt.wrapping_add(7)));
         audio
             .play(cue.handle)
             .with_volume(Decibels(20.0 * volume.max(1e-4).log10()))
@@ -127,7 +129,7 @@ fn mix(
     }
 }
 
-fn ready(played: &mut HashMap<u64, Seconds>, key: u64, clock: Seconds) -> bool {
+fn ready(played: &mut HashMap<usize, Seconds>, key: usize, clock: Seconds) -> bool {
     if played
         .get(&key)
         .is_some_and(|&last| clock - last < STACK_WINDOW)

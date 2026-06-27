@@ -21,14 +21,14 @@ use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::data;
 use crate::systems::Character;
-use crate::systems::actor::{self, Action, Actor, Hitbox, Name, Rgba, set_action};
+use crate::systems::actor::{self, Action, Actor, Hitbox, Rgba, set_action};
 use crate::systems::area::{self, AreaTag};
 use crate::systems::combat::{AttackTarget, Attackers};
 use crate::systems::effect::{self, Effect, TimedEffects};
 use crate::systems::item::Reservation;
 use crate::systems::movement::{MoveTarget, Path, Position, forget, position};
 use crate::systems::player::Players;
-use crate::systems::stat::{self, StatKind, Stats};
+use crate::systems::stat::{self, Stat, StatKind, Stats};
 
 const NPC_RESPAWN_DELAY: Seconds = Seconds(5.0);
 const RNG_SEED: u64 = 0x1234_5678_9abc_def0;
@@ -64,7 +64,7 @@ pub struct NpcDef {
     pub model: data::model::Id,
     pub tint: Rgba,
     pub ai: &'static dyn Ai,
-    pub stats: Stats,
+    pub stats: &'static [Stat],
     pub aggro: Tiles,
     pub rewards: &'static [crate::systems::rewards::Reward],
 }
@@ -97,7 +97,7 @@ fn spawn_npc(
 pub fn spawn_actor(world: &mut World, def: &NpcDef, at: Pos<Tiles>, area: area::Id) -> Entity {
     let assets = world.resource::<AssetService>().clone();
     let entity = world.spawn(character(&assets, def, at, area)).id();
-    world.entity_mut(entity).insert(def.stats.clone());
+    world.entity_mut(entity).insert(Stats(def.stats.to_vec()));
     entity
 }
 
@@ -117,15 +117,12 @@ fn character(assets: &AssetService, def: &NpcDef, at: Pos<Tiles>, area: area::Id
     Character {
         replicated: Replicated,
         position: Position { pos: at },
-        name: Name {
-            name: def.display_name.to_owned(),
-        },
         actor: Actor {
             color: def.tint,
             dir: Direction::S,
             action: Action::Idle,
             model: def.model,
-            attack_rate: PlaybackRate(def.stats.get(StatKind::AttackSpeed)),
+            attack_rate: PlaybackRate(stat::value(def.stats, StatKind::AttackSpeed)),
         },
         hitbox: Hitbox {
             size: assets

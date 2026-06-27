@@ -29,7 +29,8 @@ pub fn build_model(svc: &AssetService, source: AssetRef) -> ActorModel {
         if let Some(PropertyValue::StringValue(sfx)) = tile.properties.get("sfx") {
             sounds.insert(
                 id,
-                SfxId::by_name(sfx).unwrap_or_else(|error| panic!("actor sfx '{sfx}': {error}")),
+                sfx.parse::<SfxId>()
+                    .unwrap_or_else(|error| panic!("actor sfx '{sfx}': {error}")),
             );
         }
         if let Some(PropertyValue::BoolValue(true)) = tile.properties.get("step") {

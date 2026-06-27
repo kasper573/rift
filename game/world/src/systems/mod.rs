@@ -20,7 +20,7 @@ use bevy_ecs::message::{Message, Messages};
 use bevy_ecs::prelude::{Bundle, Resource, World};
 use bevy_replicon::prelude::{FromClient, Replicated};
 
-use actor::{Actor, Hitbox, Name};
+use actor::{Actor, Hitbox};
 use area::AreaTag;
 use movement::Position;
 
@@ -55,7 +55,6 @@ pub struct WorldArea(pub area::Id);
 pub struct Character {
     pub replicated: Replicated,
     pub position: Position,
-    pub name: Name,
     pub actor: Actor,
     pub hitbox: Hitbox,
     pub area: AreaTag,

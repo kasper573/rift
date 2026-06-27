@@ -20,6 +20,7 @@ rand = "0.9"
 serde.workspace = true
 serde_json.workspace = true
 service = { path = "../../service" }
+strum.workspace = true
 tokio.workspace = true
 ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 world = { path = "../world" }

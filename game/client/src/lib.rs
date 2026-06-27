@@ -2,6 +2,7 @@ use base64::Engine;
 use bevy::asset::AssetApp;
 use bevy::asset::io::AssetSourceId;
 use bevy::prelude::*;
+use strum::VariantArray;
 use world::systems::account::Role;
 
 pub mod core;
@@ -65,13 +66,15 @@ pub fn boot() {
 
 fn sfx_catalog() -> core::audio::SfxCatalog {
     core::audio::SfxCatalog(
-        world::data::sfx::TABLE
+        world::data::sfx::Id::VARIANTS
             .iter()
-            .map(|(id, def)| core::audio::SfxSpec {
-                id: id.name().to_owned(),
-                path: def.src.0.to_owned(),
-                volume: def.volume.range(),
-                pitch: def.pitch.range(),
+            .map(|id| {
+                let def = id.get();
+                core::audio::SfxSpec {
+                    path: def.src.0.to_owned(),
+                    volume: def.volume.range(),
+                    pitch: def.pitch.range(),
+                }
             })
             .collect(),
     )

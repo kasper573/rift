@@ -147,7 +147,7 @@ impl TilePalette {
                 });
                 self.sfx.push(match properties.get("sfx") {
                     Some(PropertyValue::StringValue(sfx)) => Some(
-                        crate::systems::sfx::SfxId::by_name(sfx)
+                        sfx.parse::<crate::systems::sfx::SfxId>()
                             .unwrap_or_else(|error| panic!("tile sfx '{sfx}': {error}")),
                     ),
                     _ => None,
@@ -189,8 +189,9 @@ fn portal(
     let malformed = || -> ! { panic!("map '{name}': goto '{goto}' must be '<area>, x, y'") };
     let mut parts = goto.split(',');
     let dest = parts.next().unwrap_or_else(|| malformed()).trim();
-    let dest_area =
-        super::Id::by_name(dest).unwrap_or_else(|error| panic!("map '{name}': {error}"));
+    let dest_area = dest
+        .parse::<super::Id>()
+        .unwrap_or_else(|error| panic!("map '{name}': {error}"));
     let mut coord = || -> f32 {
         parts
             .next()

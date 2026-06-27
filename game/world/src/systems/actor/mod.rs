@@ -2,7 +2,7 @@ mod model;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::core::math::{Direction, Size};
 use crate::core::tiling::Tiles;
@@ -64,15 +64,6 @@ pub struct Hitbox {
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Name {
     pub name: String,
-}
-
-pub fn rgba_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Rgba, D::Error> {
-    let hex = String::deserialize(deserializer)?;
-    hex.strip_prefix('#')
-        .filter(|digits| digits.len() == 8)
-        .and_then(|digits| u32::from_str_radix(digits, 16).ok())
-        .map(Rgba)
-        .ok_or_else(|| serde::de::Error::custom(format!("a color is #rrggbbaa, got '{hex}'")))
 }
 
 pub fn set_action(actor: &mut Mut<Actor>, action: Action) {

@@ -9,7 +9,7 @@ use world::systems::actor::{Action, Actor, Rgba, build_model};
 use world::systems::area::{self, AreaTag};
 use world::systems::movement::Position;
 
-use crate::core::audio::PlaySfx;
+use crate::core::audio::{PlaySfx, SfxKey};
 use crate::core::render::{Animator, atlas_rect, dynamic_z, sprite_transform};
 
 pub struct ActorPlugin;
@@ -125,7 +125,7 @@ fn actor_cues(
         );
         for id in cues {
             play.write(PlaySfx {
-                id: id.name().to_owned(),
+                key: SfxKey(id.index()),
                 at: position.pos,
             });
         }
@@ -135,7 +135,7 @@ fn actor_cues(
                 .tile_sfx_at(position.pos.cell())
         {
             play.write(PlaySfx {
-                id: id.name().to_owned(),
+                key: SfxKey(id.index()),
                 at: position.pos,
             });
         }

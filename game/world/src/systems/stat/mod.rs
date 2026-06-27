@@ -44,12 +44,16 @@ impl Stat {
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Stats(pub Vec<Stat>);
 
+pub fn value(stats: &[Stat], kind: StatKind) -> f32 {
+    stats
+        .iter()
+        .find(|stat| stat.kind == kind)
+        .map_or(0.0, |stat| stat.value)
+}
+
 impl Stats {
     pub fn get(&self, kind: StatKind) -> f32 {
-        self.0
-            .iter()
-            .find(|stat| stat.kind == kind)
-            .map_or(0.0, |stat| stat.value)
+        value(&self.0, kind)
     }
 
     pub fn apply(&self, world: &mut World, entity: Entity) {

@@ -23,6 +23,7 @@ use renet2_netcode::{
     ConnectToken, NETCODE_KEY_BYTES, NetcodeServerTransport, ServerAuthentication,
     ServerSetupConfig, WebSocketAcceptor, WebSocketServer, WebSocketServerConfig,
 };
+use strum::VariantArray;
 use world::core::assets::AssetService;
 use world::core::channels::RenetChannelsExt;
 use world::systems::TICK_HZ;
@@ -109,12 +110,11 @@ fn simulate(
     assets: AssetService,
 ) {
     let spawn = world::data::area::SPAWN_ID.index();
-    let mut real_areas: Vec<_> = world::data::area::TABLE
+    let real_areas: Vec<_> = world::data::area::Id::VARIANTS
         .iter()
-        .filter(|(_, def)| !def.bench)
-        .map(|(&id, _)| id)
+        .copied()
+        .filter(|id| !id.get().bench)
         .collect();
-    real_areas.sort_by_key(|id| id.index());
     let mut worlds: Vec<App> = real_areas
         .into_iter()
         .map(|id| build_world(id, &assets))
