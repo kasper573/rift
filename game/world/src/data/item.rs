@@ -3,7 +3,7 @@ use crate::data::sfx::Id as SfxId;
 use crate::systems::effect::Effect;
 use crate::systems::equipment::{EquipmentSlot, Requirement};
 use crate::systems::item::{Icon, ItemDef, ItemKind, ItemSfx, Stackable};
-use crate::systems::stat::Stat;
+use crate::systems::stat::{Stat, StatKind};
 
 crate::table! {
     HealthPotion: ItemDef {
@@ -19,7 +19,7 @@ crate::table! {
         icon: Icon("red_potion_3"),
         sfx: ItemSfx { on_use: Some(SfxId::Heal01), drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 10 }),
-        effects: &[Effect::StatModifier(Stat::Damage(3.0))],
+        effects: &[Effect::StatModifier(Stat { kind: StatKind::Damage, value: 3.0 })],
         kind: ItemKind::Consumable { health_bonus: 25.0, duration: Seconds(30.0) },
     },
     BatWing: ItemDef {
@@ -27,7 +27,7 @@ crate::table! {
         icon: Icon("feather"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 50 }),
-        effects: &[Effect::StatModifier(Stat::MovementSpeed(0.5))],
+        effects: &[Effect::StatModifier(Stat { kind: StatKind::MovementSpeed, value: 0.5 })],
         kind: ItemKind::Resource,
     },
     Bone: ItemDef {
@@ -51,7 +51,7 @@ crate::table! {
         icon: Icon("iron_sword"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
         stackable: None,
-        effects: &[Effect::StatModifier(Stat::Damage(3.0))],
+        effects: &[Effect::StatModifier(Stat { kind: StatKind::Damage, value: 3.0 })],
         kind: ItemKind::Equipment { slot: EquipmentSlot::Weapon, requirements: &[] },
     },
     BoneShield: ItemDef {
@@ -59,7 +59,7 @@ crate::table! {
         icon: Icon("wooden_shield"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
         stackable: None,
-        effects: &[Effect::StatModifier(Stat::MaxHealth(5.0))],
+        effects: &[Effect::StatModifier(Stat { kind: StatKind::MaxHealth, value: 5.0 })],
         kind: ItemKind::Equipment {
             slot: EquipmentSlot::Offhand,
             requirements: &[Requirement::Level(2)],
@@ -71,8 +71,8 @@ crate::table! {
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
         stackable: None,
         effects: &[
-            Effect::StatModifier(Stat::MaxHealth(8.0)),
-            Effect::StatModifier(Stat::Range(0.2)),
+            Effect::StatModifier(Stat { kind: StatKind::MaxHealth, value: 8.0 }),
+            Effect::StatModifier(Stat { kind: StatKind::Range, value: 0.2 }),
         ],
         kind: ItemKind::Equipment {
             slot: EquipmentSlot::Head,

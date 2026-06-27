@@ -4,7 +4,7 @@ use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
 use crate::core::time::Seconds;
-use crate::systems::stat::{self, Stat};
+use crate::systems::stat::{self, Stat, StatKind};
 
 const CHASE_SPEED_MULTIPLIER: f32 = 2.0;
 
@@ -38,8 +38,8 @@ impl Effect {
         match self {
             Effect::StatModifier(stat) => vec![stat],
             Effect::Chasing => {
-                let base = stat::base(ctx.world, ctx.source, Stat::MovementSpeed);
-                vec![Stat::MovementSpeed(base * (CHASE_SPEED_MULTIPLIER - 1.0))]
+                let base = stat::base(ctx.world, ctx.source, StatKind::MovementSpeed);
+                vec![StatKind::MovementSpeed.new(base * (CHASE_SPEED_MULTIPLIER - 1.0))]
             }
         }
     }
@@ -47,7 +47,7 @@ impl Effect {
     pub fn describe(self, ctx: &EffectContext) -> String {
         self.compute(ctx)
             .iter()
-            .map(|stat| format!("{:+} {}", stat.value(), stat.label()))
+            .map(|stat| format!("{:+} {}", stat.value, stat.label()))
             .collect::<Vec<_>>()
             .join(", ")
     }

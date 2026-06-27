@@ -1,19 +1,19 @@
 use bevy_ecs::prelude::*;
 
-use super::{Stat, Stats, base, effective};
+use super::{StatKind, Stats, base, effective};
 
 pub fn current_health(world: &World, entity: Entity) -> f32 {
-    base(world, entity, Stat::Health)
+    base(world, entity, StatKind::Health)
 }
 
 pub fn max_health(world: &World, entity: Entity) -> f32 {
-    effective(world, entity, Stat::MaxHealth)
+    effective(world, entity, StatKind::MaxHealth)
 }
 
 pub fn is_dead(world: &World, entity: Entity) -> bool {
     world
         .get::<Stats>(entity)
-        .is_some_and(|stats| stats.get(Stat::Health) <= 0.0)
+        .is_some_and(|stats| stats.get(StatKind::Health) <= 0.0)
 }
 
 pub fn fraction(world: &World, entity: Entity) -> f32 {
@@ -41,8 +41,8 @@ fn set_health(world: &mut World, entity: Entity, f: impl Fn(f32, f32) -> f32) {
     let max = max_health(world, entity);
     if let Some(mut stats) = world.get_mut::<Stats>(entity) {
         for stat in stats.0.iter_mut() {
-            if let Stat::Health(health) = stat {
-                *health = f(*health, max);
+            if stat.kind == StatKind::Health {
+                stat.value = f(stat.value, max);
             }
         }
     }

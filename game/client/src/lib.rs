@@ -91,7 +91,7 @@ fn roles(access_token: &str) -> Vec<Role> {
         .map(|roles| {
             roles
                 .iter()
-                .filter_map(|role| role.as_str().and_then(Role::parse))
+                .filter_map(|role| role.as_str().and_then(|name| name.parse::<Role>().ok()))
                 .collect()
         })
         .unwrap_or_default()

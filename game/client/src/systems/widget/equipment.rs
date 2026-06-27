@@ -76,7 +76,8 @@ fn equipment_cells(world: &World) -> Vec<CellData> {
     let equipment = session::me(world).and_then(|me| me.get::<Equipment>());
     let assets = world.resource::<AssetServer>();
     equipment::EquipmentSlot::all()
-        .into_iter()
+        .iter()
+        .copied()
         .map(|slot| {
             let item = equipment.and_then(|equipment| equipment.slots.get(&slot).copied());
             CellData {

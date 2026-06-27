@@ -18,7 +18,7 @@ use crate::systems::item::Inventory;
 use crate::systems::job::{self, Job};
 use crate::systems::movement::{Position, forget};
 use crate::systems::spectate::Spectators;
-use crate::systems::stat::{self, Stat, Stats};
+use crate::systems::stat::{self, StatKind, Stats};
 use crate::systems::visibility::OwnedBy;
 use bevy_ecs::lifecycle::{Add, Remove};
 use bevy_ecs::observer::On;
@@ -188,13 +188,13 @@ fn spawn_player(world: &mut World, client: ClientId, zone: area::Id, at: Pos<Til
 
 pub fn player_stats() -> Stats {
     Stats(vec![
-        Stat::Health(PLAYER_MAX_HEALTH),
-        Stat::MaxHealth(PLAYER_MAX_HEALTH),
-        Stat::Damage(PLAYER_DAMAGE),
-        Stat::AttackSpeed(PLAYER_ATTACK_SPEED.0),
-        Stat::AttackDelay(PLAYER_ATTACK_DELAY.0),
-        Stat::Range(PLAYER_RANGE.0),
-        Stat::MovementSpeed(PLAYER_SPEED.0.0),
+        StatKind::Health.new(PLAYER_MAX_HEALTH),
+        StatKind::MaxHealth.new(PLAYER_MAX_HEALTH),
+        StatKind::Damage.new(PLAYER_DAMAGE),
+        StatKind::AttackSpeed.new(PLAYER_ATTACK_SPEED.0),
+        StatKind::AttackDelay.new(PLAYER_ATTACK_DELAY.0),
+        StatKind::Range.new(PLAYER_RANGE.0),
+        StatKind::MovementSpeed.new(PLAYER_SPEED.0.0),
     ])
 }
 

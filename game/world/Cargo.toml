@@ -22,6 +22,7 @@ euclid = { version = "0.22", features = ["serde"] }
 include_dir = "0.7"
 pathfinding = "4"
 oorandom = "11"
+strum = { version = "0.27", features = ["derive"] }
 seq-macro = "0.3"
 renet2.workspace = true
 serde.workspace = true

@@ -524,7 +524,7 @@ fn resolve(http: &Http, authorization: &str) -> Result<Identity, StatusCode> {
         roles: claims
             .roles
             .iter()
-            .filter_map(|role| world::systems::account::Role::parse(role))
+            .filter_map(|role| role.parse::<world::systems::account::Role>().ok())
             .collect(),
     })
 }

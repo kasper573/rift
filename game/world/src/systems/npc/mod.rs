@@ -27,7 +27,7 @@ use crate::systems::effect::{self, Effect, TimedEffects};
 use crate::systems::item::Reservation;
 use crate::systems::movement::{MoveTarget, Path, Position, forget, position};
 use crate::systems::player::Players;
-use crate::systems::stat::{self, Stat, Stats};
+use crate::systems::stat::{self, StatKind, Stats};
 
 const NPC_RESPAWN_DELAY: Seconds = Seconds(5.0);
 const RNG_SEED: u64 = 0x1234_5678_9abc_def0;
@@ -116,7 +116,7 @@ fn character(def: &NpcDef, at: Pos<Tiles>, area: area::Id) -> Character {
             dir: Direction::S,
             action: Action::Idle,
             model,
-            attack_rate: PlaybackRate(def.stats.get(Stat::AttackSpeed)),
+            attack_rate: PlaybackRate(def.stats.get(StatKind::AttackSpeed)),
         },
         hitbox: Hitbox {
             size: model.get().hitbox(),

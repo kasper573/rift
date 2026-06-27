@@ -10,7 +10,7 @@ use crate::systems::actor::{Action, Actor, set_facing};
 use crate::systems::area;
 use crate::systems::combat::AttackTarget;
 use crate::systems::player::sender_player;
-use crate::systems::stat::{self, Stat};
+use crate::systems::stat::{self, StatKind};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -201,7 +201,7 @@ pub fn advance(world: &mut World) {
             }
         }
 
-        let speed = TilesPerSec(Tiles(stat::effective(world, id, Stat::MovementSpeed)));
+        let speed = TilesPerSec(Tiles(stat::effective(world, id, StatKind::MovementSpeed)));
         let Some(mut at) = position(world, id) else {
             continue;
         };

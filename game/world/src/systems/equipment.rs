@@ -3,13 +3,14 @@ use std::collections::BTreeMap;
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
+use strum::{IntoStaticStr, VariantArray};
 
 use crate::data;
 use crate::systems::effect::{self, Effect};
 use crate::systems::item::Inventory;
 use crate::systems::job;
 use crate::systems::player::sender_player;
-use crate::systems::stat::{self, Stat};
+use crate::systems::stat::{self, StatKind};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -29,7 +30,19 @@ pub struct UnequipRequest {
 }
 
 #[derive(
-    Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default,
+    Serialize,
+    Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Default,
+    VariantArray,
+    IntoStaticStr,
 )]
 pub enum EquipmentSlot {
     #[default]
@@ -40,19 +53,11 @@ pub enum EquipmentSlot {
 
 impl EquipmentSlot {
     pub fn label(self) -> &'static str {
-        match self {
-            EquipmentSlot::Weapon => "Weapon",
-            EquipmentSlot::Offhand => "Offhand",
-            EquipmentSlot::Head => "Head",
-        }
+        self.into()
     }
 
-    pub fn all() -> [EquipmentSlot; 3] {
-        [
-            EquipmentSlot::Weapon,
-            EquipmentSlot::Offhand,
-            EquipmentSlot::Head,
-        ]
+    pub fn all() -> &'static [EquipmentSlot] {
+        EquipmentSlot::VARIANTS
     }
 }
 
@@ -60,7 +65,7 @@ impl EquipmentSlot {
 pub enum Requirement {
     Level(u32),
     Job(data::job::Id),
-    Stat { stat: fn(f32) -> Stat, min: f32 },
+    Stat { stat: StatKind, min: f32 },
 }
 
 impl Requirement {

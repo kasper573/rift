@@ -58,7 +58,7 @@ fn stats_text(world: &World) -> String {
     let stats = stat::effective_all(world, entity);
     let mut lines = vec![format!("Level {}", job::level(world, entity))];
     for stat in &stats.0 {
-        lines.push(format!("{}: {:.1}", stat.label(), stat.value()));
+        lines.push(format!("{}: {:.1}", stat.label(), stat.value));
     }
     lines.join("\n")
 }

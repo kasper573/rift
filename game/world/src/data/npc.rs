@@ -3,7 +3,7 @@ use crate::data::item::Id as ItemId;
 use crate::systems::actor::Rgba;
 use crate::systems::npc::{Aggressive, Defensive, NpcDef, Pacifist, Protective};
 use crate::systems::rewards::Reward;
-use crate::systems::stat::{Stat, Stats};
+use crate::systems::stat::{StatKind, Stats};
 
 crate::table! {
     Orc: NpcDef {
@@ -12,9 +12,13 @@ crate::table! {
         tint: Rgba(0xffffffff),
         ai: &Defensive,
         stats: Stats(vec![
-            Stat::Health(25.0), Stat::MaxHealth(25.0), Stat::Damage(3.0),
-            Stat::AttackSpeed(1.0), Stat::AttackDelay(400.0), Stat::Range(1.0),
-            Stat::MovementSpeed(1.0),
+            StatKind::Health.new(25.0),
+            StatKind::MaxHealth.new(25.0),
+            StatKind::Damage.new(3.0),
+            StatKind::AttackSpeed.new(1.0),
+            StatKind::AttackDelay.new(400.0),
+            StatKind::Range.new(1.0),
+            StatKind::MovementSpeed.new(1.0),
         ]),
         aggro: Tiles(7.0),
         rewards: &[
@@ -29,9 +33,13 @@ crate::table! {
         tint: Rgba(0xffb070ff),
         ai: &Protective,
         stats: Stats(vec![
-            Stat::Health(60.0), Stat::MaxHealth(60.0), Stat::Damage(6.0),
-            Stat::AttackSpeed(0.8), Stat::AttackDelay(600.0), Stat::Range(1.2),
-            Stat::MovementSpeed(1.2),
+            StatKind::Health.new(60.0),
+            StatKind::MaxHealth.new(60.0),
+            StatKind::Damage.new(6.0),
+            StatKind::AttackSpeed.new(0.8),
+            StatKind::AttackDelay.new(600.0),
+            StatKind::Range.new(1.2),
+            StatKind::MovementSpeed.new(1.2),
         ]),
         aggro: Tiles(9.0),
         rewards: &[
@@ -47,9 +55,13 @@ crate::table! {
         tint: Rgba(0xffffffff),
         ai: &Aggressive,
         stats: Stats(vec![
-            Stat::Health(18.0), Stat::MaxHealth(18.0), Stat::Damage(3.0),
-            Stat::AttackSpeed(1.0), Stat::AttackDelay(400.0), Stat::Range(1.0),
-            Stat::MovementSpeed(1.0),
+            StatKind::Health.new(18.0),
+            StatKind::MaxHealth.new(18.0),
+            StatKind::Damage.new(3.0),
+            StatKind::AttackSpeed.new(1.0),
+            StatKind::AttackDelay.new(400.0),
+            StatKind::Range.new(1.0),
+            StatKind::MovementSpeed.new(1.0),
         ]),
         aggro: Tiles(8.0),
         rewards: &[
@@ -65,9 +77,13 @@ crate::table! {
         tint: Rgba(0xffffffff),
         ai: &Pacifist,
         stats: Stats(vec![
-            Stat::Health(8.0), Stat::MaxHealth(8.0), Stat::Damage(1.0),
-            Stat::AttackSpeed(1.5), Stat::AttackDelay(300.0), Stat::Range(1.0),
-            Stat::MovementSpeed(1.25),
+            StatKind::Health.new(8.0),
+            StatKind::MaxHealth.new(8.0),
+            StatKind::Damage.new(1.0),
+            StatKind::AttackSpeed.new(1.5),
+            StatKind::AttackDelay.new(300.0),
+            StatKind::Range.new(1.0),
+            StatKind::MovementSpeed.new(1.25),
         ]),
         aggro: Tiles(5.0),
         rewards: &[
@@ -81,9 +97,13 @@ crate::table! {
         tint: Rgba(0xff7788ff),
         ai: &Aggressive,
         stats: Stats(vec![
-            Stat::Health(12.0), Stat::MaxHealth(12.0), Stat::Damage(2.0),
-            Stat::AttackSpeed(2.0), Stat::AttackDelay(200.0), Stat::Range(1.0),
-            Stat::MovementSpeed(1.5),
+            StatKind::Health.new(12.0),
+            StatKind::MaxHealth.new(12.0),
+            StatKind::Damage.new(2.0),
+            StatKind::AttackSpeed.new(2.0),
+            StatKind::AttackDelay.new(200.0),
+            StatKind::Range.new(1.0),
+            StatKind::MovementSpeed.new(1.5),
         ]),
         aggro: Tiles(8.0),
         rewards: &[

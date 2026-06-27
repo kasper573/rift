@@ -13,7 +13,7 @@ use crate::systems::movement::{
     MoveTarget, Path, Position, approach, forget, halt, on_tile, position,
 };
 use crate::systems::player::{Owner, sender_player, session};
-use crate::systems::stat::{self, Stat};
+use crate::systems::stat::{self, StatKind};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -149,9 +149,9 @@ fn engage(world: &mut World, time: Seconds) {
             continue;
         };
         let stats = stat::effective_all(world, id);
-        let range = Tiles(stats.get(Stat::Range));
-        let attack_delay = Millis(stats.get(Stat::AttackDelay));
-        let attack_speed = PlaybackRate(stats.get(Stat::AttackSpeed));
+        let range = Tiles(stats.get(StatKind::Range));
+        let attack_delay = Millis(stats.get(StatKind::AttackDelay));
+        let attack_speed = PlaybackRate(stats.get(StatKind::AttackSpeed));
 
         if !approach(world, id, target_at, range + TILE_DIAGONAL_MARGIN) {
             continue;
@@ -230,7 +230,7 @@ fn strike(
     if world.get_entity(target).is_err() || stat::is_dead(world, target) || !same_area {
         return;
     }
-    let damage = stat::effective(world, attacker, Stat::Damage);
+    let damage = stat::effective(world, attacker, StatKind::Damage);
     add_attacker(world, target, attacker);
     crate::systems::item::reserve(world, target, attacker, time);
     stat::apply_damage(world, target, damage);

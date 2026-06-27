@@ -13,7 +13,7 @@ use crate::core::math::{Direction, Pos, Rect, Size, WorldPx};
 use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
 use crate::systems::sfx::SfxId;
-use crate::systems::stat::{Stat, Stats};
+use crate::systems::stat::{StatKind, Stats};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -93,7 +93,7 @@ pub fn set_facing(actor: &mut Mut<Actor>, dir: Direction, action: Action) {
 
 pub fn reset(mut actors: Query<(&mut Actor, Option<&Stats>)>) {
     for (mut actor, stats) in &mut actors {
-        let dead = stats.is_some_and(|stats| stats.get(Stat::Health) <= 0.0);
+        let dead = stats.is_some_and(|stats| stats.get(StatKind::Health) <= 0.0);
         set_action(&mut actor, if dead { Action::Dead } else { Action::Idle });
     }
 }
