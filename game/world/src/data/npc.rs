@@ -2,7 +2,7 @@ use crate::core::tiling::Tiles;
 use crate::data::item::Id as ItemId;
 use crate::systems::actor::Rgba;
 use crate::systems::npc::{Aggressive, Defensive, NpcDef, Pacifist, Protective};
-use crate::systems::rewards::{Grant, Reward};
+use crate::systems::rewards::Reward;
 use crate::systems::stat::{Stat, Stats};
 
 crate::table! {
@@ -18,22 +18,10 @@ crate::table! {
         ]),
         aggro: Tiles(7.0),
         rewards: &[
-            Reward { amount: 12, grant: Grant::Xp },
-            Reward {
-                amount: 1,
-                grant: Grant::Item {
-                    item: ItemId::HealthPotion,
-                    chance: None,
-                },
-            },
-            Reward {
-                amount: 1,
-                grant: Grant::Item {
-                    item: ItemId::OrcTusk,
-                    chance: Some(50.0),
-                },
-            },
-        ],
+            Reward::Xp(12),
+            Reward::Item { item: ItemId::HealthPotion, chance: None, amount: 1 },
+            Reward::Item { item: ItemId::OrcTusk, chance: Some(50.0), amount: 1 },
+        ]
     },
     OrcChief: NpcDef {
         display_name: "Orc Chief",
@@ -47,29 +35,11 @@ crate::table! {
         ]),
         aggro: Tiles(9.0),
         rewards: &[
-            Reward { amount: 40, grant: Grant::Xp },
-            Reward {
-                amount: 1,
-                grant: Grant::Item {
-                    item: ItemId::GreaterHealthPotion,
-                    chance: Some(75.0),
-                },
-            },
-            Reward {
-                amount: 2,
-                grant: Grant::Item {
-                    item: ItemId::OrcTusk,
-                    chance: None,
-                },
-            },
-            Reward {
-                amount: 1,
-                grant: Grant::Item {
-                    item: ItemId::TribalHelmet,
-                    chance: Some(10.0),
-                },
-            },
-        ],
+            Reward::Xp(40),
+            Reward::Item { item: ItemId::GreaterHealthPotion, chance: Some(75.0), amount: 1 },
+            Reward::Item { item: ItemId::OrcTusk, chance: None, amount: 1 },
+            Reward::Item { item: ItemId::TribalHelmet, chance: Some(10.0), amount: 1 },
+        ]
     },
     Skeleton: NpcDef {
         display_name: "Skeleton",
@@ -83,29 +53,11 @@ crate::table! {
         ]),
         aggro: Tiles(8.0),
         rewards: &[
-            Reward { amount: 10, grant: Grant::Xp },
-            Reward {
-                amount: 2,
-                grant: Grant::Item {
-                    item: ItemId::Bone,
-                    chance: Some(80.0),
-                },
-            },
-            Reward {
-                amount: 1,
-                grant: Grant::Item {
-                    item: ItemId::RustySword,
-                    chance: Some(15.0),
-                },
-            },
-            Reward {
-                amount: 1,
-                grant: Grant::Item {
-                    item: ItemId::BoneShield,
-                    chance: Some(2.5),
-                },
-            },
-        ],
+            Reward::Xp(10),
+            Reward::Item { item: ItemId::Bone, chance: Some(80.0), amount: 2 },
+            Reward::Item { item: ItemId::RustySword, chance: Some(15.0), amount: 1 },
+            Reward::Item { item: ItemId::BoneShield, chance: Some(2.5), amount: 1 },
+        ]
     },
     Bat: NpcDef {
         display_name: "Bat",
@@ -119,14 +71,8 @@ crate::table! {
         ]),
         aggro: Tiles(5.0),
         rewards: &[
-            Reward { amount: 4, grant: Grant::Xp },
-            Reward {
-                amount: 1,
-                grant: Grant::Item {
-                    item: ItemId::BatWing,
-                    chance: Some(65.0),
-                },
-            },
+            Reward::Xp(4),
+            Reward::Item { item: ItemId::BatWing, chance: Some(65.0), amount: 4 },
         ],
     },
     VampireBat: NpcDef {
@@ -141,21 +87,9 @@ crate::table! {
         ]),
         aggro: Tiles(8.0),
         rewards: &[
-            Reward { amount: 8, grant: Grant::Xp },
-            Reward {
-                amount: 2,
-                grant: Grant::Item {
-                    item: ItemId::BatWing,
-                    chance: Some(65.0),
-                },
-            },
-            Reward {
-                amount: 1,
-                grant: Grant::Item {
-                    item: ItemId::HealthPotion,
-                    chance: Some(25.0),
-                },
-            },
-        ],
+            Reward::Xp(8),
+            Reward::Item { item: ItemId::BatWing, chance: Some(65.0), amount: 2 },
+            Reward::Item { item: ItemId::HealthPotion, chance: Some(25.0), amount: 1 },
+        ]
     },
 }
