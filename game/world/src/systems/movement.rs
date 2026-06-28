@@ -43,6 +43,8 @@ pub fn position(world: &World, entity: Entity) -> Option<Pos<Tiles>> {
 
 const RUN_SPEED: TilesPerSec = TilesPerSec(Tiles(2.0));
 
+/// Remaining waypoints, stored back-to-front: the next cell to walk is `tiles.last()`, so advancing
+/// pops it off the end in O(1) instead of shifting the whole vec from the front.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Path {
     pub tiles: Vec<CellPos>,
@@ -92,7 +94,9 @@ pub fn halt(world: &mut World, entity: Entity) {
         }
         world.entity_mut(entity).remove::<Path>();
     } else if let Some(mut path) = world.get_mut::<Path>(entity) {
-        path.tiles.truncate(1);
+        let next = path.tiles.last().copied();
+        path.tiles.clear();
+        path.tiles.extend(next);
     }
 }
 
@@ -209,13 +213,14 @@ pub fn advance(world: &mut World) {
         let Some(mut at) = position(world, id) else {
             continue;
         };
-        let Some(Path { mut tiles }) = world.entity_mut(id).take::<Path>() else {
+        let mut heading: Option<Offset<Tiles>> = None;
+        let Some(mut path) = world.get_mut::<Path>(id) else {
             continue;
         };
+        let tiles = &mut path.tiles;
         let mut remaining = speed * dt;
-        let mut heading: Option<Offset<Tiles>> = None;
         while remaining > Tiles(1e-6) {
-            let target = match tiles.first() {
+            let target = match tiles.last() {
                 Some(cell) => cell.center(),
                 None => break,
             };
@@ -223,22 +228,25 @@ pub fn advance(world: &mut World) {
             let distance = at.distance(target);
             if distance < Tiles(1e-4) {
                 at = target;
-                tiles.remove(0);
+                tiles.pop();
                 continue;
             }
             if distance <= remaining {
                 at = target;
                 remaining -= distance;
                 heading = Some(step);
-                tiles.remove(0);
+                tiles.pop();
             } else {
                 at = at.toward(target, remaining);
                 heading = Some(step);
                 remaining = Tiles(0.0);
             }
         }
+        let arrived = tiles.is_empty();
 
-        world.entity_mut(id).insert(Position { pos: at });
+        if let Some(mut pos) = world.get_mut::<Position>(id) {
+            pos.pos = at;
+        }
         if let Some(step) = heading
             && let Some(mut actor) = world.get_mut::<Actor>(id)
         {
@@ -252,10 +260,8 @@ pub fn advance(world: &mut World) {
                 },
             );
         }
-        if tiles.is_empty() {
-            world.entity_mut(id).remove::<MoveTarget>();
-        } else {
-            world.entity_mut(id).insert(Path { tiles });
+        if arrived {
+            world.entity_mut(id).remove::<(MoveTarget, Path)>();
         }
         cross_portal(world, id);
     }
@@ -276,6 +282,7 @@ fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<Cell
     if path.len() > 1 {
         path.remove(0);
     }
+    path.reverse();
     Some(path)
 }
 
