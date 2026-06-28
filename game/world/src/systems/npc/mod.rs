@@ -235,7 +235,9 @@ fn idle_wander(
         return;
     }
     if def.ai.wanders(rng)
-        && let Some(node) = random_walkable(rng, assets.resolve(area.get().map, area::build_area))
+        && let Some(at) = position(world, id)
+        && let Some(node) =
+            random_reachable(rng, assets.resolve(area.get().map, area::build_area), at)
     {
         world.entity_mut(id).insert(MoveTarget { pos: node });
     }
@@ -309,5 +311,14 @@ fn random_walkable(rng: &mut Rng, area: &area::Area) -> Option<Pos<Tiles>> {
     if nodes.is_empty() {
         return None;
     }
+    Some(nodes[rng.rand_range(0..nodes.len() as u32) as usize])
+}
+
+fn random_reachable(rng: &mut Rng, area: &area::Area, from: Pos<Tiles>) -> Option<Pos<Tiles>> {
+    let component_id = area.grid.component(from)?;
+    let nodes = area
+        .component_nodes
+        .get(component_id as usize)
+        .and_then(|n| if n.is_empty() { None } else { Some(n) })?;
     Some(nodes[rng.rand_range(0..nodes.len() as u32) as usize])
 }

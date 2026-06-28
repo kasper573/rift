@@ -8,15 +8,32 @@ const DIAGONAL: u32 = 1414;
 pub struct Grid {
     size: GridSize,
     walkable: Vec<bool>,
+    components: Vec<u32>,
 }
 
 impl Grid {
     pub fn new(size: GridSize, walkable: Vec<bool>) -> Grid {
-        Grid { size, walkable }
+        let components = compute_components(size, &walkable);
+        Grid {
+            size,
+            walkable,
+            components,
+        }
     }
 
     pub fn walkable(&self, p: Pos<Tiles>) -> bool {
         self.cell_walkable(p.cell())
+    }
+
+    pub fn component(&self, p: Pos<Tiles>) -> Option<u32> {
+        self.component_at_cell(p.cell())
+    }
+
+    fn component_at_cell(&self, c: CellPos) -> Option<u32> {
+        c.index(self.size).and_then(|i| {
+            let comp = self.components[i];
+            if comp == 0 { None } else { Some(comp) }
+        })
     }
 
     pub fn nearest_walkable(&self, p: Pos<Tiles>) -> Option<Pos<Tiles>> {
@@ -79,4 +96,40 @@ pub fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<Cel
         |&node| node == goal,
     )?;
     Some(path)
+}
+
+fn compute_components(size: GridSize, walkable: &[bool]) -> Vec<u32> {
+    let mut components = vec![0u32; walkable.len()];
+    let mut next_id = 1u32;
+
+    for (i, &is_walkable) in walkable.iter().enumerate() {
+        if !is_walkable || components[i] != 0 {
+            continue;
+        }
+
+        let start_cell = CellPos::new(
+            (i % size.width as usize) as i32,
+            (i / size.width as usize) as i32,
+        );
+        let comp_id = next_id;
+        next_id += 1;
+
+        let mut queue = vec![start_cell];
+        components[i] = comp_id;
+
+        while let Some(c) = queue.pop() {
+            for &(dx, dy) in &tiling::NEIGHBORS_8 {
+                let next = c.step((dx, dy));
+                if let Some(next_i) = next.index(size)
+                    && walkable[next_i]
+                    && components[next_i] == 0
+                {
+                    components[next_i] = comp_id;
+                    queue.push(next);
+                }
+            }
+        }
+    }
+
+    components
 }
