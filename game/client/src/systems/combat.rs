@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use world::core::math::{Size, WorldPx};
-use world::systems::movement::Position;
 use world::systems::player::session;
 use world::systems::stat;
 
 use crate::core::render::present::ScreenTint;
 use crate::core::render::screen::ToScreen;
 use crate::core::render::snap_to_screen;
+use crate::systems::interpolate::RenderPosition;
 
 pub struct CombatPlugin;
 
@@ -67,7 +67,7 @@ fn hidden() -> (Transform, Visibility) {
 
 fn healthbar(world: &mut World) {
     let shown = session::me(world)
-        .and_then(|me| Some((me.id(), me.get::<Position>()?.pos)))
+        .and_then(|me| Some((me.id(), me.get::<RenderPosition>()?.0)))
         .and_then(|(entity, at)| {
             (!stat::is_dead(world, entity) && stat::max_health(world, entity) > 0.0).then(|| {
                 (

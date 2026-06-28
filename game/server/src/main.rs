@@ -26,10 +26,10 @@ use renet2_netcode::{
 use strum::VariantArray;
 use world::core::assets::AssetService;
 use world::core::channels::RenetChannelsExt;
-use world::systems::TICK_HZ;
 use world::systems::account::Identity;
 use world::systems::area::transition;
 use world::systems::player::ClientId;
+use world::systems::{REPLICATION_INTERVAL, TICK_HZ};
 
 service::heap_profiling!();
 
@@ -367,9 +367,11 @@ fn spawn_conn(
 }
 
 /// A player (and all its connections) whose character left its world (despawned) and is waiting to be
-/// re-created in the destination world. The one-tick wait lets the source world's despawns reach the
+/// re-created in the destination world. The wait lets the source world's despawns reach the
 /// connections first, so their replication state is empty before the destination's fresh snapshot
-/// arrives over the same connections — no entity-id or tick collision between the two worlds.
+/// arrives over the same connections — no entity-id or tick collision between the two worlds. The
+/// wait is one replication period (not one tick): a world only replicates every
+/// `REPLICATION_INTERVAL` ticks, so the despawn isn't guaranteed sent until then.
 struct Transfer {
     client: ClientId,
     traveler: transition::Traveler,
@@ -390,8 +392,8 @@ fn begin_transfers(worlds: &mut [App], transfers: &mut Vec<Transfer>, tick: u64)
     }
 }
 
-/// Phase 2: a tick after departing — once the source world's despawns have been sent — move every
-/// socket of the moving player to the destination world and re-create the character there.
+/// Phase 2: once the source world's despawns have been sent (a replication period after departing) —
+/// move every socket of the moving player to the destination world and re-create the character there.
 fn finish_transfers(
     worlds: &mut [App],
     conns: &mut HashMap<u64, Conn>,
@@ -400,7 +402,7 @@ fn finish_transfers(
 ) {
     let mut index = 0;
     while index < transfers.len() {
-        if tick <= transfers[index].departed_tick {
+        if tick < transfers[index].departed_tick + REPLICATION_INTERVAL {
             index += 1;
             continue;
         }

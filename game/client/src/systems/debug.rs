@@ -5,12 +5,12 @@ use world::core::tiling::{self, TilePos};
 use world::systems::actor::{Actor, Hitbox};
 use world::systems::area;
 use world::systems::area::AreaTag;
-use world::systems::movement::Position;
 use world::systems::player::Owner;
 use world::systems::player::session::MyClient;
 
 use crate::Scene;
 use crate::core::render::screen::ToScreen;
+use crate::systems::interpolate::RenderPosition;
 
 pub struct DebugPlugin;
 
@@ -108,7 +108,7 @@ fn toggle_hitboxes(keys: Res<ButtonInput<KeyCode>>, mut show: ResMut<ShowHitboxe
 
 fn draw_hitboxes(
     show: Res<ShowHitboxes>,
-    actors: Query<(&Position, &Hitbox), With<Actor>>,
+    actors: Query<(&RenderPosition, &Hitbox), With<Actor>>,
     overlays: Query<Entity, With<HitboxOverlay>>,
     mut commands: Commands,
 ) {
@@ -116,8 +116,8 @@ fn draw_hitboxes(
     if !show.0 {
         return;
     }
-    for (position, hitbox) in &actors {
-        let bounds = position.pos.hitbox(hitbox.size);
+    for (render, hitbox) in &actors {
+        let bounds = render.0.hitbox(hitbox.size);
         let size = hitbox.size.to_screen();
         let center = bounds.center().to_screen();
         commands.spawn((

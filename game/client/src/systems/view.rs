@@ -4,7 +4,6 @@ use world::core::assets::AssetService;
 use world::core::math::Pos;
 use world::core::tiling::{TileSize, Tiles};
 use world::systems::area::{self, AreaTag};
-use world::systems::movement::Position;
 use world::systems::player::Owner;
 use world::systems::player::session::MyClient;
 
@@ -13,6 +12,7 @@ use crate::core::render::present::{SCALE, target_size};
 use crate::core::render::screen::ToScreen;
 use crate::core::render::{TILE, snap_to_screen};
 use crate::core::sfx::Listener;
+use crate::systems::interpolate::RenderPosition;
 
 pub struct ViewPlugin;
 
@@ -25,7 +25,7 @@ impl Plugin for ViewPlugin {
 fn track_player(
     me: Res<MyClient>,
     service: Res<AssetService>,
-    players: Query<(&Owner, &Position, &AreaTag)>,
+    players: Query<(&Owner, &RenderPosition, &AreaTag)>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut camera: Query<&mut Transform, With<WorldCamera>>,
     mut listener: ResMut<Listener>,
@@ -33,11 +33,12 @@ fn track_player(
     let Some(my) = me.0 else {
         return;
     };
-    let Some((_, position, tag)) = players.iter().find(|(owner, _, _)| owner.client == my) else {
+    let Some((_, render, tag)) = players.iter().find(|(owner, ..)| owner.client == my) else {
         return;
     };
-    listener.0 = Some(position.pos);
-    let Some(center) = camera_center(&service, position.pos, tag.area, view_half(&window)) else {
+    let at = render.0;
+    listener.0 = Some(at);
+    let Some(center) = camera_center(&service, at, tag.area, view_half(&window)) else {
         return;
     };
     if let Ok(mut transform) = camera.single_mut() {
