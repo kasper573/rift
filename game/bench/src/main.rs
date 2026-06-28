@@ -1,30 +1,29 @@
 mod assets;
+#[cfg(feature = "profiling")]
+mod profiling;
+mod sim;
 
 use std::time::Instant;
 
 use bevy_app::App;
-use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{ConnectedClient, ServerState};
-use bevy_state::prelude::NextState;
-use strum::VariantArray;
-use world::core::assets::AssetService;
-use world::core::math::Pos;
-use world::core::tiling::Tiles;
 use world::data;
-use world::systems::area::{self, Area};
-use world::systems::item::Inventory;
-use world::systems::npc::Npc;
-use world::systems::player::{ClientId, Owner, Players, Xp};
-use world::systems::visibility::OwnedBy;
 
-const NPCS_PER_AREA: usize = 25;
-const PLAYERS_PER_AREA: usize = 25;
 const BUDGET_MS: f64 = 40.0;
-const MAX_AREAS: usize = 256; // must exceed the crossover and the probe that overshoots it
+const MAX_AREAS: usize = 768; // must exceed the crossover and the probe that overshoots it
 const WARMUP: usize = 30;
 const MEASURE: usize = 200;
 
 fn main() {
+    #[cfg(feature = "profiling")]
+    if std::env::args().any(|arg| arg == "profile") {
+        let out = std::env::args()
+            .nth(2)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().expect("cwd"));
+        profiling::run(&out);
+        return;
+    }
+
     println!("[bench] finding the highest A sustained within the {BUDGET_MS:.0}ms budget...");
 
     let mut best: Option<(usize, Point)> = None;
@@ -53,13 +52,15 @@ fn main() {
     }
 
     let (areas, r) = best.unwrap_or_else(|| (1, point(1, WARMUP, MEASURE)));
+    let npcs = sim::NPCS_PER_AREA * areas;
+    let players = sim::PLAYERS_PER_AREA * areas;
     println!("\n[bench] areas,npcs,players,clients,mean_ms,p50_ms,p99_ms,max_ms,sim_ms,repl_ms");
     println!(
         "[bench] RESULT {},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}",
         areas,
-        NPCS_PER_AREA * areas,
-        PLAYERS_PER_AREA * areas,
-        PLAYERS_PER_AREA * areas,
+        npcs,
+        players,
+        players,
         r.full,
         r.p50,
         r.p99,
@@ -69,11 +70,7 @@ fn main() {
     );
     println!(
         "[bench] capacity: {} isolated areas = {} NPCs + {} players sustained at {:.1}ms/tick (budget {:.0}ms)",
-        areas,
-        NPCS_PER_AREA * areas,
-        PLAYERS_PER_AREA * areas,
-        r.full,
-        BUDGET_MS,
+        areas, npcs, players, r.full, BUDGET_MS,
     );
 }
 
@@ -132,96 +129,29 @@ struct Point {
 fn point(areas: usize, warmup: usize, ticks: usize) -> Point {
     let npc = data::npc::Id::Orc;
     let assets = assets::service();
-    let mut worlds: Vec<App> = Vec::with_capacity(areas);
-    let mut rosters: Vec<Vec<(ClientId, Entity)>> = Vec::with_capacity(areas);
-    for id in world::data::area::Id::VARIANTS
-        .iter()
-        .copied()
-        .filter(|id| id.get().bench)
-        .take(areas)
-    {
-        let (app, roster) = build_world(id, npc, &assets);
-        worlds.push(app);
-        rosters.push(roster);
-    }
+    let (mut worlds, rosters) = sim::worlds(areas, npc, &assets);
 
-    let sim = measure(&mut worlds, warmup, ticks);
-
-    for (app, roster) in worlds.iter_mut().zip(&rosters) {
-        let world = app.world_mut();
-        for &(client, player) in roster {
-            world.spawn((ConnectedClient { max_size: 1200 }, client));
-            world.entity_mut(player).insert(OwnedBy(client));
-        }
-    }
-
+    let baseline = measure(&mut worlds, warmup, ticks);
+    sim::connect(&mut worlds, &rosters);
     let full = measure(&mut worlds, warmup, ticks);
+
     Point {
         full: full.0,
-        sim: sim.0,
+        sim: baseline.0,
         p50: full.1,
         p99: full.2,
         max: full.3,
     }
 }
 
-fn build_world(
-    id: area::Id,
-    npc: data::npc::Id,
-    assets: &AssetService,
-) -> (App, Vec<(ClientId, Entity)>) {
-    let mut app = world::systems::server_app(id);
-    app.insert_resource(assets.clone());
-    app.insert_resource(world::core::math::Rng::from_entropy());
-    app.finish();
-    app.cleanup();
-    app.world_mut()
-        .resource_mut::<NextState<ServerState>>()
-        .set(ServerState::Running);
-    app.update();
-
-    let area = assets.resolve(id.get().map, area::build_area);
-    let world = app.world_mut();
-    let content: Vec<Entity> = world
-        .query_filtered::<Entity, With<Npc>>()
-        .iter(world)
-        .collect();
-    for entity in content {
-        world.despawn(entity);
-    }
-
-    let mut roster = Vec::with_capacity(PLAYERS_PER_AREA);
-    for _ in 0..NPCS_PER_AREA {
-        let entity = spawn_character(world, id, npc, wander_pos(area));
-        world.entity_mut(entity).insert(Npc {
-            def: npc,
-            group: id.index() as u32,
-        });
-    }
-    for index in 0..PLAYERS_PER_AREA {
-        let client = ClientId(index as u32 + 1);
-        let player = spawn_character(world, id, npc, area.spawn);
-        world
-            .entity_mut(player)
-            .insert((Owner { client }, Inventory::empty(), Xp { amount: 0 }));
-        world.resource_mut::<Players>().0.insert(client, player);
-        roster.push((client, player));
-    }
-    (app, roster)
-}
-
 fn measure(worlds: &mut [App], warmup: usize, ticks: usize) -> (f64, f64, f64, f64) {
     for _ in 0..warmup {
-        for app in worlds.iter_mut() {
-            app.update();
-        }
+        sim::step(worlds);
     }
     let mut samples = Vec::with_capacity(ticks);
     for _ in 0..ticks {
         let started = Instant::now();
-        for app in worlds.iter_mut() {
-            app.update();
-        }
+        sim::step(worlds);
         samples.push(started.elapsed().as_secs_f64() * 1000.0);
     }
     samples.sort_by(f64::total_cmp);
@@ -232,17 +162,4 @@ fn measure(worlds: &mut [App], warmup: usize, ticks: usize) -> (f64, f64, f64, f
         samples[(n as f64 * 0.99) as usize],
         samples[n - 1],
     )
-}
-
-fn wander_pos(area: &Area) -> Pos<Tiles> {
-    area.walkable_nodes.first().copied().unwrap_or(area.spawn)
-}
-
-fn spawn_character(
-    world: &mut World,
-    id: area::Id,
-    def_id: data::npc::Id,
-    at: Pos<Tiles>,
-) -> Entity {
-    world::systems::npc::spawn_actor(world, def_id.get(), at, id)
 }

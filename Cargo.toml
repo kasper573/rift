@@ -74,6 +74,11 @@ ureq = { version = "3", default-features = false }
 lto = false
 incremental = true
 
+# Release with debug symbols, for sampling profilers (e.g. `bench --features profiling`).
+[profile.profiling]
+inherits = "release"
+debug = true
+
 [profile.dev]
 opt-level = 1
 

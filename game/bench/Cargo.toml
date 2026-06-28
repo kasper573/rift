@@ -8,6 +8,11 @@ description = "Isolated in-process load benchmark for the `world` simulation"
 name = "bench"
 path = "src/main.rs"
 
+[features]
+# Opt-in CPU (pprof flamegraph) + allocation profiling of a fixed workload.
+# Build with `--profile profiling --features profiling` for debug symbols.
+profiling = ["dep:pprof"]
+
 [dependencies]
 bevy_app.workspace = true
 bevy_ecs.workspace = true
@@ -15,3 +20,4 @@ bevy_state.workspace = true
 bevy_replicon = { workspace = true, features = ["server"] }
 strum.workspace = true
 world = { path = "../world" }
+pprof = { version = "0.15", features = ["flamegraph", "protobuf-codec"], optional = true }
