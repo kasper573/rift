@@ -1,6 +1,7 @@
 mod assets;
 #[cfg(feature = "profiling")]
 mod profiling;
+mod search;
 mod sim;
 
 use std::time::Instant;
@@ -8,7 +9,10 @@ use std::time::Instant;
 use bevy_app::App;
 
 const BUDGET_MS: f64 = 40.0;
-const MAX_AREAS: usize = 768; // must exceed the crossover and the probe that overshoots it
+// Must exceed the budget crossover (and the probe that overshoots it) but stay within RAM: the bench
+// holds every area world in memory at once (~3 MiB each with clients), so this caps peak use near
+// ~15 GiB. The search stops at the 40 ms crossover well before here anyway.
+const MAX_AREAS: usize = 5000;
 const WARMUP: usize = 30;
 const MEASURE: usize = 200;
 
@@ -76,7 +80,7 @@ fn main() {
         } else if over.is_none_or(|(lowest, _)| areas <= lowest) {
             over = Some(last);
         }
-        next = project_areas(under, over, previous, last);
+        next = search::project(BUDGET_MS, MAX_AREAS, under, over, previous, last);
         previous = Some(last);
     }
 
@@ -105,46 +109,6 @@ fn main() {
 
 fn verdict(mean: f64) -> &'static str {
     if mean <= BUDGET_MS { "ok" } else { "over" }
-}
-
-/// The next area count to probe while root-finding the budget crossover, or `None` to stop. Stops once
-/// the projected next probe is only one area past the best sustained one — a finer answer isn't worth a
-/// probe. With the budget bracketed it uses false position; before that it leaps straight at the budget
-/// (secant of the last two probes, else one proportional guess), so a fast world is bracketed at once.
-fn project_areas(
-    under: Option<(usize, f64)>,
-    over: Option<(usize, f64)>,
-    previous: Option<(usize, f64)>,
-    last: (usize, f64),
-) -> Option<usize> {
-    let (ua, ut) = under?;
-    if ua >= MAX_AREAS {
-        return None;
-    }
-    let next = match over {
-        Some((oa, ot)) => {
-            if oa <= ua + 1 {
-                return None;
-            }
-            let guess = if ot > ut {
-                ua as f64 + (BUDGET_MS - ut) * (oa - ua) as f64 / (ot - ut)
-            } else {
-                (ua + oa) as f64 / 2.0
-            };
-            (guess.round() as usize).clamp(ua + 1, oa - 1)
-        }
-        None => {
-            let projected = match previous {
-                Some((pa, pt)) if last.0 != pa && last.1 > pt => {
-                    let slope = (last.1 - pt) / (last.0 - pa) as f64;
-                    last.0 as f64 + (BUDGET_MS - last.1) / slope
-                }
-                _ => ua as f64 * BUDGET_MS / ut,
-            };
-            (projected.round() as usize).clamp(ua + 1, MAX_AREAS)
-        }
-    };
-    (next > ua + 1).then_some(next)
 }
 
 struct Point {

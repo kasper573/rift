@@ -5,12 +5,11 @@ use bevy::prelude::*;
 use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
 use bevy_replicon::prelude::RepliconChannels;
 use renet2::{ConnectionConfig, RenetClient};
-use renet2_netcode::{ClientAuthentication, ClientSocket, ConnectToken, NetcodeClientTransport};
 use world::core::channels::RenetChannelsExt;
 
 use crate::core::net::auth::Session;
-use crate::core::net::transport::{Client, RepliconRenetClientPlugin, Transport};
-use crate::core::platform::StartParams;
+use crate::core::net::transport::{Client, RepliconRenetClientPlugin, Socket};
+use crate::core::platform::{StartParams, WsSocket};
 
 pub struct NetPlugin;
 
@@ -28,7 +27,7 @@ pub struct Announce {
 
 #[derive(Resource)]
 pub struct PendingSession {
-    task: Task<Result<Vec<u8>, String>>,
+    task: Task<Result<String, String>>,
     spectate: bool,
 }
 
@@ -38,7 +37,7 @@ pub fn open_session(world: &mut World, spectate: bool) {
         return;
     };
     let game_server_url = world.resource::<StartParams>().game_server_url.clone();
-    let task = IoTaskPool::get().spawn(fetch_token(game_server_url, session.authorization));
+    let task = IoTaskPool::get().spawn(fetch_ticket(game_server_url, session.authorization));
     world.insert_resource(PendingSession { task, spectate });
 }
 
@@ -47,8 +46,8 @@ fn poll_session(world: &mut World) {
         return;
     };
     match block_on(future::poll_once(&mut pending.task)) {
-        Some(Ok(token)) => {
-            connect(world, &token);
+        Some(Ok(ticket)) => {
+            connect(world, ticket.trim());
             world.insert_resource(Announce {
                 spectate: pending.spectate,
             });
@@ -58,26 +57,19 @@ fn poll_session(world: &mut World) {
     }
 }
 
-async fn fetch_token(game_server_url: String, authorization: String) -> Result<Vec<u8>, String> {
+async fn fetch_ticket(game_server_url: String, authorization: String) -> Result<String, String> {
     crate::core::platform::fetch(&format!("{game_server_url}/session"), &authorization).await
 }
 
-fn connect(world: &mut World, token: &[u8]) {
+fn connect(world: &mut World, ticket: &str) {
     let channels = world.resource::<RepliconChannels>();
     let connection_config =
         ConnectionConfig::from_channels(channels.server_configs(), channels.client_configs());
-    let connect_token =
-        ConnectToken::read(&mut std::io::Cursor::new(token)).expect("read connect token");
-    let server_url = world.resource::<StartParams>().game_server_ws_url.clone();
-    let socket = crate::core::platform::client_socket(&server_url);
-    let client = RenetClient::new(connection_config, socket.is_reliable());
-    let transport = NetcodeClientTransport::new(
-        crate::core::platform::now(),
-        ClientAuthentication::Secure { connect_token },
-        socket,
-    )
-    .expect("client transport");
+    let ws_url = world.resource::<StartParams>().game_server_ws_url.clone();
+    // The websocket is reliable+ordered (TCP); renet handles channels and reliability over it.
+    let client = RenetClient::new(connection_config, true);
+    let socket = WsSocket::open(&format!("{ws_url}/?ticket={ticket}"));
     world.insert_resource(Client(client));
-    world.insert_resource(Transport(transport));
-    info!("netcode connection opened");
+    world.insert_non_send(Socket(socket));
+    info!("connection opened");
 }

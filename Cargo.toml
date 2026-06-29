@@ -58,7 +58,7 @@ quote = "1"
 proc-macro2 = "1"
 bevy_replicon = { version = "0.41.0-rc.1", default-features = false }
 renet2 = { version = "0.15", default-features = false }
-renet2_netcode = { version = "0.15", default-features = false }
+rayon = "1"
 bevy_state = { version = "0.19.0", default-features = false, features = ["bevy_app"] }
 axum = "0.8"
 envy = "0.4"

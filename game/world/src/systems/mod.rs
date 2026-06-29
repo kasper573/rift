@@ -76,9 +76,12 @@ pub struct Character {
     pub area: AreaTag,
 }
 
-pub fn server_app(area: area::Id) -> App {
+/// Builds one area world. `ordinal` is the world's slot among the worlds a driver steps concurrently;
+/// it only staggers the replication phase, so identical area instances still replicate on different
+/// ticks. The driver passes each world's index.
+pub fn server_app(area: area::Id, ordinal: u64) -> App {
     use bevy_app::{First, PostUpdate, Startup, Update};
-    use bevy_ecs::schedule::IntoScheduleConfigs;
+    use bevy_ecs::schedule::{IntoScheduleConfigs, Schedules, SingleThreadedExecutor};
     use bevy_replicon::prelude::{AuthMethod, RepliconSharedPlugin, ServerState};
     use bevy_replicon::server::{ServerSystems, increment_tick};
     use bevy_state::prelude::in_state;
@@ -103,9 +106,9 @@ pub fn server_app(area: area::Id) -> App {
     app.init_resource::<player::Players>()
         .init_resource::<spectate::Spectators>()
         .init_resource::<combat::RegenAt>()
-        // Seed the phase by area so different areas replicate on different ticks, spreading the
+        // Seed the phase by the world's ordinal so worlds replicate on different ticks, spreading the
         // serialization load across ticks instead of spiking every Nth tick in lockstep.
-        .insert_resource(ReplicationClock(area.index() as u64))
+        .insert_resource(ReplicationClock(ordinal))
         .add_message::<combat::Died>()
         .add_observer(player::greet)
         .add_observer(player::client_left)
@@ -153,5 +156,32 @@ pub fn server_app(area: area::Id) -> App {
             )
                 .chain(),
         );
+
+    // An area world is stepped single-threaded so the driver (server/bench) owns all parallelism by
+    // running whole areas concurrently. Letting each area's schedules fan out onto the global task
+    // pool too would nest a work-stealing pool inside the per-area pool and oversubscribe the cores.
+    for (_, schedule) in app.world_mut().resource_mut::<Schedules>().iter_mut() {
+        schedule.set_executor(SingleThreadedExecutor::new());
+    }
     app
+}
+
+/// Steps every area world one tick, fanning the isolated worlds across all cores. Areas share only the
+/// read-only asset service, so this is embarrassingly parallel. The worlds (not the owning `App`s) are
+/// stepped directly because `App` is `!Send` (its runner box carries no `Send` bound) while `World` is
+/// `Send`; for these single-schedule headless apps `world.run_schedule(Main)` + `clear_trackers` is
+/// exactly what `App::update` does.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn step_areas(apps: &mut [App]) {
+    use bevy_app::Main;
+    use rayon::prelude::*;
+
+    apps.iter_mut()
+        .map(App::world_mut)
+        .collect::<Vec<_>>()
+        .into_par_iter()
+        .for_each(|world| {
+            world.run_schedule(Main);
+            world.clear_trackers();
+        });
 }

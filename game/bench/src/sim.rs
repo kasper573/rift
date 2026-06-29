@@ -5,7 +5,6 @@ use bevy_state::prelude::NextState;
 use strum::VariantArray;
 use world::core::assets::AssetService;
 use world::data;
-use world::systems::area;
 use world::systems::player::{ClientId, JoinRequest, SpawnPolicy};
 
 pub const PLAYERS_PER_AREA: usize = 25;
@@ -59,18 +58,14 @@ pub fn npcs_per_area() -> usize {
         .unwrap_or(0)
 }
 
-/// The `areas` highest-numbered benchmark area worlds, each populated with its NPCs and players, plus
-/// each world's roster of connection entities.
+/// Exactly `areas` instances of the benchmark area, each populated with its NPCs and players, plus
+/// each world's roster of connection entities. The area count is a pure runtime parameter — every
+/// world is an instance of the one area template, so the count built always equals the count asked for.
 pub fn worlds(areas: usize, layout: Layout, assets: &AssetService) -> (Vec<App>, Vec<Roster>) {
     let mut worlds = Vec::with_capacity(areas);
     let mut rosters = Vec::with_capacity(areas);
-    for id in data::area::Id::VARIANTS
-        .iter()
-        .copied()
-        .filter(|id| id.get().bench)
-        .take(areas)
-    {
-        let (app, roster) = build_world(id, layout, assets);
+    for ordinal in 0..areas {
+        let (app, roster) = build_world(layout, assets, ordinal as u64);
         worlds.push(app);
         rosters.push(roster);
     }
@@ -90,15 +85,23 @@ pub fn connect(worlds: &mut [App], rosters: &[Roster]) {
     }
 }
 
-/// Advances every world one tick.
+/// Advances every world one tick across all cores — the same parallel area fan-out the real server
+/// uses, so the benchmark's capacity reflects the threaded server.
 pub fn step(worlds: &mut [App]) {
+    world::systems::step_areas(worlds);
+}
+
+/// Advances every world one tick on the calling thread only. Used by the profiler so CPU samples
+/// attribute cleanly to game systems instead of being scattered across rayon worker frames.
+#[cfg(feature = "profiling")]
+pub fn step_single_threaded(worlds: &mut [App]) {
     for app in worlds.iter_mut() {
         app.update();
     }
 }
 
-fn build_world(id: area::Id, layout: Layout, assets: &AssetService) -> (App, Roster) {
-    let mut app = world::systems::server_app(id);
+fn build_world(layout: Layout, assets: &AssetService, ordinal: u64) -> (App, Roster) {
+    let mut app = world::systems::server_app(world::data::area::BENCH_ID, ordinal);
     app.insert_resource(assets.clone());
     app.insert_resource(world::core::math::Rng::from_entropy());
     app.insert_resource(layout.spawn_policy());

@@ -1,9 +1,15 @@
 //! Load generator: connects headless replicon clients to an already-running real server over real
 //! websocket sockets and holds them idle. Start the server with `just loadtest-stack-up` first.
+//!
+//! Each client drives renet2's core directly over a plain WebSocket — the same netcode-free transport
+//! the browser and the server use — so there is no client cap. `dyn` mode root-finds the player count
+//! whose server tick hits the budget, using the same projection as the area benchmark.
 
-use std::io::{self, ErrorKind};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+mod search;
+
+use std::io::ErrorKind;
+use std::net::TcpStream;
+use std::time::{Duration, Instant};
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
@@ -11,28 +17,21 @@ use bevy_ecs::schedule::IntoScheduleConfigs;
 use bevy_replicon::prelude::*;
 use bevy_state::prelude::*;
 use renet2::{ConnectionConfig, RenetClient};
-use renet2_netcode::{
-    ClientAuthentication, ClientSocket, ConnectToken, NetcodeClientTransport, NetcodeTransportError,
-};
 use tungstenite::Message;
 use tungstenite::stream::MaybeTlsStream;
 use world::core::channels::RenetChannelsExt;
 use world::systems::player::session::{self, ClientSessionPlugin};
 
-// The placeholder address the server bakes into every connect token (it routes by websocket, not IP);
-// `send`/`try_recv` are keyed on it.
-const SERVER_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
-
 const TICK: Duration = Duration::from_millis(33);
 const BUDGET_MS: f64 = 40.0;
-const RAMP_STEP: usize = 50;
-const NETCODE_MAX_CLIENTS: usize = 1024;
-
-fn unix_now() -> Duration {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock before unix epoch")
-}
+/// Search clamp for the player root-find; the real limit is the server's client cap or its tick time.
+const MAX_PLAYERS: usize = 50_000;
+/// Open this many sockets before pumping, so already-connected clients keep draining while we connect.
+const CONNECT_BATCH: usize = 100;
+/// Let the server settle at a new player count before sampling its tick.
+const STABILIZE: Duration = Duration::from_secs(2);
+/// Sample the server tick over this window.
+const WINDOW: Duration = Duration::from_secs(3);
 
 fn main() {
     let mode = std::env::args().nth(1);
@@ -56,10 +55,12 @@ fn main() {
 fn run_fixed(http_url: &str, ws_url: &str, count: usize) {
     println!("[loadtest] connecting {count} clients to {ws_url} (fake tokens via {http_url})");
     let started = Instant::now();
-    let mut clients = connect(http_url, ws_url, 0, count);
+    let mut clients: Vec<App> = Vec::new();
+    let mut next_id = 0usize;
+    set_player_count(&mut clients, http_url, ws_url, &mut next_id, count);
     println!(
         "[loadtest] opened {}/{count} in {:.1}s — holding (Ctrl-C to stop)",
-        clients.len(),
+        connected_count(&clients),
         started.elapsed().as_secs_f64()
     );
     let mut report = Instant::now();
@@ -76,37 +77,78 @@ fn run_fixed(http_url: &str, ws_url: &str, count: usize) {
     }
 }
 
+/// Root-find the highest player count the server sustains within the tick budget, using the same
+/// projection the area benchmark uses. Each probe adjusts the live client pool to the target count
+/// (connect or disconnect) rather than restarting, so the search converges in a handful of probes.
 fn run_dyn(http_url: &str, ws_url: &str) {
-    println!("[loadtest] ramping players to find the {BUDGET_MS:.0}ms/tick equilibrium ({ws_url})");
+    println!("[loadtest] root-finding the {BUDGET_MS:.0}ms/tick player equilibrium ({ws_url})");
     let mut clients: Vec<App> = Vec::new();
-    loop {
-        let start = clients.len();
-        clients.extend(connect(http_url, ws_url, start, RAMP_STEP));
-        pump(&mut clients, Duration::from_secs(2));
-        let frame_ms = measure_tick_ms(http_url, &mut clients, Duration::from_secs(3));
+    let mut next_id = 0usize;
+    let mut under: Option<(usize, f64)> = None;
+    let mut over: Option<(usize, f64)> = None;
+    let mut previous: Option<(usize, f64)> = None;
+    let mut next = Some(1usize);
+    while let Some(target) = next {
+        set_player_count(&mut clients, http_url, ws_url, &mut next_id, target);
         let live = connected_count(&clients);
-        println!("[loadtest]   {live:>5} players  →  server {frame_ms:6.2}ms/tick");
+        let ms = measure_tick_ms(http_url, &mut clients, WINDOW);
+        let verdict = if ms <= BUDGET_MS { "ok" } else { "over" };
+        println!("[loadtest]   {live:>6} players  →  server {ms:6.2}ms/tick  {verdict}");
 
-        if frame_ms >= BUDGET_MS {
-            println!(
-                "[loadtest] equilibrium: ~{live} concurrent players at {frame_ms:.1}ms/tick (budget {BUDGET_MS:.0}ms)"
-            );
-            return;
+        let last = (live, ms);
+        if ms <= BUDGET_MS {
+            if under.is_none_or(|(highest, _)| live >= highest) {
+                under = Some(last);
+            }
+        } else if over.is_none_or(|(lowest, _)| live <= lowest) {
+            over = Some(last);
         }
-        if live + RAMP_STEP > NETCODE_MAX_CLIENTS {
-            println!(
-                "[loadtest] reached the netcode ceiling (~{NETCODE_MAX_CLIENTS}) at only {frame_ms:.1}ms/tick — \
-                 the 1024-client transport cap is the limit, not server tick time"
-            );
-            return;
+        // Couldn't open as many sockets as asked while still under budget: the limit is the machine's
+        // or server's connection ceiling, not tick time, and that count is the answer.
+        if live < target && ms < BUDGET_MS {
+            println!("[loadtest] connection ceiling at {live} players (could not open more)");
+            break;
         }
+        next = search::project(BUDGET_MS, MAX_PLAYERS, under, over, previous, last);
+        previous = Some(last);
+    }
+    match under {
+        Some((players, ms)) => println!(
+            "[loadtest] equilibrium: ~{players} concurrent players sustained at {ms:.1}ms/tick (budget {BUDGET_MS:.0}ms)"
+        ),
+        None => println!("[loadtest] the first probe already exceeded the budget"),
     }
 }
 
-fn connect(http_url: &str, ws_url: &str, start: usize, count: usize) -> Vec<App> {
-    (start..start + count)
-        .filter_map(|i| build_client(http_url, ws_url, i))
-        .collect()
+/// Brings the live client pool to exactly `target` players: drops surplus clients (each dropped
+/// websocket closes, which the server sees as a disconnect) or opens new ones. New clients connect in
+/// batches, pumping the pool between batches so already-connected sockets keep draining; a batch that
+/// opens nothing means a connection ceiling was hit. Fake ids are monotonic so a reconnecting slot is
+/// never mistaken for a still-connected account.
+fn set_player_count(
+    clients: &mut Vec<App>,
+    http_url: &str,
+    ws_url: &str,
+    next_id: &mut usize,
+    target: usize,
+) {
+    clients.truncate(target);
+    while clients.len() < target {
+        let want = CONNECT_BATCH.min(target - clients.len());
+        let before = clients.len();
+        for _ in 0..want {
+            let id = *next_id;
+            *next_id += 1;
+            if let Some(app) = build_client(http_url, ws_url, id) {
+                clients.push(app);
+            }
+        }
+        if clients.len() == before {
+            break;
+        }
+        pump(clients, Duration::from_millis(100));
+    }
+    pump(clients, STABILIZE);
 }
 
 fn pump(clients: &mut [App], duration: Duration) {
@@ -170,8 +212,8 @@ fn connected_count(clients: &[App]) -> usize {
 }
 
 fn build_client(http_url: &str, ws_url: &str, index: usize) -> Option<App> {
-    let token_bytes = fetch_token(http_url, &format!("loadtest-{index}"))?;
-    let connect_token = ConnectToken::read(&mut io::Cursor::new(token_bytes)).ok()?;
+    let ticket = fetch_ticket(http_url, &format!("loadtest-{index}"))?;
+    let socket = WsSocket::connect(ws_url, ticket)?;
 
     let mut app = App::new();
     app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));
@@ -184,163 +226,72 @@ fn build_client(http_url: &str, ws_url: &str, index: usize) -> Option<App> {
         let channels = app.world().resource::<RepliconChannels>();
         ConnectionConfig::from_channels(channels.server_configs(), channels.client_configs())
     };
-    let socket = WsSocket::new(ws_url);
-    let client = RenetClient::new(config, socket.is_reliable());
-    let transport = NetcodeClientTransport::new(
-        unix_now(),
-        ClientAuthentication::Secure { connect_token },
-        socket,
-    )
-    .ok()?;
-    app.insert_resource(Client(client));
-    app.insert_resource(Transport(transport));
+    // The websocket is reliable+ordered (TCP), matching the server side.
+    app.insert_resource(Client(RenetClient::new(config, true)));
+    app.insert_non_send(Socket(socket));
     app.finish();
     app.cleanup();
     Some(app)
 }
 
-fn fetch_token(http_url: &str, fake_id: &str) -> Option<Vec<u8>> {
+fn fetch_ticket(http_url: &str, fake_id: &str) -> Option<u64> {
     let mut response = ureq::post(format!("{http_url}/session"))
         .header("Authorization", format!("fake:{fake_id}"))
         .send_empty()
         .ok()?;
-    response.body_mut().read_to_vec().ok()
+    response
+        .body_mut()
+        .read_to_string()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
-// renet2's websocket netcode protocol carries the netcode connection request as a `creq=` URL query
-// parameter on the handshake, then exchanges every later packet as a binary frame — so the socket
-// can't open until the first packet (the connection request) is sent.
-#[derive(Debug)]
+/// A blocking-then-nonblocking WebSocket carrying opaque renet packets as binary frames.
 struct WsSocket {
-    url: String,
-    ws: Option<tungstenite::WebSocket<MaybeTlsStream<TcpStream>>>,
-    requested: bool,
-    closed: bool,
+    ws: tungstenite::WebSocket<MaybeTlsStream<TcpStream>>,
+    open: bool,
 }
 
 impl WsSocket {
-    fn new(url: &str) -> WsSocket {
-        WsSocket {
-            url: url.to_owned(),
-            ws: None,
-            requested: false,
-            closed: false,
-        }
-    }
-
-    // The connection request goes in the `creq` query parameter percent-encoded. The request is built
-    // by hand (rather than `tungstenite::connect`) so the `url` crate doesn't decode that encoding back
-    // into raw bytes in the request line — which the server's HTTP parser would reject.
-    fn open(&mut self, connection_request: &[u8]) -> Result<(), ()> {
-        let encoded = urlencoding::encode_binary(connection_request);
-        let host = self
-            .url
-            .strip_prefix("ws://")
-            .unwrap_or(&self.url)
-            .to_owned();
-        let stream = TcpStream::connect(&host).map_err(|error| eprintln!("[ws] tcp: {error}"))?;
-        let request = tungstenite::http::Request::builder()
-            .uri(format!("ws://{host}/?creq={encoded}"))
-            .header("Host", &host)
-            .header("Connection", "Upgrade")
-            .header("Upgrade", "websocket")
-            .header("Sec-WebSocket-Version", "13")
-            .header(
-                "Sec-WebSocket-Key",
-                tungstenite::handshake::client::generate_key(),
-            )
-            .body(())
-            .map_err(|error| eprintln!("[ws] request: {error}"))?;
-        let (ws, _response) = tungstenite::client(request, MaybeTlsStream::Plain(stream))
-            .map_err(|error| eprintln!("[ws] handshake: {error}"))?;
+    fn connect(ws_url: &str, ticket: u64) -> Option<WsSocket> {
+        let (ws, _response) = tungstenite::connect(format!("{ws_url}/?ticket={ticket}"))
+            .map_err(|error| eprintln!("[ws] connect: {error}"))
+            .ok()?;
         if let MaybeTlsStream::Plain(tcp) = ws.get_ref() {
-            let _ = tcp.set_nonblocking(true);
+            tcp.set_nonblocking(true).ok()?;
         }
-        self.ws = Some(ws);
-        Ok(())
-    }
-}
-
-impl ClientSocket for WsSocket {
-    // Match the server's websocket socket: it reports TLS-proxied (encrypted) and reliable.
-    fn is_encrypted(&self) -> bool {
-        true
-    }
-    fn is_reliable(&self) -> bool {
-        true
+        Some(WsSocket { ws, open: true })
     }
 
-    fn addr(&self) -> io::Result<SocketAddr> {
-        Err(io::Error::from(ErrorKind::AddrNotAvailable))
-    }
-
-    fn is_closed(&mut self) -> bool {
-        self.closed
-    }
-
-    fn close(&mut self) {
-        if let Some(ws) = self.ws.as_mut() {
-            let _ = ws.close(None);
-        }
-        self.closed = true;
-    }
-
-    fn preupdate(&mut self) {}
-
-    fn try_recv(&mut self, buffer: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
-        let Some(ws) = self.ws.as_mut() else {
-            return Err(ErrorKind::WouldBlock.into());
-        };
-        match ws.read() {
-            Ok(Message::Binary(data)) => {
-                if data.len() > buffer.len() {
-                    return Err(ErrorKind::InvalidData.into());
-                }
-                buffer[..data.len()].copy_from_slice(&data);
-                Ok((data.len(), SERVER_ADDR))
-            }
+    fn recv(&mut self) -> Option<Vec<u8>> {
+        match self.ws.read() {
+            Ok(Message::Binary(data)) => Some(data.to_vec()),
             Ok(Message::Close(_)) => {
-                self.closed = true;
-                Err(ErrorKind::ConnectionAborted.into())
+                self.open = false;
+                None
             }
-            Ok(_) => Err(ErrorKind::WouldBlock.into()),
-            Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::WouldBlock => {
-                Err(ErrorKind::WouldBlock.into())
-            }
+            Ok(_) => None,
+            Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::WouldBlock => None,
             Err(_) => {
-                self.closed = true;
-                Err(ErrorKind::WouldBlock.into())
+                self.open = false;
+                None
             }
         }
     }
 
-    fn postupdate(&mut self) {
-        if let Some(ws) = self.ws.as_mut() {
-            let _ = ws.flush();
+    fn send(&mut self, packet: Vec<u8>) {
+        match self.ws.send(Message::Binary(packet.into())) {
+            Ok(()) => {}
+            // A non-blocking write that couldn't flush fully is buffered for the next flush.
+            Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::WouldBlock => {}
+            Err(_) => self.open = false,
         }
     }
 
-    fn send(&mut self, addr: SocketAddr, packet: &[u8]) -> Result<(), NetcodeTransportError> {
-        if addr != SERVER_ADDR {
-            return Err(io::Error::from(ErrorKind::AddrNotAvailable).into());
-        }
-        if !self.requested {
-            self.requested = true;
-            if self.open(packet).is_err() {
-                self.closed = true;
-                return Err(io::Error::from(ErrorKind::ConnectionAborted).into());
-            }
-            return Ok(());
-        }
-        let Some(ws) = self.ws.as_mut() else {
-            return Err(io::Error::from(ErrorKind::ConnectionAborted).into());
-        };
-        match ws.send(Message::Binary(packet.to_vec().into())) {
-            Ok(()) => Ok(()),
-            // Non-blocking write that couldn't flush fully is buffered by tungstenite for next flush.
-            Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::WouldBlock => Ok(()),
-            Err(error) => Err(io::Error::other(error.to_string()).into()),
-        }
+    fn flush(&mut self) {
+        let _ = self.ws.flush();
     }
 }
 
@@ -348,8 +299,7 @@ impl ClientSocket for WsSocket {
 #[derive(Resource)]
 struct Client(RenetClient);
 
-#[derive(Resource)]
-struct Transport(NetcodeClientTransport);
+struct Socket(WsSocket);
 
 struct BridgePlugin;
 
@@ -361,6 +311,7 @@ impl bevy_app::Plugin for BridgePlugin {
             (
                 drive,
                 set_connecting.run_if(in_state(ClientState::Disconnected).and_then(connecting)),
+                promote.run_if(in_state(ClientState::Connecting).and_then(connecting)),
                 set_connected.run_if(in_state(ClientState::Connecting).and_then(connected)),
                 set_disconnected.run_if(connection_lost),
                 receive_packets.run_if(connected),
@@ -377,17 +328,19 @@ impl bevy_app::Plugin for BridgePlugin {
     }
 }
 
-fn drive(
-    client: Option<ResMut<Client>>,
-    transport: Option<ResMut<Transport>>,
-    time: Res<bevy_time::Time>,
-) {
-    let Some(mut client) = client else {
-        return;
-    };
+fn drive(mut socket: NonSendMut<Socket>, mut client: ResMut<Client>, time: Res<bevy_time::Time>) {
     client.0.update(time.delta());
-    if let Some(mut transport) = transport {
-        let _ = transport.0.update(time.delta(), &mut client.0);
+    while let Some(packet) = socket.0.recv() {
+        client.0.process_packet(&packet);
+    }
+}
+
+// renet2's core opens in `Connecting` and stays there until told otherwise; with no netcode layer the
+// transport promotes it once the socket is up and replicon has reached `Connecting`, so the state
+// machine advances Disconnected -> Connecting -> Connected in order.
+fn promote(socket: NonSend<Socket>, mut client: ResMut<Client>) {
+    if socket.0.open {
+        client.0.set_connected();
     }
 }
 
@@ -430,14 +383,17 @@ fn receive_packets(
 }
 
 fn send_packets(
+    mut socket: NonSendMut<Socket>,
     mut client: ResMut<Client>,
-    mut transport: ResMut<Transport>,
     mut messages: ResMut<ClientMessages>,
 ) {
     for (channel_id, message) in messages.drain_sent() {
         client.0.send_message(channel_id as u8, message);
     }
-    let _ = transport.0.send_packets(&mut client.0);
+    for packet in client.0.get_packets_to_send() {
+        socket.0.send(packet);
+    }
+    socket.0.flush();
 }
 
 fn connecting(client: Option<Res<Client>>) -> bool {

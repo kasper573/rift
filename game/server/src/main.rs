@@ -1,11 +1,12 @@
 mod assets;
 mod auth;
+mod transport;
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
@@ -19,11 +20,8 @@ use bevy_state::prelude::NextState;
 use metrics::{counter, gauge, histogram};
 use rand::RngCore;
 use renet2::{ConnectionConfig, DisconnectReason, RenetServer, ServerEvent};
-use renet2_netcode::{
-    ConnectToken, NETCODE_KEY_BYTES, NetcodeServerTransport, ServerAuthentication,
-    ServerSetupConfig, WebSocketAcceptor, WebSocketServer, WebSocketServerConfig,
-};
 use strum::VariantArray;
+use transport::WsTransport;
 use world::core::assets::AssetService;
 use world::core::channels::RenetChannelsExt;
 use world::systems::account::Identity;
@@ -33,19 +31,7 @@ use world::systems::{REPLICATION_INTERVAL, TICK_HZ};
 
 service::heap_profiling!();
 
-const PROTOCOL_ID: u64 = 0x0072_6966_7400_0001;
 const TOKEN_EXPIRE: Duration = Duration::from_secs(30);
-const CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// The single netcode socket the WebSocket transport registers; with one socket its id is 0, and
-/// every connect token must name the same id.
-const NETCODE_SOCKET_ID: u8 = 0;
-
-/// Browsers reach the netcode WebSocket through Caddy by domain, never by IP, so the netcode server
-/// address is the wildcard placeholder renet2 requires for domain-routed clients — the socket config
-/// and every connect token must agree on it. netcode's own ConnectToken encryption secures the
-/// session regardless of address.
-const NETCODE_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
 #[derive(serde::Deserialize)]
 struct Config {
@@ -100,9 +86,6 @@ fn main() {
         .parse()
         .expect("websocket bind address");
 
-    let mut private_key = [0u8; NETCODE_KEY_BYTES];
-    rand::rng().fill_bytes(&mut private_key);
-
     // One multi-threaded tokio runtime backs both the HTTP API and the WebSocket transport's
     // accept/read/write tasks; it outlives `main` because `simulate` never returns.
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -112,7 +95,6 @@ fn main() {
     let http = Http {
         sessions: sessions.clone(),
         verifier: verifier(),
-        private_key,
         allow_fake_users: config.allow_fake_users,
     };
     runtime.spawn(serve_http(http_bind, http, metrics));
@@ -125,7 +107,6 @@ fn main() {
     let assets = assets::service(config.assets_dir);
     simulate(
         ws_bind,
-        private_key,
         sessions,
         runtime.handle().clone(),
         assets,
@@ -141,7 +122,6 @@ struct Settings {
 
 fn simulate(
     ws_bind: SocketAddr,
-    private_key: [u8; NETCODE_KEY_BYTES],
     sessions: Sessions,
     runtime: tokio::runtime::Handle,
     assets: AssetService,
@@ -159,7 +139,8 @@ fn simulate(
         .unwrap_or(0);
     let mut worlds: Vec<App> = area_ids
         .iter()
-        .map(|&id| build_world(id, &assets, spawn_policy))
+        .enumerate()
+        .map(|(ordinal, &id)| build_world(id, &assets, spawn_policy, ordinal as u64))
         .collect();
 
     let (connection_config, client_channels) = {
@@ -169,37 +150,10 @@ fn simulate(
         (config, channels.client_channels().len())
     };
     let mut server = RenetServer::new(connection_config);
-
-    // `has_tls_proxy: true`: Caddy terminates TLS in front, so the browser dials `wss://` and its
-    // socket reports the link encrypted, skipping netcode's own encryption. The server must report
-    // the same or the handshake's encryption expectations mismatch; the Caddy↔server hop stays
-    // plaintext ws on the internal network, the standard reverse-proxy arrangement.
-    let ws = WebSocketServer::new(
-        WebSocketServerConfig {
-            acceptor: WebSocketAcceptor::Plain {
-                has_tls_proxy: true,
-            },
-            listen: ws_bind,
-            max_clients,
-        },
-        runtime,
-    )
-    .unwrap_or_else(|error| panic!("cannot bind websocket {ws_bind}: {error}"));
-
-    let mut transport = NetcodeServerTransport::new(
-        ServerSetupConfig {
-            current_time: unix_now(),
-            max_clients,
-            protocol_id: PROTOCOL_ID,
-            socket_addresses: vec![vec![NETCODE_ADDR]],
-            authentication: ServerAuthentication::Secure { private_key },
-        },
-        ws,
-    )
-    .expect("netcode server transport");
+    let mut transport = WsTransport::bind(ws_bind, sessions, max_clients, runtime);
 
     println!(
-        "mmo server listening: netcode websocket {ws_bind} ({} area worlds)",
+        "mmo server listening: websocket {ws_bind} ({} area worlds)",
         worlds.len()
     );
 
@@ -218,17 +172,13 @@ fn simulate(
         tick += 1;
 
         server.update(dt);
-        if let Err(errors) = transport.update(dt, &mut server) {
-            for error in errors {
-                eprintln!("netcode transport update failed: {error}");
-            }
-        }
+        transport.update(&mut server);
 
         while let Some(event) = server.get_event() {
             match event {
                 ServerEvent::ClientConnected { client_id } => {
                     counter!("rift_client_connections_opened_total").increment(1);
-                    let identity = sessions.take(client_id);
+                    let identity = transport.take_identity(client_id);
                     let account = identity.as_ref().map(|identity| identity.id.clone());
                     let (client, area) =
                         match account.as_ref().and_then(|account| accounts.get(account)) {
@@ -295,9 +245,7 @@ fn simulate(
             }
         }
 
-        for app in worlds.iter_mut() {
-            app.update();
-        }
+        world::systems::step_areas(&mut worlds);
 
         begin_transfers(&mut worlds, &mut transfers, tick);
 
@@ -316,7 +264,7 @@ fn simulate(
 
         finish_transfers(&mut worlds, &mut conns, &mut transfers, tick);
 
-        transport.send_packets(&mut server);
+        transport.send(&mut server);
 
         counter!("rift_ticks_total").increment(1);
         histogram!("rift_tick_duration_seconds").record(started.elapsed().as_secs_f64());
@@ -398,21 +346,9 @@ fn select_areas(areas: Areas) -> Vec<world::data::area::Id> {
             .copied()
             .filter(|id| !id.get().bench)
             .collect(),
-        Areas::Bench(count) => {
-            let selected: Vec<Id> = Id::VARIANTS
-                .iter()
-                .copied()
-                .filter(|id| id.get().bench)
-                .take(count)
-                .collect();
-            assert_eq!(
-                selected.len(),
-                count,
-                "RIFT_GAME_SERVER_AREAS bench,{count}: only {} bench areas exist",
-                selected.len()
-            );
-            selected
-        }
+        // The bench area is one template instanced `count` times; the count is bounded only by the
+        // machine, not by how many area rows the content table happens to define.
+        Areas::Bench(count) => vec![world::data::area::BENCH_ID; count],
     }
 }
 
@@ -420,8 +356,9 @@ fn build_world(
     area: world::systems::area::Id,
     assets: &AssetService,
     spawn_policy: SpawnPolicy,
+    ordinal: u64,
 ) -> App {
-    let mut app = world::systems::server_app(area);
+    let mut app = world::systems::server_app(area, ordinal);
     app.insert_resource(assets.clone());
     app.insert_resource(world::core::math::Rng::from_entropy());
     app.insert_resource(spawn_policy);
@@ -554,7 +491,6 @@ impl Sessions {
 struct Http {
     sessions: Sessions,
     verifier: Arc<Mutex<auth::Verifier>>,
-    private_key: [u8; NETCODE_KEY_BYTES],
     allow_fake_users: bool,
 }
 
@@ -584,28 +520,16 @@ async fn session(State(http): State<Http>, headers: HeaderMap) -> Response {
         Err(status) => return status.into_response(),
     };
 
+    // The ticket is the renet client id. The browser opens `wss://host/?ticket=<id>`; the WebSocket
+    // handshake claims it single-use. Unguessable in 2^64, ~30s expiry, only ever sent over TLS.
     let client_id = rand::rng().next_u64();
     http.sessions.put(client_id, identity);
-    let token = ConnectToken::generate(
-        unix_now(),
-        PROTOCOL_ID,
-        TOKEN_EXPIRE.as_secs(),
-        client_id,
-        CONNECTION_TIMEOUT.as_secs() as i32,
-        NETCODE_SOCKET_ID,
-        vec![NETCODE_ADDR],
-        None,
-        &http.private_key,
-    )
-    .expect("connect token");
-    let mut body = Vec::new();
-    token.write(&mut body).expect("serialize connect token");
     (
         [
-            (header::CONTENT_TYPE, "application/octet-stream"),
+            (header::CONTENT_TYPE, "text/plain"),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        body,
+        client_id.to_string(),
     )
         .into_response()
 }
@@ -647,12 +571,6 @@ async fn health(State(http): State<Http>) -> Response {
     } else {
         (StatusCode::SERVICE_UNAVAILABLE, "auth keys unavailable").into_response()
     }
-}
-
-fn unix_now() -> Duration {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock after the unix epoch")
 }
 
 fn verifier() -> Arc<Mutex<auth::Verifier>> {

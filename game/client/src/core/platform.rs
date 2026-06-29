@@ -1,8 +1,10 @@
-use std::time::Duration;
+use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
+use std::rc::Rc;
 
 use bevy::prelude::*;
-use renet2_netcode::{ClientSocket, WebSocketClient, WebSocketClientConfig};
 use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 #[derive(Resource)]
@@ -106,7 +108,7 @@ fn storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok()?
 }
 
-pub async fn fetch(url: &str, authorization: &str) -> Result<Vec<u8>, String> {
+pub async fn fetch(url: &str, authorization: &str) -> Result<String, String> {
     let response = gloo_net::http::Request::post(url)
         .header("Authorization", authorization)
         .send()
@@ -115,18 +117,83 @@ pub async fn fetch(url: &str, authorization: &str) -> Result<Vec<u8>, String> {
     if !response.ok() {
         return Err(format!("session request failed: {}", response.status()));
     }
-    response.binary().await.map_err(|error| error.to_string())
+    response.text().await.map_err(|error| error.to_string())
 }
 
-pub fn now() -> Duration {
-    web_time::SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
-        .expect("system clock")
+/// A browser WebSocket carrying opaque renet packets as binary frames. The renet client is driven
+/// directly over it — there is no netcode layer — so received frames are buffered by the `message`
+/// handler and drained each tick, and `is_open`/`is_closed` reflect the socket's lifecycle.
+pub struct WsSocket {
+    ws: web_sys::WebSocket,
+    incoming: Rc<RefCell<VecDeque<Vec<u8>>>>,
+    state: Rc<Cell<SocketState>>,
+    _handlers: [Closure<dyn FnMut()>; 3],
+    _on_message: Closure<dyn FnMut(web_sys::MessageEvent)>,
 }
 
-pub fn client_socket(ws_url: &str) -> impl ClientSocket {
-    WebSocketClient::new(WebSocketClientConfig {
-        server_url: url::Url::parse(ws_url).expect("game server ws url"),
-    })
-    .expect("websocket client")
+#[derive(Clone, Copy, PartialEq)]
+enum SocketState {
+    Connecting,
+    Open,
+    Closed,
+}
+
+impl WsSocket {
+    pub fn open(url: &str) -> WsSocket {
+        let ws = web_sys::WebSocket::new(url).expect("open websocket");
+        ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
+
+        let incoming = Rc::new(RefCell::new(VecDeque::new()));
+        let state = Rc::new(Cell::new(SocketState::Connecting));
+
+        let on_open = closure_setting(&state, SocketState::Open);
+        let on_close = closure_setting(&state, SocketState::Closed);
+        let on_error = closure_setting(&state, SocketState::Closed);
+        ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
+        ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
+        ws.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+
+        let on_message = {
+            let incoming = incoming.clone();
+            Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
+                if let Ok(buffer) = event.data().dyn_into::<js_sys::ArrayBuffer>() {
+                    incoming
+                        .borrow_mut()
+                        .push_back(js_sys::Uint8Array::new(&buffer).to_vec());
+                }
+            })
+        };
+        ws.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+
+        WsSocket {
+            ws,
+            incoming,
+            state,
+            _handlers: [on_open, on_close, on_error],
+            _on_message: on_message,
+        }
+    }
+
+    pub fn recv(&self) -> Option<Vec<u8>> {
+        self.incoming.borrow_mut().pop_front()
+    }
+
+    pub fn send(&self, packet: &[u8]) {
+        if self.state.get() == SocketState::Open {
+            let _ = self.ws.send_with_u8_array(packet);
+        }
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.state.get() == SocketState::Open
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.state.get() == SocketState::Closed
+    }
+}
+
+fn closure_setting(state: &Rc<Cell<SocketState>>, to: SocketState) -> Closure<dyn FnMut()> {
+    let state = state.clone();
+    Closure::<dyn FnMut()>::new(move || state.set(to))
 }

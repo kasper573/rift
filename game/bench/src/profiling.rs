@@ -27,7 +27,7 @@ pub fn run(out_dir: &Path, layout: crate::sim::Layout) {
     }
 
     for _ in 0..WARMUP {
-        crate::sim::step(&mut worlds);
+        crate::sim::step_single_threaded(&mut worlds);
     }
 
     report_aoi(&mut worlds);
@@ -41,7 +41,7 @@ pub fn run(out_dir: &Path, layout: crate::sim::Layout) {
     BYTES.store(0, Relaxed);
     let started = Instant::now();
     for _ in 0..MEASURE {
-        crate::sim::step(&mut worlds);
+        crate::sim::step_single_threaded(&mut worlds);
     }
     let elapsed = started.elapsed();
     let allocs = ALLOCS.load(Relaxed);

@@ -3,13 +3,14 @@ use bevy_replicon::prelude::{
     ClientMessages, ClientState, ClientStats, ClientSystems, RepliconChannels,
 };
 use renet2::RenetClient;
-use renet2_netcode::NetcodeClientTransport;
+
+use crate::core::platform::WsSocket;
 
 #[derive(Resource)]
 pub struct Client(pub RenetClient);
 
-#[derive(Resource)]
-pub struct Transport(pub NetcodeClientTransport);
+/// The browser WebSocket, held non-send because `web_sys` handles are not `Send`.
+pub struct Socket(pub WsSocket);
 
 pub struct RepliconRenetClientPlugin;
 
@@ -20,6 +21,7 @@ impl Plugin for RepliconRenetClientPlugin {
             (
                 drive,
                 set_connecting.run_if(in_state(ClientState::Disconnected).and_then(connecting)),
+                promote.run_if(in_state(ClientState::Connecting).and_then(connecting)),
                 set_connected.run_if(in_state(ClientState::Connecting).and_then(connected)),
                 set_disconnected.run_if(connection_lost),
                 receive_packets.run_if(connected),
@@ -36,15 +38,29 @@ impl Plugin for RepliconRenetClientPlugin {
     }
 }
 
-fn drive(client: Option<ResMut<Client>>, transport: Option<ResMut<Transport>>, time: Res<Time>) {
-    let Some(mut client) = client else {
+fn drive(socket: Option<NonSend<Socket>>, client: Option<ResMut<Client>>, time: Res<Time>) {
+    let (Some(socket), Some(mut client)) = (socket, client) else {
         return;
     };
     client.0.update(time.delta());
-    if let Some(mut transport) = transport
-        && let Err(error) = transport.0.update(time.delta(), &mut client.0)
-    {
-        error!("netcode transport update failed: {error}");
+    while let Some(packet) = socket.0.recv() {
+        client.0.process_packet(&packet);
+    }
+    // renet has no internal timeout, so a closed socket is the only liveness signal.
+    if socket.0.is_closed() {
+        client.0.disconnect_due_to_transport();
+    }
+}
+
+// renet2's core opens in `Connecting` and stays there until told otherwise; with no netcode layer the
+// transport promotes it once the socket is up and replicon has reached `Connecting`, so the state
+// machine advances Disconnected -> Connecting -> Connected in order.
+fn promote(socket: Option<NonSend<Socket>>, client: Option<ResMut<Client>>) {
+    let (Some(socket), Some(mut client)) = (socket, client) else {
+        return;
+    };
+    if socket.0.is_open() {
+        client.0.set_connected();
     }
 }
 
@@ -78,15 +94,15 @@ fn receive_packets(
 }
 
 fn send_packets(
+    socket: NonSend<Socket>,
     mut client: ResMut<Client>,
-    mut transport: ResMut<Transport>,
     mut messages: ResMut<ClientMessages>,
 ) {
     for (channel_id, message) in messages.drain_sent() {
         client.0.send_message(channel_id as u8, message);
     }
-    if let Err(error) = transport.0.send_packets(&mut client.0) {
-        error!("netcode transport send failed: {error}");
+    for packet in client.0.get_packets_to_send() {
+        socket.0.send(&packet);
     }
 }
 

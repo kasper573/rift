@@ -27,9 +27,7 @@ bevy_state.workspace = true
 bevy_time.workspace = true
 bevy_replicon = { workspace = true, features = ["client", "server"] }
 renet2.workspace = true
-renet2_netcode = { workspace = true, features = ["native_transport"] }
 tungstenite = "0.26"
-urlencoding = "2"
 ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 strum.workspace = true
 world = { path = "../world" }
