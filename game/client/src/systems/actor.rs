@@ -10,7 +10,7 @@ use world::systems::area::{self, AreaTag};
 
 use crate::core::render::{Animator, atlas_rect, dynamic_z, sprite_transform};
 use crate::core::sfx::PlaySfx;
-use crate::systems::interpolate::RenderPosition;
+use crate::systems::interpolate::{RenderActor, RenderPosition};
 
 pub struct ActorPlugin;
 
@@ -53,6 +53,7 @@ type ActorView = (
     Entity,
     &'static Actor,
     &'static RenderPosition,
+    &'static RenderActor,
     &'static AreaTag,
     &'static mut Sprite,
     &'static mut Transform,
@@ -66,11 +67,11 @@ fn sync_actors(
 ) {
     let clock = Seconds(time.elapsed_secs());
     animator.retain(|entity| actors.contains(entity));
-    for (entity, actor, render, tag, mut sprite, mut transform) in &mut actors {
-        let elapsed = animator.elapsed(entity, actor.action as u64, clock);
+    for (entity, actor, render, pose, tag, mut sprite, mut transform) in &mut actors {
+        let elapsed = animator.elapsed(entity, pose.action as u64, clock);
         let region = service.resolve(*actor.model.get(), build_model).frame(
-            actor.action.name(),
-            actor.dir,
+            pose.action.name(),
+            pose.dir,
             elapsed,
             actor.attack_rate,
         );
@@ -99,30 +100,25 @@ fn actor_cues(
     service: Res<AssetService>,
     mut animator: ResMut<Animator>,
     mut seen: ResMut<Seen>,
-    actors: Query<(Entity, &Actor, &RenderPosition, &AreaTag)>,
+    actors: Query<(Entity, &Actor, &RenderPosition, &RenderActor, &AreaTag)>,
     mut play: MessageWriter<PlaySfx>,
 ) {
     let clock = Seconds(time.elapsed_secs());
     seen.0.retain(|entity, _| actors.contains(*entity));
-    for (entity, actor, render, tag) in &actors {
+    for (entity, actor, render, pose, tag) in &actors {
         let at = render.0;
-        let now = animator.elapsed(entity, actor.action as u64, clock);
-        let Some((was, then)) = seen.0.insert(entity, (actor.action, now)) else {
+        let now = animator.elapsed(entity, pose.action as u64, clock);
+        let Some((was, then)) = seen.0.insert(entity, (pose.action, now)) else {
             continue;
         };
-        let since = if was == actor.action {
+        let since = if was == pose.action {
             then
         } else {
             Seconds(-1.0)
         };
         let model = service.resolve(*actor.model.get(), build_model);
-        let (cues, stepped) = model.cues(
-            actor.action.name(),
-            actor.dir,
-            since,
-            now,
-            actor.attack_rate,
-        );
+        let (cues, stepped) =
+            model.cues(pose.action.name(), pose.dir, since, now, actor.attack_rate);
         for id in cues {
             play.write(PlaySfx { id: *id, at });
         }
