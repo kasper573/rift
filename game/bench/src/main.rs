@@ -14,17 +14,47 @@ const WARMUP: usize = 30;
 const MEASURE: usize = 200;
 
 fn main() {
+    // `dist` selects distributed (spread-out) players; the default is congested (all on the spawn
+    // tile, sharing one view).
+    let layout = if std::env::args().any(|arg| arg == "dist") {
+        sim::Layout::Distributed
+    } else {
+        sim::Layout::Congested
+    };
+
     #[cfg(feature = "profiling")]
     if std::env::args().any(|arg| arg == "profile") {
         let out = std::env::args()
-            .nth(2)
+            .skip(1)
+            .find(|arg| arg != "profile" && arg != "dist")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::env::current_dir().expect("cwd"));
-        profiling::run(&out);
+        profiling::run(&out, layout);
         return;
     }
 
-    println!("[bench] finding the highest A sustained within the {BUDGET_MS:.0}ms budget...");
+    if let Ok(spec) = std::env::var("BENCH_A") {
+        for a in spec
+            .split(',')
+            .filter_map(|s| s.trim().parse::<usize>().ok())
+        {
+            let p = point(a, WARMUP, MEASURE, layout);
+            println!(
+                "[bench]   A={a:<4} full={:6.2}ms sim={:6.2}ms repl={:6.2}ms p99={:6.2}ms  {}",
+                p.full,
+                p.sim,
+                (p.full - p.sim).max(0.0),
+                p.p99,
+                verdict(p.full),
+            );
+        }
+        return;
+    }
+
+    println!(
+        "[bench] finding the highest A sustained within the {BUDGET_MS:.0}ms budget ({} players)...",
+        layout.label()
+    );
 
     let mut best: Option<(usize, Point)> = None;
     let mut under: Option<(usize, f64)> = None;
@@ -32,7 +62,7 @@ fn main() {
     let mut previous: Option<(usize, f64)> = None;
     let mut next = Some(1usize);
     while let Some(areas) = next {
-        let p = point(areas, WARMUP, MEASURE);
+        let p = point(areas, WARMUP, MEASURE, layout);
         let mean = p.full;
         println!(
             "[bench]   A={areas:<4} mean={mean:6.2}ms  {}",
@@ -51,7 +81,7 @@ fn main() {
         previous = Some(last);
     }
 
-    let (areas, r) = best.unwrap_or_else(|| (1, point(1, WARMUP, MEASURE)));
+    let (areas, r) = best.unwrap_or_else(|| (1, point(1, WARMUP, MEASURE, layout)));
     let npcs = sim::NPCS_PER_AREA * areas;
     let players = sim::PLAYERS_PER_AREA * areas;
     println!("\n[bench] areas,npcs,players,clients,mean_ms,p50_ms,p99_ms,max_ms,sim_ms,repl_ms");
@@ -126,10 +156,10 @@ struct Point {
     max: f64,
 }
 
-fn point(areas: usize, warmup: usize, ticks: usize) -> Point {
+fn point(areas: usize, warmup: usize, ticks: usize, layout: sim::Layout) -> Point {
     let npc = data::npc::Id::Orc;
     let assets = assets::service();
-    let (mut worlds, rosters) = sim::worlds(areas, npc, &assets);
+    let (mut worlds, rosters) = sim::worlds(areas, npc, layout, &assets);
 
     let baseline = measure(&mut worlds, warmup, ticks);
     sim::connect(&mut worlds, &rosters);

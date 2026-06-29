@@ -36,7 +36,6 @@ service::heap_profiling!();
 const PROTOCOL_ID: u64 = 0x0072_6966_7400_0001;
 const TOKEN_EXPIRE: Duration = Duration::from_secs(30);
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
-const MAX_CLIENTS: usize = 256;
 
 /// The single netcode socket the WebSocket transport registers; with one socket its id is 0, and
 /// every connect token must name the same id.
@@ -50,10 +49,9 @@ const NETCODE_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIE
 
 #[derive(serde::Deserialize)]
 struct Config {
-    /// HTTP API (`/session`, `/health`) port.
     port: u16,
-    /// WebSocket netcode transport port — a separate TCP listener from the HTTP API.
     ws_port: u16,
+    max_clients: usize,
     /// Directory the game assets (maps, models, ...) are read from.
     assets_dir: PathBuf,
     pyroscope_enabled: bool,
@@ -99,6 +97,7 @@ fn main() {
         sessions,
         runtime.handle().clone(),
         assets,
+        config.max_clients,
     );
 }
 
@@ -108,6 +107,7 @@ fn simulate(
     sessions: Sessions,
     runtime: tokio::runtime::Handle,
     assets: AssetService,
+    max_clients: usize,
 ) {
     let spawn = world::data::area::SPAWN_ID.index();
     let real_areas: Vec<_> = world::data::area::Id::VARIANTS
@@ -138,7 +138,7 @@ fn simulate(
                 has_tls_proxy: true,
             },
             listen: ws_bind,
-            max_clients: MAX_CLIENTS,
+            max_clients,
         },
         runtime,
     )
@@ -147,7 +147,7 @@ fn simulate(
     let mut transport = NetcodeServerTransport::new(
         ServerSetupConfig {
             current_time: unix_now(),
-            max_clients: MAX_CLIENTS,
+            max_clients,
             protocol_id: PROTOCOL_ID,
             socket_addresses: vec![vec![NETCODE_ADDR]],
             authentication: ServerAuthentication::Secure { private_key },

@@ -1,5 +1,6 @@
 use bevy_app::App;
 use bevy_ecs::prelude::*;
+use bevy_ecs::query::QueryState;
 use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
@@ -181,12 +182,16 @@ fn approach_tile(
     best.map(|(center, _)| center)
 }
 
-pub fn advance(world: &mut World) {
+type Movers = QueryState<Entity, Or<(With<MoveTarget>, With<Path>)>>;
+type StepQuery = QueryState<(
+    &'static mut Position,
+    &'static mut Path,
+    Option<&'static mut Actor>,
+)>;
+
+pub fn advance(world: &mut World, movers_query: &mut Movers, step_query: &mut StepQuery) {
     let dt = Seconds(world.resource::<Time>().delta_secs());
-    let movers: Vec<Entity> = world
-        .query_filtered::<Entity, Or<(With<MoveTarget>, With<Path>)>>()
-        .iter(world)
-        .collect();
+    let movers: Vec<Entity> = movers_query.iter(world).collect();
     for id in movers {
         if world.get_entity(id).is_err() || stat::is_dead(world, id) {
             if world.get_entity(id).is_ok() {
@@ -210,13 +215,14 @@ pub fn advance(world: &mut World) {
         }
 
         let speed = TilesPerSec(Tiles(stat::effective(world, id, StatKind::MovementSpeed)));
-        let Some(mut at) = position(world, id) else {
+        // Position, Path and the optional Actor are fetched in one access instead of separate
+        // per-component lookups. Identical behavior: Position and Path are required (Path was just
+        // ensured above); an actor-less mover still moves, it just has no facing to update.
+        let Ok((mut position, mut path, mut actor)) = step_query.get_mut(world, id) else {
             continue;
         };
+        let mut at = position.pos;
         let mut heading: Option<Offset<Tiles>> = None;
-        let Some(mut path) = world.get_mut::<Path>(id) else {
-            continue;
-        };
         let tiles = &mut path.tiles;
         let mut remaining = speed * dt;
         while remaining > Tiles(1e-6) {
@@ -244,14 +250,12 @@ pub fn advance(world: &mut World) {
         }
         let arrived = tiles.is_empty();
 
-        if let Some(mut pos) = world.get_mut::<Position>(id) {
-            pos.pos = at;
-        }
+        position.pos = at;
         if let Some(step) = heading
-            && let Some(mut actor) = world.get_mut::<Actor>(id)
+            && let Some(actor) = actor.as_mut()
         {
             set_facing(
-                &mut actor,
+                actor,
                 Direction::from(step),
                 if speed >= RUN_SPEED {
                     Action::Run

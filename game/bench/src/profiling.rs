@@ -20,11 +20,13 @@ const MEASURE: usize = 400;
 /// Profiles a fixed `AREAS`-area workload with clients connected (the replication-heavy "full"
 /// config), writing a CPU flamegraph + pprof protobuf and reporting allocation churn per tick. Uses
 /// the exact same [`crate::sim`] world construction the benchmark does, so the two never diverge.
-pub fn run(out_dir: &Path) {
+pub fn run(out_dir: &Path, layout: crate::sim::Layout) {
     let npc = data::npc::Id::Orc;
     let assets = crate::assets::service();
-    let (mut worlds, rosters) = crate::sim::worlds(AREAS, npc, &assets);
-    crate::sim::connect(&mut worlds, &rosters);
+    let (mut worlds, rosters) = crate::sim::worlds(AREAS, npc, layout, &assets);
+    if std::env::var("PROFILE_NO_CLIENTS").is_err() {
+        crate::sim::connect(&mut worlds, &rosters);
+    }
 
     for _ in 0..WARMUP {
         crate::sim::step(&mut worlds);

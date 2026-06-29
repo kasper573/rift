@@ -80,12 +80,9 @@ pub fn active_effects(world: &World, entity: Entity) -> Vec<Effect> {
         .collect()
 }
 
-pub fn expire(world: &mut World) {
+pub fn expire(world: &mut World, timed: &mut QueryState<Entity, With<TimedEffects>>) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());
-    let ids: Vec<Entity> = world
-        .query_filtered::<Entity, With<TimedEffects>>()
-        .iter(world)
-        .collect();
+    let ids: Vec<Entity> = timed.iter(world).collect();
     for id in ids {
         if let Some(mut timed) = world.get_mut::<TimedEffects>(id)
             && timed.0.iter().any(|effect| effect.until <= now)

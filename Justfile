@@ -12,8 +12,10 @@ lint:
 test:
     cargo test --release -p world
 
-bench:
-    cargo run --release -p bench
+# Find the highest area count sustained within the tick budget. Players are congested (all on the
+# spawn tile, one shared view) by default; `just bench dist` spreads them for distinct views.
+bench mode="":
+    cargo run --release -p bench -- {{mode}}
 
 # Rasterize a whole map to an image to preview it (e.g. `just render island island.png`). Defaults
 # the output to `<map>.png`.

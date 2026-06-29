@@ -18,10 +18,35 @@ pub const PLAYERS_PER_AREA: usize = 25;
 
 pub type Roster = Vec<(ClientId, Entity)>;
 
+/// How the area's players are positioned, which sets how much their areas-of-interest overlap.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Layout {
+    /// Every player stands on the spawn tile, so all clients share one identical area-of-interest —
+    /// the worst case for replicating nearby entities to many overlapping viewers.
+    Congested,
+    /// Players are spread across the area's walkable cells, so clients have realistically distinct
+    /// areas-of-interest.
+    Distributed,
+}
+
+impl Layout {
+    pub fn label(self) -> &'static str {
+        match self {
+            Layout::Congested => "congested",
+            Layout::Distributed => "distributed",
+        }
+    }
+}
+
 /// The `areas` highest-numbered benchmark area worlds, each populated with NPCs and players, plus
 /// each world's roster of (client, player). Shared by the benchmark and the profiler so both
 /// measure the exact same simulation.
-pub fn worlds(areas: usize, npc: data::npc::Id, assets: &AssetService) -> (Vec<App>, Vec<Roster>) {
+pub fn worlds(
+    areas: usize,
+    npc: data::npc::Id,
+    layout: Layout,
+    assets: &AssetService,
+) -> (Vec<App>, Vec<Roster>) {
     let mut worlds = Vec::with_capacity(areas);
     let mut rosters = Vec::with_capacity(areas);
     for id in data::area::Id::VARIANTS
@@ -30,7 +55,7 @@ pub fn worlds(areas: usize, npc: data::npc::Id, assets: &AssetService) -> (Vec<A
         .filter(|id| id.get().bench)
         .take(areas)
     {
-        let (app, roster) = build_world(id, npc, assets);
+        let (app, roster) = build_world(id, npc, layout, assets);
         worlds.push(app);
         rosters.push(roster);
     }
@@ -55,7 +80,12 @@ pub fn step(worlds: &mut [App]) {
     }
 }
 
-fn build_world(id: area::Id, npc: data::npc::Id, assets: &AssetService) -> (App, Roster) {
+fn build_world(
+    id: area::Id,
+    npc: data::npc::Id,
+    layout: Layout,
+    assets: &AssetService,
+) -> (App, Roster) {
     let mut app = world::systems::server_app(id);
     app.insert_resource(assets.clone());
     app.insert_resource(world::core::math::Rng::from_entropy());
@@ -86,7 +116,7 @@ fn build_world(id: area::Id, npc: data::npc::Id, assets: &AssetService) -> (App,
     let mut roster = Vec::with_capacity(PLAYERS_PER_AREA);
     for index in 0..PLAYERS_PER_AREA {
         let client = ClientId(index as u32 + 1);
-        let player = spawn_character(world, npc, player_spot(area, index), id);
+        let player = spawn_character(world, npc, player_spot(area, index, layout), id);
         world
             .entity_mut(player)
             .insert((Owner { client }, Inventory::empty(), Xp { amount: 0 }));
@@ -96,15 +126,16 @@ fn build_world(id: area::Id, npc: data::npc::Id, assets: &AssetService) -> (App,
     (app, roster)
 }
 
-/// Spreads players evenly across the area's walkable cells (by striding the walkable-node list) so
-/// connected clients have realistically distinct areas-of-interest, rather than all stacking on the
-/// spawn tile and sharing one identical view.
-fn player_spot(area: &Area, index: usize) -> Pos<Tiles> {
+/// Where the `index`-th player stands. [`Layout::Congested`] stacks every player on the spawn tile
+/// (one shared view); [`Layout::Distributed`] strides the walkable-node list so each client gets a
+/// distinct area-of-interest.
+fn player_spot(area: &Area, index: usize, layout: Layout) -> Pos<Tiles> {
     let nodes = &area.walkable_nodes;
-    if nodes.is_empty() {
-        return area.spawn;
+    match layout {
+        Layout::Congested => area.spawn,
+        Layout::Distributed if !nodes.is_empty() => nodes[index * nodes.len() / PLAYERS_PER_AREA],
+        Layout::Distributed => area.spawn,
     }
-    nodes[index * nodes.len() / PLAYERS_PER_AREA]
 }
 
 fn wander_pos(area: &Area) -> Pos<Tiles> {

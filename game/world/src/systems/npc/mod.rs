@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
+use bevy_ecs::query::QueryState;
 use bevy_replicon::prelude::Replicated;
 use bevy_time::Time;
 
@@ -170,14 +171,14 @@ impl Hunt<'_> {
     }
 }
 
-pub fn run_ai(world: &mut World) {
+type NpcIds = QueryState<Entity, With<Npc>>;
+type EnemyGroups = QueryState<(&'static Npc, &'static Attackers)>;
+
+pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut EnemyGroups) {
     let players: Vec<Entity> = world.resource::<Players>().0.values().copied().collect();
     let assets = world.resource::<AssetService>().clone();
-    let by_group = enemies_by_group(world);
-    let ids: Vec<Entity> = world
-        .query_filtered::<Entity, With<Npc>>()
-        .iter(world)
-        .collect();
+    let by_group = enemies_by_group(world, enemies);
+    let ids: Vec<Entity> = npcs.iter(world).collect();
     world.resource_scope(|world, mut rng: Mut<Rng>| {
         for id in ids {
             if stat::is_dead(world, id) {
@@ -243,9 +244,8 @@ fn idle_wander(
     }
 }
 
-fn enemies_by_group(world: &mut World) -> HashMap<u32, Vec<Entity>> {
+fn enemies_by_group(world: &mut World, query: &mut EnemyGroups) -> HashMap<u32, Vec<Entity>> {
     let mut by_group: HashMap<u32, Vec<Entity>> = HashMap::new();
-    let mut query = world.query::<(&Npc, &Attackers)>();
     for (npc, attackers) in query.iter(world) {
         let list = by_group.entry(npc.group).or_default();
         for attacker in &attackers.ids {
@@ -263,12 +263,9 @@ fn in_aggro(world: &World, target: Entity, at: Pos<Tiles>, area: area::Id, aggro
         && position(world, target).is_some_and(|p| at.distance(p) <= aggro)
 }
 
-pub fn run_respawn(world: &mut World) {
+pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
     let time = Seconds(world.resource::<Time>().elapsed_secs());
-    let ids: Vec<Entity> = world
-        .query_filtered::<Entity, With<Npc>>()
-        .iter(world)
-        .collect();
+    let ids: Vec<Entity> = npcs.iter(world).collect();
     world.resource_scope(|world, mut rng: Mut<Rng>| {
         for id in ids {
             if !stat::is_dead(world, id) {
