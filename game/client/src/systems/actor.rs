@@ -45,7 +45,7 @@ fn attach_sprite(
         Sprite { image, ..default() },
         Anchor(Vec2::new(0.0, -1.0 / 6.0)),
         Transform::default(),
-        Visibility::default(),
+        Visibility::Hidden,
     ));
 }
 
@@ -57,6 +57,7 @@ type ActorView = (
     &'static AreaTag,
     &'static mut Sprite,
     &'static mut Transform,
+    &'static mut Visibility,
 );
 
 fn sync_actors(
@@ -67,7 +68,8 @@ fn sync_actors(
 ) {
     let clock = Seconds(time.elapsed_secs());
     animator.retain(|entity| actors.contains(entity));
-    for (entity, actor, render, pose, tag, mut sprite, mut transform) in &mut actors {
+    for (entity, actor, render, pose, tag, mut sprite, mut transform, mut visibility) in &mut actors
+    {
         let elapsed = animator.elapsed(entity, pose.action as u64, clock);
         let region = service.resolve(*actor.model.get(), build_model).frame(
             pose.action.name(),
@@ -84,6 +86,9 @@ fn sync_actors(
             at,
             dynamic_z(area.size.height, area.dynamic_layer() as f32, Tiles(at.y)),
         );
+        if *visibility == Visibility::Hidden {
+            *visibility = Visibility::Inherited;
+        }
     }
 }
 
