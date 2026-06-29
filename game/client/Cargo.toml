@@ -57,7 +57,6 @@ bevy = { workspace = true, features = [
 bevy_picking = { workspace = true }
 bevy_replicon = { workspace = true, features = ["client"] }
 renet2 = { workspace = true }
-renet2_netcode = { workspace = true, features = ["ws_client_transport"] }
 bevy_kira_audio = { version = "0.26.0-rc.1", features = ["wav"] }
 base64 = "0.22"
 strum.workspace = true
@@ -73,9 +72,10 @@ web-sys = { version = "0.3", features = [
     "Element",
     "HtmlCanvasElement",
     "Storage",
+    "WebSocket",
+    "BinaryType",
+    "MessageEvent",
 ] }
 include_dir = "0.7"
 console_error_panic_hook = "0.1"
-web-time = "1"
-url = "2"
 getrandom = { version = "0.2", features = ["js"] }

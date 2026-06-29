@@ -23,9 +23,13 @@ pathfinding = "4"
 oorandom = "11"
 getrandom = "0.2"
 strum = { workspace = true, features = ["derive"] }
-seq-macro = "0.3"
 renet2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tiled = { version = "0.15", default-features = false }
 postcard = { version = "1", features = ["alloc"] }
+
+# Native-only: the area worlds are stepped in parallel by the server/bench drivers. The wasm client
+# steps a single world and never links rayon (its thread pool has no wasm backend).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon.workspace = true

@@ -100,6 +100,7 @@ pub struct Area {
     pub spawn: Pos<Tiles>,
     pub portals: Vec<Portal>,
     pub walkable_nodes: Vec<Pos<Tiles>>,
+    pub component_nodes: Vec<Vec<Pos<Tiles>>>,
     pub obscuring_rects: Vec<Rect<Tiles>>,
     pub groups: Vec<Group>,
     pub grouped_cells: HashSet<CellPos>,

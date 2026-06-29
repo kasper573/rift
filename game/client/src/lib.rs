@@ -50,6 +50,7 @@ pub fn boot() {
         .add_plugins((
             systems::scene::ScenePlugin { spectator },
             systems::actor::ActorPlugin,
+            systems::interpolate::InterpolatePlugin,
             systems::combat::CombatPlugin,
             systems::item::ItemsPlugin,
             systems::view::ViewPlugin,

@@ -85,12 +85,13 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
         panic!("map '{name}' must have a 'Dynamic' tile layer");
     }
     let grid = build_grid(size, &layers, &tiles, &obscuring_rects);
-    let walkable_nodes = size
+    let walkable_nodes: Vec<_> = size
         .grid()
         .cells()
         .map(|c| c.center())
         .filter(|&p| grid.walkable(p))
         .collect();
+    let component_nodes = compute_component_nodes(&grid, &walkable_nodes);
     let (groups, grouped_cells) = compute_groups(&layers, &tiles);
     let tile_sfx = tile_sfx(size, &layers, &tiles);
 
@@ -101,6 +102,7 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
         spawn,
         portals,
         walkable_nodes,
+        component_nodes,
         obscuring_rects,
         groups,
         grouped_cells,
@@ -294,4 +296,23 @@ fn obscured_cells(rect: &Rect<Tiles>) -> Vec<CellPos> {
     rect.tiles()
         .filter(|&c| cell_overlap(rect, c) >= OBSCURING_CUTOFF)
         .collect()
+}
+
+/// Walkable nodes grouped by connected-component id, so an actor can pick a wander target reachable
+/// from where it stands (index 0 is unused; component ids start at 1).
+fn compute_component_nodes(
+    grid: &nav::Grid,
+    walkable_nodes: &[Pos<Tiles>],
+) -> Vec<Vec<Pos<Tiles>>> {
+    let mut by_component: Vec<Vec<Pos<Tiles>>> = Vec::new();
+    for &node in walkable_nodes {
+        if let Some(comp_id) = grid.component(node) {
+            let i = comp_id as usize;
+            if i >= by_component.len() {
+                by_component.resize(i + 1, Vec::new());
+            }
+            by_component[i].push(node);
+        }
+    }
+    by_component
 }

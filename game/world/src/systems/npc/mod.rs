@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
+use bevy_ecs::query::QueryState;
 use bevy_replicon::prelude::Replicated;
 use bevy_time::Time;
 
@@ -170,14 +171,14 @@ impl Hunt<'_> {
     }
 }
 
-pub fn run_ai(world: &mut World) {
+type NpcIds = QueryState<Entity, With<Npc>>;
+type EnemyGroups = QueryState<(&'static Npc, &'static Attackers)>;
+
+pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut EnemyGroups) {
     let players: Vec<Entity> = world.resource::<Players>().0.values().copied().collect();
     let assets = world.resource::<AssetService>().clone();
-    let by_group = enemies_by_group(world);
-    let ids: Vec<Entity> = world
-        .query_filtered::<Entity, With<Npc>>()
-        .iter(world)
-        .collect();
+    let by_group = enemies_by_group(world, enemies);
+    let ids: Vec<Entity> = npcs.iter(world).collect();
     world.resource_scope(|world, mut rng: Mut<Rng>| {
         for id in ids {
             if stat::is_dead(world, id) {
@@ -235,15 +236,16 @@ fn idle_wander(
         return;
     }
     if def.ai.wanders(rng)
-        && let Some(node) = random_walkable(rng, assets.resolve(area.get().map, area::build_area))
+        && let Some(at) = position(world, id)
+        && let Some(node) =
+            random_reachable(rng, assets.resolve(area.get().map, area::build_area), at)
     {
         world.entity_mut(id).insert(MoveTarget { pos: node });
     }
 }
 
-fn enemies_by_group(world: &mut World) -> HashMap<u32, Vec<Entity>> {
+fn enemies_by_group(world: &mut World, query: &mut EnemyGroups) -> HashMap<u32, Vec<Entity>> {
     let mut by_group: HashMap<u32, Vec<Entity>> = HashMap::new();
-    let mut query = world.query::<(&Npc, &Attackers)>();
     for (npc, attackers) in query.iter(world) {
         let list = by_group.entry(npc.group).or_default();
         for attacker in &attackers.ids {
@@ -261,12 +263,9 @@ fn in_aggro(world: &World, target: Entity, at: Pos<Tiles>, area: area::Id, aggro
         && position(world, target).is_some_and(|p| at.distance(p) <= aggro)
 }
 
-pub fn run_respawn(world: &mut World) {
+pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
     let time = Seconds(world.resource::<Time>().elapsed_secs());
-    let ids: Vec<Entity> = world
-        .query_filtered::<Entity, With<Npc>>()
-        .iter(world)
-        .collect();
+    let ids: Vec<Entity> = npcs.iter(world).collect();
     world.resource_scope(|world, mut rng: Mut<Rng>| {
         for id in ids {
             if !stat::is_dead(world, id) {
@@ -309,5 +308,14 @@ fn random_walkable(rng: &mut Rng, area: &area::Area) -> Option<Pos<Tiles>> {
     if nodes.is_empty() {
         return None;
     }
+    Some(nodes[rng.rand_range(0..nodes.len() as u32) as usize])
+}
+
+fn random_reachable(rng: &mut Rng, area: &area::Area, from: Pos<Tiles>) -> Option<Pos<Tiles>> {
+    let component_id = area.grid.component(from)?;
+    let nodes = area
+        .component_nodes
+        .get(component_id as usize)
+        .and_then(|n| if n.is_empty() { None } else { Some(n) })?;
     Some(nodes[rng.rand_range(0..nodes.len() as u32) as usize])
 }

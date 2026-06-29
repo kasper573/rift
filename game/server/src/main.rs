@@ -1,11 +1,12 @@
 mod assets;
 mod auth;
+mod transport;
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
@@ -19,45 +20,54 @@ use bevy_state::prelude::NextState;
 use metrics::{counter, gauge, histogram};
 use rand::RngCore;
 use renet2::{ConnectionConfig, DisconnectReason, RenetServer, ServerEvent};
-use renet2_netcode::{
-    ConnectToken, NETCODE_KEY_BYTES, NetcodeServerTransport, ServerAuthentication,
-    ServerSetupConfig, WebSocketAcceptor, WebSocketServer, WebSocketServerConfig,
-};
 use strum::VariantArray;
+use transport::WsTransport;
 use world::core::assets::AssetService;
 use world::core::channels::RenetChannelsExt;
-use world::systems::TICK_HZ;
 use world::systems::account::Identity;
 use world::systems::area::transition;
-use world::systems::player::ClientId;
+use world::systems::player::{ClientId, SpawnPolicy};
+use world::systems::{REPLICATION_INTERVAL, TICK_HZ};
 
 service::heap_profiling!();
 
-const PROTOCOL_ID: u64 = 0x0072_6966_7400_0001;
 const TOKEN_EXPIRE: Duration = Duration::from_secs(30);
-const CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
-const MAX_CLIENTS: usize = 256;
-
-/// The single netcode socket the WebSocket transport registers; with one socket its id is 0, and
-/// every connect token must name the same id.
-const NETCODE_SOCKET_ID: u8 = 0;
-
-/// Browsers reach the netcode WebSocket through Caddy by domain, never by IP, so the netcode server
-/// address is the wildcard placeholder renet2 requires for domain-routed clients — the socket config
-/// and every connect token must agree on it. netcode's own ConnectToken encryption secures the
-/// session regardless of address.
-const NETCODE_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
 #[derive(serde::Deserialize)]
 struct Config {
-    /// HTTP API (`/session`, `/health`) port.
     port: u16,
-    /// WebSocket netcode transport port — a separate TCP listener from the HTTP API.
     ws_port: u16,
-    /// Directory the game assets (maps, models, ...) are read from.
+    max_clients: usize,
+    areas: Areas,
     assets_dir: PathBuf,
+    player_spawn_type: SpawnPolicy,
+    allow_fake_users: bool,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
+}
+
+#[derive(Clone, Copy)]
+enum Areas {
+    Real,
+    Bench(usize),
+}
+
+impl<'de> serde::Deserialize<'de> for Areas {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Areas, D::Error> {
+        let spec = String::deserialize(deserializer)?;
+        if spec == "real" {
+            return Ok(Areas::Real);
+        }
+        if let Some(count) = spec.strip_prefix("bench,") {
+            return count
+                .parse()
+                .map(Areas::Bench)
+                .map_err(serde::de::Error::custom);
+        }
+        Err(serde::de::Error::custom(format!(
+            "expected `real` or `bench,<n>`, got `{spec}`"
+        )))
+    }
 }
 
 fn main() {
@@ -76,9 +86,6 @@ fn main() {
         .parse()
         .expect("websocket bind address");
 
-    let mut private_key = [0u8; NETCODE_KEY_BYTES];
-    rand::rng().fill_bytes(&mut private_key);
-
     // One multi-threaded tokio runtime backs both the HTTP API and the WebSocket transport's
     // accept/read/write tasks; it outlives `main` because `simulate` never returns.
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -88,36 +95,52 @@ fn main() {
     let http = Http {
         sessions: sessions.clone(),
         verifier: verifier(),
-        private_key,
+        allow_fake_users: config.allow_fake_users,
     };
     runtime.spawn(serve_http(http_bind, http, metrics));
 
+    let settings = Settings {
+        areas: config.areas,
+        max_clients: config.max_clients,
+        spawn_policy: config.player_spawn_type,
+    };
     let assets = assets::service(config.assets_dir);
     simulate(
         ws_bind,
-        private_key,
         sessions,
         runtime.handle().clone(),
         assets,
+        settings,
     );
+}
+
+struct Settings {
+    areas: Areas,
+    max_clients: usize,
+    spawn_policy: SpawnPolicy,
 }
 
 fn simulate(
     ws_bind: SocketAddr,
-    private_key: [u8; NETCODE_KEY_BYTES],
     sessions: Sessions,
     runtime: tokio::runtime::Handle,
     assets: AssetService,
+    settings: Settings,
 ) {
-    let spawn = world::data::area::SPAWN_ID.index();
-    let real_areas: Vec<_> = world::data::area::Id::VARIANTS
+    let Settings {
+        areas,
+        max_clients,
+        spawn_policy,
+    } = settings;
+    let area_ids = select_areas(areas);
+    let spawn = area_ids
         .iter()
-        .copied()
-        .filter(|id| !id.get().bench)
-        .collect();
-    let mut worlds: Vec<App> = real_areas
-        .into_iter()
-        .map(|id| build_world(id, &assets))
+        .position(|id| *id == world::data::area::SPAWN_ID)
+        .unwrap_or(0);
+    let mut worlds: Vec<App> = area_ids
+        .iter()
+        .enumerate()
+        .map(|(ordinal, &id)| build_world(id, &assets, spawn_policy, ordinal as u64))
         .collect();
 
     let (connection_config, client_channels) = {
@@ -127,37 +150,10 @@ fn simulate(
         (config, channels.client_channels().len())
     };
     let mut server = RenetServer::new(connection_config);
-
-    // `has_tls_proxy: true`: Caddy terminates TLS in front, so the browser dials `wss://` and its
-    // socket reports the link encrypted, skipping netcode's own encryption. The server must report
-    // the same or the handshake's encryption expectations mismatch; the Caddy↔server hop stays
-    // plaintext ws on the internal network, the standard reverse-proxy arrangement.
-    let ws = WebSocketServer::new(
-        WebSocketServerConfig {
-            acceptor: WebSocketAcceptor::Plain {
-                has_tls_proxy: true,
-            },
-            listen: ws_bind,
-            max_clients: MAX_CLIENTS,
-        },
-        runtime,
-    )
-    .unwrap_or_else(|error| panic!("cannot bind websocket {ws_bind}: {error}"));
-
-    let mut transport = NetcodeServerTransport::new(
-        ServerSetupConfig {
-            current_time: unix_now(),
-            max_clients: MAX_CLIENTS,
-            protocol_id: PROTOCOL_ID,
-            socket_addresses: vec![vec![NETCODE_ADDR]],
-            authentication: ServerAuthentication::Secure { private_key },
-        },
-        ws,
-    )
-    .expect("netcode server transport");
+    let mut transport = WsTransport::bind(ws_bind, sessions, max_clients, runtime);
 
     println!(
-        "mmo server listening: netcode websocket {ws_bind} ({} area worlds)",
+        "mmo server listening: websocket {ws_bind} ({} area worlds)",
         worlds.len()
     );
 
@@ -165,6 +161,7 @@ fn simulate(
     let mut accounts: HashMap<String, ClientId> = HashMap::new();
     let mut transfers: Vec<Transfer> = Vec::new();
     let mut next_client = 1u32;
+    let mut next_area = 0usize;
     let mut tick = 0u64;
     let frame = TICK_HZ.period();
     let mut last = Instant::now();
@@ -175,17 +172,13 @@ fn simulate(
         tick += 1;
 
         server.update(dt);
-        if let Err(errors) = transport.update(dt, &mut server) {
-            for error in errors {
-                eprintln!("netcode transport update failed: {error}");
-            }
-        }
+        transport.update(&mut server);
 
         while let Some(event) = server.get_event() {
             match event {
                 ServerEvent::ClientConnected { client_id } => {
                     counter!("rift_client_connections_opened_total").increment(1);
-                    let identity = sessions.take(client_id);
+                    let identity = transport.take_identity(client_id);
                     let account = identity.as_ref().map(|identity| identity.id.clone());
                     let (client, area) =
                         match account.as_ref().and_then(|account| accounts.get(account)) {
@@ -205,7 +198,15 @@ fn simulate(
                                 if let Some(account) = account {
                                     accounts.insert(account, client);
                                 }
-                                (client, spawn)
+                                let area = match spawn_policy {
+                                    SpawnPolicy::Dist => {
+                                        let area = next_area % worlds.len();
+                                        next_area += 1;
+                                        area
+                                    }
+                                    SpawnPolicy::Map => spawn,
+                                };
+                                (client, area)
                             }
                         };
                     let entity = spawn_conn(&mut worlds[area], client, client_id, identity);
@@ -244,9 +245,7 @@ fn simulate(
             }
         }
 
-        for app in worlds.iter_mut() {
-            app.update();
-        }
+        world::systems::step_areas(&mut worlds);
 
         begin_transfers(&mut worlds, &mut transfers, tick);
 
@@ -265,7 +264,7 @@ fn simulate(
 
         finish_transfers(&mut worlds, &mut conns, &mut transfers, tick);
 
-        transport.send_packets(&mut server);
+        transport.send(&mut server);
 
         counter!("rift_ticks_total").increment(1);
         histogram!("rift_tick_duration_seconds").record(started.elapsed().as_secs_f64());
@@ -339,10 +338,30 @@ struct Conn {
 #[derive(Component)]
 struct Wire(u64);
 
-fn build_world(area: world::systems::area::Id, assets: &AssetService) -> App {
-    let mut app = world::systems::server_app(area);
+fn select_areas(areas: Areas) -> Vec<world::data::area::Id> {
+    use world::data::area::Id;
+    match areas {
+        Areas::Real => Id::VARIANTS
+            .iter()
+            .copied()
+            .filter(|id| !id.get().bench)
+            .collect(),
+        // The bench area is one template instanced `count` times; the count is bounded only by the
+        // machine, not by how many area rows the content table happens to define.
+        Areas::Bench(count) => vec![world::data::area::BENCH_ID; count],
+    }
+}
+
+fn build_world(
+    area: world::systems::area::Id,
+    assets: &AssetService,
+    spawn_policy: SpawnPolicy,
+    ordinal: u64,
+) -> App {
+    let mut app = world::systems::server_app(area, ordinal);
     app.insert_resource(assets.clone());
     app.insert_resource(world::core::math::Rng::from_entropy());
+    app.insert_resource(spawn_policy);
     app.finish();
     app.cleanup();
     app.world_mut()
@@ -367,9 +386,11 @@ fn spawn_conn(
 }
 
 /// A player (and all its connections) whose character left its world (despawned) and is waiting to be
-/// re-created in the destination world. The one-tick wait lets the source world's despawns reach the
+/// re-created in the destination world. The wait lets the source world's despawns reach the
 /// connections first, so their replication state is empty before the destination's fresh snapshot
-/// arrives over the same connections — no entity-id or tick collision between the two worlds.
+/// arrives over the same connections — no entity-id or tick collision between the two worlds. The
+/// wait is one replication period (not one tick): a world only replicates every
+/// `REPLICATION_INTERVAL` ticks, so the despawn isn't guaranteed sent until then.
 struct Transfer {
     client: ClientId,
     traveler: transition::Traveler,
@@ -390,8 +411,8 @@ fn begin_transfers(worlds: &mut [App], transfers: &mut Vec<Transfer>, tick: u64)
     }
 }
 
-/// Phase 2: a tick after departing — once the source world's despawns have been sent — move every
-/// socket of the moving player to the destination world and re-create the character there.
+/// Phase 2: once the source world's despawns have been sent (a replication period after departing) —
+/// move every socket of the moving player to the destination world and re-create the character there.
 fn finish_transfers(
     worlds: &mut [App],
     conns: &mut HashMap<u64, Conn>,
@@ -400,7 +421,7 @@ fn finish_transfers(
 ) {
     let mut index = 0;
     while index < transfers.len() {
-        if tick <= transfers[index].departed_tick {
+        if tick < transfers[index].departed_tick + REPLICATION_INTERVAL {
             index += 1;
             continue;
         }
@@ -470,7 +491,7 @@ impl Sessions {
 struct Http {
     sessions: Sessions,
     verifier: Arc<Mutex<auth::Verifier>>,
-    private_key: [u8; NETCODE_KEY_BYTES],
+    allow_fake_users: bool,
 }
 
 async fn serve_http(addr: SocketAddr, http: Http, metrics: service::PrometheusHandle) {
@@ -499,33 +520,30 @@ async fn session(State(http): State<Http>, headers: HeaderMap) -> Response {
         Err(status) => return status.into_response(),
     };
 
+    // The ticket is the renet client id. The browser opens `wss://host/?ticket=<id>`; the WebSocket
+    // handshake claims it single-use. Unguessable in 2^64, ~30s expiry, only ever sent over TLS.
     let client_id = rand::rng().next_u64();
     http.sessions.put(client_id, identity);
-    let token = ConnectToken::generate(
-        unix_now(),
-        PROTOCOL_ID,
-        TOKEN_EXPIRE.as_secs(),
-        client_id,
-        CONNECTION_TIMEOUT.as_secs() as i32,
-        NETCODE_SOCKET_ID,
-        vec![NETCODE_ADDR],
-        None,
-        &http.private_key,
-    )
-    .expect("connect token");
-    let mut body = Vec::new();
-    token.write(&mut body).expect("serialize connect token");
     (
         [
-            (header::CONTENT_TYPE, "application/octet-stream"),
+            (header::CONTENT_TYPE, "text/plain"),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        body,
+        client_id.to_string(),
     )
         .into_response()
 }
 
 fn resolve(http: &Http, authorization: &str) -> Result<Identity, StatusCode> {
+    if http.allow_fake_users
+        && let Some(id) = authorization.strip_prefix("fake:")
+    {
+        return Ok(Identity {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            roles: Vec::new(),
+        });
+    }
     let token = authorization
         .strip_prefix("Bearer ")
         .ok_or(StatusCode::UNAUTHORIZED)?;
@@ -553,12 +571,6 @@ async fn health(State(http): State<Http>) -> Response {
     } else {
         (StatusCode::SERVICE_UNAVAILABLE, "auth keys unavailable").into_response()
     }
-}
-
-fn unix_now() -> Duration {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock after the unix epoch")
 }
 
 fn verifier() -> Arc<Mutex<auth::Verifier>> {

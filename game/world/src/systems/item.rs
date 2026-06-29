@@ -19,7 +19,7 @@ use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, sender_player};
 use crate::systems::stat;
 use crate::systems::visibility::seen_by;
-use bevy_ecs::query::With;
+use bevy_ecs::query::{QueryState, With};
 use bevy_ecs::world::World;
 use bevy_replicon::prelude::{Replicated, SendTargets, ToClients};
 use bevy_time::Time;
@@ -334,11 +334,8 @@ pub fn pickup_request(world: &mut World) {
     }
 }
 
-pub fn pickups(world: &mut World) {
-    let players: Vec<Entity> = world
-        .query_filtered::<Entity, With<PickupIntent>>()
-        .iter(world)
-        .collect();
+pub fn pickups(world: &mut World, intents: &mut QueryState<Entity, With<PickupIntent>>) {
+    let players: Vec<Entity> = intents.iter(world).collect();
     for player in players {
         let Some(target) = world
             .get::<PickupIntent>(player)
@@ -366,10 +363,12 @@ pub fn pickups(world: &mut World) {
     }
 }
 
-pub fn expire_drops(world: &mut World) {
+pub fn expire_drops(
+    world: &mut World,
+    drops: &mut QueryState<(Entity, &'static Reservation), With<DroppedItem>>,
+) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());
-    let stale: Vec<Entity> = world
-        .query_filtered::<(Entity, &Reservation), With<DroppedItem>>()
+    let stale: Vec<Entity> = drops
         .iter(world)
         .filter(|(_, reservation)| now - reservation.at >= DROP_TTL)
         .map(|(entity, _)| entity)

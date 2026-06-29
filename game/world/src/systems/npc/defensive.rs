@@ -11,10 +11,7 @@ impl Ai for Defensive {
         true
     }
     fn target(&self, hunt: &Hunt) -> Option<Entity> {
-        hunt.nearest(hunt.players, |player| {
-            hunt.world
-                .get::<Attackers>(hunt.id)
-                .is_some_and(|attackers| attackers.ids.contains(&player))
-        })
+        let attackers = hunt.world.get::<Attackers>(hunt.id)?;
+        hunt.nearest(hunt.players, |player| attackers.ids.contains(&player))
     }
 }

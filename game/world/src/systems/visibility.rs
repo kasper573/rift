@@ -1,7 +1,7 @@
-use std::collections::HashSet;
-
 use bevy_app::App;
+use bevy_ecs::entity::EntityHashSet;
 use bevy_ecs::prelude::*;
+use bevy_ecs::query::QueryState;
 use bevy_replicon::prelude::{AppVisibilityExt, Replicated, SingleComponent, VisibilityFilter};
 use bevy_replicon::server::visibility::client_visibility::ClientVisibility;
 use bevy_replicon::server::visibility::filters_mask::FilterBit;
@@ -9,7 +9,7 @@ use bevy_replicon::server::visibility::registry::FilterRegistry;
 use bevy_replicon::shared::replication::registry::ReplicationRegistry;
 
 use crate::core::math::Pos;
-use crate::core::tiling::{TilePos, Tiles};
+use crate::core::tiling::Tiles;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::item::Inventory;
 use crate::systems::movement::{Position, position};
@@ -17,22 +17,37 @@ use crate::systems::player::{ClientId, Players};
 use crate::systems::spectate::{Spectate, Spectators};
 
 pub const VIEW_DISTANCE: Tiles = Tiles(24.0);
+// Compared against squared distance to avoid a per-pair `sqrt`. Exact: `VIEW_DISTANCE` is a perfect
+// square in f32, so `d <= VIEW_DISTANCE` iff `d² <= VIEW_DISTANCE²` for all inputs.
+const VIEW_DISTANCE_SQ: f32 = VIEW_DISTANCE.0 * VIEW_DISTANCE.0;
 
 pub fn register(app: &mut App) {
     app.add_visibility_filter::<OwnedBy>();
     app.init_resource::<RangeBit>();
 }
 
-pub fn update(world: &mut World) {
-    let bit = world.resource::<RangeBit>().0;
-    let players: HashSet<Entity> = world.resource::<Players>().0.values().copied().collect();
-    let clients: Vec<(Entity, ClientId)> = world
-        .query::<(Entity, &ClientId)>()
+type Clients = QueryState<(Entity, &'static ClientId)>;
+type Subjects = QueryState<
+    (
+        Entity,
+        &'static Position,
+        Option<&'static AreaTag>,
+        Has<Spectate>,
+    ),
+    With<Replicated>,
+>;
+
+pub fn update(world: &mut World, clients_query: &mut Clients, subjects_query: &mut Subjects) {
+    let clients: Vec<(Entity, ClientId)> = clients_query
         .iter(world)
         .map(|(entity, &id)| (entity, id))
         .collect();
-    let subjects: Vec<Subject> = world
-        .query_filtered::<(Entity, &Position, Option<&AreaTag>, Has<Spectate>), With<Replicated>>()
+    if clients.is_empty() {
+        return;
+    }
+    let bit = world.resource::<RangeBit>().0;
+    let players: EntityHashSet = world.resource::<Players>().0.values().copied().collect();
+    let subjects: Vec<Subject> = subjects_query
         .iter(world)
         .map(|(entity, position, tag, anchor)| Subject {
             entity,
@@ -62,7 +77,7 @@ pub fn seen_by(world: &mut World, entity: Entity) -> Vec<Entity> {
         area: world.get::<AreaTag>(entity).map(|tag| tag.area),
         anchor: world.get::<Spectate>(entity).is_some(),
     };
-    let players: HashSet<Entity> = world.resource::<Players>().0.values().copied().collect();
+    let players: EntityHashSet = world.resource::<Players>().0.values().copied().collect();
     let clients: Vec<(Entity, ClientId)> = world
         .query::<(Entity, &ClientId)>()
         .iter(world)
@@ -128,7 +143,7 @@ fn sight(world: &World, client: ClientId) -> Option<Sight> {
     })
 }
 
-fn sees(sight: Option<&Sight>, players: &HashSet<Entity>, subject: &Subject) -> bool {
+fn sees(sight: Option<&Sight>, players: &EntityHashSet, subject: &Subject) -> bool {
     let Some(sight) = sight else {
         return false;
     };
@@ -141,6 +156,6 @@ fn sees(sight: Option<&Sight>, players: &HashSet<Entity>, subject: &Subject) -> 
     if subject.area != Some(area) {
         return false;
     }
-    (!subject.anchor && pos.distance(subject.pos) <= VIEW_DISTANCE)
+    (!subject.anchor && (pos - subject.pos).square_length() <= VIEW_DISTANCE_SQ)
         || (sight.spectating && players.contains(&subject.entity))
 }

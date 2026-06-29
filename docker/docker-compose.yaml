@@ -43,8 +43,15 @@ services:
     image: ${DOCKER_REGISTRY_URL:-rift}/rift-game-server:${DOCKER_IMAGE_VERSION:-latest}
     restart: always
     profiles: ["prod", "test"]
-    # No published ports: browsers reach both the HTTP API and the WebSocket netcode transport
-    # through Caddy (wss://), so nothing dials the container directly.
+    # Every player connection is one socket fd. A server built for thousands of concurrent players
+    # must not inherit Docker's default 1024 nofile limit, or accept() fails with EMFILE near 1k
+    # clients — the very cap this transport was rebuilt to remove.
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    # No published ports: browsers reach both the HTTP API and the WebSocket transport through Caddy
+    # (wss://), so nothing dials the container directly.
     healthcheck:
       test:
         ["CMD-SHELL", "wget -qO- http://127.0.0.1:$$RIFT_GAME_SERVER_PORT/health"]

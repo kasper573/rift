@@ -3,6 +3,7 @@ pub mod combat;
 pub mod debug;
 pub mod fps;
 pub mod input;
+pub mod interpolate;
 pub mod item;
 pub mod scene;
 pub mod session;

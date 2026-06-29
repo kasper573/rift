@@ -114,21 +114,22 @@ pub fn request(world: &mut World) {
     }
 }
 
-pub fn combat(world: &mut World) {
+pub fn combat(
+    world: &mut World,
+    targets: &mut QueryState<Entity, With<AttackTarget>>,
+    swings: &mut QueryState<Entity, With<Swing>>,
+) {
     let time = Seconds(world.resource::<Time>().elapsed_secs());
     let mut deaths = Vec::new();
-    engage(world, time);
-    progress_swings(world, time, &mut deaths);
+    engage(world, time, targets);
+    progress_swings(world, time, &mut deaths, swings);
     for (entity, killer) in deaths {
         world.write_message(Died { entity, killer });
     }
 }
 
-fn engage(world: &mut World, time: Seconds) {
-    let ids: Vec<Entity> = world
-        .query_filtered::<Entity, With<AttackTarget>>()
-        .iter(world)
-        .collect();
+fn engage(world: &mut World, time: Seconds, targets: &mut QueryState<Entity, With<AttackTarget>>) {
+    let ids: Vec<Entity> = targets.iter(world).collect();
     for id in ids {
         if stat::is_dead(world, id) {
             forget(world, id);
@@ -183,11 +184,13 @@ fn engage(world: &mut World, time: Seconds) {
     }
 }
 
-fn progress_swings(world: &mut World, time: Seconds, deaths: &mut Vec<(Entity, Entity)>) {
-    let ids: Vec<Entity> = world
-        .query_filtered::<Entity, With<Swing>>()
-        .iter(world)
-        .collect();
+fn progress_swings(
+    world: &mut World,
+    time: Seconds,
+    deaths: &mut Vec<(Entity, Entity)>,
+    swings: &mut QueryState<Entity, With<Swing>>,
+) {
+    let ids: Vec<Entity> = swings.iter(world).collect();
     for id in ids {
         if stat::is_dead(world, id)
             || world.get::<MoveTarget>(id).is_some()

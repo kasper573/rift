@@ -10,7 +10,8 @@ bevy_app.workspace = true
 bevy_ecs.workspace = true
 bevy_replicon = { workspace = true, features = ["server"] }
 renet2.workspace = true
-renet2_netcode = { workspace = true, features = ["ws_server_transport"] }
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", default-features = false }
 bevy_state.workspace = true
 ctrlc.workspace = true
 envy.workspace = true

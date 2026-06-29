@@ -67,7 +67,7 @@ auth.{$RIFT_DOMAIN} {
     reverse_proxy {$RIFT_WEBSITE_PROXY_HOST}
 }
 
-# The browser opens the netcode WebSocket here (terminated to plain ws toward the server) and POSTs
+# The browser opens the game WebSocket here (terminated to plain ws toward the server) and POSTs
 # `/session`/`/health` to the HTTP API — two separate listeners, split by the upgrade handshake.
 {$RIFT_GAME_SERVER_DOMAIN} {
     import access_log

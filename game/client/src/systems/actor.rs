@@ -7,10 +7,10 @@ use world::core::tiling::{TilePos, Tiles};
 use world::core::time::Seconds;
 use world::systems::actor::{Action, Actor, Rgba, build_model};
 use world::systems::area::{self, AreaTag};
-use world::systems::movement::Position;
 
 use crate::core::render::{Animator, atlas_rect, dynamic_z, sprite_transform};
 use crate::core::sfx::PlaySfx;
+use crate::systems::interpolate::{RenderActor, RenderPosition};
 
 pub struct ActorPlugin;
 
@@ -45,30 +45,35 @@ fn attach_sprite(
         Sprite { image, ..default() },
         Anchor(Vec2::new(0.0, -1.0 / 6.0)),
         Transform::default(),
-        Visibility::default(),
+        Visibility::Hidden,
     ));
 }
+
+type ActorView = (
+    Entity,
+    &'static Actor,
+    &'static RenderPosition,
+    &'static RenderActor,
+    &'static AreaTag,
+    &'static mut Sprite,
+    &'static mut Transform,
+    &'static mut Visibility,
+);
 
 fn sync_actors(
     time: Res<Time>,
     service: Res<AssetService>,
     mut animator: ResMut<Animator>,
-    mut actors: Query<(
-        Entity,
-        &Actor,
-        &Position,
-        &AreaTag,
-        &mut Sprite,
-        &mut Transform,
-    )>,
+    mut actors: Query<ActorView>,
 ) {
     let clock = Seconds(time.elapsed_secs());
     animator.retain(|entity| actors.contains(entity));
-    for (entity, actor, position, tag, mut sprite, mut transform) in &mut actors {
-        let elapsed = animator.elapsed(entity, actor.action as u64, clock);
+    for (entity, actor, render, pose, tag, mut sprite, mut transform, mut visibility) in &mut actors
+    {
+        let elapsed = animator.elapsed(entity, pose.action as u64, clock);
         let region = service.resolve(*actor.model.get(), build_model).frame(
-            actor.action.name(),
-            actor.dir,
+            pose.action.name(),
+            pose.dir,
             elapsed,
             actor.attack_rate,
         );
@@ -76,14 +81,14 @@ fn sync_actors(
         sprite.custom_size = Some(Vec2::new(region.size.width, region.size.height));
         sprite.color = rgba(actor.color);
         let area = service.resolve(tag.area.get().map, area::build_area);
+        let at = render.0;
         *transform = sprite_transform(
-            position.pos,
-            dynamic_z(
-                area.size.height,
-                area.dynamic_layer() as f32,
-                Tiles(position.pos.y),
-            ),
+            at,
+            dynamic_z(area.size.height, area.dynamic_layer() as f32, Tiles(at.y)),
         );
+        if *visibility == Visibility::Hidden {
+            *visibility = Visibility::Inherited;
+        }
     }
 }
 
@@ -100,44 +105,34 @@ fn actor_cues(
     service: Res<AssetService>,
     mut animator: ResMut<Animator>,
     mut seen: ResMut<Seen>,
-    actors: Query<(Entity, &Actor, &Position, &AreaTag)>,
+    actors: Query<(Entity, &Actor, &RenderPosition, &RenderActor, &AreaTag)>,
     mut play: MessageWriter<PlaySfx>,
 ) {
     let clock = Seconds(time.elapsed_secs());
     seen.0.retain(|entity, _| actors.contains(*entity));
-    for (entity, actor, position, tag) in &actors {
-        let now = animator.elapsed(entity, actor.action as u64, clock);
-        let Some((was, then)) = seen.0.insert(entity, (actor.action, now)) else {
+    for (entity, actor, render, pose, tag) in &actors {
+        let at = render.0;
+        let now = animator.elapsed(entity, pose.action as u64, clock);
+        let Some((was, then)) = seen.0.insert(entity, (pose.action, now)) else {
             continue;
         };
-        let since = if was == actor.action {
+        let since = if was == pose.action {
             then
         } else {
             Seconds(-1.0)
         };
         let model = service.resolve(*actor.model.get(), build_model);
-        let (cues, stepped) = model.cues(
-            actor.action.name(),
-            actor.dir,
-            since,
-            now,
-            actor.attack_rate,
-        );
+        let (cues, stepped) =
+            model.cues(pose.action.name(), pose.dir, since, now, actor.attack_rate);
         for id in cues {
-            play.write(PlaySfx {
-                id: *id,
-                at: position.pos,
-            });
+            play.write(PlaySfx { id: *id, at });
         }
         if stepped
             && let Some(id) = service
                 .resolve(tag.area.get().map, area::build_area)
-                .tile_sfx_at(position.pos.cell())
+                .tile_sfx_at(at.cell())
         {
-            play.write(PlaySfx {
-                id: *id,
-                at: position.pos,
-            });
+            play.write(PlaySfx { id: *id, at });
         }
     }
 }
