@@ -675,8 +675,14 @@ dependencies = [
  "bevy_ecs",
  "bevy_replicon",
  "bevy_state",
+ "bevy_time",
  "pprof",
+ "renet2",
+ "renet2_netcode",
  "strum",
+ "tungstenite",
+ "ureq",
+ "urlencoding",
  "world",
 ]
 

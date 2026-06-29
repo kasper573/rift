@@ -28,7 +28,7 @@ use world::core::assets::AssetService;
 use world::core::channels::RenetChannelsExt;
 use world::systems::account::Identity;
 use world::systems::area::transition;
-use world::systems::player::ClientId;
+use world::systems::player::{ClientId, SpawnPolicy};
 use world::systems::{REPLICATION_INTERVAL, TICK_HZ};
 
 service::heap_profiling!();
@@ -52,10 +52,36 @@ struct Config {
     port: u16,
     ws_port: u16,
     max_clients: usize,
-    /// Directory the game assets (maps, models, ...) are read from.
+    areas: Areas,
     assets_dir: PathBuf,
+    player_spawn_type: SpawnPolicy,
+    allow_fake_users: bool,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
+}
+
+#[derive(Clone, Copy)]
+enum Areas {
+    Real,
+    Bench(usize),
+}
+
+impl<'de> serde::Deserialize<'de> for Areas {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Areas, D::Error> {
+        let spec = String::deserialize(deserializer)?;
+        if spec == "real" {
+            return Ok(Areas::Real);
+        }
+        if let Some(count) = spec.strip_prefix("bench,") {
+            return count
+                .parse()
+                .map(Areas::Bench)
+                .map_err(serde::de::Error::custom);
+        }
+        Err(serde::de::Error::custom(format!(
+            "expected `real` or `bench,<n>`, got `{spec}`"
+        )))
+    }
 }
 
 fn main() {
@@ -87,9 +113,15 @@ fn main() {
         sessions: sessions.clone(),
         verifier: verifier(),
         private_key,
+        allow_fake_users: config.allow_fake_users,
     };
     runtime.spawn(serve_http(http_bind, http, metrics));
 
+    let settings = Settings {
+        areas: config.areas,
+        max_clients: config.max_clients,
+        spawn_policy: config.player_spawn_type,
+    };
     let assets = assets::service(config.assets_dir);
     simulate(
         ws_bind,
@@ -97,8 +129,14 @@ fn main() {
         sessions,
         runtime.handle().clone(),
         assets,
-        config.max_clients,
+        settings,
     );
+}
+
+struct Settings {
+    areas: Areas,
+    max_clients: usize,
+    spawn_policy: SpawnPolicy,
 }
 
 fn simulate(
@@ -107,17 +145,21 @@ fn simulate(
     sessions: Sessions,
     runtime: tokio::runtime::Handle,
     assets: AssetService,
-    max_clients: usize,
+    settings: Settings,
 ) {
-    let spawn = world::data::area::SPAWN_ID.index();
-    let real_areas: Vec<_> = world::data::area::Id::VARIANTS
+    let Settings {
+        areas,
+        max_clients,
+        spawn_policy,
+    } = settings;
+    let area_ids = select_areas(areas);
+    let spawn = area_ids
         .iter()
-        .copied()
-        .filter(|id| !id.get().bench)
-        .collect();
-    let mut worlds: Vec<App> = real_areas
-        .into_iter()
-        .map(|id| build_world(id, &assets))
+        .position(|id| *id == world::data::area::SPAWN_ID)
+        .unwrap_or(0);
+    let mut worlds: Vec<App> = area_ids
+        .iter()
+        .map(|&id| build_world(id, &assets, spawn_policy))
         .collect();
 
     let (connection_config, client_channels) = {
@@ -165,6 +207,7 @@ fn simulate(
     let mut accounts: HashMap<String, ClientId> = HashMap::new();
     let mut transfers: Vec<Transfer> = Vec::new();
     let mut next_client = 1u32;
+    let mut next_area = 0usize;
     let mut tick = 0u64;
     let frame = TICK_HZ.period();
     let mut last = Instant::now();
@@ -205,7 +248,15 @@ fn simulate(
                                 if let Some(account) = account {
                                     accounts.insert(account, client);
                                 }
-                                (client, spawn)
+                                let area = match spawn_policy {
+                                    SpawnPolicy::Dist => {
+                                        let area = next_area % worlds.len();
+                                        next_area += 1;
+                                        area
+                                    }
+                                    SpawnPolicy::Map => spawn,
+                                };
+                                (client, area)
                             }
                         };
                     let entity = spawn_conn(&mut worlds[area], client, client_id, identity);
@@ -339,10 +390,41 @@ struct Conn {
 #[derive(Component)]
 struct Wire(u64);
 
-fn build_world(area: world::systems::area::Id, assets: &AssetService) -> App {
+fn select_areas(areas: Areas) -> Vec<world::data::area::Id> {
+    use world::data::area::Id;
+    match areas {
+        Areas::Real => Id::VARIANTS
+            .iter()
+            .copied()
+            .filter(|id| !id.get().bench)
+            .collect(),
+        Areas::Bench(count) => {
+            let selected: Vec<Id> = Id::VARIANTS
+                .iter()
+                .copied()
+                .filter(|id| id.get().bench)
+                .take(count)
+                .collect();
+            assert_eq!(
+                selected.len(),
+                count,
+                "RIFT_GAME_SERVER_AREAS bench,{count}: only {} bench areas exist",
+                selected.len()
+            );
+            selected
+        }
+    }
+}
+
+fn build_world(
+    area: world::systems::area::Id,
+    assets: &AssetService,
+    spawn_policy: SpawnPolicy,
+) -> App {
     let mut app = world::systems::server_app(area);
     app.insert_resource(assets.clone());
     app.insert_resource(world::core::math::Rng::from_entropy());
+    app.insert_resource(spawn_policy);
     app.finish();
     app.cleanup();
     app.world_mut()
@@ -473,6 +555,7 @@ struct Http {
     sessions: Sessions,
     verifier: Arc<Mutex<auth::Verifier>>,
     private_key: [u8; NETCODE_KEY_BYTES],
+    allow_fake_users: bool,
 }
 
 async fn serve_http(addr: SocketAddr, http: Http, metrics: service::PrometheusHandle) {
@@ -528,6 +611,15 @@ async fn session(State(http): State<Http>, headers: HeaderMap) -> Response {
 }
 
 fn resolve(http: &Http, authorization: &str) -> Result<Identity, StatusCode> {
+    if http.allow_fake_users
+        && let Some(id) = authorization.strip_prefix("fake:")
+    {
+        return Ok(Identity {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            roles: Vec::new(),
+        });
+    }
     let token = authorization
         .strip_prefix("Bearer ")
         .ok_or(StatusCode::UNAUTHORIZED)?;

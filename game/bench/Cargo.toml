@@ -8,6 +8,12 @@ description = "Isolated in-process load benchmark for the `world` simulation"
 name = "bench"
 path = "src/main.rs"
 
+# Load generator: connects N headless replicon clients to an already-running real game server over
+# real websocket sockets. Server-only (no in-process server); see `just loadtest`.
+[[bin]]
+name = "loadtest"
+path = "src/loadtest.rs"
+
 [features]
 # Opt-in CPU (pprof flamegraph) + allocation profiling of a fixed workload.
 # Build with `--profile profiling --features profiling` for debug symbols.
@@ -17,7 +23,13 @@ profiling = ["dep:pprof"]
 bevy_app.workspace = true
 bevy_ecs.workspace = true
 bevy_state.workspace = true
-bevy_replicon = { workspace = true, features = ["server"] }
+bevy_time.workspace = true
+bevy_replicon = { workspace = true, features = ["client", "server"] }
+renet2.workspace = true
+renet2_netcode = { workspace = true, features = ["native_transport"] }
+tungstenite = "0.26"
+urlencoding = "2"
+ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 strum.workspace = true
 world = { path = "../world" }
 pprof = { version = "0.15", features = ["flamegraph", "protobuf-codec"], optional = true }

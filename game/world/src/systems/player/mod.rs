@@ -6,7 +6,7 @@ use bevy_ecs::message::Message;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
-use crate::core::math::{Direction, Pos};
+use crate::core::math::{Direction, Pos, Rng};
 use crate::core::tiling::{Tiles, TilesPerSec};
 use crate::core::time::{Millis, PlaybackRate};
 use crate::systems::Character;
@@ -135,10 +135,22 @@ pub fn client_left(
     }
 }
 
+#[derive(Resource, Clone, Copy, Default, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpawnPolicy {
+    #[default]
+    Map,
+    Dist,
+}
+
 pub fn join(world: &mut World) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
     let assets = world.resource::<AssetService>().clone();
-    let spawn = assets.resolve(zone.get().map, area::build_area).spawn;
+    let area = assets.resolve(zone.get().map, area::build_area);
+    let policy = world
+        .get_resource::<SpawnPolicy>()
+        .copied()
+        .unwrap_or_default();
     for request in crate::systems::requests::<JoinRequest>(world) {
         let Some(client_entity) = request.client_id.entity() else {
             continue;
@@ -154,7 +166,21 @@ pub fn join(world: &mut World) {
         let name = world
             .get::<Identity>(client_entity)
             .map_or_else(|| format!("player {}", client.0), |id| id.name.clone());
-        spawn_player(world, client, zone, spawn, name);
+        let at = spawn_position(world, policy, area);
+        spawn_player(world, client, zone, at, name);
+    }
+}
+
+fn spawn_position(world: &mut World, policy: SpawnPolicy, area: &area::Area) -> Pos<Tiles> {
+    match policy {
+        SpawnPolicy::Map => area.spawn,
+        SpawnPolicy::Dist if !area.walkable_nodes.is_empty() => {
+            let index = world
+                .resource_mut::<Rng>()
+                .rand_range(0..area.walkable_nodes.len() as u32);
+            area.walkable_nodes[index as usize]
+        }
+        SpawnPolicy::Dist => area.spawn,
     }
 }
 

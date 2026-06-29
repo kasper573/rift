@@ -1,0 +1,9 @@
+services:
+  rift-game-server:
+    ports:
+      - "9998:9998"
+      - "9999:9999"
+    environment:
+      RIFT_GAME_SERVER_ALLOW_FAKE_USERS: "true"
+      RIFT_GAME_SERVER_PLAYER_SPAWN_TYPE: dist
+      RIFT_GAME_SERVER_AREAS: bench,333
