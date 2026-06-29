@@ -26,7 +26,7 @@ use world::core::assets::AssetService;
 use world::core::channels::RenetChannelsExt;
 use world::systems::account::Identity;
 use world::systems::area::transition;
-use world::systems::player::{ClientId, SpawnPolicy};
+use world::systems::player::{ClientId, Immortal, SpawnPolicy};
 use world::systems::{REPLICATION_INTERVAL, TICK_HZ};
 
 service::heap_profiling!();
@@ -41,6 +41,7 @@ struct Config {
     areas: Areas,
     assets_dir: PathBuf,
     player_spawn_type: SpawnPolicy,
+    player_immortal: bool,
     allow_fake_users: bool,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
@@ -103,6 +104,7 @@ fn main() {
         areas: config.areas,
         max_clients: config.max_clients,
         spawn_policy: config.player_spawn_type,
+        immortal: Immortal(config.player_immortal),
     };
     let assets = assets::service(config.assets_dir);
     simulate(
@@ -118,6 +120,7 @@ struct Settings {
     areas: Areas,
     max_clients: usize,
     spawn_policy: SpawnPolicy,
+    immortal: Immortal,
 }
 
 fn simulate(
@@ -131,6 +134,7 @@ fn simulate(
         areas,
         max_clients,
         spawn_policy,
+        immortal,
     } = settings;
     let area_ids = select_areas(areas);
     let spawn = area_ids
@@ -140,7 +144,7 @@ fn simulate(
     let mut worlds: Vec<App> = area_ids
         .iter()
         .enumerate()
-        .map(|(ordinal, &id)| build_world(id, &assets, spawn_policy, ordinal as u64))
+        .map(|(ordinal, &id)| build_world(id, &assets, spawn_policy, immortal, ordinal as u64))
         .collect();
 
     let (connection_config, client_channels) = {
@@ -352,12 +356,14 @@ fn build_world(
     area: world::systems::area::Id,
     assets: &AssetService,
     spawn_policy: SpawnPolicy,
+    immortal: Immortal,
     ordinal: u64,
 ) -> App {
     let mut app = world::systems::server_app(area, ordinal);
     app.insert_resource(assets.clone());
     app.insert_resource(world::core::math::Rng::from_entropy());
     app.insert_resource(spawn_policy);
+    app.insert_resource(immortal);
     app.finish();
     app.cleanup();
     app.world_mut()

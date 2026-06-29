@@ -82,6 +82,9 @@ pub struct Welcome {
 }
 
 const PLAYER_MAX_HEALTH: f32 = 30.0;
+/// Health a player spawns with when [`Immortal`] is set — high enough that nothing in the world can
+/// grind it down, so test/dev sessions never die to NPCs.
+const IMMORTAL_HEALTH: f32 = 9999.0;
 const PLAYER_SPEED: TilesPerSec = TilesPerSec(Tiles(4.0));
 const PLAYER_DAMAGE: f32 = 6.0;
 const PLAYER_ATTACK_SPEED: PlaybackRate = PlaybackRate(1.2);
@@ -143,12 +146,21 @@ pub enum SpawnPolicy {
     Dist,
 }
 
+/// When set, players spawn with [`IMMORTAL_HEALTH`] instead of [`PLAYER_MAX_HEALTH`] — a config toggle
+/// (off in production) so test/dev sessions aren't killed by NPCs.
+#[derive(Resource, Clone, Copy, Default)]
+pub struct Immortal(pub bool);
+
 pub fn join(world: &mut World) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
     let assets = world.resource::<AssetService>().clone();
     let area = assets.resolve(zone.get().map, area::build_area);
     let policy = world
         .get_resource::<SpawnPolicy>()
+        .copied()
+        .unwrap_or_default();
+    let immortal = world
+        .get_resource::<Immortal>()
         .copied()
         .unwrap_or_default();
     for request in crate::systems::requests::<JoinRequest>(world) {
@@ -167,7 +179,7 @@ pub fn join(world: &mut World) {
             .get::<Identity>(client_entity)
             .map_or_else(|| format!("player {}", client.0), |id| id.name.clone());
         let at = spawn_position(world, policy, area);
-        spawn_player(world, client, zone, at, name);
+        spawn_player(world, client, zone, at, name, immortal);
     }
 }
 
@@ -194,7 +206,14 @@ pub struct CharacterState {
     pub timed: TimedEffects,
 }
 
-fn spawn_player(world: &mut World, client: ClientId, zone: area::Id, at: Pos<Tiles>, name: String) {
+fn spawn_player(
+    world: &mut World,
+    client: ClientId,
+    zone: area::Id,
+    at: Pos<Tiles>,
+    name: String,
+    immortal: Immortal,
+) {
     place(
         world,
         client,
@@ -202,7 +221,7 @@ fn spawn_player(world: &mut World, client: ClientId, zone: area::Id, at: Pos<Til
         at,
         CharacterState {
             name,
-            stats: player_stats(),
+            stats: player_stats(immortal),
             inventory: Inventory::empty(),
             xp: Xp { amount: 0 },
             equipment: Equipment::default(),
@@ -214,10 +233,15 @@ fn spawn_player(world: &mut World, client: ClientId, zone: area::Id, at: Pos<Til
     );
 }
 
-pub fn player_stats() -> Stats {
+pub fn player_stats(immortal: Immortal) -> Stats {
+    let max_health = if immortal.0 {
+        IMMORTAL_HEALTH
+    } else {
+        PLAYER_MAX_HEALTH
+    };
     Stats(vec![
-        StatKind::Health.of(PLAYER_MAX_HEALTH),
-        StatKind::MaxHealth.of(PLAYER_MAX_HEALTH),
+        StatKind::Health.of(max_health),
+        StatKind::MaxHealth.of(max_health),
         StatKind::Damage.of(PLAYER_DAMAGE),
         StatKind::AttackSpeed.of(PLAYER_ATTACK_SPEED.0),
         StatKind::AttackDelay.of(PLAYER_ATTACK_DELAY.0),
