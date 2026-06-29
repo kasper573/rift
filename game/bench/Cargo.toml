@@ -3,6 +3,7 @@ name = "bench"
 version.workspace = true
 edition.workspace = true
 description = "Isolated in-process load benchmark for the `world` simulation"
+default-run = "bench"
 
 [[bin]]
 name = "bench"

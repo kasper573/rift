@@ -17,7 +17,7 @@ use renet2_netcode::{
 use tungstenite::Message;
 use tungstenite::stream::MaybeTlsStream;
 use world::core::channels::RenetChannelsExt;
-use world::systems::player::session::ClientSessionPlugin;
+use world::systems::player::session::{self, ClientSessionPlugin};
 
 // The placeholder address the server bakes into every connect token (it routes by websocket, not IP);
 // `send`/`try_recv` are keyed on it.
@@ -177,6 +177,8 @@ fn build_client(http_url: &str, ws_url: &str, index: usize) -> Option<App> {
     app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));
     app.add_plugins(ClientSessionPlugin);
     app.add_plugins(BridgePlugin);
+    app.init_resource::<Joined>();
+    app.add_systems(bevy_app::Update, announce_join);
 
     let config = {
         let channels = app.world().resource::<RepliconChannels>();
@@ -387,6 +389,20 @@ fn drive(
     if let Some(mut transport) = transport {
         let _ = transport.0.update(time.delta(), &mut client.0);
     }
+}
+
+// Once the server's welcome arrives (`MyClient` set), announce the join exactly as the real client
+// does — without it the socket connects but no player character is ever spawned server-side, so the
+// simulation runs with zero real players.
+#[derive(Resource, Default)]
+struct Joined(bool);
+
+fn announce_join(world: &mut World) {
+    if world.resource::<Joined>().0 || session::my_id(world).is_none() {
+        return;
+    }
+    session::join(world);
+    world.resource_mut::<Joined>().0 = true;
 }
 
 fn set_connecting(mut state: ResMut<NextState<ClientState>>) {

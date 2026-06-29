@@ -9,7 +9,6 @@ use std::time::Instant;
 use bevy_app::App;
 use bevy_ecs::prelude::{Entity, With};
 use bevy_replicon::prelude::Replicated;
-use world::data;
 use world::systems::movement::Position;
 use world::systems::visibility::seen_by;
 
@@ -21,9 +20,8 @@ const MEASURE: usize = 400;
 /// config), writing a CPU flamegraph + pprof protobuf and reporting allocation churn per tick. Uses
 /// the exact same [`crate::sim`] world construction the benchmark does, so the two never diverge.
 pub fn run(out_dir: &Path, layout: crate::sim::Layout) {
-    let npc = data::npc::Id::Orc;
     let assets = crate::assets::service();
-    let (mut worlds, rosters) = crate::sim::worlds(AREAS, npc, layout, &assets);
+    let (mut worlds, rosters) = crate::sim::worlds(AREAS, layout, &assets);
     if std::env::var("PROFILE_NO_CLIENTS").is_err() {
         crate::sim::connect(&mut worlds, &rosters);
     }

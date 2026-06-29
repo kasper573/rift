@@ -6,7 +6,6 @@ mod sim;
 use std::time::Instant;
 
 use bevy_app::App;
-use world::data;
 
 const BUDGET_MS: f64 = 40.0;
 const MAX_AREAS: usize = 768; // must exceed the crossover and the probe that overshoots it
@@ -82,7 +81,7 @@ fn main() {
     }
 
     let (areas, r) = best.unwrap_or_else(|| (1, point(1, WARMUP, MEASURE, layout)));
-    let npcs = sim::NPCS_PER_AREA * areas;
+    let npcs = sim::npcs_per_area() * areas;
     let players = sim::PLAYERS_PER_AREA * areas;
     println!("\n[bench] areas,npcs,players,clients,mean_ms,p50_ms,p99_ms,max_ms,sim_ms,repl_ms");
     println!(
@@ -157,9 +156,8 @@ struct Point {
 }
 
 fn point(areas: usize, warmup: usize, ticks: usize, layout: sim::Layout) -> Point {
-    let npc = data::npc::Id::Orc;
     let assets = assets::service();
-    let (mut worlds, rosters) = sim::worlds(areas, npc, layout, &assets);
+    let (mut worlds, rosters) = sim::worlds(areas, layout, &assets);
 
     let baseline = measure(&mut worlds, warmup, ticks);
     sim::connect(&mut worlds, &rosters);
