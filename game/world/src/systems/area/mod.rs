@@ -32,7 +32,6 @@ pub struct AreaTag {
 
 pub struct AreaDef {
     pub map: AssetRef,
-    pub bench: bool,
     pub spawns: &'static [Spawn],
 }
 

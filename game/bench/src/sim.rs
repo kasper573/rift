@@ -2,7 +2,6 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{ClientId as Sender, ConnectedClient, FromClient, ServerState};
 use bevy_state::prelude::NextState;
-use strum::VariantArray;
 use world::core::assets::AssetService;
 use world::data;
 use world::systems::player::{ClientId, JoinRequest, SpawnPolicy};
@@ -42,20 +41,14 @@ impl Layout {
     }
 }
 
-/// The NPCs each bench area spawns, read from the content layer (the same table the real server uses).
+/// The NPCs each bench area spawns, read from the content layer (the same area the bench instances).
 pub fn npcs_per_area() -> usize {
-    data::area::Id::VARIANTS
+    data::area::BENCH_ID
+        .get()
+        .spawns
         .iter()
-        .copied()
-        .find(|id| id.get().bench)
-        .map(|id| {
-            id.get()
-                .spawns
-                .iter()
-                .map(|spawn| spawn.population as usize)
-                .sum()
-        })
-        .unwrap_or(0)
+        .map(|spawn| spawn.population as usize)
+        .sum()
 }
 
 /// Exactly `areas` instances of the benchmark area, each populated with its NPCs and players, plus

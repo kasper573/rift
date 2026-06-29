@@ -5,7 +5,6 @@ use crate::systems::area::{AreaDef, Spawn};
 crate::table! {
     Island: AreaDef {
         map: AssetRef("maps/island.tmx"),
-        bench: false,
         spawns: &[
             Spawn { npc: NpcId::Orc, population: 6 },
             Spawn { npc: NpcId::Skeleton, population: 8 },
@@ -16,7 +15,6 @@ crate::table! {
     },
     Forest: AreaDef {
         map: AssetRef("maps/forest.tmx"),
-        bench: false,
         spawns: &[
             Spawn { npc: NpcId::Orc, population: 8 },
             Spawn { npc: NpcId::OrcChief, population: 3 },

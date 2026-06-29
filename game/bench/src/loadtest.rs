@@ -103,9 +103,11 @@ fn run_dyn(http_url: &str, ws_url: &str) {
         } else if over.is_none_or(|(lowest, _)| live <= lowest) {
             over = Some(last);
         }
-        // Couldn't open as many sockets as asked while still under budget: the limit is the machine's
-        // or server's connection ceiling, not tick time, and that count is the answer.
-        if live < target && ms < BUDGET_MS {
+        // Couldn't OPEN as many sockets as asked (not merely "not all connected yet") while still under
+        // budget: the limit is the machine's or server's connection ceiling, not tick time, and that
+        // count is the answer. Compare opened sockets, not `live`, so a slow handshake isn't mistaken
+        // for a ceiling.
+        if clients.len() < target && ms < BUDGET_MS {
             println!("[loadtest] connection ceiling at {live} players (could not open more)");
             break;
         }
@@ -213,7 +215,7 @@ fn connected_count(clients: &[App]) -> usize {
 
 fn build_client(http_url: &str, ws_url: &str, index: usize) -> Option<App> {
     let ticket = fetch_ticket(http_url, &format!("loadtest-{index}"))?;
-    let socket = WsSocket::connect(ws_url, ticket)?;
+    let socket = WsSocket::connect(ws_url, &ticket)?;
 
     let mut app = App::new();
     app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));
@@ -234,18 +236,12 @@ fn build_client(http_url: &str, ws_url: &str, index: usize) -> Option<App> {
     Some(app)
 }
 
-fn fetch_ticket(http_url: &str, fake_id: &str) -> Option<u64> {
+fn fetch_ticket(http_url: &str, fake_id: &str) -> Option<String> {
     let mut response = ureq::post(format!("{http_url}/session"))
         .header("Authorization", format!("fake:{fake_id}"))
         .send_empty()
         .ok()?;
-    response
-        .body_mut()
-        .read_to_string()
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
+    Some(response.body_mut().read_to_string().ok()?.trim().to_owned())
 }
 
 /// A blocking-then-nonblocking WebSocket carrying opaque renet packets as binary frames.
@@ -255,7 +251,7 @@ struct WsSocket {
 }
 
 impl WsSocket {
-    fn connect(ws_url: &str, ticket: u64) -> Option<WsSocket> {
+    fn connect(ws_url: &str, ticket: &str) -> Option<WsSocket> {
         let (ws, _response) = tungstenite::connect(format!("{ws_url}/?ticket={ticket}"))
             .map_err(|error| eprintln!("[ws] connect: {error}"))
             .ok()?;
@@ -332,6 +328,11 @@ fn drive(mut socket: NonSendMut<Socket>, mut client: ResMut<Client>, time: Res<b
     client.0.update(time.delta());
     while let Some(packet) = socket.0.recv() {
         client.0.process_packet(&packet);
+    }
+    // renet has no internal timeout, so a closed socket is the only liveness signal — otherwise a
+    // server-reaped client would stay "connected" and inflate the measured player count.
+    if !socket.0.open {
+        client.0.disconnect_due_to_transport();
     }
 }
 

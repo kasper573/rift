@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use renet2::RenetServer;
@@ -13,6 +14,14 @@ use tokio_tungstenite::tungstenite::http::StatusCode;
 use world::systems::account::Identity;
 
 use crate::Sessions;
+
+/// renet2's core has no connection timeout, so we keep WebSocket connections honest at the transport
+/// layer: ping every `PING_INTERVAL`, and reap a connection that sends nothing (not even a pong) for
+/// `IDLE_TIMEOUT`. Without this an unclean drop — a backgrounded mobile tab, a lock screen, a network
+/// switch that never sends a TCP FIN — would leave a zombie connection (and its character) forever, so
+/// a reconnect would re-attach to the stale character instead of spawning fresh.
+const PING_INTERVAL: Duration = Duration::from_secs(5);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Drives renet2's transport-agnostic core directly over plain WebSockets, with no netcode layer.
 /// There is therefore no fixed connection cap (renetcode's was 1024); the only bound is `max_clients`,
@@ -167,17 +176,26 @@ async fn serve(stream: TcpStream, sessions: Sessions, events: mpsc::UnboundedSen
 
     let (mut sink, mut incoming) = ws.split();
     tokio::spawn(async move {
-        while let Some(data) = out_rx.recv().await {
-            if sink.send(Message::Binary(data.into())).await.is_err() {
+        let mut ping = tokio::time::interval(PING_INTERVAL);
+        ping.tick().await; // the first tick fires immediately; skip it
+        loop {
+            let outcome = tokio::select! {
+                data = out_rx.recv() => match data {
+                    Some(data) => sink.send(Message::Binary(data.into())).await,
+                    None => break, // transport dropped the sender on disconnect
+                },
+                _ = ping.tick() => sink.send(Message::Ping(Vec::new().into())).await,
+            };
+            if outcome.is_err() {
                 break;
             }
         }
         let _ = sink.close().await;
     });
 
-    while let Some(message) = incoming.next().await {
-        match message {
-            Ok(Message::Binary(data)) => {
+    loop {
+        match tokio::time::timeout(IDLE_TIMEOUT, incoming.next()).await {
+            Ok(Some(Ok(Message::Binary(data)))) => {
                 if events
                     .send(Event::Packet {
                         client,
@@ -188,8 +206,10 @@ async fn serve(stream: TcpStream, sessions: Sessions, events: mpsc::UnboundedSen
                     break;
                 }
             }
-            Ok(Message::Close(_)) | Err(_) => break,
-            Ok(_) => {}
+            // A pong (or any other frame) is proof of life; only its arrival matters, not its payload.
+            Ok(Some(Ok(_))) => {}
+            // Clean close, socket error, end of stream, or no frame within the idle timeout: all dead.
+            Ok(Some(Err(_))) | Ok(None) | Err(_) => break,
         }
     }
     let _ = events.send(Event::Disconnected { client });

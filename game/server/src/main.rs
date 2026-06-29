@@ -341,11 +341,7 @@ struct Wire(u64);
 fn select_areas(areas: Areas) -> Vec<world::data::area::Id> {
     use world::data::area::Id;
     match areas {
-        Areas::Real => Id::VARIANTS
-            .iter()
-            .copied()
-            .filter(|id| !id.get().bench)
-            .collect(),
+        Areas::Real => Id::VARIANTS.to_vec(),
         // The bench area is one template instanced `count` times; the count is bounded only by the
         // machine, not by how many area rows the content table happens to define.
         Areas::Bench(count) => vec![world::data::area::BENCH_ID; count],
