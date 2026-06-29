@@ -34,7 +34,13 @@ seq_macro::seq!(N in 1..=768 {
             BenchArea~N: AreaDef {
                 map: AssetRef("maps/island.tmx"),
                 bench: true,
-                spawns: &[],
+                spawns: &[
+                    Spawn { npc: NpcId::Orc, population: 6 },
+                    Spawn { npc: NpcId::Skeleton, population: 8 },
+                    Spawn { npc: NpcId::VampireBat, population: 5 },
+                    Spawn { npc: NpcId::Bat, population: 4 },
+                    Spawn { npc: NpcId::OrcChief, population: 2 },
+                ],
             },
         )*
     }
