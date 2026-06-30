@@ -70,6 +70,7 @@ crate::table! {
             Reward::Item { item: ItemId::Bone, chance: Some(80.0), amount: 2 },
             Reward::Item { item: ItemId::RustySword, chance: Some(15.0), amount: 1 },
             Reward::Item { item: ItemId::BoneShield, chance: Some(2.5), amount: 1 },
+            Reward::Item { item: ItemId::FruloosRock, chance: Some(0.01), amount: 1 },
         ]
     },
     Bat: NpcDef {

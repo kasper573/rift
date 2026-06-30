@@ -80,4 +80,17 @@ crate::table! {
             requirements: &[Requirement::Level(3)],
         },
     },
+    FruloosRock: ItemDef {
+        display_name: "Just a rock",
+        icon: AssetRef("icons/misc/rune_stone.png"),
+        sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
+        stackable: None,
+        effects: &[
+            Effect::StatModifier(Stat { kind: StatKind::MaxHealth, value: -10.0 }),
+        ],
+        kind: ItemKind::Equipment {
+            slot: EquipmentSlot::Head,
+            requirements: &[],
+        },
+    },
 }
