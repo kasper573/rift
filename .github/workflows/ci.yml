@@ -24,8 +24,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      # mold is a native linker; scope it to the host target so the wasm build (rust-lld) ignores it.
-      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
       # Cache compilation across runs with sccache (rust-cache keeps the registry + dep .rlibs; sccache
       # caches the workspace crates' codegen that rust-cache cleans). Incremental off — sccache needs it.
       RUSTC_WRAPPER: sccache
