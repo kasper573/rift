@@ -658,25 +658,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bench"
-version = "0.1.0"
-dependencies = [
- "bevy_app",
- "bevy_ecs",
- "bevy_replicon",
- "bevy_state",
- "bevy_time",
- "envy",
- "pprof",
- "renet2",
- "serde",
- "strum",
- "tungstenite",
- "ureq",
- "world",
-]
-
-[[package]]
 name = "bevy"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2385,34 +2366,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "client"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "bevy",
- "bevy_kira_audio",
- "bevy_picking",
- "bevy_replicon",
- "bevy_terminal",
- "bevy_tiled",
- "console_error_panic_hook",
- "getrandom 0.2.17",
- "gloo-net",
- "include_dir",
- "js-sys",
- "renet2",
- "serde",
- "serde_json",
- "strum",
- "tiled",
- "ui",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "world",
-]
-
-[[package]]
 name = "cmake"
 version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3497,6 +3450,58 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
+]
+
+[[package]]
+name = "game"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "bevy",
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_kira_audio",
+ "bevy_picking",
+ "bevy_replicon",
+ "bevy_state",
+ "bevy_terminal",
+ "bevy_tiled",
+ "bevy_time",
+ "cargo_metadata",
+ "console_error_panic_hook",
+ "ctrlc",
+ "derive_more",
+ "envy",
+ "euclid",
+ "futures-util",
+ "getrandom 0.2.17",
+ "gloo-net",
+ "include_dir",
+ "js-sys",
+ "jsonwebtoken",
+ "metrics",
+ "oorandom",
+ "pathfinding",
+ "postcard",
+ "pprof",
+ "rand 0.9.4",
+ "rayon",
+ "renet2",
+ "serde",
+ "serde_json",
+ "service",
+ "strum",
+ "syn",
+ "tiled",
+ "tokio",
+ "tokio-tungstenite",
+ "tungstenite",
+ "ui",
+ "ureq",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -4689,15 +4694,6 @@ name = "linebender_resource_handle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4a5ff6bcca6c4867b1c4fd4ef63e4db7436ef363e0ad7531d1558856bae64f4"
-
-[[package]]
-name = "lint"
-version = "0.1.0"
-dependencies = [
- "cargo_metadata",
- "serde_json",
- "syn",
-]
 
 [[package]]
 name = "linux-raw-sys"
@@ -7242,32 +7238,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "bevy_app",
- "bevy_ecs",
- "bevy_replicon",
- "bevy_state",
- "ctrlc",
- "envy",
- "futures-util",
- "jsonwebtoken",
- "metrics",
- "rand 0.9.4",
- "renet2",
- "serde",
- "serde_json",
- "service",
- "strum",
- "tokio",
- "tokio-tungstenite",
- "ureq",
- "world",
-]
-
-[[package]]
 name = "service"
 version = "0.1.0"
 dependencies = [
@@ -9364,30 +9334,6 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
-]
-
-[[package]]
-name = "world"
-version = "0.1.0"
-dependencies = [
- "bevy_app",
- "bevy_ecs",
- "bevy_replicon",
- "bevy_state",
- "bevy_terminal",
- "bevy_time",
- "derive_more",
- "euclid",
- "getrandom 0.2.17",
- "oorandom",
- "pathfinding",
- "postcard",
- "rayon",
- "renet2",
- "serde",
- "serde_json",
- "strum",
- "tiled",
 ]
 
 [[package]]

@@ -1,0 +1,131 @@
+[package]
+name = "game"
+version.workspace = true
+edition.workspace = true
+description = "The game: the isomorphic simulation library and its server, browser client, bench, and lint binaries"
+
+[package.metadata.lint]
+game = true
+
+[[bin]]
+name = "kc-roles"
+path = "src/bin/kc_roles.rs"
+
+# Load generator: connects N headless replicon clients to an already-running real game server over
+# real websocket sockets. Server-only (no in-process server); see `just loadtest`.
+[[bin]]
+name = "loadtest"
+path = "src/bin/bench/loadtest.rs"
+
+[features]
+# Opt-in CPU (pprof flamegraph) + allocation profiling of a fixed workload.
+# Build with `--profile profiling --features profiling` for debug symbols.
+profiling = ["dep:pprof"]
+
+# One dependency set for every target keeps the source tree free of #[cfg] gates: the browser-only
+# crates (bevy's render stack, ui, web-sys, kira, …) also compile natively — wasm imports become
+# panicking stubs and the linker strips what the native binaries never call.
+[dependencies]
+bevy = { workspace = true, features = [
+    "async_executor",
+    "bevy_asset",
+    "bevy_log",
+    "bevy_state",
+    "std",
+    "bevy_winit",
+    "default_font",
+    "custom_cursor",
+    "bevy_sprite",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_post_process",
+    "bevy_sprite_render",
+    "bevy_gizmos_render",
+    "bevy_animation",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_gizmos",
+    "bevy_image",
+    "bevy_mesh",
+    "bevy_shader",
+    "bevy_material",
+    "bevy_text",
+    "bevy_window",
+    "hdr",
+    "png",
+    "bevy_input_focus",
+    "bevy_ui",
+    "bevy_ui_render",
+    "bevy_ui_widgets",
+    "bevy_scene",
+    "bevy_picking",
+    "sprite_picking",
+    "ui_picking",
+    "webgl2",
+    "web",
+] }
+ui = { path = "../ui" }
+bevy_tiled = { path = "../bevy/tiled" }
+bevy_terminal = { path = "../bevy/terminal" }
+bevy_app.workspace = true
+bevy_ecs.workspace = true
+bevy_picking.workspace = true
+bevy_replicon = { workspace = true, features = ["client", "server"] }
+bevy_state.workspace = true
+bevy_time = { workspace = true, features = ["std"] }
+bevy_kira_audio = { version = "0.26.0-rc.1", features = ["wav"] }
+base64 = "0.22"
+derive_more = { version = "2", features = ["add", "add_assign"] }
+euclid = { version = "0.22", features = ["serde"] }
+pathfinding = "4"
+oorandom = "11"
+getrandom = "0.2"
+gloo-net = { version = "0.6", default-features = false, features = ["http"] }
+include_dir = "0.7"
+console_error_panic_hook = "0.1"
+rayon.workspace = true
+strum = { workspace = true, features = ["derive"] }
+renet2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tiled = { version = "0.15", default-features = false }
+postcard = { version = "1", features = ["alloc"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlCanvasElement",
+    "Storage",
+    "WebSocket",
+    "BinaryType",
+    "MessageEvent",
+] }
+
+# Native-only: crates the server/bench/lint binaries need that have no wasm build (tokio, axum, …),
+# plus the desktop windowing features the client code needs to compile natively (mirrors ui's split).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy = { workspace = true, features = ["x11", "multi_threaded"] }
+axum.workspace = true
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", default-features = false }
+ctrlc.workspace = true
+envy.workspace = true
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+metrics = "0.24"
+rand = "0.9"
+service = { path = "../service" }
+tokio.workspace = true
+ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
+tungstenite = "0.26"
+pprof = { version = "0.15", features = ["flamegraph", "protobuf-codec"], optional = true }
+cargo_metadata = "0.19"
+syn = { workspace = true, features = ["visit"] }
+
+# Wasm-only features: `reflect_auto_register`'s #[used] registration slices defeat --gc-sections,
+# so enabling it natively would drag the whole (unused) render stack into the server binary.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { workspace = true, features = ["reflect_auto_register"] }
+getrandom = { version = "0.2", features = ["js"] }

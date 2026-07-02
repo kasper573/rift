@@ -1,6 +1,6 @@
 #!/bin/bash
 # Syncs the realm's roles and groups with the source of truth (roles.conf, generated from
-# game/world) on every container start. A temporary admin service account is written straight to
+# the game crate) on every container start. A temporary admin service account is written straight to
 # the database before the server boots and deleted once the sync ends, so no admin credential ever
 # exists outside this container or outlives the sync. Everything else about the realm lives in the
 # realm import, not here.

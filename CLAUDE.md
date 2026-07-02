@@ -27,15 +27,16 @@
 - Aim for single source of truth (however do not conflate this with DRY. Code duplication is allowed and is not the same thing as SSoT).
 - Any and all public type names must be intuitive and not ambigious if listed alongside other public types. Do not rely on crate namespacing to disambiguate. 
 - A folder may never contain only one file, with the exception of common crate root folders like `src`, `static`, `assets`, `templates`, etc. 
+- Avoid the use of #[cfg]. Only reach for it when it's absolutely necessary, and keep the usage count as low as possible.
 
 ## Architecture
 
-1. Each game crate's `src/` is organized into `core/`, `systems/`:
+1. The game crates `src/` is organized into `core/`, `systems/`, `data/`:
 
 `core/`:
 - code that may be reused by all systems
 - typically low level systems and primitives
-- may not depend on high level systems (not its own crate's `systems`, nor another crate's — e.g. the client's `core` must not touch `world::systems`)
+- may not depend on high level systems
 - must be abstract and pluggable: systems integrate with core, core never reaches into a system. Never create a `systems::x` that mirrors a `core::x`. If core code seems to need a system, that's a sign core isn't abstract enough — make it extensible (traits, messages, registries, callbacks) and put the game-specific glue in the relevant feature.
 
 `systems/`:
@@ -43,9 +44,11 @@
 - the majority of our game content and mechanics goes here
 - may depend on other high level systems
 
-2. The ui and bevy/* crates may not depend on other crates in this repo. They may depend on third party crates.
+`src/data/`: is the content layer: one normalized table per file, each built with the `table!` macro the single source of truth for a table's `enum Id`, its `TABLE`, and `Id::get()`. Tables stay separate and reference each other only loosely by `data::*::Id`, never by embedding another table's rows (a row may still nest its own data). Table row structs live in core/* or systems/*, while `data/` only declares the rows. The idea is that the content layer can be swapped for a runtime loaded format in the future without too much hassle.
 
-3. `world`'s `src/data/` is the content layer: one normalized table per file, each built with the `table!` macro the single source of truth for a table's `enum Id`, its `TABLE`, and `Id::get()`. Tables stay separate and reference each other only loosely by `data::*::Id`, never by embedding another table's rows (a row may still nest its own data). Table row structs live in core/* or systems/*, while `data/` only declares the rows. The idea is that the content layer can be swapped for a runtime loaded format in the future without too much hassle.
+Should contain no business logic, only data.
+
+2. The ui and bevy/* crates may not depend on other crates in this repo. They may depend on third party crates.
 
 ## Comments
 

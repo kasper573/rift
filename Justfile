@@ -5,21 +5,21 @@ compose := "docker compose -f " + compose_file + " --profile test"
 
 lint:
     cargo fmt --check
-    cargo run --quiet -p lint
+    cargo run --release --quiet -p game --bin lint
     cargo clippy --release --all-targets -- -D warnings
-    cargo clippy --release -p client --target wasm32-unknown-unknown -- -D warnings
+    cargo clippy --release -p game --lib --bin client --target wasm32-unknown-unknown -- -D warnings
 
 test:
-    cargo test --release -p world
+    cargo test --release -p game
 
 # Find the highest area count sustained within the tick budget. Players are congested (all on the
 # spawn tile, one shared view) by default; `just bench dist` spreads them for distinct views.
 bench mode="":
-    RIFT_BENCH_ASSETS_DIR=assets cargo run --release -p bench -- {{mode}}
+    RIFT_BENCH_ASSETS_DIR=assets cargo run --release -p game --bin bench -- {{mode}}
 
 loadtest count="dyn":
     RIFT_LOADTEST_HTTP_URL=http://127.0.0.1:9998 RIFT_LOADTEST_WS_URL=ws://127.0.0.1:9999 \
-      cargo run --release -p bench --bin loadtest -- {{count}}
+      cargo run --release -p game --bin loadtest -- {{count}}
 
 loadtest-stack-up:
     docker network inspect rift >/dev/null 2>&1 || docker network create rift
@@ -31,17 +31,17 @@ render map out="":
     cargo run -p bevy_tiled --bin render -- {{map}} {{out}}
 
 build:
-    cargo build --release -p website -p server
-    cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
+    cargo build --release -p website -p game --bin website --bin server
+    cargo run --release -p game --bin kc-roles > docker/keycloak/roles.conf
 
-# The browser client: a wasm cdylib post-processed by wasm-bindgen into the bundle the website serves
+# The browser client: a wasm binary post-processed by wasm-bindgen into the bundle the website serves
 # (and bakes into its image). Assets are embedded in the binary, so there's nothing else to ship. The
 # dev loop builds it plain and fast; the deploy alone re-runs this with LTO + size opt-level + strip
 # (env, see ci.yml) to roughly halve the bundle for mobile Safari's per-tab memory budget.
 wasm:
-    cargo build --release -p client --target wasm32-unknown-unknown
+    cargo build --release -p game --bin client --target wasm32-unknown-unknown
     wasm-bindgen --target web --no-typescript --out-name rift --out-dir target/wasm \
-      target/wasm32-unknown-unknown/release/rift.wasm
+      target/wasm32-unknown-unknown/release/client.wasm
 
 stack: build wasm stack-up
 
@@ -63,7 +63,7 @@ logs:
     {{compose}} logs --no-color
 
 kc-provision:
-    cargo run --release -p world --bin kc-roles > docker/keycloak/roles.conf
+    cargo run --release -p game --bin kc-roles > docker/keycloak/roles.conf
     {{compose}} up -d --build keycloak
 
 # Bring the stack up (website serving the baked wasm), then rebuild the wasm and refresh just the
@@ -75,7 +75,7 @@ dev: stack
     command -v cargo-watch >/dev/null || { echo "just dev needs cargo-watch: cargo install cargo-watch --locked"; exit 1; }
     set -a; source docker/.env.test; set +a
     echo "sign in and play at https://${RIFT_DOMAIN}/play"
-    cargo watch -w game/client -w game/world -w ui -w bevy \
+    cargo watch -w game -w ui -w bevy \
       -s 'just wasm && {{compose}} up -d --build --wait rift-website'
 
 # `down -v` wipes volumes: keycloak only imports its realm on first boot, so realm changes

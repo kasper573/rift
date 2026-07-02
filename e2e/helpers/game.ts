@@ -45,8 +45,7 @@ export async function captureScene(page: Page): Promise<Image> {
   return decode(await canvas(page).screenshot());
 }
 
-// Clicks a world-space tile via the client's e2e hook (installed on window at startup — see
-// game/client/src/testing.rs): a warp tile crosses, any other walks.
+// Clicks a world-space tile via the client's e2e hook (installed on window at startup: a warp tile crosses, any other walks.
 export async function clickWorldTile(page: Page, x: number, y: number): Promise<void> {
   await page.evaluate(
     ({ x, y }) => {
