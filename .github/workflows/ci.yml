@@ -24,10 +24,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      # Cache compilation across runs with sccache (rust-cache keeps the registry + dep .rlibs; sccache
-      # caches the workspace crates' codegen that rust-cache cleans). Incremental off — sccache needs it.
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
+      # rust-cache restores the registry and compiled dependencies across runs. Incremental off: the
+      # per-run incremental artifacts are large and machine-specific, so caching a lean shared-dep
+      # target/ restores far more than it costs.
       CARGO_INCREMENTAL: "0"
       DEPLOY: ${{ github.ref == 'refs/heads/main'  }}
       DOCKER_REGISTRY: ghcr.io
@@ -40,12 +39,17 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           deps: all
+      # The sole build cache. A per-object compiler cache (sccache) is deliberately absent: on the GitHub
+      # Actions backend it writes thousands of tiny entries that exhaust the repo's 10 GB cache quota and
+      # evict this one, so the whole dependency graph recompiled from cold every run.
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           # main builds optimized and branches don't, so they keep separate caches to avoid rebuilding
           # dependencies at the other's opt-level on every run.
           key: ci-${{ github.ref == 'refs/heads/main' && 'main' || 'branch' }}
-      - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+          # Save the dependency cache even when the run fails (e.g. a flaky e2e), so the next push doesn't
+          # recompile every dependency from cold.
+          cache-on-failure: "true"
       - name: Lint and test
         # Unoptimized: lint and unit tests don't ship, so build them fast regardless of branch.
         env:
