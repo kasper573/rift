@@ -11,11 +11,11 @@ use bevy_ui::{BorderRadius, FlexDirection, Node, PositionType, UiRect, UiTransfo
 use crate::component;
 use crate::motion::transition::STANDARD_ENTER;
 use crate::motion::{Motion, Transform2d};
+use crate::opacity::Opacity;
 use crate::state::ancestor_with;
 use crate::style::Style;
 use crate::theme::theme;
 use crate::tokens::{radius, spacing};
-use bevy_opacity::Opacity;
 
 const CARD_WIDTH: f32 = 356.0;
 const CARD_HEIGHT: f32 = 76.0;
@@ -83,7 +83,7 @@ pub fn toast() -> impl Scene {
         component(card_node())
         Toast
         Motion
-        component(Opacity::new(0.0))
+        component(Opacity(0.0))
         UiTransform
         template_value(card_style())
     }

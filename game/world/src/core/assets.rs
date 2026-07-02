@@ -13,6 +13,16 @@ pub trait AssetSource: Send + Sync {
     fn open(&self, path: &Path) -> io::Result<Box<dyn Read>>;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub struct FilesystemSource(pub std::path::PathBuf);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AssetSource for FilesystemSource {
+    fn open(&self, path: &Path) -> io::Result<Box<dyn Read>> {
+        Ok(Box::new(std::fs::File::open(self.0.join(path))?))
+    }
+}
+
 type Cache = Mutex<HashMap<(AssetRef, TypeId), &'static (dyn Any + Send + Sync)>>;
 
 #[derive(Resource, Clone)]

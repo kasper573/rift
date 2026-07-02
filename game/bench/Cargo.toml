@@ -21,6 +21,8 @@ path = "src/loadtest.rs"
 profiling = ["dep:pprof"]
 
 [dependencies]
+envy.workspace = true
+serde.workspace = true
 bevy_app.workspace = true
 bevy_ecs.workspace = true
 bevy_state.workspace = true

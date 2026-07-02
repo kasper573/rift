@@ -43,7 +43,7 @@ impl OnTap {
 }
 
 #[derive(Resource, Default)]
-pub struct SnapGrid(pub f32);
+pub struct SnapGrid(pub Option<f32>);
 
 pub(crate) struct DragPlugin;
 
@@ -236,13 +236,10 @@ fn settle(world: &mut World, root: Entity) {
     write_geom(world, root, settled);
 }
 
-fn snapped(raw: Geom, grid: f32, resize: bool, min: Vec2) -> Geom {
-    let snap = |value: f32| {
-        if grid > 0.0 {
-            (value / grid).round() * grid
-        } else {
-            value
-        }
+fn snapped(raw: Geom, grid: Option<f32>, resize: bool, min: Vec2) -> Geom {
+    let snap = |value: f32| match grid {
+        Some(grid) => (value / grid).round() * grid,
+        None => value,
     };
     if resize {
         Geom {

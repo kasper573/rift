@@ -116,11 +116,7 @@ fn actor_cues(
         let Some((was, then)) = seen.0.insert(entity, (pose.action, now)) else {
             continue;
         };
-        let since = if was == pose.action {
-            then
-        } else {
-            Seconds(-1.0)
-        };
+        let since = (was == pose.action).then_some(then);
         let model = service.resolve(*actor.model.get(), build_model);
         let (cues, stepped) =
             model.cues(pose.action.name(), pose.dir, since, now, actor.attack_rate);

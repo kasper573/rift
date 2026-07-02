@@ -2,7 +2,6 @@
 resolver = "3"
 members = [
     "ui",
-    "bevy/opacity",
     "bevy/tiled",
     "game/world",
     "game/server",
@@ -16,7 +15,6 @@ members = [
 # would otherwise collide with the bench bin in game/bench (shared target dir).
 default-members = [
     "ui",
-    "bevy/opacity",
     "game/world",
     "game/server",
     "game/bench",

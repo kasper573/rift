@@ -33,17 +33,22 @@ const STABILIZE: Duration = Duration::from_secs(2);
 /// Sample the server tick over this window.
 const WINDOW: Duration = Duration::from_secs(3);
 
+#[derive(serde::Deserialize)]
+struct Config {
+    http_url: String,
+    ws_url: String,
+}
+
 fn main() {
+    let config: Config = envy::prefixed("RIFT_LOADTEST_")
+        .from_env()
+        .expect("RIFT_LOADTEST_* environment");
     let mode = std::env::args().nth(1);
-    let http_url =
-        std::env::var("RIFT_LOADTEST_HTTP_URL").unwrap_or_else(|_| "http://127.0.0.1:9998".into());
-    let ws_url =
-        std::env::var("RIFT_LOADTEST_WS_URL").unwrap_or_else(|_| "ws://127.0.0.1:9999".into());
 
     match mode.as_deref() {
-        None | Some("dyn") => run_dyn(&http_url, &ws_url),
+        None | Some("dyn") => run_dyn(&config.http_url, &config.ws_url),
         Some(spec) => match spec.parse::<usize>() {
-            Ok(count) => run_fixed(&http_url, &ws_url, count),
+            Ok(count) => run_fixed(&config.http_url, &config.ws_url, count),
             Err(_) => {
                 eprintln!("usage: loadtest [dyn | <count>]");
                 std::process::exit(1);

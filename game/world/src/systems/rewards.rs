@@ -20,34 +20,6 @@ pub enum Reward {
     },
 }
 
-struct RewardCtx<'a> {
-    world: &'a mut World,
-    rewardee: Option<Entity>,
-    rng: &'a mut Rng,
-    drops: &'a mut Vec<(data::item::Id, u32)>,
-}
-
-fn apply(reward: Reward, ctx: &mut RewardCtx) {
-    match reward {
-        Reward::Xp(amount) => {
-            if let Some(entity) = ctx.rewardee
-                && let Some(mut xp) = ctx.world.get_mut::<Xp>(entity)
-            {
-                xp.gain(amount);
-            }
-        }
-        Reward::Item {
-            amount,
-            item,
-            chance,
-        } => {
-            if chance.is_none_or(|percent| ctx.rng.rand_float() * 100.0 < percent) {
-                ctx.drops.push((item, amount));
-            }
-        }
-    }
-}
-
 pub fn grant(world: &mut World) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let deaths: Vec<Died> = world.resource_mut::<Messages<Died>>().drain().collect();
@@ -79,4 +51,32 @@ pub fn grant(world: &mut World) {
             scatter_drop(world, died.entity, &drops, reserved_by);
         }
     });
+}
+
+struct RewardCtx<'a> {
+    world: &'a mut World,
+    rewardee: Option<Entity>,
+    rng: &'a mut Rng,
+    drops: &'a mut Vec<(data::item::Id, u32)>,
+}
+
+fn apply(reward: Reward, ctx: &mut RewardCtx) {
+    match reward {
+        Reward::Xp(amount) => {
+            if let Some(entity) = ctx.rewardee
+                && let Some(mut xp) = ctx.world.get_mut::<Xp>(entity)
+            {
+                xp.gain(amount);
+            }
+        }
+        Reward::Item {
+            amount,
+            item,
+            chance,
+        } => {
+            if chance.is_none_or(|percent| ctx.rng.rand_float() * 100.0 < percent) {
+                ctx.drops.push((item, amount));
+            }
+        }
+    }
 }

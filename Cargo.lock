@@ -666,8 +666,10 @@ dependencies = [
  "bevy_replicon",
  "bevy_state",
  "bevy_time",
+ "envy",
  "pprof",
  "renet2",
+ "serde",
  "strum",
  "tungstenite",
  "ureq",
@@ -1425,18 +1427,6 @@ name = "bevy_mikktspace"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bff34eb29ff4b8a8688bc7299f14fb6b597461ca80fec03ed7d22939ab33e48f"
-
-[[package]]
-name = "bevy_opacity"
-version = "0.1.0"
-dependencies = [
- "bevy_app",
- "bevy_color",
- "bevy_ecs",
- "bevy_text",
- "bevy_time",
- "bevy_ui",
-]
 
 [[package]]
 name = "bevy_pbr"
@@ -8223,7 +8213,6 @@ dependencies = [
  "bevy_ecs",
  "bevy_input",
  "bevy_math",
- "bevy_opacity",
  "bevy_picking",
  "bevy_scene",
  "bevy_text",

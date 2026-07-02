@@ -14,9 +14,10 @@ use bevy_ui::UiSystems;
 use bevy_ui_widgets::{ButtonPlugin, CheckboxPlugin, ScrollAreaPlugin};
 
 use utils::motion::MotionPlugin;
+use utils::opacity::OpacityPlugin;
 
 pub use utils::theme;
-pub(crate) use utils::{collapse, drag, motion, overlay, place, state, style, surface};
+pub(crate) use utils::{collapse, drag, motion, opacity, overlay, place, state, style, surface};
 
 pub use bevy_ui_widgets::{Activate, ValueChange, observe};
 pub use components::*;
@@ -35,7 +36,7 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(bevy_opacity::OpacityPlugin);
+        app.add_plugins(OpacityPlugin);
         app.add_plugins(MotionPlugin);
         if !app.is_plugin_added::<ButtonPlugin>() {
             app.add_plugins(ButtonPlugin);

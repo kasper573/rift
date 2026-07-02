@@ -31,24 +31,6 @@ pub const TICK_HZ: crate::core::time::Hertz = crate::core::time::Hertz(30.0);
 /// replicating at `TICK_HZ / REPLICATION_INTERVAL` (10 Hz) rather than every tick cuts it ~3x.
 pub const REPLICATION_INTERVAL: u64 = 3;
 
-#[derive(Resource)]
-struct ReplicationClock(u64);
-
-fn advance_replication_clock(mut clock: ResMut<ReplicationClock>) {
-    clock.0 = clock.0.wrapping_add(1);
-}
-
-fn on_replication_tick(clock: Res<ReplicationClock>) -> bool {
-    clock.0.is_multiple_of(REPLICATION_INTERVAL)
-}
-
-pub(crate) fn requests<M: Message>(world: &mut World) -> Vec<FromClient<M>> {
-    world
-        .resource_mut::<Messages<FromClient<M>>>()
-        .drain()
-        .collect()
-}
-
 pub fn protocol(app: &mut App) {
     actor::register(app);
     area::register(app);
@@ -184,4 +166,22 @@ pub fn step_areas(apps: &mut [App]) {
             world.run_schedule(Main);
             world.clear_trackers();
         });
+}
+
+pub(crate) fn requests<M: Message>(world: &mut World) -> Vec<FromClient<M>> {
+    world
+        .resource_mut::<Messages<FromClient<M>>>()
+        .drain()
+        .collect()
+}
+
+#[derive(Resource)]
+struct ReplicationClock(u64);
+
+fn advance_replication_clock(mut clock: ResMut<ReplicationClock>) {
+    clock.0 = clock.0.wrapping_add(1);
+}
+
+fn on_replication_tick(clock: Res<ReplicationClock>) -> bool {
+    clock.0.is_multiple_of(REPLICATION_INTERVAL)
 }

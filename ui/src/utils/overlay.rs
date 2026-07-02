@@ -12,9 +12,9 @@ use bevy_ui::{Display, GlobalZIndex, Node, PositionType, UiTransform, Val};
 use crate::component;
 use crate::motion::transition::{EMPHASIZED_ENTER, EMPHASIZED_EXIT};
 use crate::motion::{Motion, Transform2d};
+use crate::opacity::Opacity;
 use crate::place::{Placed, Placement};
 use crate::state::ancestor_with;
-use bevy_opacity::Opacity;
 
 pub(crate) const OVERLAY_EXIT: Duration = Duration::from_millis(240);
 const OVERLAY_Z: i32 = 1000;
@@ -60,7 +60,7 @@ impl OverlayContent {
         bsn! {
             component(OverlayContent { enter, exit, closing_at: None, was_open: false })
             Motion
-            component(Opacity::new(0.0))
+            component(Opacity(0.0))
             UiTransform
         }
     }

@@ -8,6 +8,9 @@ use world::systems::player::{ClientId, JoinRequest, SpawnPolicy};
 
 pub const PLAYERS_PER_AREA: usize = 25;
 
+/// Ticks stepped before sampling, so spawn waves and connect churn settle out of the measurement.
+pub const WARMUP: usize = 30;
+
 /// The connection entity per player (one per simulated client). Their characters are spawned by the
 /// world's own `join` system; [`connect`] later promotes them to fully replicating clients. Shared
 /// by the benchmark and the profiler so both measure the exact same simulation.

@@ -3,9 +3,9 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use bevy::prelude::*;
-use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::wasm_bindgen;
+use wasm_bindgen::{JsCast, JsValue};
 
 #[derive(Resource)]
 pub struct StartParams {
@@ -92,6 +92,13 @@ pub fn sync_window(window: &mut Window) {
     if window.resolution.width() != logical_w || window.resolution.height() != logical_h {
         window.resolution.set(logical_w, logical_h);
     }
+}
+
+pub fn expose_global_fn(name: &str, hook: impl Fn(f32, f32) + 'static) {
+    let hook = Closure::<dyn Fn(f32, f32)>::new(hook);
+    js_sys::Reflect::set(&js_sys::global(), &JsValue::from_str(name), hook.as_ref())
+        .unwrap_or_else(|_| panic!("expose {name} on the JS global"));
+    hook.forget(); // hand the closure to JS for the page's lifetime
 }
 
 pub fn load(key: &str) -> Option<String> {

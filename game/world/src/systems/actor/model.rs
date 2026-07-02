@@ -143,11 +143,13 @@ impl ActorModel {
         }
     }
 
+    /// `prev` is the playback position at the previous sample, or `None` when the action just
+    /// started, in which case every cue up to `now` fires.
     pub fn cues(
         &self,
         action: &str,
         dir: Direction,
-        prev: Seconds,
+        prev: Option<Seconds>,
         now: Seconds,
         attack_speed: PlaybackRate,
     ) -> (Vec<&SfxId>, bool) {
@@ -163,7 +165,7 @@ impl ActorModel {
         let (mut sfx, mut stepped) = (Vec::new(), false);
         let mut cursor = Millis(0.0);
         for frame in strip {
-            if crossed(once, total, cursor, authored(prev), authored(now)) {
+            if crossed(once, total, cursor, prev.map(authored), authored(now)) {
                 sfx.extend(self.sounds.get(&frame.tile_id));
                 stepped |= self.steps.contains(&frame.tile_id);
             }
@@ -222,7 +224,7 @@ fn total_ms(strip: &[Frame]) -> Millis {
     Millis(strip.iter().map(|frame| frame.duration as f32).sum())
 }
 
-fn crossed(once: bool, total: Millis, at: Millis, prev: Millis, now: Millis) -> bool {
+fn crossed(once: bool, total: Millis, at: Millis, prev: Option<Millis>, now: Millis) -> bool {
     let count = |t: Millis| {
         if t < at {
             0
@@ -232,5 +234,5 @@ fn crossed(once: bool, total: Millis, at: Millis, prev: Millis, now: Millis) -> 
             (t - at).ratio(total) as i64 + 1
         }
     };
-    count(now) > count(prev)
+    count(now) > prev.map_or(0, count)
 }

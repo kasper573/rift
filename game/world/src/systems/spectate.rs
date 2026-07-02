@@ -1,21 +1,20 @@
+use std::collections::HashMap;
+
 use bevy_app::App;
 use bevy_ecs::component::Component;
+use bevy_ecs::lifecycle::Remove;
 use bevy_ecs::message::Message;
+use bevy_ecs::observer::On;
+use bevy_ecs::prelude::*;
+use bevy_replicon::prelude::Replicated;
 use serde::{Deserialize, Serialize};
-
-use crate::systems::player::ClientId;
 
 use crate::core::assets::AssetService;
 use crate::systems::account::identity::Identity;
 use crate::systems::account::role::Role;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::movement::Position;
-use crate::systems::player::{Owner, Players};
-use bevy_ecs::lifecycle::Remove;
-use bevy_ecs::observer::On;
-use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::Replicated;
-use std::collections::HashMap;
+use crate::systems::player::{ClientId, Owner, Players};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -58,30 +57,6 @@ pub fn requests(world: &mut World) {
             None => spawn_anchor(world, client, request.message.watch),
         }
     }
-}
-
-fn allowed(world: &World, client_entity: Entity, client: ClientId) -> bool {
-    let playing = world.resource::<Players>().0.contains_key(&client);
-    let entitled = world
-        .get::<Identity>(client_entity)
-        .is_some_and(|identity| identity.has_role(Role::Spectate));
-    !playing && entitled
-}
-
-fn spawn_anchor(world: &mut World, client: ClientId, watch: Option<ClientId>) {
-    let zone = world.resource::<crate::systems::WorldArea>().0;
-    let assets = world.resource::<AssetService>().clone();
-    let spawn = assets.resolve(zone.get().map, area::build_area).spawn;
-    let entity = world
-        .spawn((
-            Replicated,
-            Position { pos: spawn },
-            AreaTag { area: zone },
-            Owner { client },
-            Spectate { watch },
-        ))
-        .id();
-    world.resource_mut::<Spectators>().0.insert(client, entity);
 }
 
 pub fn follow(world: &mut World) {
@@ -130,4 +105,28 @@ pub fn client_left(
     if let Some(entity) = spectators.0.remove(id) {
         commands.entity(entity).despawn();
     }
+}
+
+fn allowed(world: &World, client_entity: Entity, client: ClientId) -> bool {
+    let playing = world.resource::<Players>().0.contains_key(&client);
+    let entitled = world
+        .get::<Identity>(client_entity)
+        .is_some_and(|identity| identity.has_role(Role::Spectate));
+    !playing && entitled
+}
+
+fn spawn_anchor(world: &mut World, client: ClientId, watch: Option<ClientId>) {
+    let zone = world.resource::<crate::systems::WorldArea>().0;
+    let assets = world.resource::<AssetService>().clone();
+    let spawn = assets.resolve(zone.get().map, area::build_area).spawn;
+    let entity = world
+        .spawn((
+            Replicated,
+            Position { pos: spawn },
+            AreaTag { area: zone },
+            Owner { client },
+            Spectate { watch },
+        ))
+        .id();
+    world.resource_mut::<Spectators>().0.insert(client, entity);
 }

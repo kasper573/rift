@@ -9,24 +9,31 @@ use std::time::Instant;
 use bevy_app::App;
 use bevy_ecs::prelude::{Entity, With};
 use bevy_replicon::prelude::Replicated;
+use world::core::assets::AssetService;
 use world::systems::movement::Position;
 use world::systems::visibility::seen_by;
 
 const AREAS: usize = 250; // near the current budget crossover: the representative heavy workload
-const WARMUP: usize = 30;
 const MEASURE: usize = 400;
+
+#[derive(serde::Deserialize)]
+struct Env {
+    no_clients: Option<bool>,
+}
 
 /// Profiles a fixed `AREAS`-area workload with clients connected (the replication-heavy "full"
 /// config), writing a CPU flamegraph + pprof protobuf and reporting allocation churn per tick. Uses
 /// the exact same [`crate::sim`] world construction the benchmark does, so the two never diverge.
-pub fn run(out_dir: &Path, layout: crate::sim::Layout) {
-    let assets = crate::assets::service();
+pub fn run(out_dir: &Path, layout: crate::sim::Layout, assets: AssetService) {
+    let env: Env = envy::prefixed("RIFT_BENCH_")
+        .from_env()
+        .expect("RIFT_BENCH_* environment");
     let (mut worlds, rosters) = crate::sim::worlds(AREAS, layout, &assets);
-    if std::env::var("PROFILE_NO_CLIENTS").is_err() {
+    if !env.no_clients.unwrap_or(false) {
         crate::sim::connect(&mut worlds, &rosters);
     }
 
-    for _ in 0..WARMUP {
+    for _ in 0..crate::sim::WARMUP {
         crate::sim::step_single_threaded(&mut worlds);
     }
 

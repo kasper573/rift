@@ -16,6 +16,10 @@ use crate::systems::movement::{
 use crate::systems::player::{Owner, sender_player, session};
 use crate::systems::stat::{self, StatKind};
 
+const TILE_DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
+const HP_REGEN_INTERVAL: Seconds = Seconds(10.0);
+const HP_REGEN_AMOUNT: f32 = 5.0;
+
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
     app.add_mapped_client_message::<AttackRequest>(Channel::Ordered);
@@ -41,10 +45,6 @@ pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
         hitbox.contains(point).then_some(entity)
     })
 }
-
-const TILE_DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
-const HP_REGEN_INTERVAL: Seconds = Seconds(10.0);
-const HP_REGEN_AMOUNT: f32 = 5.0;
 
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct AttackTarget {

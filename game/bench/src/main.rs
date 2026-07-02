@@ -1,22 +1,31 @@
-mod assets;
 #[cfg(feature = "profiling")]
 mod profiling;
 mod search;
 mod sim;
 
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use bevy_app::App;
+use world::core::assets::{AssetService, FilesystemSource};
 
 const BUDGET_MS: f64 = 40.0;
 // Must exceed the budget crossover (and the probe that overshoots it) but stay within RAM: the bench
 // holds every area world in memory at once (~3 MiB each with clients), so this caps peak use near
 // ~15 GiB. The search stops at the 40 ms crossover well before here anyway.
 const MAX_AREAS: usize = 5000;
-const WARMUP: usize = 30;
 const MEASURE: usize = 200;
 
+#[derive(serde::Deserialize)]
+struct Config {
+    assets_dir: PathBuf,
+    a: Option<Vec<usize>>,
+}
+
 fn main() {
+    let config: Config = envy::prefixed("RIFT_BENCH_")
+        .from_env()
+        .expect("RIFT_BENCH_* environment");
     // `dist` selects distributed (spread-out) players; the default is congested (all on the spawn
     // tile, sharing one view).
     let layout = if std::env::args().any(|arg| arg == "dist") {
@@ -30,18 +39,15 @@ fn main() {
         let out = std::env::args()
             .skip(1)
             .find(|arg| arg != "profile" && arg != "dist")
-            .map(std::path::PathBuf::from)
+            .map(PathBuf::from)
             .unwrap_or_else(|| std::env::current_dir().expect("cwd"));
-        profiling::run(&out, layout);
+        profiling::run(&out, layout, service(&config.assets_dir));
         return;
     }
 
-    if let Ok(spec) = std::env::var("BENCH_A") {
-        for a in spec
-            .split(',')
-            .filter_map(|s| s.trim().parse::<usize>().ok())
-        {
-            let p = point(a, WARMUP, MEASURE, layout);
+    if let Some(probes) = config.a {
+        for a in probes {
+            let p = point(a, layout, &config.assets_dir);
             println!(
                 "[bench]   A={a:<4} full={:6.2}ms sim={:6.2}ms repl={:6.2}ms p99={:6.2}ms  {}",
                 p.full,
@@ -65,7 +71,7 @@ fn main() {
     let mut previous: Option<(usize, f64)> = None;
     let mut next = Some(1usize);
     while let Some(areas) = next {
-        let p = point(areas, WARMUP, MEASURE, layout);
+        let p = point(areas, layout, &config.assets_dir);
         let mean = p.full;
         println!(
             "[bench]   A={areas:<4} mean={mean:6.2}ms  {}",
@@ -84,7 +90,7 @@ fn main() {
         previous = Some(last);
     }
 
-    let (areas, r) = best.unwrap_or_else(|| (1, point(1, WARMUP, MEASURE, layout)));
+    let (areas, r) = best.unwrap_or_else(|| (1, point(1, layout, &config.assets_dir)));
     let npcs = sim::npcs_per_area() * areas;
     let players = sim::PLAYERS_PER_AREA * areas;
     println!("\n[bench] areas,npcs,players,clients,mean_ms,p50_ms,p99_ms,max_ms,sim_ms,repl_ms");
@@ -107,6 +113,10 @@ fn main() {
     );
 }
 
+fn service(assets_dir: &Path) -> AssetService {
+    AssetService::new(FilesystemSource(assets_dir.to_path_buf()))
+}
+
 fn verdict(mean: f64) -> &'static str {
     if mean <= BUDGET_MS { "ok" } else { "over" }
 }
@@ -119,13 +129,13 @@ struct Point {
     max: f64,
 }
 
-fn point(areas: usize, warmup: usize, ticks: usize, layout: sim::Layout) -> Point {
-    let assets = assets::service();
+fn point(areas: usize, layout: sim::Layout, assets_dir: &Path) -> Point {
+    let assets = service(assets_dir);
     let (mut worlds, rosters) = sim::worlds(areas, layout, &assets);
 
-    let baseline = measure(&mut worlds, warmup, ticks);
+    let baseline = measure(&mut worlds);
     sim::connect(&mut worlds, &rosters);
-    let full = measure(&mut worlds, warmup, ticks);
+    let full = measure(&mut worlds);
 
     Point {
         full: full.0,
@@ -136,12 +146,12 @@ fn point(areas: usize, warmup: usize, ticks: usize, layout: sim::Layout) -> Poin
     }
 }
 
-fn measure(worlds: &mut [App], warmup: usize, ticks: usize) -> (f64, f64, f64, f64) {
-    for _ in 0..warmup {
+fn measure(worlds: &mut [App]) -> (f64, f64, f64, f64) {
+    for _ in 0..sim::WARMUP {
         sim::step(worlds);
     }
-    let mut samples = Vec::with_capacity(ticks);
-    for _ in 0..ticks {
+    let mut samples = Vec::with_capacity(MEASURE);
+    for _ in 0..MEASURE {
         let started = Instant::now();
         sim::step(worlds);
         samples.push(started.elapsed().as_secs_f64() * 1000.0);

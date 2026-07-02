@@ -10,7 +10,7 @@ use bevy_text::TextColor;
 use bevy_ui::{BackgroundColor, BorderColor, Checked, Node, Pressed, UiTransform};
 
 use crate::motion::{Motion, Paint as MotionPaint, Timing, Transform2d};
-use bevy_opacity::Opacity;
+use crate::opacity::Opacity;
 
 type Op = Arc<dyn Fn(&mut EntityWorldMut) + Send + Sync>;
 
@@ -316,7 +316,7 @@ impl Style {
                 entity.insert(transform.to_ui());
             }
             if let Some(opacity) = self.opacity {
-                entity.insert(Opacity::new(opacity));
+                entity.insert(Opacity(opacity));
             }
             return;
         }
@@ -358,7 +358,7 @@ impl Style {
             entity.insert(UiTransform::default());
         }
         if let Some(value) = opacity {
-            entity.insert(Opacity::new(value));
+            entity.insert(Opacity(value));
         }
     }
 }

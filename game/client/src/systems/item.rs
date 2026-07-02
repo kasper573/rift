@@ -1,8 +1,9 @@
 use bevy::prelude::*;
 use world::core::assets::AssetService;
-use world::core::math::Pos;
+use world::core::math::{Pos, WorldPx};
 use world::core::sfx::SfxId;
 use world::core::tiling::Tiles;
+use world::core::time::Seconds;
 use world::systems::area::{self, AreaTag};
 use world::systems::item::{DroppedItem, ItemConsumed, ItemsDropped};
 use world::systems::movement::Position;
@@ -10,11 +11,11 @@ use world::systems::movement::Position;
 use crate::core::render::{ToScreen, dynamic_z, sprite_transform};
 use crate::core::sfx::PlaySfx;
 
-const DROP_SIZE: f32 = 12.0;
-const DROP_STAGGER: f32 = 0.06;
-const DROP_DURATION: f32 = 0.5;
-const DROP_HOP: f32 = 24.0;
-const PENDING_TTL: f32 = 0.5;
+const DROP_SIZE: WorldPx = WorldPx(12.0);
+const DROP_STAGGER: Seconds = Seconds(0.06);
+const DROP_DURATION: Seconds = Seconds(0.5);
+const DROP_HOP: WorldPx = WorldPx(24.0);
+const PENDING_TTL: Seconds = Seconds(0.5);
 
 pub struct ItemsPlugin;
 
@@ -37,8 +38,8 @@ impl Plugin for ItemsPlugin {
 struct DropAnim {
     from: Vec2,
     to: Vec2,
-    delay: f32,
-    elapsed: f32,
+    delay: Seconds,
+    elapsed: Seconds,
     drop_sfx: Option<SfxId>,
 }
 
@@ -49,7 +50,7 @@ struct Pending {
     entity: Entity,
     from: Pos<Tiles>,
     index: usize,
-    age: f32,
+    age: Seconds,
 }
 
 fn use_sounds(
@@ -84,7 +85,7 @@ fn attach_drop_sprite(
     commands.entity(add.entity).insert((
         Sprite {
             image,
-            custom_size: Some(Vec2::splat(DROP_SIZE)),
+            custom_size: Some(Vec2::splat(DROP_SIZE.0)),
             ..default()
         },
         Transform::default(),
@@ -99,7 +100,7 @@ fn recv_drops(mut dropped: MessageReader<ItemsDropped>, mut pending: ResMut<Pend
                 entity,
                 from: dropped.from,
                 index,
-                age: 0.0,
+                age: Seconds(0.0),
             });
         }
     }
@@ -111,14 +112,14 @@ fn start_drops(
     drops: Query<(&DroppedItem, &Position)>,
     mut commands: Commands,
 ) {
-    let dt = time.delta_secs();
+    let dt = Seconds(time.delta_secs());
     pending.0.retain_mut(|drop| match drops.get(drop.entity) {
         Ok((dropped, position)) => {
             commands.entity(drop.entity).insert(DropAnim {
                 from: drop.from.to_screen(),
                 to: position.pos.to_screen(),
-                delay: drop.index as f32 * DROP_STAGGER,
-                elapsed: 0.0,
+                delay: DROP_STAGGER * drop.index as f32,
+                elapsed: Seconds(0.0),
                 drop_sfx: dropped.item.get().sfx.drop,
             });
             false
@@ -146,12 +147,14 @@ fn animate_drops(
     mut play: MessageWriter<PlaySfx>,
     mut commands: Commands,
 ) {
-    let dt = time.delta_secs();
+    let dt = Seconds(time.delta_secs());
     for (entity, position, tag, mut anim, mut transform) in &mut drops {
         anim.elapsed += dt;
-        let t = ((anim.elapsed - anim.delay) / DROP_DURATION).clamp(0.0, 1.0);
+        let t = (anim.elapsed - anim.delay)
+            .ratio(DROP_DURATION)
+            .clamp(0.0, 1.0);
         let ground = anim.from.lerp(anim.to, ease_out(t));
-        let hop = DROP_HOP * (std::f32::consts::PI * t).sin();
+        let hop = DROP_HOP.0 * (std::f32::consts::PI * t).sin();
         transform.translation = Vec3::new(
             ground.x,
             ground.y + hop,

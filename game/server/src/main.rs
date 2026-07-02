@@ -1,4 +1,3 @@
-mod assets;
 mod auth;
 mod transport;
 
@@ -22,7 +21,7 @@ use rand::RngCore;
 use renet2::{ConnectionConfig, DisconnectReason, RenetServer, ServerEvent};
 use strum::VariantArray;
 use transport::WsTransport;
-use world::core::assets::AssetService;
+use world::core::assets::{AssetService, FilesystemSource};
 use world::core::channels::RenetChannelsExt;
 use world::systems::account::Identity;
 use world::systems::area::transition;
@@ -106,7 +105,7 @@ fn main() {
         spawn_policy: config.player_spawn_type,
         immortal: Immortal(config.player_immortal),
     };
-    let assets = assets::service(config.assets_dir);
+    let assets = AssetService::new(FilesystemSource(config.assets_dir));
     simulate(
         ws_bind,
         sessions,

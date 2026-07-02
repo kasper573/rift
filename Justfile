@@ -15,10 +15,11 @@ test:
 # Find the highest area count sustained within the tick budget. Players are congested (all on the
 # spawn tile, one shared view) by default; `just bench dist` spreads them for distinct views.
 bench mode="":
-    cargo run --release -p bench -- {{mode}}
+    RIFT_BENCH_ASSETS_DIR=assets cargo run --release -p bench -- {{mode}}
 
 loadtest count="dyn":
-    cargo run --release -p bench --bin loadtest -- {{count}}
+    RIFT_LOADTEST_HTTP_URL=http://127.0.0.1:9998 RIFT_LOADTEST_WS_URL=ws://127.0.0.1:9999 \
+      cargo run --release -p bench --bin loadtest -- {{count}}
 
 loadtest-stack-up:
     docker network inspect rift >/dev/null 2>&1 || docker network create rift

@@ -12,20 +12,6 @@ pub fn register(app: &mut App) {
     effect::source(app, level_effects);
 }
 
-fn level_effects(world: &World, entity: Entity) -> Vec<Effect> {
-    let Some(job) = world.get::<Job>(entity) else {
-        return Vec::new();
-    };
-    let level = level(world, entity) as usize;
-    job.def
-        .get()
-        .levels
-        .iter()
-        .take(level)
-        .flat_map(|tier| tier.effects.iter().copied())
-        .collect()
-}
-
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Job {
     pub def: data::job::Id,
@@ -56,4 +42,18 @@ pub fn level(world: &World, entity: Entity) -> u32 {
         .iter()
         .filter(|tier| tier.exp <= xp)
         .count() as u32
+}
+
+fn level_effects(world: &World, entity: Entity) -> Vec<Effect> {
+    let Some(job) = world.get::<Job>(entity) else {
+        return Vec::new();
+    };
+    let level = level(world, entity) as usize;
+    job.def
+        .get()
+        .levels
+        .iter()
+        .take(level)
+        .flat_map(|tier| tier.effects.iter().copied())
+        .collect()
 }

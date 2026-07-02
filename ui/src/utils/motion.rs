@@ -9,7 +9,7 @@ use bevy_text::TextColor;
 use bevy_time::Time;
 use bevy_ui::{BackgroundColor, BorderColor, UiTransform, Val2};
 
-use bevy_opacity::{Opacity, OpacitySet};
+use crate::opacity::{Opacity, OpacitySet};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Easing {
@@ -270,7 +270,7 @@ pub(crate) fn advance_motion(time: Res<Time>, mut motions: Query<Painted>) {
             paint.0 = step_color(tween, dt);
         }
         if let (Some(tween), Some(mut opacity)) = (motion.opacity.as_mut(), opacity) {
-            opacity.set(step_f32(tween, dt));
+            opacity.0 = step_f32(tween, dt);
         }
 
         let spin = motion.spin.map(|speed| {

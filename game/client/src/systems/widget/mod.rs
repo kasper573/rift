@@ -59,6 +59,62 @@ pub trait Window: Send + Sync {
     fn sync(&self, world: &mut World);
 }
 
+pub(super) const SLOT: f32 = 36.0;
+pub(super) const SLOT_BG: Color = Color::srgb(0.14, 0.14, 0.14);
+pub(super) const SLOT_BORDER: Color = Color::srgb(0.24, 0.24, 0.24);
+
+pub(super) fn slot_node() -> Node {
+    Node {
+        width: Val::Px(SLOT),
+        height: Val::Px(SLOT),
+        margin: UiRect::all(Val::Px(1.0)),
+        border: UiRect::all(Val::Px(1.0)),
+        ..default()
+    }
+}
+
+pub(super) fn tooltip_label(text: impl Into<String>) -> impl Scene {
+    bsn! {
+        Node { padding: {UiRect::axes(Val::Px(6.0), Val::Px(3.0))} }
+        BackgroundColor({TOOLTIP_BG})
+        Pickable { should_block_lower: false, is_hoverable: false }
+        Children [ {EntityScene(text_colored(text.into(), Color::WHITE))} ]
+    }
+}
+
+pub(super) fn reconcile_children(
+    world: &mut World,
+    container: Entity,
+    keys: &[u64],
+    build: impl Fn(usize) -> Box<dyn Scene>,
+) {
+    let current: Vec<(Entity, u64)> = world
+        .get::<Children>(container)
+        .map(|children| {
+            children
+                .iter()
+                .filter_map(|child| world.get::<Keyed>(child).map(|keyed| (child, keyed.0)))
+                .collect()
+        })
+        .unwrap_or_default();
+    if current.iter().map(|(_, key)| *key).eq(keys.iter().copied()) {
+        return;
+    }
+    for (entity, _) in current {
+        world.entity_mut(entity).despawn();
+    }
+    for (index, &key) in keys.iter().enumerate() {
+        if let Ok(mut spawned) = world.spawn_scene(build(index)) {
+            spawned.insert(Keyed(key));
+            let child = spawned.id();
+            world.entity_mut(container).add_child(child);
+        }
+    }
+}
+
+#[derive(Component)]
+struct Keyed(u64);
+
 static WIDGETS: &[(&str, &dyn Widget)] = &[
     ("character", &character::CharacterWidget),
     ("effects", &effects::EffectsWidget),
@@ -139,7 +195,7 @@ struct UserSettings {
 #[derive(Serialize, Deserialize)]
 struct UiSettings {
     #[serde(default = "default_snap")]
-    snap: ScreenPx,
+    snap: Option<ScreenPx>,
     #[serde(default)]
     widgets: Vec<(String, ScreenVec)>,
     #[serde(default)]
@@ -148,9 +204,11 @@ struct UiSettings {
 
 impl UserSettings {
     fn load() -> UserSettings {
-        crate::core::platform::load(KEY)
+        let mut settings: UserSettings = crate::core::platform::load(KEY)
             .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        settings.ui.snap = settings.ui.snap.filter(|snap| snap.0 > 0.0);
+        settings
     }
 
     fn save(&self) {
@@ -159,8 +217,8 @@ impl UserSettings {
         }
     }
 
-    fn snap_grid(&self) -> f32 {
-        self.ui.snap.0
+    fn snap_grid(&self) -> Option<f32> {
+        self.ui.snap.map(|snap| snap.0)
     }
 
     fn widget_pos(&self, id: &str) -> Option<ScreenVec> {
@@ -194,14 +252,13 @@ impl UserSettings {
     }
 
     fn snapping_enabled(&self) -> bool {
-        self.ui.snap.0 > 0.0
+        self.ui.snap.is_some()
     }
 
     fn toggle_snapping(&mut self) {
-        self.ui.snap = if self.ui.snap.0 > 0.0 {
-            ScreenPx(0.0)
-        } else {
-            DEFAULT_SNAP
+        self.ui.snap = match self.ui.snap {
+            Some(_) => None,
+            None => Some(DEFAULT_SNAP),
         };
     }
 }
@@ -216,8 +273,8 @@ impl Default for UiSettings {
     }
 }
 
-fn default_snap() -> ScreenPx {
-    DEFAULT_SNAP
+fn default_snap() -> Option<ScreenPx> {
+    Some(DEFAULT_SNAP)
 }
 
 #[derive(Resource, Default)]
@@ -385,62 +442,6 @@ fn launcher_pos(window: &'static str, screen_w: f32) -> Vec2 {
         x,
         8.0 + window_def(window).order() as f32 * (WIDGET.0 + 8.0),
     )
-}
-
-pub(super) fn reconcile_children(
-    world: &mut World,
-    container: Entity,
-    keys: &[u64],
-    build: impl Fn(usize) -> Box<dyn Scene>,
-) {
-    let current: Vec<(Entity, u64)> = world
-        .get::<Children>(container)
-        .map(|children| {
-            children
-                .iter()
-                .filter_map(|child| world.get::<Keyed>(child).map(|keyed| (child, keyed.0)))
-                .collect()
-        })
-        .unwrap_or_default();
-    if current.iter().map(|(_, key)| *key).eq(keys.iter().copied()) {
-        return;
-    }
-    for (entity, _) in current {
-        world.entity_mut(entity).despawn();
-    }
-    for (index, &key) in keys.iter().enumerate() {
-        if let Ok(mut spawned) = world.spawn_scene(build(index)) {
-            spawned.insert(Keyed(key));
-            let child = spawned.id();
-            world.entity_mut(container).add_child(child);
-        }
-    }
-}
-
-#[derive(Component)]
-struct Keyed(u64);
-
-pub(super) const SLOT: f32 = 36.0;
-pub(super) const SLOT_BG: Color = Color::srgb(0.14, 0.14, 0.14);
-pub(super) const SLOT_BORDER: Color = Color::srgb(0.24, 0.24, 0.24);
-
-pub(super) fn slot_node() -> Node {
-    Node {
-        width: Val::Px(SLOT),
-        height: Val::Px(SLOT),
-        margin: UiRect::all(Val::Px(1.0)),
-        border: UiRect::all(Val::Px(1.0)),
-        ..default()
-    }
-}
-
-pub(super) fn tooltip_label(text: impl Into<String>) -> impl Scene {
-    bsn! {
-        Node { padding: {UiRect::axes(Val::Px(6.0), Val::Px(3.0))} }
-        BackgroundColor({TOOLTIP_BG})
-        Pickable { should_block_lower: false, is_hoverable: false }
-        Children [ {EntityScene(text_colored(text.into(), Color::WHITE))} ]
-    }
 }
 
 fn open_window(world: &mut World, window: &'static str) {

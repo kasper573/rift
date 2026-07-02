@@ -2,15 +2,18 @@ use bevy_app::App;
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::{Entity, MapEntities};
 use bevy_ecs::message::Message;
+use bevy_ecs::query::{QueryState, With};
+use bevy_ecs::world::World;
+use bevy_replicon::prelude::{Replicated, SendTargets, ToClients};
+use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Offset, Pos};
+use crate::core::sfx::SfxId;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
 use crate::data::item::Id;
-
-use crate::core::sfx::SfxId;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::effect::{self, Effect, TimedEffect, TimedEffects};
 use crate::systems::equipment::{self, Requirement};
@@ -19,10 +22,6 @@ use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, sender_player};
 use crate::systems::stat;
 use crate::systems::visibility::seen_by;
-use bevy_ecs::query::{QueryState, With};
-use bevy_ecs::world::World;
-use bevy_replicon::prelude::{Replicated, SendTargets, ToClients};
-use bevy_time::Time;
 
 pub const INVENTORY_MAX: u32 = 25;
 const RESERVATION_TTL: Seconds = Seconds(60.0);
@@ -42,21 +41,6 @@ pub fn register(app: &mut App) {
         .add_mapped_server_message::<ItemConsumed>(Channel::Ordered)
         .add_mapped_server_message::<ItemsDropped>(Channel::Ordered);
     effect::source(app, carried);
-}
-
-fn carried(world: &World, entity: Entity) -> Vec<Effect> {
-    world
-        .get::<Inventory>(entity)
-        .map(|inventory| {
-            inventory
-                .slots
-                .iter()
-                .map(|slot| slot.item.get())
-                .filter(|def| def.kind.carried())
-                .flat_map(|def| def.effects.iter().copied())
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -261,15 +245,6 @@ impl UseCtx<'_> {
     }
 }
 
-fn announce_consumed(world: &mut World, actor: Entity, item: Id) {
-    for client in seen_by(world, actor) {
-        world.write_message(ToClients {
-            targets: SendTargets::Single(bevy_replicon::prelude::ClientId::Client(client)),
-            message: ItemConsumed { item, actor },
-        });
-    }
-}
-
 pub fn use_item(world: &mut World) {
     for request in crate::systems::requests::<UseItemRequest>(world) {
         let Some(entity) = sender_player(world, request.client_id) else {
@@ -443,6 +418,30 @@ pub fn scatter_drop(
                 items: items.clone(),
                 from,
             },
+        });
+    }
+}
+
+fn carried(world: &World, entity: Entity) -> Vec<Effect> {
+    world
+        .get::<Inventory>(entity)
+        .map(|inventory| {
+            inventory
+                .slots
+                .iter()
+                .map(|slot| slot.item.get())
+                .filter(|def| def.kind.carried())
+                .flat_map(|def| def.effects.iter().copied())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn announce_consumed(world: &mut World, actor: Entity, item: Id) {
+    for client in seen_by(world, actor) {
+        world.write_message(ToClients {
+            targets: SendTargets::Single(bevy_replicon::prelude::ClientId::Client(client)),
+            message: ItemConsumed { item, actor },
         });
     }
 }
