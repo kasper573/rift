@@ -220,6 +220,8 @@ const SCENES: &[(&str, SceneBuilder)] = &[
     ("Popover + card", popover_card_scene),
     ("Toasts (sonner)", toasts_scene),
     ("Scroll area", scroll_area_scene),
+    ("Pinned scroll", pinned_scroll_scene),
+    ("Text input", text_input_scene),
     ("Widget", widget_scene),
     ("Window", window_scene),
 ];
@@ -687,6 +689,82 @@ fn widget_scene() -> Box<dyn Scene> {
                     on_tap: OnTap::new(|_| {}),
                     on_settle: OnSettle::new(|_, geom| geom),
                 }))}
+            ]
+        })],
+    )
+}
+
+#[derive(Component, Default, Clone)]
+struct PinnedLog;
+
+#[derive(Component, Default, Clone)]
+struct SubmittedText;
+
+fn pinned_scroll_scene() -> Box<dyn Scene> {
+    let items: Vec<Box<dyn Scene>> = (1..=30)
+        .map(|n| {
+            boxed(text_colored(
+                format!("Log line {n}"),
+                theme().surface_canvas.on,
+            ))
+        })
+        .collect();
+    col(
+        320.0,
+        vec![
+            boxed(bsn! {
+                Node { width: Val::Px(300.0), height: Val::Px(200.0) }
+                Children [
+                    ( {scroll_area()}
+                      Children [
+                        ( {scroll_viewport()}
+                          {ui::component(ui::PinToBottom::default())}
+                          Children [
+                            ( Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(6.0), width: Val::Percent(100.0), padding: {UiRect::all(Val::Px(8.0))} }
+                              PinnedLog
+                              Children [ {items} ]
+                            )
+                          ]
+                        ),
+                        ( {scroll_bar()} Children [ {EntityScene(scroll_thumb())} ] )
+                      ]
+                    )
+                ]
+            }),
+            boxed(bsn! {
+                {button_styled(button_intent::PRIMARY, ButtonSize::Md, "append line")}
+                on(|_: On<ui::Activate>, logs: Query<(Entity, Option<&Children>), With<PinnedLog>>, mut commands: Commands| {
+                    for (log, children) in &logs {
+                        let line = children.map_or(0, Children::len) + 1;
+                        commands
+                            .spawn_scene(text_colored(format!("Appended line {line}"), theme().surface_canvas.on))
+                            .insert(ChildOf(log));
+                    }
+                })
+            }),
+        ],
+    )
+}
+
+fn text_input_scene() -> Box<dyn Scene> {
+    col(
+        360.0,
+        vec![boxed(bsn! {
+            Node {
+                width: Val::Px(320.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(8.0),
+            }
+            Children [
+                {EntityScene(ui::text_input(ui::TextInputOptions {
+                    on_submit: ui::OnSubmit::new(|world, submitted| {
+                        let mut labels = world.query_filtered::<&mut Text, With<SubmittedText>>();
+                        for mut label in labels.iter_mut(world) {
+                            label.0 = format!("submitted: {submitted}");
+                        }
+                    }),
+                }))},
+                ( {text("submitted: —")} SubmittedText )
             ]
         })],
     )
