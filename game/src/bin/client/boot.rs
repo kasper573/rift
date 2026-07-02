@@ -18,7 +18,7 @@ pub fn run() {
 }
 
 fn boot() {
-    let params = core::platform::read_start_params();
+    let params = crate::platform::read_start_params();
     let session = params
         .access_token
         .as_deref()
@@ -41,7 +41,7 @@ fn boot() {
                     ..default()
                 })
                 .set(WindowPlugin {
-                    primary_window: Some(core::platform::primary_window()),
+                    primary_window: Some(crate::platform::primary_window()),
                     ..default()
                 })
                 .set(ImagePlugin::default_nearest()),
@@ -50,6 +50,9 @@ fn boot() {
         app.insert_resource(session);
     }
     app.insert_resource(params)
+        .insert_resource(core::platform::ClientPlatform(Box::new(
+            crate::platform::WebPlatform,
+        )))
         .add_plugins((
             ui::UiPlugin,
             core::net::transport::RepliconRenetClientPlugin,
@@ -66,7 +69,7 @@ fn boot() {
             systems::player::session::ClientSessionPlugin,
             systems::input::InputPlugin,
             systems::debug::DebugPlugin,
-            systems::testing::TestingPlugin,
+            crate::testing::TestingPlugin,
             systems::hud::HudPlugin,
             systems::terminal::TerminalPlugin,
             systems::fps::FpsPlugin,

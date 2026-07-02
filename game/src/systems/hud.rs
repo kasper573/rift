@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use ui::component;
 use ui::{Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
+use crate::core::platform::{ClientPlatform, Platform};
 use crate::systems::{effect, equipment, item, player, settings, stat, terminal};
 
 pub(crate) const WIDGET: ScreenPx = ScreenPx(48.0);
@@ -20,6 +21,7 @@ impl Plugin for HudPlugin {
         app.init_resource::<Settings>()
             .init_resource::<Open>()
             .init_resource::<RefreshWindows>()
+            .add_systems(Update, persist_settings)
             .add_systems(OnEnter(crate::systems::scene::Scene::Area), spawn_hud)
             .add_systems(
                 OnExit(crate::systems::scene::Scene::Area),
@@ -153,9 +155,9 @@ fn window_def(id: &str) -> &'static dyn Window {
 #[derive(Resource)]
 pub(crate) struct Settings(UserSettings);
 
-impl Default for Settings {
-    fn default() -> Settings {
-        Settings(UserSettings::load())
+impl FromWorld for Settings {
+    fn from_world(world: &mut World) -> Settings {
+        Settings(UserSettings::load(&*world.resource::<ClientPlatform>().0))
     }
 }
 
@@ -166,7 +168,14 @@ impl Settings {
 
     pub(crate) fn toggle_snapping(&mut self) {
         self.0.toggle_snapping();
-        self.0.save();
+    }
+}
+
+/// Persists settings on change instead of at each mutation site. The initial load also registers as
+/// a change, harmlessly rewriting what was just read.
+fn persist_settings(settings: Res<Settings>, platform: Res<ClientPlatform>) {
+    if settings.is_changed() {
+        settings.0.save(&*platform.0);
     }
 }
 
@@ -218,17 +227,18 @@ struct UiSettings {
 }
 
 impl UserSettings {
-    fn load() -> UserSettings {
-        let mut settings: UserSettings = crate::core::platform::load(KEY)
+    fn load(platform: &dyn Platform) -> UserSettings {
+        let mut settings: UserSettings = platform
+            .load(KEY)
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default();
         settings.ui.snap = settings.ui.snap.filter(|snap| snap.0 > 0.0);
         settings
     }
 
-    fn save(&self) {
+    fn save(&self, platform: &dyn Platform) {
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            crate::core::platform::save(KEY, &json);
+            platform.save(KEY, &json);
         }
     }
 
@@ -441,7 +451,6 @@ pub(crate) fn persist_widget(world: &mut World, id: &str, geom: Geom) -> Geom {
     settings
         .0
         .set_widget_pos(id, ScreenVec::from_vec2(geom.pos));
-    settings.0.save();
     geom
 }
 
@@ -454,7 +463,6 @@ fn persist_window(world: &mut World, id: &str, geom: Geom) -> Geom {
             size: ScreenVec::from_vec2(geom.size),
         },
     );
-    settings.0.save();
     geom
 }
 

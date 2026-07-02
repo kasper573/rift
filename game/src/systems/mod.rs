@@ -20,7 +20,6 @@ pub mod settings;
 pub mod spectate;
 pub mod stat;
 pub mod terminal;
-pub mod testing;
 pub mod view;
 pub mod visibility;
 

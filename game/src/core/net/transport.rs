@@ -4,13 +4,12 @@ use bevy_replicon::prelude::{
 };
 use renet2::RenetClient;
 
-use crate::core::platform::WsSocket;
+use crate::core::platform::ServerSocket;
 
 #[derive(Resource)]
 pub struct Client(pub RenetClient);
 
-/// The browser WebSocket, held non-send because `web_sys` handles are not `Send`.
-pub struct Socket(pub WsSocket);
+pub struct Socket(pub Box<dyn ServerSocket>);
 
 pub struct RepliconRenetClientPlugin;
 

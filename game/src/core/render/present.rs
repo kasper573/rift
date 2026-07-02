@@ -101,8 +101,11 @@ pub(super) fn setup(
     ));
 }
 
-pub(super) fn match_display(mut window: Single<&mut Window, With<PrimaryWindow>>) {
-    crate::core::platform::sync_window(&mut window);
+pub(super) fn match_display(
+    mut window: Single<&mut Window, With<PrimaryWindow>>,
+    platform: Res<crate::core::platform::ClientPlatform>,
+) {
+    platform.0.sync_window(&mut window);
 }
 
 pub(super) fn fit(

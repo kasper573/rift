@@ -10,7 +10,7 @@ use super::mode::Mode;
 use crate::core::net::auth::Session;
 use crate::core::net::channels::RenetChannelsExt;
 use crate::core::net::transport::{Client, Socket};
-use crate::core::platform::{StartParams, WsSocket};
+use crate::core::platform::{ClientPlatform, StartParams};
 
 const OVERLAY_BG: Color = Color::srgb(0.07, 0.07, 0.07);
 
@@ -49,7 +49,11 @@ pub fn open_session(world: &mut World, spectate: bool) {
         return;
     };
     let game_server_url = world.resource::<StartParams>().game_server_url.clone();
-    let task = IoTaskPool::get().spawn_local(fetch_ticket(game_server_url, session.authorization));
+    let fetch = world
+        .resource::<ClientPlatform>()
+        .0
+        .fetch(format!("{game_server_url}/session"), session.authorization);
+    let task = IoTaskPool::get().spawn_local(fetch);
     world.insert_resource(PendingSession { task, spectate });
 }
 
@@ -69,10 +73,6 @@ fn poll_session(world: &mut World) {
     }
 }
 
-async fn fetch_ticket(game_server_url: String, authorization: String) -> Result<String, String> {
-    crate::core::platform::fetch(&format!("{game_server_url}/session"), &authorization).await
-}
-
 fn connect(world: &mut World, ticket: &str) {
     let channels = world.resource::<RepliconChannels>();
     let connection_config =
@@ -80,7 +80,10 @@ fn connect(world: &mut World, ticket: &str) {
     let ws_url = world.resource::<StartParams>().game_server_ws_url.clone();
     // The websocket is reliable+ordered (TCP); renet handles channels and reliability over it.
     let client = RenetClient::new(connection_config, true);
-    let socket = WsSocket::open(&format!("{ws_url}/?ticket={ticket}"));
+    let socket = world
+        .resource::<ClientPlatform>()
+        .0
+        .connect(&format!("{ws_url}/?ticket={ticket}"));
     world.insert_resource(Client(client));
     world.insert_non_send(Socket(socket));
     info!("connection opened");

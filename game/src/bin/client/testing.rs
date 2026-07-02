@@ -1,12 +1,12 @@
 use std::cell::RefCell;
 
-use crate::core::math::Pos;
-use crate::core::tiling::Tiles;
-use crate::systems::player::session;
 use bevy::prelude::*;
+use game::core::math::Pos;
+use game::core::tiling::Tiles;
+use game::systems::player::session;
+use game::systems::scene::Scene;
 
-use crate::core::platform;
-use crate::systems::scene::Scene;
+use crate::platform::expose_global_fn;
 
 pub struct TestingPlugin;
 
@@ -22,7 +22,7 @@ thread_local! {
 }
 
 fn install_hook() {
-    platform::expose_global_fn("click_world_tile", |x, y| {
+    expose_global_fn("click_world_tile", |x, y| {
         PENDING.with(|pending| pending.borrow_mut().push(Pos::new(x, y)));
     });
 }
