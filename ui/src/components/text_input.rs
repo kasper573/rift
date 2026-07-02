@@ -29,8 +29,7 @@ pub struct TextInputOptions {
     pub on_submit: OnSubmit,
 }
 
-/// A single-line, non-wrapping text input. Click to focus; Enter submits the trimmed text and
-/// clears the field. Editing, selection, clipboard, and IME come from bevy's editable text.
+/// Single-line text input; Enter submits the trimmed text and clears the field.
 pub fn text_input(opts: TextInputOptions) -> impl Scene {
     let family = theme().surface_inset;
     bsn! {
@@ -50,8 +49,6 @@ pub fn text_input(opts: TextInputOptions) -> impl Scene {
     }
 }
 
-/// Run condition: a text input currently has keyboard focus, so games should not treat
-/// keystrokes as actions.
 pub fn typing(focus: Option<Res<InputFocus>>, fields: Query<(), With<EditableText>>) -> bool {
     focus
         .and_then(|focus| focus.get())

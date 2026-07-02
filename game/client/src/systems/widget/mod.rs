@@ -45,8 +45,7 @@ impl Plugin for HudPlugin {
     }
 }
 
-/// Window ids whose contents must be rebuilt even though their open state did not change —
-/// for windows whose tab set is derived from live state (e.g. the terminal).
+/// Open windows to rebuild because their contents derive from state that changed (not from `Open`).
 #[derive(Resource, Default)]
 pub(crate) struct RefreshWindows(pub std::collections::HashSet<&'static str>);
 

@@ -15,8 +15,6 @@ impl Plugin for TerminalPlugin {
     }
 }
 
-/// Everything the server has told this client about its terminals. Lines live in memory only —
-/// restarting the game clears them — and survive area transfers (which re-issue the tab set).
 #[derive(Resource, Default)]
 pub struct Terminals {
     pub tabs: Vec<Id>,

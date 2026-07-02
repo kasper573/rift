@@ -30,9 +30,8 @@ pub(crate) struct ScrollThumbMark;
 #[derive(Component, Default, Clone)]
 pub(crate) struct ScrollTarget(f32);
 
-/// Opt-in for a [`scroll_viewport`]: keeps the view glued to the bottom edge. Starts scrolled to
-/// the bottom and follows it when content grows; scrolling up releases the pin, scrolling back
-/// to the bottom re-engages it.
+/// Opt-in for a [`scroll_viewport`]: follows the bottom edge as content grows; scrolling up
+/// releases the pin, scrolling back down re-engages it.
 #[derive(Component, Clone)]
 pub struct PinToBottom {
     pinned: bool,
