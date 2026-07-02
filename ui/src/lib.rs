@@ -11,7 +11,7 @@ use bevy_ecs::template::{FnTemplate, TemplateContext};
 use bevy_scene::{Scene, ScenePlugin};
 use bevy_text::Font;
 use bevy_ui::UiSystems;
-use bevy_ui_widgets::{ButtonPlugin, CheckboxPlugin, ScrollAreaPlugin};
+use bevy_ui_widgets::{ButtonPlugin, CheckboxPlugin, EditableTextInputPlugin, ScrollAreaPlugin};
 
 use utils::motion::MotionPlugin;
 use utils::opacity::OpacityPlugin;
@@ -73,6 +73,8 @@ impl Plugin for UiPlugin {
                     components::sonner::size_toaster,
                     components::sonner::layout_toasts,
                     components::sonner::reap_toasts,
+                    components::text_input::blur_on_escape,
+                    components::scroll_area::pin_to_bottom,
                     components::scroll_area::animate_scroll,
                     style::apply_styles,
                 )

@@ -36,7 +36,7 @@ pub use popover::{popover, popover_close, popover_content, popover_trigger};
 pub use progress::{ProgressFraction, progress, progress_indicator};
 pub use radio_group::{radio_circle, radio_group, radio_indicator, radio_item};
 pub use scroll_area::{
-    scroll_area, scroll_bar, scroll_corner, scroll_thumb, scroll_viewport, scrolled,
+    PinToBottom, scroll_area, scroll_bar, scroll_corner, scroll_thumb, scroll_viewport, scrolled,
 };
 pub use separator::separator;
 pub use slider::{SliderState, slider, slider_range, slider_thumb, slider_track};
