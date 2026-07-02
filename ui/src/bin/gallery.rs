@@ -693,14 +693,6 @@ fn widget_scene() -> Box<dyn Scene> {
 }
 
 fn window_scene() -> Box<dyn Scene> {
-    let items: Vec<Box<dyn Scene>> = (1..=12)
-        .map(|n| {
-            boxed(text_colored(
-                format!("Item {n}"),
-                theme().surface_floating.on,
-            ))
-        })
-        .collect();
     col(
         360.0,
         vec![boxed(bsn! {
@@ -713,21 +705,38 @@ fn window_scene() -> Box<dyn Scene> {
                 {EntityScene(window(ui::WindowOptions {
                     pos: Vec2::ZERO,
                     size: Vec2::new(340.0, 260.0),
-                    title: "Inventory".into(),
                     on_close: OnTap::new(|_| {}),
                     on_settle: OnSettle::new(|_, geom| geom),
-                    content: Box::new(bsn! {
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(6.0),
-                            width: Val::Percent(100.0),
-                        }
-                        Children [ {items} ]
-                    }),
+                    content: vec![
+                        window_tab("Inventory", 12),
+                        window_tab("Equipment", 4),
+                    ],
                 }))}
             ]
         })],
     )
+}
+
+fn window_tab(title: &str, count: u32) -> ui::WindowContent {
+    let items: Vec<Box<dyn Scene>> = (1..=count)
+        .map(|n| {
+            boxed(text_colored(
+                format!("{title} item {n}"),
+                theme().surface_floating.on,
+            ))
+        })
+        .collect();
+    ui::WindowContent {
+        title: title.into(),
+        scene: Box::new(ui::scrolled(Box::new(bsn! {
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(6.0),
+                width: Val::Percent(100.0),
+            }
+            Children [ {items} ]
+        }))),
+    }
 }
 
 fn scroll_area_scene() -> Box<dyn Scene> {

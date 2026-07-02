@@ -2,22 +2,26 @@ use bevy::prelude::*;
 use bevy_scene::{EntityScene, Scene, bsn, on, template_value};
 
 use crate::components::button::{ButtonSize, button_styled, intent};
-use crate::components::{scroll_area, scroll_bar, scroll_thumb, scroll_viewport, text_colored};
+use crate::components::{tabs_content, tabs_trigger, text};
 use crate::drag::{DragHandle, DragRoot, OnSettle, OnTap, ResizeHandle};
+use crate::state::SelectGroup;
 use crate::style::Style;
 use crate::theme::theme;
 use crate::{Activate, component};
 
-const TITLE_H: f32 = 22.0;
 const MIN_WINDOW: Vec2 = Vec2::new(100.0, 100.0);
+
+pub struct WindowContent {
+    pub title: String,
+    pub scene: Box<dyn Scene>,
+}
 
 pub struct WindowOptions {
     pub pos: Vec2,
     pub size: Vec2,
-    pub title: String,
     pub on_close: OnTap,
     pub on_settle: OnSettle,
-    pub content: Box<dyn Scene>,
+    pub content: Vec<WindowContent>,
 }
 
 pub fn window(opts: WindowOptions) -> impl Scene {
@@ -33,34 +37,59 @@ pub fn window(opts: WindowOptions) -> impl Scene {
         overflow: Overflow::clip(),
         ..default()
     };
+    let (titles, scenes): (Vec<String>, Vec<Box<dyn Scene>>) = opts
+        .content
+        .into_iter()
+        .map(|content| (content.title, content.scene))
+        .unzip();
+    let initial: Vec<String> = titles.iter().take(1).map(|_| tab_value(0)).collect();
     bsn! {
         template_value(node)
         BackgroundColor({family.base})
         component(BorderColor::all(family.border))
+        component(SelectGroup { exclusive: true, toggleable: false, initial })
         DragRoot
         component(opts.on_settle)
         Children [
-            {EntityScene(title_bar(opts.title, opts.on_close))},
-            {EntityScene(body(opts.content))},
+            {EntityScene(header(titles, opts.on_close))},
+            {EntityScene(body(scenes))},
             {EntityScene(resize_grip())},
         ]
     }
 }
 
-fn title_bar(title: String, on_close: OnTap) -> impl Scene {
+fn tab_value(index: usize) -> String {
+    index.to_string()
+}
+
+fn header(titles: Vec<String>, on_close: OnTap) -> impl Scene {
     let family = theme().surface_inset;
+    let triggers: Vec<Box<dyn Scene>> = titles
+        .into_iter()
+        .enumerate()
+        .map(|(index, title)| -> Box<dyn Scene> {
+            Box::new(bsn! {
+                {tabs_trigger(tab_value(index))}
+                Children [ {EntityScene(text(title))} ]
+            })
+        })
+        .collect();
     bsn! {
         template_value(Style::new().background(family.base).node(|node| {
             node.width = Val::Percent(100.0);
-            node.height = Val::Px(TITLE_H);
             node.align_items = AlignItems::Center;
             node.justify_content = JustifyContent::SpaceBetween;
-            node.padding = UiRect::horizontal(Val::Px(6.0));
         }))
         DragHandle
         Children [
-            {EntityScene(text_colored(title, family.on))},
-            {EntityScene(close_button(on_close))},
+            (
+                Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Stretch }
+                Children [ {triggers} ]
+            ),
+            (
+                Node { padding: {UiRect::horizontal(Val::Px(6.0))} }
+                Children [ {EntityScene(close_button(on_close))} ]
+            ),
         ]
     }
 }
@@ -76,24 +105,21 @@ fn close_button(on_close: OnTap) -> impl Scene {
     }
 }
 
-fn body(content: Box<dyn Scene>) -> impl Scene {
+fn body(scenes: Vec<Box<dyn Scene>>) -> impl Scene {
+    let panes: Vec<Box<dyn Scene>> = scenes
+        .into_iter()
+        .enumerate()
+        .map(|(index, scene)| -> Box<dyn Scene> {
+            Box::new(bsn! {
+                {tabs_content(tab_value(index))}
+                Node { width: Val::Percent(100.0), height: Val::Percent(100.0) }
+                Children [ {EntityScene(scene)} ]
+            })
+        })
+        .collect();
     bsn! {
         Node { flex_grow: 1.0, min_height: Val::Px(0.0) }
-        Children [
-            ( {scroll_area()}
-              Children [
-                ( {scroll_viewport()}
-                  Children [
-                    (
-                        Node { width: Val::Percent(100.0), padding: {UiRect::all(Val::Px(4.0))} }
-                        Children [ {EntityScene(content)} ]
-                    )
-                  ]
-                ),
-                ( {scroll_bar()} Children [ {EntityScene(scroll_thumb())} ] )
-              ]
-            )
-        ]
+        Children [ {panes} ]
     }
 }
 

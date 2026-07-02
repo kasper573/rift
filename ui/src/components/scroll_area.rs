@@ -2,11 +2,11 @@ use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::prelude::*;
 use bevy_input::mouse::MouseScrollUnit;
 use bevy_picking::prelude::{Drag, Pointer, Scroll};
-use bevy_scene::{Scene, bsn, template_value};
+use bevy_scene::{EntityScene, Scene, bsn, template_value};
 use bevy_time::Time;
 use bevy_ui::{
     BorderRadius, ComputedNode, Display, FlexDirection, Node, Overflow, PositionType,
-    ScrollPosition, UiGlobalTransform, Val,
+    ScrollPosition, UiGlobalTransform, UiRect, Val,
 };
 use bevy_window::{PrimaryWindow, Window};
 
@@ -29,6 +29,27 @@ pub(crate) struct ScrollThumbMark;
 
 #[derive(Component, Default, Clone)]
 pub(crate) struct ScrollTarget(f32);
+
+pub fn scrolled(content: Box<dyn Scene>) -> impl Scene {
+    bsn! {
+        Node { width: Val::Percent(100.0), height: Val::Percent(100.0) }
+        Children [
+            ( {scroll_area()}
+              Children [
+                ( {scroll_viewport()}
+                  Children [
+                    (
+                        Node { width: Val::Percent(100.0), padding: {UiRect::all(Val::Px(4.0))} }
+                        Children [ {EntityScene(content)} ]
+                    )
+                  ]
+                ),
+                ( {scroll_bar()} Children [ {EntityScene(scroll_thumb())} ] )
+              ]
+            )
+        ]
+    }
+}
 
 pub fn scroll_area() -> impl Scene {
     bsn! {

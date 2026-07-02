@@ -55,8 +55,15 @@ pub trait Window: Send + Sync {
     fn keybind(&self) -> &'static str;
     fn icon(&self) -> &'static str;
     fn order(&self) -> u32;
-    fn content(&self) -> Box<dyn Scene>;
+    fn contents(&self, world: &World) -> Vec<ui::WindowContent>;
     fn sync(&self, world: &mut World);
+}
+
+pub(super) fn single_tab(title: &str, scene: impl Scene + 'static) -> Vec<ui::WindowContent> {
+    vec![ui::WindowContent {
+        title: title.into(),
+        scene: Box::new(scene),
+    }]
 }
 
 pub(super) const SLOT: f32 = 36.0;
@@ -312,32 +319,39 @@ fn spawn_hud(
     });
 }
 
-fn rebuild_windows(
-    open: Res<Open>,
-    views: Query<(Entity, &WindowView, &ChildOf)>,
-    settings: Res<Settings>,
-    assets: Res<AssetServer>,
-    screen: Single<&bevy::window::Window>,
-    mut commands: Commands,
-) {
-    if !open.is_changed() {
+fn rebuild_windows(world: &mut World) {
+    if !world.is_resource_changed::<Open>() {
         return;
     }
-    let screen_w = screen.resolution.width();
-    for (entity, view, child_of) in &views {
-        let should_open = open.0.contains(&view.window);
+    let Ok(screen_w) = world
+        .query::<&bevy::window::Window>()
+        .single(world)
+        .map(|screen| screen.resolution.width())
+    else {
+        return;
+    };
+    let views: Vec<(Entity, WindowView, Entity)> = world
+        .query::<(Entity, &WindowView, &ChildOf)>()
+        .iter(world)
+        .map(|(entity, view, child_of)| (entity, view.clone(), child_of.parent()))
+        .collect();
+    for (entity, view, hud) in views {
+        let should_open = world.resource::<Open>().0.contains(&view.window);
         if should_open == view.open {
             continue;
         }
-        let hud = child_of.parent();
         let window = view.window;
-        commands.entity(entity).despawn();
         let panel: Box<dyn Scene> = if should_open {
-            Box::new(window_scene(window, &settings))
+            Box::new(window_scene(world, window))
         } else {
-            Box::new(launcher(window, screen_w, &settings, &assets))
+            let settings = world.resource::<Settings>();
+            let assets = world.resource::<AssetServer>();
+            Box::new(launcher(window, screen_w, settings, assets))
         };
-        commands.spawn_scene(panel).insert(ChildOf(hud));
+        world.entity_mut(entity).despawn();
+        if let Ok(mut spawned) = world.spawn_scene(panel) {
+            spawned.insert(ChildOf(hud));
+        }
     }
 }
 
@@ -368,17 +382,17 @@ fn launcher(
     }
 }
 
-fn window_scene(window: &'static str, settings: &Settings) -> impl Scene {
+fn window_scene(world: &World, window: &'static str) -> impl Scene {
     let def = window_def(window);
+    let settings = world.resource::<Settings>();
     let (pos, size) = window_geom(settings, window, Vec2::new(376.0, 332.0), WINDOW_SIZE);
     bsn! {
         {ui::window(ui::WindowOptions {
             pos,
             size,
-            title: def.title().to_owned(),
             on_close: OnTap::new(move |world| close_window(world, window)),
             on_settle: OnSettle::new(move |world, geom| persist_window(world, window, geom)),
-            content: def.content(),
+            content: def.contents(world),
         })}
         component(WindowView { window, open: true })
     }

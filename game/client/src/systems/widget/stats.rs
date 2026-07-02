@@ -27,8 +27,8 @@ impl Window for StatsWindow {
     fn order(&self) -> u32 {
         2
     }
-    fn content(&self) -> Box<dyn Scene> {
-        content()
+    fn contents(&self, _: &World) -> Vec<ui::WindowContent> {
+        super::single_tab(self.title(), ui::scrolled(content()))
     }
     fn sync(&self, world: &mut World) {
         sync_stats(world)

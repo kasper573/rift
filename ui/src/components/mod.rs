@@ -34,7 +34,9 @@ pub use dialog::{dialog, dialog_close};
 pub use popover::{popover, popover_close, popover_content, popover_trigger};
 pub use progress::{ProgressFraction, progress, progress_indicator};
 pub use radio_group::{radio_circle, radio_group, radio_indicator, radio_item};
-pub use scroll_area::{scroll_area, scroll_bar, scroll_corner, scroll_thumb, scroll_viewport};
+pub use scroll_area::{
+    scroll_area, scroll_bar, scroll_corner, scroll_thumb, scroll_viewport, scrolled,
+};
 pub use separator::separator;
 pub use slider::{SliderState, slider, slider_range, slider_thumb, slider_track};
 pub use sonner::{SonnerPosition, Toast, Toaster, sonner_close, toast, toaster};
@@ -43,4 +45,4 @@ pub use tabs::{tabs, tabs_content, tabs_list, tabs_trigger};
 pub use text::{text, text_colored};
 pub use tooltip::{tooltip, tooltip_content};
 pub use widget::{WidgetOptions, widget};
-pub use window::{WindowOptions, window};
+pub use window::{WindowContent, WindowOptions, window};
