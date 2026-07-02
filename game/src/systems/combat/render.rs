@@ -7,7 +7,7 @@ use bevy::sprite::Anchor;
 use crate::core::render::present::ScreenTint;
 use crate::core::render::screen::ToScreen;
 use crate::core::render::snap_to_screen;
-use crate::systems::interpolate::RenderPosition;
+use crate::systems::movement::RenderPosition;
 
 pub struct CombatPlugin;
 

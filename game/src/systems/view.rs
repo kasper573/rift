@@ -13,7 +13,7 @@ use crate::core::render::present::{SCALE, target_size};
 use crate::core::render::screen::ToScreen;
 use crate::core::render::{TILE, snap_to_screen};
 use crate::core::sfx::playback::Listener;
-use crate::systems::interpolate::RenderPosition;
+use crate::systems::movement::RenderPosition;
 
 /// Time the follow camera takes to close half the gap to the player. Smaller is snappier, larger
 /// floatier; this is what makes the camera glide after the actor rather than rigidly lock to it.

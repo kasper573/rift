@@ -9,7 +9,7 @@ use crate::systems::player::session::MyClient;
 use bevy::prelude::*;
 
 use crate::core::render::screen::ToScreen;
-use crate::systems::interpolate::RenderPosition;
+use crate::systems::movement::RenderPosition;
 use crate::systems::scene::Scene;
 
 pub struct DebugPlugin;

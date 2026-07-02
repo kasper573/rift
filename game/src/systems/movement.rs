@@ -1,15 +1,17 @@
-use bevy_app::App;
+use bevy_app::{App, Plugin};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
 use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
+use crate::core::interpolate::{Interpolate, InterpolatePlugin};
 use crate::core::math::{Direction, Offset, Pos};
 use crate::core::tiling::{Cell, CellPos, GridSize, NEIGHBORS_8, TilePos, Tiles, TilesPerSec};
 use crate::core::time::Seconds;
 use bevy_terminal::{CommandCtx, command};
 
+use crate::systems::REPLICATION_PERIOD;
 use crate::systems::account::identity::Identity;
 use crate::systems::account::role;
 use crate::systems::actor::{Action, Actor, set_facing};
@@ -44,6 +46,42 @@ pub struct MoveToPortal {
 
 pub fn position(world: &World, entity: Entity) -> Option<Pos<Tiles>> {
     world.get::<Position>(entity).map(|p| p.pos)
+}
+
+pub struct MovementPlugin;
+
+impl Plugin for MovementPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(InterpolatePlugin::<RenderPosition>::default());
+    }
+}
+
+/// The position to render a replicated entity at. The authoritative [`Position`] only updates every
+/// [`crate::systems::REPLICATION_INTERVAL`] ticks, so it is interpolated between snapshots rather
+/// than read live. Every client-side depiction of an entity (sprite, camera, health bar, hitbox,
+/// positional audio) reads this instead of [`Position`].
+#[derive(Component, Clone, Copy, PartialEq)]
+pub struct RenderPosition(pub Pos<Tiles>);
+
+/// A jump larger than this between consecutive snapshots is a teleport (portal, respawn) and is
+/// snapped rather than interpolated.
+const SNAP: Tiles = Tiles(2.0);
+
+impl Interpolate for RenderPosition {
+    type Source = Position;
+    const INTERVAL: Seconds = REPLICATION_PERIOD;
+
+    fn sample(position: &Position) -> RenderPosition {
+        RenderPosition(position.pos)
+    }
+
+    fn interpolate(&self, next: &RenderPosition, t: f32) -> RenderPosition {
+        RenderPosition(self.0 + (next.0 - self.0) * t)
+    }
+
+    fn discontinuous(&self, next: &RenderPosition) -> bool {
+        self.0.distance(next.0) > SNAP
+    }
 }
 
 const RUN_SPEED: TilesPerSec = TilesPerSec(Tiles(2.0));

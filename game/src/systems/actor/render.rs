@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 
 use crate::core::assets::AssetService;
+use crate::core::interpolate::{Interpolate, InterpolatePlugin};
+use crate::core::math::Direction;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
+use crate::systems::REPLICATION_PERIOD;
 use crate::systems::actor::{Action, Actor, Rgba, build_model};
 use crate::systems::area::{self, AreaTag};
 use bevy::prelude::*;
@@ -10,7 +13,7 @@ use bevy::sprite::Anchor;
 
 use crate::core::render::{Animator, atlas_rect, dynamic_z, sprite_transform};
 use crate::core::sfx::playback::PlaySfx;
-use crate::systems::interpolate::{RenderActor, RenderPosition};
+use crate::systems::movement::RenderPosition;
 
 pub struct ActorPlugin;
 
@@ -18,10 +21,34 @@ impl Plugin for ActorPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Seen>()
             .add_observer(attach_sprite)
+            .add_plugins(InterpolatePlugin::<RenderActor>::default())
             .add_systems(
                 Update,
                 (sync_actors, actor_cues).run_if(in_state(crate::systems::scene::Scene::Area)),
             );
+    }
+}
+
+/// The facing and animation to render an actor with. The server recomputes these alongside its
+/// movement every tick, so they ride the same replication cadence as [`RenderPosition`]: the legs go
+/// idle, and the heading turns, as the on-screen motion stops or changes course — not the snapshot
+/// earlier they would if read live, which reads as the actor sliding or drifting. Discrete values,
+/// so they switch as their segment starts rather than blending.
+#[derive(Component, Clone, Copy, PartialEq)]
+struct RenderActor {
+    dir: Direction,
+    action: Action,
+}
+
+impl Interpolate for RenderActor {
+    type Source = Actor;
+    const INTERVAL: Seconds = REPLICATION_PERIOD;
+
+    fn sample(actor: &Actor) -> RenderActor {
+        RenderActor {
+            dir: actor.dir,
+            action: actor.action,
+        }
     }
 }
 

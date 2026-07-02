@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
     derive_more::Add,
     derive_more::AddAssign,
     derive_more::Sub,
+    derive_more::SubAssign,
 )]
 pub struct Seconds(pub f32);
 
@@ -73,6 +74,10 @@ impl std::ops::Rem for Millis {
 impl Seconds {
     pub fn millis(self) -> Millis {
         Millis(self.0 * 1000.0)
+    }
+
+    pub fn min(self, other: Seconds) -> Seconds {
+        Seconds(self.0.min(other.0))
     }
 
     pub fn ratio(self, other: Seconds) -> f32 {

@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod interpolate;
 pub mod math;
 pub mod net;
 pub mod platform;

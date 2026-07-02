@@ -9,7 +9,6 @@ pub mod equipment;
 pub mod fps;
 pub mod hud;
 pub mod input;
-pub mod interpolate;
 pub mod item;
 pub mod job;
 pub mod movement;
@@ -46,6 +45,10 @@ pub const TICK_HZ: crate::core::time::Hertz = crate::core::time::Hertz(30.0);
 /// snapshots. Replication serialization is the dominant server cost and scales with this rate, so
 /// replicating at `TICK_HZ / REPLICATION_INTERVAL` (10 Hz) rather than every tick cuts it ~3x.
 pub const REPLICATION_INTERVAL: u64 = 3;
+
+/// Seconds of server time covered by one replication snapshot.
+pub const REPLICATION_PERIOD: crate::core::time::Seconds =
+    crate::core::time::Seconds(REPLICATION_INTERVAL as f32 / TICK_HZ.0);
 
 static TERMINALS: LazyLock<HashMap<crate::data::terminal::Id, &'static Terminal>> =
     LazyLock::new(|| {
