@@ -47,6 +47,9 @@ impl Plugin for UiPlugin {
         if !app.is_plugin_added::<ScrollAreaPlugin>() {
             app.add_plugins(ScrollAreaPlugin);
         }
+        if !app.is_plugin_added::<EditableTextInputPlugin>() {
+            app.add_plugins(EditableTextInputPlugin);
+        }
         if !app.is_plugin_added::<ScenePlugin>() {
             app.add_plugins(ScenePlugin);
         }

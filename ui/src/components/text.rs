@@ -28,7 +28,7 @@ fn styled(content: impl Into<String>, color: Color) -> impl Scene {
     }
 }
 
-fn font(typography: Typography) -> TextFont {
+pub(crate) fn font(typography: Typography) -> TextFont {
     TextFont {
         font: FontSource::Family(typography.family.into()),
         font_size: typography.font_size.into(),
