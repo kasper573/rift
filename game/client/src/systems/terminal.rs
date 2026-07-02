@@ -1,8 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 
 use bevy::prelude::*;
+use bevy_terminal::{AvailableTerminals, TerminalLine};
 use world::data::terminal::Id;
-use world::systems::terminal::{TerminalLine, TerminalTabs};
 
 use crate::systems::widget::{RefreshWindows, TERMINAL_WINDOW};
 
@@ -31,14 +31,14 @@ impl Terminals {
 const MAX_LINES: usize = 200;
 
 fn receive(
-    mut tabs: MessageReader<TerminalTabs>,
-    mut lines: MessageReader<TerminalLine>,
+    mut available: MessageReader<AvailableTerminals<Id>>,
+    mut lines: MessageReader<TerminalLine<Id>>,
     mut terminals: ResMut<Terminals>,
     mut refresh: ResMut<RefreshWindows>,
 ) {
-    for message in tabs.read() {
-        if terminals.tabs != message.tabs {
-            terminals.tabs = message.tabs.clone();
+    for message in available.read() {
+        if terminals.tabs != message.terminals {
+            terminals.tabs = message.terminals.clone();
             refresh.0.insert(TERMINAL_WINDOW);
         }
     }

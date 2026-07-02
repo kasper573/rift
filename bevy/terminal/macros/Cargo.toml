@@ -1,8 +1,10 @@
 [package]
-name = "world-macros"
+name = "bevy_terminal_macros"
 version.workspace = true
 edition.workspace = true
-description = "Proc-macro attributes for the world crate"
+description = "Proc-macro attributes for bevy_terminal"
+repository = "https://github.com/kasper573/rift"
+authors = ["kasper573"]
 
 [lib]
 proc-macro = true

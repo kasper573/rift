@@ -1833,6 +1833,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_terminal"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_replicon",
+ "bevy_terminal_macros",
+ "inventory",
+ "serde",
+]
+
+[[package]]
+name = "bevy_terminal_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "bevy_text"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2372,6 +2393,7 @@ dependencies = [
  "bevy_kira_audio",
  "bevy_picking",
  "bevy_replicon",
+ "bevy_terminal",
  "bevy_tiled",
  "console_error_panic_hook",
  "getrandom 0.2.17",
@@ -9352,11 +9374,11 @@ dependencies = [
  "bevy_ecs",
  "bevy_replicon",
  "bevy_state",
+ "bevy_terminal",
  "bevy_time",
  "derive_more",
  "euclid",
  "getrandom 0.2.17",
- "inventory",
  "oorandom",
  "pathfinding",
  "postcard",
@@ -9366,16 +9388,6 @@ dependencies = [
  "serde_json",
  "strum",
  "tiled",
- "world-macros",
-]
-
-[[package]]
-name = "world-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]

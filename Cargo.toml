@@ -3,8 +3,9 @@ resolver = "3"
 members = [
     "ui",
     "bevy/tiled",
+    "bevy/terminal",
+    "bevy/terminal/macros",
     "game/world",
-    "game/world/macros",
     "game/server",
     "game/client",
     "game/bench",
@@ -16,8 +17,9 @@ members = [
 # would otherwise collide with the bench bin in game/bench (shared target dir).
 default-members = [
     "ui",
+    "bevy/terminal",
+    "bevy/terminal/macros",
     "game/world",
-    "game/world/macros",
     "game/server",
     "game/bench",
     "game/lint",

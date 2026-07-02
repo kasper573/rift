@@ -8,12 +8,14 @@ use crate::core::assets::AssetService;
 use crate::core::math::{Direction, Offset, Pos};
 use crate::core::tiling::{Cell, CellPos, TilePos, Tiles, TilesPerSec};
 use crate::core::time::Seconds;
+use bevy_terminal::{CommandCtx, command};
+
 use crate::systems::account::identity::Identity;
+use crate::systems::account::role;
 use crate::systems::actor::{Action, Actor, set_facing};
 use crate::systems::area;
 use crate::systems::combat::AttackTarget;
-use crate::systems::command::{Ctx, command};
-use crate::systems::player::{ClientId, Players, sender_player};
+use crate::systems::player::{ClientId, Players, conn_player, sender_player};
 use crate::systems::stat::{self, StatKind};
 
 pub fn register(app: &mut App) {
@@ -331,10 +333,10 @@ fn relocate(world: &mut World, entity: Entity, dest_area: area::Id, dest: Pos<Ti
 }
 
 /// Teleport a player.
-#[command(name = "tp", role = Admin)]
+#[command(name = "tp", access = role::is_admin)]
 fn teleport(
     world: &mut World,
-    ctx: &Ctx,
+    ctx: &CommandCtx,
     x: f32,
     y: f32,
     area: Option<area::Id>,
@@ -343,8 +345,7 @@ fn teleport(
     let target = match &user {
         Some(user) => player_by_user(world, user)
             .ok_or_else(|| format!("no player with user id `{user}` in your area"))?,
-        None => ctx
-            .player
+        None => conn_player(world, ctx.conn)
             .ok_or_else(|| "you have no player to teleport".to_owned())?,
     };
     let current = world

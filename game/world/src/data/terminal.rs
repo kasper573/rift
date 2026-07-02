@@ -1,13 +1,12 @@
-use crate::systems::account::role::Role;
-use crate::systems::terminal::Terminal;
+use bevy_terminal::Terminal;
+
+use crate::systems::account::role;
 
 crate::table! {
     Global: Terminal {
-        title: "Global",
         access: None,
     },
     Admin: Terminal {
-        title: "Admin",
-        access: Some(Role::Admin),
+        access: Some(role::is_admin),
     },
 }

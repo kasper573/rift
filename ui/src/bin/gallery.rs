@@ -701,7 +701,7 @@ struct PinnedLog;
 struct SubmittedText;
 
 fn pinned_scroll_scene() -> Box<dyn Scene> {
-    let items: Vec<Box<dyn Scene>> = (1..=30)
+    let mut items: Vec<Box<dyn Scene>> = (1..=30)
         .map(|n| {
             boxed(text_colored(
                 format!("Log line {n}"),
@@ -709,6 +709,10 @@ fn pinned_scroll_scene() -> Box<dyn Scene> {
             ))
         })
         .collect();
+    items.push(boxed(text_colored(
+        "A deliberately long log line that must wrap onto several rows instead of overflowing the scroll area horizontally",
+        theme().surface_canvas.on,
+    )));
     col(
         320.0,
         vec![
@@ -737,7 +741,10 @@ fn pinned_scroll_scene() -> Box<dyn Scene> {
                     for (log, children) in &logs {
                         let line = children.map_or(0, Children::len) + 1;
                         commands
-                            .spawn_scene(text_colored(format!("Appended line {line}"), theme().surface_canvas.on))
+                            .spawn_scene(text_colored(
+                                format!("Appended line {line} which is deliberately long enough that it must wrap onto several rows instead of overflowing"),
+                                theme().surface_canvas.on,
+                            ))
                             .insert(ChildOf(log));
                     }
                 })
@@ -775,19 +782,20 @@ fn window_scene() -> Box<dyn Scene> {
         360.0,
         vec![boxed(bsn! {
             Node {
-                width: Val::Px(340.0),
-                height: Val::Px(260.0),
+                width: Val::Px(520.0),
+                height: Val::Px(300.0),
                 position_type: PositionType::Relative,
             }
             Children [
                 {EntityScene(window(ui::WindowOptions {
                     pos: Vec2::ZERO,
-                    size: Vec2::new(340.0, 260.0),
+                    size: Vec2::new(520.0, 300.0),
                     on_close: OnTap::new(|_| {}),
                     on_settle: OnSettle::new(|_, geom| geom),
                     content: vec![
                         window_tab("Inventory", 12),
                         window_tab("Equipment", 4),
+                        log_tab(),
                     ],
                 }))}
             ]
@@ -814,6 +822,58 @@ fn window_tab(title: &str, count: u32) -> ui::WindowContent {
             }
             Children [ {items} ]
         }))),
+    }
+}
+
+fn log_tab() -> ui::WindowContent {
+    let mut items: Vec<Box<dyn Scene>> = (1..=8)
+        .map(|n| {
+            boxed(text_colored(
+                format!("log line {n}"),
+                theme().surface_floating.on,
+            ))
+        })
+        .collect();
+    items.push(boxed(text_colored(
+        "a deliberately long log line that must wrap onto several rows instead of being clipped at the window edge",
+        theme().surface_floating.on,
+    )));
+    ui::WindowContent {
+        title: "Log".into(),
+        scene: Box::new(bsn! {
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+            }
+            Children [
+                ( Node { flex_grow: 1.0, min_height: Val::Px(0.0), width: Val::Percent(100.0) }
+                  Children [
+                    ( {scroll_area()}
+                      Children [
+                        ( {scroll_viewport()}
+                          {ui::component(ui::PinToBottom::default())}
+                          Children [
+                            (
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    width: Val::Percent(100.0),
+                                    padding: {UiRect::all(Val::Px(4.0))},
+                                }
+                                Children [ {items} ]
+                            )
+                          ]
+                        ),
+                        ( {scroll_bar()} Children [ {EntityScene(scroll_thumb())} ] )
+                      ]
+                    )
+                  ]
+                ),
+                {EntityScene(ui::text_input(ui::TextInputOptions {
+                    on_submit: ui::OnSubmit::new(|_, _| {}),
+                }))}
+            ]
+        }),
     }
 }
 

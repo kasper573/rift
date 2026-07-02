@@ -1,0 +1,15 @@
+[package]
+name = "bevy_terminal"
+version.workspace = true
+edition.workspace = true
+description = "Server-authoritative terminal channels and slash commands for bevy_replicon apps"
+repository = "https://github.com/kasper573/rift"
+authors = ["kasper573"]
+
+[dependencies]
+bevy_terminal_macros = { path = "macros" }
+bevy_app = { workspace = true }
+bevy_ecs = { workspace = true }
+bevy_replicon = { workspace = true, features = ["client", "server"] }
+serde = { workspace = true }
+inventory = { workspace = true }

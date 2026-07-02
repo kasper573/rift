@@ -87,6 +87,7 @@ impl Plugin for UiPlugin {
                     collapse::advance_collapse.after(UiSystems::Layout),
                     place::position_overlays.after(UiSystems::Layout),
                     components::scroll_area::sync_scrollbars.after(UiSystems::Layout),
+                    components::text_input::apply_submits.after(bevy_text::EditableTextSystems),
                 ),
             )
             .add_observer(state::on_select_activate)

@@ -1,9 +1,18 @@
+use bevy_ecs::prelude::{Entity, World};
 use strum::{AsRefStr, EnumString, VariantArray};
+
+use crate::systems::account::identity::Identity;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, VariantArray, AsRefStr, EnumString)]
 pub enum Role {
     Admin,
     Spectate,
+}
+
+pub fn is_admin(world: &World, conn: Entity) -> bool {
+    world
+        .get::<Identity>(conn)
+        .is_some_and(|identity| identity.has_role(Role::Admin))
 }
 
 pub const GROUPS: &[(&str, &[Role])] =

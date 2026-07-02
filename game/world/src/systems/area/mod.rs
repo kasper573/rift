@@ -25,6 +25,19 @@ pub fn register(app: &mut App) {
     app.replicate::<AreaTag>();
 }
 
+impl bevy_terminal::CommandArg for Id {
+    fn parse(name: &str, raw: Option<&str>) -> Result<Id, String> {
+        use strum::VariantArray;
+
+        let raw = bevy_terminal::require_arg(name, raw)?;
+        Id::VARIANTS
+            .iter()
+            .copied()
+            .find(|id| format!("{id:?}").eq_ignore_ascii_case(raw))
+            .ok_or_else(|| format!("`{raw}` is not a known area"))
+    }
+}
+
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AreaTag {
     pub area: Id,

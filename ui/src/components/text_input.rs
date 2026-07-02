@@ -70,27 +70,47 @@ pub(crate) fn blur_on_escape(
     }
 }
 
+#[derive(Component)]
+pub(crate) struct SubmitRequested;
+
 fn submit_on_enter(
     mut input: On<FocusedInput<KeyboardInput>>,
-    mut fields: Query<(&mut EditableText, &OnSubmit)>,
+    fields: Query<&EditableText, With<OnSubmit>>,
     mut commands: Commands,
 ) {
     if input.input.logical_key != Key::Enter || !input.input.state.is_pressed() {
         return;
     }
-    let Ok((mut field, submit)) = fields.get_mut(input.focused_entity) else {
+    let Ok(field) = fields.get(input.focused_entity) else {
         return;
     };
     if field.is_composing() {
         return;
     }
     input.propagate(false);
-    let text = field.value().to_string().trim().to_owned();
-    field.queue_edit(TextEdit::SelectAll);
-    field.queue_edit(TextEdit::Backspace);
-    if text.is_empty() {
-        return;
+    commands
+        .entity(input.focused_entity)
+        .insert(SubmitRequested);
+}
+
+/// Submits only once every edit queued before (or alongside) the Enter press has been applied,
+/// so the submitted text is never missing a same-frame keystroke or in-flight paste.
+pub(crate) fn apply_submits(
+    mut fields: Query<(Entity, &mut EditableText, &OnSubmit), With<SubmitRequested>>,
+    mut commands: Commands,
+) {
+    for (entity, mut field, submit) in &mut fields {
+        if !field.pending_edits.is_empty() || field.pending_paste.is_some() {
+            continue;
+        }
+        commands.entity(entity).remove::<SubmitRequested>();
+        let text = field.value().to_string().trim().to_owned();
+        field.queue_edit(TextEdit::SelectAll);
+        field.queue_edit(TextEdit::Backspace);
+        if text.is_empty() {
+            continue;
+        }
+        let submit = submit.0.clone();
+        commands.queue(move |world: &mut World| submit(world, text));
     }
-    let submit = submit.0.clone();
-    commands.queue(move |world: &mut World| submit(world, text));
 }

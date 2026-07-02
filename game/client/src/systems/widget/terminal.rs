@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
+use bevy_terminal::TerminalInput;
 use world::data::terminal::Id;
-use world::systems::terminal::TerminalInput;
 
 use super::{Window, reconcile_children};
 use crate::systems::terminal::Terminals;
@@ -33,7 +33,7 @@ impl Window for TerminalWindow {
             .tabs
             .iter()
             .map(|&terminal| ui::WindowContent {
-                title: terminal.get().title.to_owned(),
+                title: tab_title(terminal).to_owned(),
                 scene: Box::new(tab_scene(terminal)),
             })
             .collect()
@@ -46,6 +46,13 @@ impl Window for TerminalWindow {
 #[derive(Component, Clone)]
 struct TerminalLog {
     terminal: Id,
+}
+
+fn tab_title(terminal: Id) -> &'static str {
+    match terminal {
+        Id::Global => "Global",
+        Id::Admin => "Admin",
+    }
 }
 
 fn tab_scene(terminal: Id) -> impl Scene {

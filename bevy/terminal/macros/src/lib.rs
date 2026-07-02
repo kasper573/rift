@@ -5,11 +5,11 @@ use syn::{FnArg, ItemFn, LitStr, Pat, Token};
 
 /// Declares a free fn as a terminal command and registers it at the definition site.
 ///
-/// `#[command(name = "tp", role = Admin)]` — both attribute args are optional: `name`
-/// defaults to the fn name, omitting `role` makes the command available to anyone.
-/// The fn must take `(world: &mut World, ctx: &Ctx, ...)`; every further parameter is a
-/// positional command argument parsed via the `Arg` trait (`Option<T>` marks it optional),
-/// and the doc comment becomes the command's description.
+/// `#[command(name = "tp", access = role::admin)]` — both attribute args are optional: `name`
+/// defaults to the fn name, `access` is a `fn(&World, Entity) -> bool` checked against the
+/// sender's connection. The fn takes `(world: &mut World, ctx: &CommandCtx, ...)`; every
+/// further parameter is a positional argument parsed via `CommandArg`, and the doc comment
+/// becomes the command's description.
 #[proc_macro_attribute]
 pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attrs = syn::parse_macro_input!(attr as Attrs);
@@ -21,22 +21,22 @@ pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 struct Attrs {
     name: Option<LitStr>,
-    role: Option<syn::Ident>,
+    access: Option<syn::Expr>,
 }
 
 impl Parse for Attrs {
     fn parse(input: ParseStream) -> syn::Result<Attrs> {
         let mut attrs = Attrs {
             name: None,
-            role: None,
+            access: None,
         };
         while !input.is_empty() {
             let key: syn::Ident = input.parse()?;
             input.parse::<Token![=]>()?;
             match key.to_string().as_str() {
                 "name" => attrs.name = Some(input.parse()?),
-                "role" => attrs.role = Some(input.parse()?),
-                _ => return Err(syn::Error::new(key.span(), "expected `name` or `role`")),
+                "access" => attrs.access = Some(input.parse()?),
+                _ => return Err(syn::Error::new(key.span(), "expected `name` or `access`")),
             }
             if !input.is_empty() {
                 input.parse::<Token![,]>()?;
@@ -52,8 +52,8 @@ fn expand(attrs: Attrs, func: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
         .name
         .map(|name| name.value())
         .unwrap_or_else(|| fn_ident.to_string());
-    let role = match attrs.role {
-        Some(role) => quote!(Some(crate::systems::account::role::Role::#role)),
+    let access = match attrs.access {
+        Some(access) => quote!(Some(#access)),
         None => quote!(None),
     };
     let description = doc_string(&func);
@@ -67,24 +67,24 @@ fn expand(attrs: Attrs, func: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
 
         const _: () = {
             fn run(
-                world: &mut bevy_ecs::prelude::World,
-                ctx: &crate::systems::command::Ctx,
+                world: &mut ::bevy_terminal::macro_support::World,
+                ctx: &::bevy_terminal::CommandCtx,
             ) -> Result<String, String> {
                 let mut raw = ctx.split_args();
                 #(
-                    let #idents: #types = crate::systems::command::Arg::parse(#names, raw.next())?;
+                    let #idents: #types = ::bevy_terminal::CommandArg::parse(#names, raw.next())?;
                 )*
                 #fn_ident(world, ctx #(, #idents)*)
             }
-            inventory::submit! {
-                crate::systems::command::Command {
+            ::bevy_terminal::macro_support::inventory::submit! {
+                ::bevy_terminal::TerminalCommand {
                     name: #name,
                     description: #description,
-                    role: #role,
+                    access: #access,
                     args: &[#(
-                        crate::systems::command::ArgSpec {
+                        ::bevy_terminal::CommandArgSpec {
                             name: #names,
-                            required: <#types as crate::systems::command::Arg>::REQUIRED,
+                            required: <#types as ::bevy_terminal::CommandArg>::REQUIRED,
                         }
                     ),*],
                     run,
@@ -98,7 +98,7 @@ fn command_params(func: &ItemFn) -> syn::Result<Vec<(syn::Ident, syn::Type)>> {
     if func.sig.inputs.len() < 2 {
         return Err(syn::Error::new_spanned(
             &func.sig,
-            "a command fn must take (world: &mut World, ctx: &Ctx, ...)",
+            "a command fn must take (world: &mut World, ctx: &CommandCtx, ...)",
         ));
     }
     func.sig

@@ -3,7 +3,6 @@ pub mod actor;
 pub mod area;
 pub mod chat;
 pub mod combat;
-pub mod command;
 pub mod effect;
 pub mod equipment;
 pub mod item;
@@ -14,13 +13,17 @@ pub mod player;
 pub mod rewards;
 pub mod spectate;
 pub mod stat;
-pub mod terminal;
 pub mod visibility;
+
+use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use bevy_app::App;
 use bevy_ecs::message::{Message, Messages};
 use bevy_ecs::prelude::{Bundle, Res, ResMut, Resource, World};
 use bevy_replicon::prelude::{FromClient, Replicated};
+use bevy_terminal::Terminal;
+use strum::VariantArray;
 
 use actor::{Actor, Hitbox};
 use area::AreaTag;
@@ -33,6 +36,15 @@ pub const TICK_HZ: crate::core::time::Hertz = crate::core::time::Hertz(30.0);
 /// snapshots. Replication serialization is the dominant server cost and scales with this rate, so
 /// replicating at `TICK_HZ / REPLICATION_INTERVAL` (10 Hz) rather than every tick cuts it ~3x.
 pub const REPLICATION_INTERVAL: u64 = 3;
+
+static TERMINALS: LazyLock<HashMap<crate::data::terminal::Id, &'static Terminal>> =
+    LazyLock::new(|| {
+        crate::data::terminal::Id::VARIANTS
+            .iter()
+            .copied()
+            .zip(crate::data::terminal::TABLE)
+            .collect()
+    });
 
 pub fn protocol(app: &mut App) {
     actor::register(app);
@@ -47,7 +59,7 @@ pub fn protocol(app: &mut App) {
     npc::register(app);
     player::register(app);
     spectate::register(app);
-    terminal::register(app);
+    bevy_terminal::register(app, &TERMINALS);
 }
 
 #[derive(Resource, Clone, Copy)]
@@ -92,7 +104,6 @@ pub fn server_app(area: area::Id, ordinal: u64) -> App {
     app.init_resource::<player::Players>()
         .init_resource::<spectate::Spectators>()
         .init_resource::<combat::RegenAt>()
-        .init_resource::<terminal::TerminalInbox>()
         // Seed the phase by the world's ordinal so worlds replicate on different ticks, spreading the
         // serialization load across ticks instead of spiking every Nth tick in lockstep.
         .insert_resource(ReplicationClock(ordinal))
@@ -100,7 +111,6 @@ pub fn server_app(area: area::Id, ordinal: u64) -> App {
         .add_observer(player::greet)
         .add_observer(player::client_left)
         .add_observer(spectate::client_left)
-        .add_observer(terminal::issue_tabs)
         .add_systems(Startup, npc::spawn_all)
         .add_systems(First, advance_replication_clock)
         .add_systems(
@@ -138,8 +148,8 @@ pub fn server_app(area: area::Id, ordinal: u64) -> App {
                     spectate::requests,
                     spectate::follow,
                     npc::run_respawn,
-                    terminal::ingest,
-                    command::dispatch,
+                    bevy_terminal::ingest::<crate::data::terminal::Id>,
+                    bevy_terminal::dispatch::<crate::data::terminal::Id>,
                     chat::rebroadcast,
                     visibility::update.run_if(on_replication_tick),
                 )

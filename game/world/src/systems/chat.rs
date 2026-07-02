@@ -1,20 +1,22 @@
 use bevy_ecs::prelude::*;
+use bevy_terminal::TerminalInbox;
 
+use crate::data::terminal::Id;
 use crate::systems::actor::Name;
-use crate::systems::terminal::{self, TerminalInbox};
+use crate::systems::player::{self, ClientId};
 
-/// Any input no other integration consumed becomes a chat line on the terminal it was typed
-/// into, visible to everyone with access to that terminal.
 pub fn rebroadcast(world: &mut World) {
-    let entries = world.resource::<TerminalInbox>().0.clone();
+    let entries = world.resource::<TerminalInbox<Id>>().0.clone();
     for entry in entries.iter().filter(|entry| !entry.consumed()) {
-        let name = entry
-            .player
+        let name = player::conn_player(world, entry.conn)
             .and_then(|player| world.get::<Name>(player))
-            .map_or_else(
-                || format!("player {}", entry.client.0),
-                |name| name.name.clone(),
-            );
-        terminal::broadcast(world, entry.terminal, format!("{name}: {}", entry.text));
+            .map(|name| name.name.clone())
+            .or_else(|| {
+                world
+                    .get::<ClientId>(entry.conn)
+                    .map(|client| format!("player {}", client.0))
+            })
+            .unwrap_or_else(|| "player".to_owned());
+        bevy_terminal::broadcast(world, entry.terminal, format!("{name}: {}", entry.text));
     }
 }

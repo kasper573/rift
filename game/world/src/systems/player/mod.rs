@@ -100,7 +100,11 @@ pub(crate) fn sender_player(
     world: &World,
     sender: bevy_replicon::prelude::ClientId,
 ) -> Option<Entity> {
-    let client = world.get::<ClientId>(sender.entity()?)?;
+    conn_player(world, sender.entity()?)
+}
+
+pub(crate) fn conn_player(world: &World, conn: Entity) -> Option<Entity> {
+    let client = world.get::<ClientId>(conn)?;
     world.resource::<Players>().0.get(client).copied()
 }
 
