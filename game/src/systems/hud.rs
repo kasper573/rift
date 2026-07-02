@@ -1,12 +1,10 @@
-mod settings;
-
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use serde::{Deserialize, Serialize};
 use ui::component;
 use ui::{Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
-use crate::systems::{effect, equipment, item, player, stat, terminal};
+use crate::systems::{effect, equipment, item, player, settings, stat, terminal};
 
 pub(crate) const WIDGET: ScreenPx = ScreenPx(48.0);
 const WINDOW_SIZE: Vec2 = Vec2::new(400.0, 200.0);
@@ -153,7 +151,7 @@ fn window_def(id: &str) -> &'static dyn Window {
 }
 
 #[derive(Resource)]
-struct Settings(UserSettings);
+pub(crate) struct Settings(UserSettings);
 
 impl Default for Settings {
     fn default() -> Settings {
@@ -162,11 +160,11 @@ impl Default for Settings {
 }
 
 impl Settings {
-    fn snapping_enabled(&self) -> bool {
+    pub(crate) fn snapping_enabled(&self) -> bool {
         self.0.snapping_enabled()
     }
 
-    fn toggle_snapping(&mut self) {
+    pub(crate) fn toggle_snapping(&mut self) {
         self.0.toggle_snapping();
         self.0.save();
     }
@@ -268,11 +266,11 @@ impl UserSettings {
         }
     }
 
-    fn snapping_enabled(&self) -> bool {
+    pub(crate) fn snapping_enabled(&self) -> bool {
         self.ui.snap.is_some()
     }
 
-    fn toggle_snapping(&mut self) {
+    pub(crate) fn toggle_snapping(&mut self) {
         self.ui.snap = match self.ui.snap {
             Some(_) => None,
             None => Some(DEFAULT_SNAP),

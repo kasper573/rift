@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use ui::button::intent as button_intent;
 use ui::{Activate, ButtonSize, button_styled};
 
-use super::{Settings, Window};
+use crate::systems::hud::{Settings, Window};
 
 #[derive(Component, Default, Clone)]
 struct SnappingButton;
@@ -26,7 +26,7 @@ impl Window for SettingsWindow {
         3
     }
     fn contents(&self, _: &World) -> Vec<ui::WindowContent> {
-        super::single_tab(self.title(), ui::scrolled(content()))
+        crate::systems::hud::single_tab(self.title(), ui::scrolled(content()))
     }
     fn sync(&self, world: &mut World) {
         sync_snapping(world)

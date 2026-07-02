@@ -17,6 +17,7 @@ pub mod npc;
 pub mod player;
 pub mod rewards;
 pub mod scene;
+pub mod settings;
 pub mod spectate;
 pub mod stat;
 pub mod terminal;
