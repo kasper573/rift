@@ -372,6 +372,9 @@ fn build_world(
     app
 }
 
+/// The whole connection bundle is spawned in one call so `Add` observers on any of its
+/// components (e.g. greeting, terminal tab issuance) observe the complete connection,
+/// `Identity` included.
 fn spawn_conn(
     app: &mut App,
     client: ClientId,
@@ -379,11 +382,11 @@ fn spawn_conn(
     identity: Option<Identity>,
 ) -> Entity {
     let world = app.world_mut();
-    let mut entity = world.spawn((ConnectedClient { max_size: 1200 }, client, Wire(network_id)));
-    if let Some(identity) = identity {
-        entity.insert(identity);
+    let base = (ConnectedClient { max_size: 1200 }, client, Wire(network_id));
+    match identity {
+        Some(identity) => world.spawn((base, identity)).id(),
+        None => world.spawn(base).id(),
     }
-    entity.id()
 }
 
 /// A player (and all its connections) whose character left its world (despawned) and is waiting to be

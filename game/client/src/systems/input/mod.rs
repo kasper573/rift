@@ -24,7 +24,11 @@ impl Plugin for InputPlugin {
             .add_systems(Update, touch_as_mouse)
             .add_systems(
                 Update,
-                (respawn_when_dead, update_tile_highlight).run_if(in_state(Scene::Area)),
+                (
+                    respawn_when_dead.run_if(not(ui::typing)),
+                    update_tile_highlight,
+                )
+                    .run_if(in_state(Scene::Area)),
             );
     }
 }

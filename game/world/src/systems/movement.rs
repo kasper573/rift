@@ -8,10 +8,12 @@ use crate::core::assets::AssetService;
 use crate::core::math::{Direction, Offset, Pos};
 use crate::core::tiling::{Cell, CellPos, TilePos, Tiles, TilesPerSec};
 use crate::core::time::Seconds;
+use crate::systems::account::identity::Identity;
 use crate::systems::actor::{Action, Actor, set_facing};
 use crate::systems::area;
 use crate::systems::combat::AttackTarget;
-use crate::systems::player::sender_player;
+use crate::systems::command::{Ctx, command};
+use crate::systems::player::{ClientId, Players, sender_player};
 use crate::systems::stat::{self, StatKind};
 
 pub fn register(app: &mut App) {
@@ -311,15 +313,64 @@ fn cross_portal(world: &mut World, entity: Entity) {
     if !rect.contains(at) {
         return;
     }
-    if dest_area == area_id {
-        if let Some(mut p) = world.get_mut::<Position>(entity) {
-            p.pos = dest;
+    relocate(world, entity, dest_area, dest);
+}
+
+fn relocate(world: &mut World, entity: Entity, dest_area: area::Id, dest: Pos<Tiles>) {
+    let current = world.get::<area::AreaTag>(entity).map(|tag| tag.area);
+    if current == Some(dest_area) {
+        if let Some(mut position) = world.get_mut::<Position>(entity) {
+            position.pos = dest;
         }
-        forget(world, entity);
     } else {
         world
             .entity_mut(entity)
             .insert(crate::systems::area::transition::Crossing { dest_area, dest });
-        forget(world, entity);
     }
+    forget(world, entity);
+}
+
+/// Teleport a player.
+#[command(name = "tp", role = Admin)]
+fn teleport(
+    world: &mut World,
+    ctx: &Ctx,
+    x: f32,
+    y: f32,
+    area: Option<area::Id>,
+    user: Option<String>,
+) -> Result<String, String> {
+    let target = match &user {
+        Some(user) => player_by_user(world, user)
+            .ok_or_else(|| format!("no player with user id `{user}` in your area"))?,
+        None => ctx
+            .player
+            .ok_or_else(|| "you have no player to teleport".to_owned())?,
+    };
+    let current = world
+        .get::<area::AreaTag>(target)
+        .map(|tag| tag.area)
+        .ok_or_else(|| "target has no area".to_owned())?;
+    let dest_area = area.unwrap_or(current);
+    let size = world
+        .resource::<AssetService>()
+        .resolve(dest_area.get().map, area::build_area)
+        .size;
+    if !(0.0..=size.width).contains(&x) || !(0.0..=size.height).contains(&y) {
+        return Err(format!(
+            "({x},{y}) is outside {dest_area:?} ({}x{} tiles)",
+            size.width, size.height
+        ));
+    }
+    relocate(world, target, dest_area, Pos::new(x, y));
+    Ok(format!("teleported to {x},{y} in {dest_area:?}"))
+}
+
+fn player_by_user(world: &mut World, user: &str) -> Option<Entity> {
+    let client: ClientId = world
+        .query::<(&ClientId, &Identity)>()
+        .iter(world)
+        .find(|(_, identity)| identity.id == user)
+        .map(|(&client, _)| client)?;
+    world.resource::<Players>().0.get(&client).copied()
 }

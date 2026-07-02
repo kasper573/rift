@@ -12,6 +12,8 @@ name = "kc-roles"
 path = "src/bin/kc_roles.rs"
 
 [dependencies]
+world-macros = { path = "macros" }
+inventory.workspace = true
 bevy_app.workspace = true
 bevy_ecs.workspace = true
 bevy_replicon = { workspace = true, features = ["client", "server"] }
@@ -33,3 +35,9 @@ postcard = { version = "1", features = ["alloc"] }
 # steps a single world and never links rayon (its thread pool has no wasm backend).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rayon.workspace = true
+
+[dev-dependencies]
+bevy_app.workspace = true
+bevy_ecs.workspace = true
+bevy_replicon = { workspace = true, features = ["client", "server"] }
+bevy_state.workspace = true

@@ -60,6 +60,7 @@ pub fn boot() {
             systems::debug::DebugPlugin,
             systems::testing::TestingPlugin,
             systems::widget::HudPlugin,
+            systems::terminal::TerminalPlugin,
             systems::fps::FpsPlugin,
         ));
     ui::theme::set_theme(ui::themes::dark::THEME);

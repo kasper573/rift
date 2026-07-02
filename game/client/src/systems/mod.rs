@@ -7,6 +7,7 @@ pub mod interpolate;
 pub mod item;
 pub mod scene;
 pub mod session;
+pub mod terminal;
 pub mod testing;
 pub mod view;
 pub mod widget;

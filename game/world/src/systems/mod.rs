@@ -1,7 +1,9 @@
 pub mod account;
 pub mod actor;
 pub mod area;
+pub mod chat;
 pub mod combat;
+pub mod command;
 pub mod effect;
 pub mod equipment;
 pub mod item;
@@ -12,6 +14,7 @@ pub mod player;
 pub mod rewards;
 pub mod spectate;
 pub mod stat;
+pub mod terminal;
 pub mod visibility;
 
 use bevy_app::App;
@@ -44,6 +47,7 @@ pub fn protocol(app: &mut App) {
     npc::register(app);
     player::register(app);
     spectate::register(app);
+    terminal::register(app);
 }
 
 #[derive(Resource, Clone, Copy)]
@@ -88,6 +92,7 @@ pub fn server_app(area: area::Id, ordinal: u64) -> App {
     app.init_resource::<player::Players>()
         .init_resource::<spectate::Spectators>()
         .init_resource::<combat::RegenAt>()
+        .init_resource::<terminal::TerminalInbox>()
         // Seed the phase by the world's ordinal so worlds replicate on different ticks, spreading the
         // serialization load across ticks instead of spiking every Nth tick in lockstep.
         .insert_resource(ReplicationClock(ordinal))
@@ -95,6 +100,7 @@ pub fn server_app(area: area::Id, ordinal: u64) -> App {
         .add_observer(player::greet)
         .add_observer(player::client_left)
         .add_observer(spectate::client_left)
+        .add_observer(terminal::issue_tabs)
         .add_systems(Startup, npc::spawn_all)
         .add_systems(First, advance_replication_clock)
         .add_systems(
@@ -132,6 +138,9 @@ pub fn server_app(area: area::Id, ordinal: u64) -> App {
                     spectate::requests,
                     spectate::follow,
                     npc::run_respawn,
+                    terminal::ingest,
+                    command::dispatch,
+                    chat::rebroadcast,
                     visibility::update.run_if(on_replication_tick),
                 )
                     .chain(),

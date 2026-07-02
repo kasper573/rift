@@ -20,7 +20,13 @@ impl Plugin for DebugPlugin {
             .init_resource::<ShowHitboxes>()
             .add_systems(
                 Update,
-                (cycle, draw, toggle_hitboxes, draw_hitboxes).run_if(in_state(Scene::Area)),
+                (
+                    cycle.run_if(not(ui::typing)),
+                    draw,
+                    toggle_hitboxes.run_if(not(ui::typing)),
+                    draw_hitboxes,
+                )
+                    .run_if(in_state(Scene::Area)),
             )
             .add_systems(OnExit(Scene::Area), clear_hitboxes);
     }

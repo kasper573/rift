@@ -4,6 +4,7 @@ pub mod equipment;
 pub mod inventory;
 pub mod settings;
 pub mod stats;
+pub mod terminal;
 
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
@@ -24,6 +25,7 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Settings>()
             .init_resource::<Open>()
+            .init_resource::<RefreshWindows>()
             .add_systems(OnEnter(crate::Scene::Area), spawn_hud)
             .add_systems(
                 OnExit(crate::Scene::Area),
@@ -32,7 +34,7 @@ impl Plugin for HudPlugin {
             .add_systems(
                 Update,
                 (
-                    toggle_keys,
+                    toggle_keys.run_if(not(ui::typing)),
                     rebuild_windows,
                     sync_widgets,
                     sync_windows,
@@ -42,6 +44,13 @@ impl Plugin for HudPlugin {
             );
     }
 }
+
+/// Window ids whose contents must be rebuilt even though their open state did not change —
+/// for windows whose tab set is derived from live state (e.g. the terminal).
+#[derive(Resource, Default)]
+pub(crate) struct RefreshWindows(pub std::collections::HashSet<&'static str>);
+
+pub(crate) const TERMINAL_WINDOW: &str = "Terminal";
 
 pub trait Widget: Send + Sync {
     fn fallback(&self) -> Vec2;
@@ -104,13 +113,18 @@ pub(super) fn reconcile_children(
                 .collect()
         })
         .unwrap_or_default();
-    if current.iter().map(|(_, key)| *key).eq(keys.iter().copied()) {
+    let shared = current
+        .iter()
+        .zip(keys.iter())
+        .take_while(|(have, want)| have.1 == **want)
+        .count();
+    if shared == current.len() && shared == keys.len() {
         return;
     }
-    for (entity, _) in current {
-        world.entity_mut(entity).despawn();
+    for (entity, _) in &current[shared..] {
+        world.entity_mut(*entity).despawn();
     }
-    for (index, &key) in keys.iter().enumerate() {
+    for (index, &key) in keys.iter().enumerate().skip(shared) {
         if let Ok(mut spawned) = world.spawn_scene(build(index)) {
             spawned.insert(Keyed(key));
             let child = spawned.id();
@@ -132,6 +146,7 @@ static WINDOWS: &[(&str, &dyn Window)] = &[
     ("Equipment", &equipment::EquipmentWindow),
     ("Stats", &stats::StatsWindow),
     ("Settings", &settings::SettingsWindow),
+    (TERMINAL_WINDOW, &terminal::TerminalWindow),
 ];
 
 fn window_def(id: &str) -> &'static dyn Window {
@@ -320,7 +335,11 @@ fn spawn_hud(
 }
 
 fn rebuild_windows(world: &mut World) {
-    if !world.is_resource_changed::<Open>() {
+    let refresh = match world.resource::<RefreshWindows>().0.is_empty() {
+        true => std::collections::HashSet::new(),
+        false => std::mem::take(&mut world.resource_mut::<RefreshWindows>().0),
+    };
+    if !world.is_resource_changed::<Open>() && refresh.is_empty() {
         return;
     }
     let Ok(screen_w) = world
@@ -337,7 +356,7 @@ fn rebuild_windows(world: &mut World) {
         .collect();
     for (entity, view, hud) in views {
         let should_open = world.resource::<Open>().0.contains(&view.window);
-        if should_open == view.open {
+        if should_open == view.open && !(view.open && refresh.contains(&view.window)) {
             continue;
         }
         let window = view.window;
