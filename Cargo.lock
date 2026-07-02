@@ -8212,6 +8212,7 @@ dependencies = [
  "bevy_color",
  "bevy_ecs",
  "bevy_input",
+ "bevy_input_focus",
  "bevy_math",
  "bevy_picking",
  "bevy_scene",
@@ -9355,6 +9356,7 @@ dependencies = [
  "derive_more",
  "euclid",
  "getrandom 0.2.17",
+ "inventory",
  "oorandom",
  "pathfinding",
  "postcard",
@@ -9364,6 +9366,16 @@ dependencies = [
  "serde_json",
  "strum",
  "tiled",
+ "world-macros",
+]
+
+[[package]]
+name = "world-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

@@ -13,6 +13,7 @@ bevy_ui = { workspace = true }
 bevy_ui_widgets = { workspace = true }
 bevy_picking = { workspace = true }
 bevy_input = { workspace = true }
+bevy_input_focus = { workspace = true }
 bevy_asset = { workspace = true }
 bevy_camera = { workspace = true }
 bevy_color = { workspace = true }

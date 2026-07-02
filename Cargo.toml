@@ -4,6 +4,7 @@ members = [
     "ui",
     "bevy/tiled",
     "game/world",
+    "game/world/macros",
     "game/server",
     "game/client",
     "game/bench",
@@ -16,6 +17,7 @@ members = [
 default-members = [
     "ui",
     "game/world",
+    "game/world/macros",
     "game/server",
     "game/bench",
     "game/lint",
@@ -42,6 +44,7 @@ bevy_ui = { version = "0.19.0", default-features = false, features = ["bevy_pick
 bevy_ui_widgets = { version = "0.19.0", default-features = false }
 bevy_picking = { version = "0.19.0", default-features = false }
 bevy_input = { version = "0.19.0", default-features = false }
+bevy_input_focus = { version = "0.19.0" }
 bevy_asset = { version = "0.19.0", default-features = false }
 bevy_color = { version = "0.19.0", default-features = false }
 bevy_text = { version = "0.19.0", default-features = false }
