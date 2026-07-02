@@ -19,7 +19,7 @@ pub trait ServerSocket: 'static {
     fn is_closed(&self) -> bool;
 }
 
-/// Host capabilities the client needs that bevy doesn't provide. 
+/// Host capabilities the client needs that bevy doesn't provide.
 /// Each target implements it in its binary and installs it as the [`ClientPlatform`] resource.
 pub trait Platform: Send + Sync + 'static {
     fn load(&self, key: &str) -> Option<String>;
