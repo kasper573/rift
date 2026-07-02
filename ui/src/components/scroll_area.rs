@@ -30,6 +30,24 @@ pub(crate) struct ScrollThumbMark;
 #[derive(Component, Default, Clone)]
 pub(crate) struct ScrollTarget(f32);
 
+/// Opt-in for a [`scroll_viewport`]: keeps the view glued to the bottom edge. Starts scrolled to
+/// the bottom and follows it when content grows; scrolling up releases the pin, scrolling back
+/// to the bottom re-engages it.
+#[derive(Component, Clone)]
+pub struct PinToBottom {
+    pinned: bool,
+    last_max: f32,
+}
+
+impl Default for PinToBottom {
+    fn default() -> PinToBottom {
+        PinToBottom {
+            pinned: true,
+            last_max: -1.0,
+        }
+    }
+}
+
 pub fn scrolled(content: Box<dyn Scene>) -> impl Scene {
     bsn! {
         Node { width: Val::Percent(100.0), height: Val::Percent(100.0) }
@@ -144,6 +162,27 @@ pub(crate) fn animate_scroll(
         } else {
             position.y + delta * factor
         };
+    }
+}
+
+pub(crate) fn pin_to_bottom(
+    mut viewports: Query<
+        (&ComputedNode, &mut ScrollTarget, &mut PinToBottom),
+        With<ScrollViewport>,
+    >,
+) {
+    const EPS: f32 = 1.0;
+    for (view, mut target, mut pin) in &mut viewports {
+        let scale = view.inverse_scale_factor;
+        let max = (view.content_size.y * scale - view.size.y * scale).max(0.0);
+        if (max - pin.last_max).abs() > EPS {
+            pin.last_max = max;
+            if pin.pinned {
+                target.0 = max;
+            }
+        } else {
+            pin.pinned = target.0 >= max - EPS;
+        }
     }
 }
 
