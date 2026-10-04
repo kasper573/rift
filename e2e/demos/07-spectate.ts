@@ -24,9 +24,9 @@ test(
       await waitForWorld(page, loadReference("island.png"));
       await caption(page, "They see everyone in the area, while nobody sees them");
       for (const [dx, dy] of [
-        [3, -1],
-        [-1, -2],
-        [-4, 1],
+        [3, 1],
+        [-2, 2],
+        [-4, -1],
       ]) {
         const { me, walkable } = await probe(player);
         await walkTo(player, closestTile(walkable, [me!.at[0] + dx, me!.at[1] + dy])!);

@@ -19,8 +19,8 @@ test(
       await caption(page, "New players register an account…");
       await page.waitForTimeout(1500);
       await register(page, { typingDelayMs: 35 });
-      await caption(page, "…and land straight in the world");
       await waitForWorld(page, loadReference("island.png"));
+      await caption(page, "…and land straight in the world");
       await page.waitForTimeout(3000);
     },
   }),

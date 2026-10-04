@@ -1,10 +1,12 @@
-import type { Browser, BrowserContext, Disposable, Page, TestInfo } from "@playwright/test";
+import type { Browser, BrowserContext, Page, TestInfo } from "@playwright/test";
 import { basename, extname, join } from "node:path";
 
 import { VIDEO } from "../demo.config";
 import { register } from "./account";
 import { waitForWorld } from "./game";
 import { loadReference } from "./image";
+import { startRecording } from "./recording";
+import { tapSoundtrack } from "./soundtrack";
 
 export interface Chapter {
   summary: string;
@@ -40,17 +42,17 @@ export function chapter({ summary, setup = enterWorld, play }: Chapter) {
       },
     };
     try {
+      await tapSoundtrack(page);
       await setup(page, cast);
-      await page.screencast.start({ path: videoPath(info.file), size: VIDEO });
+      const recording = await startRecording(page, VIDEO, info.outputPath());
       try {
         await page.screencast.showActions({ cursor: "pointer", position: "bottom-right", fontSize: 18, duration: 250 });
         await page.screencast.showOverlay(titleCard(info.title, summary), { duration: TITLE_MS });
-        await page.waitForTimeout(TITLE_MS);
         await play(page, cast);
         await page.waitForTimeout(OUTRO_MS);
       } finally {
         // Kept on failure too: the recording is the quickest way to see what went wrong.
-        await page.screencast.stop();
+        await recording.finish(videoPath(info.file));
       }
     } finally {
       // The browser outlives the chapter, and so would these players, walking into the next one.
@@ -64,11 +66,19 @@ export async function enterWorld(page: Page): Promise<void> {
   await waitForWorld(page, loadReference("island.png"));
 }
 
-const captions = new WeakMap<Page, Disposable>();
+const hideCaption = new WeakMap<Page, () => Promise<void>>();
 
+// Stays up while the chapter plays on, until the next caption replaces it or its time is up. (An
+// overlay shown with a duration would hold the chapter still for all of it.)
 export async function caption(page: Page, text: string, durationMs = 3500): Promise<void> {
-  await captions.get(page)?.dispose();
-  captions.set(page, await page.screencast.showOverlay(subtitle(text), { duration: durationMs }));
+  await hideCaption.get(page)?.();
+  const overlay = await page.screencast.showOverlay(subtitle(text));
+  const hide = () => overlay.dispose().catch(() => {});
+  const timer = setTimeout(hide, durationMs);
+  hideCaption.set(page, () => {
+    clearTimeout(timer);
+    return hide();
+  });
 }
 
 function titleCard(title: string, summary: string): string {
