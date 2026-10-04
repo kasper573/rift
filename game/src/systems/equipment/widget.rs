@@ -5,7 +5,7 @@ use bevy::scene::EntityScene;
 use ui::{Align, Side, tooltip, tooltip_content};
 
 use crate::systems::hud::{
-    SLOT_BG, SLOT_BORDER, Window, reconcile_children, slot_node, tooltip_label,
+    HudAudience, SLOT_BG, SLOT_BORDER, Window, reconcile_children, slot_node, tooltip_label,
 };
 use ui::component;
 
@@ -15,8 +15,8 @@ pub(super) struct EquipmentGrid;
 pub struct EquipmentWindow;
 
 impl Window for EquipmentWindow {
-    fn needs_character(&self) -> bool {
-        true
+    fn audience(&self) -> HudAudience {
+        HudAudience::Players
     }
     fn title(&self) -> &'static str {
         "Equipment"

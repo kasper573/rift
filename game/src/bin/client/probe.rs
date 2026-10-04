@@ -31,6 +31,7 @@ struct Snapshot {
     view: Option<View>,
     area: Option<area::Id>,
     me: Option<Body>,
+    viewpoint: Option<Body>,
     actors: Vec<Body>,
     items: Vec<GroundItem>,
     portals: Vec<Exit>,
@@ -102,12 +103,14 @@ fn publish(world: &mut World) {
 
 fn snapshot(world: &mut World) -> Snapshot {
     let me = session::my_character(world).map(|me| me.id());
-    let area = session::my_viewpoint(world)
-        .and_then(|viewpoint| viewpoint.get::<AreaTag>())
+    let viewpoint = world.resource::<session::Viewpoint>().0;
+    let area = viewpoint
+        .and_then(|seen| world.get::<AreaTag>(seen))
         .map(|tag| tag.area);
     let view = view(world);
     Snapshot {
         me: me.and_then(|me| body(world, me)),
+        viewpoint: viewpoint.and_then(|seen| body(world, seen)),
         actors: actors(world, me, area),
         items: items(world, area),
         portals: portals(world, me),

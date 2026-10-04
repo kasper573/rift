@@ -3,8 +3,7 @@ use crate::core::math::Pos;
 use crate::core::tiling::{TilePos, TileSize, Tiles};
 use crate::core::time::Seconds;
 use crate::systems::area::{self, AreaTag};
-use crate::systems::player::Owner;
-use crate::systems::player::session::MyClient;
+use crate::systems::player::session::Viewpoint;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -43,18 +42,15 @@ struct FollowCenter(Option<Pos<Tiles>>);
 #[allow(clippy::too_many_arguments)]
 fn track_player(
     time: Res<Time>,
-    me: Res<MyClient>,
+    viewpoint: Res<Viewpoint>,
     service: Res<AssetService>,
-    players: Query<(&Owner, &RenderPosition, &AreaTag)>,
+    characters: Query<(&RenderPosition, &AreaTag)>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut camera: Query<&mut Transform, With<WorldCamera>>,
     mut listener: ResMut<Listener>,
     mut follow: ResMut<FollowCenter>,
 ) {
-    let Some(my) = me.0 else {
-        return;
-    };
-    let Some((_, render, tag)) = players.iter().find(|(owner, ..)| owner.client == my) else {
+    let Some((render, tag)) = viewpoint.0.and_then(|seen| characters.get(seen).ok()) else {
         return;
     };
     let at = render.0;

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use ui::button::intent as button_intent;
 use ui::{Activate, ButtonSize, button_styled};
 
-use crate::systems::hud::{Settings, Window};
+use crate::systems::hud::{HudAudience, Settings, Window};
 
 #[derive(Component, Default, Clone)]
 struct SnappingButton;
@@ -10,8 +10,8 @@ struct SnappingButton;
 pub struct SettingsWindow;
 
 impl Window for SettingsWindow {
-    fn needs_character(&self) -> bool {
-        false
+    fn audience(&self) -> HudAudience {
+        HudAudience::Everyone
     }
     fn title(&self) -> &'static str {
         "Settings"

@@ -71,6 +71,7 @@ fn boot() {
             systems::debug::DebugPlugin,
             crate::probe::ProbePlugin,
             systems::hud::HudPlugin,
+            systems::spectate::widget::SpectatorPlugin,
             systems::terminal::TerminalPlugin,
             systems::fps::FpsPlugin,
         ));

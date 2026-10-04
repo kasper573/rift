@@ -6,7 +6,7 @@ use ui::{Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
 use crate::core::platform::{ClientPlatform, Platform};
 use crate::systems::scene::mode::Mode;
-use crate::systems::{effect, equipment, item, player, settings, stat, terminal};
+use crate::systems::{effect, equipment, item, player, settings, spectate, stat, terminal};
 
 pub(crate) const WIDGET: ScreenPx = ScreenPx(48.0);
 const WINDOW_SIZE: Vec2 = Vec2::new(400.0, 200.0);
@@ -48,15 +48,32 @@ pub(crate) struct RefreshWindows(pub std::collections::HashSet<&'static str>);
 
 pub(crate) const TERMINAL_WINDOW: &str = "Terminal";
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HudAudience {
+    Players,
+    Spectators,
+    Everyone,
+}
+
+impl HudAudience {
+    fn includes(self, mode: Mode) -> bool {
+        match self {
+            HudAudience::Players => mode == Mode::Play,
+            HudAudience::Spectators => mode == Mode::Spectate,
+            HudAudience::Everyone => true,
+        }
+    }
+}
+
 pub trait Widget: Send + Sync {
-    fn needs_character(&self) -> bool;
+    fn audience(&self) -> HudAudience;
     fn fallback(&self) -> Vec2;
     fn build(&self, pos: Vec2, id: &'static str) -> Box<dyn Scene>;
     fn sync(&self, world: &mut World);
 }
 
 pub trait Window: Send + Sync {
-    fn needs_character(&self) -> bool;
+    fn audience(&self) -> HudAudience;
     fn title(&self) -> &'static str;
     fn toggle(&self) -> KeyCode;
     fn keybind(&self) -> &'static str;
@@ -137,6 +154,7 @@ struct Keyed(u64);
 static WIDGETS: &[(&str, &dyn Widget)] = &[
     ("character", &player::widget::CharacterWidget),
     ("effects", &effect::widget::EffectsWidget),
+    ("spectator", &spectate::widget::SpectatorWidget),
 ];
 
 static WINDOWS: &[(&str, &dyn Window)] = &[
@@ -151,14 +169,14 @@ fn widgets(mode: Mode) -> impl Iterator<Item = (&'static str, &'static dyn Widge
     WIDGETS
         .iter()
         .copied()
-        .filter(move |(_, widget)| mode == Mode::Play || !widget.needs_character())
+        .filter(move |(_, widget)| widget.audience().includes(mode))
 }
 
 fn windows(mode: Mode) -> impl Iterator<Item = (&'static str, &'static dyn Window)> {
     WINDOWS
         .iter()
         .copied()
-        .filter(move |(_, window)| mode == Mode::Play || !window.needs_character())
+        .filter(move |(_, window)| window.audience().includes(mode))
 }
 
 fn window_def(id: &str) -> &'static dyn Window {

@@ -15,8 +15,8 @@ struct EffectsGrid;
 pub struct EffectsWidget;
 
 impl crate::systems::hud::Widget for EffectsWidget {
-    fn needs_character(&self) -> bool {
-        true
+    fn audience(&self) -> crate::systems::hud::HudAudience {
+        crate::systems::hud::HudAudience::Players
     }
     fn fallback(&self) -> Vec2 {
         Vec2::new(8.0, 80.0)

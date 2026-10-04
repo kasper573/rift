@@ -4,7 +4,7 @@ use crate::systems::stat;
 use bevy::prelude::*;
 use ui::text_colored;
 
-use crate::systems::hud::Window;
+use crate::systems::hud::{HudAudience, Window};
 
 #[derive(Component, Default, Clone)]
 pub(super) struct StatsText;
@@ -12,8 +12,8 @@ pub(super) struct StatsText;
 pub struct StatsWindow;
 
 impl Window for StatsWindow {
-    fn needs_character(&self) -> bool {
-        true
+    fn audience(&self) -> HudAudience {
+        HudAudience::Players
     }
     fn title(&self) -> &'static str {
         "Stats"

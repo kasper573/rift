@@ -3,14 +3,14 @@ use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use bevy_terminal::TerminalInput;
 
-use crate::systems::hud::{Window, reconcile_children};
+use crate::systems::hud::{HudAudience, Window, reconcile_children};
 use crate::systems::terminal::Terminals;
 
 pub struct TerminalWindow;
 
 impl Window for TerminalWindow {
-    fn needs_character(&self) -> bool {
-        false
+    fn audience(&self) -> HudAudience {
+        HudAudience::Everyone
     }
     fn title(&self) -> &'static str {
         "Terminal"

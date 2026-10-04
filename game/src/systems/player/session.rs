@@ -1,20 +1,20 @@
-use bevy_app::{App, Plugin, Update};
+use bevy_app::{App, Plugin, PreUpdate, Update};
 use bevy_ecs::message::MessageReader;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::EntityRef;
+use bevy_replicon::client::ClientSystems;
 use bevy_replicon::prelude::{AuthMethod, ClientState, RepliconPlugins, RepliconSharedPlugin};
 use bevy_state::prelude::OnEnter;
 
 use super::{ClientId, JoinRequest, Owner, RespawnRequest, Welcome};
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
-use crate::systems::actor::Actor;
 use crate::systems::area;
 use crate::systems::combat::AttackRequest;
 use crate::systems::equipment::{EquipmentSlot, UnequipRequest};
 use crate::systems::item::{DropItemRequest, PickupRequest, UseItemRequest};
 use crate::systems::movement::{MoveRequest, MoveToPortal};
-use crate::systems::spectate::SpectateRequest;
+use crate::systems::spectate::{SpectateRequest, Spectating};
 
 pub struct ClientSessionPlugin;
 
@@ -26,8 +26,16 @@ impl Plugin for ClientSessionPlugin {
             }),
         );
         crate::systems::protocol(app);
-        app.init_resource::<MyClient>();
+        app.init_resource::<MyClient>()
+            .init_resource::<SpectateStatus>()
+            .init_resource::<Viewpoint>();
         app.add_systems(Update, record_welcome);
+        app.add_systems(
+            PreUpdate,
+            (record_spectating, track_viewpoint)
+                .chain()
+                .after(ClientSystems::Receive),
+        );
         app.add_systems(OnEnter(ClientState::Disconnected), forget_me);
     }
 }
@@ -35,17 +43,26 @@ impl Plugin for ClientSessionPlugin {
 #[derive(Resource, Default)]
 pub struct MyClient(pub Option<ClientId>);
 
+/// What the server last told this client about whom it spectates; `None` until it has.
+#[derive(Resource, Default)]
+pub struct SpectateStatus(pub Option<Spectating>);
+
+/// The character this client sees the world through: its own, or the one it spectates. There is no
+/// other way to look at the world.
+#[derive(Resource, Default)]
+pub struct Viewpoint(pub Option<Entity>);
+
 pub fn my_id(world: &World) -> Option<ClientId> {
     world.resource::<MyClient>().0
 }
 
-// A spectator owns a viewpoint in the world too, but no character.
 pub fn my_character(world: &World) -> Option<EntityRef<'_>> {
-    owned(world).find(|entity| entity.contains::<Actor>())
-}
-
-pub fn my_viewpoint(world: &World) -> Option<EntityRef<'_>> {
-    owned(world).next()
+    let mine = my_id(world)?;
+    world.iter_entities().find(|entity| {
+        entity
+            .get::<Owner>()
+            .is_some_and(|owner| owner.client == mine)
+    })
 }
 
 pub fn is_dead(world: &World) -> bool {
@@ -60,8 +77,8 @@ pub fn join(world: &mut World) {
     world.write_message(JoinRequest);
 }
 
-pub fn spectate(world: &mut World, watch: Option<ClientId>) {
-    world.write_message(SpectateRequest { watch });
+pub fn spectate(world: &mut World, request: SpectateRequest) {
+    world.write_message(request);
 }
 
 pub fn attack(world: &mut World, target: Entity) {
@@ -116,15 +133,35 @@ fn record_welcome(mut welcomes: MessageReader<Welcome>, mut me: ResMut<MyClient>
     }
 }
 
-fn forget_me(mut me: ResMut<MyClient>) {
-    me.0 = None;
+fn record_spectating(mut told: MessageReader<Spectating>, mut status: ResMut<SpectateStatus>) {
+    if let Some(&latest) = told.read().last() {
+        status.0 = Some(latest);
+    }
 }
 
-fn owned(world: &World) -> impl Iterator<Item = EntityRef<'_>> {
-    let mine = my_id(world);
-    world.iter_entities().filter(move |entity| {
-        entity
-            .get::<Owner>()
-            .is_some_and(|owner| Some(owner.client) == mine)
-    })
+fn track_viewpoint(
+    me: Res<MyClient>,
+    status: Res<SpectateStatus>,
+    characters: Query<(Entity, &Owner)>,
+    mut viewpoint: ResMut<Viewpoint>,
+) {
+    let followed = match status.0 {
+        Some(Spectating::Player(watched)) => Some(watched.player),
+        Some(Spectating::Nobody) => None,
+        None => me.0,
+    };
+    let character = followed.and_then(|client| {
+        characters
+            .iter()
+            .find(|(_, owner)| owner.client == client)
+            .map(|(character, _)| character)
+    });
+    if viewpoint.0 != character {
+        viewpoint.0 = character;
+    }
+}
+
+fn forget_me(mut me: ResMut<MyClient>, mut status: ResMut<SpectateStatus>) {
+    me.0 = None;
+    status.0 = None;
 }

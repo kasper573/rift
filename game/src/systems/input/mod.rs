@@ -4,8 +4,7 @@ use crate::core::assets::AssetService;
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 use crate::systems::area::{self, AreaTag};
-use crate::systems::player::Owner;
-use crate::systems::player::session::{self, MyClient};
+use crate::systems::player::session::{self, Viewpoint};
 use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
@@ -56,9 +55,9 @@ fn setup_highlight(mut commands: Commands) {
 
 fn update_tile_highlight(
     highlight: Option<Res<ActiveTileHighlight>>,
-    me: Res<MyClient>,
+    viewpoint: Res<Viewpoint>,
     service: Res<AssetService>,
-    players: Query<(&Owner, &AreaTag)>,
+    areas: Query<&AreaTag>,
     mut sprite: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<TileHighlight>>,
 ) {
     let Ok((mut sprite, mut transform, mut visibility)) = sprite.single_mut() else {
@@ -68,7 +67,7 @@ fn update_tile_highlight(
         *visibility = Visibility::Hidden;
         return;
     };
-    let Some(z) = highlight_z(&service, &me, &players) else {
+    let Some(z) = highlight_z(&service, &viewpoint, &areas) else {
         *visibility = Visibility::Hidden;
         return;
     };
@@ -79,11 +78,10 @@ fn update_tile_highlight(
 
 fn highlight_z(
     service: &AssetService,
-    me: &MyClient,
-    players: &Query<(&Owner, &AreaTag)>,
+    viewpoint: &Viewpoint,
+    areas: &Query<&AreaTag>,
 ) -> Option<f32> {
-    let my = me.0?;
-    let (_, tag) = players.iter().find(|(owner, _)| owner.client == my)?;
+    let tag = areas.get(viewpoint.0?).ok()?;
     Some(
         service
             .resolve(tag.area.get().map, area::build_area)

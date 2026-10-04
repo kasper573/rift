@@ -21,6 +21,7 @@ use game::core::net::channels::RenetChannelsExt;
 use game::systems::account::Identity;
 use game::systems::area::transition;
 use game::systems::player::{ClientId, Immortal, SpawnPolicy};
+use game::systems::spectate::{self, SpectatorTransfer};
 use game::systems::{REPLICATION_INTERVAL, TICK_HZ};
 use metrics::{counter, gauge, histogram};
 use rand::RngCore;
@@ -389,34 +390,54 @@ fn spawn_conn(
     }
 }
 
-/// A player (and all its connections) whose character left its world (despawned) and is waiting to be
-/// re-created in the destination world. The wait lets the source world's despawns reach the
-/// connections first, so their replication state is empty before the destination's fresh snapshot
-/// arrives over the same connections — no entity-id or tick collision between the two worlds. The
-/// wait is one replication period (not one tick): a world only replicates every
-/// `REPLICATION_INTERVAL` ticks, so the despawn isn't guaranteed sent until then.
+/// A client (and all its connections) that left its world and is waiting to be re-created in the
+/// destination world: a player whose character stepped through a cross-area portal, or a spectator
+/// whose player is in another world. Leaving blinds the connections to the source world, and the wait
+/// lets the resulting despawns reach them first, so their replication state is empty before the
+/// destination's fresh snapshot arrives over the same connections — no entity-id or tick collision
+/// between the two worlds. The wait is one replication period (not one tick): a world only replicates
+/// every `REPLICATION_INTERVAL` ticks, so the despawns aren't guaranteed sent until then.
 struct Transfer {
     client: ClientId,
-    traveler: transition::Traveler,
+    dest: usize,
     departed_tick: u64,
+    arrival: Arrival,
 }
 
-/// Phase 1: despawn the character of everyone who stepped through a cross-area portal this tick (so
-/// replicon despawns this world's entities for their connections), and queue the move.
+enum Arrival {
+    Character(transition::Traveler),
+    Spectator(SpectatorTransfer),
+}
+
+/// Phase 1: take everyone leaving their world this tick out of it, and queue the move.
 fn begin_transfers(worlds: &mut [App], transfers: &mut Vec<Transfer>, tick: u64) {
     for app in worlds.iter_mut() {
         for traveler in transition::departing(app.world_mut()) {
             transfers.push(Transfer {
                 client: traveler.client,
-                traveler,
+                dest: traveler.dest_area.index(),
                 departed_tick: tick,
+                arrival: Arrival::Character(traveler),
             });
         }
+    }
+    let arriving: Vec<(ClientId, usize)> = transfers
+        .iter()
+        .filter(|transfer| matches!(transfer.arrival, Arrival::Character(_)))
+        .map(|transfer| (transfer.client, transfer.dest))
+        .collect();
+    for spectator in spectate::coordinate(worlds, arriving.into_iter()) {
+        transfers.push(Transfer {
+            client: spectator.client,
+            dest: spectator.dest,
+            departed_tick: tick,
+            arrival: Arrival::Spectator(spectator),
+        });
     }
 }
 
 /// Phase 2: once the source world's despawns have been sent (a replication period after departing) —
-/// move every socket of the moving player to the destination world and re-create the character there.
+/// move every socket of the client to the destination world and re-create the player or spectator there.
 fn finish_transfers(
     worlds: &mut [App],
     conns: &mut HashMap<u64, Conn>,
@@ -430,9 +451,11 @@ fn finish_transfers(
             continue;
         }
         let Transfer {
-            client, traveler, ..
+            client,
+            dest,
+            arrival,
+            ..
         } = transfers.remove(index);
-        let dest = traveler.dest_area.index();
         let movers: Vec<(u64, usize, Entity)> = conns
             .iter()
             .filter(|(_, conn)| conn.client == client)
@@ -454,7 +477,12 @@ fn finish_transfers(
                 },
             );
         }
-        transition::arrive(worlds[dest].world_mut(), traveler);
+        match arrival {
+            Arrival::Character(traveler) => {
+                transition::arrive(worlds[dest].world_mut(), traveler);
+            }
+            Arrival::Spectator(spectator) => spectate::arrive(worlds[dest].world_mut(), spectator),
+        }
     }
 }
 

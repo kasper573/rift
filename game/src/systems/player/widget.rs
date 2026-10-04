@@ -12,8 +12,8 @@ struct CharacterText;
 pub struct CharacterWidget;
 
 impl crate::systems::hud::Widget for CharacterWidget {
-    fn needs_character(&self) -> bool {
-        true
+    fn audience(&self) -> crate::systems::hud::HudAudience {
+        crate::systems::hud::HudAudience::Players
     }
     fn fallback(&self) -> Vec2 {
         Vec2::new(8.0, 8.0)

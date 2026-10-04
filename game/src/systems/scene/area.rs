@@ -1,8 +1,7 @@
 use crate::core::assets::AssetService;
 use crate::core::tiling::{CellPos, TileSize};
 use crate::systems::area::{self, AreaTag};
-use crate::systems::player::Owner;
-use crate::systems::player::session::{self, MyClient};
+use crate::systems::player::session::{self, Viewpoint};
 use bevy::asset::AssetPath;
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
@@ -33,8 +32,8 @@ struct SpawnedArea(Option<crate::systems::area::Id>);
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_area_tiles(
-    me: Res<MyClient>,
-    players: Query<(&Owner, &AreaTag)>,
+    viewpoint: Res<Viewpoint>,
+    areas: Query<&AreaTag>,
     assets: Res<AssetServer>,
     service: Res<AssetService>,
     mut spawned: ResMut<SpawnedArea>,
@@ -44,13 +43,10 @@ fn spawn_area_tiles(
     mut tilemaps: ResMut<bevy::asset::Assets<bevy_tiled::TilemapMaterial>>,
     mut commands: Commands,
 ) {
-    let Some(my) = me.0 else {
-        return;
-    };
-    let Some(area_id) = players
-        .iter()
-        .find(|(owner, _)| owner.client == my)
-        .map(|(_, tag)| tag.area)
+    let Some(area_id) = viewpoint
+        .0
+        .and_then(|seen| areas.get(seen).ok())
+        .map(|tag| tag.area)
     else {
         return;
     };

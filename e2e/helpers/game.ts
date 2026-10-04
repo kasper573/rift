@@ -43,11 +43,13 @@ export interface UiElement {
 }
 
 // What the client sees this frame. Positions are world tiles, which `view` maps onto canvas pixels
-// (origin + tile × tile_size); `ui` rects are canvas pixels already.
+// (origin + tile × tile_size); `ui` rects are canvas pixels already. `viewpoint` is the character the
+// camera follows: `me`, or the player a spectator watches.
 export interface Snapshot {
   view: { origin: Tile; tile_size: Tile } | null;
   area: string | null;
   me: Body | null;
+  viewpoint: Body | null;
   actors: Body[];
   items: GroundItem[];
   portals: Exit[];

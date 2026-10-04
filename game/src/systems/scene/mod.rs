@@ -82,14 +82,14 @@ fn announce(world: &mut World) {
         if spectate { "spectate" } else { "join" }
     );
     if spectate {
-        session::spectate(world, None);
+        session::spectate(world, crate::systems::spectate::SpectateRequest::Start);
     } else {
         session::join(world);
     }
     world.remove_resource::<Announce>();
 }
 
-fn screen_node() -> Node {
+pub(crate) fn screen_node() -> Node {
     Node {
         position_type: PositionType::Absolute,
         width: Val::Percent(100.0),

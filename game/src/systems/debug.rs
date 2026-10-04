@@ -4,8 +4,7 @@ use crate::core::tiling::{self, TilePos};
 use crate::systems::actor::{Actor, Hitbox};
 use crate::systems::area;
 use crate::systems::area::AreaTag;
-use crate::systems::player::Owner;
-use crate::systems::player::session::MyClient;
+use crate::systems::player::session::Viewpoint;
 use bevy::prelude::*;
 
 use crate::core::render::screen::ToScreen;
@@ -52,21 +51,18 @@ fn cycle(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<DebugMode>) {
 
 fn draw(
     mode: Res<DebugMode>,
-    me: Res<MyClient>,
+    viewpoint: Res<Viewpoint>,
     service: Res<AssetService>,
-    players: Query<(&Owner, &AreaTag)>,
+    areas: Query<&AreaTag>,
     mut gizmos: Gizmos,
 ) {
     if *mode == DebugMode::Off {
         return;
     }
-    let Some(my) = me.0 else {
-        return;
-    };
-    let Some(area_id) = players
-        .iter()
-        .find(|(owner, _)| owner.client == my)
-        .map(|(_, tag)| tag.area)
+    let Some(area_id) = viewpoint
+        .0
+        .and_then(|seen| areas.get(seen).ok())
+        .map(|tag| tag.area)
     else {
         return;
     };

@@ -158,7 +158,6 @@ pub fn server_app(area: area::Id, ordinal: u64) -> App {
                     player::join,
                     player::respawn,
                     spectate::requests,
-                    spectate::follow,
                     npc::run_respawn,
                     bevy_terminal::ingest::<crate::data::terminal::Id>,
                     bevy_terminal::dispatch::<crate::data::terminal::Id>,
