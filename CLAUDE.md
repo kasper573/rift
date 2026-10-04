@@ -58,6 +58,15 @@ Should contain no business logic, only data.
 - Don't scatter duplicate comments describing how a specific mechanism works all over the codebase. Keep it in one place, ideally at the implementation of that mechanism. A common source of this type of bad hygiene is re-explaining a mechanism in the workflow, in env files, in call sites, and finally also in the source code implementation of the mechanism.
 
 
+## Demo videos
+
+Everything you build gets shown to the user on video, from a player's point of view, against the real stack.
+
+- The showcase is `e2e/demos/`: one chapter per file, played in file-name order. A chapter is a Playwright test built with `chapter()` and narrated with `caption()` (`e2e/helpers/demo.ts`). It plays the game with real mouse and keyboard input, finding what to click through the client's probe of the world and UI (`e2e/helpers/game.ts`: `travelTo`, `walkTo`, `pickUp`, `clickUi`, …). Never hardcode screen positions — monsters wander and windows move. When a chapter needs to see something the probe doesn't report, extend the probe (`game/src/bin/client/probe.rs`).
+- After every change, show it in the chapter it belongs to: extend that chapter, or add a numbered file where it fits the story. Record with `just demo <chapter>`, check the result with `just contact-sheet target/demo/<chapter>.webm`, and share the video path(s) with the user when you report back. This is not optional. When a change has nothing new to show (a refactor, a fix with no visible effect), record the chapters covering what it touched to show they still work.
+- A change to the `ui` crate on its own is shown in its component gallery: `just gallery-demo "<scene>" [seconds] [xdotool input]` records `target/demo/gallery-<scene>.webm`.
+- The full showcase, `just showcase` → `target/demo/showcase.webm`, is only recorded when the user explicitly asks for it. It is every chapter stitched in order, so keeping the chapters current is what keeps it complete: never demo a feature outside a chapter.
+
 ## Verification
 
 Before you start work on a task run benchmarks via `just bench` and save the results to a temporary file.

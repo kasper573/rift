@@ -109,8 +109,8 @@ pub fn read_start_params() -> StartParams {
     }
 }
 
-pub fn expose_global_fn(name: &str, hook: impl Fn(f32, f32) + 'static) {
-    let hook = Closure::<dyn Fn(f32, f32)>::new(hook);
+pub fn expose_global_fn(name: &str, hook: impl Fn() -> Option<String> + 'static) {
+    let hook = Closure::<dyn Fn() -> Option<String>>::new(hook);
     js_sys::Reflect::set(&js_sys::global(), &JsValue::from_str(name), hook.as_ref())
         .unwrap_or_else(|_| panic!("expose {name} on the JS global"));
     hook.forget(); // hand the closure to JS for the page's lifetime

@@ -2,7 +2,7 @@
   "name": "rift-e2e",
   "version": "0.1.0",
   "private": true,
-  "description": "End-to-end suite: drives the deployed stack through real browsers and asserts on the pixels the game renders.",
+  "description": "End-to-end suite and demo recordings: drives the deployed stack through real browsers, asserting on the pixels the game renders or filming them.",
   "scripts": {
     "test": "playwright test",
     "report": "playwright show-report"

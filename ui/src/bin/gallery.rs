@@ -36,7 +36,7 @@ const SLOTS: [(f32, f32, Side); 5] = [
 ];
 const FLIP_NOTE: &str = "This floating panel flips to the opposite side when its preferred side would overflow the viewport.";
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 struct CurrentScene(usize);
 
 #[derive(Component, Default, Clone)]
@@ -52,6 +52,7 @@ struct SceneTab(usize);
 struct ToasterEntity;
 
 fn main() {
+    let opened = std::env::args().nth(1).map_or(0, |name| scene_index(&name));
     App::new()
         .add_plugins(
             DefaultPlugins
@@ -69,7 +70,7 @@ fn main() {
                 }),
         )
         .insert_resource(ClearColor(theme().surface_inset.base))
-        .init_resource::<CurrentScene>()
+        .insert_resource(CurrentScene(opened))
         .add_plugins(ui::UiPlugin)
         .add_systems(Startup, setup)
         .add_systems(Update, (rebuild_scene, animate_progress))
@@ -80,7 +81,17 @@ fn boxed(scene: impl Scene + 'static) -> Box<dyn Scene> {
     Box::new(scene)
 }
 
-fn setup(mut commands: Commands) {
+fn scene_index(name: &str) -> usize {
+    SCENES
+        .iter()
+        .position(|(scene, _)| scene.eq_ignore_ascii_case(name))
+        .unwrap_or_else(|| {
+            let names: Vec<&str> = SCENES.iter().map(|(scene, _)| *scene).collect();
+            panic!("no gallery scene {name:?}, pick one of {names:?}")
+        })
+}
+
+fn setup(current: Res<CurrentScene>, mut commands: Commands) {
     commands.spawn((Camera2d, IsDefaultUiCamera));
     let tab_buttons: Vec<Box<dyn Scene>> = SCENES
         .iter()
@@ -98,7 +109,7 @@ fn setup(mut commands: Commands) {
         GalleryRoot
         Node { width: Val::Percent(100.0), height: Val::Percent(100.0), flex_direction: FlexDirection::Column }
         Children [
-            ( {tabs(Some("0".to_owned()))}
+            ( {tabs(Some(current.0.to_string()))}
               Children [
                 ( Node {
                       flex_direction: FlexDirection::Row,

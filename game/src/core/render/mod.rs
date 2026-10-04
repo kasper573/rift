@@ -2,7 +2,7 @@ pub mod camera;
 pub mod present;
 pub mod screen;
 
-pub use camera::cursor_tile;
+pub use camera::{cursor_tile, tile_to_window};
 
 use std::collections::HashMap;
 

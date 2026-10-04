@@ -17,6 +17,8 @@ One-time setup:
   npm deps on first run and drives a headless Chrome through a real sign-in, so it's zero-config and
   never touches your desktop. CI fans out across Chrome, Firefox, Safari, and Edge — see
   [`e2e/README.md`](e2e/README.md).
+- To record demo videos: [ffmpeg](https://ffmpeg.org/) and a GPU (demos fall back to slow software
+  rendering without one). The ui gallery recordings also need `xvfb` and `xdotool`.
 
 Then:
 
@@ -27,6 +29,14 @@ just dev
 This deploys the stack (website serving the baked wasm) and rebuilds the wasm on change. There is
 no wasm hot reload: sign in at the printed URL and reload the page to pick up rebuilds.
 `just stack` deploys the stack alone; `just reset` tears it down and wipes its data.
+
+To see the game in action without playing it, record its demo chapters ([`e2e/demos/`](e2e/demos)):
+
+```sh
+just demo combat   # one chapter: target/demo/03-combat.webm
+just showcase      # all of them, stitched: target/demo/showcase.webm
+just gallery-demo "toasts (sonner)" 8 "mousemove 800 523 click 1"   # a ui component on its own
+```
 
 The website lives at <https://rift.localhost> and Grafana at <https://grafana.rift.localhost>.
 

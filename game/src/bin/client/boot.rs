@@ -69,7 +69,7 @@ fn boot() {
             systems::player::session::ClientSessionPlugin,
             systems::input::InputPlugin,
             systems::debug::DebugPlugin,
-            crate::testing::TestingPlugin,
+            crate::probe::ProbePlugin,
             systems::hud::HudPlugin,
             systems::terminal::TerminalPlugin,
             systems::fps::FpsPlugin,

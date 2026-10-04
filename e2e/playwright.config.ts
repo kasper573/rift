@@ -1,13 +1,19 @@
 import { defineConfig } from "@playwright/test";
 
 const domain = process.env.RIFT_DOMAIN ?? "rift.lan";
-const baseURL = process.env.RIFT_E2E_URL ?? `https://${domain}`;
+export const baseURL = process.env.RIFT_E2E_URL ?? `https://${domain}`;
 
 // rift.lan only resolves on the LAN; map it to loopback in-browser (a Chromium-only flag — headed
 // Firefox/WebKit get the same from /etc/hosts and Firefox's prefs below). Skipped for a real URL.
-const hostResolver = process.env.RIFT_E2E_URL
+export const hostResolver = process.env.RIFT_E2E_URL
   ? []
   : [`--host-resolver-rules=MAP ${domain} 127.0.0.1,MAP *.${domain} 127.0.0.1`];
+
+// Browsers run on machines people are using, so the game's sound must never reach a real audio device:
+// each engine gets a fake one instead.
+export const chromiumSilence = ["--disable-audio-output"];
+const firefoxSilence = { "media.cubeb.force_null_context": true };
+const webkitSilence = { ...process.env, GST_PLUGIN_FEATURE_RANK: "fakeaudiosink:MAX" };
 
 // CI runners have no GPU and Chrome 137+ won't fall back to SwiftShader on its own — force it.
 const chromiumArgs = [
@@ -16,6 +22,7 @@ const chromiumArgs = [
   "--enable-unsafe-swiftshader",
   "--no-sandbox",
   "--disable-dev-shm-usage",
+  ...chromiumSilence,
   ...hostResolver,
 ];
 
@@ -38,10 +45,11 @@ const browsers = {
         "network.dns.localDomains": process.env.RIFT_E2E_URL
           ? ""
           : `${domain},auth.${domain},game-server.${domain}`,
+        ...firefoxSilence,
       },
     },
   },
-  safari: { browserName: "webkit", headless: false },
+  safari: { browserName: "webkit", headless: false, launchOptions: { env: webkitSilence } },
 } as const;
 
 const resolutions = {
