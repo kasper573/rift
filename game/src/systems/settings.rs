@@ -10,6 +10,9 @@ struct SnappingButton;
 pub struct SettingsWindow;
 
 impl Window for SettingsWindow {
+    fn needs_character(&self) -> bool {
+        false
+    }
     fn title(&self) -> &'static str {
         "Settings"
     }

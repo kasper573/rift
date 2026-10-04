@@ -14,7 +14,7 @@ impl Gesture for AttackGesture {
     }
 
     fn claims(&self, world: &mut World) -> bool {
-        !session::is_dead(world)
+        session::is_alive(world)
             && render::cursor_tile(world)
                 .is_some_and(|point| combat::enemy_at(world, point).is_some())
     }

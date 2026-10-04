@@ -12,6 +12,9 @@ pub(super) struct StatsText;
 pub struct StatsWindow;
 
 impl Window for StatsWindow {
+    fn needs_character(&self) -> bool {
+        true
+    }
     fn title(&self) -> &'static str {
         "Stats"
     }
@@ -51,7 +54,7 @@ pub(super) fn sync_stats(world: &mut World) {
 }
 
 fn stats_text(world: &World) -> String {
-    let Some(me) = session::me(world) else {
+    let Some(me) = session::my_character(world) else {
         return String::new();
     };
     let entity = me.id();

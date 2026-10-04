@@ -101,9 +101,9 @@ fn publish(world: &mut World) {
 }
 
 fn snapshot(world: &mut World) -> Snapshot {
-    let me = session::me(world).map(|me| me.id());
-    let area = me
-        .and_then(|me| world.get::<AreaTag>(me))
+    let me = session::my_character(world).map(|me| me.id());
+    let area = session::my_viewpoint(world)
+        .and_then(|viewpoint| viewpoint.get::<AreaTag>())
         .map(|tag| tag.area);
     let view = view(world);
     Snapshot {

@@ -54,7 +54,7 @@ pub struct Spawn {
 }
 
 pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
-    crate::systems::player::session::me(world)
+    crate::systems::player::session::my_character(world)
         .map(|me| me.id())
         .and_then(|entity| of(world, entity))
         .is_some_and(|area| area.grid.walkable(tile))

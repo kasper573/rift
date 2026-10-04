@@ -15,6 +15,9 @@ pub(super) struct InventoryGrid;
 pub struct InventoryWindow;
 
 impl Window for InventoryWindow {
+    fn needs_character(&self) -> bool {
+        true
+    }
     fn title(&self) -> &'static str {
         "Inventory"
     }
@@ -77,7 +80,7 @@ pub(super) fn sync_inventory(world: &mut World) {
 }
 
 fn inventory_cells(world: &World) -> Vec<CellData> {
-    let inventory = session::me(world).and_then(|me| me.get::<Inventory>());
+    let inventory = session::my_character(world).and_then(|me| me.get::<Inventory>());
     let max = inventory.map_or(INVENTORY_MAX, |inventory| inventory.max);
     let assets = world.resource::<AssetServer>();
     (0..max)

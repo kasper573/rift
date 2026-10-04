@@ -112,7 +112,7 @@ export async function hoverTile(page: Page, tile: Tile): Promise<void> {
 // A real mouse click, so it takes the same path through the game's input gestures as a player's.
 export async function clickTile(page: Page, tile: Tile): Promise<void> {
   await hoverTile(page, tile);
-  await press(page);
+  await click(page);
 }
 
 // Waits for the player to come to rest rather than to arrive: anyone standing on the tile stops them
@@ -189,7 +189,7 @@ export function findUi(snapshot: Snapshot, match: UiMatch): UiElement | undefine
 export async function clickUi(page: Page, match: UiMatch): Promise<void> {
   const { x, y } = await uiPoint(page, match);
   await page.mouse.move(x, y, { steps: 12 });
-  await press(page);
+  await click(page);
 }
 
 export async function dragUi(page: Page, match: UiMatch, by: { x: number; y: number }): Promise<void> {
@@ -257,13 +257,8 @@ export function closestTile(tiles: Tile[], target: Tile): Tile | undefined {
     .at(0);
 }
 
-// The game reads held buttons once per frame, so a press released within one frame never registers.
-// Holding it across rendered frames works at any frame rate, down to software WebGL's few per second.
-async function press(page: Page): Promise<void> {
+async function click(page: Page): Promise<void> {
   await page.mouse.down();
-  await page.evaluate(
-    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-  );
   await page.mouse.up();
 }
 

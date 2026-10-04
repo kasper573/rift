@@ -15,6 +15,9 @@ struct EffectsGrid;
 pub struct EffectsWidget;
 
 impl crate::systems::hud::Widget for EffectsWidget {
+    fn needs_character(&self) -> bool {
+        true
+    }
     fn fallback(&self) -> Vec2 {
         Vec2::new(8.0, 80.0)
     }
@@ -63,7 +66,7 @@ fn sync_effects(world: &mut World) {
 }
 
 fn effect_icons(world: &World) -> Vec<IconData> {
-    let Some(me) = session::me(world) else {
+    let Some(me) = session::my_character(world) else {
         return Vec::new();
     };
     let me = me.id();

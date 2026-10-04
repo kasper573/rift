@@ -12,6 +12,9 @@ struct CharacterText;
 pub struct CharacterWidget;
 
 impl crate::systems::hud::Widget for CharacterWidget {
+    fn needs_character(&self) -> bool {
+        true
+    }
     fn fallback(&self) -> Vec2 {
         Vec2::new(8.0, 8.0)
     }
@@ -54,7 +57,7 @@ fn sync_character(world: &mut World) {
 }
 
 fn character_text(world: &World) -> String {
-    let Some(me) = session::me(world) else {
+    let Some(me) = session::my_character(world) else {
         return String::new();
     };
     let entity = me.id();

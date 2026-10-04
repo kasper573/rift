@@ -34,7 +34,7 @@ pub struct AttackRequest {
 }
 
 pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
-    let me = session::me(world).map(|entity| entity.id());
+    let me = session::my_character(world).map(|entity| entity.id());
     let hitboxes: Vec<(Entity, _)> = world
         .query_filtered::<(Entity, &Position, &Hitbox), With<Actor>>()
         .iter(world)

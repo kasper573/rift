@@ -63,18 +63,19 @@ fn update(world: &mut World) {
             buttons.just_pressed(MouseButton::Left),
         )
     };
-    if !pressed {
-        active = None;
-    } else if just {
+    // A click pressed and released between two frames arrives as `just` without `pressed`.
+    if just {
         active = gestures
             .iter()
             .position(|gesture| gesture.claims(world))
             .map(GestureIndex);
+    } else if !pressed {
+        active = None;
     }
     if let Some(GestureIndex(index)) = active {
         gestures[index].drive(world, just);
     }
-    world.resource_mut::<Latched>().0 = active;
+    world.resource_mut::<Latched>().0 = active.filter(|_| pressed);
 
     let mut cursor = None;
     let mut highlight = None;

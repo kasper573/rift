@@ -17,7 +17,7 @@ impl Gesture for PickupGesture {
     }
 
     fn claims(&self, world: &mut World) -> bool {
-        !session::is_dead(world)
+        session::is_alive(world)
             && render::cursor_tile(world)
                 .and_then(|point| item_at(world, point))
                 .is_some()

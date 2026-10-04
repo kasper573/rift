@@ -5,6 +5,7 @@ use ui::component;
 use ui::{Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
 use crate::core::platform::{ClientPlatform, Platform};
+use crate::systems::scene::mode::Mode;
 use crate::systems::{effect, equipment, item, player, settings, stat, terminal};
 
 pub(crate) const WIDGET: ScreenPx = ScreenPx(48.0);
@@ -48,12 +49,14 @@ pub(crate) struct RefreshWindows(pub std::collections::HashSet<&'static str>);
 pub(crate) const TERMINAL_WINDOW: &str = "Terminal";
 
 pub trait Widget: Send + Sync {
+    fn needs_character(&self) -> bool;
     fn fallback(&self) -> Vec2;
     fn build(&self, pos: Vec2, id: &'static str) -> Box<dyn Scene>;
     fn sync(&self, world: &mut World);
 }
 
 pub trait Window: Send + Sync {
+    fn needs_character(&self) -> bool;
     fn title(&self) -> &'static str;
     fn toggle(&self) -> KeyCode;
     fn keybind(&self) -> &'static str;
@@ -143,6 +146,20 @@ static WINDOWS: &[(&str, &dyn Window)] = &[
     ("Settings", &settings::SettingsWindow),
     (TERMINAL_WINDOW, &terminal::widget::TerminalWindow),
 ];
+
+fn widgets(mode: Mode) -> impl Iterator<Item = (&'static str, &'static dyn Widget)> {
+    WIDGETS
+        .iter()
+        .copied()
+        .filter(move |(_, widget)| mode == Mode::Play || !widget.needs_character())
+}
+
+fn windows(mode: Mode) -> impl Iterator<Item = (&'static str, &'static dyn Window)> {
+    WINDOWS
+        .iter()
+        .copied()
+        .filter(move |(_, window)| mode == Mode::Play || !window.needs_character())
+}
 
 fn window_def(id: &str) -> &'static dyn Window {
     WINDOWS
@@ -316,18 +333,21 @@ struct WindowView {
 
 fn spawn_hud(
     mut commands: Commands,
+    mode: Res<Mode>,
     settings: Res<Settings>,
     assets: Res<AssetServer>,
     screen: Single<&bevy::window::Window>,
 ) {
     let screen_w = screen.resolution.width();
     let mut scenes: Vec<Box<dyn Scene>> = Vec::new();
-    for &(name, widget) in WIDGETS {
+    for (name, widget) in widgets(*mode) {
         let pos = widget_pos(&settings, name, widget.fallback());
         scenes.push(widget.build(pos, name));
     }
-    for &(window, _) in WINDOWS {
-        scenes.push(Box::new(launcher(window, screen_w, &settings, &assets)));
+    for (window, _) in windows(*mode) {
+        scenes.push(Box::new(launcher(
+            window, *mode, screen_w, &settings, &assets,
+        )));
     }
     commands.spawn_scene(bsn! {
         Hud
@@ -366,9 +386,10 @@ fn rebuild_windows(world: &mut World) {
         let panel: Box<dyn Scene> = if should_open {
             Box::new(window_scene(world, window))
         } else {
+            let mode = *world.resource::<Mode>();
             let settings = world.resource::<Settings>();
             let assets = world.resource::<AssetServer>();
-            Box::new(launcher(window, screen_w, settings, assets))
+            Box::new(launcher(window, mode, screen_w, settings, assets))
         };
         world.entity_mut(entity).despawn();
         if let Ok(mut spawned) = world.spawn_scene(panel) {
@@ -378,19 +399,20 @@ fn rebuild_windows(world: &mut World) {
 }
 
 fn sync_widgets(world: &mut World) {
-    for &(_, widget) in WIDGETS {
+    for (_, widget) in widgets(*world.resource::<Mode>()) {
         widget.sync(world);
     }
 }
 
 fn launcher(
     window: &'static str,
+    mode: Mode,
     screen_w: f32,
     settings: &Settings,
     assets: &AssetServer,
 ) -> impl Scene {
     let def = window_def(window);
-    let pos = widget_pos(settings, window, launcher_pos(window, screen_w));
+    let pos = widget_pos(settings, window, launcher_pos(window, mode, screen_w));
     bsn! {
         {widget(ui::WidgetOptions {
             pos,
@@ -425,7 +447,7 @@ fn close_window(world: &mut World, window: &'static str) {
 }
 
 fn sync_windows(world: &mut World) {
-    for &(_, window) in WINDOWS {
+    for (_, window) in windows(*world.resource::<Mode>()) {
         window.sync(world);
     }
 }
@@ -470,11 +492,14 @@ fn sync_snap_grid(settings: Res<Settings>, mut grid: ResMut<SnapGrid>) {
     grid.0 = settings.0.snap_grid();
 }
 
-fn launcher_pos(window: &'static str, screen_w: f32) -> Vec2 {
-    let x = screen_w - 8.0 - WIDGET.0;
+fn launcher_pos(window: &'static str, mode: Mode, screen_w: f32) -> Vec2 {
+    let order = window_def(window).order();
+    let slot = windows(mode)
+        .filter(|(_, other)| other.order() < order)
+        .count();
     Vec2::new(
-        x,
-        8.0 + window_def(window).order() as f32 * (WIDGET.0 + 8.0),
+        screen_w - 8.0 - WIDGET.0,
+        8.0 + slot as f32 * (WIDGET.0 + 8.0),
     )
 }
 
@@ -482,8 +507,8 @@ fn open_window(world: &mut World, window: &'static str) {
     world.resource_mut::<Open>().0.insert(window);
 }
 
-fn toggle_keys(keys: Res<ButtonInput<KeyCode>>, mut open: ResMut<Open>) {
-    for &(window, def) in WINDOWS {
+fn toggle_keys(keys: Res<ButtonInput<KeyCode>>, mode: Res<Mode>, mut open: ResMut<Open>) {
+    for (window, def) in windows(*mode) {
         if keys.just_pressed(def.toggle()) && !open.0.remove(&window) {
             open.0.insert(window);
         }

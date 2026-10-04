@@ -26,7 +26,7 @@ impl Gesture for WalkGesture {
     }
 
     fn claims(&self, world: &mut World) -> bool {
-        !session::is_dead(world) && target(world).is_some()
+        session::is_alive(world) && target(world).is_some()
     }
 
     fn drive(&self, world: &mut World, start: bool) {

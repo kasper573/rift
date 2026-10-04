@@ -66,7 +66,7 @@ fn hidden() -> (Transform, Visibility) {
 }
 
 fn healthbar(world: &mut World) {
-    let shown = session::me(world)
+    let shown = session::my_character(world)
         .and_then(|me| Some((me.id(), me.get::<RenderPosition>()?.0)))
         .and_then(|(entity, at)| {
             (!stat::is_dead(world, entity) && stat::max_health(world, entity) > 0.0).then(|| {

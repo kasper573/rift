@@ -9,6 +9,9 @@ use crate::systems::terminal::Terminals;
 pub struct TerminalWindow;
 
 impl Window for TerminalWindow {
+    fn needs_character(&self) -> bool {
+        false
+    }
     fn title(&self) -> &'static str {
         "Terminal"
     }

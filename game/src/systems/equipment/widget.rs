@@ -15,6 +15,9 @@ pub(super) struct EquipmentGrid;
 pub struct EquipmentWindow;
 
 impl Window for EquipmentWindow {
+    fn needs_character(&self) -> bool {
+        true
+    }
     fn title(&self) -> &'static str {
         "Equipment"
     }
@@ -75,7 +78,7 @@ pub(super) fn sync_equipment(world: &mut World) {
 }
 
 fn equipment_cells(world: &World) -> Vec<CellData> {
-    let equipment = session::me(world).and_then(|me| me.get::<Equipment>());
+    let equipment = session::my_character(world).and_then(|me| me.get::<Equipment>());
     let assets = world.resource::<AssetServer>();
     equipment::EquipmentSlot::all()
         .iter()

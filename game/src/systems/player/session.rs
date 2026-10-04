@@ -8,6 +8,7 @@ use bevy_state::prelude::OnEnter;
 use super::{ClientId, JoinRequest, Owner, RespawnRequest, Welcome};
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
+use crate::systems::actor::Actor;
 use crate::systems::area;
 use crate::systems::combat::AttackRequest;
 use crate::systems::equipment::{EquipmentSlot, UnequipRequest};
@@ -38,17 +39,21 @@ pub fn my_id(world: &World) -> Option<ClientId> {
     world.resource::<MyClient>().0
 }
 
-pub fn me(world: &World) -> Option<EntityRef<'_>> {
-    let mine = my_id(world)?;
-    world.iter_entities().find(|entity| {
-        entity
-            .get::<Owner>()
-            .is_some_and(|owner| owner.client == mine)
-    })
+// A spectator owns a viewpoint in the world too, but no character.
+pub fn my_character(world: &World) -> Option<EntityRef<'_>> {
+    owned(world).find(|entity| entity.contains::<Actor>())
+}
+
+pub fn my_viewpoint(world: &World) -> Option<EntityRef<'_>> {
+    owned(world).next()
 }
 
 pub fn is_dead(world: &World) -> bool {
-    me(world).is_some_and(|entity| crate::systems::stat::is_dead(world, entity.id()))
+    my_character(world).is_some_and(|entity| crate::systems::stat::is_dead(world, entity.id()))
+}
+
+pub fn is_alive(world: &World) -> bool {
+    my_character(world).is_some_and(|entity| !crate::systems::stat::is_dead(world, entity.id()))
 }
 
 pub fn join(world: &mut World) {
@@ -84,7 +89,7 @@ pub fn unequip(world: &mut World, slot: EquipmentSlot) {
 }
 
 pub fn move_to(world: &mut World, pos: Pos<Tiles>) {
-    let portal = me(world)
+    let portal = my_character(world)
         .map(|entity| entity.id())
         .and_then(|entity| area::of(world, entity))
         .and_then(|area| {
@@ -113,4 +118,13 @@ fn record_welcome(mut welcomes: MessageReader<Welcome>, mut me: ResMut<MyClient>
 
 fn forget_me(mut me: ResMut<MyClient>) {
     me.0 = None;
+}
+
+fn owned(world: &World) -> impl Iterator<Item = EntityRef<'_>> {
+    let mine = my_id(world);
+    world.iter_entities().filter(move |entity| {
+        entity
+            .get::<Owner>()
+            .is_some_and(|owner| Some(owner.client) == mine)
+    })
 }
