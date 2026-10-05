@@ -184,7 +184,7 @@ export async function probe(page: Page): Promise<Snapshot> {
         snapshot = await readProbe(page);
         return snapshot !== null;
       },
-      { message: "the client never published a probe snapshot", intervals: [50] },
+      { message: "the client never published a probe snapshot", timeout: WORLD_TIMEOUT, intervals: [50] },
     )
     .toBe(true);
   return snapshot!;
