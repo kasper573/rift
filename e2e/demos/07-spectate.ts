@@ -1,20 +1,22 @@
 import { test, type Page } from "@playwright/test";
 
 import { provisionAccount, signIn } from "../helpers/account";
+import { admin } from "../helpers/admin";
 import { caption, chapter, enterWorld } from "../helpers/demo";
 import {
   clickUi,
   closestTile,
-  crossWarp,
   findUi,
   focusGame,
-  nearest,
   onQuest,
   probe,
+  travelTo,
   waitFor,
+  waitForWorld,
   walkTo,
   type Tile,
 } from "../helpers/game";
+import { loadReference } from "../helpers/image";
 import { onStage, pick, readToChoices, talkTo } from "../helpers/talk";
 
 let islander: Page;
@@ -28,9 +30,13 @@ test(
       islander = await cast.newPage();
       await enterWorld(islander);
       explorer = await cast.newPage();
-      await enterWorld(explorer);
-      const { me, portals } = await probe(explorer);
-      await crossWarp(explorer, nearest(portals, me!.at)!);
+      await signIn(explorer, await provisionAccount(explorer, ["admin"]));
+      await clickUi(explorer, "Play");
+      await waitForWorld(explorer, loadReference("island.png"));
+      await admin(explorer, [["/give RoadPass,1", /gave 1 Road Pass/]]);
+      const road = (await probe(explorer)).portals.find((portal) => portal.name === "forest-road")!;
+      await travelTo(explorer, road.at);
+      await waitFor(explorer, ({ area }) => area === road.to, "the explorer never reached the forest");
       await signIn(page, await provisionAccount(page, ["spectator"]));
       await waitFor(page, (snapshot) => findUi(snapshot, "Spectate"), "the mode choice never showed");
     },

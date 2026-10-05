@@ -71,7 +71,12 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
                                     object.id()
                                 ),
                             };
-                            portals.push(portal(name, goto, pos, &object.shape, tiling));
+                            if object.name.is_empty() {
+                                panic!("map '{name}': warp {} needs a name", object.id());
+                            }
+                            let warp = portal(name, &object.name, goto, pos, &object.shape, tiling);
+                            mark(&mut markers, name, &object.name, MapMarker::Rect(warp.rect));
+                            portals.push(warp);
                         }
                         "marker" => {
                             let marker = match object.shape {
@@ -82,9 +87,7 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
                                     tiling.rect(Rect::new(pos, shape_size(&object.shape))),
                                 ),
                             };
-                            if markers.insert(object.name.clone(), marker).is_some() {
-                                panic!("map '{name}': marker '{}' is placed twice", object.name);
-                            }
+                            mark(&mut markers, name, &object.name, marker);
                         }
                         _ => {}
                     }
@@ -196,8 +199,15 @@ fn shape_size(shape: &tiled::ObjectShape) -> Size<WorldPx> {
     }
 }
 
+fn mark(markers: &mut HashMap<String, MapMarker>, map: &str, name: &str, marker: MapMarker) {
+    if markers.insert(name.to_owned(), marker).is_some() {
+        panic!("map '{map}': '{name}' is placed twice");
+    }
+}
+
 fn portal(
     name: &str,
+    warp: &str,
     goto: &str,
     pos: Pos<WorldPx>,
     shape: &tiled::ObjectShape,
@@ -216,6 +226,7 @@ fn portal(
             .unwrap_or_else(|| malformed())
     };
     Portal {
+        name: warp.to_owned(),
         rect: tiling.rect(Rect::new(pos, shape_size(shape))),
         dest_area,
         dest: Pos::new(coord(), coord()),

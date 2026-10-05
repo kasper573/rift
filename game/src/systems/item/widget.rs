@@ -1,4 +1,4 @@
-use crate::systems::item::{INVENTORY_MAX, Inventory, ItemStack};
+use crate::systems::item::{INVENTORY_MAX, Inventory, ItemDef, ItemFlag, ItemStack};
 use crate::systems::player::session;
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
@@ -142,15 +142,20 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
                         name: def.display_name.to_owned(),
                         kind: stack.item.index() as u64,
                         count: stack.count,
-                        notes: notes
-                            .iter()
-                            .filter_map(|source| source(world, stack))
+                        notes: bound_note(def)
+                            .into_iter()
+                            .chain(notes.iter().filter_map(|source| source(world, stack)))
                             .collect(),
                         verdict: verdicts.iter().find_map(|source| source(world, stack)),
                     }
                 }),
         })
         .collect()
+}
+
+fn bound_note(def: &ItemDef) -> Option<String> {
+    def.has(ItemFlag::Bound)
+        .then(|| "bound · can't be sold or dropped".to_owned())
 }
 
 fn cell_key(cell: &CellData) -> u64 {

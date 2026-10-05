@@ -1,16 +1,11 @@
 use crate::core::assets::AssetRef;
 use crate::data::announcement::Id as AnnouncementId;
-use crate::data::dialogue::Id as DialogueId;
-use crate::data::item::Id as ItemId;
 use crate::data::memory::Id as MemoryId;
 use crate::data::npc::Id as NpcId;
 use crate::data::prop::Id as PropId;
 use crate::systems::announcement::Announce;
 use crate::systems::area::{AreaDef, MarkerName, Population, Resident, Zone};
-use crate::systems::dialogue::{BusyPolicy, StartConversation};
-use crate::systems::item::{Holding, ItemStack};
 use crate::systems::memory::{Remember, Remembers};
-use crate::systems::movement::HeadingTo;
 use crate::systems::prop::Fixture;
 use crate::systems::rule::Not;
 
@@ -35,7 +30,7 @@ crate::table! {
                 at: MarkerName("dice-table"),
                 shown: &[&Not(&Remembers(MemoryId::PellFighting)), &Not(&Remembers(MemoryId::PellDead))],
             },
-            Resident { npc: NpcId::Ilsa, at: MarkerName("forest-road"), shown: &[] },
+            Resident { npc: NpcId::Ilsa, at: MarkerName("road-warden"), shown: &[] },
         ],
         props: &[
             Fixture { prop: PropId::HarbourNotices, at: MarkerName("notice-board"), shown: &[] },
@@ -43,19 +38,6 @@ crate::table! {
             Fixture { prop: PropId::HonestyBox, at: MarkerName("honesty-box"), shown: &[] },
         ],
         zones: &[
-            Zone {
-                at: MarkerName("forest-gate"),
-                with: Some(NpcId::Ilsa),
-                requires: &[
-                    &HeadingTo(Id::Forest),
-                    &Not(&Remembers(MemoryId::IlsaHaltedYou)),
-                    &Not(&Holding(ItemStack::new(ItemId::RoadPass, 1))),
-                ],
-                then: &[
-                    &StartConversation { node: DialogueId::IlsaHalt, busy: BusyPolicy::Skip },
-                    &Remember(MemoryId::IlsaHaltedYou),
-                ],
-            },
             Zone {
                 at: MarkerName("ferry-pier"),
                 with: None,

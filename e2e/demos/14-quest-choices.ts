@@ -9,7 +9,6 @@ import {
   focusGame,
   holding,
   hoverUi,
-  nearest,
   onQuest,
   probe,
   travelTo,
@@ -31,7 +30,7 @@ test(
       await waitForWorld(page, loadReference("island.png"));
       await admin(page, [
         ["/give OrcTusk,5", /gave 5 Orc Tusk/],
-        ["/remember IlsaHaltedYou", /IlsaHaltedYou is now/],
+        ["/give RoadPass,1", /gave 1 Road Pass/],
         ["/xp 40", /granted 40 xp/],
         ["/quest TusksForTheChief,accept", /TusksForTheChief: Accept/],
       ]);
@@ -61,12 +60,8 @@ test(
       await page.keyboard.press("KeyI");
 
       await caption(page, "The cross is in the forest");
-      const { me, portals } = await probe(page);
-      const warp = nearest(
-        portals.filter((portal) => portal.to === "Forest"),
-        me!.at,
-      )!;
-      await travelTo(page, warp.at);
+      const road = (await probe(page)).portals.find((portal) => portal.name === "forest-road")!;
+      await travelTo(page, road.at);
       await waitFor(page, ({ area }) => area === "Forest", "never reached the forest");
       await page.waitForTimeout(1500);
 

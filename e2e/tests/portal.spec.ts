@@ -1,16 +1,26 @@
 import { expect, test } from "@playwright/test";
 
-import { register } from "../helpers/account";
-import { captureScene, clickTile, leaveConversation, MAP_MATCH, probe, waitForWorld } from "../helpers/game";
+import { provisionAccount, signIn } from "../helpers/account";
+import { admin } from "../helpers/admin";
+import { captureScene, clickTile, clickUi, leaveConversation, MAP_MATCH, probe, waitFor, waitForWorld } from "../helpers/game";
 import { loadReference, resemblance } from "../helpers/image";
 
-test("clicking the island warp crosses to the forest", async ({ page }) => {
-  await register(page);
+test("the forest road holds you without a pass and crosses with one", async ({ page }) => {
+  await signIn(page, await provisionAccount(page, ["admin"]));
+  await clickUi(page, "Play");
   const island = loadReference("island.png");
   const forest = loadReference("forest.png");
   await waitForWorld(page, island);
-  const warp = (await probe(page)).portals.find((portal) => portal.to === "Forest");
-  expect(warp, "the island has a warp to the forest").toBeDefined();
+  const road = (await probe(page)).portals.find((portal) => portal.name === "forest-road");
+  expect(road, "the island has a forest road").toBeDefined();
+
+  await clickTile(page, road!.at);
+  const held = await waitFor(page, ({ stage }) => stage, "Ilsa never halted you on the road");
+  expect(held.node).toBe("IlsaHalt");
+  expect((await probe(page)).area).toBe("Island");
+  await leaveConversation(page);
+
+  await admin(page, [["/give RoadPass,1", /gave 1 Road Pass/]]);
   // Re-click the warp until the forest renders. Repeats just re-issue the (deterministic) crossing;
   // the long timeout is only room for a slow renderer.
   await expect
@@ -20,13 +30,10 @@ test("clicking the island warp crosses to the forest", async ({ page }) => {
         if (resemblance(scene, forest) >= MAP_MATCH) {
           return true;
         }
-        if ((await probe(page)).stage) {
-          await leaveConversation(page);
-        }
-        await clickTile(page, warp!.at);
+        await clickTile(page, road!.at);
         return false;
       },
-      { message: "clicking the warp should cross into the forest", timeout: 120_000, intervals: [1000] },
+      { message: "with a pass, clicking the warp should cross into the forest", timeout: 120_000, intervals: [1000] },
     )
     .toBe(true);
 });

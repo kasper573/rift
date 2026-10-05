@@ -1,6 +1,7 @@
 use crate::core::tiling::Tiles;
 use crate::core::time::Seconds;
 use crate::data::announcement::Id as AnnouncementId;
+use crate::data::area::Id as AreaId;
 use crate::data::attention::Id as AttentionId;
 use crate::data::dialogue::Id as DialogueId;
 use crate::data::item::Id as ItemId;
@@ -8,6 +9,7 @@ use crate::data::memory::Id as MemoryId;
 use crate::data::model::Id as ModelId;
 use crate::systems::actor::Rgba;
 use crate::systems::announcement::Announce;
+use crate::systems::area::{MarkerName, StandingOn, WarpLock};
 use crate::systems::combat::Attitude;
 use crate::systems::dialogue::BusyPolicy;
 use crate::systems::dialogue::StartConversation;
@@ -21,6 +23,8 @@ use crate::systems::quest::{OnQuest, QuestId};
 use crate::systems::rewards::Reward;
 use crate::systems::rule::Not;
 use crate::systems::stat::StatKind;
+
+const ROAD_PASS: Holding = Holding(ItemStack::new(ItemId::RoadPass, 1));
 
 crate::table! {
     Orc: NpcDef {
@@ -49,6 +53,7 @@ crate::table! {
         ],
         interaction: None,
         notices: &[],
+        guards: &[],
         on_defeat: &[],
     },
     OrcChief: NpcDef {
@@ -86,6 +91,7 @@ crate::table! {
                 &Announce(AnnouncementId::ChiefThreat),
             ],
         }],
+        guards: &[],
         on_defeat: &[],
     },
     Skeleton: NpcDef {
@@ -116,6 +122,7 @@ crate::table! {
         ],
         interaction: None,
         notices: &[],
+        guards: &[],
         on_defeat: &[],
     },
     Bat: NpcDef {
@@ -143,6 +150,7 @@ crate::table! {
         ],
         interaction: None,
         notices: &[],
+        guards: &[],
         on_defeat: &[],
     },
     VampireBat: NpcDef {
@@ -171,6 +179,7 @@ crate::table! {
         ],
         interaction: None,
         notices: &[],
+        guards: &[],
         on_defeat: &[],
     },
     Mara: NpcDef {
@@ -210,6 +219,7 @@ crate::table! {
             marks: &[],
         }),
         notices: &[],
+        guards: &[],
         on_defeat: &[],
     },
     Tobb: NpcDef {
@@ -276,6 +286,7 @@ crate::table! {
             ],
             then: &[&StartConversation { node: DialogueId::TobbNews, busy: BusyPolicy::Wait(Seconds(60.0)) }],
         }],
+        guards: &[],
         on_defeat: &[],
     },
     Grisha: NpcDef {
@@ -315,6 +326,7 @@ crate::table! {
             marks: &[StaticMark { kind: AttentionId::Innkeeper, label: "Rents beds" }],
         }),
         notices: &[],
+        guards: &[],
         on_defeat: &[],
     },
     Bram: NpcDef {
@@ -349,6 +361,7 @@ crate::table! {
             marks: &[StaticMark { kind: AttentionId::Travel, label: "Sails to the forest" }],
         }),
         notices: &[],
+        guards: &[],
         on_defeat: &[],
     },
     Wren: NpcDef {
@@ -383,6 +396,7 @@ crate::table! {
             marks: &[],
         }),
         notices: &[],
+        guards: &[],
         on_defeat: &[],
     },
     Pell: NpcDef {
@@ -422,6 +436,7 @@ crate::table! {
             marks: &[StaticMark { kind: AttentionId::Chance, label: "Dice, ten Gold a roll" }],
         }),
         notices: &[],
+        guards: &[],
         on_defeat: &[],
     },
     Ilsa: NpcDef {
@@ -448,7 +463,7 @@ crate::table! {
             reach: Tiles(2.0),
             responses: &[
                 Response {
-                    requires: &[&Holding(ItemStack::new(ItemId::RoadPass, 1))],
+                    requires: &[&ROAD_PASS],
                     then: &[&StartConversation { node: DialogueId::IlsaPassHolder, busy: BusyPolicy::Replace }],
                     news: false,
                 },
@@ -460,7 +475,12 @@ crate::table! {
             ],
             marks: &[],
         }),
-        notices: &[],
+        notices: &[Noticing {
+            within: Tiles(5.0),
+            requires: &[&StandingOn(MarkerName("forest-road")), &Not(&ROAD_PASS)],
+            then: &[&StartConversation { node: DialogueId::IlsaHalt, busy: BusyPolicy::Skip }],
+        }],
+        guards: &[WarpLock { area: AreaId::Island, warp: MarkerName("forest-road"), requires: &[&ROAD_PASS] }],
         on_defeat: &[],
     },
     Ugra: NpcDef {
@@ -505,6 +525,7 @@ crate::table! {
             marks: &[],
         }),
         notices: &[],
+        guards: &[],
         on_defeat: &[],
     },
     HarbourGuard: NpcDef {
@@ -528,6 +549,7 @@ crate::table! {
         rewards: &[Reward::Xp(10)],
         interaction: None,
         notices: &[],
+        guards: &[],
         on_defeat: &[],
     },
     PellHostile: NpcDef {
@@ -554,6 +576,7 @@ crate::table! {
         ],
         interaction: None,
         notices: &[],
+        guards: &[],
         on_defeat: &[&Forget(MemoryId::PellFighting), &Remember(MemoryId::PellDead)],
     },
 }

@@ -15,4 +15,4 @@ mod rule;
 mod shop;
 mod summon;
 mod support;
-mod zone;
+mod travel;

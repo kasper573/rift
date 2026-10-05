@@ -66,6 +66,24 @@ impl Requirement for Not {
     }
 }
 
+pub struct AnyOf(pub &'static [&'static dyn Requirement]);
+
+impl Requirement for AnyOf {
+    fn met(&self, world: &World, player: Entity) -> bool {
+        self.0
+            .iter()
+            .any(|requirement| requirement.met(world, player))
+    }
+
+    fn describe(&self) -> String {
+        self.0
+            .iter()
+            .map(|requirement| requirement.describe())
+            .collect::<Vec<_>>()
+            .join(" or ")
+    }
+}
+
 pub fn met(world: &World, player: Entity, requires: &[&dyn Requirement]) -> bool {
     requires
         .iter()

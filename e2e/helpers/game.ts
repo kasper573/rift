@@ -49,6 +49,7 @@ export interface GroundItem {
 }
 
 export interface Exit {
+  name: string;
   to: string;
   at: Tile;
 }
@@ -303,22 +304,6 @@ export async function travelTo(
     await clickTile(page, hop);
     await page.waitForTimeout(1200);
   }
-}
-
-// Something on the way can stop the walk with a conversation; leaving it and heading on gets through.
-export async function crossWarp(page: Page, warp: Exit): Promise<void> {
-  const from = (await probe(page)).area;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await travelTo(page, warp.at);
-    const outcome = await waitFor(
-      page,
-      ({ area, stage }) => (area !== from ? "crossed" : stage ? "stopped" : undefined),
-      `never crossed to ${warp.to}`,
-    );
-    if (outcome === "crossed") return;
-    await leaveConversation(page);
-  }
-  throw new Error(`kept being stopped on the way to ${warp.to}`);
 }
 
 // Text and icon paths match exactly as strings, or by pattern.

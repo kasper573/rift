@@ -103,7 +103,7 @@
   <object id="37" name="Start" type="start" x="56.08" y="298.077">
    <point/>
   </object>
-  <object id="39" name="Warp" type="warp" x="47.3917636363636" y="335.847727272727" width="16.2697" height="16.75">
+  <object id="39" name="island-road" type="warp" x="47.3917636363636" y="335.847727272727" width="16.2697" height="16.75">
    <properties>
     <property name="goto" value="Island,39,28"/>
    </properties>

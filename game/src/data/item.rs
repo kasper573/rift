@@ -148,7 +148,7 @@ crate::table! {
         stackable: None,
         effects: &[],
         kind: ItemKind::Resource,
-        flags: &[],
+        flags: &[ItemFlag::Bound],
     },
     TobbsLetter: ItemDef {
         display_name: "Tobb's Letter",

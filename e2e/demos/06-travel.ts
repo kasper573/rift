@@ -1,31 +1,45 @@
 import { test } from "@playwright/test";
 
+import { provisionAccount, signIn } from "../helpers/account";
+import { admin } from "../helpers/admin";
 import { caption, chapter } from "../helpers/demo";
-import { closestTile, focusGame, nearest, probe, travelTo, waitFor, walkTo } from "../helpers/game";
-import { conversationOver, onStage, readToChoices } from "../helpers/talk";
+import { clickUi, closestTile, holding, hoverUi, probe, travelTo, waitFor, waitForWorld, walkTo } from "../helpers/game";
+import { loadReference } from "../helpers/image";
+import { conversationOver, onStage, pick, readToChoices } from "../helpers/talk";
 
 test(
   "Travel",
   chapter({
-    summary: "Warps connect the areas of the world",
+    summary: "Warps connect the areas of the world, and some are locked",
+    setup: async (page) => {
+      await signIn(page, await provisionAccount(page, ["admin"]));
+      await clickUi(page, "Play");
+      await waitForWorld(page, loadReference("island.png"));
+      await admin(page, [["/give Gold,20", /gave 20 Gold/]]);
+    },
     play: async (page) => {
       await caption(page, "Warps lead to other areas — click one to cross");
-      const { me, portals } = await probe(page);
-      const warp = nearest(portals, me!.at)!;
-      await travelTo(page, warp.at);
+      const road = (await probe(page)).portals.find((portal) => portal.name === "forest-road")!;
+      await travelTo(page, road.at);
       await onStage(page, "IlsaHalt");
-      await caption(page, "This warp is the forest road, and its warden stops first-time travellers", {
+      await caption(page, "The forest road is locked without a pass: you just stand on it, and its warden calls out", {
         at: "top",
       });
       await readToChoices(page, 1200);
-      await page.waitForTimeout(2500);
-      await caption(page, "She can't hold you: Esc, and walk on", { at: "top" });
-      await focusGame(page);
-      await page.keyboard.press("Escape");
+      await page.waitForTimeout(2000);
+      await caption(page, "Twenty Gold buys a pass", { at: "top" });
+      await hoverUi(page, "Here, for your trouble.");
+      await page.waitForTimeout(1500);
+      await pick(page, "Here, for your trouble.");
+      await onStage(page, "IlsaBribed");
+      await readToChoices(page, 1200);
+      await pick(page, "Goodbye.");
       await conversationOver(page);
-      await travelTo(page, warp.at);
-      await waitFor(page, ({ area }) => area === warp.to, `never arrived in ${warp.to}`);
-      await caption(page, `Welcome to the ${warp.to.toLowerCase()}`);
+      await waitFor(page, (snapshot) => holding(snapshot, "RoadPass") === 1, "the pass never arrived");
+      await caption(page, "With the pass in your bag, the same warp takes you through");
+      await travelTo(page, road.at);
+      await waitFor(page, ({ area }) => area === road.to, `never arrived in ${road.to}`);
+      await caption(page, `Welcome to the ${road.to.toLowerCase()}`);
       for (const [dx, dy] of [
         [3, 2],
         [-2, 3],

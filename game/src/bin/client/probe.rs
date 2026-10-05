@@ -199,6 +199,7 @@ struct Marker {
 
 #[derive(Serialize)]
 struct Exit {
+    name: String,
     to: area::Id,
     at: Pos<Tiles>,
 }
@@ -517,6 +518,7 @@ fn portals(world: &World, me: Option<Entity>) -> Vec<Exit> {
             area.portals
                 .iter()
                 .map(|portal| Exit {
+                    name: portal.name.clone(),
                     to: portal.dest_area,
                     at: portal.rect.center(),
                 })

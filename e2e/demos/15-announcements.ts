@@ -35,15 +35,10 @@ test(
     },
     play: async (page) => {
       await caption(page, "Some places start a conversation on their own: Ilsa watches the forest road");
-      const { portals, markers } = await probe(page);
-      const gate = markers.find((marker) => marker.name === "forest-gate")!.at;
-      const road = nearest(
-        portals.filter((portal) => portal.to === "Forest"),
-        gate,
-      )!;
+      const road = (await probe(page)).portals.find((portal) => portal.name === "forest-road")!;
       await travelTo(page, road.at);
       await onStage(page, "IlsaHalt");
-      await caption(page, "Heading for the road walked you into her zone: your walk stops and your commands lock", {
+      await caption(page, "Without a pass the road is just ground. Standing on it, she stops you and your commands lock", {
         at: "top",
       });
       await readToChoices(page, 1400);

@@ -267,6 +267,7 @@ pub struct ItemDef {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemFlag {
     Quest,
+    Bound,
     Currency,
 }
 
@@ -305,6 +306,10 @@ impl ItemDef {
 
     pub fn has(&self, flag: ItemFlag) -> bool {
         self.flags.contains(&flag)
+    }
+
+    pub fn bound(&self) -> bool {
+        self.has(ItemFlag::Bound) || self.has(ItemFlag::Quest)
     }
 
     pub fn category(&self) -> ItemCategory {
@@ -444,7 +449,7 @@ pub fn drop_item(world: &mut World) {
                 if inventory
                     .slots
                     .get(slot)
-                    .is_some_and(|stack| !stack.item.get().has(ItemFlag::Quest)) =>
+                    .is_some_and(|stack| !stack.item.get().bound()) =>
             {
                 Some(inventory.slots.remove(slot))
             }

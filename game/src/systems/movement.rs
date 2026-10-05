@@ -17,7 +17,6 @@ use crate::systems::actor::{Action, Actor, set_facing};
 use crate::systems::area;
 use crate::systems::player::{commands_locked, conn_player, sender_player};
 use crate::systems::reach;
-use crate::systems::rule::Requirement;
 use crate::systems::stat::{self, StatKind};
 
 pub fn register(app: &mut App) {
@@ -103,23 +102,6 @@ pub struct DesiredPortal {
     pub index: u32,
 }
 
-pub struct HeadingTo(pub area::Id);
-
-impl Requirement for HeadingTo {
-    fn met(&self, world: &World, player: Entity) -> bool {
-        let Some(want) = world.get::<DesiredPortal>(player) else {
-            return false;
-        };
-        area::of(world, player)
-            .and_then(|area| area.portals.get(want.index as usize))
-            .is_some_and(|portal| portal.dest_area == self.0)
-    }
-
-    fn describe(&self) -> String {
-        format!("Heading for the {:?}", self.0)
-    }
-}
-
 pub fn move_request(world: &mut World) {
     for request in crate::systems::requests::<MoveRequest>(world) {
         if let Some(entity) = retarget(world, request.client_id, request.message.pos) {
@@ -155,6 +137,10 @@ pub fn halt(world: &mut World, entity: Entity) {
         path.tiles.clear();
         path.tiles.extend(next);
     }
+}
+
+pub fn moving(world: &World, entity: Entity) -> bool {
+    world.get::<MoveTarget>(entity).is_some() || world.get::<Path>(entity).is_some()
 }
 
 pub fn on_tile(world: &World, entity: Entity) -> bool {
@@ -360,14 +346,17 @@ fn cross_portal(world: &mut World, entity: Entity) {
         world.entity_mut(entity).remove::<DesiredPortal>();
         return;
     };
-    let (dest_area, dest, rect) = (portal.dest_area, portal.dest, portal.rect);
     let Some(at) = position(world, entity) else {
         return;
     };
-    if !rect.contains(at) {
+    if !portal.rect.contains(at) {
         return;
     }
-    relocate(world, entity, dest_area, dest);
+    if !area::warp::passable(world, entity, area_id, portal) {
+        world.entity_mut(entity).remove::<DesiredPortal>();
+        return;
+    }
+    relocate(world, entity, portal.dest_area, portal.dest);
 }
 
 fn relocate(world: &mut World, entity: Entity, dest_area: area::Id, dest: Pos<Tiles>) {

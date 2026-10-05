@@ -1,9 +1,11 @@
 pub mod load;
 pub mod transition;
+pub mod warp;
 pub mod zone;
 
 pub use load::build_area;
 pub use transition::Travel;
+pub use warp::{WarpLock, lock_warps};
 pub use zone::Zone;
 
 use std::collections::{HashMap, HashSet};
@@ -27,7 +29,8 @@ pub use crate::data::area::Id;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
-    app.replicate::<AreaTag>();
+    app.replicate::<AreaTag>()
+        .init_resource::<warp::WarpLocks>();
 }
 
 impl bevy_terminal::CommandArg for Id {
@@ -86,6 +89,24 @@ impl MapMarker {
     }
 }
 
+pub struct StandingOn(pub MarkerName);
+
+impl Requirement for StandingOn {
+    fn met(&self, world: &World, player: Entity) -> bool {
+        let Some(at) = movement::position(world, player) else {
+            return false;
+        };
+        !movement::moving(world, player)
+            && of(world, player)
+                .and_then(|area| area.marker(self.0))
+                .is_some_and(|marker| marker.covers(at))
+    }
+
+    fn describe(&self) -> String {
+        format!("Standing on {}", self.0.0)
+    }
+}
+
 pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
     crate::systems::player::session::my_character(world)
         .map(|me| me.id())
@@ -95,6 +116,7 @@ pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
 
 #[derive(Clone)]
 pub struct Portal {
+    pub name: String,
     pub rect: Rect<Tiles>,
     pub dest_area: Id,
     pub dest: Pos<Tiles>,

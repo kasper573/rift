@@ -42,11 +42,6 @@ crate::table! {
         kind: MemoryKind::Timer(Seconds(1_800.0)),
         resets: Resets::Never,
     },
-    IlsaHaltedYou: MemoryDef {
-        label: "Halted by Ilsa",
-        kind: MemoryKind::Timer(Seconds(600.0)),
-        resets: Resets::Never,
-    },
     BribedIlsa: MemoryDef {
         label: "Bribed Ilsa",
         kind: MemoryKind::Flag,

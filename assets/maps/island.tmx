@@ -320,7 +320,7 @@
   <object id="1" name="Start" type="start" x="632.137" y="476.046">
    <point/>
   </object>
-  <object id="7" name="Warp" type="warp" x="623.838" y="415.8125" width="15.8322" height="16">
+  <object id="7" name="forest-road" type="warp" x="623.838" y="415.8125" width="15.8322" height="16">
    <properties>
     <property name="goto" value="Forest,3,18"/>
    </properties>
@@ -336,21 +336,6 @@
     <property name="npc-id" value="1"/>
    </properties>
    <point/>
-  </object>
-  <object id="14" name="Warp" type="warp" x="1551.5839" y="416" width="15.8322" height="16">
-   <properties>
-    <property name="goto" value="Forest,3,18"/>
-   </properties>
-  </object>
-  <object id="16" name="Warp" type="warp" x="624.0839" y="1168" width="15.8322" height="16">
-   <properties>
-    <property name="goto" value="Forest,3,18"/>
-   </properties>
-  </object>
-  <object id="17" name="Warp" type="warp" x="1553.0839" y="1170" width="15.8322" height="16">
-   <properties>
-    <property name="goto" value="Forest,3,18"/>
-   </properties>
   </object>
   <object id="27" name="inn" type="marker" x="552" y="440">
    <point/>
@@ -379,10 +364,9 @@
   <object id="32" name="dice-table" type="marker" x="696" y="488">
    <point/>
   </object>
-  <object id="33" name="forest-road" type="marker" x="584" y="408">
+  <object id="33" name="road-warden" type="marker" x="584" y="408">
    <point/>
   </object>
-  <object id="37" name="forest-gate" type="marker" x="592" y="384" width="80" height="60"/>
   <object id="38" name="ferry-pier" type="marker" x="736" y="400" width="48" height="48"/>
  </objectgroup>
 </map>

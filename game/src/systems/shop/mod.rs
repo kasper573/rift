@@ -149,6 +149,9 @@ impl ShopDef {
         if def.has(ItemFlag::Quest) {
             return Err("Quest items never sell".to_owned());
         }
+        if def.bound() {
+            return Err("Bound items never sell".to_owned());
+        }
         let (index, rule) = self
             .buys
             .iter()

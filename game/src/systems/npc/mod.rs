@@ -54,6 +54,7 @@ pub fn register(app: &mut App) {
     app.replicate::<Npc>();
     effect::source(app, chase);
     interact::interaction_source(app, interaction);
+    area::lock_warps(app, data::npc::TABLE.iter().flat_map(|def| def.guards));
 }
 
 pub fn conversation_starts() -> Vec<data::dialogue::Id> {
@@ -85,6 +86,9 @@ pub fn check(assets: &AssetService) {
     });
     for outcome in outcomes {
         outcome.check(assets);
+    }
+    for lock in data::npc::TABLE.iter().flat_map(|def| def.guards) {
+        lock.check(assets);
     }
 }
 
@@ -152,6 +156,7 @@ pub struct NpcDef {
     pub rewards: &'static [crate::systems::rewards::Reward],
     pub interaction: Option<Interaction>,
     pub notices: &'static [Noticing],
+    pub guards: &'static [area::WarpLock],
     pub on_defeat: &'static [&'static dyn Outcome],
 }
 

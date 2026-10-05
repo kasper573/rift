@@ -3,12 +3,13 @@ use game::data::item::Id;
 use game::systems::item::{GiveItems, Holding, Inventory, ItemStack};
 use game::systems::job::MinLevel;
 use game::systems::player::Xp;
-use game::systems::rule::{Encounter, Not, Requirement, RuleRefusal, Terms};
+use game::systems::rule::{AnyOf, Encounter, Not, Requirement, RuleRefusal, Terms};
 
 use crate::support::Sim;
 
 static REWARD: GiveItems = GiveItems(&[ItemStack::new(Id::RustySword, 1)]);
 static HOLDING_GOLD: Holding = Holding(ItemStack::new(Id::Gold, 20));
+static GOLD_OR_LEVEL: AnyOf = AnyOf(&[&HOLDING_GOLD, &MinLevel(2)]);
 
 fn give(sim: &mut Sim, player: bevy_ecs::entity::Entity, stack: ItemStack) {
     sim.world()
@@ -28,6 +29,15 @@ fn level_requirements_follow_experience() {
     sim.world().get_mut::<Xp>(player).expect("xp").gain(needed);
     assert!(MinLevel(2).met(sim.world(), player));
     assert!(!Not(&MinLevel(2)).met(sim.world(), player));
+}
+
+#[test]
+fn any_of_holds_when_one_of_its_requirements_does() {
+    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let player = sim.join(1);
+    assert!(!GOLD_OR_LEVEL.met(sim.world(), player));
+    give(&mut sim, player, ItemStack::new(Id::Gold, 20));
+    assert!(GOLD_OR_LEVEL.met(sim.world(), player));
 }
 
 #[test]
