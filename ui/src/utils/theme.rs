@@ -11,6 +11,18 @@ pub struct Family {
     pub border: Color,
 }
 
+impl Family {
+    pub fn outline(color: Color) -> Family {
+        Family {
+            base: Color::NONE,
+            on: color,
+            hover: Color::NONE,
+            active: Color::NONE,
+            border: color,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Theme {
     pub scrim_light: Color,

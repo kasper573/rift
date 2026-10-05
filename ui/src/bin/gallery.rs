@@ -1139,21 +1139,11 @@ fn typewriter_scene() -> Box<dyn Scene> {
     )
 }
 
-fn outline(color: Color) -> ui::Family {
-    ui::Family {
-        base: Color::NONE,
-        on: color,
-        hover: Color::NONE,
-        active: Color::NONE,
-        border: color,
-    }
-}
-
 fn tag(label: &str, color: Color) -> ChipOptions {
     ChipOptions {
         label: label.to_owned(),
         icon: None,
-        family: outline(color),
+        family: ui::Family::outline(color),
     }
 }
 
@@ -1161,7 +1151,7 @@ fn cost(assets: &AssetServer, count: u32, met: bool) -> ChipOptions {
     ChipOptions {
         label: count.to_string(),
         icon: Some(assets.load("icons/misc/golden_coin.png")),
-        family: outline(if met {
+        family: ui::Family::outline(if met {
             palette::AMBER_70
         } else {
             palette::CRIMSON_70

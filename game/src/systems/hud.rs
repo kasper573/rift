@@ -66,7 +66,7 @@ impl HudAudience {
 
 pub trait Widget: Send + Sync {
     fn audience(&self) -> HudAudience;
-    fn fallback(&self) -> Vec2;
+    fn fallback(&self, screen_w: f32) -> Vec2;
     fn build(&self, pos: Vec2, id: &'static str) -> Box<dyn Scene>;
     fn sync(&self, world: &mut World);
 }
@@ -78,6 +78,9 @@ pub trait Window: Send + Sync {
     fn keybind(&self) -> &'static str;
     fn icon(&self) -> &'static str;
     fn order(&self) -> u32;
+    fn size(&self) -> Vec2 {
+        WINDOW_SIZE
+    }
     fn contents(&self, world: &World) -> Vec<ui::WindowContent>;
     fn sync(&self, world: &mut World);
 }
@@ -422,7 +425,7 @@ fn spawn_hud(
     let screen_w = screen.resolution.width();
     let mut scenes: Vec<Box<dyn Scene>> = Vec::new();
     for (name, widget) in widgets(*mode) {
-        let pos = widget_pos(&settings, name, widget.fallback());
+        let pos = widget_pos(&settings, name, widget.fallback(screen_w));
         scenes.push(widget.build(pos, name));
     }
     for (window, _) in windows(*mode) {
@@ -446,10 +449,10 @@ fn rebuild_windows(world: &mut World) {
     if !world.is_resource_changed::<Open>() && refresh.is_empty() {
         return;
     }
-    let Ok(screen_w) = world
+    let Ok(screen) = world
         .query::<&bevy::window::Window>()
         .single(world)
-        .map(|screen| screen.resolution.width())
+        .map(|screen| screen.resolution.size())
     else {
         return;
     };
@@ -465,12 +468,12 @@ fn rebuild_windows(world: &mut World) {
         }
         let window = view.window;
         let panel: Box<dyn Scene> = if should_open {
-            Box::new(window_scene(world, window))
+            Box::new(window_scene(world, window, screen))
         } else {
             let mode = *world.resource::<Mode>();
             let settings = world.resource::<Settings>();
             let assets = world.resource::<AssetServer>();
-            Box::new(launcher(window, mode, screen_w, settings, assets))
+            Box::new(launcher(window, mode, screen.x, settings, assets))
         };
         world.entity_mut(entity).despawn();
         if let Ok(mut spawned) = world.spawn_scene(panel) {
@@ -507,13 +510,14 @@ fn launcher(
     }
 }
 
-fn window_scene(world: &World, window: &'static str) -> impl Scene {
+fn window_scene(world: &World, window: &'static str, screen: Vec2) -> impl Scene {
     let def = window_def(window);
+    let centered = ((screen - def.size()) / 2.0).max(Vec2::splat(8.0));
     bsn! {
         {placed_window(
             world,
             window,
-            (Vec2::new(376.0, 332.0), WINDOW_SIZE),
+            (centered, def.size()),
             OnTap::new(move |world| close_window(world, window)),
             def.contents(world),
         )}

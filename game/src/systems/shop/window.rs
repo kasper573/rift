@@ -522,7 +522,7 @@ fn price_chip(assets: &AssetServer, inventory: &Inventory, stack: ItemStack) -> 
     ui::chip(ChipOptions {
         label: stack.count.to_string(),
         icon: Some(assets.load(stack.item.get().icon.0)),
-        family: outline(if covered {
+        family: Family::outline(if covered {
             palette::AMBER_70
         } else {
             palette::CRIMSON_70
@@ -624,16 +624,6 @@ fn confirm_sale(world: &mut World, shop: ShopId, stack: ItemStack, pays: &[ItemS
 fn sell(world: &mut World, slot: u32, stack: ItemStack) {
     world.write_message(ShopRequest::Sell { slot, stack });
     chime(world, SfxId::Coins);
-}
-
-fn outline(color: Color) -> Family {
-    Family {
-        base: Color::NONE,
-        on: color,
-        hover: Color::NONE,
-        active: Color::NONE,
-        border: color,
-    }
 }
 
 fn chime(world: &mut World, id: SfxId) {

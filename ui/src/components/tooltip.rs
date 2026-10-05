@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bevy_picking::prelude::Pickable;
 use bevy_scene::{Scene, bsn};
-use bevy_ui::{GlobalZIndex, Node, PositionType};
+use bevy_ui::{GlobalZIndex, Node, OverrideClip, PositionType};
 
 use crate::component;
 use crate::components::popover::ANCHORED_Z;
@@ -24,6 +24,7 @@ pub fn tooltip_content(side: Side, align: Align, offset: f32) -> impl Scene {
     bsn! {
         Node { position_type: PositionType::Absolute }
         GlobalZIndex({ANCHORED_Z})
+        OverrideClip
         Placement { side: {side}, align: {align}, offset: {offset} }
         {OverlayContent::animated(POPPER_ENTER, POPPER_EXIT)}
         Pickable::IGNORE

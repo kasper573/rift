@@ -594,7 +594,7 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView) -> ChoiceOptions {
             ChoiceChip::Needs { what, met } => ChipOptions {
                 label: what.clone(),
                 icon: Some(assets.load(if *met { CHECK } else { LOCK })),
-                family: outline(if *met {
+                family: Family::outline(if *met {
                     palette::EMERALD_70
                 } else {
                     palette::CRIMSON_70
@@ -603,7 +603,7 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView) -> ChoiceOptions {
             ChoiceChip::Pays { item, count, have } => ChipOptions {
                 label: count.to_string(),
                 icon: Some(assets.load(item.get().icon.0)),
-                family: outline(if have >= count {
+                family: Family::outline(if have >= count {
                     palette::AMBER_70
                 } else {
                     palette::CRIMSON_70
@@ -612,7 +612,7 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView) -> ChoiceOptions {
             ChoiceChip::Gets { item, count } => ChipOptions {
                 label: format!("+{count}"),
                 icon: Some(assets.load(item.get().icon.0)),
-                family: outline(palette::EMERALD_70),
+                family: Family::outline(palette::EMERALD_70),
             },
         })
         .collect();
@@ -620,7 +620,7 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView) -> ChoiceOptions {
         chips.push(ChipOptions {
             label: warn.clone(),
             icon: None,
-            family: outline(palette::CRIMSON_80),
+            family: Family::outline(palette::CRIMSON_80),
         });
     }
     ChoiceOptions {
@@ -646,7 +646,7 @@ fn waiting_chip(assets: &AssetServer, label: String) -> impl Scene {
         icon: Some(assets.load(SANDCLOCK)),
         family: Family {
             base: ui::theme::theme().surface_trough.base,
-            ..outline(palette::AMBER_70)
+            ..Family::outline(palette::AMBER_70)
         },
     });
     bsn! {
@@ -783,16 +783,6 @@ fn cast_key(who: Speaker) -> u64 {
         Speaker::Narrator => 1,
         Speaker::Npc(npc) => 2 + npc as u64,
         Speaker::Prop(prop) => 10_000 + prop as u64,
-    }
-}
-
-fn outline(color: Color) -> Family {
-    Family {
-        base: Color::NONE,
-        on: color,
-        hover: Color::NONE,
-        active: Color::NONE,
-        border: color,
     }
 }
 

@@ -15,7 +15,7 @@ impl crate::systems::hud::Widget for CharacterWidget {
     fn audience(&self) -> crate::systems::hud::HudAudience {
         crate::systems::hud::HudAudience::Players
     }
-    fn fallback(&self) -> Vec2 {
+    fn fallback(&self, _: f32) -> Vec2 {
         Vec2::new(8.0, 8.0)
     }
     fn build(&self, pos: Vec2, id: &'static str) -> Box<dyn Scene> {
