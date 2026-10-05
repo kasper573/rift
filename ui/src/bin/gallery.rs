@@ -9,18 +9,19 @@ use ui::theme::theme;
 use ui::tokens::palette;
 use ui::{
     Align, Announcement, AnnouncementLane, ButtonIntent, ButtonSize, CardOptions, Carriable,
-    Carried, CarryTarget, Check, ChipOptions, ChoiceOptions, ConfirmOptions, DialogueBoxOptions,
-    MotionPreference, OnSettle, OnTap, Orientation, RichPiece, RichSpan, RichText, Side,
-    SonnerPosition, TextMotion, TextVoice, Typewriter, WidgetOptions, accordion, accordion_body,
-    accordion_content, accordion_header, accordion_item, accordion_trigger, alert_dialog,
-    alert_dialog_action, alert_dialog_cancel, announcement_lane, avatar, avatar_fallback, button,
-    button_styled, card, checkbox, checkbox_indicator, chip, choice_list, collapsible,
-    collapsible_content, collapsible_trigger, component, confirm_dialog, dialog, dialog_close,
-    dialogue_box, key_hint, list_header, popover, popover_content, popover_trigger, progress,
-    progress_indicator, radio_circle, radio_group, radio_indicator, radio_item, rich_text,
-    scroll_area, scroll_bar, scroll_thumb, scroll_viewport, separator, slider, slider_range,
-    slider_thumb, slider_track, sonner_close, split_view, switch, switch_thumb, tabs, tabs_list,
-    tabs_trigger, text, text_colored, toast, toaster, tooltip, tooltip_content, widget, window,
+    Carried, CarryTarget, CastDepth, CastMember, Check, ChipOptions, ChoiceOptions, ConfirmOptions,
+    DialogueBoxOptions, MotionPreference, OnSettle, OnTap, Orientation, RichPiece, RichSpan,
+    RichText, Side, SonnerPosition, TextMotion, TextVoice, Typewriter, WidgetOptions, accordion,
+    accordion_body, accordion_content, accordion_header, accordion_item, accordion_trigger,
+    alert_dialog, alert_dialog_action, alert_dialog_cancel, announcement_lane, avatar,
+    avatar_fallback, button, button_styled, card, cast, checkbox, checkbox_indicator, chip,
+    choice_list, collapsible, collapsible_content, collapsible_trigger, component, confirm_dialog,
+    dialog, dialog_close, dialogue_box, key_hint, list_header, popover, popover_content,
+    popover_trigger, progress, progress_indicator, radio_circle, radio_group, radio_indicator,
+    radio_item, rich_text, scroll_area, scroll_bar, scroll_thumb, scroll_viewport, separator,
+    slider, slider_range, slider_thumb, slider_track, sonner_close, split_view, switch,
+    switch_thumb, tabs, tabs_list, tabs_trigger, text, text_colored, toast, toaster, tooltip,
+    tooltip_content, widget, window,
 };
 
 const WINDOW: Vec2 = Vec2::new(1600.0, 900.0);
@@ -80,7 +81,13 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (rebuild_scene, animate_progress, stage_keys, run_down_lanes),
+            (
+                rebuild_scene,
+                animate_progress,
+                stage_keys,
+                run_down_lanes,
+                rotate_cast,
+            ),
         )
         .run();
 }
@@ -249,6 +256,7 @@ const SCENES: &[(&str, SceneBuilder)] = &[
     ("Chips", chips_scene),
     ("Choices", choices_scene),
     ("Dialogue box", dialogue_box_scene),
+    ("Cast", cast_scene),
     ("Banners", banners_scene),
     ("Toasts (top center)", top_toasts_scene),
     ("List detail", list_detail_scene),
@@ -1261,6 +1269,69 @@ fn dialogue_box_scene() -> Box<dyn Scene> {
             status: None,
         }))} ]
     })
+}
+
+const CAST_SECONDS: f32 = 3.0;
+
+fn cast_scene() -> Box<dyn Scene> {
+    let line = RichText::new(vec![
+        plain("Do you know what a crate of silk costs? I do. "),
+        RichSpan::plain("To the copper.").slow().into(),
+    ]);
+    boxed(bsn! {
+        Node { width: Val::Percent(100.0), height: Val::Percent(100.0), align_items: AlignItems::End, justify_content: JustifyContent::Center, padding: {UiRect::bottom(Val::Px(40.0))} }
+        Children [
+            {EntityScene(cast())},
+            {EntityScene(dialogue_box(DialogueBoxOptions {
+                speaker: Some(("Mara".to_owned(), Side::Right)),
+                line,
+                typed: false,
+                choices: Vec::new(),
+                hint: "Space next".to_owned(),
+                actions: Vec::new(),
+                status: None,
+            }))},
+        ]
+    })
+}
+
+fn rotate_cast(time: Res<Time>, assets: Res<AssetServer>, mut casts: Query<&mut ui::Cast>) {
+    let round = (time.elapsed_secs() / CAST_SECONDS) as u64;
+    for mut cast in &mut casts {
+        let members = cast_round(&assets, round);
+        if cast.members != members {
+            cast.members = members;
+        }
+    }
+}
+
+fn cast_round(assets: &AssetServer, round: u64) -> Vec<CastMember> {
+    let mara_speaks = round.is_multiple_of(2);
+    let member = |key: u64, art: &'static str, side: Side, lit: bool| CastMember {
+        key,
+        image: assets.load(art),
+        side,
+        depth: if lit {
+            CastDepth::Front
+        } else {
+            CastDepth::Back
+        },
+        lit,
+        flip: false,
+    };
+    vec![
+        member(0, "busts/adventurer/thinking.png", Side::Left, !mara_speaks),
+        member(
+            1,
+            if mara_speaks {
+                "busts/mara/counting.png"
+            } else {
+                "busts/mara/smug.png"
+            },
+            Side::Right,
+            mara_speaks,
+        ),
+    ]
 }
 
 const BANNER_SECONDS: f32 = 4.0;

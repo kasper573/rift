@@ -24,7 +24,6 @@ const PEEK: f32 = 16.0;
 const PEEK_SCALE: f32 = 0.05;
 const GAP: f32 = 14.0;
 const MAX_VISIBLE: usize = 3;
-const STACK_HEIGHT: f32 = MAX_VISIBLE as f32 * (CARD_HEIGHT + GAP);
 const EDGE: f32 = 24.0;
 const TOAST_TTL: Duration = Duration::from_secs(4);
 
@@ -100,7 +99,7 @@ pub fn toaster(position: SonnerPosition) -> impl Scene {
     let mut node = Node {
         position_type: PositionType::Absolute,
         width: Val::Px(CARD_WIDTH),
-        height: Val::Px(STACK_HEIGHT),
+        height: Val::Px(0.0),
         ..Node::default()
     };
     position.place_toaster(&mut node);
@@ -170,20 +169,29 @@ pub(crate) fn age_toasts(
 }
 
 pub(crate) fn size_toaster(
-    mut toasters: Query<(&Toaster, &Children, &mut Node)>,
+    mut toasters: Query<(&Toaster, Option<&Children>, &mut Node)>,
     toasts: Query<&Toast>,
 ) {
     for (toaster, children, mut node) in &mut toasters {
-        let height = if toaster.expanded {
-            let live = children
-                .iter()
-                .filter(|&child| toasts.get(child).is_ok_and(|toast| !toast.leaving))
-                .count();
-            live.max(MAX_VISIBLE) as f32 * (CARD_HEIGHT + GAP)
-        } else {
-            STACK_HEIGHT
+        let held = children
+            .into_iter()
+            .flatten()
+            .filter(|&&child| toasts.contains(child))
+            .count();
+        let live = children
+            .into_iter()
+            .flatten()
+            .filter(|&&child| toasts.get(child).is_ok_and(|toast| !toast.leaving))
+            .count();
+        let height = match (held, toaster.expanded) {
+            (0, _) => 0.0,
+            (_, true) => live.max(1) as f32 * (CARD_HEIGHT + GAP),
+            (_, false) => CARD_HEIGHT + (held.min(MAX_VISIBLE) - 1) as f32 * PEEK,
         };
-        node.height = Val::Px(height);
+        let height = Val::Px(height);
+        if node.height != height {
+            node.height = height;
+        }
     }
 }
 

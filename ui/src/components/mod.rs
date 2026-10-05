@@ -46,7 +46,7 @@ pub use dialog::{dialog, dialog_close};
 pub use dialogue::{
     ChoiceList, ChoiceOptions, ChoicePicked, ChoiceRefused, ChoiceRow, DialogueBox,
     DialogueBoxOptions, choice_list, dialogue_box, dialogue_choices, dialogue_typing, pick_choice,
-    pick_choice_at, step_choice,
+    pick_choice_at, set_dialogue_status, step_choice,
 };
 pub use popover::{popover, popover_close, popover_content, popover_trigger};
 pub use progress::{ProgressFraction, progress, progress_indicator};

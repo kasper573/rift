@@ -58,6 +58,9 @@ pub(crate) struct DialogueLine;
 pub(crate) struct DialogueContinue;
 
 #[derive(Component, Clone, Default)]
+pub(crate) struct DialogueStatus;
+
+#[derive(Component, Clone, Default)]
 #[require(Node)]
 pub struct ChoiceList {
     pub selected: usize,
@@ -117,30 +120,42 @@ pub fn dialogue_box(options: DialogueBoxOptions) -> impl Scene {
             node.border = UiRect::all(Val::Px(2.0));
             node.border_radius = BorderRadius::all(Val::Px(radius::M));
         });
+    let plate_side = speaker.as_ref().map(|(_, side)| *side);
     let plate = speaker.map(|(name, side)| EntityScene(name_plate(name, side)));
     let actions = (!actions.is_empty()).then(|| {
+        let mut node = Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(-16.0),
+            column_gap: Val::Px(spacing::M),
+            align_items: AlignItems::Center,
+            ..Node::default()
+        };
+        match plate_side {
+            Some(Side::Left) => node.right = Val::Px(spacing::XL),
+            _ => node.left = Val::Px(spacing::XL),
+        }
         bsn! {
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(-16.0),
-                left: Val::Px({spacing::XL}),
-                column_gap: Val::Px({spacing::M}),
-            }
+            template_value(node)
             Children [ {actions} ]
         }
     });
-    let status = status.map(|status| {
-        bsn! {
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(0.0),
-                right: Val::Px(0.0),
-                bottom: Val::Px({spacing::XXXL}),
-                justify_content: JustifyContent::Center,
-            }
-            Children [ {EntityScene(styled_text(status, palette::CRIMSON_80, typography::BODY))} ]
+    let status_display = if status.is_some() {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    let status = bsn! {
+        DialogueStatus
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            right: Val::Px(0.0),
+            bottom: Val::Px({spacing::XXXL}),
+            justify_content: JustifyContent::Center,
+            display: {status_display},
         }
-    });
+        Children [ {EntityScene(styled_text(status.unwrap_or_default(), palette::CRIMSON_80, typography::BODY))} ]
+    };
     let line = RichText {
         size: typography::LINE.font_size,
         ..line
@@ -237,6 +252,24 @@ pub fn pick_choice_at(world: &mut World, list: Entity, index: usize) {
 
 pub fn dialogue_choices(world: &World, dialogue: Entity) -> Option<Entity> {
     descendant_with::<ChoiceList>(world, dialogue)
+}
+
+pub fn set_dialogue_status(world: &mut World, dialogue: Entity, status: Option<String>) {
+    let Some(holder) = descendant_with::<DialogueStatus>(world, dialogue) else {
+        return;
+    };
+    if let Some(mut node) = world.get_mut::<Node>(holder) {
+        node.display = if status.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    if let Some(text) = descendant_with::<bevy_ui::widget::Text>(world, holder)
+        && let Some(mut text) = world.get_mut::<bevy_ui::widget::Text>(text)
+    {
+        text.0 = status.unwrap_or_default();
+    }
 }
 
 pub fn dialogue_typing(world: &World, dialogue: Entity) -> Option<Entity> {
