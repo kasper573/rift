@@ -374,12 +374,12 @@ crate::table! {
     },
     UiOpen: SfxDef {
         src: AssetRef("sfx/interface/open.wav"),
-        volume: SfxScalar::Fixed(1.0),
+        volume: SfxScalar::Fixed(0.3),
         pitch: SfxScalar::Fixed(1.0),
     },
     UiClose: SfxDef {
         src: AssetRef("sfx/interface/close.wav"),
-        volume: SfxScalar::Fixed(1.0),
+        volume: SfxScalar::Fixed(0.3),
         pitch: SfxScalar::Fixed(1.0),
     },
     UiMove: SfxDef {
