@@ -3,10 +3,16 @@ use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{ClientId as Sender, ConnectedClient, FromClient, ServerState};
 use bevy_state::prelude::NextState;
 use game::core::assets::AssetService;
+use game::core::time::{UnixMillis, UtcHour, WallClock};
 use game::data;
 use game::systems::player::{ClientId, JoinRequest, SpawnPolicy};
 
 pub const PLAYERS_PER_AREA: usize = 25;
+
+const CLOCK: WallClock = WallClock {
+    now: UnixMillis(0),
+    reset: UtcHour::MIDNIGHT,
+};
 
 /// Ticks stepped before sampling, so spawn waves and connect churn settle out of the measurement.
 pub const WARMUP: usize = 30;
@@ -84,7 +90,7 @@ pub fn connect(worlds: &mut [App], rosters: &[Roster]) {
 /// Advances every world one tick across all cores — the same parallel area fan-out the real server
 /// uses, so the benchmark's capacity reflects the threaded server.
 pub fn step(worlds: &mut [App]) {
-    game::systems::step_areas(worlds);
+    game::systems::step_areas(worlds, CLOCK);
 }
 
 /// Advances every world one tick on the calling thread only. Used by the profiler so CPU samples
@@ -97,7 +103,7 @@ pub fn step_single_threaded(worlds: &mut [App]) {
 }
 
 fn build_world(layout: Layout, assets: &AssetService, ordinal: u64) -> (App, Roster) {
-    let mut app = game::systems::server_app(game::data::area::BENCH_ID, ordinal);
+    let mut app = game::systems::server_app(game::data::area::BENCH_ID, ordinal, CLOCK);
     app.insert_resource(assets.clone());
     app.insert_resource(game::core::math::Rng::from_entropy());
     app.insert_resource(layout.spawn_policy());

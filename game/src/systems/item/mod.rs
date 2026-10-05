@@ -15,7 +15,7 @@ use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Offset, Pos};
 use crate::core::sfx::SfxId;
 use crate::core::tiling::{TilePos, Tiles};
-use crate::core::time::Seconds;
+use crate::core::time::{Seconds, WallClock};
 use crate::data::item::Id;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::effect::{self, Effect, TimedEffect, TimedEffects};
@@ -485,7 +485,7 @@ fn instantiate_effects(world: &mut World, actor: Entity, item: Id, duration: Sec
     if effects.is_empty() {
         return;
     }
-    let until = Seconds(world.resource::<Time>().elapsed_secs()) + duration;
+    let until = world.resource::<WallClock>().now.after(duration);
     let entries = effects
         .iter()
         .map(|&effect| TimedEffect { effect, until })

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
@@ -18,6 +18,7 @@ use bevy_replicon::shared::backend::server_messages::ServerMessages;
 use bevy_state::prelude::NextState;
 use game::core::assets::{AssetService, FilesystemSource};
 use game::core::net::channels::RenetChannelsExt;
+use game::core::time::{UnixMillis, UtcHour, WallClock};
 use game::systems::account::Identity;
 use game::systems::area::transition;
 use game::systems::player::{ClientId, Immortal, SpawnPolicy};
@@ -42,6 +43,7 @@ struct Config {
     assets_dir: PathBuf,
     player_spawn_type: SpawnPolicy,
     player_immortal: bool,
+    daily_reset_utc_hour: UtcHour,
     allow_fake_users: bool,
     pyroscope_enabled: bool,
     pyroscope_sample_hz: u32,
@@ -105,6 +107,7 @@ fn main() {
         max_clients: config.max_clients,
         spawn_policy: config.player_spawn_type,
         immortal: Immortal(config.player_immortal),
+        reset: config.daily_reset_utc_hour,
     };
     let assets = AssetService::new(FilesystemSource(config.assets_dir));
     simulate(
@@ -121,6 +124,7 @@ struct Settings {
     max_clients: usize,
     spawn_policy: SpawnPolicy,
     immortal: Immortal,
+    reset: UtcHour,
 }
 
 fn simulate(
@@ -135,6 +139,7 @@ fn simulate(
         max_clients,
         spawn_policy,
         immortal,
+        reset,
     } = settings;
     let area_ids = select_areas(areas);
     let spawn = area_ids
@@ -144,7 +149,16 @@ fn simulate(
     let mut worlds: Vec<App> = area_ids
         .iter()
         .enumerate()
-        .map(|(ordinal, &id)| build_world(id, &assets, spawn_policy, immortal, ordinal as u64))
+        .map(|(ordinal, &id)| {
+            build_world(
+                id,
+                &assets,
+                spawn_policy,
+                immortal,
+                ordinal as u64,
+                wall_clock(reset),
+            )
+        })
         .collect();
 
     let (connection_config, client_channels) = {
@@ -249,7 +263,7 @@ fn simulate(
             }
         }
 
-        game::systems::step_areas(&mut worlds);
+        game::systems::step_areas(&mut worlds, wall_clock(reset));
 
         begin_transfers(&mut worlds, &mut transfers, tick);
 
@@ -279,6 +293,16 @@ fn simulate(
         if let Some(remaining) = frame.checked_sub(started.elapsed()) {
             std::thread::sleep(remaining);
         }
+    }
+}
+
+fn wall_clock(reset: UtcHour) -> WallClock {
+    let since_epoch = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("system clock is set after 1970");
+    WallClock {
+        now: UnixMillis(u64::try_from(since_epoch.as_millis()).expect("millis since 1970 fit u64")),
+        reset,
     }
 }
 
@@ -358,8 +382,9 @@ fn build_world(
     spawn_policy: SpawnPolicy,
     immortal: Immortal,
     ordinal: u64,
+    clock: WallClock,
 ) -> App {
-    let mut app = game::systems::server_app(area, ordinal);
+    let mut app = game::systems::server_app(area, ordinal, clock);
     app.insert_resource(assets.clone());
     app.insert_resource(game::core::math::Rng::from_entropy());
     app.insert_resource(spawn_policy);

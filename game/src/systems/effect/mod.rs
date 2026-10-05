@@ -2,10 +2,9 @@ pub mod widget;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
-use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
-use crate::core::time::Seconds;
+use crate::core::time::{UnixMillis, WallClock};
 use crate::systems::stat::{self, Stat, StatKind};
 
 const CHASE_SPEED_MULTIPLIER: f32 = 2.0;
@@ -61,7 +60,7 @@ pub struct TimedEffects(pub Vec<TimedEffect>);
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct TimedEffect {
     pub effect: Effect,
-    pub until: Seconds,
+    pub until: UnixMillis,
 }
 
 pub type Source = fn(&World, Entity) -> Vec<Effect>;
@@ -83,7 +82,7 @@ pub fn active_effects(world: &World, entity: Entity) -> Vec<Effect> {
 }
 
 pub fn expire(world: &mut World, timed: &mut QueryState<Entity, With<TimedEffects>>) {
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = world.resource::<WallClock>().now;
     let ids: Vec<Entity> = timed.iter(world).collect();
     for id in ids {
         if let Some(mut timed) = world.get_mut::<TimedEffects>(id)

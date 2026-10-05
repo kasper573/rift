@@ -89,7 +89,7 @@ pub struct Character {
 /// Builds one area world. `ordinal` is the world's slot among the worlds a driver steps concurrently;
 /// it only staggers the replication phase, so identical area instances still replicate on different
 /// ticks. The driver passes each world's index.
-pub fn server_app(area: area::Id, ordinal: u64) -> App {
+pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallClock) -> App {
     use bevy_app::{First, PostUpdate, Startup, Update};
     use bevy_ecs::schedule::{IntoScheduleConfigs, Schedules, SingleThreadedExecutor};
     use bevy_replicon::prelude::{AuthMethod, RepliconSharedPlugin, ServerState};
@@ -98,6 +98,7 @@ pub fn server_app(area: area::Id, ordinal: u64) -> App {
 
     let mut app = App::new();
     app.insert_resource(WorldArea(area));
+    app.insert_resource(clock);
     app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));
     app.add_plugins(
         bevy_app::PluginGroup::build(bevy_replicon::prelude::RepliconPlugins)
@@ -183,7 +184,7 @@ pub fn server_app(area: area::Id, ordinal: u64) -> App {
 /// stepped directly because `App` is `!Send` (its runner box carries no `Send` bound) while `World` is
 /// `Send`; for these single-schedule headless apps `world.run_schedule(Main)` + `clear_trackers` is
 /// exactly what `App::update` does.
-pub fn step_areas(apps: &mut [App]) {
+pub fn step_areas(apps: &mut [App], clock: crate::core::time::WallClock) {
     use bevy_app::Main;
     use rayon::prelude::*;
 
@@ -192,6 +193,7 @@ pub fn step_areas(apps: &mut [App]) {
         .collect::<Vec<_>>()
         .into_par_iter()
         .for_each(|world| {
+            world.insert_resource(clock);
             world.run_schedule(Main);
             world.clear_trackers();
         });
