@@ -12,7 +12,12 @@ test(
       await caption(page, "F1 shows the walkable navigation graph");
       await page.keyboard.press("F1");
       await page.waitForTimeout(4000);
+      await caption(page, "Again for the objects that can hide an actor");
       await page.keyboard.press("F1");
+      await page.waitForTimeout(3000);
+      await caption(page, "Again for the safe zones, where monsters never go");
+      await page.keyboard.press("F1");
+      await page.waitForTimeout(4000);
       await page.keyboard.press("F1");
       await caption(page, "F2 shows every actor's hitbox");
       await page.keyboard.press("F2");

@@ -5,7 +5,8 @@ use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
 use bevy::window::PrimaryWindow;
-use game::core::math::{Offset, Pos, Rect};
+use game::core::assets::AssetService;
+use game::core::math::{Offset, Pos, Rect, Size};
 use game::core::render::tile_to_window;
 use game::core::tiling::{TilePos, Tiles};
 use game::data;
@@ -48,6 +49,8 @@ struct Snapshot {
     portals: Vec<Exit>,
     markers: Vec<Marker>,
     walkable: Vec<Pos<Tiles>>,
+    area_size: Option<Size<Tiles>>,
+    safe_zones: Vec<Rect<Tiles>>,
     ui: Vec<UiElement>,
     covered: Vec<Cover>,
     stage: Option<Stage>,
@@ -160,6 +163,7 @@ struct Body {
     id: String,
     name: String,
     model: data::model::Id,
+    flies: bool,
     player: bool,
     at: Pos<Tiles>,
     aim: Pos<Tiles>,
@@ -330,6 +334,11 @@ fn snapshot(world: &mut World) -> Snapshot {
         portals: portals(world, me),
         markers: markers(world, me),
         walkable: walkable(world, me, view),
+        area_size: me.and_then(|me| area::of(world, me)).map(|area| area.size),
+        safe_zones: me
+            .and_then(|me| area::of(world, me))
+            .map(|area| area.safe_zones.clone())
+            .unwrap_or_default(),
         ui: ui(world),
         covered: covered(world),
         view,
@@ -390,6 +399,10 @@ fn body(world: &World, entity: Entity) -> Option<Body> {
     let at = entity.get::<Position>()?.pos;
     let hitbox = at.hitbox(entity.get::<Hitbox>()?.size);
     let model = entity.get::<Actor>()?.model;
+    let flies = world
+        .resource::<AssetService>()
+        .resolve(model.get().sheet, actor::build_model)
+        .airborne;
     let stat = |kind| entity.get::<Stats>().map_or(0.0, |stats| stats.get(kind));
     Some(Body {
         id: entity.id().to_string(),
@@ -397,6 +410,7 @@ fn body(world: &World, entity: Entity) -> Option<Body> {
             .get::<actor::Name>()
             .map_or_else(String::new, |name| name.name.clone()),
         model,
+        flies,
         player: entity.contains::<Owner>(),
         at,
         aim: hitbox.center(),
@@ -562,8 +576,11 @@ fn walkable(world: &mut World, me: Option<Entity>, view: Option<View>) -> Vec<Po
         span(0, window.resolution.width()),
         span(1, window.resolution.height()),
     );
+    let reachable = me
+        .and_then(|me| world.get::<Position>(me))
+        .and_then(|at| area.grid.component(at.pos));
     rows.flat_map(|y| columns.clone().map(move |x| Pos::new(x as f32, y as f32)))
-        .filter(|&tile| area.grid.walkable(tile))
+        .filter(|&tile| reachable.is_some() && area.grid.component(tile) == reachable)
         .collect()
 }
 

@@ -126,7 +126,8 @@ impl Sim {
     pub fn walkable_near(&self, from: Pos<Tiles>, min: Tiles, max: Tiles) -> Pos<Tiles> {
         let map = self.map();
         let component = map.grid.component(from);
-        map.walkable_nodes
+        map.grid
+            .nodes()
             .iter()
             .copied()
             .filter(|node| map.grid.component(*node) == component)

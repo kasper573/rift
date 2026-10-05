@@ -10,7 +10,7 @@ const WORLD_TIMEOUT = 120_000;
 
 export type Tile = [number, number];
 
-export interface Hitbox {
+export interface TileRect {
   origin: Tile;
   size: [number, number];
 }
@@ -19,10 +19,11 @@ export interface Body {
   id: string;
   name: string;
   model: string;
+  flies: boolean;
   player: boolean;
   at: Tile;
   aim: Tile;
-  hitbox: Hitbox;
+  hitbox: TileRect;
   health: number;
   max_health: number;
   npc: string | null;
@@ -38,7 +39,7 @@ export interface Fixture {
   prop: string;
   at: Tile;
   aim: Tile;
-  hitbox: Hitbox;
+  hitbox: TileRect;
   marks: string[];
 }
 
@@ -132,7 +133,8 @@ export interface Lane {
 
 // What the client sees this frame. Positions are world tiles, which `view` maps onto canvas pixels
 // (origin + tile × tile_size); `ui` rects are canvas pixels already. `viewpoint` is the character the
-// camera follows: `me`, or the player a spectator watches.
+// camera follows: `me`, or the player a spectator watches. `walkable` holds the tiles on screen that you
+// can walk to from where you stand.
 export interface Snapshot {
   view: { origin: Tile; tile_size: Tile } | null;
   area: string | null;
@@ -144,6 +146,8 @@ export interface Snapshot {
   portals: Exit[];
   markers: { name: string; at: Tile }[];
   walkable: Tile[];
+  area_size: [number, number] | null;
+  safe_zones: TileRect[];
   ui: UiElement[];
   covered: Cover[];
   stage: Stage | null;
@@ -263,6 +267,32 @@ export function occupied(snapshot: Snapshot, tile: Tile): boolean {
 
 export function warps(snapshot: Snapshot, tile: Tile): boolean {
   return snapshot.portals.some((portal) => distance(tile, portal.at) < 2);
+}
+
+// Safety goes by whole tiles: a spot is safe when the center of its tile lies in a safe zone.
+export function safe(snapshot: Snapshot, at: Tile): boolean {
+  const center: Tile = [Math.round(at[0]), Math.round(at[1])];
+  return snapshot.safe_zones.some((zone) => within(zone, center));
+}
+
+// A few steps past the nearest edge of the safe zone you stand in, on the map.
+export function wayOut(snapshot: Snapshot, depth = 3): Tile | undefined {
+  const me = snapshot.me?.at;
+  const zone = me && snapshot.safe_zones.find((zone) => within(zone, me));
+  if (!me || !zone || !snapshot.area_size) return undefined;
+  const [width, height] = snapshot.area_size;
+  const [left, top] = zone.origin;
+  const [right, bottom] = [left + zone.size[0], top + zone.size[1]];
+  const exits: Tile[] = [
+    [left - depth, me[1]],
+    [right + depth, me[1]],
+    [me[0], top - depth],
+    [me[0], bottom + depth],
+  ];
+  return closestTile(
+    exits.filter(([x, y]) => x >= 0 && y >= 0 && x < width && y < height),
+    me,
+  );
 }
 
 // Only on-screen tiles can be clicked, so a far target is approached hop by hop. A function target is
@@ -450,4 +480,8 @@ export function onQuest(snapshot: Snapshot, quest: string): QuestEntry | undefin
 
 export function finished(snapshot: Snapshot, quest: string): "Completed" | "Failed" | undefined {
   return snapshot.quests.finished.find((done) => done.quest === quest)?.result;
+}
+
+function within({ origin, size }: TileRect, at: Tile): boolean {
+  return at[0] >= origin[0] && at[1] >= origin[1] && at[0] < origin[0] + size[0] && at[1] < origin[1] + size[1];
 }

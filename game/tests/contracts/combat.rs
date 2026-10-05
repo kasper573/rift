@@ -33,7 +33,9 @@ fn an_attack_walks_into_range_and_strikes() {
 #[test]
 fn an_attacked_monster_is_fought_until_it_falls() {
     use bevy_ecs::prelude::*;
+    use game::core::assets::AssetService;
     use game::core::tiling::TilePos;
+    use game::systems::actor::{Actor, build_model};
     use game::systems::combat::Attitude;
     use game::systems::npc::Npc;
 
@@ -45,13 +47,20 @@ fn an_attacked_monster_is_fought_until_it_falls() {
         sim.run_until(2.0, |_| false);
         let at = position(sim.world(), player).expect("position");
         let world = sim.world();
+        let assets = world.resource::<AssetService>().clone();
+        let walks = |world: &World, npc: Entity| {
+            let model = world.get::<Actor>(npc).expect("actor").model;
+            !assets.resolve(model.get().sheet, build_model).airborne
+        };
         let foe = world
             .query_filtered::<Entity, With<Npc>>()
             .iter(world)
             .collect::<Vec<_>>()
             .into_iter()
             .filter(|&npc| {
-                !stat::is_dead(world, npc) && world.get::<Attitude>(npc) == Some(&Attitude::Hostile)
+                !stat::is_dead(world, npc)
+                    && world.get::<Attitude>(npc) == Some(&Attitude::Hostile)
+                    && walks(world, npc)
             })
             .min_by(|&a, &b| {
                 let da = position(world, a).expect("pos").distance(at).0;

@@ -31,20 +31,20 @@ use crate::core::math::{Direction, Pos, Rng};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::data;
-use crate::systems::Character;
 use crate::systems::actor::{self, Action, Actor, Hitbox, Rgba, set_action};
-use crate::systems::area::{self, AreaTag};
+use crate::systems::area::{self, AreaTag, Wild};
 use crate::systems::combat::{Attackers, Attitude};
 use crate::systems::effect::{self, Effect, TimedEffects};
 use crate::systems::interact::{self, Counterpart, Interaction, Interactive};
 use crate::systems::item::Reservation;
-use crate::systems::movement::{MoveTarget, Path, Position, position};
+use crate::systems::movement::{Grid, MoveTarget, Path, Position, position};
 use crate::systems::player::Players;
 use crate::systems::reach::{self, ReachAct};
 use crate::systems::rewards::KillCredited;
 use crate::systems::rule::{Encounter, Outcome, Terms};
 use crate::systems::stat::{self, Stat, StatKind, Stats};
 use crate::systems::visibility::{self, Presence};
+use crate::systems::{Character, WorldArea};
 
 const CORPSE_LINGER: Seconds = Seconds(5.0);
 const LEASH_TRIES: u32 = 16;
@@ -177,7 +177,7 @@ pub fn spawn_all(world: &mut World) {
         for population in def.populations {
             let pack = next_pack(world);
             for _ in 0..population.count {
-                spawn_npc(world, &assets, &mut rng, area_id, population.npc, pack);
+                spawn_wild(world, &assets, &mut rng, area_id, population.npc, pack);
             }
         }
     });
@@ -198,7 +198,7 @@ pub fn spawn_all(world: &mut World) {
     }
 }
 
-fn spawn_npc(
+fn spawn_wild(
     world: &mut World,
     assets: &AssetService,
     rng: &mut Rng,
@@ -207,8 +207,12 @@ fn spawn_npc(
     pack: Pack,
 ) {
     let area = assets.resolve(area_id.get().map, area::build_area);
-    let at = random_walkable(rng, area).unwrap_or(area.spawn);
-    spawn(world, def, at, area_id, pack);
+    let at = area
+        .wild_grid
+        .random_node(rng)
+        .expect("validated at startup: populations have ground outside the safe zones");
+    let entity = spawn(world, def, at, area_id, pack);
+    world.entity_mut(entity).insert(Wild);
 }
 
 pub fn spawn_actor(world: &mut World, def: &NpcDef, at: Pos<Tiles>, area: area::Id) -> Entity {
@@ -277,6 +281,7 @@ pub struct Hunt<'a> {
     pub pack: Pack,
     pub at: Pos<Tiles>,
     pub area: area::Id,
+    pub shelter: Option<&'a area::Area>,
     pub aggro: Tiles,
 }
 
@@ -297,7 +302,10 @@ impl Hunt<'_> {
             }
             if let Some(at) = position(self.world, candidate) {
                 let distance = self.at.distance(at);
-                if distance <= self.aggro && best.is_none_or(|(_, best)| distance < best) {
+                if distance <= self.aggro
+                    && best.is_none_or(|(_, best)| distance < best)
+                    && !self.shelter.is_some_and(|region| region.safe(at))
+                {
                     best = Some((candidate, distance));
                 }
             }
@@ -313,6 +321,7 @@ pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut PackEnemies) {
     let players: Vec<Entity> = world.resource::<Players>().0.values().copied().collect();
     let assets = world.resource::<AssetService>().clone();
     let enemies_by_pack = enemies_by_pack(world, enemies);
+    let region = assets.resolve(world.resource::<WorldArea>().0.get().map, area::build_area);
     let ids: Vec<Entity> = npcs.iter(world).collect();
     world.resource_scope(|world, mut rng: Mut<Rng>| {
         for id in ids {
@@ -331,9 +340,13 @@ pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut PackEnemies) {
             let Some(area) = world.get::<AreaTag>(id).map(|tag| tag.area) else {
                 continue;
             };
+            let wild = area::wild(world, id);
+            let shelter = wild.then_some(region);
 
             if let Some(target) = reach::intent(world, id, ReachAct::Attack) {
-                if in_aggro(world, target, at, area, def.aggro) {
+                if in_aggro(world, target, at, area, def.aggro)
+                    && !sheltered(world, shelter, target)
+                {
                     continue;
                 }
                 reach::forget(world, id);
@@ -347,6 +360,7 @@ pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut PackEnemies) {
                     pack,
                     at,
                     area,
+                    shelter,
                     aggro: def.aggro,
                 };
                 def.ai.target(&hunt)
@@ -355,19 +369,12 @@ pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut PackEnemies) {
                 reach::intend(world, id, target, ReachAct::Attack);
                 continue;
             }
-            idle_wander(world, &assets, &mut rng, id, def, area);
+            idle_wander(world, &mut rng, id, def, region.grid_for(wild));
         }
     });
 }
 
-fn idle_wander(
-    world: &mut World,
-    assets: &AssetService,
-    rng: &mut Rng,
-    id: Entity,
-    def: &NpcDef,
-    area: area::Id,
-) {
+fn idle_wander(world: &mut World, rng: &mut Rng, id: Entity, def: &NpcDef, grid: &Grid) {
     if world.get::<MoveTarget>(id).is_some() || world.get::<Path>(id).is_some() {
         return;
     }
@@ -377,12 +384,11 @@ fn idle_wander(
     let Some(at) = position(world, id) else {
         return;
     };
-    let region = assets.resolve(area.get().map, area::build_area);
     let node = match (def.ai.leash(), world.get::<Home>(id)) {
         (Some(leash), Some(&Home(home))) => (0..LEASH_TRIES)
-            .filter_map(|_| random_reachable(rng, region, at))
+            .filter_map(|_| grid.random_reachable(rng, at))
             .find(|node| node.distance(home) <= leash),
-        _ => random_reachable(rng, region, at),
+        _ => grid.random_reachable(rng, at),
     };
     if let Some(node) = node {
         world.entity_mut(id).insert(MoveTarget { pos: node });
@@ -400,6 +406,10 @@ fn enemies_by_pack(world: &mut World, query: &mut PackEnemies) -> HashMap<Pack, 
         }
     }
     by_pack
+}
+
+fn sheltered(world: &World, shelter: Option<&area::Area>, target: Entity) -> bool {
+    shelter.is_some_and(|region| position(world, target).is_some_and(|at| region.safe(at)))
 }
 
 fn in_aggro(world: &World, target: Entity, at: Pos<Tiles>, area: area::Id, aggro: Tiles) -> bool {
@@ -441,7 +451,10 @@ pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
             };
             let at = match world.get::<Home>(id) {
                 Some(&Home(home)) => home,
-                None => random_walkable(&mut rng, region).unwrap_or(region.spawn),
+                None => region
+                    .grid_for(area::wild(world, id))
+                    .random_node(&mut rng)
+                    .unwrap_or(region.spawn),
             };
             if let Some(mut position) = world.get_mut::<Position>(id) {
                 position.pos = at;
@@ -459,21 +472,4 @@ pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
             reach::forget(world, id);
         }
     });
-}
-
-fn random_walkable(rng: &mut Rng, area: &area::Area) -> Option<Pos<Tiles>> {
-    let nodes = &area.walkable_nodes;
-    if nodes.is_empty() {
-        return None;
-    }
-    Some(nodes[rng.rand_range(0..nodes.len() as u32) as usize])
-}
-
-fn random_reachable(rng: &mut Rng, area: &area::Area, from: Pos<Tiles>) -> Option<Pos<Tiles>> {
-    let component_id = area.grid.component(from)?;
-    let nodes = area
-        .component_nodes
-        .get(component_id as usize)
-        .and_then(|n| if n.is_empty() { None } else { Some(n) })?;
-    Some(nodes[rng.rand_range(0..nodes.len() as u32) as usize])
 }

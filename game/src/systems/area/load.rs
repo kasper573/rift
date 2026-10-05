@@ -27,6 +27,7 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
     let mut start = None;
     let mut portals = Vec::new();
     let mut obscuring_rects = Vec::new();
+    let mut safe_zones = Vec::new();
     let mut markers = HashMap::new();
 
     for layer in map.layers() {
@@ -89,6 +90,9 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
                             };
                             mark(&mut markers, name, &object.name, marker);
                         }
+                        "safe-zone" => {
+                            safe_zones.push(tiling.rect(Rect::new(pos, shape_size(&object.shape))))
+                        }
                         _ => {}
                     }
                 }
@@ -101,25 +105,28 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
     if !layers.iter().any(|layer| layer.dynamic) {
         panic!("map '{name}' must have a 'Dynamic' tile layer");
     }
-    let grid = build_grid(size, &layers, &tiles, &obscuring_rects);
-    let walkable_nodes: Vec<_> = size
+    let walkable = walkable_cells(size, &layers, &tiles, &obscuring_rects);
+    let outside_safe_zones = size
         .grid()
         .cells()
-        .map(|c| c.center())
-        .filter(|&p| grid.walkable(p))
+        .zip(&walkable)
+        .map(|(cell, &walkable)| {
+            walkable && !safe_zones.iter().any(|zone| zone.contains(cell.center()))
+        })
         .collect();
-    let component_nodes = compute_component_nodes(&grid, &walkable_nodes);
+    let grid = movement::Grid::new(size.grid(), walkable);
+    let wild_grid = movement::Grid::new(size.grid(), outside_safe_zones);
     let (groups, grouped_cells) = compute_groups(&layers, &tiles);
     let tile_sfx = tile_sfx(size, &layers, &tiles);
 
     Area {
         size,
         grid,
+        wild_grid,
+        safe_zones,
         tile_sfx,
         spawn,
         portals,
-        walkable_nodes,
-        component_nodes,
         obscuring_rects,
         groups,
         grouped_cells,
@@ -284,12 +291,12 @@ fn tile_sfx(size: Size<Tiles>, layers: &[RenderLayer], tiles: &TilePalette) -> V
     sfx
 }
 
-fn build_grid(
+fn walkable_cells(
     size: Size<Tiles>,
     layers: &[RenderLayer],
     tiles: &TilePalette,
     obscuring: &[Rect<Tiles>],
-) -> movement::Grid {
+) -> Vec<bool> {
     let grid = size.grid();
     let cells = (grid.width * grid.height) as usize;
     let mut any_walkable = vec![false; cells];
@@ -315,30 +322,11 @@ fn build_grid(
             }
         }
     }
-    movement::Grid::new(grid, walkable)
+    walkable
 }
 
 fn obscured_cells(rect: &Rect<Tiles>) -> Vec<CellPos> {
     rect.tiles()
         .filter(|&c| cell_overlap(rect, c) >= OBSCURING_CUTOFF)
         .collect()
-}
-
-/// Walkable nodes grouped by connected-component id, so an actor can pick a wander target reachable
-/// from where it stands (index 0 is unused; component ids start at 1).
-fn compute_component_nodes(
-    grid: &movement::Grid,
-    walkable_nodes: &[Pos<Tiles>],
-) -> Vec<Vec<Pos<Tiles>>> {
-    let mut by_component: Vec<Vec<Pos<Tiles>>> = Vec::new();
-    for &node in walkable_nodes {
-        if let Some(comp_id) = grid.component(node) {
-            let i = comp_id as usize;
-            if i >= by_component.len() {
-                by_component.resize(i + 1, Vec::new());
-            }
-            by_component[i].push(node);
-        }
-    }
-    by_component
 }

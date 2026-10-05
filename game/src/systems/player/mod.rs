@@ -213,13 +213,10 @@ pub fn join(world: &mut World) {
 fn spawn_position(world: &mut World, policy: SpawnPolicy, area: &area::Area) -> Pos<Tiles> {
     match policy {
         SpawnPolicy::Map => area.spawn,
-        SpawnPolicy::Dist if !area.walkable_nodes.is_empty() => {
-            let index = world
-                .resource_mut::<Rng>()
-                .rand_range(0..area.walkable_nodes.len() as u32);
-            area.walkable_nodes[index as usize]
-        }
-        SpawnPolicy::Dist => area.spawn,
+        SpawnPolicy::Dist => area
+            .grid
+            .random_node(&mut world.resource_mut::<Rng>())
+            .unwrap_or(area.spawn),
     }
 }
 

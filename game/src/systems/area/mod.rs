@@ -44,6 +44,13 @@ pub struct AreaTag {
     pub area: Id,
 }
 
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Wild;
+
+pub fn wild(world: &World, entity: Entity) -> bool {
+    world.get::<Wild>(entity).is_some()
+}
+
 pub struct AreaDef {
     pub map: AssetRef,
     pub populations: &'static [Population],
@@ -164,10 +171,10 @@ pub struct Area {
     pub size: Size<Tiles>,
     pub grid: movement::Grid,
     pub tile_sfx: Vec<Option<SfxId>>,
+    pub wild_grid: movement::Grid,
+    pub safe_zones: Vec<Rect<Tiles>>,
     pub spawn: Pos<Tiles>,
     pub portals: Vec<Portal>,
-    pub walkable_nodes: Vec<Pos<Tiles>>,
-    pub component_nodes: Vec<Vec<Pos<Tiles>>>,
     pub obscuring_rects: Vec<Rect<Tiles>>,
     pub groups: Vec<Group>,
     pub grouped_cells: HashSet<CellPos>,
@@ -179,6 +186,15 @@ pub struct Area {
 impl Area {
     pub fn marker(&self, name: MarkerName) -> Option<MapMarker> {
         self.markers.get(name.0).copied()
+    }
+
+    pub fn safe(&self, at: Pos<Tiles>) -> bool {
+        let center = at.cell().center();
+        self.safe_zones.iter().any(|zone| zone.contains(center))
+    }
+
+    pub fn grid_for(&self, wild: bool) -> &movement::Grid {
+        if wild { &self.wild_grid } else { &self.grid }
     }
 
     pub fn obscured_amount(&self, c: CellPos) -> f32 {
@@ -205,6 +221,9 @@ pub fn check(assets: &AssetService) {
     for &id in <Id as strum::VariantArray>::VARIANTS {
         let def = id.get();
         let area = assets.resolve(def.map, build_area);
+        if !def.populations.is_empty() && area.wild_grid.nodes().is_empty() {
+            panic!("area {id:?}: its populations have no ground outside the safe zones");
+        }
         for resident in def.residents {
             if area.marker(resident.at).is_none() {
                 panic!(

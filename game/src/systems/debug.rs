@@ -1,6 +1,6 @@
 use crate::core::assets::AssetService;
-use crate::core::math::Offset;
-use crate::core::tiling::{self, TilePos};
+use crate::core::math::{Offset, Rect};
+use crate::core::tiling::{self, Cell, TilePos, Tiles};
 use crate::systems::actor::{Actor, Hitbox};
 use crate::systems::area;
 use crate::systems::area::AreaTag;
@@ -10,6 +10,8 @@ use bevy::prelude::*;
 use crate::core::render::screen::ToScreen;
 use crate::systems::movement::RenderPosition;
 use crate::systems::scene::Scene;
+
+const SAFE_TILE_INSET: f32 = 0.2;
 
 pub struct DebugPlugin;
 
@@ -37,6 +39,7 @@ enum DebugMode {
     Off,
     Nodes,
     Obscured,
+    SafeZones,
 }
 
 fn cycle(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<DebugMode>) {
@@ -44,7 +47,8 @@ fn cycle(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<DebugMode>) {
         *mode = match *mode {
             DebugMode::Off => DebugMode::Nodes,
             DebugMode::Nodes => DebugMode::Obscured,
-            DebugMode::Obscured => DebugMode::Off,
+            DebugMode::Obscured => DebugMode::SafeZones,
+            DebugMode::SafeZones => DebugMode::Off,
         };
     }
 }
@@ -70,7 +74,7 @@ fn draw(
     let red = Color::srgb(1.0, 0.0, 0.0);
     match *mode {
         DebugMode::Nodes => {
-            for &node in &area.walkable_nodes {
+            for &node in area.grid.nodes() {
                 for (dx, dy) in tiling::NEIGHBORS_8 {
                     let neighbor = node + Offset::new(dx as f32, dy as f32);
                     if area.grid.walkable(neighbor) {
@@ -81,16 +85,29 @@ fn draw(
         }
         DebugMode::Obscured => {
             for rect in &area.obscuring_rects {
-                let min = rect.origin.to_screen();
-                let max = (rect.origin + rect.size).to_screen();
-                gizmos.line_2d(Vec2::new(min.x, min.y), Vec2::new(max.x, min.y), red);
-                gizmos.line_2d(Vec2::new(max.x, min.y), Vec2::new(max.x, max.y), red);
-                gizmos.line_2d(Vec2::new(max.x, max.y), Vec2::new(min.x, max.y), red);
-                gizmos.line_2d(Vec2::new(min.x, max.y), Vec2::new(min.x, min.y), red);
+                outline(&mut gizmos, *rect, red);
+            }
+        }
+        DebugMode::SafeZones => {
+            let green = Color::srgb(0.2, 1.0, 0.4);
+            for &node in area.grid.nodes().iter().filter(|&&node| area.safe(node)) {
+                let tile = node.cell().bounds();
+                outline(
+                    &mut gizmos,
+                    tile.inflate(-SAFE_TILE_INSET, -SAFE_TILE_INSET),
+                    green,
+                );
+            }
+            for zone in &area.safe_zones {
+                outline(&mut gizmos, *zone, green);
             }
         }
         DebugMode::Off => {}
     }
+}
+
+fn outline(gizmos: &mut Gizmos, rect: Rect<Tiles>, color: Color) {
+    gizmos.rect_2d(rect.center().to_screen(), rect.size.to_screen(), color);
 }
 
 #[derive(Resource, Default)]

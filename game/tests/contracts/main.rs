@@ -12,6 +12,7 @@ mod presence;
 mod quest;
 mod reach;
 mod rule;
+mod safe_zone;
 mod shop;
 mod summon;
 mod support;

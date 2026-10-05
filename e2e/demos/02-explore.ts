@@ -7,7 +7,7 @@ const ROUTE: Array<{ from_spawn: Tile; caption: string }> = [
   { from_spawn: [4, 1], caption: "Click the ground to walk there — the camera follows" },
   { from_spawn: [5, -2], caption: "Paths route around water, rocks and anything in the way" },
   { from_spawn: [-3, -4], caption: "Beaches, docks and palm groves — the island is open to explore" },
-  { from_spawn: [0, 0], caption: "Monsters roam freely and fight back" },
+  { from_spawn: [0, 0], caption: "Town is safe ground: monsters roam the wilds beyond it, and fight back" },
 ];
 
 test(

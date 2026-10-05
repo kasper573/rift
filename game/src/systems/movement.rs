@@ -6,8 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin};
-use crate::core::math::{Direction, Offset, Pos};
-use crate::core::tiling::{Cell, CellPos, GridSize, NEIGHBORS_8, TilePos, Tiles, TilesPerSec};
+use crate::core::math::{Direction, Offset, Pos, Rng};
+use crate::core::tiling::{
+    Cell, CellPos, GridDims, GridSize, NEIGHBORS_8, TilePos, Tiles, TilesPerSec,
+};
 use crate::core::time::Seconds;
 use bevy_terminal::{CommandCtx, command};
 
@@ -195,13 +197,7 @@ fn approach_tile(
     target: Pos<Tiles>,
     range: Tiles,
 ) -> Option<Pos<Tiles>> {
-    let grid = &area::of(world, entity)?.grid;
-    let assets = world.resource::<AssetService>();
-    let airborne = world.get::<Actor>(entity).is_some_and(|actor| {
-        assets
-            .resolve(actor.model.get().sheet, crate::systems::actor::build_model)
-            .airborne
-    });
+    let navigator = Navigator::of(world, entity)?;
     let goal = target.cell();
     let reach = range.0.ceil() as i32;
     let mut best: Option<(Pos<Tiles>, Tiles)> = None;
@@ -212,7 +208,7 @@ fn approach_tile(
                 continue;
             }
             let center = cell.center();
-            if center.distance(target) > range || (!airborne && !grid.walkable(center)) {
+            if center.distance(target) > range || !navigator.open(cell) {
                 continue;
             }
             let distance = from.distance(center);
@@ -313,18 +309,13 @@ pub fn advance(world: &mut World, movers_query: &mut Movers, step_query: &mut St
     }
 }
 
-fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
-    let assets = world.resource::<AssetService>();
-    if world.get::<Actor>(entity).is_some_and(|actor| {
-        assets
-            .resolve(actor.model.get().sheet, crate::systems::actor::build_model)
-            .airborne
-    }) {
+fn route(world: &World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
+    let navigator = Navigator::of(world, entity)?;
+    let at = position(world, entity)?;
+    if navigator.flies && navigator.clear(at, goal) {
         return Some(vec![goal.cell()]);
     }
-    let area = area::of(world, entity)?;
-    let at = position(world, entity)?;
-    let mut path = astar(&area.grid, at, goal)?;
+    let mut path = astar(at.cell(), goal.cell(), |cell| navigator.open(cell))?;
     if path.len() > 1 {
         path.remove(0);
     }
@@ -410,21 +401,39 @@ fn teleport(
 
 const ORTHOGONAL: u32 = 1000;
 const DIAGONAL: u32 = 1414;
+const FLIGHT_SAMPLE: Tiles = Tiles(0.25);
 
 #[derive(Clone)]
 pub struct Grid {
     size: GridSize,
     walkable: Vec<bool>,
     components: Vec<u32>,
+    nodes: Vec<Pos<Tiles>>,
+    nodes_by_component: Vec<Vec<Pos<Tiles>>>,
 }
 
 impl Grid {
     pub fn new(size: GridSize, walkable: Vec<bool>) -> Grid {
         let components = compute_components(size, &walkable);
+        let mut nodes = Vec::new();
+        let mut nodes_by_component: Vec<Vec<Pos<Tiles>>> = Vec::new();
+        for (index, cell) in size.cells().enumerate() {
+            let component = components[index] as usize;
+            if component == 0 {
+                continue;
+            }
+            if component >= nodes_by_component.len() {
+                nodes_by_component.resize(component + 1, Vec::new());
+            }
+            nodes.push(cell.center());
+            nodes_by_component[component].push(cell.center());
+        }
         Grid {
             size,
             walkable,
             components,
+            nodes,
+            nodes_by_component,
         }
     }
 
@@ -434,6 +443,19 @@ impl Grid {
 
     pub fn component(&self, p: Pos<Tiles>) -> Option<u32> {
         self.component_at_cell(p.cell())
+    }
+
+    pub fn nodes(&self) -> &[Pos<Tiles>] {
+        &self.nodes
+    }
+
+    pub fn random_node(&self, rng: &mut Rng) -> Option<Pos<Tiles>> {
+        pick(rng, &self.nodes)
+    }
+
+    pub fn random_reachable(&self, rng: &mut Rng, from: Pos<Tiles>) -> Option<Pos<Tiles>> {
+        let component = self.component(from)? as usize;
+        pick(rng, self.nodes_by_component.get(component)?)
     }
 
     fn component_at_cell(&self, c: CellPos) -> Option<u32> {
@@ -476,12 +498,56 @@ impl Grid {
     }
 }
 
-fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
-    let start = start.cell();
-    let goal = goal.cell();
-    if !grid.cell_walkable(start) || !grid.cell_walkable(goal) {
+struct Navigator {
+    area: &'static area::Area,
+    flies: bool,
+    wild: bool,
+}
+
+impl Navigator {
+    fn of(world: &World, entity: Entity) -> Option<Navigator> {
+        Some(Navigator {
+            area: area::of(world, entity)?,
+            flies: airborne(world, entity),
+            wild: area::wild(world, entity),
+        })
+    }
+
+    fn open(&self, cell: CellPos) -> bool {
+        if self.flies {
+            !(self.wild && self.area.safe(cell.center()))
+        } else {
+            self.area.grid_for(self.wild).cell_walkable(cell)
+        }
+    }
+
+    fn clear(&self, from: Pos<Tiles>, to: Pos<Tiles>) -> bool {
+        let samples = (from.distance(to).0 / FLIGHT_SAMPLE.0).ceil().max(1.0) as u32;
+        (0..=samples).all(|i| self.open(from.lerp(to, i as f32 / samples as f32).cell()))
+    }
+}
+
+fn airborne(world: &World, entity: Entity) -> bool {
+    let assets = world.resource::<AssetService>();
+    world.get::<Actor>(entity).is_some_and(|actor| {
+        assets
+            .resolve(actor.model.get().sheet, crate::systems::actor::build_model)
+            .airborne
+    })
+}
+
+fn pick(rng: &mut Rng, nodes: &[Pos<Tiles>]) -> Option<Pos<Tiles>> {
+    if nodes.is_empty() {
         return None;
     }
+    Some(nodes[rng.rand_range(0..nodes.len() as u32) as usize])
+}
+
+fn astar(start: CellPos, goal: CellPos, open: impl Fn(CellPos) -> bool) -> Option<Vec<CellPos>> {
+    if !open(start) || !open(goal) {
+        return None;
+    }
+    let open = &open;
     let (path, _cost) = pathfinding::prelude::astar(
         &start,
         |&c| {
@@ -492,7 +558,7 @@ fn astar(grid: &Grid, start: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Vec<CellPos
                 } else {
                     ORTHOGONAL
                 };
-                grid.cell_walkable(next).then_some((next, cost))
+                open(next).then_some((next, cost))
             })
         },
         |&c| {
