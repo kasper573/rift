@@ -13,6 +13,8 @@ use crate::systems::player::Players;
 use crate::systems::stat;
 use crate::systems::visibility;
 
+const REFRESH_ROUNDS: u32 = 3;
+
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
     app.replicate::<Attention>()
@@ -104,15 +106,26 @@ pub fn badge_source(app: &mut App, source: BadgeSource) {
 pub fn update(
     world: &mut World,
     targets: &mut QueryState<(Entity, &'static AreaTag), With<Interactive>>,
+    mut turn: Local<u32>,
 ) {
+    *turn = (*turn + 1) % REFRESH_ROUNDS;
     let marking = world.resource::<MarkSources>().0.clone();
     let badging = world.resource::<BadgeSources>().0.clone();
-    let interactive: Vec<(Entity, crate::systems::area::Id)> = targets
+    let mut interactive: Vec<(Entity, crate::systems::area::Id)> = targets
         .iter(world)
         .filter(|(target, _)| interact::interaction_of(world, *target).is_some())
         .map(|(target, tag)| (target, tag.area))
         .collect();
-    let players: Vec<Entity> = world.resource::<Players>().0.values().copied().collect();
+    interactive.sort_by_key(|&(target, _)| target);
+    let players: Vec<Entity> = world
+        .resource::<Players>()
+        .0
+        .values()
+        .copied()
+        .enumerate()
+        .filter(|(index, _)| *index as u32 % REFRESH_ROUNDS == *turn)
+        .map(|(_, player)| player)
+        .collect();
     for player in players {
         let area = world.get::<AreaTag>(player).map(|tag| tag.area);
         let attention = Attention(
