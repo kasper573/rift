@@ -70,6 +70,13 @@ pub fn build_model(svc: &AssetService, source: AssetRef) -> ActorModel {
         frame: Size::new(tileset.tile_width as f32, tileset.tile_height as f32),
         columns: tileset.columns.max(1),
         hitbox: Size::new(dimension("hitbox_width"), dimension("hitbox_height")),
+        scale: match tileset.properties.get("scale") {
+            None => 1.0,
+            Some(PropertyValue::FloatValue(scale)) if *scale > 0.0 => *scale,
+            Some(other) => {
+                panic!("actor model {name}: 'scale' must be a positive float, not {other:?}")
+            }
+        },
         airborne: matches!(
             tileset.properties.get("airborne"),
             Some(PropertyValue::BoolValue(true))
@@ -86,6 +93,7 @@ pub struct ActorModel {
     frame: Size<WorldPx>,
     columns: u32,
     hitbox: Size<Tiles>,
+    scale: f32,
     pub airborne: bool,
     strips: HashMap<String, [Vec<Frame>; 8]>,
     sounds: HashMap<TileId, SfxId>,
@@ -100,6 +108,10 @@ impl ActorModel {
 
     pub fn sheet(&self) -> &str {
         &self.sheet
+    }
+
+    pub fn drawn_size(&self, frame: Rect<WorldPx>) -> Size<WorldPx> {
+        frame.size * self.scale
     }
 
     pub fn frame(

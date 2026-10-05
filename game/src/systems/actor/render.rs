@@ -98,14 +98,11 @@ fn sync_actors(
     for (entity, actor, render, pose, tag, mut sprite, mut transform, mut visibility) in &mut actors
     {
         let elapsed = animator.elapsed(entity, pose.action as u64, clock);
-        let region = service.resolve(actor.model.get().sheet, build_model).frame(
-            pose.action.name(),
-            pose.dir,
-            elapsed,
-            actor.attack_rate,
-        );
+        let model = service.resolve(actor.model.get().sheet, build_model);
+        let region = model.frame(pose.action.name(), pose.dir, elapsed, actor.attack_rate);
+        let drawn = model.drawn_size(region);
         sprite.rect = Some(atlas_rect(region));
-        sprite.custom_size = Some(Vec2::new(region.size.width, region.size.height));
+        sprite.custom_size = Some(Vec2::new(drawn.width, drawn.height));
         sprite.color = rgba(actor.color);
         let area = service.resolve(tag.area.get().map, area::build_area);
         let at = render.0;

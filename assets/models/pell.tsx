@@ -2,7 +2,8 @@
 <tileset version="1.10" tiledversion="1.10.2" name="pell" tilewidth="32" tileheight="48" tilecount="128" columns="16">
  <properties>
   <property name="hitbox_width" type="float" value="1.0"/>
-  <property name="hitbox_height" type="float" value="2.5"/>
+  <property name="hitbox_height" type="float" value="1.25"/>
+  <property name="scale" type="float" value="0.5"/>
  </properties>
  <image source="pell.png" width="512" height="384"/>
  <tile id="0">
