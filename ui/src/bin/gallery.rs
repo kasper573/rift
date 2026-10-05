@@ -1328,7 +1328,13 @@ const BANNER_SECONDS: f32 = 4.0;
 
 fn banners_scene() -> Box<dyn Scene> {
     boxed(bsn! {
-        Node { width: Val::Percent(100.0), height: Val::Percent(100.0) }
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            padding: {UiRect::top(Val::Px(ui::tokens::spacing::XL))},
+        }
         Children [ {EntityScene(announcement_lane(banner_cycle(0)))} ]
     })
 }

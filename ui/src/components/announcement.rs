@@ -4,8 +4,7 @@ use bevy_ecs::prelude::*;
 use bevy_picking::prelude::Pickable;
 use bevy_scene::{CommandsSceneExt, EntityScene, Scene, bsn, template_value};
 use bevy_ui::{
-    AlignItems, BackgroundColor, BorderRadius, FlexDirection, JustifyContent, Node, PositionType,
-    UiRect, Val,
+    AlignItems, BackgroundColor, BorderRadius, FlexDirection, JustifyContent, Node, UiRect, Val,
 };
 
 use crate::component;
@@ -49,11 +48,8 @@ pub fn announcement_lane(lane: AnnouncementLane) -> impl Scene {
     bsn! {
         component(lane)
         Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px({spacing::XL}),
-            left: Val::Percent(50.0),
-            margin: {UiRect::left(Val::Px(-WIDTH / 2.0))},
             width: Val::Px({WIDTH}),
+            max_width: Val::Vw(94.0),
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px({spacing::L}),
         }
