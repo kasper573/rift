@@ -22,6 +22,7 @@ use crate::style::Style;
 
 const FRONT_HEIGHT: f32 = 64.0;
 const BACK_HEIGHT: f32 = 56.0;
+const BACK_LIFT: f32 = 8.0;
 const FRONT_INSET: f32 = 1.0;
 const BACK_INSET: f32 = 13.0;
 const SLIDE: f32 = 70.0;
@@ -142,15 +143,15 @@ pub(crate) fn reap_busts(time: Res<Time>, busts: Query<(Entity, &Bust)>, mut com
 }
 
 fn shown(member: &CastMember) -> Style {
-    let (height, inset) = match member.depth {
-        CastDepth::Front => (FRONT_HEIGHT, FRONT_INSET),
-        CastDepth::Back => (BACK_HEIGHT, BACK_INSET),
+    let (height, inset, lift) = match member.depth {
+        CastDepth::Front => (FRONT_HEIGHT, FRONT_INSET, 0.0),
+        CastDepth::Back => (BACK_HEIGHT, BACK_INSET, BACK_LIFT),
     };
     let side = member.side;
     Style::new()
         .node(move |node| {
             node.position_type = PositionType::Absolute;
-            node.bottom = Val::Px(0.0);
+            node.bottom = Val::Vh(lift);
             node.height = Val::Vh(height);
             match side {
                 Side::Left => node.left = Val::Vw(inset),
