@@ -10,7 +10,7 @@ pub struct InteractGesture;
 
 impl Gesture for InteractGesture {
     fn priority(&self) -> i32 {
-        3
+        4
     }
 
     fn claims(&self, world: &mut World) -> bool {

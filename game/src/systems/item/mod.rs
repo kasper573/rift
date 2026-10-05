@@ -480,6 +480,18 @@ pub fn pickup_request(world: &mut World) {
     }
 }
 
+pub fn pickable_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
+    let me = crate::systems::player::session::my_id(world);
+    let cell = point.cell();
+    world
+        .query::<(Entity, &Position, &DroppedItem, Option<&Reservation>)>()
+        .iter(world)
+        .find_map(|(entity, at, _, reservation)| {
+            let reserved = reservation.map_or(ReservedBy::None, |reservation| reservation.by);
+            (at.pos.cell() == cell && reserved.allows(me)).then_some(entity)
+        })
+}
+
 pub fn pickups(world: &mut World, intents: &mut reach::Intents) {
     for (player, target) in reach::intending(world, intents, ReachAct::Pickup) {
         match reach::pursue(world, player, PICKUP_RANGE) {

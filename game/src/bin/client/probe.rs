@@ -16,7 +16,7 @@ use game::systems::attention::{Attention, StatusBadges};
 use game::systems::combat::{self, Attitude};
 use game::systems::dialogue::{history, stage};
 use game::systems::interact;
-use game::systems::item::{DroppedItem, Inventory};
+use game::systems::item::{self, DroppedItem, Inventory};
 use game::systems::movement::Position;
 use game::systems::npc::Npc;
 use game::systems::player::{Owner, commands_locked, session};
@@ -489,7 +489,13 @@ fn aim(world: &mut World, entity: Entity, hitbox: Rect<Tiles>) -> Pos<Tiles> {
 }
 
 fn clicked(world: &mut World, spot: Pos<Tiles>) -> Option<Entity> {
-    combat::enemy_at(world, spot).or_else(|| interact::interactable_at(world, spot))
+    if let Some(enemy) = combat::enemy_at(world, spot) {
+        return Some(enemy);
+    }
+    if item::pickable_at(world, spot).is_some() {
+        return None;
+    }
+    interact::interactable_at(world, spot)
 }
 
 fn items(world: &mut World, area: Option<area::Id>) -> Vec<GroundItem> {
