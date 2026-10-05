@@ -10,7 +10,7 @@ use crate::data::dialogue::Id as DialogueId;
 use crate::data::npc::Id as NpcId;
 use crate::data::prop::Id as PropId;
 use crate::systems::actor;
-use crate::systems::attention::{self, Mark};
+use crate::systems::attention;
 use crate::systems::dialogue;
 use crate::systems::player::{commands_locked, sender_player, session};
 use crate::systems::reach::{self, Pursuit, ReachAct, Tether};
@@ -30,18 +30,13 @@ pub struct Interaction {
     pub verb: Verb,
     pub reach: Tiles,
     pub responses: &'static [Response],
-    pub marks: &'static [StaticMark],
+    pub marks: &'static [AttentionId],
 }
 
 pub struct Response {
     pub requires: &'static [&'static dyn Requirement],
     pub then: &'static [&'static dyn Outcome],
     pub news: bool,
-}
-
-pub struct StaticMark {
-    pub kind: AttentionId,
-    pub label: &'static str,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -202,7 +197,7 @@ fn respond(world: &mut World, player: Entity, target: Entity, interaction: &'sta
     }
 }
 
-fn marks(world: &World, player: Entity, target: Entity) -> Vec<Mark> {
+fn marks(world: &World, player: Entity, target: Entity) -> Vec<AttentionId> {
     let Some(interaction) = interaction_of(world, target) else {
         return Vec::new();
     };
@@ -217,13 +212,7 @@ fn marks(world: &World, player: Entity, target: Entity) -> Vec<Mark> {
     interaction
         .marks
         .iter()
-        .map(|mark| Mark {
-            kind: mark.kind,
-            label: mark.label.to_owned(),
-        })
-        .chain(news.then(|| Mark {
-            kind: AttentionId::News,
-            label: AttentionId::News.get().label.to_owned(),
-        }))
+        .copied()
+        .chain(news.then_some(AttentionId::News))
         .collect()
 }

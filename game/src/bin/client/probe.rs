@@ -382,7 +382,7 @@ fn body(world: &World, entity: Entity) -> Option<Body> {
     let viewer = world.resource::<session::Viewpoint>().0;
     let marks = viewer
         .and_then(|viewer| world.get::<Attention>(viewer))
-        .map(|attention| attention.of(entity).iter().map(|mark| mark.kind).collect())
+        .map(|attention| attention.of(entity).to_vec())
         .unwrap_or_default();
     let locked = commands_locked(world, entity);
     let entity = world.get_entity(entity).ok()?;
@@ -454,7 +454,7 @@ fn props(world: &mut World, area: Option<area::Id>) -> Vec<Fixture> {
                 hitbox,
                 marks: attention
                     .as_ref()
-                    .map(|attention| attention.of(entity).iter().map(|mark| mark.kind).collect())
+                    .map(|attention| attention.of(entity).to_vec())
                     .unwrap_or_default(),
             };
             (entity, fixture)

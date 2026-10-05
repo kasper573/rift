@@ -82,7 +82,6 @@ fn boot() {
             systems::quest::log::QuestLogPlugin,
             systems::quest::tracker::QuestTrackerPlugin,
             systems::notice::ToasterPlugin,
-            systems::attention::render::OfferingsPlugin,
             systems::spectate::widget::SpectatorPlugin,
             systems::terminal::TerminalPlugin,
             systems::fps::FpsPlugin,

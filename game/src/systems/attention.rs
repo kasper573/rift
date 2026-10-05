@@ -1,5 +1,3 @@
-pub mod render;
-
 use bevy_app::App;
 use bevy_ecs::entity::{EntityMapper, MapEntities};
 use bevy_ecs::prelude::*;
@@ -25,19 +23,12 @@ pub fn register(app: &mut App) {
 
 pub struct AttentionDef {
     pub icon: AssetRef,
-    pub label: &'static str,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Mark {
-    pub kind: AttentionId,
-    pub label: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MarkedTarget {
     pub target: Entity,
-    pub marks: Vec<Mark>,
+    pub marks: Vec<AttentionId>,
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -53,7 +44,7 @@ impl MapEntities for Attention {
 }
 
 impl Attention {
-    pub fn of(&self, target: Entity) -> &[Mark] {
+    pub fn of(&self, target: Entity) -> &[AttentionId] {
         self.0
             .iter()
             .find(|marked| marked.target == target)
@@ -64,16 +55,9 @@ impl Attention {
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct StatusBadges(pub Vec<AttentionId>);
 
-pub fn plate_marks(world: &World, viewer: Option<Entity>, actor: Entity) -> Vec<Mark> {
+pub fn plate_marks(world: &World, viewer: Option<Entity>, actor: Entity) -> Vec<AttentionId> {
     if let Some(badges) = world.get::<StatusBadges>(actor) {
-        return badges
-            .0
-            .iter()
-            .map(|&kind| Mark {
-                kind,
-                label: kind.get().label.to_owned(),
-            })
-            .collect();
+        return badges.0.clone();
     }
     viewer
         .and_then(|viewer| world.get::<Attention>(viewer))
@@ -82,7 +66,7 @@ pub fn plate_marks(world: &World, viewer: Option<Entity>, actor: Entity) -> Vec<
         .collect()
 }
 
-pub type MarkSource = fn(&World, Entity, Entity) -> Vec<Mark>;
+pub type MarkSource = fn(&World, Entity, Entity) -> Vec<AttentionId>;
 
 pub type BadgeSource = fn(&World, Entity) -> Option<AttentionId>;
 
@@ -137,11 +121,11 @@ pub fn update(
                         && visibility::present(world, *target, player)
                 })
                 .filter_map(|&(target, _)| {
-                    let mut marks: Vec<Mark> = marking
+                    let mut marks: Vec<AttentionId> = marking
                         .iter()
                         .flat_map(|source| source(world, player, target))
                         .collect();
-                    marks.sort_by_key(|mark| mark.kind);
+                    marks.sort();
                     (!marks.is_empty()).then_some(MarkedTarget { target, marks })
                 })
                 .collect(),

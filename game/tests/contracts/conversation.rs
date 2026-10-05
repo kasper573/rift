@@ -297,7 +297,7 @@ fn two_players_see_their_own_icons_over_the_same_npc() {
     let marks = |sim: &mut Sim, player: Entity| -> Vec<AttentionId> {
         sim.world()
             .get::<Attention>(player)
-            .map(|attention| attention.of(tobb).iter().map(|mark| mark.kind).collect())
+            .map(|attention| attention.of(tobb).to_vec())
             .unwrap_or_default()
     };
     sim.run_until(0.5, |_| false);

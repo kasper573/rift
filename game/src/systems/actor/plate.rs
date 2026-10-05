@@ -2,16 +2,16 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use bevy::prelude::*;
-use bevy::scene::EntityScene;
 use bevy::ui::Val2;
 use ui::tokens::{palette, typography};
 
 use crate::core::math::Pos;
 use crate::core::render::WorldToWindow;
+use crate::data::attention::Id as AttentionId;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
-use crate::systems::attention::{self, Mark};
+use crate::systems::attention;
 use crate::systems::combat::Attitude;
-use crate::systems::hud::{reconcile_children, tooltip_label};
+use crate::systems::hud::reconcile_children;
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
 use crate::systems::player::Owner;
@@ -176,39 +176,30 @@ fn sync_plate_icons(world: &mut World) {
         };
         let marks = attention::plate_marks(world, viewer, actor);
         let keys: Vec<u64> = marks.iter().map(mark_key).collect();
-        let icons: Vec<(Handle<Image>, String)> = {
+        let icons: Vec<Handle<Image>> = {
             let assets = world.resource::<AssetServer>();
             marks
                 .iter()
-                .map(|mark| (assets.load(mark.kind.get().icon.0), mark.label.clone()))
+                .map(|mark| assets.load(mark.get().icon.0))
                 .collect()
         };
         reconcile_children(world, row, &keys, |index| {
-            let (image, label) = icons[index].clone();
-            Box::new(plate_icon(image, label))
+            Box::new(plate_icon(icons[index].clone()))
         });
     }
 }
 
-fn mark_key(mark: &Mark) -> u64 {
+fn mark_key(mark: &AttentionId) -> u64 {
     let mut hasher = DefaultHasher::new();
-    mark.kind.hash(&mut hasher);
-    mark.label.hash(&mut hasher);
+    mark.hash(&mut hasher);
     hasher.finish()
 }
 
-fn plate_icon(image: Handle<Image>, label: String) -> impl Scene {
+fn plate_icon(image: Handle<Image>) -> impl Scene {
     bsn! {
         Node { width: Val::Px({ICON}), height: Val::Px({ICON}) }
         ImageNode { image: {image} }
-        Pickable { should_block_lower: false, is_hoverable: true }
-        {ui::tooltip(false)}
-        Children [
-            (
-                {ui::tooltip_content(ui::Side::Top, ui::Align::Center, 4.0)}
-                Children [ {EntityScene(tooltip_label(label))} ]
-            )
-        ]
+        Pickable::IGNORE
     }
 }
 

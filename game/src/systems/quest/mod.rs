@@ -20,7 +20,7 @@ use crate::data::item::Id as ItemId;
 use crate::data::npc::Id as NpcId;
 use crate::data::prop::Id as PropId;
 use crate::systems::area::{self, AreaTag, MarkerName};
-use crate::systems::attention::{self, Mark};
+use crate::systems::attention;
 use crate::systems::dialogue::{
     self, Asked, BusyPolicy, ChoiceTag, GotoNode, Offer, StartConversation, Then, Unmet,
 };
@@ -1041,7 +1041,7 @@ fn quest_offer(
     }
 }
 
-fn marks(world: &World, player: Entity, target: Entity) -> Vec<Mark> {
+fn marks(world: &World, player: Entity, target: Entity) -> Vec<AttentionId> {
     let Some(&counterpart) = world.get::<Counterpart>(target) else {
         return Vec::new();
     };
@@ -1070,10 +1070,7 @@ fn marks(world: &World, player: Entity, target: Entity) -> Vec<Mark> {
                 }
                 None => return None,
             };
-            Some(Mark {
-                kind,
-                label: def.title.to_owned(),
-            })
+            Some(kind)
         })
         .collect()
 }

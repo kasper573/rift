@@ -11,7 +11,7 @@ use crate::core::time::{Seconds, UnixMillis, WallClock};
 use crate::data::attention::Id as AttentionId;
 use crate::data::dialogue::Id as DialogueId;
 use crate::data::item::Id as ItemId;
-use crate::systems::attention::{self, Mark};
+use crate::systems::attention;
 use crate::systems::dialogue::{self, Asked, ChoiceTag, GotoNode, Line, Offer, Then, Unmet};
 use crate::systems::interact::Counterpart;
 use crate::systems::item::{Inventory, ItemCategory, ItemFlag, ItemStack};
@@ -363,7 +363,7 @@ fn wares(world: &World, asked: &Asked) -> Vec<Offer> {
     }]
 }
 
-fn marks(world: &World, player: Entity, target: Entity) -> Vec<Mark> {
+fn marks(world: &World, player: Entity, target: Entity) -> Vec<AttentionId> {
     let Some(&keeper) = world.get::<Counterpart>(target) else {
         return Vec::new();
     };
@@ -371,10 +371,7 @@ fn marks(world: &World, player: Entity, target: Entity) -> Vec<Mark> {
         .iter()
         .map(|shop| shop.get())
         .filter(|shop| shop.keeper == keeper && rule::met(world, player, shop.requires))
-        .map(|shop| Mark {
-            kind: shop.mark,
-            label: shop.title.to_owned(),
-        })
+        .map(|shop| shop.mark)
         .collect()
 }
 

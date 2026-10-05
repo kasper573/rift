@@ -29,7 +29,7 @@ impl Gesture for DragGesture {
     }
 }
 
-pub(super) fn over_interface(world: &World) -> bool {
+fn over_interface(world: &World) -> bool {
     hovered_has::<Node>(world)
 }
 

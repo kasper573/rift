@@ -31,10 +31,6 @@ static GESTURES: &[&dyn Gesture] = &[
     &walk::WalkGesture,
 ];
 
-pub(crate) fn over_interface(world: &World) -> bool {
-    drag::over_interface(world)
-}
-
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, setup)
         .add_systems(Update, update.run_if(in_state(Scene::Area)));

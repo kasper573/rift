@@ -13,7 +13,7 @@ use crate::systems::area::{MarkerName, StandingOn, WarpLock};
 use crate::systems::combat::Attitude;
 use crate::systems::dialogue::BusyPolicy;
 use crate::systems::dialogue::StartConversation;
-use crate::systems::interact::{Interaction, Response, StaticMark, Verb};
+use crate::systems::interact::{Interaction, Response, Verb};
 use crate::systems::item::{Holding, ItemStack};
 use crate::systems::memory::{Forget, Remember, RememberedWithin, Remembers, RemembersAtLeast};
 use crate::systems::npc::{
@@ -323,7 +323,7 @@ crate::table! {
                     news: false,
                 },
             ],
-            marks: &[StaticMark { kind: AttentionId::Innkeeper, label: "Rents beds" }],
+            marks: &[AttentionId::Innkeeper],
         }),
         notices: &[],
         guards: &[],
@@ -358,7 +358,7 @@ crate::table! {
                     news: false,
                 },
             ],
-            marks: &[StaticMark { kind: AttentionId::Travel, label: "Sails to the forest" }],
+            marks: &[AttentionId::Travel],
         }),
         notices: &[],
         guards: &[],
@@ -433,7 +433,7 @@ crate::table! {
                     news: false,
                 },
             ],
-            marks: &[StaticMark { kind: AttentionId::Chance, label: "Dice, ten Gold a roll" }],
+            marks: &[AttentionId::Chance],
         }),
         notices: &[],
         guards: &[],
