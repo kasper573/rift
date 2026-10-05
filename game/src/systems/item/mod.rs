@@ -26,7 +26,7 @@ use crate::systems::player::{ClientId, Owner, conn_player, sender_player};
 use crate::systems::reach::{self, Pursuit, ReachAct};
 use crate::systems::rule::{Outcome, Requirement, RuleContext};
 use crate::systems::stat;
-use crate::systems::visibility::seen_by;
+use crate::systems::visibility::{self, seen_by};
 
 pub const INVENTORY_MAX: u32 = 25;
 const RESERVATION_TTL: Seconds = Seconds(60.0);
@@ -408,7 +408,10 @@ pub fn pickup_request(world: &mut World) {
             continue;
         };
         let target = request.message.target;
-        if stat::is_dead(world, player) || world.get::<DroppedItem>(target).is_none() {
+        if stat::is_dead(world, player)
+            || world.get::<DroppedItem>(target).is_none()
+            || !visibility::present(world, target, player)
+        {
             continue;
         }
         reach::intend(world, player, target, ReachAct::Pickup);

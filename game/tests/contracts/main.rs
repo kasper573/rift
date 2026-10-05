@@ -1,8 +1,10 @@
 mod clock;
 mod combat;
+mod content;
 mod exchange;
 mod kill_credit;
 mod memory;
+mod presence;
 mod reach;
 mod rule;
 mod support;

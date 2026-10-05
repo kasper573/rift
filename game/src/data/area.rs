@@ -1,26 +1,28 @@
 use crate::core::assets::AssetRef;
 use crate::data::npc::Id as NpcId;
-use crate::systems::area::{AreaDef, Spawn};
+use crate::systems::area::{AreaDef, Population};
 
 crate::table! {
     Island: AreaDef {
         map: AssetRef("maps/island.tmx"),
-        spawns: &[
-            Spawn { npc: NpcId::Orc, population: 6 },
-            Spawn { npc: NpcId::Skeleton, population: 8 },
-            Spawn { npc: NpcId::VampireBat, population: 5 },
-            Spawn { npc: NpcId::Bat, population: 4 },
-            Spawn { npc: NpcId::OrcChief, population: 2 },
+        populations: &[
+            Population { npc: NpcId::Orc, count: 6 },
+            Population { npc: NpcId::Skeleton, count: 8 },
+            Population { npc: NpcId::VampireBat, count: 5 },
+            Population { npc: NpcId::Bat, count: 4 },
+            Population { npc: NpcId::OrcChief, count: 2 },
         ],
+        residents: &[],
     },
     Forest: AreaDef {
         map: AssetRef("maps/forest.tmx"),
-        spawns: &[
-            Spawn { npc: NpcId::Orc, population: 8 },
-            Spawn { npc: NpcId::OrcChief, population: 3 },
-            Spawn { npc: NpcId::Skeleton, population: 5 },
-            Spawn { npc: NpcId::Bat, population: 6 },
+        populations: &[
+            Population { npc: NpcId::Orc, count: 8 },
+            Population { npc: NpcId::OrcChief, count: 3 },
+            Population { npc: NpcId::Skeleton, count: 5 },
+            Population { npc: NpcId::Bat, count: 6 },
         ],
+        residents: &[],
     },
 }
 

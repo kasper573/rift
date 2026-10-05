@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::systems::account::identity::Identity;
 use crate::systems::account::role::Role;
 use crate::systems::player::{ClientId, Players};
+use crate::systems::visibility::PrivateSight;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -255,7 +256,15 @@ fn tell(world: &mut World, client: ClientId, status: Spectating) {
         .filter(|(_, id)| **id == client)
         .map(|(conn, _)| conn)
         .collect();
+    let watching = match status {
+        Spectating::Nobody => None,
+        Spectating::Player(watched) => Some(watched.player),
+    };
     for conn in conns {
+        world.entity_mut(conn).insert(PrivateSight {
+            own: client,
+            watching,
+        });
         world.write_message(ToClients {
             targets: SendTargets::Single(bevy_replicon::prelude::ClientId::Client(conn)),
             message: status,

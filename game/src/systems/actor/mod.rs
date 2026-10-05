@@ -1,4 +1,5 @@
 mod model;
+pub mod plate;
 pub mod render;
 
 use bevy_app::App;

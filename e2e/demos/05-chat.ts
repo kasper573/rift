@@ -1,7 +1,7 @@
 import { test, type Page } from "@playwright/test";
 
 import { caption, chapter, enterWorld } from "../helpers/demo";
-import { clickUi, closestTile, focusGame, probe, walkTo } from "../helpers/game";
+import { clickUi, closestTile, focusGame, probe, waitFor, walkTo } from "../helpers/game";
 
 test(
   "Chat",
@@ -14,6 +14,14 @@ test(
       await caption(page, "…like this one, who just signed in");
       const { me, walkable } = await probe(friend);
       await walkTo(friend, closestTile(walkable, [me!.at[0] - 3, me!.at[1] - 1])!);
+      await caption(page, "Every player's name floats over their head");
+      await waitFor(
+        page,
+        (snapshot) => snapshot.ui.some((element) => element.text === me!.name),
+        "the friend's name plate never showed",
+        10_000,
+      );
+      await page.waitForTimeout(1500);
       await caption(page, "Press C for the terminal, where everyone can chat");
       await say(page, "hello! anyone around?");
       await page.waitForTimeout(1200);

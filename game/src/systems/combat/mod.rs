@@ -16,13 +16,26 @@ use crate::systems::movement::{MoveTarget, Path, Position, halt, on_tile, positi
 use crate::systems::player::{Owner, sender_player, session};
 use crate::systems::reach::{self, Pursuit, ReachAct};
 use crate::systems::stat::{self, StatKind};
+use crate::systems::visibility;
 
 const HP_REGEN_INTERVAL: Seconds = Seconds(10.0);
 const HP_REGEN_AMOUNT: f32 = 5.0;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
-    app.add_mapped_client_message::<AttackRequest>(Channel::Ordered);
+    app.add_mapped_client_message::<AttackRequest>(Channel::Ordered)
+        .replicate::<Attitude>();
+}
+
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Attitude {
+    Friendly,
+    Hostile,
+}
+
+pub fn attackable(world: &World, attacker: Entity, target: Entity) -> bool {
+    world.get::<Attitude>(target) != Some(&Attitude::Friendly)
+        && visibility::coexist(world, attacker, target)
 }
 
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
@@ -39,7 +52,10 @@ pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
         .map(|(entity, at, hitbox)| (entity, at.pos.hitbox(hitbox.size)))
         .collect();
     hitboxes.into_iter().find_map(|(entity, hitbox)| {
-        if Some(entity) == me || stat::is_dead(world, entity) {
+        if Some(entity) == me
+            || stat::is_dead(world, entity)
+            || world.get::<Attitude>(entity) == Some(&Attitude::Friendly)
+        {
             return None;
         }
         hitbox.contains(point).then_some(entity)
@@ -102,6 +118,7 @@ pub fn request(world: &mut World) {
         if stat::is_dead(world, entity)
             || world.get_entity(target).is_err()
             || stat::is_dead(world, target)
+            || !attackable(world, entity, target)
         {
             continue;
         }

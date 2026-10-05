@@ -3,7 +3,7 @@ pub mod transition;
 
 pub use load::build_area;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use bevy_app::App;
 use bevy_ecs::component::Component;
@@ -14,9 +14,10 @@ use serde::{Deserialize, Serialize};
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::sfx::SfxId;
-use crate::core::tiling::{Cell, CellPos, GridSize, TileSize, Tiles};
+use crate::core::tiling::{Cell, CellPos, GridSize, TilePos, TileSize, Tiles};
 use crate::data;
 use crate::systems::movement;
+use crate::systems::rule::Requirement;
 
 pub use crate::data::area::Id;
 
@@ -38,12 +39,44 @@ pub struct AreaTag {
 
 pub struct AreaDef {
     pub map: AssetRef,
-    pub spawns: &'static [Spawn],
+    pub populations: &'static [Population],
+    pub residents: &'static [Resident],
 }
 
-pub struct Spawn {
+pub struct Population {
     pub npc: data::npc::Id,
-    pub population: u32,
+    pub count: u32,
+}
+
+pub struct Resident {
+    pub npc: data::npc::Id,
+    pub at: MarkerName,
+    pub shown: &'static [&'static dyn Requirement],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MarkerName(pub &'static str);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MapMarker {
+    Point(Pos<Tiles>),
+    Rect(Rect<Tiles>),
+}
+
+impl MapMarker {
+    pub fn center(self) -> Pos<Tiles> {
+        match self {
+            MapMarker::Point(at) => at,
+            MapMarker::Rect(rect) => rect.center(),
+        }
+    }
+
+    pub fn covers(self, at: Pos<Tiles>) -> bool {
+        match self {
+            MapMarker::Point(point) => point.cell() == at.cell(),
+            MapMarker::Rect(rect) => rect.contains(at),
+        }
+    }
 }
 
 pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
@@ -110,10 +143,15 @@ pub struct Area {
     pub groups: Vec<Group>,
     pub grouped_cells: HashSet<CellPos>,
     pub layers: Vec<RenderLayer>,
+    pub markers: HashMap<String, MapMarker>,
     pub map: std::sync::Arc<tiled::Map>,
 }
 
 impl Area {
+    pub fn marker(&self, name: MarkerName) -> Option<MapMarker> {
+        self.markers.get(name.0).copied()
+    }
+
     pub fn obscured_amount(&self, c: CellPos) -> f32 {
         self.obscuring_rects
             .iter()
@@ -131,6 +169,21 @@ impl Area {
     pub fn tile_sfx_at(&self, c: CellPos) -> Option<&SfxId> {
         let i = c.index(self.size.grid())?;
         self.tile_sfx[i].as_ref()
+    }
+}
+
+pub fn check(assets: &AssetService) {
+    for &id in <Id as strum::VariantArray>::VARIANTS {
+        let def = id.get();
+        let area = assets.resolve(def.map, build_area);
+        for resident in def.residents {
+            if area.marker(resident.at).is_none() {
+                panic!(
+                    "area {id:?}: {:?} stands on marker '{}', which the map lacks",
+                    resident.npc, resident.at.0
+                );
+            }
+        }
     }
 }
 

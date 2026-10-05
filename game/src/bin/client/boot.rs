@@ -62,6 +62,7 @@ fn boot() {
         .add_plugins((
             systems::scene::ScenePlugin { spectator },
             systems::actor::render::ActorPlugin,
+            systems::actor::plate::PlatePlugin,
             systems::movement::MovementPlugin,
             systems::combat::render::CombatPlugin,
             systems::item::render::ItemsPlugin,

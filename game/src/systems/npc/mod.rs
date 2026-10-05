@@ -2,11 +2,13 @@ mod aggressive;
 mod defensive;
 mod pacifist;
 mod protective;
+mod strolls;
 
 pub use aggressive::Aggressive;
 pub use defensive::Defensive;
 pub use pacifist::Pacifist;
 pub use protective::Protective;
+pub use strolls::Strolls;
 
 use std::collections::HashMap;
 
@@ -25,15 +27,17 @@ use crate::data;
 use crate::systems::Character;
 use crate::systems::actor::{self, Action, Actor, Hitbox, Rgba, set_action};
 use crate::systems::area::{self, AreaTag};
-use crate::systems::combat::Attackers;
+use crate::systems::combat::{Attackers, Attitude};
 use crate::systems::effect::{self, Effect, TimedEffects};
 use crate::systems::item::Reservation;
 use crate::systems::movement::{MoveTarget, Path, Position, position};
 use crate::systems::player::Players;
 use crate::systems::reach::{self, ReachAct};
 use crate::systems::stat::{self, Stat, StatKind, Stats};
+use crate::systems::visibility::{self, Presence};
 
-const NPC_RESPAWN_DELAY: Seconds = Seconds(5.0);
+const CORPSE_LINGER: Seconds = Seconds(5.0);
+const LEASH_TRIES: u32 = 16;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -59,6 +63,9 @@ pub struct Npc {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Pack(pub u32);
 
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Home(pub Pos<Tiles>);
+
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct DeadAt {
     pub at: Seconds,
@@ -66,6 +73,9 @@ pub struct DeadAt {
 
 pub struct NpcDef {
     pub display_name: &'static str,
+    pub role: Option<&'static str>,
+    pub attitude: Attitude,
+    pub respawn: Option<Seconds>,
     pub model: data::model::Id,
     pub tint: Rgba,
     pub ai: &'static dyn Ai,
@@ -77,20 +87,36 @@ pub struct NpcDef {
 pub fn spawn_all(world: &mut World) {
     let area_id = world.resource::<crate::systems::WorldArea>().0;
     let assets = world.resource::<AssetService>().clone();
+    let def = area_id.get();
     world.resource_scope(|world, mut rng: Mut<Rng>| {
-        for (group, spawn) in area_id.get().spawns.iter().enumerate() {
-            for _ in 0..spawn.population {
+        for (group, population) in def.populations.iter().enumerate() {
+            for _ in 0..population.count {
                 spawn_npc(
                     world,
                     &assets,
                     &mut rng,
                     area_id,
-                    spawn.npc,
+                    population.npc,
                     Pack(group as u32),
                 );
             }
         }
     });
+    let area = assets.resolve(def.map, area::build_area);
+    for (index, resident) in def.residents.iter().enumerate() {
+        let at = area
+            .marker(resident.at)
+            .expect("validated at startup: residents stand on markers")
+            .center();
+        let pack = Pack((def.populations.len() + index) as u32);
+        let entity = spawn(world, resident.npc, at, area_id, pack);
+        world.entity_mut(entity).insert(Home(at));
+        if !resident.shown.is_empty() {
+            world
+                .entity_mut(entity)
+                .insert(Presence::When(resident.shown));
+        }
+    }
 }
 
 fn spawn_npc(
@@ -121,7 +147,9 @@ pub fn spawn(
     pack: Pack,
 ) -> Entity {
     let entity = spawn_actor(world, def.get(), at, area);
-    world.entity_mut(entity).insert((Npc { def }, pack));
+    world
+        .entity_mut(entity)
+        .insert((Npc { def }, pack, def.get().attitude));
     entity
 }
 
@@ -148,6 +176,9 @@ fn character(assets: &AssetService, def: &NpcDef, at: Pos<Tiles>, area: area::Id
 pub trait Ai: Send + Sync {
     fn wanders(&self, rng: &mut Rng) -> bool;
     fn target(&self, hunt: &Hunt) -> Option<Entity>;
+    fn leash(&self) -> Option<Tiles> {
+        None
+    }
 }
 
 pub struct Hunt<'a> {
@@ -171,6 +202,7 @@ impl Hunt<'_> {
         for &candidate in candidates {
             if stat::is_dead(self.world, candidate)
                 || self.world.get::<AreaTag>(candidate).map(|t| t.area) != Some(self.area)
+                || !visibility::coexist(self.world, self.id, candidate)
                 || !accept(candidate)
             {
                 continue;
@@ -251,11 +283,20 @@ fn idle_wander(
     if world.get::<MoveTarget>(id).is_some() || world.get::<Path>(id).is_some() {
         return;
     }
-    if def.ai.wanders(rng)
-        && let Some(at) = position(world, id)
-        && let Some(node) =
-            random_reachable(rng, assets.resolve(area.get().map, area::build_area), at)
-    {
+    if !def.ai.wanders(rng) {
+        return;
+    }
+    let Some(at) = position(world, id) else {
+        return;
+    };
+    let region = assets.resolve(area.get().map, area::build_area);
+    let node = match (def.ai.leash(), world.get::<Home>(id)) {
+        (Some(leash), Some(&Home(home))) => (0..LEASH_TRIES)
+            .filter_map(|_| random_reachable(rng, region, at))
+            .find(|node| node.distance(home) <= leash),
+        _ => random_reachable(rng, region, at),
+    };
+    if let Some(node) = node {
         world.entity_mut(id).insert(MoveTarget { pos: node });
     }
 }
@@ -295,13 +336,23 @@ pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
                     time
                 }
             };
-            if time - since < NPC_RESPAWN_DELAY {
+            let respawn = world.get::<Npc>(id).and_then(|npc| npc.def.get().respawn);
+            let Some(delay) = respawn else {
+                if time - since >= CORPSE_LINGER {
+                    world.entity_mut(id).despawn();
+                }
+                continue;
+            };
+            if time - since < delay {
                 continue;
             }
             let Some(region) = area::of(world, id) else {
                 continue;
             };
-            let at = random_walkable(&mut rng, region).unwrap_or(region.spawn);
+            let at = match world.get::<Home>(id) {
+                Some(&Home(home)) => home,
+                None => random_walkable(&mut rng, region).unwrap_or(region.spawn),
+            };
             if let Some(mut position) = world.get_mut::<Position>(id) {
                 position.pos = at;
             }

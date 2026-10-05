@@ -203,6 +203,10 @@ pub fn step_areas(apps: &mut [App], clock: crate::core::time::WallClock) {
         });
 }
 
+pub fn check_content(assets: &crate::core::assets::AssetService) {
+    area::check(assets);
+}
+
 pub(crate) fn requests<M: Message>(world: &mut World) -> Vec<FromClient<M>> {
     world
         .resource_mut::<Messages<FromClient<M>>>()

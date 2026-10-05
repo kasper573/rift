@@ -1,7 +1,9 @@
 use crate::core::tiling::Tiles;
+use crate::core::time::Seconds;
 use crate::data::item::Id as ItemId;
 use crate::data::model::Id as ModelId;
 use crate::systems::actor::Rgba;
+use crate::systems::combat::Attitude;
 use crate::systems::npc::{Aggressive, Defensive, NpcDef, Pacifist, Protective};
 use crate::systems::rewards::Reward;
 use crate::systems::stat::StatKind;
@@ -9,6 +11,9 @@ use crate::systems::stat::StatKind;
 crate::table! {
     Orc: NpcDef {
         display_name: "Orc",
+        role: None,
+        attitude: Attitude::Hostile,
+        respawn: Some(Seconds(5.0)),
         model: ModelId::Orc,
         tint: Rgba(0xffffffff),
         ai: &Defensive,
@@ -31,6 +36,9 @@ crate::table! {
     },
     OrcChief: NpcDef {
         display_name: "Orc Chief",
+        role: None,
+        attitude: Attitude::Hostile,
+        respawn: Some(Seconds(5.0)),
         model: ModelId::Orc,
         tint: Rgba(0xffb070ff),
         ai: &Protective,
@@ -54,6 +62,9 @@ crate::table! {
     },
     Skeleton: NpcDef {
         display_name: "Skeleton",
+        role: None,
+        attitude: Attitude::Hostile,
+        respawn: Some(Seconds(5.0)),
         model: ModelId::Skeleton,
         tint: Rgba(0xffffffff),
         ai: &Aggressive,
@@ -78,6 +89,9 @@ crate::table! {
     },
     Bat: NpcDef {
         display_name: "Bat",
+        role: None,
+        attitude: Attitude::Hostile,
+        respawn: Some(Seconds(5.0)),
         model: ModelId::Bat,
         tint: Rgba(0xffffffff),
         ai: &Pacifist,
@@ -99,6 +113,9 @@ crate::table! {
     },
     VampireBat: NpcDef {
         display_name: "Vampire Bat",
+        role: None,
+        attitude: Attitude::Hostile,
+        respawn: Some(Seconds(5.0)),
         model: ModelId::Bat,
         tint: Rgba(0xff7788ff),
         ai: &Aggressive,

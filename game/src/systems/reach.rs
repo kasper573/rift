@@ -5,6 +5,7 @@ use crate::core::tiling::{TilePos, Tiles};
 use crate::systems::area::{self, AreaTag};
 use crate::systems::movement::{self, approach, position};
 use crate::systems::stat;
+use crate::systems::visibility;
 
 const DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
 
@@ -56,9 +57,11 @@ impl Tether {
             && world.get::<AreaTag>(actor).map(|tag| tag.area) == Some(self.area)
             && position(world, actor)
                 .is_some_and(|at| at.distance(self.anchor) <= self.range + DIAGONAL_MARGIN)
-            && self
-                .npc
-                .is_none_or(|npc| world.get_entity(npc).is_ok() && !stat::is_dead(world, npc))
+            && self.npc.is_none_or(|npc| {
+                world.get_entity(npc).is_ok()
+                    && !stat::is_dead(world, npc)
+                    && visibility::coexist(world, actor, npc)
+            })
     }
 }
 
@@ -92,6 +95,7 @@ pub fn pursue(world: &mut World, actor: Entity, range: Tiles) -> Pursuit {
         || world.get_entity(target).is_err()
         || stat::is_dead(world, target)
         || !same_area(world, actor, target)
+        || !visibility::coexist(world, actor, target)
     {
         return Pursuit::Lost;
     }

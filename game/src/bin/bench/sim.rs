@@ -52,12 +52,13 @@ impl Layout {
 
 /// The NPCs each bench area spawns, read from the content layer (the same area the bench instances).
 pub fn npcs_per_area() -> usize {
-    data::area::BENCH_ID
-        .get()
-        .spawns
+    let area = data::area::BENCH_ID.get();
+    let populations: usize = area
+        .populations
         .iter()
-        .map(|spawn| spawn.population as usize)
-        .sum()
+        .map(|population| population.count as usize)
+        .sum();
+    populations + area.residents.len()
 }
 
 /// Exactly `areas` instances of the benchmark area, each populated with its NPCs and players, plus

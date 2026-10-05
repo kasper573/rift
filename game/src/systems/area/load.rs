@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use tiled::{LayerType, PropertyValue};
 
-use super::{Area, Group, Portal, RenderLayer, TileRef, cell_overlap};
+use super::{Area, Group, MapMarker, Portal, RenderLayer, TileRef, cell_overlap};
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
 use crate::core::sfx::SfxId;
@@ -27,6 +27,7 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
     let mut start = None;
     let mut portals = Vec::new();
     let mut obscuring_rects = Vec::new();
+    let mut markers = HashMap::new();
 
     for layer in map.layers() {
         match layer.layer_type() {
@@ -72,6 +73,19 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
                             };
                             portals.push(portal(name, goto, pos, &object.shape, tiling));
                         }
+                        "marker" => {
+                            let marker = match object.shape {
+                                tiled::ObjectShape::Point(..) => {
+                                    MapMarker::Point(tiling.tile_center(pos))
+                                }
+                                _ => MapMarker::Rect(
+                                    tiling.rect(Rect::new(pos, shape_size(&object.shape))),
+                                ),
+                            };
+                            if markers.insert(object.name.clone(), marker).is_some() {
+                                panic!("map '{name}': marker '{}' is placed twice", object.name);
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -107,6 +121,7 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
         groups,
         grouped_cells,
         layers,
+        markers,
         map: std::sync::Arc::new(map),
     }
 }

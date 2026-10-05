@@ -110,6 +110,7 @@ fn main() {
         reset: config.daily_reset_utc_hour,
     };
     let assets = AssetService::new(FilesystemSource(config.assets_dir));
+    game::systems::check_content(&assets);
     simulate(
         ws_bind,
         sessions,
