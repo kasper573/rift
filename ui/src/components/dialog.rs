@@ -3,6 +3,7 @@ use bevy_picking::prelude::Pickable;
 use bevy_scene::{EntityScene, Scene, bsn, template_value};
 
 use crate::component;
+use crate::components::confirm::Modal;
 use bevy_ui::{
     AlignItems, BorderRadius, FlexDirection, JustifyContent, Node, Overflow, PositionType, UiRect,
     Val,
@@ -33,6 +34,7 @@ pub(crate) fn modal(
     let scrim_close = dismiss.then_some(component(OverlayAction::Close));
     bsn! {
         Open({open})
+        Modal
         Children [
             (
                 component(OverlayAction::Open)

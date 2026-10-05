@@ -8,17 +8,19 @@ use ui::card::intent as card_intent;
 use ui::theme::theme;
 use ui::tokens::palette;
 use ui::{
-    Align, ButtonIntent, ButtonSize, CardOptions, Check, MotionPreference, OnSettle, OnTap,
-    Orientation, RichPiece, RichSpan, RichText, Side, SonnerPosition, TextMotion, TextVoice,
-    Typewriter, WidgetOptions, accordion, accordion_body, accordion_content, accordion_header,
-    accordion_item, accordion_trigger, alert_dialog, alert_dialog_action, alert_dialog_cancel,
-    avatar, avatar_fallback, button, button_styled, card, checkbox, checkbox_indicator,
-    collapsible, collapsible_content, collapsible_trigger, dialog, dialog_close, popover,
-    popover_content, popover_trigger, progress, progress_indicator, radio_circle, radio_group,
-    radio_indicator, radio_item, rich_text, scroll_area, scroll_bar, scroll_thumb, scroll_viewport,
-    separator, slider, slider_range, slider_thumb, slider_track, sonner_close, switch,
-    switch_thumb, tabs, tabs_list, tabs_trigger, text, text_colored, toast, toaster, tooltip,
-    tooltip_content, widget, window,
+    Align, Announcement, AnnouncementLane, ButtonIntent, ButtonSize, CardOptions, Carriable,
+    Carried, CarryTarget, Check, ChipOptions, ChoiceOptions, ConfirmOptions, DialogueBoxOptions,
+    MotionPreference, OnSettle, OnTap, Orientation, RichPiece, RichSpan, RichText, Side,
+    SonnerPosition, TextMotion, TextVoice, Typewriter, WidgetOptions, accordion, accordion_body,
+    accordion_content, accordion_header, accordion_item, accordion_trigger, alert_dialog,
+    alert_dialog_action, alert_dialog_cancel, announcement_lane, avatar, avatar_fallback, button,
+    button_styled, card, checkbox, checkbox_indicator, chip, choice_list, collapsible,
+    collapsible_content, collapsible_trigger, component, confirm_dialog, dialog, dialog_close,
+    dialogue_box, key_hint, list_header, popover, popover_content, popover_trigger, progress,
+    progress_indicator, radio_circle, radio_group, radio_indicator, radio_item, rich_text,
+    scroll_area, scroll_bar, scroll_thumb, scroll_viewport, separator, slider, slider_range,
+    slider_thumb, slider_track, sonner_close, split_view, switch, switch_thumb, tabs, tabs_list,
+    tabs_trigger, text, text_colored, toast, toaster, tooltip, tooltip_content, widget, window,
 };
 
 const WINDOW: Vec2 = Vec2::new(1600.0, 900.0);
@@ -76,7 +78,10 @@ fn main() {
         .insert_resource(CurrentScene(opened))
         .add_plugins(ui::UiPlugin)
         .add_systems(Startup, setup)
-        .add_systems(Update, (rebuild_scene, animate_progress))
+        .add_systems(
+            Update,
+            (rebuild_scene, animate_progress, stage_keys, run_down_lanes),
+        )
         .run();
 }
 
@@ -94,7 +99,8 @@ fn scene_index(name: &str) -> usize {
         })
 }
 
-fn setup(current: Res<CurrentScene>, mut commands: Commands) {
+fn setup(current: Res<CurrentScene>, assets: Res<AssetServer>, mut commands: Commands) {
+    let _ = GALLERY_ASSETS.set(assets.clone());
     commands.spawn((Camera2d, IsDefaultUiCamera));
     let tab_buttons: Vec<Box<dyn Scene>> = SCENES
         .iter()
@@ -240,6 +246,14 @@ const SCENES: &[(&str, SceneBuilder)] = &[
     ("Window", window_scene),
     ("Rich text", rich_text_scene),
     ("Typewriter", typewriter_scene),
+    ("Chips", chips_scene),
+    ("Choices", choices_scene),
+    ("Dialogue box", dialogue_box_scene),
+    ("Banners", banners_scene),
+    ("Toasts (top center)", top_toasts_scene),
+    ("List detail", list_detail_scene),
+    ("Confirm dialog", confirm_dialog_scene),
+    ("Drag and drop", drag_and_drop_scene),
 ];
 
 const BUTTON_INTENTS: &[(ButtonIntent, &str)] = &[
@@ -690,6 +704,21 @@ fn toasts_scene() -> Box<dyn Scene> {
     })
 }
 
+fn top_toasts_scene() -> Box<dyn Scene> {
+    boxed(bsn! {
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+        }
+        Children [
+            ( {button("Show toast")} on(show_toast) ),
+            ( {toaster(SonnerPosition::TopCenter)} ToasterEntity )
+        ]
+    })
+}
+
 fn widget_scene() -> Box<dyn Scene> {
     col(
         160.0,
@@ -1100,4 +1129,350 @@ fn typewriter_scene() -> Box<dyn Scene> {
             }),
         ],
     )
+}
+
+fn outline(color: Color) -> ui::Family {
+    ui::Family {
+        base: Color::NONE,
+        on: color,
+        hover: Color::NONE,
+        active: Color::NONE,
+        border: color,
+    }
+}
+
+fn tag(label: &str, color: Color) -> ChipOptions {
+    ChipOptions {
+        label: label.to_owned(),
+        icon: None,
+        family: outline(color),
+    }
+}
+
+fn cost(assets: &AssetServer, count: u32, met: bool) -> ChipOptions {
+    ChipOptions {
+        label: count.to_string(),
+        icon: Some(assets.load("icons/misc/golden_coin.png")),
+        family: outline(if met {
+            palette::AMBER_70
+        } else {
+            palette::CRIMSON_70
+        }),
+    }
+}
+
+fn sample_choices(assets: &AssetServer) -> Vec<ChoiceOptions> {
+    let choice = |label: &'static str, chips: Vec<ChipOptions>, locked: bool| ChoiceOptions {
+        label: RichText::new(vec![plain(label)]),
+        icon: None,
+        chips,
+        locked,
+    };
+    vec![
+        choice(
+            "I'm ready for the forest road.",
+            vec![
+                tag("Level 3", palette::CRIMSON_70),
+                tag("DIALOGUE", palette::AZURE_70),
+            ],
+            true,
+        ),
+        choice(
+            "The Orc Chief won't trouble anyone now.",
+            vec![
+                tag("Wearing Tribal Helmet", palette::EMERALD_70),
+                tag("DIALOGUE", palette::AZURE_70),
+            ],
+            false,
+        ),
+        choice(
+            "Here, for your trouble.",
+            vec![cost(assets, 20, true), tag("DIALOGUE", palette::AZURE_70)],
+            false,
+        ),
+        choice(
+            "Never mind.",
+            vec![tag("DIALOGUE", palette::AZURE_70)],
+            false,
+        ),
+    ]
+}
+
+static GALLERY_ASSETS: std::sync::OnceLock<AssetServer> = std::sync::OnceLock::new();
+
+fn assets() -> &'static AssetServer {
+    GALLERY_ASSETS
+        .get()
+        .expect("gallery assets are ready before scenes are built")
+}
+
+fn chips_scene() -> Box<dyn Scene> {
+    let assets = assets();
+    let chips: Vec<Box<dyn Scene>> = [
+        tag("QUEST", palette::AMBER_70),
+        tag("SHOP", palette::AMBER_80),
+        tag("DIALOGUE", palette::AZURE_70),
+        tag("Level 3", palette::CRIMSON_70),
+        tag("Wearing Tribal Helmet", palette::EMERALD_70),
+        cost(assets, 20, true),
+        cost(assets, 150, false),
+    ]
+    .into_iter()
+    .map(|options| boxed(chip(options)))
+    .chain(std::iter::once(boxed(key_hint(
+        "↑ ↓ choose · Enter pick · 1-4 shortcut · Esc leave",
+        theme().surface_trough,
+    ))))
+    .collect();
+    wrap(chips)
+}
+
+fn choices_scene() -> Box<dyn Scene> {
+    col(720.0, vec![boxed(choice_list(sample_choices(assets())))])
+}
+
+fn dialogue_box_scene() -> Box<dyn Scene> {
+    let line = RichText::new(vec![
+        plain("The forest road is "),
+        ink("closed", palette::CRIMSON_80),
+        plain(". Orders from the harbour master."),
+    ]);
+    let actions: Vec<Box<dyn Scene>> = vec![
+        boxed(button_styled(
+            button_intent::SECONDARY,
+            ButtonSize::Sm,
+            "History",
+        )),
+        boxed(button_styled(
+            button_intent::SECONDARY,
+            ButtonSize::Sm,
+            "Leave",
+        )),
+    ];
+    boxed(bsn! {
+        Node { width: Val::Percent(100.0), height: Val::Percent(100.0), align_items: AlignItems::End, justify_content: JustifyContent::Center, padding: {UiRect::bottom(Val::Px(40.0))} }
+        Children [ {EntityScene(dialogue_box(DialogueBoxOptions {
+            speaker: Some(("Ilsa".to_owned(), Side::Right)),
+            line,
+            typed: true,
+            choices: sample_choices(assets()),
+            hint: "↑ ↓ choose · Enter pick · 1-4 shortcut · Esc leave".to_owned(),
+            actions,
+            status: None,
+        }))} ]
+    })
+}
+
+const BANNER_SECONDS: f32 = 4.0;
+
+fn banners_scene() -> Box<dyn Scene> {
+    boxed(bsn! {
+        Node { width: Val::Percent(100.0), height: Val::Percent(100.0) }
+        Children [ {EntityScene(announcement_lane(banner_cycle(0)))} ]
+    })
+}
+
+fn banner_cycle(round: u64) -> AnnouncementLane {
+    let chief = |key: u64, text: RichText| Announcement {
+        key,
+        speaker: Some("Orc Chief".to_owned()),
+        text,
+        narration: false,
+    };
+    let shout = chief(
+        1,
+        RichText::new(vec![
+            RichSpan::plain("WHO DARES STEAL TUSKS FROM MY CLAN?!")
+                .voice(TextVoice::Shout)
+                .motion(TextMotion::Shake)
+                .into(),
+        ]),
+    );
+    let threat = chief(
+        2,
+        RichText::new(vec![plain("I'll grind your bones for soup!")]),
+    );
+    let narration = Announcement {
+        key: 3,
+        speaker: None,
+        text: RichText::new(vec![plain(
+            "The camp falls silent. Somewhere, a drum stops.",
+        )]),
+        narration: true,
+    };
+    let (head, next) = match round % 3 {
+        0 => (shout, Some(threat)),
+        1 => (threat, Some(narration)),
+        _ => (narration, None),
+    };
+    AnnouncementLane {
+        head: Some(head),
+        next,
+        remaining: 1.0,
+    }
+}
+
+fn run_down_lanes(time: Res<Time>, mut lanes: Query<&mut AnnouncementLane>) {
+    let elapsed = time.elapsed_secs();
+    let round = (elapsed / BANNER_SECONDS) as u64;
+    for mut lane in &mut lanes {
+        let cycle = banner_cycle(round);
+        if lane.head.as_ref().map(|head| head.key) != cycle.head.as_ref().map(|head| head.key) {
+            *lane = cycle;
+        }
+        lane.remaining = 1.0 - (elapsed % BANNER_SECONDS) / BANNER_SECONDS;
+    }
+}
+
+fn list_detail_scene() -> Box<dyn Scene> {
+    let rows = |titles: &[&str]| -> Vec<Box<dyn Scene>> {
+        titles
+            .iter()
+            .map(|title| {
+                boxed(bsn! {
+                    Node { padding: {UiRect::axes(Val::Px(16.0), Val::Px(4.0))} }
+                    Children [ {EntityScene(text(*title))} ]
+                })
+            })
+            .collect()
+    };
+    let list = boxed(bsn! {
+        Node { flex_direction: FlexDirection::Column, width: Val::Percent(100.0) }
+        Children [
+            {EntityScene(list_header("Orc Trouble", "1"))},
+            {rows(&["Tusks for the Chief"])},
+            {EntityScene(list_header("Harbour Errands", "2"))},
+            {rows(&["A Letter for the Captain", "Low Tide"])},
+        ]
+    });
+    let detail = boxed(bsn! {
+        Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(8.0), padding: {UiRect::all(Val::Px(12.0))} }
+        Children [
+            {EntityScene(text("Low Tide"))},
+            {EntityScene(text("Bring Tobb three Fish Steaks before the tide turns."))},
+        ]
+    });
+    boxed(bsn! {
+        Node { width: Val::Px(640.0), height: Val::Px(360.0) }
+        BackgroundColor({theme().surface_floating.base})
+        Children [ {EntityScene(split_view(list, detail))} ]
+    })
+}
+
+#[derive(Component, Default, Clone)]
+struct ConfirmHost;
+
+fn confirm_dialog_scene() -> Box<dyn Scene> {
+    boxed(bsn! {
+        ConfirmHost
+        Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center }
+        Children [ (
+            {button("Abandon quest")}
+            on(|_: On<ui::Activate>, hosts: Query<Entity, With<ConfirmHost>>, mut commands: Commands| {
+                let Ok(host) = hosts.single() else { return };
+                commands
+                    .spawn_scene(confirm_dialog(ConfirmOptions {
+                        title: "Abandon A Letter for the Captain?".to_owned(),
+                        body: vec![
+                            "Tobb's Letter is taken from your bag.".to_owned(),
+                            "Tobb offers the quest again.".to_owned(),
+                        ],
+                        confirm: "Abandon".to_owned(),
+                        cancel: "Keep quest".to_owned(),
+                        on_confirm: OnTap::new(|_| {}),
+                        on_cancel: OnTap::new(|_| {}),
+                    }))
+                    .insert(ChildOf(host));
+            })
+        ) ]
+    })
+}
+
+#[derive(Component, Default, Clone)]
+struct DropLog;
+
+fn drag_and_drop_scene() -> Box<dyn Scene> {
+    let assets = assets();
+    let items: Vec<Box<dyn Scene>> = [
+        ("icons/monster_part/bone.png", 1),
+        ("icons/monster_part/feather.png", 2),
+        ("icons/potion/red_potion.png", 3),
+    ]
+    .into_iter()
+    .map(|(icon, payload)| {
+        let image = assets.load(icon);
+        boxed(bsn! {
+            Node { width: Val::Px(48.0), height: Val::Px(48.0) }
+            BackgroundColor({theme().surface_floating.base})
+            component(Carriable { image: image.clone(), payload })
+            Children [ ( Node { width: Val::Percent(100.0), height: Val::Percent(100.0) } component(ImageNode::new(image)) Pickable::IGNORE ) ]
+        })
+    })
+    .collect();
+    boxed(bsn! {
+        Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(80.0), align_items: AlignItems::Center }
+        Children [
+            ( Node { column_gap: Val::Px(8.0) } Children [ {items} ] ),
+            (
+                CarryTarget
+                Node { width: Val::Px(240.0), height: Val::Px(160.0), align_items: AlignItems::Center, justify_content: JustifyContent::Center }
+                BackgroundColor({theme().surface_floating.base})
+                on(|carried: On<Carried>, logs: Query<Entity, With<DropLog>>, mut texts: Query<&mut Text>| {
+                    for log in &logs {
+                        if let Ok(mut text) = texts.get_mut(log) {
+                            text.0 = format!("received item {}", carried.payload);
+                        }
+                    }
+                })
+                Children [ ( {text("Drop items here")} DropLog ) ]
+            ),
+        ]
+    })
+}
+
+fn stage_keys(keys: Res<ButtonInput<KeyCode>>, mut commands: Commands) {
+    let pressed: Vec<KeyCode> = keys.get_just_pressed().copied().collect();
+    if pressed.is_empty() {
+        return;
+    }
+    commands.queue(move |world: &mut World| {
+        let list = world
+            .query_filtered::<Entity, With<ui::ChoiceList>>()
+            .iter(world)
+            .next();
+        for key in pressed {
+            match key {
+                KeyCode::Escape => {
+                    ui::dismiss_topmost(world);
+                }
+                KeyCode::ArrowUp => {
+                    if let Some(list) = list {
+                        ui::step_choice(world, list, -1);
+                    }
+                }
+                KeyCode::ArrowDown => {
+                    if let Some(list) = list {
+                        ui::step_choice(world, list, 1);
+                    }
+                }
+                KeyCode::Enter if !ui::modal_open(world) => {
+                    if let Some(list) = list {
+                        ui::pick_choice(world, list);
+                    }
+                }
+                KeyCode::Digit1 | KeyCode::Digit2 | KeyCode::Digit3 | KeyCode::Digit4 => {
+                    let index = match key {
+                        KeyCode::Digit1 => 0,
+                        KeyCode::Digit2 => 1,
+                        KeyCode::Digit3 => 2,
+                        _ => 3,
+                    };
+                    if let Some(list) = list {
+                        ui::pick_choice_at(world, list, index);
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
 }

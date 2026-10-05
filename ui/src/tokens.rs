@@ -154,6 +154,16 @@ pub mod typography {
         font::FAMILY_TEXT,
     );
 
+    pub const CAPTION: Typography = t(12.0, 16.0, font::WEIGHT_REGULAR, font::FAMILY_TEXT);
+
+    pub const LABEL: Typography = t(12.0, 16.0, font::WEIGHT_BOLD, font::FAMILY_TEXT);
+
+    pub const HINT: Typography = t(12.0, 16.0, font::WEIGHT_REGULAR, font::FAMILY_DISPLAY);
+
+    pub const NAME: Typography = t(18.0, 24.0, font::WEIGHT_BOLD, font::FAMILY_DISPLAY);
+
+    pub const LINE: Typography = t(19.0, 27.0, font::WEIGHT_REGULAR, font::FAMILY_TEXT);
+
     pub fn by_name(_name: &str) -> Typography {
         BODY
     }

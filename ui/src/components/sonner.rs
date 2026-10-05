@@ -32,15 +32,46 @@ const TOAST_TTL: Duration = Duration::from_secs(4);
 pub enum SonnerPosition {
     #[default]
     BottomRight,
+    TopCenter,
 }
 
 impl SonnerPosition {
     fn grow(self) -> Vec2 {
-        Vec2::new(0.0, -1.0)
+        match self {
+            SonnerPosition::BottomRight => Vec2::new(0.0, -1.0),
+            SonnerPosition::TopCenter => Vec2::new(0.0, 1.0),
+        }
     }
 
     fn travel(self) -> Vec2 {
-        Vec2::new(0.0, 1.0)
+        -self.grow()
+    }
+
+    fn place_toaster(self, node: &mut Node) {
+        match self {
+            SonnerPosition::BottomRight => {
+                node.bottom = Val::Px(EDGE);
+                node.right = Val::Px(EDGE);
+            }
+            SonnerPosition::TopCenter => {
+                node.top = Val::Px(EDGE);
+                node.left = Val::Percent(50.0);
+                node.margin = UiRect::left(Val::Px(-CARD_WIDTH / 2.0));
+            }
+        }
+    }
+
+    fn place_card(self, node: &mut Node) {
+        match self {
+            SonnerPosition::BottomRight => {
+                node.bottom = Val::Px(0.0);
+                node.top = Val::Auto;
+            }
+            SonnerPosition::TopCenter => {
+                node.top = Val::Px(0.0);
+                node.bottom = Val::Auto;
+            }
+        }
     }
 }
 
@@ -66,14 +97,15 @@ pub struct ToastLeaving(Duration);
 pub struct ToastClose;
 
 pub fn toaster(position: SonnerPosition) -> impl Scene {
+    let mut node = Node {
+        position_type: PositionType::Absolute,
+        width: Val::Px(CARD_WIDTH),
+        height: Val::Px(STACK_HEIGHT),
+        ..Node::default()
+    };
+    position.place_toaster(&mut node);
     bsn! {
-        Node {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(EDGE),
-            right: Val::Px(EDGE),
-            width: Val::Px(CARD_WIDTH),
-            height: Val::Px(STACK_HEIGHT),
-        }
+        template_value(node)
         Toaster { position: {position} }
     }
 }
@@ -191,6 +223,7 @@ pub(crate) fn layout_toasts(
             let Ok((toast, mut node, mut motion)) = cards.get_mut(entity) else {
                 continue;
             };
+            toaster.position.place_card(&mut node);
             let here = depth;
             if !toast.leaving {
                 depth += 1;

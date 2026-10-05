@@ -17,10 +17,13 @@ use utils::motion::MotionPlugin;
 use utils::opacity::OpacityPlugin;
 
 pub use utils::theme;
-pub(crate) use utils::{collapse, drag, motion, opacity, overlay, place, state, style, surface};
+pub(crate) use utils::{
+    carry, collapse, drag, motion, opacity, overlay, place, state, style, surface,
+};
 
 pub use bevy_ui_widgets::{Activate, ValueChange, observe};
 pub use components::*;
+pub use utils::carry::{Carriable, Carried, CarryTarget};
 pub use utils::drag::{
     DragHandle, DragRoot, Geom, OnSettle, OnTap, Raised, ResizeHandle, SnapGrid, topmost,
 };
@@ -58,6 +61,7 @@ impl Plugin for UiPlugin {
         app.add_plugins(drag::DragPlugin);
         app.init_resource::<overlay::TooltipClock>()
             .init_resource::<TypewriterSpeed>()
+            .init_resource::<components::confirm::ModalCounter>()
             .init_resource::<MotionPreference>()
             .add_systems(Startup, (load_fonts, overlay::spawn_overlay_host))
             .add_systems(
@@ -84,6 +88,15 @@ impl Plugin for UiPlugin {
                         components::rich_text::lay_out_rich_text,
                         components::rich_text::type_rich_text,
                         components::rich_text::move_words,
+                        components::dialogue::reveal_choices,
+                        components::dialogue::mark_selected_choice,
+                        components::dialogue::shake_refused,
+                        components::cast::sync_cast,
+                        components::cast::reap_busts,
+                        components::announcement::sync_lanes,
+                        components::confirm::stamp_modals,
+                        components::confirm::enter_keeps_default,
+                        components::confirm::despawn_closed,
                     )
                         .chain(),
                     style::apply_styles,
@@ -113,7 +126,11 @@ impl Plugin for UiPlugin {
             .add_observer(overlay::on_overlay_action)
             .add_observer(overlay::dismiss_on_press)
             .add_observer(overlay::tooltip_over)
-            .add_observer(overlay::tooltip_out);
+            .add_observer(overlay::tooltip_out)
+            .add_observer(carry::lift)
+            .add_observer(carry::follow)
+            .add_observer(carry::set_down)
+            .add_observer(carry::deliver);
     }
 }
 

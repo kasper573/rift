@@ -19,10 +19,14 @@ pub fn text_colored(content: impl Into<String>, color: Color) -> impl Scene {
 }
 
 fn styled(content: impl Into<String>, color: Color) -> impl Scene {
+    styled_text(content, color, typography::BODY)
+}
+
+pub fn styled_text(content: impl Into<String>, color: Color, typography: Typography) -> impl Scene {
     let style = Style::new().text_color(color);
     bsn! {
         Text({content.into()})
-        component(font(typography::BODY))
+        component(font(typography))
         Pickable { should_block_lower: false, is_hoverable: false }
         template_value(style)
     }
