@@ -15,6 +15,7 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
 use bevy_replicon::prelude::Replicated;
 use bevy_time::Time;
+use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
 use crate::core::math::{Direction, Pos, Rng};
@@ -34,6 +35,8 @@ use crate::systems::stat::{self, Stat, StatKind, Stats};
 const NPC_RESPAWN_DELAY: Seconds = Seconds(5.0);
 
 pub fn register(app: &mut App) {
+    use bevy_replicon::prelude::*;
+    app.replicate::<Npc>();
     effect::source(app, chase);
 }
 
@@ -45,11 +48,13 @@ pub fn chase(world: &World, entity: Entity) -> Vec<Effect> {
     }
 }
 
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Npc {
     pub def: data::npc::Id,
-    pub group: u32,
 }
+
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Pack(pub u32);
 
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct DeadAt {
@@ -72,7 +77,14 @@ pub fn spawn_all(world: &mut World) {
     world.resource_scope(|world, mut rng: Mut<Rng>| {
         for (group, spawn) in area_id.get().spawns.iter().enumerate() {
             for _ in 0..spawn.population {
-                spawn_npc(world, &assets, &mut rng, area_id, spawn.npc, group as u32);
+                spawn_npc(
+                    world,
+                    &assets,
+                    &mut rng,
+                    area_id,
+                    spawn.npc,
+                    Pack(group as u32),
+                );
             }
         }
     });
@@ -84,11 +96,11 @@ fn spawn_npc(
     rng: &mut Rng,
     area_id: area::Id,
     def: data::npc::Id,
-    group: u32,
+    pack: Pack,
 ) {
     let area = assets.resolve(area_id.get().map, area::build_area);
     let at = random_walkable(rng, area).unwrap_or(area.spawn);
-    spawn(world, def, at, area_id, group);
+    spawn(world, def, at, area_id, pack);
 }
 
 pub fn spawn_actor(world: &mut World, def: &NpcDef, at: Pos<Tiles>, area: area::Id) -> Entity {
@@ -103,10 +115,10 @@ pub fn spawn(
     def: data::npc::Id,
     at: Pos<Tiles>,
     area: area::Id,
-    group: u32,
+    pack: Pack,
 ) -> Entity {
     let entity = spawn_actor(world, def.get(), at, area);
-    world.entity_mut(entity).insert(Npc { def, group });
+    world.entity_mut(entity).insert((Npc { def }, pack));
     entity
 }
 
@@ -138,9 +150,9 @@ pub trait Ai: Send + Sync {
 pub struct Hunt<'a> {
     pub world: &'a World,
     pub players: &'a [Entity],
-    pub by_group: &'a HashMap<u32, Vec<Entity>>,
+    pub enemies_by_pack: &'a HashMap<Pack, Vec<Entity>>,
     pub id: Entity,
-    pub group: u32,
+    pub pack: Pack,
     pub at: Pos<Tiles>,
     pub area: area::Id,
     pub aggro: Tiles,
@@ -172,12 +184,12 @@ impl Hunt<'_> {
 }
 
 type NpcIds = QueryState<Entity, With<Npc>>;
-type EnemyGroups = QueryState<(&'static Npc, &'static Attackers)>;
+type PackEnemies = QueryState<(&'static Pack, &'static Attackers)>;
 
-pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut EnemyGroups) {
+pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut PackEnemies) {
     let players: Vec<Entity> = world.resource::<Players>().0.values().copied().collect();
     let assets = world.resource::<AssetService>().clone();
-    let by_group = enemies_by_group(world, enemies);
+    let enemies_by_pack = enemies_by_pack(world, enemies);
     let ids: Vec<Entity> = npcs.iter(world).collect();
     world.resource_scope(|world, mut rng: Mut<Rng>| {
         for id in ids {
@@ -185,7 +197,8 @@ pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut EnemyGroups) {
                 forget(world, id);
                 continue;
             }
-            let Some(npc) = world.get::<Npc>(id).copied() else {
+            let (Some(npc), Some(&pack)) = (world.get::<Npc>(id).copied(), world.get::<Pack>(id))
+            else {
                 continue;
             };
             let Some(at) = position(world, id) else {
@@ -206,9 +219,9 @@ pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut EnemyGroups) {
                 let hunt = Hunt {
                     world,
                     players: &players,
-                    by_group: &by_group,
+                    enemies_by_pack: &enemies_by_pack,
                     id,
-                    group: npc.group,
+                    pack,
                     at,
                     area,
                     aggro: def.aggro,
@@ -244,17 +257,17 @@ fn idle_wander(
     }
 }
 
-fn enemies_by_group(world: &mut World, query: &mut EnemyGroups) -> HashMap<u32, Vec<Entity>> {
-    let mut by_group: HashMap<u32, Vec<Entity>> = HashMap::new();
-    for (npc, attackers) in query.iter(world) {
-        let list = by_group.entry(npc.group).or_default();
+fn enemies_by_pack(world: &mut World, query: &mut PackEnemies) -> HashMap<Pack, Vec<Entity>> {
+    let mut by_pack: HashMap<Pack, Vec<Entity>> = HashMap::new();
+    for (&pack, attackers) in query.iter(world) {
+        let list = by_pack.entry(pack).or_default();
         for attacker in &attackers.ids {
             if !list.contains(attacker) {
                 list.push(*attacker);
             }
         }
     }
-    by_group
+    by_pack
 }
 
 fn in_aggro(world: &World, target: Entity, at: Pos<Tiles>, area: area::Id, aggro: Tiles) -> bool {

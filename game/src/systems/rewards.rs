@@ -1,4 +1,4 @@
-use bevy_ecs::message::Messages;
+use bevy_ecs::message::{Message, MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_time::Time;
 
@@ -20,9 +20,19 @@ pub enum Reward {
     },
 }
 
-pub fn grant(world: &mut World) {
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub struct KillCredited {
+    pub npc: data::npc::Id,
+    pub victim: Entity,
+    pub credited: Entity,
+}
+
+pub fn grant(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());
-    let deaths: Vec<Died> = world.resource_mut::<Messages<Died>>().drain().collect();
+    let deaths: Vec<Died> = deaths
+        .read(world.resource::<Messages<Died>>())
+        .cloned()
+        .collect();
     world.resource_scope(|world, mut rng: Mut<Rng>| {
         for died in deaths {
             let Some(npc) = world.get::<Npc>(died.entity).map(|npc| npc.def) else {
@@ -36,6 +46,13 @@ pub fn grant(world: &mut World) {
                 ReservedBy::Account(client) => world.resource::<Players>().0.get(&client).copied(),
                 ReservedBy::None => None,
             };
+            if let Some(credited) = rewardee {
+                world.write_message(KillCredited {
+                    npc,
+                    victim: died.entity,
+                    credited,
+                });
+            }
             let mut drops: Vec<(data::item::Id, u32)> = Vec::new();
             for &reward in npc.get().rewards {
                 apply(

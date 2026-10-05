@@ -121,6 +121,7 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
         // serialization load across ticks instead of spiking every Nth tick in lockstep.
         .insert_resource(ReplicationClock(ordinal))
         .add_message::<combat::Died>()
+        .add_message::<rewards::KillCredited>()
         .add_observer(player::greet)
         .add_observer(player::client_left)
         .add_observer(spectate::client_left)

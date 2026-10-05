@@ -10,8 +10,8 @@ impl Ai for Protective {
         true
     }
     fn target(&self, hunt: &Hunt) -> Option<Entity> {
-        hunt.by_group
-            .get(&hunt.group)
+        hunt.enemies_by_pack
+            .get(&hunt.pack)
             .and_then(|enemies| hunt.nearest(enemies, |_| true))
     }
 }
