@@ -41,6 +41,9 @@ pub(crate) fn lift(
     is_carriable: Query<(), With<Carriable>>,
     mut commands: Commands,
 ) {
+    if start.entity != start.original_event_target() {
+        return;
+    }
     let Some(source) = ancestor_with::<Carriable>(start.entity, &parents, &is_carriable) else {
         return;
     };
@@ -91,6 +94,9 @@ pub(crate) fn deliver(
     is_target: Query<(), With<CarryTarget>>,
     mut commands: Commands,
 ) {
+    if drop.entity != drop.original_event_target() {
+        return;
+    }
     let Some(source) = ancestor_with::<Carriable>(drop.dropped, &parents, &is_carriable) else {
         return;
     };
