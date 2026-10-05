@@ -7,7 +7,10 @@ use bevy_ecs::world::EntityWorldMut;
 use bevy_math::Vec2;
 use bevy_picking::hover::Hovered;
 use bevy_text::TextColor;
-use bevy_ui::{BackgroundColor, BorderColor, Checked, Node, Pressed, UiTransform};
+use bevy_ui::widget::ImageNode;
+use bevy_ui::{
+    BackgroundColor, BorderColor, Checked, InteractionDisabled, Node, Pressed, UiTransform,
+};
 
 use crate::motion::{Motion, Paint as MotionPaint, Timing, Transform2d};
 use crate::opacity::Opacity;
@@ -73,6 +76,7 @@ enum Channel {
     Background,
     Border,
     Text,
+    Image,
 }
 
 impl Channel {
@@ -81,6 +85,7 @@ impl Channel {
             Channel::Background => style.background = Some(color),
             Channel::Border => style.border = Some(color),
             Channel::Text => style.text = Some(color),
+            Channel::Image => style.image = Some(color),
         }
     }
 }
@@ -92,6 +97,7 @@ pub struct Style {
     background: Option<Color>,
     border: Option<Color>,
     text: Option<Color>,
+    image: Option<Color>,
     transform: Option<Transform2d>,
     enter: Option<Transform2d>,
     opacity: Option<f32>,
@@ -101,6 +107,7 @@ pub struct Style {
     hover: Option<Box<Style>>,
     active: Option<Box<Style>>,
     checked: Option<Box<Style>>,
+    disabled: Option<Box<Style>>,
 }
 
 impl Style {
@@ -140,6 +147,11 @@ impl Style {
 
     pub fn text_color(mut self, paint: impl Into<StatefulPaint>) -> Style {
         self.put(Channel::Text, paint.into());
+        self
+    }
+
+    pub fn image_color(mut self, paint: impl Into<StatefulPaint>) -> Style {
+        self.put(Channel::Image, paint.into());
         self
     }
 
@@ -233,6 +245,11 @@ impl Style {
         self
     }
 
+    pub fn disabled(mut self, style: Style) -> Style {
+        self.disabled = compose(self.disabled.take(), Some(Box::new(style)));
+        self
+    }
+
     pub(crate) fn op<F>(mut self, op: F) -> Style
     where
         F: Fn(&mut EntityWorldMut) + Send + Sync + 'static,
@@ -246,6 +263,7 @@ impl Style {
         self.background = other.background.or(self.background);
         self.border = other.border.or(self.border);
         self.text = other.text.or(self.text);
+        self.image = other.image.or(self.image);
         self.transform = other.transform.or(self.transform);
         self.enter = other.enter.or(self.enter);
         self.opacity = other.opacity.or(self.opacity);
@@ -255,10 +273,14 @@ impl Style {
         self.hover = compose(self.hover, other.hover);
         self.active = compose(self.active, other.active);
         self.checked = compose(self.checked, other.checked);
+        self.disabled = compose(self.disabled, other.disabled);
         self
     }
 
-    fn for_state(&self, hovered: bool, pressed: bool, checked: bool) -> Style {
+    fn for_state(&self, hovered: bool, pressed: bool, checked: bool, disabled: bool) -> Style {
+        if disabled && let Some(disabled) = &self.disabled {
+            return self.flat().merge(disabled.flat());
+        }
         let mut style = self.flat();
         let (hover, active) = if checked && let Some(checked) = &self.checked {
             style = style.merge(checked.flat());
@@ -285,6 +307,7 @@ impl Style {
             hover: None,
             active: None,
             checked: None,
+            disabled: None,
             ..self.clone()
         }
     }
@@ -301,8 +324,14 @@ impl Style {
         let background = self.background;
         let border = self.border;
         let text = self.text;
+        let image = self.image;
 
         if self.transition.is_none() && self.spin.is_none() {
+            if let Some(color) = image
+                && let Some(mut node) = entity.get_mut::<ImageNode>()
+            {
+                node.color = color;
+            }
             if let Some(color) = background {
                 entity.insert(BackgroundColor(color));
             }
@@ -326,8 +355,9 @@ impl Style {
         }
         let timing = self.transition;
         let transformed = self.transform.is_some() || self.enter.is_some();
-        let (background, border, text, transform, opacity) = {
+        let (background, border, text, image, transform, opacity) = {
             let mut motion = entity.get_mut::<Motion>().expect("just inserted");
+            let image = image.map(|color| motion.aim_color(MotionPaint::Image, color, timing));
             let background =
                 background.map(|color| motion.aim_color(MotionPaint::Background, color, timing));
             let border = border.map(|color| motion.aim_color(MotionPaint::Border, color, timing));
@@ -341,8 +371,13 @@ impl Style {
             if let Some(speed) = self.spin {
                 motion.set_spin(speed);
             }
-            (background, border, text, transform, opacity)
+            (background, border, text, image, transform, opacity)
         };
+        if let Some(color) = image
+            && let Some(mut node) = entity.get_mut::<ImageNode>()
+        {
+            node.color = color;
+        }
         if let Some(color) = background {
             entity.insert(BackgroundColor(color));
         }
@@ -379,6 +414,7 @@ pub(crate) fn apply_styles(world: &mut World) {
         let hovered = world.get::<Hovered>(entity).is_some_and(Hovered::get);
         let pressed = world.get::<Pressed>(entity).is_some();
         let checked = world.get::<Checked>(entity).is_some();
+        let disabled = world.get::<InteractionDisabled>(entity).is_some();
         let Some(style) = world.get::<Style>(entity).cloned() else {
             continue;
         };
@@ -387,7 +423,7 @@ pub(crate) fn apply_styles(world: &mut World) {
             entity.insert(Hovered(false));
         }
         style
-            .for_state(hovered, pressed, checked)
+            .for_state(hovered, pressed, checked, disabled)
             .write(&mut entity);
     }
 }

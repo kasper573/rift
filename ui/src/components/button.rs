@@ -10,6 +10,8 @@ use crate::style::{StatefulPaint, Style};
 use crate::theme::{Theme, theme};
 use crate::tokens::{radius, spacing};
 
+const DISABLED_OPACITY: f32 = 0.4;
+
 #[derive(Clone, Copy)]
 pub struct ButtonIntent {
     family: fn(&Theme) -> Family,
@@ -88,6 +90,8 @@ fn intent_style(intent: ButtonIntent, theme: &Theme) -> Style {
                 .hover(family.hover)
                 .active(family.active),
         )
+        .opacity(1.0)
+        .disabled(Style::new().opacity(DISABLED_OPACITY))
         .transition(STANDARD_ENTER)
 }
 

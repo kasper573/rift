@@ -21,7 +21,9 @@ pub(crate) use utils::{collapse, drag, motion, opacity, overlay, place, state, s
 
 pub use bevy_ui_widgets::{Activate, ValueChange, observe};
 pub use components::*;
-pub use utils::drag::{DragHandle, DragRoot, Geom, OnSettle, OnTap, ResizeHandle, SnapGrid};
+pub use utils::drag::{
+    DragHandle, DragRoot, Geom, OnSettle, OnTap, Raised, ResizeHandle, SnapGrid, topmost,
+};
 pub use utils::motion::{Easing, Timing, Transform2d, transition};
 pub use utils::overlay::{Dismissable, Open, OverlayAction, set_overlay_open};
 pub use utils::place::place;
@@ -55,6 +57,8 @@ impl Plugin for UiPlugin {
         }
         app.add_plugins(drag::DragPlugin);
         app.init_resource::<overlay::TooltipClock>()
+            .init_resource::<TypewriterSpeed>()
+            .init_resource::<MotionPreference>()
             .add_systems(Startup, (load_fonts, overlay::spawn_overlay_host))
             .add_systems(
                 Update,
@@ -76,6 +80,12 @@ impl Plugin for UiPlugin {
                     components::text_input::blur_on_escape,
                     components::scroll_area::pin_to_bottom,
                     components::scroll_area::animate_scroll,
+                    (
+                        components::rich_text::lay_out_rich_text,
+                        components::rich_text::type_rich_text,
+                        components::rich_text::move_words,
+                    )
+                        .chain(),
                     style::apply_styles,
                 )
                     .chain()
@@ -147,7 +157,9 @@ fn load_fonts(assets: Option<Res<AssetServer>>, mut commands: Commands) {
         "fonts/circular-500-normal.ttf",
         "fonts/circular-700-normal.ttf",
         "fonts/lato-400-normal.ttf",
+        "fonts/lato-400-italic.ttf",
         "fonts/lato-700-normal.ttf",
+        "fonts/lato-700-italic.ttf",
     ]
     .iter()
     .map(|path| assets.load(*path))

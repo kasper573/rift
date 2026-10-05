@@ -1,21 +1,24 @@
 use std::collections::HashSet;
+use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy_scene::{CommandsSceneExt, EntityScene, Scene, bsn, on, template_value};
 use ui::button::intent as button_intent;
 use ui::card::intent as card_intent;
 use ui::theme::theme;
+use ui::tokens::palette;
 use ui::{
-    Align, ButtonIntent, ButtonSize, CardOptions, Check, OnSettle, OnTap, Orientation, Side,
-    SonnerPosition, WidgetOptions, accordion, accordion_body, accordion_content, accordion_header,
+    Align, ButtonIntent, ButtonSize, CardOptions, Check, MotionPreference, OnSettle, OnTap,
+    Orientation, RichPiece, RichSpan, RichText, Side, SonnerPosition, TextMotion, TextVoice,
+    Typewriter, WidgetOptions, accordion, accordion_body, accordion_content, accordion_header,
     accordion_item, accordion_trigger, alert_dialog, alert_dialog_action, alert_dialog_cancel,
     avatar, avatar_fallback, button, button_styled, card, checkbox, checkbox_indicator,
     collapsible, collapsible_content, collapsible_trigger, dialog, dialog_close, popover,
     popover_content, popover_trigger, progress, progress_indicator, radio_circle, radio_group,
-    radio_indicator, radio_item, scroll_area, scroll_bar, scroll_thumb, scroll_viewport, separator,
-    slider, slider_range, slider_thumb, slider_track, sonner_close, switch, switch_thumb, tabs,
-    tabs_list, tabs_trigger, text, text_colored, toast, toaster, tooltip, tooltip_content, widget,
-    window,
+    radio_indicator, radio_item, rich_text, scroll_area, scroll_bar, scroll_thumb, scroll_viewport,
+    separator, slider, slider_range, slider_thumb, slider_track, sonner_close, switch,
+    switch_thumb, tabs, tabs_list, tabs_trigger, text, text_colored, toast, toaster, tooltip,
+    tooltip_content, widget, window,
 };
 
 const WINDOW: Vec2 = Vec2::new(1600.0, 900.0);
@@ -235,6 +238,8 @@ const SCENES: &[(&str, SceneBuilder)] = &[
     ("Text input", text_input_scene),
     ("Widget", widget_scene),
     ("Window", window_scene),
+    ("Rich text", rich_text_scene),
+    ("Typewriter", typewriter_scene),
 ];
 
 const BUTTON_INTENTS: &[(ButtonIntent, &str)] = &[
@@ -274,12 +279,15 @@ fn col(width: f32, kids: Vec<Box<dyn Scene>>) -> Box<dyn Scene> {
 }
 
 fn button_intents_scene() -> Box<dyn Scene> {
-    wrap(
-        BUTTON_INTENTS
-            .iter()
-            .map(|&(intent, label)| boxed(button_styled(intent, ButtonSize::Md, label)))
-            .collect(),
-    )
+    let mut buttons: Vec<Box<dyn Scene>> = BUTTON_INTENTS
+        .iter()
+        .map(|&(intent, label)| boxed(button_styled(intent, ButtonSize::Md, label)))
+        .collect();
+    buttons.push(boxed(bsn! {
+        {button_styled(button_intent::PRIMARY, ButtonSize::Md, "disabled")}
+        bevy::ui::InteractionDisabled
+    }));
+    wrap(buttons)
 }
 
 fn button_sizes_scene() -> Box<dyn Scene> {
@@ -911,5 +919,185 @@ fn scroll_area_scene() -> Box<dyn Scene> {
                 )
             ]
         })],
+    )
+}
+
+fn ink(text: &'static str, color: Color) -> RichPiece {
+    RichSpan::plain(text).color(color).into()
+}
+
+fn plain(text: &'static str) -> RichPiece {
+    RichSpan::plain(text).into()
+}
+
+fn effect_rows() -> Vec<(&'static str, Vec<RichPiece>)> {
+    vec![
+        (
+            "ink danger",
+            vec![plain("the "), ink("chief's blade", palette::CRIMSON_80)],
+        ),
+        (
+            "ink item",
+            vec![plain("a "), ink("Greater Health Potion", palette::AMBER_80)],
+        ),
+        (
+            "ink place",
+            vec![plain("by "), ink("the old well", palette::AZURE_80)],
+        ),
+        (
+            "ink name",
+            vec![plain("ask "), ink("Mara", palette::EMERALD_80)],
+        ),
+        (
+            "ink magic",
+            vec![
+                plain("the "),
+                ink("drums", palette::VIOLET_80),
+                plain(" grow louder"),
+            ],
+        ),
+        (
+            "wave",
+            vec![
+                RichSpan::plain("a little game")
+                    .motion(TextMotion::Wave)
+                    .into(),
+            ],
+        ),
+        (
+            "shake",
+            vec![
+                plain("you'll "),
+                RichSpan::plain("lose").motion(TextMotion::Shake).into(),
+            ],
+        ),
+        (
+            "pulse",
+            vec![
+                RichSpan::plain("something stirs")
+                    .motion(TextMotion::Pulse)
+                    .into(),
+            ],
+        ),
+        (
+            "whisper",
+            vec![
+                RichSpan::plain("everyone does")
+                    .voice(TextVoice::Whisper)
+                    .into(),
+            ],
+        ),
+        (
+            "shout",
+            vec![RichSpan::plain("CHEAT?!").voice(TextVoice::Shout).into()],
+        ),
+        (
+            "slow",
+            vec![RichSpan::plain("very... slowly").slow().into()],
+        ),
+        (
+            "pause",
+            vec![
+                plain("wait"),
+                RichPiece::Pause(Duration::from_millis(900)),
+                plain(" for it"),
+            ],
+        ),
+    ]
+}
+
+fn pell_line() -> Vec<RichPiece> {
+    vec![
+        plain("Care for a little "),
+        RichSpan::plain("game of chance")
+            .motion(TextMotion::Wave)
+            .into(),
+        plain("? Ten "),
+        ink("Gold", palette::AMBER_80),
+        plain(" says you'll "),
+        RichSpan::plain("lose").motion(TextMotion::Shake).into(),
+        plain("."),
+        RichPiece::Pause(Duration::from_millis(700)),
+        RichSpan::plain(" Everyone does.")
+            .voice(TextVoice::Whisper)
+            .into(),
+    ]
+}
+
+fn rich_text_scene() -> Box<dyn Scene> {
+    let rows: Vec<Box<dyn Scene>> = effect_rows()
+        .into_iter()
+        .map(|(label, pieces)| {
+            boxed(bsn! {
+                Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(16.0), align_items: AlignItems::Center }
+                Children [
+                    ( Node { width: Val::Px(110.0) } Children [ {EntityScene(text(label))} ] ),
+                    {EntityScene(rich_text(RichText::new(pieces), false))},
+                ]
+            })
+        })
+        .collect();
+    col(
+        560.0,
+        vec![
+            boxed(bsn! {
+                Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(10.0), width: Val::Percent(100.0) }
+                Children [ {rows} ]
+            }),
+            boxed(bsn! {
+                Node { margin: {UiRect::top(Val::Px(24.0))} }
+                Children [ (
+                    {button_styled(button_intent::SECONDARY, ButtonSize::Sm, "toggle reduced motion")}
+                    on(|_: On<ui::Activate>, mut preference: ResMut<MotionPreference>| {
+                        preference.reduced = !preference.reduced;
+                    })
+                ) ]
+            }),
+        ],
+    )
+}
+
+#[derive(Component, Default, Clone)]
+struct ReplayLine;
+
+fn typewriter_scene() -> Box<dyn Scene> {
+    let line = RichText {
+        size: 20.0,
+        ..RichText::new(pell_line())
+    };
+    col(
+        620.0,
+        vec![
+            boxed(bsn! {
+                Node {
+                    width: Val::Percent(100.0),
+                    min_height: Val::Px(90.0),
+                    padding: {UiRect::all(Val::Px(18.0))},
+                }
+                BackgroundColor({theme().surface_floating.base})
+                Children [ ( {rich_text(line, true)} ReplayLine ) ]
+            }),
+            boxed(bsn! {
+                Node { margin: {UiRect::top(Val::Px(18.0))}, column_gap: Val::Px(12.0) }
+                Children [
+                    (
+                        {button_styled(button_intent::PRIMARY, ButtonSize::Sm, "replay")}
+                        on(|_: On<ui::Activate>, mut lines: Query<&mut RichText, With<ReplayLine>>| {
+                            for mut line in &mut lines {
+                                line.set_changed();
+                            }
+                        })
+                    ),
+                    (
+                        {button_styled(button_intent::SECONDARY, ButtonSize::Sm, "skip")}
+                        on(|_: On<ui::Activate>, mut typewriters: Query<&mut Typewriter, With<ReplayLine>>| {
+                            for mut typewriter in &mut typewriters {
+                                typewriter.finish();
+                            }
+                        })
+                    ),
+                ]
+            }),
+        ],
     )
 }

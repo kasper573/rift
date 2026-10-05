@@ -9,6 +9,7 @@ pub(crate) mod dialog;
 pub(crate) mod popover;
 pub(crate) mod progress;
 pub(crate) mod radio_group;
+pub(crate) mod rich_text;
 pub(crate) mod scroll_area;
 pub(crate) mod separator;
 pub(crate) mod slider;
@@ -35,6 +36,10 @@ pub use dialog::{dialog, dialog_close};
 pub use popover::{popover, popover_close, popover_content, popover_trigger};
 pub use progress::{ProgressFraction, progress, progress_indicator};
 pub use radio_group::{radio_circle, radio_group, radio_indicator, radio_item};
+pub use rich_text::{
+    MotionPreference, RichPiece, RichSpan, RichText, TextMotion, TextVoice, Typewriter,
+    TypewriterSpeed, reveal_duration, reveal_times, revealed, rich_text,
+};
 pub use scroll_area::{
     PinToBottom, scroll_area, scroll_bar, scroll_corner, scroll_thumb, scroll_viewport, scrolled,
 };

@@ -7,7 +7,8 @@ use bevy_ui::widget::ImageNode;
 use bevy_ui::{BackgroundColor, BorderColor};
 
 /// An entity's own opacity. Descendants multiply theirs into it, and the effective product is
-/// applied to every colored ui component under it each frame.
+/// applied to every colored ui component under it each frame, always from the color's own value
+/// rather than last frame's faded one.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Opacity(pub f32);
 
@@ -64,42 +65,94 @@ fn calculate(
     }
 }
 
+#[derive(Component, Default)]
+struct Faded {
+    background: Option<Fade<Color>>,
+    border: Option<Fade<[Color; 4]>>,
+    text: Option<Fade<Color>>,
+    image: Option<Fade<Color>>,
+}
+
+#[derive(Clone, Copy)]
+struct Fade<T> {
+    base: T,
+    written: T,
+}
+
 #[allow(clippy::type_complexity)]
 fn apply(
     map: Res<OpacityMap>,
+    mut commands: Commands,
     mut nodes: Query<(
         Entity,
+        Option<&mut Faded>,
         Option<&mut BackgroundColor>,
         Option<&mut BorderColor>,
         Option<&mut TextColor>,
         Option<&mut ImageNode>,
     )>,
 ) {
-    for (entity, background, border, text, image) in &mut nodes {
-        let Some(&opacity) = map.0.get(&entity) else {
-            continue;
+    for (entity, faded, background, border, text, image) in &mut nodes {
+        let opacity = map.0.get(&entity).copied().unwrap_or(1.0);
+        let mut fresh = Faded::default();
+        let faded = match faded {
+            Some(faded) => faded.into_inner(),
+            None if opacity < 1.0 => &mut fresh,
+            None => continue,
         };
-        if opacity >= 1.0 {
-            continue;
-        }
         if let Some(mut background) = background {
-            background.0 = fade(background.0, opacity);
+            background.0 = refade(&mut faded.background, background.0, opacity);
         }
         if let Some(mut border) = border {
-            border.top = fade(border.top, opacity);
-            border.right = fade(border.right, opacity);
-            border.bottom = fade(border.bottom, opacity);
-            border.left = fade(border.left, opacity);
+            let sides = [border.top, border.right, border.bottom, border.left];
+            let [top, right, bottom, left] = refade(&mut faded.border, sides, opacity);
+            *border = BorderColor {
+                top,
+                right,
+                bottom,
+                left,
+            };
         }
         if let Some(mut text) = text {
-            text.0 = fade(text.0, opacity);
+            text.0 = refade(&mut faded.text, text.0, opacity);
         }
         if let Some(mut image) = image {
-            image.color = fade(image.color, opacity);
+            image.color = refade(&mut faded.image, image.color, opacity);
+        }
+        if opacity >= 1.0 {
+            commands.entity(entity).remove::<Faded>();
+        } else if fresh.background.is_some()
+            || fresh.border.is_some()
+            || fresh.text.is_some()
+            || fresh.image.is_some()
+        {
+            commands.entity(entity).insert(fresh);
         }
     }
 }
 
-fn fade(color: Color, opacity: f32) -> Color {
-    color.with_alpha(color.alpha() * opacity)
+trait Fadable: Copy + PartialEq {
+    fn faded(self, opacity: f32) -> Self;
+}
+
+impl Fadable for Color {
+    fn faded(self, opacity: f32) -> Color {
+        self.with_alpha(self.alpha() * opacity.clamp(0.0, 1.0))
+    }
+}
+
+impl Fadable for [Color; 4] {
+    fn faded(self, opacity: f32) -> [Color; 4] {
+        self.map(|color| color.faded(opacity))
+    }
+}
+
+fn refade<T: Fadable>(slot: &mut Option<Fade<T>>, current: T, opacity: f32) -> T {
+    let base = match *slot {
+        Some(fade) if fade.written == current => fade.base,
+        _ => current,
+    };
+    let written = base.faded(opacity);
+    *slot = Some(Fade { base, written });
+    written
 }

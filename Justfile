@@ -10,7 +10,7 @@ lint:
     cargo clippy --release -p game --lib --bin client --target wasm32-unknown-unknown -- -D warnings
 
 test:
-    cargo test --release -p game
+    cargo test --release -p game -p ui
 
 # Find the highest area count sustained within the tick budget. Players are congested (all on the
 # spawn tile, one shared view) by default; `just bench dist` spreads them for distinct views.

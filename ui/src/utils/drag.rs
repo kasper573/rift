@@ -45,6 +45,17 @@ impl OnTap {
 #[derive(Resource, Default)]
 pub struct SnapGrid(pub Option<f32>);
 
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Raised(pub u64);
+
+pub fn topmost(world: &mut World, among: impl IntoIterator<Item = Entity>) -> Option<Entity> {
+    among
+        .into_iter()
+        .filter_map(|entity| Some((world.get::<Raised>(entity).copied()?, entity)))
+        .max()
+        .map(|(_, entity)| entity)
+}
+
 pub(crate) struct DragPlugin;
 
 impl Plugin for DragPlugin {
@@ -53,7 +64,9 @@ impl Plugin for DragPlugin {
             .init_resource::<Dragged>()
             .init_resource::<LastViewport>()
             .init_resource::<DragState>()
+            .init_resource::<RaiseCounter>()
             .add_observer(on_press)
+            .add_observer(raise_opened)
             .add_observer(on_drag_start)
             .add_observer(on_drag)
             .add_observer(on_drag_end)
@@ -82,8 +95,37 @@ struct Active {
     min: Vec2,
 }
 
-fn on_press(_: On<Pointer<Press>>, mut dragged: ResMut<Dragged>) {
+#[derive(Resource, Default)]
+struct RaiseCounter(u64);
+
+fn on_press(
+    press: On<Pointer<Press>>,
+    roots: Query<(), With<DragRoot>>,
+    mut dragged: ResMut<Dragged>,
+    mut counter: ResMut<RaiseCounter>,
+    mut commands: Commands,
+) {
     dragged.0 = false;
+    if roots.contains(press.entity) {
+        raise(press.entity, &mut counter, &mut commands);
+    }
+}
+
+fn raise_opened(
+    opened: On<Add, DragRoot>,
+    mut counter: ResMut<RaiseCounter>,
+    mut commands: Commands,
+) {
+    raise(opened.entity, &mut counter, &mut commands);
+}
+
+fn raise(entity: Entity, counter: &mut RaiseCounter, commands: &mut Commands) {
+    counter.0 += 1;
+    let order = counter.0;
+    commands.entity(entity).insert((
+        Raised(order),
+        ZIndex(i32::try_from(order).unwrap_or(i32::MAX)),
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]

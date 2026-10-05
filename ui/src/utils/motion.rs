@@ -7,6 +7,7 @@ use bevy_math::cubic_splines::CubicSegment;
 use bevy_math::{Rot2, Vec2};
 use bevy_text::TextColor;
 use bevy_time::Time;
+use bevy_ui::widget::ImageNode;
 use bevy_ui::{BackgroundColor, BorderColor, UiTransform, Val2};
 
 use crate::opacity::{Opacity, OpacitySet};
@@ -152,6 +153,7 @@ pub struct Motion {
     background: Option<Tween<Color>>,
     border: Option<Tween<Color>>,
     text: Option<Tween<Color>>,
+    image: Option<Tween<Color>>,
     transform: Option<Tween<Transform2d>>,
     opacity: Option<Tween<f32>>,
     spin: Option<f32>,
@@ -163,6 +165,7 @@ pub(crate) enum Paint {
     Background,
     Border,
     Text,
+    Image,
 }
 
 impl Motion {
@@ -176,6 +179,7 @@ impl Motion {
             Paint::Background => &mut self.background,
             Paint::Border => &mut self.border,
             Paint::Text => &mut self.text,
+            Paint::Image => &mut self.image,
         };
         match slot {
             Some(tween) => {
@@ -253,13 +257,14 @@ type Painted = (
     Option<&'static mut BackgroundColor>,
     Option<&'static mut BorderColor>,
     Option<&'static mut TextColor>,
+    Option<&'static mut ImageNode>,
     Option<&'static mut UiTransform>,
     Option<&'static mut Opacity>,
 );
 
 pub(crate) fn advance_motion(time: Res<Time>, mut motions: Query<Painted>) {
     let dt = time.delta();
-    for (mut motion, background, border, text, transform, opacity) in &mut motions {
+    for (mut motion, background, border, text, image, transform, opacity) in &mut motions {
         if let (Some(tween), Some(mut paint)) = (motion.background.as_mut(), background) {
             paint.0 = step_color(tween, dt);
         }
@@ -268,6 +273,9 @@ pub(crate) fn advance_motion(time: Res<Time>, mut motions: Query<Painted>) {
         }
         if let (Some(tween), Some(mut paint)) = (motion.text.as_mut(), text) {
             paint.0 = step_color(tween, dt);
+        }
+        if let (Some(tween), Some(mut node)) = (motion.image.as_mut(), image) {
+            node.color = step_color(tween, dt);
         }
         if let (Some(tween), Some(mut opacity)) = (motion.opacity.as_mut(), opacity) {
             opacity.0 = step_f32(tween, dt);

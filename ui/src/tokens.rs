@@ -70,6 +70,16 @@ pub mod palette {
     pub const SLATE_0: Color = Color::srgb_u8(0, 0, 0);
     pub const SLATE_65: Color = Color::srgb_u8(144, 148, 155);
 
+    pub const AMBER_90: Color = Color::srgb_u8(250, 222, 150);
+    pub const AMBER_80: Color = Color::srgb_u8(246, 201, 96);
+    pub const AMBER_70: Color = Color::srgb_u8(236, 178, 52);
+    pub const AMBER_50: Color = Color::srgb_u8(196, 132, 18);
+
+    pub const VIOLET_90: Color = Color::srgb_u8(215, 196, 247);
+    pub const VIOLET_80: Color = Color::srgb_u8(190, 155, 240);
+    pub const VIOLET_70: Color = Color::srgb_u8(165, 120, 230);
+    pub const VIOLET_50: Color = Color::srgb_u8(118, 70, 196);
+
     pub const CRIMSON_100: Color = Color::srgb_u8(251, 235, 232);
     pub const CRIMSON_95: Color = Color::srgb_u8(248, 192, 191);
     pub const CRIMSON_90: Color = Color::srgb_u8(238, 157, 153);
