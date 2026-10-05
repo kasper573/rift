@@ -1,8 +1,9 @@
-import { test, type Page } from "@playwright/test";
+import { test } from "@playwright/test";
 
 import { provisionAccount, signIn } from "../helpers/account";
+import { give } from "../helpers/admin";
 import { caption, chapter } from "../helpers/demo";
-import { clickUi, findUi, focusGame, hoverTile, hoverUi, probe, waitFor, waitForWorld } from "../helpers/game";
+import { clickUi, focusGame, hoverTile, hoverUi, probe, waitFor, waitForWorld } from "../helpers/game";
 import { loadReference } from "../helpers/image";
 import { conversationOver, interactWith, onStage, pick, readToChoices, talkTo } from "../helpers/talk";
 
@@ -14,7 +15,7 @@ test(
       await signIn(page, await provisionAccount(page, ["admin"]));
       await clickUi(page, "Play");
       await waitForWorld(page, loadReference("island.png"));
-      await giveGold(page, 12);
+      await give(page, [["Gold", 12]]);
     },
     play: async (page) => {
       await caption(page, "Click a townsperson to talk — you walk into reach and the conversation opens");
@@ -78,20 +79,3 @@ test(
     },
   }),
 );
-
-async function giveGold(page: Page, count: number): Promise<void> {
-  await focusGame(page);
-  await page.keyboard.press("KeyC");
-  await clickUi(page, "Admin");
-  await page.waitForTimeout(1200);
-  await clickUi(page, (element) => element.editable);
-  await page.waitForTimeout(400);
-  await page.keyboard.type(`/give Gold,${count}`, { delay: 45 });
-  await page.keyboard.press("Enter");
-  await waitFor(page, (snapshot) => findUi(snapshot, new RegExp(`gave ${count} Gold$`)), "the gold never arrived");
-  await focusGame(page);
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(300);
-  await page.keyboard.press("Escape");
-  await waitFor(page, (snapshot) => !findUi(snapshot, "Admin"), "the terminal never closed");
-}

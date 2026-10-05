@@ -8,6 +8,7 @@ import {
   waitFor,
   type Body,
   type Fixture,
+  type Shop,
   type Snapshot,
   type Stage,
   type Tile,
@@ -22,11 +23,30 @@ export function fixture(snapshot: Snapshot, prop: string): Fixture | undefined {
 }
 
 export async function talkTo(page: Page, npc: string): Promise<Stage> {
-  return openStage(page, (snapshot) => townsperson(snapshot, npc)?.aim, `the conversation with ${npc} never opened`);
+  return reachUntil(
+    page,
+    (snapshot) => townsperson(snapshot, npc)?.aim,
+    (snapshot) => snapshot.stage?.with === townsperson(snapshot, npc)?.id && snapshot.stage,
+    `the conversation with ${npc} never opened`,
+  );
 }
 
 export async function interactWith(page: Page, prop: string): Promise<Stage> {
-  return openStage(page, (snapshot) => fixture(snapshot, prop)?.aim, `interacting with ${prop} never opened a conversation`);
+  return reachUntil(
+    page,
+    (snapshot) => fixture(snapshot, prop)?.aim,
+    (snapshot) => snapshot.stage?.with === fixture(snapshot, prop)?.id && snapshot.stage,
+    `interacting with ${prop} never opened a conversation`,
+  );
+}
+
+export async function shopAt(page: Page, prop: string): Promise<Shop> {
+  return reachUntil(
+    page,
+    (snapshot) => fixture(snapshot, prop)?.aim,
+    ({ shop }) => shop,
+    `using ${prop} never opened a shop`,
+  );
 }
 
 export async function lineRead(page: Page): Promise<Stage> {
@@ -61,14 +81,21 @@ export async function stageNow(page: Page): Promise<Stage | null> {
 }
 
 // Townsfolk stroll, so a click can land where one stood a moment ago; click again, as a player would.
-async function openStage(page: Page, aim: (snapshot: Snapshot) => Tile | undefined, message: string): Promise<Stage> {
+async function reachUntil<T>(
+  page: Page,
+  aim: (snapshot: Snapshot) => Tile | undefined,
+  done: (snapshot: Snapshot) => T | null | undefined,
+  message: string,
+): Promise<T> {
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     await travelTo(page, aim, 90_000);
     const settle = Date.now() + 8_000;
     while (Date.now() < settle) {
-      const { stage } = await probe(page);
-      if (stage) return stage;
+      const snapshot = await probe(page);
+      const found = done(snapshot);
+      if (found) return found;
+      if (snapshot.stage) break;
       await page.waitForTimeout(100);
     }
   }

@@ -14,11 +14,12 @@ use game::systems::area::{self, AreaTag};
 use game::systems::attention::{Attention, StatusBadges};
 use game::systems::combat::Attitude;
 use game::systems::dialogue::{history, stage};
-use game::systems::item::DroppedItem;
+use game::systems::item::{DroppedItem, Inventory};
 use game::systems::movement::Position;
 use game::systems::npc::Npc;
 use game::systems::player::{Owner, commands_locked, session};
 use game::systems::prop::Prop;
+use game::systems::shop;
 use game::systems::stat::{StatKind, Stats};
 use serde::Serialize;
 
@@ -44,13 +45,46 @@ struct Snapshot {
     portals: Vec<Exit>,
     walkable: Vec<Pos<Tiles>>,
     ui: Vec<UiElement>,
+    covered: Vec<Cover>,
     stage: Option<Stage>,
     history: bool,
+    shop: Option<Shop>,
+    bag: Vec<Stack>,
+}
+
+#[derive(Serialize, Clone, Copy)]
+struct Cover {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+#[derive(Serialize)]
+struct Shop {
+    shop: data::shop::Id,
+    offers: Vec<Offer>,
+    buyback: Vec<Stack>,
+}
+
+#[derive(Serialize)]
+struct Offer {
+    item: data::item::Id,
+    count: u32,
+    left: Option<u32>,
+    refusal: Option<String>,
+}
+
+#[derive(Serialize)]
+struct Stack {
+    item: data::item::Id,
+    count: u32,
 }
 
 #[derive(Serialize)]
 struct Stage {
     node: data::dialogue::Id,
+    with: Option<String>,
     line: usize,
     lines: usize,
     speaker: Option<String>,
@@ -152,6 +186,7 @@ fn snapshot(world: &mut World) -> Snapshot {
     Snapshot {
         stage: stage::view(world).map(|view| Stage {
             node: view.node,
+            with: view.with.map(|with| with.to_string()),
             line: view.line,
             lines: view.lines,
             speaker: view.speaker,
@@ -167,6 +202,43 @@ fn snapshot(world: &mut World) -> Snapshot {
             waiting: view.waiting,
         }),
         history: history::is_open(world),
+        shop: shop::window::view(world).map(|window| Shop {
+            shop: window.shop,
+            offers: window
+                .shop
+                .get()
+                .sells
+                .iter()
+                .zip(&window.offers)
+                .map(|(offer, view)| Offer {
+                    item: offer.item,
+                    count: offer.count,
+                    left: view.left,
+                    refusal: view.refusal.clone(),
+                })
+                .collect(),
+            buyback: window
+                .buyback
+                .iter()
+                .map(|sale| Stack {
+                    item: sale.item,
+                    count: sale.count,
+                })
+                .collect(),
+        }),
+        bag: viewpoint
+            .and_then(|seen| world.get::<Inventory>(seen))
+            .map(|inventory| {
+                inventory
+                    .slots
+                    .iter()
+                    .map(|stack| Stack {
+                        item: stack.item,
+                        count: stack.count,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         me: me.and_then(|me| body(world, me)),
         viewpoint: viewpoint.and_then(|seen| body(world, seen)),
         actors: actors(world, me, area),
@@ -175,6 +247,7 @@ fn snapshot(world: &mut World) -> Snapshot {
         portals: portals(world, me),
         walkable: walkable(world, me, view),
         ui: ui(world),
+        covered: covered(world),
         view,
         area,
     }
@@ -362,5 +435,49 @@ fn ui(world: &mut World) -> Vec<UiElement> {
                 height: size.y,
             })
         })
+        .collect()
+}
+
+fn covered(world: &mut World) -> Vec<Cover> {
+    let blocking: HashMap<Entity, Cover> = world
+        .query::<(
+            Entity,
+            &ComputedNode,
+            &UiGlobalTransform,
+            &InheritedVisibility,
+            Option<&Pickable>,
+        )>()
+        .iter(world)
+        .filter(|(_, node, _, visibility, pickable)| {
+            visibility.get()
+                && node.size().min_element() > 0.0
+                && pickable.is_none_or(|pickable| pickable.is_hoverable)
+        })
+        .map(|(entity, node, transform, ..)| {
+            let scale = node.inverse_scale_factor();
+            let size = node.size() * scale;
+            let min = transform.translation * scale - size / 2.0;
+            let rect = Cover {
+                x: min.x,
+                y: min.y,
+                width: size.x,
+                height: size.y,
+            };
+            (entity, rect)
+        })
+        .collect();
+    let ancestors = |entity: Entity| {
+        std::iter::successors(world.get::<ChildOf>(entity).map(ChildOf::parent), |&up| {
+            world.get::<ChildOf>(up).map(ChildOf::parent)
+        })
+    };
+    blocking
+        .iter()
+        .filter(|&(&entity, _)| {
+            ancestors(entity).all(|up| {
+                !blocking.contains_key(&up) && world.get::<actor::plate::WorldOverlay>(up).is_none()
+            }) && world.get::<actor::plate::WorldOverlay>(entity).is_none()
+        })
+        .map(|(_, rect)| *rect)
         .collect()
 }

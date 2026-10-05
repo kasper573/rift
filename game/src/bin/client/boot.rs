@@ -76,6 +76,7 @@ fn boot() {
         .add_plugins((
             systems::hud::HudPlugin,
             systems::dialogue::stage::StagePlugin,
+            systems::shop::window::ShopWindowPlugin,
             systems::notice::ToasterPlugin,
             systems::attention::render::OfferingsPlugin,
             systems::spectate::widget::SpectatorPlugin,

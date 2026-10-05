@@ -56,6 +56,31 @@ export interface UiElement {
   height: number;
 }
 
+export interface Cover {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ShopOffer {
+  item: string;
+  count: number;
+  left: number | null;
+  refusal: string | null;
+}
+
+export interface Stack {
+  item: string;
+  count: number;
+}
+
+export interface Shop {
+  shop: string;
+  offers: ShopOffer[];
+  buyback: Stack[];
+}
+
 export interface StageChoice {
   label: string;
   locked: boolean;
@@ -63,6 +88,7 @@ export interface StageChoice {
 
 export interface Stage {
   node: string;
+  with: string | null;
   line: number;
   lines: number;
   speaker: string | null;
@@ -85,8 +111,11 @@ export interface Snapshot {
   portals: Exit[];
   walkable: Tile[];
   ui: UiElement[];
+  covered: Cover[];
   stage: Stage | null;
   history: boolean;
+  shop: Shop | null;
+  bag: Stack[];
 }
 
 // Waits until the world is on screen — polls until the captured frame resembles the spawn map.
@@ -191,6 +220,10 @@ export function occupied(snapshot: Snapshot, tile: Tile): boolean {
   );
 }
 
+export function warps(snapshot: Snapshot, tile: Tile): boolean {
+  return snapshot.portals.some((portal) => distance(tile, portal.at) < 2);
+}
+
 // Only on-screen tiles can be clicked, so a far target is approached hop by hop. A function target is
 // re-read every hop, for things that move. The last click waits for the camera to settle, or it lands
 // where the target was a moment ago.
@@ -203,9 +236,14 @@ export async function travelTo(
   const deadline = Date.now() + timeout;
   for (;;) {
     const snapshot = await probe(page);
+    if (snapshot.stage) {
+      await leaveConversation(page);
+      continue;
+    }
     const tile = locate(snapshot);
     if (!tile) throw new Error("the travel target is gone");
-    if (onScreen(snapshot, tile, await canvasSize(page))) {
+    const size = await canvasSize(page);
+    if (clickable(snapshot, tile, size)) {
       await waitUntilStill(page);
       const settled = locate(await probe(page));
       if (!settled) throw new Error("the travel target is gone");
@@ -213,7 +251,14 @@ export async function travelTo(
       return;
     }
     if (Date.now() > deadline) throw new Error(`never got ${tile} on screen`);
-    const hop = closestTile(snapshot.walkable.filter((step) => !occupied(snapshot, step)), tile);
+    const moves = (step: Tile) => !snapshot.me || distance(step, snapshot.me.at) >= 2;
+    const hop = closestTile(
+      snapshot.walkable.filter(
+        (step) =>
+          moves(step) && !occupied(snapshot, step) && !warps(snapshot, step) && clickable(snapshot, step, size),
+      ),
+      tile,
+    );
     if (!hop) throw new Error("no walkable tile on screen");
     await clickTile(page, hop);
     await page.waitForTimeout(1200);
@@ -240,6 +285,26 @@ export async function clickUi(page: Page, match: UiMatch): Promise<void> {
   const { x, y } = await uiPoint(page, match);
   await page.mouse.move(x, y, { steps: 12 });
   await click(page);
+}
+
+export async function rightClickUi(page: Page, match: UiMatch): Promise<void> {
+  const { x, y } = await uiPoint(page, match);
+  await page.mouse.move(x, y, { steps: 12 });
+  await page.mouse.down({ button: "right" });
+  await page.mouse.up({ button: "right" });
+}
+
+export async function dragUiOnto(page: Page, from: UiMatch, onto: UiMatch): Promise<void> {
+  const start = await uiPoint(page, from);
+  const end = await uiPoint(page, onto);
+  await page.mouse.move(start.x, start.y, { steps: 12 });
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 30 });
+  await page.mouse.up();
+}
+
+export function holding(snapshot: Snapshot, item: string): number {
+  return snapshot.bag.filter((stack) => stack.item === item).reduce((total, stack) => total + stack.count, 0);
 }
 
 export async function dragUi(page: Page, match: UiMatch, by: { x: number; y: number }): Promise<void> {
@@ -291,13 +356,23 @@ async function tilePoint(page: Page, tile: Tile): Promise<{ x: number; y: number
 }
 
 // A tile's width clear of the edges, where the HUD sits.
-function onScreen(snapshot: Snapshot, tile: Tile, size: { width: number; height: number }): boolean {
+function clickable(snapshot: Snapshot, tile: Tile, size: { width: number; height: number }): boolean {
   if (!snapshot.view) return false;
   const margin = 1;
   const x = snapshot.view.origin[0] + tile[0] * snapshot.view.tile_size[0];
   const y = snapshot.view.origin[1] + tile[1] * snapshot.view.tile_size[1];
   const [mx, my] = snapshot.view.tile_size.map((side) => Math.abs(side) * margin);
-  return x >= mx && y >= my && x <= size.width - mx && y <= size.height - my;
+  const onScreen = x >= mx && y >= my && x <= size.width - mx && y <= size.height - my;
+  const under = (cover: Cover) =>
+    x >= cover.x - mx && y >= cover.y - my && x <= cover.x + cover.width + mx && y <= cover.y + cover.height + my;
+  return onScreen && !snapshot.covered.some(under);
+}
+
+// A walk click can land on a townsperson who strolled under it, and talking locks every later click.
+async function leaveConversation(page: Page): Promise<void> {
+  await focusGame(page);
+  await page.keyboard.press("Escape");
+  await waitFor(page, ({ stage }) => stage === null, "the stray conversation never closed");
 }
 
 export function closestTile(tiles: Tile[], target: Tile): Tile | undefined {

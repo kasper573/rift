@@ -26,6 +26,7 @@ crate::table! {
         props: &[
             Fixture { prop: PropId::HarbourNotices, at: MarkerName("notice-board"), shown: &[] },
             Fixture { prop: PropId::TideChest, at: MarkerName("tide-chest"), shown: &[] },
+            Fixture { prop: PropId::HonestyBox, at: MarkerName("honesty-box"), shown: &[] },
         ],
     },
     Forest: AreaDef {

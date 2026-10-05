@@ -1,8 +1,10 @@
-use crate::systems::item::{INVENTORY_MAX, Inventory};
+use crate::systems::item::{INVENTORY_MAX, Inventory, ItemStack};
 use crate::systems::player::session;
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
-use ui::{Align, Side, text_colored, tooltip, tooltip_content};
+use std::hash::{Hash, Hasher};
+use ui::tokens::palette;
+use ui::{Align, Carriable, Side, text_colored, tooltip, tooltip_content};
 
 use crate::systems::hud::{
     HudAudience, SLOT_BG, SLOT_BORDER, Window, reconcile_children, slot_node, tooltip_label,
@@ -11,6 +13,29 @@ use ui::component;
 
 #[derive(Component, Default, Clone)]
 pub(super) struct InventoryGrid;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum SlotVerdict {
+    Wanted(String),
+    Refused(String),
+}
+
+pub type SlotVerdictSource = fn(&World, ItemStack) -> Option<SlotVerdict>;
+
+#[derive(Resource, Default)]
+struct SlotVerdicts(Vec<SlotVerdictSource>);
+
+pub fn slot_verdict_source(app: &mut App, source: SlotVerdictSource) {
+    app.world_mut()
+        .get_resource_or_init::<SlotVerdicts>()
+        .0
+        .push(source);
+}
+
+#[derive(Event, Clone, Copy, Debug)]
+pub struct SlotSecondaryClicked {
+    pub slot: u32,
+}
 
 pub struct InventoryWindow;
 
@@ -67,6 +92,7 @@ struct Filled {
     name: String,
     kind: u64,
     count: u32,
+    verdict: Option<SlotVerdict>,
 }
 
 pub(super) fn sync_inventory(world: &mut World) {
@@ -83,18 +109,23 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
     let inventory = session::my_character(world).and_then(|me| me.get::<Inventory>());
     let max = inventory.map_or(INVENTORY_MAX, |inventory| inventory.max);
     let assets = world.resource::<AssetServer>();
+    let verdicts = world
+        .get_resource::<SlotVerdicts>()
+        .map(|verdicts| verdicts.0.as_slice())
+        .unwrap_or_default();
     (0..max)
         .map(|slot| CellData {
             slot,
             filled: inventory
                 .and_then(|inventory| inventory.slots.get(slot as usize))
-                .map(|stack| {
+                .map(|&stack| {
                     let def = stack.item.get();
                     Filled {
                         icon: assets.load(def.icon.0),
                         name: def.display_name.to_owned(),
                         kind: stack.item.index() as u64,
                         count: stack.count,
+                        verdict: verdicts.iter().find_map(|source| source(world, stack)),
                     }
                 }),
         })
@@ -102,11 +133,12 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
 }
 
 fn cell_key(cell: &CellData) -> u64 {
-    let content = match &cell.filled {
-        None => 0,
-        Some(filled) => 1 | (filled.kind << 1) | ((filled.count as u64) << 24),
-    };
-    ((cell.slot as u64) << 48) | content
+    let mut hasher = std::hash::DefaultHasher::new();
+    cell.slot.hash(&mut hasher);
+    if let Some(filled) = &cell.filled {
+        (filled.kind, filled.count, &filled.verdict).hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 fn slot(cell: &CellData) -> Box<dyn Scene> {
@@ -130,31 +162,48 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
     } else {
         String::new()
     };
+    let (border, tint, tip) = match &filled.verdict {
+        None => (SLOT_BORDER, Color::WHITE, filled.name.clone()),
+        Some(SlotVerdict::Wanted(note)) => (
+            palette::AMBER_70,
+            Color::WHITE,
+            format!("{} · {note}", filled.name),
+        ),
+        Some(SlotVerdict::Refused(reason)) => (
+            SLOT_BORDER,
+            Color::WHITE.with_alpha(0.3),
+            format!("{} · {reason}", filled.name),
+        ),
+    };
     bsn! {
         template_value(slot_node())
         BackgroundColor({SLOT_BG})
-        component(BorderColor::all(SLOT_BORDER))
+        component(BorderColor::all(border))
         {tooltip(false)}
         Cell { slot: {slot} }
+        component(Carriable { image: filled.icon.clone(), payload: slot as u64 })
         on(|click: On<Pointer<Click>>, cells: Query<&Cell>, keys: Res<ButtonInput<KeyCode>>, mut commands: Commands| {
-            if click.button != PointerButton::Primary {
+            let Ok(&Cell { slot }) = cells.get(click.entity) else {
                 return;
-            }
-            if let Ok(cell) = cells.get(click.entity) {
-                let slot = cell.slot;
-                let drop = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-                commands.queue(move |world: &mut World| act(world, slot, drop));
+            };
+            match click.button {
+                PointerButton::Primary => {
+                    let drop = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+                    commands.queue(move |world: &mut World| act(world, slot, drop));
+                }
+                PointerButton::Secondary => commands.trigger(SlotSecondaryClicked { slot }),
+                PointerButton::Middle => {}
             }
         })
         Children [
             (
                 Node { width: Val::Px(32.0), height: Val::Px(32.0) }
-                component(ImageNode::new(filled.icon.clone()))
+                component(ImageNode::new(filled.icon.clone()).with_color(tint))
                 Pickable { should_block_lower: false, is_hoverable: false }
             ),
             (
                 {tooltip_content(Side::Bottom, Align::Start, 0.0)}
-                Children [ {EntityScene(tooltip_label(filled.name.clone()))} ]
+                Children [ {EntityScene(tooltip_label(tip))} ]
             ),
             (
                 Node {

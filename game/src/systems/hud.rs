@@ -509,18 +509,44 @@ fn launcher(
 
 fn window_scene(world: &World, window: &'static str) -> impl Scene {
     let def = window_def(window);
-    let settings = world.resource::<Settings>();
-    let (pos, size) = window_geom(settings, window, Vec2::new(376.0, 332.0), WINDOW_SIZE);
     bsn! {
-        {ui::window(ui::WindowOptions {
-            pos,
-            size,
-            on_close: OnTap::new(move |world| close_window(world, window)),
-            on_settle: OnSettle::new(move |world, geom| persist_window(world, window, geom)),
-            content: def.contents(world),
-        })}
+        {placed_window(
+            world,
+            window,
+            (Vec2::new(376.0, 332.0), WINDOW_SIZE),
+            OnTap::new(move |world| close_window(world, window)),
+            def.contents(world),
+        )}
         component(WindowView { window, open: true })
     }
+}
+
+pub(crate) fn spawn_in_hud(world: &mut World, scene: impl Scene) -> Option<Entity> {
+    let hud = world
+        .query_filtered::<Entity, With<Hud>>()
+        .iter(world)
+        .next()?;
+    let mut spawned = world.spawn_scene(scene).ok()?;
+    spawned.insert(ChildOf(hud));
+    Some(spawned.id())
+}
+
+pub(crate) fn placed_window(
+    world: &World,
+    id: &'static str,
+    (fallback_pos, fallback_size): (Vec2, Vec2),
+    on_close: OnTap,
+    content: Vec<ui::WindowContent>,
+) -> impl Scene + use<> {
+    let settings = world.resource::<Settings>();
+    let (pos, size) = window_geom(settings, id, fallback_pos, fallback_size);
+    ui::window(ui::WindowOptions {
+        pos,
+        size,
+        on_close,
+        on_settle: OnSettle::new(move |world, geom| persist_window(world, id, geom)),
+        content,
+    })
 }
 
 fn close_window(world: &mut World, window: &'static str) {

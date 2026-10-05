@@ -29,8 +29,7 @@ pub use crate::data::dialogue::Id as DialogueId;
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
     app.replicate::<Conversation>()
-        .add_client_message::<PickRequest>(Channel::Ordered)
-        .add_client_message::<LeaveRequest>(Channel::Ordered)
+        .add_client_message::<ConversationRequest>(Channel::Ordered)
         .init_resource::<TopicSources>()
         .init_resource::<StepCounter>();
     attention::badge_source(app, talking);
@@ -175,6 +174,32 @@ pub struct Conversation {
     pub with: Option<Entity>,
     pub choices: Vec<ChoiceView>,
     pub waiting: Option<WaitingView>,
+    pub remark: Option<Remark>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Remark {
+    pub nth: u32,
+    pub line: SpokenLine,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SpokenLine {
+    pub by: Speaker,
+    pub face: Option<Face>,
+    pub cue: bool,
+    pub text: LineText,
+}
+
+impl SpokenLine {
+    pub fn of(line: &Line) -> SpokenLine {
+        SpokenLine {
+            by: line.by,
+            face: line.face,
+            cue: line.cue,
+            text: LineText::of(line.text),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -211,14 +236,9 @@ pub struct WaitingView {
 }
 
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
-pub struct PickRequest {
-    pub step: ConversationStep,
-    pub choice: u32,
-}
-
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
-pub struct LeaveRequest {
-    pub step: ConversationStep,
+pub enum ConversationRequest {
+    Pick { step: ConversationStep, choice: u32 },
+    Leave { step: ConversationStep },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -313,6 +333,7 @@ pub fn goto(world: &mut World, player: Entity, node: DialogueId) {
     };
     session.step = step;
     session.node = node;
+    session.remark = None;
     enter(world, player);
 }
 
@@ -338,28 +359,40 @@ pub fn end(world: &mut World, player: Entity, ending: Ending) {
     }
 }
 
+pub fn remark(world: &mut World, player: Entity, to: Entity, line: &'static Line) {
+    let Some(mut session) = world.get_mut::<ConversationSession>(player) else {
+        return;
+    };
+    if session.with != Some(to) {
+        return;
+    }
+    let nth = session.remark.as_ref().map_or(0, |remark| remark.nth) + 1;
+    session.remark = Some(Remark {
+        nth,
+        line: SpokenLine::of(line),
+    });
+    refresh_view(world, player);
+}
+
 pub fn in_conversation(world: &World, player: Entity) -> bool {
     world.get::<ConversationSession>(player).is_some()
 }
 
-pub fn picks(world: &mut World) {
-    for request in crate::systems::requests::<PickRequest>(world) {
-        if let Some(player) = sender_player(world, request.client_id) {
-            pick(world, player, request.message);
-        }
-    }
-}
-
-pub fn leaves(world: &mut World) {
-    for request in crate::systems::requests::<LeaveRequest>(world) {
+pub fn requests(world: &mut World) {
+    for request in crate::systems::requests::<ConversationRequest>(world) {
         let Some(player) = sender_player(world, request.client_id) else {
             continue;
         };
-        if world
-            .get::<ConversationSession>(player)
-            .is_some_and(|session| session.step == request.message.step)
-        {
-            end(world, player, Ending::Left);
+        match request.message {
+            ConversationRequest::Pick { step, choice } => pick(world, player, step, choice),
+            ConversationRequest::Leave { step } => {
+                if world
+                    .get::<ConversationSession>(player)
+                    .is_some_and(|session| session.step == step)
+                {
+                    end(world, player, Ending::Left);
+                }
+            }
         }
     }
 }
@@ -428,6 +461,7 @@ pub struct ConversationSession {
     with: Option<Entity>,
     tether: Option<Tether>,
     offers: Vec<Offer>,
+    remark: Option<Remark>,
 }
 
 impl ConversationSession {
@@ -473,6 +507,7 @@ fn begin(world: &mut World, player: Entity, start: Start) {
             with: start.with,
             tether: start.tether,
             offers: Vec::new(),
+            remark: None,
         },
         CommandLock,
     ));
@@ -542,6 +577,7 @@ fn refresh_view(world: &mut World, player: Entity) {
                 node: queued.start.node,
                 lasts: Seconds((queued.until - now(world)).0.ceil()),
             }),
+        remark: session.remark.clone(),
     };
     if world.get::<Conversation>(player) != Some(&view) {
         world.entity_mut(player).insert(view);
@@ -587,14 +623,14 @@ fn choice_view(world: &World, player: Entity, offer: &Offer) -> ChoiceView {
     }
 }
 
-fn pick(world: &mut World, player: Entity, request: PickRequest) {
+fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) {
     let Some(session) = world.get::<ConversationSession>(player) else {
         return;
     };
-    if session.step != request.step {
+    if session.step != step {
         return;
     }
-    let Some(offer) = session.offers.get(request.choice as usize).cloned() else {
+    let Some(offer) = session.offers.get(choice as usize).cloned() else {
         return;
     };
     let encounter = session.encounter();
@@ -614,7 +650,7 @@ fn pick(world: &mut World, player: Entity, request: PickRequest) {
     }
     if world
         .get::<ConversationSession>(player)
-        .is_some_and(|session| session.step == request.step)
+        .is_some_and(|session| session.step == step)
     {
         end(world, player, Ending::Left);
     }
@@ -644,12 +680,12 @@ pub fn check(starts: impl IntoIterator<Item = DialogueId>) {
             panic!("dialogue {node:?}: has no lines");
         }
         for line in node.get().lines {
-            check_face(node, line);
+            check_line(format!("dialogue {node:?}"), line);
         }
     }
 }
 
-fn check_face(node: DialogueId, line: &Line) {
+pub fn check_line(owner: impl std::fmt::Display, line: &Line) {
     let Some(face) = line.face else {
         return;
     };
@@ -659,7 +695,7 @@ fn check_face(node: DialogueId, line: &Line) {
         Speaker::Prop(_) | Speaker::Narrator => None,
     };
     if busts.and_then(|busts| busts.face(face)).is_none() {
-        panic!("dialogue {node:?}: {:?} cannot show {face:?}", line.by);
+        panic!("{owner}: {:?} cannot show {face:?}", line.by);
     }
 }
 

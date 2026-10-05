@@ -8,4 +8,5 @@ pub mod model;
 pub mod npc;
 pub mod prop;
 pub mod sfx;
+pub mod shop;
 pub mod terminal;

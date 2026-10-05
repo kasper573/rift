@@ -266,6 +266,35 @@ pub struct ItemDef {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemFlag {
     Quest,
+    Currency,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemCategory {
+    Consumable,
+    Equipment,
+    Material,
+    Currency,
+}
+
+impl ItemCategory {
+    pub fn label(self) -> &'static str {
+        match self {
+            ItemCategory::Consumable => "Consumable",
+            ItemCategory::Equipment => "Equipment",
+            ItemCategory::Material => "Material",
+            ItemCategory::Currency => "Currency",
+        }
+    }
+
+    pub fn plural(self) -> &'static str {
+        match self {
+            ItemCategory::Consumable => "consumables",
+            ItemCategory::Equipment => "equipment",
+            ItemCategory::Material => "materials",
+            ItemCategory::Currency => "currency",
+        }
+    }
 }
 
 impl ItemDef {
@@ -275,6 +304,17 @@ impl ItemDef {
 
     pub fn has(&self, flag: ItemFlag) -> bool {
         self.flags.contains(&flag)
+    }
+
+    pub fn category(&self) -> ItemCategory {
+        if self.has(ItemFlag::Currency) {
+            return ItemCategory::Currency;
+        }
+        match self.kind {
+            ItemKind::Consumable { .. } => ItemCategory::Consumable,
+            ItemKind::Equipment { .. } => ItemCategory::Equipment,
+            ItemKind::Resource => ItemCategory::Material,
+        }
     }
 
     fn use_from(&self, ctx: &mut UseCtx) {

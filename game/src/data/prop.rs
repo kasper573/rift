@@ -9,6 +9,7 @@ use crate::systems::item::{GiveItems, ItemStack};
 use crate::systems::memory::{Remember, Remembers};
 use crate::systems::prop::PropDef;
 use crate::systems::rule::Not;
+use crate::systems::shop::{OpenShop, ShopId};
 
 crate::table! {
     HarbourNotices: PropDef {
@@ -47,6 +48,16 @@ crate::table! {
                     news: false,
                 },
             ],
+            marks: &[],
+        }),
+    },
+    HonestyBox: PropDef {
+        display_name: "Honesty box",
+        look: Some(AssetRef("icons/misc/crate.png")),
+        interaction: Some(Interaction {
+            verb: Verb::Use,
+            reach: Tiles(1.5),
+            responses: &[Response { requires: &[], then: &[&OpenShop(ShopId::HonestyBox)], news: false }],
             marks: &[],
         }),
     },

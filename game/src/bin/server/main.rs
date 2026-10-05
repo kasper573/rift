@@ -431,7 +431,7 @@ struct Transfer {
 }
 
 enum Arrival {
-    Character(transition::Traveler),
+    Character(Box<transition::Traveler>),
     Spectator(SpectatorTransfer),
 }
 
@@ -443,7 +443,7 @@ fn begin_transfers(worlds: &mut [App], transfers: &mut Vec<Transfer>, tick: u64)
                 client: traveler.client,
                 dest: traveler.dest_area.index(),
                 departed_tick: tick,
-                arrival: Arrival::Character(traveler),
+                arrival: Arrival::Character(Box::new(traveler)),
             });
         }
     }
@@ -505,7 +505,7 @@ fn finish_transfers(
         }
         match arrival {
             Arrival::Character(traveler) => {
-                transition::arrive(worlds[dest].world_mut(), traveler);
+                transition::arrive(worlds[dest].world_mut(), *traveler);
             }
             Arrival::Spectator(spectator) => spectate::arrive(worlds[dest].world_mut(), spectator),
         }

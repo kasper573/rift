@@ -8,7 +8,7 @@ use game::data::dialogue::Id as DialogueId;
 use game::data::item::Id as ItemId;
 use game::data::memory::Id as MemoryId;
 use game::systems::attention::Attention;
-use game::systems::dialogue::{self, BusyPolicy, Conversation, LeaveRequest, PickRequest, Start};
+use game::systems::dialogue::{self, BusyPolicy, Conversation, ConversationRequest, Start};
 use game::systems::interact::InteractRequest;
 use game::systems::item::{Inventory, ItemStack};
 use game::systems::memory::{self, Memory};
@@ -100,7 +100,7 @@ fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
     let still = position(sim.world(), player).expect("position");
     assert!(still.distance(at) < Tiles(0.5));
 
-    sim.send(1, LeaveRequest { step: opened.step });
+    sim.send(1, ConversationRequest::Leave { step: opened.step });
     sim.tick();
     assert!(conversation(&mut sim, player).is_none());
     assert!(!commands_locked(sim.world(), player));
@@ -112,7 +112,7 @@ fn a_pick_answers_its_step_once() {
     let player = sim.join(1);
     give_gold(&mut sim, player, 30);
     let opened = talk(&mut sim, 1, player, data::npc::Id::Grisha);
-    let round = PickRequest {
+    let round = ConversationRequest::Pick {
         step: opened.step,
         choice: choice(&opened, "Buy a round for the room."),
     };
@@ -144,7 +144,7 @@ fn a_choice_that_costs_too_much_changes_nothing() {
 
     sim.send(
         1,
-        PickRequest {
+        ConversationRequest::Pick {
             step: opened.step,
             choice: index,
         },
@@ -214,7 +214,7 @@ fn a_busy_player_waits_skips_or_is_replaced_as_each_start_says() {
         Some(DialogueId::TobbNews)
     );
 
-    sim.send(1, LeaveRequest { step: opened.step });
+    sim.send(1, ConversationRequest::Leave { step: opened.step });
     sim.tick();
     let next = conversation(&mut sim, player).expect("the waiting start began");
     assert_eq!(next.node, DialogueId::TobbNews);
@@ -243,7 +243,7 @@ fn a_waiting_start_expires() {
     );
 
     sim.run_until(2.0, |_| false);
-    sim.send(1, LeaveRequest { step: opened.step });
+    sim.send(1, ConversationRequest::Leave { step: opened.step });
     sim.tick();
 
     assert!(conversation(&mut sim, player).is_none());
@@ -263,12 +263,12 @@ fn tobb_calls_over_a_visitor_he_has_news_for() {
             .and_then(|now| now.waiting)
             .is_some_and(|next| next.node == DialogueId::TobbNews)
     }));
-    sim.send(1, LeaveRequest { step: opened.step });
+    sim.send(1, ConversationRequest::Leave { step: opened.step });
     sim.tick();
     let news = conversation(&mut sim, player).expect("Tobb's news");
     assert_eq!(news.node, DialogueId::TobbNews);
 
-    sim.send(1, LeaveRequest { step: news.step });
+    sim.send(1, ConversationRequest::Leave { step: news.step });
     sim.run_until(2.0, |_| false);
     assert!(conversation(&mut sim, player).is_none());
 }

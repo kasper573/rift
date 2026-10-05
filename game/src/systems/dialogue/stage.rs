@@ -9,8 +9,8 @@ use ui::{CastDepth, CastMember, ChipOptions, ChoiceOptions, DialogueBoxOptions, 
 
 use super::history::{self, HistoryEntry};
 use super::{
-    ChoiceChip, ChoiceView, Conversation, ConversationStep, DialogueId, LeaveRequest, Line,
-    PickRequest, Speaker, WaitingView,
+    ChoiceChip, ChoiceView, Conversation, ConversationRequest, ConversationStep, DialogueId,
+    Speaker, SpokenLine, WaitingView,
 };
 use crate::core::assets::AssetRef;
 use crate::core::sfx::SfxId;
@@ -66,6 +66,7 @@ impl Plugin for StagePlugin {
 
 pub struct StageView {
     pub node: DialogueId,
+    pub with: Option<Entity>,
     pub line: usize,
     pub lines: usize,
     pub speaker: Option<String>,
@@ -81,13 +82,13 @@ pub struct StageChoice {
 
 pub fn view(world: &World) -> Option<StageView> {
     let shown = world.resource::<Stage>().shown.as_ref()?;
-    let lines = shown.node.get().lines;
     Some(StageView {
         node: shown.node,
+        with: shown.with,
         line: shown.line,
-        lines: lines.len(),
-        speaker: lines
-            .get(shown.line)
+        lines: shown.node.get().lines.len(),
+        speaker: shown
+            .current()
             .and_then(|line| speaker_name(world, line.by)),
         typing: shown.typed_since.is_none(),
         choices: shown
@@ -114,7 +115,7 @@ pub fn leave(world: &mut World) -> bool {
     else {
         return false;
     };
-    world.write_message(LeaveRequest { step });
+    world.write_message(ConversationRequest::Leave { step });
     true
 }
 
@@ -136,6 +137,8 @@ struct Shown {
     typed_since: Option<Duration>,
     faces: HashMap<Speaker, Face>,
     stale: bool,
+    remark: Option<SpokenLine>,
+    remarks_seen: u32,
 }
 
 #[derive(Component, Default, Clone)]
@@ -221,6 +224,10 @@ fn follow_conversation(world: &mut World) {
             if shown.choices != now.choices || waiting_changed {
                 shown.stale = true;
             }
+            let remark = now
+                .remark
+                .clone()
+                .filter(|remark| remark.nth > shown.remarks_seen);
             if waiting_changed && now.waiting.is_some() {
                 shown.stale = true;
                 chime(world, SfxId::UiChime);
@@ -236,7 +243,11 @@ fn follow_conversation(world: &mut World) {
             }
             shown.choices = now.choices;
             shown.waiting = now.waiting;
-            if shown.stale && shown.typed_since.is_some() {
+            if let Some(remark) = remark {
+                shown.remarks_seen = remark.nth;
+                shown.remark = Some(remark.line);
+                show_line(world);
+            } else if shown.stale && shown.typed_since.is_some() {
                 shown.stale = false;
                 build_box(world, false);
             }
@@ -259,11 +270,15 @@ impl Shown {
             typed_since: None,
             faces,
             stale: false,
+            remarks_seen: now.remark.map_or(0, |remark| remark.nth),
+            remark: None,
         }
     }
 
-    fn current(&self) -> Option<&'static Line> {
-        self.node.get().lines.get(self.line)
+    fn current(&self) -> Option<SpokenLine> {
+        self.remark
+            .clone()
+            .or_else(|| self.node.get().lines.get(self.line).map(SpokenLine::of))
     }
 
     fn last_line(&self) -> bool {
@@ -285,15 +300,15 @@ fn close(world: &mut World) {
 }
 
 fn show_line(world: &mut World) {
-    let Some((line, speaker_face)) = world
+    let Some(line) = world
         .resource::<Stage>()
         .shown
         .as_ref()
         .and_then(Shown::current)
-        .map(|line| (line, line.face))
     else {
         return;
     };
+    let speaker_face = line.face;
     if let Some(shown) = world.resource_mut::<Stage>().shown.as_mut() {
         shown.typed_since = None;
         shown.refusal = None;
@@ -313,7 +328,7 @@ fn show_line(world: &mut World) {
         world,
         HistoryEntry::Said {
             who: speaker_name(world, line.by),
-            text: super::text::LineText::of(line.text),
+            text: line.text,
         },
     );
     let members = cast_members(world);
@@ -326,6 +341,7 @@ fn advance(world: &mut World) {
         let next = !shown.last_line();
         if next {
             shown.line += 1;
+            shown.remark = None;
         }
         (next, shown.choices.is_empty(), shown.step)
     }) else {
@@ -334,7 +350,7 @@ fn advance(world: &mut World) {
     match shown {
         (true, ..) => show_line(world),
         (false, true, step) if *world.resource::<Mode>() == Mode::Play => {
-            world.write_message(LeaveRequest { step });
+            world.write_message(ConversationRequest::Leave { step });
         }
         _ => {}
     }
@@ -453,7 +469,7 @@ fn on_picked(picked: On<ui::ChoicePicked>, mut commands: Commands) {
         else {
             return;
         };
-        world.write_message(PickRequest {
+        world.write_message(ConversationRequest::Pick {
             step,
             choice: index as u32,
         });
@@ -561,7 +577,7 @@ fn box_options(world: &World, typed: bool) -> Option<DialogueBoxOptions> {
     }
     Some(DialogueBoxOptions {
         speaker: speaker_name(world, line.by).map(|name| (name, side_of(line.by))),
-        line: super::text::LineText::of(line.text).rich(),
+        line: line.text.rich(),
         typed,
         choices,
         hint: if playing { PLAYER_HINT } else { SPECTATOR_HINT }.to_owned(),
@@ -661,15 +677,18 @@ fn cast_members(world: &World) -> Vec<CastMember> {
     let Some(current) = shown.current() else {
         return Vec::new();
     };
-    let mut speakers = vec![Speaker::Player];
-    if let Some(npc) = shown.with.and_then(|with| world.get::<Npc>(with)) {
-        speakers.push(Speaker::Npc(npc.def));
-    }
-    for line in &shown.node.get().lines[..=shown.line] {
-        if !speakers.contains(&line.by) {
+    let mut speakers = vec![current.by];
+    if shown.remark.is_none() {
+        speakers.push(Speaker::Player);
+        if let Some(npc) = shown.with.and_then(|with| world.get::<Npc>(with)) {
+            speakers.push(Speaker::Npc(npc.def));
+        }
+        for line in &shown.node.get().lines[..=shown.line] {
             speakers.push(line.by);
         }
     }
+    let mut seen = std::collections::HashSet::new();
+    speakers.retain(|who| seen.insert(*who));
     let assets = world.resource::<AssetServer>();
     speakers
         .into_iter()

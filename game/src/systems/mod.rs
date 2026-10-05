@@ -25,6 +25,7 @@ pub mod rewards;
 pub mod rule;
 pub mod scene;
 pub mod settings;
+pub mod shop;
 pub mod spectate;
 pub mod stat;
 pub mod terminal;
@@ -82,6 +83,7 @@ pub fn protocol(app: &mut App) {
     interact::register(app);
     npc::register(app);
     prop::register(app);
+    shop::register(app);
     player::register(app);
     spectate::register(app);
     bevy_terminal::register(app, &TERMINALS);
@@ -161,8 +163,8 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     item::drop_item,
                     item::pickup_request,
                     interact::interact_request,
-                    dialogue::picks,
-                    dialogue::leaves,
+                    dialogue::requests,
+                    shop::requests,
                     equipment::unequip,
                     effect::expire,
                     combat::combat,
@@ -176,6 +178,7 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     npc::notice.run_if(on_replication_tick),
                     dialogue::hold,
                     dialogue::refresh.run_if(on_replication_tick),
+                    (shop::hold, shop::refresh.run_if(on_replication_tick)).chain(),
                     item::expire_drops,
                     player::join,
                     player::respawn,
@@ -227,8 +230,10 @@ pub fn check_content(assets: &crate::core::assets::AssetService) {
     dialogue::check(
         npc::conversation_starts()
             .into_iter()
-            .chain(prop::conversation_starts()),
+            .chain(prop::conversation_starts())
+            .chain(shop::conversation_starts()),
     );
+    shop::check();
 }
 
 pub(crate) fn requests<M: Message>(world: &mut World) -> Vec<FromClient<M>> {

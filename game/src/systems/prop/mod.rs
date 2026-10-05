@@ -11,7 +11,7 @@ use crate::core::tiling::{TilePos, Tiles};
 use crate::data;
 use crate::systems::actor::{Hitbox, Name};
 use crate::systems::area::{self, AreaTag, MapMarker, MarkerName};
-use crate::systems::interact::{self, Interaction, Interactive};
+use crate::systems::interact::{self, Counterpart, Interaction, Interactive};
 use crate::systems::movement::Position;
 use crate::systems::rule::Requirement;
 use crate::systems::visibility::Presence;
@@ -64,6 +64,7 @@ pub fn spawn_all(world: &mut World) {
                 },
                 AreaTag { area: area_id },
                 Prop { def: fixture.prop },
+                Counterpart::Prop(fixture.prop),
                 Name {
                     name: prop.display_name.to_owned(),
                 },

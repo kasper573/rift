@@ -33,7 +33,7 @@ use crate::systems::actor::{self, Action, Actor, Hitbox, Rgba, set_action};
 use crate::systems::area::{self, AreaTag};
 use crate::systems::combat::{Attackers, Attitude};
 use crate::systems::effect::{self, Effect, TimedEffects};
-use crate::systems::interact::{self, Interaction, Interactive};
+use crate::systems::interact::{self, Counterpart, Interaction, Interactive};
 use crate::systems::item::Reservation;
 use crate::systems::movement::{MoveTarget, Path, Position, position};
 use crate::systems::player::Players;
@@ -175,6 +175,7 @@ pub fn spawn(
     let entity = spawn_actor(world, def.get(), at, area);
     world.entity_mut(entity).insert((
         Npc { def },
+        Counterpart::Npc(def),
         pack,
         def.get().attitude,
         actor::Name {

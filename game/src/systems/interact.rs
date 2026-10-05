@@ -7,6 +7,8 @@ use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 use crate::data::attention::Id as AttentionId;
 use crate::data::dialogue::Id as DialogueId;
+use crate::data::npc::Id as NpcId;
+use crate::data::prop::Id as PropId;
 use crate::systems::actor;
 use crate::systems::attention::{self, Mark};
 use crate::systems::dialogue;
@@ -72,6 +74,12 @@ impl Verb {
 
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Interactive;
+
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Counterpart {
+    Npc(NpcId),
+    Prop(PropId),
+}
 
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq)]
 pub struct InteractRequest {

@@ -10,4 +10,5 @@ mod memory;
 mod presence;
 mod reach;
 mod rule;
+mod shop;
 mod support;

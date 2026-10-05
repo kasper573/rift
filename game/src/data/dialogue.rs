@@ -14,6 +14,7 @@ use crate::systems::dialogue::{Choice, DialogueNode, GotoNode, Line, Unmet};
 use crate::systems::item::{GiveItems, ItemStack};
 use crate::systems::memory::{Remember, RemembersAtLeast};
 use crate::systems::rule::Not;
+use crate::systems::shop::CloseShop;
 use crate::systems::stat::Heal;
 
 crate::table! {
@@ -168,6 +169,12 @@ crate::table! {
         enter: &[],
         topics: true,
         choices: &[Choice { label: &[plain("Goodbye.")], ..Choice::SAY }],
+    },
+    MaraShopping: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Mara), face: Some(Individual(Counting)), cue: true, text: &[plain("Take your time. Everything's priced fair. "), styled("Mostly.", &[Fx::Voice(Voice::Whisper)])] }],
+        enter: &[],
+        topics: false,
+        choices: &[Choice { label: &[plain("That's all, thanks.")], then: &[&CloseShop], ..Choice::SAY }],
     },
     WrenHello: DialogueNode {
         lines: &[

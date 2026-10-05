@@ -4,7 +4,7 @@ use game::data;
 use game::data::dialogue::Id as DialogueId;
 use game::data::item::Id as ItemId;
 use game::data::prop::Id as PropId;
-use game::systems::dialogue::{Conversation, LeaveRequest};
+use game::systems::dialogue::{Conversation, ConversationRequest};
 use game::systems::interact::InteractRequest;
 use game::systems::item::Inventory;
 use game::systems::player::commands_locked;
@@ -42,7 +42,7 @@ fn leave(sim: &mut Sim, client: u32, player: Entity) {
         .get::<Conversation>(player)
         .expect("talking")
         .step;
-    sim.send(client, LeaveRequest { step });
+    sim.send(client, ConversationRequest::Leave { step });
     sim.tick();
     assert!(sim.world().get::<Conversation>(player).is_none());
 }

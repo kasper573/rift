@@ -3,7 +3,7 @@ use crate::core::time::Seconds;
 use crate::data::sfx::Id as SfxId;
 use crate::systems::effect::Effect;
 use crate::systems::equipment::EquipmentSlot;
-use crate::systems::item::{ItemDef, ItemKind, ItemSfx, Stackable};
+use crate::systems::item::{ItemDef, ItemFlag, ItemKind, ItemSfx, Stackable};
 use crate::systems::job::MinLevel;
 use crate::systems::stat::{Stat, StatKind};
 
@@ -15,7 +15,16 @@ crate::table! {
         stackable: Some(Stackable { max: u32::MAX }),
         effects: &[],
         kind: ItemKind::Resource,
-        flags: &[],
+        flags: &[ItemFlag::Currency],
+    },
+    BoneToken: ItemDef {
+        display_name: "Bone Token",
+        icon: AssetRef("icons/misc/silver_coin.png"),
+        sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
+        stackable: Some(Stackable { max: u32::MAX }),
+        effects: &[],
+        kind: ItemKind::Resource,
+        flags: &[ItemFlag::Currency],
     },
     HealthPotion: ItemDef {
         display_name: "Health Potion",
@@ -110,6 +119,15 @@ crate::table! {
             slot: EquipmentSlot::Head,
             requirements: &[],
         },
+        flags: &[],
+    },
+    FishSteak: ItemDef {
+        display_name: "Fish Steak",
+        icon: AssetRef("icons/food/fish_steak.png"),
+        sfx: ItemSfx { on_use: Some(SfxId::Heal01), drop: Some(SfxId::Landing01) },
+        stackable: Some(Stackable { max: 10 }),
+        effects: &[],
+        kind: ItemKind::Consumable { health_bonus: 15.0, duration: Seconds(0.0) },
         flags: &[],
     },
     LuckyLure: ItemDef {

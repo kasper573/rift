@@ -11,6 +11,7 @@ use crate::systems::item::Inventory;
 use crate::systems::job::Job;
 use crate::systems::memory::Memory;
 use crate::systems::player::{CharacterState, ClientId, Owner, Xp};
+use crate::systems::shop;
 use crate::systems::stat;
 
 #[derive(Component, Clone, Copy)]
@@ -61,6 +62,7 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
                             })
                             .unwrap_or_default(),
                         heard: world.get::<Heard>(entity).cloned().unwrap_or_default(),
+                        ledger: shop::ledger(world, entity),
                     },
                 },
             ))
