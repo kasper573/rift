@@ -157,17 +157,82 @@ crate::table! {
         topics: false,
         choices: GRISHA_CHOICES,
     },
+    GrishaAnythingElse: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Grisha), face: Some(Generic(Neutral)), cue: true, text: &[plain("Suit yourself. Anything else?")] }],
+        enter: &[],
+        topics: true,
+        choices: GRISHA_CHOICES,
+    },
+    GrishaChat: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Grisha), face: Some(Generic(Happy)), cue: true, text: &[plain("Ask away. Gossip's free, the ale isn't.")] }],
+        enter: &[],
+        topics: false,
+        choices: &[
+            Choice { label: &[plain("Tell me about this island.")], then: &[&GotoNode(Id::GrishaIsland)], ..Choice::SAY },
+            Choice {
+                label: &[plain("Any rumours?")],
+                requires: &[
+                    &Not(&RemembersAtLeast(MemoryId::InnFavour, 1)),
+                    &Not(&OnQuest(QuestId::TusksForTheChief)),
+                ],
+                unmet: Unmet::Hide,
+                then: &[&GotoNode(Id::GrishaRumourWren)],
+                ..Choice::SAY
+            },
+            Choice {
+                label: &[plain("Any rumours?")],
+                requires: &[
+                    &RemembersAtLeast(MemoryId::InnFavour, 1),
+                    &Not(&OnQuest(QuestId::TusksForTheChief)),
+                ],
+                unmet: Unmet::Hide,
+                then: &[&GotoNode(Id::GrishaRumourBram)],
+                ..Choice::SAY
+            },
+            Choice {
+                label: &[plain("Any rumours?")],
+                requires: &[&OnQuest(QuestId::TusksForTheChief)],
+                unmet: Unmet::Hide,
+                then: &[&GotoNode(Id::GrishaRumourChief)],
+                ..Choice::SAY
+            },
+            Choice { label: &[plain("Never mind.")], then: &[&GotoNode(Id::GrishaAnythingElse)], ..Choice::SAY },
+        ],
+    },
+    GrishaIsland: DialogueNode {
+        lines: &[
+            Line { by: Narrator, face: None, cue: false, text: &[plain("Grisha polishes a mug that will never be clean.")] },
+            Line { by: Npc(NpcId::Grisha), face: Some(Generic(Neutral)), cue: true, text: &[plain("This rock? Fishers, a market, my "), styled("inn", &[Fx::Ink(Ink::Place)]), plain(", and "), styled("Bram", &[Fx::Ink(Ink::Name)]), plain("'s ferry to the "), styled("forest shore", &[Fx::Ink(Ink::Place)]), plain(".")] },
+            Line { by: Npc(NpcId::Grisha), face: Some(Generic(Thinking)), cue: false, text: &[plain("Past the town it's sand and "), styled("skeletons", &[Fx::Ink(Ink::Danger)]), plain(", and "), styled("orcs", &[Fx::Ink(Ink::Danger)]), plain(" up the "), styled("north shore", &[Fx::Ink(Ink::Place)]), plain(". "), styled("Ilsa", &[Fx::Ink(Ink::Name)]), plain(" minds the "), styled("forest road", &[Fx::Ink(Ink::Place)]), plain(".")] },
+        ],
+        enter: &[],
+        topics: false,
+        choices: GRISHA_CHAT_DONE,
+    },
     GrishaRumourWren: DialogueNode {
         lines: &[Line { by: Npc(NpcId::Grisha), face: Some(Generic(Thinking)), cue: true, text: &[styled("Wren", &[Fx::Ink(Ink::Name)]), plain(" pays good tokens for bones. Don't ask what she does with them.")] }],
         enter: &[],
         topics: false,
-        choices: &[Choice { label: &[plain("Goodbye.")], ..Choice::SAY }],
+        choices: &[
+            Choice { label: &[plain("What does she do with them?")], then: &[&GotoNode(Id::GrishaWrenSecret)], ..Choice::SAY },
+            Choice { label: &[plain("Ok.")], then: &[&GotoNode(Id::GrishaChat)], ..Choice::SAY },
+        ],
+    },
+    GrishaWrenSecret: DialogueNode {
+        lines: &[
+            Line { by: Npc(NpcId::Grisha), face: Some(Generic(Angry)), cue: true, text: &[plain("What did I "), styled("just", &[Fx::Voice(Voice::Shout)]), plain(" say?")] },
+            Line { by: Narrator, face: None, cue: false, text: &[plain("She leans over the bar anyway.")] },
+            Line { by: Npc(NpcId::Grisha), face: Some(Generic(Thinking)), cue: false, text: &[styled("Soup, or charms. Depends who's asking, and who's buying.", &[Fx::Voice(Voice::Whisper)])] },
+        ],
+        enter: &[],
+        topics: false,
+        choices: GRISHA_CHAT_DONE,
     },
     GrishaRumourBram: DialogueNode {
         lines: &[Line { by: Npc(NpcId::Grisha), face: Some(Generic(Sad)), cue: true, text: &[plain("Between you and me? "), styled("Bram", &[Fx::Ink(Ink::Name)]), plain("'s ferry hasn't left since the orcs came. He's waiting on a brave fool.")] }],
         enter: &[],
         topics: false,
-        choices: &[Choice { label: &[plain("Goodbye.")], ..Choice::SAY }],
+        choices: GRISHA_CHAT_DONE,
     },
     MaraHello: DialogueNode {
         lines: &[
@@ -645,7 +710,7 @@ crate::table! {
         ],
         enter: &[],
         topics: false,
-        choices: &[Choice { label: &[plain("Goodbye.")], ..Choice::SAY }],
+        choices: GRISHA_CHAT_DONE,
     },
 }
 
@@ -673,30 +738,8 @@ static GRISHA_CHOICES: &[Choice] = &[
         ..Choice::SAY
     },
     Choice {
-        label: &[plain("Any rumours?")],
-        requires: &[
-            &Not(&RemembersAtLeast(MemoryId::InnFavour, 1)),
-            &Not(&OnQuest(QuestId::TusksForTheChief)),
-        ],
-        unmet: Unmet::Hide,
-        then: &[&GotoNode(Id::GrishaRumourWren)],
-        ..Choice::SAY
-    },
-    Choice {
-        label: &[plain("Any rumours?")],
-        requires: &[
-            &RemembersAtLeast(MemoryId::InnFavour, 1),
-            &Not(&OnQuest(QuestId::TusksForTheChief)),
-        ],
-        unmet: Unmet::Hide,
-        then: &[&GotoNode(Id::GrishaRumourBram)],
-        ..Choice::SAY
-    },
-    Choice {
-        label: &[plain("Any rumours?")],
-        requires: &[&OnQuest(QuestId::TusksForTheChief)],
-        unmet: Unmet::Hide,
-        then: &[&GotoNode(Id::GrishaRumourChief)],
+        label: &[plain("Chat.")],
+        then: &[&GotoNode(Id::GrishaChat)],
         ..Choice::SAY
     },
     Choice {
@@ -704,3 +747,9 @@ static GRISHA_CHOICES: &[Choice] = &[
         ..Choice::SAY
     },
 ];
+
+static GRISHA_CHAT_DONE: &[Choice] = &[Choice {
+    label: &[plain("Ok.")],
+    then: &[&GotoNode(Id::GrishaChat)],
+    ..Choice::SAY
+}];
