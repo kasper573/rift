@@ -34,6 +34,7 @@ fn an_attack_walks_into_range_and_strikes() {
 fn an_attacked_monster_is_fought_until_it_falls() {
     use bevy_ecs::prelude::*;
     use game::core::tiling::TilePos;
+    use game::systems::combat::Attitude;
     use game::systems::npc::Npc;
 
     for seed in 0..6 {
@@ -49,7 +50,9 @@ fn an_attacked_monster_is_fought_until_it_falls() {
             .iter(world)
             .collect::<Vec<_>>()
             .into_iter()
-            .filter(|&npc| !stat::is_dead(world, npc))
+            .filter(|&npc| {
+                !stat::is_dead(world, npc) && world.get::<Attitude>(npc) == Some(&Attitude::Hostile)
+            })
             .min_by(|&a, &b| {
                 let da = position(world, a).expect("pos").distance(at).0;
                 let db = position(world, b).expect("pos").distance(at).0;

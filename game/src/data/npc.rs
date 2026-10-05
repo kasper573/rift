@@ -1,11 +1,20 @@
 use crate::core::tiling::Tiles;
 use crate::core::time::Seconds;
+use crate::data::attention::Id as AttentionId;
+use crate::data::dialogue::Id as DialogueId;
 use crate::data::item::Id as ItemId;
+use crate::data::memory::Id as MemoryId;
 use crate::data::model::Id as ModelId;
 use crate::systems::actor::Rgba;
 use crate::systems::combat::Attitude;
-use crate::systems::npc::{Aggressive, Defensive, NpcDef, Pacifist, Protective};
+use crate::systems::dialogue::BusyPolicy;
+use crate::systems::memory::{RememberedWithin, Remembers, RemembersAtLeast};
+use crate::systems::npc::{
+    Aggressive, Badge, Defensive, Greeting, Noticing, NpcDef, Pacifist, Protective, Stands,
+    Strolls, Talk,
+};
 use crate::systems::rewards::Reward;
+use crate::systems::rule::Not;
 use crate::systems::stat::StatKind;
 
 crate::table! {
@@ -32,7 +41,10 @@ crate::table! {
             Reward::Item { item: ItemId::Gold, chance: None, amount: 3 },
             Reward::Item { item: ItemId::HealthPotion, chance: None, amount: 1 },
             Reward::Item { item: ItemId::OrcTusk, chance: Some(50.0), amount: 1 },
-        ]
+        ],
+        talk: None,
+        notices: &[],
+        badges: &[],
     },
     OrcChief: NpcDef {
         display_name: "Orc Chief",
@@ -58,7 +70,10 @@ crate::table! {
             Reward::Item { item: ItemId::GreaterHealthPotion, chance: Some(75.0), amount: 1 },
             Reward::Item { item: ItemId::OrcTusk, chance: None, amount: 1 },
             Reward::Item { item: ItemId::TribalHelmet, chance: Some(10.0), amount: 1 },
-        ]
+        ],
+        talk: None,
+        notices: &[],
+        badges: &[],
     },
     Skeleton: NpcDef {
         display_name: "Skeleton",
@@ -85,7 +100,10 @@ crate::table! {
             Reward::Item { item: ItemId::RustySword, chance: Some(15.0), amount: 1 },
             Reward::Item { item: ItemId::BoneShield, chance: Some(2.5), amount: 1 },
             Reward::Item { item: ItemId::FruloosRock, chance: Some(0.01), amount: 1 },
-        ]
+        ],
+        talk: None,
+        notices: &[],
+        badges: &[],
     },
     Bat: NpcDef {
         display_name: "Bat",
@@ -110,6 +128,9 @@ crate::table! {
             Reward::Item { item: ItemId::Gold, chance: Some(50.0), amount: 1 },
             Reward::Item { item: ItemId::BatWing, chance: Some(65.0), amount: 4 },
         ],
+        talk: None,
+        notices: &[],
+        badges: &[],
     },
     VampireBat: NpcDef {
         display_name: "Vampire Bat",
@@ -134,6 +155,271 @@ crate::table! {
             Reward::Item { item: ItemId::Gold, chance: Some(60.0), amount: 2 },
             Reward::Item { item: ItemId::BatWing, chance: Some(65.0), amount: 2 },
             Reward::Item { item: ItemId::HealthPotion, chance: Some(25.0), amount: 1 },
-        ]
+        ],
+        talk: None,
+        notices: &[],
+        badges: &[],
+    },
+    Mara: NpcDef {
+        display_name: "Mara",
+        role: Some("Merchant"),
+        attitude: Attitude::Friendly,
+        respawn: Some(Seconds(300.0)),
+        model: ModelId::Mara,
+        tint: Rgba(0xffffffff),
+        ai: &Stands,
+        stats: &[
+            StatKind::Health.of(40.0),
+            StatKind::MaxHealth.of(40.0),
+            StatKind::Damage.of(4.0),
+            StatKind::AttackSpeed.of(1.0),
+            StatKind::AttackDelay.of(400.0),
+            StatKind::Range.of(1.0),
+            StatKind::MovementSpeed.of(0.6),
+        ],
+        aggro: Tiles(6.0),
+        rewards: &[],
+        talk: Some(Talk {
+            reach: Tiles(2.0),
+            greetings: &[
+                Greeting {
+                    requires: &[],
+                    node: DialogueId::MaraHello,
+                    news: false,
+                },
+            ],
+        }),
+        notices: &[],
+        badges: &[],
+    },
+    Tobb: NpcDef {
+        display_name: "Tobb",
+        role: Some("Fisherman"),
+        attitude: Attitude::Friendly,
+        respawn: Some(Seconds(300.0)),
+        model: ModelId::Tobb,
+        tint: Rgba(0xffffffff),
+        ai: &Strolls,
+        stats: &[
+            StatKind::Health.of(40.0),
+            StatKind::MaxHealth.of(40.0),
+            StatKind::Damage.of(4.0),
+            StatKind::AttackSpeed.of(1.0),
+            StatKind::AttackDelay.of(400.0),
+            StatKind::Range.of(1.0),
+            StatKind::MovementSpeed.of(0.6),
+        ],
+        aggro: Tiles(6.0),
+        rewards: &[],
+        talk: Some(Talk {
+            reach: Tiles(2.0),
+            greetings: &[
+                Greeting {
+                    requires: &[&RememberedWithin(MemoryId::TobbVisits, Seconds(600.0))],
+                    node: DialogueId::TobbAgain,
+                    news: false,
+                },
+                Greeting {
+                    requires: &[&RemembersAtLeast(MemoryId::TobbVisits, 5), &Not(&Remembers(MemoryId::TobbGaveLure))],
+                    node: DialogueId::TobbGift,
+                    news: true,
+                },
+                Greeting {
+                    requires: &[&RemembersAtLeast(MemoryId::TobbVisits, 6)],
+                    node: DialogueId::TobbGossip,
+                    news: false,
+                },
+                Greeting {
+                    requires: &[&RemembersAtLeast(MemoryId::TobbVisits, 3)],
+                    node: DialogueId::TobbRegular,
+                    news: true,
+                },
+                Greeting {
+                    requires: &[&RemembersAtLeast(MemoryId::TobbVisits, 1)],
+                    node: DialogueId::TobbBack,
+                    news: false,
+                },
+                Greeting {
+                    requires: &[],
+                    node: DialogueId::TobbHello,
+                    news: false,
+                },
+            ],
+        }),
+        notices: &[Noticing {
+            within: Tiles(3.0),
+            requires: &[
+                &RemembersAtLeast(MemoryId::TobbVisits, 1),
+                &Not(&Remembers(MemoryId::TobbNewsToday)),
+            ],
+            node: DialogueId::TobbNews,
+            busy: BusyPolicy::Wait(Seconds(60.0)),
+        }],
+        badges: &[],
+    },
+    Grisha: NpcDef {
+        display_name: "Grisha",
+        role: Some("Innkeeper"),
+        attitude: Attitude::Friendly,
+        respawn: Some(Seconds(300.0)),
+        model: ModelId::Grisha,
+        tint: Rgba(0xffffffff),
+        ai: &Strolls,
+        stats: &[
+            StatKind::Health.of(40.0),
+            StatKind::MaxHealth.of(40.0),
+            StatKind::Damage.of(4.0),
+            StatKind::AttackSpeed.of(1.0),
+            StatKind::AttackDelay.of(400.0),
+            StatKind::Range.of(1.0),
+            StatKind::MovementSpeed.of(0.6),
+        ],
+        aggro: Tiles(6.0),
+        rewards: &[],
+        talk: Some(Talk {
+            reach: Tiles(2.0),
+            greetings: &[
+                Greeting {
+                    requires: &[&RemembersAtLeast(MemoryId::InnFavour, 3)],
+                    node: DialogueId::GrishaRegular,
+                    news: false,
+                },
+                Greeting {
+                    requires: &[],
+                    node: DialogueId::GrishaHello,
+                    news: false,
+                },
+            ],
+        }),
+        notices: &[],
+        badges: &[Badge { mark: AttentionId::Innkeeper, label: "Rents beds" }],
+    },
+    Bram: NpcDef {
+        display_name: "Bram",
+        role: Some("Harbour Captain"),
+        attitude: Attitude::Friendly,
+        respawn: Some(Seconds(300.0)),
+        model: ModelId::Bram,
+        tint: Rgba(0xffffffff),
+        ai: &Stands,
+        stats: &[
+            StatKind::Health.of(40.0),
+            StatKind::MaxHealth.of(40.0),
+            StatKind::Damage.of(4.0),
+            StatKind::AttackSpeed.of(1.0),
+            StatKind::AttackDelay.of(400.0),
+            StatKind::Range.of(1.0),
+            StatKind::MovementSpeed.of(0.6),
+        ],
+        aggro: Tiles(6.0),
+        rewards: &[],
+        talk: Some(Talk {
+            reach: Tiles(2.0),
+            greetings: &[
+                Greeting {
+                    requires: &[],
+                    node: DialogueId::BramHello,
+                    news: false,
+                },
+            ],
+        }),
+        notices: &[],
+        badges: &[],
+    },
+    Wren: NpcDef {
+        display_name: "Wren",
+        role: Some("Bone Collector"),
+        attitude: Attitude::Friendly,
+        respawn: Some(Seconds(300.0)),
+        model: ModelId::Wren,
+        tint: Rgba(0xffffffff),
+        ai: &Strolls,
+        stats: &[
+            StatKind::Health.of(40.0),
+            StatKind::MaxHealth.of(40.0),
+            StatKind::Damage.of(4.0),
+            StatKind::AttackSpeed.of(1.0),
+            StatKind::AttackDelay.of(400.0),
+            StatKind::Range.of(1.0),
+            StatKind::MovementSpeed.of(0.6),
+        ],
+        aggro: Tiles(6.0),
+        rewards: &[],
+        talk: Some(Talk {
+            reach: Tiles(2.0),
+            greetings: &[
+                Greeting {
+                    requires: &[],
+                    node: DialogueId::WrenHello,
+                    news: false,
+                },
+            ],
+        }),
+        notices: &[],
+        badges: &[],
+    },
+    Pell: NpcDef {
+        display_name: "Pell",
+        role: Some("Gambler"),
+        attitude: Attitude::Friendly,
+        respawn: Some(Seconds(300.0)),
+        model: ModelId::Pell,
+        tint: Rgba(0xffffffff),
+        ai: &Stands,
+        stats: &[
+            StatKind::Health.of(40.0),
+            StatKind::MaxHealth.of(40.0),
+            StatKind::Damage.of(4.0),
+            StatKind::AttackSpeed.of(1.0),
+            StatKind::AttackDelay.of(400.0),
+            StatKind::Range.of(1.0),
+            StatKind::MovementSpeed.of(0.6),
+        ],
+        aggro: Tiles(6.0),
+        rewards: &[],
+        talk: Some(Talk {
+            reach: Tiles(2.0),
+            greetings: &[
+                Greeting {
+                    requires: &[],
+                    node: DialogueId::PellHello,
+                    news: false,
+                },
+            ],
+        }),
+        notices: &[],
+        badges: &[],
+    },
+    Ilsa: NpcDef {
+        display_name: "Ilsa",
+        role: Some("Road Warden"),
+        attitude: Attitude::Friendly,
+        respawn: Some(Seconds(300.0)),
+        model: ModelId::Ilsa,
+        tint: Rgba(0xffffffff),
+        ai: &Stands,
+        stats: &[
+            StatKind::Health.of(40.0),
+            StatKind::MaxHealth.of(40.0),
+            StatKind::Damage.of(4.0),
+            StatKind::AttackSpeed.of(1.0),
+            StatKind::AttackDelay.of(400.0),
+            StatKind::Range.of(1.0),
+            StatKind::MovementSpeed.of(0.6),
+        ],
+        aggro: Tiles(6.0),
+        rewards: &[],
+        talk: Some(Talk {
+            reach: Tiles(2.0),
+            greetings: &[
+                Greeting {
+                    requires: &[],
+                    node: DialogueId::IlsaHello,
+                    news: false,
+                },
+            ],
+        }),
+        notices: &[],
+        badges: &[],
     },
 }

@@ -1,4 +1,6 @@
 pub mod area;
+pub mod attention;
+pub mod dialogue;
 pub mod item;
 pub mod job;
 pub mod memory;

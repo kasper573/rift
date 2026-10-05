@@ -72,6 +72,10 @@ impl Memory {
         );
     }
 
+    pub fn recalled_within(&self, key: Id, lasts: Seconds, clock: WallClock) -> bool {
+        self.recall(key, clock).is_some() && clock.now.since(self.0[&key].at) < lasts
+    }
+
     pub fn forget(&mut self, key: Id) {
         self.0.remove(&key);
     }
@@ -108,6 +112,21 @@ impl Requirement for RemembersAtLeast {
 
     fn describe(&self) -> String {
         format!("{} {}+", self.0.get().label, self.1)
+    }
+}
+
+pub struct RememberedWithin(pub Id, pub Seconds);
+
+impl Requirement for RememberedWithin {
+    fn met(&self, world: &World, player: Entity) -> bool {
+        let clock = *world.resource::<WallClock>();
+        world
+            .get::<Memory>(player)
+            .is_some_and(|memory| memory.recalled_within(self.0, self.1, clock))
+    }
+
+    fn describe(&self) -> String {
+        format!("{} recently", self.0.get().label)
     }
 }
 

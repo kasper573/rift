@@ -12,10 +12,10 @@ crate::table! {
         kind: MemoryKind::Flag,
         resets: Resets::Never,
     },
-    TobbHasNews: MemoryDef {
-        label: "Tobb has news",
+    TobbNewsToday: MemoryDef {
+        label: "Heard Tobb's news today",
         kind: MemoryKind::Flag,
-        resets: Resets::Never,
+        resets: Resets::Daily,
     },
     InnFavour: MemoryDef {
         label: "Favour at the inn",

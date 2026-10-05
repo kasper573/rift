@@ -1,9 +1,11 @@
 pub mod account;
 pub mod actor;
 pub mod area;
+pub mod attention;
 pub mod chat;
 pub mod combat;
 pub mod debug;
+pub mod dialogue;
 pub mod effect;
 pub mod equipment;
 pub mod fps;
@@ -13,6 +15,7 @@ pub mod item;
 pub mod job;
 pub mod memory;
 pub mod movement;
+pub mod notice;
 pub mod npc;
 pub mod player;
 pub mod reach;
@@ -64,13 +67,16 @@ static TERMINALS: LazyLock<HashMap<crate::data::terminal::Id, &'static Terminal>
 pub fn protocol(app: &mut App) {
     actor::register(app);
     area::register(app);
+    attention::register(app);
     combat::register(app);
+    dialogue::register(app);
     stat::register(app);
     effect::register(app);
     equipment::register(app);
     item::register(app);
     job::register(app);
     movement::register(app);
+    notice::register(app);
     npc::register(app);
     player::register(app);
     spectate::register(app);
@@ -150,6 +156,9 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     item::use_item,
                     item::drop_item,
                     item::pickup_request,
+                    npc::talk_request,
+                    dialogue::picks,
+                    dialogue::leaves,
                     equipment::unequip,
                     effect::expire,
                     combat::combat,
@@ -159,6 +168,10 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     rewards::grant,
                     movement::advance,
                     item::pickups,
+                    npc::talks,
+                    npc::notice.run_if(on_replication_tick),
+                    dialogue::hold,
+                    dialogue::refresh.run_if(on_replication_tick),
                     item::expire_drops,
                     player::join,
                     player::respawn,
@@ -167,6 +180,7 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     bevy_terminal::ingest::<crate::data::terminal::Id>,
                     bevy_terminal::dispatch::<crate::data::terminal::Id>,
                     chat::rebroadcast,
+                    attention::update.run_if(on_replication_tick),
                     visibility::update.run_if(on_replication_tick),
                 )
                     .chain(),
@@ -206,6 +220,7 @@ pub fn step_areas(apps: &mut [App], clock: crate::core::time::WallClock) {
 pub fn check_content(assets: &crate::core::assets::AssetService) {
     actor::check(assets);
     area::check(assets);
+    dialogue::check(npc::conversation_starts());
 }
 
 pub(crate) fn requests<M: Message>(world: &mut World) -> Vec<FromClient<M>> {

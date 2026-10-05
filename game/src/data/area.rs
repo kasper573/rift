@@ -1,6 +1,6 @@
 use crate::core::assets::AssetRef;
 use crate::data::npc::Id as NpcId;
-use crate::systems::area::{AreaDef, Population};
+use crate::systems::area::{AreaDef, MarkerName, Population, Resident};
 
 crate::table! {
     Island: AreaDef {
@@ -12,7 +12,15 @@ crate::table! {
             Population { npc: NpcId::Bat, count: 4 },
             Population { npc: NpcId::OrcChief, count: 2 },
         ],
-        residents: &[],
+        residents: &[
+            Resident { npc: NpcId::Grisha, at: MarkerName("inn"), shown: &[] },
+            Resident { npc: NpcId::Mara, at: MarkerName("market-stall"), shown: &[] },
+            Resident { npc: NpcId::Tobb, at: MarkerName("fishing-pier"), shown: &[] },
+            Resident { npc: NpcId::Bram, at: MarkerName("ferry-landing"), shown: &[] },
+            Resident { npc: NpcId::Wren, at: MarkerName("bone-heap"), shown: &[] },
+            Resident { npc: NpcId::Pell, at: MarkerName("dice-table"), shown: &[] },
+            Resident { npc: NpcId::Ilsa, at: MarkerName("forest-road"), shown: &[] },
+        ],
     },
     Forest: AreaDef {
         map: AssetRef("maps/forest.tmx"),

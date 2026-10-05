@@ -4,6 +4,7 @@ use super::Id;
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 use crate::systems::actor::Name;
+use crate::systems::dialogue::Heard;
 use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::Inventory;
@@ -59,6 +60,7 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
                                 memory
                             })
                             .unwrap_or_default(),
+                        heard: world.get::<Heard>(entity).cloned().unwrap_or_default(),
                     },
                 },
             ))

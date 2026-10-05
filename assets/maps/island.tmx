@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="100" height="100" tilewidth="16" tileheight="16" infinite="0" nextlayerid="12" nextobjectid="27">
+<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="100" height="100" tilewidth="16" tileheight="16" infinite="0" nextlayerid="12" nextobjectid="34">
  <tileset firstgid="1" source="../tilesets/beach-tileset.tsx"/>
  <layer id="1" name="Background" width="100" height="100">
   <properties>
@@ -351,6 +351,27 @@
    <properties>
     <property name="goto" value="Forest,3,18"/>
    </properties>
+  </object>
+  <object id="27" name="inn" type="marker" x="552" y="440">
+   <point/>
+  </object>
+  <object id="28" name="market-stall" type="marker" x="696" y="344">
+   <point/>
+  </object>
+  <object id="29" name="fishing-pier" type="marker" x="808" y="424">
+   <point/>
+  </object>
+  <object id="30" name="ferry-landing" type="marker" x="712" y="456">
+   <point/>
+  </object>
+  <object id="31" name="bone-heap" type="marker" x="536" y="472">
+   <point/>
+  </object>
+  <object id="32" name="dice-table" type="marker" x="696" y="488">
+   <point/>
+  </object>
+  <object id="33" name="forest-road" type="marker" x="584" y="408">
+   <point/>
   </object>
  </objectgroup>
 </map>

@@ -112,4 +112,13 @@ crate::table! {
         },
         flags: &[],
     },
+    LuckyLure: ItemDef {
+        display_name: "Lucky Lure",
+        icon: AssetRef("icons/ore_and_gem/pearl.png"),
+        sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
+        stackable: None,
+        effects: &[],
+        kind: ItemKind::Resource,
+        flags: &[],
+    },
 }

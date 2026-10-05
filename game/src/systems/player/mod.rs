@@ -14,6 +14,7 @@ use crate::systems::Character;
 use crate::systems::account::identity::Identity;
 use crate::systems::actor::{Action, Actor, Hitbox, Name, Rgba, set_action};
 use crate::systems::area::{self, AreaTag};
+use crate::systems::dialogue::Heard;
 use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::Inventory;
@@ -34,6 +35,7 @@ pub fn register(app: &mut App) {
 
     app.replicate::<Owner>()
         .replicate::<Xp>()
+        .replicate::<CommandLock>()
         .add_client_message::<JoinRequest>(Channel::Ordered)
         .add_client_message::<RespawnRequest>(Channel::Ordered)
         .add_server_message::<Welcome>(Channel::Ordered);
@@ -72,6 +74,9 @@ impl Xp {
     }
 }
 
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CommandLock;
+
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct JoinRequest;
 
@@ -93,7 +98,7 @@ const PLAYER_ATTACK_SPEED: PlaybackRate = PlaybackRate(1.2);
 const PLAYER_ATTACK_DELAY: Millis = Millis(200.0);
 const PLAYER_RANGE: Tiles = Tiles(1.5);
 const PLAYER_TINT: Rgba = Rgba(0xFFFF_FFFF);
-const PLAYER_MODEL: crate::data::model::Id = crate::data::model::Id::Adventurer;
+pub const MODEL: crate::data::model::Id = crate::data::model::Id::Adventurer;
 
 #[derive(Resource, Default)]
 pub struct Players(pub HashMap<ClientId, Entity>);
@@ -103,6 +108,10 @@ pub(crate) fn sender_player(
     sender: bevy_replicon::prelude::ClientId,
 ) -> Option<Entity> {
     conn_player(world, sender.entity()?)
+}
+
+pub fn commands_locked(world: &World, player: Entity) -> bool {
+    world.get::<CommandLock>(player).is_some()
 }
 
 pub fn by_user(world: &mut World, user: &str) -> Option<Entity> {
@@ -220,6 +229,7 @@ pub struct CharacterState {
     pub job: Job,
     pub timed: TimedEffects,
     pub memory: Memory,
+    pub heard: Heard,
 }
 
 fn spawn_player(
@@ -246,6 +256,7 @@ fn spawn_player(
             },
             timed: TimedEffects::default(),
             memory: Memory::default(),
+            heard: Heard::default(),
         },
     );
 }
@@ -274,7 +285,7 @@ pub(crate) fn place(
     at: Pos<Tiles>,
     state: CharacterState,
 ) -> Entity {
-    let model = PLAYER_MODEL;
+    let model = MODEL;
     let assets = world.resource::<AssetService>().clone();
     let entity = world
         .spawn((
@@ -304,6 +315,7 @@ pub(crate) fn place(
             state.job,
             state.timed,
             state.memory,
+            state.heard,
         ))
         .id();
     state.stats.apply(world, entity);

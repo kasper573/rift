@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::{Entity, World};
 
+use crate::data::dialogue::Id as DialogueId;
 use crate::systems::item::{Inventory, ItemStack};
 
 pub trait Requirement: Send + Sync {
@@ -21,6 +22,10 @@ pub trait Outcome: Send + Sync {
     fn gives(&self) -> &[ItemStack] {
         &[]
     }
+
+    fn leads_to(&self) -> Option<DialogueId> {
+        None
+    }
 }
 
 pub struct RuleContext<'w> {
@@ -30,9 +35,9 @@ pub struct RuleContext<'w> {
 }
 
 pub struct Terms<'a> {
-    pub requires: &'a [&'static dyn Requirement],
+    pub requires: &'a [&'a dyn Requirement],
     pub costs: &'a [ItemStack],
-    pub outcomes: &'a [&'static dyn Outcome],
+    pub outcomes: &'a [&'a dyn Outcome],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,7 +55,7 @@ impl Requirement for Not {
     }
 }
 
-pub fn met(world: &World, player: Entity, requires: &[&'static dyn Requirement]) -> bool {
+pub fn met(world: &World, player: Entity, requires: &[&dyn Requirement]) -> bool {
     requires
         .iter()
         .all(|requirement| requirement.met(world, player))

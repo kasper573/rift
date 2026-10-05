@@ -22,7 +22,7 @@ use crate::systems::effect::{self, Effect, TimedEffect, TimedEffects};
 use crate::systems::equipment;
 use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
-use crate::systems::player::{ClientId, Owner, conn_player, sender_player};
+use crate::systems::player::{ClientId, Owner, commands_locked, conn_player, sender_player};
 use crate::systems::reach::{self, Pursuit, ReachAct};
 use crate::systems::rule::{Outcome, Requirement, RuleContext};
 use crate::systems::stat;
@@ -409,6 +409,7 @@ pub fn pickup_request(world: &mut World) {
         };
         let target = request.message.target;
         if stat::is_dead(world, player)
+            || commands_locked(world, player)
             || world.get::<DroppedItem>(target).is_none()
             || !visibility::present(world, target, player)
         {

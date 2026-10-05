@@ -1,7 +1,7 @@
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
-use bevy_replicon::prelude::{AppVisibilityExt, Replicated, SingleComponent, VisibilityFilter};
+use bevy_replicon::prelude::{AppVisibilityExt, Replicated, VisibilityFilter};
 use bevy_replicon::server::visibility::client_visibility::ClientVisibility;
 use bevy_replicon::server::visibility::filters_mask::FilterBit;
 use bevy_replicon::server::visibility::registry::FilterRegistry;
@@ -10,9 +10,11 @@ use bevy_replicon::shared::replication::registry::ReplicationRegistry;
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 use crate::systems::area::{self, AreaTag};
+use crate::systems::attention::Attention;
+use crate::systems::dialogue::Conversation;
 use crate::systems::item::Inventory;
 use crate::systems::movement::{Position, position};
-use crate::systems::player::{ClientId, Owner, Players};
+use crate::systems::player::{ClientId, CommandLock, Owner, Players};
 use crate::systems::rule::{self, Requirement};
 use crate::systems::spectate::Spectators;
 
@@ -138,7 +140,7 @@ pub struct OwnedBy(pub ClientId);
 
 impl VisibilityFilter for OwnedBy {
     type ClientComponent = PrivateSight;
-    type Scope = SingleComponent<Inventory>;
+    type Scope = (Inventory, Conversation, CommandLock, Attention);
 
     fn is_visible(&self, _: Entity, sight: Option<&PrivateSight>) -> bool {
         sight.is_some_and(|sight| sight.own == self.0 || sight.watching == Some(self.0))

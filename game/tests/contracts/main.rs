@@ -2,6 +2,7 @@ mod busts;
 mod clock;
 mod combat;
 mod content;
+mod conversation;
 mod exchange;
 mod kill_credit;
 mod memory;

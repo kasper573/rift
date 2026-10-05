@@ -15,7 +15,7 @@ use crate::systems::REPLICATION_PERIOD;
 use crate::systems::account::role;
 use crate::systems::actor::{Action, Actor, set_facing};
 use crate::systems::area;
-use crate::systems::player::{conn_player, sender_player};
+use crate::systems::player::{commands_locked, conn_player, sender_player};
 use crate::systems::reach;
 use crate::systems::stat::{self, StatKind};
 
@@ -149,7 +149,7 @@ fn retarget(
     pos: Pos<Tiles>,
 ) -> Option<Entity> {
     let entity = sender_player(world, sender)?;
-    if stat::is_dead(world, entity) {
+    if stat::is_dead(world, entity) || commands_locked(world, entity) {
         return None;
     }
     reach::forget(world, entity);

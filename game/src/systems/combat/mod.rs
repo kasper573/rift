@@ -13,7 +13,7 @@ use crate::core::time::{Millis, PlaybackRate, Seconds};
 use crate::systems::actor::{Action, Actor, Hitbox, set_action, set_facing};
 use crate::systems::area::AreaTag;
 use crate::systems::movement::{MoveTarget, Path, Position, halt, on_tile, position};
-use crate::systems::player::{Owner, sender_player, session};
+use crate::systems::player::{Owner, commands_locked, sender_player, session};
 use crate::systems::reach::{self, Pursuit, ReachAct};
 use crate::systems::stat::{self, StatKind};
 use crate::systems::visibility;
@@ -116,6 +116,7 @@ pub fn request(world: &mut World) {
         };
         let target = request.message.target;
         if stat::is_dead(world, entity)
+            || commands_locked(world, entity)
             || world.get_entity(target).is_err()
             || stat::is_dead(world, target)
             || !attackable(world, entity, target)
