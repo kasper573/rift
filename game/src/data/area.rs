@@ -37,8 +37,8 @@ crate::table! {
             Population { npc: NpcId::Skeleton, count: 5 },
             Population { npc: NpcId::Bat, count: 6 },
         ],
-        residents: &[],
-        props: &[],
+        residents: &[Resident { npc: NpcId::Ugra, at: MarkerName("ugra-camp"), shown: &[] }],
+        props: &[Fixture { prop: PropId::StandingStone, at: MarkerName("standing-stone"), shown: &[] }],
     },
 }
 

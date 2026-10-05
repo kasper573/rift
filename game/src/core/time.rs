@@ -121,7 +121,16 @@ impl WallClock {
     pub fn day(self) -> GameDay {
         GameDay::of(self.now, self.reset)
     }
+
+    pub fn until_next_day(self) -> Seconds {
+        let next =
+            UnixMillis((self.day().0 + 1) * DAY_MILLIS + u64::from(self.reset.0) * HOUR_MILLIS);
+        next.since(self.now)
+    }
 }
+
+const HOUR_MILLIS: u64 = 3_600_000;
+const DAY_MILLIS: u64 = 24 * HOUR_MILLIS;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UnixMillis(pub u64);
@@ -161,7 +170,6 @@ pub struct GameDay(pub u64);
 
 impl GameDay {
     pub fn of(now: UnixMillis, reset: UtcHour) -> GameDay {
-        const HOUR: u64 = 3_600_000;
-        GameDay(now.0.saturating_sub(u64::from(reset.0) * HOUR) / (24 * HOUR))
+        GameDay(now.0.saturating_sub(u64::from(reset.0) * HOUR_MILLIS) / DAY_MILLIS)
     }
 }

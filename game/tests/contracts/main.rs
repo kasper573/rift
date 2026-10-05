@@ -8,6 +8,7 @@ mod interaction;
 mod kill_credit;
 mod memory;
 mod presence;
+mod quest;
 mod reach;
 mod rule;
 mod shop;

@@ -6,6 +6,23 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct WorldPx(pub f32);
 
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Default)]
+pub struct Percent(pub f32);
+
+impl Percent {
+    pub fn plus(self, other: Percent) -> Percent {
+        Percent(self.0 + other.0)
+    }
+
+    pub fn times(self, count: u32) -> Percent {
+        Percent(self.0 * count as f32)
+    }
+
+    pub fn rolled(self, rng: &mut Rng) -> bool {
+        rng.rand_float() * 100.0 < self.0
+    }
+}
+
 pub type Pos<U> = euclid::Point2D<f32, U>;
 pub type Offset<U> = euclid::Vector2D<f32, U>;
 pub type Size<U> = euclid::Size2D<f32, U>;

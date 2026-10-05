@@ -62,13 +62,13 @@ fn timers_run_out() {
 fn daily_memories_end_at_the_reset_hour() {
     let before_reset = at(100 * 24 * HOUR + 3 * HOUR);
     let mut memory = Memory::default();
-    memory.remember(Id::BoneTitheDone, before_reset);
+    memory.remember(Id::TideChestLooted, before_reset);
     assert_eq!(
-        memory.recall(Id::BoneTitheDone, later(before_reset, 3_599.0)),
+        memory.recall(Id::TideChestLooted, later(before_reset, 3_599.0)),
         Some(1)
     );
     assert_eq!(
-        memory.recall(Id::BoneTitheDone, later(before_reset, 3_600.0)),
+        memory.recall(Id::TideChestLooted, later(before_reset, 3_600.0)),
         None
     );
 }

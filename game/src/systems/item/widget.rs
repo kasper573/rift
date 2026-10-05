@@ -32,6 +32,18 @@ pub fn slot_verdict_source(app: &mut App, source: SlotVerdictSource) {
         .push(source);
 }
 
+pub type SlotNoteSource = fn(&World, ItemStack) -> Option<String>;
+
+#[derive(Resource, Default)]
+struct SlotNotes(Vec<SlotNoteSource>);
+
+pub fn slot_note_source(app: &mut App, source: SlotNoteSource) {
+    app.world_mut()
+        .get_resource_or_init::<SlotNotes>()
+        .0
+        .push(source);
+}
+
 #[derive(Event, Clone, Copy, Debug)]
 pub struct SlotSecondaryClicked {
     pub slot: u32,
@@ -92,6 +104,7 @@ struct Filled {
     name: String,
     kind: u64,
     count: u32,
+    notes: Vec<String>,
     verdict: Option<SlotVerdict>,
 }
 
@@ -113,6 +126,10 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
         .get_resource::<SlotVerdicts>()
         .map(|verdicts| verdicts.0.as_slice())
         .unwrap_or_default();
+    let notes = world
+        .get_resource::<SlotNotes>()
+        .map(|notes| notes.0.as_slice())
+        .unwrap_or_default();
     (0..max)
         .map(|slot| CellData {
             slot,
@@ -125,6 +142,10 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
                         name: def.display_name.to_owned(),
                         kind: stack.item.index() as u64,
                         count: stack.count,
+                        notes: notes
+                            .iter()
+                            .filter_map(|source| source(world, stack))
+                            .collect(),
                         verdict: verdicts.iter().find_map(|source| source(world, stack)),
                     }
                 }),
@@ -136,7 +157,7 @@ fn cell_key(cell: &CellData) -> u64 {
     let mut hasher = std::hash::DefaultHasher::new();
     cell.slot.hash(&mut hasher);
     if let Some(filled) = &cell.filled {
-        (filled.kind, filled.count, &filled.verdict).hash(&mut hasher);
+        (filled.kind, filled.count, &filled.notes, &filled.verdict).hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -162,17 +183,19 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
     } else {
         String::new()
     };
+    let named = std::iter::once(filled.name.as_str())
+        .chain(filled.notes.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" · ");
     let (border, tint, tip) = match &filled.verdict {
-        None => (SLOT_BORDER, Color::WHITE, filled.name.clone()),
-        Some(SlotVerdict::Wanted(note)) => (
-            palette::AMBER_70,
-            Color::WHITE,
-            format!("{} · {note}", filled.name),
-        ),
+        None => (SLOT_BORDER, Color::WHITE, named),
+        Some(SlotVerdict::Wanted(note)) => {
+            (palette::AMBER_70, Color::WHITE, format!("{named} · {note}"))
+        }
         Some(SlotVerdict::Refused(reason)) => (
             SLOT_BORDER,
             Color::WHITE.with_alpha(0.3),
-            format!("{} · {reason}", filled.name),
+            format!("{named} · {reason}"),
         ),
     };
     bsn! {

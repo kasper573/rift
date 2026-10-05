@@ -84,6 +84,20 @@ export interface Shop {
 export interface StageChoice {
   label: string;
   locked: boolean;
+  rect: Cover | null;
+}
+
+export interface QuestEntry {
+  quest: string;
+  ready: boolean;
+  left: number | null;
+  progress: [number, number][];
+}
+
+export interface Quests {
+  active: QuestEntry[];
+  finished: { quest: string; result: "Completed" | "Failed" }[];
+  tracked: string[];
 }
 
 export interface Stage {
@@ -109,6 +123,7 @@ export interface Snapshot {
   props: Fixture[];
   items: GroundItem[];
   portals: Exit[];
+  markers: { name: string; at: Tile }[];
   walkable: Tile[];
   ui: UiElement[];
   covered: Cover[];
@@ -116,6 +131,7 @@ export interface Snapshot {
   history: boolean;
   shop: Shop | null;
   bag: Stack[];
+  quests: Quests;
 }
 
 // Waits until the world is on screen — polls until the captured frame resembles the spawn map.
@@ -401,4 +417,12 @@ async function canvasSize(page: Page): Promise<{ width: number; height: number }
 // The canvas has no semantic role; target it by id.
 function canvas(page: Page) {
   return page.locator("#glcanvas");
+}
+
+export function onQuest(snapshot: Snapshot, quest: string): QuestEntry | undefined {
+  return snapshot.quests.active.find((active) => active.quest === quest);
+}
+
+export function finished(snapshot: Snapshot, quest: string): "Completed" | "Failed" | undefined {
+  return snapshot.quests.finished.find((done) => done.quest === quest)?.result;
 }

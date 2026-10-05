@@ -302,6 +302,6 @@ fn two_players_see_their_own_icons_over_the_same_npc() {
     };
     sim.run_until(0.5, |_| false);
 
-    assert_eq!(marks(&mut sim, regular), vec![AttentionId::News]);
-    assert_eq!(marks(&mut sim, stranger), Vec::new());
+    assert!(marks(&mut sim, regular).contains(&AttentionId::News));
+    assert!(!marks(&mut sim, stranger).contains(&AttentionId::News));
 }

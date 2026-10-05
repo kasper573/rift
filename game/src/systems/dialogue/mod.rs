@@ -113,7 +113,7 @@ pub struct Offer {
     pub label: LineText,
     pub tag: ChoiceTag,
     pub icon: Option<AssetRef>,
-    pub requires: &'static [&'static dyn Requirement],
+    pub requires: Vec<&'static dyn Requirement>,
     pub unmet: Unmet,
     pub costs: &'static [ItemStack],
     pub then: Then,
@@ -126,7 +126,7 @@ impl Offer {
             label: LineText::of(choice.label),
             tag: ChoiceTag::Dialogue,
             icon: None,
-            requires: choice.requires,
+            requires: choice.requires.to_vec(),
             unmet: choice.unmet,
             costs: choice.costs,
             then: Then::Data(choice.then),
@@ -135,7 +135,19 @@ impl Offer {
     }
 }
 
-pub type TopicSource = fn(&World, Entity, Entity) -> Vec<Offer>;
+pub struct Asked {
+    pub player: Entity,
+    pub with: Option<Entity>,
+    pub node: DialogueId,
+}
+
+impl Asked {
+    pub fn greeting(&self) -> Option<Entity> {
+        self.with.filter(|_| self.node.get().topics)
+    }
+}
+
+pub type TopicSource = fn(&World, &Asked) -> Vec<Offer>;
 
 #[derive(Resource, Default)]
 pub struct TopicSources(Vec<TopicSource>);
@@ -537,19 +549,20 @@ fn enter(world: &mut World, player: Entity) {
     for outcome in def.enter {
         outcome.apply(&mut ctx);
     }
-    let with = encounter.with;
-    let mut offers: Vec<Offer> = Vec::new();
-    if def.topics
-        && let Some(with) = with
-    {
-        let sources = world.resource::<TopicSources>().0.clone();
-        for source in sources {
-            offers.extend(source(world, player, with));
-        }
-    }
+    let asked = Asked {
+        player,
+        with: encounter.with,
+        node,
+    };
+    let sources = world.resource::<TopicSources>().0.clone();
+    let mut offers: Vec<Offer> = sources
+        .iter()
+        .flat_map(|source| source(world, &asked))
+        .collect();
     offers.extend(def.choices.iter().map(Offer::of));
     offers.retain(|offer| {
-        offer.unmet == Unmet::ShowLocked || crate::systems::rule::met(world, player, offer.requires)
+        offer.unmet == Unmet::ShowLocked
+            || crate::systems::rule::met(world, player, &offer.requires)
     });
     if let Some(mut session) = world.get_mut::<ConversationSession>(player) {
         session.offers = offers;
@@ -587,7 +600,7 @@ fn refresh_view(world: &mut World, player: Entity) {
 fn choice_view(world: &World, player: Entity, offer: &Offer) -> ChoiceView {
     let outcomes = offer.then.outcomes();
     let terms = Terms {
-        requires: offer.requires,
+        requires: &offer.requires,
         costs: offer.costs,
         outcomes: &outcomes,
     };
@@ -640,7 +653,7 @@ fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) 
     }
     let outcomes = offer.then.outcomes();
     let terms = Terms {
-        requires: offer.requires,
+        requires: &offer.requires,
         costs: offer.costs,
         outcomes: &outcomes,
     };

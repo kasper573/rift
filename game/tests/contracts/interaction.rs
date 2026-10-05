@@ -75,7 +75,7 @@ fn a_chest_gives_its_gold_once_a_day() {
     let before = gold(&mut sim, player);
 
     let found = interact(&mut sim, 1, player, chest);
-    assert_eq!(found.node, DialogueId::TideChestFound);
+    assert_eq!(found.node, DialogueId::TideChestMap);
     assert_eq!(gold(&mut sim, player), before + 5);
     leave(&mut sim, 1, player);
 
@@ -113,7 +113,7 @@ fn two_players_open_the_same_chest_for_themselves() {
             .get::<Conversation>(player)
             .cloned()
             .expect("open");
-        assert_eq!(opened.node, DialogueId::TideChestFound);
+        assert_eq!(opened.node, DialogueId::TideChestMap);
         assert_eq!(gold(&mut sim, player), before + 5);
     }
 }

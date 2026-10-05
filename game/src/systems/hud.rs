@@ -6,7 +6,7 @@ use ui::{Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
 use crate::core::platform::{ClientPlatform, Platform};
 use crate::systems::scene::mode::Mode;
-use crate::systems::{effect, equipment, item, player, settings, spectate, stat, terminal};
+use crate::systems::{effect, equipment, item, player, quest, settings, spectate, stat, terminal};
 
 pub(crate) const WIDGET: ScreenPx = ScreenPx(48.0);
 const WINDOW_SIZE: Vec2 = Vec2::new(400.0, 200.0);
@@ -156,6 +156,7 @@ struct Keyed(u64);
 static WIDGETS: &[(&str, &dyn Widget)] = &[
     ("character", &player::widget::CharacterWidget),
     ("effects", &effect::widget::EffectsWidget),
+    ("quests", &quest::tracker::QuestTrackerWidget),
     ("spectator", &spectate::widget::SpectatorWidget),
 ];
 
@@ -163,6 +164,7 @@ static WINDOWS: &[(&str, &dyn Window)] = &[
     ("Inventory", &item::widget::InventoryWindow),
     ("Equipment", &equipment::widget::EquipmentWindow),
     ("Stats", &stat::widget::StatsWindow),
+    ("Quests", &quest::log::QuestLogWindow),
     ("Settings", &settings::SettingsWindow),
     (TERMINAL_WINDOW, &terminal::widget::TerminalWindow),
 ];

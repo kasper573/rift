@@ -81,6 +81,15 @@ pub enum Counterpart {
     Prop(PropId),
 }
 
+impl Counterpart {
+    pub fn name(self) -> &'static str {
+        match self {
+            Counterpart::Npc(npc) => npc.get().display_name,
+            Counterpart::Prop(prop) => prop.get().display_name,
+        }
+    }
+}
+
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq)]
 pub struct InteractRequest {
     #[entities]

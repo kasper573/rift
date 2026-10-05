@@ -342,6 +342,36 @@ crate::table! {
         volume: SfxScalar::Fixed(0.9),
         pitch: SfxScalar::Fixed(1.0),
     },
+    UgraHm: SfxDef {
+        src: AssetRef("sfx/voice/mature/uh.wav"),
+        volume: SfxScalar::Fixed(0.9),
+        pitch: SfxScalar::Fixed(0.8),
+    },
+    UgraLaugh: SfxDef {
+        src: AssetRef("sfx/voice/mature/chuckle.wav"),
+        volume: SfxScalar::Fixed(0.9),
+        pitch: SfxScalar::Fixed(0.8),
+    },
+    UgraSigh: SfxDef {
+        src: AssetRef("sfx/voice/mature/sigh_01.wav"),
+        volume: SfxScalar::Fixed(0.9),
+        pitch: SfxScalar::Fixed(0.8),
+    },
+    UgraGrunt: SfxDef {
+        src: AssetRef("sfx/voice/mature/grumble.wav"),
+        volume: SfxScalar::Fixed(0.9),
+        pitch: SfxScalar::Fixed(0.8),
+    },
+    UgraGasp: SfxDef {
+        src: AssetRef("sfx/voice/mature/gasp.wav"),
+        volume: SfxScalar::Fixed(0.9),
+        pitch: SfxScalar::Fixed(0.8),
+    },
+    UgraHmm: SfxDef {
+        src: AssetRef("sfx/voice/mature/eh.wav"),
+        volume: SfxScalar::Fixed(0.9),
+        pitch: SfxScalar::Fixed(0.8),
+    },
     UiOpen: SfxDef {
         src: AssetRef("sfx/interface/open.wav"),
         volume: SfxScalar::Fixed(1.0),

@@ -23,7 +23,7 @@ impl Window for SettingsWindow {
         "icons/misc/gear.png"
     }
     fn order(&self) -> u32 {
-        3
+        4
     }
     fn contents(&self, world: &World) -> Vec<ui::WindowContent> {
         crate::systems::hud::single_tab(self.title(), ui::scrolled(content(world)))

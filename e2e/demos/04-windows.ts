@@ -16,7 +16,7 @@ test(
   chapter({
     summary: "Inventory, equipment, stats and settings, laid out your way",
     play: async (page) => {
-      await caption(page, "Every window has a hotkey: I, E, K, O and C");
+      await caption(page, "Every window has a hotkey: I, E, K, L, O and C");
       await focusGame(page);
       for (const { key, title, by } of LAYOUT) {
         await page.keyboard.press(key);

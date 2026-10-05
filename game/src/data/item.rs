@@ -1,10 +1,12 @@
 use crate::core::assets::AssetRef;
 use crate::core::time::Seconds;
+use crate::data::quest::Id as QuestId;
 use crate::data::sfx::Id as SfxId;
 use crate::systems::effect::Effect;
 use crate::systems::equipment::EquipmentSlot;
 use crate::systems::item::{ItemDef, ItemFlag, ItemKind, ItemSfx, Stackable};
 use crate::systems::job::MinLevel;
+use crate::systems::quest::OfferQuest;
 use crate::systems::stat::{Stat, StatKind};
 
 crate::table! {
@@ -137,6 +139,54 @@ crate::table! {
         stackable: None,
         effects: &[],
         kind: ItemKind::Resource,
+        flags: &[],
+    },
+    TobbsLetter: ItemDef {
+        display_name: "Tobb's Letter",
+        icon: AssetRef("icons/misc/envolop.png"),
+        sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
+        stackable: None,
+        effects: &[],
+        kind: ItemKind::Resource,
+        flags: &[ItemFlag::Quest],
+    },
+    TatteredMap: ItemDef {
+        display_name: "Tattered Map",
+        icon: AssetRef("icons/misc/map.png"),
+        sfx: ItemSfx { on_use: Some(SfxId::UiPage), drop: Some(SfxId::Landing01) },
+        stackable: None,
+        effects: &[],
+        kind: ItemKind::Usable { then: &[&OfferQuest(QuestId::XMarksTheSpot)] },
+        flags: &[ItemFlag::Quest],
+    },
+    BelfryKey: ItemDef {
+        display_name: "Belfry Key",
+        icon: AssetRef("icons/misc/iron_key.png"),
+        sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
+        stackable: None,
+        effects: &[],
+        kind: ItemKind::Resource,
+        flags: &[ItemFlag::Quest],
+    },
+    FishingBait: ItemDef {
+        display_name: "Fishing Bait",
+        icon: AssetRef("icons/monster_part/monster_meat.png"),
+        sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
+        stackable: Some(Stackable { max: 20 }),
+        effects: &[],
+        kind: ItemKind::Resource,
+        flags: &[],
+    },
+    CorsairCutlass: ItemDef {
+        display_name: "Corsair's Cutlass",
+        icon: AssetRef("icons/weapon_and_tool/golden_sword.png"),
+        sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
+        stackable: None,
+        effects: &[Effect::StatModifier(Stat { kind: StatKind::Damage, value: 5.0 })],
+        kind: ItemKind::Equipment {
+            slot: EquipmentSlot::Weapon,
+            requirements: &[&MinLevel(3)],
+        },
         flags: &[],
     },
 }

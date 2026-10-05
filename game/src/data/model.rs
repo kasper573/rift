@@ -124,6 +124,20 @@ crate::table! {
             individual: &[],
         }),
     },
+    Ugra: ModelDef {
+        sheet: AssetRef("models/ugra.tsx"),
+        busts: Some(Busts {
+            generic: GenericBusts {
+                neutral: Bust { art: AssetRef("busts/ugra/neutral.png"), cue: SfxId::UgraHm },
+                happy: Bust { art: AssetRef("busts/ugra/happy.png"), cue: SfxId::UgraLaugh },
+                sad: Bust { art: AssetRef("busts/ugra/sad.png"), cue: SfxId::UgraSigh },
+                angry: Bust { art: AssetRef("busts/ugra/angry.png"), cue: SfxId::UgraGrunt },
+                surprised: Bust { art: AssetRef("busts/ugra/surprised.png"), cue: SfxId::UgraGasp },
+                thinking: Bust { art: AssetRef("busts/ugra/thinking.png"), cue: SfxId::UgraHmm },
+            },
+            individual: &[],
+        }),
+    },
     Guard: ModelDef { sheet: AssetRef("models/guard.tsx"), busts: None },
     Bat: ModelDef { sheet: AssetRef("models/bat.tsx"), busts: None },
     Orc: ModelDef { sheet: AssetRef("models/orc.tsx"), busts: None },

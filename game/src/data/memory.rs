@@ -52,13 +52,18 @@ crate::table! {
         kind: MemoryKind::Flag,
         resets: Resets::Never,
     },
-    BoneTitheDone: MemoryDef {
-        label: "Bone tithe paid today",
-        kind: MemoryKind::Flag,
-        resets: Resets::Daily,
-    },
     SidedWithOrcs: MemoryDef {
         label: "Sided with the orcs",
+        kind: MemoryKind::Flag,
+        resets: Resets::Never,
+    },
+    FoundTatteredMap: MemoryDef {
+        label: "Found the tattered map",
+        kind: MemoryKind::Flag,
+        resets: Resets::Never,
+    },
+    SpurnedUgra: MemoryDef {
+        label: "Turned Ugra away",
         kind: MemoryKind::Flag,
         resets: Resets::Never,
     },

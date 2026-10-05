@@ -9,6 +9,7 @@ use crate::systems::combat::Died;
 use crate::systems::item::{Reservation, ReservedBy, scatter_drop};
 use crate::systems::npc::Npc;
 use crate::systems::player::{Players, Xp};
+use crate::systems::visibility::Presence;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Reward {
@@ -65,7 +66,8 @@ pub fn grant(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
                     },
                 );
             }
-            scatter_drop(world, died.entity, &drops, reserved_by);
+            let presence = world.get::<Presence>(died.entity).copied();
+            scatter_drop(world, died.entity, &drops, reserved_by, presence);
         }
     });
 }

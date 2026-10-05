@@ -21,6 +21,7 @@ use crate::systems::item::Inventory;
 use crate::systems::job::{self, Job};
 use crate::systems::memory::Memory;
 use crate::systems::movement::Position;
+use crate::systems::quest::QuestLog;
 use crate::systems::shop::ShopLedger;
 use crate::systems::spectate::Spectators;
 use crate::systems::stat::{self, StatKind, Stats};
@@ -232,6 +233,7 @@ pub struct CharacterState {
     pub memory: Memory,
     pub heard: Heard,
     pub ledger: ShopLedger,
+    pub quests: QuestLog,
 }
 
 fn spawn_player(
@@ -260,6 +262,7 @@ fn spawn_player(
             memory: Memory::default(),
             heard: Heard::default(),
             ledger: ShopLedger::default(),
+            quests: QuestLog::default(),
         },
     );
 }
@@ -320,6 +323,7 @@ pub(crate) fn place(
             state.memory,
             state.heard,
             state.ledger,
+            state.quests,
         ))
         .id();
     state.stats.apply(world, entity);

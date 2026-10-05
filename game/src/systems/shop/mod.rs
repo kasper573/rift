@@ -13,12 +13,12 @@ use crate::data::dialogue::Id as DialogueId;
 use crate::data::item::Id as ItemId;
 use crate::systems::attention::{self, Mark};
 use crate::systems::dialogue::text::{LineText, Span};
-use crate::systems::dialogue::{self, ChoiceTag, GotoNode, Line, Offer, Then, Unmet};
+use crate::systems::dialogue::{self, Asked, ChoiceTag, GotoNode, Line, Offer, Then, Unmet};
 use crate::systems::interact::Counterpart;
 use crate::systems::item::{Inventory, ItemCategory, ItemFlag, ItemStack};
 use crate::systems::notice::{self, NoticeTone};
 use crate::systems::player::sender_player;
-use crate::systems::rule::{Encounter, Outcome, Requirement, RuleContext};
+use crate::systems::rule::{self, Encounter, Outcome, Requirement, RuleContext};
 use crate::systems::stat;
 
 pub use crate::data::shop::Id as ShopId;
@@ -37,6 +37,7 @@ pub fn register(app: &mut App) {
 pub struct ShopDef {
     pub title: &'static str,
     pub keeper: Counterpart,
+    pub requires: &'static [&'static dyn Requirement],
     pub mark: AttentionId,
     pub ask: Option<&'static [Span]>,
     pub sells: &'static [ShopOffer],
@@ -61,6 +62,7 @@ pub enum Stock {
 pub struct ShopBuys {
     pub what: Buys,
     pub pays: &'static [ItemStack],
+    pub requires: &'static [&'static dyn Requirement],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,6 +99,7 @@ pub struct ShopWindow {
     pub shop: ShopId,
     pub offers: Vec<OfferView>,
     pub buyback: Vec<Sale>,
+    pub declined: Vec<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -141,19 +144,27 @@ pub struct ShopVisit {
 }
 
 impl ShopDef {
-    pub fn pays_for(&self, item: ItemId) -> Result<&'static [ItemStack], String> {
+    pub fn pays_for(&self, item: ItemId, declined: &[u32]) -> Result<&'static [ItemStack], String> {
         let def = item.get();
         if def.has(ItemFlag::Quest) {
             return Err("Quest items never sell".to_owned());
         }
-        self.buys
+        let (index, rule) = self
+            .buys
             .iter()
-            .find(|rule| match rule.what {
+            .enumerate()
+            .find(|(_, rule)| match rule.what {
                 Buys::Item(wanted) => wanted == item,
                 Buys::Category(category) => def.category() == category,
             })
-            .map(|rule| rule.pays)
-            .ok_or_else(|| format!("{} won't buy {}", self.title, def.display_name))
+            .ok_or_else(|| format!("{} won't buy {}", self.title, def.display_name))?;
+        if declined.contains(&(index as u32)) {
+            return Err(format!(
+                "{} won't buy {} from you",
+                self.title, def.display_name
+            ));
+        }
+        Ok(rule.pays)
     }
 
     pub fn wants(&self) -> Vec<String> {
@@ -263,7 +274,7 @@ pub fn check() {
         }
         for offer in shop.sells {
             for &buyer in shops {
-                if let Ok(pays) = buyer.get().pays_for(offer.item)
+                if let Ok(pays) = buyer.get().pays_for(offer.item, &[])
                     && profits(offer, pays)
                 {
                     panic!(
@@ -313,8 +324,11 @@ fn broken(world: &World, player: Entity) -> Option<&'static str> {
         .map(|_| "you walked out of reach")
 }
 
-fn wares(world: &World, _player: Entity, with: Entity) -> Vec<Offer> {
-    let Some(&keeper) = world.get::<Counterpart>(with) else {
+fn wares(world: &World, asked: &Asked) -> Vec<Offer> {
+    let Some(&keeper) = asked
+        .greeting()
+        .and_then(|with| world.get::<Counterpart>(with))
+    else {
         return Vec::new();
     };
     let Some(&id) = <ShopId as strum::VariantArray>::VARIANTS
@@ -324,7 +338,10 @@ fn wares(world: &World, _player: Entity, with: Entity) -> Vec<Offer> {
         return Vec::new();
     };
     let shop = id.get();
-    let Some(ask) = shop.ask else {
+    let Some(ask) = shop
+        .ask
+        .filter(|_| rule::met(world, asked.player, shop.requires))
+    else {
         return Vec::new();
     };
     let mut then: Vec<Arc<dyn Outcome>> = vec![Arc::new(OpenShop(id))];
@@ -335,7 +352,7 @@ fn wares(world: &World, _player: Entity, with: Entity) -> Vec<Offer> {
         label: LineText::of(ask),
         tag: ChoiceTag::Shop,
         icon: Some(shop.mark.get().icon),
-        requires: &[],
+        requires: Vec::new(),
         unmet: Unmet::ShowLocked,
         costs: &[],
         then: Then::Made(then),
@@ -343,14 +360,14 @@ fn wares(world: &World, _player: Entity, with: Entity) -> Vec<Offer> {
     }]
 }
 
-fn marks(world: &World, _player: Entity, target: Entity) -> Vec<Mark> {
+fn marks(world: &World, player: Entity, target: Entity) -> Vec<Mark> {
     let Some(&keeper) = world.get::<Counterpart>(target) else {
         return Vec::new();
     };
     <ShopId as strum::VariantArray>::VARIANTS
         .iter()
         .map(|shop| shop.get())
-        .filter(|shop| shop.keeper == keeper)
+        .filter(|shop| shop.keeper == keeper && rule::met(world, player, shop.requires))
         .map(|shop| Mark {
             kind: shop.mark,
             label: shop.title.to_owned(),
@@ -409,7 +426,8 @@ fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
     if held != Some(stack) {
         return;
     }
-    let paid: Vec<ItemStack> = match shop.get().pays_for(stack.item) {
+    let declined = declined(world, player, shop);
+    let paid: Vec<ItemStack> = match shop.get().pays_for(stack.item, &declined) {
         Ok(pays) => pays
             .iter()
             .map(|pay| ItemStack::new(pay.item, pay.count.saturating_mul(stack.count)))
@@ -552,10 +570,19 @@ fn refresh_window(world: &mut World, player: Entity) {
         shop,
         offers,
         buyback,
+        declined: declined(world, player, shop),
     };
     if world.get::<ShopWindow>(player) != Some(&window) {
         world.entity_mut(player).insert(window);
     }
+}
+
+fn declined(world: &World, player: Entity, shop: ShopId) -> Vec<u32> {
+    (0..)
+        .zip(shop.get().buys)
+        .filter(|(_, rule)| !rule::met(world, player, rule.requires))
+        .map(|(index, _)| index)
+        .collect()
 }
 
 fn react(world: &mut World, player: Entity, pick: fn(&ShopReactions) -> &'static [Line]) {

@@ -20,6 +20,7 @@ pub mod notice;
 pub mod npc;
 pub mod player;
 pub mod prop;
+pub mod quest;
 pub mod reach;
 pub mod rewards;
 pub mod rule;
@@ -84,6 +85,7 @@ pub fn protocol(app: &mut App) {
     npc::register(app);
     prop::register(app);
     shop::register(app);
+    quest::register(app);
     player::register(app);
     spectate::register(app);
     bevy_terminal::register(app, &TERMINALS);
@@ -165,6 +167,7 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     interact::interact_request,
                     dialogue::requests,
                     shop::requests,
+                    quest::requests,
                     equipment::unequip,
                     effect::expire,
                     combat::combat,
@@ -172,6 +175,7 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     .chain(),
                 (
                     rewards::grant,
+                    quest::credit,
                     movement::advance,
                     item::pickups,
                     interact::interactions,
@@ -179,6 +183,7 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     dialogue::hold,
                     dialogue::refresh.run_if(on_replication_tick),
                     (shop::hold, shop::refresh.run_if(on_replication_tick)).chain(),
+                    quest::refresh.run_if(on_replication_tick),
                     item::expire_drops,
                     player::join,
                     player::respawn,
@@ -231,9 +236,11 @@ pub fn check_content(assets: &crate::core::assets::AssetService) {
         npc::conversation_starts()
             .into_iter()
             .chain(prop::conversation_starts())
-            .chain(shop::conversation_starts()),
+            .chain(shop::conversation_starts())
+            .chain(quest::conversation_starts()),
     );
     shop::check();
+    quest::check(assets);
 }
 
 pub(crate) fn requests<M: Message>(world: &mut World) -> Vec<FromClient<M>> {

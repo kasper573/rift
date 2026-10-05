@@ -21,6 +21,7 @@ crate::table! {
     MaraWares: ShopDef {
         title: "Mara's Wares",
         keeper: Counterpart::Npc(NpcId::Mara),
+        requires: &[],
         mark: AttentionId::Merchant,
         ask: Some(&[plain("Show me your wares.")]),
         sells: &[
@@ -42,9 +43,14 @@ crate::table! {
             },
         ],
         buys: &[
-            ShopBuys { what: Buys::Category(ItemCategory::Consumable), pays: &[ItemStack::new(ItemId::Gold, 2)] },
-            ShopBuys { what: Buys::Category(ItemCategory::Equipment), pays: &[ItemStack::new(ItemId::Gold, 6)] },
-            ShopBuys { what: Buys::Category(ItemCategory::Material), pays: &[ItemStack::new(ItemId::Gold, 1)] },
+            ShopBuys {
+                what: Buys::Item(ItemId::OrcTusk),
+                pays: &[ItemStack::new(ItemId::Gold, 1)],
+                requires: &[&Not(&Remembers(MemoryId::SidedWithOrcs))],
+            },
+            ShopBuys { what: Buys::Category(ItemCategory::Consumable), pays: &[ItemStack::new(ItemId::Gold, 2)], requires: &[] },
+            ShopBuys { what: Buys::Category(ItemCategory::Equipment), pays: &[ItemStack::new(ItemId::Gold, 6)], requires: &[] },
+            ShopBuys { what: Buys::Category(ItemCategory::Material), pays: &[ItemStack::new(ItemId::Gold, 1)], requires: &[] },
         ],
         reactions: Some(ShopReactions {
             browsing: DialogueId::MaraShopping,
@@ -64,6 +70,7 @@ crate::table! {
     BoneExchange: ShopDef {
         title: "Bone Exchange",
         keeper: Counterpart::Npc(NpcId::Wren),
+        requires: &[],
         mark: AttentionId::Collector,
         ask: Some(&[plain("I've brought bones.")]),
         sells: &[
@@ -77,14 +84,15 @@ crate::table! {
             },
         ],
         buys: &[
-            ShopBuys { what: Buys::Item(ItemId::Bone), pays: &[ItemStack::new(ItemId::BoneToken, 1)] },
-            ShopBuys { what: Buys::Item(ItemId::BatWing), pays: &[ItemStack::new(ItemId::BoneToken, 1)] },
+            ShopBuys { what: Buys::Item(ItemId::Bone), pays: &[ItemStack::new(ItemId::BoneToken, 1)], requires: &[] },
+            ShopBuys { what: Buys::Item(ItemId::BatWing), pays: &[ItemStack::new(ItemId::BoneToken, 1)], requires: &[] },
         ],
         reactions: None,
     },
     HonestyBox: ShopDef {
         title: "Tobb's honesty box",
         keeper: Counterpart::Prop(PropId::HonestyBox),
+        requires: &[],
         mark: AttentionId::Merchant,
         ask: None,
         sells: &[ShopOffer {
@@ -95,6 +103,31 @@ crate::table! {
             requires: &[],
         }],
         buys: &[],
+        reactions: None,
+    },
+    UgraRemedies: ShopDef {
+        title: "Clan remedies",
+        keeper: Counterpart::Npc(NpcId::Ugra),
+        requires: &[&Remembers(MemoryId::SidedWithOrcs)],
+        mark: AttentionId::Merchant,
+        ask: Some(&[plain("Show me the clan's remedies.")]),
+        sells: &[
+            ShopOffer {
+                item: ItemId::GreaterHealthPotion,
+                count: 1,
+                price: &[ItemStack::new(ItemId::Bone, 4), ItemStack::new(ItemId::BatWing, 2)],
+                stock: Stock::Unlimited,
+                requires: &[],
+            },
+            ShopOffer {
+                item: ItemId::TribalHelmet,
+                count: 1,
+                price: &[ItemStack::new(ItemId::OrcTusk, 8)],
+                stock: Stock::Limited { count: 1, restock: Seconds(3600.0) },
+                requires: &[],
+            },
+        ],
+        buys: &[ShopBuys { what: Buys::Item(ItemId::OrcTusk), pays: &[ItemStack::new(ItemId::Gold, 2)], requires: &[] }],
         reactions: None,
     },
 }

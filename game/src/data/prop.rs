@@ -34,6 +34,16 @@ crate::table! {
             reach: Tiles(1.5),
             responses: &[
                 Response {
+                    requires: &[&Not(&Remembers(MemoryId::FoundTatteredMap))],
+                    then: &[
+                        &GiveItems(&[ItemStack::new(ItemId::Gold, 5), ItemStack::new(ItemId::TatteredMap, 1)]),
+                        &Remember(MemoryId::TideChestLooted),
+                        &Remember(MemoryId::FoundTatteredMap),
+                        &StartConversation { node: DialogueId::TideChestMap, busy: BusyPolicy::Replace },
+                    ],
+                    news: false,
+                },
+                Response {
                     requires: &[&Not(&Remembers(MemoryId::TideChestLooted))],
                     then: &[
                         &GiveItems(&[ItemStack::new(ItemId::Gold, 5)]),
@@ -58,6 +68,20 @@ crate::table! {
             verb: Verb::Use,
             reach: Tiles(1.5),
             responses: &[Response { requires: &[], then: &[&OpenShop(ShopId::HonestyBox)], news: false }],
+            marks: &[],
+        }),
+    },
+    StandingStone: PropDef {
+        display_name: "Standing stone",
+        look: Some(AssetRef("icons/misc/rune_stone.png")),
+        interaction: Some(Interaction {
+            verb: Verb::Use,
+            reach: Tiles(1.5),
+            responses: &[Response {
+                requires: &[],
+                then: &[&StartConversation { node: DialogueId::StandingStone, busy: BusyPolicy::Replace }],
+                news: false,
+            }],
             marks: &[],
         }),
     },

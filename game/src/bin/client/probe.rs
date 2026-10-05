@@ -19,6 +19,7 @@ use game::systems::movement::Position;
 use game::systems::npc::Npc;
 use game::systems::player::{Owner, commands_locked, session};
 use game::systems::prop::Prop;
+use game::systems::quest::{QuestLog, QuestResult};
 use game::systems::shop;
 use game::systems::stat::{StatKind, Stats};
 use serde::Serialize;
@@ -43,6 +44,7 @@ struct Snapshot {
     props: Vec<Fixture>,
     items: Vec<GroundItem>,
     portals: Vec<Exit>,
+    markers: Vec<Marker>,
     walkable: Vec<Pos<Tiles>>,
     ui: Vec<UiElement>,
     covered: Vec<Cover>,
@@ -50,6 +52,28 @@ struct Snapshot {
     history: bool,
     shop: Option<Shop>,
     bag: Vec<Stack>,
+    quests: Quests,
+}
+
+#[derive(Serialize, Default)]
+struct Quests {
+    active: Vec<QuestEntry>,
+    finished: Vec<FinishedEntry>,
+    tracked: Vec<data::quest::Id>,
+}
+
+#[derive(Serialize)]
+struct QuestEntry {
+    quest: data::quest::Id,
+    ready: bool,
+    left: Option<f32>,
+    progress: Vec<[u32; 2]>,
+}
+
+#[derive(Serialize)]
+struct FinishedEntry {
+    quest: data::quest::Id,
+    result: QuestResult,
 }
 
 #[derive(Serialize, Clone, Copy)]
@@ -97,6 +121,7 @@ struct Stage {
 struct StageChoice {
     label: String,
     locked: bool,
+    rect: Option<Cover>,
 }
 
 #[derive(Serialize, Clone, Copy)]
@@ -136,6 +161,12 @@ struct Fixture {
 struct GroundItem {
     item: data::item::Id,
     count: u32,
+    at: Pos<Tiles>,
+}
+
+#[derive(Serialize)]
+struct Marker {
+    name: String,
     at: Pos<Tiles>,
 }
 
@@ -183,6 +214,7 @@ fn snapshot(world: &mut World) -> Snapshot {
         .and_then(|seen| world.get::<AreaTag>(seen))
         .map(|tag| tag.area);
     let view = view(world);
+    let rows = choice_rows(world);
     Snapshot {
         stage: stage::view(world).map(|view| Stage {
             node: view.node,
@@ -194,9 +226,11 @@ fn snapshot(world: &mut World) -> Snapshot {
             choices: view
                 .choices
                 .into_iter()
-                .map(|choice| StageChoice {
+                .enumerate()
+                .map(|(index, choice)| StageChoice {
                     label: choice.label,
                     locked: choice.locked,
+                    rect: rows.get(&index).copied(),
                 })
                 .collect(),
             waiting: view.waiting,
@@ -239,18 +273,54 @@ fn snapshot(world: &mut World) -> Snapshot {
                     .collect()
             })
             .unwrap_or_default(),
+        quests: viewpoint
+            .and_then(|seen| quests(world, seen))
+            .unwrap_or_default(),
         me: me.and_then(|me| body(world, me)),
         viewpoint: viewpoint.and_then(|seen| body(world, seen)),
         actors: actors(world, me, area),
         props: props(world, area),
         items: items(world, area),
         portals: portals(world, me),
+        markers: markers(world, me),
         walkable: walkable(world, me, view),
         ui: ui(world),
         covered: covered(world),
         view,
         area,
     }
+}
+
+fn quests(world: &World, seen: Entity) -> Option<Quests> {
+    let log = world.get::<QuestLog>(seen)?;
+    let inventory = world.get::<Inventory>(seen);
+    Some(Quests {
+        active: log
+            .active
+            .iter()
+            .map(|active| QuestEntry {
+                quest: active.quest,
+                ready: active.ready,
+                left: active.left.map(|left| left.0),
+                progress: active
+                    .quest
+                    .get()
+                    .progress(active, inventory)
+                    .iter()
+                    .map(|progress| [progress.have, progress.need])
+                    .collect(),
+            })
+            .collect(),
+        finished: log
+            .finished
+            .iter()
+            .map(|finished| FinishedEntry {
+                quest: finished.quest,
+                result: finished.result,
+            })
+            .collect(),
+        tracked: log.tracked.clone(),
+    })
 }
 
 fn view(world: &mut World) -> Option<View> {
@@ -360,6 +430,22 @@ fn portals(world: &World, me: Option<Entity>) -> Vec<Exit> {
         .unwrap_or_default()
 }
 
+fn markers(world: &World, me: Option<Entity>) -> Vec<Marker> {
+    let Some(area) = me.and_then(|me| area::of(world, me)) else {
+        return Vec::new();
+    };
+    let mut markers: Vec<Marker> = area
+        .markers
+        .iter()
+        .map(|(name, marker)| Marker {
+            name: name.clone(),
+            at: marker.center(),
+        })
+        .collect();
+    markers.sort_by(|a, b| a.name.cmp(&b.name));
+    markers
+}
+
 fn walkable(world: &mut World, me: Option<Entity>, view: Option<View>) -> Vec<Pos<Tiles>> {
     let (Some(area), Some(view)) = (me.and_then(|me| area::of(world, me)), view) else {
         return Vec::new();
@@ -438,6 +524,26 @@ fn ui(world: &mut World) -> Vec<UiElement> {
         .collect()
 }
 
+fn choice_rows(world: &mut World) -> HashMap<usize, Cover> {
+    world
+        .query::<(&ui::ChoiceRow, &ComputedNode, &UiGlobalTransform)>()
+        .iter(world)
+        .map(|(row, node, transform)| (row.index, rect_of(node, transform)))
+        .collect()
+}
+
+fn rect_of(node: &ComputedNode, transform: &UiGlobalTransform) -> Cover {
+    let scale = node.inverse_scale_factor();
+    let size = node.size() * scale;
+    let min = transform.translation * scale - size / 2.0;
+    Cover {
+        x: min.x,
+        y: min.y,
+        width: size.x,
+        height: size.y,
+    }
+}
+
 fn covered(world: &mut World) -> Vec<Cover> {
     let blocking: HashMap<Entity, Cover> = world
         .query::<(
@@ -453,18 +559,7 @@ fn covered(world: &mut World) -> Vec<Cover> {
                 && node.size().min_element() > 0.0
                 && pickable.is_none_or(|pickable| pickable.is_hoverable)
         })
-        .map(|(entity, node, transform, ..)| {
-            let scale = node.inverse_scale_factor();
-            let size = node.size() * scale;
-            let min = transform.translation * scale - size / 2.0;
-            let rect = Cover {
-                x: min.x,
-                y: min.y,
-                width: size.x,
-                height: size.y,
-            };
-            (entity, rect)
-        })
+        .map(|(entity, node, transform, ..)| (entity, rect_of(node, transform)))
         .collect();
     let ancestors = |entity: Entity| {
         std::iter::successors(world.get::<ChildOf>(entity).map(ChildOf::parent), |&up| {

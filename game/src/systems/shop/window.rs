@@ -563,11 +563,13 @@ fn counted(name: &str, count: u32) -> String {
 }
 
 fn verdict(world: &World, stack: ItemStack) -> Option<SlotVerdict> {
-    let shop = shown(world)?.shop;
-    Some(match shop.get().pays_for(stack.item) {
-        Ok(pays) => SlotVerdict::Wanted(format!("sells for {}", paid(pays, stack.count))),
-        Err(refusal) => SlotVerdict::Refused(refusal),
-    })
+    let window = shown(world)?;
+    Some(
+        match window.shop.get().pays_for(stack.item, &window.declined) {
+            Ok(pays) => SlotVerdict::Wanted(format!("sells for {}", paid(pays, stack.count))),
+            Err(refusal) => SlotVerdict::Refused(refusal),
+        },
+    )
 }
 
 fn paid(pays: &[ItemStack], count: u32) -> String {
@@ -586,7 +588,8 @@ fn request_sale(world: &mut World, slot: u32) {
     if *world.resource::<Mode>() != Mode::Play {
         return;
     }
-    let Some(shop) = shown(world).map(|window| window.shop) else {
+    let Some((shop, declined)) = shown(world).map(|window| (window.shop, window.declined.clone()))
+    else {
         return;
     };
     let Some(stack) = world
@@ -597,7 +600,7 @@ fn request_sale(world: &mut World, slot: u32) {
     else {
         return;
     };
-    match shop.get().pays_for(stack.item) {
+    match shop.get().pays_for(stack.item, &declined) {
         Ok(pays) if stack.item.get().category() == ItemCategory::Equipment => {
             confirm_sale(world, shop, stack, pays, slot);
         }

@@ -180,6 +180,11 @@ crate::table! {
             reach: Tiles(2.0),
             responses: &[
                 Response {
+                    requires: &[&Remembers(MemoryId::SidedWithOrcs)],
+                    then: &[&StartConversation { node: DialogueId::MaraCold, busy: BusyPolicy::Replace }],
+                    news: false,
+                },
+                Response {
                     requires: &[],
                     then: &[&StartConversation { node: DialogueId::MaraHello, busy: BusyPolicy::Replace }],
                     news: false,
@@ -418,6 +423,49 @@ crate::table! {
                 Response {
                     requires: &[],
                     then: &[&StartConversation { node: DialogueId::IlsaHello, busy: BusyPolicy::Replace }],
+                    news: false,
+                },
+            ],
+            marks: &[],
+        }),
+        notices: &[],
+    },
+    Ugra: NpcDef {
+        display_name: "Ugra",
+        role: Some("Clan Shaman"),
+        attitude: Attitude::Friendly,
+        respawn: Some(Seconds(300.0)),
+        model: ModelId::Ugra,
+        tint: Rgba(0xffffffff),
+        ai: &Stands,
+        stats: &[
+            StatKind::Health.of(40.0),
+            StatKind::MaxHealth.of(40.0),
+            StatKind::Damage.of(4.0),
+            StatKind::AttackSpeed.of(1.0),
+            StatKind::AttackDelay.of(400.0),
+            StatKind::Range.of(1.0),
+            StatKind::MovementSpeed.of(0.6),
+        ],
+        aggro: Tiles(6.0),
+        rewards: &[],
+        interaction: Some(Interaction {
+            verb: Verb::Talk,
+            reach: Tiles(2.0),
+            responses: &[
+                Response {
+                    requires: &[&Remembers(MemoryId::SpurnedUgra)],
+                    then: &[&StartConversation { node: DialogueId::UgraSilent, busy: BusyPolicy::Replace }],
+                    news: false,
+                },
+                Response {
+                    requires: &[&Remembers(MemoryId::SidedWithOrcs)],
+                    then: &[&StartConversation { node: DialogueId::UgraFriend, busy: BusyPolicy::Replace }],
+                    news: false,
+                },
+                Response {
+                    requires: &[],
+                    then: &[&StartConversation { node: DialogueId::UgraHello, busy: BusyPolicy::Replace }],
                     news: false,
                 },
             ],

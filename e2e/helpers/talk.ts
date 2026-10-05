@@ -64,8 +64,22 @@ export async function readToChoices(page: Page, pauseMs = 900): Promise<Stage> {
   }
 }
 
+// The same words can show elsewhere on screen (a quest title on the tracker), so only the choice row counts.
 export async function pick(page: Page, label: string): Promise<void> {
-  await clickUi(page, label);
+  const row = await waitFor(
+    page,
+    ({ stage }) => stage?.choices.find((choice) => choice.label === label)?.rect,
+    `no choice ${label}`,
+  );
+  await clickUi(
+    page,
+    (element) =>
+      element.text === label &&
+      element.y >= row.y &&
+      element.y + element.height <= row.y + row.height + 1 &&
+      element.x >= row.x &&
+      element.x <= row.x + row.width,
+  );
 }
 
 export async function conversationOver(page: Page): Promise<void> {

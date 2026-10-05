@@ -15,7 +15,9 @@ use crate::systems::dialogue::Conversation;
 use crate::systems::item::Inventory;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::{ClientId, CommandLock, Owner, Players};
+use crate::systems::quest::QuestLog;
 use crate::systems::rule::{self, Requirement};
+use crate::systems::shop::ShopWindow;
 use crate::systems::spectate::Spectators;
 
 pub const VIEW_DISTANCE: Tiles = Tiles(24.0);
@@ -140,7 +142,14 @@ pub struct OwnedBy(pub ClientId);
 
 impl VisibilityFilter for OwnedBy {
     type ClientComponent = PrivateSight;
-    type Scope = (Inventory, Conversation, CommandLock, Attention);
+    type Scope = (
+        Inventory,
+        Conversation,
+        CommandLock,
+        Attention,
+        ShopWindow,
+        QuestLog,
+    );
 
     fn is_visible(&self, _: Entity, sight: Option<&PrivateSight>) -> bool {
         sight.is_some_and(|sight| sight.own == self.0 || sight.watching == Some(self.0))

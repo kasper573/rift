@@ -21,12 +21,13 @@ use crate::systems::area::{self, AreaTag};
 use crate::systems::effect::{self, Effect, TimedEffect, TimedEffects};
 use crate::systems::equipment;
 use crate::systems::movement::{Position, position};
+use crate::systems::notice::{self, NoticeTone};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, commands_locked, conn_player, sender_player};
 use crate::systems::reach::{self, Pursuit, ReachAct};
-use crate::systems::rule::{Outcome, Requirement, RuleContext};
+use crate::systems::rule::{Encounter, Outcome, Requirement, RuleContext, Terms};
 use crate::systems::stat;
-use crate::systems::visibility::{self, seen_by};
+use crate::systems::visibility::{self, Presence, seen_by};
 
 pub const INVENTORY_MAX: u32 = 25;
 const RESERVATION_TTL: Seconds = Seconds(60.0);
@@ -313,7 +314,7 @@ impl ItemDef {
         match self.kind {
             ItemKind::Consumable { .. } => ItemCategory::Consumable,
             ItemKind::Equipment { .. } => ItemCategory::Equipment,
-            ItemKind::Resource => ItemCategory::Material,
+            ItemKind::Resource | ItemKind::Usable { .. } => ItemCategory::Material,
         }
     }
 
@@ -330,6 +331,7 @@ impl ItemDef {
             ItemKind::Equipment { slot, requirements } => {
                 ctx.equip(*slot, requirements);
             }
+            ItemKind::Usable { then } => ctx.settle(then),
             ItemKind::Resource => {}
         }
     }
@@ -343,6 +345,9 @@ pub enum ItemKind {
     Equipment {
         slot: equipment::EquipmentSlot,
         requirements: &'static [&'static dyn Requirement],
+    },
+    Usable {
+        then: &'static [&'static dyn Outcome],
     },
     Resource,
 }
@@ -381,6 +386,16 @@ impl UseCtx<'_> {
     }
     pub fn apply_effects(&mut self, duration: Seconds) {
         instantiate_effects(self.world, self.actor, self.item, duration);
+    }
+    pub fn settle(&mut self, then: &'static [&'static dyn Outcome]) {
+        let terms = Terms {
+            requires: &[],
+            costs: &[],
+            outcomes: then,
+        };
+        if let Err(refusal) = terms.settle(self.world, self.actor, Encounter::default()) {
+            notice::tell(self.world, self.actor, refusal.0, NoticeTone::Bad);
+        }
     }
     pub fn equip(
         &mut self,
@@ -438,7 +453,13 @@ pub fn drop_item(world: &mut World) {
         let Some(slot) = removed else {
             continue;
         };
-        scatter_drop(world, player, &[(slot.item, slot.count)], ReservedBy::None);
+        scatter_drop(
+            world,
+            player,
+            &[(slot.item, slot.count)],
+            ReservedBy::None,
+            None,
+        );
     }
 }
 
@@ -513,6 +534,7 @@ pub fn scatter_drop(
     source: Entity,
     drops: &[(Id, u32)],
     reserved_by: ReservedBy,
+    presence: Option<Presence>,
 ) {
     if drops.is_empty() {
         return;
@@ -543,9 +565,12 @@ pub fn scatter_drop(
                 },
             ))
             .id();
+        if let Some(presence) = presence {
+            world.entity_mut(entity).insert(presence);
+        }
         items.push(entity);
     }
-    for client in seen_by(world, source) {
+    for client in seen_by(world, items[0]) {
         world.write_message(ToClients {
             targets: SendTargets::Single(bevy_replicon::prelude::ClientId::Client(client)),
             message: ItemsDropped {

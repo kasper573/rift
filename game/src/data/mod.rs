@@ -7,6 +7,7 @@ pub mod memory;
 pub mod model;
 pub mod npc;
 pub mod prop;
+pub mod quest;
 pub mod sfx;
 pub mod shop;
 pub mod terminal;

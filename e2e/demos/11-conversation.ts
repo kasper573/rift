@@ -26,8 +26,12 @@ test(
       await caption(page, "Tobb has news for you — it waits its turn, shown on the frame", { at: "top" });
       await page.waitForTimeout(2500);
       await caption(page, "↑ ↓ choose and Enter picks", { at: "top" });
-      await page.keyboard.press("ArrowDown");
-      await page.waitForTimeout(700);
+      const { stage } = await probe(page);
+      const catchIndex = stage!.choices.findIndex((choice) => choice.label === "Caught anything good today?");
+      for (let step = 0; step <= catchIndex; step++) {
+        await page.keyboard.press("ArrowDown");
+        await page.waitForTimeout(500);
+      }
       await page.keyboard.press("ArrowUp");
       await page.waitForTimeout(700);
       await page.keyboard.press("Enter");
