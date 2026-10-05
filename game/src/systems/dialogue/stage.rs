@@ -689,7 +689,19 @@ fn cast_members(world: &World) -> Vec<CastMember> {
     }
     let mut seen = std::collections::HashSet::new();
     speakers.retain(|who| seen.insert(*who));
+    speakers.retain(|&who| busts_of(who).is_some());
     let assets = world.resource::<AssetServer>();
+    let fronts: Vec<Speaker> = [Side::Left, Side::Right]
+        .into_iter()
+        .filter_map(|side| {
+            let mut standing = speakers.iter().filter(|&&who| side_of(who) == side);
+            standing
+                .clone()
+                .find(|&&who| who == current.by)
+                .or_else(|| standing.next())
+                .copied()
+        })
+        .collect();
     speakers
         .into_iter()
         .filter_map(|who| {
@@ -707,7 +719,7 @@ fn cast_members(world: &World) -> Vec<CastMember> {
                 key: cast_key(who),
                 image: bust_image(assets, bust.art),
                 side: side_of(who),
-                depth: if lit {
+                depth: if fronts.contains(&who) {
                     CastDepth::Front
                 } else {
                     CastDepth::Back
