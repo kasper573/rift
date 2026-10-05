@@ -91,6 +91,7 @@ services:
       interval: 3s
       timeout: 5s
       retries: 20
+      start_period: 5m
 
   postgres:
     env_file: *env_files
