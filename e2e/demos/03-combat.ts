@@ -12,6 +12,7 @@ import {
   waitFor,
   type Body,
   type GroundItem,
+  type Snapshot,
 } from "../helpers/game";
 
 test(
@@ -52,18 +53,19 @@ async function slay(page: Page): Promise<GroundItem[]> {
     "no monster to fight",
   );
   const live = (actors: Body[]) => actors.find((actor) => actor.id === foe.id && isAliveMonster(actor));
-  await travelTo(page, ({ actors }) => live(actors)?.aim);
   let fell = foe.at;
-  await waitFor(
-    page,
-    ({ actors }) => {
-      const it = live(actors);
-      if (it) fell = it.at;
-      return !it;
-    },
-    "the monster never fell",
-    60_000,
-  );
+  const fallen = ({ actors }: Snapshot) => {
+    const it = live(actors);
+    if (it) fell = it.at;
+    return !it;
+  };
+  const deadline = Date.now() + 60_000;
+  while (!fallen(await probe(page))) {
+    if (Date.now() > deadline) throw new Error("the monster never fell");
+    // A moving monster can slip out from under the click, so it is clicked again until it falls.
+    await travelTo(page, ({ actors }) => live(actors)?.aim).catch(() => undefined);
+    await waitFor(page, fallen, "the monster is still standing", 8_000).catch(() => undefined);
+  }
   await page.waitForTimeout(1500);
   return (await probe(page)).items.filter((item) => distance(item.at, fell) < 2.5);
 }
