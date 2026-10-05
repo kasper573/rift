@@ -15,6 +15,7 @@ pub mod movement;
 pub mod npc;
 pub mod player;
 pub mod rewards;
+pub mod rule;
 pub mod scene;
 pub mod settings;
 pub mod spectate;

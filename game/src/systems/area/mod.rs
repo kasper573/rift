@@ -27,14 +27,7 @@ pub fn register(app: &mut App) {
 
 impl bevy_terminal::CommandArg for Id {
     fn parse(name: &str, raw: Option<&str>) -> Result<Id, String> {
-        use strum::VariantArray;
-
-        let raw = bevy_terminal::require_arg(name, raw)?;
-        Id::VARIANTS
-            .iter()
-            .copied()
-            .find(|id| format!("{id:?}").eq_ignore_ascii_case(raw))
-            .ok_or_else(|| format!("`{raw}` is not a known area"))
+        crate::core::table::parse_id(name, raw, "area")
     }
 }
 

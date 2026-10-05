@@ -19,10 +19,11 @@ use crate::core::time::{Seconds, WallClock};
 use crate::data::item::Id;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::effect::{self, Effect, TimedEffect, TimedEffects};
-use crate::systems::equipment::{self, Requirement};
+use crate::systems::equipment;
 use crate::systems::movement::{MoveTarget, Position, approach, forget, position};
 use crate::systems::npc::Npc;
-use crate::systems::player::{ClientId, Owner, sender_player};
+use crate::systems::player::{ClientId, Owner, conn_player, sender_player};
+use crate::systems::rule::{Outcome, Requirement, RuleContext};
 use crate::systems::stat;
 use crate::systems::visibility::seen_by;
 
@@ -48,14 +49,46 @@ pub fn register(app: &mut App) {
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Inventory {
-    pub slots: Vec<InventorySlot>,
+    pub slots: Vec<ItemStack>,
     pub max: u32,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct InventorySlot {
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ItemStack {
     pub item: Id,
     pub count: u32,
+}
+
+impl ItemStack {
+    pub const fn new(item: Id, count: u32) -> ItemStack {
+        ItemStack { item, count }
+    }
+
+    pub fn describe(self) -> String {
+        format!("{} {}", self.count, self.item.get().display_name)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExchangeRefusal {
+    Missing(ItemStack),
+    NoRoom { slots: u32 },
+}
+
+impl ExchangeRefusal {
+    pub fn describe(self) -> String {
+        match self {
+            ExchangeRefusal::Missing(stack) => {
+                format!(
+                    "Needs {} more {}",
+                    stack.count,
+                    stack.item.get().display_name
+                )
+            }
+            ExchangeRefusal::NoRoom { slots: 1 } => "Needs 1 free slot".to_owned(),
+            ExchangeRefusal::NoRoom { slots } => format!("Needs {slots} free slots"),
+        }
+    }
 }
 
 impl Inventory {
@@ -66,19 +99,50 @@ impl Inventory {
         }
     }
 
-    pub fn capacity_for(&self, item: Id) -> u32 {
-        let stack_max = item.get().stack_max();
-        let in_existing: u32 = self
-            .slots
+    pub fn count(&self, item: Id) -> u32 {
+        self.slots
             .iter()
             .filter(|slot| slot.item == item)
-            .map(|slot| stack_max.saturating_sub(slot.count))
-            .sum();
-        let free_slots = (self.max as usize).saturating_sub(self.slots.len()) as u32;
-        in_existing + free_slots * stack_max
+            .fold(0, |total, slot| total.saturating_add(slot.count))
     }
 
-    pub fn add(&mut self, item: Id, mut count: u32) {
+    pub fn free_slots(&self) -> u32 {
+        self.max.saturating_sub(self.slots.len() as u32)
+    }
+
+    pub fn exchange(
+        &mut self,
+        takes: &[ItemStack],
+        gives: &[ItemStack],
+    ) -> Result<(), ExchangeRefusal> {
+        let mut next = self.clone();
+        for take in merged(takes) {
+            let held = next.count(take.item);
+            if held < take.count {
+                return Err(ExchangeRefusal::Missing(ItemStack::new(
+                    take.item,
+                    take.count - held,
+                )));
+            }
+            next.remove(take);
+        }
+        let mut unbounded = next.clone();
+        unbounded.max = u32::MAX;
+        for give in gives {
+            unbounded.add(give.item, give.count);
+        }
+        let needed = unbounded.slots.len() as u32;
+        if needed > next.max {
+            return Err(ExchangeRefusal::NoRoom {
+                slots: needed - next.max,
+            });
+        }
+        *self = unbounded;
+        self.max = next.max;
+        Ok(())
+    }
+
+    fn add(&mut self, item: Id, mut count: u32) {
         let stack_max = item.get().stack_max();
         for slot in self.slots.iter_mut().filter(|slot| slot.item == item) {
             if count == 0 {
@@ -90,10 +154,39 @@ impl Inventory {
         }
         while count > 0 && (self.slots.len() as u32) < self.max {
             let take = stack_max.min(count);
-            self.slots.push(InventorySlot { item, count: take });
+            self.slots.push(ItemStack::new(item, take));
             count -= take;
         }
     }
+
+    fn remove(&mut self, stack: ItemStack) {
+        let mut left = stack.count;
+        for slot in self
+            .slots
+            .iter_mut()
+            .rev()
+            .filter(|slot| slot.item == stack.item)
+        {
+            let take = slot.count.min(left);
+            slot.count -= take;
+            left -= take;
+        }
+        self.slots.retain(|slot| slot.count > 0);
+    }
+}
+
+fn merged(stacks: &[ItemStack]) -> Vec<ItemStack> {
+    let mut merged: Vec<ItemStack> = Vec::new();
+    for stack in stacks {
+        match merged
+            .iter_mut()
+            .find(|existing| existing.item == stack.item)
+        {
+            Some(existing) => existing.count = existing.count.saturating_add(stack.count),
+            None => merged.push(*stack),
+        }
+    }
+    merged
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,11 +264,21 @@ pub struct ItemDef {
     pub stackable: Option<Stackable>,
     pub effects: &'static [Effect],
     pub kind: ItemKind,
+    pub flags: &'static [ItemFlag],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemFlag {
+    Quest,
 }
 
 impl ItemDef {
     pub fn stack_max(&self) -> u32 {
         self.stackable.map_or(1, |stackable| stackable.max)
+    }
+
+    pub fn has(&self, flag: ItemFlag) -> bool {
+        self.flags.contains(&flag)
     }
 
     fn use_from(&self, ctx: &mut UseCtx) {
@@ -203,7 +306,7 @@ pub enum ItemKind {
     },
     Equipment {
         slot: equipment::EquipmentSlot,
-        requirements: &'static [Requirement],
+        requirements: &'static [&'static dyn Requirement],
     },
     Resource,
 }
@@ -243,7 +346,11 @@ impl UseCtx<'_> {
     pub fn apply_effects(&mut self, duration: Seconds) {
         instantiate_effects(self.world, self.actor, self.item, duration);
     }
-    pub fn equip(&mut self, into: equipment::EquipmentSlot, requirements: &[Requirement]) {
+    pub fn equip(
+        &mut self,
+        into: equipment::EquipmentSlot,
+        requirements: &'static [&'static dyn Requirement],
+    ) {
         equipment::equip(self.world, self.actor, self.slot, into, requirements);
     }
 }
@@ -282,7 +389,12 @@ pub fn drop_item(world: &mut World) {
         }
         let slot = request.message.slot as usize;
         let removed = match world.get_mut::<Inventory>(player) {
-            Some(mut inventory) if slot < inventory.slots.len() => {
+            Some(mut inventory)
+                if inventory
+                    .slots
+                    .get(slot)
+                    .is_some_and(|stack| !stack.item.get().has(ItemFlag::Quest)) =>
+            {
                 Some(inventory.slots.remove(slot))
             }
             _ => None,
@@ -468,16 +580,19 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
         .get::<Reservation>(item)
         .map_or(ReservedBy::None, |reservation| reservation.by);
     let account = world.get::<Owner>(player).map(|owner| owner.client);
-    let fits = world
-        .get::<Inventory>(player)
-        .is_some_and(|inventory| inventory.capacity_for(drop.item) >= drop.count);
-    if !reserved.allows(account) || !fits {
+    if !reserved.allows(account) {
         return;
     }
-    if let Some(mut inventory) = world.get_mut::<Inventory>(player) {
-        inventory.add(drop.item, drop.count);
+    let collected = world
+        .get_mut::<Inventory>(player)
+        .is_some_and(|mut inventory| {
+            inventory
+                .exchange(&[], &[ItemStack::new(drop.item, drop.count)])
+                .is_ok()
+        });
+    if collected {
+        world.entity_mut(item).despawn();
     }
-    world.entity_mut(item).despawn();
 }
 
 fn instantiate_effects(world: &mut World, actor: Entity, item: Id, duration: Seconds) {
@@ -506,4 +621,75 @@ fn scatter_pos(from: Pos<Tiles>, index: usize, count: usize, area: &area::Area) 
     let angle = std::f32::consts::TAU * index as f32 / count as f32;
     let spread = from + Offset::new(angle.cos() * DROP_RADIUS.0, angle.sin() * DROP_RADIUS.0);
     area.grid.nearest_walkable(spread).unwrap_or(rest)
+}
+
+pub struct Holding(pub ItemStack);
+
+impl Requirement for Holding {
+    fn met(&self, world: &World, player: Entity) -> bool {
+        world
+            .get::<Inventory>(player)
+            .is_some_and(|inventory| inventory.count(self.0.item) >= self.0.count)
+    }
+
+    fn describe(&self) -> String {
+        self.0.describe()
+    }
+}
+
+pub struct FreeSlots(pub u32);
+
+impl Requirement for FreeSlots {
+    fn met(&self, world: &World, player: Entity) -> bool {
+        world
+            .get::<Inventory>(player)
+            .is_some_and(|inventory| inventory.free_slots() >= self.0)
+    }
+
+    fn describe(&self) -> String {
+        match self.0 {
+            1 => "1 free slot".to_owned(),
+            slots => format!("{slots} free slots"),
+        }
+    }
+}
+
+pub struct GiveItems(pub &'static [ItemStack]);
+
+impl Outcome for GiveItems {
+    fn apply(&self, _ctx: &mut RuleContext) {}
+
+    fn gives(&self) -> &[ItemStack] {
+        self.0
+    }
+}
+
+impl bevy_terminal::CommandArg for Id {
+    fn parse(name: &str, raw: Option<&str>) -> Result<Id, String> {
+        crate::core::table::parse_id(name, raw, "item")
+    }
+}
+
+/// Give items to a player.
+#[bevy_terminal::command(name = "give", access = crate::systems::account::role::is_admin)]
+fn give(
+    world: &mut World,
+    ctx: &bevy_terminal::CommandCtx,
+    item: Id,
+    count: Option<u32>,
+    user: Option<String>,
+) -> Result<String, String> {
+    let target = match &user {
+        Some(user) => crate::systems::player::by_user(world, user)
+            .ok_or_else(|| format!("no player with user id `{user}` in your area"))?,
+        None => conn_player(world, ctx.conn).ok_or_else(|| "you have no player".to_owned())?,
+    };
+    let stack = ItemStack::new(item, count.unwrap_or(1));
+    let mut inventory = world
+        .get_mut::<Inventory>(target)
+        .ok_or_else(|| "the player has no bag".to_owned())?;
+    inventory
+        .exchange(&[], &[stack])
+        .map_err(ExchangeRefusal::describe)?;
+    Ok(format!("gave {}", stack.describe()))
 }

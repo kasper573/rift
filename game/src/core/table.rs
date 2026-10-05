@@ -32,3 +32,16 @@ macro_rules! table {
 }
 
 pub use table;
+
+pub fn parse_id<Id: strum::VariantArray + std::fmt::Debug + Copy>(
+    name: &str,
+    raw: Option<&str>,
+    kind: &str,
+) -> Result<Id, String> {
+    let raw = bevy_terminal::require_arg(name, raw)?;
+    Id::VARIANTS
+        .iter()
+        .copied()
+        .find(|id| format!("{id:?}").eq_ignore_ascii_case(raw))
+        .ok_or_else(|| format!("`{raw}` is not a known {kind}"))
+}

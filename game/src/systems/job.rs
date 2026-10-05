@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::data;
 use crate::systems::effect::{self, Effect};
 use crate::systems::player::Xp;
+use crate::systems::rule::Requirement;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -56,4 +57,30 @@ fn level_effects(world: &World, entity: Entity) -> Vec<Effect> {
         .take(level)
         .flat_map(|tier| tier.effects.iter().copied())
         .collect()
+}
+
+pub struct MinLevel(pub u32);
+
+impl Requirement for MinLevel {
+    fn met(&self, world: &World, player: Entity) -> bool {
+        level(world, player) >= self.0
+    }
+
+    fn describe(&self) -> String {
+        format!("Level {}", self.0)
+    }
+}
+
+pub struct IsJob(pub data::job::Id);
+
+impl Requirement for IsJob {
+    fn met(&self, world: &World, player: Entity) -> bool {
+        world
+            .get::<Job>(player)
+            .is_some_and(|job| job.def == self.0)
+    }
+
+    fn describe(&self) -> String {
+        self.0.get().name.to_owned()
+    }
 }

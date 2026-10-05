@@ -9,10 +9,9 @@ use strum::{IntoStaticStr, VariantArray};
 
 use crate::data;
 use crate::systems::effect::{self, Effect};
-use crate::systems::item::Inventory;
-use crate::systems::job;
+use crate::systems::item::{Inventory, ItemStack};
 use crate::systems::player::sender_player;
-use crate::systems::stat::{self, StatKind};
+use crate::systems::rule::{self, Requirement};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -63,37 +62,12 @@ impl EquipmentSlot {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum Requirement {
-    Level(u32),
-    Job(data::job::Id),
-    Stat { stat: StatKind, min: f32 },
-}
-
-impl Requirement {
-    pub fn met(self, world: &World, player: Entity) -> bool {
-        match self {
-            Requirement::Level(level) => job::level(world, player) >= level,
-            Requirement::Job(job) => world
-                .get::<job::Job>(player)
-                .is_some_and(|held| held.def == job),
-            Requirement::Stat { stat, min } => stat::effective(world, player, stat) >= min,
-        }
-    }
-}
-
-pub fn met(world: &World, player: Entity, requirements: &[Requirement]) -> bool {
-    requirements
-        .iter()
-        .all(|requirement| requirement.met(world, player))
-}
-
 pub fn equip(
     world: &mut World,
     player: Entity,
     inv_slot: usize,
     into: EquipmentSlot,
-    requirements: &[Requirement],
+    requirements: &'static [&'static dyn Requirement],
 ) {
     let Some(item) = world
         .get::<Inventory>(player)
@@ -101,7 +75,7 @@ pub fn equip(
     else {
         return;
     };
-    if !met(world, player, requirements) {
+    if !rule::met(world, player, requirements) {
         return;
     }
     let occupant = world
@@ -110,7 +84,9 @@ pub fn equip(
     if let Some(mut inventory) = world.get_mut::<Inventory>(player) {
         inventory.slots.remove(inv_slot);
         if let Some(occupant) = occupant {
-            inventory.add(occupant, 1);
+            inventory
+                .exchange(&[], &[ItemStack::new(occupant, 1)])
+                .expect("the equipped item's slot was just freed");
         }
     }
     if let Some(mut equipment) = world.get_mut::<Equipment>(player) {
@@ -130,17 +106,13 @@ pub fn unequip(world: &mut World) {
         else {
             continue;
         };
-        if world
-            .get::<Inventory>(player)
-            .is_none_or(|inventory| inventory.capacity_for(item) < 1)
-        {
-            continue;
-        }
-        if let Some(mut equipment) = world.get_mut::<Equipment>(player) {
+        let stored = world
+            .get_mut::<Inventory>(player)
+            .is_some_and(|mut inventory| {
+                inventory.exchange(&[], &[ItemStack::new(item, 1)]).is_ok()
+            });
+        if stored && let Some(mut equipment) = world.get_mut::<Equipment>(player) {
             equipment.slots.remove(&slot);
-        }
-        if let Some(mut inventory) = world.get_mut::<Inventory>(player) {
-            inventory.add(item, 1);
         }
     }
 }
@@ -156,4 +128,18 @@ fn equipped(world: &World, entity: Entity) -> Vec<Effect> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+pub struct Wearing(pub data::item::Id);
+
+impl Requirement for Wearing {
+    fn met(&self, world: &World, player: Entity) -> bool {
+        world
+            .get::<Equipment>(player)
+            .is_some_and(|equipment| equipment.slots.values().any(|&item| item == self.0))
+    }
+
+    fn describe(&self) -> String {
+        format!("{} worn", self.0.get().display_name)
+    }
 }

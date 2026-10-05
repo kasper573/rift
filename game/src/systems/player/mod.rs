@@ -104,6 +104,15 @@ pub(crate) fn sender_player(
     conn_player(world, sender.entity()?)
 }
 
+pub fn by_user(world: &mut World, user: &str) -> Option<Entity> {
+    let client: ClientId = world
+        .query::<(&ClientId, &Identity)>()
+        .iter(world)
+        .find(|(_, identity)| identity.id == user)
+        .map(|(&client, _)| client)?;
+    world.resource::<Players>().0.get(&client).copied()
+}
+
 pub(crate) fn conn_player(world: &World, conn: Entity) -> Option<Entity> {
     let client = world.get::<ClientId>(conn)?;
     world.resource::<Players>().0.get(client).copied()
@@ -321,4 +330,24 @@ pub fn respawn(world: &mut World) {
         }
         forget(world, entity);
     }
+}
+
+/// Grant experience to a player.
+#[bevy_terminal::command(name = "xp", access = crate::systems::account::role::is_admin)]
+fn grant_xp(
+    world: &mut World,
+    ctx: &bevy_terminal::CommandCtx,
+    amount: u32,
+    user: Option<String>,
+) -> Result<String, String> {
+    let target = match &user {
+        Some(user) => by_user(world, user)
+            .ok_or_else(|| format!("no player with user id `{user}` in your area"))?,
+        None => conn_player(world, ctx.conn).ok_or_else(|| "you have no player".to_owned())?,
+    };
+    let mut xp = world
+        .get_mut::<Xp>(target)
+        .ok_or_else(|| "the player has no experience".to_owned())?;
+    xp.gain(amount);
+    Ok(format!("granted {amount} xp, now {}", xp.amount))
 }

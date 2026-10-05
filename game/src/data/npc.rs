@@ -24,6 +24,7 @@ crate::table! {
         aggro: Tiles(7.0),
         rewards: &[
             Reward::Xp(12),
+            Reward::Item { item: ItemId::Gold, chance: None, amount: 3 },
             Reward::Item { item: ItemId::HealthPotion, chance: None, amount: 1 },
             Reward::Item { item: ItemId::OrcTusk, chance: Some(50.0), amount: 1 },
         ]
@@ -45,6 +46,7 @@ crate::table! {
         aggro: Tiles(9.0),
         rewards: &[
             Reward::Xp(40),
+            Reward::Item { item: ItemId::Gold, chance: None, amount: 12 },
             Reward::Item { item: ItemId::GreaterHealthPotion, chance: Some(75.0), amount: 1 },
             Reward::Item { item: ItemId::OrcTusk, chance: None, amount: 1 },
             Reward::Item { item: ItemId::TribalHelmet, chance: Some(10.0), amount: 1 },
@@ -67,6 +69,7 @@ crate::table! {
         aggro: Tiles(8.0),
         rewards: &[
             Reward::Xp(10),
+            Reward::Item { item: ItemId::Gold, chance: Some(70.0), amount: 2 },
             Reward::Item { item: ItemId::Bone, chance: Some(80.0), amount: 2 },
             Reward::Item { item: ItemId::RustySword, chance: Some(15.0), amount: 1 },
             Reward::Item { item: ItemId::BoneShield, chance: Some(2.5), amount: 1 },
@@ -90,6 +93,7 @@ crate::table! {
         aggro: Tiles(5.0),
         rewards: &[
             Reward::Xp(4),
+            Reward::Item { item: ItemId::Gold, chance: Some(50.0), amount: 1 },
             Reward::Item { item: ItemId::BatWing, chance: Some(65.0), amount: 4 },
         ],
     },
@@ -110,6 +114,7 @@ crate::table! {
         aggro: Tiles(8.0),
         rewards: &[
             Reward::Xp(8),
+            Reward::Item { item: ItemId::Gold, chance: Some(60.0), amount: 2 },
             Reward::Item { item: ItemId::BatWing, chance: Some(65.0), amount: 2 },
             Reward::Item { item: ItemId::HealthPotion, chance: Some(25.0), amount: 1 },
         ]

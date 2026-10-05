@@ -12,12 +12,11 @@ use crate::core::time::Seconds;
 use bevy_terminal::{CommandCtx, command};
 
 use crate::systems::REPLICATION_PERIOD;
-use crate::systems::account::identity::Identity;
 use crate::systems::account::role;
 use crate::systems::actor::{Action, Actor, set_facing};
 use crate::systems::area;
 use crate::systems::combat::AttackTarget;
-use crate::systems::player::{ClientId, Players, conn_player, sender_player};
+use crate::systems::player::{conn_player, sender_player};
 use crate::systems::stat::{self, StatKind};
 
 pub fn register(app: &mut App) {
@@ -381,7 +380,7 @@ fn teleport(
     user: Option<String>,
 ) -> Result<String, String> {
     let target = match &user {
-        Some(user) => player_by_user(world, user)
+        Some(user) => crate::systems::player::by_user(world, user)
             .ok_or_else(|| format!("no player with user id `{user}` in your area"))?,
         None => conn_player(world, ctx.conn)
             .ok_or_else(|| "you have no player to teleport".to_owned())?,
@@ -403,15 +402,6 @@ fn teleport(
     }
     relocate(world, target, dest_area, Pos::new(x, y));
     Ok(format!("teleported to {x},{y} in {dest_area:?}"))
-}
-
-fn player_by_user(world: &mut World, user: &str) -> Option<Entity> {
-    let client: ClientId = world
-        .query::<(&ClientId, &Identity)>()
-        .iter(world)
-        .find(|(_, identity)| identity.id == user)
-        .map(|(&client, _)| client)?;
-    world.resource::<Players>().0.get(&client).copied()
 }
 
 const ORTHOGONAL: u32 = 1000;

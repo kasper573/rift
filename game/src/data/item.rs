@@ -2,11 +2,21 @@ use crate::core::assets::AssetRef;
 use crate::core::time::Seconds;
 use crate::data::sfx::Id as SfxId;
 use crate::systems::effect::Effect;
-use crate::systems::equipment::{EquipmentSlot, Requirement};
+use crate::systems::equipment::EquipmentSlot;
 use crate::systems::item::{ItemDef, ItemKind, ItemSfx, Stackable};
+use crate::systems::job::MinLevel;
 use crate::systems::stat::{Stat, StatKind};
 
 crate::table! {
+    Gold: ItemDef {
+        display_name: "Gold",
+        icon: AssetRef("icons/misc/golden_coin.png"),
+        sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
+        stackable: Some(Stackable { max: u32::MAX }),
+        effects: &[],
+        kind: ItemKind::Resource,
+        flags: &[],
+    },
     HealthPotion: ItemDef {
         display_name: "Health Potion",
         icon: AssetRef("icons/potion/red_potion.png"),
@@ -14,6 +24,7 @@ crate::table! {
         stackable: Some(Stackable { max: 10 }),
         effects: &[],
         kind: ItemKind::Consumable { health_bonus: 10.0, duration: Seconds(0.0) },
+        flags: &[],
     },
     GreaterHealthPotion: ItemDef {
         display_name: "Greater Health Potion",
@@ -22,6 +33,7 @@ crate::table! {
         stackable: Some(Stackable { max: 10 }),
         effects: &[Effect::StatModifier(Stat { kind: StatKind::Damage, value: 3.0 })],
         kind: ItemKind::Consumable { health_bonus: 25.0, duration: Seconds(30.0) },
+        flags: &[],
     },
     BatWing: ItemDef {
         display_name: "Bat Wing",
@@ -30,6 +42,7 @@ crate::table! {
         stackable: Some(Stackable { max: 50 }),
         effects: &[Effect::StatModifier(Stat { kind: StatKind::MovementSpeed, value: 0.5 })],
         kind: ItemKind::Resource,
+        flags: &[],
     },
     Bone: ItemDef {
         display_name: "Bone",
@@ -38,6 +51,7 @@ crate::table! {
         stackable: Some(Stackable { max: 50 }),
         effects: &[],
         kind: ItemKind::Resource,
+        flags: &[],
     },
     OrcTusk: ItemDef {
         display_name: "Orc Tusk",
@@ -46,6 +60,7 @@ crate::table! {
         stackable: Some(Stackable { max: 50 }),
         effects: &[],
         kind: ItemKind::Resource,
+        flags: &[],
     },
     RustySword: ItemDef {
         display_name: "Rusty Sword",
@@ -54,6 +69,7 @@ crate::table! {
         stackable: None,
         effects: &[Effect::StatModifier(Stat { kind: StatKind::Damage, value: 3.0 })],
         kind: ItemKind::Equipment { slot: EquipmentSlot::Weapon, requirements: &[] },
+        flags: &[],
     },
     BoneShield: ItemDef {
         display_name: "Bone Shield",
@@ -63,8 +79,9 @@ crate::table! {
         effects: &[Effect::StatModifier(Stat { kind: StatKind::MaxHealth, value: 5.0 })],
         kind: ItemKind::Equipment {
             slot: EquipmentSlot::Offhand,
-            requirements: &[Requirement::Level(2)],
+            requirements: &[&MinLevel(2)],
         },
+        flags: &[],
     },
     TribalHelmet: ItemDef {
         display_name: "Tribal Helmet",
@@ -77,8 +94,9 @@ crate::table! {
         ],
         kind: ItemKind::Equipment {
             slot: EquipmentSlot::Head,
-            requirements: &[Requirement::Level(3)],
+            requirements: &[&MinLevel(3)],
         },
+        flags: &[],
     },
     FruloosRock: ItemDef {
         display_name: "Just a rock",
@@ -92,5 +110,6 @@ crate::table! {
             slot: EquipmentSlot::Head,
             requirements: &[],
         },
+        flags: &[],
     },
 }
