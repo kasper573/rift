@@ -8,11 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
 use crate::core::math::{Direction, Pos};
-use crate::core::tiling::{TilePos, Tiles};
+use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
-use crate::systems::actor::{Action, Actor, Hitbox, set_action, set_facing};
+use crate::systems::actor::{self, Action, Actor, set_action, set_facing};
 use crate::systems::area::AreaTag;
-use crate::systems::movement::{MoveTarget, Path, Position, halt, on_tile, position};
+use crate::systems::movement::{MoveTarget, Path, halt, on_tile, position};
 use crate::systems::player::{Owner, commands_locked, sender_player, session};
 use crate::systems::reach::{self, Pursuit, ReachAct};
 use crate::systems::stat::{self, StatKind};
@@ -46,19 +46,9 @@ pub struct AttackRequest {
 
 pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
     let me = session::my_character(world).map(|entity| entity.id());
-    let hitboxes: Vec<(Entity, _)> = world
-        .query_filtered::<(Entity, &Position, &Hitbox), With<Actor>>()
-        .iter(world)
-        .map(|(entity, at, hitbox)| (entity, at.pos.hitbox(hitbox.size)))
-        .collect();
-    hitboxes.into_iter().find_map(|(entity, hitbox)| {
-        if Some(entity) == me
-            || stat::is_dead(world, entity)
-            || world.get::<Attitude>(entity) == Some(&Attitude::Friendly)
-        {
-            return None;
-        }
-        hitbox.contains(point).then_some(entity)
+    actor::frontmost_at(world, point, me).filter(|&entity| {
+        world.get::<Actor>(entity).is_some()
+            && world.get::<Attitude>(entity) != Some(&Attitude::Friendly)
     })
 }
 

@@ -2,6 +2,7 @@ use bevy_ecs::prelude::{Entity, World};
 
 use crate::data::dialogue::Id as DialogueId;
 use crate::systems::item::{Inventory, ItemStack};
+use crate::systems::reach::Tether;
 
 pub trait Requirement: Send + Sync {
     fn met(&self, world: &World, player: Entity) -> bool;
@@ -31,7 +32,13 @@ pub trait Outcome: Send + Sync {
 pub struct RuleContext<'w> {
     pub world: &'w mut World,
     pub player: Entity,
-    pub speaker: Option<Entity>,
+    pub encounter: Encounter,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Encounter {
+    pub with: Option<Entity>,
+    pub tether: Option<Tether>,
 }
 
 pub struct Terms<'a> {
@@ -70,7 +77,7 @@ impl Terms<'_> {
         &self,
         world: &mut World,
         player: Entity,
-        speaker: Option<Entity>,
+        encounter: Encounter,
     ) -> Result<(), RuleRefusal> {
         let exchanged = self.exchanged(world, player)?;
         if let Some(mut inventory) = world.get_mut::<Inventory>(player) {
@@ -79,7 +86,7 @@ impl Terms<'_> {
         let mut ctx = RuleContext {
             world,
             player,
-            speaker,
+            encounter,
         };
         for outcome in self.outcomes {
             outcome.apply(&mut ctx);

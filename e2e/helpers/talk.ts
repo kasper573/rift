@@ -1,0 +1,76 @@
+import type { Page } from "@playwright/test";
+
+import {
+  clickUi,
+  focusGame,
+  probe,
+  travelTo,
+  waitFor,
+  type Body,
+  type Fixture,
+  type Snapshot,
+  type Stage,
+  type Tile,
+} from "./game";
+
+export function townsperson(snapshot: Snapshot, npc: string): Body | undefined {
+  return snapshot.actors.find((actor) => actor.npc === npc);
+}
+
+export function fixture(snapshot: Snapshot, prop: string): Fixture | undefined {
+  return snapshot.props.find((candidate) => candidate.prop === prop);
+}
+
+export async function talkTo(page: Page, npc: string): Promise<Stage> {
+  return openStage(page, (snapshot) => townsperson(snapshot, npc)?.aim, `the conversation with ${npc} never opened`);
+}
+
+export async function interactWith(page: Page, prop: string): Promise<Stage> {
+  return openStage(page, (snapshot) => fixture(snapshot, prop)?.aim, `interacting with ${prop} never opened a conversation`);
+}
+
+export async function lineRead(page: Page): Promise<Stage> {
+  return waitFor(page, ({ stage }) => stage && !stage.typing && stage, "the line never finished typing");
+}
+
+export async function readToChoices(page: Page, pauseMs = 900): Promise<Stage> {
+  await focusGame(page);
+  for (;;) {
+    const stage = await lineRead(page);
+    if (stage.line + 1 >= stage.lines) return stage;
+    await page.waitForTimeout(pauseMs);
+    await page.keyboard.press("Space");
+    await waitFor(page, (snapshot) => snapshot.stage?.line !== stage.line, "the line never advanced");
+  }
+}
+
+export async function pick(page: Page, label: string): Promise<void> {
+  await clickUi(page, label);
+}
+
+export async function conversationOver(page: Page): Promise<void> {
+  await waitFor(page, ({ stage }) => stage === null, "the conversation never ended");
+}
+
+export async function onStage(page: Page, node: string): Promise<Stage> {
+  return waitFor(page, ({ stage }) => stage?.node === node && stage, `${node} never came on stage`);
+}
+
+export async function stageNow(page: Page): Promise<Stage | null> {
+  return (await probe(page)).stage;
+}
+
+// Townsfolk stroll, so a click can land where one stood a moment ago; click again, as a player would.
+async function openStage(page: Page, aim: (snapshot: Snapshot) => Tile | undefined, message: string): Promise<Stage> {
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    await travelTo(page, aim, 90_000);
+    const settle = Date.now() + 8_000;
+    while (Date.now() < settle) {
+      const { stage } = await probe(page);
+      if (stage) return stage;
+      await page.waitForTimeout(100);
+    }
+  }
+  throw new Error(message);
+}

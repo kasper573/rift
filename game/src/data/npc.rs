@@ -8,10 +8,11 @@ use crate::data::model::Id as ModelId;
 use crate::systems::actor::Rgba;
 use crate::systems::combat::Attitude;
 use crate::systems::dialogue::BusyPolicy;
+use crate::systems::dialogue::StartConversation;
+use crate::systems::interact::{Interaction, Response, StaticMark, Verb};
 use crate::systems::memory::{RememberedWithin, Remembers, RemembersAtLeast};
 use crate::systems::npc::{
-    Aggressive, Badge, Defensive, Greeting, Noticing, NpcDef, Pacifist, Protective, Stands,
-    Strolls, Talk,
+    Aggressive, Defensive, Noticing, NpcDef, Pacifist, Protective, Stands, Strolls,
 };
 use crate::systems::rewards::Reward;
 use crate::systems::rule::Not;
@@ -42,9 +43,8 @@ crate::table! {
             Reward::Item { item: ItemId::HealthPotion, chance: None, amount: 1 },
             Reward::Item { item: ItemId::OrcTusk, chance: Some(50.0), amount: 1 },
         ],
-        talk: None,
+        interaction: None,
         notices: &[],
-        badges: &[],
     },
     OrcChief: NpcDef {
         display_name: "Orc Chief",
@@ -71,9 +71,8 @@ crate::table! {
             Reward::Item { item: ItemId::OrcTusk, chance: None, amount: 1 },
             Reward::Item { item: ItemId::TribalHelmet, chance: Some(10.0), amount: 1 },
         ],
-        talk: None,
+        interaction: None,
         notices: &[],
-        badges: &[],
     },
     Skeleton: NpcDef {
         display_name: "Skeleton",
@@ -101,9 +100,8 @@ crate::table! {
             Reward::Item { item: ItemId::BoneShield, chance: Some(2.5), amount: 1 },
             Reward::Item { item: ItemId::FruloosRock, chance: Some(0.01), amount: 1 },
         ],
-        talk: None,
+        interaction: None,
         notices: &[],
-        badges: &[],
     },
     Bat: NpcDef {
         display_name: "Bat",
@@ -128,9 +126,8 @@ crate::table! {
             Reward::Item { item: ItemId::Gold, chance: Some(50.0), amount: 1 },
             Reward::Item { item: ItemId::BatWing, chance: Some(65.0), amount: 4 },
         ],
-        talk: None,
+        interaction: None,
         notices: &[],
-        badges: &[],
     },
     VampireBat: NpcDef {
         display_name: "Vampire Bat",
@@ -156,9 +153,8 @@ crate::table! {
             Reward::Item { item: ItemId::BatWing, chance: Some(65.0), amount: 2 },
             Reward::Item { item: ItemId::HealthPotion, chance: Some(25.0), amount: 1 },
         ],
-        talk: None,
+        interaction: None,
         notices: &[],
-        badges: &[],
     },
     Mara: NpcDef {
         display_name: "Mara",
@@ -179,18 +175,19 @@ crate::table! {
         ],
         aggro: Tiles(6.0),
         rewards: &[],
-        talk: Some(Talk {
+        interaction: Some(Interaction {
+            verb: Verb::Talk,
             reach: Tiles(2.0),
-            greetings: &[
-                Greeting {
+            responses: &[
+                Response {
                     requires: &[],
-                    node: DialogueId::MaraHello,
+                    then: &[&StartConversation { node: DialogueId::MaraHello, busy: BusyPolicy::Replace }],
                     news: false,
                 },
             ],
+            marks: &[],
         }),
         notices: &[],
-        badges: &[],
     },
     Tobb: NpcDef {
         display_name: "Tobb",
@@ -211,40 +208,42 @@ crate::table! {
         ],
         aggro: Tiles(6.0),
         rewards: &[],
-        talk: Some(Talk {
+        interaction: Some(Interaction {
+            verb: Verb::Talk,
             reach: Tiles(2.0),
-            greetings: &[
-                Greeting {
+            responses: &[
+                Response {
                     requires: &[&RememberedWithin(MemoryId::TobbVisits, Seconds(600.0))],
-                    node: DialogueId::TobbAgain,
+                    then: &[&StartConversation { node: DialogueId::TobbAgain, busy: BusyPolicy::Replace }],
                     news: false,
                 },
-                Greeting {
+                Response {
                     requires: &[&RemembersAtLeast(MemoryId::TobbVisits, 5), &Not(&Remembers(MemoryId::TobbGaveLure))],
-                    node: DialogueId::TobbGift,
+                    then: &[&StartConversation { node: DialogueId::TobbGift, busy: BusyPolicy::Replace }],
                     news: true,
                 },
-                Greeting {
+                Response {
                     requires: &[&RemembersAtLeast(MemoryId::TobbVisits, 6)],
-                    node: DialogueId::TobbGossip,
+                    then: &[&StartConversation { node: DialogueId::TobbGossip, busy: BusyPolicy::Replace }],
                     news: false,
                 },
-                Greeting {
+                Response {
                     requires: &[&RemembersAtLeast(MemoryId::TobbVisits, 3)],
-                    node: DialogueId::TobbRegular,
+                    then: &[&StartConversation { node: DialogueId::TobbRegular, busy: BusyPolicy::Replace }],
                     news: true,
                 },
-                Greeting {
+                Response {
                     requires: &[&RemembersAtLeast(MemoryId::TobbVisits, 1)],
-                    node: DialogueId::TobbBack,
+                    then: &[&StartConversation { node: DialogueId::TobbBack, busy: BusyPolicy::Replace }],
                     news: false,
                 },
-                Greeting {
+                Response {
                     requires: &[],
-                    node: DialogueId::TobbHello,
+                    then: &[&StartConversation { node: DialogueId::TobbHello, busy: BusyPolicy::Replace }],
                     news: false,
                 },
             ],
+            marks: &[],
         }),
         notices: &[Noticing {
             within: Tiles(3.0),
@@ -255,7 +254,6 @@ crate::table! {
             node: DialogueId::TobbNews,
             busy: BusyPolicy::Wait(Seconds(60.0)),
         }],
-        badges: &[],
     },
     Grisha: NpcDef {
         display_name: "Grisha",
@@ -276,23 +274,24 @@ crate::table! {
         ],
         aggro: Tiles(6.0),
         rewards: &[],
-        talk: Some(Talk {
+        interaction: Some(Interaction {
+            verb: Verb::Talk,
             reach: Tiles(2.0),
-            greetings: &[
-                Greeting {
+            responses: &[
+                Response {
                     requires: &[&RemembersAtLeast(MemoryId::InnFavour, 3)],
-                    node: DialogueId::GrishaRegular,
+                    then: &[&StartConversation { node: DialogueId::GrishaRegular, busy: BusyPolicy::Replace }],
                     news: false,
                 },
-                Greeting {
+                Response {
                     requires: &[],
-                    node: DialogueId::GrishaHello,
+                    then: &[&StartConversation { node: DialogueId::GrishaHello, busy: BusyPolicy::Replace }],
                     news: false,
                 },
             ],
+            marks: &[StaticMark { kind: AttentionId::Innkeeper, label: "Rents beds" }],
         }),
         notices: &[],
-        badges: &[Badge { mark: AttentionId::Innkeeper, label: "Rents beds" }],
     },
     Bram: NpcDef {
         display_name: "Bram",
@@ -313,18 +312,19 @@ crate::table! {
         ],
         aggro: Tiles(6.0),
         rewards: &[],
-        talk: Some(Talk {
+        interaction: Some(Interaction {
+            verb: Verb::Talk,
             reach: Tiles(2.0),
-            greetings: &[
-                Greeting {
+            responses: &[
+                Response {
                     requires: &[],
-                    node: DialogueId::BramHello,
+                    then: &[&StartConversation { node: DialogueId::BramHello, busy: BusyPolicy::Replace }],
                     news: false,
                 },
             ],
+            marks: &[],
         }),
         notices: &[],
-        badges: &[],
     },
     Wren: NpcDef {
         display_name: "Wren",
@@ -345,18 +345,19 @@ crate::table! {
         ],
         aggro: Tiles(6.0),
         rewards: &[],
-        talk: Some(Talk {
+        interaction: Some(Interaction {
+            verb: Verb::Talk,
             reach: Tiles(2.0),
-            greetings: &[
-                Greeting {
+            responses: &[
+                Response {
                     requires: &[],
-                    node: DialogueId::WrenHello,
+                    then: &[&StartConversation { node: DialogueId::WrenHello, busy: BusyPolicy::Replace }],
                     news: false,
                 },
             ],
+            marks: &[],
         }),
         notices: &[],
-        badges: &[],
     },
     Pell: NpcDef {
         display_name: "Pell",
@@ -377,18 +378,19 @@ crate::table! {
         ],
         aggro: Tiles(6.0),
         rewards: &[],
-        talk: Some(Talk {
+        interaction: Some(Interaction {
+            verb: Verb::Talk,
             reach: Tiles(2.0),
-            greetings: &[
-                Greeting {
+            responses: &[
+                Response {
                     requires: &[],
-                    node: DialogueId::PellHello,
+                    then: &[&StartConversation { node: DialogueId::PellHello, busy: BusyPolicy::Replace }],
                     news: false,
                 },
             ],
+            marks: &[],
         }),
         notices: &[],
-        badges: &[],
     },
     Ilsa: NpcDef {
         display_name: "Ilsa",
@@ -409,17 +411,18 @@ crate::table! {
         ],
         aggro: Tiles(6.0),
         rewards: &[],
-        talk: Some(Talk {
+        interaction: Some(Interaction {
+            verb: Verb::Talk,
             reach: Tiles(2.0),
-            greetings: &[
-                Greeting {
+            responses: &[
+                Response {
                     requires: &[],
-                    node: DialogueId::IlsaHello,
+                    then: &[&StartConversation { node: DialogueId::IlsaHello, busy: BusyPolicy::Replace }],
                     news: false,
                 },
             ],
+            marks: &[],
         }),
         notices: &[],
-        badges: &[],
     },
 }

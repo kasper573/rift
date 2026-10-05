@@ -1,9 +1,13 @@
-use bevy_app::App;
-use bevy_ecs::prelude::*;
+use bevy::prelude::*;
+use bevy::scene::EntityScene;
 use bevy_replicon::prelude::{SendTargets, ToClients};
 use serde::{Deserialize, Serialize};
+use ui::tokens::{palette, typography};
 
+use crate::core::sfx::SfxId;
+use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::systems::player::Owner;
+use crate::systems::scene::Scene as GameScene;
 use crate::systems::visibility::PrivateSight;
 
 pub fn register(app: &mut App) {
@@ -43,5 +47,65 @@ pub fn tell(world: &mut World, player: Entity, text: impl Into<String>, tone: No
             targets: SendTargets::Single(bevy_replicon::prelude::ClientId::Client(conn)),
             message: notice.clone(),
         });
+    }
+}
+
+pub struct ToasterPlugin;
+
+impl Plugin for ToasterPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(OnEnter(GameScene::Area), spawn_toaster)
+            .add_systems(
+                OnExit(GameScene::Area),
+                crate::systems::scene::despawn_all::<NoticeToaster>,
+            )
+            .add_systems(Update, show_notices.run_if(in_state(GameScene::Area)));
+    }
+}
+
+#[derive(Component, Default, Clone)]
+struct NoticeToaster;
+
+fn spawn_toaster(mut commands: Commands) {
+    commands.spawn_scene(bsn! {
+        {ui::toaster(ui::SonnerPosition::TopCenter)}
+        NoticeToaster
+        GlobalZIndex(1)
+    });
+}
+
+fn show_notices(
+    mut notices: MessageReader<Notice>,
+    toasters: Query<Entity, With<NoticeToaster>>,
+    mut sounds: MessageWriter<PlaySfx>,
+    mut commands: Commands,
+) {
+    let Ok(toaster) = toasters.single() else {
+        return;
+    };
+    for notice in notices.read() {
+        commands.spawn_scene(toast(notice)).insert(ChildOf(toaster));
+        sounds.write(PlaySfx {
+            id: SfxId::UiToast,
+            place: SfxPlace::Interface,
+        });
+    }
+}
+
+fn toast(notice: &Notice) -> impl Scene {
+    let ink = match notice.tone {
+        NoticeTone::Info => ui::theme::theme().surface_canvas.on,
+        NoticeTone::Good => palette::EMERALD_80,
+        NoticeTone::Bad => palette::CRIMSON_80,
+    };
+    let text = ui::styled_text(notice.text.clone(), ink, typography::BODY);
+    bsn! {
+        {ui::toast()}
+        Children [
+            (
+                Node { width: Val::Percent(100.0), height: Val::Percent(100.0), align_items: AlignItems::Center }
+                Children [ {EntityScene(text)} ]
+            )
+        ]
     }
 }

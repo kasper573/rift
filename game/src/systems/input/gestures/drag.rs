@@ -14,7 +14,7 @@ impl Gesture for DragGesture {
     }
 
     fn claims(&self, world: &mut World) -> bool {
-        hovered_has::<Node>(world)
+        over_interface(world)
     }
 
     fn drive(&self, _world: &mut World, _start: bool) {}
@@ -27,6 +27,10 @@ impl Gesture for DragGesture {
         };
         Some(CursorIcon::System(icon))
     }
+}
+
+pub(super) fn over_interface(world: &World) -> bool {
+    hovered_has::<Node>(world)
 }
 
 fn hovered_has<C: Component>(world: &World) -> bool {

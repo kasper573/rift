@@ -10,11 +10,12 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
-use crate::core::math::{Direction, Size};
-use crate::core::tiling::Tiles;
+use crate::core::math::{Direction, Pos, Size};
+use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::PlaybackRate;
 use crate::data;
-use crate::systems::stat::{StatKind, Stats};
+use crate::systems::movement::Position;
+use crate::systems::stat::{self, StatKind, Stats};
 
 pub use model::{ActorModel, Timing, build_model};
 
@@ -76,6 +77,25 @@ pub struct Actor {
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Hitbox {
     pub size: Size<Tiles>,
+}
+
+pub fn frontmost_at(
+    world: &mut World,
+    point: Pos<Tiles>,
+    except: Option<Entity>,
+) -> Option<Entity> {
+    let hits: Vec<(Entity, f32)> = world
+        .query::<(Entity, &Position, &Hitbox)>()
+        .iter(world)
+        .filter(|(entity, at, hitbox)| {
+            Some(*entity) != except && at.pos.hitbox(hitbox.size).contains(point)
+        })
+        .map(|(entity, at, _)| (entity, at.pos.y))
+        .collect();
+    hits.into_iter()
+        .filter(|&(entity, _)| !stat::is_dead(world, entity))
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(entity, _)| entity)
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]

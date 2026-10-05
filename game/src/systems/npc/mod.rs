@@ -5,7 +5,6 @@ mod pacifist;
 mod protective;
 mod stands;
 mod strolls;
-mod talk;
 
 pub use aggressive::Aggressive;
 pub use defensive::Defensive;
@@ -14,7 +13,6 @@ pub use pacifist::Pacifist;
 pub use protective::Protective;
 pub use stands::Stands;
 pub use strolls::Strolls;
-pub use talk::{Greeting, Talk, TalkRequest, talk_of, talk_request, talks};
 
 use std::collections::HashMap;
 
@@ -30,14 +28,12 @@ use crate::core::math::{Direction, Pos, Rng};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::data;
-use crate::data::attention::Id as AttentionId;
 use crate::systems::Character;
 use crate::systems::actor::{self, Action, Actor, Hitbox, Rgba, set_action};
 use crate::systems::area::{self, AreaTag};
-use crate::systems::attention::{self, Mark};
 use crate::systems::combat::{Attackers, Attitude};
-use crate::systems::dialogue;
 use crate::systems::effect::{self, Effect, TimedEffects};
+use crate::systems::interact::{self, Interaction, Interactive};
 use crate::systems::item::Reservation;
 use crate::systems::movement::{MoveTarget, Path, Position, position};
 use crate::systems::player::Players;
@@ -50,42 +46,27 @@ const LEASH_TRIES: u32 = 16;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
-    app.replicate::<Npc>()
-        .add_mapped_client_message::<TalkRequest>(Channel::Ordered);
+    app.replicate::<Npc>();
     effect::source(app, chase);
-    attention::mark_source(app, marks);
+    interact::interaction_source(app, interaction);
 }
 
 pub fn conversation_starts() -> Vec<data::dialogue::Id> {
-    talk::greetings()
-        .into_iter()
+    data::npc::TABLE
+        .iter()
+        .flat_map(|def| {
+            def.interaction
+                .iter()
+                .flat_map(interact::conversation_starts)
+        })
         .chain(noticing::starts())
         .collect()
 }
 
-fn marks(world: &World, player: Entity, npc: Entity) -> Vec<Mark> {
-    let Some(def) = world.get::<Npc>(npc).map(|npc| npc.def.get()) else {
-        return Vec::new();
-    };
-    let mut marks: Vec<Mark> = def
-        .badges
-        .iter()
-        .map(|badge| Mark {
-            kind: badge.mark,
-            label: badge.label.to_owned(),
-        })
-        .collect();
-    if let Some(talk) = talk_of(world, npc) {
-        let news = talk::greeting(world, player, talk).is_some_and(|greeting| {
-            greeting.news && !dialogue::heard(world, player, greeting.node)
-        });
-        let kinds = [news.then_some(AttentionId::News), Some(AttentionId::Talk)];
-        marks.extend(kinds.into_iter().flatten().map(|kind| Mark {
-            kind,
-            label: kind.get().label.to_owned(),
-        }));
-    }
-    marks
+fn interaction(world: &World, entity: Entity) -> Option<&'static Interaction> {
+    let def = world.get::<Npc>(entity)?.def.get();
+    let friendly = world.get::<Attitude>(entity) == Some(&Attitude::Friendly);
+    def.interaction.as_ref().filter(|_| friendly)
 }
 
 pub fn chase(world: &World, entity: Entity) -> Vec<Effect> {
@@ -125,14 +106,8 @@ pub struct NpcDef {
     pub stats: &'static [Stat],
     pub aggro: Tiles,
     pub rewards: &'static [crate::systems::rewards::Reward],
-    pub talk: Option<Talk>,
+    pub interaction: Option<Interaction>,
     pub notices: &'static [Noticing],
-    pub badges: &'static [Badge],
-}
-
-pub struct Badge {
-    pub mark: AttentionId,
-    pub label: &'static str,
 }
 
 pub fn spawn_all(world: &mut World) {
@@ -198,9 +173,17 @@ pub fn spawn(
     pack: Pack,
 ) -> Entity {
     let entity = spawn_actor(world, def.get(), at, area);
-    world
-        .entity_mut(entity)
-        .insert((Npc { def }, pack, def.get().attitude));
+    world.entity_mut(entity).insert((
+        Npc { def },
+        pack,
+        def.get().attitude,
+        actor::Name {
+            name: def.get().display_name.to_owned(),
+        },
+    ));
+    if def.get().interaction.is_some() {
+        world.entity_mut(entity).insert(Interactive);
+    }
     entity
 }
 

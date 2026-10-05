@@ -1,6 +1,8 @@
 mod attack;
 mod default;
 mod drag;
+mod interact;
+mod locked;
 mod pickup;
 mod walk;
 
@@ -23,9 +25,15 @@ static GESTURES: &[&dyn Gesture] = &[
     &attack::AttackGesture,
     &default::DefaultGesture,
     &drag::DragGesture,
+    &interact::InteractGesture,
+    &locked::LockedGesture,
     &pickup::PickupGesture,
     &walk::WalkGesture,
 ];
+
+pub(crate) fn over_interface(world: &World) -> bool {
+    drag::over_interface(world)
+}
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, setup)
@@ -38,6 +46,9 @@ pub(crate) struct Gestures(pub Vec<&'static dyn Gesture>);
 #[derive(Resource, Default)]
 struct Latched(Option<GestureIndex>);
 
+#[derive(Resource, Default)]
+struct LockSeen(bool);
+
 #[derive(Clone, Copy)]
 struct GestureIndex(usize);
 
@@ -49,11 +60,13 @@ fn setup(mut commands: Commands) {
     gestures.sort_by_key(|gesture| gesture.priority());
     commands.insert_resource(Gestures(gestures));
     commands.init_resource::<Latched>();
+    commands.init_resource::<LockSeen>();
     commands.init_resource::<AppliedCursor>();
 }
 
 fn update(world: &mut World) {
     let gestures = world.resource::<Gestures>().0.clone();
+    forget_clicks_across_lock(world);
 
     let mut active = world.resource::<Latched>().0;
     let (pressed, just) = {
@@ -101,6 +114,14 @@ fn update(world: &mut World) {
         }
     }
     apply_cursor(world, cursor);
+}
+
+fn forget_clicks_across_lock(world: &mut World) {
+    let locked = crate::systems::player::session::is_locked(world);
+    if std::mem::replace(&mut world.resource_mut::<LockSeen>().0, locked) != locked {
+        world.resource_mut::<ButtonInput<MouseButton>>().reset_all();
+        world.resource_mut::<Latched>().0 = None;
+    }
 }
 
 fn apply_cursor(world: &mut World, cursor: Option<CursorIcon>) {

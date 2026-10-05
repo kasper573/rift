@@ -66,12 +66,18 @@ fn boot() {
             systems::movement::MovementPlugin,
             systems::combat::render::CombatPlugin,
             systems::item::render::ItemsPlugin,
+            systems::prop::render::PropPlugin,
             systems::view::ViewPlugin,
             systems::player::session::ClientSessionPlugin,
             systems::input::InputPlugin,
             systems::debug::DebugPlugin,
             crate::probe::ProbePlugin,
+        ))
+        .add_plugins((
             systems::hud::HudPlugin,
+            systems::dialogue::stage::StagePlugin,
+            systems::notice::ToasterPlugin,
+            systems::attention::render::OfferingsPlugin,
             systems::spectate::widget::SpectatorPlugin,
             systems::terminal::TerminalPlugin,
             systems::fps::FpsPlugin,

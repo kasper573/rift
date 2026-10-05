@@ -11,6 +11,7 @@ pub mod equipment;
 pub mod fps;
 pub mod hud;
 pub mod input;
+pub mod interact;
 pub mod item;
 pub mod job;
 pub mod memory;
@@ -18,6 +19,7 @@ pub mod movement;
 pub mod notice;
 pub mod npc;
 pub mod player;
+pub mod prop;
 pub mod reach;
 pub mod rewards;
 pub mod rule;
@@ -77,7 +79,9 @@ pub fn protocol(app: &mut App) {
     job::register(app);
     movement::register(app);
     notice::register(app);
+    interact::register(app);
     npc::register(app);
+    prop::register(app);
     player::register(app);
     spectate::register(app);
     bevy_terminal::register(app, &TERMINALS);
@@ -134,7 +138,7 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
         .add_observer(player::greet)
         .add_observer(player::client_left)
         .add_observer(spectate::client_left)
-        .add_systems(Startup, npc::spawn_all)
+        .add_systems(Startup, (npc::spawn_all, prop::spawn_all))
         .add_systems(First, advance_replication_clock)
         .add_systems(
             PostUpdate,
@@ -156,7 +160,7 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     item::use_item,
                     item::drop_item,
                     item::pickup_request,
-                    npc::talk_request,
+                    interact::interact_request,
                     dialogue::picks,
                     dialogue::leaves,
                     equipment::unequip,
@@ -168,7 +172,7 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     rewards::grant,
                     movement::advance,
                     item::pickups,
-                    npc::talks,
+                    interact::interactions,
                     npc::notice.run_if(on_replication_tick),
                     dialogue::hold,
                     dialogue::refresh.run_if(on_replication_tick),
@@ -220,7 +224,11 @@ pub fn step_areas(apps: &mut [App], clock: crate::core::time::WallClock) {
 pub fn check_content(assets: &crate::core::assets::AssetService) {
     actor::check(assets);
     area::check(assets);
-    dialogue::check(npc::conversation_starts());
+    dialogue::check(
+        npc::conversation_starts()
+            .into_iter()
+            .chain(prop::conversation_starts()),
+    );
 }
 
 pub(crate) fn requests<M: Message>(world: &mut World) -> Vec<FromClient<M>> {

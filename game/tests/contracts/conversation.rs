@@ -9,10 +9,11 @@ use game::data::item::Id as ItemId;
 use game::data::memory::Id as MemoryId;
 use game::systems::attention::Attention;
 use game::systems::dialogue::{self, BusyPolicy, Conversation, LeaveRequest, PickRequest, Start};
+use game::systems::interact::InteractRequest;
 use game::systems::item::{Inventory, ItemStack};
 use game::systems::memory::{self, Memory};
 use game::systems::movement::{MoveRequest, Position, position};
-use game::systems::npc::{Npc, TalkRequest};
+use game::systems::npc::Npc;
 use game::systems::player::commands_locked;
 use game::systems::stat::{self, StatKind};
 
@@ -34,7 +35,7 @@ fn conversation(sim: &mut Sim, player: Entity) -> Option<Conversation> {
 
 fn talk(sim: &mut Sim, client: u32, player: Entity, who: data::npc::Id) -> Conversation {
     let npc = townsperson(sim, who);
-    sim.send(client, TalkRequest { target: npc });
+    sim.send(client, InteractRequest { target: npc });
     assert!(
         sim.run_until(20.0, |world| world.get::<Conversation>(player).is_some()),
         "the conversation with {who:?} never opened"
@@ -139,7 +140,7 @@ fn a_choice_that_costs_too_much_changes_nothing() {
     let player = sim.join(1);
     let opened = talk(&mut sim, 1, player, data::npc::Id::Grisha);
     let index = choice(&opened, "Buy a round for the room.");
-    assert!(opened.choices[index as usize].locked);
+    assert!(opened.choices[index as usize].refusal.is_some());
 
     sim.send(
         1,
@@ -301,7 +302,6 @@ fn two_players_see_their_own_icons_over_the_same_npc() {
     };
     sim.run_until(0.5, |_| false);
 
-    assert!(marks(&mut sim, regular).contains(&AttentionId::News));
-    assert!(!marks(&mut sim, stranger).contains(&AttentionId::News));
-    assert!(marks(&mut sim, stranger).contains(&AttentionId::Talk));
+    assert_eq!(marks(&mut sim, regular), vec![AttentionId::News]);
+    assert_eq!(marks(&mut sim, stranger), Vec::new());
 }

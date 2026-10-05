@@ -19,7 +19,7 @@ pub struct ReachIntent {
 pub enum ReachAct {
     Attack,
     Pickup,
-    Talk,
+    Interact,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,7 +34,7 @@ pub struct Tether {
     pub anchor: Pos<Tiles>,
     pub area: area::Id,
     pub range: Tiles,
-    pub npc: Option<Entity>,
+    pub with: Option<Entity>,
 }
 
 impl Tether {
@@ -42,13 +42,13 @@ impl Tether {
         world: &World,
         actor: Entity,
         range: Tiles,
-        npc: Option<Entity>,
+        with: Option<Entity>,
     ) -> Option<Tether> {
         Some(Tether {
             anchor: position(world, actor)?,
             area: world.get::<AreaTag>(actor)?.area,
             range,
-            npc,
+            with,
         })
     }
 
@@ -57,10 +57,10 @@ impl Tether {
             && world.get::<AreaTag>(actor).map(|tag| tag.area) == Some(self.area)
             && position(world, actor)
                 .is_some_and(|at| at.distance(self.anchor) <= self.range + DIAGONAL_MARGIN)
-            && self.npc.is_none_or(|npc| {
-                world.get_entity(npc).is_ok()
-                    && !stat::is_dead(world, npc)
-                    && visibility::coexist(world, actor, npc)
+            && self.with.is_none_or(|with| {
+                world.get_entity(with).is_ok()
+                    && !stat::is_dead(world, with)
+                    && visibility::coexist(world, actor, with)
             })
     }
 }

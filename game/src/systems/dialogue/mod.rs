@@ -1,3 +1,5 @@
+pub mod history;
+pub mod stage;
 pub mod text;
 
 use std::collections::{HashSet, VecDeque};
@@ -18,7 +20,7 @@ use crate::systems::item::{Inventory, ItemStack};
 use crate::systems::notice::{self, NoticeTone};
 use crate::systems::player::{self, CommandLock, sender_player};
 use crate::systems::reach::{self, Tether};
-use crate::systems::rule::{Outcome, Requirement, RuleContext, Terms};
+use crate::systems::rule::{Encounter, Outcome, Requirement, RuleContext, Terms};
 use crate::systems::stat;
 use text::{LineText, Span};
 
@@ -48,9 +50,10 @@ pub struct Line {
     pub text: &'static [Span],
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Speaker {
     Npc(data::npc::Id),
+    Prop(data::prop::Id),
     Player,
     Narrator,
 }
@@ -180,7 +183,7 @@ pub struct ChoiceView {
     pub tag: ChoiceTag,
     pub icon: Option<String>,
     pub chips: Vec<ChoiceChip>,
-    pub locked: bool,
+    pub refusal: Option<String>,
     pub warn: Option<String>,
 }
 
@@ -247,8 +250,8 @@ impl Outcome for StartConversation {
     fn apply(&self, ctx: &mut RuleContext) {
         let start = Start {
             node: self.node,
-            with: ctx.speaker,
-            tether: None,
+            with: ctx.encounter.with,
+            tether: ctx.encounter.tether,
             requires: &[],
             busy: self.busy,
         };
@@ -368,13 +371,19 @@ pub fn hold(world: &mut World, sessions: &mut QueryState<Entity, InConversationO
         if let Some(ending) = broken(world, player) {
             end(world, player, ending);
         }
-        let expired = world
+        let expired: Vec<Queued> = world
             .get_mut::<WaitingConversations>(player)
-            .is_some_and(|mut waiting| {
-                let before = waiting.0.len();
-                waiting.0.retain(|queued| queued.until > time);
-                waiting.0.len() != before
-            });
+            .map(|mut waiting| {
+                let (expired, kept): (Vec<Queued>, Vec<Queued>) = std::mem::take(&mut waiting.0)
+                    .into_iter()
+                    .partition(|queued| queued.until <= time);
+                waiting.0 = kept.into();
+                expired
+            })
+            .unwrap_or_default();
+        for queued in &expired {
+            gave_up(world, player, &queued.start);
+        }
         if world.get::<ConversationSession>(player).is_none() {
             let next = world
                 .get_mut::<WaitingConversations>(player)
@@ -387,9 +396,11 @@ pub fn hold(world: &mut World, sessions: &mut QueryState<Entity, InConversationO
                         .is_none_or(|tether| tether.holds(world, player));
                 if ready {
                     begin(world, player, queued.start);
+                } else {
+                    gave_up(world, player, &queued.start);
                 }
             }
-        } else if expired {
+        } else if !expired.is_empty() {
             refresh_view(world, player);
         }
         if world
@@ -417,6 +428,15 @@ pub struct ConversationSession {
     with: Option<Entity>,
     tether: Option<Tether>,
     offers: Vec<Offer>,
+}
+
+impl ConversationSession {
+    fn encounter(&self) -> Encounter {
+        Encounter {
+            with: self.with,
+            tether: self.tether,
+        }
+    }
 }
 
 #[derive(Component, Default)]
@@ -460,9 +480,9 @@ fn begin(world: &mut World, player: Entity, start: Start) {
 }
 
 fn enter(world: &mut World, player: Entity) {
-    let Some((node, with)) = world
+    let Some((node, encounter)) = world
         .get::<ConversationSession>(player)
-        .map(|session| (session.node, session.with))
+        .map(|session| (session.node, session.encounter()))
     else {
         return;
     };
@@ -477,11 +497,12 @@ fn enter(world: &mut World, player: Entity) {
     let mut ctx = RuleContext {
         world,
         player,
-        speaker: with,
+        encounter,
     };
     for outcome in def.enter {
         outcome.apply(&mut ctx);
     }
+    let with = encounter.with;
     let mut offers: Vec<Offer> = Vec::new();
     if def.topics
         && let Some(with) = with
@@ -519,7 +540,7 @@ fn refresh_view(world: &mut World, player: Entity) {
             .and_then(|waiting| waiting.0.front())
             .map(|queued| WaitingView {
                 node: queued.start.node,
-                lasts: queued.until - now(world),
+                lasts: Seconds((queued.until - now(world)).0.ceil()),
             }),
     };
     if world.get::<Conversation>(player) != Some(&view) {
@@ -561,7 +582,7 @@ fn choice_view(world: &World, player: Entity, offer: &Offer) -> ChoiceView {
         tag: offer.tag,
         icon: offer.icon.map(|icon| icon.0.to_owned()),
         chips: needs.chain(pays).chain(gets).collect(),
-        locked: terms.refusal(world, player).is_some(),
+        refusal: terms.refusal(world, player).map(|refusal| refusal.0),
         warn: offer.warn.map(str::to_owned),
     }
 }
@@ -576,7 +597,7 @@ fn pick(world: &mut World, player: Entity, request: PickRequest) {
     let Some(offer) = session.offers.get(request.choice as usize).cloned() else {
         return;
     };
-    let speaker = session.with;
+    let encounter = session.encounter();
     if let Some(ending) = broken(world, player) {
         end(world, player, ending);
         return;
@@ -587,7 +608,7 @@ fn pick(world: &mut World, player: Entity, request: PickRequest) {
         costs: offer.costs,
         outcomes: &outcomes,
     };
-    if let Err(refusal) = terms.settle(world, player, speaker) {
+    if let Err(refusal) = terms.settle(world, player, encounter) {
         notice::tell(world, player, refusal.0, NoticeTone::Bad);
         return;
     }
@@ -619,6 +640,9 @@ pub fn check(starts: impl IntoIterator<Item = DialogueId>) {
         if !seen.contains(&node) {
             panic!("dialogue {node:?}: nothing leads to it");
         }
+        if node.get().lines.is_empty() {
+            panic!("dialogue {node:?}: has no lines");
+        }
         for line in node.get().lines {
             check_face(node, line);
         }
@@ -632,7 +656,7 @@ fn check_face(node: DialogueId, line: &Line) {
     let busts = match line.by {
         Speaker::Npc(npc) => npc.get().model.get().busts.as_ref(),
         Speaker::Player => player::MODEL.get().busts.as_ref(),
-        Speaker::Narrator => None,
+        Speaker::Prop(_) | Speaker::Narrator => None,
     };
     if busts.and_then(|busts| busts.face(face)).is_none() {
         panic!("dialogue {node:?}: {:?} cannot show {face:?}", line.by);
@@ -641,6 +665,19 @@ fn check_face(node: DialogueId, line: &Line) {
 
 fn talking(world: &World, player: Entity) -> Option<AttentionId> {
     in_conversation(world, player).then_some(AttentionId::Talking)
+}
+
+fn gave_up(world: &mut World, player: Entity, start: &Start) {
+    let who = start
+        .with
+        .and_then(|with| world.get::<crate::systems::actor::Name>(with))
+        .map_or_else(|| "Someone".to_owned(), |name| name.name.clone());
+    notice::tell(
+        world,
+        player,
+        format!("{who} stopped waiting to talk"),
+        NoticeTone::Info,
+    );
 }
 
 fn broken(world: &World, player: Entity) -> Option<Ending> {

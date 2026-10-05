@@ -1,3 +1,5 @@
+pub mod render;
+
 use bevy_app::App;
 use bevy_ecs::entity::{EntityMapper, MapEntities};
 use bevy_ecs::prelude::*;
@@ -6,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::assets::AssetRef;
 use crate::data::attention::Id as AttentionId;
 use crate::systems::area::AreaTag;
-use crate::systems::npc::Npc;
+use crate::systems::interact::{self, Interactive};
 use crate::systems::player::Players;
 use crate::systems::stat;
 use crate::systems::visibility;
@@ -22,7 +24,6 @@ pub fn register(app: &mut App) {
 pub struct AttentionDef {
     pub icon: AssetRef,
     pub label: &'static str,
-    pub on_plate: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -32,34 +33,52 @@ pub struct Mark {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct NpcMarks {
-    pub npc: Entity,
+pub struct MarkedTarget {
+    pub target: Entity,
     pub marks: Vec<Mark>,
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[component(map_entities)]
-pub struct Attention(pub Vec<NpcMarks>);
+pub struct Attention(pub Vec<MarkedTarget>);
 
 impl MapEntities for Attention {
     fn map_entities<E: EntityMapper>(&mut self, mapper: &mut E) {
         for marked in &mut self.0 {
-            marked.npc = mapper.get_mapped(marked.npc);
+            marked.target = mapper.get_mapped(marked.target);
         }
     }
 }
 
 impl Attention {
-    pub fn of(&self, npc: Entity) -> &[Mark] {
+    pub fn of(&self, target: Entity) -> &[Mark] {
         self.0
             .iter()
-            .find(|marked| marked.npc == npc)
+            .find(|marked| marked.target == target)
             .map_or(&[], |marked| marked.marks.as_slice())
     }
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct StatusBadges(pub Vec<AttentionId>);
+
+pub fn plate_marks(world: &World, viewer: Option<Entity>, actor: Entity) -> Vec<Mark> {
+    if let Some(badges) = world.get::<StatusBadges>(actor) {
+        return badges
+            .0
+            .iter()
+            .map(|&kind| Mark {
+                kind,
+                label: kind.get().label.to_owned(),
+            })
+            .collect();
+    }
+    viewer
+        .and_then(|viewer| world.get::<Attention>(viewer))
+        .and_then(|attention| attention.of(actor).first().cloned())
+        .into_iter()
+        .collect()
+}
 
 pub type MarkSource = fn(&World, Entity, Entity) -> Vec<Mark>;
 
@@ -82,32 +101,35 @@ pub fn badge_source(app: &mut App, source: BadgeSource) {
         .push(source);
 }
 
-pub fn update(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc, &'static AreaTag)>) {
+pub fn update(
+    world: &mut World,
+    targets: &mut QueryState<(Entity, &'static AreaTag), With<Interactive>>,
+) {
     let marking = world.resource::<MarkSources>().0.clone();
     let badging = world.resource::<BadgeSources>().0.clone();
-    let townsfolk: Vec<(Entity, crate::systems::area::Id)> = npcs
+    let interactive: Vec<(Entity, crate::systems::area::Id)> = targets
         .iter(world)
-        .filter(|(_, npc, _)| npc.def.get().talk.is_some())
-        .map(|(entity, _, tag)| (entity, tag.area))
+        .filter(|(target, _)| interact::interaction_of(world, *target).is_some())
+        .map(|(target, tag)| (target, tag.area))
         .collect();
     let players: Vec<Entity> = world.resource::<Players>().0.values().copied().collect();
     for player in players {
         let area = world.get::<AreaTag>(player).map(|tag| tag.area);
         let attention = Attention(
-            townsfolk
+            interactive
                 .iter()
-                .filter(|(npc, at)| {
+                .filter(|(target, at)| {
                     Some(*at) == area
-                        && !stat::is_dead(world, *npc)
-                        && visibility::present(world, *npc, player)
+                        && !stat::is_dead(world, *target)
+                        && visibility::present(world, *target, player)
                 })
-                .filter_map(|&(npc, _)| {
+                .filter_map(|&(target, _)| {
                     let mut marks: Vec<Mark> = marking
                         .iter()
-                        .flat_map(|source| source(world, player, npc))
+                        .flat_map(|source| source(world, player, target))
                         .collect();
                     marks.sort_by_key(|mark| mark.kind);
-                    (!marks.is_empty()).then_some(NpcMarks { npc, marks })
+                    (!marks.is_empty()).then_some(MarkedTarget { target, marks })
                 })
                 .collect(),
         );

@@ -3,7 +3,7 @@ use game::data::memory::Id;
 use game::systems::area::transition::{self, Crossing};
 use game::systems::memory::{Forget, Memory, Remember, Remembers};
 use game::systems::movement::position;
-use game::systems::rule::{Requirement, Terms};
+use game::systems::rule::{Encounter, Requirement, Terms};
 
 use crate::support::Sim;
 
@@ -111,7 +111,7 @@ fn choices_write_memory_and_requirements_read_it() {
         costs: &[],
         outcomes: &[&SIDE],
     }
-    .settle(sim.world(), player, None)
+    .settle(sim.world(), player, Encounter::default())
     .expect("settles");
     assert!(sided.met(sim.world(), player));
     Terms {
@@ -119,7 +119,7 @@ fn choices_write_memory_and_requirements_read_it() {
         costs: &[],
         outcomes: &[&UNSIDE],
     }
-    .settle(sim.world(), player, None)
+    .settle(sim.world(), player, Encounter::default())
     .expect("settles");
     assert!(!sided.met(sim.world(), player));
 }

@@ -1,4 +1,9 @@
+use std::time::Duration;
+
+use bevy::color::Color;
 use serde::{Deserialize, Serialize};
+use ui::tokens::palette;
+use ui::{RichPiece, RichSpan, RichText, TextMotion, TextVoice};
 
 use crate::core::time::Millis;
 
@@ -78,5 +83,43 @@ impl LineText {
 
     pub fn words(&self) -> String {
         self.0.iter().map(|span| span.text.as_str()).collect()
+    }
+
+    pub fn rich(&self) -> RichText {
+        RichText::new(self.0.iter().flat_map(SpanText::pieces).collect())
+    }
+}
+
+impl SpanText {
+    fn pieces(&self) -> Vec<RichPiece> {
+        let mut span = RichSpan::plain(self.text.clone());
+        let mut pause = None;
+        for fx in &self.fx {
+            match *fx {
+                Fx::Ink(ink) => span = span.color(ink.color()),
+                Fx::Voice(Voice::Whisper) => span = span.voice(TextVoice::Whisper),
+                Fx::Voice(Voice::Shout) => span = span.voice(TextVoice::Shout),
+                Fx::Motion(Motion::Wave) => span = span.motion(TextMotion::Wave),
+                Fx::Motion(Motion::Shake) => span = span.motion(TextMotion::Shake),
+                Fx::Motion(Motion::Pulse) => span = span.motion(TextMotion::Pulse),
+                Fx::Slow => span = span.slow(),
+                Fx::PauseAfter(wait) => {
+                    pause = Some(RichPiece::Pause(Duration::from_secs_f32(wait.seconds().0)));
+                }
+            }
+        }
+        std::iter::once(span.into()).chain(pause).collect()
+    }
+}
+
+impl Ink {
+    pub fn color(self) -> Color {
+        match self {
+            Ink::Danger => palette::CRIMSON_80,
+            Ink::Item => palette::AMBER_80,
+            Ink::Place => palette::AZURE_80,
+            Ink::Name => palette::EMERALD_80,
+            Ink::Magic => palette::VIOLET_80,
+        }
     }
 }

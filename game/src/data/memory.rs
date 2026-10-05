@@ -17,6 +17,11 @@ crate::table! {
         kind: MemoryKind::Flag,
         resets: Resets::Daily,
     },
+    TideChestLooted: MemoryDef {
+        label: "Emptied the tide chest today",
+        kind: MemoryKind::Flag,
+        resets: Resets::Daily,
+    },
     InnFavour: MemoryDef {
         label: "Favour at the inn",
         kind: MemoryKind::Counter { step_every: Seconds(300.0) },

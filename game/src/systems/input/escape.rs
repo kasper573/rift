@@ -1,8 +1,14 @@
 use bevy::prelude::*;
 
+use crate::systems::dialogue::{history, stage};
 use crate::systems::hud;
 
-static LAYERS: &[fn(&mut World) -> bool] = &[ui::dismiss_topmost, hud::close_topmost_window];
+static LAYERS: &[fn(&mut World) -> bool] = &[
+    ui::dismiss_topmost,
+    history::close,
+    stage::leave,
+    hud::close_topmost_window,
+];
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(

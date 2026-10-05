@@ -1,6 +1,8 @@
 use crate::core::assets::AssetRef;
 use crate::data::npc::Id as NpcId;
+use crate::data::prop::Id as PropId;
 use crate::systems::area::{AreaDef, MarkerName, Population, Resident};
+use crate::systems::prop::Fixture;
 
 crate::table! {
     Island: AreaDef {
@@ -21,6 +23,10 @@ crate::table! {
             Resident { npc: NpcId::Pell, at: MarkerName("dice-table"), shown: &[] },
             Resident { npc: NpcId::Ilsa, at: MarkerName("forest-road"), shown: &[] },
         ],
+        props: &[
+            Fixture { prop: PropId::HarbourNotices, at: MarkerName("notice-board"), shown: &[] },
+            Fixture { prop: PropId::TideChest, at: MarkerName("tide-chest"), shown: &[] },
+        ],
     },
     Forest: AreaDef {
         map: AssetRef("maps/forest.tmx"),
@@ -31,6 +37,7 @@ crate::table! {
             Population { npc: NpcId::Bat, count: 6 },
         ],
         residents: &[],
+        props: &[],
     },
 }
 

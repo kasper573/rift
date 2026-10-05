@@ -4,6 +4,7 @@ mod combat;
 mod content;
 mod conversation;
 mod exchange;
+mod interaction;
 mod kill_credit;
 mod memory;
 mod presence;

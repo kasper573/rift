@@ -11,9 +11,14 @@ use game::core::tiling::{TilePos, Tiles};
 use game::data;
 use game::systems::actor::{self, Actor, Hitbox};
 use game::systems::area::{self, AreaTag};
+use game::systems::attention::{Attention, StatusBadges};
+use game::systems::combat::Attitude;
+use game::systems::dialogue::{history, stage};
 use game::systems::item::DroppedItem;
 use game::systems::movement::Position;
-use game::systems::player::{Owner, session};
+use game::systems::npc::Npc;
+use game::systems::player::{Owner, commands_locked, session};
+use game::systems::prop::Prop;
 use game::systems::stat::{StatKind, Stats};
 use serde::Serialize;
 
@@ -34,10 +39,30 @@ struct Snapshot {
     me: Option<Body>,
     viewpoint: Option<Body>,
     actors: Vec<Body>,
+    props: Vec<Fixture>,
     items: Vec<GroundItem>,
     portals: Vec<Exit>,
     walkable: Vec<Pos<Tiles>>,
     ui: Vec<UiElement>,
+    stage: Option<Stage>,
+    history: bool,
+}
+
+#[derive(Serialize)]
+struct Stage {
+    node: data::dialogue::Id,
+    line: usize,
+    lines: usize,
+    speaker: Option<String>,
+    typing: bool,
+    choices: Vec<StageChoice>,
+    waiting: Option<data::dialogue::Id>,
+}
+
+#[derive(Serialize)]
+struct StageChoice {
+    label: String,
+    locked: bool,
 }
 
 #[derive(Serialize, Clone, Copy)]
@@ -56,6 +81,21 @@ struct Body {
     aim: Pos<Tiles>,
     health: f32,
     max_health: f32,
+    npc: Option<data::npc::Id>,
+    role: Option<&'static str>,
+    friendly: bool,
+    locked: bool,
+    marks: Vec<data::attention::Id>,
+    badges: Vec<data::attention::Id>,
+}
+
+#[derive(Serialize)]
+struct Fixture {
+    id: String,
+    prop: data::prop::Id,
+    at: Pos<Tiles>,
+    aim: Pos<Tiles>,
+    marks: Vec<data::attention::Id>,
 }
 
 #[derive(Serialize)]
@@ -110,9 +150,27 @@ fn snapshot(world: &mut World) -> Snapshot {
         .map(|tag| tag.area);
     let view = view(world);
     Snapshot {
+        stage: stage::view(world).map(|view| Stage {
+            node: view.node,
+            line: view.line,
+            lines: view.lines,
+            speaker: view.speaker,
+            typing: view.typing,
+            choices: view
+                .choices
+                .into_iter()
+                .map(|choice| StageChoice {
+                    label: choice.label,
+                    locked: choice.locked,
+                })
+                .collect(),
+            waiting: view.waiting,
+        }),
+        history: history::is_open(world),
         me: me.and_then(|me| body(world, me)),
         viewpoint: viewpoint.and_then(|seen| body(world, seen)),
         actors: actors(world, me, area),
+        props: props(world, area),
         items: items(world, area),
         portals: portals(world, me),
         walkable: walkable(world, me, view),
@@ -132,7 +190,14 @@ fn view(world: &mut World) -> Option<View> {
 }
 
 fn body(world: &World, entity: Entity) -> Option<Body> {
+    let viewer = world.resource::<session::Viewpoint>().0;
+    let marks = viewer
+        .and_then(|viewer| world.get::<Attention>(viewer))
+        .map(|attention| attention.of(entity).iter().map(|mark| mark.kind).collect())
+        .unwrap_or_default();
+    let locked = commands_locked(world, entity);
     let entity = world.get_entity(entity).ok()?;
+    let npc = entity.get::<Npc>().map(|npc| npc.def);
     let at = entity.get::<Position>()?.pos;
     let hitbox = entity.get::<Hitbox>()?;
     let model = entity.get::<Actor>()?.model;
@@ -148,6 +213,15 @@ fn body(world: &World, entity: Entity) -> Option<Body> {
         aim: at.hitbox(hitbox.size).center(),
         health: stat(StatKind::Health),
         max_health: stat(StatKind::MaxHealth),
+        npc,
+        role: npc.and_then(|npc| npc.get().role),
+        friendly: entity.get::<Attitude>() == Some(&Attitude::Friendly),
+        locked,
+        marks,
+        badges: entity
+            .get::<StatusBadges>()
+            .map(|badges| badges.0.clone())
+            .unwrap_or_default(),
     })
 }
 
@@ -161,6 +235,28 @@ fn actors(world: &mut World, me: Option<Entity>, area: Option<area::Id>) -> Vec<
     others
         .into_iter()
         .filter_map(|entity| body(world, entity))
+        .collect()
+}
+
+fn props(world: &mut World, area: Option<area::Id>) -> Vec<Fixture> {
+    let viewer = world.resource::<session::Viewpoint>().0;
+    let attention = viewer
+        .and_then(|viewer| world.get::<Attention>(viewer))
+        .cloned();
+    world
+        .query::<(Entity, &Prop, &Position, &Hitbox, &AreaTag)>()
+        .iter(world)
+        .filter(|(.., tag)| area.is_none_or(|area| tag.area == area))
+        .map(|(entity, prop, at, hitbox, _)| Fixture {
+            id: entity.to_string(),
+            prop: prop.def,
+            at: at.pos,
+            aim: at.pos.hitbox(hitbox.size).center(),
+            marks: attention
+                .as_ref()
+                .map(|attention| attention.of(entity).iter().map(|mark| mark.kind).collect())
+                .unwrap_or_default(),
+        })
         .collect()
 }
 

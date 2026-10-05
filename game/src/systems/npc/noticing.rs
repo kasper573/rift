@@ -70,7 +70,8 @@ pub fn notice(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc, &'
             else {
                 continue;
             };
-            let range = super::talk::talk_of(world, npc).map_or(noticing.within, |talk| talk.reach);
+            let range = crate::systems::interact::interaction_of(world, npc)
+                .map_or(noticing.within, |interaction| interaction.reach);
             let tether = Tether::around(world, player, range, Some(npc));
             dialogue::start(
                 world,

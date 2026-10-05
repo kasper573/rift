@@ -1,19 +1,27 @@
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use bevy::prelude::*;
+use bevy::scene::EntityScene;
 use bevy::ui::Val2;
 use ui::tokens::{palette, typography};
 
 use crate::core::math::Pos;
 use crate::core::render::WorldToWindow;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
-use crate::systems::movement::RenderPosition;
+use crate::systems::attention::{self, Mark};
+use crate::systems::combat::Attitude;
+use crate::systems::hud::{reconcile_children, tooltip_label};
+use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
 use crate::systems::player::Owner;
 use crate::systems::player::session::Viewpoint;
+use crate::systems::prop::Prop;
 use crate::systems::scene::Scene as GameScene;
+use bevy::ecs::query::QueryData;
 
 const HEAD_ROOM: f32 = 6.0;
+const ICON: f32 = 22.0;
 
 pub struct PlatePlugin;
 
@@ -22,7 +30,7 @@ impl Plugin for PlatePlugin {
         app.init_resource::<Plates>()
             .add_systems(
                 Update,
-                (spawn_plates, place_plates)
+                (spawn_plates, place_plates, sync_plate_icons)
                     .chain()
                     .run_if(in_state(GameScene::Area)),
             )
@@ -36,31 +44,50 @@ pub struct WorldOverlay;
 #[derive(Resource, Default)]
 struct Plates(HashMap<Entity, Entity>);
 
+#[derive(Component, Default, Clone)]
+struct PlateIcons;
+
 type Labelled = (
     Entity,
     Option<&'static Name>,
     Option<&'static Npc>,
     Option<&'static Owner>,
+    Option<&'static Attitude>,
+    Has<Prop>,
 );
 
+type Plated = Or<(With<Actor>, With<Prop>)>;
+
 struct Label {
-    name: String,
+    name: Option<String>,
     role: Option<&'static str>,
     color: Color,
 }
 
-fn label(name: Option<&Name>, npc: Option<&Npc>, owner: Option<&Owner>) -> Option<Label> {
+fn label(
+    (_, name, npc, owner, attitude, prop): <Labelled as QueryData>::Item<'_, '_>,
+) -> Option<Label> {
+    if prop {
+        return Some(Label {
+            name: None,
+            role: None,
+            color: Color::WHITE,
+        });
+    }
     match (npc, owner) {
         (Some(npc), _) => {
             let def = npc.def.get();
             def.role.map(|role| Label {
-                name: def.display_name.to_owned(),
+                name: Some(def.display_name.to_owned()),
                 role: Some(role),
-                color: Color::WHITE,
+                color: match attitude {
+                    Some(Attitude::Hostile) => palette::CRIMSON_80,
+                    _ => Color::WHITE,
+                },
             })
         }
         (None, Some(_)) => Some(Label {
-            name: name.map(|name| name.name.clone())?,
+            name: Some(name?.name.clone()),
             role: None,
             color: palette::AZURE_80,
         }),
@@ -71,7 +98,7 @@ fn label(name: Option<&Name>, npc: Option<&Npc>, owner: Option<&Owner>) -> Optio
 fn spawn_plates(
     mut plates: ResMut<Plates>,
     viewpoint: Res<Viewpoint>,
-    actors: Query<Labelled, With<Actor>>,
+    actors: Query<Labelled, Plated>,
     mut commands: Commands,
 ) {
     plates.0.retain(|actor, plate| {
@@ -81,11 +108,12 @@ fn spawn_plates(
         }
         keep
     });
-    for (actor, name, npc, owner) in &actors {
+    for labelled in &actors {
+        let actor = labelled.0;
         if plates.0.contains_key(&actor) || viewpoint.0 == Some(actor) {
             continue;
         }
-        let Some(label) = label(name, npc, owner) else {
+        let Some(label) = label(labelled) else {
             continue;
         };
         let plate = commands.spawn_scene(plate(label)).id();
@@ -95,7 +123,7 @@ fn spawn_plates(
 
 fn place_plates(
     plates: Res<Plates>,
-    actors: Query<(&RenderPosition, &Hitbox, &Actor)>,
+    actors: Query<(Option<&RenderPosition>, &Position, &Hitbox, Option<&Actor>)>,
     projector: WorldToWindow,
     mut nodes: Query<(&mut Node, &mut Visibility), With<WorldOverlay>>,
 ) {
@@ -103,12 +131,16 @@ fn place_plates(
         let Ok((mut node, mut visibility)) = nodes.get_mut(plate) else {
             continue;
         };
-        let head = actors.get(actor).ok().and_then(|(at, hitbox, body)| {
-            let top = Pos::new(at.0.x, at.0.y + 0.5 - hitbox.size.height);
-            (body.action != Action::Dead)
-                .then(|| projector.project(top))
-                .flatten()
-        });
+        let head = actors
+            .get(actor)
+            .ok()
+            .and_then(|(rendered, at, hitbox, body)| {
+                let at = rendered.map_or(at.pos, |rendered| rendered.0);
+                let top = Pos::new(at.x, at.y + 0.5 - hitbox.size.height);
+                body.is_none_or(|body| body.action != Action::Dead)
+                    .then(|| projector.project(top))
+                    .flatten()
+            });
         let shown = match head {
             Some(head) => {
                 let left = Val::Px(head.x.round());
@@ -127,6 +159,59 @@ fn place_plates(
     }
 }
 
+fn sync_plate_icons(world: &mut World) {
+    let viewer = world.resource::<Viewpoint>().0;
+    let plates: Vec<(Entity, Entity)> = world
+        .resource::<Plates>()
+        .0
+        .iter()
+        .map(|(&actor, &plate)| (actor, plate))
+        .collect();
+    for (actor, plate) in plates {
+        let Some(row) = world.get::<Children>(plate).and_then(|kids| {
+            kids.iter()
+                .find(|kid| world.get::<PlateIcons>(*kid).is_some())
+        }) else {
+            continue;
+        };
+        let marks = attention::plate_marks(world, viewer, actor);
+        let keys: Vec<u64> = marks.iter().map(mark_key).collect();
+        let icons: Vec<(Handle<Image>, String)> = {
+            let assets = world.resource::<AssetServer>();
+            marks
+                .iter()
+                .map(|mark| (assets.load(mark.kind.get().icon.0), mark.label.clone()))
+                .collect()
+        };
+        reconcile_children(world, row, &keys, |index| {
+            let (image, label) = icons[index].clone();
+            Box::new(plate_icon(image, label))
+        });
+    }
+}
+
+fn mark_key(mark: &Mark) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    mark.kind.hash(&mut hasher);
+    mark.label.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn plate_icon(image: Handle<Image>, label: String) -> impl Scene {
+    bsn! {
+        Node { width: Val::Px({ICON}), height: Val::Px({ICON}) }
+        ImageNode { image: {image} }
+        Pickable { should_block_lower: false, is_hoverable: true }
+        {ui::tooltip(false)}
+        Children [
+            (
+                {ui::tooltip_content(ui::Side::Top, ui::Align::Center, 4.0)}
+                Children [ {EntityScene(tooltip_label(label))} ]
+            )
+        ]
+    }
+}
+
 fn clear_plates(mut plates: ResMut<Plates>, mut commands: Commands) {
     for (_, plate) in plates.0.drain() {
         commands.entity(plate).despawn();
@@ -138,6 +223,12 @@ fn plate(label: Label) -> impl Scene {
         offset: Vec2::new(1.0, 1.0),
         color: Color::BLACK,
     };
+    let name = label.name.map(|name| {
+        bsn! {
+            {ui::styled_text(name, label.color, typography::LABEL)}
+            ui::component(shadow)
+        }
+    });
     let role = label.role.map(|role| {
         bsn! {
             {ui::styled_text(format!("<{role}>"), Color::WHITE.with_alpha(0.7), typography::CAPTION)}
@@ -155,10 +246,8 @@ fn plate(label: Label) -> impl Scene {
         GlobalZIndex(-1)
         Pickable::IGNORE
         Children [
-            (
-                {ui::styled_text(label.name, label.color, typography::LABEL)}
-                ui::component(shadow)
-            ),
+            ( PlateIcons Node { column_gap: Val::Px(2.0) } Pickable::IGNORE ),
+            {name},
             {role},
         ]
     }

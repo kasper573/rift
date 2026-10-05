@@ -41,6 +41,7 @@ pub struct AreaDef {
     pub map: AssetRef,
     pub populations: &'static [Population],
     pub residents: &'static [Resident],
+    pub props: &'static [crate::systems::prop::Fixture],
 }
 
 pub struct Population {
@@ -181,6 +182,14 @@ pub fn check(assets: &AssetService) {
                 panic!(
                     "area {id:?}: {:?} stands on marker '{}', which the map lacks",
                     resident.npc, resident.at.0
+                );
+            }
+        }
+        for fixture in def.props {
+            if area.marker(fixture.at).is_none() {
+                panic!(
+                    "area {id:?}: {:?} stands on marker '{}', which the map lacks",
+                    fixture.prop, fixture.at.0
                 );
             }
         }

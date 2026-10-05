@@ -12,6 +12,7 @@ use crate::core::tiling::Tiles;
 use crate::systems::area;
 use crate::systems::combat::AttackRequest;
 use crate::systems::equipment::{EquipmentSlot, UnequipRequest};
+use crate::systems::interact::InteractRequest;
 use crate::systems::item::{DropItemRequest, PickupRequest, UseItemRequest};
 use crate::systems::movement::{MoveRequest, MoveToPortal};
 use crate::systems::spectate::{SpectateRequest, Spectating};
@@ -69,6 +70,10 @@ pub fn is_dead(world: &World) -> bool {
     my_character(world).is_some_and(|entity| crate::systems::stat::is_dead(world, entity.id()))
 }
 
+pub fn is_locked(world: &World) -> bool {
+    my_character(world).is_some_and(|entity| super::commands_locked(world, entity.id()))
+}
+
 pub fn is_alive(world: &World) -> bool {
     my_character(world).is_some_and(|entity| !crate::systems::stat::is_dead(world, entity.id()))
 }
@@ -83,6 +88,10 @@ pub fn spectate(world: &mut World, request: SpectateRequest) {
 
 pub fn attack(world: &mut World, target: Entity) {
     world.write_message(AttackRequest { target });
+}
+
+pub fn interact(world: &mut World, target: Entity) {
+    world.write_message(InteractRequest { target });
 }
 
 pub fn respawn(world: &mut World) {

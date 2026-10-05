@@ -13,7 +13,7 @@ pub struct PickupGesture;
 
 impl Gesture for PickupGesture {
     fn priority(&self) -> i32 {
-        2
+        4
     }
 
     fn claims(&self, world: &mut World) -> bool {

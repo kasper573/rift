@@ -10,7 +10,7 @@ pub struct AttackGesture;
 
 impl Gesture for AttackGesture {
     fn priority(&self) -> i32 {
-        1
+        2
     }
 
     fn claims(&self, world: &mut World) -> bool {

@@ -22,7 +22,7 @@ struct WalkState {
 
 impl Gesture for WalkGesture {
     fn priority(&self) -> i32 {
-        3
+        5
     }
 
     fn claims(&self, world: &mut World) -> bool {

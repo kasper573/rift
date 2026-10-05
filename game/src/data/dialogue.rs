@@ -2,12 +2,13 @@ use crate::core::time::Millis;
 use crate::data::item::Id as ItemId;
 use crate::data::memory::Id as MemoryId;
 use crate::data::npc::Id as NpcId;
+use crate::data::prop::Id as PropId;
 use crate::systems::actor::bust::Face::{Generic, Individual};
 use crate::systems::actor::bust::GenericExpression::{
     Angry, Happy, Neutral, Sad, Surprised, Thinking,
 };
 use crate::systems::actor::bust::IndividualExpression::{Counting, Laughing, Sleepy, Smirk, Smug};
-use crate::systems::dialogue::Speaker::{Narrator, Npc, Player};
+use crate::systems::dialogue::Speaker::{Narrator, Npc, Player, Prop};
 use crate::systems::dialogue::text::{Fx, Ink, Motion, Voice, plain, styled};
 use crate::systems::dialogue::{Choice, DialogueNode, GotoNode, Line, Unmet};
 use crate::systems::item::{GiveItems, ItemStack};
@@ -191,6 +192,31 @@ crate::table! {
         enter: &[],
         topics: true,
         choices: &[Choice { label: &[plain("I'll turn back.")], ..Choice::SAY }],
+    },
+    HarbourNotices: DialogueNode {
+        lines: &[
+            Line { by: Narrator, face: None, cue: false, text: &[plain("Notices flap on the post, nailed over older notices.")] },
+            Line { by: Prop(PropId::HarbourNotices), face: None, cue: false, text: &[styled("FERRY SUSPENDED", &[Fx::Voice(Voice::Shout)]), plain(" until the orc trouble passes. By order of "), styled("Captain Bram", &[Fx::Ink(Ink::Name)]), plain(".")] },
+            Line { by: Prop(PropId::HarbourNotices), face: None, cue: false, text: &[plain("WANTED: strong arms for the "), styled("north shore", &[Fx::Ink(Ink::Place)]), plain(". Ask "), styled("Mara", &[Fx::Ink(Ink::Name)]), plain(" at the market.")] },
+        ],
+        enter: &[],
+        topics: true,
+        choices: &[Choice { label: &[plain("Step away.")], ..Choice::SAY }],
+    },
+    TideChestFound: DialogueNode {
+        lines: &[
+            Line { by: Narrator, face: None, cue: false, text: &[plain("Wedged between the rocks, the chest is heavy with the tide's leavings.")] },
+            Line { by: Narrator, face: None, cue: false, text: &[plain("You find five "), styled("Gold", &[Fx::Ink(Ink::Item)]), plain(" coins.")] },
+        ],
+        enter: &[],
+        topics: false,
+        choices: &[Choice { label: &[plain("Close the lid.")], ..Choice::SAY }],
+    },
+    TideChestEmpty: DialogueNode {
+        lines: &[Line { by: Narrator, face: None, cue: false, text: &[plain("Only sand, and a crab that does not appreciate the visit. "), styled("The tide brings more each day.", &[Fx::Voice(Voice::Whisper)])] }],
+        enter: &[],
+        topics: false,
+        choices: &[Choice { label: &[plain("Close the lid.")], ..Choice::SAY }],
     },
 }
 

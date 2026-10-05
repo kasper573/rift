@@ -3,7 +3,7 @@ use game::data::item::Id;
 use game::systems::item::{GiveItems, Holding, Inventory, ItemStack};
 use game::systems::job::MinLevel;
 use game::systems::player::Xp;
-use game::systems::rule::{Not, Requirement, RuleRefusal, Terms};
+use game::systems::rule::{Encounter, Not, Requirement, RuleRefusal, Terms};
 
 use crate::support::Sim;
 
@@ -41,7 +41,10 @@ fn settling_pays_costs_and_grants_outcomes_in_one_step() {
         outcomes: &[&REWARD],
     };
 
-    assert_eq!(terms.settle(sim.world(), player, None), Ok(()));
+    assert_eq!(
+        terms.settle(sim.world(), player, Encounter::default()),
+        Ok(())
+    );
 
     let inventory = sim.world().get::<Inventory>(player).expect("bag").clone();
     assert_eq!(inventory.count(Id::Gold), 5);
@@ -66,11 +69,11 @@ fn unmet_terms_are_refused_and_change_nothing() {
     };
 
     assert_eq!(
-        locked.settle(sim.world(), player, None),
+        locked.settle(sim.world(), player, Encounter::default()),
         Err(RuleRefusal("Needs Level 3".to_owned()))
     );
     assert_eq!(
-        unaffordable.settle(sim.world(), player, None),
+        unaffordable.settle(sim.world(), player, Encounter::default()),
         Err(RuleRefusal("Needs 15 more Gold".to_owned()))
     );
     assert_eq!(sim.world().get::<Inventory>(player).expect("bag"), &before);

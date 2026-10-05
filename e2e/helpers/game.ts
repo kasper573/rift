@@ -13,12 +13,26 @@ export type Tile = [number, number];
 export interface Body {
   id: string;
   name: string;
-  model: "Adventurer" | "Bat" | "Orc" | "Skeleton";
+  model: string;
   player: boolean;
   at: Tile;
   aim: Tile;
   health: number;
   max_health: number;
+  npc: string | null;
+  role: string | null;
+  friendly: boolean;
+  locked: boolean;
+  marks: string[];
+  badges: string[];
+}
+
+export interface Fixture {
+  id: string;
+  prop: string;
+  at: Tile;
+  aim: Tile;
+  marks: string[];
 }
 
 export interface GroundItem {
@@ -42,6 +56,21 @@ export interface UiElement {
   height: number;
 }
 
+export interface StageChoice {
+  label: string;
+  locked: boolean;
+}
+
+export interface Stage {
+  node: string;
+  line: number;
+  lines: number;
+  speaker: string | null;
+  typing: boolean;
+  choices: StageChoice[];
+  waiting: string | null;
+}
+
 // What the client sees this frame. Positions are world tiles, which `view` maps onto canvas pixels
 // (origin + tile × tile_size); `ui` rects are canvas pixels already. `viewpoint` is the character the
 // camera follows: `me`, or the player a spectator watches.
@@ -51,10 +80,13 @@ export interface Snapshot {
   me: Body | null;
   viewpoint: Body | null;
   actors: Body[];
+  props: Fixture[];
   items: GroundItem[];
   portals: Exit[];
   walkable: Tile[];
   ui: UiElement[];
+  stage: Stage | null;
+  history: boolean;
 }
 
 // Waits until the world is on screen — polls until the captured frame resembles the spawn map.
@@ -152,8 +184,16 @@ export async function pickUp(page: Page, item: GroundItem, timeout = 30_000): Pr
   }
 }
 
+// A click on someone or something interacts with it instead of walking.
+export function occupied(snapshot: Snapshot, tile: Tile): boolean {
+  return [...snapshot.actors, ...snapshot.props].some(
+    (thing) => distance(tile, thing.at) < 1.5 || distance(tile, thing.aim) < 1.5,
+  );
+}
+
 // Only on-screen tiles can be clicked, so a far target is approached hop by hop. A function target is
-// re-read every hop, for things that move.
+// re-read every hop, for things that move. The last click waits for the camera to settle, or it lands
+// where the target was a moment ago.
 export async function travelTo(
   page: Page,
   target: Tile | ((snapshot: Snapshot) => Tile | undefined),
@@ -166,11 +206,14 @@ export async function travelTo(
     const tile = locate(snapshot);
     if (!tile) throw new Error("the travel target is gone");
     if (onScreen(snapshot, tile, await canvasSize(page))) {
-      await clickTile(page, tile);
+      await waitUntilStill(page);
+      const settled = locate(await probe(page));
+      if (!settled) throw new Error("the travel target is gone");
+      await clickTile(page, settled);
       return;
     }
     if (Date.now() > deadline) throw new Error(`never got ${tile} on screen`);
-    const hop = closestTile(snapshot.walkable, tile);
+    const hop = closestTile(snapshot.walkable.filter((step) => !occupied(snapshot, step)), tile);
     if (!hop) throw new Error("no walkable tile on screen");
     await clickTile(page, hop);
     await page.waitForTimeout(1200);
@@ -186,6 +229,11 @@ export function findUi(snapshot: Snapshot, match: UiMatch): UiElement | undefine
   return snapshot.ui.find((element) =>
     typeof match === "function" ? match(element) : test(element.text) || test(element.image),
   );
+}
+
+export async function hoverUi(page: Page, match: UiMatch): Promise<void> {
+  const { x, y } = await uiPoint(page, match);
+  await page.mouse.move(x, y, { steps: 12 });
 }
 
 export async function clickUi(page: Page, match: UiMatch): Promise<void> {
