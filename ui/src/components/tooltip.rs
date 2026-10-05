@@ -1,17 +1,34 @@
 use std::time::Duration;
 
+use bevy_color::Alpha;
+use bevy_ecs::hierarchy::Children;
 use bevy_picking::prelude::Pickable;
-use bevy_scene::{Scene, bsn};
-use bevy_ui::{GlobalZIndex, Node, OverrideClip, PositionType};
+use bevy_scene::{EntityScene, Scene, bsn, template_value};
+use bevy_ui::{
+    BorderRadius, FlexDirection, GlobalZIndex, Node, OverrideClip, PositionType, UiRect, Val,
+};
 
 use crate::component;
 use crate::components::popover::ANCHORED_Z;
+use crate::components::text::styled_text;
 use crate::overlay::{Open, OverlayContent, POPPER_ENTER, POPPER_EXIT, TooltipTimer};
 use crate::place::Placement;
+use crate::style::Style;
+use crate::surface::elevation;
+use crate::theme::theme;
+use crate::tokens::{radius, typography};
 use crate::{Align, Side};
 
 const DELAY: Duration = Duration::from_millis(400);
 const SKIP_DELAY: Duration = Duration::from_millis(300);
+const TEXT_WIDTH: f32 = 260.0;
+
+#[derive(Clone)]
+pub struct TooltipText {
+    pub title: String,
+    pub lines: Vec<String>,
+    pub hint: Option<String>,
+}
 
 pub fn tooltip(open: bool) -> impl Scene {
     bsn! {
@@ -28,5 +45,44 @@ pub fn tooltip_content(side: Side, align: Align, offset: f32) -> impl Scene {
         Placement { side: {side}, align: {align}, offset: {offset} }
         {OverlayContent::animated(POPPER_ENTER, POPPER_EXIT)}
         Pickable::IGNORE
+    }
+}
+
+pub fn tooltip_text(text: TooltipText) -> impl Scene {
+    let TooltipText { title, lines, hint } = text;
+    let family = theme().surface_floating;
+    let style = Style::new()
+        .background(family.base)
+        .border_color(family.on.with_alpha(0.15))
+        .node(|node| {
+            node.flex_direction = FlexDirection::Column;
+            node.row_gap = Val::Px(2.0);
+            node.padding = UiRect::axes(Val::Px(8.0), Val::Px(5.0));
+            node.max_width = Val::Px(TEXT_WIDTH);
+            node.border = UiRect::all(Val::Px(1.0));
+            node.border_radius = BorderRadius::all(Val::Px(radius::S));
+        });
+    let lines: Vec<Box<dyn Scene>> = lines
+        .into_iter()
+        .map(|line| -> Box<dyn Scene> {
+            Box::new(styled_text(
+                line,
+                family.on.with_alpha(0.85),
+                typography::CAPTION,
+            ))
+        })
+        .chain(hint.map(|hint| -> Box<dyn Scene> {
+            Box::new(styled_text(
+                hint,
+                family.on.with_alpha(0.55),
+                typography::CAPTION,
+            ))
+        }))
+        .collect();
+    bsn! {
+        template_value(style)
+        template_value(elevation(1))
+        Pickable::IGNORE
+        Children [ {EntityScene(styled_text(title, family.on, typography::LABEL))}, {lines} ]
     }
 }

@@ -17,6 +17,7 @@ use game::systems::attention::{Attention, StatusBadges};
 use game::systems::combat::{self, Attitude};
 use game::systems::dialogue::{history, stage};
 use game::systems::interact;
+use game::systems::item::card::ItemCardWindow;
 use game::systems::item::{self, DroppedItem, Inventory};
 use game::systems::movement::Position;
 use game::systems::npc::Npc;
@@ -57,6 +58,7 @@ struct Snapshot {
     announcement: Lane,
     history: bool,
     shop: Option<Shop>,
+    item_card: Option<ItemCard>,
     bag: Vec<Stack>,
     quests: Quests,
 }
@@ -88,6 +90,12 @@ struct Cover {
     y: f32,
     width: f32,
     height: f32,
+}
+
+#[derive(Serialize)]
+struct ItemCard {
+    item: data::item::Id,
+    rect: Cover,
 }
 
 #[derive(Serialize)]
@@ -286,6 +294,14 @@ fn snapshot(world: &mut World) -> Snapshot {
             })
             .unwrap_or_default(),
         history: history::is_open(world),
+        item_card: world
+            .query::<(&ItemCardWindow, &ComputedNode, &UiGlobalTransform)>()
+            .iter(world)
+            .next()
+            .map(|(card, node, transform)| ItemCard {
+                item: card.item,
+                rect: rect_of(node, transform),
+            }),
         shop: shop::window::view(world).map(|window| Shop {
             shop: window.shop,
             offers: window

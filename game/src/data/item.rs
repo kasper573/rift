@@ -12,6 +12,7 @@ use crate::systems::stat::{Stat, StatKind};
 crate::table! {
     Gold: ItemDef {
         display_name: "Gold",
+        flavor: "Minted somewhere across the sea. Nobody on the island asks where.",
         icon: AssetRef("icons/misc/golden_coin.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: u32::MAX }),
@@ -21,6 +22,7 @@ crate::table! {
     },
     BoneToken: ItemDef {
         display_name: "Bone Token",
+        flavor: "Wren carves her own coin. Only her stall takes it, and only she knows from what.",
         icon: AssetRef("icons/misc/silver_coin.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: u32::MAX }),
@@ -30,6 +32,7 @@ crate::table! {
     },
     HealthPotion: ItemDef {
         display_name: "Health Potion",
+        flavor: "Tastes of copper and seaweed. Works anyway.",
         icon: AssetRef("icons/potion/red_potion.png"),
         sfx: ItemSfx { on_use: Some(SfxId::Heal01), drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 10 }),
@@ -39,6 +42,7 @@ crate::table! {
     },
     GreaterHealthPotion: ItemDef {
         display_name: "Greater Health Potion",
+        flavor: "Thick as tar and twice as bitter. For a while after, your blows land harder.",
         icon: AssetRef("icons/potion/red_potion_3.png"),
         sfx: ItemSfx { on_use: Some(SfxId::Heal01), drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 10 }),
@@ -48,6 +52,7 @@ crate::table! {
     },
     BatWing: ItemDef {
         display_name: "Bat Wing",
+        flavor: "Still twitches on cold nights. Carry a few and you feel oddly light on your feet.",
         icon: AssetRef("icons/monster_part/feather.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 50 }),
@@ -57,6 +62,7 @@ crate::table! {
     },
     Bone: ItemDef {
         display_name: "Bone",
+        flavor: "Bleached by sun and salt. Wren will want it.",
         icon: AssetRef("icons/monster_part/bone.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 50 }),
@@ -66,6 +72,7 @@ crate::table! {
     },
     OrcTusk: ItemDef {
         display_name: "Orc Tusk",
+        flavor: "Yellowed and chipped. Mara pays well for these, and Ugra mourns every one.",
         icon: AssetRef("icons/monster_part/skull.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 50 }),
@@ -75,6 +82,7 @@ crate::table! {
     },
     RustySword: ItemDef {
         display_name: "Rusty Sword",
+        flavor: "More rust than sword, but the edge still bites.",
         icon: AssetRef("icons/weapon_and_tool/iron_sword.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
         stackable: None,
@@ -84,6 +92,7 @@ crate::table! {
     },
     BoneShield: ItemDef {
         display_name: "Bone Shield",
+        flavor: "Ribs lashed to a plank. It creaks when struck, but it holds.",
         icon: AssetRef("icons/weapon_and_tool/wooden_shield.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
         stackable: None,
@@ -96,6 +105,7 @@ crate::table! {
     },
     TribalHelmet: ItemDef {
         display_name: "Tribal Helmet",
+        flavor: "The bone helmet of an orc chief. It earns you odd looks on the road.",
         icon: AssetRef("icons/equipment/leather_helmet.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
         stackable: None,
@@ -111,6 +121,7 @@ crate::table! {
     },
     FruloosRock: ItemDef {
         display_name: "Just a rock",
+        flavor: "It's a rock. Wearing it on your head was your idea.",
         icon: AssetRef("icons/misc/rune_stone.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
         stackable: None,
@@ -125,6 +136,7 @@ crate::table! {
     },
     FishSteak: ItemDef {
         display_name: "Fish Steak",
+        flavor: "Grilled over driftwood on Tobb's pier. Even a road warden can be swayed by one.",
         icon: AssetRef("icons/food/fish_steak.png"),
         sfx: ItemSfx { on_use: Some(SfxId::Heal01), drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 10 }),
@@ -134,6 +146,7 @@ crate::table! {
     },
     LuckyLure: ItemDef {
         display_name: "Lucky Lure",
+        flavor: "Tobb swears it has never come back without a fish. Tobb swears a lot of things.",
         icon: AssetRef("icons/ore_and_gem/pearl.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
         stackable: None,
@@ -143,6 +156,7 @@ crate::table! {
     },
     RoadPass: ItemDef {
         display_name: "Road Pass",
+        flavor: "Stamped by Ilsa herself. It opens the forest road, and Bram's ferry besides.",
         icon: AssetRef("icons/misc/scroll.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
         stackable: None,
@@ -152,6 +166,7 @@ crate::table! {
     },
     TobbsLetter: ItemDef {
         display_name: "Tobb's Letter",
+        flavor: "Sealed with candle wax and a fishy thumbprint, for Captain Bram of the Gull.",
         icon: AssetRef("icons/misc/envolop.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
         stackable: None,
@@ -161,6 +176,7 @@ crate::table! {
     },
     TatteredMap: ItemDef {
         display_name: "Tattered Map",
+        flavor: "Wrapped in oilcloth and left by the tide. Someone inked a cross deep in the forest.",
         icon: AssetRef("icons/misc/map.png"),
         sfx: ItemSfx { on_use: Some(SfxId::UiPage), drop: Some(SfxId::Landing01) },
         stackable: None,
@@ -170,6 +186,7 @@ crate::table! {
     },
     BelfryKey: ItemDef {
         display_name: "Belfry Key",
+        flavor: "Heavy, cold, and nibbled at the bow. Bram wants it back.",
         icon: AssetRef("icons/misc/iron_key.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
         stackable: None,
@@ -179,6 +196,7 @@ crate::table! {
     },
     FishingBait: ItemDef {
         display_name: "Fishing Bait",
+        flavor: "Smells exactly as bad as you'd think. The fish disagree.",
         icon: AssetRef("icons/monster_part/monster_meat.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
         stackable: Some(Stackable { max: 20 }),
@@ -188,6 +206,7 @@ crate::table! {
     },
     CorsairCutlass: ItemDef {
         display_name: "Corsair's Cutlass",
+        flavor: "A gilded blade from a ship nobody remembers. Worth following the cross for.",
         icon: AssetRef("icons/weapon_and_tool/golden_sword.png"),
         sfx: ItemSfx { on_use: None, drop: Some(SfxId::Block01) },
         stackable: None,

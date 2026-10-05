@@ -1,4 +1,4 @@
-import { test } from "@playwright/test";
+import { test, type Page } from "@playwright/test";
 
 import { provisionAccount, signIn } from "../helpers/account";
 import { give } from "../helpers/admin";
@@ -10,6 +10,7 @@ import {
   findUi,
   focusGame,
   holding,
+  probe,
   rightClickUi,
   waitFor,
   waitForWorld,
@@ -65,6 +66,15 @@ test(
         "the shield never sold out",
       );
       await page.waitForTimeout(2500);
+
+      await caption(page, "Click a ware's name for its item card", { at: "top" });
+      await clickWareName(page, "Bone Shield");
+      await waitFor(page, ({ item_card }) => item_card?.item === "BoneShield", "the shield's card never opened");
+      await page.waitForTimeout(3500);
+      await focusGame(page);
+      await page.keyboard.press("Escape");
+      await waitFor(page, ({ item_card, shop }) => item_card === null && shop !== null, "Esc never closed the card");
+      await page.waitForTimeout(800);
 
       await caption(page, "With a shop open, your bag shows what sells and dims what doesn't", { at: "top" });
       await focusGame(page);
@@ -129,3 +139,10 @@ test(
     },
   }),
 );
+
+// The detail pane sits beside the list, so the ware's own heading is the rightmost copy of its name.
+async function clickWareName(page: Page, name: string): Promise<void> {
+  const copies = (await probe(page)).ui.filter((element) => element.text === name);
+  const heading = copies.reduce((right, element) => (element.x > right.x ? element : right));
+  await clickUi(page, (element) => element.text === name && element.x === heading.x && element.y === heading.y);
+}

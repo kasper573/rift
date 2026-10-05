@@ -1,8 +1,9 @@
 use crate::systems::equipment::{self, Equipment, EquipmentSlot};
+use crate::systems::item::card;
 use crate::systems::player::session;
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
-use ui::{Align, Side, tooltip, tooltip_content};
+use ui::{Align, Side, TooltipText, tooltip, tooltip_content};
 
 use crate::systems::hud::{
     HudAudience, SLOT_BG, SLOT_BORDER, Window, reconcile_children, slot_node, tooltip_label,
@@ -50,11 +51,6 @@ fn content() -> Box<dyn Scene> {
         }
         EquipmentGrid
     })
-}
-
-#[derive(Component, Default, Clone)]
-struct Cell {
-    slot: EquipmentSlot,
 }
 
 struct CellData {
@@ -126,21 +122,29 @@ fn empty_slot(slot: EquipmentSlot) -> impl Scene {
 }
 
 fn worn_slot(slot: EquipmentSlot, item: crate::data::item::Id, icon: Handle<Image>) -> impl Scene {
-    let name = item.get().display_name.to_owned();
+    let def = item.get();
+    let tip = TooltipText {
+        title: def.display_name.to_owned(),
+        lines: vec![card::overview(def)],
+        hint: Some("Click for more information · double-click to take it off".to_owned()),
+    };
     bsn! {
         template_value(slot_node())
         BackgroundColor({SLOT_BG})
         component(BorderColor::all(SLOT_BORDER))
         {tooltip(false)}
-        Cell { slot: {slot} }
-        on(|click: On<Pointer<Click>>, cells: Query<&Cell>, mut commands: Commands| {
+        on(move |click: On<Pointer<Click>>, mut commands: Commands| {
             if click.button != PointerButton::Primary {
                 return;
             }
-            if let Ok(cell) = cells.get(click.entity) {
-                let slot = cell.slot;
-                commands.queue(move |world: &mut World| session::unequip(world, slot));
-            }
+            let take_off = click.count.is_multiple_of(2);
+            commands.queue(move |world: &mut World| {
+                if take_off {
+                    session::unequip(world, slot);
+                } else {
+                    card::open(world, item);
+                }
+            });
         })
         Children [
             (
@@ -150,7 +154,7 @@ fn worn_slot(slot: EquipmentSlot, item: crate::data::item::Id, icon: Handle<Imag
             ),
             (
                 {tooltip_content(Side::Bottom, Align::Start, 0.0)}
-                Children [ {EntityScene(tooltip_label(name))} ]
+                Children [ {EntityScene(ui::tooltip_text(tip))} ]
             ),
         ]
     }

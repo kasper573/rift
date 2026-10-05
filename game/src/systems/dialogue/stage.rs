@@ -17,6 +17,7 @@ use crate::core::sfx::SfxId;
 use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::systems::actor::Name;
 use crate::systems::actor::bust::{Busts, Face, GenericExpression};
+use crate::systems::item::card;
 use crate::systems::npc::Npc;
 use crate::systems::player;
 use crate::systems::player::session::Viewpoint;
@@ -599,6 +600,7 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView) -> ChoiceOptions {
                 } else {
                     palette::CRIMSON_70
                 }),
+                link: None,
             },
             ChoiceChip::Pays { item, count, have } => ChipOptions {
                 label: count.to_string(),
@@ -608,11 +610,13 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView) -> ChoiceOptions {
                 } else {
                     palette::CRIMSON_70
                 }),
+                link: None,
             },
             ChoiceChip::Gets { item, count } => ChipOptions {
                 label: format!("+{count}"),
                 icon: Some(assets.load(item.get().icon.0)),
                 family: Family::outline(palette::EMERALD_70),
+                link: Some(card::link(*item)),
             },
         })
         .collect();
@@ -621,6 +625,7 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView) -> ChoiceOptions {
             label: warn.clone(),
             icon: None,
             family: Family::outline(palette::CRIMSON_80),
+            link: None,
         });
     }
     ChoiceOptions {
@@ -648,6 +653,7 @@ fn waiting_chip(assets: &AssetServer, label: String) -> impl Scene {
             base: ui::theme::theme().surface_trough.base,
             ..Family::outline(palette::AMBER_70)
         },
+        link: None,
     });
     bsn! {
         {chip}

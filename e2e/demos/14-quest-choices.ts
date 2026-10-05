@@ -5,6 +5,7 @@ import { admin } from "../helpers/admin";
 import { caption, chapter } from "../helpers/demo";
 import {
   clickUi,
+  doubleClickUi,
   finished,
   focusGame,
   holding,
@@ -44,12 +45,12 @@ test(
       await conversationOver(page);
       await waitFor(page, (snapshot) => holding(snapshot, "TatteredMap") === 1, "the map never arrived");
 
-      await caption(page, "The map begins a quest — use it from your bag", { at: "top" });
+      await caption(page, "The map begins a quest — double-click it in your bag to use it", { at: "top" });
       await focusGame(page);
       await page.keyboard.press("KeyI");
       await hoverUi(page, MAP);
       await page.waitForTimeout(2500);
-      await clickUi(page, MAP);
+      await doubleClickUi(page, MAP);
       await onStage(page, "XMarksOffer");
       await caption(page, "No one to talk to: just you, and the map", { at: "top" });
       await readToChoices(page, 1400);
@@ -57,6 +58,8 @@ test(
       await pick(page, "Follow the map.");
       await waitFor(page, (snapshot) => onQuest(snapshot, "XMarksTheSpot"), "the map's quest never started");
       await focusGame(page);
+      await page.keyboard.press("Escape");
+      await waitFor(page, ({ item_card }) => item_card === null, "the item card never closed");
       await page.keyboard.press("KeyI");
 
       await caption(page, "The cross is in the forest");

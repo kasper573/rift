@@ -10,7 +10,7 @@ use super::{
 };
 use crate::core::assets::AssetRef;
 use crate::systems::dialogue::Conversation;
-use crate::systems::item::{Inventory, ItemStack};
+use crate::systems::item::{self, Inventory, ItemStack};
 use crate::systems::player::session::Viewpoint;
 use crate::systems::scene::Scene as GameScene;
 
@@ -274,11 +274,12 @@ pub(super) fn reward_chips(assets: &AssetServer, def: &QuestDef) -> impl Scene +
     let ink = ui::theme::theme().surface_floating.on;
     let xp: Vec<Box<dyn Scene>> = (def.xp > 0)
         .then(|| -> Box<dyn Scene> {
-            Box::new(ui::chip(ChipOptions {
+            ui::chip(ChipOptions {
                 label: format!("{} XP", def.xp),
                 icon: None,
                 family: Family::outline(ink),
-            }))
+                link: None,
+            })
         })
         .into_iter()
         .collect();
@@ -286,11 +287,12 @@ pub(super) fn reward_chips(assets: &AssetServer, def: &QuestDef) -> impl Scene +
         .rewards
         .iter()
         .map(|&stack| -> Box<dyn Scene> {
-            Box::new(ui::chip(ChipOptions {
+            ui::chip(ChipOptions {
                 label: counted(stack),
                 icon: Some(assets.load(stack.item.get().icon.0)),
                 family: Family::outline(ink),
-            }))
+                link: Some(item::card::link(stack.item)),
+            })
         })
         .collect();
     bsn! {
@@ -304,12 +306,13 @@ pub(super) fn picks(assets: &AssetServer, def: &QuestDef) -> impl Scene + use<> 
         .pick_one
         .iter()
         .map(|stack| -> Box<dyn Scene> {
-            Box::new(bsn! {
+            let slot = bsn! {
                 template_value(crate::systems::hud::slot_node())
                 BackgroundColor({crate::systems::hud::SLOT_BG})
                 component(BorderColor::all(crate::systems::hud::SLOT_BORDER))
                 Children [ {EntityScene(icon(assets, stack.item.get().icon, PICK))} ]
-            })
+            };
+            Box::new(ui::link(item::card::link(stack.item), slot))
         })
         .collect();
     bsn! {
@@ -323,6 +326,7 @@ pub(super) fn tag(label: &str, color: Color) -> impl Scene + use<> {
         label: label.to_owned(),
         icon: None,
         family: Family::outline(color),
+        link: None,
     })
 }
 

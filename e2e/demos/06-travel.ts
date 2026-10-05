@@ -3,9 +3,22 @@ import { test } from "@playwright/test";
 import { provisionAccount, signIn } from "../helpers/account";
 import { admin } from "../helpers/admin";
 import { caption, chapter } from "../helpers/demo";
-import { clickUi, closestTile, holding, hoverUi, probe, travelTo, waitFor, waitForWorld, walkTo } from "../helpers/game";
+import {
+  clickUi,
+  closestTile,
+  focusGame,
+  holding,
+  hoverUi,
+  probe,
+  travelTo,
+  waitFor,
+  waitForWorld,
+  walkTo,
+} from "../helpers/game";
 import { loadReference } from "../helpers/image";
 import { conversationOver, onStage, pick, readToChoices } from "../helpers/talk";
+
+const PASS = "icons/misc/scroll.png";
 
 test(
   "Travel",
@@ -30,6 +43,17 @@ test(
       await caption(page, "Twenty Gold buys a pass", { at: "top" });
       await hoverUi(page, "Here, for your trouble.");
       await page.waitForTimeout(1500);
+      await caption(page, "Hover what a choice gives you for a glimpse of it — click for its card", { at: "top" });
+      await hoverUi(page, PASS);
+      await page.waitForTimeout(2500);
+      await clickUi(page, PASS);
+      await waitFor(page, ({ item_card }) => item_card?.item === "RoadPass", "the pass's card never opened");
+      await page.waitForTimeout(4000);
+      await caption(page, "Esc closes the card, and the conversation carries on", { at: "top" });
+      await focusGame(page);
+      await page.keyboard.press("Escape");
+      await waitFor(page, ({ item_card, stage }) => item_card === null && stage !== null, "the card never closed");
+      await page.waitForTimeout(1200);
       await pick(page, "Here, for your trouble.");
       await onStage(page, "IlsaBribed");
       await readToChoices(page, 1200);

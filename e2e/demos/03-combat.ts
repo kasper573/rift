@@ -2,9 +2,9 @@ import { test, type Page } from "@playwright/test";
 
 import { caption, chapter } from "../helpers/demo";
 import {
-  clickUi,
   closestTile,
   distance,
+  doubleClickUi,
   focusGame,
   nearest,
   occupied,
@@ -50,12 +50,14 @@ test(
       const { ui } = await probe(page);
       const potion = ui.find((element) => element.image?.includes("potion"));
       if (potion) {
-        await caption(page, "Click a potion to drink it");
-        await clickUi(page, potion.image!);
+        await caption(page, "Double-click a potion to drink it");
+        await doubleClickUi(page, potion.image!);
         await page.waitForTimeout(1500);
       }
       await caption(page, "Kills earn experience — see the xp under your name");
       await page.waitForTimeout(3000);
+      await focusGame(page);
+      if ((await probe(page)).item_card) await page.keyboard.press("Escape");
       await page.keyboard.press("KeyI");
 
       await caption(page, "Pick a fight, then run for town");

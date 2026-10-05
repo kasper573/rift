@@ -1,13 +1,14 @@
-use crate::systems::item::{INVENTORY_MAX, Inventory, ItemDef, ItemFlag, ItemStack};
+use crate::data::item::Id as ItemId;
+use crate::systems::item::{INVENTORY_MAX, Inventory, ItemDef, ItemFlag, ItemStack, card};
 use crate::systems::player::session;
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use std::hash::{Hash, Hasher};
 use ui::tokens::palette;
-use ui::{Align, Carriable, Side, text_colored, tooltip, tooltip_content};
+use ui::{Align, Carriable, Side, TooltipText, text_colored, tooltip, tooltip_content};
 
 use crate::systems::hud::{
-    HudAudience, SLOT_BG, SLOT_BORDER, Window, reconcile_children, slot_node, tooltip_label,
+    HudAudience, SLOT_BG, SLOT_BORDER, Window, reconcile_children, slot_node,
 };
 use ui::component;
 
@@ -89,20 +90,14 @@ fn content() -> Box<dyn Scene> {
     })
 }
 
-#[derive(Component, Default, Clone)]
-struct Cell {
-    slot: u32,
-}
-
 struct CellData {
     slot: u32,
     filled: Option<Filled>,
 }
 
 struct Filled {
+    item: ItemId,
     icon: Handle<Image>,
-    name: String,
-    kind: u64,
     count: u32,
     notes: Vec<String>,
     verdict: Option<SlotVerdict>,
@@ -138,9 +133,8 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
                 .map(|&stack| {
                     let def = stack.item.get();
                     Filled {
+                        item: stack.item,
                         icon: assets.load(def.icon.0),
-                        name: def.display_name.to_owned(),
-                        kind: stack.item.index() as u64,
                         count: stack.count,
                         notes: bound_note(def)
                             .into_iter()
@@ -162,7 +156,7 @@ fn cell_key(cell: &CellData) -> u64 {
     let mut hasher = std::hash::DefaultHasher::new();
     cell.slot.hash(&mut hasher);
     if let Some(filled) = &cell.filled {
-        (filled.kind, filled.count, &filled.notes, &filled.verdict).hash(&mut hasher);
+        (filled.item, filled.count, &filled.notes, &filled.verdict).hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -188,36 +182,45 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
     } else {
         String::new()
     };
-    let named = std::iter::once(filled.name.as_str())
-        .chain(filled.notes.iter().map(String::as_str))
-        .collect::<Vec<_>>()
-        .join(" · ");
-    let (border, tint, tip) = match &filled.verdict {
-        None => (SLOT_BORDER, Color::WHITE, named),
-        Some(SlotVerdict::Wanted(note)) => {
-            (palette::AMBER_70, Color::WHITE, format!("{named} · {note}"))
-        }
+    let def = filled.item.get();
+    let (border, tint, verdict) = match &filled.verdict {
+        None => (SLOT_BORDER, Color::WHITE, None),
+        Some(SlotVerdict::Wanted(note)) => (palette::AMBER_70, Color::WHITE, Some(note.clone())),
         Some(SlotVerdict::Refused(reason)) => (
             SLOT_BORDER,
             Color::WHITE.with_alpha(0.3),
-            format!("{named} · {reason}"),
+            Some(reason.clone()),
         ),
     };
+    let tip = TooltipText {
+        title: def.display_name.to_owned(),
+        lines: std::iter::once(card::overview(def))
+            .chain(filled.notes.iter().cloned())
+            .chain(verdict)
+            .collect(),
+        hint: Some(match card::use_verb(def) {
+            Some(verb) => format!("Click for more information · double-click to {verb}"),
+            None => "Click for more information".to_owned(),
+        }),
+    };
+    let item = filled.item;
     bsn! {
         template_value(slot_node())
         BackgroundColor({SLOT_BG})
         component(BorderColor::all(border))
         {tooltip(false)}
-        Cell { slot: {slot} }
         component(Carriable { image: filled.icon.clone(), payload: slot as u64 })
-        on(|click: On<Pointer<Click>>, cells: Query<&Cell>, keys: Res<ButtonInput<KeyCode>>, mut commands: Commands| {
-            let Ok(&Cell { slot }) = cells.get(click.entity) else {
-                return;
-            };
+        on(move |click: On<Pointer<Click>>, keys: Res<ButtonInput<KeyCode>>, mut commands: Commands| {
             match click.button {
                 PointerButton::Primary => {
-                    let drop = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-                    commands.queue(move |world: &mut World| act(world, slot, drop));
+                    let tap = if keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight) {
+                        Tap::Drop
+                    } else if click.count.is_multiple_of(2) {
+                        Tap::Use
+                    } else {
+                        Tap::Inspect
+                    };
+                    commands.queue(move |world: &mut World| act(world, slot, item, tap));
                 }
                 PointerButton::Secondary => commands.trigger(SlotSecondaryClicked { slot }),
                 PointerButton::Middle => {}
@@ -231,7 +234,7 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
             ),
             (
                 {tooltip_content(Side::Bottom, Align::Start, 0.0)}
-                Children [ {EntityScene(tooltip_label(tip))} ]
+                Children [ {EntityScene(ui::tooltip_text(tip))} ]
             ),
             (
                 Node {
@@ -246,10 +249,17 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
     }
 }
 
-fn act(world: &mut World, slot: u32, drop: bool) {
-    if drop {
-        session::drop_item(world, slot);
-    } else {
-        session::use_item(world, slot);
+#[derive(Clone, Copy)]
+enum Tap {
+    Inspect,
+    Use,
+    Drop,
+}
+
+fn act(world: &mut World, slot: u32, item: ItemId, tap: Tap) {
+    match tap {
+        Tap::Inspect => card::open(world, item),
+        Tap::Use => session::use_item(world, slot),
+        Tap::Drop => session::drop_item(world, slot),
     }
 }

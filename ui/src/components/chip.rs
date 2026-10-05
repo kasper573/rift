@@ -7,6 +7,7 @@ use bevy_ui::widget::ImageNode;
 use bevy_ui::{AlignItems, BorderRadius, Node, UiRect, Val};
 
 use crate::component;
+use crate::components::link::{LinkOptions, link};
 use crate::components::text::styled_text;
 use crate::style::Style;
 use crate::theme::Family;
@@ -19,14 +20,36 @@ pub struct ChipOptions {
     pub label: String,
     pub icon: Option<Handle<Image>>,
     pub family: Family,
+    pub link: Option<LinkOptions>,
 }
 
-pub fn chip(options: ChipOptions) -> impl Scene {
+pub fn chip(options: ChipOptions) -> Box<dyn Scene> {
     let ChipOptions {
         label,
         icon,
         family,
+        link: linked,
     } = options;
+    match linked {
+        Some(linked) => Box::new(link(linked, face(label, icon, family, Pickable::IGNORE))),
+        None => Box::new(face(
+            label,
+            icon,
+            family,
+            Pickable {
+                should_block_lower: false,
+                is_hoverable: true,
+            },
+        )),
+    }
+}
+
+fn face(
+    label: String,
+    icon: Option<Handle<Image>>,
+    family: Family,
+    pickable: Pickable,
+) -> impl Scene {
     let style = Style::new()
         .background(family.base)
         .border_color(family.border)
@@ -46,7 +69,7 @@ pub fn chip(options: ChipOptions) -> impl Scene {
     let label = styled_text(label, family.on, typography::LABEL);
     bsn! {
         template_value(style)
-        Pickable { should_block_lower: false, is_hoverable: true }
+        template_value(pickable)
         Children [ {icon}, {EntityScene(label)} ]
     }
 }

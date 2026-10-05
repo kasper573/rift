@@ -11,7 +11,7 @@ use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::data::item::Id as ItemId;
 use crate::systems::hud;
 use crate::systems::item::widget::{SlotSecondaryClicked, SlotVerdict, slot_verdict_source};
-use crate::systems::item::{Inventory, ItemCategory, ItemStack};
+use crate::systems::item::{Inventory, ItemCategory, ItemStack, card};
 use crate::systems::player::session::Viewpoint;
 use crate::systems::scene::Scene as GameScene;
 use crate::systems::scene::mode::Mode;
@@ -452,6 +452,22 @@ fn detail(assets: &AssetServer, shelf: &Shelf, ware: &Ware, index: usize) -> imp
         1 => def.category().label().to_owned(),
         count => format!("{} · ×{count}", def.category().label()),
     };
+    let header = bsn! {
+        Node { column_gap: Val::Px({spacing::L}), align_items: AlignItems::Center }
+        Children [
+            (
+                Node { width: Val::Px({BIG_ICON}), height: Val::Px({BIG_ICON}) }
+                component(ImageNode::new(assets.load(def.icon.0)))
+            ),
+            (
+                Node { flex_direction: FlexDirection::Column }
+                Children [
+                    {EntityScene(ui::styled_text(def.display_name, ink, typography::NAME))},
+                    {EntityScene(ui::styled_text(category, ink.with_alpha(0.6), typography::CAPTION))},
+                ]
+            ),
+        ]
+    };
     bsn! {
         Node {
             flex_direction: FlexDirection::Column,
@@ -460,22 +476,7 @@ fn detail(assets: &AssetServer, shelf: &Shelf, ware: &Ware, index: usize) -> imp
             width: Val::Percent(100.0),
         }
         Children [
-            (
-                Node { column_gap: Val::Px({spacing::L}), align_items: AlignItems::Center }
-                Children [
-                    (
-                        Node { width: Val::Px({BIG_ICON}), height: Val::Px({BIG_ICON}) }
-                        component(ImageNode::new(assets.load(def.icon.0)))
-                    ),
-                    (
-                        Node { flex_direction: FlexDirection::Column }
-                        Children [
-                            {EntityScene(ui::styled_text(def.display_name, ink, typography::NAME))},
-                            {EntityScene(ui::styled_text(category, ink.with_alpha(0.6), typography::CAPTION))},
-                        ]
-                    ),
-                ]
-            ),
+            {EntityScene(ui::link(card::link(ware.item), header))},
             {EntityScene(ui::styled_text("Price", ink.with_alpha(0.6), typography::LABEL))},
             ( Node { flex_direction: FlexDirection::Column, row_gap: Val::Px({spacing::M}) } Children [ {costs} ] ),
             ( Node { flex_direction: FlexDirection::Column, row_gap: Val::Px({spacing::S}) } Children [ {notes} ] ),
@@ -527,6 +528,7 @@ fn price_chip(assets: &AssetServer, inventory: &Inventory, stack: ItemStack) -> 
         } else {
             palette::CRIMSON_70
         }),
+        link: None,
     })
 }
 

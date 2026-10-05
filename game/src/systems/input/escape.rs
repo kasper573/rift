@@ -1,10 +1,11 @@
 use bevy::prelude::*;
 
 use crate::systems::dialogue::{history, stage};
-use crate::systems::{hud, shop};
+use crate::systems::{hud, item, shop};
 
 static LAYERS: &[fn(&mut World) -> bool] = &[
     ui::dismiss_topmost,
+    item::card::close,
     history::close,
     shop::window::close,
     stage::leave,

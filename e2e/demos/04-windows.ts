@@ -1,7 +1,20 @@
 import { test } from "@playwright/test";
 
+import { provisionAccount, signIn } from "../helpers/account";
+import { give } from "../helpers/admin";
 import { caption, chapter } from "../helpers/demo";
-import { clickUi, dragUi, focusGame } from "../helpers/game";
+import {
+  clickUi,
+  doubleClickUi,
+  dragUi,
+  focusGame,
+  holding,
+  outsideCard,
+  probe,
+  waitFor,
+  waitForWorld,
+} from "../helpers/game";
+import { loadReference } from "../helpers/image";
 
 // Each window opens at the same spot; these spread them over the corners of a 1280×720 view.
 const LAYOUT = [
@@ -11,10 +24,22 @@ const LAYOUT = [
   { key: "KeyO", title: "Settings", by: { x: 440, y: 40 } },
 ];
 
+const SWORD = "icons/weapon_and_tool/iron_sword.png";
+const SHIELD = "icons/weapon_and_tool/wooden_shield.png";
+
 test(
   "Windows",
   chapter({
     summary: "Inventory, equipment, stats and settings, laid out your way",
+    setup: async (page) => {
+      await signIn(page, await provisionAccount(page, ["admin"]));
+      await clickUi(page, "Play");
+      await waitForWorld(page, loadReference("island.png"));
+      await give(page, [
+        ["RustySword", 1],
+        ["BoneShield", 1],
+      ]);
+    },
     play: async (page) => {
       await caption(page, "Every window has a hotkey: I, E, K, L, O and C");
       await focusGame(page);
@@ -25,6 +50,27 @@ test(
         await dragUi(page, title, by);
         await page.waitForTimeout(700);
       }
+      await caption(page, "Click an item for its card: what it does, and a line of lore");
+      await clickUi(page, outsideCard(await probe(page), SHIELD));
+      await waitFor(page, ({ item_card }) => item_card?.item === "BoneShield", "the shield's card never opened");
+      await page.waitForTimeout(3500);
+      await caption(page, "One card at a time: click another item and the card follows");
+      await clickUi(page, outsideCard(await probe(page), SWORD));
+      await waitFor(page, ({ item_card }) => item_card?.item === "RustySword", "the sword's card never opened");
+      await page.waitForTimeout(2500);
+      await caption(page, "Double-click an item to use it — or, for gear, to wear it");
+      await doubleClickUi(page, outsideCard(await probe(page), SWORD));
+      await waitFor(page, (snapshot) => holding(snapshot, "RustySword") === 0, "the sword was never worn");
+      await page.waitForTimeout(2000);
+      await caption(page, "Worn gear opens its card too, and a double-click takes it off");
+      await doubleClickUi(page, outsideCard(await probe(page), SWORD));
+      await waitFor(page, (snapshot) => holding(snapshot, "RustySword") === 1, "the sword was never taken off");
+      await page.waitForTimeout(2000);
+      await caption(page, "Esc closes the card before any window");
+      await focusGame(page);
+      await page.keyboard.press("Escape");
+      await waitFor(page, ({ item_card }) => item_card === null, "the item card never closed");
+      await page.waitForTimeout(1200);
       await caption(page, "Windows snap to a grid — toggle it in Settings");
       await clickUi(page, /^ui snapping/);
       await page.waitForTimeout(1500);

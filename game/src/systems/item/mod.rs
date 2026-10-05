@@ -1,3 +1,4 @@
+pub mod card;
 pub mod render;
 pub mod widget;
 
@@ -256,6 +257,7 @@ pub struct ItemsDropped {
 
 pub struct ItemDef {
     pub display_name: &'static str,
+    pub flavor: &'static str,
     pub icon: AssetRef,
     pub sfx: ItemSfx,
     pub stackable: Option<Stackable>,

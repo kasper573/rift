@@ -11,6 +11,7 @@ pub(crate) mod collapsible;
 pub(crate) mod confirm;
 pub(crate) mod dialog;
 pub(crate) mod dialogue;
+pub(crate) mod link;
 pub(crate) mod popover;
 pub(crate) mod progress;
 pub(crate) mod radio_group;
@@ -48,6 +49,7 @@ pub use dialogue::{
     DialogueBoxOptions, choice_list, dialogue_box, dialogue_choices, dialogue_typing, pick_choice,
     pick_choice_at, set_dialogue_status, step_choice,
 };
+pub use link::{LinkOptions, link};
 pub use popover::{popover, popover_close, popover_content, popover_trigger};
 pub use progress::{ProgressFraction, progress, progress_indicator};
 pub use radio_group::{radio_circle, radio_group, radio_indicator, radio_item};
@@ -66,6 +68,6 @@ pub use switch::{switch, switch_thumb};
 pub use tabs::{tabs, tabs_content, tabs_list, tabs_trigger};
 pub use text::{styled_text, text, text_colored};
 pub use text_input::{OnSubmit, TextInputOptions, text_input, typing};
-pub use tooltip::{tooltip, tooltip_content};
+pub use tooltip::{TooltipText, tooltip, tooltip_content, tooltip_text};
 pub use widget::{WidgetOptions, widget};
 pub use window::{WindowContent, WindowOptions, window};

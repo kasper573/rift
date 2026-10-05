@@ -154,6 +154,7 @@ export interface Snapshot {
   announcement: Lane;
   history: boolean;
   shop: Shop | null;
+  item_card: { item: string; rect: Cover } | null;
   bag: Stack[];
   quests: Quests;
 }
@@ -347,6 +348,17 @@ export function findUi(snapshot: Snapshot, match: UiMatch): UiElement | undefine
   );
 }
 
+// The item card repeats the icon of the item it shows; this matches only the copies outside it.
+export function outsideCard(snapshot: Snapshot, image: string): (element: UiElement) => boolean {
+  const card = snapshot.item_card?.rect;
+  const inside = (element: UiElement) => {
+    if (!card) return false;
+    const [x, y] = [element.x + element.width / 2, element.y + element.height / 2];
+    return x >= card.x && x <= card.x + card.width && y >= card.y && y <= card.y + card.height;
+  };
+  return (element) => element.image === image && !inside(element);
+}
+
 export async function hoverUi(page: Page, match: UiMatch): Promise<void> {
   const { x, y } = await uiPoint(page, match);
   await page.mouse.move(x, y, { steps: 12 });
@@ -356,6 +368,12 @@ export async function clickUi(page: Page, match: UiMatch): Promise<void> {
   const { x, y } = await uiPoint(page, match);
   await page.mouse.move(x, y, { steps: 12 });
   await click(page);
+}
+
+export async function doubleClickUi(page: Page, match: UiMatch): Promise<void> {
+  const { x, y } = await uiPoint(page, match);
+  await page.mouse.move(x, y, { steps: 12 });
+  await page.mouse.dblclick(x, y);
 }
 
 export async function rightClickUi(page: Page, match: UiMatch): Promise<void> {

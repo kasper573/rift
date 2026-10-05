@@ -1144,6 +1144,23 @@ fn tag(label: &str, color: Color) -> ChipOptions {
         label: label.to_owned(),
         icon: None,
         family: ui::Family::outline(color),
+        link: None,
+    }
+}
+
+fn reward(assets: &AssetServer) -> ChipOptions {
+    ChipOptions {
+        label: "+1".to_owned(),
+        icon: Some(assets.load("icons/misc/scroll.png")),
+        family: ui::Family::outline(palette::EMERALD_70),
+        link: Some(ui::LinkOptions {
+            tooltip: ui::TooltipText {
+                title: "Road Pass".to_owned(),
+                lines: vec!["Material · bound".to_owned()],
+                hint: Some("Click for more information".to_owned()),
+            },
+            on_tap: ui::OnTap::new(|_| {}),
+        }),
     }
 }
 
@@ -1156,6 +1173,7 @@ fn cost(assets: &AssetServer, count: u32, met: bool) -> ChipOptions {
         } else {
             palette::CRIMSON_70
         }),
+        link: None,
     }
 }
 
@@ -1185,7 +1203,11 @@ fn sample_choices(assets: &AssetServer) -> Vec<ChoiceOptions> {
         ),
         choice(
             "Here, for your trouble.",
-            vec![cost(assets, 20, true), tag("DIALOGUE", palette::AZURE_70)],
+            vec![
+                cost(assets, 20, true),
+                reward(assets),
+                tag("DIALOGUE", palette::AZURE_70),
+            ],
             false,
         ),
         choice(
@@ -1214,6 +1236,7 @@ fn chips_scene() -> Box<dyn Scene> {
         tag("Wearing Tribal Helmet", palette::EMERALD_70),
         cost(assets, 20, true),
         cost(assets, 150, false),
+        reward(assets),
     ]
     .into_iter()
     .map(|options| boxed(chip(options)))

@@ -22,6 +22,7 @@ import { conversationOver, onStage, pick, readToChoices, talkTo, townsperson } f
 
 const LETTER = "icons/misc/envolop.png";
 const SWORD = "icons/weapon_and_tool/iron_sword.png";
+const BAIT = "icons/monster_part/monster_meat.png";
 
 test(
   "Quests",
@@ -81,6 +82,14 @@ test(
       await page.waitForTimeout(1500);
       await clickUi(page, logRow(await probe(page), "Low Tide"));
       await page.waitForTimeout(2500);
+      await caption(page, "Click a reward for its item card", { at: "top" });
+      await clickUi(page, BAIT);
+      await waitFor(page, ({ item_card }) => item_card?.item === "FishingBait", "the bait's card never opened");
+      await page.waitForTimeout(3500);
+      await focusGame(page);
+      await page.keyboard.press("Escape");
+      await waitFor(page, ({ item_card }) => item_card === null, "the item card never closed");
+      await page.waitForTimeout(800);
       await clickUi(page, logRow(await probe(page), "A Letter for the Captain"));
       await page.waitForTimeout(2500);
       await clickUi(page, logRow(await probe(page), "Low Tide"));
