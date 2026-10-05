@@ -1,0 +1,26 @@
+use std::collections::HashSet;
+use std::path::Path;
+
+use game::data;
+
+const BUST_CAP_BYTES: u64 = 120 * 1024;
+const CAST_BUDGET_BYTES: u64 = 3 * 1024 * 1024;
+
+#[test]
+fn every_bust_fits_the_download_budget() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets");
+    let arts: HashSet<&str> = data::model::TABLE
+        .iter()
+        .flat_map(|def| def.busts.iter().flat_map(|busts| busts.all()))
+        .map(|bust| bust.art.0)
+        .collect();
+    let mut total = 0;
+    for art in arts {
+        let size = std::fs::metadata(root.join(art))
+            .unwrap_or_else(|error| panic!("{art}: {error}"))
+            .len();
+        assert!(size <= BUST_CAP_BYTES, "{art} weighs {size} bytes");
+        total += size;
+    }
+    assert!(total <= CAST_BUDGET_BYTES, "the busts weigh {total} bytes");
+}

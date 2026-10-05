@@ -166,7 +166,7 @@ fn character(assets: &AssetService, def: &NpcDef, at: Pos<Tiles>, area: area::Id
         },
         hitbox: Hitbox {
             size: assets
-                .resolve(*def.model.get(), actor::build_model)
+                .resolve(def.model.get().sheet, actor::build_model)
                 .hitbox(),
         },
         area: AreaTag { area },

@@ -204,6 +204,7 @@ pub fn step_areas(apps: &mut [App], clock: crate::core::time::WallClock) {
 }
 
 pub fn check_content(assets: &crate::core::assets::AssetService) {
+    actor::check(assets);
     area::check(assets);
 }
 

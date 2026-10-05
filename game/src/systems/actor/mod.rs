@@ -1,11 +1,15 @@
+pub mod bust;
 mod model;
 pub mod plate;
 pub mod render;
+
+use std::path::Path;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::core::assets::AssetService;
 use crate::core::math::{Direction, Size};
 use crate::core::tiling::Tiles;
 use crate::core::time::PlaybackRate;
@@ -20,6 +24,17 @@ pub fn register(app: &mut App) {
     app.replicate::<Actor>()
         .replicate::<Hitbox>()
         .replicate::<Name>();
+}
+
+pub fn check(assets: &AssetService) {
+    for def in data::model::TABLE {
+        assets.resolve(def.sheet, build_model);
+        for bust in def.busts.iter().flat_map(bust::Busts::all) {
+            if let Err(error) = assets.open(Path::new(bust.art.0)) {
+                panic!("bust {}: {error}", bust.art.0);
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]

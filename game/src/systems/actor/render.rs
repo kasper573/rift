@@ -64,7 +64,7 @@ fn attach_sprite(
     };
     let image = assets.load(
         service
-            .resolve(*actor.model.get(), build_model)
+            .resolve(actor.model.get().sheet, build_model)
             .sheet()
             .to_owned(),
     );
@@ -98,7 +98,7 @@ fn sync_actors(
     for (entity, actor, render, pose, tag, mut sprite, mut transform, mut visibility) in &mut actors
     {
         let elapsed = animator.elapsed(entity, pose.action as u64, clock);
-        let region = service.resolve(*actor.model.get(), build_model).frame(
+        let region = service.resolve(actor.model.get().sheet, build_model).frame(
             pose.action.name(),
             pose.dir,
             elapsed,
@@ -144,7 +144,7 @@ fn actor_cues(
             continue;
         };
         let since = (was == pose.action).then_some(then);
-        let model = service.resolve(*actor.model.get(), build_model);
+        let model = service.resolve(actor.model.get().sheet, build_model);
         let (cues, stepped) =
             model.cues(pose.action.name(), pose.dir, since, now, actor.attack_rate);
         for id in cues {

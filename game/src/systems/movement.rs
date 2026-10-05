@@ -195,7 +195,7 @@ fn approach_tile(
     let assets = world.resource::<AssetService>();
     let airborne = world.get::<Actor>(entity).is_some_and(|actor| {
         assets
-            .resolve(*actor.model.get(), crate::systems::actor::build_model)
+            .resolve(actor.model.get().sheet, crate::systems::actor::build_model)
             .airborne
     });
     let goal = target.cell();
@@ -313,7 +313,7 @@ fn route(world: &mut World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<Cell
     let assets = world.resource::<AssetService>();
     if world.get::<Actor>(entity).is_some_and(|actor| {
         assets
-            .resolve(*actor.model.get(), crate::systems::actor::build_model)
+            .resolve(actor.model.get().sheet, crate::systems::actor::build_model)
             .airborne
     }) {
         return Some(vec![goal.cell()]);

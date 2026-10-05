@@ -290,7 +290,7 @@ pub(crate) fn place(
                 },
                 hitbox: Hitbox {
                     size: assets
-                        .resolve(*model.get(), crate::systems::actor::build_model)
+                        .resolve(model.get().sheet, crate::systems::actor::build_model)
                         .hitbox(),
                 },
                 area: AreaTag { area: zone },
