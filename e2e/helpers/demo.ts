@@ -91,6 +91,38 @@ export async function caption(
   });
 }
 
+const INSET_REFRESH_MS = 200;
+
+// The other browser is off camera, so its screen reaches the video only as this live picture.
+export async function inset(page: Page, other: Page, label: string): Promise<() => Promise<void>> {
+  let running = true;
+  let shown: { dispose(): Promise<void> } | undefined;
+  const refreshing = (async () => {
+    while (running) {
+      const shot = await other.screenshot({ type: "jpeg", quality: 70 }).catch(() => undefined);
+      if (shot && running) {
+        const next = await page.screencast.showOverlay(insetFrame(shot.toString("base64"), label));
+        await shown?.dispose().catch(() => {});
+        shown = next;
+      }
+      await new Promise((resolve) => setTimeout(resolve, INSET_REFRESH_MS));
+    }
+  })();
+  return async () => {
+    running = false;
+    await refreshing;
+    await shown?.dispose().catch(() => {});
+  };
+}
+
+function insetFrame(jpeg: string, label: string): string {
+  return `<div style="position:fixed;left:16px;top:96px;width:448px;border-radius:10px;overflow:hidden;
+      border:3px solid rgba(255,255,255,.85);box-shadow:0 6px 24px rgba(0,0,0,.55);background:#000">
+    <img src="data:image/jpeg;base64,${jpeg}" style="display:block;width:100%">
+    <div style="position:absolute;left:0;top:0;padding:4px 10px;border-bottom-right-radius:8px;
+      background:rgba(0,0,0,.72);color:#fff;font:600 16px/1.3 system-ui,sans-serif">${escape(label)}</div></div>`;
+}
+
 function titleCard(title: string, summary: string): string {
   return `<div style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
       justify-content:center;gap:14px;background:rgba(8,10,16,.6);backdrop-filter:blur(10px);

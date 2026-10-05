@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
 use bevy::window::PrimaryWindow;
-use game::core::math::Pos;
+use game::core::math::{Pos, Rect};
 use game::core::render::tile_to_window;
 use game::core::tiling::{TilePos, Tiles};
 use game::data;
@@ -13,6 +13,7 @@ use game::systems::actor::{self, Actor, Hitbox};
 use game::systems::area::{self, AreaTag};
 use game::systems::attention::{Attention, StatusBadges};
 use game::systems::combat::Attitude;
+use game::systems::dialogue::announcement::Announcements;
 use game::systems::dialogue::{history, stage};
 use game::systems::item::{DroppedItem, Inventory};
 use game::systems::movement::Position;
@@ -49,6 +50,7 @@ struct Snapshot {
     ui: Vec<UiElement>,
     covered: Vec<Cover>,
     stage: Option<Stage>,
+    announcement: Lane,
     history: bool,
     shop: Option<Shop>,
     bag: Vec<Stack>,
@@ -117,6 +119,13 @@ struct Stage {
     waiting: Option<data::dialogue::Id>,
 }
 
+#[derive(Serialize, Default)]
+struct Lane {
+    showing: Option<data::announcement::Id>,
+    next: Option<data::announcement::Id>,
+    missed: Vec<data::announcement::Id>,
+}
+
 #[derive(Serialize)]
 struct StageChoice {
     label: String,
@@ -138,6 +147,7 @@ struct Body {
     player: bool,
     at: Pos<Tiles>,
     aim: Pos<Tiles>,
+    hitbox: Rect<Tiles>,
     health: f32,
     max_health: f32,
     npc: Option<data::npc::Id>,
@@ -154,6 +164,7 @@ struct Fixture {
     prop: data::prop::Id,
     at: Pos<Tiles>,
     aim: Pos<Tiles>,
+    hitbox: Rect<Tiles>,
     marks: Vec<data::attention::Id>,
 }
 
@@ -235,6 +246,14 @@ fn snapshot(world: &mut World) -> Snapshot {
                 .collect(),
             waiting: view.waiting,
         }),
+        announcement: viewpoint
+            .and_then(|seen| world.get::<Announcements>(seen))
+            .map(|lane| Lane {
+                showing: lane.showing.map(|shown| shown.id),
+                next: lane.next.map(|next| next.id),
+                missed: lane.missed.iter().map(|missed| missed.id).collect(),
+            })
+            .unwrap_or_default(),
         history: history::is_open(world),
         shop: shop::window::view(world).map(|window| Shop {
             shop: window.shop,
@@ -342,7 +361,7 @@ fn body(world: &World, entity: Entity) -> Option<Body> {
     let entity = world.get_entity(entity).ok()?;
     let npc = entity.get::<Npc>().map(|npc| npc.def);
     let at = entity.get::<Position>()?.pos;
-    let hitbox = entity.get::<Hitbox>()?;
+    let hitbox = at.hitbox(entity.get::<Hitbox>()?.size);
     let model = entity.get::<Actor>()?.model;
     let stat = |kind| entity.get::<Stats>().map_or(0.0, |stats| stats.get(kind));
     Some(Body {
@@ -353,7 +372,8 @@ fn body(world: &World, entity: Entity) -> Option<Body> {
         model,
         player: entity.contains::<Owner>(),
         at,
-        aim: at.hitbox(hitbox.size).center(),
+        aim: hitbox.center(),
+        hitbox,
         health: stat(StatKind::Health),
         max_health: stat(StatKind::MaxHealth),
         npc,
@@ -395,6 +415,7 @@ fn props(world: &mut World, area: Option<area::Id>) -> Vec<Fixture> {
             prop: prop.def,
             at: at.pos,
             aim: at.pos.hitbox(hitbox.size).center(),
+            hitbox: at.pos.hitbox(hitbox.size),
             marks: attention
                 .as_ref()
                 .map(|attention| attention.of(entity).iter().map(|mark| mark.kind).collect())

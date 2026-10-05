@@ -1,10 +1,12 @@
 use bevy_ecs::prelude::*;
 
-use super::Id;
+use super::{Id, MarkerName};
+use crate::core::assets::AssetService;
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 use crate::systems::actor::Name;
 use crate::systems::dialogue::Heard;
+use crate::systems::dialogue::announcement::{self, AnnouncementQueue};
 use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::Inventory;
@@ -12,6 +14,8 @@ use crate::systems::job::Job;
 use crate::systems::memory::Memory;
 use crate::systems::player::{CharacterState, ClientId, Owner, Xp};
 use crate::systems::quest::QuestLog;
+use crate::systems::reach;
+use crate::systems::rule::{Outcome, RuleContext};
 use crate::systems::shop;
 use crate::systems::stat;
 
@@ -19,6 +23,34 @@ use crate::systems::stat;
 pub struct Crossing {
     pub dest_area: Id,
     pub dest: Pos<Tiles>,
+}
+
+pub struct Travel {
+    pub to: Id,
+    pub at: MarkerName,
+}
+
+impl Outcome for Travel {
+    fn apply(&self, ctx: &mut RuleContext) {
+        let assets = ctx.world.resource::<AssetService>().clone();
+        let Some(dest) = super::destination(&assets, self.to, self.at) else {
+            return;
+        };
+        reach::forget(ctx.world, ctx.player);
+        ctx.world.entity_mut(ctx.player).insert(Crossing {
+            dest_area: self.to,
+            dest,
+        });
+    }
+
+    fn check(&self, assets: &AssetService) {
+        if super::destination(assets, self.to, self.at).is_none() {
+            panic!(
+                "travel to {:?}: marker '{}' is missing or not walkable",
+                self.to, self.at.0
+            );
+        }
+    }
 }
 
 pub struct Traveler {
@@ -65,6 +97,10 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
                         heard: world.get::<Heard>(entity).cloned().unwrap_or_default(),
                         ledger: shop::ledger(world, entity),
                         quests: world.get::<QuestLog>(entity).cloned().unwrap_or_default(),
+                        announcements: world
+                            .get::<AnnouncementQueue>(entity)
+                            .cloned()
+                            .unwrap_or_default(),
                     },
                 },
             ))
@@ -81,11 +117,15 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
 }
 
 pub fn arrive(world: &mut World, traveler: Traveler) -> Entity {
-    crate::systems::player::place(
+    let entity = crate::systems::player::place(
         world,
         traveler.client,
         traveler.dest_area,
         traveler.dest,
         traveler.state,
-    )
+    );
+    if let Some(intro) = traveler.dest_area.get().intro {
+        announcement::announce(world, entity, intro);
+    }
+    entity
 }

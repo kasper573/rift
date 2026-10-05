@@ -5,15 +5,17 @@ import { caption, chapter, enterWorld } from "../helpers/demo";
 import {
   clickUi,
   closestTile,
+  crossWarp,
   findUi,
   focusGame,
   nearest,
+  onQuest,
   probe,
-  travelTo,
   waitFor,
   walkTo,
   type Tile,
 } from "../helpers/game";
+import { onStage, pick, readToChoices, talkTo } from "../helpers/talk";
 
 let islander: Page;
 let explorer: Page;
@@ -28,9 +30,7 @@ test(
       explorer = await cast.newPage();
       await enterWorld(explorer);
       const { me, portals } = await probe(explorer);
-      const warp = nearest(portals, me!.at)!;
-      await travelTo(explorer, warp.at);
-      await waitFor(explorer, ({ area }) => area === warp.to, `never arrived in ${warp.to}`);
+      await crossWarp(explorer, nearest(portals, me!.at)!);
       await signIn(page, await provisionAccount(page, ["spectator"]));
       await waitFor(page, (snapshot) => findUi(snapshot, "Spectate"), "the mode choice never showed");
     },
@@ -46,6 +46,30 @@ test(
         [3, 1],
         [-2, 2],
       ]);
+      await caption(page, "That includes their conversations, read along without a way to answer");
+      await talkTo(islander, "Tobb");
+      await onStage(page, "TobbHello");
+      await readToChoices(islander, 1800);
+      await pick(islander, "A Letter for the Captain");
+      await onStage(page, "LetterOffer");
+      await caption(page, "The quest card and the choices show, but only the player picks", { at: "top" });
+      await readToChoices(islander, 1800);
+      await page.waitForTimeout(2500);
+      await pick(islander, "I'll take it.");
+      await waitFor(page, (snapshot) => onQuest(snapshot, "LetterForTheCaptain"), "the quest never showed");
+      await caption(page, "Their quest tracker follows along", { at: "top" });
+      await page.waitForTimeout(3000);
+      await caption(page, "So do their shops, with every button off");
+      await talkTo(islander, "Mara");
+      await readToChoices(islander, 900);
+      await pick(islander, "Show me your wares.");
+      await waitFor(page, ({ shop }) => shop?.shop === "MaraWares", "the shop never showed");
+      await page.waitForTimeout(4000);
+      await focusGame(islander);
+      await islander.keyboard.press("Escape");
+      await waitFor(page, ({ shop }) => !shop, "the spectator kept the shop open");
+      await islander.keyboard.press("Escape");
+      await waitFor(page, ({ stage }) => !stage, "the spectator kept the conversation open");
       await caption(page, "The arrow keys switch to the next player…");
       await switchTo(page, explorerName);
       await caption(page, "…wherever in the world they are");

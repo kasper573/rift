@@ -141,6 +141,15 @@ crate::table! {
         kind: ItemKind::Resource,
         flags: &[],
     },
+    RoadPass: ItemDef {
+        display_name: "Road Pass",
+        icon: AssetRef("icons/misc/scroll.png"),
+        sfx: ItemSfx { on_use: None, drop: Some(SfxId::Landing01) },
+        stackable: None,
+        effects: &[],
+        kind: ItemKind::Resource,
+        flags: &[],
+    },
     TobbsLetter: ItemDef {
         display_name: "Tobb's Letter",
         icon: AssetRef("icons/misc/envolop.png"),

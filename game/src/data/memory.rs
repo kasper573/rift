@@ -44,8 +44,8 @@ crate::table! {
     },
     IlsaHaltedYou: MemoryDef {
         label: "Halted by Ilsa",
-        kind: MemoryKind::Flag,
-        resets: Resets::OnLeavingArea,
+        kind: MemoryKind::Timer(Seconds(600.0)),
+        resets: Resets::Never,
     },
     BribedIlsa: MemoryDef {
         label: "Bribed Ilsa",
@@ -65,6 +65,16 @@ crate::table! {
     SpurnedUgra: MemoryDef {
         label: "Turned Ugra away",
         kind: MemoryKind::Flag,
+        resets: Resets::Never,
+    },
+    HeardHarbourBell: MemoryDef {
+        label: "Heard the harbour bell",
+        kind: MemoryKind::Timer(Seconds(600.0)),
+        resets: Resets::Never,
+    },
+    ChiefTauntedYou: MemoryDef {
+        label: "Taunted by an Orc Chief",
+        kind: MemoryKind::Timer(Seconds(120.0)),
         resets: Resets::Never,
     },
 }

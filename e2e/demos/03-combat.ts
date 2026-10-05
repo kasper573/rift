@@ -71,5 +71,5 @@ async function slay(page: Page): Promise<GroundItem[]> {
 }
 
 function isAliveMonster(actor: Body): boolean {
-  return !actor.player && actor.health > 0;
+  return !actor.player && !actor.friendly && actor.health > 0;
 }

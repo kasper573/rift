@@ -1,7 +1,10 @@
 pub mod load;
 pub mod transition;
+pub mod zone;
 
 pub use load::build_area;
+pub use transition::Travel;
+pub use zone::Zone;
 
 use std::collections::{HashMap, HashSet};
 
@@ -16,6 +19,7 @@ use crate::core::math::{Pos, Rect, Size};
 use crate::core::sfx::SfxId;
 use crate::core::tiling::{Cell, CellPos, GridSize, TilePos, TileSize, Tiles};
 use crate::data;
+use crate::systems::dialogue::announcement::AnnouncementId;
 use crate::systems::movement;
 use crate::systems::rule::Requirement;
 
@@ -42,6 +46,8 @@ pub struct AreaDef {
     pub populations: &'static [Population],
     pub residents: &'static [Resident],
     pub props: &'static [crate::systems::prop::Fixture],
+    pub zones: &'static [Zone],
+    pub intro: Option<AnnouncementId>,
 }
 
 pub struct Population {
@@ -193,7 +199,38 @@ pub fn check(assets: &AssetService) {
                 );
             }
         }
+        for zone in def.zones {
+            if area.marker(zone.at).is_none() {
+                panic!(
+                    "area {id:?}: a zone covers marker '{}', which the map lacks",
+                    zone.at.0
+                );
+            }
+            if let Some(npc) = zone.with
+                && !def.residents.iter().any(|resident| resident.npc == npc)
+            {
+                panic!("area {id:?}: a zone speaks for {npc:?}, who doesn't live here");
+            }
+            for outcome in zone.then {
+                outcome.check(assets);
+            }
+        }
     }
+}
+
+pub fn conversation_starts() -> Vec<data::dialogue::Id> {
+    data::area::TABLE
+        .iter()
+        .flat_map(|def| def.zones)
+        .flat_map(|zone| zone.then)
+        .flat_map(|outcome| outcome.leads_to())
+        .collect()
+}
+
+pub fn destination(assets: &AssetService, area: Id, at: MarkerName) -> Option<Pos<Tiles>> {
+    let map = assets.resolve(area.get().map, build_area);
+    let spot = map.marker(at)?.center();
+    map.grid.walkable(spot).then_some(spot)
 }
 
 pub fn of(world: &World, entity: Entity) -> Option<&'static Area> {

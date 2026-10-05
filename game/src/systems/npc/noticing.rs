@@ -5,11 +5,11 @@ use bevy_ecs::prelude::*;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::data::dialogue::Id as DialogueId;
 use crate::systems::area::AreaTag;
-use crate::systems::dialogue::{self, BusyPolicy, Start};
+use crate::systems::interact;
 use crate::systems::movement::position;
 use crate::systems::player::Players;
 use crate::systems::reach::Tether;
-use crate::systems::rule::{self, Requirement};
+use crate::systems::rule::{self, Encounter, Outcome, Requirement, Terms};
 use crate::systems::stat;
 use crate::systems::visibility;
 
@@ -18,8 +18,7 @@ use super::Npc;
 pub struct Noticing {
     pub within: Tiles,
     pub requires: &'static [&'static dyn Requirement],
-    pub node: DialogueId,
-    pub busy: BusyPolicy,
+    pub then: &'static [&'static dyn Outcome],
 }
 
 #[derive(Component, Default)]
@@ -70,20 +69,18 @@ pub fn notice(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc, &'
             else {
                 continue;
             };
-            let range = crate::systems::interact::interaction_of(world, npc)
+            let range = interact::interaction_of(world, npc)
                 .map_or(noticing.within, |interaction| interaction.reach);
-            let tether = Tether::around(world, player, range, Some(npc));
-            dialogue::start(
-                world,
-                player,
-                Start {
-                    node: noticing.node,
-                    with: Some(npc),
-                    tether,
-                    requires: noticing.requires,
-                    busy: noticing.busy,
-                },
-            );
+            let encounter = Encounter {
+                with: Some(npc),
+                tether: Tether::around(world, player, range, Some(npc)),
+            };
+            let terms = Terms {
+                requires: noticing.requires,
+                costs: &[],
+                outcomes: noticing.then,
+            };
+            terms.settle(world, player, encounter).ok();
         }
         if before != noticed {
             world.entity_mut(player).insert(Noticed(noticed));
@@ -95,6 +92,7 @@ pub(super) fn starts() -> Vec<DialogueId> {
     crate::data::npc::TABLE
         .iter()
         .flat_map(|def| def.notices)
-        .map(|noticing| noticing.node)
+        .flat_map(|noticing| noticing.then)
+        .flat_map(|outcome| outcome.leads_to())
         .collect()
 }

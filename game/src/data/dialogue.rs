@@ -1,4 +1,7 @@
+use crate::core::math::Percent;
 use crate::core::time::Millis;
+use crate::data::announcement::Id as AnnouncementId;
+use crate::data::area::Id as AreaId;
 use crate::data::item::Id as ItemId;
 use crate::data::memory::Id as MemoryId;
 use crate::data::npc::Id as NpcId;
@@ -8,15 +11,40 @@ use crate::systems::actor::bust::GenericExpression::{
     Angry, Happy, Neutral, Sad, Surprised, Thinking,
 };
 use crate::systems::actor::bust::IndividualExpression::{Counting, Laughing, Sleepy, Smirk, Smug};
+use crate::systems::area::{MarkerName, Travel};
 use crate::systems::dialogue::Speaker::{Narrator, Npc, Player, Prop};
+use crate::systems::dialogue::announcement::Announce;
 use crate::systems::dialogue::text::{Fx, Ink, Motion, Voice, plain, styled};
-use crate::systems::dialogue::{Choice, DialogueNode, GotoNode, Line, Unmet};
-use crate::systems::item::{GiveItems, ItemStack};
-use crate::systems::memory::{Remember, RemembersAtLeast};
+use crate::systems::dialogue::{Choice, DialogueNode, Gamble, GotoNode, Line, Unmet};
+use crate::systems::equipment::Wearing;
+use crate::systems::item::{GiveItems, Holding, ItemStack};
+use crate::systems::job::MinLevel;
+use crate::systems::memory::{Remember, Remembers, RemembersAtLeast};
+use crate::systems::npc::{ShownFor, SpawnNear, SpawnNpcs};
 use crate::systems::quest::{AcceptQuest, FailQuest, OnQuest, QuestId, TurnIn};
 use crate::systems::rule::Not;
+use crate::systems::rule::Outcome;
 use crate::systems::shop::CloseShop;
 use crate::systems::stat::Heal;
+
+const DICE: Gamble = Gamble {
+    odds: Percent(45.0),
+    won: &[
+        &GiveItems(&[ItemStack::new(ItemId::Gold, 20)]),
+        &GotoNode(Id::PellLoses),
+    ],
+    lost: &[&GotoNode(Id::PellWins)],
+};
+
+const SAIL: &[&dyn Outcome] = &[
+    &Announce(AnnouncementId::GullSails),
+    &Travel {
+        to: AreaId::Forest,
+        at: MarkerName("ferry-dock"),
+    },
+];
+
+const PASS: GiveItems = GiveItems(&[ItemStack::new(ItemId::RoadPass, 1)]);
 
 crate::table! {
     TobbHello: DialogueNode {
@@ -165,11 +193,15 @@ crate::table! {
     BramHello: DialogueNode {
         lines: &[
             Line { by: Npc(NpcId::Bram), face: Some(Generic(Neutral)), cue: true, text: &[plain("Captain Bram, of the "), styled("Gull", &[Fx::Ink(Ink::Name)]), plain(".")] },
-            Line { by: Npc(NpcId::Bram), face: Some(Generic(Thinking)), cue: false, text: &[plain("She sails for the "), styled("forest shore", &[Fx::Ink(Ink::Place)]), plain(" when the tide is right. And when I say so.")] },
+            Line { by: Npc(NpcId::Bram), face: Some(Generic(Thinking)), cue: false, text: &[plain("She sails for the "), styled("forest shore", &[Fx::Ink(Ink::Place)]), plain(" at the bell. Twenty "), styled("Gold", &[Fx::Ink(Ink::Item)]), plain(", or show me a pass.")] },
         ],
         enter: &[],
         topics: true,
-        choices: &[Choice { label: &[plain("Goodbye.")], ..Choice::SAY }],
+        choices: &[
+            Choice { label: &[plain("Sail to the forest.")], costs: &[ItemStack::new(ItemId::Gold, 20)], then: SAIL, ..Choice::SAY },
+            Choice { label: &[plain("Ilsa gave me this pass.")], requires: &[&Holding(ItemStack::new(ItemId::RoadPass, 1))], then: SAIL, ..Choice::SAY },
+            Choice { label: &[plain("Goodbye.")], ..Choice::SAY },
+        ],
     },
     MaraShopping: DialogueNode {
         lines: &[Line { by: Npc(NpcId::Mara), face: Some(Individual(Counting)), cue: true, text: &[plain("Take your time. Everything's priced fair. "), styled("Mostly.", &[Fx::Voice(Voice::Whisper)])] }],
@@ -187,19 +219,113 @@ crate::table! {
         choices: &[Choice { label: &[plain("Goodbye.")], ..Choice::SAY }],
     },
     PellHello: DialogueNode {
-        lines: &[
-            Line { by: Npc(NpcId::Pell), face: Some(Individual(Smirk)), cue: true, text: &[plain("Care for a "), styled("little game", &[Fx::Motion(Motion::Wave)]), plain("? Ten "), styled("Gold", &[Fx::Ink(Ink::Item)]), styled(".", &[Fx::PauseAfter(Millis(600.0))]), styled(" I never cheat.", &[Fx::Voice(Voice::Whisper)])] },
-            Line { by: Npc(NpcId::Pell), face: Some(Generic(Neutral)), cue: false, text: &[plain("The table's not set yet. Come back later, friend.")] },
-        ],
+        lines: &[Line { by: Npc(NpcId::Pell), face: Some(Individual(Smirk)), cue: true, text: &[plain("Care for a "), styled("little game", &[Fx::Motion(Motion::Wave)]), plain("? Ten "), styled("Gold", &[Fx::Ink(Ink::Item)]), styled(".", &[Fx::PauseAfter(Millis(600.0))]), styled(" I never cheat.", &[Fx::Voice(Voice::Whisper)])] }],
         enter: &[],
         topics: true,
-        choices: &[Choice { label: &[plain("Goodbye.")], ..Choice::SAY }],
+        choices: &[
+            Choice { label: &[plain("Roll the dice.")], costs: &[ItemStack::new(ItemId::Gold, 10)], then: &[&DICE], ..Choice::SAY },
+            Choice { label: &[plain("Not today.")], ..Choice::SAY },
+        ],
+    },
+    PellWins: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Pell), face: Some(Generic(Happy)), cue: true, text: &[plain("The house wins! The dice are "), styled("fickle friends", &[Fx::Motion(Motion::Wave)]), plain(", eh?")] }],
+        enter: &[],
+        topics: false,
+        choices: &[
+            Choice { label: &[plain("Roll again.")], costs: &[ItemStack::new(ItemId::Gold, 10)], then: &[&DICE], ..Choice::SAY },
+            Choice {
+                label: &[plain("You're cheating.")],
+                then: &[
+                    &Remember(MemoryId::PellGrudge),
+                    &Announce(AnnouncementId::PellCallsGuards),
+                    &SpawnNpcs { npc: NpcId::HarbourGuard, count: 2, near: SpawnNear::Speaker, shown: ShownFor::You },
+                ],
+                warn: Some("Pell calls the guards"),
+                ..Choice::SAY
+            },
+            Choice { label: &[plain("Leave.")], ..Choice::SAY },
+        ],
+    },
+    PellLoses: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Pell), face: Some(Generic(Surprised)), cue: true, text: &[plain("Bah! Beginner's luck. Twenty "), styled("Gold", &[Fx::Ink(Ink::Item)]), plain(", as promised.")] }],
+        enter: &[],
+        topics: false,
+        choices: &[
+            Choice { label: &[plain("Roll again.")], costs: &[ItemStack::new(ItemId::Gold, 10)], then: &[&DICE], ..Choice::SAY },
+            Choice { label: &[plain("I'll quit while I'm ahead.")], ..Choice::SAY },
+        ],
+    },
+    PellGrudging: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Pell), face: Some(Generic(Angry)), cue: true, text: &[plain("You've got "), styled("some nerve", &[Fx::Voice(Voice::Shout)]), plain(", showing your face at my table.")] }],
+        enter: &[],
+        topics: true,
+        choices: &[
+            Choice {
+                label: &[plain("Then let's settle this.")],
+                then: &[
+                    &Remember(MemoryId::PellFighting),
+                    &Announce(AnnouncementId::PellDrawsKnife),
+                    &SpawnNpcs { npc: NpcId::PellHostile, count: 1, near: SpawnNear::Speaker, shown: ShownFor::You },
+                ],
+                warn: Some("Pell fights you"),
+                ..Choice::SAY
+            },
+            Choice { label: &[plain("I'm leaving.")], ..Choice::SAY },
+        ],
     },
     IlsaHello: DialogueNode {
         lines: &[Line { by: Npc(NpcId::Ilsa), face: Some(Generic(Angry)), cue: true, text: &[plain("The forest road is "), styled("closed", &[Fx::Ink(Ink::Danger)]), plain(". Orders from the harbour master.")] }],
         enter: &[],
         topics: true,
-        choices: &[Choice { label: &[plain("I'll turn back.")], ..Choice::SAY }],
+        choices: &[
+            Choice { label: &[plain("I'm ready for the forest road.")], requires: &[&MinLevel(3)], then: &[&PASS, &GotoNode(Id::IlsaLetsYouPass)], ..Choice::SAY },
+            Choice { label: &[plain("The Orc Chief won't trouble anyone now.")], requires: &[&Wearing(ItemId::TribalHelmet)], then: &[&PASS, &GotoNode(Id::IlsaLetsYouPass)], ..Choice::SAY },
+            Choice { label: &[plain("Here, for your trouble.")], costs: &[ItemStack::new(ItemId::Gold, 20)], then: &[&PASS, &Remember(MemoryId::BribedIlsa), &GotoNode(Id::IlsaBribed)], ..Choice::SAY },
+            Choice { label: &[plain("Would a fish change your mind?")], costs: &[ItemStack::new(ItemId::FishSteak, 1)], then: &[&PASS, &GotoNode(Id::IlsaFish)], ..Choice::SAY },
+            Choice { label: &[plain("Ugra's clan walks with me.")], requires: &[&Remembers(MemoryId::SidedWithOrcs)], unmet: Unmet::Hide, then: &[&PASS, &GotoNode(Id::IlsaUneasy)], ..Choice::SAY },
+            Choice { label: &[plain("Never mind.")], ..Choice::SAY },
+        ],
+    },
+    IlsaHalt: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Ilsa), face: Some(Generic(Angry)), cue: true, text: &[styled("Halt!", &[Fx::Voice(Voice::Shout), Fx::Motion(Motion::Shake)]), plain(" Nobody takes the "), styled("forest road", &[Fx::Ink(Ink::Place)]), plain(" without a pass.")] }],
+        enter: &[],
+        topics: false,
+        choices: &[
+            Choice { label: &[plain("I have a Road Pass.")], requires: &[&Holding(ItemStack::new(ItemId::RoadPass, 1))], then: &[&GotoNode(Id::IlsaLetsYouPass)], ..Choice::SAY },
+            Choice { label: &[plain("I'm ready for the forest road.")], requires: &[&MinLevel(3)], then: &[&PASS, &GotoNode(Id::IlsaLetsYouPass)], ..Choice::SAY },
+            Choice { label: &[plain("Here, for your trouble.")], costs: &[ItemStack::new(ItemId::Gold, 20)], then: &[&PASS, &Remember(MemoryId::BribedIlsa), &GotoNode(Id::IlsaBribed)], ..Choice::SAY },
+            Choice { label: &[plain("I'll turn back.")], ..Choice::SAY },
+        ],
+    },
+    IlsaLetsYouPass: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Ilsa), face: Some(Generic(Neutral)), cue: true, text: &[plain("Fine. Keep that "), styled("pass", &[Fx::Ink(Ink::Item)]), plain(" on you, and show it to "), styled("Bram", &[Fx::Ink(Ink::Name)]), plain(" if you're bound for the shore.")] }],
+        enter: &[],
+        topics: false,
+        choices: &[Choice { label: &[plain("Thank you.")], ..Choice::SAY }],
+    },
+    IlsaBribed: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Ilsa), face: Some(Generic(Happy)), cue: true, text: &[plain("Pleasure doing business. Here's your "), styled("pass", &[Fx::Ink(Ink::Item)]), plain(". "), styled("I never saw a coin.", &[Fx::Voice(Voice::Whisper)])] }],
+        enter: &[],
+        topics: false,
+        choices: &[Choice { label: &[plain("Goodbye.")], ..Choice::SAY }],
+    },
+    IlsaFish: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Ilsa), face: Some(Generic(Surprised)), cue: true, text: &[plain("Is that "), styled("smoked", &[Fx::Slow]), plain("? Fine. Take the "), styled("pass", &[Fx::Ink(Ink::Item)]), plain(", and not a word to the harbour master.")] }],
+        enter: &[],
+        topics: false,
+        choices: &[Choice { label: &[plain("Enjoy it.")], ..Choice::SAY }],
+    },
+    IlsaUneasy: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Ilsa), face: Some(Generic(Thinking)), cue: true, text: &[plain("The "), styled("orcs", &[Fx::Ink(Ink::Danger)]), plain(" let you walk through their camp? Then they won't touch you on the road. Take the "), styled("pass", &[Fx::Ink(Ink::Item)]), plain(", and go.")] }],
+        enter: &[],
+        topics: false,
+        choices: &[Choice { label: &[plain("Thank you.")], ..Choice::SAY }],
+    },
+    IlsaPassHolder: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Ilsa), face: Some(Generic(Neutral)), cue: true, text: &[plain("You've got your "), styled("pass", &[Fx::Ink(Ink::Item)]), plain(". The road's yours.")] }],
+        enter: &[],
+        topics: true,
+        choices: &[Choice { label: &[plain("Goodbye.")], ..Choice::SAY }],
     },
     HarbourNotices: DialogueNode {
         lines: &[

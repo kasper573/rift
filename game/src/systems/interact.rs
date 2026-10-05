@@ -174,7 +174,7 @@ pub fn conversation_starts(interaction: &Interaction) -> impl Iterator<Item = Di
         .responses
         .iter()
         .flat_map(|response| response.then)
-        .filter_map(|outcome| outcome.leads_to())
+        .flat_map(|outcome| outcome.leads_to())
 }
 
 fn respond(world: &mut World, player: Entity, target: Entity, interaction: &'static Interaction) {
@@ -209,7 +209,7 @@ fn marks(world: &World, player: Entity, target: Entity) -> Vec<Mark> {
             && response
                 .then
                 .iter()
-                .filter_map(|outcome| outcome.leads_to())
+                .flat_map(|outcome| outcome.leads_to())
                 .any(|node| !dialogue::heard(world, player, node))
     });
     interaction

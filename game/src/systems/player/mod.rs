@@ -15,6 +15,7 @@ use crate::systems::account::identity::Identity;
 use crate::systems::actor::{Action, Actor, Hitbox, Name, Rgba, set_action};
 use crate::systems::area::{self, AreaTag};
 use crate::systems::dialogue::Heard;
+use crate::systems::dialogue::announcement::AnnouncementQueue;
 use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::Inventory;
@@ -234,6 +235,7 @@ pub struct CharacterState {
     pub heard: Heard,
     pub ledger: ShopLedger,
     pub quests: QuestLog,
+    pub announcements: AnnouncementQueue,
 }
 
 fn spawn_player(
@@ -263,6 +265,7 @@ fn spawn_player(
             heard: Heard::default(),
             ledger: ShopLedger::default(),
             quests: QuestLog::default(),
+            announcements: AnnouncementQueue::default(),
         },
     );
 }
@@ -324,6 +327,7 @@ pub(crate) fn place(
             state.heard,
             state.ledger,
             state.quests,
+            state.announcements,
         ))
         .id();
     state.stats.apply(world, entity);

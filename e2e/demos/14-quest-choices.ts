@@ -31,6 +31,7 @@ test(
       await waitForWorld(page, loadReference("island.png"));
       await admin(page, [
         ["/give OrcTusk,5", /gave 5 Orc Tusk/],
+        ["/remember IlsaHaltedYou", /IlsaHaltedYou is now/],
         ["/xp 40", /granted 40 xp/],
         ["/quest TusksForTheChief,accept", /TusksForTheChief: Accept/],
       ]);

@@ -5,6 +5,7 @@ mod pacifist;
 mod protective;
 mod stands;
 mod strolls;
+mod summon;
 
 pub use aggressive::Aggressive;
 pub use defensive::Defensive;
@@ -13,10 +14,12 @@ pub use pacifist::Pacifist;
 pub use protective::Protective;
 pub use stands::Stands;
 pub use strolls::Strolls;
+pub use summon::{ShownFor, SpawnNear, SpawnNpcs, Summoned, TurnHostile, dismiss};
 
 use std::collections::HashMap;
 
 use bevy_app::App;
+use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
 use bevy_replicon::prelude::Replicated;
@@ -38,6 +41,8 @@ use crate::systems::item::Reservation;
 use crate::systems::movement::{MoveTarget, Path, Position, position};
 use crate::systems::player::Players;
 use crate::systems::reach::{self, ReachAct};
+use crate::systems::rewards::KillCredited;
+use crate::systems::rule::{Encounter, Outcome, Terms};
 use crate::systems::stat::{self, Stat, StatKind, Stats};
 use crate::systems::visibility::{self, Presence};
 
@@ -60,7 +65,46 @@ pub fn conversation_starts() -> Vec<data::dialogue::Id> {
                 .flat_map(interact::conversation_starts)
         })
         .chain(noticing::starts())
+        .chain(
+            data::npc::TABLE
+                .iter()
+                .flat_map(|def| def.on_defeat)
+                .flat_map(|outcome| outcome.leads_to()),
+        )
         .collect()
+}
+
+pub fn check(assets: &AssetService) {
+    let outcomes = data::npc::TABLE.iter().flat_map(|def| {
+        def.interaction
+            .iter()
+            .flat_map(|interaction| interaction.responses)
+            .flat_map(|response| response.then)
+            .chain(def.notices.iter().flat_map(|noticing| noticing.then))
+            .chain(def.on_defeat)
+    });
+    for outcome in outcomes {
+        outcome.check(assets);
+    }
+}
+
+pub fn defeated(world: &mut World, mut credits: Local<MessageCursor<KillCredited>>) {
+    let credits: Vec<KillCredited> = credits
+        .read(world.resource::<Messages<KillCredited>>())
+        .copied()
+        .collect();
+    for credit in credits {
+        let terms = Terms {
+            requires: &[],
+            costs: &[],
+            outcomes: credit.npc.get().on_defeat,
+        };
+        let encounter = Encounter {
+            with: Some(credit.victim),
+            tether: None,
+        };
+        terms.settle(world, credit.credited, encounter).ok();
+    }
 }
 
 fn interaction(world: &World, entity: Entity) -> Option<&'static Interaction> {
@@ -108,6 +152,16 @@ pub struct NpcDef {
     pub rewards: &'static [crate::systems::rewards::Reward],
     pub interaction: Option<Interaction>,
     pub notices: &'static [Noticing],
+    pub on_defeat: &'static [&'static dyn Outcome],
+}
+
+#[derive(Resource, Default)]
+struct NextPack(u32);
+
+pub fn next_pack(world: &mut World) -> Pack {
+    let mut next = world.get_resource_or_init::<NextPack>();
+    next.0 += 1;
+    Pack(next.0)
 }
 
 pub fn spawn_all(world: &mut World) {
@@ -115,26 +169,20 @@ pub fn spawn_all(world: &mut World) {
     let assets = world.resource::<AssetService>().clone();
     let def = area_id.get();
     world.resource_scope(|world, mut rng: Mut<Rng>| {
-        for (group, population) in def.populations.iter().enumerate() {
+        for population in def.populations {
+            let pack = next_pack(world);
             for _ in 0..population.count {
-                spawn_npc(
-                    world,
-                    &assets,
-                    &mut rng,
-                    area_id,
-                    population.npc,
-                    Pack(group as u32),
-                );
+                spawn_npc(world, &assets, &mut rng, area_id, population.npc, pack);
             }
         }
     });
     let area = assets.resolve(def.map, area::build_area);
-    for (index, resident) in def.residents.iter().enumerate() {
+    for resident in def.residents {
         let at = area
             .marker(resident.at)
             .expect("validated at startup: residents stand on markers")
             .center();
-        let pack = Pack((def.populations.len() + index) as u32);
+        let pack = next_pack(world);
         let entity = spawn(world, resident.npc, at, area_id, pack);
         world.entity_mut(entity).insert(Home(at));
         if !resident.shown.is_empty() {
@@ -371,8 +419,10 @@ pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
                     time
                 }
             };
-            let respawn = world.get::<Npc>(id).and_then(|npc| npc.def.get().respawn);
-            let Some(delay) = respawn else {
+            let Some(def) = world.get::<Npc>(id).map(|npc| npc.def.get()) else {
+                continue;
+            };
+            let Some(delay) = def.respawn else {
                 if time - since >= CORPSE_LINGER {
                     world.entity_mut(id).despawn();
                 }
@@ -396,6 +446,7 @@ pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
             }
             world
                 .entity_mut(id)
+                .insert(def.attitude)
                 .remove::<DeadAt>()
                 .remove::<Reservation>()
                 .remove::<TimedEffects>();

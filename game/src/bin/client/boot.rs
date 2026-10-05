@@ -76,6 +76,7 @@ fn boot() {
         .add_plugins((
             systems::hud::HudPlugin,
             systems::dialogue::stage::StagePlugin,
+            systems::dialogue::lane::AnnouncementLanePlugin,
             systems::shop::window::ShopWindowPlugin,
             systems::quest::card::QuestCardPlugin,
             systems::quest::log::QuestLogPlugin,

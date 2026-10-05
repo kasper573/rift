@@ -71,7 +71,7 @@ fn start(node: DialogueId, busy: BusyPolicy) -> Start {
         node,
         with: None,
         tether: None,
-        requires: &[],
+        requires: Vec::new(),
         busy,
     }
 }

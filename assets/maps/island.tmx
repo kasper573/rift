@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="100" height="100" tilewidth="16" tileheight="16" infinite="0" nextlayerid="12" nextobjectid="37">
+<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="100" height="100" tilewidth="16" tileheight="16" infinite="0" nextlayerid="12" nextobjectid="39">
  <tileset firstgid="1" source="../tilesets/beach-tileset.tsx"/>
  <layer id="1" name="Background" width="100" height="100">
   <properties>
@@ -382,5 +382,7 @@
   <object id="33" name="forest-road" type="marker" x="584" y="408">
    <point/>
   </object>
+  <object id="37" name="forest-gate" type="marker" x="592" y="384" width="80" height="60"/>
+  <object id="38" name="ferry-pier" type="marker" x="736" y="400" width="48" height="48"/>
  </objectgroup>
 </map>

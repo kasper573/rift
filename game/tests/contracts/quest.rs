@@ -1,6 +1,5 @@
 use bevy_ecs::prelude::*;
 use game::core::tiling::Tiles;
-use game::core::time::{Seconds, WallClock};
 use game::data;
 use game::data::dialogue::Id as DialogueId;
 use game::data::item::Id as ItemId;
@@ -8,127 +7,20 @@ use game::data::memory::Id as MemoryId;
 use game::data::npc::Id as NpcId;
 use game::data::prop::Id as PropId;
 use game::systems::area::MarkerName;
-use game::systems::combat::Died;
-use game::systems::dialogue::{Conversation, ConversationRequest};
-use game::systems::interact::InteractRequest;
+use game::systems::dialogue::ConversationRequest;
 use game::systems::item::{
-    self, DropItemRequest, DroppedItem, INVENTORY_MAX, Inventory, ItemStack, UseItemRequest,
+    DropItemRequest, DroppedItem, INVENTORY_MAX, Inventory, ItemStack, UseItemRequest,
 };
-use game::systems::memory::{self, Memory};
-use game::systems::movement::{Position, position};
-use game::systems::npc::{self, Npc, Pack};
+use game::systems::memory::{self};
+use game::systems::movement::Position;
 use game::systems::player::Xp;
-use game::systems::prop::Prop;
 use game::systems::quest::{self, QuestId, QuestLog, QuestRequest, QuestResult};
 use game::systems::shop::ShopRequest;
 
-use crate::support::Sim;
-
-fn townsperson(sim: &mut Sim, who: NpcId) -> Entity {
-    let world = sim.world();
-    world
-        .query::<(Entity, &Npc)>()
-        .iter(world)
-        .find(|(_, npc)| npc.def == who)
-        .map(|(entity, _)| entity)
-        .expect("a resident")
-}
-
-fn prop(sim: &mut Sim, which: PropId) -> Entity {
-    let world = sim.world();
-    world
-        .query::<(Entity, &Prop)>()
-        .iter(world)
-        .find(|(_, prop)| prop.def == which)
-        .map(|(entity, _)| entity)
-        .expect("a fixture on the map")
-}
-
-fn open_with(sim: &mut Sim, client: u32, player: Entity, target: Entity) -> Conversation {
-    sim.send(client, InteractRequest { target });
-    assert!(
-        sim.run_until(20.0, |world| world.get::<Conversation>(player).is_some()),
-        "the conversation never opened"
-    );
-    conversation(sim, player).expect("open")
-}
-
-fn talk(sim: &mut Sim, client: u32, player: Entity, who: NpcId) -> Conversation {
-    let npc = townsperson(sim, who);
-    let opened = open_with(sim, client, player, npc);
-    assert_eq!(opened.with, Some(npc), "someone else spoke first");
-    opened
-}
-
-fn heard_the_news(sim: &mut Sim, player: Entity) {
-    let clock = *sim.world().resource::<WallClock>();
-    sim.world()
-        .get_mut::<Memory>(player)
-        .expect("memory")
-        .remember(MemoryId::TobbNewsToday, clock);
-}
-
-fn conversation(sim: &mut Sim, player: Entity) -> Option<Conversation> {
-    sim.world().get::<Conversation>(player).cloned()
-}
-
-fn labels(conversation: &Conversation) -> Vec<String> {
-    conversation
-        .choices
-        .iter()
-        .map(|choice| choice.label.words())
-        .collect()
-}
-
-fn pick(sim: &mut Sim, client: u32, player: Entity, label: &str) -> Option<Conversation> {
-    let now = conversation(sim, player).expect("talking");
-    let choice =
-        now.choices
-            .iter()
-            .position(|choice| choice.label.words() == label)
-            .unwrap_or_else(|| panic!("no choice {label:?} in {:?}", labels(&now))) as u32;
-    sim.send(
-        client,
-        ConversationRequest::Pick {
-            step: now.step,
-            choice,
-        },
-    );
-    sim.tick();
-    conversation(sim, player)
-}
-
-fn refusal(conversation: &Conversation, label: &str) -> Option<String> {
-    conversation
-        .choices
-        .iter()
-        .find(|choice| choice.label.words() == label)
-        .unwrap_or_else(|| panic!("no choice {label:?} in {:?}", labels(conversation)))
-        .refusal
-        .clone()
-}
-
-fn leave(sim: &mut Sim, client: u32, player: Entity) {
-    if let Some(now) = conversation(sim, player) {
-        sim.send(client, ConversationRequest::Leave { step: now.step });
-        sim.tick();
-    }
-}
-
-fn give(sim: &mut Sim, player: Entity, item: ItemId, count: u32) {
-    sim.world()
-        .get_mut::<Inventory>(player)
-        .expect("bag")
-        .exchange(&[], &[ItemStack::new(item, count)])
-        .expect("room");
-}
-
-fn count(sim: &mut Sim, player: Entity, item: ItemId) -> u32 {
-    sim.world()
-        .get::<Inventory>(player)
-        .expect("bag")
-        .count(item)
-}
+use crate::support::{
+    Sim, conversation, count, give, heard_the_news, labels, later, leave, open_with, pick, prop,
+    refusal, settle, slay, talk,
+};
 
 fn slot_of(sim: &mut Sim, player: Entity, item: ItemId) -> u32 {
     sim.world()
@@ -145,32 +37,6 @@ fn log(sim: &mut Sim, player: Entity) -> QuestLog {
         .get::<QuestLog>(player)
         .cloned()
         .expect("a quest log")
-}
-
-fn settle(sim: &mut Sim) {
-    sim.run_until(0.5, |_| false);
-}
-
-fn later(sim: &mut Sim, seconds: f32) {
-    let clock = *sim.world().resource::<WallClock>();
-    sim.world().insert_resource(WallClock {
-        now: clock.now.after(Seconds(seconds)),
-        ..clock
-    });
-    settle(sim);
-}
-
-fn slay(sim: &mut Sim, player: Entity, what: NpcId) {
-    let world = sim.world();
-    let at = position(world, player).expect("player position");
-    let area = world.resource::<game::systems::WorldArea>().0;
-    let victim = npc::spawn(world, what, at, area, Pack(u32::MAX));
-    item::reserve(world, victim, player, Seconds(0.0));
-    world.write_message(Died {
-        entity: victim,
-        killer: player,
-    });
-    sim.run_until(0.2, |_| false);
 }
 
 fn level_up(sim: &mut Sim, player: Entity) {

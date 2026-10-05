@@ -1,4 +1,6 @@
+pub mod announcement;
 pub mod history;
+pub mod lane;
 pub mod stage;
 pub mod text;
 
@@ -10,7 +12,8 @@ use bevy_ecs::prelude::*;
 use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::AssetRef;
+use crate::core::assets::{AssetRef, AssetService};
+use crate::core::math::{Percent, Rng};
 use crate::core::time::Seconds;
 use crate::data;
 use crate::data::attention::Id as AttentionId;
@@ -20,7 +23,7 @@ use crate::systems::item::{Inventory, ItemStack};
 use crate::systems::notice::{self, NoticeTone};
 use crate::systems::player::{self, CommandLock, sender_player};
 use crate::systems::reach::{self, Tether};
-use crate::systems::rule::{Encounter, Outcome, Requirement, RuleContext, Terms};
+use crate::systems::rule::{self, Encounter, Outcome, Requirement, RuleContext, Terms};
 use crate::systems::stat;
 use text::{LineText, Span};
 
@@ -29,6 +32,7 @@ pub use crate::data::dialogue::Id as DialogueId;
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
     app.replicate::<Conversation>()
+        .replicate::<announcement::Announcements>()
         .add_client_message::<ConversationRequest>(Channel::Ordered)
         .init_resource::<TopicSources>()
         .init_resource::<StepCounter>();
@@ -171,7 +175,7 @@ pub struct Start {
     pub node: DialogueId,
     pub with: Option<Entity>,
     pub tether: Option<Tether>,
-    pub requires: &'static [&'static dyn Requirement],
+    pub requires: Vec<&'static dyn Requirement>,
     pub busy: BusyPolicy,
 }
 
@@ -268,8 +272,8 @@ impl Outcome for GotoNode {
         goto(ctx.world, ctx.player, self.0);
     }
 
-    fn leads_to(&self) -> Option<DialogueId> {
-        Some(self.0)
+    fn leads_to(&self) -> Vec<DialogueId> {
+        vec![self.0]
     }
 }
 
@@ -284,14 +288,50 @@ impl Outcome for StartConversation {
             node: self.node,
             with: ctx.encounter.with,
             tether: ctx.encounter.tether,
-            requires: &[],
+            requires: ctx.requires.to_vec(),
             busy: self.busy,
         };
         self::start(ctx.world, ctx.player, start);
     }
 
-    fn leads_to(&self) -> Option<DialogueId> {
-        Some(self.node)
+    fn leads_to(&self) -> Vec<DialogueId> {
+        vec![self.node]
+    }
+}
+
+pub struct Gamble {
+    pub odds: Percent,
+    pub won: &'static [&'static dyn Outcome],
+    pub lost: &'static [&'static dyn Outcome],
+}
+
+impl Outcome for Gamble {
+    fn apply(&self, ctx: &mut RuleContext) {
+        let won = ctx
+            .world
+            .resource_scope(|_, mut rng: Mut<Rng>| self.odds.rolled(&mut rng));
+        let terms = Terms {
+            requires: &[],
+            costs: &[],
+            outcomes: if won { self.won } else { self.lost },
+        };
+        if let Err(refusal) = terms.settle(ctx.world, ctx.player, ctx.encounter) {
+            notice::tell(ctx.world, ctx.player, refusal.0, NoticeTone::Bad);
+        }
+    }
+
+    fn leads_to(&self) -> Vec<DialogueId> {
+        self.won
+            .iter()
+            .chain(self.lost)
+            .flat_map(|outcome| outcome.leads_to())
+            .collect()
+    }
+
+    fn check(&self, assets: &AssetService) {
+        for outcome in self.won.iter().chain(self.lost) {
+            outcome.check(assets);
+        }
     }
 }
 
@@ -311,9 +351,6 @@ pub fn heard(world: &World, player: Entity, node: DialogueId) -> bool {
 }
 
 pub fn start(world: &mut World, player: Entity, start: Start) {
-    if !crate::systems::rule::met(world, player, start.requires) {
-        return;
-    }
     if world.get::<ConversationSession>(player).is_none() {
         begin(world, player, start);
         return;
@@ -434,7 +471,7 @@ pub fn hold(world: &mut World, sessions: &mut QueryState<Entity, InConversationO
                 .get_mut::<WaitingConversations>(player)
                 .and_then(|mut waiting| waiting.0.pop_front());
             if let Some(queued) = next {
-                let ready = crate::systems::rule::met(world, player, queued.start.requires)
+                let ready = rule::met(world, player, &queued.start.requires)
                     && queued
                         .start
                         .tether
@@ -545,6 +582,7 @@ fn enter(world: &mut World, player: Entity) {
         world,
         player,
         encounter,
+        requires: &[],
     };
     for outcome in def.enter {
         outcome.apply(&mut ctx);
@@ -561,8 +599,7 @@ fn enter(world: &mut World, player: Entity) {
         .collect();
     offers.extend(def.choices.iter().map(Offer::of));
     offers.retain(|offer| {
-        offer.unmet == Unmet::ShowLocked
-            || crate::systems::rule::met(world, player, &offer.requires)
+        offer.unmet == Unmet::ShowLocked || rule::met(world, player, &offer.requires)
     });
     if let Some(mut session) = world.get_mut::<ConversationSession>(player) {
         session.offers = offers;
@@ -669,7 +706,7 @@ fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) 
     }
 }
 
-pub fn check(starts: impl IntoIterator<Item = DialogueId>) {
+pub fn check(assets: &AssetService, starts: impl IntoIterator<Item = DialogueId>) {
     let mut seen: HashSet<DialogueId> = starts.into_iter().collect();
     let mut frontier: Vec<DialogueId> = seen.iter().copied().collect();
     while let Some(node) = frontier.pop() {
@@ -678,7 +715,7 @@ pub fn check(starts: impl IntoIterator<Item = DialogueId>) {
             .enter
             .iter()
             .chain(def.choices.iter().flat_map(|choice| choice.then))
-            .filter_map(|outcome| outcome.leads_to());
+            .flat_map(|outcome| outcome.leads_to());
         for next in next {
             if seen.insert(next) {
                 frontier.push(next);
@@ -694,6 +731,14 @@ pub fn check(starts: impl IntoIterator<Item = DialogueId>) {
         }
         for line in node.get().lines {
             check_line(format!("dialogue {node:?}"), line);
+        }
+        let def = node.get();
+        for outcome in def
+            .enter
+            .iter()
+            .chain(def.choices.iter().flat_map(|choice| choice.then))
+        {
+            outcome.check(assets);
         }
     }
 }

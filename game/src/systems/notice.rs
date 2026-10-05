@@ -54,23 +54,42 @@ pub struct ToasterPlugin;
 
 impl Plugin for ToasterPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(GameScene::Area), spawn_toaster)
+        app.add_systems(OnEnter(GameScene::Area), spawn_headlines)
             .add_systems(
                 OnExit(GameScene::Area),
-                crate::systems::scene::despawn_all::<NoticeToaster>,
+                crate::systems::scene::despawn_all::<Headlines>,
             )
             .add_systems(Update, show_notices.run_if(in_state(GameScene::Area)));
     }
 }
 
 #[derive(Component, Default, Clone)]
+struct Headlines;
+
+#[derive(Component, Default, Clone)]
 struct NoticeToaster;
 
-fn spawn_toaster(mut commands: Commands) {
+fn spawn_headlines(mut commands: Commands) {
     commands.spawn_scene(bsn! {
-        {ui::toaster(ui::SonnerPosition::TopCenter)}
-        NoticeToaster
+        Headlines
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px({ui::tokens::spacing::XL}),
+            left: Val::Px(0.0),
+            right: Val::Px(0.0),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+        }
+        Pickable::IGNORE
         GlobalZIndex(1)
+        Children [
+            {EntityScene(ui::announcement_lane(ui::AnnouncementLane::default()))},
+            (
+                Node { width: Val::Percent(100.0), height: Val::Px(0.0) }
+                Pickable::IGNORE
+                Children [ ( {ui::toaster(ui::SonnerPosition::TopCenter)} NoticeToaster ) ]
+            ),
+        ]
     });
 }
 

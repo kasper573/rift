@@ -1,3 +1,4 @@
+pub mod announcement;
 pub mod area;
 pub mod attention;
 pub mod dialogue;

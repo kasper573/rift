@@ -174,21 +174,26 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                 )
                     .chain(),
                 (
-                    rewards::grant,
-                    quest::credit,
+                    (rewards::grant, quest::credit, npc::defeated).chain(),
                     movement::advance,
                     item::pickups,
                     interact::interactions,
-                    npc::notice.run_if(on_replication_tick),
-                    dialogue::hold,
-                    dialogue::refresh.run_if(on_replication_tick),
+                    (npc::notice, area::zone::enter_zones)
+                        .chain()
+                        .run_if(on_replication_tick),
+                    (
+                        dialogue::hold,
+                        dialogue::refresh.run_if(on_replication_tick),
+                        dialogue::announcement::advance.run_if(on_replication_tick),
+                    )
+                        .chain(),
                     (shop::hold, shop::refresh.run_if(on_replication_tick)).chain(),
                     quest::refresh.run_if(on_replication_tick),
                     item::expire_drops,
                     player::join,
                     player::respawn,
                     spectate::requests,
-                    npc::run_respawn,
+                    (npc::run_respawn, npc::dismiss).chain(),
                     bevy_terminal::ingest::<crate::data::terminal::Id>,
                     bevy_terminal::dispatch::<crate::data::terminal::Id>,
                     chat::rebroadcast,
@@ -232,9 +237,12 @@ pub fn step_areas(apps: &mut [App], clock: crate::core::time::WallClock) {
 pub fn check_content(assets: &crate::core::assets::AssetService) {
     actor::check(assets);
     area::check(assets);
+    npc::check(assets);
     dialogue::check(
+        assets,
         npc::conversation_starts()
             .into_iter()
+            .chain(area::conversation_starts())
             .chain(prop::conversation_starts())
             .chain(shop::conversation_starts())
             .chain(quest::conversation_starts()),

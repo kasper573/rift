@@ -473,8 +473,8 @@ impl Outcome for OfferQuest {
         .apply(ctx);
     }
 
-    fn leads_to(&self) -> Option<DialogueId> {
-        Some(self.0.get().offer)
+    fn leads_to(&self) -> Vec<DialogueId> {
+        vec![self.0.get().offer]
     }
 }
 

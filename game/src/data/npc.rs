@@ -1,5 +1,6 @@
 use crate::core::tiling::Tiles;
 use crate::core::time::Seconds;
+use crate::data::announcement::Id as AnnouncementId;
 use crate::data::attention::Id as AttentionId;
 use crate::data::dialogue::Id as DialogueId;
 use crate::data::item::Id as ItemId;
@@ -9,11 +10,14 @@ use crate::systems::actor::Rgba;
 use crate::systems::combat::Attitude;
 use crate::systems::dialogue::BusyPolicy;
 use crate::systems::dialogue::StartConversation;
+use crate::systems::dialogue::announcement::Announce;
 use crate::systems::interact::{Interaction, Response, StaticMark, Verb};
-use crate::systems::memory::{RememberedWithin, Remembers, RemembersAtLeast};
+use crate::systems::item::{Holding, ItemStack};
+use crate::systems::memory::{Forget, Remember, RememberedWithin, Remembers, RemembersAtLeast};
 use crate::systems::npc::{
     Aggressive, Defensive, Noticing, NpcDef, Pacifist, Protective, Stands, Strolls,
 };
+use crate::systems::quest::{OnQuest, QuestId};
 use crate::systems::rewards::Reward;
 use crate::systems::rule::Not;
 use crate::systems::stat::StatKind;
@@ -45,6 +49,7 @@ crate::table! {
         ],
         interaction: None,
         notices: &[],
+        on_defeat: &[],
     },
     OrcChief: NpcDef {
         display_name: "Orc Chief",
@@ -72,7 +77,16 @@ crate::table! {
             Reward::Item { item: ItemId::TribalHelmet, chance: Some(10.0), amount: 1 },
         ],
         interaction: None,
-        notices: &[],
+        notices: &[Noticing {
+            within: Tiles(8.0),
+            requires: &[&OnQuest(QuestId::TusksForTheChief), &Not(&Remembers(MemoryId::ChiefTauntedYou))],
+            then: &[
+                &Remember(MemoryId::ChiefTauntedYou),
+                &Announce(AnnouncementId::ChiefChallenge),
+                &Announce(AnnouncementId::ChiefThreat),
+            ],
+        }],
+        on_defeat: &[],
     },
     Skeleton: NpcDef {
         display_name: "Skeleton",
@@ -102,6 +116,7 @@ crate::table! {
         ],
         interaction: None,
         notices: &[],
+        on_defeat: &[],
     },
     Bat: NpcDef {
         display_name: "Bat",
@@ -128,6 +143,7 @@ crate::table! {
         ],
         interaction: None,
         notices: &[],
+        on_defeat: &[],
     },
     VampireBat: NpcDef {
         display_name: "Vampire Bat",
@@ -155,6 +171,7 @@ crate::table! {
         ],
         interaction: None,
         notices: &[],
+        on_defeat: &[],
     },
     Mara: NpcDef {
         display_name: "Mara",
@@ -193,6 +210,7 @@ crate::table! {
             marks: &[],
         }),
         notices: &[],
+        on_defeat: &[],
     },
     Tobb: NpcDef {
         display_name: "Tobb",
@@ -256,9 +274,9 @@ crate::table! {
                 &RemembersAtLeast(MemoryId::TobbVisits, 1),
                 &Not(&Remembers(MemoryId::TobbNewsToday)),
             ],
-            node: DialogueId::TobbNews,
-            busy: BusyPolicy::Wait(Seconds(60.0)),
+            then: &[&StartConversation { node: DialogueId::TobbNews, busy: BusyPolicy::Wait(Seconds(60.0)) }],
         }],
+        on_defeat: &[],
     },
     Grisha: NpcDef {
         display_name: "Grisha",
@@ -297,6 +315,7 @@ crate::table! {
             marks: &[StaticMark { kind: AttentionId::Innkeeper, label: "Rents beds" }],
         }),
         notices: &[],
+        on_defeat: &[],
     },
     Bram: NpcDef {
         display_name: "Bram",
@@ -327,9 +346,10 @@ crate::table! {
                     news: false,
                 },
             ],
-            marks: &[],
+            marks: &[StaticMark { kind: AttentionId::Travel, label: "Sails to the forest" }],
         }),
         notices: &[],
+        on_defeat: &[],
     },
     Wren: NpcDef {
         display_name: "Wren",
@@ -363,6 +383,7 @@ crate::table! {
             marks: &[],
         }),
         notices: &[],
+        on_defeat: &[],
     },
     Pell: NpcDef {
         display_name: "Pell",
@@ -388,14 +409,20 @@ crate::table! {
             reach: Tiles(2.0),
             responses: &[
                 Response {
+                    requires: &[&Remembers(MemoryId::PellGrudge)],
+                    then: &[&StartConversation { node: DialogueId::PellGrudging, busy: BusyPolicy::Replace }],
+                    news: false,
+                },
+                Response {
                     requires: &[],
                     then: &[&StartConversation { node: DialogueId::PellHello, busy: BusyPolicy::Replace }],
                     news: false,
                 },
             ],
-            marks: &[],
+            marks: &[StaticMark { kind: AttentionId::Chance, label: "Dice, ten Gold a roll" }],
         }),
         notices: &[],
+        on_defeat: &[],
     },
     Ilsa: NpcDef {
         display_name: "Ilsa",
@@ -421,6 +448,11 @@ crate::table! {
             reach: Tiles(2.0),
             responses: &[
                 Response {
+                    requires: &[&Holding(ItemStack::new(ItemId::RoadPass, 1))],
+                    then: &[&StartConversation { node: DialogueId::IlsaPassHolder, busy: BusyPolicy::Replace }],
+                    news: false,
+                },
+                Response {
                     requires: &[],
                     then: &[&StartConversation { node: DialogueId::IlsaHello, busy: BusyPolicy::Replace }],
                     news: false,
@@ -429,6 +461,7 @@ crate::table! {
             marks: &[],
         }),
         notices: &[],
+        on_defeat: &[],
     },
     Ugra: NpcDef {
         display_name: "Ugra",
@@ -472,5 +505,55 @@ crate::table! {
             marks: &[],
         }),
         notices: &[],
+        on_defeat: &[],
+    },
+    HarbourGuard: NpcDef {
+        display_name: "Harbour Guard",
+        role: Some("Town Watch"),
+        attitude: Attitude::Hostile,
+        respawn: None,
+        model: ModelId::Guard,
+        tint: Rgba(0xffffffff),
+        ai: &Aggressive,
+        stats: &[
+            StatKind::Health.of(30.0),
+            StatKind::MaxHealth.of(30.0),
+            StatKind::Damage.of(3.0),
+            StatKind::AttackSpeed.of(1.0),
+            StatKind::AttackDelay.of(500.0),
+            StatKind::Range.of(1.0),
+            StatKind::MovementSpeed.of(1.1),
+        ],
+        aggro: Tiles(10.0),
+        rewards: &[Reward::Xp(10)],
+        interaction: None,
+        notices: &[],
+        on_defeat: &[],
+    },
+    PellHostile: NpcDef {
+        display_name: "Pell",
+        role: Some("Gambler"),
+        attitude: Attitude::Hostile,
+        respawn: None,
+        model: ModelId::Pell,
+        tint: Rgba(0xffffffff),
+        ai: &Aggressive,
+        stats: &[
+            StatKind::Health.of(40.0),
+            StatKind::MaxHealth.of(40.0),
+            StatKind::Damage.of(4.0),
+            StatKind::AttackSpeed.of(1.1),
+            StatKind::AttackDelay.of(400.0),
+            StatKind::Range.of(1.0),
+            StatKind::MovementSpeed.of(1.0),
+        ],
+        aggro: Tiles(10.0),
+        rewards: &[
+            Reward::Xp(25),
+            Reward::Item { item: ItemId::Gold, chance: None, amount: 15 },
+        ],
+        interaction: None,
+        notices: &[],
+        on_defeat: &[&Forget(MemoryId::PellFighting), &Remember(MemoryId::PellDead)],
     },
 }

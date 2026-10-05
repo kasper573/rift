@@ -12,6 +12,7 @@ use crate::core::tiling::Tiles;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::attention::Attention;
 use crate::systems::dialogue::Conversation;
+use crate::systems::dialogue::announcement::Announcements;
 use crate::systems::item::Inventory;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::{ClientId, CommandLock, Owner, Players};
@@ -145,6 +146,7 @@ impl VisibilityFilter for OwnedBy {
     type Scope = (
         Inventory,
         Conversation,
+        Announcements,
         CommandLock,
         Attention,
         ShopWindow,

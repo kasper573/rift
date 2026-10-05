@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::{Entity, World};
 
+use crate::core::assets::AssetService;
 use crate::data::dialogue::Id as DialogueId;
 use crate::systems::item::{Inventory, ItemStack};
 use crate::systems::reach::Tether;
@@ -24,15 +25,18 @@ pub trait Outcome: Send + Sync {
         &[]
     }
 
-    fn leads_to(&self) -> Option<DialogueId> {
-        None
+    fn leads_to(&self) -> Vec<DialogueId> {
+        Vec::new()
     }
+
+    fn check(&self, _assets: &AssetService) {}
 }
 
 pub struct RuleContext<'w> {
     pub world: &'w mut World,
     pub player: Entity,
     pub encounter: Encounter,
+    pub requires: &'w [&'static dyn Requirement],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -42,7 +46,7 @@ pub struct Encounter {
 }
 
 pub struct Terms<'a> {
-    pub requires: &'a [&'a dyn Requirement],
+    pub requires: &'a [&'static dyn Requirement],
     pub costs: &'a [ItemStack],
     pub outcomes: &'a [&'a dyn Outcome],
 }
@@ -87,6 +91,7 @@ impl Terms<'_> {
             world,
             player,
             encounter,
+            requires: self.requires,
         };
         for outcome in self.outcomes {
             outcome.apply(&mut ctx);

@@ -98,7 +98,7 @@ export async function stageNow(page: Page): Promise<Stage | null> {
 async function reachUntil<T>(
   page: Page,
   aim: (snapshot: Snapshot) => Tile | undefined,
-  done: (snapshot: Snapshot) => T | null | undefined,
+  done: (snapshot: Snapshot) => T | null | undefined | false,
   message: string,
 ): Promise<T> {
   const deadline = Date.now() + 90_000;

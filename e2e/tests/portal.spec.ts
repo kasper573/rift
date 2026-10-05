@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { register } from "../helpers/account";
-import { captureScene, clickTile, MAP_MATCH, probe, waitForWorld } from "../helpers/game";
+import { captureScene, clickTile, leaveConversation, MAP_MATCH, probe, waitForWorld } from "../helpers/game";
 import { loadReference, resemblance } from "../helpers/image";
 
 test("clicking the island warp crosses to the forest", async ({ page }) => {
@@ -19,6 +19,9 @@ test("clicking the island warp crosses to the forest", async ({ page }) => {
         const scene = await captureScene(page);
         if (resemblance(scene, forest) >= MAP_MATCH) {
           return true;
+        }
+        if ((await probe(page)).stage) {
+          await leaveConversation(page);
         }
         await clickTile(page, warp!.at);
         return false;

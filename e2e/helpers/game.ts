@@ -10,6 +10,11 @@ const WORLD_TIMEOUT = 120_000;
 
 export type Tile = [number, number];
 
+export interface Hitbox {
+  origin: Tile;
+  size: [number, number];
+}
+
 export interface Body {
   id: string;
   name: string;
@@ -17,6 +22,7 @@ export interface Body {
   player: boolean;
   at: Tile;
   aim: Tile;
+  hitbox: Hitbox;
   health: number;
   max_health: number;
   npc: string | null;
@@ -32,6 +38,7 @@ export interface Fixture {
   prop: string;
   at: Tile;
   aim: Tile;
+  hitbox: Hitbox;
   marks: string[];
 }
 
@@ -111,6 +118,12 @@ export interface Stage {
   waiting: string | null;
 }
 
+export interface Lane {
+  showing: string | null;
+  next: string | null;
+  missed: string[];
+}
+
 // What the client sees this frame. Positions are world tiles, which `view` maps onto canvas pixels
 // (origin + tile × tile_size); `ui` rects are canvas pixels already. `viewpoint` is the character the
 // camera follows: `me`, or the player a spectator watches.
@@ -128,6 +141,7 @@ export interface Snapshot {
   ui: UiElement[];
   covered: Cover[];
   stage: Stage | null;
+  announcement: Lane;
   history: boolean;
   shop: Shop | null;
   bag: Stack[];
@@ -229,10 +243,15 @@ export async function pickUp(page: Page, item: GroundItem, timeout = 30_000): Pr
   }
 }
 
-// A click on someone or something interacts with it instead of walking.
+// A click on someone or something interacts with it instead of walking. The margin covers a body
+// that steps under the cursor between the probe and the click.
 export function occupied(snapshot: Snapshot, tile: Tile): boolean {
-  return [...snapshot.actors, ...snapshot.props].some(
-    (thing) => distance(tile, thing.at) < 1.5 || distance(tile, thing.aim) < 1.5,
+  const margin = 0.5;
+  return [...snapshot.actors, ...snapshot.props].some(({ hitbox: { origin, size } }) =>
+    tile[0] > origin[0] - margin &&
+    tile[1] > origin[1] - margin &&
+    tile[0] < origin[0] + size[0] + margin &&
+    tile[1] < origin[1] + size[1] + margin,
   );
 }
 
@@ -279,6 +298,22 @@ export async function travelTo(
     await clickTile(page, hop);
     await page.waitForTimeout(1200);
   }
+}
+
+// Something on the way can stop the walk with a conversation; leaving it and heading on gets through.
+export async function crossWarp(page: Page, warp: Exit): Promise<void> {
+  const from = (await probe(page)).area;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await travelTo(page, warp.at);
+    const outcome = await waitFor(
+      page,
+      ({ area, stage }) => (area !== from ? "crossed" : stage ? "stopped" : undefined),
+      `never crossed to ${warp.to}`,
+    );
+    if (outcome === "crossed") return;
+    await leaveConversation(page);
+  }
+  throw new Error(`kept being stopped on the way to ${warp.to}`);
 }
 
 // Text and icon paths match exactly as strings, or by pattern.
@@ -385,7 +420,7 @@ function clickable(snapshot: Snapshot, tile: Tile, size: { width: number; height
 }
 
 // A walk click can land on a townsperson who strolled under it, and talking locks every later click.
-async function leaveConversation(page: Page): Promise<void> {
+export async function leaveConversation(page: Page): Promise<void> {
   await focusGame(page);
   await page.keyboard.press("Escape");
   await waitFor(page, ({ stage }) => stage === null, "the stray conversation never closed");

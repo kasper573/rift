@@ -39,7 +39,15 @@ impl Plugin for HistoryPlugin {
 #[derive(Clone)]
 pub enum HistoryEntry {
     Began(String),
-    Said { who: Option<String>, text: LineText },
+    Said {
+        who: Option<String>,
+        text: LineText,
+    },
+    Announced {
+        who: String,
+        text: LineText,
+        missed: bool,
+    },
     Picked(LineText),
     Noted(String, NoticeTone),
 }
@@ -225,6 +233,17 @@ fn entry(entry: &HistoryEntry) -> Box<dyn Scene> {
                 );
             }
             said
+        }
+        HistoryEntry::Announced { who, text, missed } => {
+            let mut announced = text.rich();
+            let tag = if *missed { " (missed)" } else { "" };
+            announced.pieces.insert(
+                0,
+                RichSpan::plain(format!("{who}{tag}  "))
+                    .color(palette::VIOLET_80)
+                    .into(),
+            );
+            announced
         }
         HistoryEntry::Picked(label) => {
             let mut picked = label.rich();

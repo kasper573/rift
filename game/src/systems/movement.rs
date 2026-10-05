@@ -17,6 +17,7 @@ use crate::systems::actor::{Action, Actor, set_facing};
 use crate::systems::area;
 use crate::systems::player::{commands_locked, conn_player, sender_player};
 use crate::systems::reach;
+use crate::systems::rule::Requirement;
 use crate::systems::stat::{self, StatKind};
 
 pub fn register(app: &mut App) {
@@ -100,6 +101,23 @@ pub struct MoveTarget {
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct DesiredPortal {
     pub index: u32,
+}
+
+pub struct HeadingTo(pub area::Id);
+
+impl Requirement for HeadingTo {
+    fn met(&self, world: &World, player: Entity) -> bool {
+        let Some(want) = world.get::<DesiredPortal>(player) else {
+            return false;
+        };
+        area::of(world, player)
+            .and_then(|area| area.portals.get(want.index as usize))
+            .is_some_and(|portal| portal.dest_area == self.0)
+    }
+
+    fn describe(&self) -> String {
+        format!("Heading for the {:?}", self.0)
+    }
 }
 
 pub fn move_request(world: &mut World) {
