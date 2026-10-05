@@ -23,7 +23,7 @@ use crate::systems::equipment;
 use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, conn_player, sender_player};
-use crate::systems::reach::{self, Pursuit, ReachAct, ReachIntent};
+use crate::systems::reach::{self, Pursuit, ReachAct};
 use crate::systems::rule::{Outcome, Requirement, RuleContext};
 use crate::systems::stat;
 use crate::systems::visibility::seen_by;
@@ -415,12 +415,8 @@ pub fn pickup_request(world: &mut World) {
     }
 }
 
-pub fn pickups(world: &mut World, intents: &mut QueryState<Entity, With<ReachIntent>>) {
-    let players: Vec<Entity> = intents.iter(world).collect();
-    for player in players {
-        let Some(target) = reach::intent(world, player, ReachAct::Pickup) else {
-            continue;
-        };
+pub fn pickups(world: &mut World, intents: &mut reach::Intents) {
+    for (player, target) in reach::intending(world, intents, ReachAct::Pickup) {
         match reach::pursue(world, player, PICKUP_RANGE) {
             Pursuit::Approaching => {}
             Pursuit::Lost => reach::forget(world, player),

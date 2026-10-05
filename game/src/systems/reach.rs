@@ -67,6 +67,16 @@ pub fn intend(world: &mut World, actor: Entity, target: Entity, act: ReachAct) {
     world.entity_mut(actor).insert(ReachIntent { target, act });
 }
 
+pub type Intents = QueryState<(Entity, &'static ReachIntent)>;
+
+pub fn intending(world: &World, intents: &mut Intents, act: ReachAct) -> Vec<(Entity, Entity)> {
+    intents
+        .iter(world)
+        .filter(|(_, intent)| intent.act == act)
+        .map(|(actor, intent)| (actor, intent.target))
+        .collect()
+}
+
 pub fn intent(world: &World, actor: Entity, act: ReachAct) -> Option<Entity> {
     world
         .get::<ReachIntent>(actor)

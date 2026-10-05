@@ -14,7 +14,7 @@ use crate::systems::actor::{Action, Actor, Hitbox, set_action, set_facing};
 use crate::systems::area::AreaTag;
 use crate::systems::movement::{MoveTarget, Path, Position, halt, on_tile, position};
 use crate::systems::player::{Owner, sender_player, session};
-use crate::systems::reach::{self, Pursuit, ReachAct, ReachIntent};
+use crate::systems::reach::{self, Pursuit, ReachAct};
 use crate::systems::stat::{self, StatKind};
 
 const HP_REGEN_INTERVAL: Seconds = Seconds(10.0);
@@ -111,7 +111,7 @@ pub fn request(world: &mut World) {
 
 pub fn combat(
     world: &mut World,
-    intents: &mut QueryState<Entity, With<ReachIntent>>,
+    intents: &mut reach::Intents,
     swings: &mut QueryState<Entity, With<Swing>>,
 ) {
     let time = Seconds(world.resource::<Time>().elapsed_secs());
@@ -123,12 +123,8 @@ pub fn combat(
     }
 }
 
-fn engage(world: &mut World, time: Seconds, intents: &mut QueryState<Entity, With<ReachIntent>>) {
-    let ids: Vec<Entity> = intents.iter(world).collect();
-    for id in ids {
-        let Some(target) = reach::intent(world, id, ReachAct::Attack) else {
-            continue;
-        };
+fn engage(world: &mut World, time: Seconds, intents: &mut reach::Intents) {
+    for (id, target) in reach::intending(world, intents, ReachAct::Attack) {
         if world.get::<Swing>(id).is_some() {
             continue;
         }
