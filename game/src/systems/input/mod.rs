@@ -1,5 +1,6 @@
 mod escape;
 pub mod gestures;
+pub mod map;
 
 use crate::core::assets::AssetService;
 use crate::core::math::Pos;
@@ -19,6 +20,7 @@ pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
+        map::plugin(app);
         gestures::plugin(app);
         escape::plugin(app);
         app.add_systems(Startup, setup_highlight)
@@ -129,13 +131,7 @@ fn touch_as_mouse(
 }
 
 fn respawn_when_dead(world: &mut World) {
-    if session::is_dead(world)
-        && world
-            .resource::<ButtonInput<KeyCode>>()
-            .get_just_pressed()
-            .next()
-            .is_some()
-    {
+    if session::is_dead(world) && map::just_pressed(world, map::InputAction::Respawn) {
         session::respawn(world);
     }
 }

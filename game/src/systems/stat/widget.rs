@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use ui::text_colored;
 
 use crate::systems::hud::{HudAudience, Window};
+use crate::systems::input::map::InputAction;
 
 #[derive(Component, Default, Clone)]
 pub(super) struct StatsText;
@@ -18,11 +19,8 @@ impl Window for StatsWindow {
     fn title(&self) -> &'static str {
         "Stats"
     }
-    fn toggle(&self) -> KeyCode {
-        KeyCode::KeyK
-    }
-    fn keybind(&self) -> &'static str {
-        "K"
+    fn toggle(&self) -> InputAction {
+        InputAction::ToggleStats
     }
     fn icon(&self) -> &'static str {
         "icons/misc/book.png"

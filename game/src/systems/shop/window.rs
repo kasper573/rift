@@ -10,9 +10,8 @@ use crate::core::sfx::SfxId;
 use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::data::item::Id as ItemId;
 use crate::systems::hud;
-use crate::systems::item::widget::{
-    SlotRightClickOverride, SlotVerdict, slot_right_click_override, slot_verdict_source,
-};
+use crate::systems::input::map::{ActionInput, InputAction, input};
+use crate::systems::item::widget::{SlotAction, SlotVerdict, slot_action, slot_verdict_source};
 use crate::systems::item::{Inventory, ItemCategory, ItemStack, card};
 use crate::systems::player::session::Viewpoint;
 use crate::systems::scene::Scene as GameScene;
@@ -28,12 +27,13 @@ pub struct ShopWindowPlugin;
 impl Plugin for ShopWindowPlugin {
     fn build(&self, app: &mut App) {
         slot_verdict_source(app, verdict);
-        slot_right_click_override(
+        slot_action(
             app,
-            SlotRightClickOverride {
+            SlotAction {
+                action: InputAction::SellItem,
                 active: selling,
                 act: request_sale,
-                hint: "Right-click to sell",
+                verb: "sell",
             },
         );
         app.init_resource::<Browse>()
@@ -289,9 +289,14 @@ fn contents(world: &World, shelf: &Shelf) -> Box<dyn Scene> {
         format!("Buys {}", wants.join(", "))
     };
     let sell_hint = if wants.is_empty() || !shelf.playing {
-        String::new()
+        Vec::new()
     } else {
-        "Right-click or drag from your bag to sell".to_owned()
+        vec![
+            input(InputAction::SellItem),
+            ui::RichPiece::text(" or "),
+            input(InputAction::CarryItem),
+            ui::RichPiece::text(" from your bag to sell"),
+        ]
     };
     let tabs: Vec<Box<dyn Scene>> = [
         (ShopTab::Wares, "Wares".to_owned()),
@@ -318,7 +323,7 @@ fn contents(world: &World, shelf: &Shelf) -> Box<dyn Scene> {
     };
     let footer = bsn! {
         Node { padding: {UiRect::axes(Val::Px(spacing::L), Val::Px(spacing::M))} }
-        Children [ {EntityScene(ui::styled_text(sell_hint, ink.with_alpha(0.6), typography::CAPTION))} ]
+        Children [ {EntityScene(ui::rich_text(ui::RichText { pieces: sell_hint, size: typography::CAPTION.font_size, color: ink.with_alpha(0.6) }, false))} ]
     };
     let column = bsn! {
         Node {
@@ -408,8 +413,10 @@ fn row(
         }
         BackgroundColor({background})
         Pickable { should_block_lower: true, is_hoverable: true }
-        on(move |_: On<Pointer<Click>>, mut commands: Commands| {
-            commands.queue(move |world: &mut World| select(world, tab, index));
+        on(move |click: On<Pointer<Click>>, input: ActionInput, mut commands: Commands| {
+            if input.clicked(InputAction::Select, &click) {
+                commands.queue(move |world: &mut World| select(world, tab, index));
+            }
         })
         Children [
             (
@@ -627,6 +634,7 @@ fn confirm_sale(world: &mut World, shop: ShopId, stack: ItemStack, pays: &[ItemS
         cancel: "Keep".to_owned(),
         on_confirm: OnTap::new(move |world| sell(world, slot, stack)),
         on_cancel: OnTap::new(|_| {}),
+        keep: InputAction::TakeDefault.into(),
     });
     world.spawn_scene(dialog).ok();
 }

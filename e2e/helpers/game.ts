@@ -360,6 +360,16 @@ export function outsideCard(snapshot: Snapshot, image: string): (element: UiElem
   return (element) => element.image === image && !inside(element);
 }
 
+// The HUD can show the same icon as a choice's reward; this matches only the copies on a choice.
+export function onChoice(snapshot: Snapshot, image: string): (element: UiElement) => boolean {
+  const rows = (snapshot.stage?.choices ?? []).flatMap((choice) => (choice.rect ? [choice.rect] : []));
+  const inside = (element: UiElement) => {
+    const [x, y] = [element.x + element.width / 2, element.y + element.height / 2];
+    return rows.some((row) => x >= row.x && x <= row.x + row.width && y >= row.y && y <= row.y + row.height);
+  };
+  return (element) => element.image === image && inside(element);
+}
+
 export async function hoverUi(page: Page, match: UiMatch): Promise<void> {
   const { x, y } = await uiPoint(page, match);
   await page.mouse.move(x, y, { steps: 12 });

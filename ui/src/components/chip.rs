@@ -8,6 +8,7 @@ use bevy_ui::{AlignItems, BorderRadius, Node, UiRect, Val};
 
 use crate::component;
 use crate::components::inspectable::{InspectableOptions, inspectable};
+use crate::components::rich_text::{RichPiece, RichText, rich_text};
 use crate::components::text::styled_text;
 use crate::style::Style;
 use crate::theme::Family;
@@ -77,7 +78,7 @@ fn face(
     }
 }
 
-pub fn key_hint(hint: impl Into<String>, family: Family) -> impl Scene {
+pub fn key_hint(hint: Vec<RichPiece>, family: Family) -> impl Scene {
     let style = Style::new()
         .background(family.base)
         .border_color(family.border)
@@ -86,10 +87,14 @@ pub fn key_hint(hint: impl Into<String>, family: Family) -> impl Scene {
             node.border = UiRect::all(Val::Px(1.0));
             node.border_radius = BorderRadius::all(Val::Px(radius::S));
         });
-    let text = styled_text(hint.into(), family.on, typography::HINT);
+    let text = RichText {
+        pieces: hint,
+        size: typography::HINT.font_size,
+        color: family.on,
+    };
     bsn! {
         template_value(style)
         Pickable::IGNORE
-        Children [ {EntityScene(text)} ]
+        Children [ {EntityScene(rich_text(text, false))} ]
     }
 }

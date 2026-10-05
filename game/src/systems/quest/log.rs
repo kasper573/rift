@@ -13,6 +13,7 @@ use super::{
     ActiveQuest, FinishedQuest, Giver, QUEST_LOG_CAP, QuestId, QuestLog, QuestRequest, QuestResult,
 };
 use crate::systems::hud::{HudAudience, Window};
+use crate::systems::input::map::{ActionInput, InputAction};
 use crate::systems::item::widget::slot_note_source;
 use crate::systems::item::{Inventory, ItemFlag, ItemStack};
 use crate::systems::player::session::Viewpoint;
@@ -41,11 +42,8 @@ impl Window for QuestLogWindow {
     fn title(&self) -> &'static str {
         "Quests"
     }
-    fn toggle(&self) -> KeyCode {
-        KeyCode::KeyL
-    }
-    fn keybind(&self) -> &'static str {
-        "L"
+    fn toggle(&self) -> InputAction {
+        InputAction::ToggleQuestLog
     }
     fn icon(&self) -> &'static str {
         "icons/misc/book.png"
@@ -301,8 +299,10 @@ fn row(assets: &AssetServer, page: &Page, quest: QuestId, selected: bool) -> Box
         }
         BackgroundColor({background})
         Pickable { should_block_lower: true, is_hoverable: true }
-        on(move |_: On<Pointer<Click>>, mut commands: Commands| {
-            commands.queue(move |world: &mut World| select(world, tab, quest));
+        on(move |click: On<Pointer<Click>>, input: ActionInput, mut commands: Commands| {
+            if input.clicked(InputAction::Select, &click) {
+                commands.queue(move |world: &mut World| select(world, tab, quest));
+            }
         })
         Children [
             {EntityScene(icon(assets, def.icon(), ROW_ICON))},
@@ -513,10 +513,12 @@ fn footer(page: &Page, quest: QuestId) -> impl Scene + use<> {
                     (
                         {ui::styled_text("Track on HUD", ink, typography::BODY)}
                         Pickable { should_block_lower: true, is_hoverable: true }
-                        on(move |_: On<Pointer<Click>>, mut commands: Commands| {
-                            commands.queue(move |world: &mut World| {
-                                world.write_message(QuestRequest::Track { quest, tracked: !tracked });
-                            });
+                        on(move |click: On<Pointer<Click>>, input: ActionInput, mut commands: Commands| {
+                            if input.clicked(InputAction::Select, &click) {
+                                commands.queue(move |world: &mut World| {
+                                    world.write_message(QuestRequest::Track { quest, tracked: !tracked });
+                                });
+                            }
                         })
                     ),
                 ]
@@ -548,6 +550,7 @@ fn confirm_abandon(world: &mut World, quest: QuestId) {
             world.write_message(QuestRequest::Abandon { quest });
         }),
         on_cancel: OnTap::new(|_| {}),
+        keep: InputAction::TakeDefault.into(),
     });
     world.spawn_scene(dialog).ok();
 }

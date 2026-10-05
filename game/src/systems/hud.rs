@@ -5,6 +5,7 @@ use ui::component;
 use ui::{Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
 use crate::core::platform::{ClientPlatform, Platform};
+use crate::systems::input::map::{ActionInput, InputAction};
 use crate::systems::scene::mode::Mode;
 use crate::systems::{effect, equipment, item, player, quest, settings, spectate, stat, terminal};
 
@@ -74,8 +75,7 @@ pub trait Widget: Send + Sync {
 pub trait Window: Send + Sync {
     fn audience(&self) -> HudAudience;
     fn title(&self) -> &'static str;
-    fn toggle(&self) -> KeyCode;
-    fn keybind(&self) -> &'static str;
+    fn toggle(&self) -> InputAction;
     fn icon(&self) -> &'static str;
     fn order(&self) -> u32;
     fn size(&self) -> Vec2 {
@@ -503,7 +503,7 @@ fn launcher(
         {widget(ui::WidgetOptions {
             pos,
             icon: assets.load(def.icon().to_owned()),
-            badge: def.keybind().to_owned(),
+            badge: Some(def.toggle().into()),
             tooltip: def.title().to_owned(),
             on_tap: OnTap::new(move |world| open_window(world, window)),
             on_settle: OnSettle::new(move |world, geom| persist_widget(world, window, geom)),
@@ -647,9 +647,9 @@ fn open_window(world: &mut World, window: &'static str) {
     world.resource_mut::<Open>().0.insert(window);
 }
 
-fn toggle_keys(keys: Res<ButtonInput<KeyCode>>, mode: Res<Mode>, mut open: ResMut<Open>) {
+fn toggle_keys(input: ActionInput, mode: Res<Mode>, mut open: ResMut<Open>) {
     for (window, def) in windows(*mode) {
-        if keys.just_pressed(def.toggle()) && !open.0.remove(&window) {
+        if input.just_pressed(def.toggle()) && !open.0.remove(&window) {
             open.0.insert(window);
         }
     }

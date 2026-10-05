@@ -9,6 +9,7 @@ use game::data::item::Id as ItemId;
 use game::data::memory::Id as MemoryId;
 use game::systems::attention::Attention;
 use game::systems::dialogue::{self, BusyPolicy, Conversation, ConversationRequest, Start};
+use game::systems::input::map::InputMap;
 use game::systems::interact::InteractRequest;
 use game::systems::item::{Inventory, ItemStack};
 use game::systems::memory::{self, Memory};
@@ -47,7 +48,7 @@ fn choice(conversation: &Conversation, label: &str) -> u32 {
     conversation
         .choices
         .iter()
-        .position(|choice| choice.label.words() == label)
+        .position(|choice| choice.label.words(&InputMap::default()) == label)
         .unwrap_or_else(|| panic!("no choice {label:?}")) as u32
 }
 

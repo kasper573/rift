@@ -9,6 +9,7 @@ use bevy::window::CursorIcon;
 
 use crate::core::render;
 use crate::systems::input::gestures::{ActiveTileHighlight, Gesture, image_cursor};
+use crate::systems::input::map::{self, InputAction};
 
 const MOVE_REPEAT: Duration = Duration::from_millis(333);
 
@@ -42,9 +43,7 @@ impl Gesture for WalkGesture {
 
     fn cursor(&self, world: &mut World) -> Option<CursorIcon> {
         target(world)?;
-        let held = world
-            .resource::<ButtonInput<MouseButton>>()
-            .pressed(MouseButton::Left);
+        let held = map::pressed(world, InputAction::Interact);
         let path = if held {
             "icons/cursors/pointer011.png"
         } else {

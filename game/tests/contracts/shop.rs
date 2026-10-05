@@ -6,6 +6,7 @@ use game::data::dialogue::Id as DialogueId;
 use game::data::item::Id as ItemId;
 use game::data::prop::Id as PropId;
 use game::systems::dialogue::{Conversation, ConversationRequest, Speaker};
+use game::systems::input::map::InputMap;
 use game::systems::interact::InteractRequest;
 use game::systems::item::{Inventory, ItemStack};
 use game::systems::movement::{Position, position};
@@ -54,7 +55,7 @@ fn browse(sim: &mut Sim, client: u32, player: Entity, keeper: data::npc::Id) -> 
     let ask = greeting
         .choices
         .iter()
-        .position(|choice| choice.label.words() == ask_of(keeper))
+        .position(|choice| choice.label.words(&InputMap::default()) == ask_of(keeper))
         .expect("the shop's choice in the greeting") as u32;
     sim.send(
         client,

@@ -6,6 +6,7 @@ use bevy_picking::prelude::{Drag, DragDrop, DragEnd, DragStart, Pickable, Pointe
 use bevy_ui::widget::ImageNode;
 use bevy_ui::{GlobalZIndex, Node, PositionType, Val};
 
+use crate::components::input::{CatalogInput, InputRef};
 use crate::opacity::Opacity;
 use crate::state::ancestor_with;
 
@@ -17,6 +18,7 @@ const GHOST_Z: i32 = 2000;
 pub struct Carriable {
     pub image: Handle<Image>,
     pub payload: u64,
+    pub input: InputRef,
 }
 
 #[derive(Component, Clone, Default)]
@@ -39,6 +41,7 @@ pub(crate) fn lift(
     carriables: Query<&Carriable>,
     parents: Query<&ChildOf>,
     is_carriable: Query<(), With<Carriable>>,
+    gestures: CatalogInput,
     mut commands: Commands,
 ) {
     if start.entity != start.original_event_target() {
@@ -50,6 +53,9 @@ pub(crate) fn lift(
     let Ok(carriable) = carriables.get(source) else {
         return;
     };
+    if !gestures.dragged(carriable.input, start.button) {
+        return;
+    }
     let at = start.pointer_location.position;
     commands.spawn((
         Ghost,
@@ -92,6 +98,7 @@ pub(crate) fn deliver(
     parents: Query<&ChildOf>,
     is_carriable: Query<(), With<Carriable>>,
     is_target: Query<(), With<CarryTarget>>,
+    gestures: CatalogInput,
     mut commands: Commands,
 ) {
     if drop.entity != drop.original_event_target() {
@@ -106,6 +113,9 @@ pub(crate) fn deliver(
     let Ok(carriable) = carriables.get(source) else {
         return;
     };
+    if !gestures.dragged(carriable.input, drop.button) {
+        return;
+    }
     commands.trigger(Carried {
         target,
         source,

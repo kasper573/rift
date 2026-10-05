@@ -3,11 +3,12 @@ use crate::systems::item::card;
 use crate::systems::player::session;
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
-use ui::{Align, Side, TooltipText, tooltip, tooltip_content};
+use ui::{Align, RichPiece, Side, TooltipText, tooltip, tooltip_content};
 
 use crate::systems::hud::{
     HudAudience, SLOT_BG, SLOT_BORDER, Window, reconcile_children, slot_node, tooltip_label,
 };
+use crate::systems::input::map::{ActionInput, InputAction, input};
 use ui::component;
 
 #[derive(Component, Default, Clone)]
@@ -22,11 +23,8 @@ impl Window for EquipmentWindow {
     fn title(&self) -> &'static str {
         "Equipment"
     }
-    fn toggle(&self) -> KeyCode {
-        KeyCode::KeyE
-    }
-    fn keybind(&self) -> &'static str {
-        "E"
+    fn toggle(&self) -> InputAction {
+        InputAction::ToggleEquipment
     }
     fn icon(&self) -> &'static str {
         "icons/equipment/helm.png"
@@ -125,23 +123,28 @@ fn worn_slot(slot: EquipmentSlot, item: crate::data::item::Id, icon: Handle<Imag
     let def = item.get();
     let tip = TooltipText {
         title: def.display_name.to_owned(),
-        lines: vec![card::overview(def)],
-        hint: Some("Right-click for more information · double-click to take it off".to_owned()),
+        lines: vec![vec![RichPiece::text(card::overview(def))]],
+        hint: Some(
+            card::inspect_hint()
+                .into_iter()
+                .chain([
+                    RichPiece::text(" · "),
+                    input(InputAction::UseItem),
+                    RichPiece::text(" to take it off"),
+                ])
+                .collect(),
+        ),
     };
     bsn! {
         template_value(slot_node())
         BackgroundColor({SLOT_BG})
         component(BorderColor::all(SLOT_BORDER))
         {tooltip(false)}
-        on(move |click: On<Pointer<Click>>, mut commands: Commands| {
-            match click.button {
-                PointerButton::Primary if click.count.is_multiple_of(2) => {
-                    commands.queue(move |world: &mut World| session::unequip(world, slot));
-                }
-                PointerButton::Secondary => {
-                    commands.queue(move |world: &mut World| card::open(world, item));
-                }
-                _ => {}
+        on(move |click: On<Pointer<Click>>, input: ActionInput, mut commands: Commands| {
+            if input.clicked(InputAction::UseItem, &click) {
+                commands.queue(move |world: &mut World| session::unequip(world, slot));
+            } else if input.clicked(InputAction::InspectItem, &click) {
+                commands.queue(move |world: &mut World| card::open(world, item));
             }
         })
         Children [

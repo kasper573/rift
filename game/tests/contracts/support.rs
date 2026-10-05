@@ -20,6 +20,7 @@ use game::systems::TICK_HZ;
 use game::systems::area::{self, Area};
 use game::systems::combat::Died;
 use game::systems::dialogue::{Conversation, ConversationRequest};
+use game::systems::input::map::InputMap;
 use game::systems::interact::InteractRequest;
 use game::systems::item::{self, Inventory, ItemStack};
 use game::systems::memory::Memory;
@@ -188,7 +189,7 @@ pub fn labels(conversation: &Conversation) -> Vec<String> {
     conversation
         .choices
         .iter()
-        .map(|choice| choice.label.words())
+        .map(|choice| choice.label.words(&InputMap::default()))
         .collect()
 }
 
@@ -197,7 +198,7 @@ pub fn pick(sim: &mut Sim, client: u32, player: Entity, label: &str) -> Option<C
     let choice =
         now.choices
             .iter()
-            .position(|choice| choice.label.words() == label)
+            .position(|choice| choice.label.words(&InputMap::default()) == label)
             .unwrap_or_else(|| panic!("no choice {label:?} in {:?}", labels(&now))) as u32;
     sim.send(
         client,
@@ -214,7 +215,7 @@ pub fn refusal(conversation: &Conversation, label: &str) -> Option<String> {
     conversation
         .choices
         .iter()
-        .find(|choice| choice.label.words() == label)
+        .find(|choice| choice.label.words(&InputMap::default()) == label)
         .unwrap_or_else(|| panic!("no choice {label:?} in {:?}", labels(conversation)))
         .refusal
         .clone()

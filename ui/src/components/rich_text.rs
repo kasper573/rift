@@ -1,17 +1,19 @@
 use std::borrow::Cow;
 use std::time::Duration;
 
+use bevy_camera::visibility::Visibility;
 use bevy_color::{Alpha, Color};
 use bevy_ecs::prelude::*;
 use bevy_math::Vec2;
 use bevy_picking::prelude::Pickable;
-use bevy_scene::{Scene, bsn, template_value};
+use bevy_scene::{CommandsSceneExt, Scene, bsn, template_value};
 use bevy_text::{FontStyle, FontWeight, TextColor, TextFont, TextSpan};
 use bevy_time::Time;
 use bevy_ui::widget::Text;
-use bevy_ui::{AlignItems, FlexDirection, FlexWrap, Node, UiTransform, Val, Val2};
+use bevy_ui::{AlignItems, FlexDirection, FlexWrap, Node, UiRect, UiTransform, Val, Val2};
 
 use crate::component;
+use crate::components::input::{InputCatalog, InputRef, input_cap};
 use crate::components::text::font;
 use crate::theme::theme;
 use crate::tokens::typography;
@@ -27,6 +29,13 @@ const WORD_GAP_EM: f32 = 0.27;
 pub enum RichPiece {
     Span(RichSpan),
     Pause(Duration),
+    Input(InputRef),
+}
+
+impl RichPiece {
+    pub fn text(text: impl Into<Cow<'static, str>>) -> RichPiece {
+        RichPiece::Span(RichSpan::plain(text))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -108,12 +117,13 @@ impl RichText {
         }
     }
 
-    pub fn plain(&self) -> String {
+    pub fn plain(&self, catalog: &InputCatalog) -> String {
         self.pieces
             .iter()
             .filter_map(|piece| match piece {
                 RichPiece::Span(span) => Some(span.text.as_ref()),
                 RichPiece::Pause(_) => None,
+                RichPiece::Input(input) => catalog.name(*input),
             })
             .collect()
     }
@@ -157,6 +167,7 @@ pub fn rich_text(text: RichText, typed: bool) -> impl Scene {
         flex_wrap: FlexWrap::Wrap,
         align_items: AlignItems::Baseline,
         column_gap: Val::Px(gap),
+        margin: UiRect::right(Val::Px(-gap)),
         ..Default::default()
     };
     let typewriter = Typewriter {
@@ -179,8 +190,12 @@ pub fn reveal_times(pieces: &[RichPiece], speed: TypewriterSpeed) -> Vec<Duratio
             .flat_map(|piece| match piece {
                 RichPiece::Span(span) => vec![Duration::ZERO; span.text.chars().count()],
                 RichPiece::Pause(_) => Vec::new(),
+                RichPiece::Input(_) => vec![Duration::ZERO],
             })
             .collect();
+    };
+    let step = |pace: f32| {
+        Duration::from_nanos((f64::from(pace) / f64::from(per_second) * 1e9).round() as u64)
     };
     let mut clock = Duration::ZERO;
     let mut times = Vec::new();
@@ -189,13 +204,14 @@ pub fn reveal_times(pieces: &[RichPiece], speed: TypewriterSpeed) -> Vec<Duratio
             RichPiece::Pause(pause) => clock += *pause,
             RichPiece::Span(span) => {
                 let pace = if span.slow { SLOW_PACE } else { 1.0 };
-                let step = Duration::from_nanos(
-                    (f64::from(pace) / f64::from(per_second) * 1e9).round() as u64,
-                );
                 for _ in span.text.chars() {
-                    clock += step;
+                    clock += step(pace);
                     times.push(clock);
                 }
+            }
+            RichPiece::Input(_) => {
+                clock += step(1.0);
+                times.push(clock);
             }
         }
     }
@@ -221,6 +237,7 @@ pub(crate) struct Word {
     index: usize,
     motion: Option<TextMotion>,
     segments: Vec<Segment>,
+    cap_at: Option<usize>,
 }
 
 struct Segment {
@@ -248,12 +265,16 @@ pub(crate) fn lay_out_rich_text(
             typewriter.elapsed = Duration::ZERO;
             typewriter.finished = !typewriter.animated;
         }
-        let words: Vec<Entity> = split_words(text)
+        let mut laid: Vec<Entity> = split_words(text)
             .into_iter()
             .enumerate()
             .map(|(index, word)| spawn_word(&mut commands, entity, text, index, word))
             .collect();
-        commands.entity(entity).insert(Laid(words));
+        // Taffy breaks a wrapping row by comparing float sums exactly, so a row sized to its own
+        // content can push its last word onto a new line. This empty trailing item, cancelled out
+        // by the root's negative right margin, gives the last word a gap's worth of headroom.
+        laid.push(commands.spawn((Node::default(), ChildOf(entity))).id());
+        commands.entity(entity).insert(Laid(laid));
     }
 }
 
@@ -261,7 +282,7 @@ pub(crate) fn type_rich_text(
     time: Res<Time>,
     speed: Res<TypewriterSpeed>,
     mut texts: Query<(&RichText, &mut Typewriter, Option<&Laid>)>,
-    words: Query<&Word>,
+    mut words: Query<(&Word, &mut Visibility)>,
     mut spans: Query<&mut TextSpan>,
 ) {
     for (text, mut typewriter, laid) in &mut texts {
@@ -278,7 +299,18 @@ pub(crate) fn type_rich_text(
             }
             shown
         };
-        for word in words.iter_many(&laid.0) {
+        let mut laid_words = words.iter_many_mut(&laid.0);
+        while let Some((word, mut visibility)) = laid_words.fetch_next() {
+            if let Some(at) = word.cap_at {
+                let next = if shown > at {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                };
+                if *visibility != next {
+                    *visibility = next;
+                }
+            }
             for segment in &word.segments {
                 let visible = shown.saturating_sub(segment.first_char);
                 let split = segment
@@ -336,6 +368,7 @@ pub(crate) fn move_words(
 struct WordPlan {
     motion: Option<TextMotion>,
     parts: Vec<(usize, String, usize)>,
+    cap: Option<(InputRef, usize)>,
 }
 
 fn split_words(text: &RichText) -> Vec<WordPlan> {
@@ -343,8 +376,19 @@ fn split_words(text: &RichText) -> Vec<WordPlan> {
     let mut open = false;
     let mut char_index = 0;
     for (span_index, piece) in text.pieces.iter().enumerate() {
-        let RichPiece::Span(span) = piece else {
-            continue;
+        let span = match piece {
+            RichPiece::Span(span) => span,
+            RichPiece::Pause(_) => continue,
+            RichPiece::Input(input) => {
+                words.push(WordPlan {
+                    motion: None,
+                    parts: Vec::new(),
+                    cap: Some((*input, char_index)),
+                });
+                open = false;
+                char_index += 1;
+                continue;
+            }
         };
         for ch in span.text.chars() {
             if ch.is_whitespace() {
@@ -356,6 +400,7 @@ fn split_words(text: &RichText) -> Vec<WordPlan> {
                 words.push(WordPlan {
                     motion: span.motion,
                     parts: Vec::new(),
+                    cap: None,
                 });
                 open = true;
             }
@@ -378,6 +423,21 @@ fn spawn_word(
     index: usize,
     plan: WordPlan,
 ) -> Entity {
+    if let Some((input, at)) = plan.cap {
+        return commands
+            .spawn_scene(input_cap(input, text.size, text.color))
+            .insert((
+                Word {
+                    index,
+                    motion: None,
+                    segments: Vec::new(),
+                    cap_at: Some(at),
+                },
+                UiTransform::default(),
+                ChildOf(parent),
+            ))
+            .id();
+    }
     let word = commands
         .spawn((
             Node::default(),
@@ -430,6 +490,7 @@ fn spawn_word(
         index,
         motion: plan.motion,
         segments,
+        cap_at: None,
     });
     word
 }

@@ -5,7 +5,9 @@ use bevy::image::{ImageLoaderSettings, ImageSampler};
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::tokens::palette;
-use ui::{CastDepth, CastMember, ChipOptions, ChoiceOptions, DialogueBoxOptions, Family, Side};
+use ui::{
+    CastDepth, CastMember, ChipOptions, ChoiceOptions, DialogueBoxOptions, Family, RichPiece, Side,
+};
 
 use super::history::{self, HistoryEntry};
 use super::{
@@ -17,6 +19,7 @@ use crate::core::sfx::SfxId;
 use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::systems::actor::Name;
 use crate::systems::actor::bust::{Busts, Face, GenericExpression};
+use crate::systems::input::map::{self, ActionInput, InputAction, InputMap};
 use crate::systems::item::card;
 use crate::systems::npc::Npc;
 use crate::systems::player;
@@ -25,8 +28,17 @@ use crate::systems::scene::Scene as GameScene;
 use crate::systems::scene::mode::Mode;
 
 const READ_ALONG: Duration = Duration::from_millis(1800);
-const PLAYER_HINT: &str = "↑ ↓ choose · Enter pick · 1-9 shortcut · H history · Esc leave";
-const SPECTATOR_HINT: &str = "Watching · H history";
+const CHOICE_SHORTCUTS: [InputAction; 9] = [
+    InputAction::Choice1,
+    InputAction::Choice2,
+    InputAction::Choice3,
+    InputAction::Choice4,
+    InputAction::Choice5,
+    InputAction::Choice6,
+    InputAction::Choice7,
+    InputAction::Choice8,
+    InputAction::Choice9,
+];
 const CHECK: &str = "icons/misc/checkmark.png";
 const LOCK: &str = "icons/cursors/lock001.png";
 const SANDCLOCK: &str = "icons/cursors/sandclock001.png";
@@ -96,7 +108,7 @@ pub fn view(world: &World) -> Option<StageView> {
             .choices
             .iter()
             .map(|choice| StageChoice {
-                label: choice.label.words(),
+                label: choice.label.words(world.resource::<InputMap>()),
                 locked: choice.refusal.is_some(),
             })
             .collect(),
@@ -361,36 +373,31 @@ fn stage_keys(world: &mut World) {
     if world.resource::<Stage>().shown.is_none() || ui::modal_open(world) {
         return;
     }
-    let pressed: Vec<KeyCode> = world
-        .resource::<ButtonInput<KeyCode>>()
-        .get_just_pressed()
-        .copied()
-        .collect();
-    for key in pressed {
-        let typing = typing_line(world);
-        let choices = shown_choices(world);
-        match (key, typing, choices) {
-            (KeyCode::Enter | KeyCode::Space, Some(line), _) => {
-                if let Some(mut typewriter) = world.get_mut::<ui::Typewriter>(line) {
-                    typewriter.finish();
-                }
+    match (typing_line(world), shown_choices(world)) {
+        (Some(line), _) => {
+            if map::just_pressed(world, InputAction::Advance)
+                && let Some(mut typewriter) = world.get_mut::<ui::Typewriter>(line)
+            {
+                typewriter.finish();
             }
-            (KeyCode::Enter, None, Some(list)) => ui::pick_choice(world, list),
-            (KeyCode::Enter | KeyCode::Space, None, None) => advance(world),
-            (KeyCode::ArrowUp, None, Some(list)) => {
+        }
+        (None, Some(list)) => {
+            if map::just_pressed(world, InputAction::PickChoice) {
+                ui::pick_choice(world, list);
+            } else if map::just_pressed(world, InputAction::ChoosePrevious) {
                 ui::step_choice(world, list, -1);
                 chime(world, SfxId::UiMove);
-            }
-            (KeyCode::ArrowDown, None, Some(list)) => {
+            } else if map::just_pressed(world, InputAction::ChooseNext) {
                 ui::step_choice(world, list, 1);
                 chime(world, SfxId::UiMove);
+            } else if let Some(index) = map::just_pressed_index(world, &CHOICE_SHORTCUTS) {
+                ui::pick_choice_at(world, list, index);
             }
-            (key, None, Some(list)) => {
-                if let Some(index) = digit(key) {
-                    ui::pick_choice_at(world, list, index);
-                }
+        }
+        (None, None) => {
+            if map::just_pressed(world, InputAction::Advance) {
+                advance(world);
             }
-            _ => {}
         }
     }
 }
@@ -498,7 +505,10 @@ fn on_refused(refused: On<ui::ChoiceRefused>, mut commands: Commands) {
     });
 }
 
-fn advance_on_click(click: On<Pointer<Click>>, mut commands: Commands) {
+fn advance_on_click(click: On<Pointer<Click>>, input: ActionInput, mut commands: Commands) {
+    if !input.clicked(InputAction::Advance, &click) {
+        return;
+    }
     let target = click.original_event_target();
     let root = click.entity;
     commands.queue(move |world: &mut World| {
@@ -558,7 +568,8 @@ fn box_options(world: &World, typed: bool) -> Option<DialogueBoxOptions> {
         shown
             .choices
             .iter()
-            .map(|choice| choice_options(assets, choice))
+            .enumerate()
+            .map(|(index, choice)| choice_options(assets, choice, index))
             .collect()
     } else {
         Vec::new()
@@ -581,13 +592,45 @@ fn box_options(world: &World, typed: bool) -> Option<DialogueBoxOptions> {
         line: line.text.rich(),
         typed,
         choices,
-        hint: if playing { PLAYER_HINT } else { SPECTATOR_HINT }.to_owned(),
+        hint: if playing {
+            player_hint()
+        } else {
+            spectator_hint()
+        },
         actions,
         status: shown.refusal.clone(),
+        advance: InputAction::Advance.into(),
+        pick: InputAction::PickChoice.into(),
     })
 }
 
-fn choice_options(assets: &AssetServer, choice: &ChoiceView) -> ChoiceOptions {
+fn player_hint() -> Vec<RichPiece> {
+    vec![
+        map::input(InputAction::ChoosePrevious),
+        map::input(InputAction::ChooseNext),
+        RichPiece::text(" choose · "),
+        map::input(InputAction::PickChoice),
+        RichPiece::text(" pick · "),
+        map::input(InputAction::Choice1),
+        RichPiece::text("–"),
+        map::input(InputAction::Choice9),
+        RichPiece::text(" shortcut · "),
+        map::input(InputAction::ToggleHistory),
+        RichPiece::text(" history · "),
+        map::input(InputAction::Dismiss),
+        RichPiece::text(" leave"),
+    ]
+}
+
+fn spectator_hint() -> Vec<RichPiece> {
+    vec![
+        RichPiece::text("Watching · "),
+        map::input(InputAction::ToggleHistory),
+        RichPiece::text(" history"),
+    ]
+}
+
+fn choice_options(assets: &AssetServer, choice: &ChoiceView, index: usize) -> ChoiceOptions {
     let mut chips: Vec<ChipOptions> = choice
         .chips
         .iter()
@@ -633,6 +676,7 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView) -> ChoiceOptions {
         icon: choice.icon.as_ref().map(|icon| assets.load(icon.clone())),
         chips,
         locked: choice.refusal.is_some(),
+        shortcut: CHOICE_SHORTCUTS.get(index).map(|&action| action.into()),
     }
 }
 
@@ -790,22 +834,6 @@ fn cast_key(who: Speaker) -> u64 {
         Speaker::Npc(npc) => 2 + npc as u64,
         Speaker::Prop(prop) => 10_000 + prop as u64,
     }
-}
-
-fn digit(key: KeyCode) -> Option<usize> {
-    [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-        KeyCode::Digit7,
-        KeyCode::Digit8,
-        KeyCode::Digit9,
-    ]
-    .iter()
-    .position(|digit| *digit == key)
 }
 
 fn chime(world: &mut World, id: SfxId) {

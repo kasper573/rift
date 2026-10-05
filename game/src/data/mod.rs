@@ -2,6 +2,7 @@ pub mod announcement;
 pub mod area;
 pub mod attention;
 pub mod dialogue;
+pub mod input;
 pub mod item;
 pub mod job;
 pub mod memory;

@@ -10,6 +10,7 @@ use bevy_ui::{FlexDirection, JustifyContent, Node, Val};
 use crate::component;
 use crate::components::button::{ButtonSize, button_styled, intent};
 use crate::components::dialog::modal;
+use crate::components::input::{InputCatalog, InputRef};
 use crate::components::text::styled_text;
 use crate::drag::OnTap;
 use crate::overlay::{OVERLAY_EXIT, Open};
@@ -24,6 +25,7 @@ pub struct ConfirmOptions {
     pub cancel: String,
     pub on_confirm: OnTap,
     pub on_cancel: OnTap,
+    pub keep: InputRef,
 }
 
 #[derive(Component, Clone, Copy, Default)]
@@ -33,6 +35,9 @@ pub struct Modal {
 
 #[derive(Component, Clone)]
 pub struct OnDismiss(pub OnTap);
+
+#[derive(Component, Clone, Copy)]
+pub(crate) struct KeepInput(InputRef);
 
 #[derive(Component, Clone, Default)]
 pub(crate) struct DespawnOnClose {
@@ -50,6 +55,7 @@ pub fn confirm_dialog(options: ConfirmOptions) -> impl Scene {
         cancel,
         on_confirm,
         on_cancel,
+        keep,
     } = options;
     let ink = theme().surface_elevated.on;
     let lines: Vec<Box<dyn Scene>> = body
@@ -94,6 +100,7 @@ pub fn confirm_dialog(options: ConfirmOptions) -> impl Scene {
     bsn! {
         {modal(true, false, bsn! { Node }, content)}
         component(OnDismiss(on_cancel))
+        component(KeepInput(keep))
         DespawnOnClose
     }
 }
@@ -125,15 +132,16 @@ pub(crate) fn stamp_modals(
     }
 }
 
-pub(crate) fn enter_keeps_default(keys: Res<ButtonInput<KeyCode>>, mut commands: Commands) {
-    if keys.just_pressed(KeyCode::Enter) {
-        commands.queue(|world: &mut World| {
-            let confirming = topmost_modal(world)
-                .is_some_and(|modal| world.get::<DespawnOnClose>(modal).is_some());
-            if confirming {
-                dismiss_topmost(world);
-            }
-        });
+pub(crate) fn keep_default(world: &mut World) {
+    let Some(KeepInput(keep)) = topmost_modal(world).and_then(|modal| world.get(modal).copied())
+    else {
+        return;
+    };
+    if world
+        .resource::<InputCatalog>()
+        .just_pressed(keep, world.resource::<ButtonInput<KeyCode>>())
+    {
+        dismiss_topmost(world);
     }
 }
 

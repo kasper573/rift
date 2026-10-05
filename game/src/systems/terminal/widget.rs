@@ -4,6 +4,7 @@ use bevy::scene::EntityScene;
 use bevy_terminal::TerminalInput;
 
 use crate::systems::hud::{HudAudience, Window, reconcile_children};
+use crate::systems::input::map::InputAction;
 use crate::systems::terminal::Terminals;
 
 pub struct TerminalWindow;
@@ -15,11 +16,8 @@ impl Window for TerminalWindow {
     fn title(&self) -> &'static str {
         "Terminal"
     }
-    fn toggle(&self) -> KeyCode {
-        KeyCode::KeyC
-    }
-    fn keybind(&self) -> &'static str {
-        "C"
+    fn toggle(&self) -> InputAction {
+        InputAction::ToggleTerminal
     }
     fn icon(&self) -> &'static str {
         "icons/misc/scroll.png"
@@ -92,6 +90,8 @@ fn tab_scene(terminal: Id) -> impl Scene {
                 on_submit: ui::OnSubmit::new(move |world, text| {
                     world.write_message(TerminalInput { terminal, text });
                 }),
+                submit: InputAction::SubmitText.into(),
+                blur: InputAction::Dismiss.into(),
             }))}
         ]
     }

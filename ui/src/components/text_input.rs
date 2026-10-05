@@ -2,13 +2,14 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use bevy_input::ButtonInput;
-use bevy_input::keyboard::{Key, KeyCode, KeyboardInput};
+use bevy_input::keyboard::{KeyCode, KeyboardInput};
 use bevy_input_focus::{FocusedInput, InputFocus};
 use bevy_scene::{Scene, bsn, on, template_value};
 use bevy_text::{EditableText, TextEdit};
 use bevy_ui::{UiRect, Val};
 
 use crate::component;
+use crate::components::input::{CatalogInput, InputCatalog, InputRef};
 use crate::components::text::font;
 use crate::style::Style;
 use crate::theme::theme;
@@ -27,14 +28,22 @@ impl OnSubmit {
 
 pub struct TextInputOptions {
     pub on_submit: OnSubmit,
+    pub submit: InputRef,
+    pub blur: InputRef,
 }
 
-/// Single-line text input; Enter submits the trimmed text and clears the field.
+#[derive(Component, Clone, Copy)]
+pub(crate) struct FieldInputs {
+    submit: InputRef,
+    blur: InputRef,
+}
+
 pub fn text_input(opts: TextInputOptions) -> impl Scene {
     let family = theme().surface_inset;
     bsn! {
         component(EditableText::default())
         component(opts.on_submit)
+        component(FieldInputs { submit: opts.submit, blur: opts.blur })
         component(font(typography::BODY))
         template_value(Style::new()
             .background(family.base)
@@ -45,7 +54,7 @@ pub fn text_input(opts: TextInputOptions) -> impl Scene {
                 node.padding = UiRect::axes(Val::Px(6.0), Val::Px(3.0));
                 node.border = UiRect::all(Val::Px(1.0));
             }))
-        on(submit_on_enter)
+        on(request_submit)
     }
 }
 
@@ -55,16 +64,19 @@ pub fn typing(focus: Option<Res<InputFocus>>, fields: Query<(), With<EditableTex
         .is_some_and(|entity| fields.contains(entity))
 }
 
-pub(crate) fn blur_on_escape(
+pub(crate) fn blur_field(
     keys: Option<Res<ButtonInput<KeyCode>>>,
-    fields: Query<(), With<EditableText>>,
+    catalog: Res<InputCatalog>,
+    fields: Query<&FieldInputs, With<EditableText>>,
     focus: Option<ResMut<InputFocus>>,
 ) {
     let (Some(keys), Some(mut focus)) = (keys, focus) else {
         return;
     };
-    if keys.just_pressed(KeyCode::Escape)
-        && focus.get().is_some_and(|entity| fields.contains(entity))
+    if focus
+        .get()
+        .and_then(|entity| fields.get(entity).ok())
+        .is_some_and(|field| catalog.just_pressed(field.blur, &keys))
     {
         focus.clear();
     }
@@ -73,18 +85,19 @@ pub(crate) fn blur_on_escape(
 #[derive(Component)]
 pub(crate) struct SubmitRequested;
 
-fn submit_on_enter(
+fn request_submit(
     mut input: On<FocusedInput<KeyboardInput>>,
-    fields: Query<&EditableText, With<OnSubmit>>,
+    fields: Query<(&EditableText, &FieldInputs), With<OnSubmit>>,
+    gestures: CatalogInput,
     mut commands: Commands,
 ) {
-    if input.input.logical_key != Key::Enter || !input.input.state.is_pressed() {
+    if !input.input.state.is_pressed() {
         return;
     }
-    let Ok(field) = fields.get(input.focused_entity) else {
+    let Ok((field, inputs)) = fields.get(input.focused_entity) else {
         return;
     };
-    if field.is_composing() {
+    if field.is_composing() || !gestures.keyed(inputs.submit, input.input.key_code) {
         return;
     }
     input.propagate(false);
@@ -93,7 +106,7 @@ fn submit_on_enter(
         .insert(SubmitRequested);
 }
 
-/// Submits only once every edit queued before (or alongside) the Enter press has been applied,
+/// Submits only once every edit queued up to (or alongside) the submit press has been applied,
 /// so the submitted text is never missing a same-frame keystroke or in-flight paste.
 pub(crate) fn apply_submits(
     mut fields: Query<(Entity, &mut EditableText, &OnSubmit), With<SubmitRequested>>,

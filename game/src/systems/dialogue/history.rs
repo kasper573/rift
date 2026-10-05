@@ -7,6 +7,7 @@ use crate::core::sfx::SfxId;
 use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::systems::announcement::lane::AnnouncementSeen;
 use crate::systems::hud::reconcile_children;
+use crate::systems::input::map::{ActionInput, InputAction};
 use crate::systems::notice::{Notice, NoticeTone};
 use crate::systems::scene::Scene as GameScene;
 use crate::systems::text::LineText;
@@ -119,8 +120,8 @@ fn note_announcements(
     }
 }
 
-fn toggle_key(keys: Res<ButtonInput<KeyCode>>, mut commands: Commands) {
-    if keys.just_pressed(KeyCode::KeyH) {
+fn toggle_key(input: ActionInput, mut commands: Commands) {
+    if input.just_pressed(InputAction::ToggleHistory) {
         commands.queue(toggle);
     }
 }

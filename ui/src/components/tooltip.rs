@@ -10,6 +10,7 @@ use bevy_ui::{
 
 use crate::component;
 use crate::components::popover::ANCHORED_Z;
+use crate::components::rich_text::{RichPiece, RichText, rich_text};
 use crate::components::text::styled_text;
 use crate::overlay::{Open, OverlayContent, POPPER_ENTER, POPPER_EXIT, TooltipTimer};
 use crate::place::Placement;
@@ -26,8 +27,8 @@ const TEXT_WIDTH: f32 = 260.0;
 #[derive(Clone)]
 pub struct TooltipText {
     pub title: String,
-    pub lines: Vec<String>,
-    pub hint: Option<String>,
+    pub lines: Vec<Vec<RichPiece>>,
+    pub hint: Option<Vec<RichPiece>>,
 }
 
 pub fn tooltip(open: bool) -> impl Scene {
@@ -62,22 +63,20 @@ pub fn tooltip_text(text: TooltipText) -> impl Scene {
             node.border = UiRect::all(Val::Px(1.0));
             node.border_radius = BorderRadius::all(Val::Px(radius::S));
         });
+    let caption = |pieces: Vec<RichPiece>, alpha: f32| -> Box<dyn Scene> {
+        Box::new(rich_text(
+            RichText {
+                pieces,
+                size: typography::CAPTION.font_size,
+                color: family.on.with_alpha(alpha),
+            },
+            false,
+        ))
+    };
     let lines: Vec<Box<dyn Scene>> = lines
         .into_iter()
-        .map(|line| -> Box<dyn Scene> {
-            Box::new(styled_text(
-                line,
-                family.on.with_alpha(0.85),
-                typography::CAPTION,
-            ))
-        })
-        .chain(hint.map(|hint| -> Box<dyn Scene> {
-            Box::new(styled_text(
-                hint,
-                family.on.with_alpha(0.55),
-                typography::CAPTION,
-            ))
-        }))
+        .map(|line| caption(line, 0.85))
+        .chain(hint.map(|hint| caption(hint, 0.55)))
         .collect();
     bsn! {
         template_value(style)

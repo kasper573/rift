@@ -10,9 +10,8 @@ use ui::{Align, Carriable, Side, TooltipText, text_colored, tooltip, tooltip_con
 use crate::systems::hud::{
     HudAudience, SLOT_BG, SLOT_BORDER, Window, reconcile_children, slot_node,
 };
-use ui::component;
-
-const INSPECT_HINT: &str = "Right-click for more information";
+use crate::systems::input::map::{ActionInput, InputAction, InputMap, input};
+use ui::{RichPiece, component};
 
 #[derive(Component, Default, Clone)]
 pub(super) struct InventoryGrid;
@@ -48,20 +47,21 @@ pub fn slot_note_source(app: &mut App, source: SlotNoteSource) {
 }
 
 #[derive(Clone, Copy)]
-pub struct SlotRightClickOverride {
+pub struct SlotAction {
+    pub action: InputAction,
     pub active: fn(&World) -> bool,
     pub act: fn(&mut World, u32),
-    pub hint: &'static str,
+    pub verb: &'static str,
 }
 
 #[derive(Resource, Default)]
-struct SlotRightClickOverrides(Vec<SlotRightClickOverride>);
+struct SlotActions(Vec<SlotAction>);
 
-pub fn slot_right_click_override(app: &mut App, takeover: SlotRightClickOverride) {
+pub fn slot_action(app: &mut App, slot_action: SlotAction) {
     app.world_mut()
-        .get_resource_or_init::<SlotRightClickOverrides>()
+        .get_resource_or_init::<SlotActions>()
         .0
-        .push(takeover);
+        .push(slot_action);
 }
 
 pub struct InventoryWindow;
@@ -73,11 +73,8 @@ impl Window for InventoryWindow {
     fn title(&self) -> &'static str {
         "Inventory"
     }
-    fn toggle(&self) -> KeyCode {
-        KeyCode::KeyI
-    }
-    fn keybind(&self) -> &'static str {
-        "I"
+    fn toggle(&self) -> InputAction {
+        InputAction::ToggleInventory
     }
     fn icon(&self) -> &'static str {
         "icons/equipment/bag.png"
@@ -111,7 +108,7 @@ struct CellData {
 
 struct Filled {
     item: ItemId,
-    right_click: &'static str,
+    hints: Vec<(InputAction, String)>,
     icon: Handle<Image>,
     count: u32,
     notes: Vec<String>,
@@ -140,7 +137,8 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
         .get_resource::<SlotNotes>()
         .map(|notes| notes.0.as_slice())
         .unwrap_or_default();
-    let right_click = right_click_override(world).map_or(INSPECT_HINT, |takeover| takeover.hint);
+    let takeovers = active_slot_actions(world);
+    let map = world.resource::<InputMap>();
     (0..max)
         .map(|slot| CellData {
             slot,
@@ -150,7 +148,7 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
                     let def = stack.item.get();
                     Filled {
                         item: stack.item,
-                        right_click,
+                        hints: hints(map, &takeovers, def),
                         icon: assets.load(def.icon.0),
                         count: stack.count,
                         notes: bound_note(def)
@@ -175,7 +173,7 @@ fn cell_key(cell: &CellData) -> u64 {
     if let Some(filled) = &cell.filled {
         (
             filled.item,
-            filled.right_click,
+            &filled.hints,
             filled.count,
             &filled.notes,
             &filled.verdict,
@@ -221,11 +219,9 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
         lines: std::iter::once(card::overview(def))
             .chain(filled.notes.iter().cloned())
             .chain(verdict)
+            .map(|line| vec![RichPiece::text(line)])
             .collect(),
-        hint: Some(match card::use_verb(def) {
-            Some(verb) => format!("{} · double-click to {verb}", filled.right_click),
-            None => filled.right_click.to_owned(),
-        }),
+        hint: Some(hint_pieces(&filled.hints)),
     };
     let item = filled.item;
     bsn! {
@@ -233,16 +229,16 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
         BackgroundColor({SLOT_BG})
         component(BorderColor::all(border))
         {tooltip(false)}
-        component(Carriable { image: filled.icon.clone(), payload: slot as u64 })
-        on(move |click: On<Pointer<Click>>, keys: Res<ButtonInput<KeyCode>>, mut commands: Commands| {
-            let dropping = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-            let tap = match click.button {
-                PointerButton::Primary if dropping => Tap::Drop,
-                PointerButton::Primary if click.count.is_multiple_of(2) => Tap::Use,
-                PointerButton::Secondary => Tap::RightClick,
-                _ => return,
-            };
-            commands.queue(move |world: &mut World| act(world, slot, item, tap));
+        component(Carriable { image: filled.icon.clone(), payload: slot as u64, input: InputAction::CarryItem.into() })
+        on(move |click: On<Pointer<Click>>, input: ActionInput, actions: Option<Res<SlotActions>>, mut commands: Commands| {
+            let candidates = actions
+                .iter()
+                .flat_map(|actions| actions.0.iter().map(|action| action.action))
+                .chain(BUILT_IN);
+            let matched: Vec<InputAction> = candidates.filter(|action| input.clicked(*action, &click)).collect();
+            if !matched.is_empty() {
+                commands.queue(move |world: &mut World| act(world, slot, item, &matched));
+            }
         })
         Children [
             (
@@ -267,29 +263,72 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
     }
 }
 
-#[derive(Clone, Copy)]
-enum Tap {
-    RightClick,
-    Use,
-    Drop,
-}
+const BUILT_IN: [InputAction; 3] = [
+    InputAction::DropItem,
+    InputAction::UseItem,
+    InputAction::InspectItem,
+];
 
-fn act(world: &mut World, slot: u32, item: ItemId, tap: Tap) {
-    match tap {
-        Tap::RightClick => match right_click_override(world) {
-            Some(takeover) => (takeover.act)(world, slot),
-            None => card::open(world, item),
-        },
-        Tap::Use => session::use_item(world, slot),
-        Tap::Drop => session::drop_item(world, slot),
+fn act(world: &mut World, slot: u32, item: ItemId, matched: &[InputAction]) {
+    let takeover = active_slot_actions(world)
+        .into_iter()
+        .find(|takeover| matched.contains(&takeover.action));
+    if let Some(takeover) = takeover {
+        (takeover.act)(world, slot);
+        return;
+    }
+    match BUILT_IN.into_iter().find(|action| matched.contains(action)) {
+        Some(InputAction::DropItem) => session::drop_item(world, slot),
+        Some(InputAction::UseItem) => session::use_item(world, slot),
+        Some(InputAction::InspectItem) => card::open(world, item),
+        _ => {}
     }
 }
 
-fn right_click_override(world: &World) -> Option<SlotRightClickOverride> {
+fn active_slot_actions(world: &World) -> Vec<SlotAction> {
     world
-        .get_resource::<SlotRightClickOverrides>()?
-        .0
+        .get_resource::<SlotActions>()
+        .map(|actions| {
+            actions
+                .0
+                .iter()
+                .copied()
+                .filter(|action| (action.active)(world))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn hints(map: &InputMap, takeovers: &[SlotAction], def: &ItemDef) -> Vec<(InputAction, String)> {
+    let shadowed = |action: InputAction| {
+        takeovers.iter().any(|takeover| {
+            map.bindings(takeover.action)
+                .iter()
+                .any(|binding| map.bindings(action).contains(binding))
+        })
+    };
+    let inspect = (!shadowed(InputAction::InspectItem))
+        .then(|| (InputAction::InspectItem, " for more information".to_owned()));
+    let usage = card::use_verb(def)
+        .filter(|_| !shadowed(InputAction::UseItem))
+        .map(|verb| (InputAction::UseItem, format!(" to {verb}")));
+    takeovers
         .iter()
-        .copied()
-        .find(|takeover| (takeover.active)(world))
+        .map(|takeover| (takeover.action, format!(" to {}", takeover.verb)))
+        .chain(inspect)
+        .chain(usage)
+        .collect()
+}
+
+fn hint_pieces(hints: &[(InputAction, String)]) -> Vec<RichPiece> {
+    hints
+        .iter()
+        .enumerate()
+        .flat_map(|(index, (action, purpose))| {
+            let separator = (index > 0).then(|| RichPiece::text(" · "));
+            separator
+                .into_iter()
+                .chain([input(*action), RichPiece::text(purpose.clone())])
+        })
+        .collect()
 }

@@ -3,6 +3,7 @@ use ui::button::intent as button_intent;
 use ui::{Activate, ButtonSize, button_styled};
 
 use crate::systems::hud::{HudAudience, Settings, Window};
+use crate::systems::input::map::InputAction;
 
 pub struct SettingsWindow;
 
@@ -13,11 +14,8 @@ impl Window for SettingsWindow {
     fn title(&self) -> &'static str {
         "Settings"
     }
-    fn toggle(&self) -> KeyCode {
-        KeyCode::KeyO
-    }
-    fn keybind(&self) -> &'static str {
-        "O"
+    fn toggle(&self) -> InputAction {
+        InputAction::ToggleSettings
     }
     fn icon(&self) -> &'static str {
         "icons/misc/gear.png"

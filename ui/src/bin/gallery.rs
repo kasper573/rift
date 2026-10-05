@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use bevy::prelude::*;
@@ -92,6 +92,110 @@ fn main() {
         .run();
 }
 
+const UP: ui::InputRef = ui::InputRef(0);
+const DOWN: ui::InputRef = ui::InputRef(1);
+const PICK: ui::InputRef = ui::InputRef(2);
+const LEAVE: ui::InputRef = ui::InputRef(3);
+const NEXT: ui::InputRef = ui::InputRef(4);
+const INSPECT: ui::InputRef = ui::InputRef(5);
+const CARRY: ui::InputRef = ui::InputRef(6);
+const INVENTORY: ui::InputRef = ui::InputRef(7);
+const SUBMIT: ui::InputRef = ui::InputRef(8);
+const KEEP: ui::InputRef = ui::InputRef(9);
+const CHOICES: [ui::InputRef; 4] = [
+    ui::InputRef(10),
+    ui::InputRef(11),
+    ui::InputRef(12),
+    ui::InputRef(13),
+];
+const CHOICE_KEYS: [KeyCode; 4] = [
+    KeyCode::Digit1,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KeyCode::Digit4,
+];
+
+fn sample_inputs() -> ui::InputCatalog {
+    let key = |name: &str, key: KeyCode| ui::CatalogEntry {
+        name: name.to_owned(),
+        keys: vec![ui::KeyGesture {
+            key,
+            modifiers: ui::KeyModifiers::NONE,
+        }],
+        ..default()
+    };
+    let click = |button: MouseButton| ui::ClickGesture {
+        button,
+        times: 1,
+        modifiers: ui::KeyModifiers::NONE,
+    };
+    let mut entries = HashMap::from([
+        (UP, key("↑", KeyCode::ArrowUp)),
+        (DOWN, key("↓", KeyCode::ArrowDown)),
+        (
+            PICK,
+            ui::CatalogEntry {
+                clicks: vec![click(MouseButton::Left)],
+                ..key("Enter", KeyCode::Enter)
+            },
+        ),
+        (LEAVE, key("Esc", KeyCode::Escape)),
+        (
+            NEXT,
+            ui::CatalogEntry {
+                clicks: vec![click(MouseButton::Left)],
+                ..key("Space", KeyCode::Space)
+            },
+        ),
+        (INVENTORY, key("I", KeyCode::KeyI)),
+        (SUBMIT, key("Enter", KeyCode::Enter)),
+        (KEEP, key("Enter", KeyCode::Enter)),
+        (
+            INSPECT,
+            ui::CatalogEntry {
+                name: "Right-click".to_owned(),
+                clicks: vec![click(MouseButton::Right)],
+                ..default()
+            },
+        ),
+        (
+            CARRY,
+            ui::CatalogEntry {
+                name: "Drag".to_owned(),
+                drags: vec![ui::DragGesture {
+                    button: MouseButton::Left,
+                    modifiers: ui::KeyModifiers::NONE,
+                }],
+                ..default()
+            },
+        ),
+    ]);
+    entries.extend(
+        CHOICES
+            .into_iter()
+            .zip(CHOICE_KEYS)
+            .enumerate()
+            .map(|(index, (input, code))| (input, key(&(index + 1).to_string(), code))),
+    );
+    ui::InputCatalog(entries)
+}
+
+fn choice_hint() -> Vec<RichPiece> {
+    vec![
+        RichPiece::Input(UP),
+        RichPiece::Input(DOWN),
+        RichPiece::text(" choose · "),
+        RichPiece::Input(PICK),
+        RichPiece::text(" pick · "),
+        RichPiece::Input(CHOICES[0]),
+        RichPiece::text("–"),
+        RichPiece::Input(CHOICES[3]),
+        RichPiece::text(" shortcut · "),
+        RichPiece::Input(LEAVE),
+        RichPiece::text(" leave"),
+    ]
+}
+
 fn boxed(scene: impl Scene + 'static) -> Box<dyn Scene> {
     Box::new(scene)
 }
@@ -109,6 +213,7 @@ fn scene_index(name: &str) -> usize {
 fn setup(current: Res<CurrentScene>, assets: Res<AssetServer>, mut commands: Commands) {
     let _ = GALLERY_ASSETS.set(assets.clone());
     commands.spawn((Camera2d, IsDefaultUiCamera));
+    commands.insert_resource(sample_inputs());
     let tab_buttons: Vec<Box<dyn Scene>> = SCENES
         .iter()
         .enumerate()
@@ -740,7 +845,7 @@ fn widget_scene() -> Box<dyn Scene> {
                 {EntityScene(widget(WidgetOptions {
                     pos: Vec2::new(56.0, 36.0),
                     icon: Handle::default(),
-                    badge: "I".into(),
+                    badge: Some(INVENTORY),
                     tooltip: "Inventory".into(),
                     on_tap: OnTap::new(|_| {}),
                     on_settle: OnSettle::new(|_, geom| geom),
@@ -826,6 +931,8 @@ fn text_input_scene() -> Box<dyn Scene> {
                             label.0 = format!("submitted: {submitted}");
                         }
                     }),
+                    submit: SUBMIT,
+                    blur: LEAVE,
                 }))},
                 ( {text("submitted: —")} SubmittedText )
             ]
@@ -927,6 +1034,8 @@ fn log_tab() -> ui::WindowContent {
                 ),
                 {EntityScene(ui::text_input(ui::TextInputOptions {
                     on_submit: ui::OnSubmit::new(|_, _| {}),
+                    submit: SUBMIT,
+                    blur: LEAVE,
                 }))}
             ]
         }),
@@ -991,6 +1100,16 @@ fn effect_rows() -> Vec<(&'static str, Vec<RichPiece>)> {
                 plain("the "),
                 ink("drums", palette::VIOLET_80),
                 plain(" grow louder"),
+            ],
+        ),
+        (
+            "input",
+            vec![
+                plain("press "),
+                RichPiece::Input(INVENTORY),
+                plain(" for your bag, "),
+                RichPiece::Input(INSPECT),
+                plain(" to look"),
             ],
         ),
         (
@@ -1156,9 +1275,13 @@ fn reward(assets: &AssetServer) -> ChipOptions {
         inspect: Some(ui::InspectableOptions {
             tooltip: ui::TooltipText {
                 title: "Road Pass".to_owned(),
-                lines: vec!["Material · bound".to_owned()],
-                hint: Some("Right-click for more information".to_owned()),
+                lines: vec![vec![RichPiece::text("Material · bound")]],
+                hint: Some(vec![
+                    RichPiece::Input(INSPECT),
+                    RichPiece::text(" for more information"),
+                ]),
             },
+            input: INSPECT,
             on_inspect: ui::OnTap::new(|_| {}),
         }),
     }
@@ -1183,6 +1306,7 @@ fn sample_choices(assets: &AssetServer) -> Vec<ChoiceOptions> {
         icon: None,
         chips,
         locked,
+        shortcut: None,
     };
     vec![
         choice(
@@ -1216,6 +1340,13 @@ fn sample_choices(assets: &AssetServer) -> Vec<ChoiceOptions> {
             false,
         ),
     ]
+    .into_iter()
+    .zip(CHOICES)
+    .map(|(choice, shortcut)| ChoiceOptions {
+        shortcut: Some(shortcut),
+        ..choice
+    })
+    .collect()
 }
 
 static GALLERY_ASSETS: std::sync::OnceLock<AssetServer> = std::sync::OnceLock::new();
@@ -1241,7 +1372,7 @@ fn chips_scene() -> Box<dyn Scene> {
     .into_iter()
     .map(|options| boxed(chip(options)))
     .chain(std::iter::once(boxed(key_hint(
-        "↑ ↓ choose · Enter pick · 1-4 shortcut · Esc leave",
+        choice_hint(),
         theme().surface_trough,
     ))))
     .collect();
@@ -1249,7 +1380,10 @@ fn chips_scene() -> Box<dyn Scene> {
 }
 
 fn choices_scene() -> Box<dyn Scene> {
-    col(720.0, vec![boxed(choice_list(sample_choices(assets())))])
+    col(
+        720.0,
+        vec![boxed(choice_list(sample_choices(assets()), PICK))],
+    )
 }
 
 fn dialogue_box_scene() -> Box<dyn Scene> {
@@ -1277,9 +1411,11 @@ fn dialogue_box_scene() -> Box<dyn Scene> {
             line,
             typed: true,
             choices: sample_choices(assets()),
-            hint: "↑ ↓ choose · Enter pick · 1-4 shortcut · Esc leave".to_owned(),
+            hint: choice_hint(),
             actions,
             status: None,
+            advance: NEXT,
+            pick: PICK,
         }))} ]
     })
 }
@@ -1300,9 +1436,11 @@ fn cast_scene() -> Box<dyn Scene> {
                 line,
                 typed: false,
                 choices: Vec::new(),
-                hint: "Space next".to_owned(),
+                hint: vec![RichPiece::Input(NEXT), RichPiece::text(" next")],
                 actions: Vec::new(),
                 status: None,
+                advance: NEXT,
+                pick: PICK,
             }))},
         ]
     })
@@ -1478,6 +1616,7 @@ fn confirm_dialog_scene() -> Box<dyn Scene> {
                         cancel: "Keep quest".to_owned(),
                         on_confirm: OnTap::new(|_| {}),
                         on_cancel: OnTap::new(|_| {}),
+                        keep: KEEP,
                     }))
                     .insert(ChildOf(host));
             })
@@ -1501,7 +1640,7 @@ fn drag_and_drop_scene() -> Box<dyn Scene> {
         boxed(bsn! {
             Node { width: Val::Px(48.0), height: Val::Px(48.0) }
             BackgroundColor({theme().surface_floating.base})
-            component(Carriable { image: image.clone(), payload })
+            component(Carriable { image: image.clone(), payload, input: CARRY })
             Children [ ( Node { width: Val::Percent(100.0), height: Val::Percent(100.0) } component(ImageNode::new(image)) Pickable::IGNORE ) ]
         })
     })
@@ -1527,49 +1666,44 @@ fn drag_and_drop_scene() -> Box<dyn Scene> {
     })
 }
 
-fn stage_keys(keys: Res<ButtonInput<KeyCode>>, mut commands: Commands) {
-    let pressed: Vec<KeyCode> = keys.get_just_pressed().copied().collect();
-    if pressed.is_empty() {
+fn stage_keys(
+    catalog: Res<ui::InputCatalog>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+) {
+    let pressed = |input| catalog.just_pressed(input, &keys);
+    let leave = pressed(LEAVE);
+    let step = if pressed(UP) {
+        Some(-1)
+    } else if pressed(DOWN) {
+        Some(1)
+    } else {
+        None
+    };
+    let pick = pressed(PICK);
+    let shortcut = CHOICES.into_iter().position(pressed);
+    if !leave && step.is_none() && !pick && shortcut.is_none() {
         return;
     }
     commands.queue(move |world: &mut World| {
-        let list = world
+        if leave {
+            ui::dismiss_topmost(world);
+        }
+        let Some(list) = world
             .query_filtered::<Entity, With<ui::ChoiceList>>()
             .iter(world)
-            .next();
-        for key in pressed {
-            match key {
-                KeyCode::Escape => {
-                    ui::dismiss_topmost(world);
-                }
-                KeyCode::ArrowUp => {
-                    if let Some(list) = list {
-                        ui::step_choice(world, list, -1);
-                    }
-                }
-                KeyCode::ArrowDown => {
-                    if let Some(list) = list {
-                        ui::step_choice(world, list, 1);
-                    }
-                }
-                KeyCode::Enter if !ui::modal_open(world) => {
-                    if let Some(list) = list {
-                        ui::pick_choice(world, list);
-                    }
-                }
-                KeyCode::Digit1 | KeyCode::Digit2 | KeyCode::Digit3 | KeyCode::Digit4 => {
-                    let index = match key {
-                        KeyCode::Digit1 => 0,
-                        KeyCode::Digit2 => 1,
-                        KeyCode::Digit3 => 2,
-                        _ => 3,
-                    };
-                    if let Some(list) = list {
-                        ui::pick_choice_at(world, list, index);
-                    }
-                }
-                _ => {}
-            }
+            .next()
+        else {
+            return;
+        };
+        if let Some(delta) = step {
+            ui::step_choice(world, list, delta);
+        }
+        if pick && !ui::modal_open(world) {
+            ui::pick_choice(world, list);
+        }
+        if let Some(index) = shortcut {
+            ui::pick_choice_at(world, list, index);
         }
     });
 }

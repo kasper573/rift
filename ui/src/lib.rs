@@ -63,6 +63,7 @@ impl Plugin for UiPlugin {
             .init_resource::<TypewriterSpeed>()
             .init_resource::<components::confirm::ModalCounter>()
             .init_resource::<MotionPreference>()
+            .init_resource::<InputCatalog>()
             .add_systems(Startup, (load_fonts, overlay::spawn_overlay_host))
             .add_systems(
                 Update,
@@ -81,12 +82,13 @@ impl Plugin for UiPlugin {
                     components::sonner::size_toaster,
                     components::sonner::layout_toasts,
                     components::sonner::reap_toasts,
-                    components::text_input::blur_on_escape,
+                    components::text_input::blur_field,
                     components::scroll_area::pin_to_bottom,
                     components::scroll_area::animate_scroll,
                     (
                         components::rich_text::lay_out_rich_text,
                         components::rich_text::type_rich_text,
+                        components::input::name_inputs,
                         components::rich_text::move_words,
                         components::dialogue::reveal_choices,
                         components::dialogue::mark_selected_choice,
@@ -95,7 +97,7 @@ impl Plugin for UiPlugin {
                         components::cast::reap_busts,
                         components::announcement::sync_lanes,
                         components::confirm::stamp_modals,
-                        components::confirm::enter_keeps_default,
+                        components::confirm::keep_default,
                         components::confirm::despawn_closed,
                     )
                         .chain(),

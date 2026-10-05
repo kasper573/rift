@@ -5,7 +5,7 @@ use bevy_asset::Handle;
 use bevy_color::{Alpha, Color};
 use bevy_ecs::hierarchy::{ChildOf, Children};
 use bevy_ecs::prelude::*;
-use bevy_picking::prelude::{Click, Over, Pickable, Pointer, PointerButton};
+use bevy_picking::prelude::{Click, Over, Pickable, Pointer};
 use bevy_scene::{EntityScene, Scene, bsn, on, template_value};
 use bevy_time::Time;
 use bevy_ui::widget::ImageNode;
@@ -17,7 +17,8 @@ use bevy_ui::{
 use crate::Side;
 use crate::component;
 use crate::components::chip::{ChipOptions, chip, key_hint};
-use crate::components::rich_text::{RichText, Typewriter, rich_text};
+use crate::components::input::{CatalogInput, InputRef, input_cap};
+use crate::components::rich_text::{RichPiece, RichText, Typewriter, rich_text};
 use crate::components::text::styled_text;
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::ancestor_with;
@@ -34,9 +35,11 @@ pub struct DialogueBoxOptions {
     pub line: RichText,
     pub typed: bool,
     pub choices: Vec<ChoiceOptions>,
-    pub hint: String,
+    pub hint: Vec<RichPiece>,
     pub actions: Vec<Box<dyn Scene>>,
     pub status: Option<String>,
+    pub advance: InputRef,
+    pub pick: InputRef,
 }
 
 #[derive(Clone)]
@@ -45,11 +48,14 @@ pub struct ChoiceOptions {
     pub icon: Option<Handle<Image>>,
     pub chips: Vec<ChipOptions>,
     pub locked: bool,
+    pub shortcut: Option<InputRef>,
 }
 
-#[derive(Component, Clone, Default)]
+#[derive(Component, Clone)]
 #[require(Node)]
-pub struct DialogueBox;
+pub struct DialogueBox {
+    pub advance: InputRef,
+}
 
 #[derive(Component, Clone, Default)]
 pub(crate) struct DialogueLine;
@@ -60,10 +66,11 @@ pub(crate) struct DialogueContinue;
 #[derive(Component, Clone, Default)]
 pub(crate) struct DialogueStatus;
 
-#[derive(Component, Clone, Default)]
+#[derive(Component, Clone)]
 #[require(Node)]
 pub struct ChoiceList {
     pub selected: usize,
+    pub pick: InputRef,
 }
 
 #[derive(Component, Clone, Default)]
@@ -99,6 +106,8 @@ pub fn dialogue_box(options: DialogueBoxOptions) -> impl Scene {
         hint,
         actions,
         status,
+        advance,
+        pick,
     } = options;
     let surface = theme().surface_trough;
     let frame = Style::new()
@@ -162,7 +171,7 @@ pub fn dialogue_box(options: DialogueBoxOptions) -> impl Scene {
     };
     let continue_mark = styled_text("↓", surface.on, typography::HINT);
     bsn! {
-        DialogueBox
+        component(DialogueBox { advance })
         template_value(frame)
         Pickable { should_block_lower: true, is_hoverable: true }
         on(finish_on_click)
@@ -170,7 +179,7 @@ pub fn dialogue_box(options: DialogueBoxOptions) -> impl Scene {
             {plate},
             {actions},
             ( {rich_text(line, typed)} DialogueLine ),
-            {EntityScene(choice_list(choices))},
+            {EntityScene(choice_list(choices, pick))},
             (
                 DialogueContinue
                 Node {
@@ -190,7 +199,7 @@ pub fn dialogue_box(options: DialogueBoxOptions) -> impl Scene {
     }
 }
 
-pub fn choice_list(choices: Vec<ChoiceOptions>) -> impl Scene {
+pub fn choice_list(choices: Vec<ChoiceOptions>, pick: InputRef) -> impl Scene {
     let selected = choices
         .iter()
         .position(|choice| !choice.locked)
@@ -201,7 +210,7 @@ pub fn choice_list(choices: Vec<ChoiceOptions>) -> impl Scene {
         .map(|(index, choice)| -> Box<dyn Scene> { Box::new(choice_row(index, choice)) })
         .collect();
     bsn! {
-        ChoiceList { selected: {selected} }
+        component(ChoiceList { selected, pick })
         Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0) }
         Children [ {rows} ]
     }
@@ -356,8 +365,19 @@ pub(crate) fn shake_refused(
     }
 }
 
-fn finish_on_click(click: On<Pointer<Click>>, mut commands: Commands) {
+fn finish_on_click(
+    click: On<Pointer<Click>>,
+    boxes: Query<&DialogueBox>,
+    gestures: CatalogInput,
+    mut commands: Commands,
+) {
     let dialogue = click.entity;
+    if !boxes
+        .get(dialogue)
+        .is_ok_and(|dialogue| gestures.clicked(dialogue.advance, &click))
+    {
+        return;
+    }
     commands.queue(move |world: &mut World| {
         if let Some(line) = dialogue_typing(world, dialogue)
             && let Some(mut typewriter) = world.get_mut::<Typewriter>(line)
@@ -396,6 +416,7 @@ fn choice_row(index: usize, choice: ChoiceOptions) -> impl Scene {
         icon,
         chips,
         locked,
+        shortcut,
     } = choice;
     let selected = palette::AMBER_70;
     let style = Style::new()
@@ -422,7 +443,13 @@ fn choice_row(index: usize, choice: ChoiceOptions) -> impl Scene {
         color: label_color,
         ..label
     };
-    let number = number_badge(index + 1);
+    let shortcut = shortcut.map(|input| {
+        EntityScene(input_cap(
+            input,
+            typography::BODY.font_size,
+            ink.with_alpha(0.7),
+        ))
+    });
     let icon = icon.map(|image| {
         bsn! {
             Node { width: Val::Px(ICON), height: Val::Px(ICON) }
@@ -440,7 +467,7 @@ fn choice_row(index: usize, choice: ChoiceOptions) -> impl Scene {
         on(pick_on_click)
         on(select_on_hover)
         Children [
-            {EntityScene(number)},
+            {shortcut},
             {icon},
             ( Node { flex_grow: 1.0 } Children [ {EntityScene(rich_text(label, false))} ] ),
             ( Node { column_gap: Val::Px({spacing::M}), align_items: AlignItems::Center } Children [ {chips} ] ),
@@ -448,41 +475,27 @@ fn choice_row(index: usize, choice: ChoiceOptions) -> impl Scene {
     }
 }
 
-fn number_badge(number: usize) -> impl Scene {
-    let ink = theme().surface_trough.on;
-    let style = Style::new()
-        .border_color(ink.with_alpha(0.35))
-        .node(|node| {
-            node.width = Val::Px(20.0);
-            node.height = Val::Px(20.0);
-            node.align_items = AlignItems::Center;
-            node.justify_content = JustifyContent::Center;
-            node.border = UiRect::all(Val::Px(1.0));
-            node.border_radius = BorderRadius::all(Val::Px(radius::S));
-        });
-    let digit = styled_text(number.to_string(), ink.with_alpha(0.7), typography::CAPTION);
-    bsn! {
-        template_value(style)
-        Children [ {EntityScene(digit)} ]
-    }
-}
-
 fn pick_on_click(
     click: On<Pointer<Click>>,
     rows: Query<&ChoiceRow>,
     parents: Query<&ChildOf>,
+    lists: Query<&ChoiceList>,
     is_list: Query<(), With<ChoiceList>>,
+    gestures: CatalogInput,
     mut commands: Commands,
 ) {
-    if click.button != PointerButton::Primary {
-        return;
-    }
     let Ok(row) = rows.get(click.entity) else {
         return;
     };
     let Some(list) = ancestor_with::<ChoiceList>(click.entity, &parents, &is_list) else {
         return;
     };
+    if !lists
+        .get(list)
+        .is_ok_and(|choices| gestures.clicked(choices.pick, &click))
+    {
+        return;
+    }
     let index = row.index;
     commands.queue(move |world: &mut World| pick_choice_at(world, list, index));
 }

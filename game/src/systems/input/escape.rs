@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use super::map::{self, InputAction};
 use crate::systems::dialogue::{history, stage};
 use crate::systems::{hud, item, shop};
 
@@ -22,10 +23,7 @@ pub(super) fn plugin(app: &mut App) {
 }
 
 fn dismiss_topmost(world: &mut World) {
-    if !world
-        .resource::<ButtonInput<KeyCode>>()
-        .just_pressed(KeyCode::Escape)
-    {
+    if !map::just_pressed(world, InputAction::Dismiss) {
         return;
     }
     for dismiss in LAYERS {

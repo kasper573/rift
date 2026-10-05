@@ -67,7 +67,7 @@ impl Announcement {
     }
 
     pub fn shows(&self) -> Seconds {
-        let words = self.text.words().split_whitespace().count();
+        let words = self.text.word_count();
         Seconds((READING_BASE.0 + READING_PER_WORD.0 * words as f32).min(READING_MAX.0))
     }
 }

@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy_scene::{EntityScene, Scene, bsn, template_value};
 use bevy_ui::widget::ImageNode;
 
+use crate::components::input::{InputRef, input_cap};
 use crate::components::{text_colored, tooltip, tooltip_content};
 use crate::drag::{DragHandle, DragRoot, OnSettle, OnTap};
 use crate::style::Style;
@@ -9,11 +10,12 @@ use crate::theme::theme;
 use crate::{Align, Side, component};
 
 const WIDGET: f32 = 48.0;
+const BADGE: f32 = 12.0;
 
 pub struct WidgetOptions {
     pub pos: Vec2,
     pub icon: Handle<Image>,
-    pub badge: String,
+    pub badge: Option<InputRef>,
     pub tooltip: String,
     pub on_tap: OnTap,
     pub on_settle: OnSettle,
@@ -49,7 +51,7 @@ pub fn widget(opts: WidgetOptions) -> impl Scene {
                 component(ImageNode::new(opts.icon))
                 Pickable { should_block_lower: false, is_hoverable: false }
             ),
-            {EntityScene(badge(opts.badge))},
+            {opts.badge.map(|input| EntityScene(badge(input)))},
             (
                 {tooltip_content(Side::Left, Align::Center, 0.0)}
                 Children [ {EntityScene(label(opts.tooltip))} ]
@@ -58,11 +60,11 @@ pub fn widget(opts: WidgetOptions) -> impl Scene {
     }
 }
 
-fn badge(text: String) -> impl Scene {
+fn badge(input: InputRef) -> impl Scene {
     bsn! {
         Node { position_type: PositionType::Absolute, right: Val::Px(2.0), bottom: Val::Px(2.0) }
         Pickable { should_block_lower: false, is_hoverable: false }
-        Children [ {EntityScene(text_colored(text, theme().surface_floating.on))} ]
+        Children [ {EntityScene(input_cap(input, BADGE, theme().surface_floating.on))} ]
     }
 }
 

@@ -11,6 +11,7 @@ pub(crate) mod collapsible;
 pub(crate) mod confirm;
 pub(crate) mod dialog;
 pub(crate) mod dialogue;
+pub(crate) mod input;
 pub(crate) mod inspectable;
 pub(crate) mod popover;
 pub(crate) mod progress;
@@ -48,6 +49,10 @@ pub use dialogue::{
     ChoiceList, ChoiceOptions, ChoicePicked, ChoiceRefused, ChoiceRow, DialogueBox,
     DialogueBoxOptions, choice_list, dialogue_box, dialogue_choices, dialogue_typing, pick_choice,
     pick_choice_at, set_dialogue_status, step_choice,
+};
+pub use input::{
+    CatalogEntry, ClickGesture, DragGesture, InputCatalog, InputLabel, InputRef, KeyGesture,
+    KeyModifiers, input_cap,
 };
 pub use inspectable::{InspectableOptions, inspectable};
 pub use popover::{popover, popover_close, popover_content, popover_trigger};

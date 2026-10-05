@@ -11,6 +11,7 @@ use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::data::item::Id as ItemId;
 use crate::systems::effect::Effect;
 use crate::systems::hud;
+use crate::systems::input::map::{InputAction, input};
 use crate::systems::item::{ItemDef, ItemFlag, ItemKind};
 use crate::systems::player::session::Viewpoint;
 use crate::systems::scene::Scene as GameScene;
@@ -21,7 +22,6 @@ const WINDOW_SIZE: Vec2 = Vec2::new(300.0, 360.0);
 const WINDOW_TOP: f32 = 96.0;
 const WINDOW_MARGIN: f32 = 72.0;
 const ICON: f32 = 48.0;
-const MORE: &str = "Right-click for more information";
 
 pub struct ItemCardPlugin;
 
@@ -54,9 +54,10 @@ pub fn inspectable(item: ItemId) -> InspectableOptions {
     InspectableOptions {
         tooltip: TooltipText {
             title: def.display_name.to_owned(),
-            lines: vec![overview(def)],
-            hint: Some(MORE.to_owned()),
+            lines: vec![vec![RichPiece::text(overview(def))]],
+            hint: Some(inspect_hint()),
         },
+        input: InputAction::InspectItem.into(),
         on_inspect: OnTap::new(move |world| open(world, item)),
     }
 }
@@ -70,6 +71,13 @@ pub fn overview(def: &ItemDef) -> String {
         ItemKind::Equipment { slot, .. } => format!("{category} · {}", slot.label()),
         _ => category.to_owned(),
     }
+}
+
+pub fn inspect_hint() -> Vec<RichPiece> {
+    vec![
+        input(InputAction::InspectItem),
+        RichPiece::text(" for more information"),
+    ]
 }
 
 pub fn use_verb(def: &ItemDef) -> Option<&'static str> {
@@ -103,12 +111,15 @@ pub fn sheet(world: &World, item: ItemId) -> Box<dyn Scene> {
         .collect();
     let usage: Vec<Box<dyn Scene>> = use_verb(def)
         .map(|verb| -> Box<dyn Scene> {
-            let usage = format!("Double-click it in your bag to {verb} it");
-            Box::new(ui::styled_text(
-                usage,
-                ink.with_alpha(0.6),
-                typography::CAPTION,
-            ))
+            let usage = RichText {
+                pieces: vec![
+                    input(InputAction::UseItem),
+                    RichPiece::text(format!(" it in your bag to {verb} it")),
+                ],
+                size: typography::CAPTION.font_size,
+                color: ink.with_alpha(0.6),
+            };
+            Box::new(ui::rich_text(usage, false))
         })
         .into_iter()
         .collect();

@@ -2,11 +2,15 @@ use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::button::intent;
 use ui::component;
-use ui::{Activate, ButtonSize, DragHandle, DragRoot, OnSettle, button_styled, text_colored};
+use ui::{
+    Activate, ButtonSize, DragHandle, DragRoot, OnSettle, RichPiece, RichText, button_styled,
+    text_colored,
+};
 
 use super::{SpectateRequest, Spectating};
 use crate::systems::actor::Name;
 use crate::systems::hud::{BORDER, HudAudience, PANEL_BG, Widget, persist_widget};
+use crate::systems::input::map::{self, InputAction};
 use crate::systems::player::session::{self, SpectateStatus, Viewpoint};
 use crate::systems::scene::mode::Mode;
 
@@ -93,7 +97,7 @@ fn build(pos: Vec2, id: &'static str) -> Box<dyn Scene> {
                     ( {button_styled(intent::PRIMARY, ButtonSize::Sm, ">")} on(step(SpectateRequest::Next)) ),
                 ]
             ),
-            {EntityScene(text_colored("Left / right arrow to switch", HINT))},
+            {EntityScene(ui::rich_text(switch_hint(), false))},
         ]
     })
 }
@@ -104,11 +108,21 @@ fn step(request: SpectateRequest) -> impl Fn(On<Activate>, Commands) + Clone {
     }
 }
 
+fn switch_hint() -> RichText {
+    RichText {
+        color: HINT,
+        ..RichText::new(vec![
+            map::input(InputAction::SpectatePrevious),
+            map::input(InputAction::SpectateNext),
+            RichPiece::text(" to switch"),
+        ])
+    }
+}
+
 fn step_keys(world: &mut World) {
-    let keys = world.resource::<ButtonInput<KeyCode>>();
-    let request = if keys.just_pressed(KeyCode::ArrowRight) {
+    let request = if map::just_pressed(world, InputAction::SpectateNext) {
         SpectateRequest::Next
-    } else if keys.just_pressed(KeyCode::ArrowLeft) {
+    } else if map::just_pressed(world, InputAction::SpectatePrevious) {
         SpectateRequest::Previous
     } else {
         return;

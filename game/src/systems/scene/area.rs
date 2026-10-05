@@ -1,11 +1,12 @@
 use crate::core::assets::AssetService;
 use crate::core::tiling::{CellPos, TileSize};
 use crate::systems::area::{self, AreaTag};
+use crate::systems::input::map::{self, InputAction};
 use crate::systems::player::session::{self, Viewpoint};
 use bevy::asset::AssetPath;
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
-use ui::text_colored;
+use ui::{RichPiece, RichText};
 
 use crate::core::render::dynamic_z;
 use crate::core::render::screen::ToScreen;
@@ -156,6 +157,17 @@ fn death_banner() -> impl Scene {
         }
         GlobalZIndex({50})
         Pickable { should_block_lower: false, is_hoverable: false }
-        Children [ {EntityScene(text_colored("You died! Press any key to respawn", Color::WHITE))} ]
+        Children [ {EntityScene(ui::rich_text(death_notice(), false))} ]
+    }
+}
+
+fn death_notice() -> RichText {
+    RichText {
+        color: Color::WHITE,
+        ..RichText::new(vec![
+            RichPiece::text("You died! Press "),
+            map::input(InputAction::Respawn),
+            RichPiece::text(" to respawn"),
+        ])
     }
 }

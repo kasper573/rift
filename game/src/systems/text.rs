@@ -6,19 +6,27 @@ use ui::tokens::palette;
 use ui::{RichPiece, RichSpan, RichText, TextMotion, TextVoice};
 
 use crate::core::time::Millis;
+use crate::systems::input::map::{self, InputAction, InputMap};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Span {
-    pub text: &'static str,
-    pub fx: &'static [Fx],
+pub enum Span {
+    Text {
+        text: &'static str,
+        fx: &'static [Fx],
+    },
+    Input(InputAction),
 }
 
 pub const fn plain(text: &'static str) -> Span {
-    Span { text, fx: &[] }
+    Span::Text { text, fx: &[] }
 }
 
 pub const fn styled(text: &'static str, fx: &'static [Fx]) -> Span {
-    Span { text, fx }
+    Span::Text { text, fx }
+}
+
+pub const fn input(action: InputAction) -> Span {
+    Span::Input(action)
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -56,9 +64,9 @@ pub enum Motion {
 pub struct LineText(pub Vec<SpanText>);
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct SpanText {
-    pub text: String,
-    pub fx: Vec<Fx>,
+pub enum SpanText {
+    Text { text: String, fx: Vec<Fx> },
+    Input(InputAction),
 }
 
 impl LineText {
@@ -66,23 +74,42 @@ impl LineText {
         LineText(
             spans
                 .iter()
-                .map(|span| SpanText {
-                    text: span.text.to_owned(),
-                    fx: span.fx.to_vec(),
+                .map(|span| match *span {
+                    Span::Text { text, fx } => SpanText::Text {
+                        text: text.to_owned(),
+                        fx: fx.to_vec(),
+                    },
+                    Span::Input(action) => SpanText::Input(action),
                 })
                 .collect(),
         )
     }
 
     pub fn plain(text: impl Into<String>) -> LineText {
-        LineText(vec![SpanText {
+        LineText(vec![SpanText::Text {
             text: text.into(),
             fx: Vec::new(),
         }])
     }
 
-    pub fn words(&self) -> String {
-        self.0.iter().map(|span| span.text.as_str()).collect()
+    pub fn words(&self, inputs: &InputMap) -> String {
+        self.0
+            .iter()
+            .map(|span| match span {
+                SpanText::Text { text, .. } => text.clone(),
+                SpanText::Input(action) => inputs.name(*action).unwrap_or_default(),
+            })
+            .collect()
+    }
+
+    pub fn word_count(&self) -> usize {
+        self.0
+            .iter()
+            .map(|span| match span {
+                SpanText::Text { text, .. } => text.split_whitespace().count(),
+                SpanText::Input(_) => 1,
+            })
+            .sum()
     }
 
     pub fn rich(&self) -> RichText {
@@ -92,9 +119,13 @@ impl LineText {
 
 impl SpanText {
     fn pieces(&self) -> Vec<RichPiece> {
-        let mut span = RichSpan::plain(self.text.clone());
+        let (text, fx) = match self {
+            SpanText::Text { text, fx } => (text, fx),
+            SpanText::Input(action) => return vec![map::input(*action)],
+        };
+        let mut span = RichSpan::plain(text.clone());
         let mut pause = None;
-        for fx in &self.fx {
+        for fx in fx {
             match *fx {
                 Fx::Ink(ink) => span = span.color(ink.color()),
                 Fx::Voice(Voice::Whisper) => span = span.voice(TextVoice::Whisper),

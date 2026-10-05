@@ -17,6 +17,7 @@ use game::systems::area::{self, AreaTag};
 use game::systems::attention::{Attention, StatusBadges};
 use game::systems::combat::{self, Attitude};
 use game::systems::dialogue::{history, stage};
+use game::systems::input::map::InputMap;
 use game::systems::interact;
 use game::systems::item::card::ItemCardWindow;
 use game::systems::item::{self, DroppedItem, Inventory};
@@ -146,10 +147,10 @@ struct LaneLine {
 }
 
 impl LaneLine {
-    fn of(announcement: &Announcement) -> LaneLine {
+    fn of(announcement: &Announcement, inputs: &InputMap) -> LaneLine {
         LaneLine {
             by: announcement.by.name().to_owned(),
-            text: announcement.text.words(),
+            text: announcement.text.words(inputs),
         }
     }
 }
@@ -257,6 +258,7 @@ fn snapshot(world: &mut World) -> Snapshot {
         .map(|tag| tag.area);
     let view = view(world);
     let rows = choice_rows(world);
+    let input_map = world.resource::<InputMap>().clone();
     Snapshot {
         stage: stage::view(world).map(|view| Stage {
             node: view.node,
@@ -283,15 +285,15 @@ fn snapshot(world: &mut World) -> Snapshot {
                 showing: lane
                     .showing
                     .as_ref()
-                    .map(|shown| LaneLine::of(&shown.announcement)),
+                    .map(|shown| LaneLine::of(&shown.announcement, &input_map)),
                 next: lane
                     .next
                     .as_ref()
-                    .map(|next| LaneLine::of(&next.announcement)),
+                    .map(|next| LaneLine::of(&next.announcement, &input_map)),
                 missed: lane
                     .missed
                     .iter()
-                    .map(|missed| LaneLine::of(&missed.announcement))
+                    .map(|missed| LaneLine::of(&missed.announcement, &input_map))
                     .collect(),
             })
             .unwrap_or_default(),
@@ -621,6 +623,7 @@ fn ui(world: &mut World) -> Vec<UiElement> {
         Option<&EditableText>,
     )>();
     let assets = world.resource::<AssetServer>();
+    let catalog = world.resource::<ui::InputCatalog>();
     nodes
         .iter(world)
         .filter(|(_, node, _, visibility, ..)| visibility.get() && node.size().min_element() > 0.0)
@@ -634,7 +637,7 @@ fn ui(world: &mut World) -> Vec<UiElement> {
                             .filter_map(|child| spans.get(child).map(String::as_str));
                         std::iter::once(text.0.as_str()).chain(spanned).collect()
                     })
-                    .or_else(|| rich.map(ui::RichText::plain))
+                    .or_else(|| rich.map(|rich| rich.plain(catalog)))
                     .or_else(|| field.map(|field| field.value().to_string()))
                     .filter(|text: &String| !text.is_empty());
                 let image = image

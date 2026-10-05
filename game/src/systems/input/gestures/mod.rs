@@ -7,6 +7,7 @@ mod pickup;
 mod walk;
 
 use super::ActiveTileHighlight;
+use super::map::{self, InputAction};
 use crate::systems::scene::Scene;
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
@@ -65,13 +66,8 @@ fn update(world: &mut World) {
     forget_clicks_across_lock(world);
 
     let mut active = world.resource::<Latched>().0;
-    let (pressed, just) = {
-        let buttons = world.resource::<ButtonInput<MouseButton>>();
-        (
-            buttons.pressed(MouseButton::Left),
-            buttons.just_pressed(MouseButton::Left),
-        )
-    };
+    let pressed = map::pressed(world, InputAction::Interact);
+    let just = map::just_pressed(world, InputAction::Interact);
     // A click pressed and released between two frames arrives as `just` without `pressed`.
     if just {
         active = gestures

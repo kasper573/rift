@@ -4,6 +4,7 @@ use crate::core::tiling::{self, Cell, TilePos, Tiles};
 use crate::systems::actor::{Actor, Hitbox};
 use crate::systems::area;
 use crate::systems::area::AreaTag;
+use crate::systems::input::map::{ActionInput, InputAction};
 use crate::systems::player::session::Viewpoint;
 use bevy::prelude::*;
 
@@ -42,8 +43,8 @@ enum DebugMode {
     SafeZones,
 }
 
-fn cycle(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<DebugMode>) {
-    if keys.just_pressed(KeyCode::F1) {
+fn cycle(input: ActionInput, mut mode: ResMut<DebugMode>) {
+    if input.just_pressed(InputAction::CycleDebugView) {
         *mode = match *mode {
             DebugMode::Off => DebugMode::Nodes,
             DebugMode::Nodes => DebugMode::Obscured,
@@ -119,8 +120,8 @@ struct HitboxOverlay;
 const HITBOX_FILL: Color = Color::srgba(1.0, 0.0, 0.0, 0.35);
 const HITBOX_Z: f32 = 100.0;
 
-fn toggle_hitboxes(keys: Res<ButtonInput<KeyCode>>, mut show: ResMut<ShowHitboxes>) {
-    if keys.just_pressed(KeyCode::F2) {
+fn toggle_hitboxes(input: ActionInput, mut show: ResMut<ShowHitboxes>) {
+    if input.just_pressed(InputAction::ToggleHitboxes) {
         show.0 = !show.0;
     }
 }
