@@ -1,7 +1,7 @@
 import { test, type Page } from "@playwright/test";
 
 import { caption, chapter, enterWorld } from "../helpers/demo";
-import { clickUi, closestTile, focusGame, probe, waitFor, walkTo } from "../helpers/game";
+import { closestTile, focusGame, probe, submitText, waitFor, walkTo } from "../helpers/game";
 
 test(
   "Chat",
@@ -28,7 +28,7 @@ test(
       await say(friend, "hi! let's go hunt some orcs");
       await page.waitForTimeout(2500);
       await caption(page, "It also takes commands — /commands lists them");
-      await type(page, "/commands");
+      await submitText(page, "/commands");
       await page.waitForTimeout(3500);
     },
   }),
@@ -38,11 +38,5 @@ async function say(page: Page, text: string): Promise<void> {
   await focusGame(page);
   await page.keyboard.press("KeyC");
   await page.waitForTimeout(600);
-  await type(page, text);
-}
-
-async function type(page: Page, text: string): Promise<void> {
-  await clickUi(page, (element) => element.editable);
-  await page.keyboard.type(text, { delay: 45 });
-  await page.keyboard.press("Enter");
+  await submitText(page, text);
 }

@@ -59,6 +59,7 @@ export interface UiElement {
   text: string | null;
   image: string | null;
   editable: boolean;
+  focused: boolean;
   x: number;
   y: number;
   width: number;
@@ -374,6 +375,20 @@ export async function doubleClickUi(page: Page, match: UiMatch): Promise<void> {
   const { x, y } = await uiPoint(page, match);
   await page.mouse.move(x, y, { steps: 12 });
   await page.mouse.dblclick(x, y);
+}
+
+// On a slow frame, keys typed before the field holds focus, or an Enter pressed before every key
+// has landed, are lost: each step waits for the game to catch up.
+export async function submitText(page: Page, text: string): Promise<void> {
+  await clickUi(page, (element) => element.editable);
+  await waitFor(page, (snapshot) => findUi(snapshot, (element) => element.editable && element.focused), "the text field never took focus");
+  await page.keyboard.type(text, { delay: 45 });
+  await waitFor(
+    page,
+    (snapshot) => findUi(snapshot, (element) => element.editable && element.text === text),
+    `"${text}" never reached the text field`,
+  );
+  await page.keyboard.press("Enter");
 }
 
 export async function rightClickUi(page: Page, match: UiMatch): Promise<void> {

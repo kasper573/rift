@@ -2,7 +2,7 @@ import { test, type Page } from "@playwright/test";
 
 import { provisionAccount, signIn } from "../helpers/account";
 import { caption, chapter, enterWorld, inset } from "../helpers/demo";
-import { clickUi, dragUi, findUi, focusGame, probe, waitFor, waitForWorld } from "../helpers/game";
+import { clickUi, dragUi, findUi, focusGame, probe, submitText, waitFor, waitForWorld } from "../helpers/game";
 import { loadReference } from "../helpers/image";
 
 let islander: Page;
@@ -24,28 +24,28 @@ test(
       await page.keyboard.press("KeyC");
       await clickUi(page, "Admin");
       await page.waitForTimeout(1200);
-      await command(page, "/commands");
+      await submitText(page, "/commands");
       await page.waitForTimeout(2500);
       await caption(page, "…such as handing out items, like gold");
-      await command(page, "/give Gold,50");
+      await submitText(page, "/give Gold,50");
       await clickUi(page, "icons/equipment/bag.png");
       await page.waitForTimeout(600);
       await dragUi(page, "Inventory", { x: -330, y: -230 });
       await waitFor(page, (snapshot) => findUi(snapshot, "50"), "the gold never arrived");
       await page.waitForTimeout(2000);
       await caption(page, "…or experience");
-      await command(page, "/xp 120");
+      await submitText(page, "/xp 120");
       await waitFor(page, (snapshot) => findUi(snapshot, /xp 120$/), "the experience never arrived");
       await page.waitForTimeout(2000);
       await caption(page, "…or teleporting, even to another area");
-      await command(page, "/tp 20,20,Forest");
+      await submitText(page, "/tp 20,20,Forest");
       await waitFor(page, ({ area }) => area === "Forest", "the teleport never landed");
       await page.waitForTimeout(3000);
       const name = (await probe(islander)).me!.name;
       const stop = await inset(page, islander, `${name}'s screen, back on the island`);
       try {
         await caption(page, `…or announcing to every player in every area, like ${name} on the island`);
-        await command(page, "/announce The server restarts in five minutes, so finish your fights.");
+        await submitText(page, "/announce The server restarts in five minutes, so finish your fights.");
         await Promise.all(
           [page, islander].map((player) =>
             waitFor(player, ({ announcement }) => announcement.showing?.by === "Server", "the announcement never arrived"),
@@ -58,9 +58,3 @@ test(
     },
   }),
 );
-
-async function command(page: Page, text: string): Promise<void> {
-  await clickUi(page, (element) => element.editable);
-  await page.keyboard.type(text, { delay: 45 });
-  await page.keyboard.press("Enter");
-}

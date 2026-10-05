@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
@@ -221,6 +222,7 @@ struct UiElement {
     text: Option<String>,
     image: Option<String>,
     editable: bool,
+    focused: bool,
     x: f32,
     y: f32,
     width: f32,
@@ -606,7 +608,9 @@ fn ui(world: &mut World) -> Vec<UiElement> {
         .iter(world)
         .map(|(entity, span)| (entity, span.0.clone()))
         .collect();
+    let focused = world.get_resource::<InputFocus>().and_then(InputFocus::get);
     let mut nodes = world.query::<(
+        Entity,
         &ComputedNode,
         &UiGlobalTransform,
         &InheritedVisibility,
@@ -619,38 +623,41 @@ fn ui(world: &mut World) -> Vec<UiElement> {
     let assets = world.resource::<AssetServer>();
     nodes
         .iter(world)
-        .filter(|(node, _, visibility, ..)| visibility.get() && node.size().min_element() > 0.0)
-        .filter_map(|(node, transform, _, text, rich, children, image, field)| {
-            let text = text
-                .map(|text| {
-                    let spanned = children
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|child| spans.get(child).map(String::as_str));
-                    std::iter::once(text.0.as_str()).chain(spanned).collect()
+        .filter(|(_, node, _, visibility, ..)| visibility.get() && node.size().min_element() > 0.0)
+        .filter_map(
+            |(entity, node, transform, _, text, rich, children, image, field)| {
+                let text = text
+                    .map(|text| {
+                        let spanned = children
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|child| spans.get(child).map(String::as_str));
+                        std::iter::once(text.0.as_str()).chain(spanned).collect()
+                    })
+                    .or_else(|| rich.map(ui::RichText::plain))
+                    .or_else(|| field.map(|field| field.value().to_string()))
+                    .filter(|text: &String| !text.is_empty());
+                let image = image
+                    .and_then(|image| assets.get_path(image.image.id()))
+                    .map(|path| path.to_string());
+                if text.is_none() && image.is_none() && field.is_none() {
+                    return None;
+                }
+                let scale = node.inverse_scale_factor();
+                let size = node.size() * scale;
+                let min = transform.translation * scale - size / 2.0;
+                Some(UiElement {
+                    text,
+                    image,
+                    editable: field.is_some(),
+                    focused: focused == Some(entity),
+                    x: min.x,
+                    y: min.y,
+                    width: size.x,
+                    height: size.y,
                 })
-                .or_else(|| rich.map(ui::RichText::plain))
-                .or_else(|| field.map(|field| field.value().to_string()))
-                .filter(|text: &String| !text.is_empty());
-            let image = image
-                .and_then(|image| assets.get_path(image.image.id()))
-                .map(|path| path.to_string());
-            if text.is_none() && image.is_none() && field.is_none() {
-                return None;
-            }
-            let scale = node.inverse_scale_factor();
-            let size = node.size() * scale;
-            let min = transform.translation * scale - size / 2.0;
-            Some(UiElement {
-                text,
-                image,
-                editable: field.is_some(),
-                x: min.x,
-                y: min.y,
-                width: size.x,
-                height: size.y,
-            })
-        })
+            },
+        )
         .collect()
 }
 
