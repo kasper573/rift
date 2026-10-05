@@ -11,6 +11,7 @@ pub mod hud;
 pub mod input;
 pub mod item;
 pub mod job;
+pub mod memory;
 pub mod movement;
 pub mod npc;
 pub mod player;

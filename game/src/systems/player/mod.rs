@@ -18,6 +18,7 @@ use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::Inventory;
 use crate::systems::job::{self, Job};
+use crate::systems::memory::Memory;
 use crate::systems::movement::Position;
 use crate::systems::spectate::Spectators;
 use crate::systems::stat::{self, StatKind, Stats};
@@ -218,6 +219,7 @@ pub struct CharacterState {
     pub equipment: Equipment,
     pub job: Job,
     pub timed: TimedEffects,
+    pub memory: Memory,
 }
 
 fn spawn_player(
@@ -243,6 +245,7 @@ fn spawn_player(
                 def: job::default_job(),
             },
             timed: TimedEffects::default(),
+            memory: Memory::default(),
         },
     );
 }
@@ -300,6 +303,7 @@ pub(crate) fn place(
             state.equipment,
             state.job,
             state.timed,
+            state.memory,
         ))
         .id();
     state.stats.apply(world, entity);
@@ -319,6 +323,9 @@ pub fn respawn(world: &mut World) {
             continue;
         }
         stat::refill(world, entity);
+        if let Some(mut memory) = world.get_mut::<Memory>(entity) {
+            memory.leave_area();
+        }
         if let Some(mut position) = world.get_mut::<Position>(entity) {
             position.pos = spawn;
         }

@@ -8,6 +8,7 @@ use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::Inventory;
 use crate::systems::job::Job;
+use crate::systems::memory::Memory;
 use crate::systems::player::{CharacterState, ClientId, Owner, Xp};
 use crate::systems::stat;
 
@@ -49,6 +50,14 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
                         timed: world
                             .get::<TimedEffects>(entity)
                             .cloned()
+                            .unwrap_or_default(),
+                        memory: world
+                            .get::<Memory>(entity)
+                            .cloned()
+                            .map(|mut memory| {
+                                memory.leave_area();
+                                memory
+                            })
                             .unwrap_or_default(),
                     },
                 },
