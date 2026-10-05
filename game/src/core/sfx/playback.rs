@@ -31,7 +31,13 @@ pub struct Listener(pub Option<Pos<Tiles>>);
 #[derive(Message)]
 pub struct PlaySfx {
     pub id: SfxId,
-    pub at: Pos<Tiles>,
+    pub place: SfxPlace,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SfxPlace {
+    World(Pos<Tiles>),
+    Interface,
 }
 
 #[derive(Resource, Default)]
@@ -78,23 +84,25 @@ fn mix(
     mut played: ResMut<Played>,
     mut rng: ResMut<Rng>,
 ) {
-    let Some(listener) = listener.0 else {
-        requests.clear();
-        return;
-    };
     let clock = Seconds(time.elapsed_secs());
     let mut frame: HashMap<SfxId, Cue> = HashMap::new();
     for req in requests.read() {
         let Some(sound) = catalog.0.get(req.id.index()) else {
             continue;
         };
-        let proximity = proximity_volume(listener, req.at);
+        let (proximity, pan) = match (req.place, listener.0) {
+            (SfxPlace::Interface, _) => (1.0, 0.0),
+            (SfxPlace::World(at), Some(listener)) => {
+                (proximity_volume(listener, at), proximity_pan(listener, at))
+            }
+            (SfxPlace::World(_), None) => continue,
+        };
         if proximity <= 0.0 {
             continue;
         }
         let cue = Cue {
             proximity,
-            pan: proximity_pan(listener, req.at),
+            pan,
             handle: sound.handle.clone(),
             volume: sound.volume,
             pitch: sound.pitch,

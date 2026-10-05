@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy::text::EditableText;
@@ -215,11 +216,18 @@ fn walkable(world: &mut World, me: Option<Entity>, view: Option<View>) -> Vec<Po
 }
 
 fn ui(world: &mut World) -> Vec<UiElement> {
+    let spans: HashMap<Entity, String> = world
+        .query::<(Entity, &TextSpan)>()
+        .iter(world)
+        .map(|(entity, span)| (entity, span.0.clone()))
+        .collect();
     let mut nodes = world.query::<(
         &ComputedNode,
         &UiGlobalTransform,
         &InheritedVisibility,
         Option<&Text>,
+        Option<&ui::RichText>,
+        Option<&Children>,
         Option<&ImageNode>,
         Option<&EditableText>,
     )>();
@@ -227,11 +235,18 @@ fn ui(world: &mut World) -> Vec<UiElement> {
     nodes
         .iter(world)
         .filter(|(node, _, visibility, ..)| visibility.get() && node.size().min_element() > 0.0)
-        .filter_map(|(node, transform, _, text, image, field)| {
+        .filter_map(|(node, transform, _, text, rich, children, image, field)| {
             let text = text
-                .map(|text| text.0.clone())
+                .map(|text| {
+                    let spanned = children
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|child| spans.get(child).map(String::as_str));
+                    std::iter::once(text.0.as_str()).chain(spanned).collect()
+                })
+                .or_else(|| rich.map(ui::RichText::plain))
                 .or_else(|| field.map(|field| field.value().to_string()))
-                .filter(|text| !text.is_empty());
+                .filter(|text: &String| !text.is_empty());
             let image = image
                 .and_then(|image| assets.get_path(image.image.id()))
                 .map(|path| path.to_string());

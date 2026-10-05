@@ -22,7 +22,7 @@ impl Plugin for HudPlugin {
         app.init_resource::<Settings>()
             .init_resource::<Open>()
             .init_resource::<RefreshWindows>()
-            .add_systems(Update, persist_settings)
+            .add_systems(Update, (persist_settings, sync_preferences))
             .add_systems(OnEnter(crate::systems::scene::Scene::Area), spawn_hud)
             .add_systems(
                 OnExit(crate::systems::scene::Scene::Area),
@@ -35,7 +35,6 @@ impl Plugin for HudPlugin {
                     rebuild_windows,
                     sync_widgets,
                     sync_windows,
-                    sync_snap_grid,
                 )
                     .run_if(in_state(crate::systems::scene::Scene::Area)),
             );
@@ -204,6 +203,60 @@ impl Settings {
     pub(crate) fn toggle_snapping(&mut self) {
         self.0.toggle_snapping();
     }
+
+    pub(crate) fn text_speed(&self) -> TextSpeed {
+        self.0.text.speed
+    }
+
+    pub(crate) fn cycle_text_speed(&mut self) {
+        self.0.text.speed = self.0.text.speed.next();
+    }
+
+    pub(crate) fn reduced_motion(&self) -> bool {
+        self.0.text.reduced_motion
+    }
+
+    pub(crate) fn toggle_reduced_motion(&mut self) {
+        self.0.text.reduced_motion = !self.0.text.reduced_motion;
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum TextSpeed {
+    Slow,
+    #[default]
+    Normal,
+    Fast,
+    Instant,
+}
+
+impl TextSpeed {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            TextSpeed::Slow => "slow",
+            TextSpeed::Normal => "normal",
+            TextSpeed::Fast => "fast",
+            TextSpeed::Instant => "instant",
+        }
+    }
+
+    fn next(self) -> TextSpeed {
+        match self {
+            TextSpeed::Slow => TextSpeed::Normal,
+            TextSpeed::Normal => TextSpeed::Fast,
+            TextSpeed::Fast => TextSpeed::Instant,
+            TextSpeed::Instant => TextSpeed::Slow,
+        }
+    }
+
+    fn typewriter(self) -> ui::TypewriterSpeed {
+        ui::TypewriterSpeed(match self {
+            TextSpeed::Slow => Some(25.0),
+            TextSpeed::Normal => Some(45.0),
+            TextSpeed::Fast => Some(90.0),
+            TextSpeed::Instant => None,
+        })
+    }
 }
 
 /// Persists settings on change instead of at each mutation site. The initial load also registers as
@@ -249,6 +302,16 @@ struct Placement {
 struct UserSettings {
     #[serde(default)]
     ui: UiSettings,
+    #[serde(default)]
+    text: TextSettings,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct TextSettings {
+    #[serde(default)]
+    speed: TextSpeed,
+    #[serde(default)]
+    reduced_motion: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -464,6 +527,23 @@ fn close_window(world: &mut World, window: &'static str) {
     world.resource_mut::<Open>().0.remove(&window);
 }
 
+pub(crate) fn close_topmost_window(world: &mut World) -> bool {
+    let open: Vec<Entity> = world
+        .query::<(Entity, &WindowView)>()
+        .iter(world)
+        .filter(|(_, view)| view.open)
+        .map(|(entity, _)| entity)
+        .collect();
+    let Some(topmost) = ui::topmost(world, open) else {
+        return false;
+    };
+    let window = world.get::<WindowView>(topmost).map(|view| view.window);
+    if let Some(window) = window {
+        close_window(world, window);
+    }
+    window.is_some()
+}
+
 fn sync_windows(world: &mut World) {
     for (_, window) in windows(*world.resource::<Mode>()) {
         window.sync(world);
@@ -506,8 +586,18 @@ fn persist_window(world: &mut World, id: &str, geom: Geom) -> Geom {
     geom
 }
 
-fn sync_snap_grid(settings: Res<Settings>, mut grid: ResMut<SnapGrid>) {
+fn sync_preferences(
+    settings: Res<Settings>,
+    mut grid: ResMut<SnapGrid>,
+    mut speed: ResMut<ui::TypewriterSpeed>,
+    mut motion: ResMut<ui::MotionPreference>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
     grid.0 = settings.0.snap_grid();
+    *speed = settings.0.text.speed.typewriter();
+    motion.reduced = settings.0.text.reduced_motion;
 }
 
 fn launcher_pos(window: &'static str, mode: Mode, screen_w: f32) -> Vec2 {

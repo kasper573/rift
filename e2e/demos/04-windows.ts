@@ -30,12 +30,20 @@ test(
       await page.waitForTimeout(1500);
       await clickUi(page, /^ui snapping/);
       await page.waitForTimeout(1200);
+      await caption(page, "Text speed and reduced motion are settings too");
+      await clickUi(page, /^text speed/);
+      await page.waitForTimeout(900);
+      await clickUi(page, /^text speed/);
+      await page.waitForTimeout(900);
+      await clickUi(page, /^reduced motion/);
+      await page.waitForTimeout(1200);
       await caption(page, "Where you put them is remembered for next time");
       await page.waitForTimeout(2500);
+      await caption(page, "Esc closes the window you used last");
       await focusGame(page);
-      for (const { key } of LAYOUT) {
-        await page.keyboard.press(key);
-        await page.waitForTimeout(400);
+      for (const _ of LAYOUT) {
+        await page.keyboard.press("Escape");
+        await page.waitForTimeout(600);
       }
     },
   }),

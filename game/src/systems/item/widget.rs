@@ -137,6 +137,9 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
         {tooltip(false)}
         Cell { slot: {slot} }
         on(|click: On<Pointer<Click>>, cells: Query<&Cell>, keys: Res<ButtonInput<KeyCode>>, mut commands: Commands| {
+            if click.button != PointerButton::Primary {
+                return;
+            }
             if let Ok(cell) = cells.get(click.entity) {
                 let slot = cell.slot;
                 let drop = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);

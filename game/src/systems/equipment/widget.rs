@@ -134,6 +134,9 @@ fn worn_slot(slot: EquipmentSlot, item: crate::data::item::Id, icon: Handle<Imag
         {tooltip(false)}
         Cell { slot: {slot} }
         on(|click: On<Pointer<Click>>, cells: Query<&Cell>, mut commands: Commands| {
+            if click.button != PointerButton::Primary {
+                return;
+            }
             if let Ok(cell) = cells.get(click.entity) {
                 let slot = cell.slot;
                 commands.queue(move |world: &mut World| session::unequip(world, slot));

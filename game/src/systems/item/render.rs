@@ -9,7 +9,7 @@ use crate::systems::movement::Position;
 use bevy::prelude::*;
 
 use crate::core::render::{ToScreen, dynamic_z, sprite_transform};
-use crate::core::sfx::playback::PlaySfx;
+use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 
 const DROP_SIZE: WorldPx = WorldPx(12.0);
 const DROP_STAGGER: Seconds = Seconds(0.06);
@@ -67,7 +67,7 @@ fn use_sounds(
         };
         play.write(PlaySfx {
             id,
-            at: position.pos,
+            place: SfxPlace::World(position.pos),
         });
     }
 }
@@ -164,7 +164,7 @@ fn animate_drops(
             if let Some(id) = anim.drop_sfx {
                 play.write(PlaySfx {
                     id,
-                    at: position.pos,
+                    place: SfxPlace::World(position.pos),
                 });
             }
             commands.entity(entity).remove::<DropAnim>();

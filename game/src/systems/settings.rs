@@ -4,9 +4,6 @@ use ui::{Activate, ButtonSize, button_styled};
 
 use crate::systems::hud::{HudAudience, Settings, Window};
 
-#[derive(Component, Default, Clone)]
-struct SnappingButton;
-
 pub struct SettingsWindow;
 
 impl Window for SettingsWindow {
@@ -28,42 +25,85 @@ impl Window for SettingsWindow {
     fn order(&self) -> u32 {
         3
     }
-    fn contents(&self, _: &World) -> Vec<ui::WindowContent> {
-        crate::systems::hud::single_tab(self.title(), ui::scrolled(content()))
+    fn contents(&self, world: &World) -> Vec<ui::WindowContent> {
+        crate::systems::hud::single_tab(self.title(), ui::scrolled(content(world)))
     }
     fn sync(&self, world: &mut World) {
-        sync_snapping(world)
+        sync_labels(world)
     }
 }
 
-fn content() -> Box<dyn Scene> {
-    Box::new(bsn! {
-        {button_styled(button_intent::PRIMARY, ButtonSize::Md, "ui snapping disabled")}
-        SnappingButton
-        on(|_: On<Activate>, mut commands: Commands| {
-            commands.queue(toggle_snapping);
+struct Toggle {
+    label: fn(&Settings) -> String,
+    flip: fn(&mut Settings),
+}
+
+static TOGGLES: &[Toggle] = &[
+    Toggle {
+        label: |settings| match settings.snapping_enabled() {
+            true => "ui snapping enabled".to_owned(),
+            false => "ui snapping disabled".to_owned(),
+        },
+        flip: Settings::toggle_snapping,
+    },
+    Toggle {
+        label: |settings| format!("text speed {}", settings.text_speed().label()),
+        flip: Settings::cycle_text_speed,
+    },
+    Toggle {
+        label: |settings| match settings.reduced_motion() {
+            true => "reduced motion on".to_owned(),
+            false => "reduced motion off".to_owned(),
+        },
+        flip: Settings::toggle_reduced_motion,
+    },
+];
+
+#[derive(Component, Default, Clone)]
+struct ToggleButton {
+    index: usize,
+}
+
+fn content(world: &World) -> Box<dyn Scene> {
+    let settings = world.resource::<Settings>();
+    let buttons: Vec<Box<dyn Scene>> = TOGGLES
+        .iter()
+        .enumerate()
+        .map(|(index, toggle)| -> Box<dyn Scene> {
+            Box::new(bsn! {
+                {button_styled(button_intent::PRIMARY, ButtonSize::Md, (toggle.label)(settings))}
+                ToggleButton { index: {index} }
+                on(move |_: On<Activate>, mut commands: Commands| {
+                    commands.queue(move |world: &mut World| {
+                        (TOGGLES[index].flip)(&mut world.resource_mut::<Settings>());
+                    });
+                })
+            })
         })
+        .collect();
+    Box::new(bsn! {
+        Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Start, row_gap: Val::Px(6.0) }
+        Children [ {buttons} ]
     })
 }
 
-fn sync_snapping(world: &mut World) {
-    let label = if world.resource::<Settings>().snapping_enabled() {
-        "ui snapping enabled"
-    } else {
-        "ui snapping disabled"
-    };
-    let texts: Vec<Entity> = world
-        .query_filtered::<&Children, With<SnappingButton>>()
+fn sync_labels(world: &mut World) {
+    if !world.is_resource_changed::<Settings>() {
+        return;
+    }
+    let buttons: Vec<(usize, Vec<Entity>)> = world
+        .query::<(&ToggleButton, &Children)>()
         .iter(world)
-        .flat_map(|children| children.iter())
+        .map(|(button, children)| (button.index, children.iter().collect()))
         .collect();
-    for entity in texts {
-        if let Some(mut text) = world.get_mut::<Text>(entity) {
-            text.0 = label.to_owned();
+    for (index, texts) in buttons {
+        let label = (TOGGLES[index].label)(world.resource::<Settings>());
+        for entity in texts {
+            if let Some(mut text) = world.get_mut::<Text>(entity)
+                && text.0 != label
+            {
+                text.0 = label.clone();
+            }
         }
     }
-}
-
-fn toggle_snapping(world: &mut World) {
-    world.resource_mut::<Settings>().toggle_snapping();
 }

@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use bevy::sprite::Anchor;
 
 use crate::core::render::{Animator, atlas_rect, dynamic_z, sprite_transform};
-use crate::core::sfx::playback::PlaySfx;
+use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::systems::movement::RenderPosition;
 
 pub struct ActorPlugin;
@@ -148,14 +148,20 @@ fn actor_cues(
         let (cues, stepped) =
             model.cues(pose.action.name(), pose.dir, since, now, actor.attack_rate);
         for id in cues {
-            play.write(PlaySfx { id: *id, at });
+            play.write(PlaySfx {
+                id: *id,
+                place: SfxPlace::World(at),
+            });
         }
         if stepped
             && let Some(id) = service
                 .resolve(tag.area.get().map, area::build_area)
                 .tile_sfx_at(at.cell())
         {
-            play.write(PlaySfx { id: *id, at });
+            play.write(PlaySfx {
+                id: *id,
+                place: SfxPlace::World(at),
+            });
         }
     }
 }

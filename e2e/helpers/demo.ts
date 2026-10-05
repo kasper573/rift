@@ -68,11 +68,21 @@ export async function enterWorld(page: Page): Promise<void> {
 
 const hideCaption = new WeakMap<Page, () => Promise<void>>();
 
+export interface CaptionOptions {
+  durationMs?: number;
+  // "top" keeps the caption clear of whatever the game draws along the bottom edge.
+  at?: "top" | "bottom";
+}
+
 // Stays up while the chapter plays on, until the next caption replaces it or its time is up. (An
 // overlay shown with a duration would hold the chapter still for all of it.)
-export async function caption(page: Page, text: string, durationMs = 3500): Promise<void> {
+export async function caption(
+  page: Page,
+  text: string,
+  { durationMs = 3500, at = "bottom" }: CaptionOptions = {},
+): Promise<void> {
   await hideCaption.get(page)?.();
-  const overlay = await page.screencast.showOverlay(subtitle(text));
+  const overlay = await page.screencast.showOverlay(subtitle(text, at));
   const hide = () => overlay.dispose().catch(() => {});
   const timer = setTimeout(hide, durationMs);
   hideCaption.set(page, () => {
@@ -89,8 +99,8 @@ function titleCard(title: string, summary: string): string {
     <div style="font:400 26px/1.3 system-ui,sans-serif;color:#cbd5e1">${escape(summary)}</div></div>`;
 }
 
-function subtitle(text: string): string {
-  return `<div style="position:fixed;left:0;right:0;bottom:48px;display:flex;justify-content:center">
+function subtitle(text: string, at: "top" | "bottom"): string {
+  return `<div style="position:fixed;left:0;right:0;${at}:48px;display:flex;justify-content:center">
     <div style="max-width:70%;padding:8px 18px;border-radius:8px;background:rgba(0,0,0,.72);color:#fff;
       font:500 22px/1.35 system-ui,sans-serif;text-align:center">${escape(text)}</div></div>`;
 }

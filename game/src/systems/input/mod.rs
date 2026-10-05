@@ -1,3 +1,4 @@
+mod escape;
 pub mod gestures;
 
 use crate::core::assets::AssetService;
@@ -19,6 +20,7 @@ pub struct InputPlugin;
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         gestures::plugin(app);
+        escape::plugin(app);
         app.add_systems(Startup, setup_highlight)
             .add_systems(Update, touch_as_mouse)
             .add_systems(
