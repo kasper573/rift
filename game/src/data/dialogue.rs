@@ -11,10 +11,9 @@ use crate::systems::actor::bust::GenericExpression::{
     Angry, Happy, Neutral, Sad, Surprised, Thinking,
 };
 use crate::systems::actor::bust::IndividualExpression::{Counting, Laughing, Sleepy, Smirk, Smug};
+use crate::systems::announcement::Announce;
 use crate::systems::area::{MarkerName, Travel};
 use crate::systems::dialogue::Speaker::{Narrator, Npc, Player, Prop};
-use crate::systems::dialogue::announcement::Announce;
-use crate::systems::dialogue::text::{Fx, Ink, Motion, Voice, plain, styled};
 use crate::systems::dialogue::{Choice, DialogueNode, Gamble, GotoNode, Line, Unmet};
 use crate::systems::equipment::Wearing;
 use crate::systems::item::{GiveItems, Holding, ItemStack};
@@ -26,6 +25,7 @@ use crate::systems::rule::Not;
 use crate::systems::rule::Outcome;
 use crate::systems::shop::CloseShop;
 use crate::systems::stat::Heal;
+use crate::systems::text::{Fx, Ink, Motion, Voice, plain, styled};
 
 const DICE: Gamble = Gamble {
     odds: Percent(45.0),

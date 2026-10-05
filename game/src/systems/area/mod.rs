@@ -19,7 +19,7 @@ use crate::core::math::{Pos, Rect, Size};
 use crate::core::sfx::SfxId;
 use crate::core::tiling::{Cell, CellPos, GridSize, TilePos, TileSize, Tiles};
 use crate::data;
-use crate::systems::dialogue::announcement::AnnouncementId;
+use crate::systems::announcement::AnnouncementId;
 use crate::systems::movement;
 use crate::systems::rule::Requirement;
 

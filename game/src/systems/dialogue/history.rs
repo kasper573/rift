@@ -3,12 +3,13 @@ use bevy::scene::EntityScene;
 use ui::tokens::{palette, spacing, typography};
 use ui::{RichSpan, RichText};
 
-use super::text::LineText;
 use crate::core::sfx::SfxId;
 use crate::core::sfx::playback::{PlaySfx, SfxPlace};
+use crate::systems::announcement::lane::AnnouncementSeen;
 use crate::systems::hud::reconcile_children;
 use crate::systems::notice::{Notice, NoticeTone};
 use crate::systems::scene::Scene as GameScene;
+use crate::systems::text::LineText;
 
 const KEPT: usize = 200;
 const WIDTH: f32 = 920.0;
@@ -22,6 +23,7 @@ impl Plugin for HistoryPlugin {
                 Update,
                 (
                     note_notices,
+                    note_announcements,
                     toggle_key.run_if(not(ui::typing)),
                     show_panel,
                     sync_log,
@@ -101,6 +103,19 @@ struct HistoryLog;
 fn note_notices(mut notices: MessageReader<Notice>, mut history: ResMut<ConversationHistory>) {
     for notice in notices.read() {
         history.push(HistoryEntry::Noted(notice.text.clone(), notice.tone));
+    }
+}
+
+fn note_announcements(
+    mut seen: MessageReader<AnnouncementSeen>,
+    mut history: ResMut<ConversationHistory>,
+) {
+    for seen in seen.read() {
+        history.push(HistoryEntry::Announced {
+            who: seen.announcement.by.name().to_owned(),
+            text: seen.announcement.text.clone(),
+            missed: seen.missed,
+        });
     }
 }
 

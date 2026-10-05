@@ -3,9 +3,7 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 
-use super::announcement::{AnnouncementId, Announcements};
-use super::history::{self, HistoryEntry};
-use super::text::LineText;
+use super::{Announcement, Announcements, Announcer};
 use crate::core::sfx::SfxId;
 use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::systems::player::session::Viewpoint;
@@ -16,6 +14,7 @@ pub struct AnnouncementLanePlugin;
 impl Plugin for AnnouncementLanePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LaneState>()
+            .add_message::<AnnouncementSeen>()
             .add_systems(OnExit(GameScene::Area), forget)
             .add_systems(
                 Update,
@@ -24,6 +23,12 @@ impl Plugin for AnnouncementLanePlugin {
                     .before(ui::UiReactive),
             );
     }
+}
+
+#[derive(Message, Clone, Debug)]
+pub struct AnnouncementSeen {
+    pub announcement: Announcement,
+    pub missed: bool,
 }
 
 #[derive(Resource, Default)]
@@ -52,53 +57,54 @@ fn follow_announcements(world: &mut World) {
             ..LaneState::default()
         };
     }
-    if let Some(shown) = announcements.showing
+    if let Some(shown) = &announcements.showing
         && state.showing.map(|(nth, _)| nth) != Some(shown.nth)
     {
         state.showing = Some((shown.nth, now));
         if state.recorded.insert(shown.nth) {
-            fresh.push((shown.id, false));
+            fresh.push(AnnouncementSeen {
+                announcement: shown.announcement.clone(),
+                missed: false,
+            });
         }
     }
     for missed in &announcements.missed {
         if state.recorded.insert(missed.nth) {
-            fresh.push((missed.id, true));
+            fresh.push(AnnouncementSeen {
+                announcement: missed.announcement.clone(),
+                missed: true,
+            });
         }
     }
     let started = state.showing.map_or(now, |(_, at)| at);
-    for &(id, missed) in &fresh {
-        let def = id.get();
-        history::record(
-            world,
-            HistoryEntry::Announced {
-                who: def.by.name().to_owned(),
-                text: LineText::of(def.text),
-                missed,
-            },
-        );
-        if !missed {
+    for seen in fresh {
+        if !seen.missed {
             world.write_message(PlaySfx {
                 id: SfxId::UiChime,
                 place: SfxPlace::Interface,
             });
         }
+        world.write_message(seen);
     }
-    let head = announcements.showing.map(|shown| (shown.nth, shown.id));
-    let next = announcements.next.map(|next| (next.nth, next.id));
-    let remaining = announcements.showing.map_or(0.0, |shown| {
+    let head = announcements
+        .showing
+        .as_ref()
+        .map(|shown| card(shown.nth, &shown.announcement));
+    let next = announcements
+        .next
+        .as_ref()
+        .map(|next| card(next.nth, &next.announcement));
+    let remaining = announcements.showing.as_ref().map_or(0.0, |shown| {
         1.0 - now.saturating_sub(started).as_secs_f32() / shown.shows.0.max(0.01)
     });
     let mut lanes = world.query::<&mut ui::AnnouncementLane>();
     for mut lane in lanes.iter_mut(world) {
-        let keys = |lane: &ui::AnnouncementLane| {
-            (
-                lane.head.as_ref().map(|head| head.key),
-                lane.next.as_ref().map(|next| next.key),
-            )
+        let keys = |head: Option<&ui::Announcement>, next: Option<&ui::Announcement>| {
+            (head.map(|head| head.key), next.map(|next| next.key))
         };
-        if keys(&lane) != (head.map(key), next.map(key)) {
-            lane.head = head.map(card);
-            lane.next = next.map(card);
+        if keys(lane.head.as_ref(), lane.next.as_ref()) != keys(head.as_ref(), next.as_ref()) {
+            lane.head = head.clone();
+            lane.next = next.clone();
         }
         if lane.remaining != remaining {
             lane.remaining = remaining;
@@ -106,16 +112,22 @@ fn follow_announcements(world: &mut World) {
     }
 }
 
-fn key((nth, _): (u32, AnnouncementId)) -> u64 {
-    u64::from(nth)
-}
-
-fn card((nth, id): (u32, AnnouncementId)) -> ui::Announcement {
-    let def = id.get();
+fn card(nth: u32, announcement: &Announcement) -> ui::Announcement {
+    let (speaker, kind) = match &announcement.by {
+        Announcer::Npc(_) => (
+            Some(announcement.by.name().to_owned()),
+            ui::AnnouncementKind::Speech,
+        ),
+        Announcer::Narrator(_) => (
+            Some(announcement.by.name().to_owned()),
+            ui::AnnouncementKind::Narration,
+        ),
+        Announcer::Server => (None, ui::AnnouncementKind::System),
+    };
     ui::Announcement {
         key: u64::from(nth),
-        speaker: Some(def.by.name().to_owned()),
-        text: LineText::of(def.text).rich(),
-        narration: def.by.narrates(),
+        speaker,
+        text: announcement.text.rich(),
+        kind,
     }
 }

@@ -7,10 +7,10 @@ use game::data::dialogue::Id as DialogueId;
 use game::data::item::Id as ItemId;
 use game::data::memory::Id as MemoryId;
 use game::data::npc::Id as NpcId;
+use game::systems::announcement::Announcements;
 use game::systems::area::MarkerName;
 use game::systems::area::transition::Crossing;
 use game::systems::dialogue::Conversation;
-use game::systems::dialogue::announcement::Announcements;
 use game::systems::memory::Memory;
 use game::systems::movement::{MoveRequest, MoveToPortal, position};
 use game::systems::player::commands_locked;
@@ -155,8 +155,8 @@ fn bram_sails_for_twenty_gold_and_the_crossing_is_announced() {
         .cloned()
         .unwrap_or_default();
     assert_eq!(
-        lane.showing.map(|shown| shown.id),
-        Some(AnnouncementId::GullSails)
+        lane.showing.map(|shown| shown.announcement),
+        Some(AnnouncementId::GullSails.get().announcement())
     );
 }
 

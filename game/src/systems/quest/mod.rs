@@ -21,7 +21,6 @@ use crate::data::npc::Id as NpcId;
 use crate::data::prop::Id as PropId;
 use crate::systems::area::{self, AreaTag, MarkerName};
 use crate::systems::attention::{self, Mark};
-use crate::systems::dialogue::text::{LineText, Span};
 use crate::systems::dialogue::{
     self, Asked, BusyPolicy, ChoiceTag, GotoNode, Offer, StartConversation, Then, Unmet,
 };
@@ -35,6 +34,7 @@ use crate::systems::notice::{self, NoticeTone};
 use crate::systems::player::{Owner, Xp, conn_player, sender_player};
 use crate::systems::rewards::KillCredited;
 use crate::systems::rule::{self, Outcome, Requirement, RuleContext};
+use crate::systems::text::{LineText, Span};
 use crate::systems::visibility::Presence;
 
 pub use crate::data::quest::Id as QuestId;

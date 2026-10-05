@@ -67,10 +67,10 @@ test(
 
       await caption(page, "Announcements play at the top and never block: the harbour bell rings at the pier");
       await travelTo(page, ({ markers }) => markers.find((marker) => marker.name === "ferry-pier")?.at);
-      await waitFor(page, (snapshot) => showing(snapshot, "HarbourBell"), "the harbour bell never rang");
+      await waitFor(page, (snapshot) => showing(snapshot, "Harbour bell"), "the harbour bell never rang");
       await page.waitForTimeout(1500);
       await caption(page, "A line about the gulls waits behind it, but only for three seconds", { at: "top" });
-      await waitFor(page, ({ announcement }) => announcement.missed.includes("Gulls"), "the gulls never gave up");
+      await waitFor(page, ({ announcement }) => announcement.missed.some(({ by }) => by === "Gulls"), "the gulls never gave up");
       await page.waitForTimeout(1500);
       await caption(page, "Lines that wait too long go straight to history — H shows it", { at: "top" });
       await focusGame(page);
@@ -87,9 +87,9 @@ test(
       await pick(page, "Ilsa gave me this pass.");
       await waitFor(page, ({ area }) => area === "Forest", "the Gull never sailed");
       await caption(page, "The crossing and the forest narrate themselves while you walk on", { at: "top" });
-      await waitFor(page, (snapshot) => showing(snapshot, "GullSails"), "the crossing was never told");
+      await waitFor(page, (snapshot) => showing(snapshot, "The Gull"), "the crossing was never told");
       await stroll(page, [3, 1]);
-      await waitFor(page, (snapshot) => showing(snapshot, "ForestArrival"), "the forest never spoke", 15_000);
+      await waitFor(page, (snapshot) => showing(snapshot, "The forest"), "the forest never spoke", 15_000);
       await stroll(page, [-2, 2]);
       await page.waitForTimeout(2500);
 
@@ -100,7 +100,7 @@ test(
       ]);
       await waitFor(
         page,
-        (snapshot) => showing(snapshot, "ChiefChallenge") || showing(snapshot, "ChiefThreat"),
+        (snapshot) => showing(snapshot, "Orc Chief"),
         "the Orc Chief never yelled",
       );
       await caption(page, "A boss yell is urgent and jumps the queue. You keep fighting: no tether, no lock");
@@ -110,8 +110,8 @@ test(
   }),
 );
 
-function showing({ announcement }: Snapshot, id: string): boolean {
-  return announcement.showing === id;
+function showing({ announcement }: Snapshot, by: string): boolean {
+  return announcement.showing?.by === by;
 }
 
 async function stroll(page: Page, [dx, dy]: [number, number]): Promise<void> {

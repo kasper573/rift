@@ -10,12 +10,12 @@ use crate::systems::actor::bust::GenericExpression::{Angry, Happy, Thinking};
 use crate::systems::actor::bust::IndividualExpression::{Counting, Smug};
 use crate::systems::dialogue::Line;
 use crate::systems::dialogue::Speaker::Npc;
-use crate::systems::dialogue::text::plain;
 use crate::systems::interact::Counterpart;
 use crate::systems::item::{ItemCategory, ItemStack};
 use crate::systems::memory::Remembers;
 use crate::systems::rule::Not;
 use crate::systems::shop::{Buys, ShopBuys, ShopDef, ShopOffer, ShopReactions, Stock};
+use crate::systems::text::plain;
 
 crate::table! {
     MaraWares: ShopDef {

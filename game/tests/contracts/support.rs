@@ -102,6 +102,10 @@ impl Sim {
             .expect("joined player")
     }
 
+    pub fn conn(&self, client: u32) -> Entity {
+        self.conns[&client]
+    }
+
     pub fn send<M: Message>(&mut self, client: u32, message: M) {
         let conn = self.conns[&client];
         self.world().write_message(FromClient {

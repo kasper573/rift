@@ -265,6 +265,9 @@ fn simulate(
         }
 
         game::systems::step_areas(&mut worlds, wall_clock(reset));
+        game::systems::announcement::relay(
+            &mut worlds.iter_mut().map(App::world_mut).collect::<Vec<_>>(),
+        );
 
         begin_transfers(&mut worlds, &mut transfers, tick);
 

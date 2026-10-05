@@ -7,7 +7,6 @@ use crate::data::memory::Id as MemoryId;
 use crate::data::npc::Id as NpcId;
 use crate::data::prop::Id as PropId;
 use crate::systems::area::MarkerName;
-use crate::systems::dialogue::text::plain;
 use crate::systems::interact::Counterpart;
 use crate::systems::item::ItemStack;
 use crate::systems::job::MinLevel;
@@ -16,6 +15,7 @@ use crate::systems::quest::{
     DecisionPath, Giver, Objective, OnQuest, QuestDef, QuestDone, QuestDrop, Repeat,
 };
 use crate::systems::rule::Not;
+use crate::systems::text::plain;
 
 crate::table! {
     TusksForTheChief: QuestDef {

@@ -1,7 +1,7 @@
 use crate::core::time::Seconds;
 use crate::data::npc::Id as NpcId;
-use crate::systems::dialogue::announcement::{AnnouncementDef, Announcer};
-use crate::systems::dialogue::text::{Fx, Ink, Motion, Voice, plain, styled};
+use crate::systems::announcement::{AnnouncementDef, Announcer};
+use crate::systems::text::{Fx, Ink, Motion, Voice, plain, styled};
 
 crate::table! {
     ChiefChallenge: AnnouncementDef {
@@ -17,25 +17,25 @@ crate::table! {
         urgent: true,
     },
     HarbourBell: AnnouncementDef {
-        by: Announcer::Narrator("Harbour bell"),
+        by: Announcer::narrator("Harbour bell"),
         text: &[plain("The "), styled("Gull", &[Fx::Ink(Ink::Name)]), plain(" sails at the next bell.")],
         lasts: Seconds(30.0),
         urgent: false,
     },
     Gulls: AnnouncementDef {
-        by: Announcer::Narrator("Gulls"),
+        by: Announcer::narrator("Gulls"),
         text: &[plain("Gulls squabble over a fish head at the end of the pier.")],
         lasts: Seconds(3.0),
         urgent: false,
     },
     GullSails: AnnouncementDef {
-        by: Announcer::Narrator("The Gull"),
+        by: Announcer::narrator("The Gull"),
         text: &[plain("The "), styled("Gull", &[Fx::Ink(Ink::Name)]), plain(" scrapes onto the "), styled("forest shore", &[Fx::Ink(Ink::Place)]), plain(".")],
         lasts: Seconds(30.0),
         urgent: false,
     },
     ForestArrival: AnnouncementDef {
-        by: Announcer::Narrator("The forest"),
+        by: Announcer::narrator("The forest"),
         text: &[plain("Pines close in around you. Somewhere ahead, "), styled("drums", &[Fx::Ink(Ink::Magic), Fx::Motion(Motion::Pulse)]), plain(".")],
         lasts: Seconds(30.0),
         urgent: false,

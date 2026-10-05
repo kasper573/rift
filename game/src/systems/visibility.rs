@@ -9,10 +9,10 @@ use bevy_replicon::shared::replication::registry::ReplicationRegistry;
 
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
+use crate::systems::announcement::Announcements;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::attention::Attention;
 use crate::systems::dialogue::Conversation;
-use crate::systems::dialogue::announcement::Announcements;
 use crate::systems::item::Inventory;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::{ClientId, CommandLock, Owner, Players};

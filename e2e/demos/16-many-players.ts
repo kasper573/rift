@@ -75,7 +75,7 @@ test(
         await page.waitForTimeout(2500);
         await pick(page, "You're cheating.");
         await conversationOver(page);
-        await waitFor(page, ({ announcement }) => announcement.showing === "PellCallsGuards", "Pell never shouted");
+        await waitFor(page, ({ announcement }) => announcement.showing?.by === "Pell", "Pell never shouted");
         await caption(page, `Pell calls the guards — for you alone. ${name} sees none of them`);
         await fight(page, "HarbourGuard");
         await page.waitForTimeout(1500);

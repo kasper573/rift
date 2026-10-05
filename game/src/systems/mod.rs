@@ -1,5 +1,6 @@
 pub mod account;
 pub mod actor;
+pub mod announcement;
 pub mod area;
 pub mod attention;
 pub mod chat;
@@ -30,6 +31,7 @@ pub mod shop;
 pub mod spectate;
 pub mod stat;
 pub mod terminal;
+pub mod text;
 pub mod view;
 pub mod visibility;
 
@@ -70,6 +72,7 @@ static TERMINALS: LazyLock<HashMap<crate::data::terminal::Id, &'static Terminal>
 
 pub fn protocol(app: &mut App) {
     actor::register(app);
+    announcement::register(app);
     area::register(app);
     attention::register(app);
     combat::register(app);
@@ -184,7 +187,7 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     (
                         dialogue::hold,
                         dialogue::refresh.run_if(on_replication_tick),
-                        dialogue::announcement::advance.run_if(on_replication_tick),
+                        announcement::advance.run_if(on_replication_tick),
                     )
                         .chain(),
                     (shop::hold, shop::refresh.run_if(on_replication_tick)).chain(),

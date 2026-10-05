@@ -3,7 +3,10 @@ extern crate self as bevy_terminal;
 mod command;
 mod terminal;
 
-pub use command::{CommandArg, CommandArgSpec, CommandCtx, TerminalCommand, dispatch, require_arg};
+pub use command::{
+    CommandArg, CommandArgSpec, CommandArgs, CommandCtx, RestOfLine, TerminalCommand, dispatch,
+    require_arg,
+};
 pub use terminal::{
     AvailableTerminals, Terminal, TerminalAccess, TerminalEntry, TerminalInbox, TerminalInput,
     TerminalKey, TerminalLine, broadcast, ingest, register, reply,

@@ -1,8 +1,5 @@
-pub mod announcement;
 pub mod history;
-pub mod lane;
 pub mod stage;
-pub mod text;
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
@@ -25,14 +22,13 @@ use crate::systems::player::{self, CommandLock, sender_player};
 use crate::systems::reach::{self, Tether};
 use crate::systems::rule::{self, Encounter, Outcome, Requirement, RuleContext, Terms};
 use crate::systems::stat;
-use text::{LineText, Span};
+use crate::systems::text::{LineText, Span};
 
 pub use crate::data::dialogue::Id as DialogueId;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
     app.replicate::<Conversation>()
-        .replicate::<announcement::Announcements>()
         .add_client_message::<ConversationRequest>(Channel::Ordered)
         .init_resource::<TopicSources>()
         .init_resource::<StepCounter>();

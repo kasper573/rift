@@ -5,16 +5,17 @@ use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
 use bevy::window::PrimaryWindow;
-use game::core::math::{Pos, Rect};
+use game::core::math::{Offset, Pos, Rect};
 use game::core::render::tile_to_window;
 use game::core::tiling::{TilePos, Tiles};
 use game::data;
 use game::systems::actor::{self, Actor, Hitbox};
+use game::systems::announcement::{Announcement, Announcements};
 use game::systems::area::{self, AreaTag};
 use game::systems::attention::{Attention, StatusBadges};
-use game::systems::combat::Attitude;
-use game::systems::dialogue::announcement::Announcements;
+use game::systems::combat::{self, Attitude};
 use game::systems::dialogue::{history, stage};
+use game::systems::interact;
 use game::systems::item::{DroppedItem, Inventory};
 use game::systems::movement::Position;
 use game::systems::npc::Npc;
@@ -121,9 +122,24 @@ struct Stage {
 
 #[derive(Serialize, Default)]
 struct Lane {
-    showing: Option<data::announcement::Id>,
-    next: Option<data::announcement::Id>,
-    missed: Vec<data::announcement::Id>,
+    showing: Option<LaneLine>,
+    next: Option<LaneLine>,
+    missed: Vec<LaneLine>,
+}
+
+#[derive(Serialize)]
+struct LaneLine {
+    by: String,
+    text: String,
+}
+
+impl LaneLine {
+    fn of(announcement: &Announcement) -> LaneLine {
+        LaneLine {
+            by: announcement.by.name().to_owned(),
+            text: announcement.text.words(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -249,9 +265,19 @@ fn snapshot(world: &mut World) -> Snapshot {
         announcement: viewpoint
             .and_then(|seen| world.get::<Announcements>(seen))
             .map(|lane| Lane {
-                showing: lane.showing.map(|shown| shown.id),
-                next: lane.next.map(|next| next.id),
-                missed: lane.missed.iter().map(|missed| missed.id).collect(),
+                showing: lane
+                    .showing
+                    .as_ref()
+                    .map(|shown| LaneLine::of(&shown.announcement)),
+                next: lane
+                    .next
+                    .as_ref()
+                    .map(|next| LaneLine::of(&next.announcement)),
+                missed: lane
+                    .missed
+                    .iter()
+                    .map(|missed| LaneLine::of(&missed.announcement))
+                    .collect(),
             })
             .unwrap_or_default(),
         history: history::is_open(world),
@@ -395,9 +421,16 @@ fn actors(world: &mut World, me: Option<Entity>, area: Option<area::Id>) -> Vec<
         .filter(|(entity, tag)| Some(*entity) != me && area.is_none_or(|area| tag.area == area))
         .map(|(entity, _)| entity)
         .collect();
-    others
+    let bodies: Vec<(Entity, Body)> = others
         .into_iter()
-        .filter_map(|entity| body(world, entity))
+        .filter_map(|entity| body(world, entity).map(|body| (entity, body)))
+        .collect();
+    bodies
+        .into_iter()
+        .map(|(entity, body)| Body {
+            aim: aim(world, entity, body.hitbox),
+            ..body
+        })
         .collect()
 }
 
@@ -406,22 +439,57 @@ fn props(world: &mut World, area: Option<area::Id>) -> Vec<Fixture> {
     let attention = viewer
         .and_then(|viewer| world.get::<Attention>(viewer))
         .cloned();
-    world
+    let fixtures: Vec<(Entity, Fixture)> = world
         .query::<(Entity, &Prop, &Position, &Hitbox, &AreaTag)>()
         .iter(world)
         .filter(|(.., tag)| area.is_none_or(|area| tag.area == area))
-        .map(|(entity, prop, at, hitbox, _)| Fixture {
-            id: entity.to_string(),
-            prop: prop.def,
-            at: at.pos,
-            aim: at.pos.hitbox(hitbox.size).center(),
-            hitbox: at.pos.hitbox(hitbox.size),
-            marks: attention
-                .as_ref()
-                .map(|attention| attention.of(entity).iter().map(|mark| mark.kind).collect())
-                .unwrap_or_default(),
+        .map(|(entity, prop, at, hitbox, _)| {
+            let hitbox = at.pos.hitbox(hitbox.size);
+            let fixture = Fixture {
+                id: entity.to_string(),
+                prop: prop.def,
+                at: at.pos,
+                aim: hitbox.center(),
+                hitbox,
+                marks: attention
+                    .as_ref()
+                    .map(|attention| attention.of(entity).iter().map(|mark| mark.kind).collect())
+                    .unwrap_or_default(),
+            };
+            (entity, fixture)
+        })
+        .collect();
+    fixtures
+        .into_iter()
+        .map(|(entity, fixture)| Fixture {
+            aim: aim(world, entity, fixture.hitbox),
+            ..fixture
         })
         .collect()
+}
+
+fn aim(world: &mut World, entity: Entity, hitbox: Rect<Tiles>) -> Pos<Tiles> {
+    const STEPS: u8 = 5;
+    let center = hitbox.center();
+    let mut spots: Vec<Pos<Tiles>> = (0..STEPS)
+        .flat_map(|x| (0..STEPS).map(move |y| (x, y)))
+        .map(|(x, y)| {
+            hitbox.origin
+                + Offset::new(
+                    hitbox.size.width * (f32::from(x) + 0.5) / f32::from(STEPS),
+                    hitbox.size.height * (f32::from(y) + 0.5) / f32::from(STEPS),
+                )
+        })
+        .collect();
+    spots.sort_by(|a, b| a.distance_to(center).total_cmp(&b.distance_to(center)));
+    std::iter::once(center)
+        .chain(spots)
+        .find(|&spot| clicked(world, spot) == Some(entity))
+        .unwrap_or(center)
+}
+
+fn clicked(world: &mut World, spot: Pos<Tiles>) -> Option<Entity> {
+    combat::enemy_at(world, spot).or_else(|| interact::interactable_at(world, spot))
 }
 
 fn items(world: &mut World, area: Option<area::Id>) -> Vec<GroundItem> {

@@ -41,10 +41,34 @@ pub struct CommandCtx {
     pub args: String,
 }
 
-impl CommandCtx {
-    /// Positional arguments are comma-separated; an empty slot (`3,4,,bob`) skips an optional.
-    pub fn split_args(&self) -> impl Iterator<Item = &str> {
-        self.args.split(',').map(str::trim)
+/// Positional arguments are comma-separated; an empty slot (`3,4,,bob`) skips an optional.
+pub struct CommandArgs<'a> {
+    rest: Option<&'a str>,
+}
+
+impl<'a> CommandArgs<'a> {
+    pub fn of(ctx: &'a CommandCtx) -> CommandArgs<'a> {
+        CommandArgs {
+            rest: Some(ctx.args.as_str()),
+        }
+    }
+
+    pub fn remainder(&mut self) -> Option<&'a str> {
+        self.rest.take().map(str::trim)
+    }
+}
+
+impl<'a> Iterator for CommandArgs<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        let rest = self.rest?;
+        let (head, tail) = match rest.split_once(',') {
+            Some((head, tail)) => (head, Some(tail)),
+            None => (rest, None),
+        };
+        self.rest = tail;
+        Some(head.trim())
     }
 }
 
@@ -52,6 +76,23 @@ impl CommandCtx {
 pub trait CommandArg: Sized {
     const REQUIRED: bool = true;
     fn parse(name: &str, raw: Option<&str>) -> Result<Self, String>;
+
+    fn take(name: &str, args: &mut CommandArgs) -> Result<Self, String> {
+        Self::parse(name, args.next())
+    }
+}
+
+/// The rest of the line, commas and all, so it can only be a command's last argument.
+pub struct RestOfLine(pub String);
+
+impl CommandArg for RestOfLine {
+    fn parse(name: &str, raw: Option<&str>) -> Result<RestOfLine, String> {
+        require_arg(name, raw).map(|raw| RestOfLine(raw.to_owned()))
+    }
+
+    fn take(name: &str, args: &mut CommandArgs) -> Result<RestOfLine, String> {
+        Self::parse(name, args.remainder())
+    }
 }
 
 impl CommandArg for f32 {

@@ -12,7 +12,6 @@ use crate::data::attention::Id as AttentionId;
 use crate::data::dialogue::Id as DialogueId;
 use crate::data::item::Id as ItemId;
 use crate::systems::attention::{self, Mark};
-use crate::systems::dialogue::text::{LineText, Span};
 use crate::systems::dialogue::{self, Asked, ChoiceTag, GotoNode, Line, Offer, Then, Unmet};
 use crate::systems::interact::Counterpart;
 use crate::systems::item::{Inventory, ItemCategory, ItemFlag, ItemStack};
@@ -20,6 +19,7 @@ use crate::systems::notice::{self, NoticeTone};
 use crate::systems::player::sender_player;
 use crate::systems::rule::{self, Encounter, Outcome, Requirement, RuleContext};
 use crate::systems::stat;
+use crate::systems::text::{LineText, Span};
 
 pub use crate::data::shop::Id as ShopId;
 

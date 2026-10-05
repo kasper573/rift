@@ -118,10 +118,15 @@ export interface Stage {
   waiting: string | null;
 }
 
+export interface LaneLine {
+  by: string;
+  text: string;
+}
+
 export interface Lane {
-  showing: string | null;
-  next: string | null;
-  missed: string[];
+  showing: LaneLine | null;
+  next: LaneLine | null;
+  missed: LaneLine[];
 }
 
 // What the client sees this frame. Positions are world tiles, which `view` maps onto canvas pixels

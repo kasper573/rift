@@ -5,8 +5,8 @@ use crate::core::assets::AssetService;
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 use crate::systems::actor::Name;
+use crate::systems::announcement::{self, AnnouncementQueue};
 use crate::systems::dialogue::Heard;
-use crate::systems::dialogue::announcement::{self, AnnouncementQueue};
 use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::Inventory;
@@ -125,7 +125,7 @@ pub fn arrive(world: &mut World, traveler: Traveler) -> Entity {
         traveler.state,
     );
     if let Some(intro) = traveler.dest_area.get().intro {
-        announcement::announce(world, entity, intro);
+        announcement::announce(world, entity, intro.get().announcement());
     }
     entity
 }

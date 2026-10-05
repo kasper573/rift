@@ -33,7 +33,7 @@ pub use accordion::{
     accordion_trigger,
 };
 pub use alert_dialog::{alert_dialog, alert_dialog_action, alert_dialog_cancel};
-pub use announcement::{Announcement, AnnouncementLane, announcement_lane};
+pub use announcement::{Announcement, AnnouncementKind, AnnouncementLane, announcement_lane};
 pub use avatar::{avatar, avatar_fallback, avatar_image};
 pub use button::{ButtonIntent, ButtonSize, button, button_styled};
 pub use card::{CardIntent, CardOptions, card};

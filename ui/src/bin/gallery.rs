@@ -8,13 +8,13 @@ use ui::card::intent as card_intent;
 use ui::theme::theme;
 use ui::tokens::palette;
 use ui::{
-    Align, Announcement, AnnouncementLane, ButtonIntent, ButtonSize, CardOptions, Carriable,
-    Carried, CarryTarget, CastDepth, CastMember, Check, ChipOptions, ChoiceOptions, ConfirmOptions,
-    DialogueBoxOptions, MotionPreference, OnSettle, OnTap, Orientation, RichPiece, RichSpan,
-    RichText, Side, SonnerPosition, TextMotion, TextVoice, Typewriter, WidgetOptions, accordion,
-    accordion_body, accordion_content, accordion_header, accordion_item, accordion_trigger,
-    alert_dialog, alert_dialog_action, alert_dialog_cancel, announcement_lane, avatar,
-    avatar_fallback, button, button_styled, card, cast, checkbox, checkbox_indicator, chip,
+    Align, Announcement, AnnouncementKind, AnnouncementLane, ButtonIntent, ButtonSize, CardOptions,
+    Carriable, Carried, CarryTarget, CastDepth, CastMember, Check, ChipOptions, ChoiceOptions,
+    ConfirmOptions, DialogueBoxOptions, MotionPreference, OnSettle, OnTap, Orientation, RichPiece,
+    RichSpan, RichText, Side, SonnerPosition, TextMotion, TextVoice, Typewriter, WidgetOptions,
+    accordion, accordion_body, accordion_content, accordion_header, accordion_item,
+    accordion_trigger, alert_dialog, alert_dialog_action, alert_dialog_cancel, announcement_lane,
+    avatar, avatar_fallback, button, button_styled, card, cast, checkbox, checkbox_indicator, chip,
     choice_list, collapsible, collapsible_content, collapsible_trigger, component, confirm_dialog,
     dialog, dialog_close, dialogue_box, key_hint, list_header, popover, popover_content,
     popover_trigger, progress, progress_indicator, radio_circle, radio_group, radio_indicator,
@@ -1344,7 +1344,7 @@ fn banner_cycle(round: u64) -> AnnouncementLane {
         key,
         speaker: Some("Orc Chief".to_owned()),
         text,
-        narration: false,
+        kind: AnnouncementKind::Speech,
     };
     let shout = chief(
         1,
@@ -1365,12 +1365,19 @@ fn banner_cycle(round: u64) -> AnnouncementLane {
         text: RichText::new(vec![plain(
             "The camp falls silent. Somewhere, a drum stops.",
         )]),
-        narration: true,
+        kind: AnnouncementKind::Narration,
     };
-    let (head, next) = match round % 3 {
+    let system = Announcement {
+        key: 4,
+        speaker: None,
+        text: RichText::new(vec![plain("The server restarts in five minutes.")]),
+        kind: AnnouncementKind::System,
+    };
+    let (head, next) = match round % 4 {
         0 => (shout, Some(threat)),
         1 => (threat, Some(narration)),
-        _ => (narration, None),
+        2 => (narration, Some(system)),
+        _ => (system, None),
     };
     AnnouncementLane {
         head: Some(head),

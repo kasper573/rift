@@ -46,7 +46,7 @@ pub struct AttackRequest {
 
 pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
     let me = session::my_character(world).map(|entity| entity.id());
-    actor::frontmost_at(world, point, me).filter(|&entity| {
+    actor::frontmost_at(world, point, me, |world, entity| {
         world.get::<Actor>(entity).is_some()
             && world.get::<Attitude>(entity) != Some(&Attitude::Friendly)
     })

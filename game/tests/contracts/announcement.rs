@@ -1,14 +1,18 @@
 use bevy_ecs::prelude::*;
+use bevy_terminal::TerminalInput;
 use game::core::math::Offset;
 use game::data;
 use game::data::announcement::Id as AnnouncementId;
 use game::data::memory::Id as MemoryId;
 use game::data::npc::Id as NpcId;
 use game::data::quest::Id as QuestId;
+use game::data::terminal::Id as TerminalId;
+use game::systems::account::identity::Identity;
+use game::systems::account::role::Role;
+use game::systems::announcement::{self, Announcement, Announcements};
 use game::systems::area::MarkerName;
 use game::systems::area::transition::{self, Crossing};
 use game::systems::dialogue::Conversation;
-use game::systems::dialogue::announcement::{self, Announcements};
 use game::systems::memory;
 use game::systems::movement::{Position, position};
 use game::systems::npc::{self, Pack};
@@ -25,16 +29,20 @@ fn lane(sim: &mut Sim, player: Entity) -> Announcements {
         .unwrap_or_default()
 }
 
-fn showing(sim: &mut Sim, player: Entity) -> Option<AnnouncementId> {
-    lane(sim, player).showing.map(|shown| shown.id)
+fn showing(sim: &mut Sim, player: Entity) -> Option<Announcement> {
+    lane(sim, player).showing.map(|shown| shown.announcement)
 }
 
-fn next(sim: &mut Sim, player: Entity) -> Option<AnnouncementId> {
-    lane(sim, player).next.map(|next| next.id)
+fn next(sim: &mut Sim, player: Entity) -> Option<Announcement> {
+    lane(sim, player).next.map(|next| next.announcement)
+}
+
+fn said(id: AnnouncementId) -> Option<Announcement> {
+    Some(id.get().announcement())
 }
 
 fn shows(id: AnnouncementId) -> f32 {
-    id.get().shows().0
+    id.get().announcement().shows().0
 }
 
 #[test]
@@ -47,45 +55,53 @@ fn announcements_show_one_at_a_time_and_urgent_lines_go_first() {
         AnnouncementId::ChiefChallenge,
         AnnouncementId::ChiefThreat,
     ] {
-        announcement::announce(sim.world(), player, id);
+        announcement::announce(sim.world(), player, id.get().announcement());
     }
     settle(&mut sim);
-    assert_eq!(showing(&mut sim, player), Some(AnnouncementId::HarbourBell));
-    assert_eq!(next(&mut sim, player), Some(AnnouncementId::ChiefChallenge));
+    assert_eq!(showing(&mut sim, player), said(AnnouncementId::HarbourBell));
+    assert_eq!(next(&mut sim, player), said(AnnouncementId::ChiefChallenge));
 
     later(&mut sim, shows(AnnouncementId::HarbourBell));
     assert_eq!(
         showing(&mut sim, player),
-        Some(AnnouncementId::ChiefChallenge)
+        said(AnnouncementId::ChiefChallenge)
     );
-    assert_eq!(next(&mut sim, player), Some(AnnouncementId::ChiefThreat));
+    assert_eq!(next(&mut sim, player), said(AnnouncementId::ChiefThreat));
 
     later(&mut sim, shows(AnnouncementId::ChiefChallenge));
-    assert_eq!(showing(&mut sim, player), Some(AnnouncementId::ChiefThreat));
-    assert_eq!(next(&mut sim, player), Some(AnnouncementId::GullSails));
+    assert_eq!(showing(&mut sim, player), said(AnnouncementId::ChiefThreat));
+    assert_eq!(next(&mut sim, player), said(AnnouncementId::GullSails));
 }
 
 #[test]
 fn a_line_left_waiting_past_its_lifetime_is_missed() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    announcement::announce(sim.world(), player, AnnouncementId::HarbourBell);
-    announcement::announce(sim.world(), player, AnnouncementId::Gulls);
+    announcement::announce(
+        sim.world(),
+        player,
+        AnnouncementId::HarbourBell.get().announcement(),
+    );
+    announcement::announce(
+        sim.world(),
+        player,
+        AnnouncementId::Gulls.get().announcement(),
+    );
 
     later(&mut sim, AnnouncementId::Gulls.get().lasts.0);
 
     let now = lane(&mut sim, player);
     assert_eq!(
-        now.showing.map(|shown| shown.id),
-        Some(AnnouncementId::HarbourBell)
+        now.showing.map(|shown| shown.announcement),
+        said(AnnouncementId::HarbourBell)
     );
     assert_eq!(now.next, None);
     assert_eq!(
         now.missed
-            .iter()
-            .map(|missed| missed.id)
+            .into_iter()
+            .map(|missed| missed.announcement)
             .collect::<Vec<_>>(),
-        vec![AnnouncementId::Gulls]
+        vec![AnnouncementId::Gulls.get().announcement()]
     );
 }
 
@@ -104,8 +120,8 @@ fn stepping_onto_the_pier_rings_the_harbour_bell_once_in_a_while() {
         .entity_mut(player)
         .insert(Position { pos: pier });
     settle(&mut sim);
-    assert_eq!(showing(&mut sim, player), Some(AnnouncementId::HarbourBell));
-    assert_eq!(next(&mut sim, player), Some(AnnouncementId::Gulls));
+    assert_eq!(showing(&mut sim, player), said(AnnouncementId::HarbourBell));
+    assert_eq!(next(&mut sim, player), said(AnnouncementId::Gulls));
     assert!(!commands_locked(sim.world(), player));
 
     later(&mut sim, 30.0);
@@ -151,9 +167,9 @@ fn an_orc_chief_yells_at_players_on_maras_errand_without_stopping_them() {
 
     assert_eq!(
         showing(&mut sim, player),
-        Some(AnnouncementId::ChiefChallenge)
+        said(AnnouncementId::ChiefChallenge)
     );
-    assert_eq!(next(&mut sim, player), Some(AnnouncementId::ChiefThreat));
+    assert_eq!(next(&mut sim, player), said(AnnouncementId::ChiefThreat));
     assert!(sim.world().get::<Conversation>(player).is_none());
     assert!(!commands_locked(sim.world(), player));
     assert_eq!(showing(&mut sim, bystander), None);
@@ -163,7 +179,11 @@ fn an_orc_chief_yells_at_players_on_maras_errand_without_stopping_them() {
 fn the_lane_travels_with_the_character_and_the_forest_greets_arrivals() {
     let mut island = Sim::area(data::area::SPAWN_ID);
     let player = island.join(1);
-    announcement::announce(island.world(), player, AnnouncementId::GullSails);
+    announcement::announce(
+        island.world(),
+        player,
+        AnnouncementId::GullSails.get().announcement(),
+    );
     let dest = island.map().spawn;
     island.world().entity_mut(player).insert(Crossing {
         dest_area: data::area::Id::Forest,
@@ -179,10 +199,54 @@ fn the_lane_travels_with_the_character_and_the_forest_greets_arrivals() {
 
     assert_eq!(
         showing(&mut forest, arrived),
-        Some(AnnouncementId::GullSails)
+        said(AnnouncementId::GullSails)
     );
     assert_eq!(
         next(&mut forest, arrived),
-        Some(AnnouncementId::ForestArrival)
+        said(AnnouncementId::ForestArrival)
     );
+}
+
+fn announce_as(sim: &mut Sim, client: u32, terminal: TerminalId, message: &str) {
+    sim.send(
+        client,
+        TerminalInput {
+            terminal,
+            text: format!("/announce {message}"),
+        },
+    );
+    sim.tick();
+}
+
+#[test]
+fn an_admin_announcement_reaches_every_player_in_every_area() {
+    let mut island = Sim::area(data::area::SPAWN_ID);
+    let mut forest = Sim::area(data::area::Id::Forest);
+    let admin = island.join(1);
+    let traveller = forest.join(2);
+    let conn = island.conn(1);
+    island.world().entity_mut(conn).insert(Identity {
+        id: "admin".to_owned(),
+        name: "admin".to_owned(),
+        roles: vec![Role::Admin],
+    });
+    let message = "The server restarts in five minutes, so finish your fights.";
+
+    announce_as(&mut island, 1, TerminalId::Admin, message);
+    announcement::relay(&mut [island.world(), forest.world()]);
+
+    let expected = Some(Announcement::server(message));
+    assert_eq!(showing(&mut island, admin), expected);
+    assert_eq!(showing(&mut forest, traveller), expected);
+}
+
+#[test]
+fn players_without_the_admin_role_cannot_announce() {
+    let mut island = Sim::area(data::area::SPAWN_ID);
+    let player = island.join(1);
+
+    announce_as(&mut island, 1, TerminalId::Global, "Free gold at the pier!");
+    announcement::relay(&mut [island.world()]);
+
+    assert_eq!(showing(&mut island, player), None);
 }

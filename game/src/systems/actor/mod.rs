@@ -83,6 +83,7 @@ pub fn frontmost_at(
     world: &mut World,
     point: Pos<Tiles>,
     except: Option<Entity>,
+    accept: impl Fn(&World, Entity) -> bool,
 ) -> Option<Entity> {
     let hits: Vec<(Entity, f32)> = world
         .query::<(Entity, &Position, &Hitbox)>()
@@ -93,7 +94,7 @@ pub fn frontmost_at(
         .map(|(entity, at, _)| (entity, at.pos.y))
         .collect();
     hits.into_iter()
-        .filter(|&(entity, _)| !stat::is_dead(world, entity))
+        .filter(|&(entity, _)| !stat::is_dead(world, entity) && accept(world, entity))
         .max_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(entity, _)| entity)
 }

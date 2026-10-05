@@ -116,7 +116,7 @@ export async function inset(page: Page, other: Page, label: string): Promise<() 
 }
 
 function insetFrame(jpeg: string, label: string): string {
-  return `<div style="position:fixed;left:16px;top:96px;width:448px;border-radius:10px;overflow:hidden;
+  return `<div style="position:fixed;left:16px;top:168px;width:416px;border-radius:10px;overflow:hidden;
       border:3px solid rgba(255,255,255,.85);box-shadow:0 6px 24px rgba(0,0,0,.55);background:#000">
     <img src="data:image/jpeg;base64,${jpeg}" style="display:block;width:100%">
     <div style="position:absolute;left:0;top:0;padding:4px 10px;border-bottom-right-radius:8px;

@@ -70,9 +70,9 @@ fn expand(attrs: Attrs, func: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
                 world: &mut ::bevy_terminal::macro_support::World,
                 ctx: &::bevy_terminal::CommandCtx,
             ) -> Result<String, String> {
-                let mut raw = ctx.split_args();
+                let mut args = ::bevy_terminal::CommandArgs::of(ctx);
                 #(
-                    let #idents: #types = ::bevy_terminal::CommandArg::parse(#names, raw.next())?;
+                    let #idents: #types = ::bevy_terminal::CommandArg::take(#names, &mut args)?;
                 )*
                 #fn_ident(world, ctx #(, #idents)*)
             }

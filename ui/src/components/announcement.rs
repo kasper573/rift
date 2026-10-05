@@ -32,7 +32,15 @@ pub struct Announcement {
     pub key: u64,
     pub speaker: Option<String>,
     pub text: RichText,
-    pub narration: bool,
+    pub kind: AnnouncementKind,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AnnouncementKind {
+    #[default]
+    Speech,
+    Narration,
+    System,
 }
 
 #[derive(Component, Default)]
@@ -99,7 +107,7 @@ fn card(announcement: Announcement, head: bool) -> impl Scene {
     let Announcement {
         speaker,
         text,
-        narration,
+        kind,
         ..
     } = announcement;
     let surface = theme().surface_trough;
@@ -114,13 +122,18 @@ fn card(announcement: Announcement, head: bool) -> impl Scene {
             node.border = UiRect::all(Val::Px(if head { 2.0 } else { 1.0 }));
             node.border_radius = BorderRadius::all(Val::Px(radius::M));
         });
-    let tag = match (head, narration) {
+    let accent = match kind {
+        AnnouncementKind::System => palette::AZURE_70,
+        AnnouncementKind::Speech | AnnouncementKind::Narration => palette::AMBER_70,
+    };
+    let tag = match (head, kind) {
         (false, _) => tag_chip("WAITING", ink.with_alpha(0.6)),
-        (true, true) => tag_chip("NARRATION", ink.with_alpha(0.8)),
-        (true, false) => tag_chip("ANNOUNCEMENT", palette::AMBER_70),
+        (true, AnnouncementKind::Speech) => tag_chip("ANNOUNCEMENT", accent),
+        (true, AnnouncementKind::Narration) => tag_chip("NARRATION", ink.with_alpha(0.8)),
+        (true, AnnouncementKind::System) => tag_chip("SYSTEM", accent),
     };
     let speaker = speaker.unwrap_or_default();
-    let text = if narration {
+    let text = if kind == AnnouncementKind::Narration {
         RichText {
             pieces: text
                 .pieces
@@ -147,14 +160,13 @@ fn card(announcement: Announcement, head: bool) -> impl Scene {
             Children [ (
                 LaneTimer
                 Node { width: Val::Percent(100.0), height: Val::Percent(100.0) }
-                BackgroundColor({palette::AMBER_70})
+                BackgroundColor({accent})
             ) ]
         }
     });
-    let justify = if narration {
-        JustifyContent::Center
-    } else {
-        JustifyContent::Start
+    let justify = match kind {
+        AnnouncementKind::Speech => JustifyContent::Start,
+        AnnouncementKind::Narration | AnnouncementKind::System => JustifyContent::Center,
     };
     bsn! {
         template_value(style)
