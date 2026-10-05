@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use bevy_ecs::prelude::*;
 
+use crate::core::math::Pos;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::data::dialogue::Id as DialogueId;
 use crate::systems::area::AreaTag;
@@ -25,10 +26,17 @@ pub struct Noticing {
 pub struct Noticed(HashSet<(Entity, usize)>);
 
 pub fn notice(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc, &'static AreaTag)>) {
-    let watchers: Vec<(Entity, &'static [Noticing], crate::systems::area::Id)> = npcs
+    let watchers: Vec<Watcher> = npcs
         .iter(world)
         .filter(|(npc, def, _)| !def.def.get().notices.is_empty() && !stat::is_dead(world, *npc))
-        .map(|(npc, def, tag)| (npc, def.def.get().notices, tag.area))
+        .filter_map(|(npc, def, tag)| {
+            Some(Watcher {
+                npc,
+                notices: def.def.get().notices,
+                area: tag.area,
+                at: position(world, npc)?,
+            })
+        })
         .collect();
     if watchers.is_empty() {
         return;
@@ -43,18 +51,20 @@ pub fn notice(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc, &'
         };
         let area = world.get::<AreaTag>(player).map(|tag| tag.area);
         let mut noticed = HashSet::new();
-        for &(npc, notices, at_area) in &watchers {
-            if Some(at_area) != area || !visibility::present(world, npc, player) {
+        for watcher in &watchers {
+            let distance = at.distance(watcher.at);
+            if Some(watcher.area) != area
+                || watcher
+                    .notices
+                    .iter()
+                    .all(|noticing| distance > noticing.within)
+                || !visibility::present(world, watcher.npc, player)
+            {
                 continue;
             }
-            let Some(npc_at) = position(world, npc) else {
-                continue;
-            };
-            for (index, noticing) in notices.iter().enumerate() {
-                if at.distance(npc_at) <= noticing.within
-                    && rule::met(world, player, noticing.requires)
-                {
-                    noticed.insert((npc, index));
+            for (index, noticing) in watcher.notices.iter().enumerate() {
+                if distance <= noticing.within && rule::met(world, player, noticing.requires) {
+                    noticed.insert((watcher.npc, index));
                 }
             }
         }
@@ -86,6 +96,13 @@ pub fn notice(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc, &'
             world.entity_mut(player).insert(Noticed(noticed));
         }
     }
+}
+
+struct Watcher {
+    npc: Entity,
+    notices: &'static [Noticing],
+    area: crate::systems::area::Id,
+    at: Pos<Tiles>,
 }
 
 pub(super) fn starts() -> Vec<DialogueId> {

@@ -178,9 +178,13 @@ pub fn announce_everywhere(worlds: &mut [&mut World], announcement: &Announcemen
     }
 }
 
-pub fn advance(world: &mut World, queues: &mut QueryState<Entity, With<AnnouncementQueue>>) {
-    let players: Vec<Entity> = queues.iter(world).collect();
-    for player in players {
+pub fn advance(world: &mut World, queues: &mut QueryState<(Entity, &AnnouncementQueue)>) {
+    let busy: Vec<Entity> = queues
+        .iter(world)
+        .filter(|(_, queue)| queue.busy())
+        .map(|(player, _)| player)
+        .collect();
+    for player in busy {
         refresh(world, player, false);
     }
 }
@@ -197,6 +201,10 @@ fn refresh(world: &mut World, player: Entity, changed: bool) {
 }
 
 impl AnnouncementQueue {
+    fn busy(&self) -> bool {
+        self.showing.is_some() || !self.waiting.is_empty()
+    }
+
     fn advance(&mut self, now: UnixMillis) -> bool {
         let mut changed = false;
         if self

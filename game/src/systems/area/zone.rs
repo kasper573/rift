@@ -2,8 +2,10 @@ use std::collections::HashSet;
 
 use bevy_ecs::prelude::*;
 
-use super::{AreaTag, MarkerName};
+use super::{MapMarker, MarkerName};
+use crate::core::assets::AssetService;
 use crate::data;
+use crate::systems::WorldArea;
 use crate::systems::interact;
 use crate::systems::movement::position;
 use crate::systems::npc::Npc;
@@ -24,27 +26,34 @@ pub struct Zone {
 pub struct ApplyingZones(HashSet<usize>);
 
 pub fn enter_zones(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc)>) {
+    let area = world.resource::<WorldArea>().0;
+    let map = world
+        .resource::<AssetService>()
+        .resolve(area.get().map, super::build_area);
+    let zones: Vec<(usize, MapMarker)> = area
+        .get()
+        .zones
+        .iter()
+        .enumerate()
+        .filter_map(|(index, zone)| map.marker(zone.at).map(|marker| (index, marker)))
+        .collect();
+    if zones.is_empty() {
+        return;
+    }
     let players: Vec<Entity> = world.resource::<Players>().0.values().copied().collect();
     for player in players {
-        let (Some(at), Some(area), Some(map)) = (
-            position(world, player),
-            world.get::<AreaTag>(player).map(|tag| tag.area),
-            super::of(world, player),
-        ) else {
+        let Some(at) = position(world, player) else {
             continue;
         };
         let applying: HashSet<usize> = if stat::is_dead(world, player) {
             HashSet::new()
         } else {
-            area.get()
-                .zones
+            zones
                 .iter()
-                .enumerate()
-                .filter(|(_, zone)| {
-                    map.marker(zone.at).is_some_and(|marker| marker.covers(at))
-                        && rule::met(world, player, zone.requires)
+                .filter(|&&(index, marker)| {
+                    marker.covers(at) && rule::met(world, player, area.get().zones[index].requires)
                 })
-                .map(|(index, _)| index)
+                .map(|&(index, _)| index)
                 .collect()
         };
         let before = world
