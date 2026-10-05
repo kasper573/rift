@@ -18,7 +18,7 @@ use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::Inventory;
 use crate::systems::job::{self, Job};
-use crate::systems::movement::{Position, forget};
+use crate::systems::movement::Position;
 use crate::systems::spectate::Spectators;
 use crate::systems::stat::{self, StatKind, Stats};
 use crate::systems::visibility::OwnedBy;
@@ -328,7 +328,7 @@ pub fn respawn(world: &mut World) {
         if let Some(mut actor) = world.get_mut::<Actor>(entity) {
             set_action(&mut actor, Action::Idle);
         }
-        forget(world, entity);
+        crate::systems::reach::forget(world, entity);
     }
 }
 

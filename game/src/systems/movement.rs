@@ -15,8 +15,8 @@ use crate::systems::REPLICATION_PERIOD;
 use crate::systems::account::role;
 use crate::systems::actor::{Action, Actor, set_facing};
 use crate::systems::area;
-use crate::systems::combat::AttackTarget;
 use crate::systems::player::{conn_player, sender_player};
+use crate::systems::reach;
 use crate::systems::stat::{self, StatKind};
 
 pub fn register(app: &mut App) {
@@ -121,10 +121,7 @@ pub fn move_to_portal(world: &mut World) {
 }
 
 pub fn forget(world: &mut World, entity: Entity) {
-    world
-        .entity_mut(entity)
-        .remove::<AttackTarget>()
-        .remove::<DesiredPortal>();
+    world.entity_mut(entity).remove::<DesiredPortal>();
     halt(world, entity);
 }
 
@@ -155,6 +152,7 @@ fn retarget(
     if stat::is_dead(world, entity) {
         return None;
     }
+    reach::forget(world, entity);
     goto(world, entity, pos);
     Some(entity)
 }
@@ -162,7 +160,6 @@ fn retarget(
 pub fn goto(world: &mut World, entity: Entity, pos: Pos<Tiles>) {
     world
         .entity_mut(entity)
-        .remove::<AttackTarget>()
         .remove::<Path>()
         .insert(MoveTarget { pos });
 }
@@ -366,7 +363,7 @@ fn relocate(world: &mut World, entity: Entity, dest_area: area::Id, dest: Pos<Ti
             .entity_mut(entity)
             .insert(crate::systems::area::transition::Crossing { dest_area, dest });
     }
-    forget(world, entity);
+    reach::forget(world, entity);
 }
 
 /// Teleport a player.

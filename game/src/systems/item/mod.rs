@@ -20,9 +20,10 @@ use crate::data::item::Id;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::effect::{self, Effect, TimedEffect, TimedEffects};
 use crate::systems::equipment;
-use crate::systems::movement::{MoveTarget, Position, approach, forget, position};
+use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, conn_player, sender_player};
+use crate::systems::reach::{self, Pursuit, ReachAct, ReachIntent};
 use crate::systems::rule::{Outcome, Requirement, RuleContext};
 use crate::systems::stat;
 use crate::systems::visibility::seen_by;
@@ -31,7 +32,7 @@ pub const INVENTORY_MAX: u32 = 25;
 const RESERVATION_TTL: Seconds = Seconds(60.0);
 const DROP_TTL: Seconds = Seconds(120.0);
 const DROP_RADIUS: Tiles = Tiles(1.0);
-const PICKUP_RANGE: Tiles = Tiles(std::f32::consts::SQRT_2);
+const PICKUP_RANGE: Tiles = Tiles(1.0);
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -222,11 +223,6 @@ pub struct DroppedItem {
     pub count: u32,
 }
 
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct PickupIntent {
-    pub target: Entity,
-}
-
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UseItemRequest {
     pub slot: u32,
@@ -415,40 +411,23 @@ pub fn pickup_request(world: &mut World) {
         if stat::is_dead(world, player) || world.get::<DroppedItem>(target).is_none() {
             continue;
         }
-        let Some(at) = position(world, target) else {
-            continue;
-        };
-        forget(world, player);
-        approach(world, player, at, PICKUP_RANGE);
-        world.entity_mut(player).insert(PickupIntent { target });
+        reach::intend(world, player, target, ReachAct::Pickup);
     }
 }
 
-pub fn pickups(world: &mut World, intents: &mut QueryState<Entity, With<PickupIntent>>) {
+pub fn pickups(world: &mut World, intents: &mut QueryState<Entity, With<ReachIntent>>) {
     let players: Vec<Entity> = intents.iter(world).collect();
     for player in players {
-        let Some(target) = world
-            .get::<PickupIntent>(player)
-            .map(|intent| intent.target)
-        else {
+        let Some(target) = reach::intent(world, player, ReachAct::Pickup) else {
             continue;
         };
-        if stat::is_dead(world, player) || world.get::<DroppedItem>(target).is_none() {
-            world.entity_mut(player).remove::<PickupIntent>();
-            continue;
-        }
-        let (Some(at), Some(item_at)) = (position(world, player), position(world, target)) else {
-            world.entity_mut(player).remove::<PickupIntent>();
-            continue;
-        };
-        if at.distance(item_at) <= PICKUP_RANGE {
-            collect(world, player, target);
-            world.entity_mut(player).remove::<PickupIntent>();
-        } else if world
-            .get::<MoveTarget>(player)
-            .is_none_or(|goal| goal.pos.distance(item_at) > PICKUP_RANGE)
-        {
-            world.entity_mut(player).remove::<PickupIntent>();
+        match reach::pursue(world, player, PICKUP_RANGE) {
+            Pursuit::Approaching => {}
+            Pursuit::Lost => reach::forget(world, player),
+            Pursuit::Arrived => {
+                collect(world, player, target);
+                reach::forget(world, player);
+            }
         }
     }
 }

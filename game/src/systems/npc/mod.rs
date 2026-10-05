@@ -25,11 +25,12 @@ use crate::data;
 use crate::systems::Character;
 use crate::systems::actor::{self, Action, Actor, Hitbox, Rgba, set_action};
 use crate::systems::area::{self, AreaTag};
-use crate::systems::combat::{AttackTarget, Attackers};
+use crate::systems::combat::Attackers;
 use crate::systems::effect::{self, Effect, TimedEffects};
 use crate::systems::item::Reservation;
-use crate::systems::movement::{MoveTarget, Path, Position, forget, position};
+use crate::systems::movement::{MoveTarget, Path, Position, position};
 use crate::systems::player::Players;
+use crate::systems::reach::{self, ReachAct};
 use crate::systems::stat::{self, Stat, StatKind, Stats};
 
 const NPC_RESPAWN_DELAY: Seconds = Seconds(5.0);
@@ -41,7 +42,9 @@ pub fn register(app: &mut App) {
 }
 
 pub fn chase(world: &World, entity: Entity) -> Vec<Effect> {
-    if world.get::<Npc>(entity).is_some() && world.get::<AttackTarget>(entity).is_some() {
+    if world.get::<Npc>(entity).is_some()
+        && reach::intent(world, entity, ReachAct::Attack).is_some()
+    {
         vec![Effect::Chasing]
     } else {
         Vec::new()
@@ -194,7 +197,7 @@ pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut PackEnemies) {
     world.resource_scope(|world, mut rng: Mut<Rng>| {
         for id in ids {
             if stat::is_dead(world, id) {
-                forget(world, id);
+                reach::forget(world, id);
                 continue;
             }
             let (Some(npc), Some(&pack)) = (world.get::<Npc>(id).copied(), world.get::<Pack>(id))
@@ -209,11 +212,11 @@ pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut PackEnemies) {
                 continue;
             };
 
-            if let Some(target) = world.get::<AttackTarget>(id).map(|t| t.target) {
+            if let Some(target) = reach::intent(world, id, ReachAct::Attack) {
                 if in_aggro(world, target, at, area, def.aggro) {
                     continue;
                 }
-                forget(world, id);
+                reach::forget(world, id);
             }
             let target = {
                 let hunt = Hunt {
@@ -229,7 +232,7 @@ pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut PackEnemies) {
                 def.ai.target(&hunt)
             };
             if let Some(target) = target {
-                world.entity_mut(id).insert(AttackTarget { target });
+                reach::intend(world, id, target, ReachAct::Attack);
                 continue;
             }
             idle_wander(world, &assets, &mut rng, id, def, area);
@@ -311,7 +314,7 @@ pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
                 .remove::<Reservation>()
                 .remove::<TimedEffects>();
             stat::refill(world, id);
-            forget(world, id);
+            reach::forget(world, id);
         }
     });
 }

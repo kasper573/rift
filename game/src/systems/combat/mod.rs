@@ -12,13 +12,11 @@ use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{Millis, PlaybackRate, Seconds};
 use crate::systems::actor::{Action, Actor, Hitbox, set_action, set_facing};
 use crate::systems::area::AreaTag;
-use crate::systems::movement::{
-    MoveTarget, Path, Position, approach, forget, halt, on_tile, position,
-};
+use crate::systems::movement::{MoveTarget, Path, Position, halt, on_tile, position};
 use crate::systems::player::{Owner, sender_player, session};
+use crate::systems::reach::{self, Pursuit, ReachAct, ReachIntent};
 use crate::systems::stat::{self, StatKind};
 
-const TILE_DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
 const HP_REGEN_INTERVAL: Seconds = Seconds(10.0);
 const HP_REGEN_AMOUNT: f32 = 5.0;
 
@@ -46,11 +44,6 @@ pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
         }
         hitbox.contains(point).then_some(entity)
     })
-}
-
-#[derive(Component, Clone, Debug, PartialEq)]
-pub struct AttackTarget {
-    pub target: Entity,
 }
 
 #[derive(Component, Clone, Debug, PartialEq)]
@@ -112,54 +105,48 @@ pub fn request(world: &mut World) {
         {
             continue;
         }
-        world.entity_mut(entity).insert(AttackTarget { target });
+        reach::intend(world, entity, target, ReachAct::Attack);
     }
 }
 
 pub fn combat(
     world: &mut World,
-    targets: &mut QueryState<Entity, With<AttackTarget>>,
+    intents: &mut QueryState<Entity, With<ReachIntent>>,
     swings: &mut QueryState<Entity, With<Swing>>,
 ) {
     let time = Seconds(world.resource::<Time>().elapsed_secs());
     let mut deaths = Vec::new();
-    engage(world, time, targets);
+    engage(world, time, intents);
     progress_swings(world, time, &mut deaths, swings);
     for (entity, killer) in deaths {
         world.write_message(Died { entity, killer });
     }
 }
 
-fn engage(world: &mut World, time: Seconds, targets: &mut QueryState<Entity, With<AttackTarget>>) {
-    let ids: Vec<Entity> = targets.iter(world).collect();
+fn engage(world: &mut World, time: Seconds, intents: &mut QueryState<Entity, With<ReachIntent>>) {
+    let ids: Vec<Entity> = intents.iter(world).collect();
     for id in ids {
-        if stat::is_dead(world, id) {
-            forget(world, id);
+        let Some(target) = reach::intent(world, id, ReachAct::Attack) else {
             continue;
-        }
+        };
         if world.get::<Swing>(id).is_some() {
             continue;
         }
-        let Some(target) = world.get::<AttackTarget>(id).map(|t| t.target) else {
-            continue;
-        };
-        let same_area = world.get::<AreaTag>(id).map(|t| t.area)
-            == world.get::<AreaTag>(target).map(|t| t.area);
-        if world.get_entity(target).is_err() || stat::is_dead(world, target) || !same_area {
-            forget(world, id);
-            continue;
-        }
-        let (Some(at), Some(target_at)) = (position(world, id), position(world, target)) else {
-            continue;
-        };
         let stats = stat::effective_all(world, id);
         let range = Tiles(stats.get(StatKind::Range));
         let attack_delay = Millis(stats.get(StatKind::AttackDelay));
         let attack_speed = PlaybackRate(stats.get(StatKind::AttackSpeed));
-
-        if !approach(world, id, target_at, range + TILE_DIAGONAL_MARGIN) {
-            continue;
+        match reach::pursue(world, id, range) {
+            Pursuit::Lost => {
+                reach::forget(world, id);
+                continue;
+            }
+            Pursuit::Approaching => continue,
+            Pursuit::Arrived => {}
         }
+        let (Some(at), Some(target_at)) = (position(world, id), position(world, target)) else {
+            continue;
+        };
 
         halt(world, id);
         if !on_tile(world, id) {
@@ -244,7 +231,7 @@ fn strike(
         if let Some(mut actor) = world.get_mut::<Actor>(target) {
             set_action(&mut actor, Action::Dead);
         }
-        forget(world, target);
+        reach::forget(world, target);
         world.entity_mut(target).remove::<Attackers>();
         deaths.push((target, attacker));
     }

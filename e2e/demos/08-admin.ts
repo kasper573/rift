@@ -2,7 +2,7 @@ import { test, type Page } from "@playwright/test";
 
 import { provisionAccount, signIn } from "../helpers/account";
 import { caption, chapter } from "../helpers/demo";
-import { clickUi, focusGame, waitFor, waitForWorld } from "../helpers/game";
+import { clickUi, dragUi, findUi, focusGame, waitFor, waitForWorld } from "../helpers/game";
 import { loadReference } from "../helpers/image";
 
 test(
@@ -22,7 +22,18 @@ test(
       await page.waitForTimeout(1200);
       await command(page, "/commands");
       await page.waitForTimeout(2500);
-      await caption(page, "…such as teleporting, even to another area");
+      await caption(page, "…such as handing out items, like gold");
+      await command(page, "/give Gold,50");
+      await clickUi(page, "icons/equipment/bag.png");
+      await page.waitForTimeout(600);
+      await dragUi(page, "Inventory", { x: -330, y: -230 });
+      await waitFor(page, (snapshot) => findUi(snapshot, "50"), "the gold never arrived");
+      await page.waitForTimeout(2000);
+      await caption(page, "…or experience");
+      await command(page, "/xp 120");
+      await waitFor(page, (snapshot) => findUi(snapshot, /xp 120$/), "the experience never arrived");
+      await page.waitForTimeout(2000);
+      await caption(page, "…or teleporting, even to another area");
       await command(page, "/tp 20,20,Forest");
       await waitFor(page, ({ area }) => area === "Forest", "the teleport never landed");
       await page.waitForTimeout(3000);
