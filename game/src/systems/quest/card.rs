@@ -278,7 +278,7 @@ pub(super) fn reward_chips(assets: &AssetServer, def: &QuestDef) -> impl Scene +
                 label: format!("{} XP", def.xp),
                 icon: None,
                 family: Family::outline(ink),
-                link: None,
+                inspect: None,
             })
         })
         .into_iter()
@@ -291,7 +291,7 @@ pub(super) fn reward_chips(assets: &AssetServer, def: &QuestDef) -> impl Scene +
                 label: counted(stack),
                 icon: Some(assets.load(stack.item.get().icon.0)),
                 family: Family::outline(ink),
-                link: Some(item::card::link(stack.item)),
+                inspect: Some(item::card::inspectable(stack.item)),
             })
         })
         .collect();
@@ -312,7 +312,7 @@ pub(super) fn picks(assets: &AssetServer, def: &QuestDef) -> impl Scene + use<> 
                 component(BorderColor::all(crate::systems::hud::SLOT_BORDER))
                 Children [ {EntityScene(icon(assets, stack.item.get().icon, PICK))} ]
             };
-            Box::new(ui::link(item::card::link(stack.item), slot))
+            Box::new(ui::inspectable(item::card::inspectable(stack.item), slot))
         })
         .collect();
     bsn! {
@@ -326,7 +326,7 @@ pub(super) fn tag(label: &str, color: Color) -> impl Scene + use<> {
         label: label.to_owned(),
         icon: None,
         family: Family::outline(color),
-        link: None,
+        inspect: None,
     })
 }
 

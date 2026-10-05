@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::tokens::{palette, spacing, typography};
-use ui::{ChipOptions, Family, LinkOptions, OnTap, RichPiece, RichSpan, RichText, TextVoice};
+use ui::{
+    ChipOptions, Family, InspectableOptions, OnTap, RichPiece, RichSpan, RichText, TextVoice,
+};
 use ui::{TooltipText, component};
 
 use crate::core::sfx::SfxId;
@@ -19,7 +21,7 @@ const WINDOW_SIZE: Vec2 = Vec2::new(300.0, 360.0);
 const WINDOW_TOP: f32 = 96.0;
 const WINDOW_MARGIN: f32 = 72.0;
 const ICON: f32 = 48.0;
-const MORE: &str = "Click for more information";
+const MORE: &str = "Right-click for more information";
 
 pub struct ItemCardPlugin;
 
@@ -47,15 +49,15 @@ pub fn close(world: &mut World) -> bool {
     world.resource_mut::<ItemCard>().0.take().is_some()
 }
 
-pub fn link(item: ItemId) -> LinkOptions {
+pub fn inspectable(item: ItemId) -> InspectableOptions {
     let def = item.get();
-    LinkOptions {
+    InspectableOptions {
         tooltip: TooltipText {
             title: def.display_name.to_owned(),
             lines: vec![overview(def)],
             hint: Some(MORE.to_owned()),
         },
-        on_tap: OnTap::new(move |world| open(world, item)),
+        on_inspect: OnTap::new(move |world| open(world, item)),
     }
 }
 
@@ -76,6 +78,77 @@ pub fn use_verb(def: &ItemDef) -> Option<&'static str> {
         ItemKind::Equipment { .. } => Some("wear"),
         ItemKind::Resource => None,
     }
+}
+
+pub fn sheet(world: &World, item: ItemId) -> Box<dyn Scene> {
+    let assets = world.resource::<AssetServer>();
+    let def = item.get();
+    let ink = ui::theme::theme().surface_floating.on;
+    let tags: Vec<Box<dyn Scene>> = tags(def)
+        .into_iter()
+        .map(|(label, color)| {
+            ui::chip(ChipOptions {
+                label: label.to_owned(),
+                icon: None,
+                family: Family::outline(color),
+                inspect: None,
+            })
+        })
+        .collect();
+    let facts: Vec<Box<dyn Scene>> = facts(world, def)
+        .into_iter()
+        .map(|(fact, color)| -> Box<dyn Scene> {
+            Box::new(ui::styled_text(fact, color, typography::BODY))
+        })
+        .collect();
+    let usage: Vec<Box<dyn Scene>> = use_verb(def)
+        .map(|verb| -> Box<dyn Scene> {
+            let usage = format!("Double-click it in your bag to {verb} it");
+            Box::new(ui::styled_text(
+                usage,
+                ink.with_alpha(0.6),
+                typography::CAPTION,
+            ))
+        })
+        .into_iter()
+        .collect();
+    let flavor = RichText {
+        pieces: vec![RichPiece::Span(RichSpan {
+            voice: TextVoice::Whisper,
+            ..RichSpan::plain(def.flavor)
+        })],
+        size: typography::BODY.font_size,
+        color: ink,
+    };
+    Box::new(bsn! {
+        Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px({spacing::L}),
+            width: Val::Percent(100.0),
+        }
+        Children [
+            (
+                Node { column_gap: Val::Px({spacing::L}), align_items: AlignItems::Center }
+                Children [
+                    (
+                        Node { width: Val::Px({ICON}), height: Val::Px({ICON}), flex_shrink: 0.0 }
+                        component(ImageNode::new(assets.load(def.icon.0)))
+                    ),
+                    (
+                        Node { flex_direction: FlexDirection::Column }
+                        Children [
+                            {EntityScene(ui::styled_text(def.display_name, ink, typography::NAME))},
+                            {EntityScene(ui::styled_text(overview(def), ink.with_alpha(0.6), typography::CAPTION))},
+                        ]
+                    ),
+                ]
+            ),
+            ( Node { column_gap: Val::Px({spacing::M}), flex_wrap: FlexWrap::Wrap } Children [ {tags} ] ),
+            {EntityScene(ui::rich_text(flavor, false))},
+            ( Node { flex_direction: FlexDirection::Column, row_gap: Val::Px({spacing::S}) } Children [ {facts} ] ),
+            {usage},
+        ]
+    })
 }
 
 #[derive(Resource, Default)]
@@ -117,7 +190,10 @@ fn show_card(world: &mut World) {
         OnTap::new(|world| {
             close(world);
         }),
-        hud::single_tab(item.get().display_name, ui::scrolled(body(world, item))),
+        hud::single_tab(
+            item.get().display_name,
+            ui::scrolled(Box::new(padded(sheet(world, item)))),
+        ),
     );
     if let Some(panel) = hud::spawn_in_hud(world, scene) {
         world.entity_mut(panel).insert(ItemCardWindow { item });
@@ -127,76 +203,11 @@ fn show_card(world: &mut World) {
     }
 }
 
-fn body(world: &World, item: ItemId) -> Box<dyn Scene> {
-    let assets = world.resource::<AssetServer>();
-    let def = item.get();
-    let ink = ui::theme::theme().surface_floating.on;
-    let tags: Vec<Box<dyn Scene>> = tags(def)
-        .into_iter()
-        .map(|(label, color)| {
-            ui::chip(ChipOptions {
-                label: label.to_owned(),
-                icon: None,
-                family: Family::outline(color),
-                link: None,
-            })
-        })
-        .collect();
-    let facts: Vec<Box<dyn Scene>> = facts(world, def)
-        .into_iter()
-        .map(|(fact, color)| -> Box<dyn Scene> {
-            Box::new(ui::styled_text(fact, color, typography::BODY))
-        })
-        .collect();
-    let usage: Vec<Box<dyn Scene>> = use_verb(def)
-        .map(|verb| -> Box<dyn Scene> {
-            let usage = format!("Double-click it in your bag to {verb} it");
-            Box::new(ui::styled_text(
-                usage,
-                ink.with_alpha(0.6),
-                typography::CAPTION,
-            ))
-        })
-        .into_iter()
-        .collect();
-    let flavor = RichText {
-        pieces: vec![RichPiece::Span(RichSpan {
-            voice: TextVoice::Whisper,
-            ..RichSpan::plain(def.flavor)
-        })],
-        size: typography::BODY.font_size,
-        color: ink,
-    };
-    Box::new(bsn! {
-        Node {
-            flex_direction: FlexDirection::Column,
-            row_gap: Val::Px({spacing::L}),
-            padding: {UiRect::all(Val::Px(spacing::XL))},
-            width: Val::Percent(100.0),
-        }
-        Children [
-            (
-                Node { column_gap: Val::Px({spacing::L}), align_items: AlignItems::Center }
-                Children [
-                    (
-                        Node { width: Val::Px({ICON}), height: Val::Px({ICON}), flex_shrink: 0.0 }
-                        component(ImageNode::new(assets.load(def.icon.0)))
-                    ),
-                    (
-                        Node { flex_direction: FlexDirection::Column }
-                        Children [
-                            {EntityScene(ui::styled_text(def.display_name, ink, typography::NAME))},
-                            {EntityScene(ui::styled_text(overview(def), ink.with_alpha(0.6), typography::CAPTION))},
-                        ]
-                    ),
-                ]
-            ),
-            ( Node { column_gap: Val::Px({spacing::M}), flex_wrap: FlexWrap::Wrap } Children [ {tags} ] ),
-            {EntityScene(ui::rich_text(flavor, false))},
-            ( Node { flex_direction: FlexDirection::Column, row_gap: Val::Px({spacing::S}) } Children [ {facts} ] ),
-            {usage},
-        ]
-    })
+fn padded(sheet: Box<dyn Scene>) -> impl Scene {
+    bsn! {
+        Node { padding: {UiRect::all(Val::Px(spacing::XL))}, width: Val::Percent(100.0) }
+        Children [ {EntityScene(sheet)} ]
+    }
 }
 
 fn tags(def: &ItemDef) -> Vec<(&'static str, Color)> {

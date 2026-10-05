@@ -5,7 +5,7 @@ use bevy_asset::Handle;
 use bevy_color::{Alpha, Color};
 use bevy_ecs::hierarchy::{ChildOf, Children};
 use bevy_ecs::prelude::*;
-use bevy_picking::prelude::{Click, Over, Pickable, Pointer};
+use bevy_picking::prelude::{Click, Over, Pickable, Pointer, PointerButton};
 use bevy_scene::{EntityScene, Scene, bsn, on, template_value};
 use bevy_time::Time;
 use bevy_ui::widget::ImageNode;
@@ -474,6 +474,9 @@ fn pick_on_click(
     is_list: Query<(), With<ChoiceList>>,
     mut commands: Commands,
 ) {
+    if click.button != PointerButton::Primary {
+        return;
+    }
     let Ok(row) = rows.get(click.entity) else {
         return;
     };

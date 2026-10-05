@@ -1144,7 +1144,7 @@ fn tag(label: &str, color: Color) -> ChipOptions {
         label: label.to_owned(),
         icon: None,
         family: ui::Family::outline(color),
-        link: None,
+        inspect: None,
     }
 }
 
@@ -1153,13 +1153,13 @@ fn reward(assets: &AssetServer) -> ChipOptions {
         label: "+1".to_owned(),
         icon: Some(assets.load("icons/misc/scroll.png")),
         family: ui::Family::outline(palette::EMERALD_70),
-        link: Some(ui::LinkOptions {
+        inspect: Some(ui::InspectableOptions {
             tooltip: ui::TooltipText {
                 title: "Road Pass".to_owned(),
                 lines: vec!["Material · bound".to_owned()],
-                hint: Some("Click for more information".to_owned()),
+                hint: Some("Right-click for more information".to_owned()),
             },
-            on_tap: ui::OnTap::new(|_| {}),
+            on_inspect: ui::OnTap::new(|_| {}),
         }),
     }
 }
@@ -1173,7 +1173,7 @@ fn cost(assets: &AssetServer, count: u32, met: bool) -> ChipOptions {
         } else {
             palette::CRIMSON_70
         }),
-        link: None,
+        inspect: None,
     }
 }
 
@@ -1452,7 +1452,7 @@ fn list_detail_scene() -> Box<dyn Scene> {
     boxed(bsn! {
         Node { width: Val::Px(640.0), height: Val::Px(360.0) }
         BackgroundColor({theme().surface_floating.base})
-        Children [ {EntityScene(split_view(list, detail))} ]
+        Children [ {EntityScene(split_view(list, boxed(ui::scrolled(detail))))} ]
     })
 }
 

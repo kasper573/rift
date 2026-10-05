@@ -11,6 +11,7 @@ import {
   holding,
   outsideCard,
   probe,
+  rightClickUi,
   waitFor,
   waitForWorld,
 } from "../helpers/game";
@@ -50,19 +51,26 @@ test(
         await dragUi(page, title, by);
         await page.waitForTimeout(700);
       }
-      await caption(page, "Click an item for its card: what it does, and a line of lore");
-      await clickUi(page, outsideCard(await probe(page), SHIELD));
+      await caption(page, "Right-click an item for its card: what it does, and a line of lore");
+      await rightClickUi(page, outsideCard(await probe(page), SHIELD));
       await waitFor(page, ({ item_card }) => item_card?.item === "BoneShield", "the shield's card never opened");
       await page.waitForTimeout(3500);
-      await caption(page, "One card at a time: click another item and the card follows");
-      await clickUi(page, outsideCard(await probe(page), SWORD));
+      await caption(page, "One card at a time: right-click another item and the card follows");
+      await rightClickUi(page, outsideCard(await probe(page), SWORD));
       await waitFor(page, ({ item_card }) => item_card?.item === "RustySword", "the sword's card never opened");
       await page.waitForTimeout(2500);
       await caption(page, "Double-click an item to use it — or, for gear, to wear it");
       await doubleClickUi(page, outsideCard(await probe(page), SWORD));
       await waitFor(page, (snapshot) => holding(snapshot, "RustySword") === 0, "the sword was never worn");
       await page.waitForTimeout(2000);
-      await caption(page, "Worn gear opens its card too, and a double-click takes it off");
+      await caption(page, "Worn gear has a card too…");
+      await rightClickUi(page, outsideCard(await probe(page), SHIELD));
+      await waitFor(page, ({ item_card }) => item_card?.item === "BoneShield", "the shield's card never opened");
+      await page.waitForTimeout(800);
+      await rightClickUi(page, outsideCard(await probe(page), SWORD));
+      await waitFor(page, ({ item_card }) => item_card?.item === "RustySword", "the worn sword's card never opened");
+      await page.waitForTimeout(2000);
+      await caption(page, "…and a double-click takes it off");
       await doubleClickUi(page, outsideCard(await probe(page), SWORD));
       await waitFor(page, (snapshot) => holding(snapshot, "RustySword") === 1, "the sword was never taken off");
       await page.waitForTimeout(2000);

@@ -7,7 +7,7 @@ use bevy_ui::widget::ImageNode;
 use bevy_ui::{AlignItems, BorderRadius, Node, UiRect, Val};
 
 use crate::component;
-use crate::components::link::{LinkOptions, link};
+use crate::components::inspectable::{InspectableOptions, inspectable};
 use crate::components::text::styled_text;
 use crate::style::Style;
 use crate::theme::Family;
@@ -20,7 +20,7 @@ pub struct ChipOptions {
     pub label: String,
     pub icon: Option<Handle<Image>>,
     pub family: Family,
-    pub link: Option<LinkOptions>,
+    pub inspect: Option<InspectableOptions>,
 }
 
 pub fn chip(options: ChipOptions) -> Box<dyn Scene> {
@@ -28,10 +28,13 @@ pub fn chip(options: ChipOptions) -> Box<dyn Scene> {
         label,
         icon,
         family,
-        link: linked,
+        inspect,
     } = options;
-    match linked {
-        Some(linked) => Box::new(link(linked, face(label, icon, family, Pickable::IGNORE))),
+    match inspect {
+        Some(inspect) => Box::new(inspectable(
+            inspect,
+            face(label, icon, family, Pickable::IGNORE),
+        )),
         None => Box::new(face(
             label,
             icon,

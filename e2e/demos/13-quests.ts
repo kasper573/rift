@@ -12,6 +12,7 @@ import {
   hoverUi,
   onQuest,
   probe,
+  rightClickUi,
   waitFor,
   waitForWorld,
   type Snapshot,
@@ -82,8 +83,8 @@ test(
       await page.waitForTimeout(1500);
       await clickUi(page, logRow(await probe(page), "Low Tide"));
       await page.waitForTimeout(2500);
-      await caption(page, "Click a reward for its item card", { at: "top" });
-      await clickUi(page, BAIT);
+      await caption(page, "Right-click a reward for its item card", { at: "top" });
+      await rightClickUi(page, BAIT);
       await waitFor(page, ({ item_card }) => item_card?.item === "FishingBait", "the bait's card never opened");
       await page.waitForTimeout(3500);
       await focusGame(page);

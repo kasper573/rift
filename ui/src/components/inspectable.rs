@@ -6,22 +6,22 @@ use crate::drag::OnTap;
 use crate::{Align, Side, component};
 
 #[derive(Clone)]
-pub struct LinkOptions {
+pub struct InspectableOptions {
     pub tooltip: TooltipText,
-    pub on_tap: OnTap,
+    pub on_inspect: OnTap,
 }
 
-pub fn link(options: LinkOptions, content: impl Scene) -> impl Scene {
-    let LinkOptions {
+pub fn inspectable(options: InspectableOptions, content: impl Scene) -> impl Scene {
+    let InspectableOptions {
         tooltip: text,
-        on_tap,
+        on_inspect,
     } = options;
     bsn! {
         {tooltip(false)}
         Node
-        component(on_tap)
+        component(on_inspect)
         Pickable { should_block_lower: true, is_hoverable: true }
-        on(follow)
+        on(inspect)
         Children [
             {EntityScene(content)},
             (
@@ -32,8 +32,8 @@ pub fn link(options: LinkOptions, content: impl Scene) -> impl Scene {
     }
 }
 
-fn follow(mut click: On<Pointer<Click>>, taps: Query<&OnTap>, mut commands: Commands) {
-    if click.button != PointerButton::Primary {
+fn inspect(mut click: On<Pointer<Click>>, taps: Query<&OnTap>, mut commands: Commands) {
+    if click.button != PointerButton::Secondary {
         return;
     }
     let Ok(tap) = taps.get(click.entity) else {

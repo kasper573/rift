@@ -200,7 +200,7 @@ fn tag_chip(label: &str, color: Color) -> impl Scene {
             active: Color::NONE,
             border: color,
         },
-        link: None,
+        inspect: None,
     })
 }
 

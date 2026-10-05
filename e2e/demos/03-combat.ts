@@ -56,8 +56,6 @@ test(
       }
       await caption(page, "Kills earn experience — see the xp under your name");
       await page.waitForTimeout(3000);
-      await focusGame(page);
-      if ((await probe(page)).item_card) await page.keyboard.press("Escape");
       await page.keyboard.press("KeyI");
 
       await caption(page, "Pick a fight, then run for town");

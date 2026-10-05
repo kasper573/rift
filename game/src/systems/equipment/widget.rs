@@ -126,7 +126,7 @@ fn worn_slot(slot: EquipmentSlot, item: crate::data::item::Id, icon: Handle<Imag
     let tip = TooltipText {
         title: def.display_name.to_owned(),
         lines: vec![card::overview(def)],
-        hint: Some("Click for more information · double-click to take it off".to_owned()),
+        hint: Some("Right-click for more information · double-click to take it off".to_owned()),
     };
     bsn! {
         template_value(slot_node())
@@ -134,17 +134,15 @@ fn worn_slot(slot: EquipmentSlot, item: crate::data::item::Id, icon: Handle<Imag
         component(BorderColor::all(SLOT_BORDER))
         {tooltip(false)}
         on(move |click: On<Pointer<Click>>, mut commands: Commands| {
-            if click.button != PointerButton::Primary {
-                return;
-            }
-            let take_off = click.count.is_multiple_of(2);
-            commands.queue(move |world: &mut World| {
-                if take_off {
-                    session::unequip(world, slot);
-                } else {
-                    card::open(world, item);
+            match click.button {
+                PointerButton::Primary if click.count.is_multiple_of(2) => {
+                    commands.queue(move |world: &mut World| session::unequip(world, slot));
                 }
-            });
+                PointerButton::Secondary => {
+                    commands.queue(move |world: &mut World| card::open(world, item));
+                }
+                _ => {}
+            }
         })
         Children [
             (

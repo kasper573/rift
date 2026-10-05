@@ -10,6 +10,7 @@ import {
   holding,
   hoverUi,
   probe,
+  rightClickUi,
   travelTo,
   waitFor,
   waitForWorld,
@@ -43,10 +44,10 @@ test(
       await caption(page, "Twenty Gold buys a pass", { at: "top" });
       await hoverUi(page, "Here, for your trouble.");
       await page.waitForTimeout(1500);
-      await caption(page, "Hover what a choice gives you for a glimpse of it — click for its card", { at: "top" });
+      await caption(page, "Hover what a choice gives you for a glimpse of it — right-click for its card", { at: "top" });
       await hoverUi(page, PASS);
       await page.waitForTimeout(2500);
-      await clickUi(page, PASS);
+      await rightClickUi(page, PASS);
       await waitFor(page, ({ item_card }) => item_card?.item === "RoadPass", "the pass's card never opened");
       await page.waitForTimeout(4000);
       await caption(page, "Esc closes the card, and the conversation carries on", { at: "top" });

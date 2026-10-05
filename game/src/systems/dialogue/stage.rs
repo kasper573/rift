@@ -600,7 +600,7 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView) -> ChoiceOptions {
                 } else {
                     palette::CRIMSON_70
                 }),
-                link: None,
+                inspect: None,
             },
             ChoiceChip::Pays { item, count, have } => ChipOptions {
                 label: count.to_string(),
@@ -610,13 +610,13 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView) -> ChoiceOptions {
                 } else {
                     palette::CRIMSON_70
                 }),
-                link: None,
+                inspect: None,
             },
             ChoiceChip::Gets { item, count } => ChipOptions {
                 label: format!("+{count}"),
                 icon: Some(assets.load(item.get().icon.0)),
                 family: Family::outline(palette::EMERALD_70),
-                link: Some(card::link(*item)),
+                inspect: Some(card::inspectable(*item)),
             },
         })
         .collect();
@@ -625,7 +625,7 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView) -> ChoiceOptions {
             label: warn.clone(),
             icon: None,
             family: Family::outline(palette::CRIMSON_80),
-            link: None,
+            inspect: None,
         });
     }
     ChoiceOptions {
@@ -653,7 +653,7 @@ fn waiting_chip(assets: &AssetServer, label: String) -> impl Scene {
             base: ui::theme::theme().surface_trough.base,
             ..Family::outline(palette::AMBER_70)
         },
-        link: None,
+        inspect: None,
     });
     bsn! {
         {chip}

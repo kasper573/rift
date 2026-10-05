@@ -58,8 +58,6 @@ test(
       await pick(page, "Follow the map.");
       await waitFor(page, (snapshot) => onQuest(snapshot, "XMarksTheSpot"), "the map's quest never started");
       await focusGame(page);
-      await page.keyboard.press("Escape");
-      await waitFor(page, ({ item_card }) => item_card === null, "the item card never closed");
       await page.keyboard.press("KeyI");
 
       await caption(page, "The cross is in the forest");

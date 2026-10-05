@@ -10,7 +10,9 @@ use crate::core::sfx::SfxId;
 use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::data::item::Id as ItemId;
 use crate::systems::hud;
-use crate::systems::item::widget::{SlotSecondaryClicked, SlotVerdict, slot_verdict_source};
+use crate::systems::item::widget::{
+    SlotRightClickOverride, SlotVerdict, slot_right_click_override, slot_verdict_source,
+};
 use crate::systems::item::{Inventory, ItemCategory, ItemStack, card};
 use crate::systems::player::session::Viewpoint;
 use crate::systems::scene::Scene as GameScene;
@@ -20,13 +22,20 @@ const WINDOW_ID: &str = "Shop";
 const WINDOW_POS: Vec2 = Vec2::new(24.0, 96.0);
 const WINDOW_SIZE: Vec2 = Vec2::new(620.0, 400.0);
 const ICON: f32 = 28.0;
-const BIG_ICON: f32 = 48.0;
 
 pub struct ShopWindowPlugin;
 
 impl Plugin for ShopWindowPlugin {
     fn build(&self, app: &mut App) {
         slot_verdict_source(app, verdict);
+        slot_right_click_override(
+            app,
+            SlotRightClickOverride {
+                active: selling,
+                act: request_sale,
+                hint: "Right-click to sell",
+            },
+        );
         app.init_resource::<Browse>()
             .add_systems(
                 Update,
@@ -37,8 +46,7 @@ impl Plugin for ShopWindowPlugin {
             .add_systems(
                 OnExit(GameScene::Area),
                 (crate::systems::scene::despawn_all::<ShopPanel>, forget),
-            )
-            .add_observer(sell_on_secondary_click);
+            );
     }
 }
 
@@ -271,7 +279,7 @@ fn contents(world: &World, shelf: &Shelf) -> Box<dyn Scene> {
         })
     };
     let detail: Box<dyn Scene> = match wares.get(selected) {
-        Some(ware) => Box::new(detail(assets, shelf, ware, selected)),
+        Some(ware) => Box::new(detail(world, shelf, ware, selected)),
         None => Box::new(bsn! { Node }),
     };
     let wants = shop.wants();
@@ -422,9 +430,10 @@ fn row(
     })
 }
 
-fn detail(assets: &AssetServer, shelf: &Shelf, ware: &Ware, index: usize) -> impl Scene + use<> {
-    let ink = ui::theme::theme().surface_floating.on;
-    let def = ware.item.get();
+fn detail(world: &World, shelf: &Shelf, ware: &Ware, index: usize) -> impl Scene + use<> {
+    let assets = world.resource::<AssetServer>();
+    let family = ui::theme::theme().surface_floating;
+    let ink = family.on;
     let costs: Vec<Box<dyn Scene>> = ware
         .price
         .iter()
@@ -448,39 +457,36 @@ fn detail(assets: &AssetServer, shelf: &Shelf, ware: &Ware, index: usize) -> imp
         .then(|| -> Box<dyn Scene> { Box::new(trade_button(shelf.tab, ware, index)) })
         .into_iter()
         .collect();
-    let category = match ware.count {
-        1 => def.category().label().to_owned(),
-        count => format!("{} · ×{count}", def.category().label()),
+    let price = match ware.count {
+        1 => "Price".to_owned(),
+        count => format!("Price for {count}"),
     };
-    let header = bsn! {
-        Node { column_gap: Val::Px({spacing::L}), align_items: AlignItems::Center }
+    let sheet = card::sheet(world, ware.item);
+    bsn! {
+        Node { flex_direction: FlexDirection::Column, width: Val::Percent(100.0), height: Val::Percent(100.0) }
         Children [
             (
-                Node { width: Val::Px({BIG_ICON}), height: Val::Px({BIG_ICON}) }
-                component(ImageNode::new(assets.load(def.icon.0)))
+                Node { flex_grow: 1.0, min_height: Val::Px(0.0) }
+                Children [ {EntityScene(ui::scrolled(Box::new(bsn! {
+                    Node { padding: {UiRect::all(Val::Px(spacing::XL))}, width: Val::Percent(100.0) }
+                    Children [ {EntityScene(sheet)} ]
+                })))} ]
             ),
             (
-                Node { flex_direction: FlexDirection::Column }
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px({spacing::M}),
+                    padding: {UiRect::all(Val::Px(spacing::XL))},
+                    border: {UiRect::top(Val::Px(1.0))},
+                }
+                component(BorderColor::all(family.border))
                 Children [
-                    {EntityScene(ui::styled_text(def.display_name, ink, typography::NAME))},
-                    {EntityScene(ui::styled_text(category, ink.with_alpha(0.6), typography::CAPTION))},
+                    {EntityScene(ui::styled_text(price, ink.with_alpha(0.6), typography::LABEL))},
+                    ( Node { flex_direction: FlexDirection::Column, row_gap: Val::Px({spacing::M}) } Children [ {costs} ] ),
+                    ( Node { flex_direction: FlexDirection::Column, row_gap: Val::Px({spacing::S}) } Children [ {notes} ] ),
+                    {action},
                 ]
             ),
-        ]
-    };
-    bsn! {
-        Node {
-            flex_direction: FlexDirection::Column,
-            row_gap: Val::Px({spacing::L}),
-            padding: {UiRect::all(Val::Px(spacing::XL))},
-            width: Val::Percent(100.0),
-        }
-        Children [
-            {EntityScene(ui::link(card::link(ware.item), header))},
-            {EntityScene(ui::styled_text("Price", ink.with_alpha(0.6), typography::LABEL))},
-            ( Node { flex_direction: FlexDirection::Column, row_gap: Val::Px({spacing::M}) } Children [ {costs} ] ),
-            ( Node { flex_direction: FlexDirection::Column, row_gap: Val::Px({spacing::S}) } Children [ {notes} ] ),
-            {action},
         ]
     }
 }
@@ -528,7 +534,7 @@ fn price_chip(assets: &AssetServer, inventory: &Inventory, stack: ItemStack) -> 
         } else {
             palette::CRIMSON_70
         }),
-        link: None,
+        inspect: None,
     })
 }
 
@@ -581,9 +587,8 @@ fn paid(pays: &[ItemStack], count: u32) -> String {
         .join(" + ")
 }
 
-fn sell_on_secondary_click(clicked: On<SlotSecondaryClicked>, mut commands: Commands) {
-    let slot = clicked.slot;
-    commands.queue(move |world: &mut World| request_sale(world, slot));
+fn selling(world: &World) -> bool {
+    *world.resource::<Mode>() == Mode::Play && shown(world).is_some()
 }
 
 fn request_sale(world: &mut World, slot: u32) {

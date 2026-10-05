@@ -27,8 +27,8 @@ pub fn split_view(list: Box<dyn Scene>, detail: Box<dyn Scene>) -> impl Scene {
                 Children [ {EntityScene(scrolled(list))} ]
             ),
             (
-                Node { flex_grow: 1.0, height: Val::Percent(100.0) }
-                Children [ {EntityScene(scrolled(detail))} ]
+                Node { flex_grow: 1.0, min_width: Val::Px(0.0), height: Val::Percent(100.0) }
+                Children [ {EntityScene(detail)} ]
             ),
         ]
     }

@@ -251,7 +251,7 @@ fn contents(world: &World, page: &Page) -> Box<dyn Scene> {
         Some(quest) => Box::new(detail(assets, page, quest)),
         None => Box::new(bsn! { Node }),
     };
-    Box::new(ui::split_view(list, detail))
+    Box::new(ui::split_view(list, Box::new(ui::scrolled(detail))))
 }
 
 fn empty_note(tab: LogTab) -> &'static str {

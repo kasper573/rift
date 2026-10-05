@@ -12,6 +12,8 @@ use crate::systems::hud::{
 };
 use ui::component;
 
+const INSPECT_HINT: &str = "Right-click for more information";
+
 #[derive(Component, Default, Clone)]
 pub(super) struct InventoryGrid;
 
@@ -45,9 +47,21 @@ pub fn slot_note_source(app: &mut App, source: SlotNoteSource) {
         .push(source);
 }
 
-#[derive(Event, Clone, Copy, Debug)]
-pub struct SlotSecondaryClicked {
-    pub slot: u32,
+#[derive(Clone, Copy)]
+pub struct SlotRightClickOverride {
+    pub active: fn(&World) -> bool,
+    pub act: fn(&mut World, u32),
+    pub hint: &'static str,
+}
+
+#[derive(Resource, Default)]
+struct SlotRightClickOverrides(Vec<SlotRightClickOverride>);
+
+pub fn slot_right_click_override(app: &mut App, takeover: SlotRightClickOverride) {
+    app.world_mut()
+        .get_resource_or_init::<SlotRightClickOverrides>()
+        .0
+        .push(takeover);
 }
 
 pub struct InventoryWindow;
@@ -97,6 +111,7 @@ struct CellData {
 
 struct Filled {
     item: ItemId,
+    right_click: &'static str,
     icon: Handle<Image>,
     count: u32,
     notes: Vec<String>,
@@ -125,6 +140,7 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
         .get_resource::<SlotNotes>()
         .map(|notes| notes.0.as_slice())
         .unwrap_or_default();
+    let right_click = right_click_override(world).map_or(INSPECT_HINT, |takeover| takeover.hint);
     (0..max)
         .map(|slot| CellData {
             slot,
@@ -134,6 +150,7 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
                     let def = stack.item.get();
                     Filled {
                         item: stack.item,
+                        right_click,
                         icon: assets.load(def.icon.0),
                         count: stack.count,
                         notes: bound_note(def)
@@ -156,7 +173,14 @@ fn cell_key(cell: &CellData) -> u64 {
     let mut hasher = std::hash::DefaultHasher::new();
     cell.slot.hash(&mut hasher);
     if let Some(filled) = &cell.filled {
-        (filled.item, filled.count, &filled.notes, &filled.verdict).hash(&mut hasher);
+        (
+            filled.item,
+            filled.right_click,
+            filled.count,
+            &filled.notes,
+            &filled.verdict,
+        )
+            .hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -199,8 +223,8 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
             .chain(verdict)
             .collect(),
         hint: Some(match card::use_verb(def) {
-            Some(verb) => format!("Click for more information · double-click to {verb}"),
-            None => "Click for more information".to_owned(),
+            Some(verb) => format!("{} · double-click to {verb}", filled.right_click),
+            None => filled.right_click.to_owned(),
         }),
     };
     let item = filled.item;
@@ -211,20 +235,14 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
         {tooltip(false)}
         component(Carriable { image: filled.icon.clone(), payload: slot as u64 })
         on(move |click: On<Pointer<Click>>, keys: Res<ButtonInput<KeyCode>>, mut commands: Commands| {
-            match click.button {
-                PointerButton::Primary => {
-                    let tap = if keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight) {
-                        Tap::Drop
-                    } else if click.count.is_multiple_of(2) {
-                        Tap::Use
-                    } else {
-                        Tap::Inspect
-                    };
-                    commands.queue(move |world: &mut World| act(world, slot, item, tap));
-                }
-                PointerButton::Secondary => commands.trigger(SlotSecondaryClicked { slot }),
-                PointerButton::Middle => {}
-            }
+            let dropping = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+            let tap = match click.button {
+                PointerButton::Primary if dropping => Tap::Drop,
+                PointerButton::Primary if click.count.is_multiple_of(2) => Tap::Use,
+                PointerButton::Secondary => Tap::RightClick,
+                _ => return,
+            };
+            commands.queue(move |world: &mut World| act(world, slot, item, tap));
         })
         Children [
             (
@@ -251,15 +269,27 @@ fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
 
 #[derive(Clone, Copy)]
 enum Tap {
-    Inspect,
+    RightClick,
     Use,
     Drop,
 }
 
 fn act(world: &mut World, slot: u32, item: ItemId, tap: Tap) {
     match tap {
-        Tap::Inspect => card::open(world, item),
+        Tap::RightClick => match right_click_override(world) {
+            Some(takeover) => (takeover.act)(world, slot),
+            None => card::open(world, item),
+        },
         Tap::Use => session::use_item(world, slot),
         Tap::Drop => session::drop_item(world, slot),
     }
+}
+
+fn right_click_override(world: &World) -> Option<SlotRightClickOverride> {
+    world
+        .get_resource::<SlotRightClickOverrides>()?
+        .0
+        .iter()
+        .copied()
+        .find(|takeover| (takeover.active)(world))
 }
