@@ -57,8 +57,7 @@ pub use dialog::{dialog, dialog_close};
 pub use dialogue::{
     ChoiceList, ChoiceOptions, ChoicePicked, ChoiceRefused, ChoiceRow, DialogueBox,
     DialogueBoxOptions, DialoguePanelOptions, choice_list, dialogue_box, dialogue_choices,
-    dialogue_panel, dialogue_typing, pick_choice, pick_choice_at, set_dialogue_status,
-    shake_choice, step_choice,
+    dialogue_panel, dialogue_typing, pick_choice, pick_choice_at, shake_choice, step_choice,
 };
 pub use input::{
     CatalogEntry, ClickGesture, DragGesture, InputCatalog, InputLabel, InputRef, KeyGesture,

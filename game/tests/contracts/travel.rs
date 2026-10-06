@@ -15,8 +15,8 @@ use game::systems::notification::Notification;
 use game::systems::player::commands_locked;
 
 use crate::support::{
-    Sim, conversation, count, give, heard_the_news, labels, leave, pick, refusal, spoken, talk,
-    townsperson,
+    Sim, conversation, count, errors, give, heard_the_news, labels, leave, locked, pick, spoken,
+    talk, townsperson,
 };
 
 fn forest_road(sim: &Sim) -> (u32, Rect<Tiles>) {
@@ -72,10 +72,9 @@ fn without_a_pass_the_forest_road_is_ground_and_ilsa_halts_you_on_it() {
     assert!(road.contains(position(sim.world(), player).expect("position")));
     assert!(commands_locked(sim.world(), player));
     assert!(!labels(&halt).contains(&"I have a Road Pass.".to_owned()));
-    assert_eq!(
-        refusal(&halt, "I'm ready for the forest road.").as_deref(),
-        Some("Needs Level 3")
-    );
+    assert!(locked(&halt, "I'm ready for the forest road."));
+    pick(&mut sim, 1, player, "I'm ready for the forest road.");
+    assert_eq!(errors(&sim, 1), vec!["Needs Level 3".to_owned()]);
 
     leave(&mut sim, 1, player);
     head_for_the_forest_road(&mut sim, 1);
@@ -147,7 +146,7 @@ fn ilsa_trades_a_road_pass_for_a_fish_and_bram_only_looks_at_it() {
     leave(&mut sim, 1, player);
 
     let bram = talk(&mut sim, 1, player, NpcId::Bram);
-    assert_eq!(refusal(&bram, "Ilsa gave me this pass."), None);
+    assert!(!locked(&bram, "Ilsa gave me this pass."));
     pick(&mut sim, 1, player, "Ilsa gave me this pass.");
     let crossing = *sim
         .world()

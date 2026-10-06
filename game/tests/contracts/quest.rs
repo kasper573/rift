@@ -18,8 +18,8 @@ use game::systems::quest::{self, QuestId, QuestLog, QuestRequest, QuestResult};
 use game::systems::shop::ShopRequest;
 
 use crate::support::{
-    Sim, conversation, count, give, heard_the_news, labels, later, leave, open_with, pick, prop,
-    refusal, settle, slay, talk,
+    Sim, conversation, count, errors, give, heard_the_news, labels, later, leave, locked,
+    open_with, pick, prop, settle, slay, talk,
 };
 
 fn slot_of(sim: &mut Sim, player: Entity, item: ItemId) -> u32 {
@@ -111,7 +111,7 @@ fn delivering_completes_the_quest_once_and_unlocks_the_next_in_the_chain() {
     let gold = count(&mut sim, player, ItemId::Gold);
 
     let bram = talk(&mut sim, 1, player, NpcId::Bram);
-    assert!(refusal(&bram, "Bats in the Belfry").is_some());
+    assert!(!labels(&bram).contains(&"Bats in the Belfry".to_owned()));
     let thanks = pick(&mut sim, 1, player, "A Letter for the Captain").expect("thanks");
     assert_eq!(thanks.node, DialogueId::LetterThanks);
     let stale = thanks.step;
@@ -139,19 +139,18 @@ fn delivering_completes_the_quest_once_and_unlocks_the_next_in_the_chain() {
 
     let again = talk(&mut sim, 1, player, NpcId::Bram);
     assert!(!labels(&again).contains(&"A Letter for the Captain".to_owned()));
-    assert_eq!(refusal(&again, "Bats in the Belfry"), None);
+    assert!(!locked(&again, "Bats in the Belfry"));
 }
 
 #[test]
-fn a_chain_stays_locked_until_its_previous_quest_and_level_are_met() {
+fn a_chain_stays_hidden_until_its_previous_quest_and_level_are_met() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
+    level_up(&mut sim, player);
 
     let bram = talk(&mut sim, 1, player, NpcId::Bram);
-    assert!(refusal(&bram, "Bats in the Belfry").is_some());
-    pick(&mut sim, 1, player, "Bats in the Belfry");
-    assert!(log(&mut sim, player).active.is_empty());
+    assert!(!labels(&bram).contains(&"Bats in the Belfry".to_owned()));
 }
 
 #[test]
@@ -241,11 +240,14 @@ fn a_full_bag_refuses_the_reward_counting_space_after_the_hand_in() {
     talk(&mut sim, 1, player, NpcId::Mara);
     let thanks = pick(&mut sim, 1, player, "Tusks for the Chief").expect("thanks");
     assert_eq!(thanks.node, DialogueId::TusksThanks);
-    assert_eq!(refusal(&thanks, "I'll take the Bone Shield."), None);
-    let refused = pick(&mut sim, 1, player, "I'll take the Bone Shield.")
-        .and_then(|now| now.refused)
-        .map(|refused| refused.reason);
-    assert_eq!(refused.as_deref(), Some("Needs 1 free slot"));
+    assert!(!locked(&thanks, "I'll take the Bone Shield."));
+    let refused =
+        pick(&mut sim, 1, player, "I'll take the Bone Shield.").and_then(|now| now.refused);
+    assert!(refused.is_some());
+    assert_eq!(
+        errors(&sim, 1).last().map(String::as_str),
+        Some("Needs 1 free slot")
+    );
     assert_eq!(count(&mut sim, player, ItemId::OrcTusk), 7);
     assert_eq!(count(&mut sim, player, ItemId::BoneShield), 0);
     leave(&mut sim, 1, player);

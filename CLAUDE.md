@@ -57,6 +57,11 @@ Should contain no business logic, only data.
 - Never use comments as a way to give feedback to the prompter. This means comments should never refer to prompt specific details. Comments should be timeless and not rely on the reader being the person who prompted you to do some work.
 - Don't scatter duplicate comments describing how a specific mechanism works all over the codebase. Keep it in one place, ideally at the implementation of that mechanism. A common source of this type of bad hygiene is re-explaining a mechanism in the workflow, in env files, in call sites, and finally also in the source code implementation of the mechanism.
 
+## Content creation guidelines
+
+- No omniscient writing. Content only shows the player what their character could know at that point. A locked option the player has no reason to know about yet stays hidden until it unlocks, and a choice never spells out consequences the character couldn't foresee. The systems allow revealing more; the content chooses not to.
+- Show a locked or priced option only when the scene sets it up, so the NPC's words match what the options reveal. A trader laying out offers that each come at a price is the typical case: "I've got a few options for you, but each comes with its own set of challenges. Pick your poison:".
+
 
 ## Demo videos
 

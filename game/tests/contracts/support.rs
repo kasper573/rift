@@ -27,7 +27,7 @@ use game::systems::interact::InteractRequest;
 use game::systems::item::{self, Inventory, ItemStack};
 use game::systems::memory::Memory;
 use game::systems::movement::position;
-use game::systems::notification::{Notification, NotificationSent};
+use game::systems::notification::{Notification, NotificationKind, NotificationSent};
 use game::systems::npc::{self, Npc, Pack};
 use game::systems::player::{ClientId, Immortal, JoinRequest, Players};
 use game::systems::prop::Prop;
@@ -240,14 +240,21 @@ pub fn pick(sim: &mut Sim, client: u32, player: Entity, label: &str) -> Option<C
     conversation(sim, player)
 }
 
-pub fn refusal(conversation: &Conversation, label: &str) -> Option<String> {
+pub fn locked(conversation: &Conversation, label: &str) -> bool {
     conversation
         .choices
         .iter()
         .find(|choice| choice.label.words(&InputMap::default()) == label)
         .unwrap_or_else(|| panic!("no choice {label:?} in {:?}", labels(conversation)))
-        .refusal
-        .clone()
+        .locked
+}
+
+pub fn errors(sim: &Sim, client: u32) -> Vec<String> {
+    sim.notified(client)
+        .into_iter()
+        .filter(|sent| matches!(sent.notification.kind, NotificationKind::Error { .. }))
+        .map(|sent| sent.notification.text.words(&InputMap::default()))
+        .collect()
 }
 
 pub fn leave(sim: &mut Sim, client: u32, player: Entity) {

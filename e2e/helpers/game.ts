@@ -122,7 +122,6 @@ export interface Stage {
   typing: boolean;
   choices: StageChoice[];
   waiting: string | null;
-  status: string | null;
 }
 
 export interface NotificationBubble {

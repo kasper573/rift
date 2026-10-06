@@ -85,7 +85,6 @@ pub struct StageView {
     pub typing: bool,
     pub choices: Vec<StageChoice>,
     pub waiting: Option<DialogueId>,
-    pub status: Option<String>,
 }
 
 pub struct StageChoice {
@@ -112,11 +111,10 @@ pub fn view(world: &World) -> Option<StageView> {
             .iter()
             .map(|choice| StageChoice {
                 label: choice.label.words(world.resource::<InputMap>()),
-                locked: choice.refusal.is_some(),
+                locked: choice.locked,
             })
             .collect(),
         waiting: shown.waiting.map(|waiting| waiting.node),
-        status: shown.refusal.clone(),
     })
 }
 
@@ -182,7 +180,6 @@ struct Shown {
     choices: Vec<ChoiceView>,
     waiting: Option<WaitingView>,
     waiting_until: Duration,
-    refusal: Option<String>,
     picked: bool,
     typed_since: Option<Duration>,
     faces: HashMap<Speaker, Face>,
@@ -336,7 +333,6 @@ impl Shown {
             choices: now.choices,
             waiting_until: time + lasting(now.waiting),
             waiting: now.waiting,
-            refusal: None,
             picked: false,
             typed_since: None,
             faces,
@@ -383,7 +379,6 @@ fn show_line(world: &mut World) {
     let speaker_face = line.face;
     if let Some(shown) = world.resource_mut::<Stage>().shown.as_mut() {
         shown.typed_since = None;
-        shown.refusal = None;
         shown.stale = false;
         if let Some(face) = speaker_face {
             shown.faces.insert(line.by, face);
@@ -508,58 +503,52 @@ fn count_down(world: &mut World) {
 fn on_picked(picked: On<ui::ChoicePicked>, mut commands: Commands) {
     let index = picked.index;
     commands.queue(move |world: &mut World| {
-        if *world.resource::<Mode>() != Mode::Play {
-            return;
+        if request_pick(world, index) {
+            chime(world, SfxId::UiPick);
         }
-        let Some(step) = world
-            .resource_mut::<Stage>()
-            .shown
-            .as_mut()
-            .and_then(|shown| {
-                shown.choices.get(index)?;
-                (!std::mem::replace(&mut shown.picked, true)).then_some(shown.step)
-            })
-        else {
-            return;
-        };
-        world.write_message(ConversationRequest::Pick {
-            step,
-            choice: index as u32,
-        });
-        chime(world, SfxId::UiPick);
     });
-}
-
-fn refuse(world: &mut World, refused: RefusedPick) {
-    if let Some(shown) = world.resource_mut::<Stage>().shown.as_mut() {
-        shown.refusal = Some(refused.reason.clone());
-    }
-    chime(world, SfxId::UiRefuse);
-    if let Some(list) = shown_choices(world) {
-        ui::shake_choice(world, list, refused.choice as usize);
-    }
-    if let Some(dialogue) = stage_box(world) {
-        ui::set_dialogue_status(world, dialogue, Some(refused.reason));
-    }
 }
 
 fn on_refused(refused: On<ui::ChoiceRefused>, mut commands: Commands) {
     let index = refused.index;
     commands.queue(move |world: &mut World| {
-        let mut stage = world.resource_mut::<Stage>();
-        let Some(shown) = stage.shown.as_mut() else {
-            return;
-        };
-        shown.refusal = shown
-            .choices
-            .get(index)
-            .and_then(|choice| choice.refusal.clone());
-        let refusal = shown.refusal.clone();
-        chime(world, SfxId::UiRefuse);
-        if let Some(dialogue) = stage_box(world) {
-            ui::set_dialogue_status(world, dialogue, refusal);
-        }
+        request_pick(world, index);
     });
+}
+
+fn request_pick(world: &mut World, index: usize) -> bool {
+    if *world.resource::<Mode>() != Mode::Play {
+        return false;
+    }
+    let Some(step) = world
+        .resource_mut::<Stage>()
+        .shown
+        .as_mut()
+        .and_then(|shown| {
+            shown.choices.get(index)?;
+            (!std::mem::replace(&mut shown.picked, true)).then_some(shown.step)
+        })
+    else {
+        return false;
+    };
+    world.write_message(ConversationRequest::Pick {
+        step,
+        choice: index as u32,
+    });
+    true
+}
+
+fn refuse(world: &mut World, refused: RefusedPick) {
+    let index = refused.choice as usize;
+    let shaken = world
+        .resource::<Stage>()
+        .shown
+        .as_ref()
+        .and_then(|shown| shown.choices.get(index))
+        .is_some_and(|choice| choice.locked);
+    if !shaken && let Some(list) = shown_choices(world) {
+        ui::shake_choice(world, list, index);
+    }
 }
 
 fn advance_on_click(click: On<Pointer<Click>>, input: ActionInput, mut commands: Commands) {
@@ -657,7 +646,6 @@ fn box_options(world: &World, typed: bool) -> Option<DialogueBoxOptions> {
             spectator_hint()
         },
         actions,
-        status: shown.refusal.clone(),
         advance: InputAction::Advance.into(),
         pick: InputAction::PickChoice.into(),
     })
@@ -756,7 +744,7 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView, index: usize) -> Ch
         label: choice.label.rich(),
         icon: choice.icon.as_ref().map(|icon| assets.load(icon.clone())),
         chips,
-        locked: choice.refusal.is_some(),
+        locked: choice.locked,
         shortcut: CHOICE_SHORTCUTS.get(index).map(|&action| action.into()),
     }
 }

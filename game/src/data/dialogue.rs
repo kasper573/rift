@@ -334,7 +334,6 @@ crate::table! {
                     &Notify(NotificationId::PellCallsGuards),
                     &SpawnNpcs { npc: NpcId::HarbourGuard, count: 2, near: SpawnNear::Speaker, shown: ShownFor::You },
                 ],
-                warn: Some("Pell calls the guards"),
                 ..Choice::SAY
             },
             Choice { label: &[plain("Leave.")], ..Choice::SAY },
@@ -361,14 +360,16 @@ crate::table! {
                     &Notify(NotificationId::PellDrawsKnife),
                     &SpawnNpcs { npc: NpcId::PellHostile, count: 1, near: SpawnNear::Speaker, shown: ShownFor::You },
                 ],
-                warn: Some("Pell fights you"),
                 ..Choice::SAY
             },
             Choice { label: &[plain("I'm leaving.")], ..Choice::SAY },
         ],
     },
     IlsaHello: DialogueNode {
-        lines: &[Line { by: Npc(NpcId::Ilsa), face: Some(Generic(Angry)), text: &[plain("The forest road is "), styled("closed", &[Fx::Ink(Ink::Danger)]), plain(". Orders from the harbour master.")] }],
+        lines: &[
+            Line { by: Npc(NpcId::Ilsa), face: Some(Generic(Angry)), text: &[plain("The forest road is "), styled("closed", &[Fx::Ink(Ink::Danger)]), plain(". Orders from the harbour master.")] },
+            Line { by: Npc(NpcId::Ilsa), face: Some(Generic(Thinking)), text: &[plain("Seasoned fighters excepted. Everyone else turns back.")] },
+        ],
         enter: &[],
         topics: true,
         choices: &[
@@ -381,7 +382,10 @@ crate::table! {
         ],
     },
     IlsaHalt: DialogueNode {
-        lines: &[Line { by: Npc(NpcId::Ilsa), face: Some(Generic(Angry)), text: &[styled("Halt!", &[Fx::Voice(Voice::Shout), Fx::Motion(Motion::Shake)]), plain(" Nobody takes the "), styled("forest road", &[Fx::Ink(Ink::Place)]), plain(" without a pass.")] }],
+        lines: &[
+            Line { by: Npc(NpcId::Ilsa), face: Some(Generic(Angry)), text: &[styled("Halt!", &[Fx::Voice(Voice::Shout), Fx::Motion(Motion::Shake)]), plain(" Nobody takes the "), styled("forest road", &[Fx::Ink(Ink::Place)]), plain(" without a pass.")] },
+            Line { by: Npc(NpcId::Ilsa), face: Some(Generic(Thinking)), text: &[plain("Unless you're seasoned enough to survive what's out there.")] },
+        ],
         enter: &[],
         topics: false,
         choices: &[
@@ -559,7 +563,7 @@ crate::table! {
                     &GotoNode(Id::UgraGrateful),
                 ],
                 reveal: &[Locked, Needs, Costs],
-                warn: Some("Permanent · Tusks for the Chief fails, and Mara won't forget it"),
+                warn: Some("Permanent · Tusks for the Chief fails"),
             },
             Choice {
                 label: &[plain("Keep them.")],

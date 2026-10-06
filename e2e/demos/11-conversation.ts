@@ -101,10 +101,10 @@ test(
       await caption(page, "What it took shows in the corner, over Grisha's bust", { at: "top" });
       await readToChoices(page, 1400);
       await page.waitForTimeout(1500);
-      await caption(page, "Can't afford it? Pick it anyway: it shakes and says why, and you can pick again", { at: "top" });
+      await caption(page, "Can't afford it? Pick it anyway: it shakes, an error says why, and you can pick again", { at: "top" });
       await focusGame(page);
       await page.keyboard.press("Digit1");
-      await waitFor(page, ({ stage }) => stage?.status, "the refused pick never said why");
+      await waitFor(page, ({ notifications }) => notifications.error?.startsWith("Needs") ?? false, "the refused pick never said why");
       await page.waitForTimeout(2500);
       await caption(page, "History is a window like any other: H opens it here too, over the conversation", { at: "top" });
       await page.keyboard.press("KeyH");

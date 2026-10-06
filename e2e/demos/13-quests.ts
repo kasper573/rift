@@ -140,8 +140,18 @@ test(
       await caption(page, "The XP brought a new level, which joins it right below", { at: "top" });
       await waitFor(page, (snapshot) => milestone(snapshot, "Level up"), "no level up", 20_000);
       await page.waitForTimeout(2500);
-      await caption(page, "Delivered. The next quest in the chain shows what it still needs", { at: "top" });
+      await caption(page, "Bram's next errand stays out of sight until you're ready for it", { at: "top" });
       await page.waitForTimeout(1500);
+      await talkTo(page, "Bram");
+      await readToChoices(page, 600);
+      await page.waitForTimeout(2500);
+      await focusGame(page);
+      await page.keyboard.press("Escape");
+      await conversationOver(page);
+
+      await caption(page, "(Admin shortcut: experience) At level 3 he has work for you", { at: "top" });
+      await admin(page, [["/xp 50", /granted 50 xp/]]);
+      await waitFor(page, (snapshot) => townsperson(snapshot, "Bram")?.marks.includes("QuestOffered"), "Bram never had work");
       await talkTo(page, "Bram");
       await readToChoices(page, 600);
       await hoverUi(page, "Bats in the Belfry");
@@ -175,11 +185,11 @@ test(
       await pick(page, "Tusks for the Chief");
       await onStage(page, "TusksThanks");
       await readToChoices(page, 1000);
-      await caption(page, "With a full bag the pick is refused and says why — space is counted after the tusks are handed in", {
+      await caption(page, "With a full bag the pick is refused with an error — space is counted after the tusks are handed in", {
         at: "top",
       });
       await pick(page, "I'll take the Bone Shield.");
-      await waitFor(page, ({ stage }) => stage?.status, "the full bag never refused the pick");
+      await waitFor(page, ({ notifications }) => notifications.error?.includes("free slot") ?? false, "the full bag never refused the pick");
       await page.waitForTimeout(3500);
       await pick(page, "Not yet.");
       await conversationOver(page);

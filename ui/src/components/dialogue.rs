@@ -10,8 +10,8 @@ use bevy_scene::{EntityScene, Scene, bsn, on, template_value};
 use bevy_time::Time;
 use bevy_ui::widget::ImageNode;
 use bevy_ui::{
-    AlignItems, BackgroundColor, BorderColor, BorderRadius, Checked, Display, FlexDirection,
-    JustifyContent, Node, Overflow, PositionType, UiRect, UiTransform, Val, Val2,
+    AlignItems, BackgroundColor, BorderColor, BorderRadius, Checked, Display, FlexDirection, Node,
+    Overflow, PositionType, UiRect, UiTransform, Val, Val2,
 };
 
 use crate::Side;
@@ -38,7 +38,6 @@ pub struct DialogueBoxOptions {
     pub choices: Vec<ChoiceOptions>,
     pub hint: Vec<RichPiece>,
     pub actions: Vec<Box<dyn Scene>>,
-    pub status: Option<String>,
     pub advance: InputRef,
     pub pick: InputRef,
 }
@@ -70,9 +69,6 @@ pub(crate) struct DialogueLine;
 
 #[derive(Component, Clone, Default)]
 pub(crate) struct DialogueContinue;
-
-#[derive(Component, Clone, Default)]
-pub(crate) struct DialogueStatus;
 
 #[derive(Component, Clone)]
 #[require(Node)]
@@ -113,7 +109,6 @@ pub fn dialogue_box(options: DialogueBoxOptions) -> impl Scene {
         choices,
         hint,
         actions,
-        status,
         advance,
         pick,
     } = options;
@@ -156,23 +151,6 @@ pub fn dialogue_box(options: DialogueBoxOptions) -> impl Scene {
             Children [ {actions} ]
         }
     });
-    let status_display = if status.is_some() {
-        Display::Flex
-    } else {
-        Display::None
-    };
-    let status = bsn! {
-        DialogueStatus
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(0.0),
-            right: Val::Px(0.0),
-            bottom: Val::Px({spacing::XXXL}),
-            justify_content: JustifyContent::Center,
-            display: {status_display},
-        }
-        Children [ {EntityScene(styled_text(status.unwrap_or_default(), palette::CRIMSON_80, typography::BODY))} ]
-    };
     let line = RichText {
         size: typography::LINE.font_size,
         ..line
@@ -198,7 +176,6 @@ pub fn dialogue_box(options: DialogueBoxOptions) -> impl Scene {
                 }
                 Children [ {EntityScene(continue_mark)} ]
             ),
-            {status},
             (
                 Node { position_type: PositionType::Absolute, bottom: Val::Px(-12.0), left: Val::Px({spacing::XL}) }
                 Children [ {EntityScene(key_hint(hint, theme().surface_trough))} ]
@@ -319,24 +296,6 @@ fn choice_row_at(world: &World, list: Entity, index: usize) -> Option<Entity> {
 
 pub fn dialogue_choices(world: &World, dialogue: Entity) -> Option<Entity> {
     descendant_with::<ChoiceList>(world, dialogue)
-}
-
-pub fn set_dialogue_status(world: &mut World, dialogue: Entity, status: Option<String>) {
-    let Some(holder) = descendant_with::<DialogueStatus>(world, dialogue) else {
-        return;
-    };
-    if let Some(mut node) = world.get_mut::<Node>(holder) {
-        node.display = if status.is_some() {
-            Display::Flex
-        } else {
-            Display::None
-        };
-    }
-    if let Some(text) = descendant_with::<bevy_ui::widget::Text>(world, holder)
-        && let Some(mut text) = world.get_mut::<bevy_ui::widget::Text>(text)
-    {
-        text.0 = status.unwrap_or_default();
-    }
 }
 
 pub fn dialogue_typing(world: &World, dialogue: Entity) -> Option<Entity> {

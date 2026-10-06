@@ -202,7 +202,6 @@ pub struct Conversation {
 pub struct RefusedPick {
     pub nth: u32,
     pub choice: u32,
-    pub reason: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -234,7 +233,7 @@ pub struct ChoiceView {
     pub tag: ChoiceTag,
     pub icon: Option<String>,
     pub chips: Vec<ChoiceChip>,
-    pub refusal: Option<String>,
+    pub locked: bool,
     pub warn: Option<String>,
 }
 
@@ -754,24 +753,13 @@ fn choice_view(world: &World, player: Entity, offer: &Offer) -> ChoiceView {
             item: stack.item,
             count: stack.count,
         });
-    let unmet = offer
-        .requires
-        .iter()
-        .find(|requirement| !requirement.met(world, player));
     ChoiceView {
         label: offer.label.clone(),
         tag: offer.tag,
         icon: offer.icon.map(|icon| icon.0.to_owned()),
         chips: needs.chain(pays).chain(gets).collect(),
-        refusal: unmet.map(|unmet| locked_reason(offer, *unmet)),
+        locked: !rule::met(world, player, &offer.requires),
         warn: offer.warn.map(str::to_owned),
-    }
-}
-
-fn locked_reason(offer: &Offer, unmet: &dyn Requirement) -> String {
-    match offer.reveals(ChoiceReveal::Needs) {
-        true => format!("Needs {}", unmet.describe()),
-        false => LOCKED.to_owned(),
     }
 }
 
@@ -799,16 +787,19 @@ fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) 
         costs: offer.costs,
         outcomes: &outcomes,
     };
-    let hidden_need =
-        !offer.reveals(ChoiceReveal::Needs) && !rule::met(world, player, &offer.requires);
+    let met = rule::met(world, player, &offer.requires);
     let said = HistoryEntry::of(HistoryTopic::Talk, offer.label.clone())
         .by(speaker_name(world, player, Speaker::Player))
         .mark(Some(HistoryMark::You));
     history::record(world, player, said);
     if let Err(refusal) = terms.settle(world, player, encounter) {
-        let reason = match hidden_need {
-            true => NO_LONGER.to_owned(),
-            false => refusal.0,
+        let reason = match (
+            met || offer.reveals(ChoiceReveal::Needs),
+            offer.reveals(ChoiceReveal::Locked),
+        ) {
+            (true, _) => refusal.0,
+            (false, true) => LOCKED.to_owned(),
+            (false, false) => NO_LONGER.to_owned(),
         };
         refuse(world, player, choice, reason);
         return;
@@ -822,17 +813,16 @@ fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) 
 }
 
 fn refuse(world: &mut World, player: Entity, choice: u32, reason: String) {
-    notification::record(
+    notification::notify(
         world,
         player,
-        &Notification::new(NotificationKind::error(), LineText::plain(reason.clone())),
+        Notification::new(NotificationKind::error(), LineText::plain(reason)),
     );
     if let Some(mut session) = world.get_mut::<ConversationSession>(player) {
         session.refusals += 1;
         session.refused = Some(RefusedPick {
             nth: session.refusals,
             choice,
-            reason,
         });
     }
     refresh_view(world, player);

@@ -160,7 +160,7 @@ crate::table! {
         rewards: &[ItemStack::new(ItemId::Gold, 25), ItemStack::new(ItemId::HealthPotion, 2)],
         pick_one: &[],
         xp: 150,
-        reveal: &[Locked, Needs, Gains],
+        reveal: &[Needs, Gains],
         repeat: Repeat::Once,
         time_limit: None,
         drops: &[QuestDrop {

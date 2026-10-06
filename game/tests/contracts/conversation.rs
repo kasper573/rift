@@ -18,7 +18,7 @@ use game::systems::npc::Npc;
 use game::systems::player::commands_locked;
 use game::systems::stat::{self, StatKind};
 
-use crate::support::Sim;
+use crate::support::{Sim, errors};
 
 fn townsperson(sim: &mut Sim, who: data::npc::Id) -> Entity {
     let world = sim.world();
@@ -141,7 +141,7 @@ fn a_choice_that_costs_too_much_changes_nothing() {
     let player = sim.join(1);
     let opened = talk(&mut sim, 1, player, data::npc::Id::Grisha);
     let index = choice(&opened, "Buy a round for the room.");
-    assert!(opened.choices[index as usize].refusal.is_none());
+    assert!(!opened.choices[index as usize].locked);
 
     sim.send(
         1,
@@ -154,10 +154,8 @@ fn a_choice_that_costs_too_much_changes_nothing() {
 
     let now = conversation(&mut sim, player).expect("still talking");
     assert_eq!(now.node, DialogueId::GrishaHello);
-    assert_eq!(
-        now.refused.map(|refused| (refused.choice, refused.reason)),
-        Some((index, "Needs 10 more Gold".to_owned()))
-    );
+    assert_eq!(now.refused.map(|refused| refused.choice), Some(index));
+    assert_eq!(errors(&sim, 1), vec!["Needs 10 more Gold".to_owned()]);
     assert_eq!(
         memory::recall(sim.world(), player, MemoryId::InnFavour),
         None

@@ -70,7 +70,7 @@ test(
         await talkTo(page, "Pell");
         await readToChoices(page, 900);
         await loseAtDice(page);
-        await caption(page, "Losing again? This row warns what it does before you pick it", { at: "top" });
+        await caption(page, "Losing again? Call him out — he won't take it quietly", { at: "top" });
         await hoverUi(page, "You're cheating.");
         await page.waitForTimeout(2500);
         await pick(page, "You're cheating.");
