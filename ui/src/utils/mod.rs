@@ -6,6 +6,7 @@ pub mod motion;
 pub mod opacity;
 pub mod overlay;
 pub mod place;
+pub mod presence;
 pub mod state;
 pub mod style;
 pub mod surface;

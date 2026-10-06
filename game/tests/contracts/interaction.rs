@@ -58,11 +58,11 @@ fn gold(sim: &mut Sim, player: Entity) -> u32 {
 fn reading_a_map_object_opens_its_conversation_with_the_object() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    let board = prop(&mut sim, PropId::HarbourNotices);
+    let board = prop(&mut sim, PropId::HarbourBoard);
 
     let opened = interact(&mut sim, 1, player, board);
 
-    assert_eq!(opened.node, DialogueId::HarbourNotices);
+    assert_eq!(opened.node, DialogueId::HarbourBoard);
     assert_eq!(opened.with, Some(board));
     assert!(commands_locked(sim.world(), player));
 }

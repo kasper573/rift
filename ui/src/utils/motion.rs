@@ -35,7 +35,7 @@ impl Easing {
         }
     }
 
-    fn eval(self, t: f32) -> f32 {
+    pub(crate) fn eval(self, t: f32) -> f32 {
         let [x1, y1, x2, y2] = self.control();
         CubicSegment::new_bezier_easing([x1, y1], [x2, y2]).ease(t)
     }
@@ -84,6 +84,14 @@ impl Transform2d {
         scale: Vec2::ONE,
         rotation: 0.0,
     };
+
+    pub const fn new(translation: Vec2, scale: f32) -> Transform2d {
+        Transform2d {
+            translation,
+            scale: Vec2::splat(scale),
+            rotation: 0.0,
+        }
+    }
 
     fn lerp(self, other: Transform2d, t: f32) -> Transform2d {
         Transform2d {

@@ -89,14 +89,21 @@ test(
       await readToChoices(page, 1400);
       await pick(page, "I'm listening.");
       await onStage(page, "PleaAnswer");
-      await caption(page, "Both answers are permanent. The card spells out each path", { at: "top" });
+      await caption(page, "Both answers are permanent, so this one shows everything: what it needs, what it costs, and a warning", {
+        at: "top",
+      });
       await readToChoices(page, 1400);
       await hoverUi(page, "Give her the tusks.");
       await page.waitForTimeout(4000);
       await pick(page, "Give her the tusks.");
       await onStage(page, "UgraGrateful");
       await waitFor(page, (snapshot) => finished(snapshot, "TusksForTheChief") === "Failed", "Mara's quest held");
-      await caption(page, "Mara's quest fails, and the choice is remembered", { at: "top" });
+      await waitFor(
+        page,
+        ({ feed }) => feed.includes("Quest failed · Tusks for the Chief"),
+        "the failed quest never showed in the feed",
+      );
+      await caption(page, "Mara's quest fails, in red in the corner, and the choice is remembered", { at: "top" });
       await readToChoices(page, 1400);
       await pick(page, "Rest easy, Ugra.");
       await conversationOver(page);

@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 
 use super::map::{self, InputAction};
-use crate::systems::dialogue::{history, stage};
+use crate::systems::dialogue::stage;
+use crate::systems::history::widget as history;
 use crate::systems::{hud, item};
 
 static LAYERS: &[fn(&mut World) -> bool] = &[

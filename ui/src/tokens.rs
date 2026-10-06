@@ -121,9 +121,10 @@ pub mod radius {
 
 pub mod layer {
     pub const BACKDROP: i32 = -1;
+    pub const BUBBLES: i32 = 0;
     pub const STAGE: i32 = 1;
     pub const WINDOWS: i32 = 2;
-    pub const NOTICES: i32 = 3;
+    pub const NOTIFICATIONS: i32 = 3;
     pub const ALERTS: i32 = 50;
     pub const SYSTEM: i32 = 100;
     pub const ANCHORED: i32 = 900;

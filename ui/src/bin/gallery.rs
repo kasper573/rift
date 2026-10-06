@@ -8,20 +8,22 @@ use ui::card::intent as card_intent;
 use ui::theme::theme;
 use ui::tokens::palette;
 use ui::{
-    Align, Announcement, AnnouncementKind, AnnouncementLane, ButtonIntent, ButtonSize, CardOptions,
+    AlertBar, Align, BubbleLine, BubbleTail, ButtonIntent, ButtonSize, Captions, CardOptions,
     Carriable, Carried, CarryTarget, CastDepth, CastMember, Check, ChipOptions, ChoiceOptions,
-    ConfirmOptions, DialogueBoxOptions, DialoguePanelOptions, MotionPreference, OnSettle, OnTap,
-    Orientation, RichPiece, RichSpan, RichText, Side, SonnerPosition, TextMotion, TextVoice,
-    Typewriter, WidgetOptions, accordion, accordion_body, accordion_content, accordion_header,
-    accordion_item, accordion_trigger, alert_dialog, alert_dialog_action, alert_dialog_cancel,
-    announcement_lane, avatar, avatar_fallback, button, button_styled, card, cast, checkbox,
-    checkbox_indicator, chip, choice_list, collapsible, collapsible_content, collapsible_trigger,
-    component, confirm_dialog, dialog, dialog_close, dialogue_box, dialogue_panel, key_hint,
-    list_header, popover, popover_content, popover_trigger, progress, progress_indicator,
-    radio_circle, radio_group, radio_indicator, radio_item, rich_text, scroll_area, scroll_bar,
-    scroll_thumb, scroll_viewport, separator, slider, slider_range, slider_thumb, slider_track,
-    sonner_close, split_view, switch, switch_thumb, tabs, tabs_list, tabs_trigger, text,
-    text_colored, toast, toaster, tooltip, tooltip_content, widget, window,
+    ConfirmOptions, DialogueBoxOptions, DialoguePanelOptions, FoldedSpeakers, Intro, LabelledLine,
+    Leaving, Milestones, MotionPreference, OnSettle, OnTap, Orientation, RichPiece, RichSpan,
+    RichText, Side, SonnerPosition, SpeechBubble, TextMotion, TextVoice, Typewriter, WidgetOptions,
+    accordion, accordion_body, accordion_content, accordion_header, accordion_item,
+    accordion_trigger, alert_bar, alert_dialog, alert_dialog_action, alert_dialog_cancel, avatar,
+    avatar_fallback, button, button_styled, captions, card, cast, checkbox, checkbox_indicator,
+    chip, choice_list, collapsible, collapsible_content, collapsible_trigger, compact_toast,
+    compact_toaster, component, confirm_dialog, dialog, dialog_close, dialogue_box, dialogue_panel,
+    intro, key_hint, list_header, milestones, popover, popover_content, popover_trigger, progress,
+    progress_indicator, radio_circle, radio_group, radio_indicator, radio_item, rich_text,
+    scroll_area, scroll_bar, scroll_thumb, scroll_viewport, separator, slider, slider_range,
+    slider_thumb, slider_track, sonner_close, speech_bubble, split_view, switch, switch_thumb,
+    tabs, tabs_list, tabs_trigger, text, text_colored, toast, toaster, tooltip, tooltip_content,
+    widget, window,
 };
 
 const WINDOW: Vec2 = Vec2::new(1600.0, 900.0);
@@ -85,8 +87,14 @@ fn main() {
                 rebuild_scene,
                 animate_progress,
                 stage_keys,
-                run_down_lanes,
                 rotate_cast,
+                cycle_bubbles,
+                visit_bubbles,
+                cycle_captions,
+                cycle_alerts,
+                cycle_milestones,
+                cycle_intro,
+                feed_toasts,
             ),
         )
         .run();
@@ -102,6 +110,7 @@ const CARRY: ui::InputRef = ui::InputRef(6);
 const INVENTORY: ui::InputRef = ui::InputRef(7);
 const SUBMIT: ui::InputRef = ui::InputRef(8);
 const KEEP: ui::InputRef = ui::InputRef(9);
+const HISTORY: ui::InputRef = ui::InputRef(14);
 const CHOICES: [ui::InputRef; 4] = [
     ui::InputRef(10),
     ui::InputRef(11),
@@ -150,6 +159,7 @@ fn sample_inputs() -> ui::InputCatalog {
         (INVENTORY, key("I", KeyCode::KeyI)),
         (SUBMIT, key("Enter", KeyCode::Enter)),
         (KEEP, key("Enter", KeyCode::Enter)),
+        (HISTORY, key("H", KeyCode::KeyH)),
         (
             INSPECT,
             ui::CatalogEntry {
@@ -307,7 +317,7 @@ fn show_toast(
     *next += 1;
     commands
         .spawn_scene(bsn! {
-            {toast()}
+            {toast(Duration::from_secs(4))}
             Children [
                 ( Node {
                       flex_direction: FlexDirection::Row,
@@ -362,7 +372,12 @@ const SCENES: &[(&str, SceneBuilder)] = &[
     ("Choices", choices_scene),
     ("Dialogue box", dialogue_box_scene),
     ("Cast", cast_scene),
-    ("Banners", banners_scene),
+    ("Speech bubbles", bubbles_scene),
+    ("Captions", captions_scene),
+    ("Alert bar", alert_bar_scene),
+    ("Milestones", milestones_scene),
+    ("Intro", intro_scene),
+    ("Notification toasts", notification_toasts_scene),
     ("Toasts (top center)", top_toasts_scene),
     ("List detail", list_detail_scene),
     ("Confirm dialog", confirm_dialog_scene),
@@ -960,6 +975,7 @@ fn window_scene() -> Box<dyn Scene> {
                         window_tab("Equipment", 4),
                         log_tab(),
                     ],
+                    tab: 0,
                 }))}
             ]
         })],
@@ -1497,9 +1513,156 @@ fn cast_round(assets: &AssetServer, round: u64) -> Vec<CastMember> {
     ]
 }
 
-const BANNER_SECONDS: f32 = 4.0;
+const NOTIFICATION_SECONDS: f32 = 2.5;
 
-fn banners_scene() -> Box<dyn Scene> {
+#[derive(Component, Default, Clone)]
+struct GalleryBubble(usize);
+
+fn notification_round(time: &Time, rounds: u64) -> u64 {
+    (time.elapsed_secs() / NOTIFICATION_SECONDS) as u64 % rounds
+}
+
+fn bubbles_scene() -> Box<dyn Scene> {
+    let anchors: Vec<Box<dyn Scene>> = bubble_round(0)
+        .into_iter()
+        .enumerate()
+        .map(|(index, (left, top, bubble))| -> Box<dyn Scene> {
+            boxed(bsn! {
+                {speech_bubble(bubble)}
+                Node { left: Val::Percent({left}), top: Val::Percent({top}) }
+                component(GalleryBubble(index))
+            })
+        })
+        .collect();
+    boxed(bsn! {
+        GalleryBubbles
+        Node { width: Val::Percent(100.0), height: Val::Percent(100.0) }
+        Children [ {anchors} ]
+    })
+}
+
+#[derive(Component, Default, Clone)]
+struct GalleryBubbles;
+
+#[derive(Component, Default, Clone)]
+struct GalleryVisitor;
+
+fn visit_bubbles(
+    time: Res<Time>,
+    stages: Query<Entity, With<GalleryBubbles>>,
+    visitors: Query<Entity, (With<GalleryVisitor>, Without<Leaving>)>,
+    mut commands: Commands,
+) {
+    let Ok(stage) = stages.single() else {
+        return;
+    };
+    let here = notification_round(&time, 3) < 2;
+    match (here, visitors.iter().next()) {
+        (true, None) => {
+            let bubble = SpeechBubble {
+                speaker: "Pell".to_owned(),
+                replaced: 0,
+                lines: vec![BubbleLine {
+                    key: 30,
+                    text: RichText::new(vec![plain("Guards! Seize that thief!")]),
+                    read: false,
+                }],
+                tail: Some(BubbleTail::Down),
+                tail_offset: 0.0,
+                folded_speakers: None,
+            };
+            commands
+                .spawn_scene(bsn! {
+                    {speech_bubble(bubble)}
+                    Node { left: Val::Percent(50.0), top: Val::Percent(88.0) }
+                    GalleryVisitor
+                })
+                .insert(ChildOf(stage));
+        }
+        (false, Some(visitor)) => {
+            commands.entity(visitor).insert(Leaving);
+        }
+        _ => {}
+    }
+}
+
+fn bubble_round(round: u64) -> Vec<(f32, f32, SpeechBubble)> {
+    let line = |key: u64, text: RichText, read: bool| BubbleLine { key, text, read };
+    let shout = RichText::new(vec![
+        RichSpan::plain("WHO DARES STEAL TUSKS FROM MY CLAN?!")
+            .voice(TextVoice::Shout)
+            .motion(TextMotion::Shake)
+            .into(),
+    ]);
+    let threat = RichText::new(vec![plain("I'll grind your bones for soup!")]);
+    let whisper = RichText::new(vec![
+        RichSpan::plain("Psst. The chief sleeps at noon.")
+            .voice(TextVoice::Whisper)
+            .into(),
+    ]);
+    let chief_lines = match round {
+        0 => vec![line(0, shout, false)],
+        1 => vec![line(0, shout, true), line(1, threat, false)],
+        _ => vec![line(1, threat, true)],
+    };
+    let mara_text = |price: u32| {
+        RichText::new(vec![plain(match price {
+            0 => "Silk! Fresh off the boat!",
+            1 => "Silk for twenty gold!",
+            _ => "Silk for fifteen, final offer!",
+        })])
+    };
+    vec![
+        (
+            28.0,
+            48.0,
+            SpeechBubble {
+                speaker: "Orc Chief".to_owned(),
+                replaced: 0,
+                lines: chief_lines,
+                tail: Some(BubbleTail::Down),
+                tail_offset: 0.0,
+                folded_speakers: None,
+            },
+        ),
+        (
+            62.0,
+            36.0,
+            SpeechBubble {
+                speaker: "Mara".to_owned(),
+                replaced: round as u32,
+                lines: vec![line(10 + round, mara_text(round as u32), false)],
+                tail: Some(BubbleTail::Up),
+                tail_offset: -40.0,
+                folded_speakers: None,
+            },
+        ),
+        (
+            96.0,
+            62.0,
+            SpeechBubble {
+                speaker: "Grisha".to_owned(),
+                replaced: 0,
+                lines: vec![line(20, whisper, false)],
+                tail: Some(BubbleTail::Right),
+                tail_offset: 0.0,
+                folded_speakers: Some(FoldedSpeakers(3)),
+            },
+        ),
+    ]
+}
+
+fn cycle_bubbles(time: Res<Time>, mut bubbles: Query<(&GalleryBubble, &mut SpeechBubble)>) {
+    let round = bubble_round(notification_round(&time, 3));
+    for (index, mut bubble) in &mut bubbles {
+        let next = &round[index.0].2;
+        if *bubble != *next {
+            *bubble = next.clone();
+        }
+    }
+}
+
+fn notification_column(place: Box<dyn Scene>) -> Box<dyn Scene> {
     boxed(bsn! {
         Node {
             width: Val::Percent(100.0),
@@ -1508,66 +1671,265 @@ fn banners_scene() -> Box<dyn Scene> {
             align_items: AlignItems::Center,
             padding: {UiRect::top(Val::Px(ui::tokens::spacing::XL))},
         }
-        Children [ {EntityScene(announcement_lane(banner_cycle(0)))} ]
+        Children [ {EntityScene(place)} ]
     })
 }
 
-fn banner_cycle(round: u64) -> AnnouncementLane {
-    let chief = |key: u64, text: RichText| Announcement {
+fn labelled(key: u64, label: &str, replaced: u32, text: &str) -> LabelledLine {
+    LabelledLine {
         key,
-        speaker: Some("Orc Chief".to_owned()),
-        text,
-        kind: AnnouncementKind::Speech,
-    };
-    let shout = chief(
-        1,
-        RichText::new(vec![
-            RichSpan::plain("WHO DARES STEAL TUSKS FROM MY CLAN?!")
-                .voice(TextVoice::Shout)
-                .motion(TextMotion::Shake)
-                .into(),
-        ]),
-    );
-    let threat = chief(
-        2,
-        RichText::new(vec![plain("I'll grind your bones for soup!")]),
-    );
-    let narration = Announcement {
-        key: 3,
-        speaker: None,
-        text: RichText::new(vec![plain(
-            "The camp falls silent. Somewhere, a drum stops.",
-        )]),
-        kind: AnnouncementKind::Narration,
-    };
-    let system = Announcement {
-        key: 4,
-        speaker: None,
-        text: RichText::new(vec![plain("The server restarts in five minutes.")]),
-        kind: AnnouncementKind::System,
-    };
-    let (head, next) = match round % 4 {
-        0 => (shout, Some(threat)),
-        1 => (threat, Some(narration)),
-        2 => (narration, Some(system)),
-        _ => (system, None),
-    };
-    AnnouncementLane {
-        head: Some(head),
-        next,
-        remaining: 1.0,
+        label: label.to_owned(),
+        replaced,
+        text: RichText::new(vec![plain_owned(text)]),
     }
 }
 
-fn run_down_lanes(time: Res<Time>, mut lanes: Query<&mut AnnouncementLane>) {
-    let elapsed = time.elapsed_secs();
-    let round = (elapsed / BANNER_SECONDS) as u64;
-    for mut lane in &mut lanes {
-        let cycle = banner_cycle(round);
-        if lane.head.as_ref().map(|head| head.key) != cycle.head.as_ref().map(|head| head.key) {
-            *lane = cycle;
+fn plain_owned(text: &str) -> RichPiece {
+    RichPiece::text(text.to_owned())
+}
+
+fn more(count: u32) -> Option<RichText> {
+    Some(RichText::new(vec![
+        RichPiece::text(format!("+{count} more \u{b7} ")),
+        RichPiece::Input(HISTORY),
+        plain(" history"),
+    ]))
+}
+
+fn captions_scene() -> Box<dyn Scene> {
+    notification_column(boxed(captions()))
+}
+
+fn caption_round(round: u64) -> Captions {
+    let bell = labelled(
+        0,
+        "Harbour bell",
+        0,
+        "The harbour bell rings twice. A ship is coming in.",
+    );
+    let gulls = labelled(
+        1,
+        "Gulls",
+        0,
+        "Gulls squabble over a fish head at the end of the pier.",
+    );
+    let sails = labelled(
+        2,
+        "The Gull",
+        0,
+        "The Gull slips her moorings and leans into the wind.",
+    );
+    match round {
+        0 => Captions {
+            rows: vec![bell],
+            more: None,
+        },
+        1 => Captions {
+            rows: vec![bell, gulls],
+            more: None,
+        },
+        2 => Captions {
+            rows: vec![bell, gulls, sails],
+            more: None,
+        },
+        3 => Captions {
+            rows: vec![
+                labelled(1, "Gulls", 1, "A gull makes off with the whole fish."),
+                sails,
+            ],
+            more: more(2),
+        },
+        _ => Captions::default(),
+    }
+}
+
+fn cycle_captions(time: Res<Time>, mut captions: Query<&mut Captions>) {
+    let next = caption_round(notification_round(&time, 5));
+    for mut shown in &mut captions {
+        if *shown != next {
+            *shown = next.clone();
         }
-        lane.remaining = 1.0 - (elapsed % BANNER_SECONDS) / BANNER_SECONDS;
+    }
+}
+
+fn alert_bar_scene() -> Box<dyn Scene> {
+    notification_column(boxed(alert_bar()))
+}
+
+fn alert_round(round: u64) -> AlertBar {
+    let restart = labelled(
+        0,
+        "Server",
+        0,
+        "The server restarts in five minutes, so finish your fights.",
+    );
+    let watch = labelled(
+        1,
+        "Harbour watch",
+        0,
+        "The watch is looking for whoever stole from Pell.",
+    );
+    match round {
+        0 => AlertBar {
+            alerts: vec![restart],
+            more: None,
+        },
+        1 => AlertBar {
+            alerts: vec![restart, watch],
+            more: None,
+        },
+        2 => AlertBar {
+            alerts: vec![watch],
+            more: more(1),
+        },
+        _ => AlertBar::default(),
+    }
+}
+
+fn cycle_alerts(time: Res<Time>, mut bars: Query<&mut AlertBar>) {
+    let next = alert_round(notification_round(&time, 4));
+    for mut bar in &mut bars {
+        if *bar != next {
+            *bar = next.clone();
+        }
+    }
+}
+
+fn milestones_scene() -> Box<dyn Scene> {
+    notification_column(boxed(milestones()))
+}
+
+fn milestone_round(round: u64) -> Milestones {
+    let quest = labelled(0, "Quest complete", 0, "Tusks for the Chief");
+    match round {
+        0 => Milestones {
+            rows: vec![quest],
+            more: None,
+        },
+        1 => Milestones {
+            rows: vec![quest, labelled(1, "Level up", 0, "Level 5")],
+            more: None,
+        },
+        2 => Milestones {
+            rows: vec![labelled(1, "Level up", 1, "Level 6")],
+            more: None,
+        },
+        _ => Milestones::default(),
+    }
+}
+
+fn cycle_milestones(time: Res<Time>, mut milestones: Query<&mut Milestones>) {
+    let next = milestone_round(notification_round(&time, 4));
+    for mut shown in &mut milestones {
+        if *shown != next {
+            *shown = next.clone();
+        }
+    }
+}
+
+fn intro_scene() -> Box<dyn Scene> {
+    notification_column(boxed(bsn! {
+        GalleryIntroHost
+        Node { display: Display::Grid, justify_items: JustifyItems::Center }
+    }))
+}
+
+#[derive(Component, Default, Clone)]
+struct GalleryIntroHost;
+
+fn cycle_intro(
+    time: Res<Time>,
+    hosts: Query<Entity, With<GalleryIntroHost>>,
+    intros: Query<Entity, (With<Intro>, Without<Leaving>)>,
+    mut commands: Commands,
+) {
+    let Ok(host) = hosts.single() else {
+        return;
+    };
+    let here = notification_round(&time, 2) == 0;
+    match (here, intros.iter().next()) {
+        (true, None) => {
+            let shown = Intro {
+                title: "The forest".to_owned(),
+                text: RichText::new(vec![plain(
+                    "Old trees, older drums. Something is awake out here.",
+                )]),
+                tint: Some(Color::srgb_u8(0x8f, 0xd1, 0x8b)),
+                motion: Some(TextMotion::Pulse),
+                emblem: None,
+            };
+            commands
+                .spawn_scene(bsn! {
+                    {intro(shown)}
+                    Node { grid_row: {GridPlacement::start(1)}, grid_column: {GridPlacement::start(1)} }
+                })
+                .insert(ChildOf(host));
+        }
+        (false, Some(shown)) => {
+            commands.entity(shown).insert(Leaving);
+        }
+        _ => {}
+    }
+}
+
+fn notification_toasts_scene() -> Box<dyn Scene> {
+    notification_column(boxed(bsn! {
+        Node { width: Val::Percent(100.0), height: Val::Percent(100.0), justify_content: JustifyContent::Center }
+        Children [
+            (
+                {toaster(SonnerPosition::TopCenter)}
+                GalleryCardToaster
+                Node { position_type: PositionType::Relative, top: Val::Auto, left: Val::Auto, margin: UiRect::ZERO }
+            ),
+            ( {compact_toaster(320.0)} GalleryFeedToaster ),
+        ]
+    }))
+}
+
+#[derive(Component, Default, Clone)]
+struct GalleryCardToaster;
+
+#[derive(Component, Default, Clone)]
+struct GalleryFeedToaster;
+
+const FEED_EVERY: f32 = 1.1;
+const FEED_LINES: &[&str] = &[
+    "+3 Fish",
+    "Quest accepted · Low Tide",
+    "+40 XP",
+    "Equipped Rusty Sword",
+];
+
+fn feed_toasts(
+    time: Res<Time>,
+    cards: Query<Entity, With<GalleryCardToaster>>,
+    feeds: Query<Entity, With<GalleryFeedToaster>>,
+    mut fed: Local<Option<u64>>,
+    mut commands: Commands,
+) {
+    let (Ok(card), Ok(feed)) = (cards.single(), feeds.single()) else {
+        *fed = None;
+        return;
+    };
+    let tick = (time.elapsed_secs() / FEED_EVERY) as u64;
+    if *fed == Some(tick) {
+        return;
+    }
+    *fed = Some(tick);
+    let line = FEED_LINES[tick as usize % FEED_LINES.len()];
+    commands
+        .spawn_scene(bsn! {
+            {compact_toast(Duration::from_secs(3))}
+            Children [ {EntityScene(text(line))} ]
+        })
+        .insert(ChildOf(feed));
+    if tick.is_multiple_of(3) {
+        commands
+            .spawn_scene(bsn! {
+                {toast(Duration::from_secs(3))}
+                Children [ {EntityScene(text_colored("You need a helmet to enter.", palette::CRIMSON_80))} ]
+            })
+            .insert(ChildOf(card));
     }
 }
 

@@ -6,7 +6,7 @@ use bevy::ui::Val2;
 use ui::tokens::{palette, typography};
 
 use crate::core::math::Pos;
-use crate::core::render::WorldToWindow;
+use crate::core::render::{WorldToWindow, tile_to_window};
 use crate::data::attention::Id as AttentionId;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
 use crate::systems::attention;
@@ -92,6 +92,32 @@ fn label(
             color: palette::AZURE_80,
         }),
         (None, None) => None,
+    }
+}
+
+pub fn crown(world: &mut World, actor: Entity) -> Option<Vec2> {
+    let plate = world
+        .resource::<Plates>()
+        .0
+        .get(&actor)
+        .copied()
+        .filter(|&plate| {
+            world
+                .get::<InheritedVisibility>(plate)
+                .is_some_and(|visibility| visibility.get())
+        })
+        .and_then(|plate| ui::node_rect(world, plate))
+        .filter(|rect| rect.height() > 0.0);
+    match plate {
+        Some(rect) => Some(Vec2::new(rect.center().x, rect.min.y)),
+        None => {
+            let at = world
+                .get::<RenderPosition>(actor)
+                .map(|rendered| rendered.0)
+                .or_else(|| world.get::<Position>(actor).map(|position| position.pos))?;
+            let height = world.get::<Hitbox>(actor)?.size.height;
+            tile_to_window(world, Pos::new(at.x, at.y + 0.5 - height))
+        }
     }
 }
 

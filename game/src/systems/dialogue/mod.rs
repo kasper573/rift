@@ -1,4 +1,3 @@
-pub mod history;
 pub mod stage;
 
 use std::collections::{HashSet, VecDeque};
@@ -11,18 +10,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Percent, Rng};
+use crate::core::sfx::SfxId;
 use crate::core::time::Seconds;
 use crate::data;
 use crate::data::attention::Id as AttentionId;
+use crate::systems::actor::Name;
 use crate::systems::actor::bust::Face;
 use crate::systems::attention;
+use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic};
 use crate::systems::item::{Inventory, ItemStack};
-use crate::systems::notice::{self, NoticeTone};
+use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::{self, CommandLock, sender_player};
 use crate::systems::reach::{self, Tether};
 use crate::systems::rule::{self, Encounter, Outcome, Requirement, RuleContext, Terms};
 use crate::systems::stat;
-use crate::systems::text::{LineText, Span};
+use crate::systems::text::{self, LineText, Span};
 
 pub use crate::data::dialogue::Id as DialogueId;
 
@@ -45,7 +47,6 @@ pub struct DialogueNode {
 pub struct Line {
     pub by: Speaker,
     pub face: Option<Face>,
-    pub cue: bool,
     pub text: &'static [Span],
 }
 
@@ -60,9 +61,9 @@ pub enum Speaker {
 pub struct Choice {
     pub label: &'static [Span],
     pub requires: &'static [&'static dyn Requirement],
-    pub unmet: Unmet,
     pub costs: &'static [ItemStack],
     pub then: &'static [&'static dyn Outcome],
+    pub reveal: &'static [ChoiceReveal],
     pub warn: Option<&'static str>,
 }
 
@@ -70,17 +71,19 @@ impl Choice {
     pub const SAY: Choice = Choice {
         label: &[],
         requires: &[],
-        unmet: Unmet::ShowLocked,
         costs: &[],
         then: &[],
+        reveal: &[],
         warn: None,
     };
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Unmet {
-    ShowLocked,
-    Hide,
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChoiceReveal {
+    Locked,
+    Needs,
+    Costs,
+    Gains,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,24 +117,28 @@ pub struct Offer {
     pub tag: ChoiceTag,
     pub icon: Option<AssetRef>,
     pub requires: Vec<&'static dyn Requirement>,
-    pub unmet: Unmet,
     pub costs: &'static [ItemStack],
     pub then: Then,
+    pub reveal: &'static [ChoiceReveal],
     pub warn: Option<&'static str>,
 }
 
 impl Offer {
-    pub fn of(choice: &'static Choice) -> Offer {
+    pub fn of(choice: &'static Choice, world: &World, player: Entity) -> Offer {
         Offer {
-            label: LineText::of(choice.label),
+            label: LineText::spoken(choice.label, world, player),
             tag: ChoiceTag::Dialogue,
             icon: None,
             requires: choice.requires.to_vec(),
-            unmet: choice.unmet,
             costs: choice.costs,
             then: Then::Data(choice.then),
+            reveal: choice.reveal,
             warn: choice.warn,
         }
+    }
+
+    fn reveals(&self, reveal: ChoiceReveal) -> bool {
+        self.reveal.contains(&reveal)
     }
 }
 
@@ -184,9 +191,18 @@ pub struct Conversation {
     pub node: DialogueId,
     #[entities]
     pub with: Option<Entity>,
+    pub lines: Vec<SpokenLine>,
     pub choices: Vec<ChoiceView>,
+    pub refused: Option<RefusedPick>,
     pub waiting: Option<WaitingView>,
     pub remark: Option<Remark>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct RefusedPick {
+    pub nth: u32,
+    pub choice: u32,
+    pub reason: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -199,17 +215,15 @@ pub struct Remark {
 pub struct SpokenLine {
     pub by: Speaker,
     pub face: Option<Face>,
-    pub cue: bool,
     pub text: LineText,
 }
 
 impl SpokenLine {
-    pub fn of(line: &Line) -> SpokenLine {
+    pub fn spoken(line: &Line, world: &World, player: Entity) -> SpokenLine {
         SpokenLine {
             by: line.by,
             face: line.face,
-            cue: line.cue,
-            text: LineText::of(line.text),
+            text: LineText::spoken(line.text, world, player),
         }
     }
 }
@@ -313,7 +327,11 @@ impl Outcome for Gamble {
             outcomes: if won { self.won } else { self.lost },
         };
         if let Err(refusal) = terms.settle(ctx.world, ctx.player, ctx.encounter) {
-            notice::tell(ctx.world, ctx.player, refusal.0, NoticeTone::Bad);
+            notification::notify(
+                ctx.world,
+                ctx.player,
+                Notification::new(NotificationKind::error(), LineText::plain(refusal.0)),
+            );
         }
     }
 
@@ -380,6 +398,7 @@ pub fn goto(world: &mut World, player: Entity, node: DialogueId) {
     session.step = step;
     session.node = node;
     session.remark = None;
+    session.refused = None;
     enter(world, player);
 }
 
@@ -393,30 +412,35 @@ pub fn end(world: &mut World, player: Entity, ending: Ending) {
     if let Some(reason) = ending.reason() {
         let with = session
             .with
-            .and_then(|with| world.get::<crate::systems::actor::Name>(with))
+            .and_then(|with| world.get::<Name>(with))
             .map(|name| format!(" with {}", name.name))
             .unwrap_or_default();
-        notice::tell(
+        notification::notify(
             world,
             player,
-            format!("Conversation{with} ended: {reason}"),
-            NoticeTone::Bad,
+            Notification::new(
+                NotificationKind::Error {
+                    sfx: Some(SfxId::UiClose),
+                },
+                LineText::plain(format!("Conversation{with} ended: {reason}")),
+            ),
         );
     }
 }
 
 pub fn remark(world: &mut World, player: Entity, to: Entity, line: &'static Line) {
-    let Some(mut session) = world.get_mut::<ConversationSession>(player) else {
+    let Some(session) = world.get::<ConversationSession>(player) else {
         return;
     };
     if session.with != Some(to) {
         return;
     }
     let nth = session.remark.as_ref().map_or(0, |remark| remark.nth) + 1;
-    session.remark = Some(Remark {
-        nth,
-        line: SpokenLine::of(line),
-    });
+    let line = SpokenLine::spoken(line, world, player);
+    record_line(world, player, &line);
+    if let Some(mut session) = world.get_mut::<ConversationSession>(player) {
+        session.remark = Some(Remark { nth, line });
+    }
     refresh_view(world, player);
 }
 
@@ -513,7 +537,10 @@ pub struct ConversationSession {
     node: DialogueId,
     with: Option<Entity>,
     tether: Option<Tether>,
+    lines: Vec<SpokenLine>,
     offers: Vec<Offer>,
+    refused: Option<RefusedPick>,
+    refusals: u32,
     remark: Option<Remark>,
 }
 
@@ -560,11 +587,33 @@ fn begin(world: &mut World, player: Entity, start: Start) {
             node: start.node,
             with: start.with,
             tether: start.tether,
+            lines: Vec::new(),
             offers: Vec::new(),
+            refused: None,
+            refusals: 0,
             remark: None,
         },
         CommandLock,
     ));
+    let with = start
+        .with
+        .and_then(|with| world.get::<Name>(with))
+        .map(|name| name.name.clone())
+        .or_else(|| {
+            start
+                .node
+                .get()
+                .lines
+                .iter()
+                .find_map(|line| speaker_name(world, player, line.by))
+        });
+    history::record(
+        world,
+        player,
+        HistoryEntry::of(HistoryTopic::Talk, LineText::default())
+            .by(with)
+            .mark(Some(HistoryMark::Began)),
+    );
     enter(world, player);
 }
 
@@ -602,14 +651,48 @@ fn enter(world: &mut World, player: Entity) {
         .iter()
         .flat_map(|source| source(world, &asked))
         .collect();
-    offers.extend(def.choices.iter().map(Offer::of));
+    offers.extend(
+        def.choices
+            .iter()
+            .map(|choice| Offer::of(choice, world, player)),
+    );
     offers.retain(|offer| {
-        offer.unmet == Unmet::ShowLocked || rule::met(world, player, &offer.requires)
+        offer.reveals(ChoiceReveal::Locked) || rule::met(world, player, &offer.requires)
     });
+    let lines: Vec<SpokenLine> = def
+        .lines
+        .iter()
+        .map(|line| SpokenLine::spoken(line, world, player))
+        .collect();
+    for line in &lines {
+        record_line(world, player, line);
+    }
     if let Some(mut session) = world.get_mut::<ConversationSession>(player) {
+        session.lines = lines;
         session.offers = offers;
     }
     refresh_view(world, player);
+}
+
+fn record_line(world: &mut World, player: Entity, line: &SpokenLine) {
+    let by = speaker_name(world, player, line.by);
+    let mark = (line.by == Speaker::Player).then_some(HistoryMark::You);
+    history::record(
+        world,
+        player,
+        HistoryEntry::of(HistoryTopic::Talk, line.text.clone())
+            .by(by)
+            .mark(mark),
+    );
+}
+
+fn speaker_name(world: &World, player: Entity, who: Speaker) -> Option<String> {
+    match who {
+        Speaker::Npc(npc) => Some(npc.get().display_name.to_owned()),
+        Speaker::Prop(prop) => Some(prop.get().display_name.to_owned()),
+        Speaker::Player => world.get::<Name>(player).map(|name| name.name.clone()),
+        Speaker::Narrator => None,
+    }
 }
 
 fn refresh_view(world: &mut World, player: Entity) {
@@ -620,11 +703,13 @@ fn refresh_view(world: &mut World, player: Entity) {
         step: session.step,
         node: session.node,
         with: session.with,
+        lines: session.lines.clone(),
         choices: session
             .offers
             .iter()
             .map(|offer| choice_view(world, player, offer))
             .collect(),
+        refused: session.refused.clone(),
         waiting: world
             .get::<WaitingConversations>(player)
             .and_then(|waiting| waiting.0.front())
@@ -641,21 +726,21 @@ fn refresh_view(world: &mut World, player: Entity) {
 
 fn choice_view(world: &World, player: Entity, offer: &Offer) -> ChoiceView {
     let outcomes = offer.then.outcomes();
-    let terms = Terms {
-        requires: &offer.requires,
-        costs: offer.costs,
-        outcomes: &outcomes,
-    };
     let inventory = world.get::<Inventory>(player);
     let have = |item| inventory.map_or(0, |inventory| inventory.count(item));
-    let needs = offer.requires.iter().map(|requirement| ChoiceChip::Needs {
-        what: requirement.describe(),
-        met: requirement.met(world, player),
-    });
+    let needs = offer
+        .requires
+        .iter()
+        .filter(|_| offer.reveals(ChoiceReveal::Needs))
+        .map(|requirement| ChoiceChip::Needs {
+            what: requirement.describe(),
+            met: requirement.met(world, player),
+        });
     let pays = offer
         .costs
         .iter()
         .chain(outcomes.iter().flat_map(|outcome| outcome.takes()))
+        .filter(|_| offer.reveals(ChoiceReveal::Costs))
         .map(|stack| ChoiceChip::Pays {
             item: stack.item,
             count: stack.count,
@@ -664,19 +749,34 @@ fn choice_view(world: &World, player: Entity, offer: &Offer) -> ChoiceView {
     let gets = outcomes
         .iter()
         .flat_map(|outcome| outcome.gives())
+        .filter(|_| offer.reveals(ChoiceReveal::Gains))
         .map(|stack| ChoiceChip::Gets {
             item: stack.item,
             count: stack.count,
         });
+    let unmet = offer
+        .requires
+        .iter()
+        .find(|requirement| !requirement.met(world, player));
     ChoiceView {
         label: offer.label.clone(),
         tag: offer.tag,
         icon: offer.icon.map(|icon| icon.0.to_owned()),
         chips: needs.chain(pays).chain(gets).collect(),
-        refusal: terms.refusal(world, player).map(|refusal| refusal.0),
+        refusal: unmet.map(|unmet| locked_reason(offer, *unmet)),
         warn: offer.warn.map(str::to_owned),
     }
 }
+
+fn locked_reason(offer: &Offer, unmet: &dyn Requirement) -> String {
+    match offer.reveals(ChoiceReveal::Needs) {
+        true => format!("Needs {}", unmet.describe()),
+        false => LOCKED.to_owned(),
+    }
+}
+
+const LOCKED: &str = "You can't do that yet.";
+const NO_LONGER: &str = "You can't do that any more.";
 
 fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) {
     let Some(session) = world.get::<ConversationSession>(player) else {
@@ -699,8 +799,18 @@ fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) 
         costs: offer.costs,
         outcomes: &outcomes,
     };
+    let hidden_need =
+        !offer.reveals(ChoiceReveal::Needs) && !rule::met(world, player, &offer.requires);
+    let said = HistoryEntry::of(HistoryTopic::Talk, offer.label.clone())
+        .by(speaker_name(world, player, Speaker::Player))
+        .mark(Some(HistoryMark::You));
+    history::record(world, player, said);
     if let Err(refusal) = terms.settle(world, player, encounter) {
-        notice::tell(world, player, refusal.0, NoticeTone::Bad);
+        let reason = match hidden_need {
+            true => NO_LONGER.to_owned(),
+            false => refusal.0,
+        };
+        refuse(world, player, choice, reason);
         return;
     }
     if world
@@ -709,6 +819,23 @@ fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) 
     {
         end(world, player, Ending::Left);
     }
+}
+
+fn refuse(world: &mut World, player: Entity, choice: u32, reason: String) {
+    notification::record(
+        world,
+        player,
+        &Notification::new(NotificationKind::error(), LineText::plain(reason.clone())),
+    );
+    if let Some(mut session) = world.get_mut::<ConversationSession>(player) {
+        session.refusals += 1;
+        session.refused = Some(RefusedPick {
+            nth: session.refusals,
+            choice,
+            reason,
+        });
+    }
+    refresh_view(world, player);
 }
 
 pub fn check(assets: &AssetService, starts: impl IntoIterator<Item = DialogueId>) {
@@ -738,6 +865,28 @@ pub fn check(assets: &AssetService, starts: impl IntoIterator<Item = DialogueId>
             check_line(format!("dialogue {node:?}"), line);
         }
         let def = node.get();
+        for (index, choice) in def.choices.iter().enumerate() {
+            let owner = format!("dialogue {node:?}, choice {}", index + 1);
+            for fill in text::fills(choice.label) {
+                fill.check();
+            }
+            check_reveal(
+                &owner,
+                choice.reveal,
+                Revealable {
+                    needs: !choice.requires.is_empty(),
+                    costs: !choice.costs.is_empty()
+                        || choice
+                            .then
+                            .iter()
+                            .any(|outcome| !outcome.takes().is_empty()),
+                    gains: choice
+                        .then
+                        .iter()
+                        .any(|outcome| !outcome.gives().is_empty()),
+                },
+            );
+        }
         for outcome in def
             .enter
             .iter()
@@ -748,7 +897,37 @@ pub fn check(assets: &AssetService, starts: impl IntoIterator<Item = DialogueId>
     }
 }
 
+pub struct Revealable {
+    pub needs: bool,
+    pub costs: bool,
+    pub gains: bool,
+}
+
+pub fn check_reveal(owner: &str, reveal: &[ChoiceReveal], revealable: Revealable) {
+    for (index, &kind) in reveal.iter().enumerate() {
+        if reveal[..index].contains(&kind) {
+            panic!("{owner}: reveals {kind:?} twice");
+        }
+        let (has, what) = match kind {
+            ChoiceReveal::Locked | ChoiceReveal::Needs => (revealable.needs, "needs nothing"),
+            ChoiceReveal::Costs => (revealable.costs, "costs nothing"),
+            ChoiceReveal::Gains => (revealable.gains, "gives nothing"),
+        };
+        if !has {
+            panic!("{owner}: reveals {kind:?} but {what}");
+        }
+    }
+}
+
 pub fn check_line(owner: impl std::fmt::Display, line: &Line) {
+    for fill in text::fills(line.text) {
+        fill.check();
+    }
+    if let Speaker::Npc(npc) = line.by
+        && npc.get().babble.is_none()
+    {
+        panic!("{owner}: {npc:?} speaks but has no babble");
+    }
     let Some(face) = line.face else {
         return;
     };
@@ -769,13 +948,21 @@ fn talking(world: &World, player: Entity) -> Option<AttentionId> {
 fn gave_up(world: &mut World, player: Entity, start: &Start) {
     let who = start
         .with
-        .and_then(|with| world.get::<crate::systems::actor::Name>(with))
+        .and_then(|with| world.get::<Name>(with))
         .map_or_else(|| "Someone".to_owned(), |name| name.name.clone());
-    notice::tell(
+    notification::notify(
         world,
         player,
-        format!("{who} stopped waiting to talk"),
-        NoticeTone::Info,
+        Notification::new(
+            NotificationKind::Feed {
+                topic: HistoryTopic::Talk,
+                icon: None,
+                tally: None,
+                failure: false,
+                sfx: None,
+            },
+            LineText::plain(format!("{who} stopped waiting to talk")),
+        ),
     );
 }
 

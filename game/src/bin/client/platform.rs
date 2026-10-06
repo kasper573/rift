@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use bevy::prelude::*;
 use game::core::platform::{Platform, ServerSocket, StartParams};
+use game::core::time::{LocalClock, Seconds, UnixMillis};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -75,6 +76,14 @@ impl Platform for WebPlatform {
             }
             response.text().await.map_err(|error| error.to_string())
         })
+    }
+
+    fn local_clock(&self) -> LocalClock {
+        let now = js_sys::Date::new_0();
+        LocalClock {
+            now: UnixMillis(now.get_time() as u64),
+            utc_offset: Seconds(-now.get_timezone_offset() as f32 * 60.0),
+        }
     }
 
     fn connect(&self, url: &str) -> Box<dyn ServerSocket> {

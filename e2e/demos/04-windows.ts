@@ -7,6 +7,7 @@ import {
   clickUi,
   doubleClickUi,
   dragUi,
+  findUi,
   focusGame,
   holding,
   outsideCard,
@@ -84,12 +85,17 @@ test(
       await page.waitForTimeout(1500);
       await clickUi(page, /^ui snapping/);
       await page.waitForTimeout(1200);
-      await caption(page, "Text speed and reduced motion are settings too");
-      await clickUi(page, /^text speed/);
-      await page.waitForTimeout(900);
-      await clickUi(page, /^text speed/);
-      await page.waitForTimeout(900);
+      await caption(page, "Text speed is a slider, in letters a second");
+      const before = findUi(await probe(page), /^text speed/)!.text;
+      await dragUi(page, (element) => element.slider !== null, { x: 70, y: 0 });
+      await waitFor(page, (snapshot) => findUi(snapshot, /^text speed/)?.text !== before, "the text speed never changed");
+      await page.waitForTimeout(1200);
+      await caption(page, "Reduced motion and voices are settings too");
       await clickUi(page, /^reduced motion/);
+      await page.waitForTimeout(900);
+      await clickUi(page, /^voices/);
+      await page.waitForTimeout(900);
+      await clickUi(page, /^voices/);
       await page.waitForTimeout(1200);
       await caption(page, "Where you put them is remembered for next time");
       await page.waitForTimeout(2500);

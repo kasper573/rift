@@ -43,9 +43,9 @@ test("a map object opens its own conversation", async ({ page }) => {
   await register(page);
   await waitForWorld(page, loadReference("island.png"));
 
-  const notices = await interactWith(page, "HarbourNotices");
+  const board = await interactWith(page, "HarbourBoard");
 
-  expect(notices.node).toBe("HarbourNotices");
+  expect(board.node).toBe("HarbourBoard");
   await focusGame(page);
   await page.keyboard.press("Escape");
   await conversationOver(page);

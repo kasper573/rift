@@ -3,7 +3,7 @@ use bevy_color::{Alpha, Color};
 use bevy_ecs::entity::EntityHashMap;
 use bevy_ecs::prelude::*;
 use bevy_text::TextColor;
-use bevy_ui::widget::ImageNode;
+use bevy_ui::widget::{ImageNode, TextShadow};
 use bevy_ui::{BackgroundColor, BorderColor};
 
 /// An entity's own opacity. Descendants multiply theirs into it, and the effective product is
@@ -70,6 +70,7 @@ struct Faded {
     background: Option<Fade<Color>>,
     border: Option<Fade<[Color; 4]>>,
     text: Option<Fade<Color>>,
+    shadow: Option<Fade<Color>>,
     image: Option<Fade<Color>>,
 }
 
@@ -89,10 +90,11 @@ fn apply(
         Option<&mut BackgroundColor>,
         Option<&mut BorderColor>,
         Option<&mut TextColor>,
+        Option<&mut TextShadow>,
         Option<&mut ImageNode>,
     )>,
 ) {
-    for (entity, faded, background, border, text, image) in &mut nodes {
+    for (entity, faded, background, border, text, shadow, image) in &mut nodes {
         let opacity = map.0.get(&entity).copied().unwrap_or(1.0);
         let mut fresh = Faded::default();
         let faded = match faded {
@@ -116,6 +118,9 @@ fn apply(
         if let Some(mut text) = text {
             text.0 = refade(&mut faded.text, text.0, opacity);
         }
+        if let Some(mut shadow) = shadow {
+            shadow.color = refade(&mut faded.shadow, shadow.color, opacity);
+        }
         if let Some(mut image) = image {
             image.color = refade(&mut faded.image, image.color, opacity);
         }
@@ -124,6 +129,7 @@ fn apply(
         } else if fresh.background.is_some()
             || fresh.border.is_some()
             || fresh.text.is_some()
+            || fresh.shadow.is_some()
             || fresh.image.is_some()
         {
             commands.entity(entity).insert(fresh);

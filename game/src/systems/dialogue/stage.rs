@@ -9,12 +9,12 @@ use ui::{
     CastDepth, CastMember, ChipOptions, ChoiceOptions, DialogueBoxOptions, Family, RichPiece, Side,
 };
 
-use super::history::{self, HistoryEntry};
 use super::{
     ChoiceChip, ChoiceView, Conversation, ConversationRequest, ConversationStep, DialogueId,
-    Speaker, SpokenLine, WaitingView,
+    RefusedPick, Speaker, SpokenLine, WaitingView,
 };
 use crate::core::assets::AssetRef;
+use crate::core::babble::{BabbleRank, Babbler, Babbling};
 use crate::core::sfx::SfxId;
 use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::systems::actor::Name;
@@ -48,7 +48,6 @@ pub struct StagePlugin;
 impl Plugin for StagePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Stage>()
-            .add_plugins(history::HistoryPlugin)
             .add_systems(OnEnter(GameScene::Area), spawn_stage)
             .add_systems(
                 OnExit(GameScene::Area),
@@ -82,9 +81,11 @@ pub struct StageView {
     pub line: usize,
     pub lines: usize,
     pub speaker: Option<String>,
+    pub text: Option<String>,
     pub typing: bool,
     pub choices: Vec<StageChoice>,
     pub waiting: Option<DialogueId>,
+    pub status: Option<String>,
 }
 
 pub struct StageChoice {
@@ -98,10 +99,13 @@ pub fn view(world: &World) -> Option<StageView> {
         node: shown.node,
         with: shown.with,
         line: shown.line,
-        lines: shown.node.get().lines.len(),
+        lines: shown.lines.len(),
         speaker: shown
             .current()
             .and_then(|line| speaker_name(world, line.by)),
+        text: shown
+            .current()
+            .map(|line| line.text.words(world.resource::<InputMap>())),
         typing: shown.typed_since.is_none(),
         choices: shown
             .choices
@@ -112,6 +116,7 @@ pub fn view(world: &World) -> Option<StageView> {
             })
             .collect(),
         waiting: shown.waiting.map(|waiting| waiting.node),
+        status: shown.refusal.clone(),
     })
 }
 
@@ -123,6 +128,28 @@ pub fn show_panel(world: &mut World, panel: ui::DialoguePanelOptions) -> Option<
     let mut spawned = world.spawn_scene(ui::dialogue_panel(panel)).ok()?;
     spawned.insert(ChildOf(slot));
     Some(spawned.id())
+}
+
+pub fn box_right(world: &mut World) -> Option<f32> {
+    let dialogue = stage_box(world)?;
+    let line = descendant_with::<ui::DialogueBox>(world, dialogue).unwrap_or(dialogue);
+    Some(ui::node_rect(world, line)?.max.x)
+}
+
+pub fn rects(world: &mut World) -> Vec<Rect> {
+    let Some(dialogue) = stage_box(world) else {
+        return Vec::new();
+    };
+    let panels: Vec<Entity> = world
+        .query_filtered::<&Children, With<StagePanels>>()
+        .iter(world)
+        .flat_map(|panels| panels.iter())
+        .collect();
+    std::iter::once(dialogue)
+        .chain(panels)
+        .filter_map(|shown| ui::node_rect(world, shown))
+        .filter(|rect| rect.width() > 0.0 && rect.height() > 0.0)
+        .collect()
 }
 
 pub fn leave(world: &mut World) -> bool {
@@ -151,6 +178,7 @@ struct Shown {
     node: DialogueId,
     with: Option<Entity>,
     line: usize,
+    lines: Vec<SpokenLine>,
     choices: Vec<ChoiceView>,
     waiting: Option<WaitingView>,
     waiting_until: Duration,
@@ -161,6 +189,7 @@ struct Shown {
     stale: bool,
     remark: Option<SpokenLine>,
     remarks_seen: u32,
+    refusals_seen: u32,
 }
 
 #[derive(Component, Default, Clone)]
@@ -239,16 +268,6 @@ fn follow_conversation(world: &mut World) {
         None => {
             stage.shown = Some(Shown::of(now, HashMap::new(), time));
             chime(world, SfxId::UiOpen);
-            let with = world
-                .resource::<Stage>()
-                .shown
-                .as_ref()
-                .and_then(|shown| shown.with)
-                .and_then(|with| world.get::<Name>(with))
-                .map(|name| name.name.clone());
-            if let Some(with) = with {
-                history::record(world, HistoryEntry::Began(with));
-            }
             show_line(world);
         }
         Some(shown) if shown.step != now.step => {
@@ -266,6 +285,10 @@ fn follow_conversation(world: &mut World) {
                 .remark
                 .clone()
                 .filter(|remark| remark.nth > shown.remarks_seen);
+            let refused = now
+                .refused
+                .clone()
+                .filter(|refused| refused.nth > shown.refusals_seen);
             if waiting_changed && now.waiting.is_some() {
                 shown.stale = true;
                 chime(world, SfxId::UiChime);
@@ -281,6 +304,15 @@ fn follow_conversation(world: &mut World) {
             }
             shown.choices = now.choices;
             shown.waiting = now.waiting;
+            if let Some(refused) = refused {
+                shown.refusals_seen = refused.nth;
+                shown.picked = false;
+                refuse(world, refused);
+            }
+            let mut stage = world.resource_mut::<Stage>();
+            let Some(shown) = stage.shown.as_mut() else {
+                return;
+            };
             if let Some(remark) = remark {
                 shown.remarks_seen = remark.nth;
                 shown.remark = Some(remark.line);
@@ -300,6 +332,7 @@ impl Shown {
             node: now.node,
             with: now.with,
             line: 0,
+            lines: now.lines,
             choices: now.choices,
             waiting_until: time + lasting(now.waiting),
             waiting: now.waiting,
@@ -309,6 +342,7 @@ impl Shown {
             faces,
             stale: false,
             remarks_seen: now.remark.map_or(0, |remark| remark.nth),
+            refusals_seen: now.refused.map_or(0, |refused| refused.nth),
             remark: None,
         }
     }
@@ -316,11 +350,11 @@ impl Shown {
     fn current(&self) -> Option<SpokenLine> {
         self.remark
             .clone()
-            .or_else(|| self.node.get().lines.get(self.line).map(SpokenLine::of))
+            .or_else(|| self.lines.get(self.line).cloned())
     }
 
     fn last_line(&self) -> bool {
-        self.line + 1 >= self.node.get().lines.len()
+        self.line + 1 >= self.lines.len()
     }
 }
 
@@ -355,20 +389,6 @@ fn show_line(world: &mut World) {
             shown.faces.insert(line.by, face);
         }
     }
-    if line.cue
-        && let Some(cue) = speaker_face
-            .and_then(|face| busts_of(line.by).and_then(|busts| busts.face(face)))
-            .map(|bust| bust.cue)
-    {
-        chime(world, cue);
-    }
-    history::record(
-        world,
-        HistoryEntry::Said {
-            who: speaker_name(world, line.by),
-            text: line.text,
-        },
-    );
     let members = cast_members(world);
     set_cast(world, members);
     build_box(world, true);
@@ -491,13 +511,13 @@ fn on_picked(picked: On<ui::ChoicePicked>, mut commands: Commands) {
         if *world.resource::<Mode>() != Mode::Play {
             return;
         }
-        let Some((step, label)) = world
+        let Some(step) = world
             .resource_mut::<Stage>()
             .shown
             .as_mut()
             .and_then(|shown| {
-                let label = shown.choices.get(index)?.label.clone();
-                (!std::mem::replace(&mut shown.picked, true)).then_some((shown.step, label))
+                shown.choices.get(index)?;
+                (!std::mem::replace(&mut shown.picked, true)).then_some(shown.step)
             })
         else {
             return;
@@ -507,8 +527,20 @@ fn on_picked(picked: On<ui::ChoicePicked>, mut commands: Commands) {
             choice: index as u32,
         });
         chime(world, SfxId::UiPick);
-        history::record(world, HistoryEntry::Picked(label));
     });
+}
+
+fn refuse(world: &mut World, refused: RefusedPick) {
+    if let Some(shown) = world.resource_mut::<Stage>().shown.as_mut() {
+        shown.refusal = Some(refused.reason.clone());
+    }
+    chime(world, SfxId::UiRefuse);
+    if let Some(list) = shown_choices(world) {
+        ui::shake_choice(world, list, refused.choice as usize);
+    }
+    if let Some(dialogue) = stage_box(world) {
+        ui::set_dialogue_status(world, dialogue, Some(refused.reason));
+    }
 }
 
 fn on_refused(refused: On<ui::ChoiceRefused>, mut commands: Commands) {
@@ -577,6 +609,9 @@ fn build_box(world: &mut World, typed: bool) {
     };
     spawned.insert((StageBox, ChildOf(host)));
     spawned.observe(advance_on_click);
+    if typed {
+        babble_along(world);
+    }
     if let (Some(selected), Some(list)) = (selected, shown_choices(world))
         && let Some(mut list) = world.get_mut::<ui::ChoiceList>(list)
     {
@@ -606,7 +641,6 @@ fn box_options(world: &World, typed: bool) -> Option<DialogueBoxOptions> {
             waiting_label(waiting.node, lasting(Some(waiting))),
         )));
     }
-    actions.push(Box::new(frame_button("History", history::toggle)));
     if playing {
         actions.push(Box::new(frame_button("Leave", |world| {
             leave(world);
@@ -629,6 +663,34 @@ fn box_options(world: &World, typed: bool) -> Option<DialogueBoxOptions> {
     })
 }
 
+fn babble_along(world: &mut World) {
+    let Some(by) = world
+        .resource::<Stage>()
+        .shown
+        .as_ref()
+        .and_then(Shown::current)
+        .map(|line| line.by)
+    else {
+        return;
+    };
+    let babble = match by {
+        Speaker::Npc(npc) => npc.get().babble,
+        Speaker::Player => world
+            .resource::<Viewpoint>()
+            .0
+            .and_then(|seen| world.get::<Babbler>(seen))
+            .map(|babbler| babbler.0),
+        Speaker::Prop(_) | Speaker::Narrator => None,
+    };
+    if let (Some(babble), Some(line)) = (babble, typing_line(world)) {
+        world.entity_mut(line).insert(Babbling {
+            babble,
+            place: SfxPlace::Interface,
+            rank: BabbleRank::DIALOGUE_BOX,
+        });
+    }
+}
+
 fn player_hint() -> Vec<RichPiece> {
     vec![
         map::input(InputAction::ChoosePrevious),
@@ -640,19 +702,13 @@ fn player_hint() -> Vec<RichPiece> {
         RichPiece::text("–"),
         map::input(InputAction::Choice9),
         RichPiece::text(" shortcut · "),
-        map::input(InputAction::ToggleHistory),
-        RichPiece::text(" history · "),
         map::input(InputAction::Dismiss),
         RichPiece::text(" leave"),
     ]
 }
 
 fn spectator_hint() -> Vec<RichPiece> {
-    vec![
-        RichPiece::text("Watching · "),
-        map::input(InputAction::ToggleHistory),
-        RichPiece::text(" history"),
-    ]
+    vec![RichPiece::text("Watching")]
 }
 
 fn choice_options(assets: &AssetServer, choice: &ChoiceView, index: usize) -> ChoiceOptions {
@@ -758,7 +814,7 @@ fn cast_members(world: &World) -> Vec<CastMember> {
         if let Some(npc) = shown.with.and_then(|with| world.get::<Npc>(with)) {
             speakers.push(Speaker::Npc(npc.def));
         }
-        for line in &shown.node.get().lines[..=shown.line] {
+        for line in shown.lines.iter().take(shown.line + 1) {
             speakers.push(line.by);
         }
     }
@@ -792,7 +848,7 @@ fn cast_members(world: &World) -> Vec<CastMember> {
             let lit = who == current.by;
             Some(CastMember {
                 key: cast_key(who),
-                image: bust_image(assets, bust.art),
+                image: bust_image(assets, bust),
                 side: side_of(who),
                 depth: if fronts.contains(&who) {
                     CastDepth::Front

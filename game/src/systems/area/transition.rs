@@ -1,23 +1,28 @@
+use std::collections::BTreeSet;
+
 use bevy_ecs::prelude::*;
 
 use super::{Id, MarkerName};
 use crate::core::assets::AssetService;
+use crate::core::babble::Babbler;
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 use crate::systems::actor::Name;
-use crate::systems::announcement::{self, AnnouncementQueue};
 use crate::systems::dialogue::Heard;
 use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
+use crate::systems::history::{self, History, HistoryEntry, HistoryMark, HistoryTopic};
 use crate::systems::item::Inventory;
 use crate::systems::job::Job;
 use crate::systems::memory::Memory;
+use crate::systems::notification;
 use crate::systems::player::{CharacterState, ClientId, Owner, Xp};
 use crate::systems::quest::QuestLog;
 use crate::systems::reach;
 use crate::systems::rule::{Outcome, RuleContext};
 use crate::systems::shop;
 use crate::systems::stat;
+use crate::systems::text::LineText;
 
 #[derive(Component, Clone, Copy)]
 pub struct Crossing {
@@ -53,6 +58,19 @@ impl Outcome for Travel {
     }
 }
 
+#[derive(Component, Clone, Debug, Default)]
+pub struct Discovered(BTreeSet<Id>);
+
+impl Discovered {
+    pub fn starting_in(zone: Id) -> Discovered {
+        Discovered(BTreeSet::from([zone]))
+    }
+
+    pub fn discover(&mut self, area: Id) -> bool {
+        self.0.insert(area)
+    }
+}
+
 pub struct Traveler {
     pub client: ClientId,
     pub dest_area: Id,
@@ -77,6 +95,8 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
                     dest: crossing.dest,
                     state: CharacterState {
                         name: world.get::<Name>(entity)?.name.clone(),
+                        babble: world.get::<Babbler>(entity)?.0,
+                        discovered: world.get::<Discovered>(entity)?.clone(),
                         stats: stat::snapshot(world, entity),
                         inventory: world.get::<Inventory>(entity)?.clone(),
                         xp: world.get::<Xp>(entity)?.clone(),
@@ -97,10 +117,7 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
                         heard: world.get::<Heard>(entity).cloned().unwrap_or_default(),
                         ledger: shop::ledger(world, entity),
                         quests: world.get::<QuestLog>(entity).cloned().unwrap_or_default(),
-                        announcements: world
-                            .get::<AnnouncementQueue>(entity)
-                            .cloned()
-                            .unwrap_or_default(),
+                        history: world.get::<History>(entity).cloned().unwrap_or_default(),
                     },
                 },
             ))
@@ -116,7 +133,8 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
     leaving.into_iter().map(|(_, traveler)| traveler).collect()
 }
 
-pub fn arrive(world: &mut World, traveler: Traveler) -> Entity {
+pub fn arrive(world: &mut World, mut traveler: Traveler) -> Entity {
+    let first_visit = traveler.state.discovered.discover(traveler.dest_area);
     let entity = crate::systems::player::place(
         world,
         traveler.client,
@@ -124,8 +142,15 @@ pub fn arrive(world: &mut World, traveler: Traveler) -> Entity {
         traveler.dest,
         traveler.state,
     );
-    if let Some(intro) = traveler.dest_area.get().intro {
-        announcement::announce(world, entity, intro.get().announcement());
+    let arrived = HistoryEntry::of(
+        HistoryTopic::Notification,
+        LineText::plain(traveler.dest_area.get().name),
+    )
+    .mark(Some(HistoryMark::Arrived));
+    history::record(world, entity, arrived);
+    if first_visit && let Some(intro) = traveler.dest_area.get().intro {
+        let notification = intro.get().for_player(world, entity);
+        notification::notify(world, entity, notification);
     }
     entity
 }

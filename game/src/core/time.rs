@@ -84,6 +84,31 @@ impl Seconds {
     pub fn ratio(self, other: Seconds) -> f32 {
         self.0 / other.0
     }
+
+    pub fn in_words(self) -> String {
+        let exact = self.0.ceil().max(1.0) as u32;
+        let (_, small) = unit_pair(exact);
+        let rounded = exact.div_ceil(small.size) * small.size;
+        let (big, small) = unit_pair(rounded);
+        [
+            (rounded / big.size, big.name),
+            (rounded % big.size / small.size, small.name),
+        ]
+        .into_iter()
+        .filter(|&(count, _)| count > 0)
+        .map(|(count, name)| match count {
+            1 => format!("1 {name}"),
+            _ => format!("{count} {name}s"),
+        })
+        .collect::<Vec<_>>()
+        .join(" and ")
+    }
+}
+
+impl From<Seconds> for std::time::Duration {
+    fn from(seconds: Seconds) -> std::time::Duration {
+        std::time::Duration::from_secs_f32(seconds.0.max(0.0))
+    }
 }
 
 impl std::ops::Mul<f32> for Seconds {
@@ -145,6 +170,34 @@ impl UnixMillis {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct LocalClock {
+    pub now: UnixMillis,
+    pub utc_offset: Seconds,
+}
+
+impl LocalClock {
+    pub fn label(self, at: UnixMillis) -> String {
+        let local = |time: UnixMillis| {
+            let millis = time.0 as i64 + self.utc_offset.millis().0 as i64;
+            (
+                millis.div_euclid(DAY_MILLIS as i64),
+                millis.rem_euclid(DAY_MILLIS as i64),
+            )
+        };
+        let (day, of_day) = local(at);
+        let (today, _) = local(self.now);
+        let minutes = of_day / 60_000;
+        let clock = format!("{:02}:{:02}", minutes / 60, minutes % 60);
+        match day == today {
+            true => clock,
+            false => format!("{} {clock}", WEEKDAYS[day.rem_euclid(7) as usize]),
+        }
+    }
+}
+
+const WEEKDAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(try_from = "u8")]
 pub struct UtcHour(u8);
@@ -172,4 +225,38 @@ impl GameDay {
     pub fn of(now: UnixMillis, reset: UtcHour) -> GameDay {
         GameDay(now.0.saturating_sub(u64::from(reset.0) * HOUR_MILLIS) / DAY_MILLIS)
     }
+}
+
+#[derive(Clone, Copy)]
+struct TimeUnit {
+    size: u32,
+    name: &'static str,
+}
+
+const TIME_UNITS: [TimeUnit; 4] = [
+    TimeUnit {
+        size: 86_400,
+        name: "day",
+    },
+    TimeUnit {
+        size: 3_600,
+        name: "hour",
+    },
+    TimeUnit {
+        size: 60,
+        name: "minute",
+    },
+    TimeUnit {
+        size: 1,
+        name: "second",
+    },
+];
+
+fn unit_pair(seconds: u32) -> (TimeUnit, TimeUnit) {
+    let big = TIME_UNITS
+        .iter()
+        .position(|unit| seconds >= unit.size)
+        .unwrap_or(TIME_UNITS.len() - 1)
+        .min(TIME_UNITS.len() - 2);
+    (TIME_UNITS[big], TIME_UNITS[big + 1])
 }

@@ -1,4 +1,3 @@
-mod announcement;
 mod busts;
 mod clock;
 mod combat;
@@ -8,6 +7,7 @@ mod exchange;
 mod interaction;
 mod kill_credit;
 mod memory;
+mod notification;
 mod presence;
 mod quest;
 mod reach;

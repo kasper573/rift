@@ -60,6 +60,8 @@ export interface UiElement {
   image: string | null;
   editable: boolean;
   focused: boolean;
+  click_through: boolean;
+  slider: number | null;
   x: number;
   y: number;
   width: number;
@@ -116,20 +118,57 @@ export interface Stage {
   line: number;
   lines: number;
   speaker: string | null;
+  text: string | null;
   typing: boolean;
   choices: StageChoice[];
   waiting: string | null;
+  status: string | null;
 }
 
-export interface LaneLine {
-  by: string;
+export interface NotificationBubble {
+  speaker: string;
+  npc: string;
+  body: string | null;
+  replaced: number;
+  lines: string[];
+  folded: boolean;
+  rect: Cover | null;
+}
+
+export interface NotificationRow {
+  label: string;
   text: string;
+  replaced: number;
 }
 
-export interface Lane {
-  showing: LaneLine | null;
-  next: LaneLine | null;
-  missed: LaneLine[];
+export interface NotificationRows {
+  rows: NotificationRow[];
+  more: number;
+}
+
+export interface Notifications {
+  bubbles: NotificationBubble[];
+  edge_folds: number[];
+  captions: NotificationRows;
+  alerts: NotificationRows;
+  errors: { text: string; repeats: number }[];
+  milestones: NotificationRows;
+  intro: { title: string; text: string } | null;
+}
+
+export type HistoryTopic = "Talk" | "Quest" | "Item" | "Notification" | "Error";
+
+export interface HistoryRecord {
+  topic: HistoryTopic;
+  by: string | null;
+  text: string;
+  mark: "You" | "Began" | "Arrived" | "Failed" | null;
+}
+
+export interface History {
+  open: boolean;
+  tab: string | null;
+  records: HistoryRecord[];
 }
 
 // What the client sees this frame. Positions are world tiles, which `view` maps onto canvas pixels
@@ -152,8 +191,9 @@ export interface Snapshot {
   ui: UiElement[];
   covered: Cover[];
   stage: Stage | null;
-  announcement: Lane;
-  history: boolean;
+  notifications: Notifications;
+  feed: string[];
+  history: History;
   shop: Shop | null;
   item_card: { item: string; rect: Cover } | null;
   bag: Stack[];
@@ -344,10 +384,18 @@ export async function travelTo(
 export type UiMatch = string | RegExp | ((element: UiElement) => boolean);
 
 export function findUi(snapshot: Snapshot, match: UiMatch): UiElement | undefined {
-  const test = (value: string | null) =>
-    value !== null && (typeof match === "string" ? value === match : (match as RegExp).test(value));
-  return snapshot.ui.find((element) =>
-    typeof match === "function" ? match(element) : test(element.text) || test(element.image),
+  return matchUi(snapshot.ui, match);
+}
+
+// A History tab's title can show elsewhere too (a quest title, a tooltip): only the row holding "All" counts.
+export async function historyTab(page: Page, title: string): Promise<UiElement> {
+  return waitFor(
+    page,
+    (snapshot) => {
+      const all = findUi(snapshot, "All");
+      return all && snapshot.ui.find((element) => element.text === title && Math.abs(element.y - all.y) < 4);
+    },
+    `the history window has no ${title} tab`,
   );
 }
 
@@ -373,7 +421,7 @@ export function onChoice(snapshot: Snapshot, image: string): (element: UiElement
 }
 
 export async function hoverUi(page: Page, match: UiMatch): Promise<void> {
-  const { x, y } = await uiPoint(page, match);
+  const { x, y } = await uiPoint(page, match, "hover");
   await page.mouse.move(x, y, { steps: 12 });
 }
 
@@ -455,10 +503,23 @@ async function readProbe(page: Page): Promise<Snapshot | null> {
   return json === null ? null : (JSON.parse(json) as Snapshot);
 }
 
-async function uiPoint(page: Page, match: UiMatch): Promise<{ x: number; y: number }> {
-  const element = await waitFor(page, (snapshot) => findUi(snapshot, match), `no UI element matches ${match}`);
+// Clicks pass through some of what's on screen, so only the rest can be clicked; all of it can be hovered.
+async function uiPoint(page: Page, match: UiMatch, aim: "click" | "hover" = "click"): Promise<{ x: number; y: number }> {
+  const element = await waitFor(
+    page,
+    ({ ui }) => matchUi(aim === "hover" ? ui : ui.filter((element) => !element.click_through), match),
+    `no UI element matches ${match}`,
+  );
   const box = await canvasBox(page);
   return { x: box.x + element.x + element.width / 2, y: box.y + element.y + element.height / 2 };
+}
+
+function matchUi(elements: UiElement[], match: UiMatch): UiElement | undefined {
+  const test = (value: string | null) =>
+    value !== null && (typeof match === "string" ? value === match : (match as RegExp).test(value));
+  return elements.find((element) =>
+    typeof match === "function" ? match(element) : test(element.text) || test(element.image),
+  );
 }
 
 async function tilePoint(page: Page, tile: Tile): Promise<{ x: number; y: number }> {
@@ -485,10 +546,15 @@ function clickable(snapshot: Snapshot, tile: Tile, size: { width: number; height
 }
 
 // A walk click can land on a townsperson who strolled under it, and talking locks every later click.
-export async function leaveConversation(page: Page): Promise<void> {
-  await focusGame(page);
-  await page.keyboard.press("Escape");
-  await waitFor(page, ({ stage }) => stage === null, "the stray conversation never closed");
+// Leaving one conversation can hand the stage to another that was waiting its turn.
+export async function leaveConversation(page: Page, timeout = 30_000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while ((await probe(page)).stage) {
+    if (Date.now() > deadline) throw new Error("the stray conversation never closed");
+    await focusGame(page);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(600);
+  }
 }
 
 export function closestTile(tiles: Tile[], target: Tile): Tile | undefined {

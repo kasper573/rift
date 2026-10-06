@@ -22,12 +22,13 @@ use crate::systems::area::{self, AreaTag};
 use crate::systems::effect::{self, Effect, TimedEffect, TimedEffects};
 use crate::systems::equipment;
 use crate::systems::movement::{Position, position};
-use crate::systems::notice::{self, NoticeTone};
+use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, commands_locked, conn_player, sender_player};
 use crate::systems::reach::{self, Pursuit, ReachAct};
 use crate::systems::rule::{Encounter, Outcome, Requirement, RuleContext, Terms};
 use crate::systems::stat;
+use crate::systems::text::LineText;
 use crate::systems::visibility::{self, Presence, seen_by};
 
 pub const INVENTORY_MAX: u32 = 25;
@@ -365,10 +366,11 @@ impl ItemKind {
     }
 }
 
-#[derive(Default)]
 pub struct ItemSfx {
     pub on_use: Option<SfxId>,
-    pub drop: Option<SfxId>,
+    pub pickup: SfxId,
+    pub trade: SfxId,
+    pub drop: SfxId,
 }
 
 #[derive(Clone, Copy)]
@@ -401,7 +403,11 @@ impl UseCtx<'_> {
             outcomes: then,
         };
         if let Err(refusal) = terms.settle(self.world, self.actor, Encounter::default()) {
-            notice::tell(self.world, self.actor, refusal.0, NoticeTone::Bad);
+            notification::notify(
+                self.world,
+                self.actor,
+                Notification::new(NotificationKind::error(), LineText::plain(refusal.0)),
+            );
         }
     }
     pub fn equip(

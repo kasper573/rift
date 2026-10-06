@@ -12,10 +12,12 @@ use crate::data::prop::Id as PropId;
 use crate::systems::actor;
 use crate::systems::attention;
 use crate::systems::dialogue;
+use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::{commands_locked, sender_player, session};
 use crate::systems::reach::{self, Pursuit, ReachAct, Tether};
 use crate::systems::rule::{self, Encounter, Outcome, Requirement, Terms};
 use crate::systems::stat;
+use crate::systems::text::LineText;
 use crate::systems::visibility;
 
 pub fn register(app: &mut App) {
@@ -188,11 +190,10 @@ fn respond(world: &mut World, player: Entity, target: Entity, interaction: &'sta
         outcomes: response.then,
     };
     if let Err(refusal) = terms.settle(world, player, encounter) {
-        crate::systems::notice::tell(
+        notification::notify(
             world,
             player,
-            refusal.0,
-            crate::systems::notice::NoticeTone::Bad,
+            Notification::new(NotificationKind::error(), LineText::plain(refusal.0)),
         );
     }
 }

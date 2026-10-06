@@ -55,15 +55,15 @@ crate::table! {
         ],
         reactions: Some(ShopReactions {
             bought: &[
-                Line { by: Npc(NpcId::Mara), face: Some(Generic(Happy)), cue: true, text: &[plain("A fine choice. You won't find better this side of the strait.")] },
-                Line { by: Npc(NpcId::Mara), face: Some(Individual(Counting)), cue: true, text: &[plain("Pleasure doing business.")] },
+                Line { by: Npc(NpcId::Mara), face: Some(Generic(Happy)), text: &[plain("A fine choice. You won't find better this side of the strait.")] },
+                Line { by: Npc(NpcId::Mara), face: Some(Individual(Counting)), text: &[plain("Pleasure doing business.")] },
             ],
             sold: &[
-                Line { by: Npc(NpcId::Mara), face: Some(Generic(Thinking)), cue: true, text: &[plain("Hm. I'll find a buyer for that.")] },
-                Line { by: Npc(NpcId::Mara), face: Some(Individual(Smug)), cue: true, text: &[plain("It'll do. Don't tell anyone what I paid.")] },
+                Line { by: Npc(NpcId::Mara), face: Some(Generic(Thinking)), text: &[plain("Hm. I'll find a buyer for that.")] },
+                Line { by: Npc(NpcId::Mara), face: Some(Individual(Smug)), text: &[plain("It'll do. Don't tell anyone what I paid.")] },
             ],
             cant_afford: &[
-                Line { by: Npc(NpcId::Mara), face: Some(Generic(Angry)), cue: true, text: &[plain("Come back when your purse is heavier.")] },
+                Line { by: Npc(NpcId::Mara), face: Some(Generic(Angry)), text: &[plain("Come back when your purse is heavier.")] },
             ],
         }),
     },

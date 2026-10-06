@@ -3,6 +3,8 @@ use std::pin::Pin;
 
 use bevy::prelude::*;
 
+use crate::core::time::LocalClock;
+
 #[derive(Resource)]
 pub struct StartParams {
     pub access_token: Option<String>,
@@ -31,6 +33,7 @@ pub trait Platform: Send + Sync + 'static {
         authorization: String,
     ) -> Pin<Box<dyn Future<Output = Result<String, String>>>>;
     fn connect(&self, url: &str) -> Box<dyn ServerSocket>;
+    fn local_clock(&self) -> LocalClock;
 }
 
 #[derive(Resource)]

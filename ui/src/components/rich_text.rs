@@ -148,6 +148,13 @@ pub struct Typewriter {
     animated: bool,
     elapsed: Duration,
     finished: bool,
+    shown: usize,
+}
+
+#[derive(Message, Clone, Copy, Debug)]
+pub struct TypewriterReveal {
+    pub entity: Entity,
+    pub index: usize,
 }
 
 impl Typewriter {
@@ -174,6 +181,7 @@ pub fn rich_text(text: RichText, typed: bool) -> impl Scene {
         animated: typed,
         elapsed: Duration::ZERO,
         finished: !typed,
+        shown: 0,
     };
     bsn! {
         template_value(node)
@@ -264,6 +272,7 @@ pub(crate) fn lay_out_rich_text(
         if let Ok(mut typewriter) = typewriters.get_mut(entity) {
             typewriter.elapsed = Duration::ZERO;
             typewriter.finished = !typewriter.animated;
+            typewriter.shown = 0;
         }
         let mut laid: Vec<Entity> = split_words(text)
             .into_iter()
@@ -281,11 +290,12 @@ pub(crate) fn lay_out_rich_text(
 pub(crate) fn type_rich_text(
     time: Res<Time>,
     speed: Res<TypewriterSpeed>,
-    mut texts: Query<(&RichText, &mut Typewriter, Option<&Laid>)>,
+    mut texts: Query<(Entity, &RichText, &mut Typewriter, Option<&Laid>)>,
     mut words: Query<(&Word, &mut Visibility)>,
     mut spans: Query<&mut TextSpan>,
+    mut reveals: MessageWriter<TypewriterReveal>,
 ) {
-    for (text, mut typewriter, laid) in &mut texts {
+    for (entity, text, mut typewriter, laid) in &mut texts {
         let Some(laid) = laid else {
             continue;
         };
@@ -299,6 +309,12 @@ pub(crate) fn type_rich_text(
             }
             shown
         };
+        if typewriter.animated && shown > typewriter.shown {
+            let letters = reveal_times(&text.pieces, *speed).len();
+            let newly = typewriter.shown..shown.min(letters);
+            reveals.write_batch(newly.map(|index| TypewriterReveal { entity, index }));
+            typewriter.shown = shown;
+        }
         let mut laid_words = words.iter_many_mut(&laid.0);
         while let Some((word, mut visibility)) = laid_words.fetch_next() {
             if let Some(at) = word.cap_at {

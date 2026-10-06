@@ -12,7 +12,7 @@ fn every_bust_fits_the_download_budget() {
     let arts: HashSet<&str> = data::model::TABLE
         .iter()
         .flat_map(|def| def.busts.iter().flat_map(|busts| busts.all()))
-        .map(|bust| bust.art.0)
+        .map(|bust| bust.0)
         .collect();
     let mut total = 0;
     for art in arts {

@@ -51,7 +51,14 @@ test(
       await page.waitForTimeout(2000);
       await pick(page, "I'll take it.");
       await waitFor(page, (snapshot) => onQuest(snapshot, "LetterForTheCaptain"), "the letter quest never started");
-      await caption(page, "Accepted: a toast, the letter in your bag, and the quest on your tracker", { at: "top" });
+      await waitFor(
+        page,
+        ({ feed }) => feed.includes("Quest accepted · A Letter for the Captain"),
+        "the accepted quest never showed in the feed",
+      );
+      await caption(page, "Accepted: the corner says so, the letter is in your bag, the quest on your tracker", {
+        at: "top",
+      });
       await hearOutTobb(page);
       await page.waitForTimeout(2000);
 
@@ -91,8 +98,9 @@ test(
       await page.keyboard.press("Escape");
       await waitFor(page, ({ item_card }) => item_card === null, "the item card never closed");
       await page.waitForTimeout(800);
+      await caption(page, "A quest can keep its rewards to itself: the letter's entry has none to show", { at: "top" });
       await clickUi(page, logRow(await probe(page), "A Letter for the Captain"));
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(3000);
       await clickUi(page, logRow(await probe(page), "Low Tide"));
       await page.waitForTimeout(1000);
       await caption(page, "Abandoning always asks, and Keep quest is the default — Enter keeps it", { at: "top" });
@@ -119,10 +127,19 @@ test(
       await pick(page, "A Letter for the Captain");
       await onStage(page, "LetterThanks");
       await readToChoices(page, 1200);
-      await caption(page, "The letter is what this choice costs", { at: "top" });
+      await caption(page, "Nobody named Bram's pay, so the choice keeps it to itself", { at: "top" });
       await page.waitForTimeout(2000);
       await pick(page, "Tobb asked me to bring you this.");
       await waitFor(page, (snapshot) => finished(snapshot, "LetterForTheCaptain") === "Completed", "never delivered");
+      await waitFor(page, ({ feed }) => feed.includes("+10 Gold"), "the pay never showed in the feed");
+      await caption(page, "Delivered: the letter goes and the pay arrives in the corner, the finished quest lands in the middle", {
+        at: "top",
+      });
+      await waitFor(page, (snapshot) => milestone(snapshot, "Quest complete"), "the quest never finished");
+      await page.waitForTimeout(1500);
+      await caption(page, "The XP brought a new level, which joins it right below", { at: "top" });
+      await waitFor(page, (snapshot) => milestone(snapshot, "Level up"), "no level up", 20_000);
+      await page.waitForTimeout(2500);
       await caption(page, "Delivered. The next quest in the chain shows what it still needs", { at: "top" });
       await page.waitForTimeout(1500);
       await talkTo(page, "Bram");
@@ -158,10 +175,11 @@ test(
       await pick(page, "Tusks for the Chief");
       await onStage(page, "TusksThanks");
       await readToChoices(page, 1000);
-      await caption(page, "A full bag locks every pick — space is counted after the tusks are handed in", {
+      await caption(page, "With a full bag the pick is refused and says why — space is counted after the tusks are handed in", {
         at: "top",
       });
-      await hoverUi(page, "I'll take the Bone Shield.");
+      await pick(page, "I'll take the Bone Shield.");
+      await waitFor(page, ({ stage }) => stage?.status, "the full bag never refused the pick");
       await page.waitForTimeout(3500);
       await pick(page, "Not yet.");
       await conversationOver(page);
@@ -222,4 +240,8 @@ async function hearOutTobb(page: Page): Promise<void> {
     }
     await page.waitForTimeout(100);
   }
+}
+
+function milestone({ notifications }: Snapshot, label: string): boolean {
+  return notifications.milestones.rows.some((row) => row.label === label);
 }

@@ -7,7 +7,6 @@ use bevy_picking::pointer::PointerId;
 use bevy_ui::{ComputedNode, InteractionDisabled};
 
 use crate::carry::Ghost;
-use crate::state::ancestor_with;
 
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorStyle {
@@ -18,6 +17,22 @@ pub enum CursorStyle {
     Resize,
     Grab,
     Grabbing,
+}
+
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct ClickThrough;
+
+pub fn clicks_through(world: &World, hit: Entity) -> bool {
+    std::iter::successors(Some(hit), |&entity| {
+        world.get::<ChildOf>(entity).map(ChildOf::parent)
+    })
+    .find_map(|entity| {
+        passes_at(
+            world.get::<ClickThrough>(entity).is_some(),
+            world.get::<CursorStyle>(entity).is_some(),
+        )
+    })
+    .unwrap_or(false)
 }
 
 #[derive(Resource, Default)]
@@ -39,15 +54,32 @@ impl InterfaceCursor {
 pub(crate) fn track_interface_cursor(
     hover: Res<HoverMap>,
     mouse: Res<ButtonInput<MouseButton>>,
-    nodes: Query<(), With<ComputedNode>>,
+    nodes: Query<Has<ClickThrough>, With<ComputedNode>>,
     parents: Query<&ChildOf>,
     styles: Query<(&CursorStyle, Has<InteractionDisabled>)>,
     ghosts: Query<(), With<Ghost>>,
     mut cursor: ResMut<InterfaceCursor>,
 ) {
+    let ancestry = |hit: Entity| {
+        std::iter::successors(Some(hit), |&entity| {
+            parents.get(entity).ok().map(ChildOf::parent)
+        })
+    };
     let topmost = hover.get(&PointerId::Mouse).and_then(|hits| {
         hits.iter()
-            .filter_map(|(&hit, data)| Some((ancestor_with(hit, &parents, &nodes)?, data.depth)))
+            .filter(|&(&hit, _)| {
+                !ancestry(hit)
+                    .find_map(|entity| {
+                        passes_at(nodes.get(entity).unwrap_or(false), styles.contains(entity))
+                    })
+                    .unwrap_or(false)
+            })
+            .filter_map(|(&hit, data)| {
+                Some((
+                    ancestry(hit).find(|&entity| nodes.contains(entity))?,
+                    data.depth,
+                ))
+            })
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(node, _)| node)
     });
@@ -69,5 +101,13 @@ pub(crate) fn track_interface_cursor(
     }
     if cursor.held.is_some() && !ghosts.is_empty() {
         cursor.held = Some(CursorStyle::Grabbing);
+    }
+}
+
+fn passes_at(click_through: bool, styled: bool) -> Option<bool> {
+    match (styled, click_through) {
+        (true, _) => Some(false),
+        (false, true) => Some(true),
+        (false, false) => None,
     }
 }

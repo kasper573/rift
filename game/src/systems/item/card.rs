@@ -190,6 +190,7 @@ fn show_card(world: &mut World) {
             item.get().display_name,
             ui::scrolled(Box::new(padded(sheet(world, item)))),
         ),
+        0,
     );
     if let Some(panel) = hud::spawn_in_hud(world, scene) {
         world.entity_mut(panel).insert(ItemCardWindow { item });

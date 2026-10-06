@@ -1,6 +1,6 @@
 mod aggressive;
 mod defensive;
-mod noticing;
+mod observation;
 mod pacifist;
 mod protective;
 mod stands;
@@ -9,7 +9,7 @@ mod summon;
 
 pub use aggressive::Aggressive;
 pub use defensive::Defensive;
-pub use noticing::{Noticed, Noticing, notice};
+pub use observation::{Observation, Observed, observe};
 pub use pacifist::Pacifist;
 pub use protective::Protective;
 pub use stands::Stands;
@@ -27,6 +27,7 @@ use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
+use crate::core::babble::{BabbleId, Babbler};
 use crate::core::math::{Direction, Pos, Rng};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
@@ -65,7 +66,7 @@ pub fn conversation_starts() -> Vec<data::dialogue::Id> {
                 .iter()
                 .flat_map(interact::conversation_starts)
         })
-        .chain(noticing::starts())
+        .chain(observation::starts())
         .chain(
             data::npc::TABLE
                 .iter()
@@ -81,7 +82,11 @@ pub fn check(assets: &AssetService) {
             .iter()
             .flat_map(|interaction| interaction.responses)
             .flat_map(|response| response.then)
-            .chain(def.notices.iter().flat_map(|noticing| noticing.then))
+            .chain(
+                def.observations
+                    .iter()
+                    .flat_map(|observation| observation.then),
+            )
             .chain(def.on_defeat)
     });
     for outcome in outcomes {
@@ -89,6 +94,11 @@ pub fn check(assets: &AssetService) {
     }
     for lock in data::npc::TABLE.iter().flat_map(|def| def.guards) {
         lock.check(assets);
+    }
+    for speaker in crate::systems::notification::speakers() {
+        if speaker.get().babble.is_none() {
+            panic!("notification speaker {speaker:?} has no babble");
+        }
     }
 }
 
@@ -149,13 +159,14 @@ pub struct NpcDef {
     pub attitude: Attitude,
     pub respawn: Option<Seconds>,
     pub model: data::model::Id,
+    pub babble: Option<BabbleId>,
     pub tint: Rgba,
     pub ai: &'static dyn Ai,
     pub stats: &'static [Stat],
     pub aggro: Tiles,
     pub rewards: &'static [crate::systems::rewards::Reward],
     pub interaction: Option<Interaction>,
-    pub notices: &'static [Noticing],
+    pub observations: &'static [Observation],
     pub guards: &'static [area::WarpLock],
     pub on_defeat: &'static [&'static dyn Outcome],
 }
@@ -241,6 +252,9 @@ pub fn spawn(
     ));
     if def.get().interaction.is_some() {
         world.entity_mut(entity).insert(Interactive);
+    }
+    if let Some(babble) = def.get().babble {
+        world.entity_mut(entity).insert(Babbler(babble));
     }
     entity
 }

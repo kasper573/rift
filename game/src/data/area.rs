@@ -1,16 +1,17 @@
 use crate::core::assets::AssetRef;
-use crate::data::announcement::Id as AnnouncementId;
 use crate::data::memory::Id as MemoryId;
+use crate::data::notification::Id as NotificationId;
 use crate::data::npc::Id as NpcId;
 use crate::data::prop::Id as PropId;
-use crate::systems::announcement::Announce;
 use crate::systems::area::{AreaDef, MarkerName, Population, Resident, Zone};
 use crate::systems::memory::{Remember, Remembers};
+use crate::systems::notification::Notify;
 use crate::systems::prop::Fixture;
 use crate::systems::rule::Not;
 
 crate::table! {
     Island: AreaDef {
+        name: "The island",
         map: AssetRef("maps/island.tmx"),
         populations: &[
             Population { npc: NpcId::Orc, count: 6 },
@@ -33,7 +34,7 @@ crate::table! {
             Resident { npc: NpcId::Ilsa, at: MarkerName("road-warden"), shown: &[] },
         ],
         props: &[
-            Fixture { prop: PropId::HarbourNotices, at: MarkerName("notice-board"), shown: &[] },
+            Fixture { prop: PropId::HarbourBoard, at: MarkerName("notice-board"), shown: &[] },
             Fixture { prop: PropId::TideChest, at: MarkerName("tide-chest"), shown: &[] },
             Fixture { prop: PropId::HonestyBox, at: MarkerName("honesty-box"), shown: &[] },
         ],
@@ -44,14 +45,15 @@ crate::table! {
                 requires: &[&Not(&Remembers(MemoryId::HeardHarbourBell))],
                 then: &[
                     &Remember(MemoryId::HeardHarbourBell),
-                    &Announce(AnnouncementId::HarbourBell),
-                    &Announce(AnnouncementId::Gulls),
+                    &Notify(NotificationId::HarbourBell),
+                    &Notify(NotificationId::Gulls),
                 ],
             },
         ],
         intro: None,
     },
     Forest: AreaDef {
+        name: "The forest",
         map: AssetRef("maps/forest.tmx"),
         populations: &[
             Population { npc: NpcId::Orc, count: 8 },
@@ -62,7 +64,7 @@ crate::table! {
         residents: &[Resident { npc: NpcId::Ugra, at: MarkerName("ugra-camp"), shown: &[] }],
         props: &[Fixture { prop: PropId::StandingStone, at: MarkerName("standing-stone"), shown: &[] }],
         zones: &[],
-        intro: Some(AnnouncementId::ForestArrival),
+        intro: Some(NotificationId::ForestIntro),
     },
 }
 

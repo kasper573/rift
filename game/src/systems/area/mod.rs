@@ -21,8 +21,8 @@ use crate::core::math::{Pos, Rect, Size};
 use crate::core::sfx::SfxId;
 use crate::core::tiling::{Cell, CellPos, GridSize, TilePos, TileSize, Tiles};
 use crate::data;
-use crate::systems::announcement::AnnouncementId;
 use crate::systems::movement;
+use crate::systems::notification::NotificationId;
 use crate::systems::rule::Requirement;
 
 pub use crate::data::area::Id;
@@ -52,12 +52,13 @@ pub fn wild(world: &World, entity: Entity) -> bool {
 }
 
 pub struct AreaDef {
+    pub name: &'static str,
     pub map: AssetRef,
     pub populations: &'static [Population],
     pub residents: &'static [Resident],
     pub props: &'static [crate::systems::prop::Fixture],
     pub zones: &'static [Zone],
-    pub intro: Option<AnnouncementId>,
+    pub intro: Option<NotificationId>,
 }
 
 pub struct Population {

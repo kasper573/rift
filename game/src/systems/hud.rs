@@ -4,10 +4,13 @@ use serde::{Deserialize, Serialize};
 use ui::component;
 use ui::{Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
+use crate::core::babble::BabbleEnabled;
 use crate::core::platform::{ClientPlatform, Platform};
 use crate::systems::input::map::{ActionInput, InputAction};
 use crate::systems::scene::mode::Mode;
-use crate::systems::{effect, equipment, item, player, quest, settings, spectate, stat, terminal};
+use crate::systems::{
+    effect, equipment, history, item, player, quest, settings, spectate, stat, terminal,
+};
 
 pub(crate) const WIDGET: ScreenPx = ScreenPx(48.0);
 const WINDOW_SIZE: Vec2 = Vec2::new(400.0, 200.0);
@@ -82,6 +85,9 @@ pub trait Window: Send + Sync {
         WINDOW_SIZE
     }
     fn contents(&self, world: &World) -> Vec<ui::WindowContent>;
+    fn tab(&self, _world: &World) -> usize {
+        0
+    }
     fn sync(&self, world: &mut World);
 }
 
@@ -165,6 +171,10 @@ static WINDOWS: &[(&str, &dyn Window)] = &[
     ("Equipment", &equipment::widget::EquipmentWindow),
     ("Stats", &stat::widget::StatsWindow),
     ("Quests", &quest::log::QuestLogWindow),
+    (
+        history::widget::HISTORY_WINDOW,
+        &history::widget::HistoryWindow,
+    ),
     ("Settings", &settings::SettingsWindow),
     (TERMINAL_WINDOW, &terminal::widget::TerminalWindow),
 ];
@@ -209,12 +219,12 @@ impl Settings {
         self.0.toggle_snapping();
     }
 
-    pub(crate) fn text_speed(&self) -> TextSpeed {
-        self.0.text.speed
+    pub(crate) fn letters_per_second(&self) -> LettersPerSecond {
+        self.0.text.letters_per_second
     }
 
-    pub(crate) fn cycle_text_speed(&mut self) {
-        self.0.text.speed = self.0.text.speed.next();
+    pub(crate) fn set_letters_per_second(&mut self, letters_per_second: LettersPerSecond) {
+        self.0.text.letters_per_second = letters_per_second.clamped();
     }
 
     pub(crate) fn reduced_motion(&self) -> bool {
@@ -224,43 +234,31 @@ impl Settings {
     pub(crate) fn toggle_reduced_motion(&mut self) {
         self.0.text.reduced_motion = !self.0.text.reduced_motion;
     }
-}
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum TextSpeed {
-    Slow,
-    #[default]
-    Normal,
-    Fast,
-    Instant,
-}
-
-impl TextSpeed {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            TextSpeed::Slow => "slow",
-            TextSpeed::Normal => "normal",
-            TextSpeed::Fast => "fast",
-            TextSpeed::Instant => "instant",
-        }
+    pub(crate) fn babble_enabled(&self) -> bool {
+        self.0.sound.babble_enabled
     }
 
-    fn next(self) -> TextSpeed {
-        match self {
-            TextSpeed::Slow => TextSpeed::Normal,
-            TextSpeed::Normal => TextSpeed::Fast,
-            TextSpeed::Fast => TextSpeed::Instant,
-            TextSpeed::Instant => TextSpeed::Slow,
-        }
+    pub(crate) fn toggle_babble(&mut self) {
+        self.0.sound.babble_enabled = !self.0.sound.babble_enabled;
     }
+}
 
-    fn typewriter(self) -> ui::TypewriterSpeed {
-        ui::TypewriterSpeed(match self {
-            TextSpeed::Slow => Some(25.0),
-            TextSpeed::Normal => Some(45.0),
-            TextSpeed::Fast => Some(90.0),
-            TextSpeed::Instant => None,
-        })
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub(crate) struct LettersPerSecond(pub f32);
+
+impl LettersPerSecond {
+    pub(crate) const SLOWEST: LettersPerSecond = LettersPerSecond(15.0);
+    pub(crate) const FASTEST: LettersPerSecond = LettersPerSecond(120.0);
+
+    fn clamped(self) -> LettersPerSecond {
+        LettersPerSecond(self.0.clamp(Self::SLOWEST.0, Self::FASTEST.0))
+    }
+}
+
+impl Default for LettersPerSecond {
+    fn default() -> LettersPerSecond {
+        LettersPerSecond(45.0)
     }
 }
 
@@ -309,14 +307,34 @@ struct UserSettings {
     ui: UiSettings,
     #[serde(default)]
     text: TextSettings,
+    #[serde(default)]
+    sound: SoundSettings,
 }
 
 #[derive(Serialize, Deserialize, Default)]
 struct TextSettings {
     #[serde(default)]
-    speed: TextSpeed,
+    letters_per_second: LettersPerSecond,
     #[serde(default)]
     reduced_motion: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SoundSettings {
+    #[serde(default = "default_babble_enabled")]
+    babble_enabled: bool,
+}
+
+impl Default for SoundSettings {
+    fn default() -> SoundSettings {
+        SoundSettings {
+            babble_enabled: default_babble_enabled(),
+        }
+    }
+}
+
+fn default_babble_enabled() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize)]
@@ -336,6 +354,7 @@ impl UserSettings {
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default();
         settings.ui.snap = settings.ui.snap.filter(|snap| snap.0 > 0.0);
+        settings.text.letters_per_second = settings.text.letters_per_second.clamped();
         settings
     }
 
@@ -411,6 +430,9 @@ struct Open(std::collections::HashSet<&'static str>);
 #[derive(Component, Default, Clone)]
 struct Hud;
 
+#[derive(Component, Default, Clone)]
+struct HudPiece;
+
 #[derive(Component, Clone)]
 struct WindowView {
     window: &'static str,
@@ -428,7 +450,8 @@ fn spawn_hud(
     let mut scenes: Vec<Box<dyn Scene>> = Vec::new();
     for (name, widget) in widgets(*mode) {
         let pos = widget_pos(&settings, name, widget.fallback(screen_w));
-        scenes.push(widget.build(pos, name));
+        let built = widget.build(pos, name);
+        scenes.push(Box::new(bsn! { {built} HudPiece }));
     }
     for (window, _) in windows(*mode) {
         scenes.push(Box::new(launcher(
@@ -509,6 +532,7 @@ fn launcher(
             on_settle: OnSettle::new(move |world, geom| persist_widget(world, window, geom)),
         })}
         component(WindowView { window, open: false })
+        HudPiece
     }
 }
 
@@ -520,11 +544,28 @@ fn window_scene(world: &World, window: &'static str, screen: Vec2) -> impl Scene
             world,
             window,
             (centered, def.size()),
-            OnTap::new(move |world| close_window(world, window)),
+            OnTap::new(move |world| {
+                close_window(world, window);
+            }),
             def.contents(world),
+            def.tab(world),
         )}
         component(WindowView { window, open: true })
     }
+}
+
+pub(crate) fn pieces(world: &mut World) -> Vec<Rect> {
+    let pieces: Vec<Entity> = world
+        .query_filtered::<(Entity, &InheritedVisibility), With<HudPiece>>()
+        .iter(world)
+        .filter(|(_, visibility)| visibility.get())
+        .map(|(piece, _)| piece)
+        .collect();
+    pieces
+        .into_iter()
+        .filter_map(|piece| ui::node_rect(world, piece))
+        .filter(|rect| rect.width() > 0.0 && rect.height() > 0.0)
+        .collect()
 }
 
 pub(crate) fn spawn_in_hud(world: &mut World, scene: impl Scene) -> Option<Entity> {
@@ -543,6 +584,7 @@ pub(crate) fn placed_window(
     (fallback_pos, fallback_size): (Vec2, Vec2),
     on_close: OnTap,
     content: Vec<ui::WindowContent>,
+    tab: usize,
 ) -> impl Scene + use<> {
     let settings = world.resource::<Settings>();
     let (pos, size) = window_geom(settings, id, fallback_pos, fallback_size);
@@ -552,11 +594,16 @@ pub(crate) fn placed_window(
         on_close,
         on_settle: OnSettle::new(move |world, geom| persist_window(world, id, geom)),
         content,
+        tab,
     })
 }
 
-fn close_window(world: &mut World, window: &'static str) {
-    world.resource_mut::<Open>().0.remove(&window);
+pub(crate) fn close_window(world: &mut World, window: &'static str) -> bool {
+    world.resource_mut::<Open>().0.remove(&window)
+}
+
+pub(crate) fn window_open(world: &World, window: &'static str) -> bool {
+    world.resource::<Open>().0.contains(&window)
 }
 
 pub(crate) fn close_topmost_window(world: &mut World) -> bool {
@@ -623,13 +670,15 @@ fn sync_preferences(
     mut grid: ResMut<SnapGrid>,
     mut speed: ResMut<ui::TypewriterSpeed>,
     mut motion: ResMut<ui::MotionPreference>,
+    mut babble: ResMut<BabbleEnabled>,
 ) {
     if !settings.is_changed() {
         return;
     }
     grid.0 = settings.0.snap_grid();
-    *speed = settings.0.text.speed.typewriter();
+    *speed = ui::TypewriterSpeed(Some(settings.0.text.letters_per_second.0));
     motion.reduced = settings.0.text.reduced_motion;
+    babble.0 = settings.0.sound.babble_enabled;
 }
 
 fn launcher_pos(window: &'static str, mode: Mode, screen_w: f32) -> Vec2 {

@@ -44,11 +44,15 @@ test(
       const name = (await probe(islander)).me!.name;
       const stop = await inset(page, islander, `${name}'s screen, back on the island`);
       try {
-        await caption(page, `…or announcing to every player in every area, like ${name} on the island`);
-        await submitText(page, "/announce The server restarts in five minutes, so finish your fights.");
+        await caption(page, `…or alerting every player in every area, like ${name} on the island`);
+        await submitText(page, "/notify The server restarts in five minutes, so finish your fights.");
         await Promise.all(
           [page, islander].map((player) =>
-            waitFor(player, ({ announcement }) => announcement.showing?.by === "Server", "the announcement never arrived"),
+            waitFor(
+              player,
+              ({ notifications }) => notifications.alerts.rows.some(({ label }) => label === "Server"),
+              "the alert never arrived",
+            ),
           ),
         );
         await page.waitForTimeout(6000);

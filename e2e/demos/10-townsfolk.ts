@@ -45,7 +45,7 @@ test(
       const chest = await waitFor(page, (snapshot) => fixture(snapshot, "TideChest"), "no tide chest");
       await hoverTile(page, chest.aim);
       await page.waitForTimeout(2200);
-      const board = await waitFor(page, (snapshot) => fixture(snapshot, "HarbourNotices"), "no notice board");
+      const board = await waitFor(page, (snapshot) => fixture(snapshot, "HarbourBoard"), "no notice board");
       await walkBelow(page, () => board.at);
       await hoverTile(page, board.aim);
       await page.waitForTimeout(2500);

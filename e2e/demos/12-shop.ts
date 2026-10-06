@@ -107,12 +107,12 @@ test(
       await waitFor(page, ({ shop }) => shop === null, "the shop outlived the conversation");
       await page.waitForTimeout(1000);
 
-      await caption(page, "Wren collects bones and wings, and pays in his own Bone Tokens");
+      await caption(page, "Wren collects bones and wings, and pays in her own Bone Tokens");
       await talkTo(page, "Wren");
       await readToChoices(page, 900);
       await pick(page, "I've brought bones.");
       await waitFor(page, ({ shop }) => shop?.shop === "BoneExchange", "Wren's exchange never opened");
-      await caption(page, "His shop has no reactions: trades pass in silence, and your bag lights up what he takes", {
+      await caption(page, "Her shop has no reactions: trades pass in silence, and your bag lights up what she takes", {
         at: "top",
       });
       await page.waitForTimeout(3000);

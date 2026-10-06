@@ -40,7 +40,7 @@ struct DropAnim {
     to: Vec2,
     delay: Seconds,
     elapsed: Seconds,
-    drop_sfx: Option<SfxId>,
+    drop_sfx: SfxId,
 }
 
 #[derive(Resource, Default)]
@@ -161,12 +161,10 @@ fn animate_drops(
             drop_z(&service, tag, position.pos),
         );
         if anim.elapsed - anim.delay >= DROP_DURATION {
-            if let Some(id) = anim.drop_sfx {
-                play.write(PlaySfx {
-                    id,
-                    place: SfxPlace::World(position.pos),
-                });
-            }
+            play.write(PlaySfx {
+                id: anim.drop_sfx,
+                place: SfxPlace::World(position.pos),
+            });
             commands.entity(entity).remove::<DropAnim>();
         }
     }

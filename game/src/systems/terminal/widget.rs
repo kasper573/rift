@@ -23,7 +23,7 @@ impl Window for TerminalWindow {
         "icons/misc/scroll.png"
     }
     fn order(&self) -> u32 {
-        5
+        6
     }
     fn contents(&self, world: &World) -> Vec<ui::WindowContent> {
         let terminals = world.resource::<Terminals>();

@@ -6,7 +6,7 @@ use crate::core::math::Direction;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
 use crate::systems::REPLICATION_PERIOD;
-use crate::systems::actor::{Action, Actor, Rgba, build_model};
+use crate::systems::actor::{Action, Actor, build_model};
 use crate::systems::area::{self, AreaTag};
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
@@ -103,7 +103,7 @@ fn sync_actors(
         let drawn = model.drawn_size(region);
         sprite.rect = Some(atlas_rect(region));
         sprite.custom_size = Some(Vec2::new(drawn.width, drawn.height));
-        sprite.color = rgba(actor.color);
+        sprite.color = actor.color.color();
         let area = service.resolve(tag.area.get().map, area::build_area);
         let at = render.0;
         *transform = sprite_transform(
@@ -114,11 +114,6 @@ fn sync_actors(
             *visibility = Visibility::Inherited;
         }
     }
-}
-
-fn rgba(tint: Rgba) -> Color {
-    let [r, g, b, a] = tint.0.to_be_bytes();
-    Color::srgba_u8(r, g, b, a)
 }
 
 #[derive(Resource, Default)]

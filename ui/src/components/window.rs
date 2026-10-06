@@ -4,10 +4,11 @@ use bevy_scene::{EntityScene, Scene, bsn, on, template_value};
 use crate::components::button::{ButtonSize, button_styled, intent};
 use crate::components::{tabs_content, tabs_trigger, text};
 use crate::drag::{DragHandle, DragRoot, OnSettle, OnTap, ResizeHandle};
-use crate::state::SelectGroup;
+use crate::state::{SelectGroup, SelectItem, SelectionChanged, selected};
 use crate::style::Style;
 use crate::theme::theme;
 use crate::{Activate, component};
+use bevy::ui::Checked;
 
 const MIN_WINDOW: Vec2 = Vec2::new(100.0, 100.0);
 
@@ -16,12 +17,23 @@ pub struct WindowContent {
     pub scene: Box<dyn Scene>,
 }
 
+#[derive(Component, Default, Clone)]
+pub struct WindowTabs;
+
+#[derive(EntityEvent, Clone, Copy, Debug)]
+pub struct WindowTabChanged {
+    #[event_target]
+    pub window: Entity,
+    pub tab: usize,
+}
+
 pub struct WindowOptions {
     pub pos: Vec2,
     pub size: Vec2,
     pub on_close: OnTap,
     pub on_settle: OnSettle,
     pub content: Vec<WindowContent>,
+    pub tab: usize,
 }
 
 pub fn window(opts: WindowOptions) -> impl Scene {
@@ -42,12 +54,14 @@ pub fn window(opts: WindowOptions) -> impl Scene {
         .into_iter()
         .map(|content| (content.title, content.scene))
         .unzip();
-    let initial: Vec<String> = titles.iter().take(1).map(|_| tab_value(0)).collect();
+    let tab = opts.tab.min(titles.len().saturating_sub(1));
+    let initial: Vec<String> = titles.iter().take(1).map(|_| tab_value(tab)).collect();
     bsn! {
         template_value(node)
         BackgroundColor({family.base})
         component(BorderColor::all(family.border))
         component(SelectGroup { exclusive: true, toggleable: false, initial })
+        WindowTabs
         DragRoot
         component(opts.on_settle)
         Children [
@@ -55,6 +69,28 @@ pub fn window(opts: WindowOptions) -> impl Scene {
             {EntityScene(body(scenes))},
             {EntityScene(resize_grip())},
         ]
+    }
+}
+
+pub(crate) fn announce_tab(
+    changed: On<SelectionChanged>,
+    windows: Query<(), With<WindowTabs>>,
+    items: Query<(Entity, &SelectItem, Has<Checked>)>,
+    parents: Query<&ChildOf>,
+    is_group: Query<(), With<SelectGroup>>,
+    mut commands: Commands,
+) {
+    if !windows.contains(changed.group) {
+        return;
+    }
+    let tab = selected(changed.group, &items, &parents, &is_group)
+        .iter()
+        .find_map(|value| value.parse().ok());
+    if let Some(tab) = tab {
+        commands.trigger(WindowTabChanged {
+            window: changed.group,
+            tab,
+        });
     }
 }
 

@@ -1,8 +1,8 @@
 pub mod account;
 pub mod actor;
-pub mod announcement;
 pub mod area;
 pub mod attention;
+pub mod belongings;
 pub mod chat;
 pub mod combat;
 pub mod debug;
@@ -10,6 +10,7 @@ pub mod dialogue;
 pub mod effect;
 pub mod equipment;
 pub mod fps;
+pub mod history;
 pub mod hud;
 pub mod input;
 pub mod interact;
@@ -17,7 +18,7 @@ pub mod item;
 pub mod job;
 pub mod memory;
 pub mod movement;
-pub mod notice;
+pub mod notification;
 pub mod npc;
 pub mod player;
 pub mod prop;
@@ -72,7 +73,8 @@ static TERMINALS: LazyLock<HashMap<crate::data::terminal::Id, &'static Terminal>
 
 pub fn protocol(app: &mut App) {
     actor::register(app);
-    announcement::register(app);
+    crate::core::babble::register(app);
+    notification::register(app);
     area::register(app);
     attention::register(app);
     combat::register(app);
@@ -80,10 +82,10 @@ pub fn protocol(app: &mut App) {
     stat::register(app);
     effect::register(app);
     equipment::register(app);
+    history::register(app);
     item::register(app);
     job::register(app);
     movement::register(app);
-    notice::register(app);
     interact::register(app);
     npc::register(app);
     prop::register(app);
@@ -181,13 +183,12 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     movement::advance,
                     item::pickups,
                     interact::interactions,
-                    (npc::notice, area::zone::enter_zones)
+                    (npc::observe, area::zone::enter_zones)
                         .chain()
                         .run_if(on_replication_tick),
                     (
                         dialogue::hold,
                         dialogue::refresh.run_if(on_replication_tick),
-                        announcement::advance.run_if(on_replication_tick),
                     )
                         .chain(),
                     (shop::hold, shop::refresh.run_if(on_replication_tick)).chain(),
@@ -200,6 +201,8 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     bevy_terminal::ingest::<crate::data::terminal::Id>,
                     bevy_terminal::dispatch::<crate::data::terminal::Id>,
                     chat::rebroadcast,
+                    belongings::notify_changes,
+                    history::backfill,
                     attention::update.run_if(on_replication_tick),
                     visibility::update.run_if(on_replication_tick),
                 )
@@ -252,6 +255,7 @@ pub fn check_content(assets: &crate::core::assets::AssetService) {
     );
     shop::check();
     quest::check(assets);
+    notification::check();
 }
 
 pub(crate) fn requests<M: Message>(world: &mut World) -> Vec<FromClient<M>> {

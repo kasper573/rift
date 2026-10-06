@@ -241,9 +241,11 @@ fn a_full_bag_refuses_the_reward_counting_space_after_the_hand_in() {
     talk(&mut sim, 1, player, NpcId::Mara);
     let thanks = pick(&mut sim, 1, player, "Tusks for the Chief").expect("thanks");
     assert_eq!(thanks.node, DialogueId::TusksThanks);
-    let refused = refusal(&thanks, "I'll take the Bone Shield.");
+    assert_eq!(refusal(&thanks, "I'll take the Bone Shield."), None);
+    let refused = pick(&mut sim, 1, player, "I'll take the Bone Shield.")
+        .and_then(|now| now.refused)
+        .map(|refused| refused.reason);
     assert_eq!(refused.as_deref(), Some("Needs 1 free slot"));
-    pick(&mut sim, 1, player, "I'll take the Bone Shield.");
     assert_eq!(count(&mut sim, player, ItemId::OrcTusk), 7);
     assert_eq!(count(&mut sim, player, ItemId::BoneShield), 0);
     leave(&mut sim, 1, player);

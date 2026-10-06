@@ -63,8 +63,24 @@ test(
       await page.waitForTimeout(2500);
       await pick(islander, "I'll take it.");
       await waitFor(page, (snapshot) => onQuest(snapshot, "LetterForTheCaptain"), "the quest never showed");
-      await caption(page, "Their quest tracker follows along", { at: "top" });
+      await caption(page, "Their quest tracker follows along, and so does their feed in the corner", { at: "top" });
+      await waitFor(
+        page,
+        ({ feed }) => feed.includes("Quest accepted · A Letter for the Captain"),
+        "the spectator's feed never showed the quest",
+      );
       await page.waitForTimeout(3000);
+      await caption(page, "H opens their history, and says whose it is", { at: "top" });
+      await focusGame(page);
+      await page.keyboard.press("KeyH");
+      await waitFor(
+        page,
+        ({ history }) => history.open && history.records.some((record) => record.text.includes("A Letter for the Captain")),
+        "the watched player's history never showed",
+      );
+      await page.waitForTimeout(3500);
+      await page.keyboard.press("KeyH");
+      await waitFor(page, ({ history }) => !history.open, "history never closed");
       await caption(page, "So do their shops, with every button off");
       await talkTo(islander, "Mara");
       await readToChoices(islander, 900);

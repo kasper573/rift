@@ -157,11 +157,11 @@ fn death_banner() -> impl Scene {
         }
         GlobalZIndex({ui::tokens::layer::ALERTS})
         Pickable { should_block_lower: false, is_hoverable: false }
-        Children [ {EntityScene(ui::rich_text(death_notice(), false))} ]
+        Children [ {EntityScene(ui::rich_text(death_text(), false))} ]
     }
 }
 
-fn death_notice() -> RichText {
+fn death_text() -> RichText {
     RichText {
         color: Color::WHITE,
         ..RichText::new(vec![

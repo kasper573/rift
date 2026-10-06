@@ -7,6 +7,7 @@ use crate::data::memory::Id as MemoryId;
 use crate::data::npc::Id as NpcId;
 use crate::data::prop::Id as PropId;
 use crate::systems::area::MarkerName;
+use crate::systems::dialogue::ChoiceReveal::{Costs, Gains, Locked, Needs};
 use crate::systems::interact::Counterpart;
 use crate::systems::item::ItemStack;
 use crate::systems::job::MinLevel;
@@ -44,6 +45,7 @@ crate::table! {
             ItemStack::new(ItemId::TribalHelmet, 1),
         ],
         xp: 120,
+        reveal: &[Locked, Needs, Costs, Gains],
         repeat: Repeat::Once,
         time_limit: None,
         drops: &[],
@@ -83,6 +85,7 @@ crate::table! {
         rewards: &[],
         pick_one: &[],
         xp: 80,
+        reveal: &[],
         repeat: Repeat::Once,
         time_limit: None,
         drops: &[],
@@ -106,6 +109,7 @@ crate::table! {
         rewards: &[ItemStack::new(ItemId::GreaterHealthPotion, 2)],
         pick_one: &[],
         xp: 80,
+        reveal: &[Costs],
         repeat: Repeat::Once,
         time_limit: None,
         drops: &[],
@@ -129,6 +133,7 @@ crate::table! {
         rewards: &[ItemStack::new(ItemId::Gold, 10)],
         pick_one: &[],
         xp: 40,
+        reveal: &[],
         repeat: Repeat::Once,
         time_limit: None,
         drops: &[],
@@ -155,6 +160,7 @@ crate::table! {
         rewards: &[ItemStack::new(ItemId::Gold, 25), ItemStack::new(ItemId::HealthPotion, 2)],
         pick_one: &[],
         xp: 150,
+        reveal: &[Locked, Needs, Gains],
         repeat: Repeat::Once,
         time_limit: None,
         drops: &[QuestDrop {
@@ -183,6 +189,7 @@ crate::table! {
         rewards: &[ItemStack::new(ItemId::Gold, 15), ItemStack::new(ItemId::FishingBait, 5)],
         pick_one: &[],
         xp: 60,
+        reveal: &[Costs, Gains],
         repeat: Repeat::Once,
         time_limit: Some(Seconds(600.0)),
         drops: &[],
@@ -206,6 +213,7 @@ crate::table! {
         rewards: &[ItemStack::new(ItemId::BoneToken, 6)],
         pick_one: &[],
         xp: 30,
+        reveal: &[Costs, Gains],
         repeat: Repeat::Daily,
         time_limit: None,
         drops: &[],
@@ -233,6 +241,7 @@ crate::table! {
         rewards: &[ItemStack::new(ItemId::Gold, 30), ItemStack::new(ItemId::CorsairCutlass, 1)],
         pick_one: &[],
         xp: 100,
+        reveal: &[],
         repeat: Repeat::Once,
         time_limit: None,
         drops: &[],

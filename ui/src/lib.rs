@@ -22,19 +22,20 @@ use utils::opacity::OpacityPlugin;
 
 pub use utils::theme;
 pub(crate) use utils::{
-    carry, collapse, cursor, drag, motion, opacity, overlay, place, state, style, surface,
+    carry, collapse, cursor, drag, motion, opacity, overlay, place, presence, state, style, surface,
 };
 
 pub use bevy_ui_widgets::{Activate, ValueChange, observe};
 pub use components::*;
 pub use utils::carry::{Carriable, Carried, CarryTarget};
-pub use utils::cursor::{CursorStyle, InterfaceCursor};
+pub use utils::cursor::{ClickThrough, CursorStyle, InterfaceCursor, clicks_through};
 pub use utils::drag::{
     DragHandle, DragRoot, Geom, OnSettle, OnTap, Raised, ResizeHandle, SnapGrid, topmost,
 };
 pub use utils::motion::{Easing, Timing, Transform2d, transition};
 pub use utils::overlay::{Dismissable, Open, OverlayAction, set_overlay_open};
-pub use utils::place::place;
+pub use utils::place::{node_rect, place};
+pub use utils::presence::{Leaving, Presence, PresenceMove};
 pub use utils::state::{SelectionChanged, selected};
 pub use utils::style::{StatefulPaint, Style};
 pub use utils::theme::{Family, Theme};
@@ -66,6 +67,7 @@ impl Plugin for UiPlugin {
         app.add_plugins(drag::DragPlugin);
         app.init_resource::<overlay::TooltipClock>()
             .init_resource::<TypewriterSpeed>()
+            .add_message::<TypewriterReveal>()
             .init_resource::<components::confirm::ModalCounter>()
             .init_resource::<MotionPreference>()
             .init_resource::<InputCatalog>()
@@ -114,13 +116,17 @@ impl Plugin for UiPlugin {
                         components::dialogue::mark_selected_choice,
                         components::dialogue::shake_refused,
                         components::cast::sync_cast,
-                        components::cast::reap_busts,
-                        components::announcement::sync_lanes,
+                        components::bubble::sync_bubbles,
+                        components::captions::sync_captions,
+                        components::alert_bar::sync_alert_bars,
+                        components::milestones::sync_milestones,
+                        components::intro::move_intro_titles,
                         components::confirm::stamp_modals,
                         components::confirm::keep_default,
                         components::confirm::despawn_closed,
                     )
                         .chain(),
+                    (presence::advance_leaving, presence::advance_presence).chain(),
                     style::apply_styles,
                 )
                     .chain()
@@ -142,7 +148,9 @@ impl Plugin for UiPlugin {
             .add_observer(components::slider::on_thumb_drag)
             .add_observer(components::scroll_area::on_scroll)
             .add_observer(components::scroll_area::on_thumb_drag)
+            .add_observer(components::window::announce_tab)
             .add_observer(components::sonner::on_close)
+            .add_observer(components::alert_bar::close_alert)
             .add_observer(components::sonner::toaster_hover)
             .add_observer(components::sonner::toaster_leave)
             .add_observer(overlay::on_overlay_action)

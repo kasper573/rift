@@ -2,20 +2,21 @@ use bevy_ecs::prelude::*;
 use game::core::math::{Pos, Rect};
 use game::core::tiling::{TilePos, Tiles};
 use game::data;
-use game::data::announcement::Id as AnnouncementId;
 use game::data::dialogue::Id as DialogueId;
 use game::data::item::Id as ItemId;
 use game::data::memory::Id as MemoryId;
+use game::data::notification::Id as NotificationId;
 use game::data::npc::Id as NpcId;
-use game::systems::announcement::Announcements;
 use game::systems::area::transition::Crossing;
 use game::systems::dialogue::Conversation;
 use game::systems::memory::Memory;
 use game::systems::movement::{MoveRequest, MoveToPortal, position};
+use game::systems::notification::Notification;
 use game::systems::player::commands_locked;
 
 use crate::support::{
-    Sim, conversation, count, give, heard_the_news, labels, leave, pick, refusal, talk, townsperson,
+    Sim, conversation, count, give, heard_the_news, labels, leave, pick, refusal, spoken, talk,
+    townsperson,
 };
 
 fn forest_road(sim: &Sim) -> (u32, Rect<Tiles>) {
@@ -70,7 +71,11 @@ fn without_a_pass_the_forest_road_is_ground_and_ilsa_halts_you_on_it() {
     assert_eq!(halt.with, Some(ilsa));
     assert!(road.contains(position(sim.world(), player).expect("position")));
     assert!(commands_locked(sim.world(), player));
-    assert!(refusal(&halt, "I have a Road Pass.").is_some());
+    assert!(!labels(&halt).contains(&"I have a Road Pass.".to_owned()));
+    assert_eq!(
+        refusal(&halt, "I'm ready for the forest road.").as_deref(),
+        Some("Needs Level 3")
+    );
 
     leave(&mut sim, 1, player);
     head_for_the_forest_road(&mut sim, 1);
@@ -153,27 +158,24 @@ fn ilsa_trades_a_road_pass_for_a_fish_and_bram_only_looks_at_it() {
 }
 
 #[test]
-fn bram_sails_for_twenty_gold_and_the_crossing_is_announced() {
+fn bram_sails_for_twenty_gold_and_the_crossing_is_narrated() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
     give(&mut sim, player, ItemId::Gold, 25);
 
     let bram = talk(&mut sim, 1, player, NpcId::Bram);
-    assert!(refusal(&bram, "Ilsa gave me this pass.").is_some());
+    assert!(!labels(&bram).contains(&"Ilsa gave me this pass.".to_owned()));
     pick(&mut sim, 1, player, "Sail to the forest.");
 
     assert_eq!(count(&mut sim, player, ItemId::Gold), 5);
     assert!(sim.world().get::<Crossing>(player).is_some());
-    let lane = sim
-        .world()
-        .get::<Announcements>(player)
-        .cloned()
-        .unwrap_or_default();
-    assert_eq!(
-        lane.showing.map(|shown| shown.announcement),
-        Some(AnnouncementId::GullSails.get().announcement())
-    );
+    let told: Vec<Notification> = sim
+        .notified(1)
+        .into_iter()
+        .map(|sent| sent.notification)
+        .collect();
+    assert!(told.contains(&spoken(NotificationId::GullSails)));
 }
 
 #[test]

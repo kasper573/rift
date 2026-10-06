@@ -12,6 +12,7 @@ use super::card::{
 use super::{
     ActiveQuest, FinishedQuest, Giver, QUEST_LOG_CAP, QuestId, QuestLog, QuestRequest, QuestResult,
 };
+use crate::systems::dialogue::ChoiceReveal;
 use crate::systems::hud::{HudAudience, Window};
 use crate::systems::input::map::{ActionInput, InputAction};
 use crate::systems::item::widget::slot_note_source;
@@ -409,9 +410,12 @@ fn detail(assets: &AssetServer, page: &Page, quest: QuestId) -> impl Scene + use
             ))
         }));
     }
-    parts.push(Box::new(section("Rewards")));
-    parts.push(Box::new(reward_chips(assets, def)));
-    if !def.pick_one.is_empty() && finished.is_none() {
+    let handed_in = finished.is_some_and(|finished| finished.result == QuestResult::Completed);
+    if def.reveals(ChoiceReveal::Gains) || handed_in {
+        parts.push(Box::new(section("Rewards")));
+        parts.push(Box::new(reward_chips(assets, def)));
+    }
+    if def.reveals(ChoiceReveal::Gains) && !def.pick_one.is_empty() && finished.is_none() {
         parts.push(Box::new(section("Pick one when you return")));
         parts.push(Box::new(picks(assets, def)));
     }

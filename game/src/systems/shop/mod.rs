@@ -12,10 +12,10 @@ use crate::data::attention::Id as AttentionId;
 use crate::data::dialogue::Id as DialogueId;
 use crate::data::item::Id as ItemId;
 use crate::systems::attention;
-use crate::systems::dialogue::{self, Asked, BusyPolicy, ChoiceTag, Line, Offer, Then, Unmet};
+use crate::systems::dialogue::{self, Asked, BusyPolicy, ChoiceTag, Line, Offer, Then};
 use crate::systems::interact::Counterpart;
 use crate::systems::item::{Inventory, ItemCategory, ItemFlag, ItemStack};
-use crate::systems::notice::{self, NoticeTone};
+use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::sender_player;
 use crate::systems::rule::{self, Encounter, Outcome, Requirement, RuleContext};
 use crate::systems::text::{LineText, Span};
@@ -333,13 +333,13 @@ fn wares(world: &World, asked: &Asked) -> Vec<Offer> {
     };
     let then: Vec<Arc<dyn Outcome>> = vec![Arc::new(OpenShop(id))];
     vec![Offer {
-        label: LineText::of(ask),
+        label: LineText::spoken(ask, world, asked.player),
         tag: ChoiceTag::Shop,
         icon: Some(shop.mark.get().icon),
         requires: Vec::new(),
-        unmet: Unmet::ShowLocked,
         costs: &[],
         then: Then::Made(then),
+        reveal: &[],
         warn: None,
     }]
 }
@@ -374,7 +374,11 @@ fn buy(world: &mut World, player: Entity, index: u32) {
         ),
     };
     if let Err(refusal) = bought {
-        notice::tell(world, player, refusal, NoticeTone::Bad);
+        notification::notify(
+            world,
+            player,
+            Notification::new(NotificationKind::error(), LineText::plain(refusal)),
+        );
         react(world, player, |reactions| reactions.cant_afford);
         return;
     }
@@ -414,12 +418,20 @@ fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
             .map(|pay| ItemStack::new(pay.item, pay.count.saturating_mul(stack.count)))
             .collect(),
         Err(refusal) => {
-            notice::tell(world, player, refusal, NoticeTone::Bad);
+            notification::notify(
+                world,
+                player,
+                Notification::new(NotificationKind::error(), LineText::plain(refusal)),
+            );
             return;
         }
     };
     if let Err(refusal) = trade(world, player, &[stack], &paid) {
-        notice::tell(world, player, refusal, NoticeTone::Bad);
+        notification::notify(
+            world,
+            player,
+            Notification::new(NotificationKind::error(), LineText::plain(refusal)),
+        );
         return;
     }
     let mut ledger = world.entity_mut(player);
@@ -454,7 +466,11 @@ fn buy_back(world: &mut World, player: Entity, index: u32) {
         &[ItemStack::new(sale.item, sale.count)],
     );
     if let Err(refusal) = bought {
-        notice::tell(world, player, refusal, NoticeTone::Bad);
+        notification::notify(
+            world,
+            player,
+            Notification::new(NotificationKind::error(), LineText::plain(refusal)),
+        );
         return;
     }
     if let Some(mut ledger) = world.get_mut::<ShopLedger>(player)

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Percent, Rng};
+use crate::core::sfx::SfxId;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{GameDay, Seconds, UnixMillis, WallClock};
 use crate::data::area::Id as AreaId;
@@ -22,19 +23,21 @@ use crate::data::prop::Id as PropId;
 use crate::systems::area::{self, AreaTag, MarkerName};
 use crate::systems::attention;
 use crate::systems::dialogue::{
-    self, Asked, BusyPolicy, ChoiceTag, GotoNode, Offer, StartConversation, Then, Unmet,
+    self, Asked, BusyPolicy, ChoiceReveal, ChoiceTag, GotoNode, Offer, Revealable,
+    StartConversation, Then,
 };
+use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interact::Counterpart;
 use crate::systems::item::{
     GiveItems, INVENTORY_MAX, Inventory, ItemFlag, ItemStack, ReservedBy, scatter_drop,
 };
 use crate::systems::job::MinLevel;
 use crate::systems::movement::position;
-use crate::systems::notice::{self, NoticeTone};
+use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::{Owner, Xp, conn_player, sender_player};
 use crate::systems::rewards::KillCredited;
 use crate::systems::rule::{self, Outcome, Requirement, RuleContext};
-use crate::systems::text::{LineText, Span};
+use crate::systems::text::{LineText, Span, TextFill};
 use crate::systems::visibility::Presence;
 
 pub use crate::data::quest::Id as QuestId;
@@ -69,6 +72,7 @@ pub struct QuestDef {
     pub rewards: &'static [ItemStack],
     pub pick_one: &'static [ItemStack],
     pub xp: u32,
+    pub reveal: &'static [ChoiceReveal],
     pub repeat: Repeat,
     pub time_limit: Option<Seconds>,
     pub drops: &'static [QuestDrop],
@@ -318,6 +322,10 @@ impl QuestDef {
         }
     }
 
+    pub fn reveals(&self, reveal: ChoiceReveal) -> bool {
+        self.reveal.contains(&reveal)
+    }
+
     pub fn decision(&self) -> Option<&'static [DecisionPath]> {
         self.objectives
             .iter()
@@ -362,7 +370,7 @@ impl QuestLog {
                 })
     }
 
-    fn done_for_now(&self, quest: QuestId, today: GameDay) -> bool {
+    pub fn done_for_now(&self, quest: QuestId, today: GameDay) -> bool {
         self.finished(quest).is_some_and(|finished| {
             finished.result == QuestResult::Completed
                 && match quest.get().repeat {
@@ -408,6 +416,34 @@ impl Requirement for QuestDone {
 
     fn describe(&self) -> String {
         self.0.get().title.to_owned()
+    }
+}
+
+pub struct QuestOnCooldown(pub QuestId);
+
+impl Requirement for QuestOnCooldown {
+    fn met(&self, world: &World, player: Entity) -> bool {
+        let today = world.resource::<WallClock>().day();
+        self.0.get().repeat == Repeat::Daily
+            && log_of(world, player).is_some_and(|log| log.done_for_now(self.0, today))
+    }
+
+    fn describe(&self) -> String {
+        format!("{} done for today", self.0.get().title)
+    }
+}
+
+pub struct QuestResetsIn(pub QuestId);
+
+impl TextFill for QuestResetsIn {
+    fn text(&self, world: &World, _player: Entity) -> String {
+        world.resource::<WallClock>().until_next_day().in_words()
+    }
+
+    fn check(&self) {
+        if self.0.get().repeat != Repeat::Daily {
+            panic!("QuestResetsIn({:?}) never resets", self.0);
+        }
     }
 }
 
@@ -520,11 +556,12 @@ pub fn accept(world: &mut World, player: Entity, quest: QuestId) {
     if !log.tracked.contains(&quest) {
         log.tracked.push(quest);
     }
-    notice::tell(
+    tell(
         world,
         player,
         format!("Quest accepted · {}", def.title),
-        NoticeTone::Good,
+        offered_mark(def).get().icon,
+        Some(SfxId::QuestAccepted),
     );
     refresh_log(world, player, clock);
 }
@@ -545,17 +582,18 @@ pub fn complete(world: &mut World, player: Entity, quest: QuestId) {
     if let Some(mut xp) = world.get_mut::<Xp>(player) {
         xp.gain(def.xp);
     }
-    let gains: Vec<String> = def
-        .rewards
-        .iter()
-        .map(|stack| format!("+{}", stack.describe()))
-        .chain((def.xp > 0).then(|| format!("+{} XP", def.xp)))
-        .collect();
-    let text = std::iter::once(format!("Quest complete · {}", def.title))
-        .chain(gains)
-        .collect::<Vec<_>>()
-        .join(" · ");
-    notice::tell(world, player, text, NoticeTone::Good);
+    notification::notify(
+        world,
+        player,
+        Notification::new(
+            NotificationKind::Milestone {
+                label: "Quest complete".into(),
+                topic: HistoryTopic::Quest,
+                sfx: Some(SfxId::QuestCompleted),
+            },
+            LineText::plain(def.title),
+        ),
+    );
     refresh_log(world, player, clock);
 }
 
@@ -569,12 +607,17 @@ pub fn fail(world: &mut World, player: Entity, quest: QuestId) {
     }
     log.finish(quest, QuestResult::Failed, clock.day());
     take_back(world, player, quest.get().grants);
-    notice::tell(
-        world,
-        player,
-        format!("Quest failed · {}", quest.get().title),
-        NoticeTone::Bad,
+    let failed = Notification::new(
+        NotificationKind::Feed {
+            topic: HistoryTopic::Quest,
+            icon: Some(quest.get().icon().0.to_owned()),
+            tally: None,
+            failure: true,
+            sfx: Some(SfxId::QuestAbandoned),
+        },
+        LineText::plain(format!("Quest failed · {}", quest.get().title)),
     );
+    notification::notify(world, player, failed);
 }
 
 pub fn abandon(world: &mut World, player: Entity, quest: QuestId) {
@@ -587,12 +630,27 @@ pub fn abandon(world: &mut World, player: Entity, quest: QuestId) {
     log.active.retain(|active| active.quest != quest);
     log.tracked.retain(|&tracked| tracked != quest);
     take_back(world, player, quest.get().grants);
-    notice::tell(
+    tell(
         world,
         player,
         format!("Quest abandoned · {}", quest.get().title),
-        NoticeTone::Info,
+        AttentionId::QuestInProgress.get().icon,
+        Some(SfxId::QuestAbandoned),
     );
+}
+
+fn tell(world: &mut World, player: Entity, text: String, icon: AssetRef, sfx: Option<SfxId>) {
+    let told = Notification::new(
+        NotificationKind::Feed {
+            topic: HistoryTopic::Quest,
+            icon: Some(icon.0.to_owned()),
+            tally: None,
+            failure: false,
+            sfx,
+        },
+        LineText::plain(text),
+    );
+    notification::notify(world, player, told);
 }
 
 pub fn requests(world: &mut World) {
@@ -680,6 +738,15 @@ pub fn check(assets: &AssetService) {
         if quest.decision().is_none() && quest.pick_one.is_empty() && quest.hand_over.is_empty() {
             panic!("quest {id:?}: nothing to say when handing it in");
         }
+        dialogue::check_reveal(
+            &format!("quest {id:?}"),
+            quest.reveal,
+            Revealable {
+                needs: quest.level.0 > 1 || !quest.requires.is_empty(),
+                costs: !quest.hand_in.is_empty(),
+                gains: !quest.rewards.is_empty() || !quest.pick_one.is_empty() || quest.xp > 0,
+            },
+        );
         for objective in quest.objectives {
             if let Objective::Explore { area, at, .. } = objective
                 && assets
@@ -784,15 +851,17 @@ fn refresh_log(world: &mut World, player: Entity, clock: WallClock) {
     let Some(mut log) = log_of(world, player).cloned() else {
         return;
     };
-    let mut told = Vec::new();
+    let mut told: Vec<(String, AssetRef, Option<SfxId>)> = Vec::new();
     for active in &mut log.active {
         let def = active.quest.get();
         for &(quest, index) in &found {
             if quest == active.quest && active.counts[index] == 0 {
                 active.counts[index] = 1;
-                told.push(format!(
-                    "Objective done · {}",
-                    def.objective_label(&def.objectives[index])
+                let objective = &def.objectives[index];
+                told.push((
+                    format!("Objective done · {}", def.objective_label(objective)),
+                    objective.icon(),
+                    Some(SfxId::TallyTick),
                 ));
             }
         }
@@ -801,7 +870,11 @@ fn refresh_log(world: &mut World, player: Entity, clock: WallClock) {
             .map(|deadline| Seconds(deadline.since(clock.now).0.ceil()));
         let ready = def.complete(active, inventory.as_ref());
         if ready && !active.ready {
-            told.push(format!("Quest ready · {}", def.hand_in_hint()));
+            told.push((
+                format!("Quest ready · {}", def.hand_in_hint()),
+                ready_mark(def).get().icon,
+                Some(SfxId::UiChime),
+            ));
         }
         active.ready = ready;
     }
@@ -811,6 +884,13 @@ fn refresh_log(world: &mut World, player: Entity, clock: WallClock) {
         let resets = def.repeat == Repeat::Daily
             && finished.result == QuestResult::Completed
             && finished.day == today;
+        if finished.resets_in.is_some() && !resets {
+            told.push((
+                format!("{} is open again", def.title),
+                AttentionId::RepeatableOffered.get().icon,
+                Some(SfxId::UiPage),
+            ));
+        }
         finished.resets_in = resets.then(|| {
             let minutes = (clock.until_next_day().0 / 60.0).ceil();
             Seconds(minutes * 60.0)
@@ -828,8 +908,8 @@ fn refresh_log(world: &mut World, player: Entity, clock: WallClock) {
     if world.get::<QuestLog>(player) != Some(&log) {
         world.entity_mut(player).insert(log);
     }
-    for text in told {
-        notice::tell(world, player, text, NoticeTone::Good);
+    for (text, icon, sfx) in told {
+        tell(world, player, text, icon, sfx);
     }
 }
 
@@ -870,7 +950,7 @@ fn credit_kill(world: &mut World, kill: KillCredited) {
         return;
     };
     let inventory = world.get::<Inventory>(player).cloned();
-    let mut told = Vec::new();
+    let mut counted = Vec::new();
     let mut drops = Vec::new();
     world.resource_scope(|_, mut rng: Mut<Rng>| {
         for active in &mut log.active {
@@ -881,10 +961,18 @@ fn credit_kill(world: &mut World, kill: KillCredited) {
                     && active.counts[index] < count
                 {
                     active.counts[index] += 1;
-                    told.push(format!(
-                        "{} {} / {count}",
-                        def.objective_label(objective),
-                        active.counts[index]
+                    counted.push(Notification::new(
+                        NotificationKind::Feed {
+                            topic: HistoryTopic::Quest,
+                            icon: Some(objective.icon().0.to_owned()),
+                            tally: Some(RecordTally::Progress {
+                                have: active.counts[index],
+                                need: count,
+                            }),
+                            failure: false,
+                            sfx: None,
+                        },
+                        LineText::plain(def.objective_label(objective)),
                     ));
                 }
             }
@@ -906,8 +994,8 @@ fn credit_kill(world: &mut World, kill: KillCredited) {
         }
     });
     world.entity_mut(player).insert(log);
-    for text in told {
-        notice::tell(world, player, text, NoticeTone::Info);
+    for notification in counted {
+        notification::notify(world, player, notification);
     }
     if let Some(client) = world.get::<Owner>(player).map(|owner| owner.client) {
         scatter_drop(
@@ -957,7 +1045,8 @@ fn hand_ins(world: &World, asked: &Asked) -> Vec<Offer> {
     }
     if def.pick_one.is_empty() {
         return vec![quest_offer(
-            LineText::of(def.hand_over),
+            def,
+            LineText::spoken(def.hand_over, world, asked.player),
             None,
             Vec::new(),
             vec![Arc::new(TurnIn(quest))],
@@ -967,6 +1056,7 @@ fn hand_ins(world: &World, asked: &Asked) -> Vec<Offer> {
         .iter()
         .map(|pick| {
             quest_offer(
+                def,
                 LineText::plain(pick_label(*pick)),
                 Some(pick.item.get().icon),
                 Vec::new(),
@@ -999,12 +1089,14 @@ fn greeting_topic(
     let label = || LineText::plain(def.title);
     match log.active(quest) {
         Some(active) if takes && active.ready => Some(quest_offer(
+            def,
             label(),
             Some(ready_mark(def).get().icon),
             Vec::new(),
             vec![Arc::new(GotoNode(def.thanks))],
         )),
         Some(_) if gives => Some(quest_offer(
+            def,
             label(),
             Some(AttentionId::QuestInProgress.get().icon),
             Vec::new(),
@@ -1012,6 +1104,7 @@ fn greeting_topic(
         )),
         Some(_) => None,
         None if gives && offerable(world, player, quest) => Some(quest_offer(
+            def,
             label(),
             Some(offered_mark(def).get().icon),
             std::iter::once(&def.level as &'static dyn Requirement)
@@ -1024,6 +1117,7 @@ fn greeting_topic(
 }
 
 fn quest_offer(
+    def: &QuestDef,
     label: LineText,
     icon: Option<AssetRef>,
     requires: Vec<&'static dyn Requirement>,
@@ -1034,9 +1128,9 @@ fn quest_offer(
         tag: ChoiceTag::Quest,
         icon,
         requires,
-        unmet: Unmet::ShowLocked,
         costs: &[],
         then: Then::Made(then),
+        reveal: def.reveal,
         warn: None,
     }
 }
@@ -1064,8 +1158,10 @@ fn marks(world: &World, player: Entity, target: Entity) -> Vec<AttentionId> {
                 None if gives && offerable_in(world, player, log, today, quest) => {
                     if open_to(world, player, quest) {
                         offered_mark(def)
-                    } else {
+                    } else if def.reveals(ChoiceReveal::Locked) {
                         AttentionId::QuestLocked
+                    } else {
+                        return None;
                     }
                 }
                 None => return None,

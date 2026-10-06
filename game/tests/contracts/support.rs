@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use bevy_app::App;
 use bevy_ecs::message::{Message, MessageCursor, Messages};
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{ClientId as Sender, FromClient, ServerState};
+use bevy_replicon::prelude::{ClientId as Sender, FromClient, SendTargets, ServerState, ToClients};
+use bevy_replicon::server::ServerSystems;
 use bevy_state::prelude::NextState;
 use bevy_time::TimeUpdateStrategy;
 use game::core::assets::{AssetService, FilesystemSource};
@@ -14,6 +15,7 @@ use game::core::time::{UnixMillis, UtcHour, WallClock};
 use game::data;
 use game::data::item::Id as ItemId;
 use game::data::memory::Id as MemoryId;
+use game::data::notification::Id as NotificationId;
 use game::data::npc::Id as NpcId;
 use game::data::prop::Id as PropId;
 use game::systems::TICK_HZ;
@@ -25,6 +27,7 @@ use game::systems::interact::InteractRequest;
 use game::systems::item::{self, Inventory, ItemStack};
 use game::systems::memory::Memory;
 use game::systems::movement::position;
+use game::systems::notification::{Notification, NotificationSent};
 use game::systems::npc::{self, Npc, Pack};
 use game::systems::player::{ClientId, Immortal, JoinRequest, Players};
 use game::systems::prop::Prop;
@@ -53,6 +56,10 @@ impl Sim {
         app.insert_resource(Rng::new(1));
         app.insert_resource(Immortal(true));
         app.insert_resource(TimeUpdateStrategy::ManualDuration(TICK_HZ.period()));
+        app.init_resource::<Notified>().add_systems(
+            bevy_app::PostUpdate,
+            collect_notified.before(ServerSystems::Send),
+        );
         app.finish();
         app.cleanup();
         app.world_mut()
@@ -90,9 +97,14 @@ impl Sim {
         done(self.world())
     }
 
-    pub fn join(&mut self, client: u32) -> Entity {
+    pub fn connect(&mut self, client: u32) -> Entity {
         let conn = self.world().spawn(ClientId(client)).id();
         self.conns.insert(client, conn);
+        conn
+    }
+
+    pub fn join(&mut self, client: u32) -> Entity {
+        self.connect(client);
         self.send(client, JoinRequest);
         self.tick();
         *self
@@ -105,6 +117,23 @@ impl Sim {
 
     pub fn conn(&self, client: u32) -> Entity {
         self.conns[&client]
+    }
+
+    pub fn notified(&self, client: u32) -> Vec<NotificationSent> {
+        let conn = self.conns[&client];
+        let sent = self.app.world().resource::<Notified>().0.iter().cloned();
+        let unsent = self
+            .read_all::<ToClients<NotificationSent>>()
+            .into_iter()
+            .filter_map(|message| addressee(&message).map(|to| (to, message.message)));
+        sent.chain(unsent)
+            .filter(|(to, _)| *to == conn)
+            .map(|(_, sent)| sent)
+            .collect()
+    }
+
+    pub fn forget_notified(&mut self) {
+        self.world().resource_mut::<Notified>().0.clear();
     }
 
     pub fn send<M: Message>(&mut self, client: u32, message: M) {
@@ -241,6 +270,31 @@ pub fn count(sim: &mut Sim, player: Entity, item: ItemId) -> u32 {
         .get::<Inventory>(player)
         .expect("bag")
         .count(item)
+}
+
+pub fn spoken(id: NotificationId) -> Notification {
+    id.get().for_player(&World::new(), Entity::PLACEHOLDER)
+}
+
+#[derive(Resource, Default)]
+struct Notified(Vec<(Entity, NotificationSent)>);
+
+fn collect_notified(
+    mut sent: MessageReader<ToClients<NotificationSent>>,
+    mut notified: ResMut<Notified>,
+) {
+    for message in sent.read() {
+        if let Some(conn) = addressee(message) {
+            notified.0.push((conn, message.message.clone()));
+        }
+    }
+}
+
+fn addressee(message: &ToClients<NotificationSent>) -> Option<Entity> {
+    match message.targets {
+        SendTargets::Single(Sender::Client(conn)) => Some(conn),
+        _ => None,
+    }
 }
 
 pub fn settle(sim: &mut Sim) {

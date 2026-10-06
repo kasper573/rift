@@ -9,7 +9,7 @@ use super::{
     ActiveQuest, Objective, Progress, QuestDef, QuestId, QuestLog, clock_label, resets_label,
 };
 use crate::core::assets::AssetRef;
-use crate::systems::dialogue::{Conversation, stage};
+use crate::systems::dialogue::{ChoiceReveal, Conversation, stage};
 use crate::systems::item::{self, Inventory, ItemStack};
 use crate::systems::player::session::Viewpoint;
 use crate::systems::scene::Scene as GameScene;
@@ -150,11 +150,13 @@ fn offer(assets: &AssetServer, quest: QuestId, inventory: &Inventory) -> Vec<Box
             Box::new(objective_row(assets, objective, progress, ink))
         },
     ));
-    parts.push(Box::new(section("Rewards")));
-    parts.push(Box::new(reward_chips(assets, def)));
-    if !def.pick_one.is_empty() {
-        parts.push(Box::new(section("Pick one when you return")));
-        parts.push(Box::new(picks(assets, def)));
+    if def.reveals(ChoiceReveal::Gains) {
+        parts.push(Box::new(section("Rewards")));
+        parts.push(Box::new(reward_chips(assets, def)));
+        if !def.pick_one.is_empty() {
+            parts.push(Box::new(section("Pick one when you return")));
+            parts.push(Box::new(picks(assets, def)));
+        }
     }
     parts.push(Box::new(caption("Accept or decline in the conversation")));
     parts
@@ -163,9 +165,14 @@ fn offer(assets: &AssetServer, quest: QuestId, inventory: &Inventory) -> Vec<Box
 fn turn_in(assets: &AssetServer, quest: QuestId, inventory: &Inventory) -> Vec<Box<dyn Scene>> {
     let def = quest.get();
     let mut parts: Vec<Box<dyn Scene>> = vec![Box::new(head(assets, def))];
-    parts.extend(def.hand_in.iter().map(|&stack| -> Box<dyn Scene> {
-        Box::new(hand_in_row(assets, stack, inventory.count(stack.item)))
-    }));
+    if def.reveals(ChoiceReveal::Costs) {
+        parts.extend(def.hand_in.iter().map(|&stack| -> Box<dyn Scene> {
+            Box::new(hand_in_row(assets, stack, inventory.count(stack.item)))
+        }));
+    }
+    if !def.reveals(ChoiceReveal::Gains) {
+        return parts;
+    }
     let pick_note: Vec<Box<dyn Scene>> = (!def.pick_one.is_empty())
         .then(|| -> Box<dyn Scene> { Box::new(caption("+ your pick below")) })
         .into_iter()

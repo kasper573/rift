@@ -1,6 +1,6 @@
 use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::prelude::*;
-use bevy_math::Vec2;
+use bevy_math::{Rect, Vec2};
 use bevy_ui::{ComputedNode, Node, UiGlobalTransform, Val};
 use bevy_window::Window;
 
@@ -16,6 +16,16 @@ pub struct Placement {
 
 #[derive(Component)]
 pub(crate) struct Placed;
+
+pub fn node_rect(world: &World, node: Entity) -> Option<Rect> {
+    let computed = world.get::<ComputedNode>(node)?;
+    let at = world.get::<UiGlobalTransform>(node)?;
+    let scale = computed.inverse_scale_factor;
+    Some(Rect::from_center_size(
+        at.translation * scale,
+        computed.size * scale,
+    ))
+}
 
 pub(crate) fn position_overlays(
     contents: Query<(Entity, &Placement, &ChildOf)>,

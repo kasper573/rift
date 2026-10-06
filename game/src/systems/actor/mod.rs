@@ -31,8 +31,8 @@ pub fn check(assets: &AssetService) {
     for def in data::model::TABLE {
         assets.resolve(def.sheet, build_model);
         for bust in def.busts.iter().flat_map(bust::Busts::all) {
-            if let Err(error) = assets.open(Path::new(bust.art.0)) {
-                panic!("bust {}: {error}", bust.art.0);
+            if let Err(error) = assets.open(Path::new(bust.0)) {
+                panic!("bust {}: {error}", bust.0);
             }
         }
     }
@@ -64,6 +64,13 @@ impl Action {
     Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default,
 )]
 pub struct Rgba(pub u32);
+
+impl Rgba {
+    pub fn color(self) -> bevy::color::Color {
+        let [r, g, b, a] = self.0.to_be_bytes();
+        bevy::color::Color::srgba_u8(r, g, b, a)
+    }
+}
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Actor {

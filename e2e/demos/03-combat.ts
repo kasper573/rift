@@ -35,7 +35,10 @@ test(
         loot = await slay(page);
       }
       if (loot.length === 0) throw new Error("no monster fell and dropped loot");
-      await caption(page, "Monsters drop loot — click it to pick it up");
+      await waitFor(page, ({ feed }) => feed.some((row) => row.endsWith(" XP")), "the kill's XP never showed in the feed");
+      await caption(page, "Small news collects in the corner: experience, loot, gone in a few seconds");
+      await page.waitForTimeout(2500);
+      await caption(page, "Monsters drop loot — click it to pick it up. The same thing again counts up on one row");
       const carried = (snapshot: Snapshot) => snapshot.bag.reduce((total, stack) => total + stack.count, 0);
       const before = carried(await probe(page));
       // Loot lying under a monster can't be clicked until it moves or falls, so some may stay behind.

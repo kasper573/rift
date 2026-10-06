@@ -285,11 +285,7 @@ pub fn pick_choice(world: &mut World, list: Entity) {
 }
 
 pub fn pick_choice_at(world: &mut World, list: Entity, index: usize) {
-    let Some(row) = rows(world, list).into_iter().find(|row| {
-        world
-            .get::<ChoiceRow>(*row)
-            .is_some_and(|choice| choice.index == index)
-    }) else {
+    let Some(row) = choice_row_at(world, list, index) else {
         return;
     };
     if let Some(mut choices) = world.get_mut::<ChoiceList>(list) {
@@ -299,12 +295,26 @@ pub fn pick_choice_at(world: &mut World, list: Entity, index: usize) {
         .get::<ChoiceRow>(row)
         .is_some_and(|choice| choice.locked);
     if locked {
-        let now = world.resource::<Time>().elapsed();
-        world.entity_mut(row).insert(Shake(now));
+        shake_choice(world, list, index);
         world.trigger(ChoiceRefused { list, index });
     } else {
         world.trigger(ChoicePicked { list, index });
     }
+}
+
+pub fn shake_choice(world: &mut World, list: Entity, index: usize) {
+    if let Some(row) = choice_row_at(world, list, index) {
+        let now = world.resource::<Time>().elapsed();
+        world.entity_mut(row).insert(Shake(now));
+    }
+}
+
+fn choice_row_at(world: &World, list: Entity, index: usize) -> Option<Entity> {
+    rows(world, list).into_iter().find(|row| {
+        world
+            .get::<ChoiceRow>(*row)
+            .is_some_and(|choice| choice.index == index)
+    })
 }
 
 pub fn dialogue_choices(world: &World, dialogue: Entity) -> Option<Entity> {

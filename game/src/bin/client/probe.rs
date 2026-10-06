@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
 use bevy::text::EditableText;
-use bevy::ui::{ComputedNode, UiGlobalTransform};
+use bevy::ui::ComputedNode;
 use bevy::window::PrimaryWindow;
 use game::core::assets::AssetService;
 use game::core::math::{Offset, Pos, Rect, Size};
@@ -12,16 +12,20 @@ use game::core::render::tile_to_window;
 use game::core::tiling::{TilePos, Tiles};
 use game::data;
 use game::systems::actor::{self, Actor, Hitbox};
-use game::systems::announcement::{Announcement, Announcements};
 use game::systems::area::{self, AreaTag};
 use game::systems::attention::{Attention, StatusBadges};
 use game::systems::combat::{self, Attitude};
-use game::systems::dialogue::{history, stage};
+use game::systems::dialogue::stage;
+use game::systems::history::widget::{self as history, HistoryBook};
+use game::systems::history::{HistoryMark, HistoryRecord, HistoryTopic, RecordTally};
 use game::systems::input::map::InputMap;
 use game::systems::interact;
 use game::systems::item::card::ItemCardWindow;
 use game::systems::item::{self, DroppedItem, Inventory};
 use game::systems::movement::Position;
+use game::systems::notification::{
+    NotificationRows, alert, bubble, caption, error, feed, intro, milestone,
+};
 use game::systems::npc::Npc;
 use game::systems::player::{Owner, commands_locked, session};
 use game::systems::prop::Prop;
@@ -57,8 +61,9 @@ struct Snapshot {
     ui: Vec<UiElement>,
     covered: Vec<Cover>,
     stage: Option<Stage>,
-    announcement: Lane,
-    history: bool,
+    notifications: Notifications,
+    feed: Vec<String>,
+    history: History,
     shop: Option<Shop>,
     item_card: Option<ItemCard>,
     bag: Vec<Stack>,
@@ -128,29 +133,105 @@ struct Stage {
     line: usize,
     lines: usize,
     speaker: Option<String>,
+    text: Option<String>,
     typing: bool,
     choices: Vec<StageChoice>,
     waiting: Option<data::dialogue::Id>,
-}
-
-#[derive(Serialize, Default)]
-struct Lane {
-    showing: Option<LaneLine>,
-    next: Option<LaneLine>,
-    missed: Vec<LaneLine>,
+    status: Option<String>,
 }
 
 #[derive(Serialize)]
-struct LaneLine {
-    by: String,
+struct Notifications {
+    bubbles: Vec<BubbleView>,
+    edge_folds: Vec<u32>,
+    captions: Rows,
+    alerts: Rows,
+    errors: Vec<ErrorLine>,
+    milestones: Rows,
+    intro: Option<IntroLine>,
+}
+
+#[derive(Serialize)]
+struct BubbleView {
+    speaker: String,
+    npc: data::npc::Id,
+    body: Option<String>,
+    replaced: u32,
+    lines: Vec<String>,
+    folded: bool,
+    rect: Option<Cover>,
+}
+
+#[derive(Serialize)]
+struct Rows {
+    rows: Vec<Row>,
+    more: u32,
+}
+
+#[derive(Serialize)]
+struct Row {
+    label: String,
+    text: String,
+    replaced: u32,
+}
+
+impl Rows {
+    fn of(shown: NotificationRows) -> Rows {
+        Rows {
+            rows: shown
+                .rows
+                .into_iter()
+                .map(|row| Row {
+                    label: row.label,
+                    text: row.text,
+                    replaced: row.replaced,
+                })
+                .collect(),
+            more: shown.more,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ErrorLine {
+    text: String,
+    repeats: u32,
+}
+
+#[derive(Serialize)]
+struct IntroLine {
+    title: String,
     text: String,
 }
 
-impl LaneLine {
-    fn of(announcement: &Announcement, inputs: &InputMap) -> LaneLine {
-        LaneLine {
-            by: announcement.by.name().to_owned(),
-            text: announcement.text.words(inputs),
+#[derive(Serialize)]
+struct History {
+    open: bool,
+    tab: Option<String>,
+    records: Vec<RecordLine>,
+}
+
+#[derive(Serialize)]
+struct RecordLine {
+    topic: HistoryTopic,
+    by: Option<String>,
+    text: String,
+    mark: Option<HistoryMark>,
+}
+
+impl RecordLine {
+    fn of(record: &HistoryRecord, inputs: &InputMap) -> RecordLine {
+        let text = record.entry.text.words(inputs);
+        RecordLine {
+            topic: record.entry.topic,
+            by: record.entry.by.clone(),
+            text: match record.entry.tally {
+                Some(RecordTally::Change(change)) if change > 0 => format!("+{change} {text}"),
+                Some(RecordTally::Change(change)) => format!("-{} {text}", change.unsigned_abs()),
+                Some(RecordTally::Progress { have, need }) => format!("{text} {have}/{need}"),
+                None => text,
+            },
+            mark: record.entry.mark,
         }
     }
 }
@@ -224,6 +305,8 @@ struct UiElement {
     image: Option<String>,
     editable: bool,
     focused: bool,
+    click_through: bool,
+    slider: Option<f32>,
     x: f32,
     y: f32,
     width: f32,
@@ -266,6 +349,7 @@ fn snapshot(world: &mut World) -> Snapshot {
             line: view.line,
             lines: view.lines,
             speaker: view.speaker,
+            text: view.text,
             typing: view.typing,
             choices: view
                 .choices
@@ -278,33 +362,30 @@ fn snapshot(world: &mut World) -> Snapshot {
                 })
                 .collect(),
             waiting: view.waiting,
+            status: view.status,
         }),
-        announcement: viewpoint
-            .and_then(|seen| world.get::<Announcements>(seen))
-            .map(|lane| Lane {
-                showing: lane
-                    .showing
-                    .as_ref()
-                    .map(|shown| LaneLine::of(&shown.announcement, &input_map)),
-                next: lane
-                    .next
-                    .as_ref()
-                    .map(|next| LaneLine::of(&next.announcement, &input_map)),
-                missed: lane
-                    .missed
-                    .iter()
-                    .map(|missed| LaneLine::of(&missed.announcement, &input_map))
-                    .collect(),
-            })
-            .unwrap_or_default(),
-        history: history::is_open(world),
+        notifications: notifications(world),
+        feed: feed::rows(world),
+        history: History {
+            open: history::shown_tab(world).is_some(),
+            tab: history::shown_tab(world).map(|tab| tab.title().to_owned()),
+            records: world
+                .resource::<HistoryBook>()
+                .records()
+                .iter()
+                .map(|record| RecordLine::of(record, &input_map))
+                .collect(),
+        },
         item_card: world
-            .query::<(&ItemCardWindow, &ComputedNode, &UiGlobalTransform)>()
+            .query::<(Entity, &ItemCardWindow)>()
             .iter(world)
             .next()
-            .map(|(card, node, transform)| ItemCard {
-                item: card.item,
-                rect: rect_of(node, transform),
+            .map(|(entity, card)| (entity, card.item))
+            .and_then(|(entity, item)| {
+                Some(ItemCard {
+                    item,
+                    rect: cover(world, entity)?,
+                })
             }),
         shop: shop::counter::view(world).map(|shown| Shop {
             shop: shown.shop,
@@ -614,21 +695,23 @@ fn ui(world: &mut World) -> Vec<UiElement> {
     let mut nodes = world.query::<(
         Entity,
         &ComputedNode,
-        &UiGlobalTransform,
         &InheritedVisibility,
         Option<&Text>,
         Option<&ui::RichText>,
         Option<&Children>,
         Option<&ImageNode>,
         Option<&EditableText>,
+        Has<ui::SliderThumb>,
     )>();
     let assets = world.resource::<AssetServer>();
     let catalog = world.resource::<ui::InputCatalog>();
     nodes
         .iter(world)
-        .filter(|(_, node, _, visibility, ..)| visibility.get() && node.size().min_element() > 0.0)
+        .filter(|(entity, node, visibility, ..)| {
+            visibility.get() && node.size().min_element() > 0.0 && !leaving(world, *entity)
+        })
         .filter_map(
-            |(entity, node, transform, _, text, rich, children, image, field)| {
+            |(entity, _, _, text, rich, children, image, field, thumb)| {
                 let text = text
                     .map(|text| {
                         let spanned = children
@@ -643,21 +726,31 @@ fn ui(world: &mut World) -> Vec<UiElement> {
                 let image = image
                     .and_then(|image| assets.get_path(image.image.id()))
                     .map(|path| path.to_string());
-                if text.is_none() && image.is_none() && field.is_none() {
+                let slider = thumb
+                    .then(|| {
+                        std::iter::successors(Some(entity), |&up| {
+                            world.get::<ChildOf>(up).map(ChildOf::parent)
+                        })
+                        .find_map(|up| world.get::<ui::SliderState>(up))
+                    })
+                    .flatten()
+                    .map(|state| state.value);
+                if text.is_none() && image.is_none() && field.is_none() && slider.is_none() {
                     return None;
                 }
-                let scale = node.inverse_scale_factor();
-                let size = node.size() * scale;
-                let min = transform.translation * scale - size / 2.0;
+                let rect = ui::node_rect(world, entity)?;
+                let click_through = ui::clicks_through(world, entity);
                 Some(UiElement {
                     text,
                     image,
                     editable: field.is_some(),
                     focused: focused == Some(entity),
-                    x: min.x,
-                    y: min.y,
-                    width: size.x,
-                    height: size.y,
+                    click_through,
+                    slider,
+                    x: rect.min.x,
+                    y: rect.min.y,
+                    width: rect.width(),
+                    height: rect.height(),
                 })
             },
         )
@@ -666,22 +759,58 @@ fn ui(world: &mut World) -> Vec<UiElement> {
 
 fn choice_rows(world: &mut World) -> HashMap<usize, Cover> {
     world
-        .query::<(&ui::ChoiceRow, &ComputedNode, &UiGlobalTransform)>()
+        .query::<(Entity, &ui::ChoiceRow)>()
         .iter(world)
-        .map(|(row, node, transform)| (row.index, rect_of(node, transform)))
+        .filter_map(|(entity, row)| Some((row.index, cover(world, entity)?)))
         .collect()
 }
 
-fn rect_of(node: &ComputedNode, transform: &UiGlobalTransform) -> Cover {
-    let scale = node.inverse_scale_factor();
-    let size = node.size() * scale;
-    let min = transform.translation * scale - size / 2.0;
-    Cover {
-        x: min.x,
-        y: min.y,
-        width: size.x,
-        height: size.y,
+fn notifications(world: &mut World) -> Notifications {
+    let bubbles = bubble::shown(world)
+        .into_iter()
+        .map(|shown| BubbleView {
+            speaker: shown.speaker.get().display_name.to_owned(),
+            npc: shown.speaker,
+            body: shown.body.map(|body| body.to_string()),
+            replaced: shown.replaced,
+            lines: shown.lines,
+            folded: shown.folded,
+            rect: shown.drawn.and_then(|drawn| cover(world, drawn)),
+        })
+        .collect();
+    let edge_folds = bubble::edge_folds(world)
+        .into_iter()
+        .filter_map(|fold| world.get::<ui::SpeechBubble>(fold))
+        .filter_map(|fold| fold.folded_speakers.map(|speakers| speakers.0))
+        .collect();
+    Notifications {
+        bubbles,
+        edge_folds,
+        captions: Rows::of(caption::shown(world)),
+        alerts: Rows::of(alert::shown(world)),
+        errors: error::shown(world)
+            .into_iter()
+            .map(|(text, repeats)| ErrorLine { text, repeats })
+            .collect(),
+        milestones: Rows::of(milestone::shown(world)),
+        intro: intro::shown(world).map(|(title, text)| IntroLine { title, text }),
     }
+}
+
+fn leaving(world: &World, entity: Entity) -> bool {
+    std::iter::successors(Some(entity), |&up| {
+        world.get::<ChildOf>(up).map(ChildOf::parent)
+    })
+    .any(|up| world.get::<ui::Leaving>(up).is_some())
+}
+
+fn cover(world: &World, entity: Entity) -> Option<Cover> {
+    ui::node_rect(world, entity).map(|rect| Cover {
+        x: rect.min.x,
+        y: rect.min.y,
+        width: rect.width(),
+        height: rect.height(),
+    })
 }
 
 fn covered(world: &mut World) -> Vec<Cover> {
@@ -689,17 +818,20 @@ fn covered(world: &mut World) -> Vec<Cover> {
         .query::<(
             Entity,
             &ComputedNode,
-            &UiGlobalTransform,
             &InheritedVisibility,
             Option<&Pickable>,
         )>()
         .iter(world)
-        .filter(|(_, node, _, visibility, pickable)| {
+        .filter(|(entity, node, visibility, pickable)| {
             visibility.get()
                 && node.size().min_element() > 0.0
                 && pickable.is_none_or(|pickable| pickable.is_hoverable)
+                && !leaving(world, *entity)
         })
-        .map(|(entity, node, transform, ..)| (entity, rect_of(node, transform)))
+        .map(|(entity, ..)| entity)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .filter_map(|entity| Some((entity, cover(world, entity)?)))
         .collect();
     let ancestors = |entity: Entity| {
         std::iter::successors(world.get::<ChildOf>(entity).map(ChildOf::parent), |&up| {

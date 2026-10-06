@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 
 use crate::core::assets::AssetRef;
-use crate::core::sfx::SfxId;
 
 pub struct ModelDef {
     pub sheet: AssetRef,
@@ -11,22 +10,16 @@ pub struct ModelDef {
 
 pub struct Busts {
     pub generic: GenericBusts,
-    pub individual: &'static [(IndividualExpression, Bust)],
+    pub individual: &'static [(IndividualExpression, AssetRef)],
 }
 
 pub struct GenericBusts {
-    pub neutral: Bust,
-    pub happy: Bust,
-    pub sad: Bust,
-    pub angry: Bust,
-    pub surprised: Bust,
-    pub thinking: Bust,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Bust {
-    pub art: AssetRef,
-    pub cue: SfxId,
+    pub neutral: AssetRef,
+    pub happy: AssetRef,
+    pub sad: AssetRef,
+    pub angry: AssetRef,
+    pub surprised: AssetRef,
+    pub thinking: AssetRef,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -58,14 +51,14 @@ pub enum IndividualExpression {
 }
 
 impl Busts {
-    pub fn all(&self) -> impl Iterator<Item = Bust> + '_ {
+    pub fn all(&self) -> impl Iterator<Item = AssetRef> + '_ {
         GenericExpression::VARIANTS
             .iter()
             .map(|&expression| self.generic.of(expression))
             .chain(self.individual.iter().map(|(_, bust)| *bust))
     }
 
-    pub fn face(&self, face: Face) -> Option<Bust> {
+    pub fn face(&self, face: Face) -> Option<AssetRef> {
         match face {
             Face::Generic(expression) => Some(self.generic.of(expression)),
             Face::Individual(expression) => self
@@ -78,7 +71,7 @@ impl Busts {
 }
 
 impl GenericBusts {
-    pub fn of(&self, expression: GenericExpression) -> Bust {
+    pub fn of(&self, expression: GenericExpression) -> AssetRef {
         match expression {
             GenericExpression::Neutral => self.neutral,
             GenericExpression::Happy => self.happy,

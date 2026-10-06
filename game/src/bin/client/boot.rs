@@ -58,6 +58,7 @@ fn boot() {
             core::net::transport::RepliconRenetClientPlugin,
             core::render::RenderPlugin,
             core::sfx::playback::SfxPlugin,
+            core::babble::BabblePlugin,
         ))
         .add_plugins((
             systems::scene::ScenePlugin { spectator },
@@ -76,13 +77,13 @@ fn boot() {
         .add_plugins((
             systems::hud::HudPlugin,
             systems::dialogue::stage::StagePlugin,
-            systems::announcement::lane::AnnouncementLanePlugin,
+            systems::notification::NotificationPlugin,
+            systems::history::widget::HistoryPlugin,
             systems::shop::counter::ShopCounterPlugin,
             systems::item::card::ItemCardPlugin,
             systems::quest::card::QuestCardPlugin,
             systems::quest::log::QuestLogPlugin,
             systems::quest::tracker::QuestTrackerPlugin,
-            systems::notice::ToasterPlugin,
             systems::spectate::widget::SpectatorPlugin,
             systems::terminal::TerminalPlugin,
             systems::fps::FpsPlugin,

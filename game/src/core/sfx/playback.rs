@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::core::math::{Pos, Rng, Size};
 use crate::core::sfx::{SfxId, SfxScalar};
 use crate::core::tiling::Tiles;
-use crate::core::time::Seconds;
+use crate::core::time::{PlaybackRate, Seconds};
 use bevy::prelude::*;
 use bevy_kira_audio::prelude::{Audio, AudioControl, AudioSource, Decibels};
 use strum::VariantArray;
@@ -20,8 +20,9 @@ impl Plugin for SfxPlugin {
             .init_resource::<Catalog>()
             .init_resource::<Played>()
             .add_message::<PlaySfx>()
+            .add_message::<PlayClip>()
             .add_systems(Startup, load)
-            .add_systems(Update, mix);
+            .add_systems(Update, (mix, play_clips));
     }
 }
 
@@ -32,6 +33,19 @@ pub struct Listener(pub Option<Pos<Tiles>>);
 pub struct PlaySfx {
     pub id: SfxId,
     pub place: SfxPlace,
+}
+
+#[derive(Message)]
+pub struct PlayClip {
+    pub clip: Handle<AudioSource>,
+    pub place: SfxPlace,
+    pub tune: SfxTune,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SfxTune {
+    pub pitch: PlaybackRate,
+    pub volume: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -90,16 +104,9 @@ fn mix(
         let Some(sound) = catalog.0.get(req.id.index()) else {
             continue;
         };
-        let (proximity, pan) = match (req.place, listener.0) {
-            (SfxPlace::Interface, _) => (1.0, 0.0),
-            (SfxPlace::World(at), Some(listener)) => {
-                (proximity_volume(listener, at), proximity_pan(listener, at))
-            }
-            (SfxPlace::World(_), None) => continue,
-        };
-        if proximity <= 0.0 {
+        let Some((proximity, pan)) = heard_at(req.place, listener.0) else {
             continue;
-        }
+        };
         let cue = Cue {
             proximity,
             pan,
@@ -124,6 +131,31 @@ fn mix(
             .with_playback_rate(f64::from(pitch))
             .with_panning(cue.pan);
     }
+}
+
+fn play_clips(mut clips: MessageReader<PlayClip>, listener: Res<Listener>, audio: Res<Audio>) {
+    for clip in clips.read() {
+        let Some((proximity, pan)) = heard_at(clip.place, listener.0) else {
+            continue;
+        };
+        let volume = clip.tune.volume * proximity;
+        audio
+            .play(clip.clip.clone())
+            .with_volume(Decibels(20.0 * volume.max(1e-4).log10()))
+            .with_playback_rate(f64::from(clip.tune.pitch.0))
+            .with_panning(pan);
+    }
+}
+
+fn heard_at(place: SfxPlace, listener: Option<Pos<Tiles>>) -> Option<(f32, f32)> {
+    let (proximity, pan) = match (place, listener) {
+        (SfxPlace::Interface, _) => (1.0, 0.0),
+        (SfxPlace::World(at), Some(listener)) => {
+            (proximity_volume(listener, at), proximity_pan(listener, at))
+        }
+        (SfxPlace::World(_), None) => return None,
+    };
+    (proximity > 0.0).then_some((proximity, pan))
 }
 
 fn ready(played: &mut HashMap<SfxId, Seconds>, id: SfxId, clock: Seconds) -> bool {

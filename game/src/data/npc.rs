@@ -1,14 +1,14 @@
+use crate::core::babble::BabbleId;
 use crate::core::tiling::Tiles;
 use crate::core::time::Seconds;
-use crate::data::announcement::Id as AnnouncementId;
 use crate::data::area::Id as AreaId;
 use crate::data::attention::Id as AttentionId;
 use crate::data::dialogue::Id as DialogueId;
 use crate::data::item::Id as ItemId;
 use crate::data::memory::Id as MemoryId;
 use crate::data::model::Id as ModelId;
+use crate::data::notification::Id as NotificationId;
 use crate::systems::actor::Rgba;
-use crate::systems::announcement::Announce;
 use crate::systems::area::{MarkerName, StandingOn, WarpLock};
 use crate::systems::combat::Attitude;
 use crate::systems::dialogue::BusyPolicy;
@@ -16,8 +16,9 @@ use crate::systems::dialogue::StartConversation;
 use crate::systems::interact::{Interaction, Response, Verb};
 use crate::systems::item::{Holding, ItemStack};
 use crate::systems::memory::{Forget, Remember, RememberedWithin, Remembers, RemembersAtLeast};
+use crate::systems::notification::Notify;
 use crate::systems::npc::{
-    Aggressive, Defensive, Noticing, NpcDef, Pacifist, Protective, Stands, Strolls,
+    Aggressive, Defensive, NpcDef, Observation, Pacifist, Protective, Stands, Strolls,
 };
 use crate::systems::quest::{OnQuest, QuestId};
 use crate::systems::rewards::Reward;
@@ -33,6 +34,7 @@ crate::table! {
         attitude: Attitude::Hostile,
         respawn: Some(Seconds(5.0)),
         model: ModelId::Orc,
+        babble: None,
         tint: Rgba(0xffffffff),
         ai: &Defensive,
         stats: &[
@@ -52,7 +54,7 @@ crate::table! {
             Reward::Item { item: ItemId::OrcTusk, chance: Some(50.0), amount: 1 },
         ],
         interaction: None,
-        notices: &[],
+        observations: &[],
         guards: &[],
         on_defeat: &[],
     },
@@ -62,6 +64,7 @@ crate::table! {
         attitude: Attitude::Hostile,
         respawn: Some(Seconds(5.0)),
         model: ModelId::Orc,
+        babble: Some(BabbleId::OrcChief),
         tint: Rgba(0xffb070ff),
         ai: &Protective,
         stats: &[
@@ -82,13 +85,13 @@ crate::table! {
             Reward::Item { item: ItemId::TribalHelmet, chance: Some(10.0), amount: 1 },
         ],
         interaction: None,
-        notices: &[Noticing {
+        observations: &[Observation {
             within: Tiles(8.0),
             requires: &[&OnQuest(QuestId::TusksForTheChief), &Not(&Remembers(MemoryId::ChiefTauntedYou))],
             then: &[
                 &Remember(MemoryId::ChiefTauntedYou),
-                &Announce(AnnouncementId::ChiefChallenge),
-                &Announce(AnnouncementId::ChiefThreat),
+                &Notify(NotificationId::ChiefChallenge),
+                &Notify(NotificationId::ChiefThreat),
             ],
         }],
         guards: &[],
@@ -100,6 +103,7 @@ crate::table! {
         attitude: Attitude::Hostile,
         respawn: Some(Seconds(5.0)),
         model: ModelId::Skeleton,
+        babble: None,
         tint: Rgba(0xffffffff),
         ai: &Aggressive,
         stats: &[
@@ -121,7 +125,7 @@ crate::table! {
             Reward::Item { item: ItemId::FruloosRock, chance: Some(0.01), amount: 1 },
         ],
         interaction: None,
-        notices: &[],
+        observations: &[],
         guards: &[],
         on_defeat: &[],
     },
@@ -131,6 +135,7 @@ crate::table! {
         attitude: Attitude::Hostile,
         respawn: Some(Seconds(5.0)),
         model: ModelId::Bat,
+        babble: None,
         tint: Rgba(0xffffffff),
         ai: &Pacifist,
         stats: &[
@@ -149,7 +154,7 @@ crate::table! {
             Reward::Item { item: ItemId::BatWing, chance: Some(65.0), amount: 4 },
         ],
         interaction: None,
-        notices: &[],
+        observations: &[],
         guards: &[],
         on_defeat: &[],
     },
@@ -159,6 +164,7 @@ crate::table! {
         attitude: Attitude::Hostile,
         respawn: Some(Seconds(5.0)),
         model: ModelId::Bat,
+        babble: None,
         tint: Rgba(0xff7788ff),
         ai: &Aggressive,
         stats: &[
@@ -178,7 +184,7 @@ crate::table! {
             Reward::Item { item: ItemId::HealthPotion, chance: Some(25.0), amount: 1 },
         ],
         interaction: None,
-        notices: &[],
+        observations: &[],
         guards: &[],
         on_defeat: &[],
     },
@@ -188,6 +194,7 @@ crate::table! {
         attitude: Attitude::Friendly,
         respawn: Some(Seconds(300.0)),
         model: ModelId::Mara,
+        babble: Some(BabbleId::Mara),
         tint: Rgba(0xffffffff),
         ai: &Stands,
         stats: &[
@@ -218,7 +225,7 @@ crate::table! {
             ],
             marks: &[],
         }),
-        notices: &[],
+        observations: &[],
         guards: &[],
         on_defeat: &[],
     },
@@ -228,6 +235,7 @@ crate::table! {
         attitude: Attitude::Friendly,
         respawn: Some(Seconds(300.0)),
         model: ModelId::Tobb,
+        babble: Some(BabbleId::Tobb),
         tint: Rgba(0xffffffff),
         ai: &Strolls,
         stats: &[
@@ -278,7 +286,7 @@ crate::table! {
             ],
             marks: &[],
         }),
-        notices: &[Noticing {
+        observations: &[Observation {
             within: Tiles(3.0),
             requires: &[
                 &RemembersAtLeast(MemoryId::TobbVisits, 1),
@@ -295,6 +303,7 @@ crate::table! {
         attitude: Attitude::Friendly,
         respawn: Some(Seconds(300.0)),
         model: ModelId::Grisha,
+        babble: Some(BabbleId::Grisha),
         tint: Rgba(0xffffffff),
         ai: &Strolls,
         stats: &[
@@ -325,7 +334,7 @@ crate::table! {
             ],
             marks: &[AttentionId::Innkeeper],
         }),
-        notices: &[],
+        observations: &[],
         guards: &[],
         on_defeat: &[],
     },
@@ -335,6 +344,7 @@ crate::table! {
         attitude: Attitude::Friendly,
         respawn: Some(Seconds(300.0)),
         model: ModelId::Bram,
+        babble: Some(BabbleId::Bram),
         tint: Rgba(0xffffffff),
         ai: &Stands,
         stats: &[
@@ -360,7 +370,7 @@ crate::table! {
             ],
             marks: &[AttentionId::Travel],
         }),
-        notices: &[],
+        observations: &[],
         guards: &[],
         on_defeat: &[],
     },
@@ -370,6 +380,7 @@ crate::table! {
         attitude: Attitude::Friendly,
         respawn: Some(Seconds(300.0)),
         model: ModelId::Wren,
+        babble: Some(BabbleId::Wren),
         tint: Rgba(0xffffffff),
         ai: &Strolls,
         stats: &[
@@ -395,7 +406,7 @@ crate::table! {
             ],
             marks: &[],
         }),
-        notices: &[],
+        observations: &[],
         guards: &[],
         on_defeat: &[],
     },
@@ -405,6 +416,7 @@ crate::table! {
         attitude: Attitude::Friendly,
         respawn: Some(Seconds(300.0)),
         model: ModelId::Pell,
+        babble: Some(BabbleId::Pell),
         tint: Rgba(0xffffffff),
         ai: &Stands,
         stats: &[
@@ -435,7 +447,7 @@ crate::table! {
             ],
             marks: &[AttentionId::Chance],
         }),
-        notices: &[],
+        observations: &[],
         guards: &[],
         on_defeat: &[],
     },
@@ -445,6 +457,7 @@ crate::table! {
         attitude: Attitude::Friendly,
         respawn: Some(Seconds(300.0)),
         model: ModelId::Ilsa,
+        babble: Some(BabbleId::Ilsa),
         tint: Rgba(0xffffffff),
         ai: &Stands,
         stats: &[
@@ -475,7 +488,7 @@ crate::table! {
             ],
             marks: &[],
         }),
-        notices: &[Noticing {
+        observations: &[Observation {
             within: Tiles(5.0),
             requires: &[&StandingOn(MarkerName("forest-road")), &Not(&ROAD_PASS)],
             then: &[&StartConversation { node: DialogueId::IlsaHalt, busy: BusyPolicy::Skip }],
@@ -489,6 +502,7 @@ crate::table! {
         attitude: Attitude::Friendly,
         respawn: Some(Seconds(300.0)),
         model: ModelId::Ugra,
+        babble: Some(BabbleId::Ugra),
         tint: Rgba(0xffffffff),
         ai: &Stands,
         stats: &[
@@ -524,7 +538,7 @@ crate::table! {
             ],
             marks: &[],
         }),
-        notices: &[],
+        observations: &[],
         guards: &[],
         on_defeat: &[],
     },
@@ -534,6 +548,7 @@ crate::table! {
         attitude: Attitude::Hostile,
         respawn: None,
         model: ModelId::Guard,
+        babble: None,
         tint: Rgba(0xffffffff),
         ai: &Aggressive,
         stats: &[
@@ -548,7 +563,7 @@ crate::table! {
         aggro: Tiles(10.0),
         rewards: &[Reward::Xp(10)],
         interaction: None,
-        notices: &[],
+        observations: &[],
         guards: &[],
         on_defeat: &[],
     },
@@ -558,6 +573,7 @@ crate::table! {
         attitude: Attitude::Hostile,
         respawn: None,
         model: ModelId::Pell,
+        babble: Some(BabbleId::Pell),
         tint: Rgba(0xffffffff),
         ai: &Aggressive,
         stats: &[
@@ -575,7 +591,7 @@ crate::table! {
             Reward::Item { item: ItemId::Gold, chance: None, amount: 15 },
         ],
         interaction: None,
-        notices: &[],
+        observations: &[],
         guards: &[],
         on_defeat: &[&Forget(MemoryId::PellFighting), &Remember(MemoryId::PellDead)],
     },

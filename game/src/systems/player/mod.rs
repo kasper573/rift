@@ -7,17 +7,20 @@ use bevy_ecs::message::Message;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
+use crate::core::babble::{BabbleId, Babbler};
 use crate::core::math::{Direction, Pos, Rng};
 use crate::core::tiling::{Tiles, TilesPerSec};
 use crate::core::time::{Millis, PlaybackRate};
 use crate::systems::Character;
 use crate::systems::account::identity::Identity;
 use crate::systems::actor::{Action, Actor, Hitbox, Name, Rgba, set_action};
-use crate::systems::announcement::AnnouncementQueue;
+use crate::systems::area::transition::Discovered;
 use crate::systems::area::{self, AreaTag};
+use crate::systems::belongings;
 use crate::systems::dialogue::Heard;
 use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
+use crate::systems::history::History;
 use crate::systems::item::Inventory;
 use crate::systems::job::{self, Job};
 use crate::systems::memory::Memory;
@@ -222,6 +225,8 @@ fn spawn_position(world: &mut World, policy: SpawnPolicy, area: &area::Area) -> 
 
 pub struct CharacterState {
     pub name: String,
+    pub babble: BabbleId,
+    pub discovered: Discovered,
     pub stats: Stats,
     pub inventory: Inventory,
     pub xp: Xp,
@@ -232,7 +237,7 @@ pub struct CharacterState {
     pub heard: Heard,
     pub ledger: ShopLedger,
     pub quests: QuestLog,
-    pub announcements: AnnouncementQueue,
+    pub history: History,
 }
 
 fn spawn_player(
@@ -250,6 +255,8 @@ fn spawn_player(
         at,
         CharacterState {
             name,
+            babble: BabbleId::Adventurer,
+            discovered: Discovered::starting_in(zone),
             stats: player_stats(immortal),
             inventory: Inventory::empty(),
             xp: Xp { amount: 0 },
@@ -262,7 +269,7 @@ fn spawn_player(
             heard: Heard::default(),
             ledger: ShopLedger::default(),
             quests: QuestLog::default(),
-            announcements: AnnouncementQueue::default(),
+            history: History::default(),
         },
     );
 }
@@ -313,6 +320,7 @@ pub(crate) fn place(
                 area: AreaTag { area: zone },
             },
             Name { name: state.name },
+            (Babbler(state.babble), state.discovered),
             OwnedBy(client),
             Owner { client },
             state.inventory,
@@ -324,10 +332,12 @@ pub(crate) fn place(
             state.heard,
             state.ledger,
             state.quests,
-            state.announcements,
+            state.history,
         ))
         .id();
     state.stats.apply(world, entity);
+    let belongings = belongings::of(world, entity);
+    world.entity_mut(entity).insert(belongings);
     world.resource_mut::<Players>().0.insert(client, entity);
     entity
 }

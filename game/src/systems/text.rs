@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use bevy::color::Color;
+use bevy::prelude::{Entity, World};
 use serde::{Deserialize, Serialize};
 use ui::tokens::palette;
 use ui::{RichPiece, RichSpan, RichText, TextMotion, TextVoice};
@@ -8,13 +9,23 @@ use ui::{RichPiece, RichSpan, RichText, TextMotion, TextVoice};
 use crate::core::time::Millis;
 use crate::systems::input::map::{self, InputAction, InputMap};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy)]
 pub enum Span {
     Text {
         text: &'static str,
         fx: &'static [Fx],
     },
     Input(InputAction),
+    Fill {
+        fill: &'static dyn TextFill,
+        fx: &'static [Fx],
+    },
+}
+
+pub trait TextFill: Send + Sync {
+    fn text(&self, world: &World, player: Entity) -> String;
+
+    fn check(&self) {}
 }
 
 pub const fn plain(text: &'static str) -> Span {
@@ -27,6 +38,17 @@ pub const fn styled(text: &'static str, fx: &'static [Fx]) -> Span {
 
 pub const fn input(action: InputAction) -> Span {
     Span::Input(action)
+}
+
+pub const fn fill(fill: &'static dyn TextFill) -> Span {
+    Span::Fill { fill, fx: &[] }
+}
+
+pub fn fills(spans: &[Span]) -> impl Iterator<Item = &'static dyn TextFill> + '_ {
+    spans.iter().filter_map(|span| match *span {
+        Span::Fill { fill, .. } => Some(fill),
+        Span::Text { .. } | Span::Input(_) => None,
+    })
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -70,13 +92,17 @@ pub enum SpanText {
 }
 
 impl LineText {
-    pub fn of(spans: &[Span]) -> LineText {
+    pub fn spoken(spans: &[Span], world: &World, player: Entity) -> LineText {
         LineText(
             spans
                 .iter()
                 .map(|span| match *span {
                     Span::Text { text, fx } => SpanText::Text {
                         text: text.to_owned(),
+                        fx: fx.to_vec(),
+                    },
+                    Span::Fill { fill, fx } => SpanText::Text {
+                        text: fill.text(world, player),
                         fx: fx.to_vec(),
                     },
                     Span::Input(action) => SpanText::Input(action),
@@ -130,9 +156,7 @@ impl SpanText {
                 Fx::Ink(ink) => span = span.color(ink.color()),
                 Fx::Voice(Voice::Whisper) => span = span.voice(TextVoice::Whisper),
                 Fx::Voice(Voice::Shout) => span = span.voice(TextVoice::Shout),
-                Fx::Motion(Motion::Wave) => span = span.motion(TextMotion::Wave),
-                Fx::Motion(Motion::Shake) => span = span.motion(TextMotion::Shake),
-                Fx::Motion(Motion::Pulse) => span = span.motion(TextMotion::Pulse),
+                Fx::Motion(motion) => span = span.motion(motion.text_motion()),
                 Fx::Slow => span = span.slow(),
                 Fx::PauseAfter(wait) => {
                     pause = Some(RichPiece::Pause(Duration::from_secs_f32(wait.seconds().0)));
@@ -140,6 +164,16 @@ impl SpanText {
             }
         }
         std::iter::once(span.into()).chain(pause).collect()
+    }
+}
+
+impl Motion {
+    pub fn text_motion(self) -> TextMotion {
+        match self {
+            Motion::Wave => TextMotion::Wave,
+            Motion::Shake => TextMotion::Shake,
+            Motion::Pulse => TextMotion::Pulse,
+        }
     }
 }
 

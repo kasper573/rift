@@ -12,7 +12,7 @@ use crate::systems::rule::Not;
 use crate::systems::shop::{OpenShop, ShopId};
 
 crate::table! {
-    HarbourNotices: PropDef {
+    HarbourBoard: PropDef {
         display_name: "Harbour notices",
         look: Some(AssetRef("icons/misc/scroll.png")),
         interaction: Some(Interaction {
@@ -20,7 +20,7 @@ crate::table! {
             reach: Tiles(1.5),
             responses: &[Response {
                 requires: &[],
-                then: &[&StartConversation { node: DialogueId::HarbourNotices, busy: BusyPolicy::Replace }],
+                then: &[&StartConversation { node: DialogueId::HarbourBoard, busy: BusyPolicy::Replace }],
                 news: false,
             }],
             marks: &[],

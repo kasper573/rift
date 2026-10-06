@@ -141,7 +141,7 @@ fn a_choice_that_costs_too_much_changes_nothing() {
     let player = sim.join(1);
     let opened = talk(&mut sim, 1, player, data::npc::Id::Grisha);
     let index = choice(&opened, "Buy a round for the room.");
-    assert!(opened.choices[index as usize].refusal.is_some());
+    assert!(opened.choices[index as usize].refusal.is_none());
 
     sim.send(
         1,
@@ -154,6 +154,10 @@ fn a_choice_that_costs_too_much_changes_nothing() {
 
     let now = conversation(&mut sim, player).expect("still talking");
     assert_eq!(now.node, DialogueId::GrishaHello);
+    assert_eq!(
+        now.refused.map(|refused| (refused.choice, refused.reason)),
+        Some((index, "Needs 10 more Gold".to_owned()))
+    );
     assert_eq!(
         memory::recall(sim.world(), player, MemoryId::InnFavour),
         None

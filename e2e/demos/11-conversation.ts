@@ -10,7 +10,7 @@ import { conversationOver, interactWith, onStage, pick, readToChoices, talkTo } 
 test(
   "Conversation",
   chapter({
-    summary: "Talk to the townsfolk: busts, choices, costs, history",
+    summary: "Talk to the townsfolk: busts, choices, prices, refusals, history",
     setup: async (page) => {
       await signIn(page, await provisionAccount(page, ["admin"]));
       await clickUi(page, "Play");
@@ -25,6 +25,8 @@ test(
       await waitFor(page, ({ stage }) => stage?.waiting === "TobbNews", "Tobb never queued his news");
       await caption(page, "Tobb has news for you — it waits its turn, shown on the frame", { at: "top" });
       await page.waitForTimeout(2500);
+      await caption(page, "A choice shows its words and nothing more, unless the writer reveals more", { at: "top" });
+      await page.waitForTimeout(2000);
       await caption(page, "↑ ↓ choose and Enter picks", { at: "top" });
       const { stage } = await probe(page);
       const catchIndex = stage!.choices.findIndex((choice) => choice.label === "Caught anything good today?");
@@ -90,20 +92,24 @@ test(
       await pick(page, "Never mind.");
       await onStage(page, "GrishaAnythingElse");
       await readToChoices(page, 1000);
-      await caption(page, "Choices show what they cost, and what you have", { at: "top" });
+      await caption(page, "An inn has its prices on the wall: Grisha's menu shows what each choice costs", { at: "top" });
       await hoverUi(page, "Buy a round for the room.");
       await page.waitForTimeout(2000);
       await pick(page, "Buy a round for the room.");
       await onStage(page, "GrishaRound");
+      await waitFor(page, ({ feed }) => feed.includes("−10 Gold"), "the round's price never showed in the feed");
+      await caption(page, "What it took shows in the corner, over Grisha's bust", { at: "top" });
       await readToChoices(page, 1400);
-      await caption(page, "Can't afford it? The choice shakes and says why", { at: "top" });
+      await page.waitForTimeout(1500);
+      await caption(page, "Can't afford it? Pick it anyway: it shakes and says why, and you can pick again", { at: "top" });
       await focusGame(page);
       await page.keyboard.press("Digit1");
+      await waitFor(page, ({ stage }) => stage?.status, "the refused pick never said why");
       await page.waitForTimeout(2500);
-      await caption(page, "H opens the history of everything said", { at: "top" });
+      await caption(page, "History is a window like any other: H opens it here too, over the conversation", { at: "top" });
       await page.keyboard.press("KeyH");
-      await waitFor(page, ({ history }) => history, "history never opened");
-      await page.waitForTimeout(3000);
+      await waitFor(page, ({ history }) => history.open, "history never opened");
+      await page.waitForTimeout(3500);
       await caption(page, "Esc closes the history, then leaves the conversation", { at: "top" });
       await page.keyboard.press("Escape");
       await page.waitForTimeout(1000);

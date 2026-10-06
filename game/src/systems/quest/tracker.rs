@@ -8,8 +8,6 @@ use ui::{DragHandle, DragRoot, OnSettle, component};
 use super::card::{Countdown, icon, live_text};
 use super::{QuestId, QuestLog, QuestResult, Repeat};
 use crate::core::assets::AssetRef;
-use crate::core::sfx::SfxId;
-use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::data::attention::Id as AttentionId;
 use crate::systems::hud::{self, HudAudience, Widget};
 use crate::systems::item::Inventory;
@@ -25,7 +23,6 @@ impl Plugin for QuestTrackerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Folded>()
             .init_resource::<Built>()
-            .add_systems(Update, chime_on_progress.run_if(in_state(GameScene::Area)))
             .add_systems(OnExit(GameScene::Area), forget);
     }
 }
@@ -314,47 +311,4 @@ fn entry_scene(assets: &AssetServer, log: &QuestLog, entry: &Entry) -> Box<dyn S
             {rows},
         ]
     })
-}
-
-fn chime_on_progress(world: &mut World, mut last: Local<Option<(Entity, QuestLog)>>) {
-    let seen = world.resource::<Viewpoint>().0;
-    let now = seen.and_then(|seen| world.get::<QuestLog>(seen).map(|log| (seen, log.clone())));
-    let previous = std::mem::replace(&mut *last, now.clone());
-    let (Some((before_entity, before)), Some((after_entity, after))) = (previous, now) else {
-        return;
-    };
-    if before_entity != after_entity || before == after {
-        return;
-    }
-    let accepted = after
-        .active
-        .iter()
-        .any(|active| before.active(active.quest).is_none());
-    let completed = after.finished.iter().any(|finished| {
-        finished.result == QuestResult::Completed
-            && before.finished(finished.quest).is_none_or(|earlier| {
-                (earlier.result, earlier.day) != (finished.result, finished.day)
-            })
-    });
-    let dropped = before.active.iter().any(|active| {
-        after.active(active.quest).is_none()
-            && after
-                .finished(active.quest)
-                .is_none_or(|finished| finished.result == QuestResult::Failed)
-    });
-    let cue = if completed {
-        Some(SfxId::QuestCompleted)
-    } else if accepted {
-        Some(SfxId::QuestAccepted)
-    } else if dropped {
-        Some(SfxId::QuestAbandoned)
-    } else {
-        None
-    };
-    if let Some(id) = cue {
-        world.write_message(PlaySfx {
-            id,
-            place: SfxPlace::Interface,
-        });
-    }
 }

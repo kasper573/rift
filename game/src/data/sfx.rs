@@ -82,296 +82,6 @@ crate::table! {
         volume: SfxScalar::Random(0.8, 1.0),
         pitch: SfxScalar::Fixed(1.0),
     },
-    AdventurerHm: SfxDef {
-        src: AssetRef("sfx/voice/low/mmhmm_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    AdventurerLaugh: SfxDef {
-        src: AssetRef("sfx/voice/low/haha_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    AdventurerSigh: SfxDef {
-        src: AssetRef("sfx/voice/low/sigh_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    AdventurerGrunt: SfxDef {
-        src: AssetRef("sfx/voice/low/grr_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    AdventurerGasp: SfxDef {
-        src: AssetRef("sfx/voice/low/gasp_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    AdventurerHmm: SfxDef {
-        src: AssetRef("sfx/voice/low/hmm_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    TobbHm: SfxDef {
-        src: AssetRef("sfx/voice/low/uhuh_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.1),
-    },
-    TobbLaugh: SfxDef {
-        src: AssetRef("sfx/voice/low/laugh_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.1),
-    },
-    TobbSigh: SfxDef {
-        src: AssetRef("sfx/voice/low/phew_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.1),
-    },
-    TobbGrunt: SfxDef {
-        src: AssetRef("sfx/voice/low/ugh_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.1),
-    },
-    TobbGasp: SfxDef {
-        src: AssetRef("sfx/voice/low/woah_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.1),
-    },
-    TobbHmm: SfxDef {
-        src: AssetRef("sfx/voice/low/hmm_02.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.1),
-    },
-    TobbHaha: SfxDef {
-        src: AssetRef("sfx/voice/low/haha_02.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.1),
-    },
-    BramHm: SfxDef {
-        src: AssetRef("sfx/voice/low/mmhmm_02.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.85),
-    },
-    BramLaugh: SfxDef {
-        src: AssetRef("sfx/voice/low/laugh_03.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.85),
-    },
-    BramSigh: SfxDef {
-        src: AssetRef("sfx/voice/low/sigh_02.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.85),
-    },
-    BramGrunt: SfxDef {
-        src: AssetRef("sfx/voice/low/grunt_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.85),
-    },
-    BramGasp: SfxDef {
-        src: AssetRef("sfx/voice/low/surprised_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.85),
-    },
-    BramHmm: SfxDef {
-        src: AssetRef("sfx/voice/low/hmm_03.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.85),
-    },
-    PellHm: SfxDef {
-        src: AssetRef("sfx/voice/low/huh_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.95),
-    },
-    PellLaugh: SfxDef {
-        src: AssetRef("sfx/voice/low/haha_03.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.95),
-    },
-    PellSigh: SfxDef {
-        src: AssetRef("sfx/voice/low/breath_out_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.95),
-    },
-    PellGrunt: SfxDef {
-        src: AssetRef("sfx/voice/low/grr_02.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.95),
-    },
-    PellGasp: SfxDef {
-        src: AssetRef("sfx/voice/low/gasp_02.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.95),
-    },
-    PellHmm: SfxDef {
-        src: AssetRef("sfx/voice/low/hmm_04.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.95),
-    },
-    PellHmph: SfxDef {
-        src: AssetRef("sfx/voice/low/hmph_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.95),
-    },
-    MaraHm: SfxDef {
-        src: AssetRef("sfx/voice/mature/eh.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    MaraLaugh: SfxDef {
-        src: AssetRef("sfx/voice/mature/laugh.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    MaraSigh: SfxDef {
-        src: AssetRef("sfx/voice/mature/sigh_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    MaraGrunt: SfxDef {
-        src: AssetRef("sfx/voice/mature/grumble.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    MaraGasp: SfxDef {
-        src: AssetRef("sfx/voice/mature/gasp.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    MaraHmm: SfxDef {
-        src: AssetRef("sfx/voice/mature/uh.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    MaraHmph: SfxDef {
-        src: AssetRef("sfx/voice/mature/chuckle.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    GrishaHm: SfxDef {
-        src: AssetRef("sfx/voice/mature/ah.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.9),
-    },
-    GrishaLaugh: SfxDef {
-        src: AssetRef("sfx/voice/mature/laugh.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.9),
-    },
-    GrishaSigh: SfxDef {
-        src: AssetRef("sfx/voice/mature/sigh_02.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.9),
-    },
-    GrishaGrunt: SfxDef {
-        src: AssetRef("sfx/voice/mature/grumble.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.9),
-    },
-    GrishaGasp: SfxDef {
-        src: AssetRef("sfx/voice/mature/wah.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.9),
-    },
-    GrishaHmm: SfxDef {
-        src: AssetRef("sfx/voice/mature/haa.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.9),
-    },
-    WrenHm: SfxDef {
-        src: AssetRef("sfx/voice/bright/okay.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    WrenLaugh: SfxDef {
-        src: AssetRef("sfx/voice/bright/laughter.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    WrenSigh: SfxDef {
-        src: AssetRef("sfx/voice/bright/why.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    WrenGrunt: SfxDef {
-        src: AssetRef("sfx/voice/bright/what.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    WrenGasp: SfxDef {
-        src: AssetRef("sfx/voice/bright/anime_gasp.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    WrenHmm: SfxDef {
-        src: AssetRef("sfx/voice/bright/actually.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    WrenYawn: SfxDef {
-        src: AssetRef("sfx/voice/bright/okay.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.8),
-    },
-    IlsaHm: SfxDef {
-        src: AssetRef("sfx/voice/clear/okay.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    IlsaLaugh: SfxDef {
-        src: AssetRef("sfx/voice/clear/laughter.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    IlsaSigh: SfxDef {
-        src: AssetRef("sfx/voice/clear/why.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    IlsaGrunt: SfxDef {
-        src: AssetRef("sfx/voice/clear/what.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    IlsaGasp: SfxDef {
-        src: AssetRef("sfx/voice/clear/anime_gasp.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    IlsaHmm: SfxDef {
-        src: AssetRef("sfx/voice/clear/actually.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(1.0),
-    },
-    UgraHm: SfxDef {
-        src: AssetRef("sfx/voice/mature/uh.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.8),
-    },
-    UgraLaugh: SfxDef {
-        src: AssetRef("sfx/voice/mature/chuckle.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.8),
-    },
-    UgraSigh: SfxDef {
-        src: AssetRef("sfx/voice/mature/sigh_01.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.8),
-    },
-    UgraGrunt: SfxDef {
-        src: AssetRef("sfx/voice/mature/grumble.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.8),
-    },
-    UgraGasp: SfxDef {
-        src: AssetRef("sfx/voice/mature/gasp.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.8),
-    },
-    UgraHmm: SfxDef {
-        src: AssetRef("sfx/voice/mature/eh.wav"),
-        volume: SfxScalar::Fixed(0.9),
-        pitch: SfxScalar::Fixed(0.8),
-    },
     UiOpen: SfxDef {
         src: AssetRef("sfx/interface/open.wav"),
         volume: SfxScalar::Fixed(0.3),
@@ -397,14 +107,14 @@ crate::table! {
         volume: SfxScalar::Fixed(1.0),
         pitch: SfxScalar::Fixed(1.0),
     },
-    UiToast: SfxDef {
-        src: AssetRef("sfx/interface/toast.wav"),
-        volume: SfxScalar::Fixed(1.0),
-        pitch: SfxScalar::Fixed(1.0),
-    },
     UiChime: SfxDef {
         src: AssetRef("sfx/interface/chime.wav"),
         volume: SfxScalar::Fixed(1.0),
+        pitch: SfxScalar::Fixed(1.0),
+    },
+    ForestDrums: SfxDef {
+        src: AssetRef("sfx/interface/forest_drums.wav"),
+        volume: SfxScalar::Fixed(0.8),
         pitch: SfxScalar::Fixed(1.0),
     },
     UiPage: SfxDef {
@@ -431,5 +141,110 @@ crate::table! {
         src: AssetRef("sfx/interface/quest_abandoned.wav"),
         volume: SfxScalar::Fixed(1.0),
         pitch: SfxScalar::Fixed(1.0),
+    },
+    RisingChime: SfxDef {
+        src: AssetRef("sfx/interface/rising_chime.wav"),
+        volume: SfxScalar::Fixed(0.7),
+        pitch: SfxScalar::Fixed(1.0),
+    },
+    TallyTick: SfxDef {
+        src: AssetRef("sfx/interface/tally_tick.wav"),
+        volume: SfxScalar::Fixed(0.4),
+        pitch: SfxScalar::Fixed(1.0),
+    },
+    BellToll: SfxDef {
+        src: AssetRef("sfx/ambient/harbour_bell.wav"),
+        volume: SfxScalar::Fixed(0.45),
+        pitch: SfxScalar::Fixed(1.0),
+    },
+    GullCries: SfxDef {
+        src: AssetRef("sfx/ambient/gulls.wav"),
+        volume: SfxScalar::Fixed(0.4),
+        pitch: SfxScalar::Fixed(1.0),
+    },
+    HullScrape: SfxDef {
+        src: AssetRef("sfx/ambient/hull_scrape.wav"),
+        volume: SfxScalar::Fixed(0.5),
+        pitch: SfxScalar::Fixed(1.0),
+    },
+    PickupCoins: SfxDef {
+        src: AssetRef("sfx/items/pickup/coins.wav"),
+        volume: SfxScalar::Fixed(0.35),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    PickupGlass: SfxDef {
+        src: AssetRef("sfx/items/pickup/glass.wav"),
+        volume: SfxScalar::Fixed(0.35),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    PickupBone: SfxDef {
+        src: AssetRef("sfx/items/pickup/bone.wav"),
+        volume: SfxScalar::Fixed(0.35),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    PickupFlesh: SfxDef {
+        src: AssetRef("sfx/items/pickup/flesh.wav"),
+        volume: SfxScalar::Fixed(0.35),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    PickupBlade: SfxDef {
+        src: AssetRef("sfx/items/pickup/blade.wav"),
+        volume: SfxScalar::Fixed(0.35),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    PickupTrinket: SfxDef {
+        src: AssetRef("sfx/items/pickup/trinket.wav"),
+        volume: SfxScalar::Fixed(0.35),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    PickupPaper: SfxDef {
+        src: AssetRef("sfx/items/pickup/paper.wav"),
+        volume: SfxScalar::Fixed(0.35),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    PickupStone: SfxDef {
+        src: AssetRef("sfx/items/pickup/stone.wav"),
+        volume: SfxScalar::Fixed(0.35),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    TradeCoins: SfxDef {
+        src: AssetRef("sfx/items/trade/coins.wav"),
+        volume: SfxScalar::Fixed(0.55),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    TradeGlass: SfxDef {
+        src: AssetRef("sfx/items/trade/glass.wav"),
+        volume: SfxScalar::Fixed(0.55),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    TradeBone: SfxDef {
+        src: AssetRef("sfx/items/trade/bone.wav"),
+        volume: SfxScalar::Fixed(0.55),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    TradeFlesh: SfxDef {
+        src: AssetRef("sfx/items/trade/flesh.wav"),
+        volume: SfxScalar::Fixed(0.55),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    TradeBlade: SfxDef {
+        src: AssetRef("sfx/items/trade/blade.wav"),
+        volume: SfxScalar::Fixed(0.55),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    TradeTrinket: SfxDef {
+        src: AssetRef("sfx/items/trade/trinket.wav"),
+        volume: SfxScalar::Fixed(0.55),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    TradePaper: SfxDef {
+        src: AssetRef("sfx/items/trade/paper.wav"),
+        volume: SfxScalar::Fixed(0.55),
+        pitch: SfxScalar::Random(0.95, 1.05),
+    },
+    TradeStone: SfxDef {
+        src: AssetRef("sfx/items/trade/stone.wav"),
+        volume: SfxScalar::Fixed(0.55),
+        pitch: SfxScalar::Random(0.95, 1.05),
     },
 }

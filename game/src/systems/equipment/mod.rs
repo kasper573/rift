@@ -10,8 +10,10 @@ use strum::{IntoStaticStr, VariantArray};
 use crate::data;
 use crate::systems::effect::{self, Effect};
 use crate::systems::item::{Inventory, ItemStack};
+use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::sender_player;
-use crate::systems::rule::{self, Requirement};
+use crate::systems::rule::Requirement;
+use crate::systems::text::LineText;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -75,7 +77,16 @@ pub fn equip(
     else {
         return;
     };
-    if !rule::met(world, player, requirements) {
+    if let Some(unmet) = requirements
+        .iter()
+        .find(|requirement| !requirement.met(world, player))
+    {
+        let refusal = format!("{} needs {}", item.get().display_name, unmet.describe());
+        notification::notify(
+            world,
+            player,
+            Notification::new(NotificationKind::error(), LineText::plain(refusal)),
+        );
         return;
     }
     let occupant = world
@@ -108,11 +119,22 @@ pub fn unequip(world: &mut World) {
         };
         let stored = world
             .get_mut::<Inventory>(player)
-            .is_some_and(|mut inventory| {
-                inventory.exchange(&[], &[ItemStack::new(item, 1)]).is_ok()
-            });
-        if stored && let Some(mut equipment) = world.get_mut::<Equipment>(player) {
-            equipment.slots.remove(&slot);
+            .map(|mut inventory| inventory.exchange(&[], &[ItemStack::new(item, 1)]));
+        match stored {
+            Some(Ok(())) => {
+                if let Some(mut equipment) = world.get_mut::<Equipment>(player) {
+                    equipment.slots.remove(&slot);
+                }
+            }
+            Some(Err(refusal)) => notification::notify(
+                world,
+                player,
+                Notification::new(
+                    NotificationKind::error(),
+                    LineText::plain(refusal.describe()),
+                ),
+            ),
+            None => {}
         }
     }
 }

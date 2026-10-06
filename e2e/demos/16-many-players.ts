@@ -75,8 +75,12 @@ test(
         await page.waitForTimeout(2500);
         await pick(page, "You're cheating.");
         await conversationOver(page);
-        await waitFor(page, ({ announcement }) => announcement.showing?.by === "Pell", "Pell never shouted");
-        await caption(page, `Pell calls the guards — for you alone. ${name} sees none of them`);
+        await waitFor(
+          page,
+          ({ notifications }) => notifications.bubbles.some(({ npc }) => npc === "Pell"),
+          "Pell never shouted",
+        );
+        await caption(page, `Pell shouts for the guards over his head — for you alone. ${name} sees none of them`);
         await fight(page, "HarbourGuard");
         await page.waitForTimeout(1500);
 

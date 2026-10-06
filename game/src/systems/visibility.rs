@@ -1,7 +1,9 @@
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
-use bevy_replicon::prelude::{AppVisibilityExt, Replicated, VisibilityFilter};
+use bevy_replicon::prelude::{
+    AppVisibilityExt, Replicated, SendTargets, ToClients, VisibilityFilter,
+};
 use bevy_replicon::server::visibility::client_visibility::ClientVisibility;
 use bevy_replicon::server::visibility::filters_mask::FilterBit;
 use bevy_replicon::server::visibility::registry::FilterRegistry;
@@ -9,7 +11,6 @@ use bevy_replicon::shared::replication::registry::ReplicationRegistry;
 
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
-use crate::systems::announcement::Announcements;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::attention::Attention;
 use crate::systems::dialogue::Conversation;
@@ -30,6 +31,7 @@ pub fn register(app: &mut App) {
     app.add_visibility_filter::<OwnedBy>();
     app.init_resource::<RangeBit>();
     app.init_resource::<PresenceBit>();
+    app.init_resource::<Sights>();
     app.add_observer(grant_own_sight);
     app.add_observer(reveal_to_all);
 }
@@ -137,6 +139,39 @@ pub fn seen_by(world: &mut World, entity: Entity) -> Vec<Entity> {
         .collect()
 }
 
+pub fn private_viewers(world: &mut World, player: Entity) -> Vec<Entity> {
+    let Some(owner) = world.get::<Owner>(player).map(|owner| owner.client) else {
+        return Vec::new();
+    };
+    world.resource_scope(|world, mut sights: Mut<Sights>| {
+        sights
+            .0
+            .iter(world)
+            .filter(|(_, sight)| sight.sees_privately(owner))
+            .map(|(conn, _)| conn)
+            .collect()
+    })
+}
+
+pub fn send_private<M: Message + Clone>(world: &mut World, player: Entity, message: M) {
+    for conn in private_viewers(world, player) {
+        world.write_message(ToClients {
+            targets: SendTargets::Single(bevy_replicon::prelude::ClientId::Client(conn)),
+            message: message.clone(),
+        });
+    }
+}
+
+impl PrivateSight {
+    pub fn subject(self) -> ClientId {
+        self.watching.unwrap_or(self.own)
+    }
+
+    fn sees_privately(self, owner: ClientId) -> bool {
+        self.own == owner || self.watching == Some(owner)
+    }
+}
+
 #[derive(Component)]
 #[component(immutable)]
 pub struct OwnedBy(pub ClientId);
@@ -146,7 +181,6 @@ impl VisibilityFilter for OwnedBy {
     type Scope = (
         Inventory,
         Conversation,
-        Announcements,
         CommandLock,
         Attention,
         ShopView,
@@ -154,7 +188,7 @@ impl VisibilityFilter for OwnedBy {
     );
 
     fn is_visible(&self, _: Entity, sight: Option<&PrivateSight>) -> bool {
-        sight.is_some_and(|sight| sight.own == self.0 || sight.watching == Some(self.0))
+        sight.is_some_and(|sight| sight.sees_privately(self.0))
     }
 }
 
@@ -174,6 +208,15 @@ fn reveal_to_all(
 ) {
     for mut visibility in &mut clients {
         visibility.set(remove.entity, bit.0, true);
+    }
+}
+
+#[derive(Resource)]
+struct Sights(QueryState<(Entity, &'static PrivateSight)>);
+
+impl FromWorld for Sights {
+    fn from_world(world: &mut World) -> Self {
+        Sights(world.query())
     }
 }
 
