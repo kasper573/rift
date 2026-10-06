@@ -146,7 +146,7 @@ struct Notifications {
     edge_folds: Vec<u32>,
     captions: Rows,
     alerts: Rows,
-    errors: Vec<ErrorLine>,
+    error: Option<String>,
     milestones: Rows,
     intro: Option<IntroLine>,
 }
@@ -190,12 +190,6 @@ impl Rows {
             more: shown.more,
         }
     }
-}
-
-#[derive(Serialize)]
-struct ErrorLine {
-    text: String,
-    repeats: u32,
 }
 
 #[derive(Serialize)]
@@ -788,10 +782,7 @@ fn notifications(world: &mut World) -> Notifications {
         edge_folds,
         captions: Rows::of(caption::shown(world)),
         alerts: Rows::of(alert::shown(world)),
-        errors: error::shown(world)
-            .into_iter()
-            .map(|(text, repeats)| ErrorLine { text, repeats })
-            .collect(),
+        error: error::shown(world),
         milestones: Rows::of(milestone::shown(world)),
         intro: intro::shown(world).map(|(title, text)| IntroLine { title, text }),
     }

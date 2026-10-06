@@ -151,7 +151,7 @@ export interface Notifications {
   edge_folds: number[];
   captions: NotificationRows;
   alerts: NotificationRows;
-  errors: { text: string; repeats: number }[];
+  error: string | null;
   milestones: NotificationRows;
   intro: { title: string; text: string } | null;
 }

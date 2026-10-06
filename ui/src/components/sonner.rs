@@ -326,6 +326,10 @@ pub(crate) fn layout_toasts(
 
             let grow = toaster.position.grow();
             let off = toaster.position.travel() * TRAVEL;
+            let away = match here {
+                0 => off * LEAVE_TRAVEL,
+                _ => Vec2::ZERO,
+            };
             let here = here as f32;
             let rest = if toaster.expanded {
                 grow * here * (CARD_HEIGHT + GAP)
@@ -340,7 +344,7 @@ pub(crate) fn layout_toasts(
             let enter = Transform2d::new(rest + off, 0.9);
             let (target, opacity, timing) = match toast.leaving {
                 true => (
-                    Transform2d::new(rest + off * LEAVE_TRAVEL, scale * LEAVE_SCALE),
+                    Transform2d::new(rest + away, scale * LEAVE_SCALE),
                     0.0,
                     STANDARD_EXIT,
                 ),

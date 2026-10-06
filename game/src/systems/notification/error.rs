@@ -21,55 +21,47 @@ pub fn toast(world: &mut World, notification_sent: NotificationSent) {
     else {
         return;
     };
-    let repeated = world
+    let shown = world
         .query::<(Entity, &ErrorRow, &ui::Toast)>()
         .iter(world)
-        .find(|(_, row, toast)| !toast.leaving && row.notification == notification)
-        .map(|(entity, row, _)| (entity, row.repeats + 1));
-    if let Some((row, repeats)) = repeated {
-        world.entity_mut(row).despawn_related::<Children>();
-        world.entity_mut(row).insert(ErrorRow {
-            notification: notification.clone(),
-            repeats,
-        });
-        if let Ok(mut content) = world.spawn_scene(content(&notification, repeats)) {
-            content.insert(ChildOf(row));
+        .find(|(_, _, toast)| !toast.leaving)
+        .map(|(entity, row, _)| (entity, row.0 == notification));
+    match shown {
+        Some((again, true)) => {
+            ui::bump_toast(world, again);
+            return;
         }
-        ui::bump_toast(world, row);
-        return;
+        Some((replaced, false)) => {
+            if let Some(mut toast) = world.get_mut::<ui::Toast>(replaced) {
+                toast.leaving = true;
+            }
+        }
+        None => {}
     }
     let lasts = Duration::from(notification.stays());
     let row = bsn! {
         {ui::toast(lasts)}
-        ui::component(ErrorRow { notification: notification.clone(), repeats: 1 })
-        Children [ {EntityScene(content(&notification, 1))} ]
+        ui::component(ErrorRow(notification.clone()))
+        Children [ {EntityScene(content(&notification))} ]
     };
     if let Ok(mut spawned) = world.spawn_scene(row) {
         spawned.insert(ChildOf(toaster));
     }
 }
 
-pub fn shown(world: &mut World) -> Vec<(String, u32)> {
+pub fn shown(world: &mut World) -> Option<String> {
     world
         .query::<(&ErrorRow, &ui::Toast)>()
         .iter(world)
-        .filter(|(_, toast)| !toast.leaving)
-        .map(|(row, _)| (super::plain_words(&row.notification.text), row.repeats))
-        .collect()
+        .find(|(_, toast)| !toast.leaving)
+        .map(|(row, _)| super::plain_words(&row.0.text))
 }
 
 #[derive(Component, Clone)]
-struct ErrorRow {
-    notification: Notification,
-    repeats: u32,
-}
+struct ErrorRow(Notification);
 
-fn content(notification: &Notification, repeats: u32) -> impl Scene + use<> {
-    let mut text = notification.text.rich();
-    if repeats > 1 {
-        text.pieces
-            .push(ui::RichSpan::plain(format!(" \u{d7}{repeats}")).into());
-    }
+fn content(notification: &Notification) -> impl Scene + use<> {
+    let text = notification.text.rich();
     let line = ui::rich_text(
         ui::RichText {
             size: typography::BODY.font_size,

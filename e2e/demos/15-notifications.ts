@@ -8,6 +8,7 @@ import {
   closestTile,
   doubleClickUi,
   focusGame,
+  historyTab,
   holding,
   hoverUi,
   nearest,
@@ -23,6 +24,7 @@ import { conversationOver, onStage, pick, readToChoices, talkTo } from "../helpe
 
 const BAG = "icons/equipment/bag.png";
 const HELMET = "icons/equipment/leather_helmet.png";
+const CUTLASS = "icons/weapon_and_tool/golden_sword.png";
 
 test(
   "Notifications",
@@ -35,6 +37,7 @@ test(
       await admin(page, [
         ["/give FishSteak,1", /gave 1 Fish Steak/],
         ["/give TribalHelmet,1", /gave 1 Tribal Helmet/],
+        ["/give CorsairCutlass,1", /gave 1 Corsair's Cutlass/],
         ["/xp 40", /granted 40 xp/],
       ]);
     },
@@ -85,16 +88,29 @@ test(
       await caption(page, "What you can't do is an error, in red at the top: the Tribal Helmet wants level 3");
       await clickUi(page, BAG);
       await doubleClickUi(page, HELMET);
-      await waitFor(page, (snapshot) => refused(snapshot, "Tribal Helmet", 1), "the helmet was never refused");
-      await page.waitForTimeout(1200);
-      await caption(page, "Trying again counts on the same toast instead of stacking new ones", { at: "top" });
-      for (const times of [2, 3]) {
-        await doubleClickUi(page, HELMET);
-        await waitFor(page, (snapshot) => refused(snapshot, "Tribal Helmet", times), "the toast never counted");
-        await page.waitForTimeout(600);
-      }
+      await waitFor(page, (snapshot) => refused(snapshot, "Tribal Helmet"), "the helmet was never refused");
       await page.waitForTimeout(1500);
+      await caption(page, "Only the latest error shows: the Corsair's Cutlass wants level 3 too", { at: "top" });
+      await doubleClickUi(page, CUTLASS);
+      await waitFor(page, (snapshot) => refused(snapshot, "Corsair's Cutlass"), "the cutlass never replaced the helmet");
+      await page.waitForTimeout(1500);
+      await caption(page, "Trying again keeps that one error up, with nothing piling on", { at: "top" });
+      await doubleClickUi(page, CUTLASS);
+      await page.waitForTimeout(1500);
+      await caption(page, "Errors it replaced are kept in history", { at: "top" });
       await focusGame(page);
+      await page.keyboard.press("KeyH");
+      await waitFor(page, ({ history }) => history.open, "history never opened");
+      await openTab(page, "Errors");
+      await waitFor(
+        page,
+        ({ history }) => history.records.filter(({ topic }) => topic === "Error").length >= 2,
+        "history never kept both errors",
+      );
+      await page.waitForTimeout(3000);
+      await focusGame(page);
+      await page.keyboard.press("KeyH");
+      await waitFor(page, ({ history }) => !history.open, "history never closed");
       await page.keyboard.press("KeyI");
 
       await caption(page, "Bram sails for twenty Gold, or for a pass he only needs to see");
@@ -158,8 +174,14 @@ function captioned({ notifications }: Snapshot, label: string): boolean {
   return notifications.captions.rows.some((row) => row.label === label);
 }
 
-function refused({ notifications }: Snapshot, item: string, times: number): boolean {
-  return notifications.errors.some(({ text, repeats }) => text.startsWith(item) && repeats >= times);
+function refused({ notifications }: Snapshot, item: string): boolean {
+  return notifications.error?.startsWith(item) ?? false;
+}
+
+async function openTab(page: Page, title: string): Promise<void> {
+  const tab = await historyTab(page, title);
+  await clickUi(page, (element) => element.text === tab.text && element.x === tab.x && element.y === tab.y);
+  await waitFor(page, ({ history }) => history.tab === title, `the ${title} tab never opened`);
 }
 
 async function stroll(page: Page, [dx, dy]: [number, number]): Promise<void> {

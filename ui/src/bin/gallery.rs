@@ -12,8 +12,8 @@ use ui::{
     Carriable, Carried, CarryTarget, CastDepth, CastMember, Check, ChipOptions, ChoiceOptions,
     ConfirmOptions, DialogueBoxOptions, DialoguePanelOptions, FoldedSpeakers, Intro, LabelledLine,
     Leaving, Milestones, MotionPreference, OnSettle, OnTap, Orientation, RichPiece, RichSpan,
-    RichText, Side, SonnerPosition, SpeechBubble, TextMotion, TextVoice, Typewriter, WidgetOptions,
-    accordion, accordion_body, accordion_content, accordion_header, accordion_item,
+    RichText, Side, SonnerPosition, SpeechBubble, TextMotion, TextVoice, Toast, Typewriter,
+    WidgetOptions, accordion, accordion_body, accordion_content, accordion_header, accordion_item,
     accordion_trigger, alert_bar, alert_dialog, alert_dialog_action, alert_dialog_cancel, avatar,
     avatar_fallback, button, button_styled, captions, card, cast, checkbox, checkbox_indicator,
     chip, choice_list, collapsible, collapsible_content, collapsible_trigger, compact_toast,
@@ -1899,15 +1899,17 @@ const FEED_LINES: &[&str] = &[
     "+40 XP",
     "Equipped Rusty Sword",
 ];
+const ERROR_LINES: &[&str] = &["You need a helmet to enter.", "The door is locked."];
 
 fn feed_toasts(
     time: Res<Time>,
-    cards: Query<Entity, With<GalleryCardToaster>>,
+    cards: Query<(Entity, Option<&Children>), With<GalleryCardToaster>>,
     feeds: Query<Entity, With<GalleryFeedToaster>>,
+    mut shown: Query<&mut Toast>,
     mut fed: Local<Option<u64>>,
     mut commands: Commands,
 ) {
-    let (Ok(card), Ok(feed)) = (cards.single(), feeds.single()) else {
+    let (Ok((card, errors)), Ok(feed)) = (cards.single(), feeds.single()) else {
         *fed = None;
         return;
     };
@@ -1923,11 +1925,16 @@ fn feed_toasts(
             Children [ {EntityScene(text(line))} ]
         })
         .insert(ChildOf(feed));
-    if tick.is_multiple_of(3) {
+    if tick.is_multiple_of(2) {
+        let mut replaced = shown.iter_many_mut(errors.into_iter().flatten());
+        while let Some(mut toast) = replaced.fetch_next() {
+            toast.leaving = true;
+        }
+        let error = ERROR_LINES[(tick / 2) as usize % ERROR_LINES.len()];
         commands
             .spawn_scene(bsn! {
-                {toast(Duration::from_secs(3))}
-                Children [ {EntityScene(text_colored("You need a helmet to enter.", palette::CRIMSON_80))} ]
+                {toast(Duration::from_secs(4))}
+                Children [ {EntityScene(text_colored(error, palette::CRIMSON_80))} ]
             })
             .insert(ChildOf(card));
     }
