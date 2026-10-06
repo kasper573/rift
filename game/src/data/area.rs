@@ -42,12 +42,8 @@ crate::table! {
             Zone {
                 at: MarkerName("ferry-pier"),
                 with: None,
-                requires: &[&Not(&Remembers(MemoryId::HeardHarbourBell))],
-                then: &[
-                    &Remember(MemoryId::HeardHarbourBell),
-                    &Notify(NotificationId::HarbourBell),
-                    &Notify(NotificationId::Gulls),
-                ],
+                requires: &[&Not(&Remembers(MemoryId::HeardGulls))],
+                then: &[&Remember(MemoryId::HeardGulls), &Notify(NotificationId::Gulls)],
             },
         ],
         intro: None,

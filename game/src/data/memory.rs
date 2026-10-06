@@ -62,8 +62,8 @@ crate::table! {
         kind: MemoryKind::Flag,
         resets: Resets::Never,
     },
-    HeardHarbourBell: MemoryDef {
-        label: "Heard the harbour bell",
+    HeardGulls: MemoryDef {
+        label: "Heard the gulls",
         kind: MemoryKind::Timer(Seconds(600.0)),
         resets: Resets::Never,
     },

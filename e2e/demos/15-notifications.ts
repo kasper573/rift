@@ -67,11 +67,8 @@ test(
       await conversationOver(page);
       await waitFor(page, (snapshot) => holding(snapshot, "RoadPass") === 1, "the pass never arrived");
 
-      await caption(page, "Narration plays as captions at the top and never blocks: the harbour bell rings at the pier");
+      await caption(page, "Narration plays as captions at the top and never blocks: gulls squabble at the pier");
       await travelTo(page, ({ markers }) => markers.find((marker) => marker.name === "ferry-pier")?.at);
-      await waitFor(page, (snapshot) => captioned(snapshot, "Harbour bell"), "the harbour bell never rang");
-      await page.waitForTimeout(1500);
-      await caption(page, "The gulls take the next row: nothing queues, nothing is skipped", { at: "top" });
       await waitFor(page, (snapshot) => captioned(snapshot, "Gulls"), "the gulls never squabbled");
       await page.waitForTimeout(1000);
       await caption(page, "Hovering holds the captions, so you can finish reading", { at: "top" });

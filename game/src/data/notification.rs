@@ -18,11 +18,6 @@ crate::table! {
         text: &[plain("I'll grind your bones for "), styled("soup", &[Fx::Motion(Motion::Wave)]), plain("!")],
         lasts: None,
     },
-    HarbourBell: NotificationDef {
-        kind: NotificationKind::Narration { label: Cow::Borrowed("Harbour bell"), sfx: Some(SfxId::BellToll) },
-        text: &[plain("The "), styled("Gull", &[Fx::Ink(Ink::Name)]), plain(" sails at the next bell.")],
-        lasts: None,
-    },
     Gulls: NotificationDef {
         kind: NotificationKind::Narration { label: Cow::Borrowed("Gulls"), sfx: Some(SfxId::GullCries) },
         text: &[plain("Gulls squabble over a fish head at the end of the pier.")],

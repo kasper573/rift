@@ -1701,11 +1701,11 @@ fn captions_scene() -> Box<dyn Scene> {
 }
 
 fn caption_round(round: u64) -> Captions {
-    let bell = labelled(
+    let tide = labelled(
         0,
-        "Harbour bell",
+        "Tide",
         0,
-        "The harbour bell rings twice. A ship is coming in.",
+        "The tide turns. Moored boats knock against the pier.",
     );
     let gulls = labelled(
         1,
@@ -1721,15 +1721,15 @@ fn caption_round(round: u64) -> Captions {
     );
     match round {
         0 => Captions {
-            rows: vec![bell],
+            rows: vec![tide],
             more: None,
         },
         1 => Captions {
-            rows: vec![bell, gulls],
+            rows: vec![tide, gulls],
             more: None,
         },
         2 => Captions {
-            rows: vec![bell, gulls, sails],
+            rows: vec![tide, gulls, sails],
             more: None,
         },
         3 => Captions {

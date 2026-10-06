@@ -82,7 +82,7 @@ fn intros(sim: &Sim, client: u32) -> usize {
 }
 
 #[test]
-fn stepping_onto_the_pier_narrates_the_harbour_bell_and_the_gulls_once() {
+fn stepping_onto_the_pier_narrates_the_gulls_once() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
     let start = position(sim.world(), player).expect("position");
@@ -96,13 +96,7 @@ fn stepping_onto_the_pier_narrates_the_harbour_bell_and_the_gulls_once() {
         .entity_mut(player)
         .insert(Position { pos: pier });
     settle(&mut sim);
-    assert_eq!(
-        told(&sim, 1),
-        vec![
-            spoken(NotificationId::HarbourBell),
-            spoken(NotificationId::Gulls)
-        ]
-    );
+    assert_eq!(told(&sim, 1), vec![spoken(NotificationId::Gulls)]);
     assert!(!commands_locked(sim.world(), player));
 
     later(&mut sim, 30.0);
@@ -116,14 +110,14 @@ fn stepping_onto_the_pier_narrates_the_harbour_bell_and_the_gulls_once() {
         .insert(Position { pos: pier });
     settle(&mut sim);
     assert_eq!(told(&sim, 1), Vec::new());
-    assert!(memory::recall(sim.world(), player, MemoryId::HeardHarbourBell).is_some());
+    assert!(memory::recall(sim.world(), player, MemoryId::HeardGulls).is_some());
 }
 
 #[test]
 fn every_notification_is_recorded_when_it_is_raised() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    notification::notify(sim.world(), player, spoken(NotificationId::HarbourBell));
+    notification::notify(sim.world(), player, spoken(NotificationId::Gulls));
     notification::record(
         sim.world(),
         player,
@@ -133,12 +127,12 @@ fn every_notification_is_recorded_when_it_is_raised() {
     let records = recorded(&mut sim, player);
     assert!(records.contains(&(
         HistoryTopic::Notification,
-        Some("Harbour bell".to_owned()),
-        "The Gull sails at the next bell.".to_owned(),
+        Some("Gulls".to_owned()),
+        "Gulls squabble over a fish head at the end of the pier.".to_owned(),
         1
     )));
     assert!(records.contains(&(HistoryTopic::Error, None, "Needs 10 Gold".to_owned(), 1)));
-    assert_eq!(told(&sim, 1), vec![spoken(NotificationId::HarbourBell)]);
+    assert_eq!(told(&sim, 1), vec![spoken(NotificationId::Gulls)]);
 }
 
 #[test]

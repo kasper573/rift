@@ -152,11 +152,6 @@ crate::table! {
         volume: SfxScalar::Fixed(0.4),
         pitch: SfxScalar::Fixed(1.0),
     },
-    BellToll: SfxDef {
-        src: AssetRef("sfx/ambient/harbour_bell.wav"),
-        volume: SfxScalar::Fixed(0.45),
-        pitch: SfxScalar::Fixed(1.0),
-    },
     GullCries: SfxDef {
         src: AssetRef("sfx/ambient/gulls.wav"),
         volume: SfxScalar::Fixed(0.4),

@@ -110,18 +110,6 @@ synth-sfx:
       fine "$file" synth "$length" "$color" gain -12 "$@"
     }
 
-    bell() {
-      local file=$1 prime=$2
-      struck "$work/bell_body.wav" 4.2 \
-        "$(awk "BEGIN{print $prime*0.5}"):-6:4.2" "$prime:0:3.4" "$(awk "BEGIN{print $prime*1.19}"):-4:2.6" \
-        "$(awk "BEGIN{print $prime*1.5}"):-8:2.0" "$(awk "BEGIN{print $prime*2.0}"):-6:1.6" \
-        "$(awk "BEGIN{print $prime*2.52}"):-12:1.0" "$(awk "BEGIN{print $prime*3.01}"):-14:0.7"
-      noise "$work/bell_strike.wav" 0.03 whitenoise bandpass 1800 1q fade l 0 0.03 0.03 gain -10
-      sox -m "$work/bell_body.wav" "$work/bell_strike.wav" "$file" tremolo 2.3 18
-    }
-    bell "$work/toll.wav" 196
-    save "$work/toll.wav" "assets/sfx/ambient/harbour_bell.wav" lowpass 2400 pad 0 0.6 reverb 60 50 100 fade l 0 4.8 0.8
-
     gull() {
       fine "$1" synth 0.34 sawtooth "$2" gain -18 bend 0,650,.07 0,-1100,.25 \
         bandpass 1900 0.9q equalizer 3200 1q 6 tremolo 34 30 fade q 0.015 0.34 0.12

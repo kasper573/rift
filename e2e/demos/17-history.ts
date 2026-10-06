@@ -30,7 +30,7 @@ test(
       await give(page, [["RoadPass", 1]]);
     },
     play: async (page) => {
-      await caption(page, "Everything you say, see and get is kept: a talk with Tobb on the pier, the bell and gulls narrated over it…");
+      await caption(page, "Everything you say, see and get is kept: a talk with Tobb, the gulls out on the pier…");
       await talkTo(page, "Tobb");
       await readToChoices(page, 900);
       await pick(page, "A Letter for the Captain");
@@ -40,6 +40,7 @@ test(
       await waitFor(page, (snapshot) => onQuest(snapshot, "LetterForTheCaptain"), "the letter quest never started");
       await leaveTobb(page);
 
+      await travelTo(page, ({ markers }) => markers.find((marker) => marker.name === "ferry-pier")?.at);
       await waitFor(page, ({ history }) => history.records.some(({ by }) => by === "Gulls"), "the gulls never squabbled");
 
       await caption(page, "History has its own slot in the toolbar, or press H");
