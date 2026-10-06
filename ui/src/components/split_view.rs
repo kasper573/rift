@@ -10,7 +10,7 @@ use crate::style::Style;
 use crate::theme::theme;
 use crate::tokens::{spacing, typography};
 
-const LIST_SHARE: f32 = 42.0;
+const LIST_WIDEST: f32 = 50.0;
 
 pub fn split_view(list: Box<dyn Scene>, detail: Box<dyn Scene>) -> impl Scene {
     let divider = BorderColor::all(theme().surface_floating.border);
@@ -19,15 +19,16 @@ pub fn split_view(list: Box<dyn Scene>, detail: Box<dyn Scene>) -> impl Scene {
         Children [
             (
                 Node {
-                    width: Val::Percent({LIST_SHARE}),
+                    max_width: Val::Percent({LIST_WIDEST}),
                     height: Val::Percent(100.0),
+                    flex_shrink: 0.0,
                     border: {UiRect::right(Val::Px(1.0))},
                 }
                 component(divider)
                 Children [ {EntityScene(scrolled(list))} ]
             ),
             (
-                Node { flex_grow: 1.0, min_width: Val::Px(0.0), height: Val::Percent(100.0) }
+                Node { flex_grow: 1.0, flex_basis: Val::Px(0.0), min_width: Val::Px(0.0), height: Val::Percent(100.0) }
                 Children [ {EntityScene(detail)} ]
             ),
         ]

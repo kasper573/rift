@@ -391,7 +391,7 @@ fn snapshot(world: &mut World) -> Snapshot {
                     item: offer.item,
                     count: offer.count,
                     left: view.left,
-                    refusal: view.refusal.clone(),
+                    refusal: view.refusal.as_ref().map(shop::WareRefusal::describe),
                 })
                 .collect(),
             buyback: shown

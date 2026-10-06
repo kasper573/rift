@@ -14,7 +14,7 @@ use crate::data::item::Id as ItemId;
 use crate::systems::attention;
 use crate::systems::dialogue::{self, Asked, BusyPolicy, ChoiceTag, Line, Offer, Then};
 use crate::systems::interact::Counterpart;
-use crate::systems::item::{Inventory, ItemCategory, ItemFlag, ItemStack};
+use crate::systems::item::{ExchangeRefusal, Inventory, ItemCategory, ItemFlag, ItemStack};
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::sender_player;
 use crate::systems::rule::{self, Encounter, Outcome, Requirement, RuleContext};
@@ -114,7 +114,31 @@ pub struct ShopView {
 pub struct OfferView {
     pub left: Option<u32>,
     pub restocks_in: Option<Seconds>,
-    pub refusal: Option<String>,
+    pub refusal: Option<WareRefusal>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum WareRefusal {
+    Unaffordable(ItemStack),
+    Unavailable(String),
+}
+
+impl WareRefusal {
+    pub fn describe(&self) -> String {
+        match self {
+            WareRefusal::Unaffordable(short) => ExchangeRefusal::Missing(*short).describe(),
+            WareRefusal::Unavailable(reason) => reason.clone(),
+        }
+    }
+}
+
+impl From<ExchangeRefusal> for WareRefusal {
+    fn from(refusal: ExchangeRefusal) -> WareRefusal {
+        match refusal {
+            ExchangeRefusal::Missing(short) => WareRefusal::Unaffordable(short),
+            ExchangeRefusal::NoRoom { .. } => WareRefusal::Unavailable(refusal.describe()),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -365,7 +389,7 @@ fn buy(world: &mut World, player: Entity, index: u32) {
     };
     let now = world.resource::<WallClock>().now;
     let bought = match offer_refusal(world, player, shop, index, now) {
-        Some(refusal) => Err(refusal),
+        Some(refusal) => Err(refusal.describe()),
         None => trade(
             world,
             player,
@@ -501,23 +525,26 @@ fn offer_refusal(
     shop: ShopId,
     index: u32,
     now: UnixMillis,
-) -> Option<String> {
+) -> Option<WareRefusal> {
     let offer = shop.get().sells.get(index as usize)?;
     if let Some(unmet) = offer
         .requires
         .iter()
         .find(|requirement| !requirement.met(world, player))
     {
-        return Some(format!("Needs {}", unmet.describe()));
+        return Some(WareRefusal::Unavailable(format!(
+            "Needs {}",
+            unmet.describe()
+        )));
     }
     if stock(world, player, shop, index, now).is_some_and(|(left, _)| left == 0) {
-        return Some("Sold out for now".to_owned());
+        return Some(WareRefusal::Unavailable("Sold out for now".to_owned()));
     }
     let mut inventory = world.get::<Inventory>(player)?.clone();
     inventory
         .exchange(offer.price, &[ItemStack::new(offer.item, offer.count)])
         .err()
-        .map(|refusal| refusal.describe())
+        .map(WareRefusal::from)
 }
 
 fn stock(

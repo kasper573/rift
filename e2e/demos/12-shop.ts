@@ -1,4 +1,4 @@
-import { test } from "@playwright/test";
+import { test, type Page } from "@playwright/test";
 
 import { provisionAccount, signIn } from "../helpers/account";
 import { give } from "../helpers/admin";
@@ -50,6 +50,13 @@ test(
       await caption(page, "Prices are lists of items — each part turns red when you can't cover it", { at: "top" });
       await clickUi(page, "Greater Health Potion");
       await page.waitForTimeout(2500);
+      await caption(page, "The list stays as narrow as its wares, and browsing never shifts it", { at: "top" });
+      const listed = await rowX(page, "Bone Shield");
+      for (const ware of ["Bone Shield", "Health Potion", "Greater Health Potion"]) {
+        await clickUi(page, (element) => element.text === ware && element.x <= listed + 1);
+        await page.waitForTimeout(900);
+        if ((await rowX(page, "Bone Shield")) !== listed) throw new Error("the ware list shifted");
+      }
       await caption(page, "Mara's shop opts into reactions — try buying anyway", { at: "top" });
       await clickUi(page, "Can't afford");
       await waitFor(page, (snapshot) => findUi(snapshot, /purse is heavier/), "Mara never reacted");
@@ -135,3 +142,7 @@ test(
     },
   }),
 );
+
+async function rowX(page: Page, ware: string): Promise<number> {
+  return Math.min(...(await probe(page)).ui.filter((element) => element.text === ware).map((element) => element.x));
+}

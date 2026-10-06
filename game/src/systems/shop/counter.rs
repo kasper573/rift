@@ -5,7 +5,7 @@ use bevy::scene::EntityScene;
 use ui::tokens::{palette, spacing, typography};
 use ui::{Carried, CarryTarget, ChipOptions, ConfirmOptions, Family, OnTap, component};
 
-use super::{OfferView, Sale, ShopId, ShopRequest, ShopView};
+use super::{OfferView, Sale, ShopId, ShopRequest, ShopView, WareRefusal};
 use crate::core::sfx::SfxId;
 use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::data::item::Id as ItemId;
@@ -336,7 +336,7 @@ struct Ware {
     count: u32,
     price: Vec<ItemStack>,
     note: Option<String>,
-    refusal: Option<String>,
+    refusal: Option<WareRefusal>,
 }
 impl Shelf {
     fn wares(&self) -> Vec<Ware> {
@@ -383,12 +383,9 @@ fn stock_note(view: &OfferView) -> Option<String> {
     })
 }
 
-fn missing(inventory: &Inventory, price: &[ItemStack]) -> Option<String> {
+fn missing(inventory: &Inventory, price: &[ItemStack]) -> Option<WareRefusal> {
     let mut trial = inventory.clone();
-    trial
-        .exchange(price, &[])
-        .err()
-        .map(|refusal| refusal.describe())
+    trial.exchange(price, &[]).err().map(WareRefusal::from)
 }
 
 fn wants_note(wants: &[String]) -> String {
@@ -457,10 +454,8 @@ fn row(
     let ink = ui::theme::theme().surface_floating.on;
     let def = ware.item.get();
     let name = counted(def.display_name, ware.count);
-    let note = ware
-        .refusal
-        .clone()
-        .map(|refusal| (refusal, palette::CRIMSON_80))
+    let note = unavailable(ware)
+        .map(|reason| (reason, palette::CRIMSON_80))
         .or_else(|| ware.note.clone().map(|note| (note, ink.with_alpha(0.6))));
     let note: Vec<Box<dyn Scene>> = note
         .into_iter()
@@ -508,7 +503,11 @@ fn row(
                     {note},
                 ]
             ),
-            ( Node { column_gap: Val::Px({spacing::M}) } Pickable::IGNORE Children [ {chips} ] ),
+            (
+                Node { flex_direction: FlexDirection::Column, align_items: AlignItems::End, row_gap: Val::Px({spacing::S}) }
+                Pickable::IGNORE
+                Children [ {chips} ]
+            ),
         ]
     })
 }
@@ -526,11 +525,7 @@ fn detail(world: &World, shelf: &Shelf, ware: &Ware, index: usize) -> impl Scene
         .note
         .iter()
         .map(|note| (note.clone(), ink.with_alpha(0.7)))
-        .chain(
-            ware.refusal
-                .iter()
-                .map(|refusal| (refusal.clone(), palette::CRIMSON_80)),
-        )
+        .chain(unavailable(ware).map(|reason| (reason, palette::CRIMSON_80)))
         .map(|(note, color)| -> Box<dyn Scene> {
             Box::new(ui::styled_text(note, color, typography::CAPTION))
         })
@@ -576,10 +571,12 @@ fn detail(world: &World, shelf: &Shelf, ware: &Ware, index: usize) -> impl Scene
 
 fn trade_button(tab: ShopTab, ware: &Ware, index: usize) -> impl Scene + use<> {
     let (intent, label) = match (&ware.refusal, tab) {
-        (Some(refusal), _) if refusal.starts_with("Needs") && refusal.contains("more") => {
+        (Some(WareRefusal::Unaffordable(_)), _) => {
             (ui::button::intent::DANGER, "Can't afford".to_owned())
         }
-        (Some(_), _) => (ui::button::intent::MUTED, "Unavailable".to_owned()),
+        (Some(WareRefusal::Unavailable(_)), _) => {
+            (ui::button::intent::MUTED, "Unavailable".to_owned())
+        }
         (None, ShopTab::Wares) => (ui::button::intent::PRIMARY, "Buy".to_owned()),
         (None, ShopTab::Buyback) => (ui::button::intent::PRIMARY, "Buy back".to_owned()),
     };
@@ -642,6 +639,13 @@ fn cost_row(assets: &AssetServer, inventory: &Inventory, stack: ItemStack) -> im
             ),
             {EntityScene(ui::styled_text(label, color, typography::BODY))},
         ]
+    }
+}
+
+fn unavailable(ware: &Ware) -> Option<String> {
+    match &ware.refusal {
+        Some(WareRefusal::Unavailable(reason)) => Some(reason.clone()),
+        Some(WareRefusal::Unaffordable(_)) | None => None,
     }
 }
 
