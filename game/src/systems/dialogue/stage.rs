@@ -69,8 +69,7 @@ impl Plugin for StagePlugin {
                     count_down,
                 )
                     .chain()
-                    .run_if(in_state(GameScene::Area))
-                    .before(ui::UiReactive),
+                    .run_if(in_state(GameScene::Area)),
             )
             .add_observer(on_picked)
             .add_observer(on_refused);
@@ -114,6 +113,16 @@ pub fn view(world: &World) -> Option<StageView> {
             .collect(),
         waiting: shown.waiting.map(|waiting| waiting.node),
     })
+}
+
+pub fn attach(world: &mut World, scene: impl Scene) -> Option<Entity> {
+    let slot = world
+        .query_filtered::<Entity, With<StageAttachments>>()
+        .iter(world)
+        .next()?;
+    let mut spawned = world.spawn_scene(scene).ok()?;
+    spawned.insert(ChildOf(slot));
+    Some(spawned.id())
 }
 
 pub fn leave(world: &mut World) -> bool {
@@ -164,6 +173,9 @@ struct StageBoxHost;
 struct StageBox;
 
 #[derive(Component, Default, Clone)]
+struct StageAttachments;
+
+#[derive(Component, Default, Clone)]
 struct WaitingChip;
 
 fn spawn_stage(mut commands: Commands) {
@@ -174,6 +186,7 @@ fn spawn_stage(mut commands: Commands) {
             width: Val::Percent(100.0),
             height: Val::Percent(100.0),
         }
+        GlobalZIndex({ui::tokens::layer::STAGE})
         Pickable::IGNORE
         Children [
             {EntityScene(ui::cast())},
@@ -184,9 +197,21 @@ fn spawn_stage(mut commands: Commands) {
                     left: Val::Px(0.0),
                     right: Val::Px(0.0),
                     bottom: Val::Px(28.0),
-                    justify_content: JustifyContent::Center,
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
                 }
                 Pickable::IGNORE
+                Children [ (
+                    StageAttachments
+                    Node {
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::FlexEnd,
+                        column_gap: Val::Px({ui::tokens::spacing::L}),
+                        margin: {UiRect::bottom(Val::Px(ui::tokens::spacing::XL))},
+                    }
+                    Pickable::IGNORE
+                ) ]
             ),
         ]
     });

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use bevy_color::Color;
 use bevy_ecs::bundle::Bundle;
+use bevy_ecs::entity::EntityHashSet;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::EntityWorldMut;
 use bevy_math::Vec2;
@@ -405,16 +406,40 @@ fn compose(base: Option<Box<Style>>, over: Option<Box<Style>>) -> Option<Box<Sty
     }
 }
 
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+struct StyleState {
+    hovered: bool,
+    pressed: bool,
+    checked: bool,
+    disabled: bool,
+}
+
 pub(crate) fn apply_styles(world: &mut World) {
-    let entities: Vec<Entity> = world
-        .query_filtered::<Entity, With<Style>>()
+    let restyled: EntityHashSet = world
+        .query_filtered::<Entity, Changed<Style>>()
         .iter(world)
         .collect();
-    for entity in entities {
-        let hovered = world.get::<Hovered>(entity).is_some_and(Hovered::get);
-        let pressed = world.get::<Pressed>(entity).is_some();
-        let checked = world.get::<Checked>(entity).is_some();
-        let disabled = world.get::<InteractionDisabled>(entity).is_some();
+    let due: Vec<(Entity, StyleState)> = world
+        .query_filtered::<(
+            Entity,
+            Option<&Hovered>,
+            Has<Pressed>,
+            Has<Checked>,
+            Has<InteractionDisabled>,
+            Option<&StyleState>,
+        ), With<Style>>()
+        .iter(world)
+        .filter_map(|(entity, hovered, pressed, checked, disabled, applied)| {
+            let state = StyleState {
+                hovered: hovered.is_some_and(Hovered::get),
+                pressed,
+                checked,
+                disabled,
+            };
+            (applied != Some(&state) || restyled.contains(&entity)).then_some((entity, state))
+        })
+        .collect();
+    for (entity, state) in due {
         let Some(style) = world.get::<Style>(entity).cloned() else {
             continue;
         };
@@ -423,7 +448,8 @@ pub(crate) fn apply_styles(world: &mut World) {
             entity.insert(Hovered(false));
         }
         style
-            .for_state(hovered, pressed, checked, disabled)
+            .for_state(state.hovered, state.pressed, state.checked, state.disabled)
             .write(&mut entity);
+        entity.insert(state);
     }
 }

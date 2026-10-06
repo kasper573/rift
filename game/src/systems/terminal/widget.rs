@@ -110,7 +110,7 @@ fn sync_logs(world: &mut World) {
             .cloned()
             .collect();
         let keys: Vec<u64> = lines.iter().map(|(seq, _)| *seq).collect();
-        reconcile_children(world, container, &keys, |index| {
+        reconcile_children(world, container, &keys, |_, index| {
             Box::new(ui::text(lines[index].1.clone()))
         });
     }

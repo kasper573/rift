@@ -97,7 +97,7 @@ fn connecting(mut commands: Commands) {
         ConnectionUi
         template_value(super::screen_node())
         BackgroundColor({OVERLAY_BG})
-        GlobalZIndex({100})
+        GlobalZIndex({ui::tokens::layer::SYSTEM})
         Children [ {EntityScene(text_colored("Connecting...", Color::WHITE))} ]
     });
 }
@@ -107,7 +107,7 @@ fn lost(mut commands: Commands) {
         ConnectionUi
         template_value(super::screen_node())
         BackgroundColor({OVERLAY_BG})
-        GlobalZIndex({100})
+        GlobalZIndex({ui::tokens::layer::SYSTEM})
         Children [
             {EntityScene(text_colored("Connection lost", Color::WHITE))},
             ( {button("Reconnect")} on(reconnect) ),

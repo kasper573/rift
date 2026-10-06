@@ -68,7 +68,7 @@ pub(super) fn sync_equipment(world: &mut World) {
         .enumerate()
         .map(|(index, cell)| cell_key(index, cell))
         .collect();
-    reconcile_children(world, grid, &keys, |index| cell_scene(&cells[index]));
+    reconcile_children(world, grid, &keys, |_, index| cell_scene(&cells[index]));
 }
 
 fn equipment_cells(world: &World) -> Vec<CellData> {
@@ -140,6 +140,7 @@ fn worn_slot(slot: EquipmentSlot, item: crate::data::item::Id, icon: Handle<Imag
         BackgroundColor({SLOT_BG})
         component(BorderColor::all(SLOT_BORDER))
         {tooltip(false)}
+        ui::component(ui::CursorStyle::Pointer)
         on(move |click: On<Pointer<Click>>, input: ActionInput, mut commands: Commands| {
             if input.clicked(InputAction::UseItem, &click) {
                 commands.queue(move |world: &mut World| session::unequip(world, slot));

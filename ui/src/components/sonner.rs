@@ -9,6 +9,7 @@ use bevy_time::Time;
 use bevy_ui::{BorderRadius, FlexDirection, Node, PositionType, UiRect, UiTransform, Val};
 
 use crate::component;
+use crate::cursor::CursorStyle;
 use crate::motion::transition::STANDARD_ENTER;
 use crate::motion::{Motion, Transform2d};
 use crate::opacity::Opacity;
@@ -92,7 +93,7 @@ pub struct Toast {
 pub struct ToastLeaving(Duration);
 
 #[derive(Component, Clone, Default)]
-#[require(Node)]
+#[require(Node, CursorStyle::Pointer)]
 pub struct ToastClose;
 
 pub fn toaster(position: SonnerPosition) -> impl Scene {

@@ -33,11 +33,16 @@ test(
       ]);
     },
     play: async (page) => {
-      await caption(page, "Mara keeps a shop: ask, and her wares open beside the conversation");
+      await caption(page, "Mara keeps a shop: ask, and her wares open above the conversation");
       await talkTo(page, "Mara");
       await readToChoices(page, 900);
       await pick(page, "Show me your wares.");
       await waitFor(page, ({ shop }) => shop?.shop === "MaraWares", "Mara's shop never opened");
+      await page.waitForTimeout(1500);
+      await caption(page, "It moves where you like, but has no close button: it belongs to the conversation", {
+        at: "top",
+      });
+      await dragUi(page, "Mara's Wares", { x: -300, y: 0 });
       await page.waitForTimeout(1500);
 
       await caption(page, "Prices are lists of items — each part turns red when you can't cover it", { at: "top" });
@@ -93,13 +98,11 @@ test(
       await waitFor(page, (snapshot) => holding(snapshot, "RustySword") === 1, "the sword never came back");
       await page.waitForTimeout(1500);
 
-      await caption(page, "Esc closes the shop first, then the conversation", { at: "top" });
+      await caption(page, "Leaving the conversation closes the shop with it", { at: "top" });
       await focusGame(page);
       await page.keyboard.press("Escape");
-      await waitFor(page, ({ shop }) => shop === null, "Esc never closed the shop");
-      await page.waitForTimeout(1200);
-      await page.keyboard.press("Escape");
       await conversationOver(page);
+      await waitFor(page, ({ shop }) => shop === null, "the shop outlived the conversation");
       await page.waitForTimeout(1000);
 
       await caption(page, "Wren collects bones and wings, and pays in his own Bone Tokens");
@@ -107,7 +110,7 @@ test(
       await readToChoices(page, 900);
       await pick(page, "I've brought bones.");
       await waitFor(page, ({ shop }) => shop?.shop === "BoneExchange", "Wren's exchange never opened");
-      await caption(page, "His shop has no reactions: he stays quiet, and your bag lights up what he takes", {
+      await caption(page, "His shop has no reactions: trades pass in silence, and your bag lights up what he takes", {
         at: "top",
       });
       await page.waitForTimeout(3000);
@@ -116,10 +119,10 @@ test(
       await page.waitForTimeout(2000);
       await focusGame(page);
       await page.keyboard.press("Escape");
-      await waitFor(page, ({ shop }) => shop === null, "Esc never closed the exchange");
+      await waitFor(page, ({ shop }) => shop === null, "leaving never closed the exchange");
       await page.keyboard.press("KeyI");
 
-      await caption(page, "Even a box on the pier can keep a shop");
+      await caption(page, "Even a box on the pier can keep a shop, inside a conversation of its own");
       await shopAt(page, "HonestyBox");
       await page.waitForTimeout(1500);
       await clickUi(page, "Fish Steak");

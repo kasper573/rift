@@ -18,9 +18,7 @@ impl Plugin for AnnouncementLanePlugin {
             .add_systems(OnExit(GameScene::Area), forget)
             .add_systems(
                 Update,
-                follow_announcements
-                    .run_if(in_state(GameScene::Area))
-                    .before(ui::UiReactive),
+                follow_announcements.run_if(in_state(GameScene::Area)),
             );
     }
 }

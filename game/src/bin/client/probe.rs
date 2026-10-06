@@ -708,11 +708,7 @@ fn covered(world: &mut World) -> Vec<Cover> {
     };
     blocking
         .iter()
-        .filter(|&(&entity, _)| {
-            ancestors(entity).all(|up| {
-                !blocking.contains_key(&up) && world.get::<actor::plate::WorldOverlay>(up).is_none()
-            }) && world.get::<actor::plate::WorldOverlay>(entity).is_none()
-        })
+        .filter(|&(&entity, _)| ancestors(entity).all(|up| !blocking.contains_key(&up)))
         .map(|(_, rect)| *rect)
         .collect()
 }

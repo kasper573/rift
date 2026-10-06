@@ -152,7 +152,7 @@ fn sync_log(world: &mut World) {
     };
     let entries = world.resource::<ConversationHistory>().entries.clone();
     let keys: Vec<u64> = entries.iter().map(|(key, _)| *key).collect();
-    reconcile_children(world, log, &keys, |index| entry(&entries[index].1));
+    reconcile_children(world, log, &keys, |_, index| entry(&entries[index].1));
 }
 
 fn forget(mut history: ResMut<ConversationHistory>) {

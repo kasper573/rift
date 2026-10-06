@@ -204,9 +204,10 @@ fn a_collector_pays_in_his_own_currency_and_buyback_costs_exactly_what_he_paid()
 
     let opened = browse(&mut sim, 1, player, data::npc::Id::Wren);
     assert_eq!(opened.shop, ShopId::BoneExchange);
-    assert!(
-        conversation(&mut sim, player).is_none(),
-        "a shop without reactions leaves the conversation behind"
+    assert_eq!(
+        conversation(&mut sim, player).map(|now| now.node),
+        Some(DialogueId::WrenShopping),
+        "a shop without reactions still keeps its conversation"
     );
 
     let tusk = slot_of(&mut sim, player, ItemId::OrcTusk);
@@ -266,19 +267,17 @@ fn walking_out_of_reach_closes_the_shop() {
 }
 
 #[test]
-fn closing_the_shop_keeps_the_conversation() {
+fn leaving_the_conversation_closes_the_shop() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
     browse(&mut sim, 1, player, data::npc::Id::Mara);
+    let step = conversation(&mut sim, player).expect("browsing").step;
 
-    sim.send(1, ShopRequest::Close);
+    sim.send(1, ConversationRequest::Leave { step });
     sim.tick();
 
+    assert!(conversation(&mut sim, player).is_none());
     assert!(window(&mut sim, player).is_none());
-    assert_eq!(
-        conversation(&mut sim, player).map(|now| now.node),
-        Some(DialogueId::MaraShopping)
-    );
 }
 
 #[test]
@@ -298,6 +297,11 @@ fn a_map_object_can_keep_a_shop() {
     assert_eq!(
         window(&mut sim, player).map(|opened| opened.shop),
         Some(ShopId::HonestyBox)
+    );
+    assert_eq!(
+        conversation(&mut sim, player).map(|now| now.node),
+        Some(DialogueId::HonestyBoxShopping),
+        "the box keeps its shop inside a conversation"
     );
 
     sim.send(

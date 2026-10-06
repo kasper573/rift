@@ -171,7 +171,6 @@ fn card(announcement: Announcement, head: bool) -> impl Scene {
     bsn! {
         template_value(style)
         component(Opacity(if head { 1.0 } else { NEXT_OPACITY }))
-        Pickable::IGNORE
         Children [
             (
                 Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center }

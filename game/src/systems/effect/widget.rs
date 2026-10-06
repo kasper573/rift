@@ -62,7 +62,7 @@ fn sync_effects(world: &mut World) {
         return;
     };
     let keys: Vec<u64> = icons.iter().map(|icon| icon.key).collect();
-    reconcile_children(world, grid, &keys, |index| icon_scene(&icons[index]));
+    reconcile_children(world, grid, &keys, |_, index| icon_scene(&icons[index]));
 }
 
 fn effect_icons(world: &World) -> Vec<IconData> {

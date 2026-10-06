@@ -12,13 +12,12 @@ use crate::data::attention::Id as AttentionId;
 use crate::data::dialogue::Id as DialogueId;
 use crate::data::item::Id as ItemId;
 use crate::systems::attention;
-use crate::systems::dialogue::{self, Asked, ChoiceTag, GotoNode, Line, Offer, Then, Unmet};
+use crate::systems::dialogue::{self, Asked, BusyPolicy, ChoiceTag, Line, Offer, Then, Unmet};
 use crate::systems::interact::Counterpart;
 use crate::systems::item::{Inventory, ItemCategory, ItemFlag, ItemStack};
 use crate::systems::notice::{self, NoticeTone};
 use crate::systems::player::sender_player;
 use crate::systems::rule::{self, Encounter, Outcome, Requirement, RuleContext};
-use crate::systems::stat;
 use crate::systems::text::{LineText, Span};
 
 pub use crate::data::shop::Id as ShopId;
@@ -40,6 +39,7 @@ pub struct ShopDef {
     pub requires: &'static [&'static dyn Requirement],
     pub mark: AttentionId,
     pub ask: Option<&'static [Span]>,
+    pub browsing: DialogueId,
     pub sells: &'static [ShopOffer],
     pub buys: &'static [ShopBuys],
     pub reactions: Option<ShopReactions>,
@@ -72,7 +72,6 @@ pub enum Buys {
 }
 
 pub struct ShopReactions {
-    pub browsing: DialogueId,
     pub bought: &'static [Line],
     pub sold: &'static [Line],
     pub cant_afford: &'static [Line],
@@ -82,15 +81,24 @@ pub struct OpenShop(pub ShopId);
 
 impl Outcome for OpenShop {
     fn apply(&self, ctx: &mut RuleContext) {
+        let browsing = self.0.get().browsing;
+        if dialogue::in_conversation(ctx.world, ctx.player) {
+            dialogue::goto(ctx.world, ctx.player, browsing);
+        } else {
+            let start = dialogue::Start {
+                node: browsing,
+                with: ctx.encounter.with,
+                tether: ctx.encounter.tether,
+                requires: Vec::new(),
+                busy: BusyPolicy::Replace,
+            };
+            dialogue::start(ctx.world, ctx.player, start);
+        }
         open(ctx.world, ctx.player, self.0, ctx.encounter);
     }
-}
 
-pub struct CloseShop;
-
-impl Outcome for CloseShop {
-    fn apply(&self, ctx: &mut RuleContext) {
-        close(ctx.world, ctx.player);
+    fn leads_to(&self) -> Vec<DialogueId> {
+        vec![self.0.get().browsing]
     }
 }
 
@@ -133,7 +141,6 @@ pub enum ShopRequest {
     Buy { offer: u32 },
     Sell { slot: u32, stack: ItemStack },
     Buyback { sale: u32 },
-    Close,
 }
 
 #[derive(Component)]
@@ -181,8 +188,8 @@ impl ShopDef {
     }
 }
 
-pub fn open(world: &mut World, player: Entity, shop: ShopId, encounter: Encounter) {
-    if stat::is_dead(world, player) {
+fn open(world: &mut World, player: Entity, shop: ShopId, encounter: Encounter) {
+    if !dialogue::engaged_with(world, player, encounter.with) {
         return;
     }
     world.entity_mut(player).insert(ShopVisit {
@@ -193,7 +200,7 @@ pub fn open(world: &mut World, player: Entity, shop: ShopId, encounter: Encounte
     refresh_window(world, player);
 }
 
-pub fn close(world: &mut World, player: Entity) {
+fn close(world: &mut World, player: Entity) {
     world.entity_mut(player).remove::<(ShopVisit, ShopWindow)>();
 }
 
@@ -210,18 +217,13 @@ pub fn requests(world: &mut World) {
         let Some(player) = sender_player(world, request.client_id) else {
             continue;
         };
-        if request.message == ShopRequest::Close {
-            close(world, player);
-            continue;
-        }
-        if world.get::<ShopVisit>(player).is_none() || broken(world, player).is_some() {
+        if !bound(world, player) {
             continue;
         }
         match request.message {
             ShopRequest::Buy { offer } => buy(world, player, offer),
             ShopRequest::Sell { slot, stack } => sell(world, player, slot, stack),
             ShopRequest::Buyback { sale } => buy_back(world, player, sale),
-            ShopRequest::Close => {}
         }
     }
 }
@@ -229,14 +231,8 @@ pub fn requests(world: &mut World) {
 pub fn hold(world: &mut World, visits: &mut QueryState<Entity, With<ShopVisit>>) {
     let players: Vec<Entity> = visits.iter(world).collect();
     for player in players {
-        if let Some(reason) = broken(world, player) {
+        if !bound(world, player) {
             close(world, player);
-            notice::tell(
-                world,
-                player,
-                format!("Shop closed: {reason}"),
-                NoticeTone::Bad,
-            );
         }
     }
 }
@@ -251,8 +247,7 @@ pub fn refresh(world: &mut World, visits: &mut QueryState<Entity, With<ShopVisit
 pub fn conversation_starts() -> Vec<DialogueId> {
     crate::data::shop::TABLE
         .iter()
-        .filter_map(|shop| shop.reactions.as_ref())
-        .map(|reactions| reactions.browsing)
+        .map(|shop| shop.browsing)
         .collect()
 }
 
@@ -310,21 +305,10 @@ fn profits(offer: &ShopOffer, pays: &[ItemStack]) -> bool {
         && items.iter().any(|&item| earned(item) > spent(item))
 }
 
-fn broken(world: &World, player: Entity) -> Option<&'static str> {
-    let visit = world.get::<ShopVisit>(player)?;
-    if stat::is_dead(world, player) {
-        return Some("you died");
-    }
-    if let Some(keeper) = visit.encounter.with
-        && (world.get_entity(keeper).is_err() || stat::is_dead(world, keeper))
-    {
-        return Some("the shopkeeper is gone");
-    }
-    visit
-        .encounter
-        .tether
-        .filter(|tether| !tether.holds(world, player))
-        .map(|_| "you walked out of reach")
+fn bound(world: &World, player: Entity) -> bool {
+    world
+        .get::<ShopVisit>(player)
+        .is_some_and(|visit| dialogue::engaged_with(world, player, visit.encounter.with))
 }
 
 fn wares(world: &World, asked: &Asked) -> Vec<Offer> {
@@ -347,10 +331,7 @@ fn wares(world: &World, asked: &Asked) -> Vec<Offer> {
     else {
         return Vec::new();
     };
-    let mut then: Vec<Arc<dyn Outcome>> = vec![Arc::new(OpenShop(id))];
-    if let Some(reactions) = &shop.reactions {
-        then.push(Arc::new(GotoNode(reactions.browsing)));
-    }
+    let then: Vec<Arc<dyn Outcome>> = vec![Arc::new(OpenShop(id))];
     vec![Offer {
         label: LineText::of(ask),
         tag: ChoiceTag::Shop,

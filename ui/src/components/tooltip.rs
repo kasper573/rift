@@ -9,7 +9,6 @@ use bevy_ui::{
 };
 
 use crate::component;
-use crate::components::popover::ANCHORED_Z;
 use crate::components::rich_text::{RichPiece, RichText, rich_text};
 use crate::components::text::styled_text;
 use crate::overlay::{Open, OverlayContent, POPPER_ENTER, POPPER_EXIT, TooltipTimer};
@@ -17,6 +16,7 @@ use crate::place::Placement;
 use crate::style::Style;
 use crate::surface::elevation;
 use crate::theme::theme;
+use crate::tokens::layer;
 use crate::tokens::{radius, typography};
 use crate::{Align, Side};
 
@@ -41,7 +41,7 @@ pub fn tooltip(open: bool) -> impl Scene {
 pub fn tooltip_content(side: Side, align: Align, offset: f32) -> impl Scene {
     bsn! {
         Node { position_type: PositionType::Absolute }
-        GlobalZIndex({ANCHORED_Z})
+        GlobalZIndex({layer::ANCHORED})
         OverrideClip
         Placement { side: {side}, align: {align}, offset: {offset} }
         {OverlayContent::animated(POPPER_ENTER, POPPER_EXIT)}

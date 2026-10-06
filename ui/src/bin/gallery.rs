@@ -941,28 +941,49 @@ fn text_input_scene() -> Box<dyn Scene> {
 }
 
 fn window_scene() -> Box<dyn Scene> {
+    let anchored = window(ui::WindowOptions {
+        frame: ui::WindowFrame::Anchored {
+            width: Val::Px(320.0),
+            height: Val::Auto,
+        },
+        content: vec![ui::WindowContent {
+            title: "Anchored".into(),
+            scene: boxed(bsn! {
+                Node { padding: {UiRect::all(Val::Px(12.0))} }
+                Children [ {EntityScene(text_colored("Laid out by its parent: moves, but never closes or resizes", theme().surface_floating.on))} ]
+            }),
+        }],
+    });
     col(
         360.0,
-        vec![boxed(bsn! {
-            Node {
-                width: Val::Px(520.0),
-                height: Val::Px(300.0),
-                position_type: PositionType::Relative,
-            }
-            Children [
-                {EntityScene(window(ui::WindowOptions {
-                    pos: Vec2::ZERO,
-                    size: Vec2::new(520.0, 300.0),
-                    on_close: OnTap::new(|_| {}),
-                    on_settle: OnSettle::new(|_, geom| geom),
-                    content: vec![
-                        window_tab("Inventory", 12),
-                        window_tab("Equipment", 4),
-                        log_tab(),
-                    ],
-                }))}
-            ]
-        })],
+        vec![
+            boxed(bsn! {
+                Node { width: Val::Px(520.0), justify_content: JustifyContent::Center, margin: {UiRect::bottom(Val::Px(24.0))} }
+                Children [ {EntityScene(anchored)} ]
+            }),
+            boxed(bsn! {
+                Node {
+                    width: Val::Px(520.0),
+                    height: Val::Px(300.0),
+                    position_type: PositionType::Relative,
+                }
+                Children [
+                    {EntityScene(window(ui::WindowOptions {
+                        frame: ui::WindowFrame::Floating {
+                            pos: Vec2::ZERO,
+                            size: Vec2::new(520.0, 300.0),
+                            on_close: OnTap::new(|_| {}),
+                            on_settle: OnSettle::new(|_, geom| geom),
+                        },
+                        content: vec![
+                            window_tab("Inventory", 12),
+                            window_tab("Equipment", 4),
+                            log_tab(),
+                        ],
+                    }))}
+                ]
+            }),
+        ],
     )
 }
 

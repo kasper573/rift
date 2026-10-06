@@ -9,6 +9,7 @@ use super::{OfferView, Sale, ShopId, ShopRequest, ShopWindow};
 use crate::core::sfx::SfxId;
 use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::data::item::Id as ItemId;
+use crate::systems::dialogue::stage;
 use crate::systems::hud;
 use crate::systems::input::map::{ActionInput, InputAction, input};
 use crate::systems::item::widget::{SlotAction, SlotVerdict, slot_action, slot_verdict_source};
@@ -17,8 +18,6 @@ use crate::systems::player::session::Viewpoint;
 use crate::systems::scene::Scene as GameScene;
 use crate::systems::scene::mode::Mode;
 
-const WINDOW_ID: &str = "Shop";
-const WINDOW_POS: Vec2 = Vec2::new(24.0, 96.0);
 const WINDOW_SIZE: Vec2 = Vec2::new(620.0, 400.0);
 const ICON: f32 = 28.0;
 
@@ -43,10 +42,7 @@ impl Plugin for ShopWindowPlugin {
                     .chain()
                     .run_if(in_state(GameScene::Area)),
             )
-            .add_systems(
-                OnExit(GameScene::Area),
-                (crate::systems::scene::despawn_all::<ShopPanel>, forget),
-            );
+            .add_systems(OnExit(GameScene::Area), forget);
     }
 }
 
@@ -55,15 +51,6 @@ pub fn view(world: &World) -> Option<&ShopWindow> {
         .resource::<Viewpoint>()
         .0
         .and_then(|seen| world.get::<ShopWindow>(seen))
-}
-
-pub fn close(world: &mut World) -> bool {
-    if *world.resource::<Mode>() != Mode::Play || shown(world).is_none() {
-        return false;
-    }
-    world.resource_mut::<Browse>().closing = true;
-    world.write_message(ShopRequest::Close);
-    true
 }
 
 pub fn select(world: &mut World, tab: ShopTab, index: usize) {
@@ -83,29 +70,33 @@ pub enum ShopTab {
 struct Browse {
     tab: ShopTab,
     selected: usize,
-    closing: bool,
-    built: Option<u64>,
+    synced: Option<u64>,
 }
 
 #[derive(Component, Default, Clone)]
 struct ShopPanel;
 
 #[derive(Component, Default, Clone)]
-struct ShopBody;
+struct ShopTabs;
 
-fn shown(world: &World) -> Option<&ShopWindow> {
-    view(world).filter(|_| !world.resource::<Browse>().closing)
-}
+#[derive(Component, Default, Clone)]
+struct ShopWants;
+
+#[derive(Component, Default, Clone)]
+struct ShopList;
+
+#[derive(Component, Default, Clone)]
+struct ShopDetail;
+
+#[derive(Component, Default, Clone)]
+struct ShopFooter;
 
 fn forget(mut browse: ResMut<Browse>) {
     *browse = Browse::default();
 }
 
 fn show_window(world: &mut World) {
-    if view(world).is_none() {
-        world.resource_mut::<Browse>().closing = false;
-    }
-    let shop = shown(world).map(|window| window.shop);
+    let shop = view(world).map(|window| window.shop);
     let panel = world
         .query_filtered::<Entity, With<ShopPanel>>()
         .iter(world)
@@ -113,41 +104,79 @@ fn show_window(world: &mut World) {
     match (shop, panel) {
         (Some(shop), None) => {
             *world.resource_mut::<Browse>() = Browse::default();
-            let scene = hud::placed_window(
-                world,
-                WINDOW_ID,
-                (WINDOW_POS, WINDOW_SIZE),
-                OnTap::new(|world| {
-                    close(world);
-                }),
-                hud::single_tab(
-                    shop.get().title,
-                    bsn! { ShopBody Node { width: Val::Percent(100.0), height: Val::Percent(100.0) } },
-                ),
-            );
-            if let Some(panel) = hud::spawn_in_hud(world, scene) {
+            let playing = *world.resource::<Mode>() == Mode::Play;
+            let scene = ui::window(ui::WindowOptions {
+                frame: ui::WindowFrame::Anchored {
+                    width: Val::Px(WINDOW_SIZE.x),
+                    height: Val::Px(WINDOW_SIZE.y),
+                },
+                content: hud::single_tab(shop.get().title, layout(playing)),
+            });
+            if let Some(panel) = stage::attach(world, scene) {
                 world.entity_mut(panel).insert(ShopPanel);
             }
             chime(world, SfxId::UiOpen);
         }
         (None, Some(panel)) => {
             world.entity_mut(panel).despawn();
-            world.resource_mut::<Browse>().built = None;
-            chime(world, SfxId::UiClose);
+            world.resource_mut::<Browse>().synced = None;
         }
         _ => {}
     }
 }
 
+fn layout(playing: bool) -> Box<dyn Scene> {
+    let header = bsn! {
+        Node {
+            width: Val::Percent(100.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::SpaceBetween,
+            padding: {UiRect::axes(Val::Px(spacing::L), Val::Px(spacing::M))},
+        }
+        Children [
+            ( ShopTabs Node { column_gap: Val::Px({spacing::M}) } ),
+            ( ShopWants Node ),
+        ]
+    };
+    let split = ui::split_view(
+        Box::new(
+            bsn! { ShopList Node { flex_direction: FlexDirection::Column, width: Val::Percent(100.0) } },
+        ),
+        Box::new(
+            bsn! { ShopDetail Node { width: Val::Percent(100.0), height: Val::Percent(100.0) } },
+        ),
+    );
+    let column = bsn! {
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+        }
+        Children [
+            {EntityScene(header)},
+            ( Node { flex_grow: 1.0, min_height: Val::Px(0.0), width: Val::Percent(100.0) } Children [ {EntityScene(split)} ] ),
+            ( ShopFooter Node { padding: {UiRect::axes(Val::Px(spacing::L), Val::Px(spacing::M))} } ),
+        ]
+    };
+    if playing {
+        Box::new(bsn! {
+            {column}
+            CarryTarget
+            on(|carried: On<Carried>, mut commands: Commands| {
+                let slot = carried.payload as u32;
+                commands.queue(move |world: &mut World| request_sale(world, slot));
+            })
+        })
+    } else {
+        Box::new(column)
+    }
+}
+
 fn sync_body(world: &mut World) {
-    let Some(body) = world
-        .query_filtered::<Entity, With<ShopBody>>()
-        .iter(world)
-        .next()
-    else {
+    let Some(window) = view(world).cloned() else {
         return;
     };
-    let Some(window) = shown(world).cloned() else {
+    let Some(parts) = Parts::find(world) else {
         return;
     };
     let inventory = world
@@ -158,33 +187,140 @@ fn sync_body(world: &mut World) {
         .unwrap_or_else(Inventory::empty);
     let playing = *world.resource::<Mode>() == Mode::Play;
     let browse = world.resource::<Browse>();
-    let mut hasher = DefaultHasher::new();
-    format!(
-        "{window:?}{:?}{:?}{}{playing}",
-        inventory.slots, browse.tab, browse.selected
-    )
-    .hash(&mut hasher);
-    let key = hasher.finish();
-    if browse.built == Some(key) {
+    let synced = key(&(
+        &window,
+        &inventory.slots,
+        browse.tab,
+        browse.selected,
+        playing,
+    ));
+    if browse.synced == Some(synced) {
         return;
     }
-    let tab = browse.tab;
-    let selected = browse.selected;
-    world.resource_mut::<Browse>().built = Some(key);
-    let scene = contents(
-        world,
-        &Shelf {
-            window,
-            inventory,
-            tab,
-            selected,
-            playing,
-        },
-    );
-    world.entity_mut(body).despawn_related::<Children>();
-    if let Ok(mut spawned) = world.spawn_scene(scene) {
-        spawned.insert(ChildOf(body));
+    let shelf = Shelf {
+        window,
+        inventory,
+        tab: browse.tab,
+        selected: browse.selected,
+        playing,
+    };
+    world.resource_mut::<Browse>().synced = Some(synced);
+    let wares = shelf.wares();
+    let selected = shelf.selected.min(wares.len().saturating_sub(1));
+
+    let tabs = [
+        (ShopTab::Wares, "Wares".to_owned()),
+        (
+            ShopTab::Buyback,
+            format!("Buy back ({})", shelf.window.buyback.len()),
+        ),
+    ];
+    let tab_keys: Vec<u64> = tabs
+        .iter()
+        .map(|(tab, label)| key(&(tab, label, shelf.tab == *tab)))
+        .collect();
+    hud::reconcile_children(world, parts.tabs, &tab_keys, |_, index| {
+        let (tab, label) = tabs[index].clone();
+        Box::new(tab_button(tab, label, shelf.tab == tab))
+    });
+
+    let wants = shelf.window.shop.get().wants();
+    hud::reconcile_children(world, parts.wants, &[key(&wants)], |_, _| {
+        Box::new(ui::styled_text(
+            wants_note(&wants),
+            palette::AMBER_80,
+            typography::CAPTION,
+        ))
+    });
+
+    let list_keys: Vec<u64> = if wares.is_empty() {
+        vec![key(&shelf.tab)]
+    } else {
+        wares
+            .iter()
+            .enumerate()
+            .map(|(index, ware)| {
+                key(&(
+                    shelf.tab,
+                    index,
+                    ware,
+                    index == selected,
+                    held(&shelf.inventory, ware),
+                ))
+            })
+            .collect()
+    };
+    hud::reconcile_children(world, parts.list, &list_keys, |world, index| {
+        match wares.get(index) {
+            Some(ware) => row(
+                world.resource::<AssetServer>(),
+                &shelf,
+                ware,
+                index,
+                index == selected,
+            ),
+            None => Box::new(empty_note(shelf.tab)),
+        }
+    });
+
+    let detail_keys: Vec<u64> = wares
+        .get(selected)
+        .map(|ware| {
+            key(&(
+                shelf.tab,
+                selected,
+                ware,
+                held(&shelf.inventory, ware),
+                shelf.playing,
+            ))
+        })
+        .into_iter()
+        .collect();
+    hud::reconcile_children(world, parts.detail, &detail_keys, |world, _| {
+        Box::new(detail(world, &shelf, &wares[selected], selected))
+    });
+
+    let selling = shelf.playing && !wants.is_empty();
+    hud::reconcile_children(world, parts.footer, &[key(&selling)], |_, _| {
+        Box::new(sell_hint(selling))
+    });
+}
+
+struct Parts {
+    tabs: Entity,
+    wants: Entity,
+    list: Entity,
+    detail: Entity,
+    footer: Entity,
+}
+
+impl Parts {
+    fn find(world: &mut World) -> Option<Parts> {
+        Some(Parts {
+            tabs: single::<ShopTabs>(world)?,
+            wants: single::<ShopWants>(world)?,
+            list: single::<ShopList>(world)?,
+            detail: single::<ShopDetail>(world)?,
+            footer: single::<ShopFooter>(world)?,
+        })
     }
+}
+
+fn single<C: Component>(world: &mut World) -> Option<Entity> {
+    world.query_filtered::<Entity, With<C>>().iter(world).next()
+}
+
+fn key(value: &impl std::fmt::Debug) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    format!("{value:?}").hash(&mut hasher);
+    hasher.finish()
+}
+
+fn held(inventory: &Inventory, ware: &Ware) -> Vec<u32> {
+    ware.price
+        .iter()
+        .map(|stack| inventory.count(stack.item))
+        .collect()
 }
 
 struct Shelf {
@@ -195,6 +331,7 @@ struct Shelf {
     playing: bool,
 }
 
+#[derive(Debug)]
 struct Ware {
     item: ItemId,
     count: u32,
@@ -202,7 +339,6 @@ struct Ware {
     note: Option<String>,
     refusal: Option<String>,
 }
-
 impl Shelf {
     fn wares(&self) -> Vec<Ware> {
         match self.tab {
@@ -256,105 +392,45 @@ fn missing(inventory: &Inventory, price: &[ItemStack]) -> Option<String> {
         .map(|refusal| refusal.describe())
 }
 
-fn contents(world: &World, shelf: &Shelf) -> Box<dyn Scene> {
-    let assets = world.resource::<AssetServer>();
-    let ink = ui::theme::theme().surface_floating.on;
-    let shop = shelf.window.shop.get();
-    let wares = shelf.wares();
-    let selected = shelf.selected.min(wares.len().saturating_sub(1));
-    let rows: Vec<Box<dyn Scene>> = wares
-        .iter()
-        .enumerate()
-        .map(|(index, ware)| row(assets, shelf, ware, index, index == selected))
-        .collect();
-    let list: Box<dyn Scene> = if rows.is_empty() {
-        Box::new(bsn! {
-            Node { padding: {UiRect::all(Val::Px(spacing::XL))} }
-            Children [ {EntityScene(ui::styled_text(empty_note(shelf.tab), ink.with_alpha(0.6), typography::CAPTION))} ]
-        })
-    } else {
-        Box::new(bsn! {
-            Node { flex_direction: FlexDirection::Column, width: Val::Percent(100.0) }
-            Children [ {rows} ]
-        })
-    };
-    let detail: Box<dyn Scene> = match wares.get(selected) {
-        Some(ware) => Box::new(detail(world, shelf, ware, selected)),
-        None => Box::new(bsn! { Node }),
-    };
-    let wants = shop.wants();
-    let buys_note = if wants.is_empty() {
+fn wants_note(wants: &[String]) -> String {
+    if wants.is_empty() {
         "Buys nothing".to_owned()
     } else {
         format!("Buys {}", wants.join(", "))
-    };
-    let sell_hint = if wants.is_empty() || !shelf.playing {
-        Vec::new()
-    } else {
+    }
+}
+
+fn sell_hint(selling: bool) -> impl Scene {
+    let ink = ui::theme::theme().surface_floating.on;
+    let pieces = if selling {
         vec![
             input(InputAction::SellItem),
             ui::RichPiece::text(" or "),
             input(InputAction::CarryItem),
             ui::RichPiece::text(" from your bag to sell"),
         ]
-    };
-    let tabs: Vec<Box<dyn Scene>> = [
-        (ShopTab::Wares, "Wares".to_owned()),
-        (
-            ShopTab::Buyback,
-            format!("Buy back ({})", shelf.window.buyback.len()),
-        ),
-    ]
-    .into_iter()
-    .map(|(tab, label)| -> Box<dyn Scene> { Box::new(tab_button(tab, label, shelf.tab == tab)) })
-    .collect();
-    let split = ui::split_view(list, detail);
-    let header = bsn! {
-        Node {
-            width: Val::Percent(100.0),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::SpaceBetween,
-            padding: {UiRect::axes(Val::Px(spacing::L), Val::Px(spacing::M))},
-        }
-        Children [
-            ( Node { column_gap: Val::Px({spacing::M}) } Children [ {tabs} ] ),
-            {EntityScene(ui::styled_text(buys_note, palette::AMBER_80, typography::CAPTION))},
-        ]
-    };
-    let footer = bsn! {
-        Node { padding: {UiRect::axes(Val::Px(spacing::L), Val::Px(spacing::M))} }
-        Children [ {EntityScene(ui::rich_text(ui::RichText { pieces: sell_hint, size: typography::CAPTION.font_size, color: ink.with_alpha(0.6) }, false))} ]
-    };
-    let column = bsn! {
-        Node {
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            flex_direction: FlexDirection::Column,
-        }
-        Children [
-            {EntityScene(header)},
-            ( Node { flex_grow: 1.0, min_height: Val::Px(0.0), width: Val::Percent(100.0) } Children [ {EntityScene(split)} ] ),
-            {EntityScene(footer)},
-        ]
-    };
-    if shelf.playing {
-        Box::new(bsn! {
-            {column}
-            CarryTarget
-            on(|carried: On<Carried>, mut commands: Commands| {
-                let slot = carried.payload as u32;
-                commands.queue(move |world: &mut World| request_sale(world, slot));
-            })
-        })
     } else {
-        Box::new(column)
-    }
+        Vec::new()
+    };
+    ui::rich_text(
+        ui::RichText {
+            pieces,
+            size: typography::CAPTION.font_size,
+            color: ink.with_alpha(0.6),
+        },
+        false,
+    )
 }
 
-fn empty_note(tab: ShopTab) -> &'static str {
-    match tab {
+fn empty_note(tab: ShopTab) -> impl Scene {
+    let ink = ui::theme::theme().surface_floating.on;
+    let note = match tab {
         ShopTab::Wares => "Nothing for sale",
         ShopTab::Buyback => "Nothing sold here yet",
+    };
+    bsn! {
+        Node { padding: {UiRect::all(Val::Px(spacing::XL))} }
+        Children [ {EntityScene(ui::styled_text(note, ink.with_alpha(0.6), typography::CAPTION))} ]
     }
 }
 
@@ -413,6 +489,7 @@ fn row(
         }
         BackgroundColor({background})
         Pickable { should_block_lower: true, is_hoverable: true }
+        ui::component(ui::CursorStyle::Pointer)
         on(move |click: On<Pointer<Click>>, input: ActionInput, mut commands: Commands| {
             if input.clicked(InputAction::Select, &click) {
                 commands.queue(move |world: &mut World| select(world, tab, index));
@@ -553,7 +630,7 @@ fn cost_row(assets: &AssetServer, inventory: &Inventory, stack: ItemStack) -> im
         palette::CRIMSON_80
     };
     let label = format!(
-        "{} {} · have {have}",
+        "{} {} · You have {have}",
         stack.count,
         stack.item.get().display_name
     );
@@ -578,7 +655,7 @@ fn counted(name: &str, count: u32) -> String {
 }
 
 fn verdict(world: &World, stack: ItemStack) -> Option<SlotVerdict> {
-    let window = shown(world)?;
+    let window = view(world)?;
     Some(
         match window.shop.get().pays_for(stack.item, &window.declined) {
             Ok(pays) => SlotVerdict::Wanted(format!("sells for {}", paid(pays, stack.count))),
@@ -595,14 +672,14 @@ fn paid(pays: &[ItemStack], count: u32) -> String {
 }
 
 fn selling(world: &World) -> bool {
-    *world.resource::<Mode>() == Mode::Play && shown(world).is_some()
+    *world.resource::<Mode>() == Mode::Play && view(world).is_some()
 }
 
 fn request_sale(world: &mut World, slot: u32) {
     if *world.resource::<Mode>() != Mode::Play {
         return;
     }
-    let Some((shop, declined)) = shown(world).map(|window| (window.shop, window.declined.clone()))
+    let Some((shop, declined)) = view(world).map(|window| (window.shop, window.declined.clone()))
     else {
         return;
     };

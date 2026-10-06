@@ -180,7 +180,7 @@ fn nobody_playing() -> impl Scene {
         NobodyPlaying
         template_value(crate::systems::scene::screen_node())
         BackgroundColor({BLANK_BG})
-        GlobalZIndex({-1})
+        GlobalZIndex({ui::tokens::layer::BACKDROP})
         Children [
             {EntityScene(text_colored("Nobody is playing right now", Color::WHITE))},
             {EntityScene(text_colored("Spectating starts as soon as someone joins", HINT))},

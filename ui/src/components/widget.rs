@@ -4,6 +4,7 @@ use bevy_ui::widget::ImageNode;
 
 use crate::components::input::{InputRef, input_cap};
 use crate::components::{text_colored, tooltip, tooltip_content};
+use crate::cursor::CursorStyle;
 use crate::drag::{DragHandle, DragRoot, OnSettle, OnTap};
 use crate::style::Style;
 use crate::theme::theme;
@@ -39,6 +40,7 @@ pub fn widget(opts: WidgetOptions) -> impl Scene {
         {tooltip(false)}
         DragRoot
         DragHandle
+        component(CursorStyle::Pointer)
         component(opts.on_tap)
         component(opts.on_settle)
         Children [

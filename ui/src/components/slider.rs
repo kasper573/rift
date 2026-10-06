@@ -13,6 +13,7 @@ use bevy_math::Vec2;
 use bevy_picking::prelude::{Drag, Pointer};
 
 use crate::component;
+use crate::cursor::CursorStyle;
 use crate::state::ancestor_with;
 use crate::style::Style;
 use crate::theme::theme;
@@ -29,6 +30,7 @@ pub struct SliderState {
 pub struct SliderRange;
 
 #[derive(Component, Clone, Default)]
+#[require(CursorStyle::Grab)]
 pub struct SliderThumb;
 
 pub fn slider(value: f32, min: f32, max: f32) -> impl Scene {

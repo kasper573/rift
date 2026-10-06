@@ -155,7 +155,7 @@ fn death_banner() -> impl Scene {
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
         }
-        GlobalZIndex({50})
+        GlobalZIndex({ui::tokens::layer::ALERTS})
         Pickable { should_block_lower: false, is_hoverable: false }
         Children [ {EntityScene(ui::rich_text(death_notice(), false))} ]
     }

@@ -23,7 +23,6 @@ use crate::systems::npc::{ShownFor, SpawnNear, SpawnNpcs};
 use crate::systems::quest::{AcceptQuest, FailQuest, OnQuest, QuestId, TurnIn};
 use crate::systems::rule::Not;
 use crate::systems::rule::Outcome;
-use crate::systems::shop::CloseShop;
 use crate::systems::stat::Heal;
 use crate::systems::text::{Fx, Ink, Motion, Voice, plain, styled};
 
@@ -272,7 +271,25 @@ crate::table! {
         lines: &[Line { by: Npc(NpcId::Mara), face: Some(Individual(Counting)), cue: true, text: &[plain("Take your time. Everything's priced fair. "), styled("Mostly.", &[Fx::Voice(Voice::Whisper)])] }],
         enter: &[],
         topics: false,
-        choices: &[Choice { label: &[plain("That's all, thanks.")], then: &[&CloseShop], ..Choice::SAY }],
+        choices: &[Choice { label: &[plain("That's all, thanks.")], ..Choice::SAY }],
+    },
+    WrenShopping: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Wren), face: Some(Individual(Sleepy)), cue: false, text: &[plain("On the counter. I'll count.")] }],
+        enter: &[],
+        topics: false,
+        choices: &[Choice { label: &[plain("That's all.")], ..Choice::SAY }],
+    },
+    UgraShopping: DialogueNode {
+        lines: &[Line { by: Npc(NpcId::Ugra), face: Some(Generic(Neutral)), cue: false, text: &[plain("Roots and bitter water. They mend what the forest breaks.")] }],
+        enter: &[],
+        topics: false,
+        choices: &[Choice { label: &[plain("Farewell, Ugra.")], ..Choice::SAY }],
+    },
+    HonestyBoxShopping: DialogueNode {
+        lines: &[Line { by: Narrator, face: None, cue: false, text: &[plain("Fish steaks wrapped in leaves, and a slot for coins. A note in "), styled("Tobb", &[Fx::Ink(Ink::Name)]), plain("'s hand: "), styled("pay what's written.", &[Fx::Voice(Voice::Whisper)])] }],
+        enter: &[],
+        topics: false,
+        choices: &[Choice { label: &[plain("Step away.")], ..Choice::SAY }],
     },
     WrenHello: DialogueNode {
         lines: &[

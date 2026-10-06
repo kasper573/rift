@@ -1,4 +1,5 @@
 pub mod camera;
+mod icons;
 pub mod present;
 pub mod screen;
 
@@ -47,7 +48,9 @@ impl Plugin for RenderPlugin {
             .init_resource::<present::Viewport>()
             .add_systems(Startup, present::setup)
             .add_systems(Update, (present::match_display, present::fit).chain())
-            .add_systems(Update, present::apply_tint);
+            .init_resource::<icons::ResidentIcons>()
+            .add_systems(Update, present::apply_tint)
+            .add_systems(Update, icons::keep_icons_resident);
     }
 }
 

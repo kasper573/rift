@@ -119,6 +119,18 @@ pub mod radius {
     pub const L: f32 = 16.0;
 }
 
+pub mod layer {
+    pub const BACKDROP: i32 = -1;
+    pub const STAGE: i32 = 1;
+    pub const WINDOWS: i32 = 2;
+    pub const NOTICES: i32 = 3;
+    pub const ALERTS: i32 = 50;
+    pub const SYSTEM: i32 = 100;
+    pub const ANCHORED: i32 = 900;
+    pub const OVERLAY: i32 = 1000;
+    pub const CARRIED: i32 = 2000;
+}
+
 pub mod font {
     pub const FAMILY_TEXT: &str = "Lato";
     pub const FAMILY_DISPLAY: &str = "Circular TT";

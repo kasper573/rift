@@ -4,26 +4,31 @@ mod utils;
 pub mod themes;
 pub mod tokens;
 
-use bevy_app::{App, Plugin, PostUpdate, Startup, Update};
+use bevy_app::{App, Plugin, PostUpdate, PreUpdate, Startup};
 use bevy_asset::{AssetServer, Handle};
+use bevy_camera::visibility::VisibilitySystems;
 use bevy_ecs::prelude::*;
 use bevy_ecs::template::{FnTemplate, TemplateContext};
+use bevy_picking::PickingSystems;
 use bevy_scene::{Scene, ScenePlugin};
-use bevy_text::Font;
+use bevy_text::{EditableText, Font};
 use bevy_ui::UiSystems;
-use bevy_ui_widgets::{ButtonPlugin, CheckboxPlugin, EditableTextInputPlugin, ScrollAreaPlugin};
+use bevy_ui_widgets::{
+    Button, ButtonPlugin, Checkbox, CheckboxPlugin, EditableTextInputPlugin, ScrollAreaPlugin,
+};
 
 use utils::motion::MotionPlugin;
 use utils::opacity::OpacityPlugin;
 
 pub use utils::theme;
 pub(crate) use utils::{
-    carry, collapse, drag, motion, opacity, overlay, place, state, style, surface,
+    carry, collapse, cursor, drag, motion, opacity, overlay, place, state, style, surface,
 };
 
 pub use bevy_ui_widgets::{Activate, ValueChange, observe};
 pub use components::*;
 pub use utils::carry::{Carriable, Carried, CarryTarget};
+pub use utils::cursor::{CursorStyle, InterfaceCursor};
 pub use utils::drag::{
     DragHandle, DragRoot, Geom, OnSettle, OnTap, Raised, ResizeHandle, SnapGrid, topmost,
 };
@@ -64,9 +69,24 @@ impl Plugin for UiPlugin {
             .init_resource::<components::confirm::ModalCounter>()
             .init_resource::<MotionPreference>()
             .init_resource::<InputCatalog>()
+            .init_resource::<InterfaceCursor>()
+            .register_required_components_with::<Button, CursorStyle>(|| CursorStyle::Pointer)
+            .register_required_components_with::<Checkbox, CursorStyle>(|| CursorStyle::Pointer)
+            .register_required_components_with::<EditableText, CursorStyle>(|| CursorStyle::Text)
             .add_systems(Startup, (load_fonts, overlay::spawn_overlay_host))
             .add_systems(
-                Update,
+                PreUpdate,
+                cursor::track_interface_cursor.after(PickingSystems::Hover),
+            )
+            .configure_sets(
+                PostUpdate,
+                UiReactive
+                    .before(UiSystems::Prepare)
+                    .before(VisibilitySystems::VisibilityPropagate)
+                    .before(opacity::OpacitySet::Calculate),
+            )
+            .add_systems(
+                PostUpdate,
                 (
                     overlay::reparent_portals,
                     overlay::cleanup_portals,

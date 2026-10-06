@@ -3,6 +3,7 @@ use bevy_scene::{EntityScene, Scene, bsn, on};
 
 use crate::components::input::{CatalogInput, InputRef};
 use crate::components::tooltip::{TooltipText, tooltip, tooltip_content, tooltip_text};
+use crate::cursor::CursorStyle;
 use crate::drag::OnTap;
 use crate::{Align, Side, component};
 
@@ -14,6 +15,7 @@ pub struct InspectableOptions {
 }
 
 #[derive(Component, Clone, Copy)]
+#[require(CursorStyle::Pointer)]
 struct InspectedBy(InputRef);
 
 pub fn inspectable(options: InspectableOptions, content: impl Scene) -> impl Scene {

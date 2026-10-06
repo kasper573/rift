@@ -7,14 +7,15 @@ use bevy_ui::widget::ImageNode;
 use bevy_ui::{GlobalZIndex, Node, PositionType, Val};
 
 use crate::components::input::{CatalogInput, InputRef};
+use crate::cursor::CursorStyle;
 use crate::opacity::Opacity;
 use crate::state::ancestor_with;
+use crate::tokens::layer;
 
 const GHOST: f32 = 40.0;
-const GHOST_Z: i32 = 2000;
 
 #[derive(Component, Clone)]
-#[require(Node)]
+#[require(Node, CursorStyle::Pointer)]
 pub struct Carriable {
     pub image: Handle<Image>,
     pub payload: u64,
@@ -69,7 +70,7 @@ pub(crate) fn lift(
         },
         ImageNode::new(carriable.image.clone()),
         Opacity(0.8),
-        GlobalZIndex(GHOST_Z),
+        GlobalZIndex(layer::CARRIED),
         Pickable::IGNORE,
     ));
 }

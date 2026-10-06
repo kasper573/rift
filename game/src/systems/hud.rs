@@ -119,7 +119,7 @@ pub(crate) fn reconcile_children(
     world: &mut World,
     container: Entity,
     keys: &[u64],
-    build: impl Fn(usize) -> Box<dyn Scene>,
+    build: impl Fn(&World, usize) -> Box<dyn Scene>,
 ) {
     let current: Vec<(Entity, u64)> = world
         .get::<Children>(container)
@@ -130,23 +130,23 @@ pub(crate) fn reconcile_children(
                 .collect()
         })
         .unwrap_or_default();
-    let shared = current
-        .iter()
-        .zip(keys.iter())
-        .take_while(|(have, want)| have.1 == **want)
-        .count();
-    if shared == current.len() && shared == keys.len() {
-        return;
-    }
-    for (entity, _) in &current[shared..] {
-        world.entity_mut(*entity).despawn();
-    }
-    for (index, &key) in keys.iter().enumerate().skip(shared) {
-        if let Ok(mut spawned) = world.spawn_scene(build(index)) {
+    for (index, &key) in keys.iter().enumerate() {
+        let have = current.get(index);
+        if have.is_some_and(|&(_, have)| have == key) {
+            continue;
+        }
+        if let Some(&(stale, _)) = have {
+            world.entity_mut(stale).despawn();
+        }
+        let scene = build(world, index);
+        if let Ok(mut spawned) = world.spawn_scene(scene) {
             spawned.insert(Keyed(key));
             let child = spawned.id();
-            world.entity_mut(container).add_child(child);
+            world.entity_mut(container).insert_children(index, &[child]);
         }
+    }
+    for &(extra, _) in current.iter().skip(keys.len()) {
+        world.entity_mut(extra).despawn();
     }
 }
 
@@ -547,10 +547,12 @@ pub(crate) fn placed_window(
     let settings = world.resource::<Settings>();
     let (pos, size) = window_geom(settings, id, fallback_pos, fallback_size);
     ui::window(ui::WindowOptions {
-        pos,
-        size,
-        on_close,
-        on_settle: OnSettle::new(move |world, geom| persist_window(world, id, geom)),
+        frame: ui::WindowFrame::Floating {
+            pos,
+            size,
+            on_close,
+            on_settle: OnSettle::new(move |world, geom| persist_window(world, id, geom)),
+        },
         content,
     })
 }

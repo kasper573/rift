@@ -3,19 +3,18 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::tokens::{palette, spacing, typography};
-use ui::{CardOptions, ChipOptions, Family, component};
+use ui::{ChipOptions, Family, component};
 
 use super::{
     ActiveQuest, Objective, Progress, QuestDef, QuestId, QuestLog, clock_label, resets_label,
 };
 use crate::core::assets::AssetRef;
-use crate::systems::dialogue::Conversation;
+use crate::systems::dialogue::{Conversation, stage};
 use crate::systems::item::{self, Inventory, ItemStack};
 use crate::systems::player::session::Viewpoint;
 use crate::systems::scene::Scene as GameScene;
 
-const WIDTH: f32 = 440.0;
-const TOP: f32 = 12.0;
+const WIDTH: f32 = 480.0;
 const ICON: f32 = 20.0;
 const PICK: f32 = 32.0;
 
@@ -28,10 +27,7 @@ impl Plugin for QuestCardPlugin {
                 Update,
                 (show_card, tick_clocks).run_if(in_state(GameScene::Area)),
             )
-            .add_systems(
-                OnExit(GameScene::Area),
-                (crate::systems::scene::despawn_all::<QuestCard>, forget),
-            );
+            .add_systems(OnExit(GameScene::Area), forget);
     }
 }
 
@@ -43,10 +39,13 @@ enum Moment {
 }
 
 #[derive(Resource, Default)]
-struct ShownCard(Option<u64>);
+struct ShownCard(Option<(QuestId, Moment)>);
 
 #[derive(Component, Default, Clone)]
 struct QuestCard;
+
+#[derive(Component, Default, Clone)]
+struct QuestCardBody;
 
 fn forget(mut shown: ResMut<ShownCard>) {
     shown.0 = None;
@@ -57,60 +56,71 @@ fn show_card(world: &mut World) {
     let moment = seen
         .and_then(|seen| world.get::<Conversation>(seen))
         .and_then(|conversation| moment_of(conversation.node));
-    let inventory = seen
-        .and_then(|seen| world.get::<Inventory>(seen))
-        .cloned()
-        .unwrap_or_else(Inventory::empty);
-    let key = moment.map(|moment| {
-        let mut hasher = DefaultHasher::new();
-        format!("{moment:?}{:?}", inventory.slots).hash(&mut hasher);
-        hasher.finish()
-    });
-    if world.resource::<ShownCard>().0 == key {
-        return;
-    }
-    world.resource_mut::<ShownCard>().0 = key;
-    let shown: Vec<Entity> = world
-        .query_filtered::<Entity, With<QuestCard>>()
-        .iter(world)
-        .collect();
-    for card in shown {
-        world.entity_mut(card).despawn();
+    if world.resource::<ShownCard>().0 != moment {
+        world.resource_mut::<ShownCard>().0 = moment;
+        let shown: Vec<Entity> = world
+            .query_filtered::<Entity, With<QuestCard>>()
+            .iter(world)
+            .collect();
+        for card in shown {
+            world.entity_mut(card).despawn();
+        }
+        if let Some((_, moment)) = moment {
+            let scene = ui::window(ui::WindowOptions {
+                frame: ui::WindowFrame::Anchored {
+                    width: Val::Px(WIDTH),
+                    height: Val::Auto,
+                },
+                content: vec![ui::WindowContent {
+                    title: moment.title().to_owned(),
+                    scene: Box::new(bsn! {
+                        QuestCardBody
+                        Node { width: Val::Percent(100.0), padding: {UiRect::all(Val::Px(spacing::XL))} }
+                    }),
+                }],
+            });
+            if let Some(card) = stage::attach(world, scene) {
+                world.entity_mut(card).insert(QuestCard);
+            }
+        }
     }
     let Some((quest, moment)) = moment else {
         return;
     };
-    let assets = world.resource::<AssetServer>();
-    let body = match moment {
-        Moment::Offer => offer(assets, quest, &inventory),
-        Moment::TurnIn => turn_in(assets, quest, &inventory),
-        Moment::Decision => decision(quest),
+    let Ok(body) = world
+        .query_filtered::<Entity, With<QuestCardBody>>()
+        .single(world)
+    else {
+        return;
     };
-    world
-        .spawn_scene(bsn! {
-            QuestCard
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(0.0),
-                right: Val::Px(0.0),
-                top: Val::Vh({TOP}),
-                justify_content: JustifyContent::Center,
-            }
-            GlobalZIndex(1)
-            Pickable::IGNORE
-            Children [
-                (
-                    {ui::card(CardOptions { floating: true, ..default() })}
-                    Children [
-                        (
-                            Node { width: Val::Px({WIDTH}), flex_direction: FlexDirection::Column, row_gap: Val::Px({spacing::L}) }
-                            Children [ {body} ]
-                        ),
-                    ]
-                ),
-            ]
+    let inventory = seen
+        .and_then(|seen| world.get::<Inventory>(seen))
+        .cloned()
+        .unwrap_or_else(Inventory::empty);
+    let mut hasher = DefaultHasher::new();
+    format!("{:?}", inventory.slots).hash(&mut hasher);
+    crate::systems::hud::reconcile_children(world, body, &[hasher.finish()], |world, _| {
+        let assets = world.resource::<AssetServer>();
+        let parts = match moment {
+            Moment::Offer => offer(assets, quest, &inventory),
+            Moment::TurnIn => turn_in(assets, quest, &inventory),
+            Moment::Decision => decision(quest),
+        };
+        Box::new(bsn! {
+            Node { width: Val::Percent(100.0), flex_direction: FlexDirection::Column, row_gap: Val::Px({spacing::L}) }
+            Children [ {parts} ]
         })
-        .ok();
+    });
+}
+
+impl Moment {
+    fn title(self) -> &'static str {
+        match self {
+            Moment::Offer => "Quest offer",
+            Moment::TurnIn => "Quest complete",
+            Moment::Decision => "A permanent choice",
+        }
+    }
 }
 
 fn moment_of(node: crate::data::dialogue::Id) -> Option<(QuestId, Moment)> {
@@ -135,7 +145,7 @@ fn offer(assets: &AssetServer, quest: QuestId, inventory: &Inventory) -> Vec<Box
     let ink = ui::theme::theme().surface_floating.on;
     let progress = def.progress(&ActiveQuest::fresh(quest), Some(inventory));
     let mut parts: Vec<Box<dyn Scene>> = vec![
-        Box::new(head(assets, def, "quest offer", palette::AMBER_70)),
+        Box::new(head(assets, def)),
         Box::new(caption(format!("{} · {}", def.kinds(), def.meta()))),
         Box::new(section("Objectives")),
     ];
@@ -156,12 +166,7 @@ fn offer(assets: &AssetServer, quest: QuestId, inventory: &Inventory) -> Vec<Box
 
 fn turn_in(assets: &AssetServer, quest: QuestId, inventory: &Inventory) -> Vec<Box<dyn Scene>> {
     let def = quest.get();
-    let mut parts: Vec<Box<dyn Scene>> = vec![Box::new(head(
-        assets,
-        def,
-        "quest complete",
-        palette::EMERALD_70,
-    ))];
+    let mut parts: Vec<Box<dyn Scene>> = vec![Box::new(head(assets, def))];
     parts.extend(def.hand_in.iter().map(|&stack| -> Box<dyn Scene> {
         Box::new(hand_in_row(assets, stack, inventory.count(stack.item)))
     }));
@@ -205,7 +210,6 @@ fn decision(quest: QuestId) -> Vec<Box<dyn Scene>> {
         })
         .collect();
     vec![
-        Box::new(tag("a permanent choice", palette::CRIMSON_80)),
         Box::new(ui::styled_text(def.title, ink, typography::NAME)),
         Box::new(bsn! {
             Node { column_gap: Val::Px({spacing::XL}), width: Val::Percent(100.0) }
@@ -214,19 +218,13 @@ fn decision(quest: QuestId) -> Vec<Box<dyn Scene>> {
     ]
 }
 
-fn head(assets: &AssetServer, def: &QuestDef, label: &str, color: Color) -> impl Scene + use<> {
+fn head(assets: &AssetServer, def: &QuestDef) -> impl Scene + use<> {
     let ink = ui::theme::theme().surface_floating.on;
     bsn! {
         Node { column_gap: Val::Px({spacing::L}), align_items: AlignItems::Center }
         Children [
             {EntityScene(icon(assets, def.icon(), PICK))},
-            (
-                Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Start, row_gap: Val::Px({spacing::S}) }
-                Children [
-                    {EntityScene(tag(label, color))},
-                    {EntityScene(ui::styled_text(def.title, ink, typography::NAME))},
-                ]
-            ),
+            {EntityScene(ui::styled_text(def.title, ink, typography::NAME))},
         ]
     }
 }

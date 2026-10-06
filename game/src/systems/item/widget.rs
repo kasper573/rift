@@ -122,7 +122,7 @@ pub(super) fn sync_inventory(world: &mut World) {
         return;
     };
     let keys: Vec<u64> = cells.iter().map(cell_key).collect();
-    reconcile_children(world, grid, &keys, |index| slot(&cells[index]));
+    reconcile_children(world, grid, &keys, |_, index| slot(&cells[index]));
 }
 
 fn inventory_cells(world: &World) -> Vec<CellData> {

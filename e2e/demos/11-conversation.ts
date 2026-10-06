@@ -45,14 +45,26 @@ test(
       await page.keyboard.press("Digit1");
       await conversationOver(page);
 
-      await caption(page, "While you talk, clicks on the world are ignored", { at: "top" });
+      await caption(page, "While you talk, the map ignores the mouse: a plain pointer, and clicks do nothing", {
+        at: "top",
+      });
       await talkTo(page, "Grisha");
       const me = (await probe(page)).me!;
-      await hoverTile(page, [me.at[0] + 2, me.at[1] - 4]);
+      const offStage: [number, number] = [me.at[0] + 2, me.at[1] - 4];
+      await hoverTile(page, offStage);
       await page.mouse.down();
       await page.mouse.up();
       await page.waitForTimeout(1500);
       await readToChoices(page, 1200);
+      await caption(page, "Over the conversation the cursor is its own: an arrow on the words, a hand on the choices", {
+        at: "top",
+      });
+      await hoverUi(page, /Driftwood Inn/);
+      await page.waitForTimeout(1800);
+      await hoverUi(page, "Chat.");
+      await page.waitForTimeout(1800);
+      await hoverTile(page, offStage);
+      await page.waitForTimeout(1200);
       await caption(page, "Choices branch into a tree: Chat opens a menu of its own", { at: "top" });
       await pick(page, "Chat.");
       await onStage(page, "GrishaChat");

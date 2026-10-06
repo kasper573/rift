@@ -1,5 +1,6 @@
 pub mod carry;
 pub mod collapse;
+pub mod cursor;
 pub mod drag;
 pub mod motion;
 pub mod opacity;

@@ -20,6 +20,7 @@ use crate::components::chip::{ChipOptions, chip, key_hint};
 use crate::components::input::{CatalogInput, InputRef, input_cap};
 use crate::components::rich_text::{RichPiece, RichText, Typewriter, rich_text};
 use crate::components::text::styled_text;
+use crate::cursor::CursorStyle;
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::ancestor_with;
 use crate::style::Style;
@@ -74,7 +75,7 @@ pub struct ChoiceList {
 }
 
 #[derive(Component, Clone, Default)]
-#[require(Node)]
+#[require(Node, CursorStyle::Pointer)]
 pub struct ChoiceRow {
     pub index: usize,
     pub locked: bool,

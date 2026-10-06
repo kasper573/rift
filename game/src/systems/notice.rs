@@ -81,7 +81,7 @@ fn spawn_headlines(mut commands: Commands) {
             align_items: AlignItems::Center,
         }
         Pickable::IGNORE
-        GlobalZIndex(1)
+        GlobalZIndex({ui::tokens::layer::NOTICES})
         Children [
             {EntityScene(ui::announcement_lane(ui::AnnouncementLane::default()))},
             (

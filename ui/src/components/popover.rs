@@ -4,9 +4,8 @@ use bevy_ui::{GlobalZIndex, Node, OverrideClip, PositionType};
 use crate::component;
 use crate::overlay::{Dismissable, Open, OverlayAction, OverlayContent, POPPER_ENTER, POPPER_EXIT};
 use crate::place::Placement;
+use crate::tokens::layer;
 use crate::{Align, Side};
-
-pub(crate) const ANCHORED_Z: i32 = 900;
 
 pub fn popover(open: bool) -> impl Scene {
     bsn! {
@@ -24,7 +23,7 @@ pub fn popover_trigger() -> impl Scene {
 pub fn popover_content(side: Side, align: Align, offset: f32) -> impl Scene {
     bsn! {
         Node { position_type: PositionType::Absolute }
-        GlobalZIndex({ANCHORED_Z})
+        GlobalZIndex({layer::ANCHORED})
         OverrideClip
         Placement { side: {side}, align: {align}, offset: {offset} }
         {OverlayContent::animated(POPPER_ENTER, POPPER_EXIT)}

@@ -46,7 +46,8 @@ export function chapter({ summary, setup = enterWorld, play }: Chapter) {
       await setup(page, cast);
       const recording = await startRecording(page, VIDEO, info.outputPath());
       try {
-        await page.screencast.showActions({ cursor: "pointer", position: "bottom-right", fontSize: 18, duration: 250 });
+        await page.screencast.showActions({ cursor: "none", position: "bottom-right", fontSize: 18, duration: 250 });
+        await mirrorCursor(page);
         await page.screencast.showOverlay(titleCard(info.title, summary), { duration: TITLE_MS });
         await play(page, cast);
         await page.waitForTimeout(OUTRO_MS);
@@ -89,6 +90,45 @@ export async function caption(
     clearTimeout(timer);
     return hide();
   });
+}
+
+// The recording captures the page, not the system cursor, so a copy of whatever cursor the page
+// shows under the mouse follows it on camera.
+async function mirrorCursor(page: Page): Promise<void> {
+  await page.evaluate(
+    ({ arrow, beam }) => {
+      const image = document.createElement("img");
+      image.style.cssText = "position:fixed;left:0;top:0;pointer-events:none;z-index:2147483647;display:none";
+      document.documentElement.append(image);
+      let at: { x: number; y: number } | undefined;
+      document.addEventListener("mousemove", (event) => (at = { x: event.clientX, y: event.clientY }), true);
+      const follow = () => {
+        const under = at && document.elementFromPoint(at.x, at.y);
+        if (at && under) {
+          const cursor = getComputedStyle(under).cursor;
+          const custom = /url\("?([^")]+)"?\)\s+(\d+)\s+(\d+)/.exec(cursor);
+          const [src, x, y] = custom
+            ? [custom[1], Number(custom[2]), Number(custom[3])]
+            : cursor === "text"
+              ? [beam, 8, 12]
+              : [arrow, 1, 1];
+          if (image.getAttribute("src") !== src) image.src = src;
+          image.style.transform = `translate(${at.x - x}px, ${at.y - y}px)`;
+          image.style.display = "block";
+        }
+        requestAnimationFrame(follow);
+      };
+      requestAnimationFrame(follow);
+    },
+    { arrow: svgCursor(ARROW), beam: svgCursor(BEAM) },
+  );
+}
+
+const ARROW = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="28"><path d="M1 1v22l6-6 4 9 3-1-4-9h8z" fill="#fff" stroke="#000" stroke-width="1.5"/></svg>`;
+const BEAM = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24"><path d="M4 2h8M8 2v20M4 22h8" fill="none" stroke="#fff" stroke-width="4"/><path d="M4 2h8M8 2v20M4 22h8" fill="none" stroke="#000" stroke-width="2"/></svg>`;
+
+function svgCursor(svg: string): string {
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
 const INSET_REFRESH_MS = 200;

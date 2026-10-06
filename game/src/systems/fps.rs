@@ -33,8 +33,7 @@ fn spawn(mut commands: Commands) {
             bottom: Val::Px(8.0),
         }
         BackgroundColor({Color::BLACK})
-        GlobalZIndex({100})
-        Pickable { should_block_lower: false, is_hoverable: false }
+        GlobalZIndex({ui::tokens::layer::SYSTEM})
         Children [ ( {text_colored("-- fps", Color::WHITE)} FpsText ) ]
     });
 }

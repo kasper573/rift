@@ -94,7 +94,6 @@ pub fn key_hint(hint: Vec<RichPiece>, family: Family) -> impl Scene {
     };
     bsn! {
         template_value(style)
-        Pickable::IGNORE
         Children [ {EntityScene(rich_text(text, false))} ]
     }
 }

@@ -258,6 +258,7 @@ pub enum Ending {
     Left,
     OutOfReach,
     Died,
+    Gone,
     Replaced,
 }
 
@@ -423,6 +424,13 @@ pub fn in_conversation(world: &World, player: Entity) -> bool {
     world.get::<ConversationSession>(player).is_some()
 }
 
+pub fn engaged_with(world: &World, player: Entity, with: Option<Entity>) -> bool {
+    world
+        .get::<ConversationSession>(player)
+        .is_some_and(|session| session.with == with)
+        && broken(world, player).is_none()
+}
+
 pub fn requests(world: &mut World) {
     for request in crate::systems::requests::<ConversationRequest>(world) {
         let Some(player) = sender_player(world, request.client_id) else {
@@ -535,6 +543,7 @@ impl Ending {
             Ending::Left | Ending::Replaced => None,
             Ending::OutOfReach => Some("you walked out of reach"),
             Ending::Died => Some("you died"),
+            Ending::Gone => Some("they're gone"),
         }
     }
 }
@@ -774,6 +783,11 @@ fn broken(world: &World, player: Entity) -> Option<Ending> {
     let session = world.get::<ConversationSession>(player)?;
     if stat::is_dead(world, player) {
         return Some(Ending::Died);
+    }
+    if let Some(with) = session.with
+        && (world.get_entity(with).is_err() || stat::is_dead(world, with))
+    {
+        return Some(Ending::Gone);
     }
     session
         .tether

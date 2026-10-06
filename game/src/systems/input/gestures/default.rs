@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::window::CursorIcon;
 
-use crate::systems::input::gestures::{Gesture, image_cursor};
+use crate::systems::input::gestures::{Gesture, default_cursor};
 
 pub struct DefaultGesture;
 
@@ -17,9 +17,6 @@ impl Gesture for DefaultGesture {
     fn drive(&self, _world: &mut World, _start: bool) {}
 
     fn cursor(&self, world: &mut World) -> Option<CursorIcon> {
-        let handle = world
-            .resource::<AssetServer>()
-            .load("icons/cursors/pointer003.png");
-        Some(image_cursor(handle, (0, 0)))
+        Some(default_cursor(world))
     }
 }

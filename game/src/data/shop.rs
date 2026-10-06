@@ -24,6 +24,7 @@ crate::table! {
         requires: &[],
         mark: AttentionId::Merchant,
         ask: Some(&[plain("Show me your wares.")]),
+        browsing: DialogueId::MaraShopping,
         sells: &[
             ShopOffer { item: ItemId::HealthPotion, count: 1, price: &[ItemStack::new(ItemId::Gold, 6)], stock: Stock::Unlimited, requires: &[] },
             ShopOffer {
@@ -53,7 +54,6 @@ crate::table! {
             ShopBuys { what: Buys::Category(ItemCategory::Material), pays: &[ItemStack::new(ItemId::Gold, 1)], requires: &[] },
         ],
         reactions: Some(ShopReactions {
-            browsing: DialogueId::MaraShopping,
             bought: &[
                 Line { by: Npc(NpcId::Mara), face: Some(Generic(Happy)), cue: true, text: &[plain("A fine choice. You won't find better this side of the strait.")] },
                 Line { by: Npc(NpcId::Mara), face: Some(Individual(Counting)), cue: true, text: &[plain("Pleasure doing business.")] },
@@ -73,6 +73,7 @@ crate::table! {
         requires: &[],
         mark: AttentionId::Collector,
         ask: Some(&[plain("I've brought bones.")]),
+        browsing: DialogueId::WrenShopping,
         sells: &[
             ShopOffer { item: ItemId::GreaterHealthPotion, count: 1, price: &[ItemStack::new(ItemId::BoneToken, 3)], stock: Stock::Unlimited, requires: &[] },
             ShopOffer {
@@ -95,6 +96,7 @@ crate::table! {
         requires: &[],
         mark: AttentionId::Merchant,
         ask: None,
+        browsing: DialogueId::HonestyBoxShopping,
         sells: &[ShopOffer {
             item: ItemId::FishSteak,
             count: 1,
@@ -111,6 +113,7 @@ crate::table! {
         requires: &[&Remembers(MemoryId::SidedWithOrcs)],
         mark: AttentionId::Merchant,
         ask: Some(&[plain("Show me the clan's remedies.")]),
+        browsing: DialogueId::UgraShopping,
         sells: &[
             ShopOffer {
                 item: ItemId::GreaterHealthPotion,

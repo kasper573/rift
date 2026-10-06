@@ -109,20 +109,6 @@ pub fn sheet(world: &World, item: ItemId) -> Box<dyn Scene> {
             Box::new(ui::styled_text(fact, color, typography::BODY))
         })
         .collect();
-    let usage: Vec<Box<dyn Scene>> = use_verb(def)
-        .map(|verb| -> Box<dyn Scene> {
-            let usage = RichText {
-                pieces: vec![
-                    input(InputAction::UseItem),
-                    RichPiece::text(format!(" it in your bag to {verb} it")),
-                ],
-                size: typography::CAPTION.font_size,
-                color: ink.with_alpha(0.6),
-            };
-            Box::new(ui::rich_text(usage, false))
-        })
-        .into_iter()
-        .collect();
     let flavor = RichText {
         pieces: vec![RichPiece::Span(RichSpan {
             voice: TextVoice::Whisper,
@@ -157,7 +143,6 @@ pub fn sheet(world: &World, item: ItemId) -> Box<dyn Scene> {
             ( Node { column_gap: Val::Px({spacing::M}), flex_wrap: FlexWrap::Wrap } Children [ {tags} ] ),
             {EntityScene(ui::rich_text(flavor, false))},
             ( Node { flex_direction: FlexDirection::Column, row_gap: Val::Px({spacing::S}) } Children [ {facts} ] ),
-            {usage},
         ]
     })
 }

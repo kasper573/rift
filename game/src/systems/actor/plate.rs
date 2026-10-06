@@ -39,7 +39,7 @@ impl Plugin for PlatePlugin {
 }
 
 #[derive(Component, Default, Clone)]
-pub struct WorldOverlay;
+struct WorldOverlay;
 
 #[derive(Resource, Default)]
 struct Plates(HashMap<Entity, Entity>);
@@ -183,7 +183,7 @@ fn sync_plate_icons(world: &mut World) {
                 .map(|mark| assets.load(mark.get().icon.0))
                 .collect()
         };
-        reconcile_children(world, row, &keys, |index| {
+        reconcile_children(world, row, &keys, |_, index| {
             Box::new(plate_icon(icons[index].clone()))
         });
     }
@@ -234,7 +234,7 @@ fn plate(label: Label) -> impl Scene {
             align_items: AlignItems::Center,
         }
         UiTransform { translation: {Val2::percent(-50.0, -100.0)} }
-        GlobalZIndex(-1)
+        GlobalZIndex({ui::tokens::layer::BACKDROP})
         Pickable::IGNORE
         Children [
             ( PlateIcons Node { column_gap: Val::Px(2.0) } Pickable::IGNORE ),

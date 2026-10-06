@@ -75,4 +75,4 @@ pub use text::{styled_text, text, text_colored};
 pub use text_input::{OnSubmit, TextInputOptions, text_input, typing};
 pub use tooltip::{TooltipText, tooltip, tooltip_content, tooltip_text};
 pub use widget::{WidgetOptions, widget};
-pub use window::{WindowContent, WindowOptions, window};
+pub use window::{WindowContent, WindowFrame, WindowOptions, window};

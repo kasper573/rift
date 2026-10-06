@@ -447,10 +447,7 @@ fn spawn_word(
                 ..font(typography::BODY)
             },
             UiTransform::default(),
-            Pickable {
-                should_block_lower: false,
-                is_hoverable: false,
-            },
+            Pickable::IGNORE,
             ChildOf(parent),
         ))
         .id();
@@ -467,6 +464,7 @@ fn spawn_word(
                     TextSpan::new(String::new()),
                     style.clone(),
                     TextColor(color),
+                    Pickable::IGNORE,
                     ChildOf(word),
                 ))
                 .id();
@@ -475,6 +473,7 @@ fn spawn_word(
                     TextSpan::new(part.clone()),
                     style,
                     TextColor(color.with_alpha(0.0)),
+                    Pickable::IGNORE,
                     ChildOf(word),
                 ))
                 .id();

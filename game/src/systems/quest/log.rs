@@ -299,6 +299,7 @@ fn row(assets: &AssetServer, page: &Page, quest: QuestId, selected: bool) -> Box
         }
         BackgroundColor({background})
         Pickable { should_block_lower: true, is_hoverable: true }
+        ui::component(ui::CursorStyle::Pointer)
         on(move |click: On<Pointer<Click>>, input: ActionInput, mut commands: Commands| {
             if input.clicked(InputAction::Select, &click) {
                 commands.queue(move |world: &mut World| select(world, tab, quest));
@@ -513,6 +514,7 @@ fn footer(page: &Page, quest: QuestId) -> impl Scene + use<> {
                     (
                         {ui::styled_text("Track on HUD", ink, typography::BODY)}
                         Pickable { should_block_lower: true, is_hoverable: true }
+                        ui::component(ui::CursorStyle::Pointer)
                         on(move |click: On<Pointer<Click>>, input: ActionInput, mut commands: Commands| {
                             if input.clicked(InputAction::Select, &click) {
                                 commands.queue(move |world: &mut World| {

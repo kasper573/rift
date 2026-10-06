@@ -343,6 +343,11 @@ pub(crate) struct MotionPlugin;
 
 impl Plugin for MotionPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostUpdate, advance_motion.before(OpacitySet::Calculate));
+        app.add_systems(
+            PostUpdate,
+            advance_motion
+                .after(crate::UiReactive)
+                .before(OpacitySet::Calculate),
+        );
     }
 }

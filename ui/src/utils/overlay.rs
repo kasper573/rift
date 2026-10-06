@@ -10,14 +10,15 @@ use bevy_time::Time;
 use bevy_ui::{Display, GlobalZIndex, Node, PositionType, UiTransform, Val};
 
 use crate::component;
+use crate::cursor::CursorStyle;
 use crate::motion::transition::{EMPHASIZED_ENTER, EMPHASIZED_EXIT};
 use crate::motion::{Motion, Transform2d};
 use crate::opacity::Opacity;
 use crate::place::{Placed, Placement};
 use crate::state::ancestor_with;
+use crate::tokens::layer;
 
 pub(crate) const OVERLAY_EXIT: Duration = Duration::from_millis(240);
-const OVERLAY_Z: i32 = 1000;
 
 pub(crate) const POPPER_ENTER: Transform2d = Transform2d {
     translation: Vec2::ZERO,
@@ -39,7 +40,7 @@ pub struct Open(pub bool);
 pub struct Dismissable;
 
 #[derive(Component, Clone, Copy)]
-#[require(Node)]
+#[require(Node, CursorStyle::Pointer)]
 pub enum OverlayAction {
     Open,
     Close,
@@ -87,7 +88,7 @@ pub(crate) fn spawn_overlay_host(mut commands: Commands) {
                 height: Val::Percent(100.0),
                 ..Node::default()
             },
-            GlobalZIndex(OVERLAY_Z),
+            GlobalZIndex(layer::OVERLAY),
             Pickable::IGNORE,
         ))
         .id();

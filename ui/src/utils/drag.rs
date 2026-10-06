@@ -4,6 +4,9 @@ use bevy::ecs::hierarchy::ChildOf;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
+use crate::cursor::CursorStyle;
+use crate::tokens::layer;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Geom {
     pub pos: Vec2,
@@ -14,9 +17,11 @@ pub struct Geom {
 pub struct DragRoot;
 
 #[derive(Component, Default, Clone)]
+#[require(CursorStyle::Grab)]
 pub struct DragHandle;
 
 #[derive(Component, Default, Clone)]
+#[require(CursorStyle::Resize)]
 pub struct ResizeHandle {
     pub min: Vec2,
 }
@@ -124,6 +129,7 @@ fn raise(entity: Entity, counter: &mut RaiseCounter, commands: &mut Commands) {
     let order = counter.0;
     commands.entity(entity).insert((
         Raised(order),
+        GlobalZIndex(layer::WINDOWS),
         ZIndex(i32::try_from(order).unwrap_or(i32::MAX)),
     ));
 }
@@ -238,6 +244,9 @@ fn anchor_panels(
     let resized = last.0 != Vec2::ZERO && last.0 != size;
     last.0 = size;
     for (entity, mut node, anchor) in &mut roots {
+        if node.position_type != PositionType::Absolute {
+            continue;
+        }
         let Some(mut anchor) = anchor else {
             commands
                 .entity(entity)

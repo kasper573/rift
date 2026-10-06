@@ -11,6 +11,9 @@ use crate::core::render::screen::{ToScreen, ToTile};
 pub(crate) struct WorldCamera;
 
 pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
+    if world.resource::<ui::InterfaceCursor>().captured() {
+        return None;
+    }
     let cursor = world
         .query_filtered::<&Window, With<PrimaryWindow>>()
         .single(world)

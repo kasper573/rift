@@ -1,14 +1,13 @@
 mod attack;
 mod default;
-mod drag;
 mod interact;
+mod interface;
 mod locked;
 mod pickup;
 mod walk;
 
 use super::ActiveTileHighlight;
 use super::map::{self, InputAction};
-use crate::systems::scene::Scene;
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
 
@@ -25,16 +24,15 @@ pub trait Gesture: Send + Sync {
 static GESTURES: &[&dyn Gesture] = &[
     &attack::AttackGesture,
     &default::DefaultGesture,
-    &drag::DragGesture,
     &interact::InteractGesture,
+    &interface::InterfaceGesture,
     &locked::LockedGesture,
     &pickup::PickupGesture,
     &walk::WalkGesture,
 ];
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, setup)
-        .add_systems(Update, update.run_if(in_state(Scene::Area)));
+    app.add_systems(Startup, setup).add_systems(Update, update);
 }
 
 #[derive(Resource)]
@@ -130,6 +128,13 @@ fn apply_cursor(world: &mut World, cursor: Option<CursorIcon>) {
     {
         world.entity_mut(window).insert(cursor);
     }
+}
+
+pub(crate) fn default_cursor(world: &mut World) -> CursorIcon {
+    let handle = world
+        .resource::<AssetServer>()
+        .load("icons/cursors/pointer003.png");
+    image_cursor(handle, (0, 0))
 }
 
 pub(crate) fn image_cursor(handle: Handle<Image>, hotspot: (u16, u16)) -> CursorIcon {

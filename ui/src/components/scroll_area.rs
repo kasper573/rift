@@ -10,6 +10,7 @@ use bevy_ui::{
 };
 use bevy_window::{PrimaryWindow, Window};
 
+use crate::cursor::CursorStyle;
 use crate::motion::transition::STANDARD_ENTER;
 use crate::state::ancestor_with;
 use crate::style::{StatefulPaint, Style};
@@ -17,6 +18,7 @@ use crate::theme::theme;
 use crate::tokens::radius;
 
 const SCROLL_SMOOTHING: f32 = 16.0;
+const BAR_WIDTH: f32 = 10.0;
 
 #[derive(Component, Clone, Default)]
 pub(crate) struct ScrollRoot;
@@ -25,6 +27,7 @@ pub(crate) struct ScrollViewport;
 #[derive(Component, Clone, Default)]
 pub(crate) struct ScrollBar;
 #[derive(Component, Clone, Default)]
+#[require(CursorStyle::Grab)]
 pub(crate) struct ScrollThumbMark;
 
 #[derive(Component, Default, Clone)]
@@ -76,6 +79,7 @@ pub fn scroll_area() -> impl Scene {
             node.overflow = Overflow::clip();
             node.position_type = PositionType::Relative;
             node.width = Val::Percent(100.0);
+            node.padding = UiRect::right(Val::Px(BAR_WIDTH));
         }))
     }
 }
@@ -100,9 +104,12 @@ pub fn scroll_bar() -> impl Scene {
         template_value(Style::new()
             .background(theme().surface_canvas.hover)
             .node(|node| {
-                node.width = Val::Px(10.0);
-                node.height = Val::Percent(100.0);
-                node.position_type = PositionType::Relative;
+                node.display = Display::None;
+                node.width = Val::Px(BAR_WIDTH);
+                node.position_type = PositionType::Absolute;
+                node.right = Val::Px(0.0);
+                node.top = Val::Px(0.0);
+                node.bottom = Val::Px(0.0);
                 node.border_radius = BorderRadius::all(Val::Px(radius::PILL));
             }))
     }
