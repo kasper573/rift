@@ -304,11 +304,13 @@ export async function travelTo(
   page: Page,
   target: Tile | ((snapshot: Snapshot) => Tile | undefined),
   timeout = 60_000,
+  arrived: (snapshot: Snapshot) => unknown = () => false,
 ): Promise<void> {
   const locate = typeof target === "function" ? target : () => target;
   const deadline = Date.now() + timeout;
   for (;;) {
     const snapshot = await probe(page);
+    if (arrived(snapshot)) return;
     if (snapshot.stage) {
       await leaveConversation(page);
       continue;

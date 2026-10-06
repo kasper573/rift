@@ -103,7 +103,7 @@ async function reachUntil<T>(
 ): Promise<T> {
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
-    await travelTo(page, aim, 90_000);
+    await travelTo(page, aim, 90_000, done);
     const settle = Date.now() + 8_000;
     while (Date.now() < settle) {
       const snapshot = await probe(page);
