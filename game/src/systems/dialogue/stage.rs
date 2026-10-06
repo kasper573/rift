@@ -115,12 +115,12 @@ pub fn view(world: &World) -> Option<StageView> {
     })
 }
 
-pub fn attach(world: &mut World, scene: impl Scene) -> Option<Entity> {
+pub fn show_panel(world: &mut World, panel: ui::DialoguePanelOptions) -> Option<Entity> {
     let slot = world
-        .query_filtered::<Entity, With<StageAttachments>>()
+        .query_filtered::<Entity, With<StagePanels>>()
         .iter(world)
         .next()?;
-    let mut spawned = world.spawn_scene(scene).ok()?;
+    let mut spawned = world.spawn_scene(ui::dialogue_panel(panel)).ok()?;
     spawned.insert(ChildOf(slot));
     Some(spawned.id())
 }
@@ -173,7 +173,7 @@ struct StageBoxHost;
 struct StageBox;
 
 #[derive(Component, Default, Clone)]
-struct StageAttachments;
+struct StagePanels;
 
 #[derive(Component, Default, Clone)]
 struct WaitingChip;
@@ -202,7 +202,7 @@ fn spawn_stage(mut commands: Commands) {
                 }
                 Pickable::IGNORE
                 Children [ (
-                    StageAttachments
+                    StagePanels
                     Node {
                         width: Val::Percent(100.0),
                         justify_content: JustifyContent::Center,

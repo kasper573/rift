@@ -77,7 +77,7 @@ fn boot() {
             systems::hud::HudPlugin,
             systems::dialogue::stage::StagePlugin,
             systems::announcement::lane::AnnouncementLanePlugin,
-            systems::shop::window::ShopWindowPlugin,
+            systems::shop::counter::ShopCounterPlugin,
             systems::item::card::ItemCardPlugin,
             systems::quest::card::QuestCardPlugin,
             systems::quest::log::QuestLogPlugin,

@@ -10,6 +10,7 @@ import {
   findUi,
   focusGame,
   holding,
+  probe,
   rightClickUi,
   waitFor,
   waitForWorld,
@@ -39,11 +40,12 @@ test(
       await pick(page, "Show me your wares.");
       await waitFor(page, ({ shop }) => shop?.shop === "MaraWares", "Mara's shop never opened");
       await page.waitForTimeout(1500);
-      await caption(page, "It moves where you like, but has no close button: it belongs to the conversation", {
-        at: "top",
-      });
+      await caption(page, "It belongs to the conversation: fixed above it, with no close button", { at: "top" });
+      const before = findUi(await probe(page), "Mara's Wares");
       await dragUi(page, "Mara's Wares", { x: -300, y: 0 });
       await page.waitForTimeout(1500);
+      const after = findUi(await probe(page), "Mara's Wares");
+      if (!before || !after || before.x !== after.x || before.y !== after.y) throw new Error("the shop panel moved");
 
       await caption(page, "Prices are lists of items — each part turns red when you can't cover it", { at: "top" });
       await clickUi(page, "Greater Health Potion");

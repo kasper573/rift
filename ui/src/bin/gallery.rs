@@ -10,18 +10,18 @@ use ui::tokens::palette;
 use ui::{
     Align, Announcement, AnnouncementKind, AnnouncementLane, ButtonIntent, ButtonSize, CardOptions,
     Carriable, Carried, CarryTarget, CastDepth, CastMember, Check, ChipOptions, ChoiceOptions,
-    ConfirmOptions, DialogueBoxOptions, MotionPreference, OnSettle, OnTap, Orientation, RichPiece,
-    RichSpan, RichText, Side, SonnerPosition, TextMotion, TextVoice, Typewriter, WidgetOptions,
-    accordion, accordion_body, accordion_content, accordion_header, accordion_item,
-    accordion_trigger, alert_dialog, alert_dialog_action, alert_dialog_cancel, announcement_lane,
-    avatar, avatar_fallback, button, button_styled, card, cast, checkbox, checkbox_indicator, chip,
-    choice_list, collapsible, collapsible_content, collapsible_trigger, component, confirm_dialog,
-    dialog, dialog_close, dialogue_box, key_hint, list_header, popover, popover_content,
-    popover_trigger, progress, progress_indicator, radio_circle, radio_group, radio_indicator,
-    radio_item, rich_text, scroll_area, scroll_bar, scroll_thumb, scroll_viewport, separator,
-    slider, slider_range, slider_thumb, slider_track, sonner_close, split_view, switch,
-    switch_thumb, tabs, tabs_list, tabs_trigger, text, text_colored, toast, toaster, tooltip,
-    tooltip_content, widget, window,
+    ConfirmOptions, DialogueBoxOptions, DialoguePanelOptions, MotionPreference, OnSettle, OnTap,
+    Orientation, RichPiece, RichSpan, RichText, Side, SonnerPosition, TextMotion, TextVoice,
+    Typewriter, WidgetOptions, accordion, accordion_body, accordion_content, accordion_header,
+    accordion_item, accordion_trigger, alert_dialog, alert_dialog_action, alert_dialog_cancel,
+    announcement_lane, avatar, avatar_fallback, button, button_styled, card, cast, checkbox,
+    checkbox_indicator, chip, choice_list, collapsible, collapsible_content, collapsible_trigger,
+    component, confirm_dialog, dialog, dialog_close, dialogue_box, dialogue_panel, key_hint,
+    list_header, popover, popover_content, popover_trigger, progress, progress_indicator,
+    radio_circle, radio_group, radio_indicator, radio_item, rich_text, scroll_area, scroll_bar,
+    scroll_thumb, scroll_viewport, separator, slider, slider_range, slider_thumb, slider_track,
+    sonner_close, split_view, switch, switch_thumb, tabs, tabs_list, tabs_trigger, text,
+    text_colored, toast, toaster, tooltip, tooltip_content, widget, window,
 };
 
 const WINDOW: Vec2 = Vec2::new(1600.0, 900.0);
@@ -941,49 +941,28 @@ fn text_input_scene() -> Box<dyn Scene> {
 }
 
 fn window_scene() -> Box<dyn Scene> {
-    let anchored = window(ui::WindowOptions {
-        frame: ui::WindowFrame::Anchored {
-            width: Val::Px(320.0),
-            height: Val::Auto,
-        },
-        content: vec![ui::WindowContent {
-            title: "Anchored".into(),
-            scene: boxed(bsn! {
-                Node { padding: {UiRect::all(Val::Px(12.0))} }
-                Children [ {EntityScene(text_colored("Laid out by its parent: moves, but never closes or resizes", theme().surface_floating.on))} ]
-            }),
-        }],
-    });
     col(
         360.0,
-        vec![
-            boxed(bsn! {
-                Node { width: Val::Px(520.0), justify_content: JustifyContent::Center, margin: {UiRect::bottom(Val::Px(24.0))} }
-                Children [ {EntityScene(anchored)} ]
-            }),
-            boxed(bsn! {
-                Node {
-                    width: Val::Px(520.0),
-                    height: Val::Px(300.0),
-                    position_type: PositionType::Relative,
-                }
-                Children [
-                    {EntityScene(window(ui::WindowOptions {
-                        frame: ui::WindowFrame::Floating {
-                            pos: Vec2::ZERO,
-                            size: Vec2::new(520.0, 300.0),
-                            on_close: OnTap::new(|_| {}),
-                            on_settle: OnSettle::new(|_, geom| geom),
-                        },
-                        content: vec![
-                            window_tab("Inventory", 12),
-                            window_tab("Equipment", 4),
-                            log_tab(),
-                        ],
-                    }))}
-                ]
-            }),
-        ],
+        vec![boxed(bsn! {
+            Node {
+                width: Val::Px(520.0),
+                height: Val::Px(300.0),
+                position_type: PositionType::Relative,
+            }
+            Children [
+                {EntityScene(window(ui::WindowOptions {
+                    pos: Vec2::ZERO,
+                    size: Vec2::new(520.0, 300.0),
+                    on_close: OnTap::new(|_| {}),
+                    on_settle: OnSettle::new(|_, geom| geom),
+                    content: vec![
+                        window_tab("Inventory", 12),
+                        window_tab("Equipment", 4),
+                        log_tab(),
+                    ],
+                }))}
+            ]
+        })],
     )
 }
 
@@ -1425,19 +1404,31 @@ fn dialogue_box_scene() -> Box<dyn Scene> {
             "Leave",
         )),
     ];
+    let panel = dialogue_panel(DialoguePanelOptions {
+        title: "Road pass".to_owned(),
+        width: Val::Px(420.0),
+        height: Val::Auto,
+        content: boxed(bsn! {
+            Node { padding: {UiRect::all(Val::Px(12.0))} }
+            Children [ {EntityScene(text_colored("Panels hold any content, centered above the box", theme().surface_floating.on))} ]
+        }),
+    });
     boxed(bsn! {
-        Node { width: Val::Percent(100.0), height: Val::Percent(100.0), align_items: AlignItems::End, justify_content: JustifyContent::Center, padding: {UiRect::bottom(Val::Px(40.0))} }
-        Children [ {EntityScene(dialogue_box(DialogueBoxOptions {
-            speaker: Some(("Ilsa".to_owned(), Side::Right)),
-            line,
-            typed: true,
-            choices: sample_choices(assets()),
-            hint: choice_hint(),
-            actions,
-            status: None,
-            advance: NEXT,
-            pick: PICK,
-        }))} ]
+        Node { width: Val::Percent(100.0), height: Val::Percent(100.0), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, justify_content: JustifyContent::End, row_gap: Val::Px(24.0), padding: {UiRect::bottom(Val::Px(40.0))} }
+        Children [
+            {EntityScene(panel)},
+            {EntityScene(dialogue_box(DialogueBoxOptions {
+                speaker: Some(("Ilsa".to_owned(), Side::Right)),
+                line,
+                typed: true,
+                choices: sample_choices(assets()),
+                hint: choice_hint(),
+                actions,
+                status: None,
+                advance: NEXT,
+                pick: PICK,
+            }))},
+        ]
     })
 }
 

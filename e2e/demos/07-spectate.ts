@@ -58,7 +58,7 @@ test(
       await readToChoices(islander, 1800);
       await pick(islander, "A Letter for the Captain");
       await onStage(page, "LetterOffer");
-      await caption(page, "The quest window and the choices show, but only the player picks", { at: "top" });
+      await caption(page, "The quest panel and the choices show, but only the player picks", { at: "top" });
       await readToChoices(islander, 1800);
       await page.waitForTimeout(2500);
       await pick(islander, "I'll take it.");

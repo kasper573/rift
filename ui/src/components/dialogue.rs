@@ -10,8 +10,8 @@ use bevy_scene::{EntityScene, Scene, bsn, on, template_value};
 use bevy_time::Time;
 use bevy_ui::widget::ImageNode;
 use bevy_ui::{
-    AlignItems, BorderRadius, Checked, Display, FlexDirection, JustifyContent, Node, PositionType,
-    UiRect, UiTransform, Val, Val2,
+    AlignItems, BackgroundColor, BorderColor, BorderRadius, Checked, Display, FlexDirection,
+    JustifyContent, Node, Overflow, PositionType, UiRect, UiTransform, Val, Val2,
 };
 
 use crate::Side;
@@ -41,6 +41,13 @@ pub struct DialogueBoxOptions {
     pub status: Option<String>,
     pub advance: InputRef,
     pub pick: InputRef,
+}
+
+pub struct DialoguePanelOptions {
+    pub title: String,
+    pub width: Val,
+    pub height: Val,
+    pub content: Box<dyn Scene>,
 }
 
 #[derive(Clone)]
@@ -195,6 +202,46 @@ pub fn dialogue_box(options: DialogueBoxOptions) -> impl Scene {
             (
                 Node { position_type: PositionType::Absolute, bottom: Val::Px(-12.0), left: Val::Px({spacing::XL}) }
                 Children [ {EntityScene(key_hint(hint, theme().surface_trough))} ]
+            ),
+        ]
+    }
+}
+
+pub fn dialogue_panel(options: DialoguePanelOptions) -> impl Scene {
+    let DialoguePanelOptions {
+        title,
+        width,
+        height,
+        content,
+    } = options;
+    let surface = theme().surface_floating;
+    let header = theme().surface_inset;
+    let frame = Node {
+        width,
+        height,
+        max_width: Val::Vw(94.0),
+        border: UiRect::all(Val::Px(1.0)),
+        border_radius: BorderRadius::all(Val::Px(radius::M)),
+        flex_direction: FlexDirection::Column,
+        overflow: Overflow::clip(),
+        ..Node::default()
+    };
+    bsn! {
+        template_value(frame)
+        BackgroundColor({surface.base})
+        component(BorderColor::all(surface.border))
+        Children [
+            (
+                Node { width: Val::Percent(100.0), padding: {UiRect::axes(Val::Px(spacing::L), Val::Px(spacing::M))} }
+                BackgroundColor({header.base})
+                Children [ {EntityScene(styled_text(title, header.on, typography::BODY))} ]
+            ),
+            (
+                Node { flex_grow: 1.0, min_height: Val::Px(0.0) }
+                Children [ (
+                    Node { width: Val::Percent(100.0), height: Val::Percent(100.0) }
+                    Children [ {EntityScene(content)} ]
+                ) ]
             ),
         ]
     }

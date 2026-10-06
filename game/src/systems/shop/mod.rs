@@ -1,4 +1,4 @@
-pub mod window;
+pub mod counter;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -27,7 +27,7 @@ const MINUTE: f32 = 60.0;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
-    app.replicate::<ShopWindow>()
+    app.replicate::<ShopView>()
         .add_client_message::<ShopRequest>(Channel::Ordered);
     dialogue::topic_source(app, wares);
     attention::mark_source(app, marks);
@@ -103,7 +103,7 @@ impl Outcome for OpenShop {
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct ShopWindow {
+pub struct ShopView {
     pub shop: ShopId,
     pub offers: Vec<OfferView>,
     pub buyback: Vec<Sale>,
@@ -197,11 +197,11 @@ fn open(world: &mut World, player: Entity, shop: ShopId, encounter: Encounter) {
         encounter,
         reactions: 0,
     });
-    refresh_window(world, player);
+    refresh_view(world, player);
 }
 
 fn close(world: &mut World, player: Entity) {
-    world.entity_mut(player).remove::<(ShopVisit, ShopWindow)>();
+    world.entity_mut(player).remove::<(ShopVisit, ShopView)>();
 }
 
 pub fn visiting(world: &World, player: Entity) -> Option<ShopId> {
@@ -240,7 +240,7 @@ pub fn hold(world: &mut World, visits: &mut QueryState<Entity, With<ShopVisit>>)
 pub fn refresh(world: &mut World, visits: &mut QueryState<Entity, With<ShopVisit>>) {
     let players: Vec<Entity> = visits.iter(world).collect();
     for player in players {
-        refresh_window(world, player);
+        refresh_view(world, player);
     }
 }
 
@@ -394,7 +394,7 @@ fn buy(world: &mut World, player: Entity, index: u32) {
         entry.left = entry.left.saturating_sub(1);
     }
     react(world, player, |reactions| reactions.bought);
-    refresh_window(world, player);
+    refresh_view(world, player);
 }
 
 fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
@@ -432,7 +432,7 @@ fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
     });
     sales.truncate(BUYBACK_KEPT);
     react(world, player, |reactions| reactions.sold);
-    refresh_window(world, player);
+    refresh_view(world, player);
 }
 
 fn buy_back(world: &mut World, player: Entity, index: u32) {
@@ -462,7 +462,7 @@ fn buy_back(world: &mut World, player: Entity, index: u32) {
     {
         sales.remove(index as usize);
     }
-    refresh_window(world, player);
+    refresh_view(world, player);
 }
 
 fn trade(
@@ -527,7 +527,7 @@ fn stock(
     })
 }
 
-fn refresh_window(world: &mut World, player: Entity) {
+fn refresh_view(world: &mut World, player: Entity) {
     let Some(shop) = visiting(world, player) else {
         return;
     };
@@ -547,14 +547,14 @@ fn refresh_window(world: &mut World, player: Entity) {
         .and_then(|ledger| ledger.sales.get(&shop))
         .map(|sales| sales.iter().cloned().collect())
         .unwrap_or_default();
-    let window = ShopWindow {
+    let view = ShopView {
         shop,
         offers,
         buyback,
         declined: declined(world, player, shop),
     };
-    if world.get::<ShopWindow>(player) != Some(&window) {
-        world.entity_mut(player).insert(window);
+    if world.get::<ShopView>(player) != Some(&view) {
+        world.entity_mut(player).insert(view);
     }
 }
 

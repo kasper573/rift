@@ -12,7 +12,7 @@ use game::systems::item::{Inventory, ItemStack};
 use game::systems::movement::{Position, position};
 use game::systems::npc::Npc;
 use game::systems::prop::Prop;
-use game::systems::shop::{ShopId, ShopRequest, ShopWindow};
+use game::systems::shop::{ShopId, ShopRequest, ShopView};
 
 use crate::support::Sim;
 
@@ -40,11 +40,11 @@ fn conversation(sim: &mut Sim, player: Entity) -> Option<Conversation> {
     sim.world().get::<Conversation>(player).cloned()
 }
 
-fn window(sim: &mut Sim, player: Entity) -> Option<ShopWindow> {
-    sim.world().get::<ShopWindow>(player).cloned()
+fn shown(sim: &mut Sim, player: Entity) -> Option<ShopView> {
+    sim.world().get::<ShopView>(player).cloned()
 }
 
-fn browse(sim: &mut Sim, client: u32, player: Entity, keeper: data::npc::Id) -> ShopWindow {
+fn browse(sim: &mut Sim, client: u32, player: Entity, keeper: data::npc::Id) -> ShopView {
     let target = townsperson(sim, keeper);
     sim.send(client, InteractRequest { target });
     assert!(
@@ -65,7 +65,7 @@ fn browse(sim: &mut Sim, client: u32, player: Entity, keeper: data::npc::Id) -> 
         },
     );
     sim.tick();
-    window(sim, player).expect("the shop opened")
+    shown(sim, player).expect("the shop opened")
 }
 
 fn ask_of(keeper: data::npc::Id) -> &'static str {
@@ -182,7 +182,7 @@ fn limited_stock_is_kept_per_player_and_restocks_on_its_timer() {
         sim.tick();
     }
     assert_eq!(count(&mut sim, first, ItemId::GreaterHealthPotion), 3);
-    let sold_out = window(&mut sim, first).expect("open");
+    let sold_out = shown(&mut sim, first).expect("open");
     assert_eq!(sold_out.offers[potion as usize].left, Some(0));
 
     sim.send(2, ShopRequest::Buy { offer: potion });
@@ -240,14 +240,14 @@ fn a_collector_pays_in_his_own_currency_and_buyback_costs_exactly_what_he_paid()
     sim.tick();
     assert_eq!(count(&mut sim, player, ItemId::Bone), 0);
     assert_eq!(count(&mut sim, player, ItemId::BoneToken), 7);
-    let sold = window(&mut sim, player).expect("open");
+    let sold = shown(&mut sim, player).expect("open");
     assert_eq!(sold.buyback.len(), 1);
 
     sim.send(1, ShopRequest::Buyback { sale: 0 });
     sim.tick();
     assert_eq!(count(&mut sim, player, ItemId::Bone), 7);
     assert_eq!(count(&mut sim, player, ItemId::BoneToken), 0);
-    assert!(window(&mut sim, player).expect("open").buyback.is_empty());
+    assert!(shown(&mut sim, player).expect("open").buyback.is_empty());
 }
 
 #[test]
@@ -263,7 +263,7 @@ fn walking_out_of_reach_closes_the_shop() {
         .insert(Position { pos: away });
     sim.tick();
 
-    assert!(window(&mut sim, player).is_none());
+    assert!(shown(&mut sim, player).is_none());
 }
 
 #[test]
@@ -277,7 +277,7 @@ fn leaving_the_conversation_closes_the_shop() {
     sim.tick();
 
     assert!(conversation(&mut sim, player).is_none());
-    assert!(window(&mut sim, player).is_none());
+    assert!(shown(&mut sim, player).is_none());
 }
 
 #[test]
@@ -293,9 +293,9 @@ fn a_map_object_can_keep_a_shop() {
             target: honesty_box,
         },
     );
-    assert!(sim.run_until(20.0, |world| world.get::<ShopWindow>(player).is_some()));
+    assert!(sim.run_until(20.0, |world| world.get::<ShopView>(player).is_some()));
     assert_eq!(
-        window(&mut sim, player).map(|opened| opened.shop),
+        shown(&mut sim, player).map(|opened| opened.shop),
         Some(ShopId::HonestyBox)
     );
     assert_eq!(

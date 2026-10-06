@@ -5,7 +5,7 @@ use bevy::scene::EntityScene;
 use ui::tokens::{palette, spacing, typography};
 use ui::{Carried, CarryTarget, ChipOptions, ConfirmOptions, Family, OnTap, component};
 
-use super::{OfferView, Sale, ShopId, ShopRequest, ShopWindow};
+use super::{OfferView, Sale, ShopId, ShopRequest, ShopView};
 use crate::core::sfx::SfxId;
 use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::data::item::Id as ItemId;
@@ -18,12 +18,12 @@ use crate::systems::player::session::Viewpoint;
 use crate::systems::scene::Scene as GameScene;
 use crate::systems::scene::mode::Mode;
 
-const WINDOW_SIZE: Vec2 = Vec2::new(620.0, 400.0);
+const COUNTER_SIZE: Vec2 = Vec2::new(620.0, 400.0);
 const ICON: f32 = 28.0;
 
-pub struct ShopWindowPlugin;
+pub struct ShopCounterPlugin;
 
-impl Plugin for ShopWindowPlugin {
+impl Plugin for ShopCounterPlugin {
     fn build(&self, app: &mut App) {
         slot_verdict_source(app, verdict);
         slot_action(
@@ -38,7 +38,7 @@ impl Plugin for ShopWindowPlugin {
         app.init_resource::<Browse>()
             .add_systems(
                 Update,
-                (show_window, sync_body)
+                (show_counter, sync_counter)
                     .chain()
                     .run_if(in_state(GameScene::Area)),
             )
@@ -46,11 +46,11 @@ impl Plugin for ShopWindowPlugin {
     }
 }
 
-pub fn view(world: &World) -> Option<&ShopWindow> {
+pub fn view(world: &World) -> Option<&ShopView> {
     world
         .resource::<Viewpoint>()
         .0
-        .and_then(|seen| world.get::<ShopWindow>(seen))
+        .and_then(|seen| world.get::<ShopView>(seen))
 }
 
 pub fn select(world: &mut World, tab: ShopTab, index: usize) {
@@ -74,7 +74,7 @@ struct Browse {
 }
 
 #[derive(Component, Default, Clone)]
-struct ShopPanel;
+struct CounterPanel;
 
 #[derive(Component, Default, Clone)]
 struct ShopTabs;
@@ -95,25 +95,24 @@ fn forget(mut browse: ResMut<Browse>) {
     *browse = Browse::default();
 }
 
-fn show_window(world: &mut World) {
-    let shop = view(world).map(|window| window.shop);
+fn show_counter(world: &mut World) {
+    let shop = view(world).map(|shown| shown.shop);
     let panel = world
-        .query_filtered::<Entity, With<ShopPanel>>()
+        .query_filtered::<Entity, With<CounterPanel>>()
         .iter(world)
         .next();
     match (shop, panel) {
         (Some(shop), None) => {
             *world.resource_mut::<Browse>() = Browse::default();
             let playing = *world.resource::<Mode>() == Mode::Play;
-            let scene = ui::window(ui::WindowOptions {
-                frame: ui::WindowFrame::Anchored {
-                    width: Val::Px(WINDOW_SIZE.x),
-                    height: Val::Px(WINDOW_SIZE.y),
-                },
-                content: hud::single_tab(shop.get().title, layout(playing)),
-            });
-            if let Some(panel) = stage::attach(world, scene) {
-                world.entity_mut(panel).insert(ShopPanel);
+            let panel = ui::DialoguePanelOptions {
+                title: shop.get().title.to_owned(),
+                width: Val::Px(COUNTER_SIZE.x),
+                height: Val::Px(COUNTER_SIZE.y),
+                content: counter(playing),
+            };
+            if let Some(panel) = stage::show_panel(world, panel) {
+                world.entity_mut(panel).insert(CounterPanel);
             }
             chime(world, SfxId::UiOpen);
         }
@@ -125,7 +124,7 @@ fn show_window(world: &mut World) {
     }
 }
 
-fn layout(playing: bool) -> Box<dyn Scene> {
+fn counter(playing: bool) -> Box<dyn Scene> {
     let header = bsn! {
         Node {
             width: Val::Percent(100.0),
@@ -172,8 +171,8 @@ fn layout(playing: bool) -> Box<dyn Scene> {
     }
 }
 
-fn sync_body(world: &mut World) {
-    let Some(window) = view(world).cloned() else {
+fn sync_counter(world: &mut World) {
+    let Some(shown) = view(world).cloned() else {
         return;
     };
     let Some(parts) = Parts::find(world) else {
@@ -188,7 +187,7 @@ fn sync_body(world: &mut World) {
     let playing = *world.resource::<Mode>() == Mode::Play;
     let browse = world.resource::<Browse>();
     let synced = key(&(
-        &window,
+        &shown,
         &inventory.slots,
         browse.tab,
         browse.selected,
@@ -198,7 +197,7 @@ fn sync_body(world: &mut World) {
         return;
     }
     let shelf = Shelf {
-        window,
+        shown,
         inventory,
         tab: browse.tab,
         selected: browse.selected,
@@ -212,7 +211,7 @@ fn sync_body(world: &mut World) {
         (ShopTab::Wares, "Wares".to_owned()),
         (
             ShopTab::Buyback,
-            format!("Buy back ({})", shelf.window.buyback.len()),
+            format!("Buy back ({})", shelf.shown.buyback.len()),
         ),
     ];
     let tab_keys: Vec<u64> = tabs
@@ -224,7 +223,7 @@ fn sync_body(world: &mut World) {
         Box::new(tab_button(tab, label, shelf.tab == tab))
     });
 
-    let wants = shelf.window.shop.get().wants();
+    let wants = shelf.shown.shop.get().wants();
     hud::reconcile_children(world, parts.wants, &[key(&wants)], |_, _| {
         Box::new(ui::styled_text(
             wants_note(&wants),
@@ -324,7 +323,7 @@ fn held(inventory: &Inventory, ware: &Ware) -> Vec<u32> {
 }
 
 struct Shelf {
-    window: ShopWindow,
+    shown: ShopView,
     inventory: Inventory,
     tab: ShopTab,
     selected: usize,
@@ -343,12 +342,12 @@ impl Shelf {
     fn wares(&self) -> Vec<Ware> {
         match self.tab {
             ShopTab::Wares => self
-                .window
+                .shown
                 .shop
                 .get()
                 .sells
                 .iter()
-                .zip(&self.window.offers)
+                .zip(&self.shown.offers)
                 .map(|(offer, view)| Ware {
                     item: offer.item,
                     count: offer.count,
@@ -358,7 +357,7 @@ impl Shelf {
                 })
                 .collect(),
             ShopTab::Buyback => self
-                .window
+                .shown
                 .buyback
                 .iter()
                 .map(|sale: &Sale| Ware {
@@ -655,9 +654,9 @@ fn counted(name: &str, count: u32) -> String {
 }
 
 fn verdict(world: &World, stack: ItemStack) -> Option<SlotVerdict> {
-    let window = view(world)?;
+    let shown = view(world)?;
     Some(
-        match window.shop.get().pays_for(stack.item, &window.declined) {
+        match shown.shop.get().pays_for(stack.item, &shown.declined) {
             Ok(pays) => SlotVerdict::Wanted(format!("sells for {}", paid(pays, stack.count))),
             Err(refusal) => SlotVerdict::Refused(refusal),
         },
@@ -679,7 +678,7 @@ fn request_sale(world: &mut World, slot: u32) {
     if *world.resource::<Mode>() != Mode::Play {
         return;
     }
-    let Some((shop, declined)) = view(world).map(|window| (window.shop, window.declined.clone()))
+    let Some((shop, declined)) = view(world).map(|shown| (shown.shop, shown.declined.clone()))
     else {
         return;
     };

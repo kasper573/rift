@@ -44,7 +44,7 @@ test(
       await page.waitForTimeout(1500);
       await pick(page, "A Letter for the Captain");
       await onStage(page, "LetterOffer");
-      await caption(page, "A window above the conversation lays out objectives and rewards. Accept or decline below", {
+      await caption(page, "A panel above the conversation lays out objectives and rewards. Accept or decline below", {
         at: "top",
       });
       await readToChoices(page, 1400);

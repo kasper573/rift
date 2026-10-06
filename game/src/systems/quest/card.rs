@@ -42,7 +42,7 @@ enum Moment {
 struct ShownCard(Option<(QuestId, Moment)>);
 
 #[derive(Component, Default, Clone)]
-struct QuestCard;
+struct CardPanel;
 
 #[derive(Component, Default, Clone)]
 struct QuestCardBody;
@@ -59,28 +59,24 @@ fn show_card(world: &mut World) {
     if world.resource::<ShownCard>().0 != moment {
         world.resource_mut::<ShownCard>().0 = moment;
         let shown: Vec<Entity> = world
-            .query_filtered::<Entity, With<QuestCard>>()
+            .query_filtered::<Entity, With<CardPanel>>()
             .iter(world)
             .collect();
         for card in shown {
             world.entity_mut(card).despawn();
         }
         if let Some((_, moment)) = moment {
-            let scene = ui::window(ui::WindowOptions {
-                frame: ui::WindowFrame::Anchored {
-                    width: Val::Px(WIDTH),
-                    height: Val::Auto,
-                },
-                content: vec![ui::WindowContent {
-                    title: moment.title().to_owned(),
-                    scene: Box::new(bsn! {
-                        QuestCardBody
-                        Node { width: Val::Percent(100.0), padding: {UiRect::all(Val::Px(spacing::XL))} }
-                    }),
-                }],
-            });
-            if let Some(card) = stage::attach(world, scene) {
-                world.entity_mut(card).insert(QuestCard);
+            let panel = ui::DialoguePanelOptions {
+                title: moment.title().to_owned(),
+                width: Val::Px(WIDTH),
+                height: Val::Auto,
+                content: Box::new(bsn! {
+                    QuestCardBody
+                    Node { width: Val::Percent(100.0), padding: {UiRect::all(Val::Px(spacing::XL))} }
+                }),
+            };
+            if let Some(card) = stage::show_panel(world, panel) {
+                world.entity_mut(card).insert(CardPanel);
             }
         }
     }

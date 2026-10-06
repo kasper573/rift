@@ -18,7 +18,7 @@ use crate::systems::movement::{Position, position};
 use crate::systems::player::{ClientId, CommandLock, Owner, Players};
 use crate::systems::quest::QuestLog;
 use crate::systems::rule::{self, Requirement};
-use crate::systems::shop::ShopWindow;
+use crate::systems::shop::ShopView;
 use crate::systems::spectate::Spectators;
 
 pub const VIEW_DISTANCE: Tiles = Tiles(24.0);
@@ -149,7 +149,7 @@ impl VisibilityFilter for OwnedBy {
         Announcements,
         CommandLock,
         Attention,
-        ShopWindow,
+        ShopView,
         QuestLog,
     );
 

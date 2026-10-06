@@ -306,14 +306,14 @@ fn snapshot(world: &mut World) -> Snapshot {
                 item: card.item,
                 rect: rect_of(node, transform),
             }),
-        shop: shop::window::view(world).map(|window| Shop {
-            shop: window.shop,
-            offers: window
+        shop: shop::counter::view(world).map(|shown| Shop {
+            shop: shown.shop,
+            offers: shown
                 .shop
                 .get()
                 .sells
                 .iter()
-                .zip(&window.offers)
+                .zip(&shown.offers)
                 .map(|(offer, view)| Offer {
                     item: offer.item,
                     count: offer.count,
@@ -321,7 +321,7 @@ fn snapshot(world: &mut World) -> Snapshot {
                     refusal: view.refusal.clone(),
                 })
                 .collect(),
-            buyback: window
+            buyback: shown
                 .buyback
                 .iter()
                 .map(|sale| Stack {

@@ -547,12 +547,10 @@ pub(crate) fn placed_window(
     let settings = world.resource::<Settings>();
     let (pos, size) = window_geom(settings, id, fallback_pos, fallback_size);
     ui::window(ui::WindowOptions {
-        frame: ui::WindowFrame::Floating {
-            pos,
-            size,
-            on_close,
-            on_settle: OnSettle::new(move |world, geom| persist_window(world, id, geom)),
-        },
+        pos,
+        size,
+        on_close,
+        on_settle: OnSettle::new(move |world, geom| persist_window(world, id, geom)),
         content,
     })
 }

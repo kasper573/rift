@@ -244,9 +244,6 @@ fn anchor_panels(
     let resized = last.0 != Vec2::ZERO && last.0 != size;
     last.0 = size;
     for (entity, mut node, anchor) in &mut roots {
-        if node.position_type != PositionType::Absolute {
-            continue;
-        }
         let Some(mut anchor) = anchor else {
             commands
                 .entity(entity)
