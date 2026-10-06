@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ui::component;
 use ui::{Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
-use crate::core::babble::BabbleEnabled;
 use crate::core::platform::{ClientPlatform, Platform};
+use crate::core::sfx::{AudioFader, AudioMix, AudioVolume};
 use crate::systems::input::map::{ActionInput, InputAction};
 use crate::systems::scene::mode::Mode;
 use crate::systems::{
@@ -235,12 +235,12 @@ impl Settings {
         self.0.text.reduced_motion = !self.0.text.reduced_motion;
     }
 
-    pub(crate) fn babble_enabled(&self) -> bool {
-        self.0.sound.babble_enabled
+    pub(crate) fn volume(&self, fader: AudioFader) -> AudioVolume {
+        self.0.sound.level(fader)
     }
 
-    pub(crate) fn toggle_babble(&mut self) {
-        self.0.sound.babble_enabled = !self.0.sound.babble_enabled;
+    pub(crate) fn set_volume(&mut self, fader: AudioFader, volume: AudioVolume) {
+        self.0.sound.set(fader, volume);
     }
 }
 
@@ -308,7 +308,7 @@ struct UserSettings {
     #[serde(default)]
     text: TextSettings,
     #[serde(default)]
-    sound: SoundSettings,
+    sound: AudioMix,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -317,24 +317,6 @@ struct TextSettings {
     letters_per_second: LettersPerSecond,
     #[serde(default)]
     reduced_motion: bool,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SoundSettings {
-    #[serde(default = "default_babble_enabled")]
-    babble_enabled: bool,
-}
-
-impl Default for SoundSettings {
-    fn default() -> SoundSettings {
-        SoundSettings {
-            babble_enabled: default_babble_enabled(),
-        }
-    }
-}
-
-fn default_babble_enabled() -> bool {
-    true
 }
 
 #[derive(Serialize, Deserialize)]
@@ -670,7 +652,7 @@ fn sync_preferences(
     mut grid: ResMut<SnapGrid>,
     mut speed: ResMut<ui::TypewriterSpeed>,
     mut motion: ResMut<ui::MotionPreference>,
-    mut babble: ResMut<BabbleEnabled>,
+    mut audio_mix: ResMut<AudioMix>,
 ) {
     if !settings.is_changed() {
         return;
@@ -678,7 +660,7 @@ fn sync_preferences(
     grid.0 = settings.0.snap_grid();
     *speed = ui::TypewriterSpeed(Some(settings.0.text.letters_per_second.0));
     motion.reduced = settings.0.text.reduced_motion;
-    babble.0 = settings.0.sound.babble_enabled;
+    *audio_mix = settings.0.sound;
 }
 
 fn launcher_pos(window: &'static str, mode: Mode, screen_w: f32) -> Vec2 {

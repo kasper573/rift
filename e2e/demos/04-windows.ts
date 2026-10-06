@@ -10,6 +10,7 @@ import {
   findUi,
   focusGame,
   holding,
+  hoverUi,
   outsideCard,
   probe,
   rightClickUi,
@@ -90,13 +91,20 @@ test(
       await dragUi(page, (element) => element.slider !== null, { x: 70, y: 0 });
       await waitFor(page, (snapshot) => findUi(snapshot, /^text speed/)?.text !== before, "the text speed never changed");
       await page.waitForTimeout(1200);
-      await caption(page, "Reduced motion and voices are settings too");
+      await caption(page, "Reduced motion is a setting too");
       await clickUi(page, /^reduced motion/);
-      await page.waitForTimeout(900);
-      await clickUi(page, /^voices/);
-      await page.waitForTimeout(900);
-      await clickUi(page, /^voices/);
       await page.waitForTimeout(1200);
+      await caption(page, "Sound has a volume each for everything, music, voices and effects");
+      await hoverUi(page, /^reduced motion/);
+      await page.mouse.wheel(0, 400);
+      await page.waitForTimeout(1200);
+      const voice = findUi(await probe(page), /^voice volume/)!;
+      await dragUi(page, (element) => element.slider !== null && element.y > voice.y && element.y < voice.y + 40, {
+        x: -80,
+        y: 0,
+      });
+      await waitFor(page, (snapshot) => findUi(snapshot, /^voice volume/)?.text !== voice.text, "the voice volume never changed");
+      await page.waitForTimeout(1500);
       await caption(page, "Where you put them is remembered for next time");
       await page.waitForTimeout(2500);
       await caption(page, "Esc closes the window you used last");

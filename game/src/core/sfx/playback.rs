@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use crate::core::math::{Pos, Rng, Size};
-use crate::core::sfx::{SfxId, SfxScalar};
+use crate::core::sfx::{AudioCategory, AudioMix, SfxId, SfxScalar};
 use crate::core::tiling::Tiles;
 use crate::core::time::{PlaybackRate, Seconds};
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_kira_audio::prelude::{Audio, AudioControl, AudioSource, Decibels};
 use strum::VariantArray;
@@ -17,6 +18,7 @@ impl Plugin for SfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(bevy_kira_audio::AudioPlugin)
             .init_resource::<Listener>()
+            .init_resource::<AudioMix>()
             .init_resource::<Catalog>()
             .init_resource::<Played>()
             .add_message::<PlaySfx>()
@@ -38,6 +40,7 @@ pub struct PlaySfx {
 #[derive(Message)]
 pub struct PlayClip {
     pub clip: Handle<AudioSource>,
+    pub category: AudioCategory,
     pub place: SfxPlace,
     pub tune: SfxTune,
 }
@@ -59,6 +62,7 @@ struct Catalog(Vec<Sound>);
 
 struct Sound {
     handle: Handle<AudioSource>,
+    category: AudioCategory,
     volume: SfxScalar,
     pitch: SfxScalar,
 }
@@ -71,6 +75,7 @@ struct Cue {
     proximity: f32,
     pan: f32,
     handle: Handle<AudioSource>,
+    category: AudioCategory,
     volume: SfxScalar,
     pitch: SfxScalar,
 }
@@ -82,6 +87,7 @@ fn load(assets: Res<AssetServer>, mut catalog: ResMut<Catalog>) {
             let def = id.get();
             Sound {
                 handle: assets.load(def.src.0),
+                category: def.category,
                 volume: def.volume,
                 pitch: def.pitch,
             }
@@ -93,7 +99,7 @@ fn mix(
     mut requests: MessageReader<PlaySfx>,
     listener: Res<Listener>,
     time: Res<Time>,
-    audio: Res<Audio>,
+    speakers: Speakers,
     catalog: Res<Catalog>,
     mut played: ResMut<Played>,
     mut rng: ResMut<Rng>,
@@ -111,6 +117,7 @@ fn mix(
             proximity,
             pan,
             handle: sound.handle.clone(),
+            category: sound.category,
             volume: sound.volume,
             pitch: sound.pitch,
         };
@@ -123,26 +130,43 @@ fn mix(
         if !ready(&mut played.0, id, clock) {
             continue;
         }
-        let volume = cue.volume.resolve(&mut rng) * cue.proximity;
-        let pitch = cue.pitch.resolve(&mut rng);
-        audio
-            .play(cue.handle)
-            .with_volume(Decibels(20.0 * volume.max(1e-4).log10()))
-            .with_playback_rate(f64::from(pitch))
-            .with_panning(cue.pan);
+        let tune = SfxTune {
+            pitch: PlaybackRate(cue.pitch.resolve(&mut rng)),
+            volume: cue.volume.resolve(&mut rng) * cue.proximity,
+        };
+        speakers.play(cue.handle, cue.category, tune, cue.pan);
     }
 }
 
-fn play_clips(mut clips: MessageReader<PlayClip>, listener: Res<Listener>, audio: Res<Audio>) {
+fn play_clips(mut clips: MessageReader<PlayClip>, listener: Res<Listener>, speakers: Speakers) {
     for clip in clips.read() {
         let Some((proximity, pan)) = heard_at(clip.place, listener.0) else {
             continue;
         };
-        let volume = clip.tune.volume * proximity;
-        audio
-            .play(clip.clip.clone())
+        let tune = SfxTune {
+            volume: clip.tune.volume * proximity,
+            ..clip.tune
+        };
+        speakers.play(clip.clip.clone(), clip.category, tune, pan);
+    }
+}
+
+#[derive(SystemParam)]
+struct Speakers<'w> {
+    audio: Res<'w, Audio>,
+    audio_mix: Res<'w, AudioMix>,
+}
+
+impl Speakers<'_> {
+    fn play(&self, clip: Handle<AudioSource>, category: AudioCategory, tune: SfxTune, pan: f32) {
+        let volume = tune.volume * self.audio_mix.gain(category);
+        if volume <= 0.0 {
+            return;
+        }
+        self.audio
+            .play(clip)
             .with_volume(Decibels(20.0 * volume.max(1e-4).log10()))
-            .with_playback_rate(f64::from(clip.tune.pitch.0))
+            .with_playback_rate(f64::from(tune.pitch.0))
             .with_panning(pan);
     }
 }

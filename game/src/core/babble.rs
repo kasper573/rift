@@ -6,6 +6,7 @@ use ui::{RichPiece, RichText, TextVoice, Typewriter, TypewriterReveal};
 
 use crate::core::assets::AssetRef;
 use crate::core::math::Rng;
+use crate::core::sfx::AudioCategory;
 use crate::core::sfx::playback::{PlayClip, SfxPlace, SfxTune};
 use crate::core::time::{Hertz, PlaybackRate, Seconds};
 
@@ -59,15 +60,6 @@ impl BabbleRank {
     pub const DIALOGUE_BOX: BabbleRank = BabbleRank(u32::MAX);
 }
 
-#[derive(Resource)]
-pub struct BabbleEnabled(pub bool);
-
-impl Default for BabbleEnabled {
-    fn default() -> BabbleEnabled {
-        BabbleEnabled(true)
-    }
-}
-
 pub fn register(app: &mut bevy_app::App) {
     use bevy_replicon::prelude::*;
     app.replicate::<Babbler>();
@@ -77,8 +69,7 @@ pub struct BabblePlugin;
 
 impl Plugin for BabblePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<BabbleEnabled>()
-            .init_resource::<BabbleClips>()
+        app.init_resource::<BabbleClips>()
             .add_systems(Startup, load_clips)
             .add_systems(Update, babble);
     }
@@ -114,16 +105,12 @@ fn load_clips(assets: Res<AssetServer>, mut clips: ResMut<BabbleClips>) {
 fn babble(
     mut revealed: MessageReader<TypewriterReveal>,
     typing: Query<(Entity, &Babbling, &Typewriter, &RichText)>,
-    babble_enabled: Res<BabbleEnabled>,
     clips: Res<BabbleClips>,
     time: Res<Time>,
     mut free_at: Local<Seconds>,
     mut sounds: MessageWriter<PlayClip>,
 ) {
     let reveals: Vec<TypewriterReveal> = revealed.read().copied().collect();
-    if !babble_enabled.0 {
-        return;
-    }
     let heard = typing
         .iter()
         .filter(|(entity, _, typewriter, _)| {
@@ -153,6 +140,7 @@ fn babble(
         };
         sounds.write(PlayClip {
             clip,
+            category: AudioCategory::Voice,
             place: babbling.place,
             tune: SfxTune {
                 pitch: babble.pitch_for(&syllable),
