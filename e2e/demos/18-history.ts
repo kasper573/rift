@@ -13,6 +13,7 @@ import {
   travelTo,
   waitFor,
   waitForWorld,
+  walkInto,
 } from "../helpers/game";
 import { loadReference } from "../helpers/image";
 import { conversationOver, onStage, pick, readToChoices, talkTo } from "../helpers/talk";
@@ -40,7 +41,7 @@ test(
       await waitFor(page, (snapshot) => onQuest(snapshot, "LetterForTheCaptain"), "the letter quest never started");
       await leaveTobb(page);
 
-      await travelTo(page, ({ markers }) => markers.find((marker) => marker.name === "ferry-pier")?.at);
+      await walkInto(page, "ferry-pier");
       await waitFor(page, ({ history }) => history.records.some(({ by }) => by === "Gulls"), "the gulls never squabbled");
 
       await caption(page, "History has its own slot in the toolbar, or press H");

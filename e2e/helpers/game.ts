@@ -53,6 +53,7 @@ export interface Exit {
   name: string;
   to: string;
   at: Tile;
+  rect: TileRect;
 }
 
 export interface UiElement {
@@ -280,6 +281,16 @@ export async function clickTile(page: Page, tile: Tile): Promise<void> {
 export async function walkTo(page: Page, tile: Tile): Promise<Tile> {
   await clickTile(page, tile);
   return waitUntilStill(page);
+}
+
+// Steps into a marked spot on ground no one stands on: a click on someone there would talk to them instead.
+export async function walkInto(page: Page, marker: string, reach = 1): Promise<void> {
+  await travelTo(page, (snapshot) => {
+    const at = snapshot.markers.find((candidate) => candidate.name === marker)?.at;
+    if (!at) return undefined;
+    const inside = (tile: Tile) => Math.max(Math.abs(tile[0] - at[0]), Math.abs(tile[1] - at[1])) <= reach;
+    return closestTile(snapshot.walkable.filter((tile) => inside(tile) && !occupied(snapshot, tile)), at) ?? at;
+  });
 }
 
 export async function waitUntilStill(page: Page, timeout = 30_000): Promise<Tile> {
