@@ -704,7 +704,7 @@ pub fn check(assets: &AssetService) {
                 )
         })
         .collect();
-    for &id in <QuestId as strum::VariantArray>::VARIANTS {
+    for &id in QuestId::VARIANTS {
         let quest = id.get();
         let parties = quest.giver.counterpart().into_iter().chain([quest.turn_in]);
         for party in parties {
@@ -1024,7 +1024,7 @@ fn topics(world: &World, asked: &Asked) -> Vec<Offer> {
         .and_then(|with| world.get::<Counterpart>(with))
     {
         offers.extend(
-            <QuestId as strum::VariantArray>::VARIANTS
+            QuestId::VARIANTS
                 .iter()
                 .filter_map(|&quest| greeting_topic(world, asked.player, counterpart, quest)),
         );
@@ -1033,7 +1033,7 @@ fn topics(world: &World, asked: &Asked) -> Vec<Offer> {
 }
 
 fn hand_ins(world: &World, asked: &Asked) -> Vec<Offer> {
-    let Some(&quest) = <QuestId as strum::VariantArray>::VARIANTS
+    let Some(&quest) = QuestId::VARIANTS
         .iter()
         .find(|quest| quest.get().thanks == asked.node)
     else {
@@ -1143,7 +1143,7 @@ fn marks(world: &World, player: Entity, target: Entity) -> Vec<AttentionId> {
         return Vec::new();
     };
     let today = world.resource::<WallClock>().day();
-    <QuestId as strum::VariantArray>::VARIANTS
+    QuestId::VARIANTS
         .iter()
         .filter_map(|&quest| {
             let def = quest.get();

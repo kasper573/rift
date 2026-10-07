@@ -13,13 +13,10 @@ use crate::core::time::{Millis, PlaybackRate, Seconds};
 use crate::systems::actor::{self, Action, Actor, set_action, set_facing};
 use crate::systems::area::AreaTag;
 use crate::systems::movement::{MoveTarget, Path, halt, on_tile, position};
-use crate::systems::player::{Owner, commands_locked, sender_player, session};
+use crate::systems::player::{self, Owner, commands_locked, sender_player, session};
 use crate::systems::reach::{self, Pursuit, ReachAct};
 use crate::systems::stat::{self, StatKind};
 use crate::systems::visibility;
-
-const HP_REGEN_INTERVAL: Seconds = Seconds(10.0);
-const HP_REGEN_AMOUNT: f32 = 5.0;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -76,14 +73,20 @@ pub struct Swing {
     pub struck: bool,
 }
 
+pub struct HealthRegen {
+    pub every: Seconds,
+    pub health: f32,
+}
+
 #[derive(Resource, Default)]
 pub struct RegenAt(Seconds);
 
 pub fn regen(world: &mut World) {
+    let regen = &player::def().regen;
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     {
         let mut last = world.resource_mut::<RegenAt>();
-        if now - last.0 < HP_REGEN_INTERVAL {
+        if now - last.0 < regen.every {
             return;
         }
         last.0 = now;
@@ -94,7 +97,7 @@ pub fn regen(world: &mut World) {
         .collect();
     for player in players {
         if !stat::is_dead(world, player) {
-            stat::heal(world, player, HP_REGEN_AMOUNT);
+            stat::heal(world, player, regen.health);
         }
     }
 }

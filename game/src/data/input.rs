@@ -5,6 +5,7 @@ use ui::KeyModifiers;
 use crate::systems::input::map::{InputBinding, InputDef};
 
 crate::table! {
+    #![expose]
     Interact: InputDef {
         label: "Walk, attack, talk or pick up",
         bindings: &[InputBinding::mouse(MouseButton::Left)],

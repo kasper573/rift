@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use bevy::ecs::system::SystemParam;
 use bevy::picking::events::{Click, Pointer};
 use bevy::prelude::*;
-use strum::VariantArray;
 use ui::{
     CatalogEntry, ClickGesture, DragGesture, InputCatalog, InputRef, KeyGesture, KeyModifiers,
     RichPiece,

@@ -99,36 +99,42 @@ crate::table! {
         volume: SfxScalar::Random(0.8, 1.0),
         pitch: SfxScalar::Fixed(1.0),
     },
+    #[expose]
     UiOpen: SfxDef {
         src: AssetRef("sfx/interface/open.wav"),
         category: Effects,
         volume: SfxScalar::Fixed(0.3),
         pitch: SfxScalar::Fixed(1.0),
     },
+    #[expose]
     UiClose: SfxDef {
         src: AssetRef("sfx/interface/close.wav"),
         category: Effects,
         volume: SfxScalar::Fixed(0.3),
         pitch: SfxScalar::Fixed(1.0),
     },
+    #[expose]
     UiMove: SfxDef {
         src: AssetRef("sfx/interface/move.wav"),
         category: Effects,
         volume: SfxScalar::Fixed(1.0),
         pitch: SfxScalar::Fixed(1.0),
     },
+    #[expose]
     UiPick: SfxDef {
         src: AssetRef("sfx/interface/pick.wav"),
         category: Effects,
         volume: SfxScalar::Fixed(1.0),
         pitch: SfxScalar::Fixed(1.0),
     },
+    #[expose]
     UiRefuse: SfxDef {
         src: AssetRef("sfx/interface/refuse.wav"),
         category: Effects,
         volume: SfxScalar::Fixed(1.0),
         pitch: SfxScalar::Fixed(1.0),
     },
+    #[expose]
     UiChime: SfxDef {
         src: AssetRef("sfx/interface/chime.wav"),
         category: Effects,
@@ -141,42 +147,49 @@ crate::table! {
         volume: SfxScalar::Fixed(0.8),
         pitch: SfxScalar::Fixed(1.0),
     },
+    #[expose]
     UiPage: SfxDef {
         src: AssetRef("sfx/interface/page.wav"),
         category: Effects,
         volume: SfxScalar::Fixed(1.0),
         pitch: SfxScalar::Fixed(1.0),
     },
+    #[expose]
     Coins: SfxDef {
         src: AssetRef("sfx/interface/coins.wav"),
         category: Effects,
         volume: SfxScalar::Fixed(1.0),
         pitch: SfxScalar::Fixed(1.0),
     },
+    #[expose]
     QuestAccepted: SfxDef {
         src: AssetRef("sfx/interface/quest_accepted.wav"),
         category: Effects,
         volume: SfxScalar::Fixed(1.0),
         pitch: SfxScalar::Fixed(1.0),
     },
+    #[expose]
     QuestCompleted: SfxDef {
         src: AssetRef("sfx/interface/quest_completed.wav"),
         category: Effects,
         volume: SfxScalar::Fixed(1.0),
         pitch: SfxScalar::Fixed(1.0),
     },
+    #[expose]
     QuestAbandoned: SfxDef {
         src: AssetRef("sfx/interface/quest_abandoned.wav"),
         category: Effects,
         volume: SfxScalar::Fixed(1.0),
         pitch: SfxScalar::Fixed(1.0),
     },
+    #[expose]
     RisingChime: SfxDef {
         src: AssetRef("sfx/interface/rising_chime.wav"),
         category: Effects,
         volume: SfxScalar::Fixed(0.7),
         pitch: SfxScalar::Fixed(1.0),
     },
+    #[expose]
     TallyTick: SfxDef {
         src: AssetRef("sfx/interface/tally_tick.wav"),
         category: Effects,

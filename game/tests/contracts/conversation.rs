@@ -5,8 +5,6 @@ use game::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
 use game::data;
 use game::data::attention::Id as AttentionId;
 use game::data::dialogue::Id as DialogueId;
-use game::data::item::Id as ItemId;
-use game::data::memory::Id as MemoryId;
 use game::systems::attention::Attention;
 use game::systems::dialogue::{self, BusyPolicy, Conversation, ConversationRequest, Start};
 use game::systems::input::map::InputMap;
@@ -18,7 +16,7 @@ use game::systems::npc::Npc;
 use game::systems::player::commands_locked;
 use game::systems::stat::{self, StatKind};
 
-use crate::support::{Sim, errors};
+use crate::support::{Sim, errors, row};
 
 fn townsperson(sim: &mut Sim, who: data::npc::Id) -> Entity {
     let world = sim.world();
@@ -56,7 +54,7 @@ fn give_gold(sim: &mut Sim, player: Entity, count: u32) {
     sim.world()
         .get_mut::<Inventory>(player)
         .expect("bag")
-        .exchange(&[], &[ItemStack::new(ItemId::Gold, count)])
+        .exchange(&[], &[ItemStack::new(row("Gold"), count)])
         .expect("room for gold");
 }
 
@@ -64,7 +62,7 @@ fn gold(sim: &mut Sim, player: Entity) -> u32 {
     sim.world()
         .get::<Inventory>(player)
         .expect("bag")
-        .count(ItemId::Gold)
+        .count(row("Gold"))
 }
 
 fn start(node: DialogueId, busy: BusyPolicy) -> Start {
@@ -85,11 +83,11 @@ fn place(sim: &mut Sim, player: Entity, at: Pos<Tiles>) {
 fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    let grisha = townsperson(&mut sim, data::npc::Id::Grisha);
+    let grisha = townsperson(&mut sim, row("Grisha"));
 
-    let opened = talk(&mut sim, 1, player, data::npc::Id::Grisha);
+    let opened = talk(&mut sim, 1, player, row("Grisha"));
 
-    assert_eq!(opened.node, DialogueId::GrishaHello);
+    assert_eq!(opened.node, row("GrishaHello"));
     let at = position(sim.world(), player).expect("position");
     let grisha_at = position(sim.world(), grisha).expect("position");
     assert!(at.distance(grisha_at) <= Tiles(2.0 + std::f32::consts::SQRT_2));
@@ -112,7 +110,7 @@ fn a_pick_answers_its_step_once() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
     give_gold(&mut sim, player, 30);
-    let opened = talk(&mut sim, 1, player, data::npc::Id::Grisha);
+    let opened = talk(&mut sim, 1, player, row("Grisha"));
     let round = ConversationRequest::Pick {
         step: opened.step,
         choice: choice(&opened, "Buy a round for the room."),
@@ -124,9 +122,9 @@ fn a_pick_answers_its_step_once() {
 
     assert_eq!(gold(&mut sim, player), 20);
     let now = conversation(&mut sim, player).expect("still talking");
-    assert_eq!(now.node, DialogueId::GrishaRound);
+    assert_eq!(now.node, row("GrishaRound"));
     assert_eq!(
-        memory::recall(sim.world(), player, MemoryId::InnFavour),
+        memory::recall(sim.world(), player, row("InnFavour")),
         Some(1)
     );
 
@@ -139,7 +137,7 @@ fn a_pick_answers_its_step_once() {
 fn a_choice_that_costs_too_much_changes_nothing() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    let opened = talk(&mut sim, 1, player, data::npc::Id::Grisha);
+    let opened = talk(&mut sim, 1, player, row("Grisha"));
     let index = choice(&opened, "Buy a round for the room.");
     assert!(!opened.choices[index as usize].locked);
 
@@ -153,20 +151,17 @@ fn a_choice_that_costs_too_much_changes_nothing() {
     sim.tick();
 
     let now = conversation(&mut sim, player).expect("still talking");
-    assert_eq!(now.node, DialogueId::GrishaHello);
+    assert_eq!(now.node, row("GrishaHello"));
     assert_eq!(now.refused.map(|refused| refused.choice), Some(index));
     assert_eq!(errors(&sim, 1), vec!["Needs 10 more Gold".to_owned()]);
-    assert_eq!(
-        memory::recall(sim.world(), player, MemoryId::InnFavour),
-        None
-    );
+    assert_eq!(memory::recall(sim.world(), player, row("InnFavour")), None);
 }
 
 #[test]
 fn walking_out_of_reach_ends_the_conversation() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    talk(&mut sim, 1, player, data::npc::Id::Grisha);
+    talk(&mut sim, 1, player, row("Grisha"));
     let at = position(sim.world(), player).expect("position");
     let away = sim.walkable_near(at, Tiles(6.0), Tiles(9.0));
 
@@ -181,7 +176,7 @@ fn walking_out_of_reach_ends_the_conversation() {
 fn damage_keeps_a_conversation_but_death_ends_it() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    talk(&mut sim, 1, player, data::npc::Id::Grisha);
+    talk(&mut sim, 1, player, row("Grisha"));
 
     stat::apply_damage(sim.world(), player, 1.0);
     sim.tick();
@@ -197,40 +192,37 @@ fn damage_keeps_a_conversation_but_death_ends_it() {
 fn a_busy_player_waits_skips_or_is_replaced_as_each_start_says() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    let opened = talk(&mut sim, 1, player, data::npc::Id::Grisha);
+    let opened = talk(&mut sim, 1, player, row("Grisha"));
 
     dialogue::start(
         sim.world(),
         player,
-        start(DialogueId::BramHello, BusyPolicy::Skip),
+        start(row("BramHello"), BusyPolicy::Skip),
     );
     dialogue::start(
         sim.world(),
         player,
-        start(DialogueId::TobbNews, BusyPolicy::Wait(Seconds(30.0))),
+        start(row("TobbNews"), BusyPolicy::Wait(Seconds(30.0))),
     );
     sim.tick();
     let waiting = conversation(&mut sim, player).expect("talking");
-    assert_eq!(waiting.node, DialogueId::GrishaHello);
-    assert_eq!(
-        waiting.waiting.map(|next| next.node),
-        Some(DialogueId::TobbNews)
-    );
+    assert_eq!(waiting.node, row("GrishaHello"));
+    assert_eq!(waiting.waiting.map(|next| next.node), Some(row("TobbNews")));
 
     sim.send(1, ConversationRequest::Leave { step: opened.step });
     sim.tick();
     let next = conversation(&mut sim, player).expect("the waiting start began");
-    assert_eq!(next.node, DialogueId::TobbNews);
+    assert_eq!(next.node, row("TobbNews"));
 
     dialogue::start(
         sim.world(),
         player,
-        start(DialogueId::IlsaHello, BusyPolicy::Replace),
+        start(row("IlsaHello"), BusyPolicy::Replace),
     );
     sim.tick();
     assert_eq!(
         conversation(&mut sim, player).map(|now| now.node),
-        Some(DialogueId::IlsaHello)
+        Some(row("IlsaHello"))
     );
 }
 
@@ -238,11 +230,11 @@ fn a_busy_player_waits_skips_or_is_replaced_as_each_start_says() {
 fn a_waiting_start_expires() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    let opened = talk(&mut sim, 1, player, data::npc::Id::Grisha);
+    let opened = talk(&mut sim, 1, player, row("Grisha"));
     dialogue::start(
         sim.world(),
         player,
-        start(DialogueId::TobbNews, BusyPolicy::Wait(Seconds(1.0))),
+        start(row("TobbNews"), BusyPolicy::Wait(Seconds(1.0))),
     );
 
     sim.run_until(2.0, |_| false);
@@ -256,20 +248,20 @@ fn a_waiting_start_expires() {
 fn tobb_calls_over_a_visitor_he_has_news_for() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    let opened = talk(&mut sim, 1, player, data::npc::Id::Tobb);
-    assert_eq!(opened.node, DialogueId::TobbHello);
+    let opened = talk(&mut sim, 1, player, row("Tobb"));
+    assert_eq!(opened.node, row("TobbHello"));
     assert_eq!(opened.waiting, None);
 
     assert!(sim.run_until(1.0, |world| {
         world
             .get::<Conversation>(player)
             .and_then(|now| now.waiting)
-            .is_some_and(|next| next.node == DialogueId::TobbNews)
+            .is_some_and(|next| next.node == row("TobbNews"))
     }));
     sim.send(1, ConversationRequest::Leave { step: opened.step });
     sim.tick();
     let news = conversation(&mut sim, player).expect("Tobb's news");
-    assert_eq!(news.node, DialogueId::TobbNews);
+    assert_eq!(news.node, row("TobbNews"));
 
     sim.send(1, ConversationRequest::Leave { step: news.step });
     sim.run_until(2.0, |_| false);
@@ -281,7 +273,7 @@ fn two_players_see_their_own_icons_over_the_same_npc() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let regular = sim.join(1);
     let stranger = sim.join(2);
-    let tobb = townsperson(&mut sim, data::npc::Id::Tobb);
+    let tobb = townsperson(&mut sim, row("Tobb"));
     for visit in 0..3 {
         let clock = WallClock {
             now: UnixMillis(visit * 3_600_000),
@@ -290,7 +282,7 @@ fn two_players_see_their_own_icons_over_the_same_npc() {
         sim.world()
             .get_mut::<Memory>(regular)
             .expect("memory")
-            .remember(MemoryId::TobbVisits, clock);
+            .remember(row("TobbVisits"), clock);
     }
     sim.world().insert_resource(WallClock {
         now: UnixMillis(3 * 3_600_000),

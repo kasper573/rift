@@ -5,7 +5,7 @@ use game::systems::movement::position;
 use game::systems::npc::{self, Pack};
 use game::systems::stat::{self, StatKind};
 
-use crate::support::Sim;
+use crate::support::{Sim, row};
 
 #[test]
 fn an_attack_walks_into_range_and_strikes() {
@@ -15,7 +15,7 @@ fn an_attack_walks_into_range_and_strikes() {
     let spot = sim.walkable_near(start, Tiles(3.0), Tiles(5.0));
     let orc = npc::spawn(
         sim.world(),
-        data::npc::Id::Orc,
+        row("Orc"),
         spot,
         data::area::SPAWN_ID,
         Pack(u32::MAX),

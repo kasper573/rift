@@ -8,18 +8,12 @@ use game::systems::movement::position;
 use game::systems::npc::{self, Pack};
 use game::systems::rewards::KillCredited;
 
-use crate::support::Sim;
+use crate::support::{Sim, row};
 
 fn orc(sim: &mut Sim, near: Entity) -> Entity {
     let world = sim.world();
     let at = position(world, near).expect("player position");
-    npc::spawn(
-        world,
-        data::npc::Id::Orc,
-        at,
-        data::area::SPAWN_ID,
-        Pack(u32::MAX),
-    )
+    npc::spawn(world, row("Orc"), at, data::area::SPAWN_ID, Pack(u32::MAX))
 }
 
 fn kill(sim: &mut Sim, victim: Entity, killer: Entity) {
@@ -52,7 +46,7 @@ fn a_reserved_kill_credits_the_reserving_player_once() {
     assert_eq!(
         credits,
         vec![KillCredited {
-            npc: data::npc::Id::Orc,
+            npc: row("Orc"),
             victim,
             credited: player,
         }]

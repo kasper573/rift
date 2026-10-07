@@ -1,13 +1,13 @@
 use crate::core::time::Seconds;
 use crate::data::attention::Id as AttentionId;
 use crate::data::dialogue::Id as DialogueId;
+use crate::data::expression::Id as ExpressionId;
 use crate::data::item::Id as ItemId;
 use crate::data::memory::Id as MemoryId;
 use crate::data::npc::Id as NpcId;
 use crate::data::prop::Id as PropId;
 use crate::systems::actor::bust::Face::{Generic, Individual};
 use crate::systems::actor::bust::GenericExpression::{Angry, Happy, Thinking};
-use crate::systems::actor::bust::IndividualExpression::{Counting, Smug};
 use crate::systems::dialogue::Line;
 use crate::systems::dialogue::Speaker::Npc;
 use crate::systems::interact::Counterpart;
@@ -56,11 +56,11 @@ crate::table! {
         reactions: Some(ShopReactions {
             bought: &[
                 Line { by: Npc(NpcId::Mara), face: Some(Generic(Happy)), text: &[plain("A fine choice. You won't find better this side of the strait.")] },
-                Line { by: Npc(NpcId::Mara), face: Some(Individual(Counting)), text: &[plain("Pleasure doing business.")] },
+                Line { by: Npc(NpcId::Mara), face: Some(Individual(ExpressionId::MaraCounting)), text: &[plain("Pleasure doing business.")] },
             ],
             sold: &[
                 Line { by: Npc(NpcId::Mara), face: Some(Generic(Thinking)), text: &[plain("Hm. I'll find a buyer for that.")] },
-                Line { by: Npc(NpcId::Mara), face: Some(Individual(Smug)), text: &[plain("It'll do. Don't tell anyone what I paid.")] },
+                Line { by: Npc(NpcId::Mara), face: Some(Individual(ExpressionId::MaraSmug)), text: &[plain("It'll do. Don't tell anyone what I paid.")] },
             ],
             cant_afford: &[
                 Line { by: Npc(NpcId::Mara), face: Some(Generic(Angry)), text: &[plain("Come back when your purse is heavier.")] },

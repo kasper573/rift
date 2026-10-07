@@ -1,6 +1,7 @@
 use crate::core::math::Percent;
 use crate::core::time::Millis;
 use crate::data::area::Id as AreaId;
+use crate::data::expression::Id as ExpressionId;
 use crate::data::item::Id as ItemId;
 use crate::data::memory::Id as MemoryId;
 use crate::data::notification::Id as NotificationId;
@@ -10,7 +11,6 @@ use crate::systems::actor::bust::Face::{Generic, Individual};
 use crate::systems::actor::bust::GenericExpression::{
     Angry, Happy, Neutral, Sad, Surprised, Thinking,
 };
-use crate::systems::actor::bust::IndividualExpression::{Counting, Laughing, Sleepy, Smirk, Smug};
 use crate::systems::area::{MarkerName, Travel};
 use crate::systems::dialogue::ChoiceReveal::{Costs, Locked, Needs};
 use crate::systems::dialogue::Speaker::{Narrator, Npc, Player, Prop};
@@ -64,7 +64,7 @@ crate::table! {
     TobbCatch: DialogueNode {
         lines: &[
             Line { by: Npc(NpcId::Tobb), face: Some(Generic(Thinking)), text: &[plain("A boot, two crabs and a very rude gull.")] },
-            Line { by: Npc(NpcId::Tobb), face: Some(Individual(Laughing)), text: &[plain("Best day all week!")] },
+            Line { by: Npc(NpcId::Tobb), face: Some(Individual(ExpressionId::TobbLaughing)), text: &[plain("Best day all week!")] },
         ],
         enter: &[],
         topics: false,
@@ -236,7 +236,7 @@ crate::table! {
     MaraHello: DialogueNode {
         lines: &[
             Line { by: Npc(NpcId::Mara), face: Some(Generic(Happy)), text: &[plain("Welcome, traveller! Fresh crates off the boat this morning.")] },
-            Line { by: Npc(NpcId::Mara), face: Some(Individual(Smug)), text: &[plain("And if you've got a strong arm, I might have a job that pays.")] },
+            Line { by: Npc(NpcId::Mara), face: Some(Individual(ExpressionId::MaraSmug)), text: &[plain("And if you've got a strong arm, I might have a job that pays.")] },
         ],
         enter: &[],
         topics: true,
@@ -248,7 +248,7 @@ crate::table! {
     MaraDocks: DialogueNode {
         lines: &[
             Line { by: Npc(NpcId::Mara), face: Some(Generic(Angry)), text: &[styled("Orcs", &[Fx::Ink(Ink::Danger)]), plain(". They come down from the "), styled("north shore", &[Fx::Ink(Ink::Place)]), plain(" at night and take whatever isn't nailed down.")] },
-            Line { by: Npc(NpcId::Mara), face: Some(Individual(Counting)), text: &[plain("Do you know what a crate of silk costs? I do. "), styled("To the copper.", &[Fx::Slow])] },
+            Line { by: Npc(NpcId::Mara), face: Some(Individual(ExpressionId::MaraCounting)), text: &[plain("Do you know what a crate of silk costs? I do. "), styled("To the copper.", &[Fx::Slow])] },
         ],
         enter: &[],
         topics: false,
@@ -268,13 +268,13 @@ crate::table! {
         ],
     },
     MaraShopping: DialogueNode {
-        lines: &[Line { by: Npc(NpcId::Mara), face: Some(Individual(Counting)), text: &[plain("Take your time. Everything's priced fair. "), styled("Mostly.", &[Fx::Voice(Voice::Whisper)])] }],
+        lines: &[Line { by: Npc(NpcId::Mara), face: Some(Individual(ExpressionId::MaraCounting)), text: &[plain("Take your time. Everything's priced fair. "), styled("Mostly.", &[Fx::Voice(Voice::Whisper)])] }],
         enter: &[],
         topics: false,
         choices: &[Choice { label: &[plain("That's all, thanks.")], ..Choice::SAY }],
     },
     WrenShopping: DialogueNode {
-        lines: &[Line { by: Npc(NpcId::Wren), face: Some(Individual(Sleepy)), text: &[plain("On the counter. I'll count.")] }],
+        lines: &[Line { by: Npc(NpcId::Wren), face: Some(Individual(ExpressionId::WrenSleepy)), text: &[plain("On the counter. I'll count.")] }],
         enter: &[],
         topics: false,
         choices: &[Choice { label: &[plain("That's all.")], ..Choice::SAY }],
@@ -293,7 +293,7 @@ crate::table! {
     },
     WrenHello: DialogueNode {
         lines: &[
-            Line { by: Npc(NpcId::Wren), face: Some(Individual(Sleepy)), text: &[plain("Bones. Wings. Nothing else.")] },
+            Line { by: Npc(NpcId::Wren), face: Some(Individual(ExpressionId::WrenSleepy)), text: &[plain("Bones. Wings. Nothing else.")] },
             Line { by: Npc(NpcId::Wren), face: Some(Generic(Thinking)), text: &[plain("If you find any, you know where I am.")] },
         ],
         enter: &[],
@@ -305,7 +305,7 @@ crate::table! {
     },
     TitheTomorrow: DialogueNode {
         lines: &[
-            Line { by: Npc(NpcId::Wren), face: Some(Individual(Sleepy)), text: &[plain("The dead are down for today. Come back in "), fill(&QuestResetsIn(QuestId::BoneTithe)), plain(".")] },
+            Line { by: Npc(NpcId::Wren), face: Some(Individual(ExpressionId::WrenSleepy)), text: &[plain("The dead are down for today. Come back in "), fill(&QuestResetsIn(QuestId::BoneTithe)), plain(".")] },
             Line { by: Npc(NpcId::Wren), face: Some(Generic(Thinking)), text: &[plain("Ten "), styled("Bones", &[Fx::Ink(Ink::Item)]), plain(". Not nine.")] },
         ],
         enter: &[],
@@ -313,7 +313,7 @@ crate::table! {
         choices: &[Choice { label: &[plain("I'll be back.")], ..Choice::SAY }],
     },
     PellHello: DialogueNode {
-        lines: &[Line { by: Npc(NpcId::Pell), face: Some(Individual(Smirk)), text: &[plain("Care for a "), styled("little game", &[Fx::Motion(Motion::Wave)]), plain("? Ten "), styled("Gold", &[Fx::Ink(Ink::Item)]), styled(".", &[Fx::PauseAfter(Millis(600.0))]), styled(" I never cheat.", &[Fx::Voice(Voice::Whisper)])] }],
+        lines: &[Line { by: Npc(NpcId::Pell), face: Some(Individual(ExpressionId::PellSmirk)), text: &[plain("Care for a "), styled("little game", &[Fx::Motion(Motion::Wave)]), plain("? Ten "), styled("Gold", &[Fx::Ink(Ink::Item)]), styled(".", &[Fx::PauseAfter(Millis(600.0))]), styled(" I never cheat.", &[Fx::Voice(Voice::Whisper)])] }],
         enter: &[],
         topics: true,
         choices: &[
@@ -477,7 +477,7 @@ crate::table! {
     TusksOffer: DialogueNode {
         lines: &[
             Line { by: Npc(NpcId::Mara), face: Some(Generic(Angry)), text: &[plain("Those "), styled("orcs", &[Fx::Ink(Ink::Danger)]), plain(" have cost me three crates this week. I want it to cost them something.")] },
-            Line { by: Npc(NpcId::Mara), face: Some(Individual(Counting)), text: &[plain("Bring me five "), styled("Orc Tusks", &[Fx::Ink(Ink::Item)]), plain(". Put their "), styled("chief", &[Fx::Ink(Ink::Danger)]), plain(" in the sand and I'll make it worth your while.")] },
+            Line { by: Npc(NpcId::Mara), face: Some(Individual(ExpressionId::MaraCounting)), text: &[plain("Bring me five "), styled("Orc Tusks", &[Fx::Ink(Ink::Item)]), plain(". Put their "), styled("chief", &[Fx::Ink(Ink::Danger)]), plain(" in the sand and I'll make it worth your while.")] },
         ],
         enter: &[],
         topics: false,
@@ -487,7 +487,7 @@ crate::table! {
         ],
     },
     TusksNotYet: DialogueNode {
-        lines: &[Line { by: Npc(NpcId::Mara), face: Some(Individual(Smug)), text: &[plain("Five tusks and a dead chief. I don't pay for half a job.")] }],
+        lines: &[Line { by: Npc(NpcId::Mara), face: Some(Individual(ExpressionId::MaraSmug)), text: &[plain("Five tusks and a dead chief. I don't pay for half a job.")] }],
         enter: &[],
         topics: false,
         choices: &[Choice { label: &[plain("I'm on it.")], ..Choice::SAY }],
@@ -616,7 +616,7 @@ crate::table! {
     LetterOffer: DialogueNode {
         lines: &[
             Line { by: Npc(NpcId::Tobb), face: Some(Generic(Thinking)), text: &[plain("Do me a kindness? This letter needs to reach "), styled("Captain Bram", &[Fx::Ink(Ink::Name)]), plain(" on the "), styled("Gull", &[Fx::Ink(Ink::Name)]), plain(".")] },
-            Line { by: Npc(NpcId::Tobb), face: Some(Individual(Laughing)), text: &[plain("My knees and that gangplank are not on speaking terms.")] },
+            Line { by: Npc(NpcId::Tobb), face: Some(Individual(ExpressionId::TobbLaughing)), text: &[plain("My knees and that gangplank are not on speaking terms.")] },
         ],
         enter: &[],
         topics: false,
@@ -680,14 +680,14 @@ crate::table! {
         choices: &[Choice { label: &[plain("Working on it.")], ..Choice::SAY }],
     },
     LowTideThanks: DialogueNode {
-        lines: &[Line { by: Npc(NpcId::Tobb), face: Some(Individual(Laughing)), text: &[plain("Just in time! Take some bait. You'll have the gulls following you for a week.")] }],
+        lines: &[Line { by: Npc(NpcId::Tobb), face: Some(Individual(ExpressionId::TobbLaughing)), text: &[plain("Just in time! Take some bait. You'll have the gulls following you for a week.")] }],
         enter: &[],
         topics: false,
         choices: &[Choice { label: &[plain("Not yet.")], ..Choice::SAY }],
     },
     TitheOffer: DialogueNode {
         lines: &[
-            Line { by: Npc(NpcId::Wren), face: Some(Individual(Sleepy)), text: &[plain("Ten "), styled("Bones", &[Fx::Ink(Ink::Item)]), plain(" a day keeps the dead from wandering.")] },
+            Line { by: Npc(NpcId::Wren), face: Some(Individual(ExpressionId::WrenSleepy)), text: &[plain("Ten "), styled("Bones", &[Fx::Ink(Ink::Item)]), plain(" a day keeps the dead from wandering.")] },
             Line { by: Npc(NpcId::Wren), face: Some(Generic(Neutral)), text: &[plain("Bring them, and I pay in "), styled("tokens", &[Fx::Ink(Ink::Item)]), plain(". Every day.")] },
         ],
         enter: &[],

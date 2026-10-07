@@ -871,7 +871,7 @@ fn bust_image(assets: &AssetServer, art: AssetRef) -> Handle<Image> {
 fn busts_of(who: Speaker) -> Option<&'static Busts> {
     match who {
         Speaker::Npc(npc) => npc.get().model.get().busts.as_ref(),
-        Speaker::Player => player::MODEL.get().busts.as_ref(),
+        Speaker::Player => player::def().model.get().busts.as_ref(),
         Speaker::Prop(_) | Speaker::Narrator => None,
     }
 }
@@ -900,8 +900,8 @@ fn cast_key(who: Speaker) -> u64 {
     match who {
         Speaker::Player => 0,
         Speaker::Narrator => 1,
-        Speaker::Npc(npc) => 2 + npc as u64,
-        Speaker::Prop(prop) => 10_000 + prop as u64,
+        Speaker::Npc(npc) => 2 + npc.index() as u64,
+        Speaker::Prop(prop) => 10_000 + prop.index() as u64,
     }
 }
 

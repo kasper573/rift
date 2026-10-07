@@ -276,7 +276,7 @@ pub fn conversation_starts() -> Vec<DialogueId> {
 }
 
 pub fn check() {
-    let shops = <ShopId as strum::VariantArray>::VARIANTS;
+    let shops = ShopId::VARIANTS;
     for &id in shops {
         let shop = id.get();
         if shops
@@ -342,7 +342,7 @@ fn wares(world: &World, asked: &Asked) -> Vec<Offer> {
     else {
         return Vec::new();
     };
-    let Some(&id) = <ShopId as strum::VariantArray>::VARIANTS
+    let Some(&id) = ShopId::VARIANTS
         .iter()
         .find(|shop| shop.get().keeper == keeper)
     else {
@@ -372,7 +372,7 @@ fn marks(world: &World, player: Entity, target: Entity) -> Vec<AttentionId> {
     let Some(&keeper) = world.get::<Counterpart>(target) else {
         return Vec::new();
     };
-    <ShopId as strum::VariantArray>::VARIANTS
+    ShopId::VARIANTS
         .iter()
         .map(|shop| shop.get())
         .filter(|shop| shop.keeper == keeper && rule::met(world, player, shop.requires))

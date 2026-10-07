@@ -44,7 +44,6 @@ use bevy_ecs::message::{Message, Messages};
 use bevy_ecs::prelude::{Bundle, Res, ResMut, Resource, World};
 use bevy_replicon::prelude::{FromClient, Replicated};
 use bevy_terminal::Terminal;
-use strum::VariantArray;
 
 use actor::{Actor, Hitbox};
 use area::AreaTag;

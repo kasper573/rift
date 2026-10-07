@@ -219,7 +219,7 @@ impl Area {
 }
 
 pub fn check(assets: &AssetService) {
-    for &id in <Id as strum::VariantArray>::VARIANTS {
+    for &id in Id::VARIANTS {
         let def = id.get();
         let area = assets.resolve(def.map, build_area);
         if !def.populations.is_empty() && area.wild_grid.nodes().is_empty() {

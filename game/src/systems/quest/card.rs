@@ -120,20 +120,18 @@ impl Moment {
 }
 
 fn moment_of(node: crate::data::dialogue::Id) -> Option<(QuestId, Moment)> {
-    <QuestId as strum::VariantArray>::VARIANTS
-        .iter()
-        .find_map(|&quest| {
-            let def = quest.get();
-            if node == def.offer {
-                Some((quest, Moment::Offer))
-            } else if node == def.thanks && def.decision().is_some() {
-                Some((quest, Moment::Decision))
-            } else if node == def.thanks {
-                Some((quest, Moment::TurnIn))
-            } else {
-                None
-            }
-        })
+    QuestId::VARIANTS.iter().find_map(|&quest| {
+        let def = quest.get();
+        if node == def.offer {
+            Some((quest, Moment::Offer))
+        } else if node == def.thanks && def.decision().is_some() {
+            Some((quest, Moment::Decision))
+        } else if node == def.thanks {
+            Some((quest, Moment::TurnIn))
+        } else {
+            None
+        }
+    })
 }
 
 fn offer(assets: &AssetServer, quest: QuestId, inventory: &Inventory) -> Vec<Box<dyn Scene>> {

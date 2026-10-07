@@ -4,9 +4,6 @@ use game::core::math::Offset;
 use game::core::sfx::SfxId;
 use game::core::time::Seconds;
 use game::data;
-use game::data::memory::Id as MemoryId;
-use game::data::notification::Id as NotificationId;
-use game::data::npc::Id as NpcId;
 use game::data::quest::Id as QuestId;
 use game::data::terminal::Id as TerminalId;
 use game::systems::account::identity::Identity;
@@ -24,7 +21,7 @@ use game::systems::quest::{self, AcceptQuest};
 use game::systems::rule::{Encounter, Terms};
 use game::systems::text::LineText;
 
-use crate::support::{Sim, later, settle, spoken};
+use crate::support::{Sim, later, row, settle, spoken};
 
 fn told(sim: &Sim, client: u32) -> Vec<Notification> {
     sim.notified(client)
@@ -96,7 +93,7 @@ fn stepping_onto_the_pier_narrates_the_gulls_once() {
         .entity_mut(player)
         .insert(Position { pos: pier });
     settle(&mut sim);
-    assert_eq!(told(&sim, 1), vec![spoken(NotificationId::Gulls)]);
+    assert_eq!(told(&sim, 1), vec![spoken(row("Gulls"))]);
     assert!(!commands_locked(sim.world(), player));
 
     later(&mut sim, 30.0);
@@ -110,14 +107,14 @@ fn stepping_onto_the_pier_narrates_the_gulls_once() {
         .insert(Position { pos: pier });
     settle(&mut sim);
     assert_eq!(told(&sim, 1), Vec::new());
-    assert!(memory::recall(sim.world(), player, MemoryId::HeardGulls).is_some());
+    assert!(memory::recall(sim.world(), player, row("HeardGulls")).is_some());
 }
 
 #[test]
 fn every_notification_is_recorded_when_it_is_raised() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    notification::notify(sim.world(), player, spoken(NotificationId::Gulls));
+    notification::notify(sim.world(), player, spoken(row("Gulls")));
     notification::record(
         sim.world(),
         player,
@@ -132,12 +129,12 @@ fn every_notification_is_recorded_when_it_is_raised() {
         1
     )));
     assert!(records.contains(&(HistoryTopic::Error, None, "Needs 10 Gold".to_owned(), 1)));
-    assert_eq!(told(&sim, 1), vec![spoken(NotificationId::Gulls)]);
+    assert_eq!(told(&sim, 1), vec![spoken(row("Gulls"))]);
 }
 
 #[test]
 fn the_orc_chief_speaks_to_players_on_maras_errand_from_its_own_body() {
-    static ACCEPT: AcceptQuest = AcceptQuest(QuestId::TusksForTheChief);
+    let accept = AcceptQuest(row("TusksForTheChief"));
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
     let bystander = sim.join(2);
@@ -146,7 +143,7 @@ fn the_orc_chief_speaks_to_players_on_maras_errand_from_its_own_body() {
     Terms {
         requires: &[],
         costs: &[],
-        outcomes: &[&ACCEPT],
+        outcomes: &[&accept],
     }
     .settle(sim.world(), player, Encounter::default())
     .expect("accepted");
@@ -158,7 +155,7 @@ fn the_orc_chief_speaks_to_players_on_maras_errand_from_its_own_body() {
 
     let chief = npc::spawn(
         sim.world(),
-        NpcId::OrcChief,
+        row("OrcChief"),
         at + Offset::new(2.0, 0.0),
         data::area::SPAWN_ID,
         Pack(u32::MAX),
@@ -174,10 +171,7 @@ fn the_orc_chief_speaks_to_players_on_maras_errand_from_its_own_body() {
         said.iter()
             .map(|sent| sent.notification.clone())
             .collect::<Vec<_>>(),
-        vec![
-            spoken(NotificationId::ChiefChallenge),
-            spoken(NotificationId::ChiefThreat)
-        ]
+        vec![spoken(row("ChiefChallenge")), spoken(row("ChiefThreat"))]
     );
     assert!(said.iter().all(|sent| sent.speaker == Some(chief)));
     assert!(sim.world().get::<Conversation>(player).is_none());
@@ -197,7 +191,7 @@ fn speech_names_no_body_when_the_speaker_is_someone_else() {
         .world()
         .query::<(Entity, &Npc)>()
         .iter(sim.world())
-        .find(|(_, npc)| npc.def == NpcId::Tobb)
+        .find(|(_, npc)| npc.def == row("Tobb"))
         .map(|(entity, _)| entity)
         .expect("Tobb on the pier");
 
@@ -205,7 +199,7 @@ fn speech_names_no_body_when_the_speaker_is_someone_else() {
         sim.world(),
         player,
         Some(tobb),
-        spoken(NotificationId::ChiefChallenge),
+        spoken(row("ChiefChallenge")),
     );
 
     assert_eq!(
@@ -224,25 +218,25 @@ fn an_area_intro_plays_on_the_first_arrival_only_and_never_for_the_start_zone() 
     settle(&mut island);
     assert_eq!(intros(&island, 1), 0);
 
-    let (mut forest, player) = travel(&mut island, player, data::area::Id::Forest);
+    let (mut forest, player) = travel(&mut island, player, row("Forest"));
     assert_eq!(
         told(&forest, 1)
             .into_iter()
             .filter(|notification| matches!(notification.kind, NotificationKind::Intro { .. }))
             .collect::<Vec<_>>(),
-        vec![spoken(NotificationId::ForestIntro)]
+        vec![spoken(row("ForestIntro"))]
     );
 
     let (mut island, player) = travel(&mut forest, player, data::area::SPAWN_ID);
     assert_eq!(intros(&island, 1), 0);
 
-    let (forest, _) = travel(&mut island, player, data::area::Id::Forest);
+    let (forest, _) = travel(&mut island, player, row("Forest"));
     assert_eq!(intros(&forest, 1), 0);
 }
 
 #[test]
 fn completing_a_quest_and_reaching_a_level_are_milestones() {
-    static ACCEPT: AcceptQuest = AcceptQuest(QuestId::TusksForTheChief);
+    let accept = AcceptQuest(row("TusksForTheChief"));
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
     sim.world().get_mut::<Xp>(player).expect("xp").gain(100_000);
@@ -250,12 +244,12 @@ fn completing_a_quest_and_reaching_a_level_are_milestones() {
     Terms {
         requires: &[],
         costs: &[],
-        outcomes: &[&ACCEPT],
+        outcomes: &[&accept],
     }
     .settle(sim.world(), player, Encounter::default())
     .expect("accepted");
 
-    quest::complete(sim.world(), player, QuestId::TusksForTheChief);
+    quest::complete(sim.world(), player, row("TusksForTheChief"));
     settle(&mut sim);
 
     let milestones: Vec<(String, String, HistoryTopic)> = told(&sim, 1)
@@ -276,7 +270,7 @@ fn completing_a_quest_and_reaching_a_level_are_milestones() {
     );
     assert!(milestones.contains(&(
         "Quest complete".to_owned(),
-        QuestId::TusksForTheChief.get().title.to_owned(),
+        row::<QuestId>("TusksForTheChief").get().title.to_owned(),
         HistoryTopic::Quest
     )));
 }
@@ -286,9 +280,9 @@ fn the_same_line_from_the_same_speaker_goes_out_once_per_window_and_merges_in_hi
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
     for _ in 0..25 {
-        notification::notify(sim.world(), player, spoken(NotificationId::Gulls));
+        notification::notify(sim.world(), player, spoken(row("Gulls")));
     }
-    assert_eq!(told(&sim, 1), vec![spoken(NotificationId::Gulls)]);
+    assert_eq!(told(&sim, 1), vec![spoken(row("Gulls"))]);
     let gulls = |records: Vec<(HistoryTopic, Option<String>, String, u32)>| {
         records
             .into_iter()
@@ -299,10 +293,10 @@ fn the_same_line_from_the_same_speaker_goes_out_once_per_window_and_merges_in_hi
     assert_eq!(gulls(recorded(&mut sim, player)), vec![25]);
 
     later(&mut sim, 11.0);
-    notification::notify(sim.world(), player, spoken(NotificationId::Gulls));
+    notification::notify(sim.world(), player, spoken(row("Gulls")));
     assert_eq!(
         told(&sim, 1),
-        vec![spoken(NotificationId::Gulls), spoken(NotificationId::Gulls)]
+        vec![spoken(row("Gulls")), spoken(row("Gulls"))]
     );
 }
 
@@ -371,7 +365,7 @@ fn make_admin(sim: &mut Sim, client: u32) {
 #[test]
 fn an_admin_alert_reaches_every_player_in_every_area_for_a_minute() {
     let mut island = Sim::area(data::area::SPAWN_ID);
-    let mut forest = Sim::area(data::area::Id::Forest);
+    let mut forest = Sim::area(row("Forest"));
     island.join(1);
     forest.join(2);
     make_admin(&mut island, 1);

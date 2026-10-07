@@ -27,7 +27,6 @@ use game::systems::{REPLICATION_INTERVAL, TICK_HZ};
 use metrics::{counter, gauge, histogram};
 use rand::RngCore;
 use renet2::{ConnectionConfig, DisconnectReason, RenetServer, ServerEvent};
-use strum::VariantArray;
 use transport::WsTransport;
 
 service::heap_profiling!();

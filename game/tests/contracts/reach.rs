@@ -8,7 +8,7 @@ use game::systems::movement::{MoveRequest, Position, position};
 use game::systems::npc::{self, Pack};
 use game::systems::reach::{self, ReachAct, Tether};
 
-use crate::support::Sim;
+use crate::support::{Sim, row};
 
 fn drop_bone(sim: &mut Sim, at: game::core::math::Pos<Tiles>) -> Entity {
     sim.world()
@@ -18,7 +18,7 @@ fn drop_bone(sim: &mut Sim, at: game::core::math::Pos<Tiles>) -> Entity {
                 area: data::area::SPAWN_ID,
             },
             DroppedItem {
-                item: data::item::Id::Bone,
+                item: row("Bone"),
                 count: 2,
             },
             Reservation {
@@ -32,7 +32,7 @@ fn drop_bone(sim: &mut Sim, at: game::core::math::Pos<Tiles>) -> Entity {
 fn bones(world: &World, player: Entity) -> u32 {
     world
         .get::<Inventory>(player)
-        .map_or(0, |inventory| inventory.count(data::item::Id::Bone))
+        .map_or(0, |inventory| inventory.count(row("Bone")))
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn an_actor_holds_one_intent_at_a_time() {
     let at = position(sim.world(), player).expect("position");
     let orc = npc::spawn(
         sim.world(),
-        data::npc::Id::Orc,
+        row("Orc"),
         at,
         data::area::SPAWN_ID,
         Pack(u32::MAX),
@@ -95,7 +95,7 @@ fn a_tether_holds_while_its_owner_stays_in_reach_of_a_living_npc() {
     let far = sim.walkable_near(anchor, Tiles(5.0), Tiles(8.0));
     let orc = npc::spawn(
         sim.world(),
-        data::npc::Id::Orc,
+        row("Orc"),
         far,
         data::area::SPAWN_ID,
         Pack(u32::MAX),

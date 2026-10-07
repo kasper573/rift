@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use bevy_kira_audio::prelude::AudioSource;
 use serde::{Deserialize, Serialize};
-use strum::VariantArray;
 use ui::{RichPiece, RichText, TextVoice, Typewriter, TypewriterReveal};
 
 use crate::core::assets::AssetRef;

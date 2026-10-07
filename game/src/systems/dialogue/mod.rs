@@ -844,7 +844,7 @@ pub fn check(assets: &AssetService, starts: impl IntoIterator<Item = DialogueId>
             }
         }
     }
-    for &node in <DialogueId as strum::VariantArray>::VARIANTS {
+    for &node in DialogueId::VARIANTS {
         if !seen.contains(&node) {
             panic!("dialogue {node:?}: nothing leads to it");
         }
@@ -923,7 +923,7 @@ pub fn check_line(owner: impl std::fmt::Display, line: &Line) {
     };
     let busts = match line.by {
         Speaker::Npc(npc) => npc.get().model.get().busts.as_ref(),
-        Speaker::Player => player::MODEL.get().busts.as_ref(),
+        Speaker::Player => player::def().model.get().busts.as_ref(),
         Speaker::Prop(_) | Speaker::Narrator => None,
     };
     if busts.and_then(|busts| busts.face(face)).is_none() {

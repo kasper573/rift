@@ -9,7 +9,7 @@ use game::systems::npc::{self, Pack, ShownFor, SpawnNear, SpawnNpcs, Summoned};
 use game::systems::reach::{self, ReachAct};
 use game::systems::rule::{Encounter, Terms};
 
-use crate::support::Sim;
+use crate::support::{Sim, row};
 
 struct Edge {
     lair: Pos<Tiles>,
@@ -116,7 +116,7 @@ fn a_wild_monster_gives_up_a_player_who_reaches_a_safe_zone() {
     let edge = edge(sim.map());
     let player = sim.join(1);
     place(&mut sim, player, edge.doorstep);
-    let skeleton = wild(&mut sim, NpcId::Skeleton, edge.lair);
+    let skeleton = wild(&mut sim, row("Skeleton"), edge.lair);
     assert!(hunted_by(&mut sim, skeleton, player));
 
     sim.send(1, MoveRequest { pos: edge.refuge });
@@ -137,7 +137,7 @@ fn a_summoned_monster_follows_its_target_into_a_safe_zone() {
     let edge = edge(sim.map());
     let player = sim.join(1);
     place(&mut sim, player, edge.doorstep);
-    let guard = summon(&mut sim, player, NpcId::Skeleton);
+    let guard = summon(&mut sim, player, row("Skeleton"));
     assert!(hunted_by(&mut sim, guard, player));
 
     sim.send(1, MoveRequest { pos: edge.refuge });
@@ -160,7 +160,7 @@ fn a_wild_flyer_flies_around_a_safe_zone_instead_of_over_it() {
         .filter(|&(a, b)| map.safe(a.lerp(b, 0.5)))
         .min_by(|(a, b), (c, d)| a.distance(*b).0.total_cmp(&c.distance(*d).0))
         .expect("two points whose straight line crosses a safe zone");
-    let bat = wild(&mut sim, NpcId::Bat, from);
+    let bat = wild(&mut sim, row("Bat"), from);
 
     movement::goto(sim.world(), bat, to);
     let mut trespassed = false;

@@ -1,8 +1,6 @@
 use bevy_ecs::prelude::*;
 use game::core::time::WallClock;
 use game::data;
-use game::data::dialogue::Id as DialogueId;
-use game::data::item::Id as ItemId;
 use game::data::memory::Id as MemoryId;
 use game::data::npc::Id as NpcId;
 use game::systems::combat::{self, AttackRequest, Attitude};
@@ -13,7 +11,9 @@ use game::systems::rule::{Encounter, Terms};
 use game::systems::stat::{self, StatKind};
 use game::systems::visibility::{self, Presence};
 
-use crate::support::{Sim, count, give, heard_the_news, later, pick, settle, talk, townsperson};
+use crate::support::{
+    Sim, count, give, heard_the_news, later, pick, row, settle, talk, townsperson,
+};
 
 fn summoned(sim: &mut Sim, what: NpcId) -> Vec<Entity> {
     let world = sim.world();
@@ -34,13 +34,16 @@ fn remember(sim: &mut Sim, player: Entity, key: MemoryId) {
 }
 
 fn lose_at_dice(sim: &mut Sim, client: u32, player: Entity) {
-    let mut node = talk(sim, client, player, NpcId::Pell).node;
+    let mut node = talk(sim, client, player, row("Pell")).node;
     for _ in 0..40 {
-        let roll = match node {
-            DialogueId::PellHello => "Roll the dice.",
-            DialogueId::PellLoses => "Roll again.",
-            DialogueId::PellWins => return,
-            other => panic!("Pell is at {other:?}"),
+        let roll = if node == row("PellHello") {
+            "Roll the dice."
+        } else if node == row("PellLoses") {
+            "Roll again."
+        } else if node == row("PellWins") {
+            return;
+        } else {
+            panic!("Pell is at {node:?}");
         };
         node = pick(sim, client, player, roll)
             .expect("still at the table")
@@ -58,29 +61,27 @@ fn pells_dice_take_ten_gold_a_roll_and_pay_twenty_on_a_win() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
-    give(&mut sim, player, ItemId::Gold, 400);
+    give(&mut sim, player, row("Gold"), 400);
 
-    let mut node = talk(&mut sim, 1, player, NpcId::Pell).node;
+    let mut node = talk(&mut sim, 1, player, row("Pell")).node;
     let (mut won, mut lost) = (false, false);
     for _ in 0..30 {
-        let before = count(&mut sim, player, ItemId::Gold);
-        let roll = if node == DialogueId::PellHello {
+        let before = count(&mut sim, player, row("Gold"));
+        let roll = if node == row("PellHello") {
             "Roll the dice."
         } else {
             "Roll again."
         };
         node = pick(&mut sim, 1, player, roll).expect("at the table").node;
-        let after = count(&mut sim, player, ItemId::Gold);
-        match node {
-            DialogueId::PellLoses => {
-                assert_eq!(after, before + 10);
-                won = true;
-            }
-            DialogueId::PellWins => {
-                assert_eq!(after, before - 10);
-                lost = true;
-            }
-            other => panic!("the dice landed on {other:?}"),
+        let after = count(&mut sim, player, row("Gold"));
+        if node == row("PellLoses") {
+            assert_eq!(after, before + 10);
+            won = true;
+        } else if node == row("PellWins") {
+            assert_eq!(after, before - 10);
+            lost = true;
+        } else {
+            panic!("the dice landed on {node:?}");
         }
     }
     assert!(won && lost, "thirty rolls went only one way");
@@ -92,12 +93,12 @@ fn calling_pell_a_cheat_sends_guards_after_you_alone() {
     let player = sim.join(1);
     let bystander = sim.join(2);
     heard_the_news(&mut sim, player);
-    give(&mut sim, player, ItemId::Gold, 400);
+    give(&mut sim, player, row("Gold"), 400);
 
     lose_at_dice(&mut sim, 1, player);
     assert!(pick(&mut sim, 1, player, "You're cheating.").is_none());
 
-    let guards = summoned(&mut sim, NpcId::HarbourGuard);
+    let guards = summoned(&mut sim, row("HarbourGuard"));
     assert_eq!(guards.len(), 2);
     for &guard in &guards {
         assert!(matches!(
@@ -111,7 +112,7 @@ fn calling_pell_a_cheat_sends_guards_after_you_alone() {
         assert!(visibility::present(sim.world(), guard, player));
         assert!(!visibility::present(sim.world(), guard, bystander));
     }
-    assert!(memory::recall(sim.world(), player, MemoryId::PellGrudge).is_some());
+    assert!(memory::recall(sim.world(), player, row("PellGrudge")).is_some());
 
     let (full, calm) = (health(&mut sim, player), health(&mut sim, bystander));
     assert!(sim.run_until(15.0, |world| stat::effective(
@@ -122,8 +123,8 @@ fn calling_pell_a_cheat_sends_guards_after_you_alone() {
     assert_eq!(health(&mut sim, bystander), calm);
 
     assert_eq!(
-        talk(&mut sim, 1, player, NpcId::Pell).node,
-        DialogueId::PellGrudging
+        talk(&mut sim, 1, player, row("Pell")).node,
+        row("PellGrudging")
     );
 }
 
@@ -133,12 +134,12 @@ fn fighting_pell_leaves_him_dead_in_your_world_only() {
     let player = sim.join(1);
     let bystander = sim.join(2);
     heard_the_news(&mut sim, player);
-    remember(&mut sim, player, MemoryId::PellGrudge);
-    let pell = townsperson(&mut sim, NpcId::Pell);
+    remember(&mut sim, player, row("PellGrudge"));
+    let pell = townsperson(&mut sim, row("Pell"));
 
-    talk(&mut sim, 1, player, NpcId::Pell);
+    talk(&mut sim, 1, player, row("Pell"));
     assert!(pick(&mut sim, 1, player, "Then let's settle this.").is_none());
-    let copies = summoned(&mut sim, NpcId::PellHostile);
+    let copies = summoned(&mut sim, row("PellHostile"));
     assert_eq!(copies.len(), 1);
     let copy = copies[0];
     assert!(!visibility::present(sim.world(), pell, player));
@@ -151,12 +152,12 @@ fn fighting_pell_leaves_him_dead_in_your_world_only() {
         "the copy never fell"
     );
     settle(&mut sim);
-    assert!(memory::recall(sim.world(), player, MemoryId::PellDead).is_some());
-    assert!(memory::recall(sim.world(), player, MemoryId::PellFighting).is_none());
+    assert!(memory::recall(sim.world(), player, row("PellDead")).is_some());
+    assert!(memory::recall(sim.world(), player, row("PellFighting")).is_none());
     assert!(!visibility::present(sim.world(), pell, player));
     assert!(visibility::present(sim.world(), pell, bystander));
 
-    let MemoryKind::Timer(lasts) = MemoryId::PellDead.get().kind else {
+    let MemoryKind::Timer(lasts) = row::<MemoryId>("PellDead").get().kind else {
         panic!("Pell stays dead for a while, not forever");
     };
     later(&mut sim, lasts.0);
@@ -165,8 +166,8 @@ fn fighting_pell_leaves_him_dead_in_your_world_only() {
 
 #[test]
 fn summons_leave_with_their_owner() {
-    static GUARDS: SpawnNpcs = SpawnNpcs {
-        npc: NpcId::HarbourGuard,
+    let guards = SpawnNpcs {
+        npc: row("HarbourGuard"),
         count: 2,
         near: SpawnNear::Player,
         shown: ShownFor::Everyone,
@@ -176,15 +177,15 @@ fn summons_leave_with_their_owner() {
     Terms {
         requires: &[],
         costs: &[],
-        outcomes: &[&GUARDS],
+        outcomes: &[&guards],
     }
     .settle(sim.world(), player, Encounter::default())
     .expect("summoned");
-    assert_eq!(summoned(&mut sim, NpcId::HarbourGuard).len(), 2);
+    assert_eq!(summoned(&mut sim, row("HarbourGuard")).len(), 2);
 
     sim.world().despawn(player);
     sim.tick();
-    assert!(summoned(&mut sim, NpcId::HarbourGuard).is_empty());
+    assert!(summoned(&mut sim, row("HarbourGuard")).is_empty());
 }
 
 #[test]
@@ -192,7 +193,7 @@ fn a_townsperson_turned_hostile_can_be_fought_until_they_return_friendly() {
     static TURN: TurnHostile = TurnHostile;
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    let bram = townsperson(&mut sim, NpcId::Bram);
+    let bram = townsperson(&mut sim, row("Bram"));
     assert!(!combat::attackable(sim.world(), player, bram));
 
     Terms {
@@ -212,7 +213,7 @@ fn a_townsperson_turned_hostile_can_be_fought_until_they_return_friendly() {
     assert!(combat::attackable(sim.world(), player, bram));
 
     stat::apply_damage(sim.world(), bram, 10_000.0);
-    let respawn = NpcId::Bram.get().respawn.expect("Bram returns").0;
+    let respawn = row::<NpcId>("Bram").get().respawn.expect("Bram returns").0;
     assert!(sim.run_until(respawn + 5.0, |world| !stat::is_dead(world, bram)));
     assert_eq!(sim.world().get::<Attitude>(bram), Some(&Attitude::Friendly));
 }

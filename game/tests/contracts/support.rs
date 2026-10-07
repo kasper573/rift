@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use bevy_app::App;
 use bevy_ecs::message::{Message, MessageCursor, Messages};
@@ -14,7 +15,6 @@ use game::core::time::Seconds;
 use game::core::time::{UnixMillis, UtcHour, WallClock};
 use game::data;
 use game::data::item::Id as ItemId;
-use game::data::memory::Id as MemoryId;
 use game::data::notification::Id as NotificationId;
 use game::data::npc::Id as NpcId;
 use game::data::prop::Id as PropId;
@@ -36,6 +36,11 @@ pub const CLOCK: WallClock = WallClock {
     now: UnixMillis(0),
     reset: UtcHour::MIDNIGHT,
 };
+
+pub fn row<Id: FromStr>(name: &str) -> Id {
+    name.parse()
+        .unwrap_or_else(|_| panic!("no row named `{name}`"))
+}
 
 pub fn assets() -> AssetService {
     AssetService::new(FilesystemSource(
@@ -207,7 +212,7 @@ pub fn heard_the_news(sim: &mut Sim, player: Entity) {
     sim.world()
         .get_mut::<Memory>(player)
         .expect("memory")
-        .remember(MemoryId::TobbNewsToday, clock);
+        .remember(row("TobbNewsToday"), clock);
 }
 
 pub fn conversation(sim: &mut Sim, player: Entity) -> Option<Conversation> {

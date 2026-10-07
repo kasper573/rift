@@ -1,5 +1,6 @@
 use crate::core::assets::AssetRef;
-use crate::systems::actor::bust::{Busts, GenericBusts, IndividualExpression, ModelDef};
+use crate::data::expression::Id as ExpressionId;
+use crate::systems::actor::bust::{Busts, GenericBusts, ModelDef};
 
 crate::table! {
     Adventurer: ModelDef {
@@ -27,9 +28,7 @@ crate::table! {
                 surprised: AssetRef("busts/tobb/surprised.png"),
                 thinking: AssetRef("busts/tobb/thinking.png"),
             },
-            individual: &[
-                (IndividualExpression::Laughing, AssetRef("busts/tobb/laughing.png")),
-            ],
+            individual: &[ExpressionId::TobbLaughing],
         }),
     },
     Bram: ModelDef {
@@ -57,9 +56,7 @@ crate::table! {
                 surprised: AssetRef("busts/pell/surprised.png"),
                 thinking: AssetRef("busts/pell/thinking.png"),
             },
-            individual: &[
-                (IndividualExpression::Smirk, AssetRef("busts/pell/smirk.png")),
-            ],
+            individual: &[ExpressionId::PellSmirk],
         }),
     },
     Mara: ModelDef {
@@ -73,10 +70,7 @@ crate::table! {
                 surprised: AssetRef("busts/mara/surprised.png"),
                 thinking: AssetRef("busts/mara/thinking.png"),
             },
-            individual: &[
-                (IndividualExpression::Smug, AssetRef("busts/mara/smug.png")),
-                (IndividualExpression::Counting, AssetRef("busts/mara/counting.png")),
-            ],
+            individual: &[ExpressionId::MaraSmug, ExpressionId::MaraCounting],
         }),
     },
     Grisha: ModelDef {
@@ -104,9 +98,7 @@ crate::table! {
                 surprised: AssetRef("busts/wren/surprised.png"),
                 thinking: AssetRef("busts/wren/thinking.png"),
             },
-            individual: &[
-                (IndividualExpression::Sleepy, AssetRef("busts/wren/sleepy.png")),
-            ],
+            individual: &[ExpressionId::WrenSleepy],
         }),
     },
     Ilsa: ModelDef {

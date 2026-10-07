@@ -28,10 +28,6 @@ pub struct JobLevel {
     pub effects: &'static [Effect],
 }
 
-pub fn default_job() -> data::job::Id {
-    data::job::Id::Adventurer
-}
-
 pub fn level(world: &World, entity: Entity) -> u32 {
     let Some(job) = world.get::<Job>(entity) else {
         return 0;

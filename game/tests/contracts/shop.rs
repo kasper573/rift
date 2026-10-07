@@ -2,7 +2,6 @@ use bevy_ecs::prelude::*;
 use game::core::tiling::Tiles;
 use game::core::time::{Seconds, WallClock};
 use game::data;
-use game::data::dialogue::Id as DialogueId;
 use game::data::item::Id as ItemId;
 use game::data::prop::Id as PropId;
 use game::systems::dialogue::{Conversation, ConversationRequest, Speaker};
@@ -14,7 +13,7 @@ use game::systems::npc::Npc;
 use game::systems::prop::Prop;
 use game::systems::shop::{ShopId, ShopRequest, ShopView};
 
-use crate::support::Sim;
+use crate::support::{Sim, row};
 
 fn townsperson(sim: &mut Sim, who: data::npc::Id) -> Entity {
     let world = sim.world();
@@ -69,10 +68,12 @@ fn browse(sim: &mut Sim, client: u32, player: Entity, keeper: data::npc::Id) -> 
 }
 
 fn ask_of(keeper: data::npc::Id) -> &'static str {
-    match keeper {
-        data::npc::Id::Mara => "Show me your wares.",
-        data::npc::Id::Wren => "I've brought bones.",
-        other => panic!("{other:?} keeps no shop"),
+    if keeper == row("Mara") {
+        "Show me your wares."
+    } else if keeper == row("Wren") {
+        "I've brought bones."
+    } else {
+        panic!("{keeper:?} keeps no shop")
     }
 }
 
@@ -122,46 +123,46 @@ fn later(sim: &mut Sim, seconds: f32) {
 fn asking_a_keeper_opens_the_shop_and_buying_trades_the_price_for_the_goods() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    give(&mut sim, player, ItemId::Gold, 10);
+    give(&mut sim, player, row("Gold"), 10);
 
-    let opened = browse(&mut sim, 1, player, data::npc::Id::Mara);
-    assert_eq!(opened.shop, ShopId::MaraWares);
+    let opened = browse(&mut sim, 1, player, row("Mara"));
+    assert_eq!(opened.shop, row("MaraWares"));
     assert_eq!(
         conversation(&mut sim, player).map(|now| now.node),
-        Some(DialogueId::MaraShopping)
+        Some(row("MaraShopping"))
     );
 
     sim.send(
         1,
         ShopRequest::Buy {
-            offer: offer_of(ShopId::MaraWares, ItemId::HealthPotion),
+            offer: offer_of(row("MaraWares"), row("HealthPotion")),
         },
     );
     sim.tick();
 
-    assert_eq!(count(&mut sim, player, ItemId::Gold), 4);
-    assert_eq!(count(&mut sim, player, ItemId::HealthPotion), 1);
+    assert_eq!(count(&mut sim, player, row("Gold")), 4);
+    assert_eq!(count(&mut sim, player, row("HealthPotion")), 1);
 }
 
 #[test]
 fn a_purchase_you_cannot_cover_changes_nothing_and_the_keeper_says_so() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    give(&mut sim, player, ItemId::Gold, 12);
-    let mara = townsperson(&mut sim, data::npc::Id::Mara);
-    let opened = browse(&mut sim, 1, player, data::npc::Id::Mara);
-    let potion = offer_of(ShopId::MaraWares, ItemId::GreaterHealthPotion);
+    give(&mut sim, player, row("Gold"), 12);
+    let mara = townsperson(&mut sim, row("Mara"));
+    let opened = browse(&mut sim, 1, player, row("Mara"));
+    let potion = offer_of(row("MaraWares"), row("GreaterHealthPotion"));
     assert!(opened.offers[potion as usize].refusal.is_some());
 
     sim.send(1, ShopRequest::Buy { offer: potion });
     sim.tick();
 
-    assert_eq!(count(&mut sim, player, ItemId::Gold), 12);
-    assert_eq!(count(&mut sim, player, ItemId::GreaterHealthPotion), 0);
+    assert_eq!(count(&mut sim, player, row("Gold")), 12);
+    assert_eq!(count(&mut sim, player, row("GreaterHealthPotion")), 0);
     let talking = conversation(&mut sim, player).expect("still browsing");
     assert_eq!(talking.with, Some(mara));
     let remark = talking.remark.expect("Mara reacts");
-    assert_eq!(remark.line.by, Speaker::Npc(data::npc::Id::Mara));
+    assert_eq!(remark.line.by, Speaker::Npc(row("Mara")));
 }
 
 #[test]
@@ -170,59 +171,59 @@ fn limited_stock_is_kept_per_player_and_restocks_on_its_timer() {
     let first = sim.join(1);
     let second = sim.join(2);
     for player in [first, second] {
-        give(&mut sim, player, ItemId::Gold, 100);
-        give(&mut sim, player, ItemId::BatWing, 20);
+        give(&mut sim, player, row("Gold"), 100);
+        give(&mut sim, player, row("BatWing"), 20);
     }
-    browse(&mut sim, 1, first, data::npc::Id::Mara);
-    browse(&mut sim, 2, second, data::npc::Id::Mara);
-    let potion = offer_of(ShopId::MaraWares, ItemId::GreaterHealthPotion);
+    browse(&mut sim, 1, first, row("Mara"));
+    browse(&mut sim, 2, second, row("Mara"));
+    let potion = offer_of(row("MaraWares"), row("GreaterHealthPotion"));
 
     for _ in 0..4 {
         sim.send(1, ShopRequest::Buy { offer: potion });
         sim.tick();
     }
-    assert_eq!(count(&mut sim, first, ItemId::GreaterHealthPotion), 3);
+    assert_eq!(count(&mut sim, first, row("GreaterHealthPotion")), 3);
     let sold_out = shown(&mut sim, first).expect("open");
     assert_eq!(sold_out.offers[potion as usize].left, Some(0));
 
     sim.send(2, ShopRequest::Buy { offer: potion });
     sim.tick();
-    assert_eq!(count(&mut sim, second, ItemId::GreaterHealthPotion), 1);
+    assert_eq!(count(&mut sim, second, row("GreaterHealthPotion")), 1);
 
     later(&mut sim, 600.0);
     sim.send(1, ShopRequest::Buy { offer: potion });
     sim.tick();
-    assert_eq!(count(&mut sim, first, ItemId::GreaterHealthPotion), 4);
+    assert_eq!(count(&mut sim, first, row("GreaterHealthPotion")), 4);
 }
 
 #[test]
 fn a_collector_pays_in_his_own_currency_and_buyback_costs_exactly_what_he_paid() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    give(&mut sim, player, ItemId::Bone, 7);
-    give(&mut sim, player, ItemId::OrcTusk, 1);
+    give(&mut sim, player, row("Bone"), 7);
+    give(&mut sim, player, row("OrcTusk"), 1);
 
-    let opened = browse(&mut sim, 1, player, data::npc::Id::Wren);
-    assert_eq!(opened.shop, ShopId::BoneExchange);
+    let opened = browse(&mut sim, 1, player, row("Wren"));
+    assert_eq!(opened.shop, row("BoneExchange"));
     assert_eq!(
         conversation(&mut sim, player).map(|now| now.node),
-        Some(DialogueId::WrenShopping),
+        Some(row("WrenShopping")),
         "a shop without reactions still keeps its conversation"
     );
 
-    let tusk = slot_of(&mut sim, player, ItemId::OrcTusk);
+    let tusk = slot_of(&mut sim, player, row("OrcTusk"));
     sim.send(
         1,
         ShopRequest::Sell {
             slot: tusk,
-            stack: ItemStack::new(ItemId::OrcTusk, 1),
+            stack: ItemStack::new(row("OrcTusk"), 1),
         },
     );
     sim.tick();
-    assert_eq!(count(&mut sim, player, ItemId::OrcTusk), 1);
+    assert_eq!(count(&mut sim, player, row("OrcTusk")), 1);
 
-    let bones = slot_of(&mut sim, player, ItemId::Bone);
-    let all_bones = ItemStack::new(ItemId::Bone, 7);
+    let bones = slot_of(&mut sim, player, row("Bone"));
+    let all_bones = ItemStack::new(row("Bone"), 7);
     sim.send(
         1,
         ShopRequest::Sell {
@@ -238,15 +239,15 @@ fn a_collector_pays_in_his_own_currency_and_buyback_costs_exactly_what_he_paid()
         },
     );
     sim.tick();
-    assert_eq!(count(&mut sim, player, ItemId::Bone), 0);
-    assert_eq!(count(&mut sim, player, ItemId::BoneToken), 7);
+    assert_eq!(count(&mut sim, player, row("Bone")), 0);
+    assert_eq!(count(&mut sim, player, row("BoneToken")), 7);
     let sold = shown(&mut sim, player).expect("open");
     assert_eq!(sold.buyback.len(), 1);
 
     sim.send(1, ShopRequest::Buyback { sale: 0 });
     sim.tick();
-    assert_eq!(count(&mut sim, player, ItemId::Bone), 7);
-    assert_eq!(count(&mut sim, player, ItemId::BoneToken), 0);
+    assert_eq!(count(&mut sim, player, row("Bone")), 7);
+    assert_eq!(count(&mut sim, player, row("BoneToken")), 0);
     assert!(shown(&mut sim, player).expect("open").buyback.is_empty());
 }
 
@@ -254,7 +255,7 @@ fn a_collector_pays_in_his_own_currency_and_buyback_costs_exactly_what_he_paid()
 fn walking_out_of_reach_closes_the_shop() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    browse(&mut sim, 1, player, data::npc::Id::Wren);
+    browse(&mut sim, 1, player, row("Wren"));
     let at = position(sim.world(), player).expect("position");
 
     let away = sim.walkable_near(at, Tiles(8.0), Tiles(12.0));
@@ -270,7 +271,7 @@ fn walking_out_of_reach_closes_the_shop() {
 fn leaving_the_conversation_closes_the_shop() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    browse(&mut sim, 1, player, data::npc::Id::Mara);
+    browse(&mut sim, 1, player, row("Mara"));
     let step = conversation(&mut sim, player).expect("browsing").step;
 
     sim.send(1, ConversationRequest::Leave { step });
@@ -284,8 +285,8 @@ fn leaving_the_conversation_closes_the_shop() {
 fn a_map_object_can_keep_a_shop() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    give(&mut sim, player, ItemId::Gold, 3);
-    let honesty_box = prop(&mut sim, PropId::HonestyBox);
+    give(&mut sim, player, row("Gold"), 3);
+    let honesty_box = prop(&mut sim, row("HonestyBox"));
 
     sim.send(
         1,
@@ -296,21 +297,21 @@ fn a_map_object_can_keep_a_shop() {
     assert!(sim.run_until(20.0, |world| world.get::<ShopView>(player).is_some()));
     assert_eq!(
         shown(&mut sim, player).map(|opened| opened.shop),
-        Some(ShopId::HonestyBox)
+        Some(row("HonestyBox"))
     );
     assert_eq!(
         conversation(&mut sim, player).map(|now| now.node),
-        Some(DialogueId::HonestyBoxShopping),
+        Some(row("HonestyBoxShopping")),
         "the box keeps its shop inside a conversation"
     );
 
     sim.send(
         1,
         ShopRequest::Buy {
-            offer: offer_of(ShopId::HonestyBox, ItemId::FishSteak),
+            offer: offer_of(row("HonestyBox"), row("FishSteak")),
         },
     );
     sim.tick();
-    assert_eq!(count(&mut sim, player, ItemId::FishSteak), 1);
-    assert_eq!(count(&mut sim, player, ItemId::Gold), 0);
+    assert_eq!(count(&mut sim, player, row("FishSteak")), 1);
+    assert_eq!(count(&mut sim, player, row("Gold")), 0);
 }

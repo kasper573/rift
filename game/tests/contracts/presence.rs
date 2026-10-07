@@ -1,6 +1,7 @@
+use std::sync::LazyLock;
+
 use game::core::tiling::Tiles;
 use game::data;
-use game::data::memory::Id as MemoryId;
 use game::systems::combat::{AttackRequest, Attitude};
 use game::systems::memory::Remembers;
 use game::systems::movement::position;
@@ -11,14 +12,14 @@ use game::systems::rule::Not;
 use game::systems::stat::{self, StatKind};
 use game::systems::visibility::{self, Presence};
 
-use crate::support::{CLOCK, Sim};
+use crate::support::{CLOCK, Sim, row};
 
 fn orc_near(sim: &mut Sim, player: bevy_ecs::entity::Entity) -> bevy_ecs::entity::Entity {
     let start = position(sim.world(), player).expect("position");
     let spot = sim.walkable_near(start, Tiles(2.0), Tiles(4.0));
     npc::spawn(
         sim.world(),
-        data::npc::Id::Orc,
+        row("Orc"),
         spot,
         data::area::SPAWN_ID,
         Pack(u32::MAX),
@@ -71,7 +72,7 @@ fn a_monster_spawned_for_one_player_ignores_everyone_else() {
     let spot = sim.walkable_near(start, Tiles(1.0), Tiles(2.0));
     let skeleton = npc::spawn(
         sim.world(),
-        data::npc::Id::Skeleton,
+        row("Skeleton"),
         spot,
         data::area::SPAWN_ID,
         Pack(u32::MAX),
@@ -92,18 +93,20 @@ fn a_monster_spawned_for_one_player_ignores_everyone_else() {
 
 #[test]
 fn presence_by_requirement_follows_the_players_memory() {
-    static SHOWN: [&dyn game::systems::rule::Requirement; 1] =
-        [&Not(&Remembers(MemoryId::PellDead))];
+    static PELL_DEAD: LazyLock<Remembers> = LazyLock::new(|| Remembers(row("PellDead")));
+    static PELL_ALIVE: LazyLock<Not> = LazyLock::new(|| Not(&*PELL_DEAD));
+    static SHOWN: LazyLock<[&dyn game::systems::rule::Requirement; 1]> =
+        LazyLock::new(|| [&*PELL_ALIVE]);
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
     let orc = orc_near(&mut sim, player);
-    sim.world().entity_mut(orc).insert(Presence::When(&SHOWN));
+    sim.world().entity_mut(orc).insert(Presence::When(&*SHOWN));
     assert!(visibility::present(sim.world(), orc, player));
 
     sim.world()
         .get_mut::<game::systems::memory::Memory>(player)
         .expect("memory")
-        .remember(MemoryId::PellDead, CLOCK);
+        .remember(row("PellDead"), CLOCK);
 
     assert!(!visibility::present(sim.world(), orc, player));
 }

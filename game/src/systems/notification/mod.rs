@@ -244,7 +244,7 @@ pub fn speakers() -> impl Iterator<Item = NpcId> {
 }
 
 pub fn check() {
-    for (id, def) in <NotificationId as strum::VariantArray>::VARIANTS
+    for (id, def) in NotificationId::VARIANTS
         .iter()
         .zip(data::notification::TABLE)
     {

@@ -9,26 +9,28 @@ use serde::{Deserialize, Serialize};
 use crate::core::assets::AssetService;
 use crate::core::babble::{BabbleId, Babbler};
 use crate::core::math::{Direction, Pos, Rng};
-use crate::core::tiling::{Tiles, TilesPerSec};
-use crate::core::time::{Millis, PlaybackRate};
+use crate::core::tiling::Tiles;
+use crate::core::time::PlaybackRate;
+use crate::data;
 use crate::systems::Character;
 use crate::systems::account::identity::Identity;
 use crate::systems::actor::{Action, Actor, Hitbox, Name, Rgba, set_action};
 use crate::systems::area::transition::Discovered;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::belongings;
+use crate::systems::combat::HealthRegen;
 use crate::systems::dialogue::Heard;
 use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
 use crate::systems::history::History;
 use crate::systems::item::Inventory;
-use crate::systems::job::{self, Job};
+use crate::systems::job::Job;
 use crate::systems::memory::Memory;
 use crate::systems::movement::Position;
 use crate::systems::quest::QuestLog;
 use crate::systems::shop::ShopLedger;
 use crate::systems::spectate::Spectators;
-use crate::systems::stat::{self, StatKind, Stats};
+use crate::systems::stat::{self, Stat, StatKind, Stats};
 use crate::systems::visibility::OwnedBy;
 use bevy_ecs::lifecycle::{Add, Remove};
 use bevy_ecs::observer::On;
@@ -94,17 +96,22 @@ pub struct Welcome {
     pub id: ClientId,
 }
 
-const PLAYER_MAX_HEALTH: f32 = 30.0;
 /// Health a player spawns with when [`Immortal`] is set — high enough that nothing in the world can
 /// grind it down, so test/dev sessions never die to NPCs.
 const IMMORTAL_HEALTH: f32 = 9999.0;
-const PLAYER_SPEED: TilesPerSec = TilesPerSec(Tiles(4.0));
-const PLAYER_DAMAGE: f32 = 6.0;
-const PLAYER_ATTACK_SPEED: PlaybackRate = PlaybackRate(1.2);
-const PLAYER_ATTACK_DELAY: Millis = Millis(200.0);
-const PLAYER_RANGE: Tiles = Tiles(1.5);
-const PLAYER_TINT: Rgba = Rgba(0xFFFF_FFFF);
-pub const MODEL: crate::data::model::Id = crate::data::model::Id::Adventurer;
+
+pub struct PlayerDef {
+    pub model: data::model::Id,
+    pub babble: BabbleId,
+    pub job: data::job::Id,
+    pub tint: Rgba,
+    pub stats: &'static [Stat],
+    pub regen: HealthRegen,
+}
+
+pub fn def() -> &'static PlayerDef {
+    data::player::DEFAULT_ID.get()
+}
 
 #[derive(Resource, Default)]
 pub struct Players(pub HashMap<ClientId, Entity>);
@@ -176,7 +183,7 @@ pub enum SpawnPolicy {
     Dist,
 }
 
-/// When set, players spawn with [`IMMORTAL_HEALTH`] instead of [`PLAYER_MAX_HEALTH`] — a config toggle
+/// When set, players spawn with [`IMMORTAL_HEALTH`] instead of their usual health — a config toggle
 /// (off in production) so test/dev sessions aren't killed by NPCs.
 #[derive(Resource, Clone, Copy, Default)]
 pub struct Immortal(pub bool);
@@ -255,15 +262,13 @@ fn spawn_player(
         at,
         CharacterState {
             name,
-            babble: BabbleId::Adventurer,
+            babble: def().babble,
             discovered: Discovered::starting_in(zone),
             stats: player_stats(immortal),
             inventory: Inventory::empty(),
             xp: Xp { amount: 0 },
             equipment: Equipment::default(),
-            job: Job {
-                def: job::default_job(),
-            },
+            job: Job { def: def().job },
             timed: TimedEffects::default(),
             memory: Memory::default(),
             heard: Heard::default(),
@@ -275,20 +280,18 @@ fn spawn_player(
 }
 
 pub fn player_stats(immortal: Immortal) -> Stats {
-    let max_health = if immortal.0 {
-        IMMORTAL_HEALTH
-    } else {
-        PLAYER_MAX_HEALTH
-    };
-    Stats(vec![
-        StatKind::Health.of(max_health),
-        StatKind::MaxHealth.of(max_health),
-        StatKind::Damage.of(PLAYER_DAMAGE),
-        StatKind::AttackSpeed.of(PLAYER_ATTACK_SPEED.0),
-        StatKind::AttackDelay.of(PLAYER_ATTACK_DELAY.0),
-        StatKind::Range.of(PLAYER_RANGE.0),
-        StatKind::MovementSpeed.of(PLAYER_SPEED.0.0),
-    ])
+    Stats(
+        def()
+            .stats
+            .iter()
+            .map(|&stat| match stat.kind {
+                StatKind::Health | StatKind::MaxHealth if immortal.0 => {
+                    stat.kind.of(IMMORTAL_HEALTH)
+                }
+                _ => stat,
+            })
+            .collect(),
+    )
 }
 
 pub(crate) fn place(
@@ -298,7 +301,8 @@ pub(crate) fn place(
     at: Pos<Tiles>,
     state: CharacterState,
 ) -> Entity {
-    let model = MODEL;
+    let def = def();
+    let model = def.model;
     let assets = world.resource::<AssetService>().clone();
     let entity = world
         .spawn((
@@ -306,11 +310,11 @@ pub(crate) fn place(
                 replicated: Replicated,
                 position: Position { pos: at },
                 actor: Actor {
-                    color: PLAYER_TINT,
+                    color: def.tint,
                     dir: Direction::S,
                     action: Action::Idle,
                     model,
-                    attack_rate: PLAYER_ATTACK_SPEED,
+                    attack_rate: PlaybackRate(stat::value(def.stats, StatKind::AttackSpeed)),
                 },
                 hitbox: Hitbox {
                     size: assets

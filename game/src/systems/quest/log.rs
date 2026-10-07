@@ -196,7 +196,7 @@ impl Page {
                 .iter()
                 .position(|quest| quest.category == category)
         };
-        quests.sort_by_key(|quest| (first_seen(quest.get().category), *quest as usize));
+        quests.sort_by_key(|quest| (first_seen(quest.get().category), quest.index()));
         quests
     }
 
@@ -562,7 +562,7 @@ fn confirm_abandon(world: &mut World, quest: QuestId) {
 }
 
 fn quest_note(world: &World, stack: ItemStack) -> Option<String> {
-    let quests = <QuestId as strum::VariantArray>::VARIANTS;
+    let quests = QuestId::VARIANTS;
     if quests
         .iter()
         .any(|quest| quest.get().giver == Giver::Item(stack.item))

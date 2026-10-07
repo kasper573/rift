@@ -41,12 +41,19 @@
 
 `systems/`:
 - high level systems and compositions of core primitives
-- the majority of our game content and mechanics goes here
+- the majority of our game mechanics goes here
 - may depend on other high level systems
 
-`src/data/`: is the content layer: one normalized table per file, each built with the `table!` macro the single source of truth for a table's `enum Id`, its `TABLE`, and `Id::get()`. Tables stay separate and reference each other only loosely by `data::*::Id`, never by embedding another table's rows (a row may still nest its own data). Table row structs live in core/* or systems/*, while `data/` only declares the rows. The idea is that the content layer can be swapped for a runtime loaded format in the future without too much hassle.
+`src/data/`: is the content layer: one normalized table per file, each built with the `table!` macro the single source of truth for a table's `Id`, its `TABLE`, and `Id::get()`. Tables stay separate and reference each other only loosely by `data::*::Id`, never by embedding another table's rows (a row may still nest its own data). Table row structs live in core/* or systems/*, while `data/` only declares the rows. The idea is that the content layer can be swapped for a runtime loaded format in the future without too much hassle.
 
 Should contain no business logic, only data.
+
+Code outside `data/` must not depend on arbitrary game content, so the same server and client can run any game's data. `table!` enforces this:
+- A table's `Id` type, `TABLE`, `Id::VARIANTS` and `Id::get()` are usable everywhere, but its rows are hidden: only `data/` can name them (`data::npc::Id::Mara`).
+- Mark a row `#[expose]` when it stands for a generic system or mechanic (an input action, an interface sound, a quest marker), or put `#![expose]` at the top of a table whose rows all do. Never expose a piece of content (a character, an item, a quest). Exposed rows are the game's core data requirements: every game's data must provide them.
+- When code needs content for a role, `data/` exports a designation instead (`data::area::SPAWN_ID`).
+- Integration tests look hidden rows up by name.
+- Generic assets of systems (cursors, window icons) may be referenced directly; another game reskins them by swapping asset files.
 
 2. The ui and bevy/* crates may not depend on other crates in this repo. They may depend on third party crates.
 

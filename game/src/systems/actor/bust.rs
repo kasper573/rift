@@ -3,6 +3,8 @@ use strum::VariantArray;
 
 use crate::core::assets::AssetRef;
 
+pub use crate::data::expression::Id as IndividualExpression;
+
 pub struct ModelDef {
     pub sheet: AssetRef,
     pub busts: Option<Busts>,
@@ -10,7 +12,7 @@ pub struct ModelDef {
 
 pub struct Busts {
     pub generic: GenericBusts,
-    pub individual: &'static [(IndividualExpression, AssetRef)],
+    pub individual: &'static [IndividualExpression],
 }
 
 pub struct GenericBusts {
@@ -41,13 +43,8 @@ pub enum GenericExpression {
     Thinking,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum IndividualExpression {
-    Smug,
-    Counting,
-    Laughing,
-    Smirk,
-    Sleepy,
+pub struct IndividualExpressionDef {
+    pub bust: AssetRef,
 }
 
 impl Busts {
@@ -55,7 +52,11 @@ impl Busts {
         GenericExpression::VARIANTS
             .iter()
             .map(|&expression| self.generic.of(expression))
-            .chain(self.individual.iter().map(|(_, bust)| *bust))
+            .chain(
+                self.individual
+                    .iter()
+                    .map(|expression| expression.get().bust),
+            )
     }
 
     pub fn face(&self, face: Face) -> Option<AssetRef> {
@@ -63,9 +64,8 @@ impl Busts {
             Face::Generic(expression) => Some(self.generic.of(expression)),
             Face::Individual(expression) => self
                 .individual
-                .iter()
-                .find(|(own, _)| *own == expression)
-                .map(|(_, bust)| *bust),
+                .contains(&expression)
+                .then(|| expression.get().bust),
         }
     }
 }
