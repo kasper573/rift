@@ -116,6 +116,7 @@ impl Plugin for UiPlugin {
                         components::dialogue::mark_selected_choice,
                         components::dialogue::shake_refused,
                         components::cast::sync_cast,
+                        components::cast::show_loaded_faces,
                         components::bubble::sync_bubbles,
                         components::captions::sync_captions,
                         components::alert_bar::sync_alert_bars,

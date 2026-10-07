@@ -1,5 +1,5 @@
 use bevy::image::Image;
-use bevy_asset::Handle;
+use bevy_asset::{Assets, Handle};
 use bevy_color::Color;
 use bevy_ecs::hierarchy::{ChildOf, Children};
 use bevy_ecs::prelude::*;
@@ -50,6 +50,7 @@ pub enum CastDepth {
 #[derive(Component)]
 pub(crate) struct Bust {
     key: u64,
+    face: Handle<Image>,
 }
 
 pub fn cast() -> impl Scene {
@@ -69,7 +70,7 @@ pub fn cast() -> impl Scene {
 pub(crate) fn sync_cast(
     casts: Query<(Entity, &Cast, Option<&Children>), Changed<Cast>>,
     mut busts: Query<(
-        &Bust,
+        &mut Bust,
         &mut ImageNode,
         &mut Style,
         &mut Presence,
@@ -80,7 +81,8 @@ pub(crate) fn sync_cast(
     for (stage, cast, kids) in &casts {
         let mut present = Vec::new();
         for &kid in kids.into_iter().flatten() {
-            let Ok((bust, mut image, mut style, mut presence, leaving)) = busts.get_mut(kid) else {
+            let Ok((mut bust, mut image, mut style, mut presence, leaving)) = busts.get_mut(kid)
+            else {
                 continue;
             };
             match cast.members.iter().find(|member| member.key == bust.key) {
@@ -89,13 +91,12 @@ pub(crate) fn sync_cast(
                     if leaving {
                         commands.entity(kid).remove::<Leaving>();
                     }
-                    if image.image != member.image {
-                        image.image = member.image.clone();
+                    if bust.face != member.image {
+                        bust.face = member.image.clone();
                     }
                     image.flip_x = member.flip;
                     *style = shown(member);
                     let wanted = presence_of(member.side);
-                    presence.shown = true;
                     presence.enter = wanted.enter;
                     presence.exit = wanted.exit;
                     commands.entity(kid).insert(depth_order(member.depth));
@@ -112,17 +113,37 @@ pub(crate) fn sync_cast(
             .filter(|member| !present.contains(&member.key))
         {
             commands.spawn((
-                Bust { key: member.key },
+                Bust {
+                    key: member.key,
+                    face: member.image.clone(),
+                },
                 ImageNode {
                     flip_x: member.flip,
                     ..ImageNode::new(member.image.clone())
                 },
-                presence_of(member.side),
+                presence_of(member.side).hidden(),
                 shown(member),
                 depth_order(member.depth),
                 Pickable::IGNORE,
                 ChildOf(stage),
             ));
+        }
+    }
+}
+
+pub(crate) fn show_loaded_faces(
+    images: Res<Assets<Image>>,
+    mut busts: Query<(&Bust, &mut ImageNode, &mut Presence), Without<Leaving>>,
+) {
+    for (bust, mut image, mut presence) in &mut busts {
+        if !images.contains(&bust.face) {
+            continue;
+        }
+        if image.image != bust.face {
+            image.image = bust.face.clone();
+        }
+        if !presence.shown {
+            presence.shown = true;
         }
     }
 }
