@@ -1,12 +1,12 @@
 use bevy_ecs::prelude::*;
 use game::core::math::Pos;
 use game::core::tiling::{TilePos, Tiles};
-use game::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
+use game::core::time::{UnixMillis, UtcHour, WallClock};
 use game::data;
 use game::data::attention::Id as AttentionId;
 use game::data::dialogue::Id as DialogueId;
 use game::systems::attention::Attention;
-use game::systems::dialogue::{self, BusyPolicy, Conversation, ConversationRequest, Start};
+use game::systems::dialogue::{self, Conversation, ConversationRequest, Start};
 use game::systems::input::map::InputMap;
 use game::systems::interact::InteractRequest;
 use game::systems::item::{Inventory, ItemStack};
@@ -65,13 +65,11 @@ fn gold(sim: &mut Sim, player: Entity) -> u32 {
         .count(row("Gold"))
 }
 
-fn start(node: DialogueId, busy: BusyPolicy) -> Start {
+fn start(node: DialogueId) -> Start {
     Start {
         node,
         with: None,
         tether: None,
-        requires: Vec::new(),
-        busy,
     }
 }
 
@@ -189,36 +187,12 @@ fn damage_keeps_a_conversation_but_death_ends_it() {
 }
 
 #[test]
-fn a_busy_player_waits_skips_or_is_replaced_as_each_start_says() {
+fn a_new_conversation_replaces_the_one_in_progress() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    let opened = talk(&mut sim, 1, player, row("Grisha"));
+    talk(&mut sim, 1, player, row("Grisha"));
 
-    dialogue::start(
-        sim.world(),
-        player,
-        start(row("BramHello"), BusyPolicy::Skip),
-    );
-    dialogue::start(
-        sim.world(),
-        player,
-        start(row("TobbNews"), BusyPolicy::Wait(Seconds(30.0))),
-    );
-    sim.tick();
-    let waiting = conversation(&mut sim, player).expect("talking");
-    assert_eq!(waiting.node, row("GrishaHello"));
-    assert_eq!(waiting.waiting.map(|next| next.node), Some(row("TobbNews")));
-
-    sim.send(1, ConversationRequest::Leave { step: opened.step });
-    sim.tick();
-    let next = conversation(&mut sim, player).expect("the waiting start began");
-    assert_eq!(next.node, row("TobbNews"));
-
-    dialogue::start(
-        sim.world(),
-        player,
-        start(row("IlsaHello"), BusyPolicy::Replace),
-    );
+    dialogue::start(sim.world(), player, start(row("IlsaHello")));
     sim.tick();
     assert_eq!(
         conversation(&mut sim, player).map(|now| now.node),
@@ -227,39 +201,23 @@ fn a_busy_player_waits_skips_or_is_replaced_as_each_start_says() {
 }
 
 #[test]
-fn a_waiting_start_expires() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
-    let player = sim.join(1);
-    let opened = talk(&mut sim, 1, player, row("Grisha"));
-    dialogue::start(
-        sim.world(),
-        player,
-        start(row("TobbNews"), BusyPolicy::Wait(Seconds(1.0))),
-    );
-
-    sim.run_until(2.0, |_| false);
-    sim.send(1, ConversationRequest::Leave { step: opened.step });
-    sim.tick();
-
-    assert!(conversation(&mut sim, player).is_none());
-}
-
-#[test]
-fn tobb_calls_over_a_visitor_he_has_news_for() {
+fn tobb_holds_his_news_until_you_are_free() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
     let opened = talk(&mut sim, 1, player, row("Tobb"));
     assert_eq!(opened.node, row("TobbHello"));
-    assert_eq!(opened.waiting, None);
 
+    sim.run_until(1.0, |_| false);
+    assert_eq!(
+        conversation(&mut sim, player).map(|now| now.step),
+        Some(opened.step)
+    );
+    sim.send(1, ConversationRequest::Leave { step: opened.step });
     assert!(sim.run_until(1.0, |world| {
         world
             .get::<Conversation>(player)
-            .and_then(|now| now.waiting)
-            .is_some_and(|next| next.node == row("TobbNews"))
+            .is_some_and(|now| now.step != opened.step)
     }));
-    sim.send(1, ConversationRequest::Leave { step: opened.step });
-    sim.tick();
     let news = conversation(&mut sim, player).expect("Tobb's news");
     assert_eq!(news.node, row("TobbNews"));
 

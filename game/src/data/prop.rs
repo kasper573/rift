@@ -3,7 +3,7 @@ use crate::core::tiling::Tiles;
 use crate::data::dialogue::Id as DialogueId;
 use crate::data::item::Id as ItemId;
 use crate::data::memory::Id as MemoryId;
-use crate::systems::dialogue::{BusyPolicy, StartConversation};
+use crate::systems::dialogue::StartConversation;
 use crate::systems::interact::{Interaction, Response, Verb};
 use crate::systems::item::{GiveItems, ItemStack};
 use crate::systems::memory::{Remember, Remembers};
@@ -20,7 +20,7 @@ crate::table! {
             reach: Tiles(1.5),
             responses: &[Response {
                 requires: &[],
-                then: &[&StartConversation { node: DialogueId::HarbourBoard, busy: BusyPolicy::Replace }],
+                then: &[&StartConversation { node: DialogueId::HarbourBoard }],
                 news: false,
             }],
             marks: &[],
@@ -39,7 +39,7 @@ crate::table! {
                         &GiveItems(&[ItemStack::new(ItemId::Gold, 5), ItemStack::new(ItemId::TatteredMap, 1)]),
                         &Remember(MemoryId::TideChestLooted),
                         &Remember(MemoryId::FoundTatteredMap),
-                        &StartConversation { node: DialogueId::TideChestMap, busy: BusyPolicy::Replace },
+                        &StartConversation { node: DialogueId::TideChestMap },
                     ],
                     news: false,
                 },
@@ -48,13 +48,13 @@ crate::table! {
                     then: &[
                         &GiveItems(&[ItemStack::new(ItemId::Gold, 5)]),
                         &Remember(MemoryId::TideChestLooted),
-                        &StartConversation { node: DialogueId::TideChestFound, busy: BusyPolicy::Replace },
+                        &StartConversation { node: DialogueId::TideChestFound },
                     ],
                     news: false,
                 },
                 Response {
                     requires: &[],
-                    then: &[&StartConversation { node: DialogueId::TideChestEmpty, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::TideChestEmpty }],
                     news: false,
                 },
             ],
@@ -79,7 +79,7 @@ crate::table! {
             reach: Tiles(1.5),
             responses: &[Response {
                 requires: &[],
-                then: &[&StartConversation { node: DialogueId::StandingStone, busy: BusyPolicy::Replace }],
+                then: &[&StartConversation { node: DialogueId::StandingStone }],
                 news: false,
             }],
             marks: &[],

@@ -22,8 +22,7 @@ test(
       await talkTo(page, "Tobb");
       await caption(page, "Busts show who is speaking. Space, Enter or a click reads on");
       await readToChoices(page, 1400);
-      await waitFor(page, ({ stage }) => stage?.waiting === "TobbNews", "Tobb never queued his news");
-      await caption(page, "Tobb has news for you — it waits its turn, shown on the frame", { at: "top" });
+      await caption(page, "No buttons on the frame: Esc leaves, and the choices say the rest", { at: "top" });
       await page.waitForTimeout(2500);
       await caption(page, "A choice shows its words and nothing more, unless the writer reveals more", { at: "top" });
       await page.waitForTimeout(2000);
@@ -42,7 +41,7 @@ test(
       await caption(page, "…or click a choice", { at: "top" });
       await pick(page, "Good luck out there.");
       await onStage(page, "TobbNews");
-      await caption(page, "When one conversation ends, the one waiting begins", { at: "top" });
+      await caption(page, "Tobb held his news while you talked — once you're free, he calls you over", { at: "top" });
       await readToChoices(page, 1400);
       await page.keyboard.press("Digit1");
       await conversationOver(page);

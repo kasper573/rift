@@ -37,7 +37,6 @@ pub struct DialogueBoxOptions {
     pub typed: bool,
     pub choices: Vec<ChoiceOptions>,
     pub hint: Vec<RichPiece>,
-    pub actions: Vec<Box<dyn Scene>>,
     pub advance: InputRef,
     pub pick: InputRef,
 }
@@ -108,7 +107,6 @@ pub fn dialogue_box(options: DialogueBoxOptions) -> impl Scene {
         typed,
         choices,
         hint,
-        actions,
         advance,
         pick,
     } = options;
@@ -132,25 +130,7 @@ pub fn dialogue_box(options: DialogueBoxOptions) -> impl Scene {
             node.border = UiRect::all(Val::Px(2.0));
             node.border_radius = BorderRadius::all(Val::Px(radius::M));
         });
-    let plate_side = speaker.as_ref().map(|(_, side)| *side);
     let plate = speaker.map(|(name, side)| EntityScene(name_plate(name, side)));
-    let actions = (!actions.is_empty()).then(|| {
-        let mut node = Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(-16.0),
-            column_gap: Val::Px(spacing::M),
-            align_items: AlignItems::Center,
-            ..Node::default()
-        };
-        match plate_side {
-            Some(Side::Left) => node.right = Val::Px(spacing::XL),
-            _ => node.left = Val::Px(spacing::XL),
-        }
-        bsn! {
-            template_value(node)
-            Children [ {actions} ]
-        }
-    });
     let line = RichText {
         size: typography::LINE.font_size,
         ..line
@@ -163,7 +143,6 @@ pub fn dialogue_box(options: DialogueBoxOptions) -> impl Scene {
         on(finish_on_click)
         Children [
             {plate},
-            {actions},
             ( {rich_text(line, typed)} DialogueLine ),
             {EntityScene(choice_list(choices, pick))},
             (

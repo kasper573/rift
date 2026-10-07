@@ -12,7 +12,7 @@ use crate::data::attention::Id as AttentionId;
 use crate::data::dialogue::Id as DialogueId;
 use crate::data::item::Id as ItemId;
 use crate::systems::attention;
-use crate::systems::dialogue::{self, Asked, BusyPolicy, ChoiceTag, Line, Offer, Then};
+use crate::systems::dialogue::{self, Asked, ChoiceTag, Line, Offer, Then};
 use crate::systems::interact::Counterpart;
 use crate::systems::item::{ExchangeRefusal, Inventory, ItemCategory, ItemFlag, ItemStack};
 use crate::systems::notification::{self, Notification, NotificationKind};
@@ -89,8 +89,6 @@ impl Outcome for OpenShop {
                 node: browsing,
                 with: ctx.encounter.with,
                 tether: ctx.encounter.tether,
-                requires: Vec::new(),
-                busy: BusyPolicy::Replace,
             };
             dialogue::start(ctx.world, ctx.player, start);
         }

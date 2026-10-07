@@ -136,7 +136,6 @@ struct Stage {
     text: Option<String>,
     typing: bool,
     choices: Vec<StageChoice>,
-    waiting: Option<data::dialogue::Id>,
 }
 
 #[derive(Serialize)]
@@ -354,7 +353,6 @@ fn snapshot(world: &mut World) -> Snapshot {
                     rect: rows.get(&index).copied(),
                 })
                 .collect(),
-            waiting: view.waiting,
         }),
         notifications: notifications(world),
         feed: feed::rows(world),

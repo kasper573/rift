@@ -1408,18 +1408,6 @@ fn dialogue_box_scene() -> Box<dyn Scene> {
         ink("closed", palette::CRIMSON_80),
         plain(". Orders from the harbour master."),
     ]);
-    let actions: Vec<Box<dyn Scene>> = vec![
-        boxed(button_styled(
-            button_intent::SECONDARY,
-            ButtonSize::Sm,
-            "History",
-        )),
-        boxed(button_styled(
-            button_intent::SECONDARY,
-            ButtonSize::Sm,
-            "Leave",
-        )),
-    ];
     let panel = dialogue_panel(DialoguePanelOptions {
         title: "Road pass".to_owned(),
         width: Val::Px(420.0),
@@ -1439,7 +1427,6 @@ fn dialogue_box_scene() -> Box<dyn Scene> {
                 typed: true,
                 choices: sample_choices(assets()),
                 hint: choice_hint(),
-                actions,
                 advance: NEXT,
                 pick: PICK,
             }))},
@@ -1464,7 +1451,6 @@ fn cast_scene() -> Box<dyn Scene> {
                 typed: false,
                 choices: Vec::new(),
                 hint: vec![RichPiece::Input(NEXT), RichPiece::text(" next")],
-                actions: Vec::new(),
                 advance: NEXT,
                 pick: PICK,
             }))},

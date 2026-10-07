@@ -23,8 +23,7 @@ use crate::data::prop::Id as PropId;
 use crate::systems::area::{self, AreaTag, MarkerName};
 use crate::systems::attention;
 use crate::systems::dialogue::{
-    self, Asked, BusyPolicy, ChoiceReveal, ChoiceTag, GotoNode, Offer, Revealable,
-    StartConversation, Then,
+    self, Asked, ChoiceReveal, ChoiceTag, GotoNode, Offer, Revealable, StartConversation, Then,
 };
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interact::Counterpart;
@@ -502,11 +501,7 @@ impl Outcome for OfferQuest {
             None if offerable(ctx.world, ctx.player, self.0) => def.offer,
             None => return,
         };
-        StartConversation {
-            node,
-            busy: BusyPolicy::Replace,
-        }
-        .apply(ctx);
+        StartConversation { node }.apply(ctx);
     }
 
     fn leads_to(&self) -> Vec<DialogueId> {

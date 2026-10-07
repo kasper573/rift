@@ -121,7 +121,6 @@ export interface Stage {
   text: string | null;
   typing: boolean;
   choices: StageChoice[];
-  waiting: string | null;
 }
 
 export interface NotificationBubble {
@@ -545,7 +544,7 @@ function clickable(snapshot: Snapshot, tile: Tile, size: { width: number; height
 }
 
 // A walk click can land on a townsperson who strolled under it, and talking locks every later click.
-// Leaving one conversation can hand the stage to another that was waiting its turn.
+// Leaving one conversation can open another that someone was holding until you were free.
 export async function leaveConversation(page: Page, timeout = 30_000): Promise<void> {
   const deadline = Date.now() + timeout;
   while ((await probe(page)).stage) {

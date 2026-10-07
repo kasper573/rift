@@ -6,6 +6,7 @@ use super::{MapMarker, MarkerName};
 use crate::core::assets::AssetService;
 use crate::data;
 use crate::systems::WorldArea;
+use crate::systems::dialogue;
 use crate::systems::interact;
 use crate::systems::movement::position;
 use crate::systems::npc::Npc;
@@ -45,7 +46,7 @@ pub fn enter_zones(world: &mut World, npcs: &mut QueryState<(Entity, &'static Np
         let Some(at) = position(world, player) else {
             continue;
         };
-        let applying: HashSet<usize> = if stat::is_dead(world, player) {
+        let holding: HashSet<usize> = if stat::is_dead(world, player) {
             HashSet::new()
         } else {
             zones
@@ -60,7 +61,11 @@ pub fn enter_zones(world: &mut World, npcs: &mut QueryState<(Entity, &'static Np
             .get::<ApplyingZones>(player)
             .map(|zones| zones.0.clone())
             .unwrap_or_default();
-        for &index in applying.difference(&before) {
+        let mut applying: HashSet<usize> = holding.intersection(&before).copied().collect();
+        for &index in holding.difference(&before) {
+            if dialogue::in_conversation(world, player) {
+                continue;
+            }
             let zone = &area.get().zones[index];
             let with = zone.with.and_then(|npc| {
                 npcs.iter(world)
@@ -82,6 +87,7 @@ pub fn enter_zones(world: &mut World, npcs: &mut QueryState<(Entity, &'static Np
                 outcomes: zone.then,
             };
             terms.settle(world, player, encounter).ok();
+            applying.insert(index);
         }
         if before != applying {
             world.entity_mut(player).insert(ApplyingZones(applying));

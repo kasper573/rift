@@ -11,7 +11,6 @@ use crate::data::notification::Id as NotificationId;
 use crate::systems::actor::Rgba;
 use crate::systems::area::{MarkerName, StandingOn, WarpLock};
 use crate::systems::combat::Attitude;
-use crate::systems::dialogue::BusyPolicy;
 use crate::systems::dialogue::StartConversation;
 use crate::systems::interact::{Interaction, Response, Verb};
 use crate::systems::item::{Holding, ItemStack};
@@ -214,12 +213,12 @@ crate::table! {
             responses: &[
                 Response {
                     requires: &[&Remembers(MemoryId::SidedWithOrcs)],
-                    then: &[&StartConversation { node: DialogueId::MaraCold, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::MaraCold }],
                     news: false,
                 },
                 Response {
                     requires: &[],
-                    then: &[&StartConversation { node: DialogueId::MaraHello, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::MaraHello }],
                     news: false,
                 },
             ],
@@ -255,32 +254,32 @@ crate::table! {
             responses: &[
                 Response {
                     requires: &[&RememberedWithin(MemoryId::TobbVisits, Seconds(600.0))],
-                    then: &[&StartConversation { node: DialogueId::TobbAgain, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::TobbAgain }],
                     news: false,
                 },
                 Response {
                     requires: &[&RemembersAtLeast(MemoryId::TobbVisits, 5), &Not(&Remembers(MemoryId::TobbGaveLure))],
-                    then: &[&StartConversation { node: DialogueId::TobbGift, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::TobbGift }],
                     news: true,
                 },
                 Response {
                     requires: &[&RemembersAtLeast(MemoryId::TobbVisits, 6)],
-                    then: &[&StartConversation { node: DialogueId::TobbGossip, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::TobbGossip }],
                     news: false,
                 },
                 Response {
                     requires: &[&RemembersAtLeast(MemoryId::TobbVisits, 3)],
-                    then: &[&StartConversation { node: DialogueId::TobbRegular, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::TobbRegular }],
                     news: true,
                 },
                 Response {
                     requires: &[&RemembersAtLeast(MemoryId::TobbVisits, 1)],
-                    then: &[&StartConversation { node: DialogueId::TobbBack, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::TobbBack }],
                     news: false,
                 },
                 Response {
                     requires: &[],
-                    then: &[&StartConversation { node: DialogueId::TobbHello, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::TobbHello }],
                     news: false,
                 },
             ],
@@ -292,7 +291,7 @@ crate::table! {
                 &RemembersAtLeast(MemoryId::TobbVisits, 1),
                 &Not(&Remembers(MemoryId::TobbNewsToday)),
             ],
-            then: &[&StartConversation { node: DialogueId::TobbNews, busy: BusyPolicy::Wait(Seconds(60.0)) }],
+            then: &[&StartConversation { node: DialogueId::TobbNews }],
         }],
         guards: &[],
         on_defeat: &[],
@@ -323,12 +322,12 @@ crate::table! {
             responses: &[
                 Response {
                     requires: &[&RemembersAtLeast(MemoryId::InnFavour, 3)],
-                    then: &[&StartConversation { node: DialogueId::GrishaRegular, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::GrishaRegular }],
                     news: false,
                 },
                 Response {
                     requires: &[],
-                    then: &[&StartConversation { node: DialogueId::GrishaHello, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::GrishaHello }],
                     news: false,
                 },
             ],
@@ -364,7 +363,7 @@ crate::table! {
             responses: &[
                 Response {
                     requires: &[],
-                    then: &[&StartConversation { node: DialogueId::BramHello, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::BramHello }],
                     news: false,
                 },
             ],
@@ -400,7 +399,7 @@ crate::table! {
             responses: &[
                 Response {
                     requires: &[],
-                    then: &[&StartConversation { node: DialogueId::WrenHello, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::WrenHello }],
                     news: false,
                 },
             ],
@@ -436,12 +435,12 @@ crate::table! {
             responses: &[
                 Response {
                     requires: &[&Remembers(MemoryId::PellGrudge)],
-                    then: &[&StartConversation { node: DialogueId::PellGrudging, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::PellGrudging }],
                     news: false,
                 },
                 Response {
                     requires: &[],
-                    then: &[&StartConversation { node: DialogueId::PellHello, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::PellHello }],
                     news: false,
                 },
             ],
@@ -477,12 +476,12 @@ crate::table! {
             responses: &[
                 Response {
                     requires: &[&ROAD_PASS],
-                    then: &[&StartConversation { node: DialogueId::IlsaPassHolder, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::IlsaPassHolder }],
                     news: false,
                 },
                 Response {
                     requires: &[],
-                    then: &[&StartConversation { node: DialogueId::IlsaHello, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::IlsaHello }],
                     news: false,
                 },
             ],
@@ -491,7 +490,7 @@ crate::table! {
         observations: &[Observation {
             within: Tiles(5.0),
             requires: &[&StandingOn(MarkerName("forest-road")), &Not(&ROAD_PASS)],
-            then: &[&StartConversation { node: DialogueId::IlsaHalt, busy: BusyPolicy::Skip }],
+            then: &[&StartConversation { node: DialogueId::IlsaHalt }],
         }],
         guards: &[WarpLock { area: AreaId::Island, warp: MarkerName("forest-road"), requires: &[&ROAD_PASS] }],
         on_defeat: &[],
@@ -522,17 +521,17 @@ crate::table! {
             responses: &[
                 Response {
                     requires: &[&Remembers(MemoryId::SpurnedUgra)],
-                    then: &[&StartConversation { node: DialogueId::UgraSilent, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::UgraSilent }],
                     news: false,
                 },
                 Response {
                     requires: &[&Remembers(MemoryId::SidedWithOrcs)],
-                    then: &[&StartConversation { node: DialogueId::UgraFriend, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::UgraFriend }],
                     news: false,
                 },
                 Response {
                     requires: &[],
-                    then: &[&StartConversation { node: DialogueId::UgraHello, busy: BusyPolicy::Replace }],
+                    then: &[&StartConversation { node: DialogueId::UgraHello }],
                     news: false,
                 },
             ],

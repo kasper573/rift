@@ -1,17 +1,15 @@
 pub mod stage;
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
-use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::math::{Percent, Rng};
 use crate::core::sfx::SfxId;
-use crate::core::time::Seconds;
 use crate::data;
 use crate::data::attention::Id as AttentionId;
 use crate::systems::actor::Name;
@@ -166,20 +164,11 @@ pub fn topic_source(app: &mut App, source: TopicSource) {
         .push(source);
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum BusyPolicy {
-    Wait(Seconds),
-    Replace,
-    Skip,
-}
-
 #[derive(Clone)]
 pub struct Start {
     pub node: DialogueId,
     pub with: Option<Entity>,
     pub tether: Option<Tether>,
-    pub requires: Vec<&'static dyn Requirement>,
-    pub busy: BusyPolicy,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -194,7 +183,6 @@ pub struct Conversation {
     pub lines: Vec<SpokenLine>,
     pub choices: Vec<ChoiceView>,
     pub refused: Option<RefusedPick>,
-    pub waiting: Option<WaitingView>,
     pub remark: Option<Remark>,
 }
 
@@ -254,12 +242,6 @@ pub enum ChoiceChip {
     },
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
-pub struct WaitingView {
-    pub node: DialogueId,
-    pub lasts: Seconds,
-}
-
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum ConversationRequest {
     Pick { step: ConversationStep, choice: u32 },
@@ -289,7 +271,6 @@ impl Outcome for GotoNode {
 
 pub struct StartConversation {
     pub node: DialogueId,
-    pub busy: BusyPolicy,
 }
 
 impl Outcome for StartConversation {
@@ -298,8 +279,6 @@ impl Outcome for StartConversation {
             node: self.node,
             with: ctx.encounter.with,
             tether: ctx.encounter.tether,
-            requires: ctx.requires.to_vec(),
-            busy: self.busy,
         };
         self::start(ctx.world, ctx.player, start);
     }
@@ -365,28 +344,8 @@ pub fn heard(world: &World, player: Entity, node: DialogueId) -> bool {
 }
 
 pub fn start(world: &mut World, player: Entity, start: Start) {
-    if world.get::<ConversationSession>(player).is_none() {
-        begin(world, player, start);
-        return;
-    }
-    match start.busy {
-        BusyPolicy::Skip => {}
-        BusyPolicy::Replace => {
-            end(world, player, Ending::Replaced);
-            begin(world, player, start);
-        }
-        BusyPolicy::Wait(lasts) => {
-            let until = now(world) + lasts;
-            world
-                .entity_mut(player)
-                .entry::<WaitingConversations>()
-                .or_default()
-                .into_mut()
-                .0
-                .push_back(Queued { start, until });
-            refresh_view(world, player);
-        }
-    }
+    end(world, player, Ending::Replaced);
+    begin(world, player, start);
 }
 
 pub fn goto(world: &mut World, player: Entity, node: DialogueId) {
@@ -473,50 +432,11 @@ pub fn requests(world: &mut World) {
     }
 }
 
-pub fn hold(world: &mut World, sessions: &mut QueryState<Entity, InConversationOrWaiting>) {
+pub fn hold(world: &mut World, sessions: &mut QueryState<Entity, With<ConversationSession>>) {
     let players: Vec<Entity> = sessions.iter(world).collect();
-    let time = now(world);
     for player in players {
         if let Some(ending) = broken(world, player) {
             end(world, player, ending);
-        }
-        let expired: Vec<Queued> = world
-            .get_mut::<WaitingConversations>(player)
-            .map(|mut waiting| {
-                let (expired, kept): (Vec<Queued>, Vec<Queued>) = std::mem::take(&mut waiting.0)
-                    .into_iter()
-                    .partition(|queued| queued.until <= time);
-                waiting.0 = kept.into();
-                expired
-            })
-            .unwrap_or_default();
-        for queued in &expired {
-            gave_up(world, player, &queued.start);
-        }
-        if world.get::<ConversationSession>(player).is_none() {
-            let next = world
-                .get_mut::<WaitingConversations>(player)
-                .and_then(|mut waiting| waiting.0.pop_front());
-            if let Some(queued) = next {
-                let ready = rule::met(world, player, &queued.start.requires)
-                    && queued
-                        .start
-                        .tether
-                        .is_none_or(|tether| tether.holds(world, player));
-                if ready {
-                    begin(world, player, queued.start);
-                } else {
-                    gave_up(world, player, &queued.start);
-                }
-            }
-        } else if !expired.is_empty() {
-            refresh_view(world, player);
-        }
-        if world
-            .get::<WaitingConversations>(player)
-            .is_some_and(|waiting| waiting.0.is_empty())
-        {
-            world.entity_mut(player).remove::<WaitingConversations>();
         }
     }
 }
@@ -527,8 +447,6 @@ pub fn refresh(world: &mut World, sessions: &mut QueryState<Entity, With<Convers
         refresh_view(world, player);
     }
 }
-
-pub type InConversationOrWaiting = Or<(With<ConversationSession>, With<WaitingConversations>)>;
 
 #[derive(Component)]
 pub struct ConversationSession {
@@ -550,14 +468,6 @@ impl ConversationSession {
             tether: self.tether,
         }
     }
-}
-
-#[derive(Component, Default)]
-pub struct WaitingConversations(VecDeque<Queued>);
-
-struct Queued {
-    start: Start,
-    until: Seconds,
 }
 
 #[derive(Resource, Default)]
@@ -709,13 +619,6 @@ fn refresh_view(world: &mut World, player: Entity) {
             .map(|offer| choice_view(world, player, offer))
             .collect(),
         refused: session.refused.clone(),
-        waiting: world
-            .get::<WaitingConversations>(player)
-            .and_then(|waiting| waiting.0.front())
-            .map(|queued| WaitingView {
-                node: queued.start.node,
-                lasts: Seconds((queued.until - now(world)).0.ceil()),
-            }),
         remark: session.remark.clone(),
     };
     if world.get::<Conversation>(player) != Some(&view) {
@@ -935,27 +838,6 @@ fn talking(world: &World, player: Entity) -> Option<AttentionId> {
     in_conversation(world, player).then_some(AttentionId::Talking)
 }
 
-fn gave_up(world: &mut World, player: Entity, start: &Start) {
-    let who = start
-        .with
-        .and_then(|with| world.get::<Name>(with))
-        .map_or_else(|| "Someone".to_owned(), |name| name.name.clone());
-    notification::notify(
-        world,
-        player,
-        Notification::new(
-            NotificationKind::Feed {
-                topic: HistoryTopic::Talk,
-                icon: None,
-                tally: None,
-                failure: false,
-                sfx: None,
-            },
-            LineText::plain(format!("{who} stopped waiting to talk")),
-        ),
-    );
-}
-
 fn broken(world: &World, player: Entity) -> Option<Ending> {
     let session = world.get::<ConversationSession>(player)?;
     if stat::is_dead(world, player) {
@@ -976,8 +858,4 @@ fn next_step(world: &mut World) -> ConversationStep {
     let mut counter = world.resource_mut::<StepCounter>();
     counter.0 = counter.0.wrapping_add(1);
     ConversationStep(counter.0)
-}
-
-fn now(world: &World) -> Seconds {
-    Seconds(world.resource::<Time>().elapsed_secs())
 }

@@ -6,6 +6,7 @@ use crate::core::math::Pos;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::data::dialogue::Id as DialogueId;
 use crate::systems::area::AreaTag;
+use crate::systems::dialogue;
 use crate::systems::interact;
 use crate::systems::movement::position;
 use crate::systems::player::Players;
@@ -52,7 +53,7 @@ pub fn observe(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc, &
             continue;
         };
         let area = world.get::<AreaTag>(player).map(|tag| tag.area);
-        let mut observed = HashSet::new();
+        let mut holding = HashSet::new();
         for watcher in &watchers {
             let distance = at.distance(watcher.at);
             if Some(watcher.area) != area
@@ -67,7 +68,7 @@ pub fn observe(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc, &
             for (index, observation) in watcher.observations.iter().enumerate() {
                 if distance <= observation.within && rule::met(world, player, observation.requires)
                 {
-                    observed.insert((watcher.npc, index));
+                    holding.insert((watcher.npc, index));
                 }
             }
         }
@@ -75,7 +76,12 @@ pub fn observe(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc, &
             .get::<Observed>(player)
             .map(|observed| observed.0.clone())
             .unwrap_or_default();
-        for &(npc, index) in observed.difference(&before) {
+        let mut observed: HashSet<(Entity, usize)> =
+            holding.intersection(&before).copied().collect();
+        for &(npc, index) in holding.difference(&before) {
+            if dialogue::in_conversation(world, player) {
+                continue;
+            }
             let Some(observation) = world
                 .get::<Npc>(npc)
                 .and_then(|def| def.def.get().observations.get(index))
@@ -94,6 +100,7 @@ pub fn observe(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc, &
                 outcomes: observation.then,
             };
             terms.settle(world, player, encounter).ok();
+            observed.insert((npc, index));
         }
         if before != observed {
             world.entity_mut(player).insert(Observed(observed));

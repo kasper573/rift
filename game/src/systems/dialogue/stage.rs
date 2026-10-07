@@ -11,7 +11,7 @@ use ui::{
 
 use super::{
     ChoiceChip, ChoiceView, Conversation, ConversationRequest, ConversationStep, DialogueId,
-    RefusedPick, Speaker, SpokenLine, WaitingView,
+    RefusedPick, Speaker, SpokenLine,
 };
 use crate::core::assets::AssetRef;
 use crate::core::babble::{BabbleRank, Babbler, Babbling};
@@ -41,7 +41,6 @@ const CHOICE_SHORTCUTS: [InputAction; 9] = [
 ];
 const CHECK: &str = "icons/misc/checkmark.png";
 const LOCK: &str = "icons/cursors/lock001.png";
-const SANDCLOCK: &str = "icons/cursors/sandclock001.png";
 
 pub struct StagePlugin;
 
@@ -65,7 +64,6 @@ impl Plugin for StagePlugin {
                         .run_if(resource_equals(Mode::Play)),
                     read_along.run_if(resource_equals(Mode::Spectate)),
                     track_typing,
-                    count_down,
                 )
                     .chain()
                     .run_if(in_state(GameScene::Area)),
@@ -84,7 +82,6 @@ pub struct StageView {
     pub text: Option<String>,
     pub typing: bool,
     pub choices: Vec<StageChoice>,
-    pub waiting: Option<DialogueId>,
 }
 
 pub struct StageChoice {
@@ -114,7 +111,6 @@ pub fn view(world: &World) -> Option<StageView> {
                 locked: choice.locked,
             })
             .collect(),
-        waiting: shown.waiting.map(|waiting| waiting.node),
     })
 }
 
@@ -178,8 +174,6 @@ struct Shown {
     line: usize,
     lines: Vec<SpokenLine>,
     choices: Vec<ChoiceView>,
-    waiting: Option<WaitingView>,
-    waiting_until: Duration,
     picked: bool,
     typed_since: Option<Duration>,
     faces: HashMap<Speaker, Face>,
@@ -200,9 +194,6 @@ struct StageBox;
 
 #[derive(Component, Default, Clone)]
 struct StagePanels;
-
-#[derive(Component, Default, Clone)]
-struct WaitingChip;
 
 fn spawn_stage(mut commands: Commands) {
     commands.spawn_scene(bsn! {
@@ -259,23 +250,20 @@ fn follow_conversation(world: &mut World) {
         }
         return;
     };
-    let time = world.resource::<Time>().elapsed();
     let mut stage = world.resource_mut::<Stage>();
     match stage.shown.as_mut() {
         None => {
-            stage.shown = Some(Shown::of(now, HashMap::new(), time));
+            stage.shown = Some(Shown::of(now, HashMap::new()));
             chime(world, SfxId::UiOpen);
             show_line(world);
         }
         Some(shown) if shown.step != now.step => {
             let faces = std::mem::take(&mut shown.faces);
-            stage.shown = Some(Shown::of(now, faces, time));
+            stage.shown = Some(Shown::of(now, faces));
             show_line(world);
         }
         Some(shown) => {
-            let waiting_changed = shown.waiting.map(|waiting| waiting.node)
-                != now.waiting.map(|waiting| waiting.node);
-            if shown.choices != now.choices || waiting_changed {
+            if shown.choices != now.choices {
                 shown.stale = true;
             }
             let remark = now
@@ -286,21 +274,7 @@ fn follow_conversation(world: &mut World) {
                 .refused
                 .clone()
                 .filter(|refused| refused.nth > shown.refusals_seen);
-            if waiting_changed && now.waiting.is_some() {
-                shown.stale = true;
-                chime(world, SfxId::UiChime);
-            }
-            let mut stage = world.resource_mut::<Stage>();
-            let Some(shown) = stage.shown.as_mut() else {
-                return;
-            };
-            if shown.waiting.map(|waiting| waiting.lasts)
-                != now.waiting.map(|waiting| waiting.lasts)
-            {
-                shown.waiting_until = time + lasting(now.waiting);
-            }
             shown.choices = now.choices;
-            shown.waiting = now.waiting;
             if let Some(refused) = refused {
                 shown.refusals_seen = refused.nth;
                 shown.picked = false;
@@ -323,7 +297,7 @@ fn follow_conversation(world: &mut World) {
 }
 
 impl Shown {
-    fn of(now: Conversation, faces: HashMap<Speaker, Face>, time: Duration) -> Shown {
+    fn of(now: Conversation, faces: HashMap<Speaker, Face>) -> Shown {
         Shown {
             step: now.step,
             node: now.node,
@@ -331,8 +305,6 @@ impl Shown {
             line: 0,
             lines: now.lines,
             choices: now.choices,
-            waiting_until: time + lasting(now.waiting),
-            waiting: now.waiting,
             picked: false,
             typed_since: None,
             faces,
@@ -352,12 +324,6 @@ impl Shown {
     fn last_line(&self) -> bool {
         self.line + 1 >= self.lines.len()
     }
-}
-
-fn lasting(waiting: Option<WaitingView>) -> Duration {
-    waiting.map_or(Duration::ZERO, |waiting| {
-        Duration::from_secs_f32(waiting.lasts.0.max(0.0))
-    })
 }
 
 fn close(world: &mut World) {
@@ -472,30 +438,6 @@ fn track_typing(world: &mut World) {
         if shown.stale {
             shown.stale = false;
             build_box(world, false);
-        }
-    }
-}
-
-fn count_down(world: &mut World) {
-    let now = world.resource::<Time>().elapsed();
-    let Some((node, until)) = world.resource::<Stage>().shown.as_ref().and_then(|shown| {
-        shown
-            .waiting
-            .map(|waiting| (waiting.node, shown.waiting_until))
-    }) else {
-        return;
-    };
-    let label = waiting_label(node, until.saturating_sub(now));
-    let chips: Vec<Entity> = world
-        .query_filtered::<Entity, With<WaitingChip>>()
-        .iter(world)
-        .collect();
-    for chip in chips {
-        if let Some(text) = descendant_with::<Text>(world, chip)
-            && let Some(mut text) = world.get_mut::<Text>(text)
-            && text.0 != label
-        {
-            text.0 = label.clone();
         }
     }
 }
@@ -623,18 +565,6 @@ fn box_options(world: &World, typed: bool) -> Option<DialogueBoxOptions> {
     } else {
         Vec::new()
     };
-    let mut actions: Vec<Box<dyn Scene>> = Vec::new();
-    if let Some(waiting) = shown.waiting {
-        actions.push(Box::new(waiting_chip(
-            assets,
-            waiting_label(waiting.node, lasting(Some(waiting))),
-        )));
-    }
-    if playing {
-        actions.push(Box::new(frame_button("Leave", |world| {
-            leave(world);
-        })));
-    }
     Some(DialogueBoxOptions {
         speaker: speaker_name(world, line.by).map(|name| (name, side_of(line.by))),
         line: line.text.rich(),
@@ -645,7 +575,6 @@ fn box_options(world: &World, typed: bool) -> Option<DialogueBoxOptions> {
         } else {
             spectator_hint()
         },
-        actions,
         advance: InputAction::Advance.into(),
         pick: InputAction::PickChoice.into(),
     })
@@ -747,46 +676,6 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView, index: usize) -> Ch
         locked: choice.locked,
         shortcut: CHOICE_SHORTCUTS.get(index).map(|&action| action.into()),
     }
-}
-
-fn frame_button(label: &'static str, act: fn(&mut World)) -> impl Scene {
-    bsn! {
-        {ui::button_styled(ui::button::intent::SECONDARY, ui::ButtonSize::Sm, label)}
-        on(move |_: On<ui::Activate>, mut commands: Commands| {
-            commands.queue(move |world: &mut World| act(world));
-        })
-    }
-}
-
-fn waiting_chip(assets: &AssetServer, label: String) -> impl Scene {
-    let chip = ui::chip(ChipOptions {
-        label,
-        icon: Some(assets.load(SANDCLOCK)),
-        family: Family {
-            base: ui::theme::theme().surface_trough.base,
-            ..Family::outline(palette::AMBER_70)
-        },
-        inspect: None,
-    });
-    bsn! {
-        {chip}
-        WaitingChip
-    }
-}
-
-fn waiting_label(node: DialogueId, left: Duration) -> String {
-    let who = node
-        .get()
-        .lines
-        .iter()
-        .find_map(|line| match line.by {
-            Speaker::Npc(npc) => Some(npc.get().display_name),
-            Speaker::Prop(prop) => Some(prop.get().display_name),
-            Speaker::Player | Speaker::Narrator => None,
-        })
-        .unwrap_or("Someone");
-    let seconds = left.as_secs_f32().ceil() as u32;
-    format!("Next: {who} · {}:{:02}", seconds / 60, seconds % 60)
 }
 
 fn cast_members(world: &World) -> Vec<CastMember> {
