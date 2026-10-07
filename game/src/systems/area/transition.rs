@@ -95,7 +95,7 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
                     dest: crossing.dest,
                     state: CharacterState {
                         name: world.get::<Name>(entity)?.name.clone(),
-                        babble: world.get::<Babbler>(entity)?.0,
+                        babble: world.get::<Babbler>(entity).map(|babbler| babbler.0),
                         discovered: world.get::<Discovered>(entity)?.clone(),
                         stats: stat::snapshot(world, entity),
                         inventory: world.get::<Inventory>(entity)?.clone(),

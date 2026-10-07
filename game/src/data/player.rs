@@ -1,4 +1,3 @@
-use crate::core::babble::BabbleId;
 use crate::core::time::Seconds;
 use crate::data::job::Id as JobId;
 use crate::data::model::Id as ModelId;
@@ -10,7 +9,7 @@ use crate::systems::stat::StatKind;
 crate::table! {
     Adventurer: PlayerDef {
         model: ModelId::Adventurer,
-        babble: BabbleId::Adventurer,
+        babble: None,
         job: JobId::Adventurer,
         tint: Rgba(0xffffffff),
         stats: &[

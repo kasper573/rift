@@ -1483,7 +1483,7 @@ fn cast_round(assets: &AssetServer, round: u64) -> Vec<CastMember> {
         flip: false,
     };
     vec![
-        member(0, "busts/adventurer/thinking.png", Side::Left, !mara_speaks),
+        member(0, "busts/tobb/thinking.png", Side::Left, !mara_speaks),
         member(
             1,
             if mara_speaks {

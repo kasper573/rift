@@ -68,6 +68,7 @@ Code outside `data/` must not depend on arbitrary game content, so the same serv
 
 - No omniscient writing. Content only shows the player what their character could know at that point. A locked option the player has no reason to know about yet stays hidden until it unlocks, and a choice never spells out consequences the character couldn't foresee. The systems allow revealing more; the content chooses not to.
 - Show a locked or priced option only when the scene sets it up, so the NPC's words match what the options reveal. A trader laying out offers that each come at a price is the typical case: "I've got a few options for you, but each comes with its own set of challenges. Pick your poison:".
+- The player character has no bust and no voice, and never speaks a line. The player speaks only by picking dialogue choices, so anything their character says belongs in a choice's label. Busts and voices belong to NPCs, and a scene may stage several NPCs at once.
 
 
 ## Demo videos

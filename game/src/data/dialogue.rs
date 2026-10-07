@@ -13,7 +13,7 @@ use crate::systems::actor::bust::GenericExpression::{
 };
 use crate::systems::area::{MarkerName, Travel};
 use crate::systems::dialogue::ChoiceReveal::{Costs, Locked, Needs};
-use crate::systems::dialogue::Speaker::{Narrator, Npc, Player, Prop};
+use crate::systems::dialogue::Speaker::{Narrator, Npc, Prop};
 use crate::systems::dialogue::{Choice, DialogueNode, Gamble, GotoNode, Line};
 use crate::systems::equipment::Wearing;
 use crate::systems::item::{GiveItems, Holding, ItemStack};
@@ -123,11 +123,10 @@ crate::table! {
         lines: &[
             Line { by: Npc(NpcId::Tobb), face: Some(Generic(Surprised)), text: &[plain("Oi! Over here! You'll want to hear this.")] },
             Line { by: Npc(NpcId::Tobb), face: Some(Generic(Thinking)), text: &[styled("Orcs", &[Fx::Ink(Ink::Danger)]), plain(" were seen on the "), styled("north shore", &[Fx::Ink(Ink::Place)]), plain(" at dawn. Big ones, with a chief in a bone helmet.")] },
-            Line { by: Player, face: Some(Generic(Thinking)), text: &[plain("Thanks for the warning.")] },
         ],
         enter: &[&Remember(MemoryId::TobbNewsToday)],
         topics: false,
-        choices: &[Choice { label: &[plain("I'll keep my eyes open.")], ..Choice::SAY }],
+        choices: &[Choice { label: &[plain("Thanks for the warning. I'll keep my eyes open.")], ..Choice::SAY }],
     },
     GrishaHello: DialogueNode {
         lines: &[Line { by: Npc(NpcId::Grisha), face: Some(Generic(Happy)), text: &[plain("Welcome to the "), styled("Driftwood Inn", &[Fx::Ink(Ink::Place)]), plain("! A bed, a bowl, and all the gossip you can stomach.")] }],
@@ -144,11 +143,10 @@ crate::table! {
     GrishaRested: DialogueNode {
         lines: &[
             Line { by: Npc(NpcId::Grisha), face: Some(Generic(Neutral)), text: &[plain("There. Slept like a log, you did.")] },
-            Line { by: Player, face: Some(Generic(Happy)), text: &[plain("Good as new.")] },
         ],
         enter: &[],
         topics: false,
-        choices: &[Choice { label: &[plain("Thanks, Grisha.")], ..Choice::SAY }],
+        choices: &[Choice { label: &[plain("Good as new. Thanks, Grisha.")], ..Choice::SAY }],
     },
     GrishaRound: DialogueNode {
         lines: &[
@@ -712,7 +710,7 @@ crate::table! {
     XMarksOffer: DialogueNode {
         lines: &[
             Line { by: Narrator, face: None, text: &[plain("Salt has eaten most of the ink. A cross is scrawled beside a "), styled("standing stone", &[Fx::Ink(Ink::Place)]), plain(" in the "), styled("Forest", &[Fx::Ink(Ink::Place)]), plain(".")] },
-            Line { by: Player, face: Some(Generic(Thinking)), text: &[plain("Someone buried something there.")] },
+            Line { by: Narrator, face: None, text: &[plain("Someone buried something there.")] },
         ],
         enter: &[],
         topics: false,
@@ -730,7 +728,6 @@ crate::table! {
     XMarksThanks: DialogueNode {
         lines: &[
             Line { by: Narrator, face: None, text: &[plain("The stone matches the drawing, down to the crack in its side.")] },
-            Line { by: Player, face: Some(Generic(Happy)), text: &[plain("This is the spot.")] },
         ],
         enter: &[],
         topics: false,

@@ -5,17 +5,7 @@ use crate::systems::actor::bust::{Busts, GenericBusts, ModelDef};
 crate::table! {
     Adventurer: ModelDef {
         sheet: AssetRef("models/adventurer.tsx"),
-        busts: Some(Busts {
-            generic: GenericBusts {
-                neutral: AssetRef("busts/adventurer/neutral.png"),
-                happy: AssetRef("busts/adventurer/happy.png"),
-                sad: AssetRef("busts/adventurer/sad.png"),
-                angry: AssetRef("busts/adventurer/angry.png"),
-                surprised: AssetRef("busts/adventurer/surprised.png"),
-                thinking: AssetRef("busts/adventurer/thinking.png"),
-            },
-            individual: &[],
-        }),
+        busts: None,
     },
     Tobb: ModelDef {
         sheet: AssetRef("models/tobb.tsx"),

@@ -102,7 +102,7 @@ const IMMORTAL_HEALTH: f32 = 9999.0;
 
 pub struct PlayerDef {
     pub model: data::model::Id,
-    pub babble: BabbleId,
+    pub babble: Option<BabbleId>,
     pub job: data::job::Id,
     pub tint: Rgba,
     pub stats: &'static [Stat],
@@ -232,7 +232,7 @@ fn spawn_position(world: &mut World, policy: SpawnPolicy, area: &area::Area) -> 
 
 pub struct CharacterState {
     pub name: String,
-    pub babble: BabbleId,
+    pub babble: Option<BabbleId>,
     pub discovered: Discovered,
     pub stats: Stats,
     pub inventory: Inventory,
@@ -324,7 +324,7 @@ pub(crate) fn place(
                 area: AreaTag { area: zone },
             },
             Name { name: state.name },
-            (Babbler(state.babble), state.discovered),
+            state.discovered,
             OwnedBy(client),
             Owner { client },
             state.inventory,
@@ -340,6 +340,9 @@ pub(crate) fn place(
         ))
         .id();
     state.stats.apply(world, entity);
+    if let Some(babble) = state.babble {
+        world.entity_mut(entity).insert(Babbler(babble));
+    }
     let belongings = belongings::of(world, entity);
     world.entity_mut(entity).insert(belongings);
     world.resource_mut::<Players>().0.insert(client, entity);

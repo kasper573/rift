@@ -27,7 +27,7 @@ use crate::style::Style;
 use crate::theme::theme;
 use crate::tokens::{palette, radius, spacing, typography};
 
-const BOX_WIDTH: f32 = 920.0;
+const BOX_WIDTH: f32 = 780.0;
 const ICON: f32 = 18.0;
 const SHAKE: Duration = Duration::from_millis(320);
 
