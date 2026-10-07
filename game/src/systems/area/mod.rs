@@ -65,6 +65,7 @@ pub struct AreaDef {
 pub struct Population {
     pub npc: data::npc::Id,
     pub count: u32,
+    pub roams: Option<MarkerName>,
 }
 
 pub struct Resident {
@@ -191,6 +192,13 @@ impl Area {
         self.markers.get(name.0).copied()
     }
 
+    pub fn range(&self, name: MarkerName) -> Option<Rect<Tiles>> {
+        match self.marker(name)? {
+            MapMarker::Rect(rect) => Some(rect),
+            MapMarker::Point(_) => None,
+        }
+    }
+
     pub fn safe(&self, at: Pos<Tiles>) -> bool {
         let center = at.cell().center();
         self.safe_zones.iter().any(|zone| zone.contains(center))
@@ -226,6 +234,28 @@ pub fn check(assets: &AssetService) {
         let area = assets.resolve(def.map, build_area);
         if !def.populations.is_empty() && area.wild_grid.nodes().is_empty() {
             panic!("area {id:?}: its populations have no ground outside the safe zones");
+        }
+        for population in def.populations {
+            let Some(name) = population.roams else {
+                continue;
+            };
+            let Some(bounds) = area.range(name) else {
+                panic!(
+                    "area {id:?}: {:?} roams '{}', which the map lacks as an area marker",
+                    population.npc, name.0
+                );
+            };
+            if !area
+                .wild_grid
+                .nodes()
+                .iter()
+                .any(|&node| bounds.contains(node))
+            {
+                panic!(
+                    "area {id:?}: {:?} roams '{}', which has no ground outside the safe zones",
+                    population.npc, name.0
+                );
+            }
         }
         for resident in def.residents {
             if area.marker(resident.at).is_none() {

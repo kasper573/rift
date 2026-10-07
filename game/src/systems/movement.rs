@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin};
-use crate::core::math::{Direction, Offset, Pos, Rng};
+use crate::core::math::{Direction, Offset, Pos, Rect, Rng};
 use crate::core::tiling::{
     Cell, CellPos, GridDims, GridSize, NEIGHBORS_8, TilePos, Tiles, TilesPerSec,
 };
@@ -458,6 +458,23 @@ impl Grid {
         pick(rng, self.nodes_by_component.get(component)?)
     }
 
+    pub fn random_node_within(&self, rng: &mut Rng, bounds: Rect<Tiles>) -> Option<Pos<Tiles>> {
+        pick(rng, &within(&self.nodes, bounds))
+    }
+
+    pub fn random_reachable_within(
+        &self,
+        rng: &mut Rng,
+        from: Pos<Tiles>,
+        bounds: Rect<Tiles>,
+    ) -> Option<Pos<Tiles>> {
+        let component = self.component(from)? as usize;
+        pick(
+            rng,
+            &within(self.nodes_by_component.get(component)?, bounds),
+        )
+    }
+
     fn component_at_cell(&self, c: CellPos) -> Option<u32> {
         c.index(self.size).and_then(|i| {
             let comp = self.components[i];
@@ -534,6 +551,14 @@ fn airborne(world: &World, entity: Entity) -> bool {
             .resolve(actor.model.get().sheet, crate::systems::actor::build_model)
             .airborne
     })
+}
+
+fn within(nodes: &[Pos<Tiles>], bounds: Rect<Tiles>) -> Vec<Pos<Tiles>> {
+    nodes
+        .iter()
+        .copied()
+        .filter(|&node| bounds.contains(node))
+        .collect()
 }
 
 fn pick(rng: &mut Rng, nodes: &[Pos<Tiles>]) -> Option<Pos<Tiles>> {

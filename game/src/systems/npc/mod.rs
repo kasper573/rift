@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
 use crate::core::babble::{BabbleId, Babbler};
-use crate::core::math::{Direction, Pos, Rng};
+use crate::core::math::{Direction, Pos, Rect, Rng};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::data;
@@ -148,6 +148,9 @@ pub struct Pack(pub u32);
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Home(pub Pos<Tiles>);
 
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Roams(pub Rect<Tiles>);
+
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct DeadAt {
     pub at: Seconds,
@@ -188,7 +191,7 @@ pub fn spawn_all(world: &mut World) {
         for population in def.populations {
             let pack = next_pack(world);
             for _ in 0..population.count {
-                spawn_wild(world, &assets, &mut rng, area_id, population.npc, pack);
+                spawn_wild(world, &assets, &mut rng, area_id, population, pack);
             }
         }
     });
@@ -214,16 +217,21 @@ fn spawn_wild(
     assets: &AssetService,
     rng: &mut Rng,
     area_id: area::Id,
-    def: data::npc::Id,
+    population: &area::Population,
     pack: Pack,
 ) {
     let area = assets.resolve(area_id.get().map, area::build_area);
-    let at = area
-        .wild_grid
-        .random_node(rng)
-        .expect("validated at startup: populations have ground outside the safe zones");
-    let entity = spawn(world, def, at, area_id, pack);
+    let range = population.roams.and_then(|name| area.range(name));
+    let at = match range {
+        Some(bounds) => area.wild_grid.random_node_within(rng, bounds),
+        None => area.wild_grid.random_node(rng),
+    }
+    .expect("validated at startup: populations have ground outside the safe zones");
+    let entity = spawn(world, population.npc, at, area_id, pack);
     world.entity_mut(entity).insert(Wild);
+    if let Some(bounds) = range {
+        world.entity_mut(entity).insert(Roams(bounds));
+    }
 }
 
 pub fn spawn_actor(world: &mut World, def: &NpcDef, at: Pos<Tiles>, area: area::Id) -> Entity {
@@ -398,10 +406,15 @@ fn idle_wander(world: &mut World, rng: &mut Rng, id: Entity, def: &NpcDef, grid:
     let Some(at) = position(world, id) else {
         return;
     };
-    let node = match (def.ai.leash(), world.get::<Home>(id)) {
-        (Some(leash), Some(&Home(home))) => (0..LEASH_TRIES)
+    let node = match (
+        def.ai.leash(),
+        world.get::<Home>(id),
+        world.get::<Roams>(id),
+    ) {
+        (Some(leash), Some(&Home(home)), _) => (0..LEASH_TRIES)
             .filter_map(|_| grid.random_reachable(rng, at))
             .find(|node| node.distance(home) <= leash),
+        (_, _, Some(&Roams(bounds))) => grid.random_reachable_within(rng, at, bounds),
         _ => grid.random_reachable(rng, at),
     };
     if let Some(node) = node {
@@ -463,13 +476,13 @@ pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
             let Some(region) = area::of(world, id) else {
                 continue;
             };
-            let at = match world.get::<Home>(id) {
-                Some(&Home(home)) => home,
-                None => region
-                    .grid_for(area::wild(world, id))
-                    .random_node(&mut rng)
-                    .unwrap_or(region.spawn),
-            };
+            let grid = region.grid_for(area::wild(world, id));
+            let at = match (world.get::<Home>(id), world.get::<Roams>(id)) {
+                (Some(&Home(home)), _) => Some(home),
+                (None, Some(&Roams(bounds))) => grid.random_node_within(&mut rng, bounds),
+                (None, None) => grid.random_node(&mut rng),
+            }
+            .unwrap_or(region.spawn);
             if let Some(mut position) = world.get_mut::<Position>(id) {
                 position.pos = at;
             }
