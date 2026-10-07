@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use ui::{RichPiece, RichText, TextVoice, Typewriter, TypewriterReveal};
 
 use crate::core::assets::AssetRef;
+use crate::core::audio::mix::AudioCategory;
+use crate::core::audio::playback::{PlayClip, SfxPlace, SfxTune};
 use crate::core::math::Rng;
-use crate::core::sfx::AudioCategory;
-use crate::core::sfx::playback::{PlayClip, SfxPlace, SfxTune};
 use crate::core::time::{Hertz, PlaybackRate, Seconds};
 
 pub use crate::data::babble::Id as BabbleId;

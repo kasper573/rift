@@ -6,10 +6,10 @@ use bevy::window::PrimaryWindow;
 use ui::{BubbleLine, BubbleTail, FoldedSpeakers, SpeechBubble};
 
 use super::{Notification, NotificationKind, NotificationSent};
+use crate::core::audio::playback::SfxPlace;
 use crate::core::babble::{BabbleId, BabbleRank, Babbler, Babbling};
 use crate::core::math::Pos;
 use crate::core::render::tile_to_window;
-use crate::core::sfx::playback::SfxPlace;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
 use crate::data::npc::Id as NpcId;

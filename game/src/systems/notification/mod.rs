@@ -16,9 +16,9 @@ use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use serde::{Deserialize, Serialize};
 
+use crate::core::audio::playback::SfxId;
+use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::platform::ClientPlatform;
-use crate::core::sfx::SfxId;
-use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::core::time::{Seconds, UnixMillis, WallClock};
 use crate::data;
 use crate::data::npc::Id as NpcId;

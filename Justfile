@@ -31,7 +31,7 @@ render map out="":
     cargo run -p bevy_tiled --bin render -- {{map}} {{out}}
 
 # Synthesize the generated sound effects: a bank of 26 letter sounds per voice timbre
-# (assets/sfx/babble/<bank>/a..z.wav), the forest's intro drums, the harbour's ambience, interface
+# (assets/audio/babble/<bank>/a..z.wav), the forest's intro drums, the harbour's ambience, interface
 # stings, and a pickup and trade sound per item material. Retune the numbers and rerun.
 synth-sfx:
     #!/usr/bin/env bash
@@ -58,7 +58,7 @@ synth-sfx:
     bank() {
       local name=$1 sweep=$2 length=$3
       shift 3
-      local dir=assets/sfx/babble/$name
+      local dir=assets/audio/babble/$name
       mkdir -p "$dir"
       for letter in {a..z}; do
         read -r f1 f2 <<<"${formants[${vowel[$letter]}]}"
@@ -84,9 +84,9 @@ synth-sfx:
     drum "$work/low.wav" -3
     drum "$work/soft.wav" -9
     sox -m "$work/low.wav" "|sox $work/soft.wav -p pad 0.32" "|sox $work/low.wav -p pad 0.64" \
-      -e signed-integer -b 16 assets/sfx/interface/forest_drums.wav gain -6 reverb 35 50 70 gain -n -1
+      -e signed-integer -b 16 assets/audio/interface/forest_drums.wav gain -6 reverb 35 50 70 gain -n -1
 
-    mkdir -p assets/sfx/ambient assets/sfx/items/pickup assets/sfx/items/trade
+    mkdir -p assets/audio/ambient assets/audio/items/pickup assets/audio/items/trade
     fine() { sox -r 44100 -c 1 -n -e floating-point -b 32 "$@"; }
     save() { sox "$1" -e signed-integer -b 16 "$2" "${@:3}" gain -n -3; }
     at() { echo "|sox $1 -p pad $2"; }
@@ -120,7 +120,7 @@ synth-sfx:
     sox -m "$work/gull1.wav" "$(at "$work/gull2.wav" 0.38)" "$(at "$work/gull3.wav" 0.95)" "$work/gulls.wav"
     noise "$work/surf.wav" 1.9 pinknoise lowpass 700 fade q 0.6 1.9 0.9 gain -14
     sox -m "$work/gulls.wav" "$work/surf.wav" "$work/gulls_all.wav"
-    save "$work/gulls_all.wav" "assets/sfx/ambient/gulls.wav" lowpass 4200 pad 0 0.4 reverb 55 50 90
+    save "$work/gulls_all.wav" "assets/audio/ambient/gulls.wav" lowpass 4200 pad 0 0.4 reverb 55 50 90
 
     noise "$work/grind.wav" 1.4 brownnoise bandpass 480 0.6q tremolo 7.3 35 fade q 0.35 1.4 0.6
     grains=()
@@ -133,7 +133,7 @@ synth-sfx:
     fine "$work/thud.wav" synth 0.35 sine 78:44 fade l 0 0.35 0.33 gain -2
     fine "$work/creak.wav" synth 0.5 sawtooth 120 gain -18 bend 0,300,.28 0,-200,.18 bandpass 700 2q tremolo 18 60 fade q 0.08 0.5 0.2 gain -6
     sox -m "$work/grind.wav" "$work/grit.wav" "$(at "$work/creak.wav" 0.3)" "$(at "$work/thud.wav" 1.15)" "$work/hull.wav"
-    save "$work/hull.wav" "assets/sfx/ambient/hull_scrape.wav" lowpass 3000 pad 0 0.3 reverb 30 50 60
+    save "$work/hull.wav" "assets/audio/ambient/hull_scrape.wav" lowpass 3000 pad 0 0.3 reverb 30 50 60
 
     note() { struck "$1" 0.9 "$2:0:0.85" "$(awk "BEGIN{print $2*2}"):-12:0.4" "$(awk "BEGIN{print $2*3}"):-20:0.2"; }
     note "$work/c.wav" 1047
@@ -141,12 +141,12 @@ synth-sfx:
     note "$work/g.wav" 1568
     note "$work/c2.wav" 2093
     sox -m "$work/c.wav" "$(at "$work/e.wav" 0.07)" "$(at "$work/g.wav" 0.14)" "$(at "$work/c2.wav" 0.21)" "$work/rise.wav"
-    save "$work/rise.wav" "assets/sfx/interface/rising_chime.wav" pad 0 0.3 reverb 40 50 80
+    save "$work/rise.wav" "assets/audio/interface/rising_chime.wav" pad 0 0.3 reverb 40 50 80
 
     struck "$work/tick_body.wav" 0.08 "1150:0:0.05" "3100:-9:0.025"
     noise "$work/tick_click.wav" 0.006 whitenoise highpass 2500 fade l 0 0.006 0.006 gain -6
     sox -m "$work/tick_body.wav" "$work/tick_click.wav" "$work/tick.wav"
-    save "$work/tick.wav" "assets/sfx/interface/tally_tick.wav" lowpass 5000
+    save "$work/tick.wav" "assets/audio/interface/tally_tick.wav" lowpass 5000
 
     clink() { struck "$1" 0.2 "$2:0:0.16" "$(awk "BEGIN{print $2*1.47}"):-5:0.12" "$(awk "BEGIN{print $2*2.18}"):-9:0.08"; }
     clink "$work/coin1.wav" 3100
@@ -154,17 +154,17 @@ synth-sfx:
     clink "$work/coin3.wav" 2850
     clink "$work/coin4.wav" 3350
     sox -m "$work/coin1.wav" "$(at "$work/coin2.wav" 0.055)" "$work/coins_pickup.wav"
-    save "$work/coins_pickup.wav" "assets/sfx/items/pickup/coins.wav" lowpass 9000
+    save "$work/coins_pickup.wav" "assets/audio/items/pickup/coins.wav" lowpass 9000
     sox -m "$work/coin1.wav" "$(at "$work/coin3.wav" 0.04)" "$(at "$work/coin2.wav" 0.09)" "$(at "$work/coin4.wav" 0.13)" "$(at "$work/coin1.wav" 0.2)" "$work/coins_trade.wav"
-    save "$work/coins_trade.wav" "assets/sfx/items/trade/coins.wav" lowpass 9000 reverb 15
+    save "$work/coins_trade.wav" "assets/audio/items/trade/coins.wav" lowpass 9000 reverb 15
 
     struck "$work/glass1.wav" 0.4 "2450:0:0.34" "5900:-8:0.2" "8100:-16:0.08"
     struck "$work/glass2.wav" 0.4 "2780:0:0.3" "6400:-9:0.18"
     noise "$work/slosh.wav" 0.25 pinknoise bandpass 900 1q tremolo 9 80 fade q 0.05 0.25 0.12 gain -18
     sox -m "$work/glass1.wav" "$work/slosh.wav" "$work/glass_pickup.wav"
-    save "$work/glass_pickup.wav" "assets/sfx/items/pickup/glass.wav"
+    save "$work/glass_pickup.wav" "assets/audio/items/pickup/glass.wav"
     sox -m "$work/glass1.wav" "$(at "$work/glass2.wav" 0.08)" "$work/slosh.wav" "$work/glass_trade.wav"
-    save "$work/glass_trade.wav" "assets/sfx/items/trade/glass.wav" reverb 15
+    save "$work/glass_trade.wav" "assets/audio/items/trade/glass.wav" reverb 15
 
     clack() {
       noise "$work/clack_noise.wav" 0.04 whitenoise bandpass "$2" 2q fade l 0 0.04 0.04
@@ -173,46 +173,46 @@ synth-sfx:
     }
     clack "$work/bone1.wav" 1500
     clack "$work/bone2.wav" 1250
-    save "$work/bone1.wav" "assets/sfx/items/pickup/bone.wav" lowpass 6000
+    save "$work/bone1.wav" "assets/audio/items/pickup/bone.wav" lowpass 6000
     sox -m "$work/bone1.wav" "$(at "$work/bone2.wav" 0.075)" "$work/bone_trade.wav"
-    save "$work/bone_trade.wav" "assets/sfx/items/trade/bone.wav" lowpass 6000
+    save "$work/bone_trade.wav" "assets/audio/items/trade/bone.wav" lowpass 6000
 
     noise "$work/flop.wav" 0.12 brownnoise lowpass 650 fade l 0.004 0.12 0.11
     noise "$work/slap.wav" 0.03 whitenoise bandpass 1300 1q fade l 0 0.03 0.03 gain -8
     sox -m "$work/flop.wav" "$work/slap.wav" "$work/flesh1.wav"
-    save "$work/flesh1.wav" "assets/sfx/items/pickup/flesh.wav"
+    save "$work/flesh1.wav" "assets/audio/items/pickup/flesh.wav"
     sox -m "$work/flesh1.wav" "$(at "$work/flop.wav" 0.09)" "$work/flesh_trade.wav"
-    save "$work/flesh_trade.wav" "assets/sfx/items/trade/flesh.wav"
+    save "$work/flesh_trade.wav" "assets/audio/items/trade/flesh.wav"
 
     struck "$work/ring_short.wav" 0.3 "1820:0:0.24" "2760:-4:0.18" "4130:-8:0.12" "5790:-12:0.08"
-    save "$work/ring_short.wav" "assets/sfx/items/pickup/blade.wav" lowpass 4500
+    save "$work/ring_short.wav" "assets/audio/items/pickup/blade.wav" lowpass 4500
     struck "$work/ring_long.wav" 0.8 "1820:0:0.7" "2760:-4:0.5" "4130:-7:0.35" "5790:-10:0.22"
     noise "$work/shing.wav" 0.18 whitenoise highpass 3200 fade q 0.12 0.18 0.06 gain -6
     sox -m "$work/shing.wav" "$(at "$work/ring_long.wav" 0.12)" "$work/blade_trade.wav"
-    save "$work/blade_trade.wav" "assets/sfx/items/trade/blade.wav" reverb 15
+    save "$work/blade_trade.wav" "assets/audio/items/trade/blade.wav" reverb 15
 
     ping() { struck "$1" 0.12 "$2:0:0.09" "$(awk "BEGIN{print $2*1.62}"):-7:0.05"; }
     ping "$work/ping1.wav" 4200
     ping "$work/ping2.wav" 5100
     ping "$work/ping3.wav" 3700
-    save "$work/ping1.wav" "assets/sfx/items/pickup/trinket.wav"
+    save "$work/ping1.wav" "assets/audio/items/pickup/trinket.wav"
     sox -m "$work/ping1.wav" "$(at "$work/ping2.wav" 0.05)" "$(at "$work/ping3.wav" 0.11)" "$work/trinket_trade.wav"
-    save "$work/trinket_trade.wav" "assets/sfx/items/trade/trinket.wav"
+    save "$work/trinket_trade.wav" "assets/audio/items/trade/trinket.wav"
 
     noise "$work/rustle.wav" 0.18 whitenoise bandpass 3800 0.8q tremolo 27 85 fade q 0.03 0.18 0.1
-    save "$work/rustle.wav" "assets/sfx/items/pickup/paper.wav"
+    save "$work/rustle.wav" "assets/audio/items/pickup/paper.wav"
     noise "$work/fold1.wav" 0.2 whitenoise bandpass 3400 0.8q tremolo 23 85 fade q 0.04 0.2 0.1
     noise "$work/fold2.wav" 0.16 whitenoise bandpass 4200 0.8q tremolo 31 85 fade q 0.02 0.16 0.1
     sox -m "$work/fold1.wav" "$(at "$work/fold2.wav" 0.17)" "$work/paper_trade.wav"
-    save "$work/paper_trade.wav" "assets/sfx/items/trade/paper.wav"
+    save "$work/paper_trade.wav" "assets/audio/items/trade/paper.wav"
 
     fine "$work/knock_tone.wav" synth 0.1 sine 170:120 fade l 0 0.1 0.1
     noise "$work/knock_noise.wav" 0.05 brownnoise bandpass 420 1q fade l 0 0.05 0.05
     sox -m "$work/knock_tone.wav" "$work/knock_noise.wav" "$work/knock.wav"
-    save "$work/knock.wav" "assets/sfx/items/pickup/stone.wav"
+    save "$work/knock.wav" "assets/audio/items/pickup/stone.wav"
     noise "$work/scrape.wav" 0.16 brownnoise bandpass 650 1q tremolo 21 70 fade q 0.03 0.16 0.08 gain -4
     sox -m "$work/knock.wav" "$(at "$work/scrape.wav" 0.07)" "$work/stone_trade.wav"
-    save "$work/stone_trade.wav" "assets/sfx/items/trade/stone.wav"
+    save "$work/stone_trade.wav" "assets/audio/items/trade/stone.wav"
 
 build:
     cargo build --release -p website -p game --bin website --bin server

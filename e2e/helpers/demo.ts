@@ -3,7 +3,7 @@ import { basename, extname, join } from "node:path";
 
 import { VIDEO } from "../demo.config";
 import { register } from "./account";
-import { waitForWorld } from "./game";
+import { probe, waitForWorld, type SoundVoice } from "./game";
 import { loadReference } from "./image";
 import { startRecording } from "./recording";
 import { tapSoundtrack } from "./soundtrack";
@@ -153,6 +153,58 @@ export async function inset(page: Page, other: Page, label: string): Promise<() 
     await refreshing;
     await shown?.dispose().catch(() => {});
   };
+}
+
+const MIXER_REFRESH_MS = 200;
+const METER_RANGE_DB = 48;
+
+// A soundtrack can't show which channel a track plays on, or how loud, so this panel does.
+export async function soundscapeMixer(page: Page): Promise<() => Promise<void>> {
+  let running = true;
+  let shown: { dispose(): Promise<void> } | undefined;
+  const refreshing = (async () => {
+    while (running) {
+      const voices = await probe(page)
+        .then((snapshot) => snapshot.soundscape.voices)
+        .catch(() => undefined);
+      if (voices && running) {
+        const next = await page.screencast.showOverlay(mixerPanel(voices));
+        await shown?.dispose().catch(() => {});
+        shown = next;
+      }
+      await new Promise((resolve) => setTimeout(resolve, MIXER_REFRESH_MS));
+    }
+  })();
+  return async () => {
+    running = false;
+    await refreshing;
+    await shown?.dispose().catch(() => {});
+  };
+}
+
+function mixerPanel(voices: SoundVoice[]): string {
+  const rows = voices
+    .slice()
+    .sort((a, b) => a.channel - b.channel || a.src.localeCompare(b.src))
+    .map(
+      ({ channel, category, src, heard }) => `<div style="display:flex;align-items:center;gap:10px;margin:4px 0">
+        <span style="width:22px;color:#94a3b8">${channel}</span>
+        <span style="width:120px">${escape(basename(src, extname(src)))}</span>
+        <span style="width:70px;color:#94a3b8">${category}</span>
+        <span style="flex:1;height:8px;border-radius:4px;background:rgba(255,255,255,.15);overflow:hidden">
+          <span style="display:block;height:100%;width:${meter(heard)}%;background:#facc15"></span></span></div>`,
+    )
+    .join("");
+  return `<div style="position:fixed;right:72px;top:40px;width:380px;padding:10px 14px;border-radius:10px;
+      background:rgba(0,0,0,.72);color:#fff;font:500 15px/1.3 system-ui,sans-serif">
+    <div style="font-weight:700;margin-bottom:4px">Soundscape channels</div>
+    ${rows || '<div style="color:#94a3b8">silence</div>'}</div>`;
+}
+
+// Loudness is heard in decibels, so the bar spans METER_RANGE_DB of them down from full scale.
+function meter(amplitude: number): number {
+  const decibels = 20 * Math.log10(Math.max(amplitude, 1e-6));
+  return Math.round(Math.min(1, Math.max(0, 1 + decibels / METER_RANGE_DB)) * 100);
 }
 
 function insetFrame(jpeg: string, label: string): string {

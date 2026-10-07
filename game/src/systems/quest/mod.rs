@@ -10,8 +10,8 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{AssetRef, AssetService};
+use crate::core::audio::playback::SfxId;
 use crate::core::math::{Percent, Rng};
-use crate::core::sfx::SfxId;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{GameDay, Seconds, UnixMillis, WallClock};
 use crate::data::area::Id as AreaId;

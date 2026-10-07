@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ui::component;
 use ui::{Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
+use crate::core::audio::mix::{AudioFader, AudioMix, AudioVolume};
 use crate::core::platform::{ClientPlatform, Platform};
-use crate::core::sfx::{AudioFader, AudioMix, AudioVolume};
 use crate::systems::input::map::{ActionInput, InputAction};
 use crate::systems::scene::mode::Mode;
 use crate::systems::{

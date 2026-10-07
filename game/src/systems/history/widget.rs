@@ -9,9 +9,9 @@ use ui::{RichSpan, RichText, component};
 use super::{
     HistoryEntry, HistoryMark, HistoryNews, HistoryRecord, HistoryTopic, KEPT, RecordTally,
 };
+use crate::core::audio::playback::SfxId;
+use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::platform::ClientPlatform;
-use crate::core::sfx::SfxId;
-use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::core::time::LocalClock;
 use crate::systems::actor::Name;
 use crate::systems::hud::{self, HudAudience, Window, reconcile_children};

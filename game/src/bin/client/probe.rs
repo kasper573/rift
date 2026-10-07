@@ -7,6 +7,9 @@ use bevy::text::EditableText;
 use bevy::ui::ComputedNode;
 use bevy::window::PrimaryWindow;
 use game::core::assets::AssetService;
+use game::core::audio::mix::AudioCategory;
+use game::core::audio::playback::Listener;
+use game::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
 use game::core::math::{Offset, Pos, Rect, Size};
 use game::core::render::tile_to_window;
 use game::core::tiling::{TilePos, Tiles};
@@ -68,6 +71,37 @@ struct Snapshot {
     item_card: Option<ItemCard>,
     bag: Vec<Stack>,
     quests: Quests,
+    soundscape: Soundscape,
+}
+
+#[derive(Serialize)]
+struct Soundscape {
+    zones: Vec<SoundZone>,
+    voices: Vec<Voice>,
+}
+
+#[derive(Serialize)]
+struct SoundZone {
+    name: String,
+    bounds: Rect<Tiles>,
+    ellipse: bool,
+    reach: f32,
+    proximity: f32,
+    tracks: Vec<Track>,
+}
+
+#[derive(Serialize)]
+struct Track {
+    channel: u32,
+    src: String,
+}
+
+#[derive(Serialize)]
+struct Voice {
+    channel: u32,
+    category: AudioCategory,
+    src: &'static str,
+    heard: f32,
 }
 
 #[derive(Serialize, Default)]
@@ -432,8 +466,48 @@ fn snapshot(world: &mut World) -> Snapshot {
             .unwrap_or_default(),
         ui: ui(world),
         covered: covered(world),
+        soundscape: soundscape(world),
         view,
         area,
+    }
+}
+
+fn soundscape(world: &World) -> Soundscape {
+    let listener = world.resource::<Listener>().0;
+    Soundscape {
+        zones: world
+            .resource::<soundscape::Soundscape>()
+            .0
+            .iter()
+            .map(|zone| SoundZone {
+                name: zone.name.clone(),
+                bounds: zone.shape.bounds(),
+                ellipse: matches!(zone.shape, SoundscapeShape::Ellipse(_)),
+                reach: zone.reach().0,
+                proximity: listener
+                    .and_then(|at| zone.heard_from(at))
+                    .map_or(0.0, |heard| heard.proximity),
+                tracks: zone
+                    .channels
+                    .iter()
+                    .map(|(channel, layer)| Track {
+                        channel: channel.0,
+                        src: layer.src.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        voices: world
+            .resource::<SoundscapeMixer>()
+            .voices()
+            .iter()
+            .map(|voice| Voice {
+                channel: voice.channel.0,
+                category: voice.channel.category(),
+                src: voice.src,
+                heard: voice.heard(),
+            })
+            .collect(),
     }
 }
 

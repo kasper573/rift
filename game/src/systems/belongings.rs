@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
 
-use crate::core::sfx::SfxId;
+use crate::core::audio::playback::SfxId;
 use crate::data::item::Id as ItemId;
 use crate::systems::equipment::{Equipment, EquipmentSlot};
 use crate::systems::history::{HistoryTopic, RecordTally};

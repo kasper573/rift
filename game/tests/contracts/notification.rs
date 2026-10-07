@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use bevy_terminal::TerminalInput;
+use game::core::audio::playback::SfxId;
 use game::core::math::Offset;
-use game::core::sfx::SfxId;
 use game::core::time::Seconds;
 use game::data;
 use game::data::quest::Id as QuestId;

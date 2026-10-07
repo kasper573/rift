@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="45" height="31" tilewidth="16" tileheight="16" infinite="0" nextlayerid="11" nextobjectid="51">
+<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="45" height="31" tilewidth="16" tileheight="16" infinite="0" nextlayerid="12" nextobjectid="55">
  <tileset firstgid="1" source="../tilesets/forest-tileset.tsx"/>
  <tileset firstgid="289" source="../tilesets/beach-tileset.tsx"/>
  <layer id="1" name="Background" width="45" height="31">
@@ -116,6 +116,33 @@
   </object>
   <object id="50" name="ferry-dock" type="marker" x="360" y="280">
    <point/>
+  </object>
+ </objectgroup>
+ <objectgroup id="11" name="Soundscape">
+  <object id="51" name="forest" type="soundscape" x="0" y="0" width="720" height="496">
+   <properties>
+    <property name="channel1" value="audio/music/forest.flac, 0.25"/>
+    <property name="channel2" value="audio/ambient/forest_air.flac, 0.28"/>
+   </properties>
+  </object>
+  <object id="52" name="ugra-camp" type="soundscape" x="128" y="200" width="112" height="96">
+   <properties>
+    <property name="channel3" value="audio/ambient/campfire.flac, 0.29"/>
+    <property name="emit" type="float" value="2"/>
+   </properties>
+   <ellipse/>
+  </object>
+  <object id="53" name="standing-stone" type="soundscape" x="528" y="48" width="112" height="112">
+   <properties>
+    <property name="channel3" value="audio/ambient/stone_hum.flac, 0.29"/>
+    <property name="emit" type="float" value="4"/>
+   </properties>
+   <ellipse/>
+  </object>
+  <object id="54" name="mere" type="soundscape" x="272" y="240" width="304" height="192">
+   <properties>
+    <property name="channel4" value="audio/ambient/lake.flac, 0.29"/>
+   </properties>
   </object>
  </objectgroup>
 </map>

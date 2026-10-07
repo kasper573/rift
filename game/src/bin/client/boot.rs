@@ -57,7 +57,8 @@ fn boot() {
             ui::UiPlugin,
             core::net::transport::RepliconRenetClientPlugin,
             core::render::RenderPlugin,
-            core::sfx::playback::SfxPlugin,
+            core::audio::playback::SfxPlugin,
+            core::audio::soundscape::SoundscapePlugin,
             core::babble::BabblePlugin,
         ))
         .add_plugins((

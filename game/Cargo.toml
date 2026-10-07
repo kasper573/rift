@@ -73,8 +73,9 @@ bevy_picking.workspace = true
 bevy_replicon = { workspace = true, features = ["client", "server"] }
 bevy_state.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
-bevy_kira_audio = { version = "0.26.0-rc.1", features = ["wav"] }
+bevy_kira_audio = { version = "0.26.0-rc.1", default-features = false, features = ["wav", "flac"] }
 base64 = "0.22"
+csv = "1"
 derive_more = { version = "2", features = ["add", "add_assign"] }
 euclid = { version = "0.22", features = ["serde"] }
 pathfinding = "4"

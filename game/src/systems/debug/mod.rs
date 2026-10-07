@@ -1,3 +1,5 @@
+mod soundscape;
+
 use crate::core::assets::AssetService;
 use crate::core::math::{Offset, Rect};
 use crate::core::tiling::{self, Cell, TilePos, Tiles};
@@ -20,17 +22,19 @@ impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DebugMode>()
             .init_resource::<ShowHitboxes>()
+            .init_resource::<soundscape::ShownSoundscape>()
             .add_systems(
                 Update,
                 (
                     cycle.run_if(not(ui::typing)),
                     draw,
+                    (soundscape::show, soundscape::read_out_hovered).chain(),
                     toggle_hitboxes.run_if(not(ui::typing)),
                     draw_hitboxes,
                 )
                     .run_if(in_state(Scene::Area)),
             )
-            .add_systems(OnExit(Scene::Area), clear_hitboxes);
+            .add_systems(OnExit(Scene::Area), (clear_hitboxes, soundscape::hide));
     }
 }
 
@@ -41,6 +45,7 @@ enum DebugMode {
     Nodes,
     Obscured,
     SafeZones,
+    Soundscapes,
 }
 
 fn cycle(input: ActionInput, mut mode: ResMut<DebugMode>) {
@@ -49,7 +54,8 @@ fn cycle(input: ActionInput, mut mode: ResMut<DebugMode>) {
             DebugMode::Off => DebugMode::Nodes,
             DebugMode::Nodes => DebugMode::Obscured,
             DebugMode::Obscured => DebugMode::SafeZones,
-            DebugMode::SafeZones => DebugMode::Off,
+            DebugMode::SafeZones => DebugMode::Soundscapes,
+            DebugMode::Soundscapes => DebugMode::Off,
         };
     }
 }
@@ -103,6 +109,7 @@ fn draw(
                 outline(&mut gizmos, *zone, green);
             }
         }
+        DebugMode::Soundscapes => soundscape::outline(&mut gizmos, &area.soundscape),
         DebugMode::Off => {}
     }
 }

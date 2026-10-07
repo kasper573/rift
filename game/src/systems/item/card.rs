@@ -6,8 +6,8 @@ use ui::{
 };
 use ui::{TooltipText, component};
 
-use crate::core::sfx::SfxId;
-use crate::core::sfx::playback::{PlaySfx, SfxPlace};
+use crate::core::audio::playback::SfxId;
+use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::data::item::Id as ItemId;
 use crate::systems::effect::Effect;
 use crate::systems::hud;

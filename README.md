@@ -32,7 +32,7 @@ no wasm hot reload: sign in at the printed URL and reload the page to pick up re
 To see the game in action without playing it, record its demo chapters ([`e2e/demos/`](e2e/demos)):
 
 ```sh
-just demo combat   # one chapter: target/demo/03-combat.webm
+just demo combat   # one chapter: target/demo/04-combat.webm
 just showcase      # all of them, stitched: target/demo/showcase.webm
 just gallery-demo "toasts (sonner)" 8 "mousemove 800 523 click 1"   # a ui component on its own
 ```

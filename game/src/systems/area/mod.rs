@@ -17,8 +17,9 @@ use bevy_ecs::world::World;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{AssetRef, AssetService};
+use crate::core::audio::playback::SfxId;
+use crate::core::audio::soundscape::SoundscapeZone;
 use crate::core::math::{Pos, Rect, Size};
-use crate::core::sfx::SfxId;
 use crate::core::tiling::{Cell, CellPos, GridSize, TilePos, TileSize, Tiles};
 use crate::data;
 use crate::systems::movement;
@@ -181,6 +182,7 @@ pub struct Area {
     pub grouped_cells: HashSet<CellPos>,
     pub layers: Vec<RenderLayer>,
     pub markers: HashMap<String, MapMarker>,
+    pub soundscape: Vec<SoundscapeZone>,
     pub map: std::sync::Arc<tiled::Map>,
 }
 
@@ -255,6 +257,15 @@ pub fn check(assets: &AssetService) {
             }
             for outcome in zone.then {
                 outcome.check(assets);
+            }
+        }
+        for layer in area
+            .soundscape
+            .iter()
+            .flat_map(|zone| zone.channels.values())
+        {
+            if let Err(error) = assets.open(std::path::Path::new(&layer.src)) {
+                panic!("area {id:?}: soundscape track {}: {error}", layer.src);
             }
         }
     }

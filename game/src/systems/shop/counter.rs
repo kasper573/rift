@@ -6,8 +6,8 @@ use ui::tokens::{palette, spacing, typography};
 use ui::{Carried, CarryTarget, ChipOptions, ConfirmOptions, Family, OnTap, component};
 
 use super::{OfferView, Sale, ShopId, ShopRequest, ShopView, WareRefusal};
-use crate::core::sfx::SfxId;
-use crate::core::sfx::playback::{PlaySfx, SfxPlace};
+use crate::core::audio::playback::SfxId;
+use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::data::item::Id as ItemId;
 use crate::systems::dialogue::stage;
 use crate::systems::hud;

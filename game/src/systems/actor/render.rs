@@ -11,8 +11,8 @@ use crate::systems::area::{self, AreaTag};
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 
+use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::render::{Animator, atlas_rect, dynamic_z, sprite_transform};
-use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 use crate::systems::movement::RenderPosition;
 
 pub struct ActorPlugin;

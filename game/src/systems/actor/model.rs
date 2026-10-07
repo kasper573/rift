@@ -4,8 +4,8 @@ use std::path::Path;
 use tiled::{Frame, PropertyValue, TileId};
 
 use crate::core::assets::{AssetRef, AssetService};
+use crate::core::audio::playback::SfxId;
 use crate::core::math::{Direction, Pos, Rect, Size, WorldPx};
-use crate::core::sfx::SfxId;
 use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
 

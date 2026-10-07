@@ -1,6 +1,6 @@
 use crate::core::assets::AssetService;
+use crate::core::audio::playback::SfxId;
 use crate::core::math::{Pos, WorldPx};
-use crate::core::sfx::SfxId;
 use crate::core::tiling::Tiles;
 use crate::core::time::Seconds;
 use crate::systems::area::{self, AreaTag};
@@ -8,8 +8,8 @@ use crate::systems::item::{DroppedItem, ItemConsumed, ItemsDropped};
 use crate::systems::movement::Position;
 use bevy::prelude::*;
 
+use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::render::{ToScreen, dynamic_z, sprite_transform};
-use crate::core::sfx::playback::{PlaySfx, SfxPlace};
 
 const DROP_SIZE: WorldPx = WorldPx(12.0);
 const DROP_STAGGER: Seconds = Seconds(0.06);

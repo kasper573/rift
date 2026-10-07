@@ -169,6 +169,22 @@ export interface History {
   records: HistoryRecord[];
 }
 
+export interface SoundZone {
+  name: string;
+  bounds: TileRect;
+  ellipse: boolean;
+  reach: number;
+  proximity: number;
+  tracks: { channel: number; src: string }[];
+}
+
+export interface SoundVoice {
+  channel: number;
+  category: "music" | "ambience";
+  src: string;
+  heard: number;
+}
+
 // What the client sees this frame. Positions are world tiles, which `view` maps onto canvas pixels
 // (origin + tile × tile_size); `ui` rects are canvas pixels already. `viewpoint` is the character the
 // camera follows: `me`, or the player a spectator watches. `walkable` holds the tiles on screen that you
@@ -196,6 +212,7 @@ export interface Snapshot {
   item_card: { item: string; rect: Cover } | null;
   bag: Stack[];
   quests: Quests;
+  soundscape: { zones: SoundZone[]; voices: SoundVoice[] };
 }
 
 // Waits until the world is on screen — polls until the captured frame resembles the spawn map.

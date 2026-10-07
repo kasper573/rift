@@ -1,4 +1,5 @@
 use crate::core::assets::AssetService;
+use crate::core::audio::soundscape::Soundscape;
 use crate::core::tiling::{CellPos, TileSize};
 use crate::systems::area::{self, AreaTag};
 use crate::systems::input::map::{self, InputAction};
@@ -19,11 +20,15 @@ impl Plugin for AreaPlugin {
             .add_plugins(bevy_tiled::TileAnimationPlugin)
             .add_systems(
                 Update,
-                (spawn_area_tiles, sync_death_banner).run_if(in_state(super::Scene::Area)),
+                (spawn_area_tiles, play_area_soundscape, sync_death_banner)
+                    .run_if(in_state(super::Scene::Area)),
             )
             .add_systems(
                 OnExit(super::Scene::Area),
-                crate::systems::scene::despawn_all::<DeathBanner>,
+                (
+                    crate::systems::scene::despawn_all::<DeathBanner>,
+                    silence_soundscape,
+                ),
             );
     }
 }
@@ -70,6 +75,32 @@ fn spawn_area_tiles(
         &mut hooks,
         origin,
     );
+}
+
+fn play_area_soundscape(
+    viewpoint: Res<Viewpoint>,
+    areas: Query<&AreaTag>,
+    service: Res<AssetService>,
+    mut soundscape: ResMut<Soundscape>,
+) {
+    let Some(area_id) = viewpoint
+        .0
+        .and_then(|seen| areas.get(seen).ok())
+        .map(|tag| tag.area)
+    else {
+        return;
+    };
+    let zones = service
+        .resolve(area_id.get().map, area::build_area)
+        .soundscape
+        .as_slice();
+    if !std::ptr::eq(soundscape.0, zones) {
+        soundscape.0 = zones;
+    }
+}
+
+fn silence_soundscape(mut soundscape: ResMut<Soundscape>) {
+    soundscape.0 = &[];
 }
 
 struct AreaHooks {

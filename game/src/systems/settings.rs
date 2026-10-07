@@ -4,11 +4,12 @@ use ui::button::intent as button_intent;
 use ui::tokens::typography;
 use ui::{Activate, ButtonSize, ValueChange, button_styled};
 
-use crate::core::sfx::{AudioCategory, AudioFader, AudioVolume};
+use crate::core::audio::mix::{AudioCategory, AudioFader, AudioVolume};
 use crate::systems::hud::{HudAudience, LettersPerSecond, Settings, Window};
 use crate::systems::input::map::InputAction;
 
 const SLIDER_WIDTH: f32 = 240.0;
+const FADER_NAME_WIDTH: f32 = 80.0;
 
 pub struct SettingsWindow;
 
@@ -63,75 +64,99 @@ enum SettingSlider {
     Volume(AudioFader),
 }
 
-const VOLUMES: [SettingSlider; 4] = [
-    SettingSlider::Volume(AudioFader::Master),
-    SettingSlider::Volume(AudioFader::Category(AudioCategory::Music)),
-    SettingSlider::Volume(AudioFader::Category(AudioCategory::Voice)),
-    SettingSlider::Volume(AudioFader::Category(AudioCategory::Effects)),
+const FADERS: [AudioFader; 5] = [
+    AudioFader::Master,
+    AudioFader::Category(AudioCategory::Music),
+    AudioFader::Category(AudioCategory::Ambience),
+    AudioFader::Category(AudioCategory::Effects),
+    AudioFader::Category(AudioCategory::Voice),
 ];
 
 #[derive(Component, Clone)]
 struct ToggleButton(&'static Toggle);
 
-#[derive(Component, Clone)]
-struct SliderLabel(SettingSlider);
+#[derive(Component, Clone, Default)]
+struct TextSpeedLabel;
 
 fn content(world: &World) -> Box<dyn Scene> {
     let settings = world.resource::<Settings>();
-    let volumes: Vec<Box<dyn Scene>> = VOLUMES
-        .into_iter()
-        .map(|slider| -> Box<dyn Scene> { Box::new(slider_row(settings, slider)) })
-        .collect();
     Box::new(bsn! {
         Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Start, row_gap: Val::Px(6.0) }
         Children [
             {EntityScene(toggle_button(settings, &SNAPPING))},
-            {EntityScene(slider_row(settings, SettingSlider::TextSpeed))},
+            {EntityScene(text_speed_row(settings))},
             {EntityScene(toggle_button(settings, &REDUCED_MOTION))},
-            {volumes},
+            {EntityScene(audio_section(settings))},
         ]
     })
 }
 
-fn slider_row(settings: &Settings, slider: SettingSlider) -> impl Scene + use<> {
-    let (min, max) = slider.range();
+fn text_speed_row(settings: &Settings) -> impl Scene + use<> {
     bsn! {
         Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(6.0), width: Val::Px(SLIDER_WIDTH), padding: {UiRect::vertical(Val::Px(6.0))} }
         Children [
             (
-                {ui::styled_text(slider.label(settings), ui::theme::theme().surface_canvas.on, typography::BODY)}
-                ui::component(SliderLabel(slider))
+                {ui::styled_text(text_speed_label(settings), ui::theme::theme().surface_canvas.on, typography::BODY)}
+                TextSpeedLabel
+            ),
+            {EntityScene(slider(settings, SettingSlider::TextSpeed))},
+        ]
+    }
+}
+
+fn audio_section(settings: &Settings) -> impl Scene + use<> {
+    let faders: Vec<Box<dyn Scene>> = FADERS
+        .into_iter()
+        .map(|fader| -> Box<dyn Scene> { Box::new(fader_row(settings, fader)) })
+        .collect();
+    bsn! {
+        Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(4.0), width: {Val::Px(SLIDER_WIDTH + FADER_NAME_WIDTH)}, padding: {UiRect::top(Val::Px(6.0))} }
+        Children [
+            {EntityScene(ui::styled_text("Audio", ui::theme::theme().surface_canvas.on, typography::NAME))},
+            {faders},
+        ]
+    }
+}
+
+fn fader_row(settings: &Settings, fader: AudioFader) -> impl Scene + use<> {
+    bsn! {
+        Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center }
+        Children [
+            (
+                {ui::styled_text(fader_name(fader), ui::theme::theme().surface_canvas.on, typography::BODY)}
+                Node { width: Val::Px(FADER_NAME_WIDTH) }
             ),
             (
-                {ui::slider(slider.value(settings), min, max)}
-                on(move |changed: On<ValueChange<f32>>, mut settings: ResMut<Settings>| {
-                    slider.set(&mut settings, changed.value);
-                })
-                Children [
-                    ( {ui::slider_track()}
-                      Children [ {EntityScene(ui::slider_range())}, {EntityScene(ui::slider_thumb())} ]
-                    )
-                ]
+                Node { flex_grow: 1.0 }
+                Children [ {EntityScene(slider(settings, SettingSlider::Volume(fader)))} ]
             ),
         ]
     }
 }
 
-impl SettingSlider {
-    fn label(self, settings: &Settings) -> String {
-        match self {
-            SettingSlider::TextSpeed => format!(
-                "text speed {} letters a second",
-                settings.letters_per_second().0 as u32
-            ),
-            SettingSlider::Volume(fader) => format!(
-                "{} volume {}%",
-                fader_name(fader),
-                (settings.volume(fader).0 * 100.0).round() as u32
-            ),
-        }
+fn slider(settings: &Settings, slider: SettingSlider) -> impl Scene + use<> {
+    let (min, max) = slider.range();
+    bsn! {
+        {ui::slider(slider.value(settings), min, max)}
+        on(move |changed: On<ValueChange<f32>>, mut settings: ResMut<Settings>| {
+            slider.set(&mut settings, changed.value);
+        })
+        Children [
+            ( {ui::slider_track()}
+              Children [ {EntityScene(ui::slider_range())}, {EntityScene(ui::slider_thumb())} ]
+            )
+        ]
     }
+}
 
+fn text_speed_label(settings: &Settings) -> String {
+    format!(
+        "text speed {} letters a second",
+        settings.letters_per_second().0 as u32
+    )
+}
+
+impl SettingSlider {
     fn value(self, settings: &Settings) -> f32 {
         match self {
             SettingSlider::TextSpeed => settings.letters_per_second().0,
@@ -160,10 +185,11 @@ impl SettingSlider {
 
 fn fader_name(fader: AudioFader) -> &'static str {
     match fader {
-        AudioFader::Master => "master",
-        AudioFader::Category(AudioCategory::Music) => "music",
-        AudioFader::Category(AudioCategory::Voice) => "voice",
-        AudioFader::Category(AudioCategory::Effects) => "effects",
+        AudioFader::Master => "Master",
+        AudioFader::Category(AudioCategory::Music) => "Music",
+        AudioFader::Category(AudioCategory::Ambience) => "Ambience",
+        AudioFader::Category(AudioCategory::Effects) => "Effects",
+        AudioFader::Category(AudioCategory::Voice) => "Voice",
     }
 }
 
@@ -188,10 +214,11 @@ fn sync_labels(world: &mut World) {
         .iter(world)
         .map(|(button, children)| (button.0, children.iter().collect()))
         .collect();
+    let speed = text_speed_label(world.resource::<Settings>());
     let labels: Vec<(Entity, String)> = world
-        .query::<(Entity, &SliderLabel)>()
+        .query_filtered::<Entity, With<TextSpeedLabel>>()
         .iter(world)
-        .map(|(entity, label)| (entity, label.0.label(world.resource::<Settings>())))
+        .map(|entity| (entity, speed.clone()))
         .collect();
     let texts: Vec<(Entity, String)> = buttons
         .into_iter()

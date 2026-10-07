@@ -2,7 +2,7 @@ import { test } from "@playwright/test";
 
 import { provisionAccount, signIn } from "../helpers/account";
 import { admin } from "../helpers/admin";
-import { caption, chapter } from "../helpers/demo";
+import { caption, chapter, soundscapeMixer } from "../helpers/demo";
 import {
   clickUi,
   closestTile,
@@ -47,17 +47,22 @@ test(
       await conversationOver(page);
       await waitFor(page, (snapshot) => holding(snapshot, "RoadPass") === 1, "the pass never arrived");
       await caption(page, "With the pass in your bag, the same warp takes you through");
+      const hideMixer = await soundscapeMixer(page);
       await travelTo(page, road.at);
       await waitFor(page, ({ area }) => area === road.to, `never arrived in ${road.to}`);
-      await caption(page, `Welcome to the ${road.to.toLowerCase()}`);
+      await caption(page, `Welcome to the ${road.to.toLowerCase()}: its own music and birdsong crossfade in over the harbour's`);
+      await page.waitForTimeout(5000);
+      await caption(page, "A camp's fire carries past its edge, louder the closer you walk");
       for (const [dx, dy] of [
-        [3, 2],
-        [-2, 3],
+        [3, -2],
+        [2, -1],
       ]) {
         const { me, walkable } = await probe(page);
         await walkTo(page, closestTile(walkable, [me!.at[0] + dx, me!.at[1] + dy])!);
+        await page.waitForTimeout(2500);
       }
       await page.waitForTimeout(1500);
+      await hideMixer();
     },
   }),
 );

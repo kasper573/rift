@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::core::sfx::SfxId;
+use crate::core::audio::playback::SfxId;
 use crate::core::time::Seconds;
 use crate::data::npc::Id as NpcId;
 use crate::systems::actor::Rgba;

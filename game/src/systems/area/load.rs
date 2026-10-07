@@ -1,12 +1,13 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use tiled::{LayerType, PropertyValue};
 
 use super::{Area, Group, MapMarker, Portal, RenderLayer, TileRef, cell_overlap};
 use crate::core::assets::{AssetRef, AssetService};
+use crate::core::audio::playback::SfxId;
+use crate::core::audio::soundscape::{SoundscapeChannel, SoundscapeShape, SoundscapeZone};
 use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
-use crate::core::sfx::SfxId;
 use crate::core::tiling::{
     self, Cell, CellPos, GridDims, GridSize, PixelsPerTile, TileRect, TileSize, Tiles,
 };
@@ -29,6 +30,7 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
     let mut obscuring_rects = Vec::new();
     let mut safe_zones = Vec::new();
     let mut markers = HashMap::new();
+    let mut soundscape = Vec::new();
 
     for layer in map.layers() {
         match layer.layer_type() {
@@ -93,6 +95,7 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
                         "safe-zone" => {
                             safe_zones.push(tiling.rect(Rect::new(pos, shape_size(&object.shape))))
                         }
+                        "soundscape" => soundscape.push(soundscape_zone(name, &object, tiling)),
                         _ => {}
                     }
                 }
@@ -132,6 +135,7 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
         grouped_cells,
         layers,
         markers,
+        soundscape,
         map: std::sync::Arc::new(map),
     }
 }
@@ -174,7 +178,7 @@ impl TilePalette {
                 });
                 self.sfx.push(match properties.get("sfx") {
                     Some(PropertyValue::StringValue(sfx)) => Some(
-                        sfx.parse::<crate::core::sfx::SfxId>()
+                        sfx.parse::<crate::core::audio::playback::SfxId>()
                             .unwrap_or_else(|error| panic!("tile sfx '{sfx}': {error}")),
                     ),
                     _ => None,
@@ -209,6 +213,55 @@ fn shape_size(shape: &tiled::ObjectShape) -> Size<WorldPx> {
 fn mark(markers: &mut HashMap<String, MapMarker>, map: &str, name: &str, marker: MapMarker) {
     if markers.insert(name.to_owned(), marker).is_some() {
         panic!("map '{map}': '{name}' is placed twice");
+    }
+}
+
+fn soundscape_zone(map: &str, object: &tiled::Object, tiling: PixelsPerTile) -> SoundscapeZone {
+    let id = object.id();
+    let bounds = tiling.rect(Rect::new(
+        Pos::new(object.x, object.y),
+        shape_size(&object.shape),
+    ));
+    let shape = match object.shape {
+        tiled::ObjectShape::Rect { .. } => SoundscapeShape::Rect(bounds),
+        tiled::ObjectShape::Ellipse { .. } => SoundscapeShape::Ellipse(bounds),
+        _ => panic!("map '{map}': soundscape {id} must be a rectangle or an ellipse"),
+    };
+    let mut emit = Tiles(0.0);
+    let mut channels = BTreeMap::new();
+    for (key, value) in &object.properties {
+        if key == "emit" {
+            emit = match value {
+                PropertyValue::FloatValue(tiles) if *tiles >= 0.0 => Tiles(*tiles),
+                _ => panic!("map '{map}': soundscape {id} emit must be a float of at least 0"),
+            };
+            continue;
+        }
+        let channel = key
+            .strip_prefix("channel")
+            .and_then(|number| number.parse().ok())
+            .map(SoundscapeChannel)
+            .unwrap_or_else(|| {
+                panic!("map '{map}': soundscape {id} has '{key}', but takes only emit and channel1, channel2, …")
+            });
+        let PropertyValue::StringValue(values) = value else {
+            panic!("map '{map}': soundscape {id} {key} must be a string");
+        };
+        let layer = values.parse().unwrap_or_else(|error| {
+            panic!("map '{map}': soundscape {id} {key} '{values}': {error}")
+        });
+        if channels.insert(channel, layer).is_some() {
+            panic!(
+                "map '{map}': soundscape {id} sets channel {} twice",
+                channel.0
+            );
+        }
+    }
+    SoundscapeZone {
+        name: object.name.clone(),
+        shape,
+        emit,
+        channels,
     }
 }
 

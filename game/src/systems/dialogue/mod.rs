@@ -8,8 +8,8 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{AssetRef, AssetService};
+use crate::core::audio::playback::SfxId;
 use crate::core::math::{Percent, Rng};
-use crate::core::sfx::SfxId;
 use crate::data;
 use crate::data::attention::Id as AttentionId;
 use crate::systems::actor::Name;
