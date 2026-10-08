@@ -53,7 +53,6 @@ export interface Exit {
   name: string;
   to: string;
   at: Tile;
-  rect: TileRect;
 }
 
 export interface UiElement {
