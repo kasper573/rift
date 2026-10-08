@@ -4,9 +4,9 @@ use crate::core::assets::AssetService;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin};
 use crate::core::math::Direction;
 use crate::core::tiling::{TilePos, Tiles};
-use crate::core::time::Seconds;
+use crate::core::time::{PlaybackRate, Seconds};
 use crate::systems::REPLICATION_PERIOD;
-use crate::systems::actor::{Action, Actor, build_model};
+use crate::systems::actor::{Action, Actor, ActorModel, build_model};
 use crate::systems::area::{self, AreaTag};
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
@@ -27,6 +27,22 @@ impl Plugin for ActorPlugin {
                 (sync_actors, actor_cues).run_if(in_state(crate::systems::scene::Scene::Area)),
             );
     }
+}
+
+pub const ACTOR_ANCHOR: Anchor = Anchor(Vec2::new(0.0, -1.0 / 6.0));
+
+pub fn draw_actor_frame(
+    sprite: &mut Sprite,
+    model: &ActorModel,
+    action: Action,
+    dir: Direction,
+    elapsed: Seconds,
+    attack_rate: PlaybackRate,
+) {
+    let region = model.frame(action, dir, elapsed, attack_rate);
+    let drawn = model.drawn_size(region);
+    sprite.rect = Some(atlas_rect(region));
+    sprite.custom_size = Some(Vec2::new(drawn.width, drawn.height));
 }
 
 /// The facing and animation to render an actor with. The server recomputes these alongside its
@@ -70,7 +86,7 @@ fn attach_sprite(
     );
     commands.entity(add.entity).insert((
         Sprite { image, ..default() },
-        Anchor(Vec2::new(0.0, -1.0 / 6.0)),
+        ACTOR_ANCHOR,
         Transform::default(),
         Visibility::Hidden,
     ));
@@ -99,10 +115,14 @@ fn sync_actors(
     {
         let elapsed = animator.elapsed(entity, pose.action as u64, clock);
         let model = service.resolve(actor.model.get().sheet, build_model);
-        let region = model.frame(pose.action.name(), pose.dir, elapsed, actor.attack_rate);
-        let drawn = model.drawn_size(region);
-        sprite.rect = Some(atlas_rect(region));
-        sprite.custom_size = Some(Vec2::new(drawn.width, drawn.height));
+        draw_actor_frame(
+            &mut sprite,
+            model,
+            pose.action,
+            pose.dir,
+            elapsed,
+            actor.attack_rate,
+        );
         sprite.color = actor.color.color();
         let area = service.resolve(tag.area.get().map, area::build_area);
         let at = render.0;
@@ -137,8 +157,7 @@ fn actor_cues(
         };
         let since = (was == pose.action).then_some(then);
         let model = service.resolve(actor.model.get().sheet, build_model);
-        let (cues, stepped) =
-            model.cues(pose.action.name(), pose.dir, since, now, actor.attack_rate);
+        let (cues, stepped) = model.cues(pose.action, pose.dir, since, now, actor.attack_rate);
         for id in cues {
             play.write(PlaySfx {
                 id: *id,

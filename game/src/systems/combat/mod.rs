@@ -251,7 +251,7 @@ fn attack_timing(world: &World, entity: Entity, dir: Direction) -> crate::system
         .map(|a| {
             assets
                 .resolve(a.model.get().sheet, crate::systems::actor::build_model)
-                .timing(Action::Attack.name(), dir)
+                .timing(Action::Attack, dir)
         })
         .unwrap_or_default()
 }

@@ -38,7 +38,7 @@ pub fn check(assets: &AssetService) {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Action {
     #[default]
     Idle,
@@ -49,6 +49,18 @@ pub enum Action {
 }
 
 impl Action {
+    pub const ALL: [Action; 5] = [
+        Action::Idle,
+        Action::Walk,
+        Action::Run,
+        Action::Attack,
+        Action::Dead,
+    ];
+
+    pub fn named(name: &str) -> Option<Action> {
+        Action::ALL.into_iter().find(|action| action.name() == name)
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Action::Idle => "idle",

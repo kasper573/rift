@@ -17,6 +17,10 @@ path = "src/bin/kc_roles.rs"
 name = "loadtest"
 path = "src/bin/bench/loadtest.rs"
 
+[[bin]]
+name = "render-actor"
+path = "src/bin/render_actor.rs"
+
 [features]
 # Opt-in CPU (pprof flamegraph) + allocation profiling of a fixed workload.
 # Build with `--profile profiling --features profiling` for debug symbols.

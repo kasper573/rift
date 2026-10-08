@@ -9,6 +9,8 @@ use crate::core::math::{Direction, Pos, Rect, Size, WorldPx};
 use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
 
+use super::Action;
+
 pub fn build_model(svc: &AssetService, source: AssetRef) -> ActorModel {
     let name = source.0;
     let tileset = tiled::Loader::with_reader(|path: &Path| svc.open(path))
@@ -21,7 +23,7 @@ pub fn build_model(svc: &AssetService, source: AssetRef) -> ActorModel {
         .unwrap_or_else(|| panic!("actor model {name} declares no sheet image"))
         .to_owned();
 
-    let mut strips: HashMap<String, [Vec<Frame>; 8]> = HashMap::new();
+    let mut strips: HashMap<Action, [Vec<Frame>; 8]> = HashMap::new();
     let mut sounds = HashMap::new();
     let mut steps = HashSet::new();
     let mut apexes = HashSet::new();
@@ -39,26 +41,35 @@ pub fn build_model(svc: &AssetService, source: AssetRef) -> ActorModel {
         if let Some(PropertyValue::BoolValue(true)) = tile.properties.get("apex") {
             apexes.insert(id);
         }
-        if let Some(PropertyValue::StringValue(action)) = tile.properties.get("action") {
+        if let Some(PropertyValue::StringValue(label)) = tile.properties.get("action") {
+            let action = Action::named(label).unwrap_or_else(|| {
+                panic!("actor model {name}: tile {id} has an unknown action '{label}'")
+            });
             let dir = match tile.properties.get("dir") {
                 Some(PropertyValue::IntValue(dir)) if (0..8).contains(dir) => *dir as usize,
-                _ => panic!("actor model {name}: '{action}' tile {id} needs a dir in 0..8"),
+                _ => panic!("actor model {name}: '{label}' tile {id} needs a dir in 0..8"),
             };
             let strip = tile
                 .animation
                 .clone()
                 .filter(|frames| !frames.is_empty())
-                .unwrap_or_else(|| panic!("actor model {name}: '{action}' dir {dir} is empty"));
-            strips.entry(action.clone()).or_default()[dir] = strip;
+                .unwrap_or_else(|| panic!("actor model {name}: '{label}' dir {dir} is empty"));
+            strips.entry(action).or_default()[dir] = strip;
         }
     }
-    for (action, dirs) in &strips {
+    for action in Action::ALL {
+        let Some(dirs) = strips.get(&action) else {
+            panic!(
+                "actor model {name} must declare a '{}' action",
+                action.name()
+            );
+        };
         if dirs.iter().any(Vec::is_empty) {
-            panic!("actor model {name}: action '{action}' is missing a direction strip");
+            panic!(
+                "actor model {name}: action '{}' is missing a direction strip",
+                action.name()
+            );
         }
-    }
-    if !strips.contains_key(IDLE) {
-        panic!("actor model {name} must declare an idle action");
     }
 
     let dimension = |key: &str| match tileset.properties.get(key) {
@@ -95,7 +106,7 @@ pub struct ActorModel {
     hitbox: Size<Tiles>,
     scale: f32,
     pub airborne: bool,
-    strips: HashMap<String, [Vec<Frame>; 8]>,
+    strips: HashMap<Action, [Vec<Frame>; 8]>,
     sounds: HashMap<TileId, SfxId>,
     steps: HashSet<TileId>,
     apexes: HashSet<TileId>,
@@ -116,7 +127,7 @@ impl ActorModel {
 
     pub fn frame(
         &self,
-        action: &str,
+        action: Action,
         dir: Direction,
         t: Seconds,
         attack_speed: PlaybackRate,
@@ -124,7 +135,7 @@ impl ActorModel {
         let strip = self.strip(action, dir);
         let elapsed = (t.millis() * rate(action, attack_speed)).max(Millis(0.0));
         let total = total_ms(strip);
-        let position = if action == DEATH {
+        let position = if action == Action::Dead {
             elapsed.min(total - Millis(1.0))
         } else {
             elapsed % total
@@ -139,7 +150,7 @@ impl ActorModel {
         self.region(strip[strip.len() - 1].tile_id)
     }
 
-    pub fn timing(&self, action: &str, dir: Direction) -> Timing {
+    pub fn timing(&self, action: Action, dir: Direction) -> Timing {
         let strip = self.strip(action, dir);
         let mut apex = Millis(0.0);
         let mut cursor = Millis(0.0);
@@ -159,21 +170,17 @@ impl ActorModel {
     /// started, in which case every cue up to `now` fires.
     pub fn cues(
         &self,
-        action: &str,
+        action: Action,
         dir: Direction,
         prev: Option<Seconds>,
         now: Seconds,
         attack_speed: PlaybackRate,
     ) -> (Vec<&SfxId>, bool) {
-        let strip = self
-            .strips
-            .get(action)
-            .map(|dirs| dirs[dir_slot(dir)].as_slice())
-            .unwrap_or_default();
+        let strip = self.strip(action, dir);
         let rate = rate(action, attack_speed);
         let authored = |t: Seconds| t.millis() * rate;
         let total = total_ms(strip);
-        let once = action == DEATH;
+        let once = action == Action::Dead;
         let (mut sfx, mut stepped) = (Vec::new(), false);
         let mut cursor = Millis(0.0);
         for frame in strip {
@@ -190,13 +197,11 @@ impl ActorModel {
         self.sounds.values()
     }
 
-    fn strip(&self, action: &str, dir: Direction) -> &[Frame] {
-        let spec = self.strips.get(action).unwrap_or_else(|| {
-            self.strips
-                .get(IDLE)
-                .expect("validated at load: every actor model declares idle")
-        });
-        &spec[dir_slot(dir)]
+    fn strip(&self, action: Action, dir: Direction) -> &[Frame] {
+        &self
+            .strips
+            .get(&action)
+            .expect("validated at load: every actor model declares every action")[dir_slot(dir)]
     }
 
     fn region(&self, tile: TileId) -> Rect<WorldPx> {
@@ -216,16 +221,12 @@ pub struct Timing {
     pub apex: Seconds,
 }
 
-const IDLE: &str = "idle";
-const ATTACK: &str = "attack";
-const DEATH: &str = "death";
-
 fn dir_slot(dir: Direction) -> usize {
     dir as usize
 }
 
-fn rate(action: &str, attack_speed: PlaybackRate) -> PlaybackRate {
-    if action == ATTACK {
+fn rate(action: Action, attack_speed: PlaybackRate) -> PlaybackRate {
+    if action == Action::Attack {
         attack_speed.at_least(0.01)
     } else {
         PlaybackRate(1.0)

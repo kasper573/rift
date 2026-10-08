@@ -25,10 +25,7 @@ loadtest-stack-up:
     docker network inspect rift >/dev/null 2>&1 || docker network create rift
     {{compose}} -f docker/docker-compose.loadtest.yaml up -d --build --wait
 
-# Rasterize a whole map to an image to preview it (e.g. `just render island island.png`). Defaults
-# the output to `<map>.png`.
-render map out="":
-    cargo run -p bevy_tiled --bin render -- {{map}} {{out}}
+mod render
 
 # Synthesize the generated sound effects: a bank of 26 letter sounds per voice timbre
 # (assets/audio/babble/<bank>/a..z.wav), the forest's intro drums, the harbour's ambience, interface
