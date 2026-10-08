@@ -295,7 +295,7 @@ crate::table! {
         name: "Sakura",
         map: AssetRef("maps/sakura.tmx"),
         populations: &[
-            Population { npc: NpcId::Kitsune, count: 6, roams: Some(MarkerName("fox-wood")) },
+            Population { npc: NpcId::Kitsune, count: 6, roams: Some(MarkerName("shrine-grounds")) },
             Population { npc: NpcId::Ronin, count: 4, roams: Some(MarkerName("bamboo-grove")) },
             Population { npc: NpcId::Ronin, count: 2, roams: Some(MarkerName("lords-cairn")) },
         ],
