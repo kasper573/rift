@@ -28,8 +28,8 @@ pub fn register(app: &mut App) {
 }
 
 pub fn check(assets: &AssetService) {
+    assets.resolve_all(data::model::TABLE.iter().map(|def| def.sheet), build_model);
     for def in data::model::TABLE {
-        assets.resolve(def.sheet, build_model);
         for bust in def.busts.iter().flat_map(bust::Busts::all) {
             if let Err(error) = assets.open(Path::new(bust.0)) {
                 panic!("bust {}: {error}", bust.0);

@@ -1,4 +1,4 @@
-use std::io::{self, Cursor, Read};
+use std::io::{self, BufRead, Cursor};
 use std::path::{Path, PathBuf};
 
 use bevy::asset::AssetPath;
@@ -24,12 +24,12 @@ pub fn bevy_source() -> AssetSourceBuilder {
 struct EmbeddedSource;
 
 impl AssetSource for EmbeddedSource {
-    fn open(&self, path: &Path) -> io::Result<Box<dyn Read>> {
+    fn open(&self, path: &Path) -> io::Result<Box<dyn BufRead>> {
         let name = path.to_string_lossy();
         let resolved = AssetPath::from("").resolve(&AssetPath::parse(&name));
         ASSETS
             .get_file(resolved.path())
-            .map(|file| Box::new(Cursor::new(file.contents())) as Box<dyn Read>)
+            .map(|file| Box::new(Cursor::new(file.contents())) as Box<dyn BufRead>)
             .ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::NotFound,

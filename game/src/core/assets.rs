@@ -1,6 +1,6 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::io::{self, Read};
+use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -10,14 +10,16 @@ use bevy_ecs::prelude::Resource;
 pub struct AssetRef(pub &'static str);
 
 pub trait AssetSource: Send + Sync {
-    fn open(&self, path: &Path) -> io::Result<Box<dyn Read>>;
+    fn open(&self, path: &Path) -> io::Result<Box<dyn BufRead>>;
 }
 
 pub struct FilesystemSource(pub std::path::PathBuf);
 
 impl AssetSource for FilesystemSource {
-    fn open(&self, path: &Path) -> io::Result<Box<dyn Read>> {
-        Ok(Box::new(std::fs::File::open(self.0.join(path))?))
+    fn open(&self, path: &Path) -> io::Result<Box<dyn BufRead>> {
+        Ok(Box::new(BufReader::new(std::fs::File::open(
+            self.0.join(path),
+        )?)))
     }
 }
 
@@ -37,7 +39,7 @@ impl AssetService {
         }
     }
 
-    pub fn open(&self, path: &Path) -> io::Result<Box<dyn Read>> {
+    pub fn open(&self, path: &Path) -> io::Result<Box<dyn BufRead>> {
         self.source.open(path)
     }
 
@@ -55,12 +57,29 @@ impl AssetService {
                 .downcast_ref::<T>()
                 .expect("asset resolved under one type");
         }
-        let value: &'static T = Box::leak(Box::new(build(self, asset_ref)));
-        self.cache
+        let built: &'static (dyn Any + Send + Sync) = Box::leak(Box::new(build(self, asset_ref)));
+        let cached = *self
+            .cache
             .lock()
             .expect("asset cache")
             .entry(slot)
-            .or_insert(value);
-        value
+            .or_insert(built);
+        cached
+            .downcast_ref::<T>()
+            .expect("asset resolved under one type")
+    }
+
+    pub fn resolve_all<T: Send + Sync + 'static>(
+        &self,
+        asset_refs: impl IntoIterator<Item = AssetRef>,
+        build: impl Fn(&AssetService, AssetRef) -> T + Sync,
+    ) -> Vec<&'static T> {
+        use rayon::prelude::*;
+
+        let asset_refs: Vec<AssetRef> = asset_refs.into_iter().collect();
+        asset_refs
+            .into_par_iter()
+            .map(|asset_ref| self.resolve(asset_ref, &build))
+            .collect()
     }
 }

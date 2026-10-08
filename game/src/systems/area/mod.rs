@@ -229,9 +229,9 @@ impl Area {
 }
 
 pub fn check(assets: &AssetService) {
-    for &id in Id::VARIANTS {
+    let areas = assets.resolve_all(Id::VARIANTS.iter().map(|id| id.get().map), build_area);
+    for (&id, area) in Id::VARIANTS.iter().zip(areas) {
         let def = id.get();
-        let area = assets.resolve(def.map, build_area);
         if !def.populations.is_empty() && area.wild_grid.nodes().is_empty() {
             panic!("area {id:?}: its populations have no ground outside the safe zones");
         }

@@ -191,7 +191,7 @@ fn load_map(arg: &str) -> tiled::Map {
     } else {
         PathBuf::from(format!("assets/maps/{arg}.tmx"))
     };
-    tiled::Loader::with_reader(|path: &Path| std::fs::File::open(path))
+    tiled::Loader::new()
         .load_tmx_map(&path)
         .unwrap_or_else(|error| {
             eprintln!("bench: cannot load map '{}': {error}", path.display());
