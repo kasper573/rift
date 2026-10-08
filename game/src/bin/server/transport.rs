@@ -60,8 +60,12 @@ impl WsTransport {
         max_clients: usize,
         runtime: Handle,
     ) -> WsTransport {
+        let listener = runtime
+            .block_on(TcpListener::bind(addr))
+            .unwrap_or_else(|error| panic!("cannot bind websocket {addr}: {error}"));
+        println!("websocket transport listening on {addr}");
         let (events_tx, events) = mpsc::unbounded_channel();
-        runtime.spawn(accept(addr, sessions, events_tx));
+        runtime.spawn(accept(listener, sessions, events_tx));
         WsTransport {
             events,
             senders: HashMap::new(),
@@ -122,11 +126,7 @@ impl WsTransport {
     }
 }
 
-async fn accept(addr: SocketAddr, sessions: Sessions, events: mpsc::UnboundedSender<Event>) {
-    let listener = TcpListener::bind(addr)
-        .await
-        .unwrap_or_else(|error| panic!("cannot bind websocket {addr}: {error}"));
-    println!("websocket transport listening on {addr}");
+async fn accept(listener: TcpListener, sessions: Sessions, events: mpsc::UnboundedSender<Event>) {
     loop {
         let Ok((stream, _)) = listener.accept().await else {
             continue;

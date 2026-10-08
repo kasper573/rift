@@ -99,7 +99,7 @@ fn main() {
         verifier: verifier(),
         allow_fake_users: config.allow_fake_users,
     };
-    runtime.spawn(serve_http(http_bind, http, metrics));
+    let api = serve_http(http_bind, http, metrics);
 
     let settings = Settings {
         areas: config.areas,
@@ -116,6 +116,7 @@ fn main() {
         runtime.handle().clone(),
         assets,
         settings,
+        api,
     );
 }
 
@@ -133,6 +134,7 @@ fn simulate(
     runtime: tokio::runtime::Handle,
     assets: AssetService,
     settings: Settings,
+    api: impl Future<Output = ()> + Send + 'static,
 ) {
     let Settings {
         areas,
@@ -168,7 +170,9 @@ fn simulate(
         (config, channels.client_channels().len())
     };
     let mut server = RenetServer::new(connection_config);
-    let mut transport = WsTransport::bind(ws_bind, sessions, max_clients, runtime);
+    let mut transport = WsTransport::bind(ws_bind, sessions, max_clients, runtime.clone());
+    // Opened only once players can connect, so a passing health check means the game is playable.
+    runtime.spawn(api);
 
     println!(
         "mmo server listening: websocket {ws_bind} ({} area worlds)",
