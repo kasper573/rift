@@ -1,10 +1,10 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<tileset version="1.10" tiledversion="1.10.2" name="scorpion" tilewidth="48" tileheight="64" tilecount="320" columns="8">
+<tileset version="1.10" tiledversion="1.10.2" name="scorpion" tilewidth="80" tileheight="96" tilecount="320" columns="8">
  <properties>
-  <property name="hitbox_width" type="float" value="1.75" />
-  <property name="hitbox_height" type="float" value="2.75" />
+  <property name="hitbox_width" type="float" value="2.0" />
+  <property name="hitbox_height" type="float" value="3.0" />
  </properties>
- <image source="scorpion.png" width="384" height="2560" />
+ <image source="scorpion.png" width="640" height="3840" />
  <tile id="0">
   <properties>
    <property name="action" value="attack" />

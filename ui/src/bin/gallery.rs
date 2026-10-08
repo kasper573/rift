@@ -75,7 +75,8 @@ fn main() {
                 .set(bevy::asset::AssetPlugin {
                     file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../assets").to_owned(),
                     ..default()
-                }),
+                })
+                .set(ImagePlugin::default_nearest()),
         )
         .insert_resource(ClearColor(theme().surface_inset.base))
         .insert_resource(CurrentScene(opened))

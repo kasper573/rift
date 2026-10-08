@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <tileset version="1.10" tiledversion="1.10.2" name="brown-bear" tilewidth="64" tileheight="96" tilecount="320" columns="8">
  <properties>
-  <property name="hitbox_width" type="float" value="2.0" />
+  <property name="hitbox_width" type="float" value="2.25" />
   <property name="hitbox_height" type="float" value="3.25" />
  </properties>
  <image source="brown-bear.png" width="512" height="3840" />

@@ -1,10 +1,10 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<tileset version="1.10" tiledversion="1.10.2" name="baker" tilewidth="64" tileheight="64" tilecount="320" columns="8">
+<tileset version="1.10" tiledversion="1.10.2" name="baker" tilewidth="48" tileheight="64" tilecount="320" columns="8">
  <properties>
   <property name="hitbox_width" type="float" value="1.0" />
   <property name="hitbox_height" type="float" value="2.25" />
  </properties>
- <image source="baker.png" width="512" height="2560" />
+ <image source="baker.png" width="384" height="2560" />
  <tile id="0">
   <properties>
    <property name="action" value="attack" />

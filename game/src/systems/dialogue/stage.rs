@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use bevy::image::{ImageLoaderSettings, ImageSampler};
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use ui::tokens::palette;
@@ -749,12 +748,7 @@ fn set_cast(world: &mut World, members: Vec<CastMember>) {
 }
 
 fn bust_image(assets: &AssetServer, art: AssetRef) -> Handle<Image> {
-    assets
-        .load_builder()
-        .with_settings(|settings: &mut ImageLoaderSettings| {
-            settings.sampler = ImageSampler::linear();
-        })
-        .load(art.0)
+    assets.load(art.0)
 }
 
 fn busts_of(who: Speaker) -> Option<&'static Busts> {

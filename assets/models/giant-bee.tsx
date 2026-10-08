@@ -2,7 +2,7 @@
 <tileset version="1.10" tiledversion="1.10.2" name="giant-bee" tilewidth="48" tileheight="64" tilecount="320" columns="8">
  <properties>
   <property name="hitbox_width" type="float" value="1.25" />
-  <property name="hitbox_height" type="float" value="2.0" />
+  <property name="hitbox_height" type="float" value="2.25" />
   <property name="airborne" type="bool" value="true" />
  </properties>
  <image source="giant-bee.png" width="384" height="2560" />

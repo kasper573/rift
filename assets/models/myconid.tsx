@@ -1,10 +1,10 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<tileset version="1.10" tiledversion="1.10.2" name="myconid" tilewidth="80" tileheight="64" tilecount="320" columns="8">
+<tileset version="1.10" tiledversion="1.10.2" name="myconid" tilewidth="48" tileheight="64" tilecount="320" columns="8">
  <properties>
-  <property name="hitbox_width" type="float" value="1.75" />
+  <property name="hitbox_width" type="float" value="1.5" />
   <property name="hitbox_height" type="float" value="2.75" />
  </properties>
- <image source="myconid.png" width="640" height="2560" />
+ <image source="myconid.png" width="384" height="2560" />
  <tile id="0">
   <properties>
    <property name="action" value="attack" />
@@ -404,14 +404,14 @@
    <property name="step" type="bool" value="true" />
   </properties>
   <animation>
-   <frame tileid="192" duration="48" />
-   <frame tileid="193" duration="48" />
-   <frame tileid="194" duration="48" />
-   <frame tileid="195" duration="48" />
-   <frame tileid="196" duration="48" />
-   <frame tileid="197" duration="48" />
-   <frame tileid="198" duration="48" />
-   <frame tileid="199" duration="48" />
+   <frame tileid="192" duration="79" />
+   <frame tileid="193" duration="79" />
+   <frame tileid="194" duration="79" />
+   <frame tileid="195" duration="79" />
+   <frame tileid="196" duration="79" />
+   <frame tileid="197" duration="79" />
+   <frame tileid="198" duration="79" />
+   <frame tileid="199" duration="79" />
   </animation>
  </tile>
  <tile id="196">
@@ -426,14 +426,14 @@
    <property name="step" type="bool" value="true" />
   </properties>
   <animation>
-   <frame tileid="200" duration="48" />
-   <frame tileid="201" duration="48" />
-   <frame tileid="202" duration="48" />
-   <frame tileid="203" duration="48" />
-   <frame tileid="204" duration="48" />
-   <frame tileid="205" duration="48" />
-   <frame tileid="206" duration="48" />
-   <frame tileid="207" duration="48" />
+   <frame tileid="200" duration="79" />
+   <frame tileid="201" duration="79" />
+   <frame tileid="202" duration="79" />
+   <frame tileid="203" duration="79" />
+   <frame tileid="204" duration="79" />
+   <frame tileid="205" duration="79" />
+   <frame tileid="206" duration="79" />
+   <frame tileid="207" duration="79" />
   </animation>
  </tile>
  <tile id="204">
@@ -448,14 +448,14 @@
    <property name="step" type="bool" value="true" />
   </properties>
   <animation>
-   <frame tileid="208" duration="48" />
-   <frame tileid="209" duration="48" />
-   <frame tileid="210" duration="48" />
-   <frame tileid="211" duration="48" />
-   <frame tileid="212" duration="48" />
-   <frame tileid="213" duration="48" />
-   <frame tileid="214" duration="48" />
-   <frame tileid="215" duration="48" />
+   <frame tileid="208" duration="79" />
+   <frame tileid="209" duration="79" />
+   <frame tileid="210" duration="79" />
+   <frame tileid="211" duration="79" />
+   <frame tileid="212" duration="79" />
+   <frame tileid="213" duration="79" />
+   <frame tileid="214" duration="79" />
+   <frame tileid="215" duration="79" />
   </animation>
  </tile>
  <tile id="212">
@@ -470,14 +470,14 @@
    <property name="step" type="bool" value="true" />
   </properties>
   <animation>
-   <frame tileid="216" duration="48" />
-   <frame tileid="217" duration="48" />
-   <frame tileid="218" duration="48" />
-   <frame tileid="219" duration="48" />
-   <frame tileid="220" duration="48" />
-   <frame tileid="221" duration="48" />
-   <frame tileid="222" duration="48" />
-   <frame tileid="223" duration="48" />
+   <frame tileid="216" duration="79" />
+   <frame tileid="217" duration="79" />
+   <frame tileid="218" duration="79" />
+   <frame tileid="219" duration="79" />
+   <frame tileid="220" duration="79" />
+   <frame tileid="221" duration="79" />
+   <frame tileid="222" duration="79" />
+   <frame tileid="223" duration="79" />
   </animation>
  </tile>
  <tile id="220">
@@ -492,14 +492,14 @@
    <property name="step" type="bool" value="true" />
   </properties>
   <animation>
-   <frame tileid="224" duration="48" />
-   <frame tileid="225" duration="48" />
-   <frame tileid="226" duration="48" />
-   <frame tileid="227" duration="48" />
-   <frame tileid="228" duration="48" />
-   <frame tileid="229" duration="48" />
-   <frame tileid="230" duration="48" />
-   <frame tileid="231" duration="48" />
+   <frame tileid="224" duration="79" />
+   <frame tileid="225" duration="79" />
+   <frame tileid="226" duration="79" />
+   <frame tileid="227" duration="79" />
+   <frame tileid="228" duration="79" />
+   <frame tileid="229" duration="79" />
+   <frame tileid="230" duration="79" />
+   <frame tileid="231" duration="79" />
   </animation>
  </tile>
  <tile id="228">
@@ -514,14 +514,14 @@
    <property name="step" type="bool" value="true" />
   </properties>
   <animation>
-   <frame tileid="232" duration="48" />
-   <frame tileid="233" duration="48" />
-   <frame tileid="234" duration="48" />
-   <frame tileid="235" duration="48" />
-   <frame tileid="236" duration="48" />
-   <frame tileid="237" duration="48" />
-   <frame tileid="238" duration="48" />
-   <frame tileid="239" duration="48" />
+   <frame tileid="232" duration="79" />
+   <frame tileid="233" duration="79" />
+   <frame tileid="234" duration="79" />
+   <frame tileid="235" duration="79" />
+   <frame tileid="236" duration="79" />
+   <frame tileid="237" duration="79" />
+   <frame tileid="238" duration="79" />
+   <frame tileid="239" duration="79" />
   </animation>
  </tile>
  <tile id="236">
@@ -536,14 +536,14 @@
    <property name="step" type="bool" value="true" />
   </properties>
   <animation>
-   <frame tileid="240" duration="48" />
-   <frame tileid="241" duration="48" />
-   <frame tileid="242" duration="48" />
-   <frame tileid="243" duration="48" />
-   <frame tileid="244" duration="48" />
-   <frame tileid="245" duration="48" />
-   <frame tileid="246" duration="48" />
-   <frame tileid="247" duration="48" />
+   <frame tileid="240" duration="79" />
+   <frame tileid="241" duration="79" />
+   <frame tileid="242" duration="79" />
+   <frame tileid="243" duration="79" />
+   <frame tileid="244" duration="79" />
+   <frame tileid="245" duration="79" />
+   <frame tileid="246" duration="79" />
+   <frame tileid="247" duration="79" />
   </animation>
  </tile>
  <tile id="244">
@@ -558,14 +558,14 @@
    <property name="step" type="bool" value="true" />
   </properties>
   <animation>
-   <frame tileid="248" duration="48" />
-   <frame tileid="249" duration="48" />
-   <frame tileid="250" duration="48" />
-   <frame tileid="251" duration="48" />
-   <frame tileid="252" duration="48" />
-   <frame tileid="253" duration="48" />
-   <frame tileid="254" duration="48" />
-   <frame tileid="255" duration="48" />
+   <frame tileid="248" duration="79" />
+   <frame tileid="249" duration="79" />
+   <frame tileid="250" duration="79" />
+   <frame tileid="251" duration="79" />
+   <frame tileid="252" duration="79" />
+   <frame tileid="253" duration="79" />
+   <frame tileid="254" duration="79" />
+   <frame tileid="255" duration="79" />
   </animation>
  </tile>
  <tile id="252">
