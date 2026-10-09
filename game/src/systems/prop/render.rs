@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 use super::Prop;
 use crate::core::assets::AssetService;
+use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::{TILE, dynamic_z, sprite_transform};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::systems::actor::Hitbox;
@@ -14,7 +15,9 @@ impl Plugin for PropPlugin {
     fn build(&self, app: &mut App) {
         app.add_observer(attach_look).add_systems(
             Update,
-            place_props.run_if(in_state(crate::systems::scene::Scene::Area)),
+            place_props
+                .run_if(in_state(crate::systems::scene::Scene::Area))
+                .in_set(WorldViewSystems),
         );
     }
 }

@@ -9,6 +9,7 @@ use crate::systems::movement::Position;
 use bevy::prelude::*;
 
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
+use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::{ToScreen, dynamic_z, sprite_transform};
 
 const DROP_SIZE: WorldPx = WorldPx(12.0);
@@ -27,7 +28,9 @@ impl Plugin for ItemsPlugin {
                 Update,
                 (
                     use_sounds,
-                    (recv_drops, start_drops, place_drops, animate_drops).chain(),
+                    (recv_drops, start_drops, place_drops, animate_drops)
+                        .chain()
+                        .in_set(WorldViewSystems),
                 )
                     .run_if(in_state(crate::systems::scene::Scene::Area)),
             );

@@ -1,7 +1,9 @@
+use std::collections::HashSet;
+
 use crate::core::assets::AssetService;
 use crate::core::audio::soundscape::Soundscape;
 use crate::core::math::{Direction, Pos};
-use crate::core::render::transition;
+use crate::core::render::transition::{self, WorldViewSystems};
 use crate::core::tiling::{CellPos, TileSize, Tiles};
 use crate::core::time::Seconds;
 use crate::systems::actor::Actor;
@@ -23,12 +25,14 @@ impl Plugin for AreaPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SpawnedArea>()
             .init_resource::<Crossing>()
+            .init_resource::<RetainedImages>()
             .add_plugins(bevy_tiled::TileAnimationPlugin)
             .add_systems(
                 Update,
                 (
-                    (spawn_area_tiles, carry_view_across).chain(),
-                    play_area_soundscape,
+                    carry_view_across.before(WorldViewSystems),
+                    (spawn_area_tiles, play_area_soundscape).in_set(WorldViewSystems),
+                    retain_loaded_images,
                     sync_death_banner,
                 )
                     .run_if(in_state(super::Scene::Area)),
@@ -64,29 +68,45 @@ struct Crossing {
 struct Pose {
     at: Pos<Tiles>,
     heading: Direction,
+    area: area::Id,
 }
 
 #[derive(Clone, Copy)]
 struct Held {
     since: Seconds,
     pose: Pose,
+    /// The first frame that draws a newly drawable area uploads its images to the GPU, a long
+    /// frame. The view is revealed only after it, so that frame passes under the full cover.
+    rendered: bool,
 }
 
 fn carry_view_across(world: &mut World) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let Crossing { last_seen, held } = *world.resource::<Crossing>();
     let (last_seen, held) = match world.resource::<Viewpoint>().0 {
-        Some(character) => match pose_of(world, character) {
-            Some((pose, area)) => {
-                let waited_out = held.is_some_and(|held| now - held.since > ARRIVAL_PATIENCE);
-                if held.is_some() && (waited_out || area_drawable(world, area)) {
+        Some(character) => match (pose_of(world, character), held, last_seen) {
+            (None, _, _) => (last_seen, held),
+            (Some(pose), None, Some(seen)) if seen.area != pose.area => {
+                transition::freeze(world, seen.at, seen.heading);
+                (Some(pose), Some(Held::new(now, seen)))
+            }
+            (Some(pose), Some(held), _) => {
+                let drawable = area_drawable(world, pose.area);
+                if now - held.since > ARRIVAL_PATIENCE || (drawable && held.rendered) {
                     transition::reveal(world, pose.at);
+                    release_unshown_images(world);
                     (Some(pose), None)
                 } else {
-                    (Some(pose), held)
+                    (
+                        Some(pose),
+                        Some(Held {
+                            rendered: drawable,
+                            ..held
+                        }),
+                    )
                 }
             }
-            None => (last_seen, held),
+            (Some(pose), None, _) => (Some(pose), None),
         },
         None => match (held, last_seen) {
             (Some(_), _) if session::followed(world).is_none() => {
@@ -99,7 +119,7 @@ fn carry_view_across(world: &mut World) {
             }
             (None, Some(pose)) if session::followed(world).is_some() => {
                 transition::freeze(world, pose.at, pose.heading);
-                (None, Some(Held { since: now, pose }))
+                (None, Some(Held::new(now, pose)))
             }
             _ => (None, held),
         },
@@ -107,13 +127,23 @@ fn carry_view_across(world: &mut World) {
     *world.resource_mut::<Crossing>() = Crossing { last_seen, held };
 }
 
-fn pose_of(world: &World, character: Entity) -> Option<(Pose, area::Id)> {
+impl Held {
+    fn new(since: Seconds, pose: Pose) -> Held {
+        Held {
+            since,
+            pose,
+            rendered: false,
+        }
+    }
+}
+
+fn pose_of(world: &World, character: Entity) -> Option<Pose> {
     let character = world.get_entity(character).ok()?;
-    let pose = Pose {
+    Some(Pose {
         at: character.get::<RenderPosition>()?.0,
         heading: character.get::<Actor>()?.dir,
-    };
-    Some((pose, character.get::<AreaTag>()?.area))
+        area: character.get::<AreaTag>()?.area,
+    })
 }
 
 fn area_drawable(world: &mut World, area: area::Id) -> bool {
@@ -135,6 +165,47 @@ fn area_drawable(world: &mut World, area: area::Id) -> bool {
 fn forget_crossing(world: &mut World) {
     transition::abort(world);
     *world.resource_mut::<Crossing>() = Crossing::default();
+    world.resource_mut::<RetainedImages>().0.clear();
+}
+
+/// Images loaded since the last crossing finished, and those it ended up showing, stay loaded until
+/// the next one finishes. What the area left behind shares with the next (the player's own sheet, a
+/// common tileset) then survives its departure, instead of unloading and decoding again moments
+/// later.
+#[derive(Resource, Default)]
+struct RetainedImages(Vec<Handle<Image>>);
+
+fn retain_loaded_images(
+    mut events: MessageReader<AssetEvent<Image>>,
+    mut images: ResMut<Assets<Image>>,
+    mut retained: ResMut<RetainedImages>,
+) {
+    for event in events.read() {
+        if let AssetEvent::LoadedWithDependencies { id } = *event
+            && let Some(image) = images.get_strong_handle(id)
+        {
+            retained.0.push(image);
+        }
+    }
+}
+
+fn release_unshown_images(world: &mut World) {
+    let mut shown: HashSet<AssetId<Image>> = world
+        .resource::<SpawnedArea>()
+        .images
+        .iter()
+        .map(Handle::id)
+        .collect();
+    shown.extend(
+        world
+            .query::<&Sprite>()
+            .iter(world)
+            .map(|sprite| sprite.image.id()),
+    );
+    world
+        .resource_mut::<RetainedImages>()
+        .0
+        .retain(|image| shown.contains(&image.id()));
 }
 
 #[allow(clippy::too_many_arguments)]

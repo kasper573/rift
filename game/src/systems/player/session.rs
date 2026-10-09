@@ -8,6 +8,7 @@ use bevy_state::prelude::OnEnter;
 
 use super::{ClientId, JoinRequest, Owner, RespawnRequest, Welcome};
 use crate::core::math::Pos;
+use crate::core::render::transition::WorldViewSystems;
 use crate::core::tiling::Tiles;
 use crate::systems::area;
 use crate::systems::combat::AttackRequest;
@@ -33,7 +34,7 @@ impl Plugin for ClientSessionPlugin {
         app.add_systems(Update, record_welcome);
         app.add_systems(
             PreUpdate,
-            (record_spectating, track_viewpoint)
+            (record_spectating, track_viewpoint.in_set(WorldViewSystems))
                 .chain()
                 .after(ClientSystems::Receive),
         );

@@ -8,6 +8,7 @@ mod walk;
 
 use super::ActiveTileHighlight;
 use super::map::{self, InputAction};
+use crate::core::render::transition::WorldViewSystems;
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
 
@@ -32,7 +33,8 @@ static GESTURES: &[&dyn Gesture] = &[
 ];
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, setup).add_systems(Update, update);
+    app.add_systems(Startup, setup)
+        .add_systems(Update, update.in_set(WorldViewSystems));
 }
 
 #[derive(Resource)]
