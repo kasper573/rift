@@ -12,6 +12,7 @@ use game::core::audio::playback::Listener;
 use game::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
 use game::core::math::{Offset, Pos, Rect, Size};
 use game::core::render::tile_to_window;
+use game::core::render::transition::ScreenTransitionPhase;
 use game::core::tiling::{TilePos, Tiles};
 use game::data;
 use game::systems::actor::{self, Actor, Hitbox};
@@ -72,6 +73,7 @@ struct Snapshot {
     bag: Vec<Stack>,
     quests: Quests,
     soundscape: Soundscape,
+    transition: ScreenTransitionPhase,
 }
 
 #[derive(Serialize)]
@@ -467,6 +469,7 @@ fn snapshot(world: &mut World) -> Snapshot {
         ui: ui(world),
         covered: covered(world),
         soundscape: soundscape(world),
+        transition: *world.resource::<ScreenTransitionPhase>(),
         view,
         area,
     }

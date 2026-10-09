@@ -78,6 +78,13 @@ pub fn is_alive(world: &World) -> bool {
     my_character(world).is_some_and(|entity| !crate::systems::stat::is_dead(world, entity.id()))
 }
 
+pub fn followed(world: &World) -> Option<ClientId> {
+    followed_client(
+        world.resource::<MyClient>(),
+        world.resource::<SpectateStatus>(),
+    )
+}
+
 pub fn join(world: &mut World) {
     world.write_message(JoinRequest);
 }
@@ -148,17 +155,21 @@ fn record_spectating(mut told: MessageReader<Spectating>, mut status: ResMut<Spe
     }
 }
 
+fn followed_client(me: &MyClient, status: &SpectateStatus) -> Option<ClientId> {
+    match status.0 {
+        Some(Spectating::Player(watched)) => Some(watched.player),
+        Some(Spectating::Nobody) => None,
+        None => me.0,
+    }
+}
+
 fn track_viewpoint(
     me: Res<MyClient>,
     status: Res<SpectateStatus>,
     characters: Query<(Entity, &Owner)>,
     mut viewpoint: ResMut<Viewpoint>,
 ) {
-    let followed = match status.0 {
-        Some(Spectating::Player(watched)) => Some(watched.player),
-        Some(Spectating::Nobody) => None,
-        None => me.0,
-    };
+    let followed = followed_client(&me, &status);
     let character = followed.and_then(|client| {
         characters
             .iter()

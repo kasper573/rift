@@ -2,7 +2,7 @@ import { test, type Page } from "@playwright/test";
 
 import { provisionAccount, signIn } from "../helpers/account";
 import { caption, chapter, enterWorld, inset } from "../helpers/demo";
-import { clickUi, dragUi, findUi, focusGame, probe, submitText, waitFor, waitForWorld } from "../helpers/game";
+import { arrivedIn, clickUi, dragUi, findUi, focusGame, probe, submitText, waitFor, waitForWorld } from "../helpers/game";
 import { loadReference } from "../helpers/image";
 
 let islander: Page;
@@ -39,7 +39,7 @@ test(
       await page.waitForTimeout(2000);
       await caption(page, "…or teleporting, even to another area");
       await submitText(page, "/tp 20,20,Forest");
-      await waitFor(page, ({ area }) => area === "Forest", "the teleport never landed");
+      await waitFor(page, (snapshot) => arrivedIn(snapshot, "Forest"), "the teleport never landed");
       await page.waitForTimeout(3000);
       const name = (await probe(islander)).me!.name;
       const stop = await inset(page, islander, `${name}'s screen, back on the island`);

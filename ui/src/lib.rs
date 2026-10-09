@@ -99,7 +99,10 @@ impl Plugin for UiPlugin {
                     overlay::advance_overlays,
                     state::apply_gating,
                     components::progress::sync_progress,
-                    components::slider::sync_slider,
+                    (
+                        components::slider::sync_slider,
+                        components::dropdown::sync_dropdown_values,
+                    ),
                     components::sonner::age_toasts,
                     components::sonner::size_toaster,
                     components::sonner::layout_toasts,
@@ -143,6 +146,7 @@ impl Plugin for UiPlugin {
                 ),
             )
             .add_observer(state::on_select_activate)
+            .add_observer(components::dropdown::announce_choice)
             .add_observer(state::on_pressable_press)
             .add_observer(state::on_pressable_release)
             .add_observer(state::on_pressable_out)

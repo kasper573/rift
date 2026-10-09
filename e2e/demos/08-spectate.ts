@@ -4,6 +4,7 @@ import { provisionAccount, signIn } from "../helpers/account";
 import { admin } from "../helpers/admin";
 import { caption, chapter, enterWorld } from "../helpers/demo";
 import {
+  arrivedIn,
   clickUi,
   closestTile,
   findUi,
@@ -36,7 +37,7 @@ test(
       await admin(explorer, [["/give RoadPass,1", /gave 1 Road Pass/]]);
       const road = (await probe(explorer)).portals.find((portal) => portal.name === "forest-road")!;
       await travelTo(explorer, road.at);
-      await waitFor(explorer, ({ area }) => area === road.to, "the explorer never reached the forest");
+      await waitFor(explorer, (snapshot) => arrivedIn(snapshot, road.to), "the explorer never reached the forest");
       await signIn(page, await provisionAccount(page, ["spectator"]));
       await waitFor(page, (snapshot) => findUi(snapshot, "Spectate"), "the mode choice never showed");
     },

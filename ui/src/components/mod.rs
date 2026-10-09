@@ -13,6 +13,7 @@ pub(crate) mod collapsible;
 pub(crate) mod confirm;
 pub(crate) mod dialog;
 pub(crate) mod dialogue;
+pub(crate) mod dropdown;
 pub(crate) mod input;
 pub(crate) mod inspectable;
 pub(crate) mod intro;
@@ -59,6 +60,7 @@ pub use dialogue::{
     DialogueBoxOptions, DialoguePanelOptions, choice_list, dialogue_box, dialogue_choices,
     dialogue_panel, dialogue_typing, pick_choice, pick_choice_at, shake_choice, step_choice,
 };
+pub use dropdown::{dropdown, dropdown_content, dropdown_item, dropdown_trigger};
 pub use input::{
     CatalogEntry, ClickGesture, DragGesture, InputCatalog, InputLabel, InputRef, KeyGesture,
     KeyModifiers, input_cap,

@@ -213,6 +213,7 @@ export interface Snapshot {
   bag: Stack[];
   quests: Quests;
   soundscape: { zones: SoundZone[]; voices: SoundVoice[] };
+  transition: "idle" | "out" | "hold" | "in";
 }
 
 // Waits until the world is on screen — polls until the captured frame resembles the spawn map.
@@ -330,6 +331,12 @@ export function occupied(snapshot: Snapshot, tile: Tile): boolean {
     tile[0] < origin[0] + size[0] + margin &&
     tile[1] < origin[1] + size[1] + margin,
   );
+}
+
+// The probe names the new area as soon as the character is there; the crossing's transition is
+// still uncovering it until the screen settles.
+export function arrivedIn(snapshot: Snapshot, area: string): boolean {
+  return snapshot.area === area && snapshot.transition === "idle";
 }
 
 export function warps(snapshot: Snapshot, tile: Tile): boolean {

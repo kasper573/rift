@@ -6,6 +6,7 @@ use bevy::ui::Val2;
 use ui::tokens::{palette, typography};
 
 use crate::core::math::Pos;
+use crate::core::render::transition::ScreenTransitionPhase;
 use crate::core::render::{WorldToWindow, tile_to_window};
 use crate::data::attention::Id as AttentionId;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
@@ -151,8 +152,10 @@ fn place_plates(
     plates: Res<Plates>,
     actors: Query<(Option<&RenderPosition>, &Position, &Hitbox, Option<&Actor>)>,
     projector: WorldToWindow,
+    phase: Res<ScreenTransitionPhase>,
     mut nodes: Query<(&mut Node, &mut Visibility), With<WorldOverlay>>,
 ) {
+    let world_on_screen = *phase == ScreenTransitionPhase::Idle;
     for (&actor, &plate) in &plates.0 {
         let Ok((mut node, mut visibility)) = nodes.get_mut(plate) else {
             continue;
@@ -163,7 +166,7 @@ fn place_plates(
             .and_then(|(rendered, at, hitbox, body)| {
                 let at = rendered.map_or(at.pos, |rendered| rendered.0);
                 let top = Pos::new(at.x, at.y + 0.5 - hitbox.size.height);
-                body.is_none_or(|body| body.action != Action::Dead)
+                (world_on_screen && body.is_none_or(|body| body.action != Action::Dead))
                     .then(|| projector.project(top))
                     .flatten()
             });

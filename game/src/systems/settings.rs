@@ -5,6 +5,7 @@ use ui::tokens::typography;
 use ui::{Activate, ButtonSize, ValueChange, button_styled};
 
 use crate::core::audio::mix::{AudioCategory, AudioFader, AudioVolume};
+use crate::core::render::transition::ScreenTransition;
 use crate::systems::hud::{HudAudience, LettersPerSecond, Settings, Window};
 use crate::systems::input::map::InputAction;
 
@@ -86,6 +87,7 @@ fn content(world: &World) -> Box<dyn Scene> {
             {EntityScene(toggle_button(settings, &SNAPPING))},
             {EntityScene(text_speed_row(settings))},
             {EntityScene(toggle_button(settings, &REDUCED_MOTION))},
+            {EntityScene(transition_row(settings))},
             {EntityScene(audio_section(settings))},
         ]
     })
@@ -100,6 +102,36 @@ fn text_speed_row(settings: &Settings) -> impl Scene + use<> {
                 TextSpeedLabel
             ),
             {EntityScene(slider(settings, SettingSlider::TextSpeed))},
+        ]
+    }
+}
+
+fn transition_row(settings: &Settings) -> impl Scene + use<> {
+    let choices: Vec<Box<dyn Scene>> = ScreenTransition::ALL
+        .into_iter()
+        .map(|transition| -> Box<dyn Scene> {
+            Box::new(ui::dropdown_item(transition.label(), transition.label()))
+        })
+        .collect();
+    bsn! {
+        Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(6.0), width: Val::Px(SLIDER_WIDTH), padding: {UiRect::vertical(Val::Px(6.0))} }
+        Children [
+            {EntityScene(ui::styled_text("area transition", ui::theme::theme().surface_canvas.on, typography::BODY))},
+            (
+                {ui::dropdown(settings.screen_transition().label())}
+                on(|picked: On<ValueChange<String>>, mut settings: ResMut<Settings>| {
+                    if let Some(transition) = ScreenTransition::ALL
+                        .into_iter()
+                        .find(|transition| transition.label() == picked.value)
+                    {
+                        settings.set_screen_transition(transition);
+                    }
+                })
+                Children [
+                    {EntityScene(ui::dropdown_trigger())},
+                    ( {ui::dropdown_content()} Children [ {choices} ] ),
+                ]
+            ),
         ]
     }
 }

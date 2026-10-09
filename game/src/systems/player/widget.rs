@@ -48,18 +48,19 @@ fn build(pos: Vec2, id: &'static str) -> Box<dyn Scene> {
     })
 }
 
+// Between areas there is no character for a moment; the panel keeps what it last showed.
 fn sync_character(world: &mut World) {
-    let text = character_text(world);
+    let Some(text) = character_text(world) else {
+        return;
+    };
     let mut query = world.query_filtered::<&mut Text, With<CharacterText>>();
     for mut node in query.iter_mut(world) {
         node.0 = text.clone();
     }
 }
 
-fn character_text(world: &World) -> String {
-    let Some(me) = session::my_character(world) else {
-        return String::new();
-    };
+fn character_text(world: &World) -> Option<String> {
+    let me = session::my_character(world)?;
     let entity = me.id();
     let name = me
         .get::<Name>()
@@ -67,5 +68,5 @@ fn character_text(world: &World) -> String {
     let xp = me.get::<Xp>().map_or(0, |x| x.amount);
     let health = stat::current_health(world, entity);
     let max = stat::max_health(world, entity);
-    format!("{name}\n{health:.0} / {max:.0}\nxp {xp}")
+    Some(format!("{name}\n{health:.0} / {max:.0}\nxp {xp}"))
 }

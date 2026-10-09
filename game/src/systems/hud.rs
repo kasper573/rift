@@ -6,6 +6,7 @@ use ui::{Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
 use crate::core::audio::mix::{AudioFader, AudioMix, AudioVolume};
 use crate::core::platform::{ClientPlatform, Platform};
+use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
 use crate::systems::input::map::{ActionInput, InputAction};
 use crate::systems::scene::mode::Mode;
 use crate::systems::{
@@ -242,6 +243,14 @@ impl Settings {
     pub(crate) fn set_volume(&mut self, fader: AudioFader, volume: AudioVolume) {
         self.0.sound.set(fader, volume);
     }
+
+    pub(crate) fn screen_transition(&self) -> ScreenTransition {
+        self.0.screen.transition
+    }
+
+    pub(crate) fn set_screen_transition(&mut self, transition: ScreenTransition) {
+        self.0.screen.transition = transition;
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
@@ -309,6 +318,14 @@ struct UserSettings {
     text: TextSettings,
     #[serde(default)]
     sound: AudioMix,
+    #[serde(default)]
+    screen: ScreenSettings,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct ScreenSettings {
+    #[serde(default)]
+    transition: ScreenTransition,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -653,6 +670,7 @@ fn sync_preferences(
     mut speed: ResMut<ui::TypewriterSpeed>,
     mut motion: ResMut<ui::MotionPreference>,
     mut audio_mix: ResMut<AudioMix>,
+    mut transition: ResMut<ScreenTransitionPreference>,
 ) {
     if !settings.is_changed() {
         return;
@@ -661,6 +679,7 @@ fn sync_preferences(
     *speed = ui::TypewriterSpeed(Some(settings.0.text.letters_per_second.0));
     motion.reduced = settings.0.text.reduced_motion;
     *audio_mix = settings.0.sound;
+    transition.0 = settings.0.screen.transition;
 }
 
 fn launcher_pos(window: &'static str, mode: Mode, screen_w: f32) -> Vec2 {

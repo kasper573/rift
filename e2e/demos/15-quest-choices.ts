@@ -4,6 +4,7 @@ import { provisionAccount, signIn } from "../helpers/account";
 import { admin } from "../helpers/admin";
 import { caption, chapter } from "../helpers/demo";
 import {
+  arrivedIn,
   clickUi,
   doubleClickUi,
   finished,
@@ -63,7 +64,7 @@ test(
       await caption(page, "The cross is in the forest");
       const road = (await probe(page)).portals.find((portal) => portal.name === "forest-road")!;
       await travelTo(page, road.at);
-      await waitFor(page, ({ area }) => area === "Forest", "never reached the forest");
+      await waitFor(page, (snapshot) => arrivedIn(snapshot, "Forest"), "never reached the forest");
       await page.waitForTimeout(1500);
 
       await caption(page, "Finding the standing stone completes the objective");

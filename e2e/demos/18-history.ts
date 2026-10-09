@@ -4,6 +4,7 @@ import { provisionAccount, signIn } from "../helpers/account";
 import { give } from "../helpers/admin";
 import { caption, chapter } from "../helpers/demo";
 import {
+  arrivedIn,
   clickUi,
   focusGame,
   historyTab,
@@ -71,7 +72,7 @@ test(
       await caption(page, "History stays with your character, across the strait too");
       const road = (await probe(page)).portals.find((portal) => portal.name === "forest-road")!;
       await travelTo(page, road.at);
-      await waitFor(page, ({ area }) => area === "Forest", "never reached the forest");
+      await waitFor(page, (snapshot) => arrivedIn(snapshot, "Forest"), "never reached the forest");
       await waitFor(page, ({ notifications }) => notifications.intro?.title === "The forest", "the forest never spoke", 20_000);
       await page.waitForTimeout(2000);
       await focusGame(page);
