@@ -1,3 +1,4 @@
+pub mod decode;
 pub mod mix;
 pub mod playback;
 pub mod soundscape;
