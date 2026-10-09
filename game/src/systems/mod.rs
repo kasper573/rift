@@ -73,6 +73,7 @@ static TERMINALS: LazyLock<HashMap<crate::data::terminal::Id, &'static Terminal>
 pub fn protocol(app: &mut App) {
     actor::register(app);
     crate::core::babble::register(app);
+    crate::core::interpolate::register(app);
     notification::register(app);
     area::register(app);
     attention::register(app);

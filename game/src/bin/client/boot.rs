@@ -56,6 +56,9 @@ fn boot() {
         .add_plugins((
             ui::UiPlugin,
             core::net::transport::RepliconRenetClientPlugin,
+            core::interpolate::SnapshotPlugin {
+                period: systems::REPLICATION_PERIOD,
+            },
             core::render::RenderPlugin,
             core::audio::playback::SfxPlugin,
             core::audio::soundscape::SoundscapePlugin,

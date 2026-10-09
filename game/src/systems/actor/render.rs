@@ -5,7 +5,6 @@ use crate::core::interpolate::{Interpolate, InterpolatePlugin};
 use crate::core::math::Direction;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
-use crate::systems::REPLICATION_PERIOD;
 use crate::systems::actor::{Action, Actor, ActorModel, build_model};
 use crate::systems::area::{self, AreaTag};
 use bevy::prelude::*;
@@ -58,7 +57,6 @@ struct RenderActor {
 
 impl Interpolate for RenderActor {
     type Source = Actor;
-    const INTERVAL: Seconds = REPLICATION_PERIOD;
 
     fn sample(actor: &Actor) -> RenderActor {
         RenderActor {

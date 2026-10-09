@@ -175,6 +175,8 @@ pub struct Area {
     pub grid: movement::Grid,
     pub tile_sfx: Vec<Option<SfxId>>,
     pub wild_grid: movement::Grid,
+    pub airspace: movement::Grid,
+    pub wild_airspace: movement::Grid,
     pub safe_zones: Vec<Rect<Tiles>>,
     pub spawn: Pos<Tiles>,
     pub portals: Vec<Portal>,
@@ -206,6 +208,14 @@ impl Area {
 
     pub fn grid_for(&self, wild: bool) -> &movement::Grid {
         if wild { &self.wild_grid } else { &self.grid }
+    }
+
+    pub fn airspace_for(&self, wild: bool) -> &movement::Grid {
+        if wild {
+            &self.wild_airspace
+        } else {
+            &self.airspace
+        }
     }
 
     pub fn obscured_amount(&self, c: CellPos) -> f32 {

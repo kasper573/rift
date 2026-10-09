@@ -144,6 +144,8 @@ services:
     logging: *logging
     image: grafana/alloy:v1.8.3
     profiles: ["prod", "dev"]
+    # The host's process table, so its process exporter sees every container's processes.
+    pid: host
     volumes:
       - ./grafana/alloy.alloy:/etc/alloy/config.alloy
       - /var/lib/docker/containers:/var/lib/docker/containers:ro

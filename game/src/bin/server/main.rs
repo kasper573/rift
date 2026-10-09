@@ -293,6 +293,7 @@ fn simulate(
 
         counter!("rift_ticks_total").increment(1);
         histogram!("rift_tick_duration_seconds").record(started.elapsed().as_secs_f64());
+        histogram!("rift_tick_interval_seconds").record(dt.as_secs_f64());
         gauge!("rift_clients_connected").set(conns.len() as f64);
         record_ecs_metrics(&worlds);
         record_network_metrics(&server, &conns);

@@ -139,6 +139,9 @@ async fn accept(listener: TcpListener, sessions: Sessions, events: mpsc::Unbound
 // variant is a whole HTTP response, so it cannot be shrunk here.
 #[allow(clippy::result_large_err)]
 async fn serve(stream: TcpStream, sessions: Sessions, events: mpsc::UnboundedSender<Event>) {
+    if stream.set_nodelay(true).is_err() {
+        return;
+    }
     // Claim the single-use ticket inside the handshake callback, so two sockets bearing the same
     // ticket can never both become a connection (the second `take` returns `None` and is rejected).
     let mut claimed: Option<(u64, Identity)> = None;

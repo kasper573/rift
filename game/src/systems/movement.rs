@@ -13,7 +13,6 @@ use crate::core::tiling::{
 use crate::core::time::Seconds;
 use bevy_terminal::{CommandCtx, command};
 
-use crate::systems::REPLICATION_PERIOD;
 use crate::systems::account::role;
 use crate::systems::actor::{Action, Actor, set_facing};
 use crate::systems::area;
@@ -70,7 +69,6 @@ const SNAP: Tiles = Tiles(2.0);
 
 impl Interpolate for RenderPosition {
     type Source = Position;
-    const INTERVAL: Seconds = REPLICATION_PERIOD;
 
     fn sample(position: &Position) -> RenderPosition {
         RenderPosition(position.pos)
@@ -198,6 +196,7 @@ fn approach_tile(
     range: Tiles,
 ) -> Option<Pos<Tiles>> {
     let navigator = Navigator::of(world, entity)?;
+    let start = from.cell();
     let goal = target.cell();
     let reach = range.0.ceil() as i32;
     let mut best: Option<(Pos<Tiles>, Tiles)> = None;
@@ -208,7 +207,7 @@ fn approach_tile(
                 continue;
             }
             let center = cell.center();
-            if center.distance(target) > range || !navigator.open(cell) {
+            if center.distance(target) > range || !navigator.grid.connects(start, cell) {
                 continue;
             }
             let distance = from.distance(center);
@@ -315,7 +314,7 @@ fn route(world: &World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<CellPos>
     if navigator.flies && navigator.clear(at, goal) {
         return Some(vec![goal.cell()]);
     }
-    let mut path = astar(at.cell(), goal.cell(), |cell| navigator.open(cell))?;
+    let mut path = astar(navigator.grid, at.cell(), goal.cell())?;
     if path.len() > 1 {
         path.remove(0);
     }
@@ -513,34 +512,39 @@ impl Grid {
     fn cell_walkable(&self, c: CellPos) -> bool {
         c.index(self.size).is_some_and(|i| self.walkable[i])
     }
+
+    fn connects(&self, from: CellPos, to: CellPos) -> bool {
+        self.component_at_cell(from)
+            .is_some_and(|component| self.component_at_cell(to) == Some(component))
+    }
 }
 
 struct Navigator {
-    area: &'static area::Area,
+    grid: &'static Grid,
     flies: bool,
-    wild: bool,
 }
 
 impl Navigator {
     fn of(world: &World, entity: Entity) -> Option<Navigator> {
+        let area = area::of(world, entity)?;
+        let wild = area::wild(world, entity);
+        let flies = airborne(world, entity);
         Some(Navigator {
-            area: area::of(world, entity)?,
-            flies: airborne(world, entity),
-            wild: area::wild(world, entity),
+            grid: if flies {
+                area.airspace_for(wild)
+            } else {
+                area.grid_for(wild)
+            },
+            flies,
         })
-    }
-
-    fn open(&self, cell: CellPos) -> bool {
-        if self.flies {
-            !(self.wild && self.area.safe(cell.center()))
-        } else {
-            self.area.grid_for(self.wild).cell_walkable(cell)
-        }
     }
 
     fn clear(&self, from: Pos<Tiles>, to: Pos<Tiles>) -> bool {
         let samples = (from.distance(to).0 / FLIGHT_SAMPLE.0).ceil().max(1.0) as u32;
-        (0..=samples).all(|i| self.open(from.lerp(to, i as f32 / samples as f32).cell()))
+        (0..=samples).all(|i| {
+            self.grid
+                .cell_walkable(from.lerp(to, i as f32 / samples as f32).cell())
+        })
     }
 }
 
@@ -568,11 +572,10 @@ fn pick(rng: &mut Rng, nodes: &[Pos<Tiles>]) -> Option<Pos<Tiles>> {
     Some(nodes[rng.rand_range(0..nodes.len() as u32) as usize])
 }
 
-fn astar(start: CellPos, goal: CellPos, open: impl Fn(CellPos) -> bool) -> Option<Vec<CellPos>> {
-    if !open(start) || !open(goal) {
+fn astar(grid: &Grid, start: CellPos, goal: CellPos) -> Option<Vec<CellPos>> {
+    if !grid.connects(start, goal) {
         return None;
     }
-    let open = &open;
     let (path, _cost) = pathfinding::prelude::astar(
         &start,
         |&c| {
@@ -583,7 +586,7 @@ fn astar(start: CellPos, goal: CellPos, open: impl Fn(CellPos) -> bool) -> Optio
                 } else {
                     ORTHOGONAL
                 };
-                open(next).then_some((next, cost))
+                grid.cell_walkable(next).then_some((next, cost))
             })
         },
         |&c| {

@@ -109,16 +109,20 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
         panic!("map '{name}' must have a 'Dynamic' tile layer");
     }
     let walkable = walkable_cells(size, &layers, &tiles, &obscuring_rects);
-    let outside_safe_zones = size
+    let outside_safe_zones: Vec<bool> = size
         .grid()
         .cells()
-        .zip(&walkable)
-        .map(|(cell, &walkable)| {
-            walkable && !safe_zones.iter().any(|zone| zone.contains(cell.center()))
-        })
+        .map(|cell| !safe_zones.iter().any(|zone| zone.contains(cell.center())))
+        .collect();
+    let wild_walkable = walkable
+        .iter()
+        .zip(&outside_safe_zones)
+        .map(|(&walkable, &outside)| walkable && outside)
         .collect();
     let grid = movement::Grid::new(size.grid(), walkable);
-    let wild_grid = movement::Grid::new(size.grid(), outside_safe_zones);
+    let wild_grid = movement::Grid::new(size.grid(), wild_walkable);
+    let airspace = movement::Grid::new(size.grid(), vec![true; outside_safe_zones.len()]);
+    let wild_airspace = movement::Grid::new(size.grid(), outside_safe_zones);
     let (groups, grouped_cells) = compute_groups(&layers, &tiles);
     let tile_sfx = tile_sfx(size, &layers, &tiles);
 
@@ -126,6 +130,8 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
         size,
         grid,
         wild_grid,
+        airspace,
+        wild_airspace,
         safe_zones,
         tile_sfx,
         spawn,
