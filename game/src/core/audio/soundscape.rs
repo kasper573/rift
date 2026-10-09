@@ -1,12 +1,17 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
 
+use bevy::platform::time::Instant;
 use bevy::prelude::*;
 use bevy_kira_audio::prelude::{Audio, AudioControl, AudioInstance, AudioSource, AudioTween};
 use serde::Deserialize;
 
+use crate::core::assets::AssetService;
 use crate::core::audio::decibels;
+use crate::core::audio::decode::DecodingTrack;
 use crate::core::audio::mix::{AudioCategory, AudioMix};
 use crate::core::audio::playback::{Listener, PositionalAudio};
 use crate::core::math::{Pos, Rect, Size};
@@ -17,6 +22,9 @@ const EDGE_FALLOFF: Tiles = Tiles(4.0);
 // The quickest the mix may swing from silence to full. Proximity drives every change, and this only
 // catches the jumps, like travelling between areas, so they glide instead of cutting.
 const SLEW: Seconds = Seconds(0.75);
+// Decoding a whole track at once stalls the frame for long enough to starve audio output that is
+// fed from the same thread (as on the web), so tracks decode a little each frame instead.
+const DECODE_BUDGET: Duration = Duration::from_millis(4);
 
 pub struct SoundscapePlugin;
 
@@ -26,7 +34,12 @@ impl Plugin for SoundscapePlugin {
             .init_resource::<SoundscapeMixer>()
             .add_systems(
                 Update,
-                (load_sources.run_if(resource_changed::<Soundscape>), mix).chain(),
+                (
+                    load_sources.run_if(resource_changed::<Soundscape>),
+                    decode_sources,
+                    mix,
+                )
+                    .chain(),
             );
     }
 }
@@ -64,7 +77,7 @@ pub struct SoundscapeLayer {
 #[derive(Resource, Default)]
 pub struct SoundscapeMixer {
     clock_start: Duration,
-    sources: HashMap<&'static str, Handle<AudioSource>>,
+    sources: HashMap<&'static str, SoundscapeSource>,
     voices: Vec<SoundscapeVoice>,
 }
 
@@ -182,6 +195,11 @@ impl SoundscapeVoice {
     }
 }
 
+enum SoundscapeSource {
+    Decoding(DecodingTrack),
+    Decoded(Handle<AudioSource>),
+}
+
 struct WantedLayer {
     channel: SoundscapeChannel,
     src: &'static str,
@@ -202,16 +220,48 @@ impl WantedLayer {
 fn load_sources(
     soundscape: Res<Soundscape>,
     time: Res<Time<Real>>,
-    assets: Res<AssetServer>,
+    service: Res<AssetService>,
     mut mixer: ResMut<SoundscapeMixer>,
 ) {
     mixer.clock_start = time.elapsed();
-    mixer.sources = soundscape
+    let srcs: HashSet<&'static str> = soundscape
         .0
         .iter()
         .flat_map(|zone| zone.channels.values())
-        .map(|layer| (layer.src.as_str(), assets.load(layer.src.as_str())))
+        .map(|layer| layer.src.as_str())
         .collect();
+    mixer.sources.retain(|src, _| srcs.contains(src));
+    for src in srcs {
+        let Entry::Vacant(slot) = mixer.sources.entry(src) else {
+            continue;
+        };
+        match DecodingTrack::open(&service, Path::new(src)) {
+            Ok(track) => {
+                slot.insert(SoundscapeSource::Decoding(track));
+            }
+            Err(error) => warn!("soundscape track {src}: {error}"),
+        }
+    }
+}
+
+fn decode_sources(mut mixer: ResMut<SoundscapeMixer>, mut sources: ResMut<Assets<AudioSource>>) {
+    let deadline = Instant::now() + DECODE_BUDGET;
+    mixer.sources.retain(|src, source| {
+        let SoundscapeSource::Decoding(track) = source else {
+            return true;
+        };
+        match track.decode_until(deadline) {
+            Ok(None) => true,
+            Ok(Some(decoded)) => {
+                *source = SoundscapeSource::Decoded(sources.add(decoded));
+                true
+            }
+            Err(error) => {
+                warn!("soundscape track {src}: {error}");
+                false
+            }
+        }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -234,7 +284,7 @@ fn mix(
         if mixer.voices.iter().any(|voice| voice.plays(layer)) {
             continue;
         }
-        let Some(source) = mixer.sources.get(layer.src) else {
+        let Some(SoundscapeSource::Decoded(source)) = mixer.sources.get(layer.src) else {
             continue;
         };
         let Some(clip) = sources.get(source) else {
