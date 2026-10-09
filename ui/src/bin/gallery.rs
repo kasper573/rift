@@ -18,12 +18,12 @@ use ui::{
     avatar_fallback, button, button_styled, captions, card, cast, checkbox, checkbox_indicator,
     chip, choice_list, collapsible, collapsible_content, collapsible_trigger, compact_toast,
     compact_toaster, component, confirm_dialog, dialog, dialog_close, dialogue_box, dialogue_panel,
-    intro, key_hint, list_header, milestones, popover, popover_content, popover_trigger, progress,
-    progress_indicator, radio_circle, radio_group, radio_indicator, radio_item, rich_text,
-    scroll_area, scroll_bar, scroll_thumb, scroll_viewport, separator, slider, slider_range,
-    slider_thumb, slider_track, sonner_close, speech_bubble, split_view, switch, switch_thumb,
-    tabs, tabs_list, tabs_trigger, text, text_colored, toast, toaster, tooltip, tooltip_content,
-    widget, window,
+    dropdown, dropdown_content, dropdown_item, dropdown_trigger, intro, key_hint, list_header,
+    milestones, popover, popover_content, popover_trigger, progress, progress_indicator,
+    radio_circle, radio_group, radio_indicator, radio_item, rich_text, scroll_area, scroll_bar,
+    scroll_thumb, scroll_viewport, separator, slider, slider_range, slider_thumb, slider_track,
+    sonner_close, speech_bubble, split_view, switch, switch_thumb, tabs, tabs_list, tabs_trigger,
+    text, text_colored, toast, toaster, tooltip, tooltip_content, widget, window,
 };
 
 const WINDOW: Vec2 = Vec2::new(1600.0, 900.0);
@@ -348,6 +348,7 @@ const SCENES: &[(&str, SceneBuilder)] = &[
     ("Checkbox", checkbox_scene),
     ("Switch", switch_scene),
     ("Radio group", radio_scene),
+    ("Dropdown", dropdown_scene),
     ("Slider", slider_scene),
     ("Progress", progress_scene),
     ("Avatar", avatar_scene),
@@ -498,6 +499,23 @@ fn radio_scene() -> Box<dyn Scene> {
         vec![boxed(bsn! {
             {radio_group(Some("apple".to_owned()))}
             Children [ {items.into_iter().collect::<Vec<_>>()} ]
+        })],
+    )
+}
+
+fn dropdown_scene() -> Box<dyn Scene> {
+    let items: Vec<Box<dyn Scene>> = ["Apple", "Banana", "Cherry", "Durian"]
+        .into_iter()
+        .map(|name| boxed(dropdown_item(name, name)))
+        .collect();
+    col(
+        240.0,
+        vec![boxed(bsn! {
+            {dropdown("Banana")}
+            Children [
+                {EntityScene(dropdown_trigger())},
+                ( {dropdown_content()} Children [ {items} ] )
+            ]
         })],
     )
 }

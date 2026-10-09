@@ -2,6 +2,7 @@ pub mod camera;
 mod icons;
 pub mod present;
 pub mod screen;
+pub mod transition;
 
 pub use camera::{WorldToWindow, cursor_tile, tile_to_window};
 
@@ -46,10 +47,16 @@ impl Plugin for RenderPlugin {
             .init_resource::<Animator>()
             .init_resource::<present::ScreenTint>()
             .init_resource::<present::Viewport>()
+            .init_resource::<transition::ActiveTransition>()
+            .init_resource::<transition::ScreenTransitionPreference>()
+            .init_resource::<transition::ScreenTransitionPhase>()
             .add_systems(Startup, present::setup)
             .add_systems(Update, (present::match_display, present::fit).chain())
             .init_resource::<icons::ResidentIcons>()
-            .add_systems(Update, present::apply_tint)
+            .add_systems(
+                PostUpdate,
+                present::apply_present.after(bevy::transform::TransformSystems::Propagate),
+            )
             .add_systems(Update, icons::keep_icons_resident);
     }
 }

@@ -1,13 +1,17 @@
-import { test } from "@playwright/test";
+import { test, type Page } from "@playwright/test";
 
 import { provisionAccount, signIn } from "../helpers/account";
 import { admin } from "../helpers/admin";
 import { caption, chapter, soundscapeMixer } from "../helpers/demo";
 import {
+  arrivedIn,
   clickUi,
   closestTile,
+  findUi,
+  focusGame,
   holding,
   hoverUi,
+  nearest,
   probe,
   travelTo,
   waitFor,
@@ -20,7 +24,7 @@ import { conversationOver, onStage, pick, readToChoices } from "../helpers/talk"
 test(
   "Travel",
   chapter({
-    summary: "Warps connect the areas of the world, and some are locked",
+    summary: "Warps connect the areas of the world, some are locked, and each crossing plays a transition",
     setup: async (page) => {
       await signIn(page, await provisionAccount(page, ["admin"]));
       await clickUi(page, "Play");
@@ -29,7 +33,8 @@ test(
     },
     play: async (page) => {
       await caption(page, "Warps lead to other areas — click one to cross");
-      const road = (await probe(page)).portals.find((portal) => portal.name === "forest-road")!;
+      const { area: home, portals } = await probe(page);
+      const road = portals.find((portal) => portal.name === "forest-road")!;
       await travelTo(page, road.at);
       await onStage(page, "IlsaHalt");
       await caption(page, "The forest road is locked without a pass: you just stand on it, and its warden calls out", {
@@ -46,10 +51,10 @@ test(
       await pick(page, "Goodbye.");
       await conversationOver(page);
       await waitFor(page, (snapshot) => holding(snapshot, "RoadPass") === 1, "the pass never arrived");
-      await caption(page, "With the pass in your bag, the same warp takes you through");
+      await caption(page, "With the pass in your bag, the same warp takes you through: the island crumbles away, and the forest rises around you");
       const hideMixer = await soundscapeMixer(page);
       await travelTo(page, road.at);
-      await waitFor(page, ({ area }) => area === road.to, `never arrived in ${road.to}`);
+      await waitFor(page, (snapshot) => arrivedIn(snapshot, road.to), `never arrived in ${road.to}`);
       await caption(page, `Welcome to the ${road.to.toLowerCase()}: its own music and birdsong crossfade in over the harbour's`);
       await page.waitForTimeout(5000);
       await caption(page, "A camp's fire carries past its edge, louder the closer you walk");
@@ -63,6 +68,56 @@ test(
       }
       await page.waitForTimeout(1500);
       await hideMixer();
+
+      await caption(page, "Settings choose how a crossing looks", { at: "top" });
+      let current = "Crumble";
+      let there = road.to;
+      for (const [style, says] of TRANSITIONS) {
+        await chooseTransition(page, current, style);
+        current = style;
+        there = there === road.to ? home! : road.to;
+        await caption(page, says);
+        await crossInto(page, there);
+        await page.waitForTimeout(1200);
+      }
     },
   }),
 );
+
+const TRANSITIONS: [string, string][] = [
+  ["Tile wave", "Tile wave: the tiles shrink to diamonds around you, and grow back where you land"],
+  ["Sweep", "Sweep: bands carry the old area off the way you walk, and bring the next in behind them"],
+  ["Iris", "Iris: a spotlight closes on you, and opens again where you arrive"],
+  ["Mosaic", "Mosaic: the area coarsens into blocks, steps over to the next, and resolves"],
+  ["Dither dissolve", "Dither dissolve: the area fizzles out pixel by pixel, and the next fizzles in around you"],
+  ["Fade", "Fade: plain and quick"],
+];
+
+async function chooseTransition(page: Page, current: string, next: string): Promise<void> {
+  await focusGame(page);
+  await page.keyboard.press("KeyO");
+  await hoverUi(page, /^reduced motion/);
+  await page.mouse.wheel(0, -1000);
+  await page.waitForTimeout(600);
+  const settings = await probe(page);
+  const motion = findUi(settings, /^reduced motion/)!;
+  const picker = findUi(settings, current)!;
+  await page.mouse.wheel(0, picker.y + picker.height - (motion.y + motion.height));
+  await page.waitForTimeout(600);
+  await clickUi(page, current);
+  await hoverUi(page, next);
+  await page.waitForTimeout(700);
+  await clickUi(page, next);
+  await waitFor(page, (snapshot) => findUi(snapshot, next) && !findUi(snapshot, current), `${next} was never picked`);
+  await page.waitForTimeout(500);
+  await focusGame(page);
+  await page.keyboard.press("KeyO");
+  await waitFor(page, (snapshot) => !findUi(snapshot, next), "the settings never closed");
+}
+
+async function crossInto(page: Page, area: string): Promise<void> {
+  const { me, portals } = await probe(page);
+  const warp = nearest(portals.filter((portal) => portal.to === area), me!.at)!;
+  await travelTo(page, warp.at);
+  await waitFor(page, (snapshot) => arrivedIn(snapshot, area), `never crossed into ${area}`);
+}

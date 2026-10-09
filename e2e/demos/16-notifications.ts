@@ -4,6 +4,7 @@ import { provisionAccount, signIn } from "../helpers/account";
 import { admin } from "../helpers/admin";
 import { caption, chapter } from "../helpers/demo";
 import {
+  arrivedIn,
   clickUi,
   closestTile,
   doubleClickUi,
@@ -120,7 +121,7 @@ test(
       await hoverUi(page, "Ilsa gave me this pass.");
       await page.waitForTimeout(2500);
       await pick(page, "Ilsa gave me this pass.");
-      await waitFor(page, ({ area }) => area === "Forest", "the Gull never sailed");
+      await waitFor(page, (snapshot) => arrivedIn(snapshot, "Forest"), "the Gull never sailed");
       await caption(page, "The crossing narrates itself while you walk on", { at: "top" });
       await waitFor(page, (snapshot) => captioned(snapshot, "The Gull"), "the crossing was never told");
       await stroll(page, [3, 1]);
