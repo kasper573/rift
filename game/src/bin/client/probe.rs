@@ -325,6 +325,7 @@ struct Exit {
     name: String,
     to: area::Id,
     at: Pos<Tiles>,
+    rect: Rect<Tiles>,
 }
 
 #[derive(Serialize)]
@@ -703,6 +704,7 @@ fn portals(world: &World, me: Option<Entity>) -> Vec<Exit> {
                     name: portal.name.clone(),
                     to: portal.dest_area,
                     at: portal.rect.center(),
+                    rect: portal.rect,
                 })
                 .collect()
         })

@@ -15,23 +15,26 @@ export const chromiumSilence = ["--disable-audio-output"];
 const firefoxSilence = { "media.cubeb.force_null_context": true };
 const webkitSilence = { ...process.env, GST_PLUGIN_FEATURE_RANK: "fakeaudiosink:MAX" };
 
-// CI runners have no GPU and Chrome 137+ won't fall back to SwiftShader on its own — force it.
+// Chrome's own software renderer (SwiftShader) runs the game several times slower than Mesa's, too
+// slow for real input to keep up with, so Chrome renders through the display's GL like the others.
+// Chrome blocklists software GL, which is all a runner without a GPU has.
 const chromiumArgs = [
   "--use-gl=angle",
-  "--use-angle=swiftshader",
-  "--enable-unsafe-swiftshader",
+  "--use-angle=gl",
+  "--ignore-gpu-blocklist",
   "--no-sandbox",
   "--disable-dev-shm-usage",
   ...chromiumSilence,
   ...hostResolver,
 ];
 
+// Headed, on a virtual display: Firefox/WebKit can't do WebGL headless on Linux, and Chrome's GL
+// needs a display to render through.
 const browsers = {
-  chrome: { browserName: "chromium", channel: "chrome", launchOptions: { args: chromiumArgs } },
+  chrome: { browserName: "chromium", channel: "chrome", headless: false, launchOptions: { args: chromiumArgs } },
   // Edge is the same engine as Chrome (Chromium) — off for now to save a CI project. Re-add for
   // Edge-channel-specific coverage.
-  // edge: { browserName: "chromium", channel: "msedge", launchOptions: { args: chromiumArgs } },
-  // Headed: Firefox/WebKit can't do WebGL headless on Linux, so they run software WebGL under xvfb.
+  // edge: { browserName: "chromium", channel: "msedge", headless: false, launchOptions: { args: chromiumArgs } },
   firefox: {
     browserName: "firefox",
     headless: false,
@@ -52,8 +55,10 @@ const browsers = {
   safari: { browserName: "webkit", headless: false, launchOptions: { env: webkitSilence } },
 } as const;
 
+// The suite must pass at any screen a player might use. The smallest one the game supports is the
+// cheapest for software WebGL to render, by several times.
 const resolutions = {
-  desktop: { width: 1280, height: 800 },
+  smallest: { width: 640, height: 400 },
   // Mobile portrait is off for now (halves the matrix). Re-add for mobile-viewport coverage.
   // portrait: { width: 480, height: 844 },
 } as const;
@@ -66,7 +71,7 @@ const matrix: Array<[BrowserName, Resolution]> = process.env.E2E_ALL_BROWSERS
   ? (Object.keys(browsers) as BrowserName[]).flatMap((browser) =>
       (Object.keys(resolutions) as Resolution[]).map((res) => [browser, res] as [BrowserName, Resolution]),
     )
-  : [["chrome", "desktop"]];
+  : [["chrome", "smallest"]];
 
 export default defineConfig({
   testDir: "./tests",

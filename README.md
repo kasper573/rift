@@ -12,10 +12,10 @@ One-time setup:
 - `wasm-bindgen-cli` for building the wasm client:
   `cargo install wasm-bindgen-cli --locked`
 - `cargo-watch` for the dev loop: `cargo install cargo-watch --locked`
-- To run the end-to-end suite (`just e2e`): [Node.js](https://nodejs.org/) and Google Chrome. The
-  suite is [Playwright](https://playwright.dev) (in [`e2e/`](e2e)); `just e2e` installs its npm deps
-  on first run and drives a headless Chrome through a real sign-in, so it's zero-config and never
-  touches your desktop. CI fans out across Chrome, Firefox and Safari.
+- To run the end-to-end suite (`just e2e`): [Node.js](https://nodejs.org/), Google Chrome and `xvfb`.
+  The suite is [Playwright](https://playwright.dev) (in [`e2e/`](e2e)); `just e2e` installs its npm
+  deps on first run and drives Chrome on a virtual display through a real sign-in, so it's
+  zero-config and never touches your desktop. CI fans out across Chrome, Firefox and Safari.
 - To record demo videos: [ffmpeg](https://ffmpeg.org/) and a GPU (demos fall back to slow software
   rendering without one). The ui gallery recordings also need `xvfb` and `xdotool`.
 

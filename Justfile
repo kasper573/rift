@@ -282,11 +282,7 @@ e2e-run filter="":
     cd e2e
     [ -d node_modules ] || npm ci
     export LP_NUM_THREADS=2 # bound each headed browser's Mesa threads so parallel workers don't thrash
-    if [ "${E2E_ALL_BROWSERS:-}" = "1" ]; then
-      xvfb-run -a npx playwright test {{filter}}
-    else
-      npx playwright test {{filter}}
-    fi
+    xvfb-run -a npx playwright test {{filter}}
 
 demo_dir := "target/demo"
 

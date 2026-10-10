@@ -34,12 +34,16 @@ export async function register(page: Page, { typingDelayMs }: { typingDelayMs?: 
   return account;
 }
 
+// Ends back on the game's page: the login redirects through the site to it, and until it lands, anything
+// that reads the page reads one on its way out.
 export async function signIn(page: Page, account: Account): Promise<void> {
   await page.goto("/play");
+  const play = page.url();
   await page.getByRole("button", { name: "Sign in to play" }).click();
   await page.locator("#username").fill(account.username);
   await page.locator("#password").fill(account.password);
   await page.locator("#kc-login").click();
+  await page.waitForURL(play);
 }
 
 // Roles land in the access token at sign-in, so an account gets its groups before it first signs in:

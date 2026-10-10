@@ -53,6 +53,7 @@ export interface Exit {
   name: string;
   to: string;
   at: Tile;
+  rect: TileRect;
 }
 
 export interface UiElement {
@@ -607,7 +608,7 @@ async function canvasBox(page: Page): Promise<{ x: number; y: number; width: num
   return box;
 }
 
-async function canvasSize(page: Page): Promise<{ width: number; height: number }> {
+export async function canvasSize(page: Page): Promise<{ width: number; height: number }> {
   const { width, height } = await canvasBox(page);
   return { width, height };
 }

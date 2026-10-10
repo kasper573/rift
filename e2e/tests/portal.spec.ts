@@ -2,8 +2,9 @@ import { expect, test } from "@playwright/test";
 
 import { provisionAccount, signIn } from "../helpers/account";
 import { admin } from "../helpers/admin";
-import { captureScene, clickTile, clickUi, leaveConversation, MAP_MATCH, probe, waitFor, waitForWorld } from "../helpers/game";
+import { captureScene, clickUi, leaveConversation, MAP_MATCH, probe, waitFor, waitForWorld } from "../helpers/game";
 import { loadReference, resemblance } from "../helpers/image";
+import { travel } from "./travel";
 
 test("the forest road holds you without a pass and crosses with one", async ({ page }) => {
   await signIn(page, await provisionAccount(page, ["admin"]));
@@ -14,7 +15,7 @@ test("the forest road holds you without a pass and crosses with one", async ({ p
   const road = (await probe(page)).portals.find((portal) => portal.name === "forest-road");
   expect(road, "the island has a forest road").toBeDefined();
 
-  await clickTile(page, road!.at);
+  await travel(page, road!.at);
   const held = await waitFor(page, ({ stage }) => stage, "Ilsa never halted you on the road");
   expect(held.node).toBe("IlsaHalt");
   expect((await probe(page)).area).toBe("Island");
@@ -30,7 +31,7 @@ test("the forest road holds you without a pass and crosses with one", async ({ p
         if (resemblance(scene, forest) >= MAP_MATCH) {
           return true;
         }
-        await clickTile(page, road!.at);
+        if ((await probe(page)).area === "Island") await travel(page, road!.at);
         return false;
       },
       { message: "with a pass, clicking the warp should cross into the forest", timeout: 120_000, intervals: [1000] },

@@ -22,27 +22,30 @@ export function fixture(snapshot: Snapshot, prop: string): Fixture | undefined {
   return snapshot.props.find((candidate) => candidate.prop === prop);
 }
 
-export async function talkTo(page: Page, npc: string): Promise<Stage> {
+export async function talkTo(page: Page, npc: string, travel = travelTo): Promise<Stage> {
   return reachUntil(
     page,
+    travel,
     (snapshot) => townsperson(snapshot, npc)?.aim,
     (snapshot) => snapshot.stage?.with === townsperson(snapshot, npc)?.id && snapshot.stage,
     `the conversation with ${npc} never opened`,
   );
 }
 
-export async function interactWith(page: Page, prop: string): Promise<Stage> {
+export async function interactWith(page: Page, prop: string, travel = travelTo): Promise<Stage> {
   return reachUntil(
     page,
+    travel,
     (snapshot) => fixture(snapshot, prop)?.aim,
     (snapshot) => snapshot.stage?.with === fixture(snapshot, prop)?.id && snapshot.stage,
     `interacting with ${prop} never opened a conversation`,
   );
 }
 
-export async function shopAt(page: Page, prop: string): Promise<Shop> {
+export async function shopAt(page: Page, prop: string, travel = travelTo): Promise<Shop> {
   return reachUntil(
     page,
+    travel,
     (snapshot) => fixture(snapshot, prop)?.aim,
     ({ shop }) => shop,
     `using ${prop} never opened a shop`,
@@ -97,13 +100,14 @@ export async function stageNow(page: Page): Promise<Stage | null> {
 // Townsfolk stroll, so a click can land where one stood a moment ago; click again, as a player would.
 async function reachUntil<T>(
   page: Page,
+  travel: typeof travelTo,
   aim: (snapshot: Snapshot) => Tile | undefined,
   done: (snapshot: Snapshot) => T | null | undefined | false,
   message: string,
 ): Promise<T> {
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
-    await travelTo(page, aim, 90_000, done);
+    await travel(page, aim, 90_000, done);
     const settle = Date.now() + 8_000;
     while (Date.now() < settle) {
       const snapshot = await probe(page);

@@ -27,7 +27,7 @@ runs:
       # `-sys` crates link system C libraries cargo can't supply (the one platform-specific place, per
       # the repo's platform rule): the x11/gl libs, cmake/g++ for the native `ui` gallery and
       # `bevy_render`, and alsa for kira's cpal backend (the client audio code compiles natively too).
-      # xvfb + the Mesa DRI driver are for the e2e's headed Firefox/WebKit (software WebGL). Drop the
+      # xvfb + the Mesa DRI driver are for the e2e's headed browsers (software WebGL). Drop the
       # runner's microsoft/azure apt sources first — unused, and they 403 intermittently.
       run: |
         sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
