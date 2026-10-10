@@ -153,15 +153,17 @@ fn offer(
         Box::new(caption(format!("{} · {}", def.kinds(), def.meta(content)))),
         Box::new(section("Objectives")),
     ];
-    parts.extend(def.objectives.iter().zip(&progress).map(
-        |(objective, progress)| -> Box<dyn Scene> {
-            Box::new(objective_row(content, assets, objective, progress, ink))
-        },
-    ));
+    parts.extend(
+        def.objectives()
+            .zip(&progress)
+            .map(|(objective, progress)| -> Box<dyn Scene> {
+                Box::new(objective_row(content, assets, objective, progress, ink))
+            }),
+    );
     if def.reveals(ChoiceReveal::Gains) {
         parts.push(Box::new(section("Rewards")));
         parts.push(Box::new(reward_chips(content, assets, def)));
-        if !def.pick_one.is_empty() {
+        if !def.pick_one().is_empty() {
             parts.push(Box::new(section("Pick one when you return")));
             parts.push(Box::new(picks(content, assets, def)));
         }
@@ -179,7 +181,7 @@ fn turn_in(
     let def = quest.get(content);
     let mut parts: Vec<Box<dyn Scene>> = vec![Box::new(head(content, assets, def))];
     if def.reveals(ChoiceReveal::Costs) {
-        parts.extend(def.hand_in.iter().map(|&stack| -> Box<dyn Scene> {
+        parts.extend(def.hand_in().iter().map(|&stack| -> Box<dyn Scene> {
             Box::new(hand_in_row(
                 content,
                 assets,
@@ -191,7 +193,7 @@ fn turn_in(
     if !def.reveals(ChoiceReveal::Gains) {
         return parts;
     }
-    let pick_note: Vec<Box<dyn Scene>> = (!def.pick_one.is_empty())
+    let pick_note: Vec<Box<dyn Scene>> = (!def.pick_one().is_empty())
         .then(|| -> Box<dyn Scene> { Box::new(caption("+ your pick below")) })
         .into_iter()
         .collect();
@@ -313,7 +315,7 @@ pub(super) fn reward_chips(
         .into_iter()
         .collect();
     let items: Vec<Box<dyn Scene>> = def
-        .rewards
+        .rewards()
         .iter()
         .map(|&stack| -> Box<dyn Scene> {
             ui::chip(ChipOptions {
@@ -332,7 +334,7 @@ pub(super) fn reward_chips(
 
 pub(super) fn picks(content: &Content, assets: &AssetServer, def: &QuestDef) -> impl Scene + use<> {
     let slots: Vec<Box<dyn Scene>> = def
-        .pick_one
+        .pick_one()
         .iter()
         .map(|stack| -> Box<dyn Scene> {
             let slot = bsn! {
@@ -381,7 +383,7 @@ pub(super) fn icon(assets: &AssetServer, icon: AssetRef, size: f32) -> impl Scen
 }
 
 pub(super) fn counted(content: &Content, stack: ItemStack) -> String {
-    let name = stack.item.get(content).display_name;
+    let name = stack.item.get(content).name;
     match stack.count {
         1 => name.to_owned(),
         count => format!("{name} ×{count}"),
@@ -464,7 +466,7 @@ fn remaining(content: &Content, log: &QuestLog, quest: QuestId) -> (f32, f32) {
         .active(quest)
         .and_then(|active| active.left)
         .map_or(0.0, |left| left.0);
-    let limit = quest.get(content).time_limit.map_or(1.0, |limit| limit.0);
+    let limit = quest.get(content).time_limit().map_or(1.0, |limit| limit.0);
     (left, limit)
 }
 

@@ -4,7 +4,6 @@ use bevy_ecs::prelude::*;
 
 use super::{Id, MarkerName};
 use crate::core::assets::AssetService;
-use crate::core::babble::Babbler;
 use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
@@ -97,7 +96,7 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
                     dest: crossing.dest,
                     state: CharacterState {
                         name: world.get::<Name>(entity)?.name.clone(),
-                        babble: world.get::<Babbler>(entity).map(|babbler| babbler.0),
+                        spawn: crossing.dest,
                         discovered: world.get::<Discovered>(entity)?.clone(),
                         stats: stat::snapshot(world, entity),
                         inventory: world.get::<Inventory>(entity)?.clone(),

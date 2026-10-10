@@ -1,5 +1,6 @@
 use crate::core::content::Content;
 use crate::data::item::Id as ItemId;
+use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::{INVENTORY_MAX, Inventory, ItemDef, ItemFlag, ItemStack, card};
 use crate::systems::player::session;
 use bevy::prelude::*;
@@ -77,8 +78,8 @@ impl Window for InventoryWindow {
     fn toggle(&self) -> InputAction {
         InputAction::ToggleInventory
     }
-    fn icon(&self) -> &'static str {
-        "icons/equipment/bag.png"
+    fn icon(&self) -> InterfaceIcon {
+        InterfaceIcon::Bag
     }
     fn order(&self) -> u32 {
         0
@@ -219,7 +220,7 @@ fn filled_slot(content: &Content, slot: u32, filled: &Filled) -> impl Scene {
         ),
     };
     let tip = TooltipText {
-        title: def.display_name.to_owned(),
+        title: def.name.to_owned(),
         lines: std::iter::once(card::overview(def))
             .chain(filled.notes.iter().cloned())
             .chain(verdict)

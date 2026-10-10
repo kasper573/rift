@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
 
-use crate::core::audio::playback::SfxId;
-use crate::core::content::Content;
+use crate::core::content::{Content, Fixture};
 use crate::data::item::Id as ItemId;
 use crate::systems::equipment::{Equipment, EquipmentSlot};
 use crate::systems::history::{HistoryTopic, RecordTally};
+use crate::systems::interface::InterfaceSound;
 use crate::systems::item::Inventory;
 use crate::systems::job;
 use crate::systems::notification::{self, Notification, NotificationKind};
@@ -102,14 +102,14 @@ fn changes(content: &Content, before: &Belongings, now: &Belongings) -> Vec<Noti
             (_, Some(&on)) if before.worn.get(slot) != Some(&on) => {
                 told.push(worn_row(
                     content,
-                    format!("Equipped {}", on.get(content).display_name),
+                    format!("Equipped {}", on.get(content).name),
                     on,
                 ));
             }
             (Some(&off), None) => {
                 told.push(worn_row(
                     content,
-                    format!("Took off {}", off.get(content).display_name),
+                    format!("Took off {}", off.get(content).name),
                     off,
                 ));
             }
@@ -121,7 +121,7 @@ fn changes(content: &Content, before: &Belongings, now: &Belongings) -> Vec<Noti
             NotificationKind::Milestone {
                 label: "Level up".into(),
                 topic: HistoryTopic::Notification,
-                sfx: Some(SfxId::RisingChime),
+                sfx: Some(InterfaceSound::RisingChime.id(content)),
             },
             LineText::plain(format!("Level {}", now.level)),
         ));
@@ -143,7 +143,7 @@ fn item_row(content: &Content, item: ItemId, change: i32) -> Notification {
             failure: false,
             sfx: Some(sfx),
         },
-        LineText::plain(item.get(content).display_name),
+        LineText::plain(item.get(content).name),
     )
 }
 

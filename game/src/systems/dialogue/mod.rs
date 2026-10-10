@@ -8,15 +8,16 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{AssetRef, AssetService};
-use crate::core::audio::playback::SfxId;
-use crate::core::content::Content;
+use crate::core::content::{Content, Fixture};
 use crate::core::math::{Percent, Rng};
 use crate::data;
 use crate::data::attention::Id as AttentionId;
 use crate::systems::actor::Name;
 use crate::systems::actor::bust::Face;
 use crate::systems::attention;
+use crate::systems::attention::AttentionMark;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic};
+use crate::systems::interface::InterfaceSound;
 use crate::systems::item::{Inventory, ItemStack};
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::{self, CommandLock, sender_player};
@@ -322,7 +323,10 @@ impl Outcome for Gamble {
             notification::notify(
                 ctx.world,
                 ctx.player,
-                Notification::new(NotificationKind::error(), LineText::plain(refusal.0)),
+                Notification::new(
+                    NotificationKind::error(ctx.world.resource::<Content>()),
+                    LineText::plain(refusal.0),
+                ),
             );
         }
     }
@@ -392,7 +396,7 @@ pub fn end(world: &mut World, player: Entity, ending: Ending) {
             player,
             Notification::new(
                 NotificationKind::Error {
-                    sfx: Some(SfxId::UiClose),
+                    sfx: Some(InterfaceSound::UiClose.id(world.resource::<Content>())),
                 },
                 LineText::plain(format!("Conversation{with} ended: {reason}")),
             ),
@@ -614,8 +618,8 @@ fn record_line(world: &mut World, player: Entity, line: &SpokenLine) {
 fn speaker_name(world: &World, player: Entity, who: Speaker) -> Option<String> {
     let content = world.resource::<Content>();
     match who {
-        Speaker::Npc(npc) => Some(npc.get(content).display_name.to_owned()),
-        Speaker::Prop(prop) => Some(prop.get(content).display_name.to_owned()),
+        Speaker::Npc(npc) => Some(npc.get(content).name.to_owned()),
+        Speaker::Prop(prop) => Some(prop.get(content).name.to_owned()),
         Speaker::Player => world.get::<Name>(player).map(|name| name.name.clone()),
         Speaker::Narrator => None,
     }
@@ -739,7 +743,10 @@ fn refuse(world: &mut World, player: Entity, choice: u32, reason: String) {
     notification::notify(
         world,
         player,
-        Notification::new(NotificationKind::error(), LineText::plain(reason)),
+        Notification::new(
+            NotificationKind::error(world.resource::<Content>()),
+            LineText::plain(reason),
+        ),
     );
     if let Some(mut session) = world.get_mut::<ConversationSession>(player) {
         session.refusals += 1;
@@ -837,7 +844,7 @@ pub fn check_line(content: &Content, owner: impl std::fmt::Display, line: &Line)
         fill.check(content);
     }
     if let Speaker::Npc(npc) = line.by
-        && npc.get(content).babble.is_none()
+        && npc.get(content).voice().is_none()
     {
         panic!("{owner}: {npc:?} speaks but has no babble");
     }
@@ -845,8 +852,8 @@ pub fn check_line(content: &Content, owner: impl std::fmt::Display, line: &Line)
         return;
     };
     let busts = match line.by {
-        Speaker::Npc(npc) => npc.get(content).model.get(content).busts.as_ref(),
-        Speaker::Player => player::def(content).model.get(content).busts.as_ref(),
+        Speaker::Npc(npc) => npc.get(content).model.get(content).busts(),
+        Speaker::Player => player::def(content).model.get(content).busts(),
         Speaker::Prop(_) | Speaker::Narrator => None,
     };
     if busts.and_then(|busts| busts.face(content, face)).is_none() {
@@ -855,7 +862,7 @@ pub fn check_line(content: &Content, owner: impl std::fmt::Display, line: &Line)
 }
 
 fn talking(world: &World, player: Entity) -> Option<AttentionId> {
-    in_conversation(world, player).then_some(AttentionId::Talking)
+    in_conversation(world, player).then_some(AttentionMark::Talking.id(world.resource::<Content>()))
 }
 
 fn broken(world: &World, player: Entity) -> Option<Ending> {

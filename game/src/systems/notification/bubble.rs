@@ -334,7 +334,7 @@ fn place_bubbles(world: &mut World) {
         let perch = room.settle(perch, size);
         let typed = typed_lines(world, speaking);
         let bubble = SpeechBubble {
-            speaker: speaking.speaker.get(&content).display_name.to_owned(),
+            speaker: speaking.speaker.get(&content).name.to_owned(),
             replaced: speaking.replaced,
             lines: speaking.shown_lines(&typed),
             tail: perch.tail,
@@ -502,7 +502,7 @@ fn babble_of(world: &World, speaking: &Speaking) -> Option<BabbleId> {
         .body
         .and_then(|body| world.get::<Babbler>(body))
         .map(|babbler| babbler.0)
-        .or(speaking.speaker.get(content).babble)
+        .or(speaking.speaker.get(content).voice())
 }
 
 fn spot(world: &mut World, speaking: &Speaking, window: Vec2) -> Spot {

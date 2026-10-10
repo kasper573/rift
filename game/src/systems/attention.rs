@@ -4,6 +4,7 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetRef;
+use crate::core::content::Fixture;
 use crate::data::attention::Id as AttentionId;
 use crate::systems::area::AreaTag;
 use crate::systems::interact::{self, Interactive};
@@ -28,6 +29,23 @@ pub struct AttentionDef {
 
 impl crate::core::content::ContentRow for AttentionDef {
     const TABLE: &'static str = "attention";
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+pub enum AttentionMark {
+    QuestReady,
+    QuestOffered,
+    RepeatableReady,
+    RepeatableOffered,
+    QuestInProgress,
+    QuestLocked,
+    News,
+    Talking,
+}
+
+impl Fixture for AttentionMark {
+    type Row = AttentionDef;
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

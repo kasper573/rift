@@ -136,5 +136,5 @@ fn spawn_command(
     terms
         .settle(world, player, crate::systems::rule::Encounter::default())
         .map_err(|refusal| refusal.0)?;
-    Ok(format!("spawned {}", npc.get(&content).display_name))
+    Ok(format!("spawned {}", npc.get(&content).name))
 }

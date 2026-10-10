@@ -1,17 +1,14 @@
 use crate::core::time::Seconds;
 use crate::data::job::Id as JobId;
 use crate::data::model::Id as ModelId;
-use crate::systems::actor::Rgba;
 use crate::systems::combat::HealthRegen;
-use crate::systems::player::PlayerDef;
+use crate::systems::player::{PlayerDef, PlayerModule};
 use crate::systems::stat::StatKind;
 
 crate::table! {
     Adventurer: PlayerDef {
         model: ModelId::Adventurer,
-        babble: None,
         job: JobId::Adventurer,
-        tint: Rgba(0xffffffff),
         stats: &[
             StatKind::Health.of(30.0),
             StatKind::MaxHealth.of(30.0),
@@ -21,9 +18,6 @@ crate::table! {
             StatKind::Range.of(1.5),
             StatKind::MovementSpeed.of(4.0),
         ],
-        regen: HealthRegen { every: Seconds(10.0), health: 5.0 },
+        modules: &[PlayerModule::Regen(HealthRegen { every: Seconds(10.0), health: 5.0 })],
     },
 }
-
-/// The archetype every player plays as.
-pub const DEFAULT_ID: Id = Id::Adventurer;

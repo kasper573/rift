@@ -27,7 +27,7 @@ pub fn register(app: &mut App) {
 
 #[derive(Clone)]
 pub struct PropDef {
-    pub display_name: &'static str,
+    pub name: &'static str,
     pub look: Option<AssetRef>,
     pub interaction: Option<Interaction>,
 }
@@ -71,7 +71,7 @@ pub fn spawn_all(world: &mut World) {
                 Prop { def: fixture.prop },
                 Counterpart::Prop(fixture.prop),
                 Name {
-                    name: prop.display_name.to_owned(),
+                    name: prop.name.to_owned(),
                 },
             ))
             .id();

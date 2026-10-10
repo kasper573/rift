@@ -36,7 +36,7 @@ pub use crate::data::sfx::Id as SfxId;
 
 #[derive(Clone)]
 pub struct SfxDef {
-    pub src: AssetRef,
+    pub file: AssetRef,
     pub volume: SfxScalar,
     pub pitch: SfxScalar,
 }
@@ -149,7 +149,7 @@ fn load(assets: Res<AssetServer>, content: Res<Content>, mut catalog: ResMut<Cat
         .rows()
         .iter()
         .map(|def| Sound {
-            handle: assets.load(def.src.0),
+            handle: assets.load(def.file.0),
             volume: def.volume,
             pitch: def.pitch,
         })

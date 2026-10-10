@@ -1,6 +1,5 @@
 use bevy_ecs::prelude::*;
 use game::core::tiling::Tiles;
-use game::data;
 use game::data::item::Id as ItemId;
 use game::systems::area::MarkerName;
 use game::systems::dialogue::ConversationRequest;
@@ -15,7 +14,7 @@ use game::systems::shop::ShopRequest;
 
 use crate::support::{
     Sim, content, conversation, count, errors, give, heard_the_news, labels, later, leave, locked,
-    open_with, pick, prop, row, settle, slay, talk,
+    open_with, pick, prop, row, settle, slay, spawn_area, talk,
 };
 
 fn slot_of(sim: &mut Sim, player: Entity, item: ItemId) -> u32 {
@@ -54,7 +53,7 @@ fn fill_bag(sim: &mut Sim, player: Entity) {
 
 #[test]
 fn accepting_a_quest_logs_it_tracks_it_and_hands_over_its_items() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
 
@@ -72,7 +71,7 @@ fn accepting_a_quest_logs_it_tracks_it_and_hands_over_its_items() {
 
 #[test]
 fn abandoning_takes_the_quest_items_back_and_accepting_again_returns_them() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
     quest::accept(sim.world(), player, row("LetterForTheCaptain"));
@@ -96,7 +95,7 @@ fn abandoning_takes_the_quest_items_back_and_accepting_again_returns_them() {
 
 #[test]
 fn delivering_completes_the_quest_once_and_unlocks_the_next_in_the_chain() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
     talk(&mut sim, 1, player, row("Tobb"));
@@ -140,7 +139,7 @@ fn delivering_completes_the_quest_once_and_unlocks_the_next_in_the_chain() {
 
 #[test]
 fn a_chain_stays_hidden_until_its_previous_quest_and_level_are_met() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
     level_up(&mut sim, player);
@@ -151,7 +150,7 @@ fn a_chain_stays_hidden_until_its_previous_quest_and_level_are_met() {
 
 #[test]
 fn kills_count_only_for_the_credited_player() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let hunter = sim.join(1);
     let bystander = sim.join(2);
     quest::accept(sim.world(), hunter, row("BatsInTheBelfry"));
@@ -170,7 +169,7 @@ fn kills_count_only_for_the_credited_player() {
 
 #[test]
 fn quest_drops_fall_only_for_players_on_the_quest() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let keys = |sim: &mut Sim| {
         let world = sim.world();
@@ -195,7 +194,7 @@ fn quest_drops_fall_only_for_players_on_the_quest() {
 
 #[test]
 fn quest_items_never_sell_or_drop() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
     quest::accept(sim.world(), player, row("LetterForTheCaptain"));
@@ -222,7 +221,7 @@ fn quest_items_never_sell_or_drop() {
 
 #[test]
 fn a_full_bag_refuses_the_reward_counting_space_after_the_hand_in() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
     quest::accept(sim.world(), player, row("TusksForTheChief"));
@@ -269,7 +268,7 @@ fn a_full_bag_refuses_the_reward_counting_space_after_the_hand_in() {
 
 #[test]
 fn a_daily_quest_returns_after_the_reset() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
     quest::accept(sim.world(), player, row("BoneTithe"));
@@ -292,7 +291,7 @@ fn a_daily_quest_returns_after_the_reset() {
 
 #[test]
 fn a_timed_quest_fails_when_time_runs_out_and_is_offered_again() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
     talk(&mut sim, 1, player, row("Tobb"));

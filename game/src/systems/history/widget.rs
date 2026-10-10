@@ -9,13 +9,15 @@ use ui::{RichSpan, RichText, component};
 use super::{
     HistoryEntry, HistoryMark, HistoryNews, HistoryRecord, HistoryTopic, KEPT, RecordTally,
 };
-use crate::core::audio::playback::SfxId;
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
+use crate::core::content::{Content, Fixture};
 use crate::core::platform::ClientPlatform;
 use crate::core::time::LocalClock;
 use crate::systems::actor::Name;
 use crate::systems::hud::{self, HudAudience, Window, reconcile_children};
 use crate::systems::input::map::InputAction;
+use crate::systems::interface::InterfaceIcon;
+use crate::systems::interface::InterfaceSound;
 use crate::systems::player::ClientId;
 use crate::systems::player::session::Viewpoint;
 use crate::systems::scene::Scene as GameScene;
@@ -128,8 +130,8 @@ impl Window for HistoryWindow {
     fn toggle(&self) -> InputAction {
         InputAction::ToggleHistory
     }
-    fn icon(&self) -> &'static str {
-        "icons/misc/book_3.png"
+    fn icon(&self) -> InterfaceIcon {
+        InterfaceIcon::History
     }
     fn order(&self) -> u32 {
         4
@@ -195,6 +197,7 @@ fn remember_tab(
     parents: Query<&ChildOf>,
     mut book: ResMut<HistoryBook>,
     mut sounds: MessageWriter<PlaySfx>,
+    content: Res<Content>,
 ) {
     let ours = bodies
         .iter()
@@ -205,7 +208,7 @@ fn remember_tab(
     if ours && book.tab != tab {
         book.tab = tab;
         sounds.write(PlaySfx {
-            id: SfxId::UiPage,
+            id: InterfaceSound::UiPage.id(&content),
             place: SfxPlace::Interface,
         });
     }

@@ -6,13 +6,13 @@ use ui::tokens::{palette, spacing, typography};
 use ui::{Carried, CarryTarget, ChipOptions, ConfirmOptions, Family, OnTap, component};
 
 use super::{OfferView, Sale, ShopId, ShopRequest, ShopView, WareRefusal};
-use crate::core::audio::playback::SfxId;
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
-use crate::core::content::Content;
+use crate::core::content::{Content, Fixture};
 use crate::data::item::Id as ItemId;
 use crate::systems::dialogue::stage;
 use crate::systems::hud;
 use crate::systems::input::map::{ActionInput, InputAction, input};
+use crate::systems::interface::InterfaceSound;
 use crate::systems::item::widget::{SlotAction, SlotVerdict, slot_action, slot_verdict_source};
 use crate::systems::item::{Inventory, ItemCategory, ItemStack, card};
 use crate::systems::player::session::Viewpoint;
@@ -116,7 +116,7 @@ fn show_counter(world: &mut World) {
             if let Some(panel) = stage::show_panel(world, panel) {
                 world.entity_mut(panel).insert(CounterPanel);
             }
-            chime(world, SfxId::UiOpen);
+            chime(world, InterfaceSound::UiOpen);
         }
         (None, Some(panel)) => {
             world.entity_mut(panel).despawn();
@@ -349,8 +349,7 @@ impl Shelf {
                 .shown
                 .shop
                 .get(content)
-                .sells
-                .iter()
+                .sells()
                 .zip(&self.shown.offers)
                 .map(|(offer, view)| Ware {
                     item: offer.item,
@@ -461,7 +460,7 @@ fn row(
 ) -> Box<dyn Scene> {
     let ink = ui::theme::theme().surface_floating.on;
     let def = ware.item.get(content);
-    let name = counted(def.display_name, ware.count);
+    let name = counted(def.name, ware.count);
     let note = unavailable(ware)
         .map(|reason| (reason, palette::CRIMSON_80))
         .or_else(|| ware.note.clone().map(|note| (note, ink.with_alpha(0.6))));
@@ -614,7 +613,7 @@ fn trade(world: &mut World, tab: ShopTab, index: usize) {
             world.write_message(ShopRequest::Buyback { sale: index });
         }
     }
-    chime(world, SfxId::UiPick);
+    chime(world, InterfaceSound::UiPick);
 }
 
 fn price_chip(
@@ -651,7 +650,7 @@ fn cost_row(
     let label = format!(
         "{} {} · You have {have}",
         stack.count,
-        stack.item.get(content).display_name
+        stack.item.get(content).name
     );
     bsn! {
         Node { column_gap: Val::Px({spacing::L}), align_items: AlignItems::Center }
@@ -735,7 +734,7 @@ fn request_sale(world: &mut World, slot: u32) {
 
 fn confirm_sale(world: &mut World, shop: ShopId, stack: ItemStack, pays: &[ItemStack], slot: u32) {
     let content = world.resource::<Content>().clone();
-    let name = stack.item.get(&content).display_name;
+    let name = stack.item.get(&content).name;
     let dialog = ui::confirm_dialog(ConfirmOptions {
         title: format!("Sell {name}?"),
         body: vec![
@@ -757,10 +756,11 @@ fn confirm_sale(world: &mut World, shop: ShopId, stack: ItemStack, pays: &[ItemS
 
 fn sell(world: &mut World, slot: u32, stack: ItemStack) {
     world.write_message(ShopRequest::Sell { slot, stack });
-    chime(world, SfxId::Coins);
+    chime(world, InterfaceSound::Coins);
 }
 
-fn chime(world: &mut World, id: SfxId) {
+fn chime(world: &mut World, sound: InterfaceSound) {
+    let id = sound.id(world.resource::<Content>());
     world.write_message(PlaySfx {
         id,
         place: SfxPlace::Interface,

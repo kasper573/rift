@@ -4,7 +4,8 @@ use bevy::prelude::*;
 use bevy::window::CursorIcon;
 
 use crate::core::render;
-use crate::systems::input::gestures::{Gesture, image_cursor};
+use crate::systems::input::gestures::{Gesture, content_cursor};
+use crate::systems::interface::CursorShape;
 
 pub struct PickupGesture;
 
@@ -30,9 +31,6 @@ impl Gesture for PickupGesture {
     }
 
     fn cursor(&self, world: &mut World) -> Option<CursorIcon> {
-        let handle = world
-            .resource::<AssetServer>()
-            .load("icons/cursors/hand001.png");
-        Some(image_cursor(handle, (8, 8)))
+        Some(content_cursor(world, CursorShape::PickUp))
     }
 }

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::audio::playback::SfxId;
-use crate::core::content::Content;
+use crate::core::content::{Content, ContentRow, Fixture, ModuleRule, ModuleSet};
 use crate::core::math::{Percent, Rng};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{GameDay, Seconds, UnixMillis, WallClock};
@@ -24,15 +24,16 @@ use crate::data::prop::Id as PropId;
 use crate::systems::area::AreaDef;
 use crate::systems::area::{self, AreaTag, MarkerName};
 use crate::systems::attention;
+use crate::systems::attention::AttentionMark;
 use crate::systems::dialogue::{
     self, Asked, ChoiceReveal, ChoiceTag, GotoNode, Offer, Revealable, StartConversation, Then,
 };
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interact::Counterpart;
+use crate::systems::interface::{InterfaceIcon, InterfaceSound};
 use crate::systems::item::{
     GiveItems, INVENTORY_MAX, Inventory, ItemFlag, ItemStack, ReservedBy, scatter_drop,
 };
-use crate::systems::job::MinLevel;
 use crate::systems::movement::position;
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::{Owner, Xp, conn_player, sender_player};
@@ -58,30 +59,151 @@ pub fn register(app: &mut App) {
 pub struct QuestDef {
     pub title: &'static str,
     pub category: &'static str,
+    pub blurb: &'static str,
+    pub xp: u32,
+    pub reveal: &'static [ChoiceReveal],
+    pub modules: &'static [QuestModule],
     pub giver: Giver,
     pub turn_in: Counterpart,
-    pub level: MinLevel,
-    pub shown: &'static [&'static dyn Requirement],
-    pub requires: &'static [&'static dyn Requirement],
-    pub blurb: &'static str,
     pub offer: DialogueId,
     pub waiting: DialogueId,
     pub thanks: DialogueId,
-    pub hand_over: &'static [Span],
-    pub grants: &'static [ItemStack],
-    pub objectives: &'static [Objective],
-    pub hand_in: &'static [ItemStack],
-    pub rewards: &'static [ItemStack],
-    pub pick_one: &'static [ItemStack],
-    pub xp: u32,
-    pub reveal: &'static [ChoiceReveal],
-    pub repeat: Repeat,
-    pub time_limit: Option<Seconds>,
-    pub drops: &'static [QuestDrop],
 }
 
-impl crate::core::content::ContentRow for QuestDef {
+impl ContentRow for QuestDef {
     const TABLE: &'static str = "quest";
+}
+
+impl ModuleSet for QuestDef {
+    type Module = QuestModule;
+
+    fn modules(&self) -> &[QuestModule] {
+        self.modules
+    }
+
+    fn rule(module: &QuestModule) -> ModuleRule {
+        match module {
+            QuestModule::Objective(_) | QuestModule::Drop(_) => ModuleRule::AnyNumber,
+            _ => ModuleRule::AtMostOne,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum QuestModule {
+    Shown(&'static [&'static dyn Requirement]),
+    Requires(&'static [&'static dyn Requirement]),
+    Grants(&'static [ItemStack]),
+    Objective(Objective),
+    HandIn(&'static [ItemStack]),
+    HandOver(&'static [Span]),
+    Reward(&'static [ItemStack]),
+    PickOne(&'static [ItemStack]),
+    Daily,
+    TimeLimit(Seconds),
+    Drop(QuestDrop),
+}
+
+impl QuestDef {
+    pub fn shown(&self) -> &'static [&'static dyn Requirement] {
+        self.modules
+            .iter()
+            .find_map(|module| match module {
+                QuestModule::Shown(shown) => Some(*shown),
+                _ => None,
+            })
+            .unwrap_or(&[])
+    }
+
+    pub fn requires(&self) -> &'static [&'static dyn Requirement] {
+        self.modules
+            .iter()
+            .find_map(|module| match module {
+                QuestModule::Requires(requires) => Some(*requires),
+                _ => None,
+            })
+            .unwrap_or(&[])
+    }
+
+    pub fn min_level(&self) -> u32 {
+        self.requires()
+            .iter()
+            .filter_map(|requirement| requirement.min_level())
+            .max()
+            .unwrap_or(1)
+    }
+
+    pub fn grants(&self) -> &'static [ItemStack] {
+        self.stacks(|module| match module {
+            QuestModule::Grants(items) => Some(*items),
+            _ => None,
+        })
+    }
+
+    pub fn objectives(&self) -> impl Iterator<Item = &Objective> + Clone {
+        self.modules.iter().filter_map(|module| match module {
+            QuestModule::Objective(objective) => Some(objective),
+            _ => None,
+        })
+    }
+
+    pub fn hand_in(&self) -> &'static [ItemStack] {
+        self.stacks(|module| match module {
+            QuestModule::HandIn(items) => Some(*items),
+            _ => None,
+        })
+    }
+
+    pub fn hand_over(&self) -> &'static [Span] {
+        self.modules
+            .iter()
+            .find_map(|module| match module {
+                QuestModule::HandOver(text) => Some(*text),
+                _ => None,
+            })
+            .unwrap_or(&[])
+    }
+
+    pub fn rewards(&self) -> &'static [ItemStack] {
+        self.stacks(|module| match module {
+            QuestModule::Reward(items) => Some(*items),
+            _ => None,
+        })
+    }
+
+    pub fn pick_one(&self) -> &'static [ItemStack] {
+        self.stacks(|module| match module {
+            QuestModule::PickOne(items) => Some(*items),
+            _ => None,
+        })
+    }
+
+    pub fn daily(&self) -> bool {
+        self.modules
+            .iter()
+            .any(|module| matches!(module, QuestModule::Daily))
+    }
+
+    pub fn time_limit(&self) -> Option<Seconds> {
+        self.modules.iter().find_map(|module| match module {
+            QuestModule::TimeLimit(limit) => Some(*limit),
+            _ => None,
+        })
+    }
+
+    pub fn drops(&self) -> impl Iterator<Item = &QuestDrop> {
+        self.modules.iter().filter_map(|module| match module {
+            QuestModule::Drop(drop) => Some(drop),
+            _ => None,
+        })
+    }
+
+    fn stacks(
+        &self,
+        pick: fn(&QuestModule) -> Option<&'static [ItemStack]>,
+    ) -> &'static [ItemStack] {
+        self.modules.iter().find_map(pick).unwrap_or(&[])
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,13 +224,14 @@ impl Giver {
 
     pub fn name(self, content: &Content) -> &'static str {
         match self {
-            Giver::Npc(npc) => npc.get(content).display_name,
-            Giver::Prop(prop) => prop.get(content).display_name,
-            Giver::Item(item) => item.get(content).display_name,
+            Giver::Npc(npc) => npc.get(content).name,
+            Giver::Prop(prop) => prop.get(content).name,
+            Giver::Item(item) => item.get(content).name,
         }
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Objective {
     Hold(ItemStack),
     Defeat {
@@ -131,25 +254,21 @@ impl Objective {
     pub fn icon(&self, content: &Content) -> AssetRef {
         match self {
             Objective::Hold(stack) => stack.item.get(content).icon,
-            Objective::Defeat { .. } => AssetRef("icons/cursors/swords001.png"),
-            Objective::Explore { .. } => AssetRef("icons/misc/map.png"),
+            Objective::Defeat { .. } => InterfaceIcon::ObjectiveDefeat.get(content).image,
+            Objective::Explore { .. } => InterfaceIcon::ObjectiveTask.get(content).image,
             Objective::Deliver(item) => item.get(content).icon,
-            Objective::Decide { .. } => AssetRef("icons/cursors/question001.png"),
+            Objective::Decide { .. } => InterfaceIcon::ObjectiveDecide.get(content).image,
         }
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct DecisionPath {
     pub choice: &'static str,
     pub means: &'static [&'static str],
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Repeat {
-    Once,
-    Daily,
-}
-
+#[derive(Clone, Copy)]
 pub struct QuestDrop {
     pub from: NpcId,
     pub item: ItemId,
@@ -212,16 +331,16 @@ pub enum QuestRequest {
 impl QuestDef {
     pub fn objective_label(&self, content: &Content, objective: &Objective) -> String {
         match objective {
-            Objective::Hold(stack) => stack.item.get(content).display_name.to_owned(),
+            Objective::Hold(stack) => stack.item.get(content).name.to_owned(),
             Objective::Defeat { npc, .. } => {
-                format!("Defeat the {}", npc.get(content).display_name)
+                format!("Defeat the {}", npc.get(content).name)
             }
             Objective::Explore { label, .. } | Objective::Decide { label, .. } => {
                 (*label).to_owned()
             }
             Objective::Deliver(item) => format!(
                 "Bring {} to {}",
-                item.get(content).display_name,
+                item.get(content).name,
                 self.turn_in.name(content)
             ),
         }
@@ -234,8 +353,7 @@ impl QuestDef {
         inventory: Option<&Inventory>,
     ) -> Vec<Progress> {
         let held = |item| inventory.map_or(0, |inventory| inventory.count(item));
-        self.objectives
-            .iter()
+        self.objectives()
             .enumerate()
             .map(|(index, objective)| {
                 let counted = active.counts.get(index).copied().unwrap_or(0);
@@ -264,8 +382,7 @@ impl QuestDef {
         active: &ActiveQuest,
         inventory: Option<&Inventory>,
     ) -> bool {
-        self.objectives
-            .iter()
+        self.objectives()
             .zip(self.progress(content, active, inventory))
             .all(|(objective, progress)| {
                 matches!(objective, Objective::Decide { .. }) || progress.done()
@@ -274,7 +391,7 @@ impl QuestDef {
 
     pub fn kinds(&self) -> String {
         let mut kinds: Vec<&str> = Vec::new();
-        for objective in self.objectives {
+        for objective in self.objectives() {
             let kind = match objective {
                 Objective::Hold(_) => "collect",
                 Objective::Defeat { .. } => "defeat",
@@ -286,10 +403,10 @@ impl QuestDef {
                 kinds.push(kind);
             }
         }
-        if self.time_limit.is_some() {
+        if self.time_limit().is_some() {
             kinds.push("timed");
         }
-        if self.repeat == Repeat::Daily {
+        if self.daily() {
             kinds.push("daily");
         }
         match kinds.split_last() {
@@ -303,21 +420,21 @@ impl QuestDef {
         format!(
             "{} · Level {} · from {}",
             self.category,
-            self.level.0,
+            self.min_level(),
             self.giver.name(content)
         )
     }
 
     pub fn icon(&self, content: &Content) -> AssetRef {
-        if self.time_limit.is_some() {
-            return AssetRef("icons/cursors/sandclock001.png");
+        if self.time_limit().is_some() {
+            return InterfaceIcon::Timed.get(content).image;
         }
-        if self.repeat == Repeat::Daily {
-            return AttentionId::RepeatableOffered.get(content).icon;
+        if self.daily() {
+            return AttentionMark::RepeatableOffered.get(content).icon;
         }
-        self.objectives
-            .first()
-            .map_or(AttentionId::QuestOffered.get(content).icon, |objective| {
+        self.objectives()
+            .next()
+            .map_or(AttentionMark::QuestOffered.get(content).icon, |objective| {
                 objective.icon(content)
             })
     }
@@ -328,19 +445,16 @@ impl QuestDef {
             false => "Go",
         };
         match self.turn_in {
-            Counterpart::Npc(npc) => format!("{verb} to {}", npc.get(content).display_name),
+            Counterpart::Npc(npc) => format!("{verb} to {}", npc.get(content).name),
             Counterpart::Prop(prop) => {
-                format!(
-                    "{verb} to the {}",
-                    prop.get(content).display_name.to_lowercase()
-                )
+                format!("{verb} to the {}", prop.get(content).name.to_lowercase())
             }
         }
     }
 
     pub fn retry_hint(&self, content: &Content) -> String {
         match self.giver {
-            Giver::Item(item) => format!("Use the {} to try again", item.get(content).display_name),
+            Giver::Item(item) => format!("Use the {} to try again", item.get(content).name),
             giver => format!("Talk to {} to try again", giver.name(content)),
         }
     }
@@ -350,12 +464,10 @@ impl QuestDef {
     }
 
     pub fn decision(&self) -> Option<&'static [DecisionPath]> {
-        self.objectives
-            .iter()
-            .find_map(|objective| match objective {
-                Objective::Decide { paths, .. } => Some(*paths),
-                _ => None,
-            })
+        self.objectives().find_map(|objective| match objective {
+            Objective::Decide { paths, .. } => Some(*paths),
+            _ => None,
+        })
     }
 }
 
@@ -363,7 +475,7 @@ impl ActiveQuest {
     pub fn fresh(content: &Content, quest: QuestId) -> ActiveQuest {
         ActiveQuest {
             quest,
-            counts: vec![0; quest.get(content).objectives.len()],
+            counts: vec![0; quest.get(content).objectives().count()],
             deadline: None,
             left: None,
             ready: false,
@@ -389,17 +501,14 @@ impl QuestLog {
                 .finished(quest)
                 .is_some_and(|finished| match finished.result {
                     QuestResult::Failed => finished.offered_again,
-                    QuestResult::Completed => quest.get(content).repeat == Repeat::Daily,
+                    QuestResult::Completed => quest.get(content).daily(),
                 })
     }
 
     pub fn done_for_now(&self, content: &Content, quest: QuestId, today: GameDay) -> bool {
         self.finished(quest).is_some_and(|finished| {
             finished.result == QuestResult::Completed
-                && match quest.get(content).repeat {
-                    Repeat::Once => true,
-                    Repeat::Daily => finished.day == today,
-                }
+                && (!quest.get(content).daily() || finished.day == today)
         })
     }
 
@@ -448,7 +557,7 @@ impl Requirement for QuestOnCooldown {
     fn met(&self, world: &World, player: Entity) -> bool {
         let content = world.resource::<Content>();
         let today = world.resource::<WallClock>().day();
-        self.0.get(content).repeat == Repeat::Daily
+        self.0.get(content).daily()
             && log_of(world, player).is_some_and(|log| log.done_for_now(content, self.0, today))
     }
 
@@ -465,7 +574,7 @@ impl TextFill for QuestResetsIn {
     }
 
     fn check(&self, content: &Content) {
-        if self.0.get(content).repeat != Repeat::Daily {
+        if !self.0.get(content).daily() {
             panic!("QuestResetsIn({:?}) never resets", self.0);
         }
     }
@@ -483,7 +592,7 @@ impl Outcome for AcceptQuest {
     }
 
     fn gives(&self, content: &Content) -> Vec<ItemStack> {
-        self.0.get(content).grants.to_vec()
+        self.0.get(content).grants().to_vec()
     }
 }
 
@@ -501,11 +610,11 @@ impl Outcome for TurnIn {
     }
 
     fn takes(&self, content: &Content) -> Vec<ItemStack> {
-        self.0.get(content).hand_in.to_vec()
+        self.0.get(content).hand_in().to_vec()
     }
 
     fn gives(&self, content: &Content) -> Vec<ItemStack> {
-        self.0.get(content).rewards.to_vec()
+        self.0.get(content).rewards().to_vec()
     }
 }
 
@@ -577,8 +686,8 @@ pub fn accept(world: &mut World, player: Entity, quest: QuestId) {
     log.finished
         .retain(|finished| finished.quest != quest || finished.result == QuestResult::Completed);
     log.active.push(ActiveQuest {
-        deadline: def.time_limit.map(|limit| clock.now.after(limit)),
-        left: def.time_limit,
+        deadline: def.time_limit().map(|limit| clock.now.after(limit)),
+        left: def.time_limit(),
         ..ActiveQuest::fresh(&content, quest)
     });
     if !log.tracked.contains(&quest) {
@@ -589,7 +698,7 @@ pub fn accept(world: &mut World, player: Entity, quest: QuestId) {
         player,
         format!("Quest accepted · {}", def.title),
         offered_mark(def).get(&content).icon,
-        Some(SfxId::QuestAccepted),
+        Some(InterfaceSound::QuestAccepted.id(&content)),
     );
     refresh_log(world, player, clock);
 }
@@ -605,7 +714,7 @@ pub fn complete(world: &mut World, player: Entity, quest: QuestId) {
         return;
     }
     log.finish(quest, QuestResult::Completed, clock.day());
-    if def.repeat == Repeat::Once {
+    if !def.daily() {
         log.tracked.retain(|&tracked| tracked != quest);
     }
     if let Some(mut xp) = world.get_mut::<Xp>(player) {
@@ -618,7 +727,7 @@ pub fn complete(world: &mut World, player: Entity, quest: QuestId) {
             NotificationKind::Milestone {
                 label: "Quest complete".into(),
                 topic: HistoryTopic::Quest,
-                sfx: Some(SfxId::QuestCompleted),
+                sfx: Some(InterfaceSound::QuestCompleted.id(&content)),
             },
             LineText::plain(def.title),
         ),
@@ -636,14 +745,14 @@ pub fn fail(world: &mut World, player: Entity, quest: QuestId) {
         return;
     }
     log.finish(quest, QuestResult::Failed, clock.day());
-    take_back(world, player, quest.get(&content).grants);
+    take_back(world, player, quest.get(&content).grants());
     let failed = Notification::new(
         NotificationKind::Feed {
             topic: HistoryTopic::Quest,
             icon: Some(quest.get(&content).icon(&content).0.to_owned()),
             tally: None,
             failure: true,
-            sfx: Some(SfxId::QuestAbandoned),
+            sfx: Some(InterfaceSound::QuestAbandoned.id(&content)),
         },
         LineText::plain(format!("Quest failed · {}", quest.get(&content).title)),
     );
@@ -660,13 +769,13 @@ pub fn abandon(world: &mut World, player: Entity, quest: QuestId) {
     }
     log.active.retain(|active| active.quest != quest);
     log.tracked.retain(|&tracked| tracked != quest);
-    take_back(world, player, quest.get(&content).grants);
+    take_back(world, player, quest.get(&content).grants());
     tell(
         world,
         player,
         format!("Quest abandoned · {}", quest.get(&content).title),
-        AttentionId::QuestInProgress.get(&content).icon,
-        Some(SfxId::QuestAbandoned),
+        AttentionMark::QuestInProgress.get(&content).icon,
+        Some(InterfaceSound::QuestAbandoned.id(&content)),
     );
 }
 
@@ -747,7 +856,7 @@ pub fn check(assets: &AssetService) {
                 panic!("quest {id:?}: {party:?} lives nowhere");
             }
         }
-        for stack in quest.grants {
+        for stack in quest.grants() {
             if !stack.item.get(content).has(ItemFlag::Quest) {
                 panic!(
                     "quest {id:?}: grants {:?}, which isn't a quest item",
@@ -755,7 +864,7 @@ pub fn check(assets: &AssetService) {
                 );
             }
         }
-        for drop in quest.drops {
+        for drop in quest.drops() {
             if !drop.item.get(content).has(ItemFlag::Quest) {
                 panic!(
                     "quest {id:?}: drops {:?}, which isn't a quest item",
@@ -763,26 +872,27 @@ pub fn check(assets: &AssetService) {
                 );
             }
         }
-        let slots = quest.rewards.len() + usize::from(!quest.pick_one.is_empty());
+        let slots = quest.rewards().len() + usize::from(!quest.pick_one().is_empty());
         if slots > INVENTORY_MAX as usize {
             panic!("quest {id:?}: its rewards can never fit in a bag");
         }
-        if quest.decision().is_some() && !quest.pick_one.is_empty() {
+        if quest.decision().is_some() && !quest.pick_one().is_empty() {
             panic!("quest {id:?}: a decision settles itself, so it offers no pick");
         }
-        if quest.decision().is_none() && quest.pick_one.is_empty() && quest.hand_over.is_empty() {
+        if quest.decision().is_none() && quest.pick_one().is_empty() && quest.hand_over().is_empty()
+        {
             panic!("quest {id:?}: nothing to say when handing it in");
         }
         dialogue::check_reveal(
             &format!("quest {id:?}"),
             quest.reveal,
             Revealable {
-                needs: quest.level.0 > 1 || !quest.requires.is_empty(),
-                costs: !quest.hand_in.is_empty(),
-                gains: !quest.rewards.is_empty() || !quest.pick_one.is_empty() || quest.xp > 0,
+                needs: !quest.requires().is_empty(),
+                costs: !quest.hand_in().is_empty(),
+                gains: !quest.rewards().is_empty() || !quest.pick_one().is_empty() || quest.xp > 0,
             },
         );
-        for objective in quest.objectives {
+        for objective in quest.objectives() {
             if let Objective::Explore { area, at, .. } = objective
                 && area::load(assets, *area).marker(*at).is_none()
             {
@@ -817,9 +927,10 @@ fn accept_refusal(world: &World, player: Entity, quest: QuestId) -> Option<Strin
     if log.active.len() >= QUEST_LOG_CAP {
         return Some(format!("Your quest log is full ({QUEST_LOG_CAP})"));
     }
-    std::iter::once(&def.level as &dyn Requirement)
-        .chain(def.requires.iter().copied())
-        .chain(def.shown.iter().copied())
+    def.requires()
+        .iter()
+        .copied()
+        .chain(def.shown().iter().copied())
         .find(|requirement| !requirement.met(world, player))
         .map(|unmet| format!("Needs {}", unmet.describe(content)))
 }
@@ -841,13 +952,13 @@ fn offerable_in(
     let content = world.resource::<Content>();
     log.active(quest).is_none()
         && !log.done_for_now(content, quest, today)
-        && rule::met(world, player, quest.get(content).shown)
+        && rule::met(world, player, quest.get(content).shown())
 }
 
 fn open_to(world: &World, player: Entity, quest: QuestId) -> bool {
     let content = world.resource::<Content>();
     let def = quest.get(content);
-    def.level.met(world, player) && rule::met(world, player, def.requires)
+    rule::met(world, player, def.requires())
 }
 
 fn take_back(world: &mut World, player: Entity, grants: &[ItemStack]) {
@@ -895,14 +1006,14 @@ fn refresh_log(world: &mut World, player: Entity, clock: WallClock) {
         for &(quest, index) in &found {
             if quest == active.quest && active.counts[index] == 0 {
                 active.counts[index] = 1;
-                let objective = &def.objectives[index];
+                let objective = &def.objectives().nth(index).expect("an objective per count");
                 told.push((
                     format!(
                         "Objective done · {}",
                         def.objective_label(&content, objective)
                     ),
                     objective.icon(&content),
-                    Some(SfxId::TallyTick),
+                    Some(InterfaceSound::TallyTick.id(&content)),
                 ));
             }
         }
@@ -914,7 +1025,7 @@ fn refresh_log(world: &mut World, player: Entity, clock: WallClock) {
             told.push((
                 format!("Quest ready · {}", def.hand_in_hint(&content)),
                 ready_mark(def).get(&content).icon,
-                Some(SfxId::UiChime),
+                Some(InterfaceSound::UiChime.id(&content)),
             ));
         }
         active.ready = ready;
@@ -922,14 +1033,13 @@ fn refresh_log(world: &mut World, player: Entity, clock: WallClock) {
     let today = clock.day();
     for finished in &mut log.finished {
         let def = finished.quest.get(&content);
-        let resets = def.repeat == Repeat::Daily
-            && finished.result == QuestResult::Completed
-            && finished.day == today;
+        let resets =
+            def.daily() && finished.result == QuestResult::Completed && finished.day == today;
         if finished.resets_in.is_some() && !resets {
             told.push((
                 format!("{} is open again", def.title),
-                AttentionId::RepeatableOffered.get(&content).icon,
-                Some(SfxId::UiPage),
+                AttentionMark::RepeatableOffered.get(&content).icon,
+                Some(InterfaceSound::UiPage.id(&content)),
             ));
         }
         finished.resets_in = resets.then(|| {
@@ -937,7 +1047,7 @@ fn refresh_log(world: &mut World, player: Entity, clock: WallClock) {
             Seconds(minutes * 60.0)
         });
         finished.offered_again =
-            finished.result == QuestResult::Failed && rule::met(world, player, def.shown);
+            finished.result == QuestResult::Failed && rule::met(world, player, def.shown());
     }
     let trackable: Vec<QuestId> = log
         .tracked
@@ -970,8 +1080,7 @@ fn explored(world: &World, player: Entity) -> Vec<(QuestId, usize)> {
             active
                 .quest
                 .get(content)
-                .objectives
-                .iter()
+                .objectives()
                 .enumerate()
                 .filter_map(move |(index, objective)| match objective {
                     Objective::Explore {
@@ -1001,7 +1110,7 @@ fn credit_kill(world: &mut World, kill: KillCredited) {
     world.resource_scope(|_, mut rng: Mut<Rng>| {
         for active in &mut log.active {
             let def = active.quest.get(&content);
-            for (index, objective) in def.objectives.iter().enumerate() {
+            for (index, objective) in def.objectives().enumerate() {
                 if let Objective::Defeat { npc, count } = *objective
                     && npc == kill.npc
                     && active.counts[index] < count
@@ -1022,7 +1131,7 @@ fn credit_kill(world: &mut World, kill: KillCredited) {
                     ));
                 }
             }
-            for drop in def.drops.iter().filter(|drop| drop.from == kill.npc) {
+            for drop in def.drops().filter(|drop| drop.from == kill.npc) {
                 if !still_needs(def, drop.item, inventory.as_ref()) {
                     continue;
                 }
@@ -1056,7 +1165,7 @@ fn credit_kill(world: &mut World, kill: KillCredited) {
 
 fn still_needs(def: &QuestDef, item: ItemId, inventory: Option<&Inventory>) -> bool {
     let held = inventory.map_or(0, |inventory| inventory.count(item));
-    def.objectives.iter().any(|objective| match objective {
+    def.objectives().any(|objective| match objective {
         Objective::Hold(stack) => stack.item == item && held < stack.count,
         Objective::Deliver(wanted) => *wanted == item && held == 0,
         _ => false,
@@ -1091,16 +1200,16 @@ fn hand_ins(world: &World, asked: &Asked) -> Vec<Offer> {
     if def.decision().is_some() || !ready_to_hand_in(world, asked.player, quest) {
         return Vec::new();
     }
-    if def.pick_one.is_empty() {
+    if def.pick_one().is_empty() {
         return vec![quest_offer(
             def,
-            LineText::spoken(def.hand_over, world, asked.player),
+            LineText::spoken(def.hand_over(), world, asked.player),
             None,
             Vec::new(),
             vec![Arc::new(TurnIn(quest))],
         )];
     }
-    def.pick_one
+    def.pick_one()
         .iter()
         .map(|pick| {
             quest_offer(
@@ -1119,7 +1228,7 @@ fn hand_ins(world: &World, asked: &Asked) -> Vec<Offer> {
 
 fn pick_label(content: &Content, pick: ItemStack) -> String {
     match pick.count {
-        1 => format!("I'll take the {}.", pick.item.get(content).display_name),
+        1 => format!("I'll take the {}.", pick.item.get(content).name),
         _ => format!("I'll take {}.", pick.describe(content)),
     }
 }
@@ -1147,7 +1256,7 @@ fn greeting_topic(
         Some(_) if gives => Some(quest_offer(
             def,
             label(),
-            Some(AttentionId::QuestInProgress.get(content).icon),
+            Some(AttentionMark::QuestInProgress.get(content).icon),
             Vec::new(),
             vec![Arc::new(GotoNode(def.waiting))],
         )),
@@ -1156,12 +1265,9 @@ fn greeting_topic(
             def,
             label(),
             Some(offered_mark(def).get(content).icon),
-            std::iter::once(Arc::new(def.level) as Arc<dyn Requirement>)
-                .chain(
-                    def.requires
-                        .iter()
-                        .map(|&requirement| Arc::new(requirement) as Arc<dyn Requirement>),
-                )
+            def.requires()
+                .iter()
+                .map(|&requirement| Arc::new(requirement) as Arc<dyn Requirement>)
                 .collect(),
             vec![Arc::new(GotoNode(def.offer))],
         )),
@@ -1196,8 +1302,8 @@ fn marks(world: &World, player: Entity, target: Entity) -> Vec<AttentionId> {
         return Vec::new();
     };
     let today = world.resource::<WallClock>().day();
-    world
-        .resource::<Content>()
+    let content = world.resource::<Content>();
+    content
         .table::<QuestDef>()
         .iter()
         .filter_map(|(quest, def)| {
@@ -1207,35 +1313,37 @@ fn marks(world: &World, player: Entity, target: Entity) -> Vec<AttentionId> {
             }
             let kind = match log.active(quest) {
                 Some(active) if def.turn_in == counterpart && active.ready => ready_mark(def),
-                Some(_) if def.turn_in == counterpart => AttentionId::QuestInProgress,
+                Some(_) if def.turn_in == counterpart => AttentionMark::QuestInProgress,
                 Some(_) => return None,
                 None if gives && offerable_in(world, player, log, today, quest) => {
                     if open_to(world, player, quest) {
                         offered_mark(def)
                     } else if def.reveals(ChoiceReveal::Locked) {
-                        AttentionId::QuestLocked
+                        AttentionMark::QuestLocked
                     } else {
                         return None;
                     }
                 }
                 None => return None,
             };
-            Some(kind)
+            Some(kind.id(content))
         })
         .collect()
 }
 
-fn ready_mark(def: &QuestDef) -> AttentionId {
-    match def.repeat {
-        Repeat::Once => AttentionId::QuestReady,
-        Repeat::Daily => AttentionId::RepeatableReady,
+fn ready_mark(def: &QuestDef) -> AttentionMark {
+    if def.daily() {
+        AttentionMark::RepeatableReady
+    } else {
+        AttentionMark::QuestReady
     }
 }
 
-fn offered_mark(def: &QuestDef) -> AttentionId {
-    match def.repeat {
-        Repeat::Once => AttentionId::QuestOffered,
-        Repeat::Daily => AttentionId::RepeatableOffered,
+fn offered_mark(def: &QuestDef) -> AttentionMark {
+    if def.daily() {
+        AttentionMark::RepeatableOffered
+    } else {
+        AttentionMark::QuestOffered
     }
 }
 
@@ -1279,8 +1387,10 @@ fn quest_command(
             if let Some(mut log) = world.get_mut::<QuestLog>(player)
                 && let Some(active) = log.active.iter_mut().find(|active| active.quest == quest)
             {
-                for (count, objective) in
-                    active.counts.iter_mut().zip(quest.get(&content).objectives)
+                for (count, objective) in active
+                    .counts
+                    .iter_mut()
+                    .zip(quest.get(&content).objectives())
                 {
                     *count = match objective {
                         Objective::Defeat { count, .. } => *count,

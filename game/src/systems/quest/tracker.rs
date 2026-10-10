@@ -6,11 +6,12 @@ use ui::tokens::{palette, spacing, typography};
 use ui::{DragHandle, DragRoot, OnSettle, component};
 
 use super::card::{Countdown, icon, live_text};
-use super::{QuestId, QuestLog, QuestResult, Repeat};
+use super::{QuestId, QuestLog, QuestResult};
 use crate::core::assets::AssetRef;
-use crate::core::content::Content;
-use crate::data::attention::Id as AttentionId;
+use crate::core::content::{Content, Fixture};
+use crate::systems::attention::AttentionMark;
 use crate::systems::hud::{self, HudAudience, Widget};
+use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::Inventory;
 use crate::systems::player::session::Viewpoint;
 use crate::systems::scene::Scene as GameScene;
@@ -162,10 +163,12 @@ fn entries(world: &World) -> Vec<Entry> {
             if let Some(active) = log.active(quest) {
                 let timed = active.left.is_some();
                 if active.ready && def.decision().is_none() {
-                    let mark = match def.repeat {
-                        Repeat::Once => AttentionId::QuestReady,
-                        Repeat::Daily => AttentionId::RepeatableReady,
-                    };
+                    let mark = if def.daily() {
+                        AttentionMark::RepeatableReady
+                    } else {
+                        AttentionMark::QuestReady
+                    }
+                    .id(content);
                     return Some(Entry {
                         quest,
                         mark: Some(mark.get(content).icon),
@@ -273,7 +276,7 @@ fn entry_scene(
             Box::new(bsn! {
                 Node { column_gap: Val::Px({spacing::S}), align_items: AlignItems::Center }
                 Children [
-                    {EntityScene(icon(assets, AssetRef("icons/cursors/sandclock001.png"), 12.0))},
+                    {EntityScene(icon(assets, InterfaceIcon::Timed.get(content).image, 12.0))},
                     {EntityScene(live_text(log, quest, Countdown::Left, palette::AMBER_80, typography::CAPTION))},
                 ]
             })

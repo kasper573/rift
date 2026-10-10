@@ -2,18 +2,44 @@ use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 
 use crate::core::assets::AssetRef;
-use crate::core::content::Content;
+use crate::core::content::{Content, ContentRow, ModuleRule, ModuleSet};
 
 pub use crate::data::expression::Id as IndividualExpression;
 
 #[derive(Clone)]
 pub struct ModelDef {
     pub sheet: AssetRef,
-    pub busts: Option<Busts>,
+    pub modules: &'static [ModelModule],
 }
 
-impl crate::core::content::ContentRow for ModelDef {
+impl ContentRow for ModelDef {
     const TABLE: &'static str = "model";
+}
+
+impl ModuleSet for ModelDef {
+    type Module = ModelModule;
+
+    fn modules(&self) -> &[ModelModule] {
+        self.modules
+    }
+
+    fn rule(_: &ModelModule) -> ModuleRule {
+        ModuleRule::AtMostOne
+    }
+}
+
+#[derive(Clone)]
+pub enum ModelModule {
+    Bust(Busts),
+}
+
+impl ModelDef {
+    pub fn busts(&self) -> Option<&Busts> {
+        self.modules
+            .iter()
+            .map(|ModelModule::Bust(busts)| busts)
+            .next()
+    }
 }
 
 #[derive(Clone)]

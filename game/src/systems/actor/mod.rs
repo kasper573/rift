@@ -36,7 +36,7 @@ pub fn check(assets: &AssetService) {
     let models = content.table::<bust::ModelDef>();
     assets.resolve_all(models.rows().iter().map(|def| def.sheet), build_model);
     for def in models.rows() {
-        for bust in def.busts.iter().flat_map(|busts| busts.all(content)) {
+        for bust in def.busts().into_iter().flat_map(|busts| busts.all(content)) {
             if let Err(error) = assets.open(Path::new(bust.0)) {
                 panic!("bust {}: {error}", bust.0);
             }
@@ -83,7 +83,14 @@ impl Action {
 )]
 pub struct Rgba(pub u32);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tint {
+    pub rgba: Rgba,
+}
+
 impl Rgba {
+    pub const WHITE: Rgba = Rgba(0xffff_ffff);
+
     pub fn color(self) -> bevy::color::Color {
         let [r, g, b, a] = self.0.to_be_bytes();
         bevy::color::Color::srgba_u8(r, g, b, a)

@@ -1,22 +1,19 @@
 use bevy_ecs::prelude::*;
 use game::core::tiling::Tiles;
 use game::core::time::Seconds;
-use game::data;
 use game::systems::area::AreaTag;
 use game::systems::item::{DroppedItem, Inventory, PickupRequest, Reservation, ReservedBy};
 use game::systems::movement::{MoveRequest, Position, position};
 use game::systems::npc::{self, Pack};
 use game::systems::reach::{self, ReachAct, Tether};
 
-use crate::support::{Sim, row};
+use crate::support::{Sim, row, spawn_area};
 
 fn drop_bone(sim: &mut Sim, at: game::core::math::Pos<Tiles>) -> Entity {
     sim.world()
         .spawn((
             Position { pos: at },
-            AreaTag {
-                area: data::area::SPAWN_ID,
-            },
+            AreaTag { area: spawn_area() },
             DroppedItem {
                 item: row("Bone"),
                 count: 2,
@@ -37,7 +34,7 @@ fn bones(world: &World, player: Entity) -> u32 {
 
 #[test]
 fn a_pickup_walks_into_reach_and_then_collects() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let start = position(sim.world(), player).expect("position");
     let spot = sim.walkable_near(start, Tiles(3.0), Tiles(5.0));
@@ -51,7 +48,7 @@ fn a_pickup_walks_into_reach_and_then_collects() {
 
 #[test]
 fn walking_away_cancels_the_intent() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let start = position(sim.world(), player).expect("position");
     let spot = sim.walkable_near(start, Tiles(4.0), Tiles(6.0));
@@ -67,16 +64,10 @@ fn walking_away_cancels_the_intent() {
 
 #[test]
 fn an_actor_holds_one_intent_at_a_time() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let at = position(sim.world(), player).expect("position");
-    let orc = npc::spawn(
-        sim.world(),
-        row("Orc"),
-        at,
-        data::area::SPAWN_ID,
-        Pack(u32::MAX),
-    );
+    let orc = npc::spawn(sim.world(), row("Orc"), at, spawn_area(), Pack(u32::MAX));
     let item = drop_bone(&mut sim, at);
     let world = sim.world();
 
@@ -89,17 +80,11 @@ fn an_actor_holds_one_intent_at_a_time() {
 
 #[test]
 fn a_tether_holds_while_its_owner_stays_in_reach_of_a_living_npc() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let anchor = position(sim.world(), player).expect("position");
     let far = sim.walkable_near(anchor, Tiles(5.0), Tiles(8.0));
-    let orc = npc::spawn(
-        sim.world(),
-        row("Orc"),
-        far,
-        data::area::SPAWN_ID,
-        Pack(u32::MAX),
-    );
+    let orc = npc::spawn(sim.world(), row("Orc"), far, spawn_area(), Pack(u32::MAX));
     let world = sim.world();
     let tether = Tether::around(world, player, Tiles(2.0), Some(orc)).expect("tether");
 

@@ -1,5 +1,6 @@
 use crate::core::content::Content;
 use crate::systems::equipment::{self, Equipment, EquipmentSlot};
+use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::card;
 use crate::systems::player::session;
 use bevy::prelude::*;
@@ -27,8 +28,8 @@ impl Window for EquipmentWindow {
     fn toggle(&self) -> InputAction {
         InputAction::ToggleEquipment
     }
-    fn icon(&self) -> &'static str {
-        "icons/equipment/helm.png"
+    fn icon(&self) -> InterfaceIcon {
+        InterfaceIcon::Equipment
     }
     fn order(&self) -> u32 {
         1
@@ -132,7 +133,7 @@ fn worn_slot(
 ) -> impl Scene {
     let def = item.get(content);
     let tip = TooltipText {
-        title: def.display_name.to_owned(),
+        title: def.name.to_owned(),
         lines: vec![vec![RichPiece::text(card::overview(def))]],
         hint: Some(
             card::inspect_hint()

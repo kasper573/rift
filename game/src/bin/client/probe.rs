@@ -425,8 +425,7 @@ fn snapshot(world: &mut World) -> Snapshot {
             offers: shown
                 .shop
                 .get(&content)
-                .sells
-                .iter()
+                .sells()
                 .zip(&shown.offers)
                 .map(|(offer, view)| Offer {
                     item: offer.item,
@@ -594,7 +593,7 @@ fn body(world: &World, entity: Entity) -> Option<Body> {
         health: stat(StatKind::Health),
         max_health: stat(StatKind::MaxHealth),
         npc,
-        role: npc.and_then(|npc| npc.get(world.resource::<Content>()).role),
+        role: npc.and_then(|npc| npc.get(world.resource::<Content>()).nameplate()),
         friendly: entity.get::<Attitude>() == Some(&Attitude::Friendly),
         locked,
         marks,
@@ -846,7 +845,7 @@ fn notifications(world: &mut World) -> Notifications {
     let bubbles = bubble::shown(world)
         .into_iter()
         .map(|shown| BubbleView {
-            speaker: shown.speaker.get(&content).display_name.to_owned(),
+            speaker: shown.speaker.get(&content).name.to_owned(),
             npc: shown.speaker,
             body: shown.body.map(|body| body.to_string()),
             replaced: shown.replaced,

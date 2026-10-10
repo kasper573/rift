@@ -9,6 +9,10 @@ use crate::systems::reach::Tether;
 pub trait Requirement: Send + Sync {
     fn met(&self, world: &World, player: Entity) -> bool;
     fn describe(&self, content: &Content) -> String;
+
+    fn min_level(&self) -> Option<u32> {
+        None
+    }
 }
 
 impl<R: Requirement + ?Sized> Requirement for &R {

@@ -28,12 +28,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
 use crate::core::babble::{BabbleId, Babbler};
-use crate::core::content::Content;
+use crate::core::content::{Content, ContentRow, ModuleRule, ModuleSet};
 use crate::core::math::{Direction, Pos, Rect, Rng};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::data;
-use crate::systems::actor::{self, Action, Actor, Hitbox, Rgba, set_action};
+use crate::systems::actor::{self, Action, Actor, Hitbox, Rgba, Tint, set_action};
 use crate::systems::area::{self, AreaTag, Wild};
 use crate::systems::combat::{Attackers, Attitude};
 use crate::systems::effect::{self, Effect, TimedEffects};
@@ -106,7 +106,7 @@ pub fn check(assets: &AssetService) {
         lock.check(assets);
     }
     for speaker in crate::systems::notification::speakers(content) {
-        if speaker.get(content).babble.is_none() {
+        if speaker.get(content).voice().is_none() {
             panic!("notification speaker {speaker:?} has no babble");
         }
     }
@@ -170,25 +170,110 @@ pub struct DeadAt {
 
 #[derive(Clone)]
 pub struct NpcDef {
-    pub display_name: &'static str,
-    pub role: Option<&'static str>,
-    pub attitude: Attitude,
-    pub respawn: Option<Seconds>,
+    pub name: &'static str,
     pub model: data::model::Id,
-    pub babble: Option<BabbleId>,
-    pub tint: Rgba,
-    pub ai: &'static dyn Ai,
     pub stats: &'static [Stat],
+    pub modules: &'static [NpcModule],
+    pub attitude: Attitude,
+    pub ai: &'static dyn Ai,
     pub aggro: Tiles,
-    pub rewards: &'static [crate::systems::rewards::Reward],
     pub interaction: Option<Interaction>,
     pub observations: &'static [Observation],
     pub guards: &'static [area::WarpLock],
     pub on_defeat: &'static [&'static dyn Outcome],
 }
 
-impl crate::core::content::ContentRow for NpcDef {
+impl ContentRow for NpcDef {
     const TABLE: &'static str = "npc";
+}
+
+impl ModuleSet for NpcDef {
+    type Module = NpcModule;
+
+    fn modules(&self) -> &[NpcModule] {
+        self.modules
+    }
+
+    fn rule(_: &NpcModule) -> ModuleRule {
+        ModuleRule::AtMostOne
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum NpcModule {
+    Nameplate(Nameplate),
+    Tint(Tint),
+    Voice(Voice),
+    Respawn(Respawn),
+    Loot(Loot),
+}
+
+#[derive(Clone, Copy)]
+pub struct Nameplate {
+    pub role: &'static str,
+}
+
+#[derive(Clone, Copy)]
+pub struct Voice {
+    pub babble: BabbleId,
+}
+
+#[derive(Clone, Copy)]
+pub struct Respawn {
+    pub after: Seconds,
+}
+
+#[derive(Clone, Copy)]
+pub struct Loot {
+    pub xp: u32,
+    pub items: &'static [LootItem],
+}
+
+#[derive(Clone, Copy)]
+pub struct LootItem {
+    pub item: data::item::Id,
+    pub amount: u32,
+    pub chance: Option<f32>,
+}
+
+impl NpcDef {
+    pub fn nameplate(&self) -> Option<&'static str> {
+        self.modules.iter().find_map(|module| match module {
+            NpcModule::Nameplate(nameplate) => Some(nameplate.role),
+            _ => None,
+        })
+    }
+
+    pub fn tint(&self) -> Rgba {
+        self.modules
+            .iter()
+            .find_map(|module| match module {
+                NpcModule::Tint(tint) => Some(tint.rgba),
+                _ => None,
+            })
+            .unwrap_or(Rgba::WHITE)
+    }
+
+    pub fn voice(&self) -> Option<BabbleId> {
+        self.modules.iter().find_map(|module| match module {
+            NpcModule::Voice(voice) => Some(voice.babble),
+            _ => None,
+        })
+    }
+
+    pub fn respawn(&self) -> Option<Seconds> {
+        self.modules.iter().find_map(|module| match module {
+            NpcModule::Respawn(respawn) => Some(respawn.after),
+            _ => None,
+        })
+    }
+
+    pub fn loot(&self) -> Option<&Loot> {
+        self.modules.iter().find_map(|module| match module {
+            NpcModule::Loot(loot) => Some(loot),
+            _ => None,
+        })
+    }
 }
 
 #[derive(Resource, Default)]
@@ -274,13 +359,13 @@ pub fn spawn(
         pack,
         def.get(&content).attitude,
         actor::Name {
-            name: def.get(&content).display_name.to_owned(),
+            name: def.get(&content).name.to_owned(),
         },
     ));
     if def.get(&content).interaction.is_some() {
         world.entity_mut(entity).insert(Interactive);
     }
-    if let Some(babble) = def.get(&content).babble {
+    if let Some(babble) = def.get(&content).voice() {
         world.entity_mut(entity).insert(Babbler(babble));
     }
     entity
@@ -291,7 +376,7 @@ fn character(assets: &AssetService, def: &NpcDef, at: Pos<Tiles>, area: area::Id
         replicated: Replicated,
         position: Position { pos: at },
         actor: Actor {
-            color: def.tint,
+            color: def.tint(),
             dir: Direction::S,
             action: Action::Idle,
             model: def.model,
@@ -483,7 +568,7 @@ pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
             let Some(def) = world.get::<Npc>(id).map(|npc| npc.def.get(&content)) else {
                 continue;
             };
-            let Some(delay) = def.respawn else {
+            let Some(delay) = def.respawn() else {
                 if time - since >= CORPSE_LINGER {
                     world.entity_mut(id).despawn();
                 }

@@ -7,16 +7,16 @@ use bevy_ecs::message::Message;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
-use crate::core::babble::{BabbleId, Babbler};
-use crate::core::content::Content;
+use crate::core::content::{Content, ContentRow, ModuleRule, ModuleSet};
 use crate::core::math::{Direction, Pos, Rng};
 use crate::core::tiling::Tiles;
 use crate::core::time::PlaybackRate;
 use crate::data;
 use crate::systems::Character;
+use crate::systems::GameSettings;
 use crate::systems::account::identity::Identity;
 use crate::systems::actor;
-use crate::systems::actor::{Action, Actor, Hitbox, Name, Rgba, set_action};
+use crate::systems::actor::{Action, Actor, Hitbox, Name, Rgba, Tint, set_action};
 use crate::systems::area::transition::Discovered;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::belongings;
@@ -105,19 +105,54 @@ const IMMORTAL_HEALTH: f32 = 9999.0;
 #[derive(Clone)]
 pub struct PlayerDef {
     pub model: data::model::Id,
-    pub babble: Option<BabbleId>,
     pub job: data::job::Id,
-    pub tint: Rgba,
     pub stats: &'static [Stat],
-    pub regen: HealthRegen,
+    pub modules: &'static [PlayerModule],
 }
 
-impl crate::core::content::ContentRow for PlayerDef {
+impl ContentRow for PlayerDef {
     const TABLE: &'static str = "player";
 }
 
+impl ModuleSet for PlayerDef {
+    type Module = PlayerModule;
+
+    fn modules(&self) -> &[PlayerModule] {
+        self.modules
+    }
+
+    fn rule(_: &PlayerModule) -> ModuleRule {
+        ModuleRule::AtMostOne
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum PlayerModule {
+    Tint(Tint),
+    Regen(HealthRegen),
+}
+
+impl PlayerDef {
+    pub fn tint(&self) -> Rgba {
+        self.modules
+            .iter()
+            .find_map(|module| match module {
+                PlayerModule::Tint(tint) => Some(tint.rgba),
+                _ => None,
+            })
+            .unwrap_or(Rgba::WHITE)
+    }
+
+    pub fn regen(&self) -> Option<HealthRegen> {
+        self.modules.iter().find_map(|module| match module {
+            PlayerModule::Regen(regen) => Some(*regen),
+            _ => None,
+        })
+    }
+}
+
 pub fn def(content: &Content) -> &PlayerDef {
-    data::player::DEFAULT_ID.get(content)
+    data::settings().player.get(content)
 }
 
 #[derive(Resource, Default)]
@@ -222,13 +257,20 @@ pub fn join(world: &mut World) {
         let name = world
             .get::<Identity>(client_entity)
             .map_or_else(|| format!("player {}", client.0), |id| id.name.clone());
-        let at = spawn_position(world, policy, area);
+        let at = spawn_position(world, policy, zone, area);
         spawn_player(world, client, zone, at, name, immortal);
     }
 }
 
-fn spawn_position(world: &mut World, policy: SpawnPolicy, area: &area::Area) -> Pos<Tiles> {
+fn spawn_position(
+    world: &mut World,
+    policy: SpawnPolicy,
+    zone: area::Id,
+    area: &area::Area,
+) -> Pos<Tiles> {
+    let spawn = world.resource::<GameSettings>().spawn;
     match policy {
+        SpawnPolicy::Map if spawn.area == zone => spawn.at,
         SpawnPolicy::Map => area.spawn,
         SpawnPolicy::Dist => area
             .grid
@@ -237,9 +279,12 @@ fn spawn_position(world: &mut World, policy: SpawnPolicy, area: &area::Area) -> 
     }
 }
 
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct SpawnPoint(pub Pos<Tiles>);
+
 pub struct CharacterState {
     pub name: String,
-    pub babble: Option<BabbleId>,
+    pub spawn: Pos<Tiles>,
     pub discovered: Discovered,
     pub stats: Stats,
     pub inventory: Inventory,
@@ -271,7 +316,7 @@ fn spawn_player(
         at,
         CharacterState {
             name,
-            babble: def.babble,
+            spawn: at,
             discovered: Discovered::starting_in(zone),
             stats: player_stats(def, immortal),
             inventory: Inventory::empty(),
@@ -319,7 +364,7 @@ pub(crate) fn place(
                 replicated: Replicated,
                 position: Position { pos: at },
                 actor: Actor {
-                    color: def.tint,
+                    color: def.tint(),
                     dir: Direction::S,
                     action: Action::Idle,
                     model,
@@ -347,9 +392,7 @@ pub(crate) fn place(
         ))
         .id();
     state.stats.apply(world, entity);
-    if let Some(babble) = state.babble {
-        world.entity_mut(entity).insert(Babbler(babble));
-    }
+    world.entity_mut(entity).insert(SpawnPoint(state.spawn));
     let belongings = belongings::of(world, entity);
     world.entity_mut(entity).insert(belongings);
     world.resource_mut::<Players>().0.insert(client, entity);
@@ -358,9 +401,6 @@ pub(crate) fn place(
 
 pub fn respawn(world: &mut World) {
     let content = world.resource::<Content>().clone();
-    let zone = world.resource::<crate::systems::WorldArea>().0;
-    let assets = world.resource::<AssetService>().clone();
-    let spawn = area::load(&assets, zone).spawn;
     for request in crate::systems::requests::<RespawnRequest>(world) {
         let Some(entity) = sender_player(world, request.client_id) else {
             continue;
@@ -368,15 +408,15 @@ pub fn respawn(world: &mut World) {
         if !stat::is_dead(world, entity) {
             continue;
         }
+        let Some(spawn) = world.get::<SpawnPoint>(entity).map(|spawn| spawn.0) else {
+            continue;
+        };
         stat::refill(world, entity);
         if let Some(mut memory) = world.get_mut::<Memory>(entity) {
             memory.leave_area(&content);
         }
         if let Some(mut position) = world.get_mut::<Position>(entity) {
             position.pos = spawn;
-        }
-        if let Some(mut tag) = world.get_mut::<AreaTag>(entity) {
-            tag.area = zone;
         }
         if let Some(mut actor) = world.get_mut::<Actor>(entity) {
             set_action(&mut actor, Action::Idle);

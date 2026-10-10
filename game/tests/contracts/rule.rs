@@ -6,7 +6,7 @@ use game::systems::job::MinLevel;
 use game::systems::player::Xp;
 use game::systems::rule::{AnyOf, Encounter, Not, Requirement, RuleRefusal, Terms};
 
-use crate::support::{Sim, content, row};
+use crate::support::{Sim, content, row, spawn_area};
 
 static REWARD_ITEMS: LazyLock<[ItemStack; 1]> =
     LazyLock::new(|| [ItemStack::new(row("RustySword"), 1)]);
@@ -26,9 +26,9 @@ fn give(sim: &mut Sim, player: bevy_ecs::entity::Entity, stack: ItemStack) {
 
 #[test]
 fn level_requirements_follow_experience() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
-    let needed = row::<data::job::Id>("Adventurer").get(content()).levels[1].exp;
+    let needed = row::<data::job::Id>("Adventurer").get(content()).levels[1].xp;
 
     assert!(!MinLevel(2).met(sim.world(), player));
     sim.world().get_mut::<Xp>(player).expect("xp").gain(needed);
@@ -38,7 +38,7 @@ fn level_requirements_follow_experience() {
 
 #[test]
 fn any_of_holds_when_one_of_its_requirements_does() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     assert!(!GOLD_OR_LEVEL.met(sim.world(), player));
     give(&mut sim, player, ItemStack::new(row("Gold"), 20));
@@ -47,7 +47,7 @@ fn any_of_holds_when_one_of_its_requirements_does() {
 
 #[test]
 fn settling_pays_costs_and_grants_outcomes_in_one_step() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     give(&mut sim, player, ItemStack::new(row("Gold"), 25));
     let terms = Terms {
@@ -68,7 +68,7 @@ fn settling_pays_costs_and_grants_outcomes_in_one_step() {
 
 #[test]
 fn unmet_terms_are_refused_and_change_nothing() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     give(&mut sim, player, ItemStack::new(row("Gold"), 5));
     let before = sim.world().get::<Inventory>(player).expect("bag").clone();

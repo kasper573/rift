@@ -32,8 +32,10 @@ fn boot() {
 
     let mut app = App::new();
     let assets = crate::assets::service();
+    let fonts = systems::interface::font_files(assets.content());
     app.insert_resource(assets.content().clone());
     app.insert_resource(assets);
+    app.insert_resource(game::data::settings());
     app.insert_resource(Rng::from_entropy());
     app.register_asset_source(AssetSourceId::Default, crate::assets::bevy_source())
         .add_plugins(
@@ -56,7 +58,7 @@ fn boot() {
             crate::platform::WebPlatform,
         )))
         .add_plugins((
-            ui::UiPlugin,
+            ui::UiPlugin { fonts },
             core::net::transport::RepliconRenetClientPlugin,
             core::interpolate::SnapshotPlugin {
                 period: systems::REPLICATION_PERIOD,

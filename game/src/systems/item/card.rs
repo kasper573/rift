@@ -6,13 +6,12 @@ use ui::{
 };
 use ui::{TooltipText, component};
 
-use crate::core::audio::playback::SfxId;
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
-use crate::core::content::Content;
+use crate::core::content::{Content, Fixture};
 use crate::data::item::Id as ItemId;
-use crate::systems::effect::Effect;
 use crate::systems::hud;
 use crate::systems::input::map::{InputAction, input};
+use crate::systems::interface::InterfaceSound;
 use crate::systems::item::{ItemDef, ItemFlag, ItemKind};
 use crate::systems::player::session::Viewpoint;
 use crate::systems::scene::Scene as GameScene;
@@ -54,7 +53,7 @@ pub fn inspectable(content: &Content, item: ItemId) -> InspectableOptions {
     let def = item.get(content);
     InspectableOptions {
         tooltip: TooltipText {
-            title: def.display_name.to_owned(),
+            title: def.name.to_owned(),
             lines: vec![vec![RichPiece::text(overview(def))]],
             hint: Some(inspect_hint()),
         },
@@ -114,7 +113,7 @@ pub fn sheet(world: &World, item: ItemId) -> Box<dyn Scene> {
     let flavor = RichText {
         pieces: vec![RichPiece::Span(RichSpan {
             voice: TextVoice::Whisper,
-            ..RichSpan::plain(def.flavor)
+            ..RichSpan::plain(def.flavor().unwrap_or_default())
         })],
         size: typography::BODY.font_size,
         color: ink,
@@ -136,7 +135,7 @@ pub fn sheet(world: &World, item: ItemId) -> Box<dyn Scene> {
                     (
                         Node { flex_direction: FlexDirection::Column }
                         Children [
-                            {EntityScene(ui::styled_text(def.display_name, ink, typography::NAME))},
+                            {EntityScene(ui::styled_text(def.name, ink, typography::NAME))},
                             {EntityScene(ui::styled_text(overview(def), ink.with_alpha(0.6), typography::CAPTION))},
                         ]
                     ),
@@ -171,7 +170,7 @@ fn show_card(world: &mut World) {
         world.entity_mut(panel).despawn();
     }
     let Some(item) = wanted else {
-        chime(world, SfxId::UiClose);
+        chime(world, InterfaceSound::UiClose);
         return;
     };
     let screen = world
@@ -190,7 +189,7 @@ fn show_card(world: &mut World) {
             close(world);
         }),
         hud::single_tab(
-            item.get(&content).display_name,
+            item.get(&content).name,
             ui::scrolled(Box::new(padded(sheet(world, item)))),
         ),
         0,
@@ -199,7 +198,7 @@ fn show_card(world: &mut World) {
         world.entity_mut(panel).insert(ItemCardWindow { item });
     }
     if shown.is_none() {
-        chime(world, SfxId::UiOpen);
+        chime(world, InterfaceSound::UiOpen);
     }
 }
 
@@ -229,23 +228,23 @@ fn facts(world: &World, def: &ItemDef) -> Vec<(String, Color)> {
     match def.kind {
         ItemKind::Consumable {
             health_bonus,
-            duration,
+            lasts,
         } => {
             if health_bonus > 0.0 {
                 facts.push(plain(format!("Restores {health_bonus} health")));
             }
             facts.extend(
-                modifiers(def).map(|stat| plain(format!("{} for {}s", modifier(stat), duration.0))),
+                modifiers(def).map(|stat| plain(format!("{} for {}s", modifier(stat), lasts.0))),
             );
         }
-        ItemKind::Equipment { slot, requirements } => {
+        ItemKind::Equipment { slot, requires } => {
             facts.push(plain(format!(
                 "Worn as your {}",
                 slot.label().to_lowercase()
             )));
             facts.extend(modifiers(def).map(|stat| plain(modifier(stat))));
             let viewer = world.resource::<Viewpoint>().0;
-            facts.extend(requirements.iter().map(|requirement| {
+            facts.extend(requires.iter().map(|requirement| {
                 let color = match viewer.map(|viewer| requirement.met(world, viewer)) {
                     Some(true) => palette::EMERALD_80,
                     Some(false) => palette::CRIMSON_80,
@@ -270,10 +269,7 @@ fn facts(world: &World, def: &ItemDef) -> Vec<(String, Color)> {
 }
 
 fn modifiers(def: &ItemDef) -> impl Iterator<Item = Stat> {
-    def.effects.iter().filter_map(|effect| match effect {
-        Effect::StatModifier(stat) => Some(*stat),
-        Effect::Chasing => None,
-    })
+    def.stats()
 }
 
 fn modifier(stat: Stat) -> String {
@@ -289,7 +285,8 @@ fn modifier(stat: Stat) -> String {
     format!("{:+} {words}", stat.value)
 }
 
-fn chime(world: &mut World, id: SfxId) {
+fn chime(world: &mut World, sound: InterfaceSound) {
+    let id = sound.id(world.resource::<Content>());
     world.write_message(PlaySfx {
         id,
         place: SfxPlace::Interface,

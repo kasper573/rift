@@ -13,7 +13,7 @@ use game::systems::npc::Npc;
 use game::systems::prop::Prop;
 use game::systems::shop::{ShopId, ShopRequest, ShopView};
 
-use crate::support::{Sim, content, row};
+use crate::support::{Sim, content, row, spawn_area};
 
 fn townsperson(sim: &mut Sim, who: data::npc::Id) -> Entity {
     let world = sim.world();
@@ -104,8 +104,7 @@ fn slot_of(sim: &mut Sim, player: Entity, item: ItemId) -> u32 {
 
 fn offer_of(shop: ShopId, item: ItemId) -> u32 {
     shop.get(content())
-        .sells
-        .iter()
+        .sells()
         .position(|offer| offer.item == item)
         .expect("on sale") as u32
 }
@@ -121,7 +120,7 @@ fn later(sim: &mut Sim, seconds: f32) {
 
 #[test]
 fn asking_a_keeper_opens_the_shop_and_buying_trades_the_price_for_the_goods() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     give(&mut sim, player, row("Gold"), 10);
 
@@ -146,7 +145,7 @@ fn asking_a_keeper_opens_the_shop_and_buying_trades_the_price_for_the_goods() {
 
 #[test]
 fn a_purchase_you_cannot_cover_changes_nothing_and_the_keeper_says_so() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     give(&mut sim, player, row("Gold"), 12);
     let mara = townsperson(&mut sim, row("Mara"));
@@ -167,7 +166,7 @@ fn a_purchase_you_cannot_cover_changes_nothing_and_the_keeper_says_so() {
 
 #[test]
 fn limited_stock_is_kept_per_player_and_restocks_on_its_timer() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let first = sim.join(1);
     let second = sim.join(2);
     for player in [first, second] {
@@ -198,7 +197,7 @@ fn limited_stock_is_kept_per_player_and_restocks_on_its_timer() {
 
 #[test]
 fn a_collector_pays_in_his_own_currency_and_buyback_costs_exactly_what_he_paid() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     give(&mut sim, player, row("Bone"), 7);
     give(&mut sim, player, row("OrcTusk"), 1);
@@ -253,7 +252,7 @@ fn a_collector_pays_in_his_own_currency_and_buyback_costs_exactly_what_he_paid()
 
 #[test]
 fn walking_out_of_reach_closes_the_shop() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     browse(&mut sim, 1, player, row("Wren"));
     let at = position(sim.world(), player).expect("position");
@@ -269,7 +268,7 @@ fn walking_out_of_reach_closes_the_shop() {
 
 #[test]
 fn leaving_the_conversation_closes_the_shop() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     browse(&mut sim, 1, player, row("Mara"));
     let step = conversation(&mut sim, player).expect("browsing").step;
@@ -283,7 +282,7 @@ fn leaving_the_conversation_closes_the_shop() {
 
 #[test]
 fn a_map_object_can_keep_a_shop() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     give(&mut sim, player, row("Gold"), 3);
     let honesty_box = prop(&mut sim, row("HonestyBox"));

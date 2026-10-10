@@ -85,13 +85,16 @@ pub fn equip(
     {
         let refusal = format!(
             "{} needs {}",
-            item.get(&content).display_name,
+            item.get(&content).name,
             unmet.describe(&content)
         );
         notification::notify(
             world,
             player,
-            Notification::new(NotificationKind::error(), LineText::plain(refusal)),
+            Notification::new(
+                NotificationKind::error(world.resource::<Content>()),
+                LineText::plain(refusal),
+            ),
         );
         return;
     }
@@ -137,7 +140,7 @@ pub fn unequip(world: &mut World) {
                 world,
                 player,
                 Notification::new(
-                    NotificationKind::error(),
+                    NotificationKind::error(world.resource::<Content>()),
                     LineText::plain(refusal.describe(&content)),
                 ),
             ),
@@ -154,7 +157,7 @@ fn equipped(world: &World, entity: Entity) -> Vec<Effect> {
             equipment
                 .slots
                 .values()
-                .flat_map(|item| item.get(content).effects.iter().copied())
+                .flat_map(|item| item.get(content).effects())
                 .collect()
         })
         .unwrap_or_default()
@@ -170,6 +173,6 @@ impl Requirement for Wearing {
     }
 
     fn describe(&self, content: &Content) -> String {
-        format!("{} worn", self.0.get(content).display_name)
+        format!("{} worn", self.0.get(content).name)
     }
 }

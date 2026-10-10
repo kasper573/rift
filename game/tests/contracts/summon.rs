@@ -1,6 +1,5 @@
 use bevy_ecs::prelude::*;
 use game::core::time::WallClock;
-use game::data;
 use game::data::memory::Id as MemoryId;
 use game::data::npc::Id as NpcId;
 use game::systems::combat::{self, AttackRequest, Attitude};
@@ -12,7 +11,8 @@ use game::systems::stat::{self, StatKind};
 use game::systems::visibility::{self, Presence};
 
 use crate::support::{
-    Sim, content, count, give, heard_the_news, later, pick, row, settle, talk, townsperson,
+    Sim, content, count, give, heard_the_news, later, pick, row, settle, spawn_area, talk,
+    townsperson,
 };
 
 fn summoned(sim: &mut Sim, what: NpcId) -> Vec<Entity> {
@@ -58,7 +58,7 @@ fn health(sim: &mut Sim, who: Entity) -> f32 {
 
 #[test]
 fn pells_dice_take_ten_gold_a_roll_and_pay_twenty_on_a_win() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
     give(&mut sim, player, row("Gold"), 400);
@@ -89,7 +89,7 @@ fn pells_dice_take_ten_gold_a_roll_and_pay_twenty_on_a_win() {
 
 #[test]
 fn calling_pell_a_cheat_sends_guards_after_you_alone() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let bystander = sim.join(2);
     heard_the_news(&mut sim, player);
@@ -130,7 +130,7 @@ fn calling_pell_a_cheat_sends_guards_after_you_alone() {
 
 #[test]
 fn fighting_pell_leaves_him_dead_in_your_world_only() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let bystander = sim.join(2);
     heard_the_news(&mut sim, player);
@@ -172,7 +172,7 @@ fn summons_leave_with_their_owner() {
         near: SpawnNear::Player,
         shown: ShownFor::Everyone,
     };
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     Terms {
         requires: &[],
@@ -191,7 +191,7 @@ fn summons_leave_with_their_owner() {
 #[test]
 fn a_townsperson_turned_hostile_can_be_fought_until_they_return_friendly() {
     static TURN: TurnHostile = TurnHostile;
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let bram = townsperson(&mut sim, row("Bram"));
     assert!(!combat::attackable(sim.world(), player, bram));
@@ -215,7 +215,7 @@ fn a_townsperson_turned_hostile_can_be_fought_until_they_return_friendly() {
     stat::apply_damage(sim.world(), bram, 10_000.0);
     let respawn = row::<NpcId>("Bram")
         .get(content())
-        .respawn
+        .respawn()
         .expect("Bram returns")
         .0;
     assert!(sim.run_until(respawn + 5.0, |world| !stat::is_dead(world, bram)));

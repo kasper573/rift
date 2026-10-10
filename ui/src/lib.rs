@@ -43,10 +43,13 @@ pub use utils::theme::{Family, Theme};
 #[derive(bevy_ecs::schedule::SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UiReactive;
 
-pub struct UiPlugin;
+pub struct UiPlugin {
+    pub fonts: Vec<String>,
+}
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
+        app.insert_resource(FontFiles(self.fonts.clone()));
         app.add_plugins(OpacityPlugin);
         app.add_plugins(MotionPlugin);
         if !app.is_plugin_added::<ButtonPlugin>() {
@@ -194,27 +197,23 @@ pub enum Orientation {
 }
 
 #[derive(Resource)]
+struct FontFiles(Vec<String>);
+
+#[derive(Resource)]
 struct DesignFonts(#[allow(dead_code)] Vec<Handle<Font>>);
 
 pub fn component<C: Component + Clone>(value: C) -> impl Scene {
     FnTemplate(move |_: &mut TemplateContext| Ok(value.clone()))
 }
 
-fn load_fonts(assets: Option<Res<AssetServer>>, mut commands: Commands) {
+fn load_fonts(assets: Option<Res<AssetServer>>, files: Res<FontFiles>, mut commands: Commands) {
     let Some(assets) = assets else {
         return;
     };
-    let handles = [
-        "fonts/circular-400-normal.ttf",
-        "fonts/circular-500-normal.ttf",
-        "fonts/circular-700-normal.ttf",
-        "fonts/lato-400-normal.ttf",
-        "fonts/lato-400-italic.ttf",
-        "fonts/lato-700-normal.ttf",
-        "fonts/lato-700-italic.ttf",
-    ]
-    .iter()
-    .map(|path| assets.load(*path))
-    .collect();
+    let handles = files
+        .0
+        .iter()
+        .map(|path| assets.load(path.clone()))
+        .collect();
     commands.insert_resource(DesignFonts(handles));
 }

@@ -80,8 +80,8 @@ fn label(
     match (npc, owner) {
         (Some(npc), _) => {
             let def = npc.def.get(content);
-            def.role.map(|role| Label {
-                name: Some(def.display_name.to_owned()),
+            def.nameplate().map(|role| Label {
+                name: Some(def.name.to_owned()),
                 role: Some(role),
                 color: match attitude {
                     Some(Attitude::Hostile) => palette::CRIMSON_80,

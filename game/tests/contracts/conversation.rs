@@ -1,11 +1,12 @@
 use bevy_ecs::prelude::*;
+use game::core::content::Fixture;
 use game::core::math::Pos;
 use game::core::tiling::{TilePos, Tiles};
 use game::core::time::{UnixMillis, UtcHour, WallClock};
 use game::data;
 use game::data::attention::Id as AttentionId;
 use game::data::dialogue::Id as DialogueId;
-use game::systems::attention::Attention;
+use game::systems::attention::{Attention, AttentionMark};
 use game::systems::dialogue::{self, Conversation, ConversationRequest, Start};
 use game::systems::input::map::InputMap;
 use game::systems::interact::InteractRequest;
@@ -16,7 +17,7 @@ use game::systems::npc::Npc;
 use game::systems::player::commands_locked;
 use game::systems::stat::{self, StatKind};
 
-use crate::support::{Sim, content, errors, row};
+use crate::support::{Sim, content, errors, row, spawn_area};
 
 fn townsperson(sim: &mut Sim, who: data::npc::Id) -> Entity {
     let world = sim.world();
@@ -79,7 +80,7 @@ fn place(sim: &mut Sim, player: Entity, at: Pos<Tiles>) {
 
 #[test]
 fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let grisha = townsperson(&mut sim, row("Grisha"));
 
@@ -105,7 +106,7 @@ fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
 
 #[test]
 fn a_pick_answers_its_step_once() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     give_gold(&mut sim, player, 30);
     let opened = talk(&mut sim, 1, player, row("Grisha"));
@@ -133,7 +134,7 @@ fn a_pick_answers_its_step_once() {
 
 #[test]
 fn a_choice_that_costs_too_much_changes_nothing() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let opened = talk(&mut sim, 1, player, row("Grisha"));
     let index = choice(&opened, "Buy a round for the room.");
@@ -157,7 +158,7 @@ fn a_choice_that_costs_too_much_changes_nothing() {
 
 #[test]
 fn walking_out_of_reach_ends_the_conversation() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     talk(&mut sim, 1, player, row("Grisha"));
     let at = position(sim.world(), player).expect("position");
@@ -172,7 +173,7 @@ fn walking_out_of_reach_ends_the_conversation() {
 
 #[test]
 fn damage_keeps_a_conversation_but_death_ends_it() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     talk(&mut sim, 1, player, row("Grisha"));
 
@@ -188,7 +189,7 @@ fn damage_keeps_a_conversation_but_death_ends_it() {
 
 #[test]
 fn a_new_conversation_replaces_the_one_in_progress() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     talk(&mut sim, 1, player, row("Grisha"));
 
@@ -202,7 +203,7 @@ fn a_new_conversation_replaces_the_one_in_progress() {
 
 #[test]
 fn tobb_holds_his_news_until_you_are_free() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let opened = talk(&mut sim, 1, player, row("Tobb"));
     assert_eq!(opened.node, row("TobbHello"));
@@ -228,7 +229,7 @@ fn tobb_holds_his_news_until_you_are_free() {
 
 #[test]
 fn two_players_see_their_own_icons_over_the_same_npc() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let regular = sim.join(1);
     let stranger = sim.join(2);
     let tobb = townsperson(&mut sim, row("Tobb"));
@@ -255,6 +256,6 @@ fn two_players_see_their_own_icons_over_the_same_npc() {
     };
     sim.run_until(0.5, |_| false);
 
-    assert!(marks(&mut sim, regular).contains(&AttentionId::News));
-    assert!(!marks(&mut sim, stranger).contains(&AttentionId::News));
+    assert!(marks(&mut sim, regular).contains(&AttentionMark::News.id(content())));
+    assert!(!marks(&mut sim, stranger).contains(&AttentionMark::News.id(content())));
 }

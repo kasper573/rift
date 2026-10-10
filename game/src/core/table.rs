@@ -1,15 +1,8 @@
 #[macro_export]
 macro_rules! table {
     (
-        #![expose]
-        $($key:ident : $row:ident $body:tt),+
-        $(,)?
-    ) => {
-        $crate::table! { $(#[expose] $key : $row $body),+ }
-    };
-    (
-        $(#[$first_mark:ident])? $first:ident : $def:ident $first_body:tt
-        $(, $(#[$mark:ident])? $key:ident : $row:ident $body:tt)*
+        $first:ident : $def:ident $first_body:tt
+        $(, $key:ident : $row:ident $body:tt)*
         $(,)?
     ) => {
         pub type Id = $crate::core::content::ContentId<$def>;
@@ -21,8 +14,8 @@ macro_rules! table {
 
         #[allow(non_upper_case_globals)]
         impl Id {
-            $crate::table_row!($($first_mark)? $first);
-            $($crate::table_row!($($mark)? $key);)*
+            $crate::table_row!($first);
+            $($crate::table_row!($key);)*
         }
 
         pub static TABLE: &[$def] = &[
@@ -41,12 +34,6 @@ macro_rules! table {
 
 #[macro_export]
 macro_rules! table_row {
-    (expose $key:ident) => {
-        pub const $key: Id = Id::new($crate::core::content::sorted_index(
-            KEYS,
-            &$crate::core::content::key_of(stringify!($key)),
-        ));
-    };
     ($key:ident) => {
         #[allow(dead_code)]
         pub(super) const $key: Id = Id::new($crate::core::content::sorted_index(

@@ -74,7 +74,7 @@ pub struct Swing {
     pub struck: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct HealthRegen {
     pub every: Seconds,
     pub health: f32,
@@ -84,7 +84,9 @@ pub struct HealthRegen {
 pub struct RegenAt(Seconds);
 
 pub fn regen(world: &mut World) {
-    let regen = player::def(world.resource::<Content>()).regen.clone();
+    let Some(regen) = player::def(world.resource::<Content>()).regen() else {
+        return;
+    };
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     {
         let mut last = world.resource_mut::<RegenAt>();

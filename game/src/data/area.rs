@@ -446,8 +446,3 @@ crate::table! {
         intro: None,
     },
 }
-
-pub const BENCH_ID: Id = Id::Island;
-
-/// The area new players spawn into.
-pub const SPAWN_ID: Id = Id::Island;

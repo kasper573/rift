@@ -1,3 +1,4 @@
+use crate::systems::interface::InterfaceIcon;
 use crate::systems::terminal::TerminalKind;
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
@@ -19,8 +20,8 @@ impl Window for TerminalWindow {
     fn toggle(&self) -> InputAction {
         InputAction::ToggleTerminal
     }
-    fn icon(&self) -> &'static str {
-        "icons/misc/scroll.png"
+    fn icon(&self) -> InterfaceIcon {
+        InterfaceIcon::Terminal
     }
     fn order(&self) -> u32 {
         6

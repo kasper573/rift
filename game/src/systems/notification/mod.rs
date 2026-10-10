@@ -19,11 +19,12 @@ use serde::{Deserialize, Serialize};
 use crate::core::assets::AssetService;
 use crate::core::audio::playback::SfxId;
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
-use crate::core::content::Content;
+use crate::core::content::{Content, Fixture};
 use crate::core::platform::ClientPlatform;
 use crate::core::time::{Seconds, UnixMillis, WallClock};
 use crate::data::npc::Id as NpcId;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic, RecordTally};
+use crate::systems::interface::InterfaceSound;
 use crate::systems::npc::Npc;
 use crate::systems::player::Players;
 use crate::systems::rule::{Outcome, RuleContext};
@@ -92,9 +93,9 @@ pub enum NotificationKind {
 }
 
 impl NotificationKind {
-    pub fn error() -> NotificationKind {
+    pub fn error(content: &Content) -> NotificationKind {
         NotificationKind::Error {
-            sfx: Some(SfxId::UiRefuse),
+            sfx: Some(InterfaceSound::UiRefuse.id(content)),
         }
     }
 
@@ -184,10 +185,9 @@ impl Notification {
             HistoryEntry::of(topic, self.text.clone()).by(by.map(str::to_owned))
         };
         match &self.kind {
-            NotificationKind::Speech { speaker } => entry(
-                HistoryTopic::Notification,
-                Some(speaker.get(content).display_name),
-            ),
+            NotificationKind::Speech { speaker } => {
+                entry(HistoryTopic::Notification, Some(speaker.get(content).name))
+            }
             NotificationKind::Narration { label, .. } | NotificationKind::Alert { label, .. } => {
                 entry(HistoryTopic::Notification, Some(label))
             }
@@ -300,11 +300,11 @@ pub fn notify_everywhere(worlds: &mut [&mut World], notification: &Notification)
     }
 }
 
-pub fn server_alert(message: impl Into<String>) -> Notification {
+pub fn server_alert(content: &Content, message: impl Into<String>) -> Notification {
     Notification {
         kind: NotificationKind::Alert {
             label: Cow::Borrowed(SERVER_LABEL),
-            sfx: Some(SfxId::UiChime),
+            sfx: Some(InterfaceSound::UiChime.id(content)),
         },
         text: LineText::plain(message),
         lasts: Some(SERVER_LASTS),
@@ -324,7 +324,8 @@ fn notify_command(
             "{length} characters is too long, at most {LONGEST_NOTIFY_CHARS} fit"
         ));
     }
-    broadcast(world, server_alert(message.0));
+    let alert = server_alert(world.resource::<Content>(), message.0);
+    broadcast(world, alert);
     Ok("notified every area".to_owned())
 }
 

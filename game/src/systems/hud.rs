@@ -5,9 +5,11 @@ use ui::component;
 use ui::{Geom, OnSettle, OnTap, SnapGrid, text_colored, widget};
 
 use crate::core::audio::mix::{AudioFader, AudioMix, AudioVolume};
+use crate::core::content::{Content, Fixture};
 use crate::core::platform::{ClientPlatform, Platform};
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
 use crate::systems::input::map::{ActionInput, InputAction};
+use crate::systems::interface::InterfaceIcon;
 use crate::systems::scene::mode::Mode;
 use crate::systems::{
     effect, equipment, history, item, player, quest, settings, spectate, stat, terminal,
@@ -80,7 +82,7 @@ pub trait Window: Send + Sync {
     fn audience(&self) -> HudAudience;
     fn title(&self) -> &'static str;
     fn toggle(&self) -> InputAction;
-    fn icon(&self) -> &'static str;
+    fn icon(&self) -> InterfaceIcon;
     fn order(&self) -> u32;
     fn size(&self) -> Vec2 {
         WINDOW_SIZE
@@ -443,6 +445,7 @@ fn spawn_hud(
     mode: Res<Mode>,
     settings: Res<Settings>,
     assets: Res<AssetServer>,
+    content: Res<Content>,
     screen: Single<&bevy::window::Window>,
 ) {
     let screen_w = screen.resolution.width();
@@ -454,7 +457,7 @@ fn spawn_hud(
     }
     for (window, _) in windows(*mode) {
         scenes.push(Box::new(launcher(
-            window, *mode, screen_w, &settings, &assets,
+            window, *mode, screen_w, &settings, &assets, &content,
         )));
     }
     commands.spawn_scene(bsn! {
@@ -497,7 +500,8 @@ fn rebuild_windows(world: &mut World) {
             let mode = *world.resource::<Mode>();
             let settings = world.resource::<Settings>();
             let assets = world.resource::<AssetServer>();
-            Box::new(launcher(window, mode, screen.x, settings, assets))
+            let content = world.resource::<Content>();
+            Box::new(launcher(window, mode, screen.x, settings, assets, content))
         };
         world.entity_mut(entity).despawn();
         if let Ok(mut spawned) = world.spawn_scene(panel) {
@@ -518,13 +522,14 @@ fn launcher(
     screen_w: f32,
     settings: &Settings,
     assets: &AssetServer,
+    content: &Content,
 ) -> impl Scene {
     let def = window_def(window);
     let pos = widget_pos(settings, window, launcher_pos(window, mode, screen_w));
     bsn! {
         {widget(ui::WidgetOptions {
             pos,
-            icon: assets.load(def.icon().to_owned()),
+            icon: assets.load(def.icon().get(content).image.0),
             badge: Some(def.toggle().into()),
             tooltip: def.title().to_owned(),
             on_tap: OnTap::new(move |world| open_window(world, window)),

@@ -8,6 +8,7 @@ use crate::core::audio::mix::{AudioCategory, AudioFader, AudioVolume};
 use crate::core::render::transition::ScreenTransition;
 use crate::systems::hud::{HudAudience, LettersPerSecond, Settings, Window};
 use crate::systems::input::map::InputAction;
+use crate::systems::interface::InterfaceIcon;
 
 const SLIDER_WIDTH: f32 = 240.0;
 const FADER_NAME_WIDTH: f32 = 80.0;
@@ -24,8 +25,8 @@ impl Window for SettingsWindow {
     fn toggle(&self) -> InputAction {
         InputAction::ToggleSettings
     }
-    fn icon(&self) -> &'static str {
-        "icons/misc/gear.png"
+    fn icon(&self) -> InterfaceIcon {
+        InterfaceIcon::Settings
     }
     fn order(&self) -> u32 {
         5

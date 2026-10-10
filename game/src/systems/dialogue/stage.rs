@@ -13,13 +13,13 @@ use super::{
     RefusedPick, Speaker, SpokenLine,
 };
 use crate::core::assets::AssetRef;
-use crate::core::audio::playback::SfxId;
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::babble::{BabbleRank, Babbler, Babbling};
-use crate::core::content::Content;
+use crate::core::content::{Content, Fixture};
 use crate::systems::actor::Name;
 use crate::systems::actor::bust::{Busts, Face, GenericExpression};
 use crate::systems::input::map::{self, ActionInput, InputAction, InputMap};
+use crate::systems::interface::{InterfaceIcon, InterfaceSound};
 use crate::systems::item::card;
 use crate::systems::npc::Npc;
 use crate::systems::player;
@@ -39,8 +39,6 @@ const CHOICE_SHORTCUTS: [InputAction; 9] = [
     InputAction::Choice8,
     InputAction::Choice9,
 ];
-const CHECK: &str = "icons/misc/checkmark.png";
-const LOCK: &str = "icons/cursors/lock001.png";
 
 pub struct StagePlugin;
 
@@ -254,7 +252,7 @@ fn follow_conversation(world: &mut World) {
     match stage.shown.as_mut() {
         None => {
             stage.shown = Some(Shown::of(now, HashMap::new()));
-            chime(world, SfxId::UiOpen);
+            chime(world, InterfaceSound::UiOpen);
             show_line(world);
         }
         Some(shown) if shown.step != now.step => {
@@ -330,7 +328,7 @@ fn close(world: &mut World) {
     world.resource_mut::<Stage>().shown = None;
     despawn_box(world);
     set_cast(world, Vec::new());
-    chime(world, SfxId::UiClose);
+    chime(world, InterfaceSound::UiClose);
 }
 
 fn show_line(world: &mut World) {
@@ -392,10 +390,10 @@ fn stage_keys(world: &mut World) {
                 ui::pick_choice(world, list);
             } else if map::just_pressed(world, InputAction::ChoosePrevious) {
                 ui::step_choice(world, list, -1);
-                chime(world, SfxId::UiMove);
+                chime(world, InterfaceSound::UiMove);
             } else if map::just_pressed(world, InputAction::ChooseNext) {
                 ui::step_choice(world, list, 1);
-                chime(world, SfxId::UiMove);
+                chime(world, InterfaceSound::UiMove);
             } else if let Some(index) = map::just_pressed_index(world, &CHOICE_SHORTCUTS) {
                 ui::pick_choice_at(world, list, index);
             }
@@ -446,7 +444,7 @@ fn on_picked(picked: On<ui::ChoicePicked>, mut commands: Commands) {
     let index = picked.index;
     commands.queue(move |world: &mut World| {
         if request_pick(world, index) {
-            chime(world, SfxId::UiPick);
+            chime(world, InterfaceSound::UiPick);
         }
     });
 }
@@ -594,7 +592,7 @@ fn babble_along(world: &mut World) {
         return;
     };
     let babble = match by {
-        Speaker::Npc(npc) => npc.get(&content).babble,
+        Speaker::Npc(npc) => npc.get(&content).voice(),
         Speaker::Player => world
             .resource::<Viewpoint>()
             .0
@@ -643,7 +641,18 @@ fn choice_options(
         .map(|chip| match chip {
             ChoiceChip::Needs { what, met } => ChipOptions {
                 label: what.clone(),
-                icon: Some(assets.load(if *met { CHECK } else { LOCK })),
+                icon: Some(
+                    assets.load(
+                        if *met {
+                            InterfaceIcon::Checked
+                        } else {
+                            InterfaceIcon::Locked
+                        }
+                        .get(content)
+                        .image
+                        .0,
+                    ),
+                ),
                 family: Family::outline(if *met {
                     palette::EMERALD_70
                 } else {
@@ -763,8 +772,8 @@ fn bust_image(assets: &AssetServer, art: AssetRef) -> Handle<Image> {
 
 fn busts_of(content: &Content, who: Speaker) -> Option<&Busts> {
     match who {
-        Speaker::Npc(npc) => npc.get(content).model.get(content).busts.as_ref(),
-        Speaker::Player => player::def(content).model.get(content).busts.as_ref(),
+        Speaker::Npc(npc) => npc.get(content).model.get(content).busts(),
+        Speaker::Player => player::def(content).model.get(content).busts(),
         Speaker::Prop(_) | Speaker::Narrator => None,
     }
 }
@@ -772,8 +781,8 @@ fn busts_of(content: &Content, who: Speaker) -> Option<&Busts> {
 fn speaker_name(world: &World, who: Speaker) -> Option<String> {
     let content = world.resource::<Content>();
     match who {
-        Speaker::Npc(npc) => Some(npc.get(content).display_name.to_owned()),
-        Speaker::Prop(prop) => Some(prop.get(content).display_name.to_owned()),
+        Speaker::Npc(npc) => Some(npc.get(content).name.to_owned()),
+        Speaker::Prop(prop) => Some(prop.get(content).name.to_owned()),
         Speaker::Player => world
             .resource::<Viewpoint>()
             .0
@@ -799,7 +808,8 @@ fn cast_key(who: Speaker) -> u64 {
     }
 }
 
-fn chime(world: &mut World, id: SfxId) {
+fn chime(world: &mut World, sound: InterfaceSound) {
+    let id = sound.id(world.resource::<Content>());
     world.write_message(PlaySfx {
         id,
         place: SfxPlace::Interface,

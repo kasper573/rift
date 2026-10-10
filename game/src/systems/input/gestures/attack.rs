@@ -4,7 +4,8 @@ use bevy::prelude::*;
 use bevy::window::CursorIcon;
 
 use crate::core::render;
-use crate::systems::input::gestures::{Gesture, image_cursor};
+use crate::systems::input::gestures::{Gesture, content_cursor};
+use crate::systems::interface::CursorShape;
 
 pub struct AttackGesture;
 
@@ -29,9 +30,6 @@ impl Gesture for AttackGesture {
     }
 
     fn cursor(&self, world: &mut World) -> Option<CursorIcon> {
-        let handle = world
-            .resource::<AssetServer>()
-            .load("icons/cursors/swords002.png");
-        Some(image_cursor(handle, (32, 32)))
+        Some(content_cursor(world, CursorShape::Attack))
     }
 }

@@ -14,6 +14,7 @@ pub mod history;
 pub mod hud;
 pub mod input;
 pub mod interact;
+pub mod interface;
 pub mod item;
 pub mod job;
 pub mod memory;
@@ -98,6 +99,20 @@ pub fn protocol(app: &mut App) {
 #[derive(Resource, Clone, Copy)]
 pub struct WorldArea(pub area::Id);
 
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct GameSettings {
+    pub name: &'static str,
+    pub spawn: SpawnPlace,
+    pub player: crate::data::player::Id,
+    pub bench: area::Id,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpawnPlace {
+    pub area: area::Id,
+    pub at: crate::core::math::Pos<crate::core::tiling::Tiles>,
+}
+
 #[derive(Bundle)]
 pub struct Character {
     pub replicated: Replicated,
@@ -124,6 +139,7 @@ pub fn server_app(
 
     let mut app = App::new();
     app.insert_resource(WorldArea(area));
+    app.insert_resource(crate::data::settings());
     app.insert_resource(clock);
     app.insert_resource(assets.content().clone());
     app.insert_resource(assets.clone());
@@ -247,6 +263,8 @@ pub fn step_areas(apps: &mut [App], clock: crate::core::time::WallClock) {
 }
 
 pub fn check_content(assets: &crate::core::assets::AssetService) {
+    check_fixtures(assets.content());
+    interface::check(assets);
     actor::check(assets);
     area::check(assets);
     npc::check(assets);
@@ -263,6 +281,28 @@ pub fn check_content(assets: &crate::core::assets::AssetService) {
     shop::check(assets);
     quest::check(assets);
     notification::check(assets);
+}
+
+fn check_fixtures(content: &crate::core::content::Content) {
+    use crate::core::content::{ContentRow, Fixture};
+    fn missing<F: Fixture>(content: &crate::core::content::Content) -> Vec<String> {
+        F::missing(content)
+            .into_iter()
+            .map(|key| format!("{}/{key}", F::Row::TABLE))
+            .collect()
+    }
+    let missing: Vec<String> = [
+        missing::<input::map::InputAction>(content),
+        missing::<attention::AttentionMark>(content),
+        missing::<interface::InterfaceSound>(content),
+        missing::<interface::CursorShape>(content),
+        missing::<interface::InterfaceIcon>(content),
+        missing::<interface::FontFace>(content),
+    ]
+    .concat();
+    if !missing.is_empty() {
+        panic!("missing fixture rows: {}", missing.join(", "));
+    }
 }
 
 pub(crate) fn requests<M: Message>(world: &mut World) -> Vec<FromClient<M>> {

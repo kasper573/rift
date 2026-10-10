@@ -13,7 +13,7 @@ use crate::systems::shop::{OpenShop, ShopId};
 
 crate::table! {
     HarbourBoard: PropDef {
-        display_name: "Harbour notices",
+        name: "Harbour notices",
         look: Some(AssetRef("icons/misc/scroll.png")),
         interaction: Some(Interaction {
             verb: Verb::Read,
@@ -27,7 +27,7 @@ crate::table! {
         }),
     },
     TideChest: PropDef {
-        display_name: "Tide chest",
+        name: "Tide chest",
         look: Some(AssetRef("icons/misc/chest.png")),
         interaction: Some(Interaction {
             verb: Verb::Open,
@@ -62,7 +62,7 @@ crate::table! {
         }),
     },
     HonestyBox: PropDef {
-        display_name: "Honesty box",
+        name: "Honesty box",
         look: Some(AssetRef("icons/misc/crate.png")),
         interaction: Some(Interaction {
             verb: Verb::Use,
@@ -72,7 +72,7 @@ crate::table! {
         }),
     },
     StandingStone: PropDef {
-        display_name: "Standing stone",
+        name: "Standing stone",
         look: Some(AssetRef("icons/misc/rune_stone.png")),
         interaction: Some(Interaction {
             verb: Verb::Use,

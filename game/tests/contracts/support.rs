@@ -59,6 +59,10 @@ pub fn row<Id: Named>(name: &str) -> Id {
     Id::named(name)
 }
 
+pub fn spawn_area() -> data::area::Id {
+    data::settings().spawn.area
+}
+
 pub fn assets() -> AssetService {
     AssetService::new(
         FilesystemSource(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets")),

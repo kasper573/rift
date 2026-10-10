@@ -3,7 +3,7 @@ use bevy_ecs::entity::MapEntities;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::core::content::Content;
+use crate::core::content::{Content, Fixture};
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 use crate::data::attention::Id as AttentionId;
@@ -11,8 +11,9 @@ use crate::data::dialogue::Id as DialogueId;
 use crate::data::npc::Id as NpcId;
 use crate::data::prop::Id as PropId;
 use crate::systems::actor;
-use crate::systems::attention;
+use crate::systems::attention::{self, AttentionMark};
 use crate::systems::dialogue;
+use crate::systems::interface::CursorShape;
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::{commands_locked, sender_player, session};
 use crate::systems::reach::{self, Pursuit, ReachAct, Tether};
@@ -61,12 +62,12 @@ impl Verb {
         }
     }
 
-    pub fn cursor(self) -> &'static str {
+    pub fn cursor(self) -> CursorShape {
         match self {
-            Verb::Talk => "icons/cursors/talk001.png",
-            Verb::Use => "icons/cursors/hand002.png",
-            Verb::Open => "icons/cursors/chest001.png",
-            Verb::Read => "icons/cursors/book001.png",
+            Verb::Talk => CursorShape::Talk,
+            Verb::Use => CursorShape::Use,
+            Verb::Open => CursorShape::Open,
+            Verb::Read => CursorShape::Read,
         }
     }
 }
@@ -83,8 +84,8 @@ pub enum Counterpart {
 impl Counterpart {
     pub fn name(self, content: &Content) -> &'static str {
         match self {
-            Counterpart::Npc(npc) => npc.get(content).display_name,
-            Counterpart::Prop(prop) => prop.get(content).display_name,
+            Counterpart::Npc(npc) => npc.get(content).name,
+            Counterpart::Prop(prop) => prop.get(content).name,
         }
     }
 }
@@ -198,7 +199,10 @@ fn respond(world: &mut World, player: Entity, target: Entity, interaction: Inter
         notification::notify(
             world,
             player,
-            Notification::new(NotificationKind::error(), LineText::plain(refusal.0)),
+            Notification::new(
+                NotificationKind::error(world.resource::<Content>()),
+                LineText::plain(refusal.0),
+            ),
         );
     }
 }
@@ -220,6 +224,6 @@ fn marks(world: &World, player: Entity, target: Entity) -> Vec<AttentionId> {
         .marks
         .iter()
         .copied()
-        .chain(news.then_some(AttentionId::News))
+        .chain(news.then_some(AttentionMark::News.id(content)))
         .collect()
 }

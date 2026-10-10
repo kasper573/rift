@@ -15,7 +15,11 @@ fn every_bust_fits_the_download_budget() {
         .table::<ModelDef>()
         .rows()
         .iter()
-        .flat_map(|def| def.busts.iter().flat_map(|busts| busts.all(content())))
+        .flat_map(|def| {
+            def.busts()
+                .into_iter()
+                .flat_map(|busts| busts.all(content()))
+        })
         .map(|bust| bust.0)
         .collect();
     let mut total = 0;

@@ -148,7 +148,7 @@ fn simulate(
     let area_ids = select_areas(assets.content(), areas);
     let spawn = area_ids
         .iter()
-        .position(|id| *id == game::data::area::SPAWN_ID)
+        .position(|id| *id == game::data::settings().spawn.area)
         .unwrap_or(0);
     let mut worlds: Vec<App> = area_ids
         .iter()
@@ -381,7 +381,7 @@ fn select_areas(content: &Content, areas: Areas) -> Vec<game::data::area::Id> {
         Areas::Real => content.ids::<AreaDef>().collect(),
         // The bench area is one template instanced `count` times; the count is bounded only by the
         // machine, not by how many area rows the content table happens to define.
-        Areas::Bench(count) => vec![game::data::area::BENCH_ID; count],
+        Areas::Bench(count) => vec![game::data::settings().bench; count],
     }
 }
 

@@ -8,7 +8,9 @@ mod walk;
 
 use super::ActiveTileHighlight;
 use super::map::{self, InputAction};
+use crate::core::content::{Content, Fixture};
 use crate::core::render::transition::WorldViewSystems;
+use crate::systems::interface::CursorShape;
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage, PrimaryWindow};
 
@@ -132,20 +134,14 @@ fn apply_cursor(world: &mut World, cursor: Option<CursorIcon>) {
     }
 }
 
-pub(crate) fn default_cursor(world: &mut World) -> CursorIcon {
-    let handle = world
-        .resource::<AssetServer>()
-        .load("icons/cursors/pointer003.png");
-    image_cursor(handle, (0, 0))
-}
-
-pub(crate) fn image_cursor(handle: Handle<Image>, hotspot: (u16, u16)) -> CursorIcon {
+pub(crate) fn content_cursor(world: &World, shape: CursorShape) -> CursorIcon {
+    let cursor = shape.get(world.resource::<Content>());
     CursorIcon::Custom(CustomCursor::Image(CustomCursorImage {
-        handle,
+        handle: world.resource::<AssetServer>().load(cursor.image.0),
         texture_atlas: None,
         flip_x: false,
         flip_y: false,
         rect: None,
-        hotspot,
+        hotspot: (cursor.hotspot.x, cursor.hotspot.y),
     }))
 }

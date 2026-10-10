@@ -14,46 +14,39 @@ use crate::systems::interact::Counterpart;
 use crate::systems::item::{ItemCategory, ItemStack};
 use crate::systems::memory::Remembers;
 use crate::systems::rule::Not;
-use crate::systems::shop::{Buys, ShopBuys, ShopDef, ShopOffer, ShopReactions, Stock};
+use crate::systems::shop::{Buys, ShopBuys, ShopDef, ShopModule, ShopOffer, ShopReactions, Stock};
 use crate::systems::text::plain;
 
 crate::table! {
     MaraWares: ShopDef {
         title: "Mara's Wares",
-        keeper: Counterpart::Npc(NpcId::Mara),
-        requires: &[],
         mark: AttentionId::Merchant,
-        ask: Some(&[plain("Show me your wares.")]),
-        browsing: DialogueId::MaraShopping,
-        sells: &[
-            ShopOffer { item: ItemId::HealthPotion, count: 1, price: &[ItemStack::new(ItemId::Gold, 6)], stock: Stock::Unlimited, requires: &[] },
-            ShopOffer {
+        modules: &[
+            ShopModule::Sells(ShopOffer { item: ItemId::HealthPotion, count: 1, price: &[ItemStack::new(ItemId::Gold, 6)], stock: Stock::Unlimited, requires: &[] }),
+            ShopModule::Sells(ShopOffer {
                 item: ItemId::GreaterHealthPotion,
                 count: 1,
                 price: &[ItemStack::new(ItemId::Gold, 10), ItemStack::new(ItemId::BatWing, 2)],
                 stock: Stock::Limited { count: 3, restock: Seconds(600.0) },
                 requires: &[],
-            },
-            ShopOffer { item: ItemId::FishSteak, count: 2, price: &[ItemStack::new(ItemId::Gold, 5)], stock: Stock::Unlimited, requires: &[] },
-            ShopOffer {
+            }),
+            ShopModule::Sells(ShopOffer { item: ItemId::FishSteak, count: 2, price: &[ItemStack::new(ItemId::Gold, 5)], stock: Stock::Unlimited, requires: &[] }),
+            ShopModule::Sells(ShopOffer {
                 item: ItemId::BoneShield,
                 count: 1,
                 price: &[ItemStack::new(ItemId::Gold, 25)],
                 stock: Stock::Limited { count: 1, restock: Seconds(3600.0) },
                 requires: &[&Not(&Remembers(MemoryId::SidedWithOrcs))],
-            },
-        ],
-        buys: &[
-            ShopBuys {
+            }),
+            ShopModule::Buys(ShopBuys {
                 what: Buys::Item(ItemId::OrcTusk),
                 pays: &[ItemStack::new(ItemId::Gold, 1)],
                 requires: &[&Not(&Remembers(MemoryId::SidedWithOrcs))],
-            },
-            ShopBuys { what: Buys::Category(ItemCategory::Consumable), pays: &[ItemStack::new(ItemId::Gold, 2)], requires: &[] },
-            ShopBuys { what: Buys::Category(ItemCategory::Equipment), pays: &[ItemStack::new(ItemId::Gold, 6)], requires: &[] },
-            ShopBuys { what: Buys::Category(ItemCategory::Material), pays: &[ItemStack::new(ItemId::Gold, 1)], requires: &[] },
-        ],
-        reactions: Some(ShopReactions {
+            }),
+            ShopModule::Buys(ShopBuys { what: Buys::Category(ItemCategory::Consumable), pays: &[ItemStack::new(ItemId::Gold, 2)], requires: &[] }),
+            ShopModule::Buys(ShopBuys { what: Buys::Category(ItemCategory::Equipment), pays: &[ItemStack::new(ItemId::Gold, 6)], requires: &[] }),
+            ShopModule::Buys(ShopBuys { what: Buys::Category(ItemCategory::Material), pays: &[ItemStack::new(ItemId::Gold, 1)], requires: &[] }),
+            ShopModule::Reactions(ShopReactions {
             bought: &[
                 Line { by: Npc(NpcId::Mara), face: Some(Generic(Happy)), text: &[plain("A fine choice. You won't find better this side of the strait.")] },
                 Line { by: Npc(NpcId::Mara), face: Some(Individual(ExpressionId::MaraCounting)), text: &[plain("Pleasure doing business.")] },
@@ -66,71 +59,72 @@ crate::table! {
                 Line { by: Npc(NpcId::Mara), face: Some(Generic(Angry)), text: &[plain("Come back when your purse is heavier.")] },
             ],
         }),
+        ],
+        keeper: Counterpart::Npc(NpcId::Mara),
+        requires: &[],
+        ask: Some(&[plain("Show me your wares.")]),
+        browsing: DialogueId::MaraShopping,
     },
     BoneExchange: ShopDef {
         title: "Bone Exchange",
-        keeper: Counterpart::Npc(NpcId::Wren),
-        requires: &[],
         mark: AttentionId::Collector,
-        ask: Some(&[plain("I've brought bones.")]),
-        browsing: DialogueId::WrenShopping,
-        sells: &[
-            ShopOffer { item: ItemId::GreaterHealthPotion, count: 1, price: &[ItemStack::new(ItemId::BoneToken, 3)], stock: Stock::Unlimited, requires: &[] },
-            ShopOffer {
+        modules: &[
+            ShopModule::Sells(ShopOffer { item: ItemId::GreaterHealthPotion, count: 1, price: &[ItemStack::new(ItemId::BoneToken, 3)], stock: Stock::Unlimited, requires: &[] }),
+            ShopModule::Sells(ShopOffer {
                 item: ItemId::TribalHelmet,
                 count: 1,
                 price: &[ItemStack::new(ItemId::BoneToken, 12), ItemStack::new(ItemId::Gold, 20)],
                 stock: Stock::Limited { count: 1, restock: Seconds(3600.0) },
                 requires: &[],
-            },
+            }),
+            ShopModule::Buys(ShopBuys { what: Buys::Item(ItemId::Bone), pays: &[ItemStack::new(ItemId::BoneToken, 1)], requires: &[] }),
+            ShopModule::Buys(ShopBuys { what: Buys::Item(ItemId::BatWing), pays: &[ItemStack::new(ItemId::BoneToken, 1)], requires: &[] }),
         ],
-        buys: &[
-            ShopBuys { what: Buys::Item(ItemId::Bone), pays: &[ItemStack::new(ItemId::BoneToken, 1)], requires: &[] },
-            ShopBuys { what: Buys::Item(ItemId::BatWing), pays: &[ItemStack::new(ItemId::BoneToken, 1)], requires: &[] },
-        ],
-        reactions: None,
+        keeper: Counterpart::Npc(NpcId::Wren),
+        requires: &[],
+        ask: Some(&[plain("I've brought bones.")]),
+        browsing: DialogueId::WrenShopping,
     },
     HonestyBox: ShopDef {
         title: "Tobb's honesty box",
-        keeper: Counterpart::Prop(PropId::HonestyBox),
-        requires: &[],
         mark: AttentionId::Merchant,
-        ask: None,
-        browsing: DialogueId::HonestyBoxShopping,
-        sells: &[ShopOffer {
+        modules: &[
+            ShopModule::Sells(ShopOffer {
             item: ItemId::FishSteak,
             count: 1,
             price: &[ItemStack::new(ItemId::Gold, 3)],
             stock: Stock::Limited { count: 5, restock: Seconds(1800.0) },
             requires: &[],
-        }],
-        buys: &[],
-        reactions: None,
+        }),
+        ],
+        keeper: Counterpart::Prop(PropId::HonestyBox),
+        requires: &[],
+        ask: None,
+        browsing: DialogueId::HonestyBoxShopping,
     },
     UgraRemedies: ShopDef {
         title: "Clan remedies",
-        keeper: Counterpart::Npc(NpcId::Ugra),
-        requires: &[&Remembers(MemoryId::SidedWithOrcs)],
         mark: AttentionId::Merchant,
-        ask: Some(&[plain("Show me the clan's remedies.")]),
-        browsing: DialogueId::UgraShopping,
-        sells: &[
-            ShopOffer {
+        modules: &[
+            ShopModule::Sells(ShopOffer {
                 item: ItemId::GreaterHealthPotion,
                 count: 1,
                 price: &[ItemStack::new(ItemId::Bone, 4), ItemStack::new(ItemId::BatWing, 2)],
                 stock: Stock::Unlimited,
                 requires: &[],
-            },
-            ShopOffer {
+            }),
+            ShopModule::Sells(ShopOffer {
                 item: ItemId::TribalHelmet,
                 count: 1,
                 price: &[ItemStack::new(ItemId::OrcTusk, 8)],
                 stock: Stock::Limited { count: 1, restock: Seconds(3600.0) },
                 requires: &[],
-            },
+            }),
+            ShopModule::Buys(ShopBuys { what: Buys::Item(ItemId::OrcTusk), pays: &[ItemStack::new(ItemId::Gold, 2)], requires: &[] }),
         ],
-        buys: &[ShopBuys { what: Buys::Item(ItemId::OrcTusk), pays: &[ItemStack::new(ItemId::Gold, 2)], requires: &[] }],
-        reactions: None,
+        keeper: Counterpart::Npc(NpcId::Ugra),
+        requires: &[&Remembers(MemoryId::SidedWithOrcs)],
+        ask: Some(&[plain("Show me the clan's remedies.")]),
+        browsing: DialogueId::UgraShopping,
     },
 }

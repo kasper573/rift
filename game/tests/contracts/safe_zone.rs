@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::*;
 use game::core::math::Pos;
 use game::core::tiling::{TilePos, Tiles};
-use game::data;
 use game::data::npc::Id as NpcId;
 use game::systems::area::{self, Area, Wild};
 use game::systems::movement::{self, MoveRequest, Position, position};
@@ -9,7 +8,7 @@ use game::systems::npc::{self, Pack, ShownFor, SpawnNear, SpawnNpcs, Summoned};
 use game::systems::reach::{self, ReachAct};
 use game::systems::rule::{Encounter, Terms};
 
-use crate::support::{Sim, row};
+use crate::support::{Sim, row, spawn_area};
 
 struct Edge {
     lair: Pos<Tiles>,
@@ -55,7 +54,7 @@ fn place(sim: &mut Sim, entity: Entity, at: Pos<Tiles>) {
 }
 
 fn wild(sim: &mut Sim, what: NpcId, at: Pos<Tiles>) -> Entity {
-    let monster = npc::spawn(sim.world(), what, at, data::area::SPAWN_ID, Pack(u32::MAX));
+    let monster = npc::spawn(sim.world(), what, at, spawn_area(), Pack(u32::MAX));
     sim.world().entity_mut(monster).insert(Wild);
     monster
 }
@@ -90,7 +89,7 @@ fn hunted_by(sim: &mut Sim, hunter: Entity, player: Entity) -> bool {
 
 #[test]
 fn wild_monsters_never_set_foot_in_a_safe_zone() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     sim.join(1);
     let world = sim.world();
     let monsters: Vec<Entity> = world
@@ -112,7 +111,7 @@ fn wild_monsters_never_set_foot_in_a_safe_zone() {
 
 #[test]
 fn a_wild_monster_gives_up_a_player_who_reaches_a_safe_zone() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let edge = edge(sim.map());
     let player = sim.join(1);
     place(&mut sim, player, edge.doorstep);
@@ -133,7 +132,7 @@ fn a_wild_monster_gives_up_a_player_who_reaches_a_safe_zone() {
 
 #[test]
 fn a_summoned_monster_follows_its_target_into_a_safe_zone() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let edge = edge(sim.map());
     let player = sim.join(1);
     place(&mut sim, player, edge.doorstep);
@@ -151,7 +150,7 @@ fn a_summoned_monster_follows_its_target_into_a_safe_zone() {
 
 #[test]
 fn a_wild_flyer_flies_around_a_safe_zone_instead_of_over_it() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let map = sim.map();
     let ground = map.wild_grid.nodes();
     let (from, to) = ground

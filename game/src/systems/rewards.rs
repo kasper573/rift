@@ -12,16 +12,6 @@ use crate::systems::npc::Npc;
 use crate::systems::player::{Players, Xp};
 use crate::systems::visibility::Presence;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Reward {
-    Xp(u32),
-    Item {
-        amount: u32,
-        item: data::item::Id,
-        chance: Option<f32>,
-    },
-}
-
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct KillCredited {
     pub npc: data::npc::Id,
@@ -56,48 +46,25 @@ pub fn grant(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
                     credited,
                 });
             }
-            let mut drops: Vec<(data::item::Id, u32)> = Vec::new();
-            for &reward in npc.get(&content).rewards {
-                apply(
-                    reward,
-                    &mut RewardCtx {
-                        world,
-                        rewardee,
-                        rng: &mut rng,
-                        drops: &mut drops,
-                    },
-                );
+            let Some(loot) = npc.get(&content).loot() else {
+                continue;
+            };
+            if let Some(entity) = rewardee
+                && let Some(mut xp) = world.get_mut::<Xp>(entity)
+            {
+                xp.gain(loot.xp);
             }
+            let drops: Vec<(data::item::Id, u32)> = loot
+                .items
+                .iter()
+                .filter(|drop| {
+                    drop.chance
+                        .is_none_or(|percent| rng.rand_float() * 100.0 < percent)
+                })
+                .map(|drop| (drop.item, drop.amount))
+                .collect();
             let presence = world.get::<Presence>(died.entity).copied();
             scatter_drop(world, died.entity, &drops, reserved_by, presence);
         }
     });
-}
-
-struct RewardCtx<'a> {
-    world: &'a mut World,
-    rewardee: Option<Entity>,
-    rng: &'a mut Rng,
-    drops: &'a mut Vec<(data::item::Id, u32)>,
-}
-
-fn apply(reward: Reward, ctx: &mut RewardCtx) {
-    match reward {
-        Reward::Xp(amount) => {
-            if let Some(entity) = ctx.rewardee
-                && let Some(mut xp) = ctx.world.get_mut::<Xp>(entity)
-            {
-                xp.gain(amount);
-            }
-        }
-        Reward::Item {
-            amount,
-            item,
-            chance,
-        } => {
-            if chance.is_none_or(|percent| ctx.rng.rand_float() * 100.0 < percent) {
-                ctx.drops.push((item, amount));
-            }
-        }
-    }
 }

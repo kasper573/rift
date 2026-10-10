@@ -7,6 +7,7 @@ use crate::data;
 use crate::systems::effect::{self, Effect};
 use crate::systems::player::Xp;
 use crate::systems::rule::Requirement;
+use crate::systems::stat::Stat;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -29,9 +30,20 @@ impl crate::core::content::ContentRow for JobDef {
     const TABLE: &'static str = "job";
 }
 
+#[derive(Clone, Copy)]
 pub struct JobLevel {
-    pub exp: u32,
-    pub effects: &'static [Effect],
+    pub xp: u32,
+    pub stats: &'static [Stat],
+    pub chasing: bool,
+}
+
+impl JobLevel {
+    pub fn effects(&self) -> impl Iterator<Item = Effect> + '_ {
+        self.stats
+            .iter()
+            .map(|&stat| Effect::StatModifier(stat))
+            .chain(self.chasing.then_some(Effect::Chasing))
+    }
 }
 
 pub fn level(world: &World, entity: Entity) -> u32 {
@@ -44,7 +56,7 @@ pub fn level(world: &World, entity: Entity) -> u32 {
         .get(content)
         .levels
         .iter()
-        .filter(|tier| tier.exp <= xp)
+        .filter(|tier| tier.xp <= xp)
         .count() as u32
 }
 
@@ -59,7 +71,7 @@ fn level_effects(world: &World, entity: Entity) -> Vec<Effect> {
         .levels
         .iter()
         .take(level)
-        .flat_map(|tier| tier.effects.iter().copied())
+        .flat_map(JobLevel::effects)
         .collect()
 }
 
@@ -73,6 +85,10 @@ impl Requirement for MinLevel {
 
     fn describe(&self, _content: &Content) -> String {
         format!("Level {}", self.0)
+    }
+
+    fn min_level(&self) -> Option<u32> {
+        Some(self.0)
     }
 }
 

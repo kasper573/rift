@@ -1,6 +1,5 @@
 use bevy_ecs::prelude::*;
 use game::core::time::{UnixMillis, UtcHour, WallClock};
-use game::data;
 use game::data::prop::Id as PropId;
 use game::systems::dialogue::{Conversation, ConversationRequest};
 use game::systems::interact::InteractRequest;
@@ -8,7 +7,7 @@ use game::systems::item::Inventory;
 use game::systems::player::commands_locked;
 use game::systems::prop::Prop;
 
-use crate::support::{Sim, row};
+use crate::support::{Sim, row, spawn_area};
 
 const DAY: u64 = 24 * 3_600_000;
 
@@ -54,7 +53,7 @@ fn gold(sim: &mut Sim, player: Entity) -> u32 {
 
 #[test]
 fn reading_a_map_object_opens_its_conversation_with_the_object() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let board = prop(&mut sim, row("HarbourBoard"));
 
@@ -67,7 +66,7 @@ fn reading_a_map_object_opens_its_conversation_with_the_object() {
 
 #[test]
 fn a_chest_gives_its_gold_once_a_day() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let chest = prop(&mut sim, row("TideChest"));
     let before = gold(&mut sim, player);
@@ -93,7 +92,7 @@ fn a_chest_gives_its_gold_once_a_day() {
 
 #[test]
 fn two_players_open_the_same_chest_for_themselves() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let first = sim.join(1);
     let second = sim.join(2);
     let chest = prop(&mut sim, row("TideChest"));

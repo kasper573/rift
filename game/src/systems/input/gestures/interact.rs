@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy::window::CursorIcon;
 
 use crate::core::render;
-use crate::systems::input::gestures::{Gesture, image_cursor};
+use crate::systems::input::gestures::{Gesture, content_cursor};
 
 pub struct InteractGesture;
 
@@ -26,8 +26,7 @@ impl Gesture for InteractGesture {
     fn cursor(&self, world: &mut World) -> Option<CursorIcon> {
         let target = target(world)?;
         let verb = interact::interaction_of(world, target)?.verb;
-        let handle = world.resource::<AssetServer>().load(verb.cursor());
-        Some(image_cursor(handle, (4, 4)))
+        Some(content_cursor(world, verb.cursor()))
     }
 }
 

@@ -2,7 +2,8 @@ use crate::systems::player::session;
 use bevy::prelude::*;
 use bevy::window::CursorIcon;
 
-use crate::systems::input::gestures::{Gesture, default_cursor};
+use crate::systems::input::gestures::{Gesture, content_cursor};
+use crate::systems::interface::CursorShape;
 
 pub struct LockedGesture;
 
@@ -18,6 +19,6 @@ impl Gesture for LockedGesture {
     fn drive(&self, _world: &mut World, _start: bool) {}
 
     fn cursor(&self, world: &mut World) -> Option<CursorIcon> {
-        Some(default_cursor(world))
+        Some(content_cursor(world, CursorShape::Default))
     }
 }

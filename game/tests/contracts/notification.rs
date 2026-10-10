@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use bevy_terminal::TerminalInput;
-use game::core::audio::playback::SfxId;
+use game::core::content::Fixture;
 use game::core::math::Offset;
 use game::core::time::Seconds;
 use game::data;
@@ -12,6 +12,7 @@ use game::systems::area::transition::{self, Crossing};
 use game::systems::dialogue::Conversation;
 use game::systems::history::{History, HistoryTopic};
 use game::systems::input::map::InputMap;
+use game::systems::interface::InterfaceSound;
 use game::systems::memory;
 use game::systems::movement::{Position, position};
 use game::systems::notification::{self, Notification, NotificationKind, NotificationSent};
@@ -22,7 +23,7 @@ use game::systems::rule::{Encounter, Terms};
 use game::systems::terminal::TerminalKind as TerminalId;
 use game::systems::text::LineText;
 
-use crate::support::{Sim, content, later, row, settle, spoken};
+use crate::support::{Sim, content, later, row, settle, spawn_area, spoken};
 
 fn told(sim: &Sim, client: u32) -> Vec<Notification> {
     sim.notified(client)
@@ -81,7 +82,7 @@ fn intros(sim: &Sim, client: u32) -> usize {
 
 #[test]
 fn stepping_onto_the_pier_narrates_the_gulls_once() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let start = position(sim.world(), player).expect("position");
     let pier = sim
@@ -113,13 +114,16 @@ fn stepping_onto_the_pier_narrates_the_gulls_once() {
 
 #[test]
 fn every_notification_is_recorded_when_it_is_raised() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     notification::notify(sim.world(), player, spoken(row("Gulls")));
     notification::record(
         sim.world(),
         player,
-        &Notification::new(NotificationKind::error(), LineText::plain("Needs 10 Gold")),
+        &Notification::new(
+            NotificationKind::error(content()),
+            LineText::plain("Needs 10 Gold"),
+        ),
     );
 
     let records = recorded(&mut sim, player);
@@ -136,7 +140,7 @@ fn every_notification_is_recorded_when_it_is_raised() {
 #[test]
 fn the_orc_chief_speaks_to_players_on_maras_errand_from_its_own_body() {
     let accept = AcceptQuest(row("TusksForTheChief"));
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let bystander = sim.join(2);
     sim.world().get_mut::<Xp>(player).expect("xp").gain(100_000);
@@ -158,7 +162,7 @@ fn the_orc_chief_speaks_to_players_on_maras_errand_from_its_own_body() {
         sim.world(),
         row("OrcChief"),
         at + Offset::new(2.0, 0.0),
-        data::area::SPAWN_ID,
+        spawn_area(),
         Pack(u32::MAX),
     );
     settle(&mut sim);
@@ -186,7 +190,7 @@ fn the_orc_chief_speaks_to_players_on_maras_errand_from_its_own_body() {
 
 #[test]
 fn speech_names_no_body_when_the_speaker_is_someone_else() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let tobb = sim
         .world()
@@ -214,7 +218,7 @@ fn speech_names_no_body_when_the_speaker_is_someone_else() {
 
 #[test]
 fn an_area_intro_plays_on_the_first_arrival_only_and_never_for_the_start_zone() {
-    let mut island = Sim::area(data::area::SPAWN_ID);
+    let mut island = Sim::area(spawn_area());
     let player = island.join(1);
     settle(&mut island);
     assert_eq!(intros(&island, 1), 0);
@@ -228,7 +232,7 @@ fn an_area_intro_plays_on_the_first_arrival_only_and_never_for_the_start_zone() 
         vec![spoken(row("ForestIntro"))]
     );
 
-    let (mut island, player) = travel(&mut forest, player, data::area::SPAWN_ID);
+    let (mut island, player) = travel(&mut forest, player, spawn_area());
     assert_eq!(intros(&island, 1), 0);
 
     let (forest, _) = travel(&mut island, player, row("Forest"));
@@ -238,7 +242,7 @@ fn an_area_intro_plays_on_the_first_arrival_only_and_never_for_the_start_zone() 
 #[test]
 fn completing_a_quest_and_reaching_a_level_are_milestones() {
     let accept = AcceptQuest(row("TusksForTheChief"));
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     sim.world().get_mut::<Xp>(player).expect("xp").gain(100_000);
     settle(&mut sim);
@@ -283,7 +287,7 @@ fn completing_a_quest_and_reaching_a_level_are_milestones() {
 
 #[test]
 fn the_same_line_from_the_same_speaker_goes_out_once_per_window_and_merges_in_history() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     for _ in 0..25 {
         notification::notify(sim.world(), player, spoken(row("Gulls")));
@@ -308,7 +312,7 @@ fn the_same_line_from_the_same_speaker_goes_out_once_per_window_and_merges_in_hi
 
 #[test]
 fn a_flood_goes_out_in_a_burst_and_then_at_the_refill_rate() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     for line in 0..15 {
         notification::notify(
@@ -339,9 +343,12 @@ fn a_flood_goes_out_in_a_burst_and_then_at_the_refill_rate() {
 
 #[test]
 fn errors_and_feed_lines_answer_every_action() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
-    let refused = Notification::new(NotificationKind::error(), LineText::plain("Needs 10 Gold"));
+    let refused = Notification::new(
+        NotificationKind::error(content()),
+        LineText::plain("Needs 10 Gold"),
+    );
     for _ in 0..20 {
         notification::notify(sim.world(), player, refused.clone());
     }
@@ -370,7 +377,7 @@ fn make_admin(sim: &mut Sim, client: u32) {
 
 #[test]
 fn an_admin_alert_reaches_every_player_in_every_area_for_a_minute() {
-    let mut island = Sim::area(data::area::SPAWN_ID);
+    let mut island = Sim::area(spawn_area());
     let mut forest = Sim::area(row("Forest"));
     island.join(1);
     forest.join(2);
@@ -383,7 +390,7 @@ fn an_admin_alert_reaches_every_player_in_every_area_for_a_minute() {
     let alert = Notification {
         kind: NotificationKind::Alert {
             label: "Server".into(),
-            sfx: Some(SfxId::UiChime),
+            sfx: Some(InterfaceSound::UiChime.id(content())),
         },
         text: LineText::plain(message),
         lasts: Some(Seconds(60.0)),
@@ -394,7 +401,7 @@ fn an_admin_alert_reaches_every_player_in_every_area_for_a_minute() {
 
 #[test]
 fn an_admin_alert_longer_than_a_line_is_refused() {
-    let mut island = Sim::area(data::area::SPAWN_ID);
+    let mut island = Sim::area(spawn_area());
     island.join(1);
     make_admin(&mut island, 1);
 
@@ -410,7 +417,7 @@ fn an_admin_alert_longer_than_a_line_is_refused() {
 
 #[test]
 fn players_without_the_admin_role_cannot_notify() {
-    let mut island = Sim::area(data::area::SPAWN_ID);
+    let mut island = Sim::area(spawn_area());
     island.join(1);
 
     notify_as(&mut island, 1, TerminalId::Global, "Free gold at the pier!");

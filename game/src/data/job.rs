@@ -1,4 +1,3 @@
-use crate::systems::effect::Effect;
 use crate::systems::job::{JobDef, JobLevel};
 use crate::systems::stat::{Stat, StatKind};
 
@@ -7,23 +6,24 @@ crate::table! {
         name: "Adventurer",
         levels: &[
             JobLevel {
-                exp: 0,
-                effects: &[],
+                xp: 0,
+                stats: &[],
+                chasing: false,
             },
             JobLevel {
-                exp: 30,
-                effects: &[Effect::StatModifier(Stat { kind: StatKind::MaxHealth, value: 10.0 })],
+                xp: 30,
+                stats: &[Stat { kind: StatKind::MaxHealth, value: 10.0 }],
+                chasing: false,
             },
             JobLevel {
-                exp: 90,
-                effects: &[Effect::StatModifier(Stat { kind: StatKind::Damage, value: 2.0 })],
+                xp: 90,
+                stats: &[Stat { kind: StatKind::Damage, value: 2.0 }],
+                chasing: false,
             },
             JobLevel {
-                exp: 200,
-                effects: &[
-                    Effect::StatModifier(Stat { kind: StatKind::MaxHealth, value: 15.0 }),
-                    Effect::StatModifier(Stat { kind: StatKind::Damage, value: 2.0 }),
-                ],
+                xp: 200,
+                stats: &[Stat { kind: StatKind::MaxHealth, value: 15.0 }, Stat { kind: StatKind::Damage, value: 2.0 }],
+                chasing: false,
             },
         ],
     },

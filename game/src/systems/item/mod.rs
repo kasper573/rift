@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::audio::playback::SfxId;
-use crate::core::content::Content;
+use crate::core::content::{Content, ContentRow, ModuleRule, ModuleSet};
 use crate::core::math::{Offset, Pos};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{Seconds, WallClock};
@@ -28,7 +28,7 @@ use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, Owner, commands_locked, conn_player, sender_player};
 use crate::systems::reach::{self, Pursuit, ReachAct};
 use crate::systems::rule::{Encounter, Outcome, Requirement, RuleContext, Terms};
-use crate::systems::stat;
+use crate::systems::stat::{self, Stat};
 use crate::systems::text::LineText;
 use crate::systems::visibility::{self, Presence, seen_by};
 
@@ -70,7 +70,7 @@ impl ItemStack {
     }
 
     pub fn describe(self, content: &Content) -> String {
-        format!("{} {}", self.count, self.item.get(content).display_name)
+        format!("{} {}", self.count, self.item.get(content).name)
     }
 }
 
@@ -87,7 +87,7 @@ impl ExchangeRefusal {
                 format!(
                     "Needs {} more {}",
                     stack.count,
-                    stack.item.get(content).display_name
+                    stack.item.get(content).name
                 )
             }
             ExchangeRefusal::NoRoom { slots: 1 } => "Needs 1 free slot".to_owned(),
@@ -260,18 +260,51 @@ pub struct ItemsDropped {
 
 #[derive(Clone)]
 pub struct ItemDef {
-    pub display_name: &'static str,
-    pub flavor: &'static str,
+    pub name: &'static str,
     pub icon: AssetRef,
     pub sfx: ItemSfx,
-    pub stackable: Option<Stackable>,
-    pub effects: &'static [Effect],
     pub kind: ItemKind,
-    pub flags: &'static [ItemFlag],
+    pub modules: &'static [ItemModule],
 }
 
-impl crate::core::content::ContentRow for ItemDef {
+impl ContentRow for ItemDef {
     const TABLE: &'static str = "item";
+}
+
+impl ModuleSet for ItemDef {
+    type Module = ItemModule;
+
+    fn modules(&self) -> &[ItemModule] {
+        self.modules
+    }
+
+    fn rule(module: &ItemModule) -> ModuleRule {
+        match module {
+            ItemModule::Stat(_) => ModuleRule::AnyNumber,
+            _ => ModuleRule::AtMostOne,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum ItemModule {
+    Flavor(Flavor),
+    Stack(Stack),
+    Stat(Stat),
+    Chasing,
+    QuestItem,
+    Bound,
+    Currency,
+}
+
+#[derive(Clone, Copy)]
+pub struct Flavor {
+    pub text: &'static str,
+}
+
+#[derive(Clone, Copy)]
+pub struct Stack {
+    pub max: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -310,12 +343,47 @@ impl ItemCategory {
 }
 
 impl ItemDef {
+    pub fn flavor(&self) -> Option<&'static str> {
+        self.modules.iter().find_map(|module| match module {
+            ItemModule::Flavor(flavor) => Some(flavor.text),
+            _ => None,
+        })
+    }
+
     pub fn stack_max(&self) -> u32 {
-        self.stackable.map_or(1, |stackable| stackable.max)
+        self.modules
+            .iter()
+            .find_map(|module| match module {
+                ItemModule::Stack(stack) => Some(stack.max),
+                _ => None,
+            })
+            .unwrap_or(1)
+    }
+
+    pub fn stats(&self) -> impl Iterator<Item = Stat> + '_ {
+        self.modules.iter().filter_map(|module| match module {
+            ItemModule::Stat(stat) => Some(*stat),
+            _ => None,
+        })
+    }
+
+    pub fn effects(&self) -> impl Iterator<Item = Effect> + '_ {
+        self.modules.iter().filter_map(|module| match module {
+            ItemModule::Stat(stat) => Some(Effect::StatModifier(*stat)),
+            ItemModule::Chasing => Some(Effect::Chasing),
+            _ => None,
+        })
     }
 
     pub fn has(&self, flag: ItemFlag) -> bool {
-        self.flags.contains(&flag)
+        self.modules.iter().any(|module| {
+            matches!(
+                (module, flag),
+                (ItemModule::QuestItem, ItemFlag::Quest)
+                    | (ItemModule::Bound, ItemFlag::Bound)
+                    | (ItemModule::Currency, ItemFlag::Currency)
+            )
+        })
     }
 
     pub fn bound(&self) -> bool {
@@ -337,14 +405,14 @@ impl ItemDef {
         match &self.kind {
             ItemKind::Consumable {
                 health_bonus,
-                duration,
+                lasts,
             } => {
                 ctx.heal(*health_bonus);
                 ctx.consume();
-                ctx.apply_effects(*duration);
+                ctx.apply_effects(*lasts);
             }
-            ItemKind::Equipment { slot, requirements } => {
-                ctx.equip(*slot, requirements);
+            ItemKind::Equipment { slot, requires } => {
+                ctx.equip(*slot, requires);
             }
             ItemKind::Usable { then } => ctx.settle(then),
             ItemKind::Resource => {}
@@ -356,11 +424,11 @@ impl ItemDef {
 pub enum ItemKind {
     Consumable {
         health_bonus: f32,
-        duration: Seconds,
+        lasts: Seconds,
     },
     Equipment {
         slot: equipment::EquipmentSlot,
-        requirements: &'static [&'static dyn Requirement],
+        requires: &'static [&'static dyn Requirement],
     },
     Usable {
         then: &'static [&'static dyn Outcome],
@@ -376,15 +444,10 @@ impl ItemKind {
 
 #[derive(Clone)]
 pub struct ItemSfx {
-    pub on_use: Option<SfxId>,
     pub pickup: SfxId,
     pub trade: SfxId,
     pub drop: SfxId,
-}
-
-#[derive(Clone, Copy)]
-pub struct Stackable {
-    pub max: u32,
+    pub on_use: Option<SfxId>,
 }
 
 pub struct UseCtx<'a> {
@@ -415,7 +478,10 @@ impl UseCtx<'_> {
             notification::notify(
                 self.world,
                 self.actor,
-                Notification::new(NotificationKind::error(), LineText::plain(refusal.0)),
+                Notification::new(
+                    NotificationKind::error(self.world.resource::<Content>()),
+                    LineText::plain(refusal.0),
+                ),
             );
         }
     }
@@ -625,7 +691,7 @@ fn carried(world: &World, entity: Entity) -> Vec<Effect> {
                 .iter()
                 .map(|slot| slot.item.get(content))
                 .filter(|def| def.kind.carried())
-                .flat_map(|def| def.effects.iter().copied())
+                .flat_map(|def| def.effects())
                 .collect()
         })
         .unwrap_or_default()
@@ -677,15 +743,15 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
 
 fn instantiate_effects(world: &mut World, actor: Entity, item: Id, duration: Seconds) {
     let content = world.resource::<Content>().clone();
-    let effects = item.get(&content).effects;
-    if effects.is_empty() {
+    let until = world.resource::<WallClock>().now.after(duration);
+    let entries = item
+        .get(&content)
+        .effects()
+        .map(|effect| TimedEffect { effect, until })
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
         return;
     }
-    let until = world.resource::<WallClock>().now.after(duration);
-    let entries = effects
-        .iter()
-        .map(|&effect| TimedEffect { effect, until })
-        .collect::<Vec<_>>();
     match world.get_mut::<TimedEffects>(actor) {
         Some(mut timed) => timed.0.extend(entries),
         None => {

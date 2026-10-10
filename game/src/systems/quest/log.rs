@@ -12,10 +12,11 @@ use super::card::{
 use super::{
     ActiveQuest, FinishedQuest, Giver, QUEST_LOG_CAP, QuestId, QuestLog, QuestRequest, QuestResult,
 };
-use crate::core::content::Content;
+use crate::core::content::{Content, Fixture};
 use crate::systems::dialogue::ChoiceReveal;
 use crate::systems::hud::{HudAudience, Window};
 use crate::systems::input::map::{ActionInput, InputAction};
+use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::widget::slot_note_source;
 use crate::systems::item::{Inventory, ItemFlag, ItemStack};
 use crate::systems::player::session::Viewpoint;
@@ -48,8 +49,8 @@ impl Window for QuestLogWindow {
     fn toggle(&self) -> InputAction {
         InputAction::ToggleQuestLog
     }
-    fn icon(&self) -> &'static str {
-        "icons/misc/book.png"
+    fn icon(&self) -> InterfaceIcon {
+        InterfaceIcon::QuestLog
     }
     fn order(&self) -> u32 {
         3
@@ -290,7 +291,7 @@ fn row(
         .then(|| -> Box<dyn Scene> {
             Box::new(icon(
                 assets,
-                crate::core::assets::AssetRef("icons/cursors/eye001.png"),
+                InterfaceIcon::Tracked.get(content).image,
                 14.0,
             ))
         })
@@ -406,7 +407,7 @@ fn detail(
         Some(&page.inventory),
     );
     let finished = page.finished(quest);
-    parts.extend(def.objectives.iter().zip(progress).map(
+    parts.extend(def.objectives().zip(progress).map(
         |(objective, mut progress)| -> Box<dyn Scene> {
             let color = match finished.map(|finished| finished.result) {
                 Some(QuestResult::Completed) => palette::EMERALD_80,
@@ -433,11 +434,11 @@ fn detail(
         parts.push(Box::new(section("Rewards")));
         parts.push(Box::new(reward_chips(content, assets, def)));
     }
-    if def.reveals(ChoiceReveal::Gains) && !def.pick_one.is_empty() && finished.is_none() {
+    if def.reveals(ChoiceReveal::Gains) && !def.pick_one().is_empty() && finished.is_none() {
         parts.push(Box::new(section("Pick one when you return")));
         parts.push(Box::new(picks(content, assets, def)));
     }
-    if def.time_limit.is_some() {
+    if def.time_limit().is_some() {
         parts.push(Box::new(section("If time runs out")));
         parts.push(Box::new(ui::styled_text(
             format!("The quest fails. {}.", def.retry_hint(content)),
@@ -494,7 +495,7 @@ fn timer(
     bsn! {
         Node { column_gap: Val::Px({spacing::L}), align_items: AlignItems::Center, width: Val::Percent(100.0) }
         Children [
-            {EntityScene(icon(assets, crate::core::assets::AssetRef("icons/cursors/sandclock001.png"), 16.0))},
+            {EntityScene(icon(assets, InterfaceIcon::Timed.get(content).image, 16.0))},
             {EntityScene(live_text(log, quest, Countdown::LeftDetail, palette::AMBER_80, typography::LABEL))},
             ( Node { flex_grow: 1.0 } Children [ {EntityScene(live_bar(content, log, quest))} ] ),
         ]
@@ -560,17 +561,12 @@ fn footer(page: &Page, quest: QuestId) -> impl Scene + use<> {
 fn confirm_abandon(world: &mut World, quest: QuestId) {
     let content = world.resource::<Content>().clone();
     let def = quest.get(&content);
-    let taken = def.grants.iter().map(|stack| {
-        format!(
-            "{} is taken from your bag.",
-            stack.item.get(&content).display_name
-        )
-    });
+    let taken = def
+        .grants()
+        .iter()
+        .map(|stack| format!("{} is taken from your bag.", stack.item.get(&content).name));
     let again = match def.giver {
-        Giver::Item(item) => format!(
-            "Use the {} to start it again.",
-            item.get(&content).display_name
-        ),
+        Giver::Item(item) => format!("Use the {} to start it again.", item.get(&content).name),
         giver => format!("{} will offer the quest again.", giver.name(&content)),
     };
     let body = taken
@@ -612,7 +608,7 @@ fn quest_note(world: &World, stack: ItemStack) -> Option<String> {
                 active
                     .quest
                     .get(content)
-                    .grants
+                    .grants()
                     .iter()
                     .any(|grant| grant.item == stack.item)
             })

@@ -80,7 +80,19 @@ fn main() {
         )
         .insert_resource(ClearColor(theme().surface_inset.base))
         .insert_resource(CurrentScene(opened))
-        .add_plugins(ui::UiPlugin)
+        .add_plugins(ui::UiPlugin {
+            fonts: [
+                "fonts/circular-400-normal.ttf",
+                "fonts/circular-500-normal.ttf",
+                "fonts/circular-700-normal.ttf",
+                "fonts/lato-400-normal.ttf",
+                "fonts/lato-400-italic.ttf",
+                "fonts/lato-700-normal.ttf",
+                "fonts/lato-700-italic.ttf",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+        })
         .add_systems(Startup, setup)
         .add_systems(
             Update,

@@ -1,25 +1,18 @@
 use game::core::tiling::Tiles;
-use game::data;
 use game::systems::combat::AttackRequest;
 use game::systems::movement::position;
 use game::systems::npc::{self, Pack};
 use game::systems::stat::{self, StatKind};
 
-use crate::support::{Sim, row};
+use crate::support::{Sim, row, spawn_area};
 
 #[test]
 fn an_attack_walks_into_range_and_strikes() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let start = position(sim.world(), player).expect("position");
     let spot = sim.walkable_near(start, Tiles(3.0), Tiles(5.0));
-    let orc = npc::spawn(
-        sim.world(),
-        row("Orc"),
-        spot,
-        data::area::SPAWN_ID,
-        Pack(u32::MAX),
-    );
+    let orc = npc::spawn(sim.world(), row("Orc"), spot, spawn_area(), Pack(u32::MAX));
     let full = stat::effective(sim.world(), orc, StatKind::Health);
 
     sim.send(1, AttackRequest { target: orc });
@@ -40,7 +33,7 @@ fn an_attacked_monster_is_fought_until_it_falls() {
     use game::systems::npc::Npc;
 
     for seed in 0..6 {
-        let mut sim = Sim::area(data::area::SPAWN_ID);
+        let mut sim = Sim::area(spawn_area());
         sim.world()
             .insert_resource(game::core::math::Rng::new(seed));
         let player = sim.join(1);

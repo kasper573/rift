@@ -1,3 +1,4 @@
+use crate::systems::interface::InterfaceIcon;
 use crate::systems::job;
 use crate::systems::player::session;
 use crate::systems::stat;
@@ -22,8 +23,8 @@ impl Window for StatsWindow {
     fn toggle(&self) -> InputAction {
         InputAction::ToggleStats
     }
-    fn icon(&self) -> &'static str {
-        "icons/misc/book.png"
+    fn icon(&self) -> InterfaceIcon {
+        InterfaceIcon::Stats
     }
     fn order(&self) -> u32 {
         2

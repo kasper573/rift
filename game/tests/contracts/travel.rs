@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::*;
 use game::core::math::{Pos, Rect};
 use game::core::tiling::{TilePos, Tiles};
-use game::data;
 use game::data::memory::Id as MemoryId;
 use game::systems::area::transition::Crossing;
 use game::systems::dialogue::Conversation;
@@ -12,7 +11,7 @@ use game::systems::player::commands_locked;
 
 use crate::support::{
     Sim, content, conversation, count, errors, give, heard_the_news, labels, leave, locked, pick,
-    row, spoken, talk, townsperson,
+    row, spawn_area, spoken, talk, townsperson,
 };
 
 fn forest_road(sim: &Sim) -> (u32, Rect<Tiles>) {
@@ -56,7 +55,7 @@ fn crossed(sim: &mut Sim, player: Entity, within: f32) -> bool {
 
 #[test]
 fn without_a_pass_the_forest_road_is_ground_and_ilsa_halts_you_on_it() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let ilsa = townsperson(&mut sim, row("Ilsa"));
     let (_, road) = forest_road(&sim);
@@ -83,7 +82,7 @@ fn without_a_pass_the_forest_road_is_ground_and_ilsa_halts_you_on_it() {
 
 #[test]
 fn ilsa_halts_you_each_time_you_step_back_onto_the_road() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let (_, road) = forest_road(&sim);
     head_for_the_forest_road(&mut sim, 1);
@@ -101,7 +100,7 @@ fn ilsa_halts_you_each_time_you_step_back_onto_the_road() {
 
 #[test]
 fn a_road_pass_opens_the_forest_road_without_a_word_from_ilsa() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     give(&mut sim, player, row("RoadPass"), 1);
 
@@ -114,7 +113,7 @@ fn a_road_pass_opens_the_forest_road_without_a_word_from_ilsa() {
 
 #[test]
 fn walking_past_the_forest_road_is_no_business_of_ilsas() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let (_, road) = forest_road(&sim);
     let past = Pos::new(road.center().x - 2.0, road.center().y - 1.0);
@@ -128,7 +127,7 @@ fn walking_past_the_forest_road_is_no_business_of_ilsas() {
 
 #[test]
 fn ilsa_trades_a_road_pass_for_a_fish_and_bram_only_looks_at_it() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
     give(&mut sim, player, row("FishSteak"), 1);
@@ -154,7 +153,7 @@ fn ilsa_trades_a_road_pass_for_a_fish_and_bram_only_looks_at_it() {
 
 #[test]
 fn bram_sails_for_twenty_gold_and_the_crossing_is_narrated() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
     give(&mut sim, player, row("Gold"), 25);
@@ -175,7 +174,7 @@ fn bram_sails_for_twenty_gold_and_the_crossing_is_narrated() {
 
 #[test]
 fn ilsa_has_a_word_only_for_friends_of_the_clan() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     heard_the_news(&mut sim, player);
     remember(&mut sim, player, row("SidedWithOrcs"));
@@ -188,7 +187,7 @@ fn ilsa_has_a_word_only_for_friends_of_the_clan() {
 
 #[test]
 fn crossing_the_forest_road_on_the_way_elsewhere_is_no_business_of_ilsas() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let (_, road) = forest_road(&sim);
     let before = Pos::new(road.center().x, road.center().y + 3.0);

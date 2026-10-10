@@ -4,7 +4,7 @@ use game::systems::memory::{Forget, Memory, Remember, Remembers};
 use game::systems::movement::position;
 use game::systems::rule::{Encounter, Requirement, Terms};
 
-use crate::support::{Sim, content, row};
+use crate::support::{Sim, content, row, spawn_area};
 
 const HOUR: u64 = 3_600_000;
 
@@ -94,7 +94,7 @@ fn daily_memories_end_at_the_reset_hour() {
 
 #[test]
 fn leaving_an_area_forgets_what_only_lasts_there() {
-    let mut sim = Sim::area(game::data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let clock = *sim.world().resource::<WallClock>();
     let dest = position(sim.world(), player).expect("position");
@@ -120,7 +120,7 @@ fn leaving_an_area_forgets_what_only_lasts_there() {
 fn choices_write_memory_and_requirements_read_it() {
     let side = Remember(row("SidedWithOrcs"));
     let unside = Forget(row("SidedWithOrcs"));
-    let mut sim = Sim::area(game::data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let sided = Remembers(row("SidedWithOrcs"));
 

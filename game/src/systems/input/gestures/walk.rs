@@ -7,9 +7,11 @@ use crate::systems::{area, combat};
 use bevy::prelude::*;
 use bevy::window::CursorIcon;
 
+use crate::core::content::{Content, Fixture};
 use crate::core::render;
-use crate::systems::input::gestures::{ActiveTileHighlight, Gesture, image_cursor};
+use crate::systems::input::gestures::{ActiveTileHighlight, Gesture, content_cursor};
 use crate::systems::input::map::{self, InputAction};
+use crate::systems::interface::{CursorShape, InterfaceIcon};
 
 const MOVE_REPEAT: Duration = Duration::from_millis(333);
 
@@ -43,21 +45,20 @@ impl Gesture for WalkGesture {
 
     fn cursor(&self, world: &mut World) -> Option<CursorIcon> {
         target(world)?;
-        let held = map::pressed(world, InputAction::Interact);
-        let path = if held {
-            "icons/cursors/pointer011.png"
+        let shape = if map::pressed(world, InputAction::Interact) {
+            CursorShape::WalkHeld
         } else {
-            "icons/cursors/pointer010.png"
+            CursorShape::Walk
         };
-        let handle = world.resource::<AssetServer>().load(path);
-        Some(image_cursor(handle, (32, 32)))
+        Some(content_cursor(world, shape))
     }
 
     fn tile_highlight(&self, world: &mut World) -> Option<ActiveTileHighlight> {
         let pos = target(world)?;
-        let image = world
-            .resource::<AssetServer>()
-            .load("icons/crosshairs/white/crosshair026.png");
+        let target = InterfaceIcon::WalkTarget
+            .get(world.resource::<Content>())
+            .image;
+        let image = world.resource::<AssetServer>().load(target.0);
         Some(ActiveTileHighlight { pos, image })
     }
 }

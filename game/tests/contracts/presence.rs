@@ -1,7 +1,6 @@
 use std::sync::LazyLock;
 
 use game::core::tiling::Tiles;
-use game::data;
 use game::systems::combat::{AttackRequest, Attitude};
 use game::systems::memory::Remembers;
 use game::systems::movement::position;
@@ -12,23 +11,17 @@ use game::systems::rule::Not;
 use game::systems::stat::{self, StatKind};
 use game::systems::visibility::{self, Presence};
 
-use crate::support::{CLOCK, Sim, content, row};
+use crate::support::{CLOCK, Sim, content, row, spawn_area};
 
 fn orc_near(sim: &mut Sim, player: bevy_ecs::entity::Entity) -> bevy_ecs::entity::Entity {
     let start = position(sim.world(), player).expect("position");
     let spot = sim.walkable_near(start, Tiles(2.0), Tiles(4.0));
-    npc::spawn(
-        sim.world(),
-        row("Orc"),
-        spot,
-        data::area::SPAWN_ID,
-        Pack(u32::MAX),
-    )
+    npc::spawn(sim.world(), row("Orc"), spot, spawn_area(), Pack(u32::MAX))
 }
 
 #[test]
 fn an_npc_spawned_for_one_player_cannot_be_fought_by_another() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let owner = sim.join(1);
     sim.join(2);
     let orc = orc_near(&mut sim, owner);
@@ -50,7 +43,7 @@ fn an_npc_spawned_for_one_player_cannot_be_fought_by_another() {
 
 #[test]
 fn a_friendly_npc_cannot_be_attacked() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let orc = orc_near(&mut sim, player);
     sim.world().entity_mut(orc).insert(Attitude::Friendly);
@@ -65,7 +58,7 @@ fn a_friendly_npc_cannot_be_attacked() {
 
 #[test]
 fn a_monster_spawned_for_one_player_ignores_everyone_else() {
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let owner = sim.join(1);
     let bystander = sim.join(2);
     let start = position(sim.world(), bystander).expect("position");
@@ -74,7 +67,7 @@ fn a_monster_spawned_for_one_player_ignores_everyone_else() {
         sim.world(),
         row("Skeleton"),
         spot,
-        data::area::SPAWN_ID,
+        spawn_area(),
         Pack(u32::MAX),
     );
     sim.world()
@@ -97,7 +90,7 @@ fn presence_by_requirement_follows_the_players_memory() {
     static PELL_ALIVE: LazyLock<Not> = LazyLock::new(|| Not(&*PELL_DEAD));
     static SHOWN: LazyLock<[&dyn game::systems::rule::Requirement; 1]> =
         LazyLock::new(|| [&*PELL_ALIVE]);
-    let mut sim = Sim::area(data::area::SPAWN_ID);
+    let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let orc = orc_near(&mut sim, player);
     sim.world().entity_mut(orc).insert(Presence::When(&*SHOWN));

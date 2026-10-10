@@ -8,7 +8,7 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
-use crate::core::content::Content;
+use crate::core::content::{Content, ContentRow, ModuleRule, ModuleSet};
 use crate::core::time::{Seconds, UnixMillis, WallClock};
 use crate::data::attention::Id as AttentionId;
 use crate::data::dialogue::Id as DialogueId;
@@ -38,20 +38,64 @@ pub fn register(app: &mut App) {
 #[derive(Clone)]
 pub struct ShopDef {
     pub title: &'static str,
+    pub mark: AttentionId,
+    pub modules: &'static [ShopModule],
     pub keeper: Counterpart,
     pub requires: &'static [&'static dyn Requirement],
-    pub mark: AttentionId,
     pub ask: Option<&'static [Span]>,
     pub browsing: DialogueId,
-    pub sells: &'static [ShopOffer],
-    pub buys: &'static [ShopBuys],
-    pub reactions: Option<ShopReactions>,
 }
 
-impl crate::core::content::ContentRow for ShopDef {
+impl ContentRow for ShopDef {
     const TABLE: &'static str = "shop";
 }
 
+impl ModuleSet for ShopDef {
+    type Module = ShopModule;
+
+    fn modules(&self) -> &[ShopModule] {
+        self.modules
+    }
+
+    fn rule(module: &ShopModule) -> ModuleRule {
+        match module {
+            ShopModule::Sells(_) | ShopModule::Buys(_) => ModuleRule::AnyNumber,
+            ShopModule::Reactions(_) => ModuleRule::AtMostOne,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum ShopModule {
+    Sells(ShopOffer),
+    Buys(ShopBuys),
+    Reactions(ShopReactions),
+}
+
+impl ShopDef {
+    pub fn sells(&self) -> impl Iterator<Item = &ShopOffer> + Clone {
+        self.modules.iter().filter_map(|module| match module {
+            ShopModule::Sells(offer) => Some(offer),
+            _ => None,
+        })
+    }
+
+    pub fn buys(&self) -> impl Iterator<Item = &ShopBuys> + Clone {
+        self.modules.iter().filter_map(|module| match module {
+            ShopModule::Buys(buys) => Some(buys),
+            _ => None,
+        })
+    }
+
+    pub fn reactions(&self) -> Option<&ShopReactions> {
+        self.modules.iter().find_map(|module| match module {
+            ShopModule::Reactions(reactions) => Some(reactions),
+            _ => None,
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct ShopOffer {
     pub item: ItemId,
     pub count: u32,
@@ -66,6 +110,7 @@ pub enum Stock {
     Limited { count: u32, restock: Seconds },
 }
 
+#[derive(Clone, Copy)]
 pub struct ShopBuys {
     pub what: Buys,
     pub pays: &'static [ItemStack],
@@ -78,7 +123,7 @@ pub enum Buys {
     Category(ItemCategory),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct ShopReactions {
     pub bought: &'static [Line],
     pub sold: &'static [Line],
@@ -194,28 +239,23 @@ impl ShopDef {
             return Err("Bound items never sell".to_owned());
         }
         let (index, rule) = self
-            .buys
-            .iter()
+            .buys()
             .enumerate()
             .find(|(_, rule)| match rule.what {
                 Buys::Item(wanted) => wanted == item,
                 Buys::Category(category) => def.category() == category,
             })
-            .ok_or_else(|| format!("{} won't buy {}", self.title, def.display_name))?;
+            .ok_or_else(|| format!("{} won't buy {}", self.title, def.name))?;
         if declined.contains(&(index as u32)) {
-            return Err(format!(
-                "{} won't buy {} from you",
-                self.title, def.display_name
-            ));
+            return Err(format!("{} won't buy {} from you", self.title, def.name));
         }
         Ok(rule.pays)
     }
 
     pub fn wants(&self, content: &Content) -> Vec<String> {
-        self.buys
-            .iter()
+        self.buys()
             .map(|rule| match rule.what {
-                Buys::Item(item) => item.get(content).display_name.to_owned(),
+                Buys::Item(item) => item.get(content).name.to_owned(),
                 Buys::Category(category) => category.plural().to_owned(),
             })
             .collect()
@@ -297,7 +337,7 @@ pub fn check(assets: &AssetService) {
         {
             panic!("shop {id:?}: its keeper keeps another shop too");
         }
-        for line in shop.reactions.iter().flat_map(|reactions| {
+        for line in shop.reactions().into_iter().flat_map(|reactions| {
             reactions
                 .bought
                 .iter()
@@ -306,7 +346,7 @@ pub fn check(assets: &AssetService) {
         }) {
             dialogue::check_line(content, format!("shop {id:?}"), line);
         }
-        for offer in shop.sells {
+        for offer in shop.sells() {
             for (buyer, def) in shops.iter() {
                 if let Ok(pays) = def.pays_for(content, offer.item, &[])
                     && profits(offer, pays)
@@ -400,7 +440,7 @@ fn buy(world: &mut World, player: Entity, index: u32) {
     let Some(shop) = visiting(world, player) else {
         return;
     };
-    let Some(offer) = shop.get(&content).sells.get(index as usize) else {
+    let Some(offer) = shop.get(&content).sells().nth(index as usize) else {
         return;
     };
     let now = world.resource::<WallClock>().now;
@@ -417,7 +457,10 @@ fn buy(world: &mut World, player: Entity, index: u32) {
         notification::notify(
             world,
             player,
-            Notification::new(NotificationKind::error(), LineText::plain(refusal)),
+            Notification::new(
+                NotificationKind::error(world.resource::<Content>()),
+                LineText::plain(refusal),
+            ),
         );
         react(world, player, |reactions| reactions.cant_afford);
         return;
@@ -462,7 +505,10 @@ fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
             notification::notify(
                 world,
                 player,
-                Notification::new(NotificationKind::error(), LineText::plain(refusal)),
+                Notification::new(
+                    NotificationKind::error(world.resource::<Content>()),
+                    LineText::plain(refusal),
+                ),
             );
             return;
         }
@@ -471,7 +517,10 @@ fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
         notification::notify(
             world,
             player,
-            Notification::new(NotificationKind::error(), LineText::plain(refusal)),
+            Notification::new(
+                NotificationKind::error(world.resource::<Content>()),
+                LineText::plain(refusal),
+            ),
         );
         return;
     }
@@ -510,7 +559,10 @@ fn buy_back(world: &mut World, player: Entity, index: u32) {
         notification::notify(
             world,
             player,
-            Notification::new(NotificationKind::error(), LineText::plain(refusal)),
+            Notification::new(
+                NotificationKind::error(world.resource::<Content>()),
+                LineText::plain(refusal),
+            ),
         );
         return;
     }
@@ -545,7 +597,7 @@ fn offer_refusal(
     now: UnixMillis,
 ) -> Option<WareRefusal> {
     let content = world.resource::<Content>();
-    let offer = shop.get(content).sells.get(index as usize)?;
+    let offer = shop.get(content).sells().nth(index as usize)?;
     if let Some(unmet) = offer
         .requires
         .iter()
@@ -578,7 +630,7 @@ fn stock(
     now: UnixMillis,
 ) -> Option<(u32, Option<Seconds>)> {
     let content = world.resource::<Content>();
-    let Stock::Limited { count, .. } = shop.get(content).sells.get(index as usize)?.stock else {
+    let Stock::Limited { count, .. } = shop.get(content).sells().nth(index as usize)?.stock else {
         return None;
     };
     let restock = world
@@ -600,7 +652,7 @@ fn refresh_view(world: &mut World, player: Entity) {
         return;
     };
     let now = world.resource::<WallClock>().now;
-    let offers = (0..shop.get(&content).sells.len() as u32)
+    let offers = (0..shop.get(&content).sells().count() as u32)
         .map(|index| {
             let stock = stock(world, player, shop, index, now);
             OfferView {
@@ -629,7 +681,7 @@ fn refresh_view(world: &mut World, player: Entity) {
 fn declined(world: &World, player: Entity, shop: ShopId) -> Vec<u32> {
     let content = world.resource::<Content>();
     (0..)
-        .zip(shop.get(content).buys)
+        .zip(shop.get(content).buys())
         .filter(|(_, rule)| !rule::met(world, player, rule.requires))
         .map(|(index, _)| index)
         .collect()
@@ -643,8 +695,7 @@ fn react(world: &mut World, player: Entity, pick: fn(&ShopReactions) -> &'static
     }) else {
         return;
     };
-    let (Some(lines), Some(keeper)) = (shop.get(&content).reactions.as_ref().map(pick), keeper)
-    else {
+    let (Some(lines), Some(keeper)) = (shop.get(&content).reactions().map(pick), keeper) else {
         return;
     };
     if let Some(line) = lines.get(nth as usize % lines.len().max(1)) {
