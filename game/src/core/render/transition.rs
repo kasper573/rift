@@ -74,6 +74,16 @@ pub enum ScreenTransitionPhase {
     In,
 }
 
+/// Systems that work with the world on view. They hold off while a transition covers the old view:
+/// the area being entered isn't on view yet, and whatever they would load for it then loads under
+/// the full cover, where a long frame can't stutter the animation.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WorldViewSystems;
+
+pub fn covering(phase: Res<ScreenTransitionPhase>) -> bool {
+    *phase == ScreenTransitionPhase::Out
+}
+
 pub fn freeze(world: &mut World, viewed_at: Pos<Tiles>, heading: Direction) {
     let Some(from) = world_camera_marks(world, viewed_at) else {
         return;
@@ -87,6 +97,7 @@ pub fn freeze(world: &mut World, viewed_at: Pos<Tiles>, heading: Direction) {
         heading: screen_heading(heading),
         arrival: None,
     });
+    world.insert_resource(ScreenTransitionPhase::Out);
 }
 
 pub fn reveal(world: &mut World, viewed_at: Pos<Tiles>) {
@@ -102,10 +113,10 @@ pub fn reveal(world: &mut World, viewed_at: Pos<Tiles>) {
 
 pub fn abort(world: &mut World) {
     world.resource_mut::<ActiveTransition>().0 = None;
+    world.insert_resource(ScreenTransitionPhase::Idle);
 }
 
-/// A long frame, like the one that builds the next area, pauses the transition rather than skipping
-/// part of it.
+/// A long frame pauses the transition rather than skipping part of it.
 const LONGEST_STEP: Seconds = Seconds(1.0 / 30.0);
 
 #[derive(Resource, Default)]

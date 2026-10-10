@@ -5,13 +5,13 @@ use crate::core::interpolate::{Interpolate, InterpolatePlugin};
 use crate::core::math::Direction;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
-use crate::systems::REPLICATION_PERIOD;
 use crate::systems::actor::{Action, Actor, ActorModel, build_model};
 use crate::systems::area::{self, AreaTag};
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
+use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::{Animator, atlas_rect, dynamic_z, sprite_transform};
 use crate::systems::movement::RenderPosition;
 
@@ -20,11 +20,15 @@ pub struct ActorPlugin;
 impl Plugin for ActorPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Seen>()
-            .add_observer(attach_sprite)
             .add_plugins(InterpolatePlugin::<RenderActor>::default())
             .add_systems(
                 Update,
-                (sync_actors, actor_cues).run_if(in_state(crate::systems::scene::Scene::Area)),
+                (
+                    attach_sprites,
+                    (sync_actors, actor_cues).run_if(in_state(crate::systems::scene::Scene::Area)),
+                )
+                    .chain()
+                    .in_set(WorldViewSystems),
             );
     }
 }
@@ -58,7 +62,6 @@ struct RenderActor {
 
 impl Interpolate for RenderActor {
     type Source = Actor;
-    const INTERVAL: Seconds = REPLICATION_PERIOD;
 
     fn sample(actor: &Actor) -> RenderActor {
         RenderActor {
@@ -68,28 +71,26 @@ impl Interpolate for RenderActor {
     }
 }
 
-fn attach_sprite(
-    add: On<Add, Actor>,
-    actors: Query<&Actor>,
+fn attach_sprites(
+    actors: Query<(Entity, &Actor), Without<Sprite>>,
     assets: Res<AssetServer>,
     service: Res<AssetService>,
     mut commands: Commands,
 ) {
-    let Ok(actor) = actors.get(add.entity) else {
-        return;
-    };
-    let image = assets.load(
-        service
-            .resolve(actor.model.get().sheet, build_model)
-            .sheet()
-            .to_owned(),
-    );
-    commands.entity(add.entity).insert((
-        Sprite { image, ..default() },
-        ACTOR_ANCHOR,
-        Transform::default(),
-        Visibility::Hidden,
-    ));
+    for (entity, actor) in &actors {
+        let image = assets.load(
+            service
+                .resolve(actor.model.get().sheet, build_model)
+                .sheet()
+                .to_owned(),
+        );
+        commands.entity(entity).insert((
+            Sprite { image, ..default() },
+            ACTOR_ANCHOR,
+            Transform::default(),
+            Visibility::Hidden,
+        ));
+    }
 }
 
 type ActorView = (

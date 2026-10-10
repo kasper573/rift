@@ -28,6 +28,24 @@ prometheus.scrape "node_exporter" {
 	scrape_timeout  = env("PROMETHEUS_SCRAPE_TIMEOUT")
 }
 
+prometheus.exporter.process "host" {
+	gather_smaps   = false
+	track_children = false
+
+	matcher {
+		name    = "{{.Comm}}"
+		cmdline = [".+"]
+	}
+}
+
+prometheus.scrape "process_exporter" {
+	targets         = prometheus.exporter.process.host.targets
+	forward_to      = [prometheus.remote_write.default.receiver]
+	job_name        = "process_exporter"
+	scrape_interval = env("PROMETHEUS_SCRAPE_INTERVAL")
+	scrape_timeout  = env("PROMETHEUS_SCRAPE_TIMEOUT")
+}
+
 prometheus.scrape "postgres_exporter" {
 	targets = [{
 		__address__ = env("POSTGRES_EXPORTER_TARGET"),

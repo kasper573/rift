@@ -50,6 +50,14 @@ impl Plugin for RenderPlugin {
             .init_resource::<transition::ActiveTransition>()
             .init_resource::<transition::ScreenTransitionPreference>()
             .init_resource::<transition::ScreenTransitionPhase>()
+            .configure_sets(
+                PreUpdate,
+                transition::WorldViewSystems.run_if(not(transition::covering)),
+            )
+            .configure_sets(
+                Update,
+                transition::WorldViewSystems.run_if(not(transition::covering)),
+            )
             .add_systems(Startup, present::setup)
             .add_systems(Update, (present::match_display, present::fit).chain())
             .init_resource::<icons::ResidentIcons>()
