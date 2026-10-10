@@ -3,16 +3,78 @@ use std::collections::HashMap;
 use bevy::ecs::system::SystemParam;
 use bevy::picking::events::{Click, Pointer};
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
+use strum::VariantArray;
 use ui::{
     CatalogEntry, ClickGesture, DragGesture, InputCatalog, InputRef, KeyGesture, KeyModifiers,
     RichPiece,
 };
 
-pub use crate::data::input::Id as InputAction;
+use crate::core::content::{Content, Fixture};
 
+#[derive(
+    Serialize,
+    Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+)]
+#[strum(serialize_all = "snake_case")]
+pub enum InputAction {
+    Interact,
+    Select,
+    InspectItem,
+    UseItem,
+    DropItem,
+    SellItem,
+    CarryItem,
+    ToggleInventory,
+    ToggleEquipment,
+    ToggleStats,
+    ToggleQuestLog,
+    ToggleSettings,
+    ToggleTerminal,
+    Dismiss,
+    SubmitText,
+    TakeDefault,
+    Respawn,
+    ChoosePrevious,
+    ChooseNext,
+    PickChoice,
+    Advance,
+    Choice1,
+    Choice2,
+    Choice3,
+    Choice4,
+    Choice5,
+    Choice6,
+    Choice7,
+    Choice8,
+    Choice9,
+    ToggleHistory,
+    SpectatePrevious,
+    SpectateNext,
+    CycleDebugView,
+    ToggleHitboxes,
+}
+
+impl Fixture for InputAction {
+    type Row = InputDef;
+}
+
+#[derive(Clone)]
 pub struct InputDef {
     pub label: &'static str,
     pub bindings: &'static [InputBinding],
+}
+
+impl crate::core::content::ContentRow for InputDef {
+    const TABLE: &'static str = "input";
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -104,12 +166,12 @@ impl InputBinding {
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct InputMap(HashMap<InputAction, Vec<InputBinding>>);
 
-impl Default for InputMap {
-    fn default() -> InputMap {
+impl InputMap {
+    pub fn new(content: &Content) -> InputMap {
         InputMap(
             InputAction::VARIANTS
                 .iter()
-                .map(|&action| (action, action.get().bindings.to_vec()))
+                .map(|&action| (action, action.get(content).bindings.to_vec()))
                 .collect(),
         )
     }
@@ -263,12 +325,13 @@ pub fn input(action: InputAction) -> RichPiece {
 
 impl From<InputAction> for InputRef {
     fn from(action: InputAction) -> InputRef {
-        InputRef(action.index() as u16)
+        InputRef(action as u16)
     }
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.init_resource::<InputMap>()
+    let map = InputMap::new(app.world().resource::<Content>());
+    app.insert_resource(map)
         .add_systems(PreUpdate, publish.run_if(resource_changed::<InputMap>));
 }
 

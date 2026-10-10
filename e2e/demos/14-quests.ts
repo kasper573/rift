@@ -33,24 +33,24 @@ test(
       await signIn(page, await provisionAccount(page, ["admin"]));
       await clickUi(page, "Play");
       await waitForWorld(page, loadReference("island.png"));
-      await give(page, [["OrcTusk", 7]]);
+      await give(page, [["orc_tusk", 7]]);
     },
     play: async (page) => {
       await caption(page, "A ! over a townsperson means they have work for you");
-      await waitFor(page, (snapshot) => townsperson(snapshot, "Tobb")?.marks.includes("QuestOffered"), "Tobb has no !");
-      await talkTo(page, "Tobb");
+      await waitFor(page, (snapshot) => townsperson(snapshot, "tobb")?.marks.includes("quest_offered"), "Tobb has no !");
+      await talkTo(page, "tobb");
       await readToChoices(page, 900);
       await caption(page, "Quests join the conversation as topics", { at: "top" });
       await page.waitForTimeout(1500);
       await pick(page, "A Letter for the Captain");
-      await onStage(page, "LetterOffer");
+      await onStage(page, "letter_offer");
       await caption(page, "A panel above the conversation lays out objectives and rewards. Accept or decline below", {
         at: "top",
       });
       await readToChoices(page, 1400);
       await page.waitForTimeout(2000);
       await pick(page, "I'll take it.");
-      await waitFor(page, (snapshot) => onQuest(snapshot, "LetterForTheCaptain"), "the letter quest never started");
+      await waitFor(page, (snapshot) => onQuest(snapshot, "letter_for_the_captain"), "the letter quest never started");
       await waitFor(
         page,
         ({ feed }) => feed.includes("Quest accepted · A Letter for the Captain"),
@@ -73,13 +73,13 @@ test(
       await page.keyboard.press("KeyI");
 
       await caption(page, "Some quests run against the clock");
-      await talkTo(page, "Tobb");
+      await talkTo(page, "tobb");
       await readToChoices(page, 600);
       await pick(page, "Low Tide");
-      await onStage(page, "LowTideOffer");
+      await onStage(page, "low_tide_offer");
       await readToChoices(page, 1200);
       await pick(page, "I'll hurry.");
-      await waitFor(page, (snapshot) => onQuest(snapshot, "LowTide")?.left, "Low Tide never started its clock");
+      await waitFor(page, (snapshot) => onQuest(snapshot, "low_tide")?.left, "Low Tide never started its clock");
       await caption(page, "The tracker counts it down", { at: "top" });
       await page.waitForTimeout(3000);
 
@@ -92,7 +92,7 @@ test(
       await page.waitForTimeout(2500);
       await caption(page, "Right-click a reward for its item card", { at: "top" });
       await rightClickUi(page, BAIT);
-      await waitFor(page, ({ item_card }) => item_card?.item === "FishingBait", "the bait's card never opened");
+      await waitFor(page, ({ item_card }) => item_card?.item === "fishing_bait", "the bait's card never opened");
       await page.waitForTimeout(3500);
       await focusGame(page);
       await page.keyboard.press("Escape");
@@ -114,23 +114,23 @@ test(
       await waitFor(page, (snapshot) => findUi(snapshot, "Abandon quest"), "abandoning never asked again");
       await page.waitForTimeout(1200);
       await clickUi(page, "Abandon quest");
-      await waitFor(page, (snapshot) => !onQuest(snapshot, "LowTide"), "Low Tide was never abandoned");
+      await waitFor(page, (snapshot) => !onQuest(snapshot, "low_tide"), "Low Tide was never abandoned");
       await page.waitForTimeout(1500);
       await focusGame(page);
       await page.keyboard.press("Escape");
       await page.waitForTimeout(800);
 
       await caption(page, "The letter is for Bram: a ? marks where a quest is handed in");
-      await waitFor(page, (snapshot) => townsperson(snapshot, "Bram")?.marks.includes("QuestReady"), "Bram has no ?");
-      await talkTo(page, "Bram");
+      await waitFor(page, (snapshot) => townsperson(snapshot, "bram")?.marks.includes("quest_ready"), "Bram has no ?");
+      await talkTo(page, "bram");
       await readToChoices(page, 600);
       await pick(page, "A Letter for the Captain");
-      await onStage(page, "LetterThanks");
+      await onStage(page, "letter_thanks");
       await readToChoices(page, 1200);
       await caption(page, "Nobody named Bram's pay, so the choice keeps it to itself", { at: "top" });
       await page.waitForTimeout(2000);
       await pick(page, "Tobb asked me to bring you this.");
-      await waitFor(page, (snapshot) => finished(snapshot, "LetterForTheCaptain") === "Completed", "never delivered");
+      await waitFor(page, (snapshot) => finished(snapshot, "letter_for_the_captain") === "Completed", "never delivered");
       await waitFor(page, ({ feed }) => feed.includes("+10 Gold"), "the pay never showed in the feed");
       await caption(page, "Delivered: the letter goes and the pay arrives in the corner, the finished quest lands in the middle", {
         at: "top",
@@ -142,7 +142,7 @@ test(
       await page.waitForTimeout(2500);
       await caption(page, "Bram's next errand stays out of sight until you're ready for it", { at: "top" });
       await page.waitForTimeout(1500);
-      await talkTo(page, "Bram");
+      await talkTo(page, "bram");
       await readToChoices(page, 600);
       await page.waitForTimeout(2500);
       await focusGame(page);
@@ -151,8 +151,8 @@ test(
 
       await caption(page, "(Admin shortcut: experience) At level 3 he has work for you", { at: "top" });
       await admin(page, [["/xp 50", /granted 50 xp/]]);
-      await waitFor(page, (snapshot) => townsperson(snapshot, "Bram")?.marks.includes("QuestOffered"), "Bram never had work");
-      await talkTo(page, "Bram");
+      await waitFor(page, (snapshot) => townsperson(snapshot, "bram")?.marks.includes("quest_offered"), "Bram never had work");
+      await talkTo(page, "bram");
       await readToChoices(page, 600);
       await hoverUi(page, "Bats in the Belfry");
       await page.waitForTimeout(3000);
@@ -161,15 +161,15 @@ test(
       await conversationOver(page);
 
       await caption(page, "Mara pays for orc tusks — and their chief");
-      await talkTo(page, "Mara");
+      await talkTo(page, "mara");
       await readToChoices(page, 600);
       await pick(page, "Tusks for the Chief");
-      await onStage(page, "TusksOffer");
+      await onStage(page, "tusks_offer");
       await caption(page, "Rewards can include a pick, chosen when you return", { at: "top" });
       await readToChoices(page, 1400);
       await page.waitForTimeout(1500);
       await pick(page, "Consider it done.");
-      await waitFor(page, (snapshot) => onQuest(snapshot, "TusksForTheChief"), "Mara's quest never started");
+      await waitFor(page, (snapshot) => onQuest(snapshot, "tusks_for_the_chief"), "Mara's quest never started");
       await page.waitForTimeout(1500);
 
       await caption(page, "(Admin shortcut: the chief falls, and the bag fills up)", { at: "top" });
@@ -178,12 +178,12 @@ test(
         ["/quest TusksForTheChief,ready", /TusksForTheChief: Ready/],
         [`/give RustySword,${room}`, /gave \d+ Rusty Sword/],
       ]);
-      await waitFor(page, (snapshot) => onQuest(snapshot, "TusksForTheChief")?.ready, "the quest never got ready");
+      await waitFor(page, (snapshot) => onQuest(snapshot, "tusks_for_the_chief")?.ready, "the quest never got ready");
 
-      await talkTo(page, "Mara");
+      await talkTo(page, "mara");
       await readToChoices(page, 600);
       await pick(page, "Tusks for the Chief");
-      await onStage(page, "TusksThanks");
+      await onStage(page, "tusks_thanks");
       await readToChoices(page, 1000);
       await caption(page, "With a full bag the pick is refused with an error — space is counted after the tusks are handed in", {
         at: "top",
@@ -199,23 +199,23 @@ test(
       await page.keyboard.press("KeyI");
       await page.waitForTimeout(800);
       for (let dropped = 0; dropped < 2; dropped++) {
-        const before = holding(await probe(page), "RustySword");
+        const before = holding(await probe(page), "rusty_sword");
         await page.keyboard.down("Control");
         await clickUi(page, SWORD);
         await page.keyboard.up("Control");
-        await waitFor(page, (snapshot) => holding(snapshot, "RustySword") < before, "the sword never dropped");
+        await waitFor(page, (snapshot) => holding(snapshot, "rusty_sword") < before, "the sword never dropped");
       }
       await focusGame(page);
       await page.keyboard.press("KeyI");
 
-      await talkTo(page, "Mara");
+      await talkTo(page, "mara");
       await readToChoices(page, 600);
       await pick(page, "Tusks for the Chief");
-      await onStage(page, "TusksThanks");
+      await onStage(page, "tusks_thanks");
       await readToChoices(page, 800);
       await caption(page, "Now there's room for the pick", { at: "top" });
       await pick(page, "I'll take the Bone Shield.");
-      await waitFor(page, (snapshot) => finished(snapshot, "TusksForTheChief") === "Completed", "never handed in");
+      await waitFor(page, (snapshot) => finished(snapshot, "tusks_for_the_chief") === "Completed", "never handed in");
       await page.waitForTimeout(2500);
 
       await caption(page, "Finished quests move to Completed in the log", { at: "top" });
@@ -241,7 +241,7 @@ async function hearOutTobb(page: Page): Promise<void> {
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const { stage } = await probe(page);
-    if (stage?.node === "TobbNews") {
+    if (stage?.node === "tobb_news") {
       await readToChoices(page, 1200);
       await focusGame(page);
       await page.keyboard.press("Digit1");

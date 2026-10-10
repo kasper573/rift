@@ -2,6 +2,7 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::Content;
 use crate::data;
 use crate::systems::effect::{self, Effect};
 use crate::systems::player::Xp;
@@ -18,9 +19,14 @@ pub struct Job {
     pub def: data::job::Id,
 }
 
+#[derive(Clone)]
 pub struct JobDef {
     pub name: &'static str,
     pub levels: &'static [JobLevel],
+}
+
+impl crate::core::content::ContentRow for JobDef {
+    const TABLE: &'static str = "job";
 }
 
 pub struct JobLevel {
@@ -29,12 +35,13 @@ pub struct JobLevel {
 }
 
 pub fn level(world: &World, entity: Entity) -> u32 {
+    let content = world.resource::<Content>();
     let Some(job) = world.get::<Job>(entity) else {
         return 0;
     };
     let xp = world.get::<Xp>(entity).map_or(0, |xp| xp.amount);
     job.def
-        .get()
+        .get(content)
         .levels
         .iter()
         .filter(|tier| tier.exp <= xp)
@@ -42,12 +49,13 @@ pub fn level(world: &World, entity: Entity) -> u32 {
 }
 
 fn level_effects(world: &World, entity: Entity) -> Vec<Effect> {
+    let content = world.resource::<Content>();
     let Some(job) = world.get::<Job>(entity) else {
         return Vec::new();
     };
     let level = level(world, entity) as usize;
     job.def
-        .get()
+        .get(content)
         .levels
         .iter()
         .take(level)
@@ -55,6 +63,7 @@ fn level_effects(world: &World, entity: Entity) -> Vec<Effect> {
         .collect()
 }
 
+#[derive(Clone, Copy)]
 pub struct MinLevel(pub u32);
 
 impl Requirement for MinLevel {
@@ -62,7 +71,7 @@ impl Requirement for MinLevel {
         level(world, player) >= self.0
     }
 
-    fn describe(&self) -> String {
+    fn describe(&self, _content: &Content) -> String {
         format!("Level {}", self.0)
     }
 }
@@ -76,7 +85,7 @@ impl Requirement for IsJob {
             .is_some_and(|job| job.def == self.0)
     }
 
-    fn describe(&self) -> String {
-        self.0.get().name.to_owned()
+    fn describe(&self, content: &Content) -> String {
+        self.0.get(content).name.to_owned()
     }
 }

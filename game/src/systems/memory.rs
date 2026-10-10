@@ -3,15 +3,21 @@ use std::collections::BTreeMap;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::Content;
 use crate::core::time::{GameDay, Seconds, UnixMillis, WallClock};
 use crate::data::memory::Id;
 use crate::systems::player::conn_player;
 use crate::systems::rule::{Outcome, Requirement, RuleContext};
 
+#[derive(Clone)]
 pub struct MemoryDef {
     pub label: &'static str,
     pub kind: MemoryKind,
     pub resets: Resets,
+}
+
+impl crate::core::content::ContentRow for MemoryDef {
+    const TABLE: &'static str = "memory";
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -39,9 +45,9 @@ struct Recollection {
 }
 
 impl Memory {
-    pub fn recall(&self, key: Id, clock: WallClock) -> Option<u32> {
+    pub fn recall(&self, content: &Content, key: Id, clock: WallClock) -> Option<u32> {
         let recollection = self.0.get(&key)?;
-        let def = key.get();
+        let def = key.get(content);
         let expired = match def.kind {
             MemoryKind::Timer(lasts) => clock.now.since(recollection.at) >= lasts,
             MemoryKind::Flag | MemoryKind::Counter { .. } => false,
@@ -50,9 +56,9 @@ impl Memory {
         (!expired && !stale).then_some(recollection.count)
     }
 
-    pub fn remember(&mut self, key: Id, clock: WallClock) {
-        let previous = self.recall(key, clock);
-        let count = match (key.get().kind, previous) {
+    pub fn remember(&mut self, content: &Content, key: Id, clock: WallClock) {
+        let previous = self.recall(content, key, clock);
+        let count = match (key.get(content).kind, previous) {
             (MemoryKind::Counter { step_every }, Some(count)) => {
                 let last = self.0[&key].at;
                 if clock.now.since(last) < step_every {
@@ -72,23 +78,31 @@ impl Memory {
         );
     }
 
-    pub fn recalled_within(&self, key: Id, lasts: Seconds, clock: WallClock) -> bool {
-        self.recall(key, clock).is_some() && clock.now.since(self.0[&key].at) < lasts
+    pub fn recalled_within(
+        &self,
+        content: &Content,
+        key: Id,
+        lasts: Seconds,
+        clock: WallClock,
+    ) -> bool {
+        self.recall(content, key, clock).is_some() && clock.now.since(self.0[&key].at) < lasts
     }
 
     pub fn forget(&mut self, key: Id) {
         self.0.remove(&key);
     }
 
-    pub fn leave_area(&mut self) {
+    pub fn leave_area(&mut self, content: &Content) {
         self.0
-            .retain(|key, _| key.get().resets != Resets::OnLeavingArea);
+            .retain(|key, _| key.get(content).resets != Resets::OnLeavingArea);
     }
 }
 
 pub fn recall(world: &World, player: Entity, key: Id) -> Option<u32> {
     let clock = *world.resource::<WallClock>();
-    world.get::<Memory>(player)?.recall(key, clock)
+    world
+        .get::<Memory>(player)?
+        .recall(world.resource::<Content>(), key, clock)
 }
 
 pub struct Remembers(pub Id);
@@ -98,8 +112,8 @@ impl Requirement for Remembers {
         recall(world, player, self.0).is_some()
     }
 
-    fn describe(&self) -> String {
-        self.0.get().label.to_owned()
+    fn describe(&self, content: &Content) -> String {
+        self.0.get(content).label.to_owned()
     }
 }
 
@@ -110,8 +124,8 @@ impl Requirement for RemembersAtLeast {
         recall(world, player, self.0).is_some_and(|count| count >= self.1)
     }
 
-    fn describe(&self) -> String {
-        format!("{} {}+", self.0.get().label, self.1)
+    fn describe(&self, content: &Content) -> String {
+        format!("{} {}+", self.0.get(content).label, self.1)
     }
 }
 
@@ -120,13 +134,13 @@ pub struct RememberedWithin(pub Id, pub Seconds);
 impl Requirement for RememberedWithin {
     fn met(&self, world: &World, player: Entity) -> bool {
         let clock = *world.resource::<WallClock>();
-        world
-            .get::<Memory>(player)
-            .is_some_and(|memory| memory.recalled_within(self.0, self.1, clock))
+        world.get::<Memory>(player).is_some_and(|memory| {
+            memory.recalled_within(world.resource::<Content>(), self.0, self.1, clock)
+        })
     }
 
-    fn describe(&self) -> String {
-        format!("{} recently", self.0.get().label)
+    fn describe(&self, content: &Content) -> String {
+        format!("{} recently", self.0.get(content).label)
     }
 }
 
@@ -135,8 +149,9 @@ pub struct Remember(pub Id);
 impl Outcome for Remember {
     fn apply(&self, ctx: &mut RuleContext) {
         let clock = *ctx.world.resource::<WallClock>();
+        let content = ctx.world.resource::<Content>().clone();
         if let Some(mut memory) = ctx.world.get_mut::<Memory>(ctx.player) {
-            memory.remember(self.0, clock);
+            memory.remember(&content, self.0, clock);
         }
     }
 }
@@ -151,26 +166,25 @@ impl Outcome for Forget {
     }
 }
 
-impl bevy_terminal::CommandArg for Id {
-    fn parse(name: &str, raw: Option<&str>) -> Result<Id, String> {
-        crate::core::table::parse_id(name, raw, "memory")
-    }
-}
-
 /// Make your character remember something.
 #[bevy_terminal::command(name = "remember", access = crate::systems::account::role::is_admin)]
 fn remember_command(
     world: &mut World,
     ctx: &bevy_terminal::CommandCtx,
-    key: Id,
+    key: String,
 ) -> Result<String, String> {
     let player = conn_player(world, ctx.conn).ok_or_else(|| "you have no player".to_owned())?;
+    let key = crate::core::content::named::<MemoryDef>(world, &key)?;
     let clock = *world.resource::<WallClock>();
+    let content = world.resource::<Content>().clone();
     let mut memory = world
         .get_mut::<Memory>(player)
         .ok_or_else(|| "your character has no memory".to_owned())?;
-    memory.remember(key, clock);
-    Ok(format!("{key:?} is now {:?}", memory.recall(key, clock)))
+    memory.remember(&content, key, clock);
+    Ok(format!(
+        "{key:?} is now {:?}",
+        memory.recall(&content, key, clock)
+    ))
 }
 
 /// Make your character forget something.
@@ -178,9 +192,10 @@ fn remember_command(
 fn forget_command(
     world: &mut World,
     ctx: &bevy_terminal::CommandCtx,
-    key: Id,
+    key: String,
 ) -> Result<String, String> {
     let player = conn_player(world, ctx.conn).ok_or_else(|| "you have no player".to_owned())?;
+    let key = crate::core::content::named::<MemoryDef>(world, &key)?;
     world
         .get_mut::<Memory>(player)
         .ok_or_else(|| "your character has no memory".to_owned())?

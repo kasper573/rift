@@ -9,6 +9,7 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 
+use crate::core::content::Content;
 use crate::systems::effect::{self, EffectContext};
 use crate::systems::rule::{Outcome, Requirement, RuleContext};
 
@@ -113,7 +114,7 @@ impl Requirement for MinStat {
         effective(world, player, self.stat) >= self.min
     }
 
-    fn describe(&self) -> String {
+    fn describe(&self, _content: &Content) -> String {
         format!("{} {}", self.min, self.stat.of(self.min).label())
     }
 }

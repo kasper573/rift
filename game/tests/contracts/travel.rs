@@ -11,8 +11,8 @@ use game::systems::notification::Notification;
 use game::systems::player::commands_locked;
 
 use crate::support::{
-    Sim, conversation, count, errors, give, heard_the_news, labels, leave, locked, pick, row,
-    spoken, talk, townsperson,
+    Sim, content, conversation, count, errors, give, heard_the_news, labels, leave, locked, pick,
+    row, spoken, talk, townsperson,
 };
 
 fn forest_road(sim: &Sim) -> (u32, Rect<Tiles>) {
@@ -42,7 +42,7 @@ fn remember(sim: &mut Sim, player: Entity, key: MemoryId) {
     sim.world()
         .get_mut::<Memory>(player)
         .expect("memory")
-        .remember(key, clock);
+        .remember(content(), key, clock);
 }
 
 fn halted(sim: &mut Sim, player: Entity) -> bool {

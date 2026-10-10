@@ -25,7 +25,7 @@ pub enum Span {
 pub trait TextFill: Send + Sync {
     fn text(&self, world: &World, player: Entity) -> String;
 
-    fn check(&self) {}
+    fn check(&self, _content: &crate::core::content::Content) {}
 }
 
 pub const fn plain(text: &'static str) -> Span {

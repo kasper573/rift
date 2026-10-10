@@ -2,6 +2,7 @@ use bevy_ecs::message::{Message, MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_time::Time;
 
+use crate::core::content::Content;
 use crate::core::math::Rng;
 use crate::core::time::Seconds;
 use crate::data;
@@ -29,6 +30,7 @@ pub struct KillCredited {
 }
 
 pub fn grant(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
+    let content = world.resource::<Content>().clone();
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let deaths: Vec<Died> = deaths
         .read(world.resource::<Messages<Died>>())
@@ -55,7 +57,7 @@ pub fn grant(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
                 });
             }
             let mut drops: Vec<(data::item::Id, u32)> = Vec::new();
-            for &reward in npc.get().rewards {
+            for &reward in npc.get(&content).rewards {
                 apply(
                     reward,
                     &mut RewardCtx {

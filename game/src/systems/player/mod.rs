@@ -8,12 +8,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
 use crate::core::babble::{BabbleId, Babbler};
+use crate::core::content::Content;
 use crate::core::math::{Direction, Pos, Rng};
 use crate::core::tiling::Tiles;
 use crate::core::time::PlaybackRate;
 use crate::data;
 use crate::systems::Character;
 use crate::systems::account::identity::Identity;
+use crate::systems::actor;
 use crate::systems::actor::{Action, Actor, Hitbox, Name, Rgba, set_action};
 use crate::systems::area::transition::Discovered;
 use crate::systems::area::{self, AreaTag};
@@ -100,6 +102,7 @@ pub struct Welcome {
 /// grind it down, so test/dev sessions never die to NPCs.
 const IMMORTAL_HEALTH: f32 = 9999.0;
 
+#[derive(Clone)]
 pub struct PlayerDef {
     pub model: data::model::Id,
     pub babble: Option<BabbleId>,
@@ -109,8 +112,12 @@ pub struct PlayerDef {
     pub regen: HealthRegen,
 }
 
-pub fn def() -> &'static PlayerDef {
-    data::player::DEFAULT_ID.get()
+impl crate::core::content::ContentRow for PlayerDef {
+    const TABLE: &'static str = "player";
+}
+
+pub fn def(content: &Content) -> &PlayerDef {
+    data::player::DEFAULT_ID.get(content)
 }
 
 #[derive(Resource, Default)]
@@ -191,7 +198,7 @@ pub struct Immortal(pub bool);
 pub fn join(world: &mut World) {
     let zone = world.resource::<crate::systems::WorldArea>().0;
     let assets = world.resource::<AssetService>().clone();
-    let area = assets.resolve(zone.get().map, area::build_area);
+    let area = area::load(&assets, zone);
     let policy = world
         .get_resource::<SpawnPolicy>()
         .copied()
@@ -255,6 +262,8 @@ fn spawn_player(
     name: String,
     immortal: Immortal,
 ) {
+    let content = world.resource::<Content>().clone();
+    let def = def(&content);
     place(
         world,
         client,
@@ -262,13 +271,13 @@ fn spawn_player(
         at,
         CharacterState {
             name,
-            babble: def().babble,
+            babble: def.babble,
             discovered: Discovered::starting_in(zone),
-            stats: player_stats(immortal),
+            stats: player_stats(def, immortal),
             inventory: Inventory::empty(),
             xp: Xp { amount: 0 },
             equipment: Equipment::default(),
-            job: Job { def: def().job },
+            job: Job { def: def.job },
             timed: TimedEffects::default(),
             memory: Memory::default(),
             heard: Heard::default(),
@@ -279,10 +288,9 @@ fn spawn_player(
     );
 }
 
-pub fn player_stats(immortal: Immortal) -> Stats {
+pub fn player_stats(def: &PlayerDef, immortal: Immortal) -> Stats {
     Stats(
-        def()
-            .stats
+        def.stats
             .iter()
             .map(|&stat| match stat.kind {
                 StatKind::Health | StatKind::MaxHealth if immortal.0 => {
@@ -301,7 +309,8 @@ pub(crate) fn place(
     at: Pos<Tiles>,
     state: CharacterState,
 ) -> Entity {
-    let def = def();
+    let content = world.resource::<Content>().clone();
+    let def = def(&content);
     let model = def.model;
     let assets = world.resource::<AssetService>().clone();
     let entity = world
@@ -317,9 +326,7 @@ pub(crate) fn place(
                     attack_rate: PlaybackRate(stat::value(def.stats, StatKind::AttackSpeed)),
                 },
                 hitbox: Hitbox {
-                    size: assets
-                        .resolve(model.get().sheet, crate::systems::actor::build_model)
-                        .hitbox(),
+                    size: actor::model(&assets, model).hitbox(),
                 },
                 area: AreaTag { area: zone },
             },
@@ -350,9 +357,10 @@ pub(crate) fn place(
 }
 
 pub fn respawn(world: &mut World) {
+    let content = world.resource::<Content>().clone();
     let zone = world.resource::<crate::systems::WorldArea>().0;
     let assets = world.resource::<AssetService>().clone();
-    let spawn = assets.resolve(zone.get().map, area::build_area).spawn;
+    let spawn = area::load(&assets, zone).spawn;
     for request in crate::systems::requests::<RespawnRequest>(world) {
         let Some(entity) = sender_player(world, request.client_id) else {
             continue;
@@ -362,7 +370,7 @@ pub fn respawn(world: &mut World) {
         }
         stat::refill(world, entity);
         if let Some(mut memory) = world.get_mut::<Memory>(entity) {
-            memory.leave_area();
+            memory.leave_area(&content);
         }
         if let Some(mut position) = world.get_mut::<Position>(entity) {
             position.pos = spawn;

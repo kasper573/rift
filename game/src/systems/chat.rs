@@ -1,12 +1,12 @@
 use bevy_ecs::prelude::*;
 use bevy_terminal::TerminalInbox;
 
-use crate::data::terminal::Id;
 use crate::systems::actor::Name;
 use crate::systems::player::{self, ClientId};
+use crate::systems::terminal::TerminalKind;
 
 pub fn rebroadcast(world: &mut World) {
-    let entries = world.resource::<TerminalInbox<Id>>().0.clone();
+    let entries = world.resource::<TerminalInbox<TerminalKind>>().0.clone();
     for entry in entries.iter().filter(|entry| !entry.consumed()) {
         let name = player::conn_player(world, entry.conn)
             .and_then(|player| world.get::<Name>(player))

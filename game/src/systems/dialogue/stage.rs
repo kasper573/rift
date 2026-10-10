@@ -16,6 +16,7 @@ use crate::core::assets::AssetRef;
 use crate::core::audio::playback::SfxId;
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::babble::{BabbleRank, Babbler, Babbling};
+use crate::core::content::Content;
 use crate::systems::actor::Name;
 use crate::systems::actor::bust::{Busts, Face, GenericExpression};
 use crate::systems::input::map::{self, ActionInput, InputAction, InputMap};
@@ -559,7 +560,9 @@ fn box_options(world: &World, typed: bool) -> Option<DialogueBoxOptions> {
             .choices
             .iter()
             .enumerate()
-            .map(|(index, choice)| choice_options(assets, choice, index))
+            .map(|(index, choice)| {
+                choice_options(world.resource::<Content>(), assets, choice, index)
+            })
             .collect()
     } else {
         Vec::new()
@@ -580,6 +583,7 @@ fn box_options(world: &World, typed: bool) -> Option<DialogueBoxOptions> {
 }
 
 fn babble_along(world: &mut World) {
+    let content = world.resource::<Content>().clone();
     let Some(by) = world
         .resource::<Stage>()
         .shown
@@ -590,7 +594,7 @@ fn babble_along(world: &mut World) {
         return;
     };
     let babble = match by {
-        Speaker::Npc(npc) => npc.get().babble,
+        Speaker::Npc(npc) => npc.get(&content).babble,
         Speaker::Player => world
             .resource::<Viewpoint>()
             .0
@@ -627,7 +631,12 @@ fn spectator_hint() -> Vec<RichPiece> {
     vec![RichPiece::text("Watching")]
 }
 
-fn choice_options(assets: &AssetServer, choice: &ChoiceView, index: usize) -> ChoiceOptions {
+fn choice_options(
+    content: &Content,
+    assets: &AssetServer,
+    choice: &ChoiceView,
+    index: usize,
+) -> ChoiceOptions {
     let mut chips: Vec<ChipOptions> = choice
         .chips
         .iter()
@@ -644,7 +653,7 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView, index: usize) -> Ch
             },
             ChoiceChip::Pays { item, count, have } => ChipOptions {
                 label: count.to_string(),
-                icon: Some(assets.load(item.get().icon.0)),
+                icon: Some(assets.load(item.get(content).icon.0)),
                 family: Family::outline(if have >= count {
                     palette::AMBER_70
                 } else {
@@ -654,9 +663,9 @@ fn choice_options(assets: &AssetServer, choice: &ChoiceView, index: usize) -> Ch
             },
             ChoiceChip::Gets { item, count } => ChipOptions {
                 label: format!("+{count}"),
-                icon: Some(assets.load(item.get().icon.0)),
+                icon: Some(assets.load(item.get(content).icon.0)),
                 family: Family::outline(palette::EMERALD_70),
-                inspect: Some(card::inspectable(*item)),
+                inspect: Some(card::inspectable(content, *item)),
             },
         })
         .collect();
@@ -696,7 +705,8 @@ fn cast_members(world: &World) -> Vec<CastMember> {
     }
     let mut seen = std::collections::HashSet::new();
     speakers.retain(|who| seen.insert(*who));
-    speakers.retain(|&who| busts_of(who).is_some());
+    let content = world.resource::<Content>();
+    speakers.retain(|&who| busts_of(content, who).is_some());
     let assets = world.resource::<AssetServer>();
     let fronts: Vec<Speaker> = [Side::Left, Side::Right]
         .into_iter()
@@ -712,14 +722,14 @@ fn cast_members(world: &World) -> Vec<CastMember> {
     speakers
         .into_iter()
         .filter_map(|who| {
-            let busts = busts_of(who)?;
+            let busts = busts_of(content, who)?;
             let face = shown
                 .faces
                 .get(&who)
                 .copied()
                 .unwrap_or(Face::Generic(GenericExpression::Neutral));
             let bust = busts
-                .face(face)
+                .face(content, face)
                 .unwrap_or_else(|| busts.generic.of(GenericExpression::Neutral));
             let lit = who == current.by;
             Some(CastMember {
@@ -751,18 +761,19 @@ fn bust_image(assets: &AssetServer, art: AssetRef) -> Handle<Image> {
     assets.load(art.0)
 }
 
-fn busts_of(who: Speaker) -> Option<&'static Busts> {
+fn busts_of(content: &Content, who: Speaker) -> Option<&Busts> {
     match who {
-        Speaker::Npc(npc) => npc.get().model.get().busts.as_ref(),
-        Speaker::Player => player::def().model.get().busts.as_ref(),
+        Speaker::Npc(npc) => npc.get(content).model.get(content).busts.as_ref(),
+        Speaker::Player => player::def(content).model.get(content).busts.as_ref(),
         Speaker::Prop(_) | Speaker::Narrator => None,
     }
 }
 
 fn speaker_name(world: &World, who: Speaker) -> Option<String> {
+    let content = world.resource::<Content>();
     match who {
-        Speaker::Npc(npc) => Some(npc.get().display_name.to_owned()),
-        Speaker::Prop(prop) => Some(prop.get().display_name.to_owned()),
+        Speaker::Npc(npc) => Some(npc.get(content).display_name.to_owned()),
+        Speaker::Prop(prop) => Some(prop.get(content).display_name.to_owned()),
         Speaker::Player => world
             .resource::<Viewpoint>()
             .0

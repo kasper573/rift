@@ -8,6 +8,7 @@ use ui::{TooltipText, component};
 
 use crate::core::audio::playback::SfxId;
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
+use crate::core::content::Content;
 use crate::data::item::Id as ItemId;
 use crate::systems::effect::Effect;
 use crate::systems::hud;
@@ -49,8 +50,8 @@ pub fn close(world: &mut World) -> bool {
     world.resource_mut::<ItemCard>().0.take().is_some()
 }
 
-pub fn inspectable(item: ItemId) -> InspectableOptions {
-    let def = item.get();
+pub fn inspectable(content: &Content, item: ItemId) -> InspectableOptions {
+    let def = item.get(content);
     InspectableOptions {
         tooltip: TooltipText {
             title: def.display_name.to_owned(),
@@ -89,8 +90,9 @@ pub fn use_verb(def: &ItemDef) -> Option<&'static str> {
 }
 
 pub fn sheet(world: &World, item: ItemId) -> Box<dyn Scene> {
+    let content = world.resource::<Content>();
     let assets = world.resource::<AssetServer>();
-    let def = item.get();
+    let def = item.get(content);
     let ink = ui::theme::theme().surface_floating.on;
     let tags: Vec<Box<dyn Scene>> = tags(def)
         .into_iter()
@@ -155,6 +157,7 @@ fn forget(mut card: ResMut<ItemCard>) {
 }
 
 fn show_card(world: &mut World) {
+    let content = world.resource::<Content>().clone();
     let wanted = world.resource::<ItemCard>().0;
     let shown = world
         .query::<(Entity, &ItemCardWindow)>()
@@ -187,7 +190,7 @@ fn show_card(world: &mut World) {
             close(world);
         }),
         hud::single_tab(
-            item.get().display_name,
+            item.get(&content).display_name,
             ui::scrolled(Box::new(padded(sheet(world, item)))),
         ),
         0,
@@ -219,6 +222,7 @@ fn tags(def: &ItemDef) -> Vec<(&'static str, Color)> {
 }
 
 fn facts(world: &World, def: &ItemDef) -> Vec<(String, Color)> {
+    let content = world.resource::<Content>();
     let ink = ui::theme::theme().surface_floating.on;
     let plain = |fact: String| (fact, ink);
     let mut facts = Vec::new();
@@ -247,7 +251,7 @@ fn facts(world: &World, def: &ItemDef) -> Vec<(String, Color)> {
                     Some(false) => palette::CRIMSON_80,
                     None => ink,
                 };
-                (format!("Requires {}", requirement.describe()), color)
+                (format!("Requires {}", requirement.describe(content)), color)
             }));
         }
         ItemKind::Usable { .. } => facts.push(plain("Can be used".to_owned())),

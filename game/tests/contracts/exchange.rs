@@ -1,4 +1,4 @@
-use crate::support::row;
+use crate::support::{content, row};
 use game::systems::item::{ExchangeRefusal, Inventory, ItemStack};
 
 fn bag(max: u32, slots: &[ItemStack]) -> Inventory {
@@ -19,6 +19,7 @@ fn a_hand_in_frees_the_slot_its_reward_needs() {
     );
 
     let result = inventory.exchange(
+        content(),
         &[ItemStack::new(row("OrcTusk"), 5)],
         &[ItemStack::new(row("RustySword"), 1)],
     );
@@ -41,7 +42,7 @@ fn a_refused_exchange_changes_nothing() {
 
     let mut short = original.clone();
     assert_eq!(
-        short.exchange(&[ItemStack::new(row("Gold"), 15)], &[]),
+        short.exchange(content(), &[ItemStack::new(row("Gold"), 15)], &[]),
         Err(ExchangeRefusal::Missing(ItemStack::new(row("Gold"), 5)))
     );
     assert_eq!(short, original);
@@ -49,6 +50,7 @@ fn a_refused_exchange_changes_nothing() {
     let mut full = original.clone();
     assert_eq!(
         full.exchange(
+            content(),
             &[ItemStack::new(row("Gold"), 1)],
             &[ItemStack::new(row("RustySword"), 1)]
         ),
@@ -62,6 +64,7 @@ fn costs_of_the_same_item_add_up() {
     let mut inventory = bag(5, &[ItemStack::new(row("Gold"), 20)]);
     assert_eq!(
         inventory.exchange(
+            content(),
             &[
                 ItemStack::new(row("Gold"), 15),
                 ItemStack::new(row("Gold"), 10)
@@ -76,10 +79,14 @@ fn costs_of_the_same_item_add_up() {
 fn gold_stacks_without_limit_in_one_slot() {
     let mut inventory = bag(1, &[]);
     inventory
-        .exchange(&[], &[ItemStack::new(row("Gold"), u32::MAX - 10)])
+        .exchange(
+            content(),
+            &[],
+            &[ItemStack::new(row("Gold"), u32::MAX - 10)],
+        )
         .expect("gold fits");
     inventory
-        .exchange(&[], &[ItemStack::new(row("Gold"), 10)])
+        .exchange(content(), &[], &[ItemStack::new(row("Gold"), 10)])
         .expect("gold still fits");
     assert_eq!(inventory.slots.len(), 1);
     assert_eq!(inventory.count(row("Gold")), u32::MAX);
@@ -88,11 +95,11 @@ fn gold_stacks_without_limit_in_one_slot() {
 #[test]
 fn refusals_read_as_what_is_needed() {
     assert_eq!(
-        ExchangeRefusal::NoRoom { slots: 1 }.describe(),
+        ExchangeRefusal::NoRoom { slots: 1 }.describe(content()),
         "Needs 1 free slot"
     );
     assert_eq!(
-        ExchangeRefusal::Missing(ItemStack::new(row("Gold"), 20)).describe(),
+        ExchangeRefusal::Missing(ItemStack::new(row("Gold"), 20)).describe(content()),
         "Needs 20 more Gold"
     );
 }

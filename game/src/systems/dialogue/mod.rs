@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::audio::playback::SfxId;
+use crate::core::content::Content;
 use crate::core::math::{Percent, Rng};
 use crate::data;
 use crate::data::attention::Id as AttentionId;
@@ -35,11 +36,16 @@ pub fn register(app: &mut App) {
     attention::badge_source(app, talking);
 }
 
+#[derive(Clone)]
 pub struct DialogueNode {
     pub lines: &'static [Line],
     pub enter: &'static [&'static dyn Outcome],
     pub topics: bool,
     pub choices: &'static [Choice],
+}
+
+impl crate::core::content::ContentRow for DialogueNode {
+    const TABLE: &'static str = "dialogue";
 }
 
 pub struct Line {
@@ -114,7 +120,7 @@ pub struct Offer {
     pub label: LineText,
     pub tag: ChoiceTag,
     pub icon: Option<AssetRef>,
-    pub requires: Vec<&'static dyn Requirement>,
+    pub requires: Vec<Arc<dyn Requirement>>,
     pub costs: &'static [ItemStack],
     pub then: Then,
     pub reveal: &'static [ChoiceReveal],
@@ -127,7 +133,11 @@ impl Offer {
             label: LineText::spoken(choice.label, world, player),
             tag: ChoiceTag::Dialogue,
             icon: None,
-            requires: choice.requires.to_vec(),
+            requires: choice
+                .requires
+                .iter()
+                .map(|&r| Arc::new(r) as Arc<dyn Requirement>)
+                .collect(),
             costs: choice.costs,
             then: Then::Data(choice.then),
             reveal: choice.reveal,
@@ -138,6 +148,10 @@ impl Offer {
     fn reveals(&self, reveal: ChoiceReveal) -> bool {
         self.reveal.contains(&reveal)
     }
+
+    fn requirements(&self) -> Vec<&dyn Requirement> {
+        self.requires.iter().map(|r| r.as_ref()).collect()
+    }
 }
 
 pub struct Asked {
@@ -147,8 +161,8 @@ pub struct Asked {
 }
 
 impl Asked {
-    pub fn greeting(&self) -> Option<Entity> {
-        self.with.filter(|_| self.node.get().topics)
+    pub fn greeting(&self, content: &Content) -> Option<Entity> {
+        self.with.filter(|_| self.node.get(content).topics)
     }
 }
 
@@ -264,7 +278,7 @@ impl Outcome for GotoNode {
         goto(ctx.world, ctx.player, self.0);
     }
 
-    fn leads_to(&self) -> Vec<DialogueId> {
+    fn leads_to(&self, _content: &Content) -> Vec<DialogueId> {
         vec![self.0]
     }
 }
@@ -283,7 +297,7 @@ impl Outcome for StartConversation {
         self::start(ctx.world, ctx.player, start);
     }
 
-    fn leads_to(&self) -> Vec<DialogueId> {
+    fn leads_to(&self, _content: &Content) -> Vec<DialogueId> {
         vec![self.node]
     }
 }
@@ -313,11 +327,11 @@ impl Outcome for Gamble {
         }
     }
 
-    fn leads_to(&self) -> Vec<DialogueId> {
+    fn leads_to(&self, content: &Content) -> Vec<DialogueId> {
         self.won
             .iter()
             .chain(self.lost)
-            .flat_map(|outcome| outcome.leads_to())
+            .flat_map(|outcome| outcome.leads_to(content))
             .collect()
     }
 
@@ -485,6 +499,7 @@ impl Ending {
 }
 
 fn begin(world: &mut World, player: Entity, start: Start) {
+    let content = world.resource::<Content>().clone();
     if stat::is_dead(world, player) {
         return;
     }
@@ -511,7 +526,7 @@ fn begin(world: &mut World, player: Entity, start: Start) {
         .or_else(|| {
             start
                 .node
-                .get()
+                .get(&content)
                 .lines
                 .iter()
                 .find_map(|line| speaker_name(world, player, line.by))
@@ -527,13 +542,14 @@ fn begin(world: &mut World, player: Entity, start: Start) {
 }
 
 fn enter(world: &mut World, player: Entity) {
+    let content = world.resource::<Content>().clone();
     let Some((node, encounter)) = world
         .get::<ConversationSession>(player)
         .map(|session| (session.node, session.encounter()))
     else {
         return;
     };
-    let def = node.get();
+    let def = node.get(&content);
     world
         .entity_mut(player)
         .entry::<Heard>()
@@ -566,7 +582,7 @@ fn enter(world: &mut World, player: Entity) {
             .map(|choice| Offer::of(choice, world, player)),
     );
     offers.retain(|offer| {
-        offer.reveals(ChoiceReveal::Locked) || rule::met(world, player, &offer.requires)
+        offer.reveals(ChoiceReveal::Locked) || rule::met(world, player, &offer.requirements())
     });
     let lines: Vec<SpokenLine> = def
         .lines
@@ -596,9 +612,10 @@ fn record_line(world: &mut World, player: Entity, line: &SpokenLine) {
 }
 
 fn speaker_name(world: &World, player: Entity, who: Speaker) -> Option<String> {
+    let content = world.resource::<Content>();
     match who {
-        Speaker::Npc(npc) => Some(npc.get().display_name.to_owned()),
-        Speaker::Prop(prop) => Some(prop.get().display_name.to_owned()),
+        Speaker::Npc(npc) => Some(npc.get(content).display_name.to_owned()),
+        Speaker::Prop(prop) => Some(prop.get(content).display_name.to_owned()),
         Speaker::Player => world.get::<Name>(player).map(|name| name.name.clone()),
         Speaker::Narrator => None,
     }
@@ -627,6 +644,7 @@ fn refresh_view(world: &mut World, player: Entity) {
 }
 
 fn choice_view(world: &World, player: Entity, offer: &Offer) -> ChoiceView {
+    let content = world.resource::<Content>();
     let outcomes = offer.then.outcomes();
     let inventory = world.get::<Inventory>(player);
     let have = |item| inventory.map_or(0, |inventory| inventory.count(item));
@@ -635,13 +653,14 @@ fn choice_view(world: &World, player: Entity, offer: &Offer) -> ChoiceView {
         .iter()
         .filter(|_| offer.reveals(ChoiceReveal::Needs))
         .map(|requirement| ChoiceChip::Needs {
-            what: requirement.describe(),
+            what: requirement.describe(content),
             met: requirement.met(world, player),
         });
     let pays = offer
         .costs
         .iter()
-        .chain(outcomes.iter().flat_map(|outcome| outcome.takes()))
+        .copied()
+        .chain(outcomes.iter().flat_map(|outcome| outcome.takes(content)))
         .filter(|_| offer.reveals(ChoiceReveal::Costs))
         .map(|stack| ChoiceChip::Pays {
             item: stack.item,
@@ -650,7 +669,7 @@ fn choice_view(world: &World, player: Entity, offer: &Offer) -> ChoiceView {
         });
     let gets = outcomes
         .iter()
-        .flat_map(|outcome| outcome.gives())
+        .flat_map(|outcome| outcome.gives(content))
         .filter(|_| offer.reveals(ChoiceReveal::Gains))
         .map(|stack| ChoiceChip::Gets {
             item: stack.item,
@@ -661,7 +680,7 @@ fn choice_view(world: &World, player: Entity, offer: &Offer) -> ChoiceView {
         tag: offer.tag,
         icon: offer.icon.map(|icon| icon.0.to_owned()),
         chips: needs.chain(pays).chain(gets).collect(),
-        locked: !rule::met(world, player, &offer.requires),
+        locked: !rule::met(world, player, &offer.requirements()),
         warn: offer.warn.map(str::to_owned),
     }
 }
@@ -685,12 +704,13 @@ fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) 
         return;
     }
     let outcomes = offer.then.outcomes();
+    let requires = offer.requirements();
     let terms = Terms {
-        requires: &offer.requires,
+        requires: &requires,
         costs: offer.costs,
         outcomes: &outcomes,
     };
-    let met = rule::met(world, player, &offer.requires);
+    let met = rule::met(world, player, &requires);
     let said = HistoryEntry::of(HistoryTopic::Talk, offer.label.clone())
         .by(speaker_name(world, player, Speaker::Player))
         .mark(Some(HistoryMark::You));
@@ -732,36 +752,36 @@ fn refuse(world: &mut World, player: Entity, choice: u32, reason: String) {
 }
 
 pub fn check(assets: &AssetService, starts: impl IntoIterator<Item = DialogueId>) {
+    let content = assets.content();
     let mut seen: HashSet<DialogueId> = starts.into_iter().collect();
     let mut frontier: Vec<DialogueId> = seen.iter().copied().collect();
     while let Some(node) = frontier.pop() {
-        let def = node.get();
+        let def = node.get(content);
         let next = def
             .enter
             .iter()
             .chain(def.choices.iter().flat_map(|choice| choice.then))
-            .flat_map(|outcome| outcome.leads_to());
+            .flat_map(|outcome| outcome.leads_to(content));
         for next in next {
             if seen.insert(next) {
                 frontier.push(next);
             }
         }
     }
-    for &node in DialogueId::VARIANTS {
+    for (node, def) in content.table::<DialogueNode>().iter() {
         if !seen.contains(&node) {
             panic!("dialogue {node:?}: nothing leads to it");
         }
-        if node.get().lines.is_empty() {
+        if def.lines.is_empty() {
             panic!("dialogue {node:?}: has no lines");
         }
-        for line in node.get().lines {
-            check_line(format!("dialogue {node:?}"), line);
+        for line in def.lines {
+            check_line(content, format!("dialogue {node:?}"), line);
         }
-        let def = node.get();
         for (index, choice) in def.choices.iter().enumerate() {
             let owner = format!("dialogue {node:?}, choice {}", index + 1);
             for fill in text::fills(choice.label) {
-                fill.check();
+                fill.check(content);
             }
             check_reveal(
                 &owner,
@@ -772,11 +792,11 @@ pub fn check(assets: &AssetService, starts: impl IntoIterator<Item = DialogueId>
                         || choice
                             .then
                             .iter()
-                            .any(|outcome| !outcome.takes().is_empty()),
+                            .any(|outcome| !outcome.takes(content).is_empty()),
                     gains: choice
                         .then
                         .iter()
-                        .any(|outcome| !outcome.gives().is_empty()),
+                        .any(|outcome| !outcome.gives(content).is_empty()),
                 },
             );
         }
@@ -812,12 +832,12 @@ pub fn check_reveal(owner: &str, reveal: &[ChoiceReveal], revealable: Revealable
     }
 }
 
-pub fn check_line(owner: impl std::fmt::Display, line: &Line) {
+pub fn check_line(content: &Content, owner: impl std::fmt::Display, line: &Line) {
     for fill in text::fills(line.text) {
-        fill.check();
+        fill.check(content);
     }
     if let Speaker::Npc(npc) = line.by
-        && npc.get().babble.is_none()
+        && npc.get(content).babble.is_none()
     {
         panic!("{owner}: {npc:?} speaks but has no babble");
     }
@@ -825,11 +845,11 @@ pub fn check_line(owner: impl std::fmt::Display, line: &Line) {
         return;
     };
     let busts = match line.by {
-        Speaker::Npc(npc) => npc.get().model.get().busts.as_ref(),
-        Speaker::Player => player::def().model.get().busts.as_ref(),
+        Speaker::Npc(npc) => npc.get(content).model.get(content).busts.as_ref(),
+        Speaker::Player => player::def(content).model.get(content).busts.as_ref(),
         Speaker::Prop(_) | Speaker::Narrator => None,
     };
-    if busts.and_then(|busts| busts.face(face)).is_none() {
+    if busts.and_then(|busts| busts.face(content, face)).is_none() {
         panic!("{owner}: {:?} cannot show {face:?}", line.by);
     }
 }

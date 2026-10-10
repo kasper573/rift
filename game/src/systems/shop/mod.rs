@@ -7,6 +7,8 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::core::assets::AssetService;
+use crate::core::content::Content;
 use crate::core::time::{Seconds, UnixMillis, WallClock};
 use crate::data::attention::Id as AttentionId;
 use crate::data::dialogue::Id as DialogueId;
@@ -33,6 +35,7 @@ pub fn register(app: &mut App) {
     attention::mark_source(app, marks);
 }
 
+#[derive(Clone)]
 pub struct ShopDef {
     pub title: &'static str,
     pub keeper: Counterpart,
@@ -43,6 +46,10 @@ pub struct ShopDef {
     pub sells: &'static [ShopOffer],
     pub buys: &'static [ShopBuys],
     pub reactions: Option<ShopReactions>,
+}
+
+impl crate::core::content::ContentRow for ShopDef {
+    const TABLE: &'static str = "shop";
 }
 
 pub struct ShopOffer {
@@ -71,6 +78,7 @@ pub enum Buys {
     Category(ItemCategory),
 }
 
+#[derive(Clone)]
 pub struct ShopReactions {
     pub bought: &'static [Line],
     pub sold: &'static [Line],
@@ -81,7 +89,8 @@ pub struct OpenShop(pub ShopId);
 
 impl Outcome for OpenShop {
     fn apply(&self, ctx: &mut RuleContext) {
-        let browsing = self.0.get().browsing;
+        let content = ctx.world.resource::<Content>().clone();
+        let browsing = self.0.get(&content).browsing;
         if dialogue::in_conversation(ctx.world, ctx.player) {
             dialogue::goto(ctx.world, ctx.player, browsing);
         } else {
@@ -95,8 +104,8 @@ impl Outcome for OpenShop {
         open(ctx.world, ctx.player, self.0, ctx.encounter);
     }
 
-    fn leads_to(&self) -> Vec<DialogueId> {
-        vec![self.0.get().browsing]
+    fn leads_to(&self, content: &Content) -> Vec<DialogueId> {
+        vec![self.0.get(content).browsing]
     }
 }
 
@@ -122,19 +131,17 @@ pub enum WareRefusal {
 }
 
 impl WareRefusal {
-    pub fn describe(&self) -> String {
+    pub fn describe(&self, content: &Content) -> String {
         match self {
-            WareRefusal::Unaffordable(short) => ExchangeRefusal::Missing(*short).describe(),
+            WareRefusal::Unaffordable(short) => ExchangeRefusal::Missing(*short).describe(content),
             WareRefusal::Unavailable(reason) => reason.clone(),
         }
     }
-}
 
-impl From<ExchangeRefusal> for WareRefusal {
-    fn from(refusal: ExchangeRefusal) -> WareRefusal {
+    fn of(refusal: ExchangeRefusal, content: &Content) -> WareRefusal {
         match refusal {
             ExchangeRefusal::Missing(short) => WareRefusal::Unaffordable(short),
-            ExchangeRefusal::NoRoom { .. } => WareRefusal::Unavailable(refusal.describe()),
+            ExchangeRefusal::NoRoom { .. } => WareRefusal::Unavailable(refusal.describe(content)),
         }
     }
 }
@@ -173,8 +180,13 @@ pub struct ShopVisit {
 }
 
 impl ShopDef {
-    pub fn pays_for(&self, item: ItemId, declined: &[u32]) -> Result<&'static [ItemStack], String> {
-        let def = item.get();
+    pub fn pays_for(
+        &self,
+        content: &Content,
+        item: ItemId,
+        declined: &[u32],
+    ) -> Result<&'static [ItemStack], String> {
+        let def = item.get(content);
         if def.has(ItemFlag::Quest) {
             return Err("Quest items never sell".to_owned());
         }
@@ -199,11 +211,11 @@ impl ShopDef {
         Ok(rule.pays)
     }
 
-    pub fn wants(&self) -> Vec<String> {
+    pub fn wants(&self, content: &Content) -> Vec<String> {
         self.buys
             .iter()
             .map(|rule| match rule.what {
-                Buys::Item(item) => item.get().display_name.to_owned(),
+                Buys::Item(item) => item.get(content).display_name.to_owned(),
                 Buys::Category(category) => category.plural().to_owned(),
             })
             .collect()
@@ -266,20 +278,22 @@ pub fn refresh(world: &mut World, visits: &mut QueryState<Entity, With<ShopVisit
     }
 }
 
-pub fn conversation_starts() -> Vec<DialogueId> {
-    crate::data::shop::TABLE
+pub fn conversation_starts(content: &Content) -> Vec<DialogueId> {
+    content
+        .table::<ShopDef>()
+        .rows()
         .iter()
         .map(|shop| shop.browsing)
         .collect()
 }
 
-pub fn check() {
-    let shops = ShopId::VARIANTS;
-    for &id in shops {
-        let shop = id.get();
+pub fn check(assets: &AssetService) {
+    let content = assets.content();
+    let shops = content.table::<ShopDef>();
+    for (id, shop) in shops.iter() {
         if shops
             .iter()
-            .any(|&other| other != id && other.get().keeper == shop.keeper)
+            .any(|(other, def)| other != id && def.keeper == shop.keeper)
         {
             panic!("shop {id:?}: its keeper keeps another shop too");
         }
@@ -290,11 +304,11 @@ pub fn check() {
                 .chain(reactions.sold)
                 .chain(reactions.cant_afford)
         }) {
-            dialogue::check_line(format!("shop {id:?}"), line);
+            dialogue::check_line(content, format!("shop {id:?}"), line);
         }
         for offer in shop.sells {
-            for &buyer in shops {
-                if let Ok(pays) = buyer.get().pays_for(offer.item, &[])
+            for (buyer, def) in shops.iter() {
+                if let Ok(pays) = def.pays_for(content, offer.item, &[])
                     && profits(offer, pays)
                 {
                     panic!(
@@ -334,19 +348,20 @@ fn bound(world: &World, player: Entity) -> bool {
 }
 
 fn wares(world: &World, asked: &Asked) -> Vec<Offer> {
+    let content = world.resource::<Content>();
     let Some(&keeper) = asked
-        .greeting()
+        .greeting(content)
         .and_then(|with| world.get::<Counterpart>(with))
     else {
         return Vec::new();
     };
-    let Some(&id) = ShopId::VARIANTS
+    let Some((id, shop)) = content
+        .table::<ShopDef>()
         .iter()
-        .find(|shop| shop.get().keeper == keeper)
+        .find(|(_, shop)| shop.keeper == keeper)
     else {
         return Vec::new();
     };
-    let shop = id.get();
     let Some(ask) = shop
         .ask
         .filter(|_| rule::met(world, asked.player, shop.requires))
@@ -357,7 +372,7 @@ fn wares(world: &World, asked: &Asked) -> Vec<Offer> {
     vec![Offer {
         label: LineText::spoken(ask, world, asked.player),
         tag: ChoiceTag::Shop,
-        icon: Some(shop.mark.get().icon),
+        icon: Some(shop.mark.get(content).icon),
         requires: Vec::new(),
         costs: &[],
         then: Then::Made(then),
@@ -370,24 +385,27 @@ fn marks(world: &World, player: Entity, target: Entity) -> Vec<AttentionId> {
     let Some(&keeper) = world.get::<Counterpart>(target) else {
         return Vec::new();
     };
-    ShopId::VARIANTS
+    world
+        .resource::<Content>()
+        .table::<ShopDef>()
+        .rows()
         .iter()
-        .map(|shop| shop.get())
         .filter(|shop| shop.keeper == keeper && rule::met(world, player, shop.requires))
         .map(|shop| shop.mark)
         .collect()
 }
 
 fn buy(world: &mut World, player: Entity, index: u32) {
+    let content = world.resource::<Content>().clone();
     let Some(shop) = visiting(world, player) else {
         return;
     };
-    let Some(offer) = shop.get().sells.get(index as usize) else {
+    let Some(offer) = shop.get(&content).sells.get(index as usize) else {
         return;
     };
     let now = world.resource::<WallClock>().now;
     let bought = match offer_refusal(world, player, shop, index, now) {
-        Some(refusal) => Err(refusal.describe()),
+        Some(refusal) => Err(refusal.describe(&content)),
         None => trade(
             world,
             player,
@@ -424,6 +442,7 @@ fn buy(world: &mut World, player: Entity, index: u32) {
 }
 
 fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
+    let content = world.resource::<Content>().clone();
     let Some(shop) = visiting(world, player) else {
         return;
     };
@@ -434,7 +453,7 @@ fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
         return;
     }
     let declined = declined(world, player, shop);
-    let paid: Vec<ItemStack> = match shop.get().pays_for(stack.item, &declined) {
+    let paid: Vec<ItemStack> = match shop.get(&content).pays_for(&content, stack.item, &declined) {
         Ok(pays) => pays
             .iter()
             .map(|pay| ItemStack::new(pay.item, pay.count.saturating_mul(stack.count)))
@@ -509,12 +528,13 @@ fn trade(
     takes: &[ItemStack],
     gives: &[ItemStack],
 ) -> Result<(), String> {
+    let content = world.resource::<Content>().clone();
     let mut inventory = world
         .get_mut::<Inventory>(player)
         .ok_or_else(|| "You have no bag".to_owned())?;
     inventory
-        .exchange(takes, gives)
-        .map_err(|refusal| refusal.describe())
+        .exchange(&content, takes, gives)
+        .map_err(|refusal| refusal.describe(&content))
 }
 
 fn offer_refusal(
@@ -524,7 +544,8 @@ fn offer_refusal(
     index: u32,
     now: UnixMillis,
 ) -> Option<WareRefusal> {
-    let offer = shop.get().sells.get(index as usize)?;
+    let content = world.resource::<Content>();
+    let offer = shop.get(content).sells.get(index as usize)?;
     if let Some(unmet) = offer
         .requires
         .iter()
@@ -532,7 +553,7 @@ fn offer_refusal(
     {
         return Some(WareRefusal::Unavailable(format!(
             "Needs {}",
-            unmet.describe()
+            unmet.describe(content)
         )));
     }
     if stock(world, player, shop, index, now).is_some_and(|(left, _)| left == 0) {
@@ -540,9 +561,13 @@ fn offer_refusal(
     }
     let mut inventory = world.get::<Inventory>(player)?.clone();
     inventory
-        .exchange(offer.price, &[ItemStack::new(offer.item, offer.count)])
+        .exchange(
+            content,
+            offer.price,
+            &[ItemStack::new(offer.item, offer.count)],
+        )
         .err()
-        .map(WareRefusal::from)
+        .map(|refusal| WareRefusal::of(refusal, content))
 }
 
 fn stock(
@@ -552,7 +577,8 @@ fn stock(
     index: u32,
     now: UnixMillis,
 ) -> Option<(u32, Option<Seconds>)> {
-    let Stock::Limited { count, .. } = shop.get().sells.get(index as usize)?.stock else {
+    let content = world.resource::<Content>();
+    let Stock::Limited { count, .. } = shop.get(content).sells.get(index as usize)?.stock else {
         return None;
     };
     let restock = world
@@ -569,11 +595,12 @@ fn stock(
 }
 
 fn refresh_view(world: &mut World, player: Entity) {
+    let content = world.resource::<Content>().clone();
     let Some(shop) = visiting(world, player) else {
         return;
     };
     let now = world.resource::<WallClock>().now;
-    let offers = (0..shop.get().sells.len() as u32)
+    let offers = (0..shop.get(&content).sells.len() as u32)
         .map(|index| {
             let stock = stock(world, player, shop, index, now);
             OfferView {
@@ -600,21 +627,24 @@ fn refresh_view(world: &mut World, player: Entity) {
 }
 
 fn declined(world: &World, player: Entity, shop: ShopId) -> Vec<u32> {
+    let content = world.resource::<Content>();
     (0..)
-        .zip(shop.get().buys)
+        .zip(shop.get(content).buys)
         .filter(|(_, rule)| !rule::met(world, player, rule.requires))
         .map(|(index, _)| index)
         .collect()
 }
 
 fn react(world: &mut World, player: Entity, pick: fn(&ShopReactions) -> &'static [Line]) {
+    let content = world.resource::<Content>().clone();
     let Some((shop, nth, keeper)) = world.get_mut::<ShopVisit>(player).map(|mut visit| {
         visit.reactions += 1;
         (visit.shop, visit.reactions, visit.encounter.with)
     }) else {
         return;
     };
-    let (Some(lines), Some(keeper)) = (shop.get().reactions.as_ref().map(pick), keeper) else {
+    let (Some(lines), Some(keeper)) = (shop.get(&content).reactions.as_ref().map(pick), keeper)
+    else {
         return;
     };
     if let Some(line) = lines.get(nth as usize % lines.len().max(1)) {

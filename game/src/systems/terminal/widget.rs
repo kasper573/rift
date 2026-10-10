@@ -1,4 +1,4 @@
-use crate::data::terminal::Id;
+use crate::systems::terminal::TerminalKind;
 use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use bevy_terminal::TerminalInput;
@@ -46,17 +46,17 @@ impl Window for TerminalWindow {
 
 #[derive(Component, Clone)]
 struct TerminalLog {
-    terminal: Id,
+    terminal: TerminalKind,
 }
 
-fn tab_title(terminal: Id) -> &'static str {
+fn tab_title(terminal: TerminalKind) -> &'static str {
     match terminal {
-        Id::Global => "Global",
-        Id::Admin => "Admin",
+        TerminalKind::Global => "Global",
+        TerminalKind::Admin => "Admin",
     }
 }
 
-fn tab_scene(terminal: Id) -> impl Scene {
+fn tab_scene(terminal: TerminalKind) -> impl Scene {
     bsn! {
         Node {
             width: Val::Percent(100.0),
@@ -98,7 +98,7 @@ fn tab_scene(terminal: Id) -> impl Scene {
 }
 
 fn sync_logs(world: &mut World) {
-    let logs: Vec<(Entity, Id)> = world
+    let logs: Vec<(Entity, TerminalKind)> = world
         .query::<(Entity, &TerminalLog)>()
         .iter(world)
         .map(|(entity, log)| (entity, log.terminal))

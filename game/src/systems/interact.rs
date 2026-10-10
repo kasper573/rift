@@ -3,6 +3,7 @@ use bevy_ecs::entity::MapEntities;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 use crate::data::attention::Id as AttentionId;
@@ -28,6 +29,7 @@ pub fn register(app: &mut App) {
     attention::mark_source(app, marks);
 }
 
+#[derive(Clone, Copy)]
 pub struct Interaction {
     pub verb: Verb,
     pub reach: Tiles,
@@ -79,10 +81,10 @@ pub enum Counterpart {
 }
 
 impl Counterpart {
-    pub fn name(self) -> &'static str {
+    pub fn name(self, content: &Content) -> &'static str {
         match self {
-            Counterpart::Npc(npc) => npc.get().display_name,
-            Counterpart::Prop(prop) => prop.get().display_name,
+            Counterpart::Npc(npc) => npc.get(content).display_name,
+            Counterpart::Prop(prop) => prop.get(content).display_name,
         }
     }
 }
@@ -93,7 +95,7 @@ pub struct InteractRequest {
     pub target: Entity,
 }
 
-pub type InteractionSource = fn(&World, Entity) -> Option<&'static Interaction>;
+pub type InteractionSource = fn(&World, Entity) -> Option<Interaction>;
 
 #[derive(Resource, Default)]
 pub struct InteractionSources(Vec<InteractionSource>);
@@ -105,7 +107,7 @@ pub fn interaction_source(app: &mut App, source: InteractionSource) {
         .push(source);
 }
 
-pub fn interaction_of(world: &World, target: Entity) -> Option<&'static Interaction> {
+pub fn interaction_of(world: &World, target: Entity) -> Option<Interaction> {
     world.get::<Interactive>(target)?;
     world
         .resource::<InteractionSources>()
@@ -117,7 +119,7 @@ pub fn interaction_of(world: &World, target: Entity) -> Option<&'static Interact
 pub fn response(
     world: &World,
     player: Entity,
-    interaction: &'static Interaction,
+    interaction: &Interaction,
 ) -> Option<&'static Response> {
     interaction
         .responses
@@ -168,16 +170,19 @@ pub fn interactions(world: &mut World, intents: &mut reach::Intents) {
     }
 }
 
-pub fn conversation_starts(interaction: &Interaction) -> impl Iterator<Item = DialogueId> + '_ {
+pub fn conversation_starts<'a>(
+    content: &'a Content,
+    interaction: &'a Interaction,
+) -> impl Iterator<Item = DialogueId> + 'a {
     interaction
         .responses
         .iter()
         .flat_map(|response| response.then)
-        .flat_map(|outcome| outcome.leads_to())
+        .flat_map(|outcome| outcome.leads_to(content))
 }
 
-fn respond(world: &mut World, player: Entity, target: Entity, interaction: &'static Interaction) {
-    let Some(response) = response(world, player, interaction) else {
+fn respond(world: &mut World, player: Entity, target: Entity, interaction: Interaction) {
+    let Some(response) = response(world, player, &interaction) else {
         return;
     };
     let encounter = Encounter {
@@ -202,12 +207,13 @@ fn marks(world: &World, player: Entity, target: Entity) -> Vec<AttentionId> {
     let Some(interaction) = interaction_of(world, target) else {
         return Vec::new();
     };
-    let news = response(world, player, interaction).is_some_and(|response| {
+    let content = world.resource::<Content>();
+    let news = response(world, player, &interaction).is_some_and(|response| {
         response.news
             && response
                 .then
                 .iter()
-                .flat_map(|outcome| outcome.leads_to())
+                .flat_map(|outcome| outcome.leads_to(content))
                 .any(|node| !dialogue::heard(world, player, node))
     });
     interaction

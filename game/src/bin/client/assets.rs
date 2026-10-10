@@ -10,7 +10,7 @@ use include_dir::{Dir as Embedded, include_dir};
 static ASSETS: Embedded<'static> = include_dir!("$CARGO_MANIFEST_DIR/../assets");
 
 pub fn service() -> AssetService {
-    AssetService::new(EmbeddedSource)
+    AssetService::new(EmbeddedSource, game::data::build())
 }
 
 pub fn bevy_source() -> AssetSourceBuilder {

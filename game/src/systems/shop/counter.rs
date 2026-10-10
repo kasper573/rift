@@ -8,6 +8,7 @@ use ui::{Carried, CarryTarget, ChipOptions, ConfirmOptions, Family, OnTap, compo
 use super::{OfferView, Sale, ShopId, ShopRequest, ShopView, WareRefusal};
 use crate::core::audio::playback::SfxId;
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
+use crate::core::content::Content;
 use crate::data::item::Id as ItemId;
 use crate::systems::dialogue::stage;
 use crate::systems::hud;
@@ -96,6 +97,7 @@ fn forget(mut browse: ResMut<Browse>) {
 }
 
 fn show_counter(world: &mut World) {
+    let content = world.resource::<Content>().clone();
     let shop = view(world).map(|shown| shown.shop);
     let panel = world
         .query_filtered::<Entity, With<CounterPanel>>()
@@ -106,7 +108,7 @@ fn show_counter(world: &mut World) {
             *world.resource_mut::<Browse>() = Browse::default();
             let playing = *world.resource::<Mode>() == Mode::Play;
             let panel = ui::DialoguePanelOptions {
-                title: shop.get().title.to_owned(),
+                title: shop.get(&content).title.to_owned(),
                 width: Val::Px(COUNTER_SIZE.x),
                 height: Val::Px(COUNTER_SIZE.y),
                 content: counter(playing),
@@ -172,6 +174,7 @@ fn counter(playing: bool) -> Box<dyn Scene> {
 }
 
 fn sync_counter(world: &mut World) {
+    let content = world.resource::<Content>().clone();
     let Some(shown) = view(world).cloned() else {
         return;
     };
@@ -204,7 +207,7 @@ fn sync_counter(world: &mut World) {
         playing,
     };
     world.resource_mut::<Browse>().synced = Some(synced);
-    let wares = shelf.wares();
+    let wares = shelf.wares(&content);
     let selected = shelf.selected.min(wares.len().saturating_sub(1));
 
     let tabs = [
@@ -223,7 +226,7 @@ fn sync_counter(world: &mut World) {
         Box::new(tab_button(tab, label, shelf.tab == tab))
     });
 
-    let wants = shelf.shown.shop.get().wants();
+    let wants = shelf.shown.shop.get(&content).wants(&content);
     hud::reconcile_children(world, parts.wants, &[key(&wants)], |_, _| {
         Box::new(ui::styled_text(
             wants_note(&wants),
@@ -252,6 +255,7 @@ fn sync_counter(world: &mut World) {
     hud::reconcile_children(world, parts.list, &list_keys, |world, index| {
         match wares.get(index) {
             Some(ware) => row(
+                world.resource::<Content>(),
                 world.resource::<AssetServer>(),
                 &shelf,
                 ware,
@@ -339,12 +343,12 @@ struct Ware {
     refusal: Option<WareRefusal>,
 }
 impl Shelf {
-    fn wares(&self) -> Vec<Ware> {
+    fn wares(&self, content: &Content) -> Vec<Ware> {
         match self.tab {
             ShopTab::Wares => self
                 .shown
                 .shop
-                .get()
+                .get(content)
                 .sells
                 .iter()
                 .zip(&self.shown.offers)
@@ -365,7 +369,7 @@ impl Shelf {
                     count: sale.count,
                     price: sale.paid.clone(),
                     note: None,
-                    refusal: missing(&self.inventory, &sale.paid),
+                    refusal: missing(content, &self.inventory, &sale.paid),
                 })
                 .collect(),
         }
@@ -383,9 +387,12 @@ fn stock_note(view: &OfferView) -> Option<String> {
     })
 }
 
-fn missing(inventory: &Inventory, price: &[ItemStack]) -> Option<WareRefusal> {
+fn missing(content: &Content, inventory: &Inventory, price: &[ItemStack]) -> Option<WareRefusal> {
     let mut trial = inventory.clone();
-    trial.exchange(price, &[]).err().map(WareRefusal::from)
+    trial
+        .exchange(content, price, &[])
+        .err()
+        .map(|refusal| WareRefusal::of(refusal, content))
 }
 
 fn wants_note(wants: &[String]) -> String {
@@ -445,6 +452,7 @@ fn tab_button(tab: ShopTab, label: String, active: bool) -> impl Scene {
 }
 
 fn row(
+    content: &Content,
     assets: &AssetServer,
     shelf: &Shelf,
     ware: &Ware,
@@ -452,7 +460,7 @@ fn row(
     selected: bool,
 ) -> Box<dyn Scene> {
     let ink = ui::theme::theme().surface_floating.on;
-    let def = ware.item.get();
+    let def = ware.item.get(content);
     let name = counted(def.display_name, ware.count);
     let note = unavailable(ware)
         .map(|reason| (reason, palette::CRIMSON_80))
@@ -466,7 +474,9 @@ fn row(
     let chips: Vec<Box<dyn Scene>> = ware
         .price
         .iter()
-        .map(|stack| -> Box<dyn Scene> { Box::new(price_chip(assets, &shelf.inventory, *stack)) })
+        .map(|stack| -> Box<dyn Scene> {
+            Box::new(price_chip(content, assets, &shelf.inventory, *stack))
+        })
         .collect();
     let background = if selected {
         ui::theme::theme().surface_inset.base
@@ -513,13 +523,16 @@ fn row(
 }
 
 fn detail(world: &World, shelf: &Shelf, ware: &Ware, index: usize) -> impl Scene + use<> {
+    let content = world.resource::<Content>();
     let assets = world.resource::<AssetServer>();
     let family = ui::theme::theme().surface_floating;
     let ink = family.on;
     let costs: Vec<Box<dyn Scene>> = ware
         .price
         .iter()
-        .map(|stack| -> Box<dyn Scene> { Box::new(cost_row(assets, &shelf.inventory, *stack)) })
+        .map(|stack| -> Box<dyn Scene> {
+            Box::new(cost_row(content, assets, &shelf.inventory, *stack))
+        })
         .collect();
     let notes: Vec<Box<dyn Scene>> = ware
         .note
@@ -604,11 +617,16 @@ fn trade(world: &mut World, tab: ShopTab, index: usize) {
     chime(world, SfxId::UiPick);
 }
 
-fn price_chip(assets: &AssetServer, inventory: &Inventory, stack: ItemStack) -> impl Scene + use<> {
+fn price_chip(
+    content: &Content,
+    assets: &AssetServer,
+    inventory: &Inventory,
+    stack: ItemStack,
+) -> impl Scene + use<> {
     let covered = inventory.count(stack.item) >= stack.count;
     ui::chip(ChipOptions {
         label: stack.count.to_string(),
-        icon: Some(assets.load(stack.item.get().icon.0)),
+        icon: Some(assets.load(stack.item.get(content).icon.0)),
         family: Family::outline(if covered {
             palette::AMBER_70
         } else {
@@ -618,7 +636,12 @@ fn price_chip(assets: &AssetServer, inventory: &Inventory, stack: ItemStack) -> 
     })
 }
 
-fn cost_row(assets: &AssetServer, inventory: &Inventory, stack: ItemStack) -> impl Scene + use<> {
+fn cost_row(
+    content: &Content,
+    assets: &AssetServer,
+    inventory: &Inventory,
+    stack: ItemStack,
+) -> impl Scene + use<> {
     let have = inventory.count(stack.item);
     let color = if have >= stack.count {
         ui::theme::theme().surface_floating.on
@@ -628,14 +651,14 @@ fn cost_row(assets: &AssetServer, inventory: &Inventory, stack: ItemStack) -> im
     let label = format!(
         "{} {} · You have {have}",
         stack.count,
-        stack.item.get().display_name
+        stack.item.get(content).display_name
     );
     bsn! {
         Node { column_gap: Val::Px({spacing::L}), align_items: AlignItems::Center }
         Children [
             (
                 Node { width: Val::Px(16.0), height: Val::Px(16.0) }
-                component(ImageNode::new(assets.load(stack.item.get().icon.0)))
+                component(ImageNode::new(assets.load(stack.item.get(content).icon.0)))
             ),
             {EntityScene(ui::styled_text(label, color, typography::BODY))},
         ]
@@ -658,18 +681,25 @@ fn counted(name: &str, count: u32) -> String {
 }
 
 fn verdict(world: &World, stack: ItemStack) -> Option<SlotVerdict> {
+    let content = world.resource::<Content>();
     let shown = view(world)?;
     Some(
-        match shown.shop.get().pays_for(stack.item, &shown.declined) {
-            Ok(pays) => SlotVerdict::Wanted(format!("sells for {}", paid(pays, stack.count))),
+        match shown
+            .shop
+            .get(content)
+            .pays_for(content, stack.item, &shown.declined)
+        {
+            Ok(pays) => {
+                SlotVerdict::Wanted(format!("sells for {}", paid(content, pays, stack.count)))
+            }
             Err(refusal) => SlotVerdict::Refused(refusal),
         },
     )
 }
 
-fn paid(pays: &[ItemStack], count: u32) -> String {
+fn paid(content: &Content, pays: &[ItemStack], count: u32) -> String {
     pays.iter()
-        .map(|pay| ItemStack::new(pay.item, pay.count.saturating_mul(count)).describe())
+        .map(|pay| ItemStack::new(pay.item, pay.count.saturating_mul(count)).describe(content))
         .collect::<Vec<_>>()
         .join(" + ")
 }
@@ -679,6 +709,7 @@ fn selling(world: &World) -> bool {
 }
 
 fn request_sale(world: &mut World, slot: u32) {
+    let content = world.resource::<Content>().clone();
     if *world.resource::<Mode>() != Mode::Play {
         return;
     }
@@ -694,8 +725,8 @@ fn request_sale(world: &mut World, slot: u32) {
     else {
         return;
     };
-    match shop.get().pays_for(stack.item, &declined) {
-        Ok(pays) if stack.item.get().category() == ItemCategory::Equipment => {
+    match shop.get(&content).pays_for(&content, stack.item, &declined) {
+        Ok(pays) if stack.item.get(&content).category() == ItemCategory::Equipment => {
             confirm_sale(world, shop, stack, pays, slot);
         }
         _ => sell(world, slot, stack),
@@ -703,11 +734,16 @@ fn request_sale(world: &mut World, slot: u32) {
 }
 
 fn confirm_sale(world: &mut World, shop: ShopId, stack: ItemStack, pays: &[ItemStack], slot: u32) {
-    let name = stack.item.get().display_name;
+    let content = world.resource::<Content>().clone();
+    let name = stack.item.get(&content).display_name;
     let dialog = ui::confirm_dialog(ConfirmOptions {
         title: format!("Sell {name}?"),
         body: vec![
-            format!("{} pays {}.", shop.get().title, paid(pays, stack.count)),
+            format!(
+                "{} pays {}.",
+                shop.get(&content).title,
+                paid(&content, pays, stack.count)
+            ),
             "You can buy it back for the same until you leave the game.".to_owned(),
         ],
         confirm: "Sell".to_owned(),

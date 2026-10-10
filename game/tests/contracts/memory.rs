@@ -4,7 +4,7 @@ use game::systems::memory::{Forget, Memory, Remember, Remembers};
 use game::systems::movement::position;
 use game::systems::rule::{Encounter, Requirement, Terms};
 
-use crate::support::{Sim, row};
+use crate::support::{Sim, content, row};
 
 const HOUR: u64 = 3_600_000;
 
@@ -26,27 +26,30 @@ fn later(clock: WallClock, seconds: f32) -> WallClock {
 fn flags_are_remembered_until_forgotten() {
     let clock = at(100 * HOUR);
     let mut memory = Memory::default();
-    assert_eq!(memory.recall(row("BribedIlsa"), clock), None);
-    memory.remember(row("BribedIlsa"), clock);
-    assert_eq!(memory.recall(row("BribedIlsa"), later(clock, 1e7)), Some(1));
+    assert_eq!(memory.recall(content(), row("BribedIlsa"), clock), None);
+    memory.remember(content(), row("BribedIlsa"), clock);
+    assert_eq!(
+        memory.recall(content(), row("BribedIlsa"), later(clock, 1e7)),
+        Some(1)
+    );
     memory.forget(row("BribedIlsa"));
-    assert_eq!(memory.recall(row("BribedIlsa"), clock), None);
+    assert_eq!(memory.recall(content(), row("BribedIlsa"), clock), None);
 }
 
 #[test]
 fn counters_step_at_most_once_per_cooldown() {
     let start = at(100 * HOUR);
     let mut memory = Memory::default();
-    memory.remember(row("TobbVisits"), start);
-    memory.remember(row("TobbVisits"), later(start, 60.0));
-    memory.remember(row("TobbVisits"), later(start, 599.0));
+    memory.remember(content(), row("TobbVisits"), start);
+    memory.remember(content(), row("TobbVisits"), later(start, 60.0));
+    memory.remember(content(), row("TobbVisits"), later(start, 599.0));
     assert_eq!(
-        memory.recall(row("TobbVisits"), later(start, 599.0)),
+        memory.recall(content(), row("TobbVisits"), later(start, 599.0)),
         Some(1)
     );
-    memory.remember(row("TobbVisits"), later(start, 600.0));
+    memory.remember(content(), row("TobbVisits"), later(start, 600.0));
     assert_eq!(
-        memory.recall(row("TobbVisits"), later(start, 600.0)),
+        memory.recall(content(), row("TobbVisits"), later(start, 600.0)),
         Some(2)
     );
 }
@@ -55,13 +58,13 @@ fn counters_step_at_most_once_per_cooldown() {
 fn timers_run_out() {
     let start = at(100 * HOUR);
     let mut memory = Memory::default();
-    memory.remember(row("PellGrudge"), start);
+    memory.remember(content(), row("PellGrudge"), start);
     assert_eq!(
-        memory.recall(row("PellGrudge"), later(start, 1_799.0)),
+        memory.recall(content(), row("PellGrudge"), later(start, 1_799.0)),
         Some(1)
     );
     assert_eq!(
-        memory.recall(row("PellGrudge"), later(start, 1_800.0)),
+        memory.recall(content(), row("PellGrudge"), later(start, 1_800.0)),
         None
     );
 }
@@ -70,13 +73,21 @@ fn timers_run_out() {
 fn daily_memories_end_at_the_reset_hour() {
     let before_reset = at(100 * 24 * HOUR + 3 * HOUR);
     let mut memory = Memory::default();
-    memory.remember(row("TideChestLooted"), before_reset);
+    memory.remember(content(), row("TideChestLooted"), before_reset);
     assert_eq!(
-        memory.recall(row("TideChestLooted"), later(before_reset, 3_599.0)),
+        memory.recall(
+            content(),
+            row("TideChestLooted"),
+            later(before_reset, 3_599.0)
+        ),
         Some(1)
     );
     assert_eq!(
-        memory.recall(row("TideChestLooted"), later(before_reset, 3_600.0)),
+        memory.recall(
+            content(),
+            row("TideChestLooted"),
+            later(before_reset, 3_600.0)
+        ),
         None
     );
 }
@@ -88,8 +99,8 @@ fn leaving_an_area_forgets_what_only_lasts_there() {
     let clock = *sim.world().resource::<WallClock>();
     let dest = position(sim.world(), player).expect("position");
     let mut memory = Memory::default();
-    memory.remember(row("PellFighting"), clock);
-    memory.remember(row("PellGrudge"), clock);
+    memory.remember(content(), row("PellFighting"), clock);
+    memory.remember(content(), row("PellGrudge"), clock);
     sim.world().entity_mut(player).insert((
         memory,
         Crossing {
@@ -101,8 +112,8 @@ fn leaving_an_area_forgets_what_only_lasts_there() {
     let travelers = transition::departing(sim.world());
 
     let carried = &travelers[0].state.memory;
-    assert_eq!(carried.recall(row("PellFighting"), clock), None);
-    assert_eq!(carried.recall(row("PellGrudge"), clock), Some(1));
+    assert_eq!(carried.recall(content(), row("PellFighting"), clock), None);
+    assert_eq!(carried.recall(content(), row("PellGrudge"), clock), Some(1));
 }
 
 #[test]

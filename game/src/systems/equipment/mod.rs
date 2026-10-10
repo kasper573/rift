@@ -7,6 +7,7 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 
+use crate::core::content::Content;
 use crate::data;
 use crate::systems::effect::{self, Effect};
 use crate::systems::item::{Inventory, ItemStack};
@@ -71,6 +72,7 @@ pub fn equip(
     into: EquipmentSlot,
     requirements: &'static [&'static dyn Requirement],
 ) {
+    let content = world.resource::<Content>().clone();
     let Some(item) = world
         .get::<Inventory>(player)
         .and_then(|inventory| inventory.slots.get(inv_slot).map(|slot| slot.item))
@@ -81,7 +83,11 @@ pub fn equip(
         .iter()
         .find(|requirement| !requirement.met(world, player))
     {
-        let refusal = format!("{} needs {}", item.get().display_name, unmet.describe());
+        let refusal = format!(
+            "{} needs {}",
+            item.get(&content).display_name,
+            unmet.describe(&content)
+        );
         notification::notify(
             world,
             player,
@@ -96,7 +102,7 @@ pub fn equip(
         inventory.slots.remove(inv_slot);
         if let Some(occupant) = occupant {
             inventory
-                .exchange(&[], &[ItemStack::new(occupant, 1)])
+                .exchange(&content, &[], &[ItemStack::new(occupant, 1)])
                 .expect("the equipped item's slot was just freed");
         }
     }
@@ -106,6 +112,7 @@ pub fn equip(
 }
 
 pub fn unequip(world: &mut World) {
+    let content = world.resource::<Content>().clone();
     for request in crate::systems::requests::<UnequipRequest>(world) {
         let Some(player) = sender_player(world, request.client_id) else {
             continue;
@@ -119,7 +126,7 @@ pub fn unequip(world: &mut World) {
         };
         let stored = world
             .get_mut::<Inventory>(player)
-            .map(|mut inventory| inventory.exchange(&[], &[ItemStack::new(item, 1)]));
+            .map(|mut inventory| inventory.exchange(&content, &[], &[ItemStack::new(item, 1)]));
         match stored {
             Some(Ok(())) => {
                 if let Some(mut equipment) = world.get_mut::<Equipment>(player) {
@@ -131,7 +138,7 @@ pub fn unequip(world: &mut World) {
                 player,
                 Notification::new(
                     NotificationKind::error(),
-                    LineText::plain(refusal.describe()),
+                    LineText::plain(refusal.describe(&content)),
                 ),
             ),
             None => {}
@@ -140,13 +147,14 @@ pub fn unequip(world: &mut World) {
 }
 
 fn equipped(world: &World, entity: Entity) -> Vec<Effect> {
+    let content = world.resource::<Content>();
     world
         .get::<Equipment>(entity)
         .map(|equipment| {
             equipment
                 .slots
                 .values()
-                .flat_map(|item| item.get().effects.iter().copied())
+                .flat_map(|item| item.get(content).effects.iter().copied())
                 .collect()
         })
         .unwrap_or_default()
@@ -161,7 +169,7 @@ impl Requirement for Wearing {
             .is_some_and(|equipment| equipment.slots.values().any(|&item| item == self.0))
     }
 
-    fn describe(&self) -> String {
-        format!("{} worn", self.0.get().display_name)
+    fn describe(&self, content: &Content) -> String {
+        format!("{} worn", self.0.get(content).display_name)
     }
 }

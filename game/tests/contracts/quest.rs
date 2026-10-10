@@ -14,7 +14,7 @@ use game::systems::quest::{self, QuestLog, QuestRequest, QuestResult};
 use game::systems::shop::ShopRequest;
 
 use crate::support::{
-    Sim, conversation, count, errors, give, heard_the_news, labels, later, leave, locked,
+    Sim, content, conversation, count, errors, give, heard_the_news, labels, later, leave, locked,
     open_with, pick, prop, row, settle, slay, talk,
 };
 
@@ -406,7 +406,7 @@ fn giving_ugra_the_tusks_fails_maras_quest_and_is_remembered() {
     leave(&mut sim, 1, player);
     settle(&mut sim);
     let settled = log(&mut sim, player);
-    assert!(!settled.trackable(row("TusksForTheChief")));
+    assert!(!settled.trackable(content(), row("TusksForTheChief")));
     assert!(!settled.tracked.contains(&row("TusksForTheChief")));
 
     let friend = talk(&mut sim, 1, player, row("Ugra"));

@@ -4,7 +4,8 @@ use std::path::Path;
 use tiled::{Frame, PropertyValue, TileId};
 
 use crate::core::assets::{AssetRef, AssetService};
-use crate::core::audio::playback::SfxId;
+use crate::core::audio::playback::{SfxDef, SfxId};
+use crate::core::content::key_of;
 use crate::core::math::{Direction, Pos, Rect, Size, WorldPx};
 use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
@@ -31,8 +32,9 @@ pub fn build_model(svc: &AssetService, source: AssetRef) -> ActorModel {
         if let Some(PropertyValue::StringValue(sfx)) = tile.properties.get("sfx") {
             sounds.insert(
                 id,
-                sfx.parse::<SfxId>()
-                    .unwrap_or_else(|error| panic!("actor sfx '{sfx}': {error}")),
+                svc.content()
+                    .by_key::<SfxDef>(key_of(sfx).as_str())
+                    .unwrap_or_else(|| panic!("actor sfx '{sfx}' is not a known sfx")),
             );
         }
         if let Some(PropertyValue::BoolValue(true)) = tile.properties.get("step") {

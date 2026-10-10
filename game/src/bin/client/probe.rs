@@ -10,6 +10,7 @@ use game::core::assets::AssetService;
 use game::core::audio::mix::AudioCategory;
 use game::core::audio::playback::Listener;
 use game::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
+use game::core::content::{Content, ContentScope, with_content};
 use game::core::math::{Offset, Pos, Rect, Size};
 use game::core::render::tile_to_window;
 use game::core::render::transition::ScreenTransitionPhase;
@@ -357,12 +358,17 @@ fn install() {
 // A snapshot scans the whole world every frame, so only a page that has asked for one pays for it.
 fn publish(world: &mut World) {
     if REQUESTED.get() {
-        let snapshot = serde_json::to_string(&snapshot(world)).expect("a serializable snapshot");
+        let scope = ContentScope::of(world.resource::<Content>());
+        let snapshot = snapshot(world);
+        let (snapshot, _) = with_content(scope, || {
+            serde_json::to_string(&snapshot).expect("a serializable snapshot")
+        });
         LATEST.set(Some(snapshot));
     }
 }
 
 fn snapshot(world: &mut World) -> Snapshot {
+    let content = world.resource::<Content>().clone();
     let me = session::my_character(world).map(|me| me.id());
     let viewpoint = world.resource::<session::Viewpoint>().0;
     let area = viewpoint
@@ -418,7 +424,7 @@ fn snapshot(world: &mut World) -> Snapshot {
             shop: shown.shop,
             offers: shown
                 .shop
-                .get()
+                .get(&content)
                 .sells
                 .iter()
                 .zip(&shown.offers)
@@ -426,7 +432,10 @@ fn snapshot(world: &mut World) -> Snapshot {
                     item: offer.item,
                     count: offer.count,
                     left: view.left,
-                    refusal: view.refusal.as_ref().map(shop::WareRefusal::describe),
+                    refusal: view
+                        .refusal
+                        .as_ref()
+                        .map(|refusal| refusal.describe(&content)),
                 })
                 .collect(),
             buyback: shown
@@ -516,6 +525,7 @@ fn soundscape(world: &World) -> Soundscape {
 }
 
 fn quests(world: &World, seen: Entity) -> Option<Quests> {
+    let content = world.resource::<Content>();
     let log = world.get::<QuestLog>(seen)?;
     let inventory = world.get::<Inventory>(seen);
     Some(Quests {
@@ -528,8 +538,8 @@ fn quests(world: &World, seen: Entity) -> Option<Quests> {
                 left: active.left.map(|left| left.0),
                 progress: active
                     .quest
-                    .get()
-                    .progress(active, inventory)
+                    .get(content)
+                    .progress(content, active, inventory)
                     .iter()
                     .map(|progress| [progress.have, progress.need])
                     .collect(),
@@ -568,10 +578,7 @@ fn body(world: &World, entity: Entity) -> Option<Body> {
     let at = entity.get::<Position>()?.pos;
     let hitbox = at.hitbox(entity.get::<Hitbox>()?.size);
     let model = entity.get::<Actor>()?.model;
-    let flies = world
-        .resource::<AssetService>()
-        .resolve(model.get().sheet, actor::build_model)
-        .airborne;
+    let flies = actor::model(world.resource::<AssetService>(), model).airborne;
     let stat = |kind| entity.get::<Stats>().map_or(0.0, |stats| stats.get(kind));
     Some(Body {
         id: entity.id().to_string(),
@@ -587,7 +594,7 @@ fn body(world: &World, entity: Entity) -> Option<Body> {
         health: stat(StatKind::Health),
         max_health: stat(StatKind::MaxHealth),
         npc,
-        role: npc.and_then(|npc| npc.get().role),
+        role: npc.and_then(|npc| npc.get(world.resource::<Content>()).role),
         friendly: entity.get::<Attitude>() == Some(&Attitude::Friendly),
         locked,
         marks,
@@ -835,10 +842,11 @@ fn choice_rows(world: &mut World) -> HashMap<usize, Cover> {
 }
 
 fn notifications(world: &mut World) -> Notifications {
+    let content = world.resource::<Content>().clone();
     let bubbles = bubble::shown(world)
         .into_iter()
         .map(|shown| BubbleView {
-            speaker: shown.speaker.get().display_name.to_owned(),
+            speaker: shown.speaker.get(&content).display_name.to_owned(),
             npc: shown.speaker,
             body: shown.body.map(|body| body.to_string()),
             replaced: shown.replaced,

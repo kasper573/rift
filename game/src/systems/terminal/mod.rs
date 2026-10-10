@@ -2,11 +2,35 @@ pub mod widget;
 
 use std::collections::{HashMap, VecDeque};
 
-use crate::data::terminal::Id;
 use bevy::prelude::*;
-use bevy_terminal::{AvailableTerminals, TerminalLine};
+use bevy_terminal::{AvailableTerminals, Terminal, TerminalLine};
+use serde::{Deserialize, Serialize};
+
+use crate::systems::account::role;
 
 use crate::systems::hud::{RefreshWindows, TERMINAL_WINDOW};
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TerminalKind {
+    Global,
+    Admin,
+}
+
+impl TerminalKind {
+    pub const ALL: [TerminalKind; 2] = [TerminalKind::Global, TerminalKind::Admin];
+
+    pub fn terminal(self) -> &'static Terminal {
+        match self {
+            TerminalKind::Global => &GLOBAL,
+            TerminalKind::Admin => &ADMIN,
+        }
+    }
+}
+
+static GLOBAL: Terminal = Terminal { access: None };
+static ADMIN: Terminal = Terminal {
+    access: Some(role::is_admin),
+};
 
 pub struct TerminalPlugin;
 
@@ -19,13 +43,13 @@ impl Plugin for TerminalPlugin {
 
 #[derive(Resource, Default)]
 pub struct Terminals {
-    pub tabs: Vec<Id>,
-    lines: HashMap<Id, VecDeque<(u64, String)>>,
+    pub tabs: Vec<TerminalKind>,
+    lines: HashMap<TerminalKind, VecDeque<(u64, String)>>,
     next_seq: u64,
 }
 
 impl Terminals {
-    pub fn lines(&self, terminal: Id) -> impl Iterator<Item = &(u64, String)> {
+    pub fn lines(&self, terminal: TerminalKind) -> impl Iterator<Item = &(u64, String)> {
         self.lines.get(&terminal).into_iter().flatten()
     }
 }
@@ -33,8 +57,8 @@ impl Terminals {
 const MAX_LINES: usize = 200;
 
 fn receive(
-    mut available: MessageReader<AvailableTerminals<Id>>,
-    mut lines: MessageReader<TerminalLine<Id>>,
+    mut available: MessageReader<AvailableTerminals<TerminalKind>>,
+    mut lines: MessageReader<TerminalLine<TerminalKind>>,
     mut terminals: ResMut<Terminals>,
     mut refresh: ResMut<RefreshWindows>,
 ) {

@@ -4,6 +4,7 @@ use bevy_ecs::prelude::*;
 
 use super::{MapMarker, MarkerName};
 use crate::core::assets::AssetService;
+use crate::core::content::Content;
 use crate::data;
 use crate::systems::WorldArea;
 use crate::systems::dialogue;
@@ -27,12 +28,13 @@ pub struct Zone {
 pub struct ApplyingZones(HashSet<usize>);
 
 pub fn enter_zones(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc)>) {
+    let content = world.resource::<Content>().clone();
     let area = world.resource::<WorldArea>().0;
     let map = world
         .resource::<AssetService>()
-        .resolve(area.get().map, super::build_area);
+        .resolve(area.get(&content).map, super::build_area);
     let zones: Vec<(usize, MapMarker)> = area
-        .get()
+        .get(&content)
         .zones
         .iter()
         .enumerate()
@@ -52,7 +54,8 @@ pub fn enter_zones(world: &mut World, npcs: &mut QueryState<(Entity, &'static Np
             zones
                 .iter()
                 .filter(|&&(index, marker)| {
-                    marker.covers(at) && rule::met(world, player, area.get().zones[index].requires)
+                    marker.covers(at)
+                        && rule::met(world, player, area.get(&content).zones[index].requires)
                 })
                 .map(|&(index, _)| index)
                 .collect()
@@ -66,7 +69,7 @@ pub fn enter_zones(world: &mut World, npcs: &mut QueryState<(Entity, &'static Np
             if dialogue::in_conversation(world, player) {
                 continue;
             }
-            let zone = &area.get().zones[index];
+            let zone = &area.get(&content).zones[index];
             let with = zone.with.and_then(|npc| {
                 npcs.iter(world)
                     .find(|&(entity, found)| {

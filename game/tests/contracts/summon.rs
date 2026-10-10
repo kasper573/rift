@@ -12,7 +12,7 @@ use game::systems::stat::{self, StatKind};
 use game::systems::visibility::{self, Presence};
 
 use crate::support::{
-    Sim, count, give, heard_the_news, later, pick, row, settle, talk, townsperson,
+    Sim, content, count, give, heard_the_news, later, pick, row, settle, talk, townsperson,
 };
 
 fn summoned(sim: &mut Sim, what: NpcId) -> Vec<Entity> {
@@ -30,7 +30,7 @@ fn remember(sim: &mut Sim, player: Entity, key: MemoryId) {
     sim.world()
         .get_mut::<Memory>(player)
         .expect("memory")
-        .remember(key, clock);
+        .remember(content(), key, clock);
 }
 
 fn lose_at_dice(sim: &mut Sim, client: u32, player: Entity) {
@@ -157,7 +157,7 @@ fn fighting_pell_leaves_him_dead_in_your_world_only() {
     assert!(!visibility::present(sim.world(), pell, player));
     assert!(visibility::present(sim.world(), pell, bystander));
 
-    let MemoryKind::Timer(lasts) = row::<MemoryId>("PellDead").get().kind else {
+    let MemoryKind::Timer(lasts) = row::<MemoryId>("PellDead").get(content()).kind else {
         panic!("Pell stays dead for a while, not forever");
     };
     later(&mut sim, lasts.0);
@@ -213,7 +213,11 @@ fn a_townsperson_turned_hostile_can_be_fought_until_they_return_friendly() {
     assert!(combat::attackable(sim.world(), player, bram));
 
     stat::apply_damage(sim.world(), bram, 10_000.0);
-    let respawn = row::<NpcId>("Bram").get().respawn.expect("Bram returns").0;
+    let respawn = row::<NpcId>("Bram")
+        .get(content())
+        .respawn
+        .expect("Bram returns")
+        .0;
     assert!(sim.run_until(respawn + 5.0, |world| !stat::is_dead(world, bram)));
     assert_eq!(sim.world().get::<Attitude>(bram), Some(&Attitude::Friendly));
 }

@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use bevy_ecs::prelude::Resource;
 
+use crate::core::content::Content;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AssetRef(pub &'static str);
 
@@ -29,14 +31,20 @@ type Cache = Mutex<HashMap<(AssetRef, TypeId), &'static (dyn Any + Send + Sync)>
 pub struct AssetService {
     source: Arc<dyn AssetSource>,
     cache: Arc<Cache>,
+    content: Content,
 }
 
 impl AssetService {
-    pub fn new(source: impl AssetSource + 'static) -> AssetService {
+    pub fn new(source: impl AssetSource + 'static, content: Content) -> AssetService {
         AssetService {
             source: Arc::new(source),
             cache: Arc::new(Mutex::new(HashMap::new())),
+            content,
         }
+    }
+
+    pub fn content(&self) -> &Content {
+        &self.content
     }
 
     pub fn open(&self, path: &Path) -> io::Result<Box<dyn BufRead>> {

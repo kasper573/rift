@@ -21,8 +21,13 @@ pub fn register(app: &mut App) {
         .init_resource::<BadgeSources>();
 }
 
+#[derive(Clone)]
 pub struct AttentionDef {
     pub icon: AssetRef,
+}
+
+impl crate::core::content::ContentRow for AttentionDef {
+    const TABLE: &'static str = "attention";
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

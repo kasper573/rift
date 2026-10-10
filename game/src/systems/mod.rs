@@ -44,6 +44,7 @@ use bevy_ecs::message::{Message, Messages};
 use bevy_ecs::prelude::{Bundle, Res, ResMut, Resource, World};
 use bevy_replicon::prelude::{FromClient, Replicated};
 use bevy_terminal::Terminal;
+use terminal::TerminalKind;
 
 use actor::{Actor, Hitbox};
 use area::AreaTag;
@@ -61,14 +62,12 @@ pub const REPLICATION_INTERVAL: u64 = 3;
 pub const REPLICATION_PERIOD: crate::core::time::Seconds =
     crate::core::time::Seconds(REPLICATION_INTERVAL as f32 / TICK_HZ.0);
 
-static TERMINALS: LazyLock<HashMap<crate::data::terminal::Id, &'static Terminal>> =
-    LazyLock::new(|| {
-        crate::data::terminal::Id::VARIANTS
-            .iter()
-            .copied()
-            .zip(crate::data::terminal::TABLE)
-            .collect()
-    });
+static TERMINALS: LazyLock<HashMap<TerminalKind, &'static Terminal>> = LazyLock::new(|| {
+    TerminalKind::ALL
+        .into_iter()
+        .map(|kind| (kind, kind.terminal()))
+        .collect()
+});
 
 pub fn protocol(app: &mut App) {
     actor::register(app);
@@ -111,7 +110,12 @@ pub struct Character {
 /// Builds one area world. `ordinal` is the world's slot among the worlds a driver steps concurrently;
 /// it only staggers the replication phase, so identical area instances still replicate on different
 /// ticks. The driver passes each world's index.
-pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallClock) -> App {
+pub fn server_app(
+    area: area::Id,
+    ordinal: u64,
+    clock: crate::core::time::WallClock,
+    assets: &crate::core::assets::AssetService,
+) -> App {
     use bevy_app::{First, PostUpdate, Startup, Update};
     use bevy_ecs::schedule::{IntoScheduleConfigs, Schedules, SingleThreadedExecutor};
     use bevy_replicon::prelude::{AuthMethod, RepliconSharedPlugin, ServerState};
@@ -121,6 +125,8 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
     let mut app = App::new();
     app.insert_resource(WorldArea(area));
     app.insert_resource(clock);
+    app.insert_resource(assets.content().clone());
+    app.insert_resource(assets.clone());
     app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));
     app.add_plugins(
         bevy_app::PluginGroup::build(bevy_replicon::prelude::RepliconPlugins)
@@ -198,8 +204,8 @@ pub fn server_app(area: area::Id, ordinal: u64, clock: crate::core::time::WallCl
                     player::respawn,
                     spectate::requests,
                     (npc::run_respawn, npc::dismiss).chain(),
-                    bevy_terminal::ingest::<crate::data::terminal::Id>,
-                    bevy_terminal::dispatch::<crate::data::terminal::Id>,
+                    bevy_terminal::ingest::<TerminalKind>,
+                    bevy_terminal::dispatch::<TerminalKind>,
                     chat::rebroadcast,
                     belongings::notify_changes,
                     history::backfill,
@@ -244,18 +250,19 @@ pub fn check_content(assets: &crate::core::assets::AssetService) {
     actor::check(assets);
     area::check(assets);
     npc::check(assets);
+    let content = assets.content();
     dialogue::check(
         assets,
-        npc::conversation_starts()
+        npc::conversation_starts(content)
             .into_iter()
-            .chain(area::conversation_starts())
-            .chain(prop::conversation_starts())
-            .chain(shop::conversation_starts())
-            .chain(quest::conversation_starts()),
+            .chain(area::conversation_starts(content))
+            .chain(prop::conversation_starts(content))
+            .chain(shop::conversation_starts(content))
+            .chain(quest::conversation_starts(content)),
     );
-    shop::check();
+    shop::check(assets);
     quest::check(assets);
-    notification::check();
+    notification::check(assets);
 }
 
 pub(crate) fn requests<M: Message>(world: &mut World) -> Vec<FromClient<M>> {

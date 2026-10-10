@@ -31,7 +31,9 @@ fn boot() {
     });
 
     let mut app = App::new();
-    app.insert_resource(crate::assets::service());
+    let assets = crate::assets::service();
+    app.insert_resource(assets.content().clone());
+    app.insert_resource(assets);
     app.insert_resource(Rng::from_entropy());
     app.register_asset_source(AssetSourceId::Default, crate::assets::bevy_source())
         .add_plugins(

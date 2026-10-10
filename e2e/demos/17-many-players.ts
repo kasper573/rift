@@ -44,30 +44,30 @@ test(
         await waitForWorld(player, loadReference("island.png"));
         await admin(player, commands);
       }
-      await standBelow(other, "Mara", 1);
-      await standBelow(page, "Mara", -1);
+      await standBelow(other, "mara", 1);
+      await standBelow(page, "mara", -1);
     },
     play: async (page) => {
       const name = (await probe(other)).me!.name;
       const stop = await inset(page, other, `${name}'s screen`);
       try {
         await caption(page, `Two players at Mara's stall. On your screen she has a quest for you: !`);
-        await waitFor(page, (snapshot) => townsperson(snapshot, "Mara")?.marks.includes("QuestOffered"), "no !");
+        await waitFor(page, (snapshot) => townsperson(snapshot, "mara")?.marks.includes("quest_offered"), "no !");
         await page.waitForTimeout(3000);
         await caption(page, `On ${name}'s, top left, she shows a ?: they're halfway through it`);
-        await waitFor(other, (snapshot) => townsperson(snapshot, "Mara")?.marks.includes("QuestInProgress"), "no ?");
+        await waitFor(other, (snapshot) => townsperson(snapshot, "mara")?.marks.includes("quest_in_progress"), "no ?");
         await page.waitForTimeout(3500);
 
         await caption(page, "You both talk to her at once, each in a conversation of your own");
-        await Promise.all([talkTo(page, "Mara"), talkTo(other, "Mara")]);
+        await Promise.all([talkTo(page, "mara"), talkTo(other, "mara")]);
         await Promise.all([readToChoices(page, 1000), readToChoices(other, 1000)]);
         await caption(page, "What she offers comes from each player's own quest log", { at: "top" });
         await page.waitForTimeout(4000);
         await Promise.all([leave(page), leave(other)]);
 
         await caption(page, "Pell runs a dice table");
-        await standBelow(other, "Pell", 2);
-        await talkTo(page, "Pell");
+        await standBelow(other, "pell", 2);
+        await talkTo(page, "pell");
         await readToChoices(page, 900);
         await loseAtDice(page);
         await caption(page, "Losing again? Call him out — he won't take it quietly", { at: "top" });
@@ -77,16 +77,16 @@ test(
         await conversationOver(page);
         await waitFor(
           page,
-          ({ notifications }) => notifications.bubbles.some(({ npc }) => npc === "Pell"),
+          ({ notifications }) => notifications.bubbles.some(({ npc }) => npc === "pell"),
           "Pell never shouted",
         );
         await caption(page, `Pell shouts for the guards over his head — for you alone. ${name} sees none of them`);
-        await fight(page, "HarbourGuard");
+        await fight(page, "harbour_guard");
         await page.waitForTimeout(1500);
 
         await caption(page, "Pell holds a grudge now, and settles it himself");
-        await talkTo(page, "Pell");
-        await onStage(page, "PellGrudging");
+        await talkTo(page, "pell");
+        await onStage(page, "pell_grudging");
         await readToChoices(page, 1000);
         await hoverUi(page, "Then let's settle this.");
         await page.waitForTimeout(2000);
@@ -94,7 +94,7 @@ test(
         await conversationOver(page);
         await caption(page, `His table is empty for you while his copy fights you. On ${name}'s screen, Pell never left`);
         await page.waitForTimeout(3000);
-        await fight(page, "PellHostile");
+        await fight(page, "pell_hostile");
         await caption(page, `Pell is dead in your world for half an hour, and alive in ${name}'s`);
         await page.waitForTimeout(5000);
       } finally {
@@ -122,15 +122,15 @@ async function leave(page: Page): Promise<void> {
 async function loseAtDice(page: Page): Promise<void> {
   for (let roll = 0; roll < 20; roll++) {
     const before = await probe(page);
-    if (before.stage?.node === "PellWins") return;
-    const gold = holding(before, "Gold");
-    await pick(page, before.stage?.node === "PellHello" ? "Roll the dice." : "Roll again.");
+    if (before.stage?.node === "pell_wins") return;
+    const gold = holding(before, "gold");
+    await pick(page, before.stage?.node === "pell_hello" ? "Roll the dice." : "Roll again.");
     const landed = await waitFor(
       page,
-      (snapshot) => holding(snapshot, "Gold") !== gold && snapshot.stage && !snapshot.stage.typing && snapshot.stage,
+      (snapshot) => holding(snapshot, "gold") !== gold && snapshot.stage && !snapshot.stage.typing && snapshot.stage,
       "the dice never landed",
     );
-    if (landed.node === "PellLoses") {
+    if (landed.node === "pell_loses") {
       await caption(page, "A win pays twenty. Again!", { at: "top" });
     }
     await page.waitForTimeout(1500);

@@ -75,7 +75,7 @@ impl VoiceRows {
                 until: now,
             });
             turned_away.more += 1;
-            turned_away.until = now + COUNT_LINGERS.into();
+            turned_away.until = now + Duration::from(COUNT_LINGERS);
             return;
         }
         let after = self.rows.last().map_or(now, |last| last.read_by.max(now));

@@ -35,7 +35,7 @@ fn an_attacked_monster_is_fought_until_it_falls() {
     use bevy_ecs::prelude::*;
     use game::core::assets::AssetService;
     use game::core::tiling::TilePos;
-    use game::systems::actor::{Actor, build_model};
+    use game::systems::actor::{self, Actor};
     use game::systems::combat::Attitude;
     use game::systems::npc::Npc;
 
@@ -50,7 +50,7 @@ fn an_attacked_monster_is_fought_until_it_falls() {
         let assets = world.resource::<AssetService>().clone();
         let walks = |world: &World, npc: Entity| {
             let model = world.get::<Actor>(npc).expect("actor").model;
-            !assets.resolve(model.get().sheet, build_model).airborne
+            !actor::model(&assets, model).airborne
         };
         let foe = world
             .query_filtered::<Entity, With<Npc>>()

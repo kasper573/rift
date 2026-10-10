@@ -86,11 +86,7 @@ fn highlight_z(
     areas: &Query<&AreaTag>,
 ) -> Option<f32> {
     let tag = areas.get(viewpoint.0?).ok()?;
-    Some(
-        service
-            .resolve(tag.area.get().map, area::build_area)
-            .dynamic_layer() as f32,
-    )
+    Some(area::load(service, tag.area).dynamic_layer() as f32)
 }
 
 fn touch_as_mouse(

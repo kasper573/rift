@@ -6,6 +6,7 @@ use bevy_replicon::prelude::Replicated;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{AssetRef, AssetService};
+use crate::core::content::Content;
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::data;
@@ -24,10 +25,15 @@ pub fn register(app: &mut App) {
     interact::interaction_source(app, interaction);
 }
 
+#[derive(Clone)]
 pub struct PropDef {
     pub display_name: &'static str,
     pub look: Option<AssetRef>,
     pub interaction: Option<Interaction>,
+}
+
+impl crate::core::content::ContentRow for PropDef {
+    const TABLE: &'static str = "prop";
 }
 
 pub struct Fixture {
@@ -42,17 +48,16 @@ pub struct Prop {
 }
 
 pub fn spawn_all(world: &mut World) {
+    let content = world.resource::<Content>().clone();
     let area_id = world.resource::<crate::systems::WorldArea>().0;
-    let def = area_id.get();
-    let area = world
-        .resource::<AssetService>()
-        .resolve(def.map, area::build_area);
+    let def = area_id.get(&content);
+    let area = area::load(world.resource::<AssetService>(), area_id);
     for fixture in def.props {
         let marker = area
             .marker(fixture.at)
             .expect("validated at startup: fixtures stand on markers");
         let footprint = footprint(marker);
-        let prop = fixture.prop.get();
+        let prop = fixture.prop.get(&content);
         let entity = world
             .spawn((
                 Replicated,
@@ -81,19 +86,22 @@ pub fn spawn_all(world: &mut World) {
     }
 }
 
-pub fn conversation_starts() -> Vec<data::dialogue::Id> {
-    data::prop::TABLE
+pub fn conversation_starts(content: &Content) -> Vec<data::dialogue::Id> {
+    content
+        .table::<PropDef>()
+        .rows()
         .iter()
         .flat_map(|def| {
             def.interaction
                 .iter()
-                .flat_map(interact::conversation_starts)
+                .flat_map(|interaction| interact::conversation_starts(content, interaction))
         })
         .collect()
 }
 
-fn interaction(world: &World, entity: Entity) -> Option<&'static Interaction> {
-    world.get::<Prop>(entity)?.def.get().interaction.as_ref()
+fn interaction(world: &World, entity: Entity) -> Option<Interaction> {
+    let content = world.resource::<Content>();
+    world.get::<Prop>(entity)?.def.get(content).interaction
 }
 
 fn footprint(marker: MapMarker) -> Rect<Tiles> {

@@ -1,11 +1,13 @@
 use bevy_ecs::prelude::*;
 
+use crate::core::content::Content;
 use crate::core::math::{Offset, Pos};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::data;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::combat::Attitude;
 use crate::systems::movement::position;
+use crate::systems::npc::NpcDef;
 use crate::systems::player::Owner;
 use crate::systems::rule::{Outcome, RuleContext};
 use crate::systems::stat;
@@ -109,19 +111,15 @@ fn beside(region: &area::Area, at: Pos<Tiles>, index: u32, count: u32) -> Pos<Ti
     region.grid.nearest_walkable(spot).unwrap_or(at.snap())
 }
 
-impl bevy_terminal::CommandArg for data::npc::Id {
-    fn parse(name: &str, raw: Option<&str>) -> Result<data::npc::Id, String> {
-        crate::core::table::parse_id(name, raw, "npc")
-    }
-}
-
 /// Spawn an NPC beside you, for everyone to see.
 #[bevy_terminal::command(name = "spawn", access = crate::systems::account::role::is_admin)]
 fn spawn_command(
     world: &mut World,
     ctx: &bevy_terminal::CommandCtx,
-    npc: data::npc::Id,
+    npc: String,
 ) -> Result<String, String> {
+    let npc = crate::core::content::named::<NpcDef>(world, &npc)?;
+    let content = world.resource::<Content>().clone();
     let player = crate::systems::player::conn_player(world, ctx.conn)
         .ok_or_else(|| "you have no player".to_owned())?;
     let spawn = SpawnNpcs {
@@ -138,5 +136,5 @@ fn spawn_command(
     terms
         .settle(world, player, crate::systems::rule::Encounter::default())
         .map_err(|refusal| refusal.0)?;
-    Ok(format!("spawned {}", npc.get().display_name))
+    Ok(format!("spawned {}", npc.get(&content).display_name))
 }

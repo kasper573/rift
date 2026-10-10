@@ -47,7 +47,7 @@ test(
       await caption(page, "Some places start a conversation on their own: Ilsa watches the forest road");
       const road = (await probe(page)).portals.find((portal) => portal.name === "forest-road")!;
       await travelTo(page, road.at);
-      await onStage(page, "IlsaHalt");
+      await onStage(page, "ilsa_halt");
       await caption(page, "Without a pass the road is just ground. Standing on it, she stops you and your commands lock", {
         at: "top",
       });
@@ -59,18 +59,18 @@ test(
       await conversationOver(page);
 
       await caption(page, "Talk to her, though, and a fish changes her mind");
-      await talkTo(page, "Ilsa");
+      await talkTo(page, "ilsa");
       await readToChoices(page, 1000);
       await hoverUi(page, "Would a fish change your mind?");
       await page.waitForTimeout(2000);
       await pick(page, "Would a fish change your mind?");
-      await onStage(page, "IlsaFish");
+      await onStage(page, "ilsa_fish");
       await waitFor(page, ({ feed }) => feed.includes("+1 Road Pass"), "the pass never showed in the feed");
       await caption(page, "The trade shows in the corner, over her bust: the fish goes, the pass arrives", { at: "top" });
       await readToChoices(page, 1800);
       await pick(page, "Enjoy it.");
       await conversationOver(page);
-      await waitFor(page, (snapshot) => holding(snapshot, "RoadPass") === 1, "the pass never arrived");
+      await waitFor(page, (snapshot) => holding(snapshot, "road_pass") === 1, "the pass never arrived");
 
       await caption(page, "Narration plays as captions at the top and never blocks: gulls squabble at the pier");
       await walkInto(page, "ferry-pier");
@@ -116,12 +116,12 @@ test(
       await page.keyboard.press("KeyI");
 
       await caption(page, "Bram sails for twenty Gold, or for a pass he only needs to see");
-      await talkTo(page, "Bram");
+      await talkTo(page, "bram");
       await readToChoices(page, 1000);
       await hoverUi(page, "Ilsa gave me this pass.");
       await page.waitForTimeout(2500);
       await pick(page, "Ilsa gave me this pass.");
-      await waitFor(page, (snapshot) => arrivedIn(snapshot, "Forest"), "the Gull never sailed");
+      await waitFor(page, (snapshot) => arrivedIn(snapshot, "forest"), "the Gull never sailed");
       await caption(page, "The crossing narrates itself while you walk on", { at: "top" });
       await waitFor(page, (snapshot) => captioned(snapshot, "The Gull"), "the crossing was never told");
       await stroll(page, [3, 1]);
@@ -160,13 +160,13 @@ test(
       await admin(page, [["/spawn OrcChief", /spawned Orc Chief/]]);
       await waitFor(
         page,
-        ({ notifications }) => notifications.bubbles.some(({ npc }) => npc === "OrcChief"),
+        ({ notifications }) => notifications.bubbles.some(({ npc }) => npc === "orc_chief"),
         "the Orc Chief never yelled",
       );
       await caption(page, "Voices speak from where they stand: a bubble over the chief, in his own voice");
       await page.waitForTimeout(2500);
       await caption(page, "You keep fighting: no tether, no lock, and your foe's bubble stays up front");
-      await fight(page, "OrcChief", 9000);
+      await fight(page, "orc_chief", 9000);
       await page.waitForTimeout(1500);
     },
   }),

@@ -1,13 +1,24 @@
 use bevy_ecs::prelude::{Entity, World};
 
 use crate::core::assets::AssetService;
+use crate::core::content::Content;
 use crate::data::dialogue::Id as DialogueId;
 use crate::systems::item::{Inventory, ItemStack};
 use crate::systems::reach::Tether;
 
 pub trait Requirement: Send + Sync {
     fn met(&self, world: &World, player: Entity) -> bool;
-    fn describe(&self) -> String;
+    fn describe(&self, content: &Content) -> String;
+}
+
+impl<R: Requirement + ?Sized> Requirement for &R {
+    fn met(&self, world: &World, player: Entity) -> bool {
+        (**self).met(world, player)
+    }
+
+    fn describe(&self, content: &Content) -> String {
+        (**self).describe(content)
+    }
 }
 
 pub trait Outcome: Send + Sync {
@@ -17,15 +28,15 @@ pub trait Outcome: Send + Sync {
         None
     }
 
-    fn takes(&self) -> &[ItemStack] {
-        &[]
+    fn takes(&self, _content: &Content) -> Vec<ItemStack> {
+        Vec::new()
     }
 
-    fn gives(&self) -> &[ItemStack] {
-        &[]
+    fn gives(&self, _content: &Content) -> Vec<ItemStack> {
+        Vec::new()
     }
 
-    fn leads_to(&self) -> Vec<DialogueId> {
+    fn leads_to(&self, _content: &Content) -> Vec<DialogueId> {
         Vec::new()
     }
 
@@ -36,7 +47,7 @@ pub struct RuleContext<'w> {
     pub world: &'w mut World,
     pub player: Entity,
     pub encounter: Encounter,
-    pub requires: &'w [&'static dyn Requirement],
+    pub requires: &'w [&'w dyn Requirement],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -46,7 +57,7 @@ pub struct Encounter {
 }
 
 pub struct Terms<'a> {
-    pub requires: &'a [&'static dyn Requirement],
+    pub requires: &'a [&'a dyn Requirement],
     pub costs: &'a [ItemStack],
     pub outcomes: &'a [&'a dyn Outcome],
 }
@@ -61,8 +72,8 @@ impl Requirement for Not {
         !self.0.met(world, player)
     }
 
-    fn describe(&self) -> String {
-        format!("not {}", self.0.describe())
+    fn describe(&self, content: &Content) -> String {
+        format!("not {}", self.0.describe(content))
     }
 }
 
@@ -75,10 +86,10 @@ impl Requirement for AnyOf {
             .any(|requirement| requirement.met(world, player))
     }
 
-    fn describe(&self) -> String {
+    fn describe(&self, content: &Content) -> String {
         self.0
             .iter()
-            .map(|requirement| requirement.describe())
+            .map(|requirement| requirement.describe(content))
             .collect::<Vec<_>>()
             .join(" or ")
     }
@@ -118,12 +129,13 @@ impl Terms<'_> {
     }
 
     fn exchanged(&self, world: &World, player: Entity) -> Result<Inventory, RuleRefusal> {
+        let content = world.resource::<Content>();
         if let Some(unmet) = self
             .requires
             .iter()
             .find(|requirement| !requirement.met(world, player))
         {
-            return Err(RuleRefusal(format!("Needs {}", unmet.describe())));
+            return Err(RuleRefusal(format!("Needs {}", unmet.describe(content))));
         }
         if let Some(reason) = self
             .outcomes
@@ -135,22 +147,25 @@ impl Terms<'_> {
         let takes: Vec<ItemStack> = self
             .costs
             .iter()
-            .chain(self.outcomes.iter().flat_map(|outcome| outcome.takes()))
             .copied()
+            .chain(
+                self.outcomes
+                    .iter()
+                    .flat_map(|outcome| outcome.takes(content)),
+            )
             .collect();
         let gives: Vec<ItemStack> = self
             .outcomes
             .iter()
-            .flat_map(|outcome| outcome.gives())
-            .copied()
+            .flat_map(|outcome| outcome.gives(content))
             .collect();
         let mut inventory = world
             .get::<Inventory>(player)
             .cloned()
             .ok_or_else(|| RuleRefusal("Has no bag".to_owned()))?;
         inventory
-            .exchange(&takes, &gives)
-            .map_err(|refusal| RuleRefusal(refusal.describe()))?;
+            .exchange(content, &takes, &gives)
+            .map_err(|refusal| RuleRefusal(refusal.describe(content)))?;
         Ok(inventory)
     }
 }

@@ -6,6 +6,7 @@ use ui::{RichPiece, RichText, TextVoice, Typewriter, TypewriterReveal};
 use crate::core::assets::AssetRef;
 use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::{PlayClip, SfxPlace, SfxTune};
+use crate::core::content::Content;
 use crate::core::math::Rng;
 use crate::core::time::{Hertz, PlaybackRate, Seconds};
 
@@ -27,6 +28,7 @@ const EXCLAIMED_LOUDNESS: f32 = 1.2;
 const SHOUT_LOUDNESS: f32 = 1.35;
 const WHISPER_LOUDNESS: f32 = 0.6;
 
+#[derive(Clone)]
 pub struct BabbleDef {
     pub babble_bank: BabbleBankId,
     pub pitch: PlaybackRate,
@@ -34,9 +36,18 @@ pub struct BabbleDef {
     pub pace: Hertz,
 }
 
+impl crate::core::content::ContentRow for BabbleDef {
+    const TABLE: &'static str = "babble";
+}
+
+#[derive(Clone)]
 pub struct BabbleBankDef {
     pub letters: AssetRef,
     pub volume: f32,
+}
+
+impl crate::core::content::ContentRow for BabbleBankDef {
+    const TABLE: &'static str = "babble_bank";
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, derive_more::Add)]
@@ -90,18 +101,17 @@ impl BabbleClips {
     }
 }
 
-fn load_clips(assets: Res<AssetServer>, mut clips: ResMut<BabbleClips>) {
-    clips.0 = BabbleBankId::VARIANTS
+fn load_clips(assets: Res<AssetServer>, content: Res<Content>, mut clips: ResMut<BabbleClips>) {
+    clips.0 = content
+        .table::<BabbleBankDef>()
+        .rows()
         .iter()
-        .map(|bank| {
-            letter_clips(bank.get())
-                .map(|path| assets.load(path))
-                .collect()
-        })
+        .map(|bank| letter_clips(bank).map(|path| assets.load(path)).collect())
         .collect();
 }
 
 fn babble(
+    content: Res<Content>,
     mut revealed: MessageReader<TypewriterReveal>,
     typing: Query<(Entity, &Babbling, &Typewriter, &RichText)>,
     clips: Res<BabbleClips>,
@@ -119,8 +129,8 @@ fn babble(
     let Some((speaker, babbling, _, text)) = heard else {
         return;
     };
-    let babble = babbling.babble.get();
-    let babble_bank = babble.babble_bank.get();
+    let babble = babbling.babble.get(&content);
+    let babble_bank = babble.babble_bank.get(&content);
     let now = Seconds(time.elapsed_secs());
     for reveal in reveals.iter().filter(|reveal| reveal.entity == speaker) {
         if now < *free_at {

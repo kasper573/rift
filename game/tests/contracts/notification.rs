@@ -5,13 +5,13 @@ use game::core::math::Offset;
 use game::core::time::Seconds;
 use game::data;
 use game::data::quest::Id as QuestId;
-use game::data::terminal::Id as TerminalId;
 use game::systems::account::identity::Identity;
 use game::systems::account::role::Role;
 use game::systems::area::MarkerName;
 use game::systems::area::transition::{self, Crossing};
 use game::systems::dialogue::Conversation;
 use game::systems::history::{History, HistoryTopic};
+use game::systems::input::map::InputMap;
 use game::systems::memory;
 use game::systems::movement::{Position, position};
 use game::systems::notification::{self, Notification, NotificationKind, NotificationSent};
@@ -19,9 +19,10 @@ use game::systems::npc::{self, Npc, Pack};
 use game::systems::player::{Xp, commands_locked};
 use game::systems::quest::{self, AcceptQuest};
 use game::systems::rule::{Encounter, Terms};
+use game::systems::terminal::TerminalKind as TerminalId;
 use game::systems::text::LineText;
 
-use crate::support::{Sim, later, row, settle, spoken};
+use crate::support::{Sim, content, later, row, settle, spoken};
 
 fn told(sim: &Sim, client: u32) -> Vec<Notification> {
     sim.notified(client)
@@ -38,7 +39,7 @@ fn recorded(sim: &mut Sim, player: Entity) -> Vec<(HistoryTopic, Option<String>,
                 .records()
                 .map(|record| {
                     let entry = &record.entry;
-                    let text = entry.text.words(&Default::default());
+                    let text = entry.text.words(&InputMap::new(content()));
                     (entry.topic, entry.by.clone(), text, entry.repeats)
                 })
                 .collect()
@@ -257,7 +258,7 @@ fn completing_a_quest_and_reaching_a_level_are_milestones() {
         .filter_map(|notification| match notification.kind {
             NotificationKind::Milestone { label, topic, .. } => Some((
                 label.into_owned(),
-                notification.text.words(&Default::default()),
+                notification.text.words(&InputMap::new(content())),
                 topic,
             )),
             _ => None,
@@ -268,11 +269,16 @@ fn completing_a_quest_and_reaching_a_level_are_milestones() {
             .iter()
             .any(|(label, _, topic)| label == "Level up" && *topic == HistoryTopic::Notification)
     );
-    assert!(milestones.contains(&(
-        "Quest complete".to_owned(),
-        row::<QuestId>("TusksForTheChief").get().title.to_owned(),
-        HistoryTopic::Quest
-    )));
+    assert!(
+        milestones.contains(&(
+            "Quest complete".to_owned(),
+            row::<QuestId>("TusksForTheChief")
+                .get(content())
+                .title
+                .to_owned(),
+            HistoryTopic::Quest
+        ))
+    );
 }
 
 #[test]

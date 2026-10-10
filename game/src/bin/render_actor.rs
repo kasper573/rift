@@ -15,11 +15,13 @@ use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::window::ExitCondition;
 
 use game::core::assets::{AssetService, FilesystemSource};
+use game::core::content::Content;
 use game::core::math::{Direction, Size, WorldPx};
 use game::core::time::{PlaybackRate, Seconds};
 use game::data::model;
+use game::systems::actor::bust::ModelDef;
 use game::systems::actor::render::{ACTOR_ANCHOR, draw_actor_frame};
-use game::systems::actor::{Action, ActorModel, build_model};
+use game::systems::actor::{self, Action, ActorModel};
 
 const FPS: f32 = 30.0;
 const DEATH_HOLD: Seconds = Seconds(0.75);
@@ -100,8 +102,8 @@ fn main() {
     };
     let out = PathBuf::from(out);
 
-    let service = AssetService::new(FilesystemSource(assets_dir.clone()));
-    let models = select_models(names);
+    let service = AssetService::new(FilesystemSource(assets_dir.clone()), game::data::build());
+    let models = select_models(service.content(), names);
     let loops: usize = loops
         .parse()
         .ok()
@@ -151,6 +153,7 @@ fn main() {
             }),
     )
     .insert_resource(ClearColor(Color::srgb_u8(0x24, 0x27, 0x2e)))
+    .insert_resource(service.content().clone())
     .insert_resource(service)
     .insert_resource(Sink::spawn(&out, layout.width, layout.height))
     .add_systems(Update, advance);
@@ -178,26 +181,22 @@ fn main() {
     println!("{}", out.display());
 }
 
-fn select_models(names: &str) -> Vec<model::Id> {
+fn select_models(content: &Content, names: &str) -> Vec<model::Id> {
     let wanted: Vec<&str> = split(names);
+    let models = content.table::<ModelDef>();
     if wanted.is_empty() {
-        return model::Id::VARIANTS.to_vec();
+        return models.ids().collect();
     }
     wanted
         .into_iter()
         .map(|name| {
-            name.replace(['-', '_', ' '], "")
-                .parse()
-                .unwrap_or_else(|_| {
-                    let known: Vec<String> = model::Id::VARIANTS
-                        .iter()
-                        .map(|id| format!("{id:?}"))
-                        .collect();
-                    fail(&format!(
-                        "no actor named `{name}`; actors: {}",
-                        known.join(", ")
-                    ))
-                })
+            let key = name.replace(['-', ' '], "_").to_lowercase();
+            models.id_of(&key).unwrap_or_else(|| {
+                fail(&format!(
+                    "no actor named `{name}`; actors: {}",
+                    models.keys().join(", ")
+                ))
+            })
         })
         .collect()
 }
@@ -438,7 +437,7 @@ fn locate(clips: &[Clip], mut index: usize) -> (&Clip, usize) {
 }
 
 fn resolve(service: &AssetService, id: model::Id) -> &'static ActorModel {
-    service.resolve(id.get().sheet, build_model)
+    actor::model(service, id)
 }
 
 fn split(list: &str) -> Vec<&str> {

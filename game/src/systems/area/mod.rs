@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::audio::playback::SfxId;
 use crate::core::audio::soundscape::SoundscapeZone;
+use crate::core::content::Content;
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::tiling::{Cell, CellPos, GridSize, TilePos, TileSize, Tiles};
 use crate::data;
@@ -34,12 +35,6 @@ pub fn register(app: &mut App) {
         .init_resource::<warp::WarpLocks>();
 }
 
-impl bevy_terminal::CommandArg for Id {
-    fn parse(name: &str, raw: Option<&str>) -> Result<Id, String> {
-        crate::core::table::parse_id(name, raw, "area")
-    }
-}
-
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AreaTag {
     pub area: Id,
@@ -52,6 +47,7 @@ pub fn wild(world: &World, entity: Entity) -> bool {
     world.get::<Wild>(entity).is_some()
 }
 
+#[derive(Clone)]
 pub struct AreaDef {
     pub name: &'static str,
     pub map: AssetRef,
@@ -60,6 +56,10 @@ pub struct AreaDef {
     pub props: &'static [crate::systems::prop::Fixture],
     pub zones: &'static [Zone],
     pub intro: Option<NotificationId>,
+}
+
+impl crate::core::content::ContentRow for AreaDef {
+    const TABLE: &'static str = "area";
 }
 
 pub struct Population {
@@ -112,7 +112,7 @@ impl Requirement for StandingOn {
                 .is_some_and(|marker| marker.covers(at))
     }
 
-    fn describe(&self) -> String {
+    fn describe(&self, _content: &Content) -> String {
         format!("Standing on {}", self.0.0)
     }
 }
@@ -239,9 +239,11 @@ impl Area {
 }
 
 pub fn check(assets: &AssetService) {
-    let areas = assets.resolve_all(Id::VARIANTS.iter().map(|id| id.get().map), build_area);
-    for (&id, area) in Id::VARIANTS.iter().zip(areas) {
-        let def = id.get();
+    let content = assets.content();
+    let table = content.table::<AreaDef>();
+    let areas = assets.resolve_all(table.rows().iter().map(|def| def.map), build_area);
+    for (id, area) in table.ids().zip(areas) {
+        let def = id.get(content);
         if !def.populations.is_empty() && area.wild_grid.nodes().is_empty() {
             panic!("area {id:?}: its populations have no ground outside the safe zones");
         }
@@ -311,24 +313,30 @@ pub fn check(assets: &AssetService) {
     }
 }
 
-pub fn conversation_starts() -> Vec<data::dialogue::Id> {
-    data::area::TABLE
+pub fn conversation_starts(content: &Content) -> Vec<data::dialogue::Id> {
+    content
+        .table::<AreaDef>()
+        .rows()
         .iter()
         .flat_map(|def| def.zones)
         .flat_map(|zone| zone.then)
-        .flat_map(|outcome| outcome.leads_to())
+        .flat_map(|outcome| outcome.leads_to(content))
         .collect()
 }
 
+pub fn load(assets: &AssetService, area: Id) -> &'static Area {
+    assets.resolve(area.get(assets.content()).map, build_area)
+}
+
 pub fn destination(assets: &AssetService, area: Id, at: MarkerName) -> Option<Pos<Tiles>> {
-    let map = assets.resolve(area.get().map, build_area);
+    let map = load(assets, area);
     let spot = map.marker(at)?.center();
     map.grid.walkable(spot).then_some(spot)
 }
 
 pub fn of(world: &World, entity: Entity) -> Option<&'static Area> {
-    let map = world.get::<AreaTag>(entity)?.area.get().map;
-    Some(world.resource::<AssetService>().resolve(map, build_area))
+    let area = world.get::<AreaTag>(entity)?.area;
+    Some(load(world.resource::<AssetService>(), area))
 }
 
 fn cell_overlap(rect: &Rect<Tiles>, c: CellPos) -> f32 {

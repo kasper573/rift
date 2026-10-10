@@ -3,6 +3,7 @@ use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{ClientId as Sender, ConnectedClient, FromClient, ServerState};
 use bevy_state::prelude::NextState;
 use game::core::assets::AssetService;
+use game::core::content::Content;
 use game::core::time::{UnixMillis, UtcHour, WallClock};
 use game::data;
 use game::systems::player::{ClientId, JoinRequest, SpawnPolicy};
@@ -51,8 +52,8 @@ impl Layout {
 }
 
 /// The NPCs each bench area spawns, read from the content layer (the same area the bench instances).
-pub fn npcs_per_area() -> usize {
-    let area = data::area::BENCH_ID.get();
+pub fn npcs_per_area(content: &Content) -> usize {
+    let area = data::area::BENCH_ID.get(content);
     let populations: usize = area
         .populations
         .iter()
@@ -104,8 +105,7 @@ pub fn step_single_threaded(worlds: &mut [App]) {
 }
 
 fn build_world(layout: Layout, assets: &AssetService, ordinal: u64) -> (App, Roster) {
-    let mut app = game::systems::server_app(game::data::area::BENCH_ID, ordinal, CLOCK);
-    app.insert_resource(assets.clone());
+    let mut app = game::systems::server_app(game::data::area::BENCH_ID, ordinal, CLOCK, assets);
     app.insert_resource(game::core::math::Rng::from_entropy());
     app.insert_resource(layout.spawn_policy());
     app.finish();

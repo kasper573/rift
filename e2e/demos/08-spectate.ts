@@ -54,16 +54,16 @@ test(
         [-2, 2],
       ]);
       await caption(page, "That includes their conversations, read along without a way to answer");
-      await talkTo(islander, "Tobb");
-      await onStage(page, "TobbHello");
+      await talkTo(islander, "tobb");
+      await onStage(page, "tobb_hello");
       await readToChoices(islander, 1800);
       await pick(islander, "A Letter for the Captain");
-      await onStage(page, "LetterOffer");
+      await onStage(page, "letter_offer");
       await caption(page, "The quest panel and the choices show, but only the player picks", { at: "top" });
       await readToChoices(islander, 1800);
       await page.waitForTimeout(2500);
       await pick(islander, "I'll take it.");
-      await waitFor(page, (snapshot) => onQuest(snapshot, "LetterForTheCaptain"), "the quest never showed");
+      await waitFor(page, (snapshot) => onQuest(snapshot, "letter_for_the_captain"), "the quest never showed");
       await caption(page, "Their quest tracker follows along, and so does their feed in the corner", { at: "top" });
       await waitFor(
         page,
@@ -83,10 +83,10 @@ test(
       await page.keyboard.press("KeyH");
       await waitFor(page, ({ history }) => !history.open, "history never closed");
       await caption(page, "So do their shops, with every button off");
-      await talkTo(islander, "Mara");
+      await talkTo(islander, "mara");
       await readToChoices(islander, 900);
       await pick(islander, "Show me your wares.");
-      await waitFor(page, ({ shop }) => shop?.shop === "MaraWares", "the shop never showed");
+      await waitFor(page, ({ shop }) => shop?.shop === "mara_wares", "the shop never showed");
       await page.waitForTimeout(4000);
       await focusGame(islander);
       await islander.keyboard.press("Escape");

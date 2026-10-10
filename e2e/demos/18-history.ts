@@ -29,17 +29,17 @@ test(
       await signIn(page, await provisionAccount(page, ["admin"]));
       await clickUi(page, "Play");
       await waitForWorld(page, loadReference("island.png"));
-      await give(page, [["RoadPass", 1]]);
+      await give(page, [["road_pass", 1]]);
     },
     play: async (page) => {
       await caption(page, "Everything you say, see and get is kept: a talk with Tobb, the gulls out on the pier…");
-      await talkTo(page, "Tobb");
+      await talkTo(page, "tobb");
       await readToChoices(page, 900);
       await pick(page, "A Letter for the Captain");
-      await onStage(page, "LetterOffer");
+      await onStage(page, "letter_offer");
       await readToChoices(page, 1000);
       await pick(page, "I'll take it.");
-      await waitFor(page, (snapshot) => onQuest(snapshot, "LetterForTheCaptain"), "the letter quest never started");
+      await waitFor(page, (snapshot) => onQuest(snapshot, "letter_for_the_captain"), "the letter quest never started");
       await leaveTobb(page);
 
       await walkInto(page, "ferry-pier");
@@ -72,7 +72,7 @@ test(
       await caption(page, "History stays with your character, across the strait too");
       const road = (await probe(page)).portals.find((portal) => portal.name === "forest-road")!;
       await travelTo(page, road.at);
-      await waitFor(page, (snapshot) => arrivedIn(snapshot, "Forest"), "never reached the forest");
+      await waitFor(page, (snapshot) => arrivedIn(snapshot, "forest"), "never reached the forest");
       await waitFor(page, ({ notifications }) => notifications.intro?.title === "The forest", "the forest never spoke", 20_000);
       await page.waitForTimeout(2000);
       await focusGame(page);

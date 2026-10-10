@@ -234,7 +234,7 @@ fn spawn_area_tiles(
     for tile in &tiles {
         commands.entity(tile).despawn();
     }
-    let area = service.resolve(area_id.get().map, area::build_area);
+    let area = area::load(&service, area_id);
     let mut hooks = AreaHooks::new(area, assets.clone());
     let origin = area.size.bounds().min().to_screen();
     bevy_tiled::spawn_map(
@@ -265,10 +265,7 @@ fn play_area_soundscape(
     else {
         return;
     };
-    let zones = service
-        .resolve(area_id.get().map, area::build_area)
-        .soundscape
-        .as_slice();
+    let zones = area::load(&service, area_id).soundscape.as_slice();
     if !std::ptr::eq(soundscape.0, zones) {
         soundscape.0 = zones;
     }

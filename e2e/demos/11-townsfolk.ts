@@ -36,23 +36,23 @@ test(
     },
     play: async (page) => {
       await caption(page, "Seven townsfolk live around the harbour — name plates show who they are");
-      await walkBelow(page, (snapshot) => townsperson(snapshot, "Mara")?.at);
+      await walkBelow(page, (snapshot) => townsperson(snapshot, "mara")?.at);
       await page.waitForTimeout(1500);
       await caption(page, "An icon over a head is the most important thing they have for you");
       await page.waitForTimeout(3500);
       await caption(page, "Things on the map can be used too: a notice board, a chest by the tide");
-      await walkBelow(page, (snapshot) => fixture(snapshot, "TideChest")?.at);
-      const chest = await waitFor(page, (snapshot) => fixture(snapshot, "TideChest"), "no tide chest");
+      await walkBelow(page, (snapshot) => fixture(snapshot, "tide_chest")?.at);
+      const chest = await waitFor(page, (snapshot) => fixture(snapshot, "tide_chest"), "no tide chest");
       await hoverTile(page, chest.aim);
       await page.waitForTimeout(2200);
-      const board = await waitFor(page, (snapshot) => fixture(snapshot, "HarbourBoard"), "no notice board");
+      const board = await waitFor(page, (snapshot) => fixture(snapshot, "harbour_board"), "no notice board");
       await walkBelow(page, () => board.at);
       await hoverTile(page, board.aim);
       await page.waitForTimeout(2500);
 
       await caption(page, "Loot at a townsperson's feet? A click picks it up before it talks");
       const { walkable, actors } = await probe(page);
-      const host = ["Mara", "Wren", "Bram", "Grisha"]
+      const host = ["mara", "wren", "bram", "grisha"]
         .map((npc) => actors.find((actor) => actor.npc === npc))
         .find((actor) => actor && walkable.some((tile) => tile[0] === actor.at[0] && tile[1] === actor.at[1]))!;
       await caption(page, `(Admin shortcut: drop a sword right where ${host.name} stands)`, { at: "top" });
@@ -62,13 +62,13 @@ test(
       await page.keyboard.down("Control");
       await clickUi(page, SWORD);
       await page.keyboard.up("Control");
-      await waitFor(page, (snapshot) => holding(snapshot, "RustySword") === 0, "the sword never dropped");
+      await waitFor(page, (snapshot) => holding(snapshot, "rusty_sword") === 0, "the sword never dropped");
       await focusGame(page);
       await page.keyboard.press("KeyI");
       await walkBelow(page, () => host.at);
       const sword = await waitFor(
         page,
-        ({ items }) => items.find((item) => item.item === "RustySword"),
+        ({ items }) => items.find((item) => item.item === "rusty_sword"),
         "the sword is not on the ground",
       );
       const underFoot: Tile = [sword.at[0], sword.at[1] - 0.3];
@@ -77,7 +77,7 @@ test(
       await clickTile(page, underFoot);
       await waitFor(
         page,
-        (snapshot) => holding(snapshot, "RustySword") === 1 && !snapshot.stage,
+        (snapshot) => holding(snapshot, "rusty_sword") === 1 && !snapshot.stage,
         `${host.name} talked instead of letting you pick the sword up`,
       );
       await page.waitForTimeout(1500);

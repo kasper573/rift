@@ -16,11 +16,12 @@ use bevy::prelude::*;
 use bevy::scene::EntityScene;
 use serde::{Deserialize, Serialize};
 
+use crate::core::assets::AssetService;
 use crate::core::audio::playback::SfxId;
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
+use crate::core::content::Content;
 use crate::core::platform::ClientPlatform;
 use crate::core::time::{Seconds, UnixMillis, WallClock};
-use crate::data;
 use crate::data::npc::Id as NpcId;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic, RecordTally};
 use crate::systems::npc::Npc;
@@ -149,7 +150,8 @@ pub fn notify_from(
 }
 
 pub fn record(world: &mut World, player: Entity, notification: &Notification) {
-    history::record(world, player, notification.history_entry());
+    let entry = notification.history_entry(world.resource::<Content>());
+    history::record(world, player, entry);
 }
 
 impl Notification {
@@ -177,14 +179,15 @@ impl Notification {
         }
     }
 
-    fn history_entry(&self) -> HistoryEntry {
+    fn history_entry(&self, content: &Content) -> HistoryEntry {
         let entry = |topic: HistoryTopic, by: Option<&str>| {
             HistoryEntry::of(topic, self.text.clone()).by(by.map(str::to_owned))
         };
         match &self.kind {
-            NotificationKind::Speech { speaker } => {
-                entry(HistoryTopic::Notification, Some(speaker.get().display_name))
-            }
+            NotificationKind::Speech { speaker } => entry(
+                HistoryTopic::Notification,
+                Some(speaker.get(content).display_name),
+            ),
             NotificationKind::Narration { label, .. } | NotificationKind::Alert { label, .. } => {
                 entry(HistoryTopic::Notification, Some(label))
             }
@@ -205,10 +208,15 @@ impl Notification {
     }
 }
 
+#[derive(Clone)]
 pub struct NotificationDef {
     pub kind: NotificationKind,
     pub text: &'static [Span],
     pub lasts: Option<Seconds>,
+}
+
+impl crate::core::content::ContentRow for NotificationDef {
+    const TABLE: &'static str = "notification";
 }
 
 impl NotificationDef {
@@ -232,24 +240,25 @@ pub struct Notify(pub NotificationId);
 
 impl Outcome for Notify {
     fn apply(&self, ctx: &mut RuleContext) {
-        let notification = self.0.get().for_player(ctx.world, ctx.player);
+        let content = ctx.world.resource::<Content>().clone();
+        let notification = self.0.get(&content).for_player(ctx.world, ctx.player);
         notify_from(ctx.world, ctx.player, ctx.encounter.with, notification);
     }
 }
 
-pub fn speakers() -> impl Iterator<Item = NpcId> {
-    data::notification::TABLE
+pub fn speakers(content: &Content) -> impl Iterator<Item = NpcId> + '_ {
+    content
+        .table::<NotificationDef>()
+        .rows()
         .iter()
         .filter_map(NotificationDef::speaker)
 }
 
-pub fn check() {
-    for (id, def) in NotificationId::VARIANTS
-        .iter()
-        .zip(data::notification::TABLE)
-    {
+pub fn check(assets: &AssetService) {
+    let content = assets.content();
+    for (id, def) in content.table::<NotificationDef>().iter() {
         for fill in text::fills(def.text) {
-            fill.check();
+            fill.check(content);
         }
         let words: usize = def
             .text

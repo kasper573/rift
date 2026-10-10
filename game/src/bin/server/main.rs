@@ -17,9 +17,11 @@ use bevy_replicon::prelude::{ConnectedClient, RepliconChannels, ServerState};
 use bevy_replicon::shared::backend::server_messages::ServerMessages;
 use bevy_state::prelude::NextState;
 use game::core::assets::{AssetService, FilesystemSource};
+use game::core::content::Content;
 use game::core::net::channels::RenetChannelsExt;
 use game::core::time::{UnixMillis, UtcHour, WallClock};
 use game::systems::account::Identity;
+use game::systems::area::AreaDef;
 use game::systems::area::transition;
 use game::systems::player::{ClientId, Immortal, SpawnPolicy};
 use game::systems::spectate::{self, SpectatorTransfer};
@@ -108,7 +110,7 @@ fn main() {
         immortal: Immortal(config.player_immortal),
         reset: config.daily_reset_utc_hour,
     };
-    let assets = AssetService::new(FilesystemSource(config.assets_dir));
+    let assets = AssetService::new(FilesystemSource(config.assets_dir), game::data::build());
     game::systems::check_content(&assets);
     simulate(
         ws_bind,
@@ -143,7 +145,7 @@ fn simulate(
         immortal,
         reset,
     } = settings;
-    let area_ids = select_areas(areas);
+    let area_ids = select_areas(assets.content(), areas);
     let spawn = area_ids
         .iter()
         .position(|id| *id == game::data::area::SPAWN_ID)
@@ -374,10 +376,9 @@ struct Conn {
 #[derive(Component)]
 struct Wire(u64);
 
-fn select_areas(areas: Areas) -> Vec<game::data::area::Id> {
-    use game::data::area::Id;
+fn select_areas(content: &Content, areas: Areas) -> Vec<game::data::area::Id> {
     match areas {
-        Areas::Real => Id::VARIANTS.to_vec(),
+        Areas::Real => content.ids::<AreaDef>().collect(),
         // The bench area is one template instanced `count` times; the count is bounded only by the
         // machine, not by how many area rows the content table happens to define.
         Areas::Bench(count) => vec![game::data::area::BENCH_ID; count],
@@ -392,8 +393,7 @@ fn build_world(
     ordinal: u64,
     clock: WallClock,
 ) -> App {
-    let mut app = game::systems::server_app(area, ordinal, clock);
-    app.insert_resource(assets.clone());
+    let mut app = game::systems::server_app(area, ordinal, clock, assets);
     app.insert_resource(game::core::math::Rng::from_entropy());
     app.insert_resource(spawn_policy);
     app.insert_resource(immortal);

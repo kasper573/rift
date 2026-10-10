@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::str::FromStr;
+use std::sync::LazyLock;
 
 use bevy_app::App;
 use bevy_ecs::message::{Message, MessageCursor, Messages};
@@ -9,6 +9,7 @@ use bevy_replicon::server::ServerSystems;
 use bevy_state::prelude::NextState;
 use bevy_time::TimeUpdateStrategy;
 use game::core::assets::{AssetService, FilesystemSource};
+use game::core::content::{Content, ContentId, ContentRow, key_of};
 use game::core::math::{Pos, Rng};
 use game::core::tiling::{TilePos, Tiles};
 use game::core::time::Seconds;
@@ -37,15 +38,32 @@ pub const CLOCK: WallClock = WallClock {
     reset: UtcHour::MIDNIGHT,
 };
 
-pub fn row<Id: FromStr>(name: &str) -> Id {
-    name.parse()
-        .unwrap_or_else(|_| panic!("no row named `{name}`"))
+pub fn content() -> &'static Content {
+    static CONTENT: LazyLock<Content> = LazyLock::new(game::data::build);
+    &CONTENT
+}
+
+pub trait Named: Sized {
+    fn named(name: &str) -> Self;
+}
+
+impl<Row: ContentRow> Named for ContentId<Row> {
+    fn named(name: &str) -> ContentId<Row> {
+        content()
+            .by_key::<Row>(key_of(name).as_str())
+            .unwrap_or_else(|| panic!("no {} row named `{name}`", Row::TABLE))
+    }
+}
+
+pub fn row<Id: Named>(name: &str) -> Id {
+    Id::named(name)
 }
 
 pub fn assets() -> AssetService {
-    AssetService::new(FilesystemSource(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets"),
-    ))
+    AssetService::new(
+        FilesystemSource(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets")),
+        content().clone(),
+    )
 }
 
 pub struct Sim {
@@ -56,8 +74,7 @@ pub struct Sim {
 
 impl Sim {
     pub fn area(area: data::area::Id) -> Sim {
-        let mut app = game::systems::server_app(area, 0, CLOCK);
-        app.insert_resource(assets());
+        let mut app = game::systems::server_app(area, 0, CLOCK, &assets());
         app.insert_resource(Rng::new(1));
         app.insert_resource(Immortal(true));
         app.insert_resource(TimeUpdateStrategy::ManualDuration(TICK_HZ.period()));
@@ -84,7 +101,7 @@ impl Sim {
 
     pub fn map(&self) -> &'static Area {
         let assets = self.app.world().resource::<AssetService>().clone();
-        assets.resolve(self.area.get().map, area::build_area)
+        area::load(&assets, self.area)
     }
 
     pub fn tick(&mut self) {
@@ -212,7 +229,7 @@ pub fn heard_the_news(sim: &mut Sim, player: Entity) {
     sim.world()
         .get_mut::<Memory>(player)
         .expect("memory")
-        .remember(row("TobbNewsToday"), clock);
+        .remember(content(), row("TobbNewsToday"), clock);
 }
 
 pub fn conversation(sim: &mut Sim, player: Entity) -> Option<Conversation> {
@@ -223,7 +240,7 @@ pub fn labels(conversation: &Conversation) -> Vec<String> {
     conversation
         .choices
         .iter()
-        .map(|choice| choice.label.words(&InputMap::default()))
+        .map(|choice| choice.label.words(&InputMap::new(content())))
         .collect()
 }
 
@@ -232,7 +249,7 @@ pub fn pick(sim: &mut Sim, client: u32, player: Entity, label: &str) -> Option<C
     let choice =
         now.choices
             .iter()
-            .position(|choice| choice.label.words(&InputMap::default()) == label)
+            .position(|choice| choice.label.words(&InputMap::new(content())) == label)
             .unwrap_or_else(|| panic!("no choice {label:?} in {:?}", labels(&now))) as u32;
     sim.send(
         client,
@@ -249,7 +266,7 @@ pub fn locked(conversation: &Conversation, label: &str) -> bool {
     conversation
         .choices
         .iter()
-        .find(|choice| choice.label.words(&InputMap::default()) == label)
+        .find(|choice| choice.label.words(&InputMap::new(content())) == label)
         .unwrap_or_else(|| panic!("no choice {label:?} in {:?}", labels(conversation)))
         .locked
 }
@@ -258,7 +275,7 @@ pub fn errors(sim: &Sim, client: u32) -> Vec<String> {
     sim.notified(client)
         .into_iter()
         .filter(|sent| matches!(sent.notification.kind, NotificationKind::Error { .. }))
-        .map(|sent| sent.notification.text.words(&InputMap::default()))
+        .map(|sent| sent.notification.text.words(&InputMap::new(content())))
         .collect()
 }
 
@@ -273,7 +290,7 @@ pub fn give(sim: &mut Sim, player: Entity, item: ItemId, count: u32) {
     sim.world()
         .get_mut::<Inventory>(player)
         .expect("bag")
-        .exchange(&[], &[ItemStack::new(item, count)])
+        .exchange(content(), &[], &[ItemStack::new(item, count)])
         .expect("room");
 }
 
@@ -285,7 +302,8 @@ pub fn count(sim: &mut Sim, player: Entity, item: ItemId) -> u32 {
 }
 
 pub fn spoken(id: NotificationId) -> Notification {
-    id.get().for_player(&World::new(), Entity::PLACEHOLDER)
+    id.get(content())
+        .for_player(&World::new(), Entity::PLACEHOLDER)
 }
 
 #[derive(Resource, Default)]

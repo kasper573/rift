@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use bevy::ui::Val2;
 use ui::tokens::{palette, typography};
 
+use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::render::transition::ScreenTransitionPhase;
 use crate::core::render::{WorldToWindow, tile_to_window};
@@ -66,6 +67,7 @@ struct Label {
 }
 
 fn label(
+    content: &Content,
     (_, name, npc, owner, attitude, prop): <Labelled as QueryData>::Item<'_, '_>,
 ) -> Option<Label> {
     if prop {
@@ -77,7 +79,7 @@ fn label(
     }
     match (npc, owner) {
         (Some(npc), _) => {
-            let def = npc.def.get();
+            let def = npc.def.get(content);
             def.role.map(|role| Label {
                 name: Some(def.display_name.to_owned()),
                 role: Some(role),
@@ -123,6 +125,7 @@ pub fn crown(world: &mut World, actor: Entity) -> Option<Vec2> {
 }
 
 fn spawn_plates(
+    content: Res<Content>,
     mut plates: ResMut<Plates>,
     viewpoint: Res<Viewpoint>,
     actors: Query<Labelled, Plated>,
@@ -140,7 +143,7 @@ fn spawn_plates(
         if plates.0.contains_key(&actor) || viewpoint.0 == Some(actor) {
             continue;
         }
-        let Some(label) = label(labelled) else {
+        let Some(label) = label(&content, labelled) else {
             continue;
         };
         let plate = commands.spawn_scene(plate(label)).id();
@@ -189,6 +192,7 @@ fn place_plates(
 }
 
 fn sync_plate_icons(world: &mut World) {
+    let content = world.resource::<Content>().clone();
     let viewer = world.resource::<Viewpoint>().0;
     let plates: Vec<(Entity, Entity)> = world
         .resource::<Plates>()
@@ -209,7 +213,7 @@ fn sync_plate_icons(world: &mut World) {
             let assets = world.resource::<AssetServer>();
             marks
                 .iter()
-                .map(|mark| assets.load(mark.get().icon.0))
+                .map(|mark| assets.load(mark.get(&content).icon.0))
                 .collect()
         };
         reconcile_children(world, row, &keys, |_, index| {

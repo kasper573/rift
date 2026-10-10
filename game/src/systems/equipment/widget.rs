@@ -1,3 +1,4 @@
+use crate::core::content::Content;
 use crate::systems::equipment::{self, Equipment, EquipmentSlot};
 use crate::systems::item::card;
 use crate::systems::player::session;
@@ -68,10 +69,13 @@ pub(super) fn sync_equipment(world: &mut World) {
         .enumerate()
         .map(|(index, cell)| cell_key(index, cell))
         .collect();
-    reconcile_children(world, grid, &keys, |_, index| cell_scene(&cells[index]));
+    reconcile_children(world, grid, &keys, |world, index| {
+        cell_scene(world.resource::<Content>(), &cells[index])
+    });
 }
 
 fn equipment_cells(world: &World) -> Vec<CellData> {
+    let content = world.resource::<Content>();
     let equipment = session::my_character(world).and_then(|me| me.get::<Equipment>());
     let assets = world.resource::<AssetServer>();
     equipment::EquipmentSlot::all()
@@ -82,7 +86,7 @@ fn equipment_cells(world: &World) -> Vec<CellData> {
             CellData {
                 slot,
                 item,
-                icon: item.map(|item| assets.load(item.get().icon.0)),
+                icon: item.map(|item| assets.load(item.get(content).icon.0)),
             }
         })
         .collect()
@@ -93,9 +97,10 @@ fn cell_key(index: usize, cell: &CellData) -> u64 {
     ((index as u64) << 48) | content
 }
 
-fn cell_scene(cell: &CellData) -> Box<dyn Scene> {
+fn cell_scene(content: &Content, cell: &CellData) -> Box<dyn Scene> {
     match &cell.icon {
         Some(icon) => Box::new(worn_slot(
+            content,
             cell.slot,
             cell.item.expect("a worn slot holds an item"),
             icon.clone(),
@@ -119,8 +124,13 @@ fn empty_slot(slot: EquipmentSlot) -> impl Scene {
     }
 }
 
-fn worn_slot(slot: EquipmentSlot, item: crate::data::item::Id, icon: Handle<Image>) -> impl Scene {
-    let def = item.get();
+fn worn_slot(
+    content: &Content,
+    slot: EquipmentSlot,
+    item: crate::data::item::Id,
+    icon: Handle<Image>,
+) -> impl Scene {
+    let def = item.get(content);
     let tip = TooltipText {
         title: def.display_name.to_owned(),
         lines: vec![vec![RichPiece::text(card::overview(def))]],

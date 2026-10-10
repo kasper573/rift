@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{AssetRef, AssetService};
 use crate::core::audio::playback::SfxId;
+use crate::core::content::Content;
 use crate::core::math::{Offset, Pos};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{Seconds, WallClock};
@@ -68,8 +69,8 @@ impl ItemStack {
         ItemStack { item, count }
     }
 
-    pub fn describe(self) -> String {
-        format!("{} {}", self.count, self.item.get().display_name)
+    pub fn describe(self, content: &Content) -> String {
+        format!("{} {}", self.count, self.item.get(content).display_name)
     }
 }
 
@@ -80,13 +81,13 @@ pub enum ExchangeRefusal {
 }
 
 impl ExchangeRefusal {
-    pub fn describe(self) -> String {
+    pub fn describe(self, content: &Content) -> String {
         match self {
             ExchangeRefusal::Missing(stack) => {
                 format!(
                     "Needs {} more {}",
                     stack.count,
-                    stack.item.get().display_name
+                    stack.item.get(content).display_name
                 )
             }
             ExchangeRefusal::NoRoom { slots: 1 } => "Needs 1 free slot".to_owned(),
@@ -116,6 +117,7 @@ impl Inventory {
 
     pub fn exchange(
         &mut self,
+        content: &Content,
         takes: &[ItemStack],
         gives: &[ItemStack],
     ) -> Result<(), ExchangeRefusal> {
@@ -133,7 +135,7 @@ impl Inventory {
         let mut unbounded = next.clone();
         unbounded.max = u32::MAX;
         for give in gives {
-            unbounded.add(give.item, give.count);
+            unbounded.add(content, give.item, give.count);
         }
         let needed = unbounded.slots.len() as u32;
         if needed > next.max {
@@ -146,8 +148,8 @@ impl Inventory {
         Ok(())
     }
 
-    fn add(&mut self, item: Id, mut count: u32) {
-        let stack_max = item.get().stack_max();
+    fn add(&mut self, content: &Content, item: Id, mut count: u32) {
+        let stack_max = item.get(content).stack_max();
         for slot in self.slots.iter_mut().filter(|slot| slot.item == item) {
             if count == 0 {
                 break;
@@ -256,6 +258,7 @@ pub struct ItemsDropped {
     pub from: Pos<Tiles>,
 }
 
+#[derive(Clone)]
 pub struct ItemDef {
     pub display_name: &'static str,
     pub flavor: &'static str,
@@ -265,6 +268,10 @@ pub struct ItemDef {
     pub effects: &'static [Effect],
     pub kind: ItemKind,
     pub flags: &'static [ItemFlag],
+}
+
+impl crate::core::content::ContentRow for ItemDef {
+    const TABLE: &'static str = "item";
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -345,6 +352,7 @@ impl ItemDef {
     }
 }
 
+#[derive(Clone)]
 pub enum ItemKind {
     Consumable {
         health_bonus: f32,
@@ -366,6 +374,7 @@ impl ItemKind {
     }
 }
 
+#[derive(Clone)]
 pub struct ItemSfx {
     pub on_use: Option<SfxId>,
     pub pickup: SfxId,
@@ -420,6 +429,7 @@ impl UseCtx<'_> {
 }
 
 pub fn use_item(world: &mut World) {
+    let content = world.resource::<Content>().clone();
     for request in crate::systems::requests::<UseItemRequest>(world) {
         let Some(entity) = sender_player(world, request.client_id) else {
             continue;
@@ -434,7 +444,7 @@ pub fn use_item(world: &mut World) {
         else {
             continue;
         };
-        item.get().use_from(&mut UseCtx {
+        item.get(&content).use_from(&mut UseCtx {
             world,
             actor: entity,
             slot,
@@ -444,6 +454,7 @@ pub fn use_item(world: &mut World) {
 }
 
 pub fn drop_item(world: &mut World) {
+    let content = world.resource::<Content>().clone();
     for request in crate::systems::requests::<DropItemRequest>(world) {
         let Some(player) = sender_player(world, request.client_id) else {
             continue;
@@ -457,7 +468,7 @@ pub fn drop_item(world: &mut World) {
                 if inventory
                     .slots
                     .get(slot)
-                    .is_some_and(|stack| !stack.item.get().bound()) =>
+                    .is_some_and(|stack| !stack.item.get(&content).bound()) =>
             {
                 Some(inventory.slots.remove(slot))
             }
@@ -570,9 +581,7 @@ pub fn scatter_drop(
     let Some(area_id) = world.get::<AreaTag>(source).map(|tag| tag.area) else {
         return;
     };
-    let area = world
-        .resource::<AssetService>()
-        .resolve(area_id.get().map, area::build_area);
+    let area = area::load(world.resource::<AssetService>(), area_id);
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let count = drops.len();
     let mut items = Vec::with_capacity(count);
@@ -607,13 +616,14 @@ pub fn scatter_drop(
 }
 
 fn carried(world: &World, entity: Entity) -> Vec<Effect> {
+    let content = world.resource::<Content>();
     world
         .get::<Inventory>(entity)
         .map(|inventory| {
             inventory
                 .slots
                 .iter()
-                .map(|slot| slot.item.get())
+                .map(|slot| slot.item.get(content))
                 .filter(|def| def.kind.carried())
                 .flat_map(|def| def.effects.iter().copied())
                 .collect()
@@ -652,11 +662,12 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
     if !reserved.allows(account) {
         return;
     }
+    let content = world.resource::<Content>().clone();
     let collected = world
         .get_mut::<Inventory>(player)
         .is_some_and(|mut inventory| {
             inventory
-                .exchange(&[], &[ItemStack::new(drop.item, drop.count)])
+                .exchange(&content, &[], &[ItemStack::new(drop.item, drop.count)])
                 .is_ok()
         });
     if collected {
@@ -665,7 +676,8 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
 }
 
 fn instantiate_effects(world: &mut World, actor: Entity, item: Id, duration: Seconds) {
-    let effects = item.get().effects;
+    let content = world.resource::<Content>().clone();
+    let effects = item.get(&content).effects;
     if effects.is_empty() {
         return;
     }
@@ -701,8 +713,8 @@ impl Requirement for Holding {
             .is_some_and(|inventory| inventory.count(self.0.item) >= self.0.count)
     }
 
-    fn describe(&self) -> String {
-        self.0.describe()
+    fn describe(&self, content: &Content) -> String {
+        self.0.describe(content)
     }
 }
 
@@ -715,7 +727,7 @@ impl Requirement for FreeSlots {
             .is_some_and(|inventory| inventory.free_slots() >= self.0)
     }
 
-    fn describe(&self) -> String {
+    fn describe(&self, _content: &Content) -> String {
         match self.0 {
             1 => "1 free slot".to_owned(),
             slots => format!("{slots} free slots"),
@@ -728,14 +740,8 @@ pub struct GiveItems(pub &'static [ItemStack]);
 impl Outcome for GiveItems {
     fn apply(&self, _ctx: &mut RuleContext) {}
 
-    fn gives(&self) -> &[ItemStack] {
-        self.0
-    }
-}
-
-impl bevy_terminal::CommandArg for Id {
-    fn parse(name: &str, raw: Option<&str>) -> Result<Id, String> {
-        crate::core::table::parse_id(name, raw, "item")
+    fn gives(&self, _content: &Content) -> Vec<ItemStack> {
+        self.0.to_vec()
     }
 }
 
@@ -744,7 +750,7 @@ impl bevy_terminal::CommandArg for Id {
 fn give(
     world: &mut World,
     ctx: &bevy_terminal::CommandCtx,
-    item: Id,
+    item: String,
     count: Option<u32>,
     user: Option<String>,
 ) -> Result<String, String> {
@@ -753,12 +759,14 @@ fn give(
             .ok_or_else(|| format!("no player with user id `{user}` in your area"))?,
         None => conn_player(world, ctx.conn).ok_or_else(|| "you have no player".to_owned())?,
     };
+    let item = crate::core::content::named::<ItemDef>(world, &item)?;
+    let content = world.resource::<Content>().clone();
     let stack = ItemStack::new(item, count.unwrap_or(1));
     let mut inventory = world
         .get_mut::<Inventory>(target)
         .ok_or_else(|| "the player has no bag".to_owned())?;
     inventory
-        .exchange(&[], &[stack])
-        .map_err(ExchangeRefusal::describe)?;
-    Ok(format!("gave {}", stack.describe()))
+        .exchange(&content, &[], &[stack])
+        .map_err(|refusal| refusal.describe(&content))?;
+    Ok(format!("gave {}", stack.describe(&content)))
 }

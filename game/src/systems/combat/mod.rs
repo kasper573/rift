@@ -7,6 +7,7 @@ use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
+use crate::core::content::Content;
 use crate::core::math::{Direction, Pos};
 use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
@@ -73,6 +74,7 @@ pub struct Swing {
     pub struck: bool,
 }
 
+#[derive(Clone)]
 pub struct HealthRegen {
     pub every: Seconds,
     pub health: f32,
@@ -82,7 +84,7 @@ pub struct HealthRegen {
 pub struct RegenAt(Seconds);
 
 pub fn regen(world: &mut World) {
-    let regen = &player::def().regen;
+    let regen = player::def(world.resource::<Content>()).regen.clone();
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     {
         let mut last = world.resource_mut::<RegenAt>();
@@ -248,11 +250,7 @@ fn attack_timing(world: &World, entity: Entity, dir: Direction) -> crate::system
     let assets = world.resource::<AssetService>();
     world
         .get::<Actor>(entity)
-        .map(|a| {
-            assets
-                .resolve(a.model.get().sheet, crate::systems::actor::build_model)
-                .timing(Action::Attack, dir)
-        })
+        .map(|a| actor::model(assets, a.model).timing(Action::Attack, dir))
         .unwrap_or_default()
 }
 

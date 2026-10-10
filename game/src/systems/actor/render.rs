@@ -5,7 +5,7 @@ use crate::core::interpolate::{Interpolate, InterpolatePlugin};
 use crate::core::math::Direction;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
-use crate::systems::actor::{Action, Actor, ActorModel, build_model};
+use crate::systems::actor::{self, Action, Actor, ActorModel};
 use crate::systems::area::{self, AreaTag};
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
@@ -78,12 +78,7 @@ fn attach_sprites(
     mut commands: Commands,
 ) {
     for (entity, actor) in &actors {
-        let image = assets.load(
-            service
-                .resolve(actor.model.get().sheet, build_model)
-                .sheet()
-                .to_owned(),
-        );
+        let image = assets.load(actor::model(&service, actor.model).sheet().to_owned());
         commands.entity(entity).insert((
             Sprite { image, ..default() },
             ACTOR_ANCHOR,
@@ -115,7 +110,7 @@ fn sync_actors(
     for (entity, actor, render, pose, tag, mut sprite, mut transform, mut visibility) in &mut actors
     {
         let elapsed = animator.elapsed(entity, pose.action as u64, clock);
-        let model = service.resolve(actor.model.get().sheet, build_model);
+        let model = actor::model(&service, actor.model);
         draw_actor_frame(
             &mut sprite,
             model,
@@ -125,7 +120,7 @@ fn sync_actors(
             actor.attack_rate,
         );
         sprite.color = actor.color.color();
-        let area = service.resolve(tag.area.get().map, area::build_area);
+        let area = area::load(&service, tag.area);
         let at = render.0;
         *transform = sprite_transform(
             at,
@@ -157,7 +152,7 @@ fn actor_cues(
             continue;
         };
         let since = (was == pose.action).then_some(then);
-        let model = service.resolve(actor.model.get().sheet, build_model);
+        let model = actor::model(&service, actor.model);
         let (cues, stepped) = model.cues(pose.action, pose.dir, since, now, actor.attack_rate);
         for id in cues {
             play.write(PlaySfx {
@@ -165,11 +160,7 @@ fn actor_cues(
                 place: SfxPlace::World(at),
             });
         }
-        if stepped
-            && let Some(id) = service
-                .resolve(tag.area.get().map, area::build_area)
-                .tile_sfx_at(at.cell())
-        {
+        if stepped && let Some(id) = area::load(&service, tag.area).tile_sfx_at(at.cell()) {
             play.write(PlaySfx {
                 id: *id,
                 place: SfxPlace::World(at),

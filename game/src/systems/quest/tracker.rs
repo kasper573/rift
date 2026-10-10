@@ -8,6 +8,7 @@ use ui::{DragHandle, DragRoot, OnSettle, component};
 use super::card::{Countdown, icon, live_text};
 use super::{QuestId, QuestLog, QuestResult, Repeat};
 use crate::core::assets::AssetRef;
+use crate::core::content::Content;
 use crate::data::attention::Id as AttentionId;
 use crate::systems::hud::{self, HudAudience, Widget};
 use crate::systems::item::Inventory;
@@ -129,10 +130,15 @@ fn sync_tracker(world: &mut World) {
         };
     }
     let header = header(entries.len(), folded);
+    let content = world.resource::<Content>();
     let assets = world.resource::<AssetServer>();
     let mut parts: Vec<Box<dyn Scene>> = vec![Box::new(header)];
     if !folded {
-        parts.extend(entries.iter().map(|entry| entry_scene(assets, &log, entry)));
+        parts.extend(
+            entries
+                .iter()
+                .map(|entry| entry_scene(content, assets, &log, entry)),
+        );
     }
     world.entity_mut(panel).despawn_related::<Children>();
     for part in parts {
@@ -143,6 +149,7 @@ fn sync_tracker(world: &mut World) {
 }
 
 fn entries(world: &World) -> Vec<Entry> {
+    let content = world.resource::<Content>();
     let seen = world.resource::<Viewpoint>().0;
     let Some(log) = seen.and_then(|seen| world.get::<QuestLog>(seen)) else {
         return Vec::new();
@@ -151,7 +158,7 @@ fn entries(world: &World) -> Vec<Entry> {
     log.tracked
         .iter()
         .filter_map(|&quest| {
-            let def = quest.get();
+            let def = quest.get(content);
             if let Some(active) = log.active(quest) {
                 let timed = active.left.is_some();
                 if active.ready && def.decision().is_none() {
@@ -161,12 +168,16 @@ fn entries(world: &World) -> Vec<Entry> {
                     };
                     return Some(Entry {
                         quest,
-                        mark: Some(mark.get().icon),
+                        mark: Some(mark.get(content).icon),
                         timed,
-                        rows: vec![(def.hand_in_hint(), Count::Fixed(String::new()), Tone::Next)],
+                        rows: vec![(
+                            def.hand_in_hint(content),
+                            Count::Fixed(String::new()),
+                            Tone::Next,
+                        )],
                     });
                 }
-                let progress = def.progress(active, inventory);
+                let progress = def.progress(content, active, inventory);
                 let next = progress.iter().position(|progress| !progress.done());
                 let rows = progress
                     .into_iter()
@@ -202,7 +213,11 @@ fn entries(world: &World) -> Vec<Entry> {
                 )],
                 QuestResult::Failed => vec![
                     ("Failed".to_owned(), Count::Fixed(String::new()), Tone::Bad),
-                    (def.retry_hint(), Count::Fixed(String::new()), Tone::Plain),
+                    (
+                        def.retry_hint(content),
+                        Count::Fixed(String::new()),
+                        Tone::Plain,
+                    ),
                 ],
             };
             Some(Entry {
@@ -239,7 +254,12 @@ fn header(count: usize, folded: bool) -> impl Scene {
     }
 }
 
-fn entry_scene(assets: &AssetServer, log: &QuestLog, entry: &Entry) -> Box<dyn Scene> {
+fn entry_scene(
+    content: &Content,
+    assets: &AssetServer,
+    log: &QuestLog,
+    entry: &Entry,
+) -> Box<dyn Scene> {
     let ink = ui::theme::theme().surface_floating.on;
     let mark: Vec<Box<dyn Scene>> = entry
         .mark
@@ -294,7 +314,7 @@ fn entry_scene(assets: &AssetServer, log: &QuestLog, entry: &Entry) -> Box<dyn S
             })
         })
         .collect();
-    let title = quest.get().title;
+    let title = quest.get(content).title;
     Box::new(bsn! {
         Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(1.0), width: Val::Percent(100.0) }
         Pickable::IGNORE

@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetService;
 use crate::core::babble::{BabbleId, Babbler};
+use crate::core::content::Content;
 use crate::core::math::{Direction, Pos, Rect, Rng};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
@@ -55,29 +56,38 @@ pub fn register(app: &mut App) {
     app.replicate::<Npc>();
     effect::source(app, chase);
     interact::interaction_source(app, interaction);
-    area::lock_warps(app, data::npc::TABLE.iter().flat_map(|def| def.guards));
+    let content = app.world().resource::<Content>().clone();
+    area::lock_warps(
+        app,
+        content
+            .table::<NpcDef>()
+            .rows()
+            .iter()
+            .flat_map(|def| def.guards.iter().copied()),
+    );
 }
 
-pub fn conversation_starts() -> Vec<data::dialogue::Id> {
-    data::npc::TABLE
-        .iter()
+pub fn conversation_starts(content: &Content) -> Vec<data::dialogue::Id> {
+    let npcs = content.table::<NpcDef>().rows();
+    npcs.iter()
         .flat_map(|def| {
             def.interaction
                 .iter()
-                .flat_map(interact::conversation_starts)
+                .flat_map(|interaction| interact::conversation_starts(content, interaction))
         })
-        .chain(observation::starts())
+        .chain(observation::starts(content))
         .chain(
-            data::npc::TABLE
-                .iter()
+            npcs.iter()
                 .flat_map(|def| def.on_defeat)
-                .flat_map(|outcome| outcome.leads_to()),
+                .flat_map(|outcome| outcome.leads_to(content)),
         )
         .collect()
 }
 
 pub fn check(assets: &AssetService) {
-    let outcomes = data::npc::TABLE.iter().flat_map(|def| {
+    let content = assets.content();
+    let npcs = content.table::<NpcDef>().rows();
+    let outcomes = npcs.iter().flat_map(|def| {
         def.interaction
             .iter()
             .flat_map(|interaction| interaction.responses)
@@ -92,17 +102,18 @@ pub fn check(assets: &AssetService) {
     for outcome in outcomes {
         outcome.check(assets);
     }
-    for lock in data::npc::TABLE.iter().flat_map(|def| def.guards) {
+    for lock in npcs.iter().flat_map(|def| def.guards) {
         lock.check(assets);
     }
-    for speaker in crate::systems::notification::speakers() {
-        if speaker.get().babble.is_none() {
+    for speaker in crate::systems::notification::speakers(content) {
+        if speaker.get(content).babble.is_none() {
             panic!("notification speaker {speaker:?} has no babble");
         }
     }
 }
 
 pub fn defeated(world: &mut World, mut credits: Local<MessageCursor<KillCredited>>) {
+    let content = world.resource::<Content>().clone();
     let credits: Vec<KillCredited> = credits
         .read(world.resource::<Messages<KillCredited>>())
         .copied()
@@ -111,7 +122,7 @@ pub fn defeated(world: &mut World, mut credits: Local<MessageCursor<KillCredited
         let terms = Terms {
             requires: &[],
             costs: &[],
-            outcomes: credit.npc.get().on_defeat,
+            outcomes: credit.npc.get(&content).on_defeat,
         };
         let encounter = Encounter {
             with: Some(credit.victim),
@@ -121,10 +132,11 @@ pub fn defeated(world: &mut World, mut credits: Local<MessageCursor<KillCredited
     }
 }
 
-fn interaction(world: &World, entity: Entity) -> Option<&'static Interaction> {
-    let def = world.get::<Npc>(entity)?.def.get();
+fn interaction(world: &World, entity: Entity) -> Option<Interaction> {
+    let content = world.resource::<Content>();
+    let def = world.get::<Npc>(entity)?.def.get(content);
     let friendly = world.get::<Attitude>(entity) == Some(&Attitude::Friendly);
-    def.interaction.as_ref().filter(|_| friendly)
+    def.interaction.filter(|_| friendly)
 }
 
 pub fn chase(world: &World, entity: Entity) -> Vec<Effect> {
@@ -156,6 +168,7 @@ pub struct DeadAt {
     pub at: Seconds,
 }
 
+#[derive(Clone)]
 pub struct NpcDef {
     pub display_name: &'static str,
     pub role: Option<&'static str>,
@@ -174,6 +187,10 @@ pub struct NpcDef {
     pub on_defeat: &'static [&'static dyn Outcome],
 }
 
+impl crate::core::content::ContentRow for NpcDef {
+    const TABLE: &'static str = "npc";
+}
+
 #[derive(Resource, Default)]
 struct NextPack(u32);
 
@@ -184,9 +201,10 @@ pub fn next_pack(world: &mut World) -> Pack {
 }
 
 pub fn spawn_all(world: &mut World) {
+    let content = world.resource::<Content>().clone();
     let area_id = world.resource::<crate::systems::WorldArea>().0;
     let assets = world.resource::<AssetService>().clone();
-    let def = area_id.get();
+    let def = area_id.get(&content);
     world.resource_scope(|world, mut rng: Mut<Rng>| {
         for population in def.populations {
             let pack = next_pack(world);
@@ -195,7 +213,7 @@ pub fn spawn_all(world: &mut World) {
             }
         }
     });
-    let area = assets.resolve(def.map, area::build_area);
+    let area = area::load(&assets, area_id);
     for resident in def.residents {
         let at = area
             .marker(resident.at)
@@ -220,7 +238,7 @@ fn spawn_wild(
     population: &area::Population,
     pack: Pack,
 ) {
-    let area = assets.resolve(area_id.get().map, area::build_area);
+    let area = area::load(assets, area_id);
     let range = population.roams.and_then(|name| area.range(name));
     let at = match range {
         Some(bounds) => area.wild_grid.random_node_within(rng, bounds),
@@ -248,20 +266,21 @@ pub fn spawn(
     area: area::Id,
     pack: Pack,
 ) -> Entity {
-    let entity = spawn_actor(world, def.get(), at, area);
+    let content = world.resource::<Content>().clone();
+    let entity = spawn_actor(world, def.get(&content), at, area);
     world.entity_mut(entity).insert((
         Npc { def },
         Counterpart::Npc(def),
         pack,
-        def.get().attitude,
+        def.get(&content).attitude,
         actor::Name {
-            name: def.get().display_name.to_owned(),
+            name: def.get(&content).display_name.to_owned(),
         },
     ));
-    if def.get().interaction.is_some() {
+    if def.get(&content).interaction.is_some() {
         world.entity_mut(entity).insert(Interactive);
     }
-    if let Some(babble) = def.get().babble {
+    if let Some(babble) = def.get(&content).babble {
         world.entity_mut(entity).insert(Babbler(babble));
     }
     entity
@@ -279,9 +298,7 @@ fn character(assets: &AssetService, def: &NpcDef, at: Pos<Tiles>, area: area::Id
             attack_rate: PlaybackRate(stat::value(def.stats, StatKind::AttackSpeed)),
         },
         hitbox: Hitbox {
-            size: assets
-                .resolve(def.model.get().sheet, actor::build_model)
-                .hitbox(),
+            size: actor::model(assets, def.model).hitbox(),
         },
         area: AreaTag { area },
     }
@@ -340,10 +357,11 @@ type NpcIds = QueryState<Entity, With<Npc>>;
 type PackEnemies = QueryState<(&'static Pack, &'static Attackers)>;
 
 pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut PackEnemies) {
+    let content = world.resource::<Content>().clone();
     let players: Vec<Entity> = world.resource::<Players>().0.values().copied().collect();
     let assets = world.resource::<AssetService>().clone();
     let enemies_by_pack = enemies_by_pack(world, enemies);
-    let region = assets.resolve(world.resource::<WorldArea>().0.get().map, area::build_area);
+    let region = area::load(&assets, world.resource::<WorldArea>().0);
     let ids: Vec<Entity> = npcs.iter(world).collect();
     world.resource_scope(|world, mut rng: Mut<Rng>| {
         for id in ids {
@@ -358,7 +376,7 @@ pub fn run_ai(world: &mut World, npcs: &mut NpcIds, enemies: &mut PackEnemies) {
             let Some(at) = position(world, id) else {
                 continue;
             };
-            let def = npc.def.get();
+            let def = npc.def.get(&content);
             let Some(area) = world.get::<AreaTag>(id).map(|tag| tag.area) else {
                 continue;
             };
@@ -446,6 +464,7 @@ fn in_aggro(world: &World, target: Entity, at: Pos<Tiles>, area: area::Id, aggro
 }
 
 pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
+    let content = world.resource::<Content>().clone();
     let time = Seconds(world.resource::<Time>().elapsed_secs());
     let ids: Vec<Entity> = npcs.iter(world).collect();
     world.resource_scope(|world, mut rng: Mut<Rng>| {
@@ -461,7 +480,7 @@ pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
                     time
                 }
             };
-            let Some(def) = world.get::<Npc>(id).map(|npc| npc.def.get()) else {
+            let Some(def) = world.get::<Npc>(id).map(|npc| npc.def.get(&content)) else {
                 continue;
             };
             let Some(delay) = def.respawn else {

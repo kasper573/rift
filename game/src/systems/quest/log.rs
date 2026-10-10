@@ -12,12 +12,14 @@ use super::card::{
 use super::{
     ActiveQuest, FinishedQuest, Giver, QUEST_LOG_CAP, QuestId, QuestLog, QuestRequest, QuestResult,
 };
+use crate::core::content::Content;
 use crate::systems::dialogue::ChoiceReveal;
 use crate::systems::hud::{HudAudience, Window};
 use crate::systems::input::map::{ActionInput, InputAction};
 use crate::systems::item::widget::slot_note_source;
 use crate::systems::item::{Inventory, ItemFlag, ItemStack};
 use crate::systems::player::session::Viewpoint;
+use crate::systems::quest::QuestDef;
 use crate::systems::scene::Scene as GameScene;
 use crate::systems::scene::mode::Mode;
 
@@ -181,7 +183,7 @@ fn sync_bodies(world: &mut World) {
 }
 
 impl Page {
-    fn listed(&self) -> Vec<QuestId> {
+    fn listed(&self, content: &Content) -> Vec<QuestId> {
         let mut quests: Vec<QuestId> = match self.tab {
             LogTab::Active => self.log.active.iter().map(|active| active.quest).collect(),
             LogTab::Completed => self
@@ -192,11 +194,13 @@ impl Page {
                 .collect(),
         };
         let first_seen = |category: &str| {
-            crate::data::quest::TABLE
+            content
+                .table::<QuestDef>()
+                .rows()
                 .iter()
                 .position(|quest| quest.category == category)
         };
-        quests.sort_by_key(|quest| (first_seen(quest.get().category), quest.index()));
+        quests.sort_by_key(|quest| (first_seen(quest.get(content).category), quest.index()));
         quests
     }
 
@@ -216,8 +220,9 @@ impl Page {
 }
 
 fn contents(world: &World, page: &Page) -> Box<dyn Scene> {
+    let content = world.resource::<Content>();
     let assets = world.resource::<AssetServer>();
-    let listed = page.listed();
+    let listed = page.listed(content);
     let shown = page.shown(&listed);
     let (title, aside) = match page.tab {
         LogTab::Active => (
@@ -229,12 +234,12 @@ fn contents(world: &World, page: &Page) -> Box<dyn Scene> {
     let mut rows: Vec<Box<dyn Scene>> = vec![Box::new(ui::list_header(title, aside))];
     let mut category = None;
     for &quest in &listed {
-        let def = quest.get();
+        let def = quest.get(content);
         if category != Some(def.category) {
             category = Some(def.category);
             rows.push(Box::new(group(def.category)));
         }
-        rows.push(row(assets, page, quest, shown == Some(quest)));
+        rows.push(row(content, assets, page, quest, shown == Some(quest)));
     }
     if listed.is_empty() {
         rows.push(Box::new(bsn! {
@@ -247,7 +252,7 @@ fn contents(world: &World, page: &Page) -> Box<dyn Scene> {
         Children [ {rows} ]
     });
     let detail: Box<dyn Scene> = match shown {
-        Some(quest) => Box::new(detail(assets, page, quest)),
+        Some(quest) => Box::new(detail(content, assets, page, quest)),
         None => Box::new(bsn! { Node }),
     };
     Box::new(ui::split_view(list, Box::new(ui::scrolled(detail))))
@@ -268,10 +273,16 @@ fn group(category: &str) -> impl Scene + use<> {
     }
 }
 
-fn row(assets: &AssetServer, page: &Page, quest: QuestId, selected: bool) -> Box<dyn Scene> {
+fn row(
+    content: &Content,
+    assets: &AssetServer,
+    page: &Page,
+    quest: QuestId,
+    selected: bool,
+) -> Box<dyn Scene> {
     let ink = ui::theme::theme().surface_floating.on;
-    let def = quest.get();
-    let status: Vec<Box<dyn Scene>> = vec![status(page, quest)];
+    let def = quest.get(content);
+    let status: Vec<Box<dyn Scene>> = vec![status(content, page, quest)];
     let tracked: Vec<Box<dyn Scene>> = page
         .log
         .tracked
@@ -307,7 +318,7 @@ fn row(assets: &AssetServer, page: &Page, quest: QuestId, selected: bool) -> Box
             }
         })
         Children [
-            {EntityScene(icon(assets, def.icon(), ROW_ICON))},
+            {EntityScene(icon(assets, def.icon(content), ROW_ICON))},
             ( Node { flex_grow: 1.0 } Pickable::IGNORE Children [ {EntityScene(ui::styled_text(def.title, ink, typography::LABEL))} ] ),
             {status},
             {tracked},
@@ -315,7 +326,7 @@ fn row(assets: &AssetServer, page: &Page, quest: QuestId, selected: bool) -> Box
     })
 }
 
-fn status(page: &Page, quest: QuestId) -> Box<dyn Scene> {
+fn status(content: &Content, page: &Page, quest: QuestId) -> Box<dyn Scene> {
     let ink = ui::theme::theme().surface_floating.on.with_alpha(0.7);
     let fixed = |text: &str, color: Color| -> Box<dyn Scene> {
         Box::new(ui::styled_text(text.to_owned(), color, typography::CAPTION))
@@ -329,7 +340,7 @@ fn status(page: &Page, quest: QuestId) -> Box<dyn Scene> {
             typography::CAPTION,
         ))
     };
-    let def = quest.get();
+    let def = quest.get(content);
     if let Some(active) = page.active(quest) {
         if def.decision().is_some() {
             return fixed("choice", palette::AMBER_80);
@@ -341,7 +352,7 @@ fn status(page: &Page, quest: QuestId) -> Box<dyn Scene> {
             return live(Countdown::Left, palette::AMBER_80);
         }
         let counted = def
-            .progress(active, Some(&page.inventory))
+            .progress(content, active, Some(&page.inventory))
             .into_iter()
             .find(|progress| progress.counted && !progress.done())
             .map(|progress| format!("{}/{}", progress.have, progress.need))
@@ -358,9 +369,14 @@ fn status(page: &Page, quest: QuestId) -> Box<dyn Scene> {
     }
 }
 
-fn detail(assets: &AssetServer, page: &Page, quest: QuestId) -> impl Scene + use<> {
+fn detail(
+    content: &Content,
+    assets: &AssetServer,
+    page: &Page,
+    quest: QuestId,
+) -> impl Scene + use<> {
     let ink = ui::theme::theme().surface_floating.on;
-    let def = quest.get();
+    let def = quest.get(content);
     let mut parts: Vec<Box<dyn Scene>> = vec![
         Box::new(bsn! {
             Node { column_gap: Val::Px({spacing::L}), align_items: AlignItems::Center, flex_wrap: FlexWrap::Wrap }
@@ -369,13 +385,13 @@ fn detail(assets: &AssetServer, page: &Page, quest: QuestId) -> impl Scene + use
                 {EntityScene(tag(&def.kinds(), palette::AMBER_70))},
             ]
         }),
-        Box::new(caption(def.meta())),
+        Box::new(caption(def.meta(content))),
     ];
     if page
         .active(quest)
         .is_some_and(|active| active.left.is_some())
     {
-        parts.push(Box::new(timer(assets, &page.log, quest)));
+        parts.push(Box::new(timer(content, assets, &page.log, quest)));
     }
     parts.push(Box::new(ui::styled_text(
         format!("\u{201c}{}\u{201d}", def.blurb),
@@ -384,7 +400,9 @@ fn detail(assets: &AssetServer, page: &Page, quest: QuestId) -> impl Scene + use
     )));
     parts.push(Box::new(section("Objectives")));
     let progress = def.progress(
-        page.active(quest).unwrap_or(&ActiveQuest::fresh(quest)),
+        content,
+        page.active(quest)
+            .unwrap_or(&ActiveQuest::fresh(content, quest)),
         Some(&page.inventory),
     );
     let finished = page.finished(quest);
@@ -397,7 +415,7 @@ fn detail(assets: &AssetServer, page: &Page, quest: QuestId) -> impl Scene + use
                 None => ink,
             };
             progress.counted &= finished.is_none();
-            Box::new(objective_row(assets, objective, &progress, color))
+            Box::new(objective_row(content, assets, objective, &progress, color))
         },
     ));
     if let Some(paths) = def.decision() {
@@ -413,16 +431,16 @@ fn detail(assets: &AssetServer, page: &Page, quest: QuestId) -> impl Scene + use
     let handed_in = finished.is_some_and(|finished| finished.result == QuestResult::Completed);
     if def.reveals(ChoiceReveal::Gains) || handed_in {
         parts.push(Box::new(section("Rewards")));
-        parts.push(Box::new(reward_chips(assets, def)));
+        parts.push(Box::new(reward_chips(content, assets, def)));
     }
     if def.reveals(ChoiceReveal::Gains) && !def.pick_one.is_empty() && finished.is_none() {
         parts.push(Box::new(section("Pick one when you return")));
-        parts.push(Box::new(picks(assets, def)));
+        parts.push(Box::new(picks(content, assets, def)));
     }
     if def.time_limit.is_some() {
         parts.push(Box::new(section("If time runs out")));
         parts.push(Box::new(ui::styled_text(
-            format!("The quest fails. {}.", def.retry_hint()),
+            format!("The quest fails. {}.", def.retry_hint(content)),
             ink,
             typography::BODY,
         )));
@@ -442,7 +460,7 @@ fn detail(assets: &AssetServer, page: &Page, quest: QuestId) -> impl Scene + use
                 typography::LABEL,
             )),
             QuestResult::Failed if finished.offered_again => Box::new(ui::styled_text(
-                format!("Failed · {}", def.retry_hint()),
+                format!("Failed · {}", def.retry_hint(content)),
                 palette::CRIMSON_80,
                 typography::LABEL,
             )),
@@ -453,7 +471,7 @@ fn detail(assets: &AssetServer, page: &Page, quest: QuestId) -> impl Scene + use
             )),
         });
     }
-    if page.playing && page.log.trackable(quest) {
+    if page.playing && page.log.trackable(content, quest) {
         parts.push(Box::new(footer(page, quest)));
     }
     bsn! {
@@ -467,13 +485,18 @@ fn detail(assets: &AssetServer, page: &Page, quest: QuestId) -> impl Scene + use
     }
 }
 
-fn timer(assets: &AssetServer, log: &QuestLog, quest: QuestId) -> impl Scene + use<> {
+fn timer(
+    content: &Content,
+    assets: &AssetServer,
+    log: &QuestLog,
+    quest: QuestId,
+) -> impl Scene + use<> {
     bsn! {
         Node { column_gap: Val::Px({spacing::L}), align_items: AlignItems::Center, width: Val::Percent(100.0) }
         Children [
             {EntityScene(icon(assets, crate::core::assets::AssetRef("icons/cursors/sandclock001.png"), 16.0))},
             {EntityScene(live_text(log, quest, Countdown::LeftDetail, palette::AMBER_80, typography::LABEL))},
-            ( Node { flex_grow: 1.0 } Children [ {EntityScene(live_bar(log, quest))} ] ),
+            ( Node { flex_grow: 1.0 } Children [ {EntityScene(live_bar(content, log, quest))} ] ),
         ]
     }
 }
@@ -535,14 +558,20 @@ fn footer(page: &Page, quest: QuestId) -> impl Scene + use<> {
 }
 
 fn confirm_abandon(world: &mut World, quest: QuestId) {
-    let def = quest.get();
-    let taken = def
-        .grants
-        .iter()
-        .map(|stack| format!("{} is taken from your bag.", stack.item.get().display_name));
+    let content = world.resource::<Content>().clone();
+    let def = quest.get(&content);
+    let taken = def.grants.iter().map(|stack| {
+        format!(
+            "{} is taken from your bag.",
+            stack.item.get(&content).display_name
+        )
+    });
     let again = match def.giver {
-        Giver::Item(item) => format!("Use the {} to start it again.", item.get().display_name),
-        giver => format!("{} will offer the quest again.", giver.name()),
+        Giver::Item(item) => format!(
+            "Use the {} to start it again.",
+            item.get(&content).display_name
+        ),
+        giver => format!("{} will offer the quest again.", giver.name(&content)),
     };
     let body = taken
         .chain(["Your progress is lost.".to_owned(), again])
@@ -562,14 +591,16 @@ fn confirm_abandon(world: &mut World, quest: QuestId) {
 }
 
 fn quest_note(world: &World, stack: ItemStack) -> Option<String> {
-    let quests = QuestId::VARIANTS;
-    if quests
+    let content = world.resource::<Content>();
+    if content
+        .table::<QuestDef>()
+        .rows()
         .iter()
-        .any(|quest| quest.get().giver == Giver::Item(stack.item))
+        .any(|quest| quest.giver == Giver::Item(stack.item))
     {
         return Some("begins a quest · use to read it".to_owned());
     }
-    if !stack.item.get().has(ItemFlag::Quest) {
+    if !stack.item.get(content).has(ItemFlag::Quest) {
         return None;
     }
     let granted_by = world
@@ -580,13 +611,13 @@ fn quest_note(world: &World, stack: ItemStack) -> Option<String> {
             log.active.iter().find(|active| {
                 active
                     .quest
-                    .get()
+                    .get(content)
                     .grants
                     .iter()
                     .any(|grant| grant.item == stack.item)
             })
         })
-        .map(|active| active.quest.get().title);
+        .map(|active| active.quest.get(content).title);
     Some(match granted_by {
         Some(title) => {
             format!("quest item · can't be sold or dropped · taken back if you abandon {title}")

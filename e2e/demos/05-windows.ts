@@ -44,8 +44,8 @@ test(
       await clickUi(page, "Play");
       await waitForWorld(page, loadReference("island.png"));
       await give(page, [
-        ["RustySword", 1],
-        ["BoneShield", 1],
+        ["rusty_sword", 1],
+        ["bone_shield", 1],
       ]);
     },
     play: async (page) => {
@@ -60,26 +60,26 @@ test(
       }
       await caption(page, "Right-click an item for its card: what it does, and a line of lore");
       await rightClickUi(page, outsideCard(await probe(page), SHIELD));
-      await waitFor(page, ({ item_card }) => item_card?.item === "BoneShield", "the shield's card never opened");
+      await waitFor(page, ({ item_card }) => item_card?.item === "bone_shield", "the shield's card never opened");
       await page.waitForTimeout(3500);
       await caption(page, "One card at a time: right-click another item and the card follows");
       await rightClickUi(page, outsideCard(await probe(page), SWORD));
-      await waitFor(page, ({ item_card }) => item_card?.item === "RustySword", "the sword's card never opened");
+      await waitFor(page, ({ item_card }) => item_card?.item === "rusty_sword", "the sword's card never opened");
       await page.waitForTimeout(2500);
       await caption(page, "Double-click an item to use it — or, for gear, to wear it");
       await doubleClickUi(page, outsideCard(await probe(page), SWORD));
-      await waitFor(page, (snapshot) => holding(snapshot, "RustySword") === 0, "the sword was never worn");
+      await waitFor(page, (snapshot) => holding(snapshot, "rusty_sword") === 0, "the sword was never worn");
       await page.waitForTimeout(2000);
       await caption(page, "Worn gear has a card too…");
       await rightClickUi(page, outsideCard(await probe(page), SHIELD));
-      await waitFor(page, ({ item_card }) => item_card?.item === "BoneShield", "the shield's card never opened");
+      await waitFor(page, ({ item_card }) => item_card?.item === "bone_shield", "the shield's card never opened");
       await page.waitForTimeout(800);
       await rightClickUi(page, outsideCard(await probe(page), SWORD));
-      await waitFor(page, ({ item_card }) => item_card?.item === "RustySword", "the worn sword's card never opened");
+      await waitFor(page, ({ item_card }) => item_card?.item === "rusty_sword", "the worn sword's card never opened");
       await page.waitForTimeout(2000);
       await caption(page, "…and a double-click takes it off");
       await doubleClickUi(page, outsideCard(await probe(page), SWORD));
-      await waitFor(page, (snapshot) => holding(snapshot, "RustySword") === 1, "the sword was never taken off");
+      await waitFor(page, (snapshot) => holding(snapshot, "rusty_sword") === 1, "the sword was never taken off");
       await page.waitForTimeout(2000);
       await caption(page, "Esc closes the card before any window");
       await focusGame(page);
@@ -133,7 +133,7 @@ test(
         await page.waitForTimeout(600);
       }
       await caption(page, "Voice is how characters speak: at halfway, Grisha's greeting babbles…");
-      await talkTo(page, "Grisha");
+      await talkTo(page, "grisha");
       await lineRead(page);
       await page.waitForTimeout(1500);
       await leaveConversation(page);
@@ -145,7 +145,7 @@ test(
       await focusGame(page);
       await page.keyboard.press("Escape");
       await caption(page, "…and with voice turned down, the same greeting is silent");
-      await talkTo(page, "Grisha");
+      await talkTo(page, "grisha");
       await lineRead(page);
       await page.waitForTimeout(1500);
       await leaveConversation(page);

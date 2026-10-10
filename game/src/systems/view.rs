@@ -79,7 +79,7 @@ fn camera_center(
     area_id: crate::systems::area::Id,
     half: Vec2,
 ) -> Option<Pos<Tiles>> {
-    let area = service.resolve(area_id.get().map, area::build_area);
+    let area = area::load(service, area_id);
     let bounds = area.size.bounds();
     let lo = Pos::new(bounds.min().x + half.x, bounds.min().y + half.y);
     let hi = Pos::new(

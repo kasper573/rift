@@ -1,36 +1,3 @@
-use std::fmt;
-use std::str::FromStr;
-
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct TableId<Row>(Row);
-
-impl<Row> TableId<Row> {
-    pub(crate) const fn new(row: Row) -> TableId<Row> {
-        TableId(row)
-    }
-
-    pub(crate) fn row(self) -> Row {
-        self.0
-    }
-}
-
-impl<Row: fmt::Debug> fmt::Debug for TableId<Row> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl<Row: FromStr> FromStr for TableId<Row> {
-    type Err = Row::Err;
-
-    fn from_str(name: &str) -> Result<TableId<Row>, Row::Err> {
-        name.parse().map(TableId)
-    }
-}
-
 #[macro_export]
 macro_rules! table {
     (
@@ -45,42 +12,29 @@ macro_rules! table {
         $(, $(#[$mark:ident])? $key:ident : $row:ident $body:tt)*
         $(,)?
     ) => {
-        mod row {
-            #[derive(
-                Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord,
-                serde::Serialize, serde::Deserialize, strum::EnumString,
-            )]
-            #[strum(ascii_case_insensitive)]
-            pub enum Row {
-                $first
-                $(, $key)*
-            }
-        }
+        pub type Id = $crate::core::content::ContentId<$def>;
 
-        pub type Id = $crate::core::table::TableId<row::Row>;
-
-        pub static TABLE: &[$def] = &[
-            $def $first_body,
-            $($row $body,)*
+        const KEYS: &[$crate::core::content::KeyBuf] = &[
+            $crate::core::content::key_of(stringify!($first))
+            $(, $crate::core::content::key_of(stringify!($key)))*
         ];
 
         #[allow(non_upper_case_globals)]
         impl Id {
             $crate::table_row!($($first_mark)? $first);
             $($crate::table_row!($($mark)? $key);)*
+        }
 
-            pub const VARIANTS: &'static [Id] = &[
-                Id::new(row::Row::$first)
-                $(, Id::new(row::Row::$key))*
-            ];
+        pub static TABLE: &[$def] = &[
+            $def $first_body,
+            $($row $body,)*
+        ];
 
-            pub fn get(self) -> &'static $def {
-                &TABLE[self.index()]
-            }
-
-            pub fn index(self) -> usize {
-                self.row() as usize
-            }
+        pub fn rows() -> Vec<(String, $def)> {
+            KEYS.iter()
+                .zip(TABLE)
+                .map(|(key, row)| (key.as_str().to_owned(), row.clone()))
+                .collect()
         }
     };
 }
@@ -88,22 +42,18 @@ macro_rules! table {
 #[macro_export]
 macro_rules! table_row {
     (expose $key:ident) => {
-        pub const $key: Id = Id::new(row::Row::$key);
+        pub const $key: Id = Id::new($crate::core::content::sorted_index(
+            KEYS,
+            &$crate::core::content::key_of(stringify!($key)),
+        ));
     };
     ($key:ident) => {
         #[allow(dead_code)]
-        pub(super) const $key: Id = Id::new(row::Row::$key);
+        pub(super) const $key: Id = Id::new($crate::core::content::sorted_index(
+            KEYS,
+            &$crate::core::content::key_of(stringify!($key)),
+        ));
     };
 }
 
 pub use table;
-
-pub fn parse_id<Row: FromStr>(
-    name: &str,
-    raw: Option<&str>,
-    kind: &str,
-) -> Result<TableId<Row>, String> {
-    let raw = bevy_terminal::require_arg(name, raw)?;
-    raw.parse()
-        .map_err(|_| format!("`{raw}` is not a known {kind}"))
-}

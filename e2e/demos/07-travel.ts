@@ -36,7 +36,7 @@ test(
       const { area: home, portals } = await probe(page);
       const road = portals.find((portal) => portal.name === "forest-road")!;
       await travelTo(page, road.at);
-      await onStage(page, "IlsaHalt");
+      await onStage(page, "ilsa_halt");
       await caption(page, "The forest road is locked without a pass: you just stand on it, and its warden calls out", {
         at: "top",
       });
@@ -46,11 +46,11 @@ test(
       await hoverUi(page, "Here, for your trouble.");
       await page.waitForTimeout(1500);
       await pick(page, "Here, for your trouble.");
-      await onStage(page, "IlsaBribed");
+      await onStage(page, "ilsa_bribed");
       await readToChoices(page, 1200);
       await pick(page, "Goodbye.");
       await conversationOver(page);
-      await waitFor(page, (snapshot) => holding(snapshot, "RoadPass") === 1, "the pass never arrived");
+      await waitFor(page, (snapshot) => holding(snapshot, "road_pass") === 1, "the pass never arrived");
       await caption(page, "With the pass in your bag, the same warp takes you through: the island crumbles away, and the forest rises around you");
       const hideMixer = await soundscapeMixer(page);
       await travelTo(page, road.at);

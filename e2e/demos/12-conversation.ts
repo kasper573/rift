@@ -15,11 +15,11 @@ test(
       await signIn(page, await provisionAccount(page, ["admin"]));
       await clickUi(page, "Play");
       await waitForWorld(page, loadReference("island.png"));
-      await give(page, [["Gold", 12]]);
+      await give(page, [["gold", 12]]);
     },
     play: async (page) => {
       await caption(page, "Click a townsperson to talk — you walk into reach and the conversation opens");
-      await talkTo(page, "Tobb");
+      await talkTo(page, "tobb");
       await caption(page, "Busts show who is speaking. Space, Enter or a click reads on");
       await readToChoices(page, 1400);
       await caption(page, "No buttons on the frame: Esc leaves, and the choices say the rest", { at: "top" });
@@ -36,11 +36,11 @@ test(
       await page.keyboard.press("ArrowUp");
       await page.waitForTimeout(700);
       await page.keyboard.press("Enter");
-      await onStage(page, "TobbCatch");
+      await onStage(page, "tobb_catch");
       await readToChoices(page, 1200);
       await caption(page, "…or click a choice", { at: "top" });
       await pick(page, "Good luck out there.");
-      await onStage(page, "TobbNews");
+      await onStage(page, "tobb_news");
       await caption(page, "Tobb held his news while you talked — once you're free, he calls you over", { at: "top" });
       await readToChoices(page, 1400);
       await page.keyboard.press("Digit1");
@@ -49,7 +49,7 @@ test(
       await caption(page, "While you talk, the map ignores the mouse: a plain pointer, and clicks do nothing", {
         at: "top",
       });
-      await talkTo(page, "Grisha");
+      await talkTo(page, "grisha");
       const me = (await probe(page)).me!;
       const offStage: [number, number] = [me.at[0] + 2, me.at[1] - 4];
       await hoverTile(page, offStage);
@@ -68,34 +68,34 @@ test(
       await page.waitForTimeout(1200);
       await caption(page, "Choices branch into a tree: Chat opens a menu of its own", { at: "top" });
       await pick(page, "Chat.");
-      await onStage(page, "GrishaChat");
+      await onStage(page, "grisha_chat");
       await readToChoices(page, 1200);
       await pick(page, "Tell me about this island.");
-      await onStage(page, "GrishaIsland");
+      await onStage(page, "grisha_island");
       await readToChoices(page, 1200);
       await caption(page, "Ok leads back up to the chat menu", { at: "top" });
       await pick(page, "Ok.");
-      await onStage(page, "GrishaChat");
+      await onStage(page, "grisha_chat");
       await readToChoices(page, 1000);
       await pick(page, "Any rumours?");
-      await onStage(page, "GrishaRumourWren");
+      await onStage(page, "grisha_rumour_wren");
       await readToChoices(page, 1200);
       await caption(page, "…and a branch can go deeper still", { at: "top" });
       await pick(page, "What does she do with them?");
-      await onStage(page, "GrishaWrenSecret");
+      await onStage(page, "grisha_wren_secret");
       await readToChoices(page, 1200);
       await pick(page, "Ok.");
-      await onStage(page, "GrishaChat");
+      await onStage(page, "grisha_chat");
       await readToChoices(page, 1000);
       await caption(page, "Never mind goes back to the top", { at: "top" });
       await pick(page, "Never mind.");
-      await onStage(page, "GrishaAnythingElse");
+      await onStage(page, "grisha_anything_else");
       await readToChoices(page, 1000);
       await caption(page, "An inn has its prices on the wall: Grisha's menu shows what each choice costs", { at: "top" });
       await hoverUi(page, "Buy a round for the room.");
       await page.waitForTimeout(2000);
       await pick(page, "Buy a round for the room.");
-      await onStage(page, "GrishaRound");
+      await onStage(page, "grisha_round");
       await waitFor(page, ({ feed }) => feed.includes("−10 Gold"), "the round's price never showed in the feed");
       await caption(page, "What it took shows in the corner, over Grisha's bust", { at: "top" });
       await readToChoices(page, 1400);
@@ -117,7 +117,7 @@ test(
       await page.waitForTimeout(1200);
 
       await caption(page, "Things on the map can start conversations too — a chest washed up by the tide");
-      await interactWith(page, "TideChest");
+      await interactWith(page, "tide_chest");
       await readToChoices(page, 1400);
       await pick(page, "Close the lid.");
       await conversationOver(page);

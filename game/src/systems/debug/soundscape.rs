@@ -53,12 +53,7 @@ pub(super) fn show(
         .0
         .and_then(|seen| areas.get(seen).ok())
         .filter(|_| *mode == DebugMode::Soundscapes)
-        .map(|tag| {
-            service
-                .resolve(tag.area.get().map, area::build_area)
-                .soundscape
-                .as_slice()
-        });
+        .map(|tag| area::load(&service, tag.area).soundscape.as_slice());
     if shown.0.map(<[_]>::as_ptr) == wanted.map(<[_]>::as_ptr) {
         return;
     }

@@ -5,8 +5,9 @@ use tiled::{LayerType, PropertyValue};
 
 use super::{Area, Group, MapMarker, Portal, RenderLayer, TileRef, cell_overlap};
 use crate::core::assets::{AssetRef, AssetService};
-use crate::core::audio::playback::SfxId;
+use crate::core::audio::playback::{SfxDef, SfxId};
 use crate::core::audio::soundscape::{SoundscapeChannel, SoundscapeShape, SoundscapeZone};
+use crate::core::content::{Content, key_of};
 use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
 use crate::core::tiling::{
     self, Cell, CellPos, GridDims, GridSize, PixelsPerTile, TileRect, TileSize, Tiles,
@@ -16,14 +17,14 @@ use crate::systems::movement;
 const OBSCURING_CUTOFF: f32 = 0.4;
 
 pub fn build_area(svc: &AssetService, map: AssetRef) -> Area {
-    build_from_map(map.0, load_map(svc, map))
+    build_from_map(svc.content(), map.0, load_map(svc, map))
 }
 
-pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
+fn build_from_map(content: &Content, name: &str, map: tiled::Map) -> Area {
     let tiling = PixelsPerTile::new(Size::new(map.tile_width as f32, map.tile_height as f32));
     let size = Size::new(map.width as f32, map.height as f32);
 
-    let mut tiles = TilePalette::default();
+    let mut tiles = TilePalette::new(content.clone());
     let mut layers = Vec::new();
     let mut start = None;
     let mut portals = Vec::new();
@@ -77,7 +78,15 @@ pub(super) fn build_from_map(name: &str, map: tiled::Map) -> Area {
                             if object.name.is_empty() {
                                 panic!("map '{name}': warp {} needs a name", object.id());
                             }
-                            let warp = portal(name, &object.name, goto, pos, &object.shape, tiling);
+                            let warp = portal(
+                                content,
+                                name,
+                                &object.name,
+                                goto,
+                                pos,
+                                &object.shape,
+                                tiling,
+                            );
                             mark(&mut markers, name, &object.name, MapMarker::Rect(warp.rect));
                             portals.push(warp);
                         }
@@ -152,8 +161,8 @@ fn load_map(svc: &AssetService, map: AssetRef) -> tiled::Map {
         .unwrap_or_else(|error| panic!("map '{}': {error}", map.0))
 }
 
-#[derive(Default)]
 struct TilePalette {
+    content: Content,
     keys: Vec<(usize, u32)>,
     walkable: Vec<Option<bool>>,
     group: Vec<Option<i64>>,
@@ -161,6 +170,16 @@ struct TilePalette {
 }
 
 impl TilePalette {
+    fn new(content: Content) -> TilePalette {
+        TilePalette {
+            content,
+            keys: Vec::new(),
+            walkable: Vec::new(),
+            group: Vec::new(),
+            sfx: Vec::new(),
+        }
+    }
+
     fn add(&mut self, tileset: &tiled::Tileset, id: u32) -> TileRef {
         let identity = tileset as *const tiled::Tileset as usize;
         let key = (identity, id);
@@ -184,8 +203,9 @@ impl TilePalette {
                 });
                 self.sfx.push(match properties.get("sfx") {
                     Some(PropertyValue::StringValue(sfx)) => Some(
-                        sfx.parse::<crate::core::audio::playback::SfxId>()
-                            .unwrap_or_else(|error| panic!("tile sfx '{sfx}': {error}")),
+                        self.content
+                            .by_key::<SfxDef>(key_of(sfx).as_str())
+                            .unwrap_or_else(|| panic!("tile sfx '{sfx}' is not a known sfx")),
                     ),
                     _ => None,
                 });
@@ -272,6 +292,7 @@ fn soundscape_zone(map: &str, object: &tiled::Object, tiling: PixelsPerTile) -> 
 }
 
 fn portal(
+    content: &Content,
     name: &str,
     warp: &str,
     goto: &str,
@@ -282,9 +303,9 @@ fn portal(
     let malformed = || -> ! { panic!("map '{name}': goto '{goto}' must be '<area>, x, y'") };
     let mut parts = goto.split(',');
     let dest = parts.next().unwrap_or_else(|| malformed()).trim();
-    let dest_area = dest
-        .parse::<super::Id>()
-        .unwrap_or_else(|error| panic!("map '{name}': {error}"));
+    let dest_area = content
+        .by_key::<super::AreaDef>(key_of(dest).as_str())
+        .unwrap_or_else(|| panic!("map '{name}': goto '{dest}' is not a known area"));
     let mut coord = || -> f32 {
         parts
             .next()

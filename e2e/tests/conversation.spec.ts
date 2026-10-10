@@ -22,8 +22,8 @@ test("a conversation drops world clicks until Esc leaves it", async ({ page }) =
   await register(page);
   await waitForWorld(page, loadReference("island.png"));
 
-  const greeting = await talkTo(page, "Grisha", travel);
-  expect(greeting.node).toBe("GrishaHello");
+  const greeting = await talkTo(page, "grisha", travel);
+  expect(greeting.node).toBe("grisha_hello");
   const talking = await waitFor(page, ({ me }) => me?.locked && me, "talking never locked commands");
   await waitAtRest(page);
 
@@ -44,9 +44,9 @@ test("a map object opens its own conversation", async ({ page }) => {
   await register(page);
   await waitForWorld(page, loadReference("island.png"));
 
-  const board = await interactWith(page, "HarbourBoard", travel);
+  const board = await interactWith(page, "harbour_board", travel);
 
-  expect(board.node).toBe("HarbourBoard");
+  expect(board.node).toBe("harbour_board");
   await focusGame(page);
   await page.keyboard.press("Escape");
   await conversationOver(page);

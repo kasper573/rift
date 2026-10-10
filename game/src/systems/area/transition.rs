@@ -5,6 +5,7 @@ use bevy_ecs::prelude::*;
 use super::{Id, MarkerName};
 use crate::core::assets::AssetService;
 use crate::core::babble::Babbler;
+use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::tiling::Tiles;
 use crate::systems::actor::Name;
@@ -79,6 +80,7 @@ pub struct Traveler {
 }
 
 pub fn departing(world: &mut World) -> Vec<Traveler> {
+    let content = world.resource::<Content>().clone();
     let ids: Vec<Entity> = world
         .query_filtered::<Entity, With<Crossing>>()
         .iter(world)
@@ -110,7 +112,7 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
                             .get::<Memory>(entity)
                             .cloned()
                             .map(|mut memory| {
-                                memory.leave_area();
+                                memory.leave_area(&content);
                                 memory
                             })
                             .unwrap_or_default(),
@@ -134,6 +136,7 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
 }
 
 pub fn arrive(world: &mut World, mut traveler: Traveler) -> Entity {
+    let content = world.resource::<Content>().clone();
     let first_visit = traveler.state.discovered.discover(traveler.dest_area);
     let entity = crate::systems::player::place(
         world,
@@ -144,12 +147,12 @@ pub fn arrive(world: &mut World, mut traveler: Traveler) -> Entity {
     );
     let arrived = HistoryEntry::of(
         HistoryTopic::Notification,
-        LineText::plain(traveler.dest_area.get().name),
+        LineText::plain(traveler.dest_area.get(&content).name),
     )
     .mark(Some(HistoryMark::Arrived));
     history::record(world, entity, arrived);
-    if first_visit && let Some(intro) = traveler.dest_area.get().intro {
-        let notification = intro.get().for_player(world, entity);
+    if first_visit && let Some(intro) = traveler.dest_area.get(&content).intro {
+        let notification = intro.get(&content).for_player(world, entity);
         notification::notify(world, entity, notification);
     }
     entity

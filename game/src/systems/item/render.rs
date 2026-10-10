@@ -1,5 +1,6 @@
 use crate::core::assets::AssetService;
 use crate::core::audio::playback::SfxId;
+use crate::core::content::Content;
 use crate::core::math::{Pos, WorldPx};
 use crate::core::tiling::Tiles;
 use crate::core::time::Seconds;
@@ -57,12 +58,13 @@ struct Pending {
 }
 
 fn use_sounds(
+    content: Res<Content>,
     mut consumed: MessageReader<ItemConsumed>,
     positions: Query<&Position>,
     mut play: MessageWriter<PlaySfx>,
 ) {
     for consumed in consumed.read() {
-        let Some(id) = consumed.item.get().sfx.on_use else {
+        let Some(id) = consumed.item.get(&content).sfx.on_use else {
             continue;
         };
         let Ok(position) = positions.get(consumed.actor) else {
@@ -78,13 +80,14 @@ fn use_sounds(
 fn attach_drop_sprite(
     add: On<Add, DroppedItem>,
     drops: Query<&DroppedItem>,
+    content: Res<Content>,
     assets: Res<AssetServer>,
     mut commands: Commands,
 ) {
     let Ok(dropped) = drops.get(add.entity) else {
         return;
     };
-    let image = assets.load(dropped.item.get().icon.0);
+    let image = assets.load(dropped.item.get(&content).icon.0);
     commands.entity(add.entity).insert((
         Sprite {
             image,
@@ -111,6 +114,7 @@ fn recv_drops(mut dropped: MessageReader<ItemsDropped>, mut pending: ResMut<Pend
 
 fn start_drops(
     time: Res<Time>,
+    content: Res<Content>,
     mut pending: ResMut<PendingDrops>,
     drops: Query<(&DroppedItem, &Position)>,
     mut commands: Commands,
@@ -123,7 +127,7 @@ fn start_drops(
                 to: position.pos.to_screen(),
                 delay: DROP_STAGGER * drop.index as f32,
                 elapsed: Seconds(0.0),
-                drop_sfx: dropped.item.get().sfx.drop,
+                drop_sfx: dropped.item.get(&content).sfx.drop,
             });
             false
         }
@@ -174,7 +178,7 @@ fn animate_drops(
 }
 
 fn drop_z(service: &AssetService, tag: &AreaTag, pos: Pos<Tiles>) -> f32 {
-    let area = service.resolve(tag.area.get().map, area::build_area);
+    let area = area::load(service, tag.area);
     dynamic_z(area.size.height, area.dynamic_layer() as f32, Tiles(pos.y))
 }
 

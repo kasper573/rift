@@ -1,3 +1,4 @@
+use crate::core::content::Content;
 use crate::data::item::Id as ItemId;
 use crate::systems::item::{INVENTORY_MAX, Inventory, ItemDef, ItemFlag, ItemStack, card};
 use crate::systems::player::session;
@@ -122,10 +123,13 @@ pub(super) fn sync_inventory(world: &mut World) {
         return;
     };
     let keys: Vec<u64> = cells.iter().map(cell_key).collect();
-    reconcile_children(world, grid, &keys, |_, index| slot(&cells[index]));
+    reconcile_children(world, grid, &keys, |world, index| {
+        slot(world.resource::<Content>(), &cells[index])
+    });
 }
 
 fn inventory_cells(world: &World) -> Vec<CellData> {
+    let content = world.resource::<Content>();
     let inventory = session::my_character(world).and_then(|me| me.get::<Inventory>());
     let max = inventory.map_or(INVENTORY_MAX, |inventory| inventory.max);
     let assets = world.resource::<AssetServer>();
@@ -145,7 +149,7 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
             filled: inventory
                 .and_then(|inventory| inventory.slots.get(slot as usize))
                 .map(|&stack| {
-                    let def = stack.item.get();
+                    let def = stack.item.get(content);
                     Filled {
                         item: stack.item,
                         hints: hints(map, &takeovers, def),
@@ -183,9 +187,9 @@ fn cell_key(cell: &CellData) -> u64 {
     hasher.finish()
 }
 
-fn slot(cell: &CellData) -> Box<dyn Scene> {
+fn slot(content: &Content, cell: &CellData) -> Box<dyn Scene> {
     match &cell.filled {
-        Some(filled) => Box::new(filled_slot(cell.slot, filled)),
+        Some(filled) => Box::new(filled_slot(content, cell.slot, filled)),
         None => Box::new(empty_slot()),
     }
 }
@@ -198,13 +202,13 @@ fn empty_slot() -> impl Scene {
     }
 }
 
-fn filled_slot(slot: u32, filled: &Filled) -> impl Scene {
+fn filled_slot(content: &Content, slot: u32, filled: &Filled) -> impl Scene {
     let count = if filled.count > 1 {
         filled.count.to_string()
     } else {
         String::new()
     };
-    let def = filled.item.get();
+    let def = filled.item.get(content);
     let (border, tint, verdict) = match &filled.verdict {
         None => (SLOT_BORDER, Color::WHITE, None),
         Some(SlotVerdict::Wanted(note)) => (palette::AMBER_70, Color::WHITE, Some(note.clone())),

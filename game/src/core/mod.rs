@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod audio;
 pub mod babble;
+pub mod content;
 pub mod interpolate;
 pub mod math;
 pub mod net;

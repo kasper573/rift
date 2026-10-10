@@ -4,6 +4,7 @@ use crate::core::assets::AssetRef;
 use crate::core::audio::decibels;
 use crate::core::audio::loader::AudioLoader;
 use crate::core::audio::mix::{AudioCategory, AudioMix};
+use crate::core::content::Content;
 use crate::core::math::{Pos, Rng, Size};
 use crate::core::tiling::Tiles;
 use crate::core::time::{PlaybackRate, Seconds};
@@ -33,10 +34,15 @@ impl Plugin for SfxPlugin {
 
 pub use crate::data::sfx::Id as SfxId;
 
+#[derive(Clone)]
 pub struct SfxDef {
     pub src: AssetRef,
     pub volume: SfxScalar,
     pub pitch: SfxScalar,
+}
+
+impl crate::core::content::ContentRow for SfxDef {
+    const TABLE: &'static str = "sfx";
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -137,16 +143,15 @@ struct Cue {
     pitch: SfxScalar,
 }
 
-fn load(assets: Res<AssetServer>, mut catalog: ResMut<Catalog>) {
-    catalog.0 = SfxId::VARIANTS
+fn load(assets: Res<AssetServer>, content: Res<Content>, mut catalog: ResMut<Catalog>) {
+    catalog.0 = content
+        .table::<SfxDef>()
+        .rows()
         .iter()
-        .map(|id| {
-            let def = id.get();
-            Sound {
-                handle: assets.load(def.src.0),
-                volume: def.volume,
-                pitch: def.pitch,
-            }
+        .map(|def| Sound {
+            handle: assets.load(def.src.0),
+            volume: def.volume,
+            pitch: def.pitch,
         })
         .collect();
 }

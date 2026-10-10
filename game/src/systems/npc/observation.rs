@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use bevy_ecs::prelude::*;
 
+use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::tiling::{TilePos, Tiles};
 use crate::data::dialogue::Id as DialogueId;
@@ -9,6 +10,7 @@ use crate::systems::area::AreaTag;
 use crate::systems::dialogue;
 use crate::systems::interact;
 use crate::systems::movement::position;
+use crate::systems::npc::NpcDef;
 use crate::systems::player::Players;
 use crate::systems::reach::Tether;
 use crate::systems::rule::{self, Encounter, Outcome, Requirement, Terms};
@@ -27,15 +29,16 @@ pub struct Observation {
 pub struct Observed(HashSet<(Entity, usize)>);
 
 pub fn observe(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc, &'static AreaTag)>) {
+    let content = world.resource::<Content>().clone();
     let watchers: Vec<Watcher> = npcs
         .iter(world)
         .filter(|(npc, def, _)| {
-            !def.def.get().observations.is_empty() && !stat::is_dead(world, *npc)
+            !def.def.get(&content).observations.is_empty() && !stat::is_dead(world, *npc)
         })
         .filter_map(|(npc, def, tag)| {
             Some(Watcher {
                 npc,
-                observations: def.def.get().observations,
+                observations: def.def.get(&content).observations,
                 area: tag.area,
                 at: position(world, npc)?,
             })
@@ -84,7 +87,7 @@ pub fn observe(world: &mut World, npcs: &mut QueryState<(Entity, &'static Npc, &
             }
             let Some(observation) = world
                 .get::<Npc>(npc)
-                .and_then(|def| def.def.get().observations.get(index))
+                .and_then(|def| def.def.get(&content).observations.get(index))
             else {
                 continue;
             };
@@ -115,11 +118,13 @@ struct Watcher {
     at: Pos<Tiles>,
 }
 
-pub(super) fn starts() -> Vec<DialogueId> {
-    crate::data::npc::TABLE
+pub(super) fn starts(content: &Content) -> Vec<DialogueId> {
+    content
+        .table::<NpcDef>()
+        .rows()
         .iter()
         .flat_map(|def| def.observations)
         .flat_map(|observation| observation.then)
-        .flat_map(|outcome| outcome.leads_to())
+        .flat_map(|outcome| outcome.leads_to(content))
         .collect()
 }

@@ -91,7 +91,7 @@ fn main() {
     }
 
     let (areas, r) = best.unwrap_or_else(|| (1, point(1, layout, &config.assets_dir)));
-    let npcs = sim::npcs_per_area() * areas;
+    let npcs = sim::npcs_per_area(service(&config.assets_dir).content()) * areas;
     let players = sim::PLAYERS_PER_AREA * areas;
     println!("\n[bench] areas,npcs,players,clients,mean_ms,p50_ms,p99_ms,max_ms,sim_ms,repl_ms");
     println!(
@@ -114,7 +114,10 @@ fn main() {
 }
 
 fn service(assets_dir: &Path) -> AssetService {
-    AssetService::new(FilesystemSource(assets_dir.to_path_buf()))
+    AssetService::new(
+        FilesystemSource(assets_dir.to_path_buf()),
+        game::data::build(),
+    )
 }
 
 fn verdict(mean: f64) -> &'static str {

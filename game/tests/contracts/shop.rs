@@ -13,7 +13,7 @@ use game::systems::npc::Npc;
 use game::systems::prop::Prop;
 use game::systems::shop::{ShopId, ShopRequest, ShopView};
 
-use crate::support::{Sim, row};
+use crate::support::{Sim, content, row};
 
 fn townsperson(sim: &mut Sim, who: data::npc::Id) -> Entity {
     let world = sim.world();
@@ -54,7 +54,7 @@ fn browse(sim: &mut Sim, client: u32, player: Entity, keeper: data::npc::Id) -> 
     let ask = greeting
         .choices
         .iter()
-        .position(|choice| choice.label.words(&InputMap::default()) == ask_of(keeper))
+        .position(|choice| choice.label.words(&InputMap::new(content())) == ask_of(keeper))
         .expect("the shop's choice in the greeting") as u32;
     sim.send(
         client,
@@ -81,7 +81,7 @@ fn give(sim: &mut Sim, player: Entity, item: ItemId, count: u32) {
     sim.world()
         .get_mut::<Inventory>(player)
         .expect("bag")
-        .exchange(&[], &[ItemStack::new(item, count)])
+        .exchange(content(), &[], &[ItemStack::new(item, count)])
         .expect("room");
 }
 
@@ -103,7 +103,7 @@ fn slot_of(sim: &mut Sim, player: Entity, item: ItemId) -> u32 {
 }
 
 fn offer_of(shop: ShopId, item: ItemId) -> u32 {
-    shop.get()
+    shop.get(content())
         .sells
         .iter()
         .position(|offer| offer.item == item)

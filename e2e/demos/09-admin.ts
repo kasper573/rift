@@ -39,7 +39,7 @@ test(
       await page.waitForTimeout(2000);
       await caption(page, "…or teleporting, even to another area");
       await submitText(page, "/tp 20,20,Forest");
-      await waitFor(page, (snapshot) => arrivedIn(snapshot, "Forest"), "the teleport never landed");
+      await waitFor(page, (snapshot) => arrivedIn(snapshot, "forest"), "the teleport never landed");
       await page.waitForTimeout(3000);
       const name = (await probe(islander)).me!.name;
       const stop = await inset(page, islander, `${name}'s screen, back on the island`);

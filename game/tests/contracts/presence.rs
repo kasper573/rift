@@ -12,7 +12,7 @@ use game::systems::rule::Not;
 use game::systems::stat::{self, StatKind};
 use game::systems::visibility::{self, Presence};
 
-use crate::support::{CLOCK, Sim, row};
+use crate::support::{CLOCK, Sim, content, row};
 
 fn orc_near(sim: &mut Sim, player: bevy_ecs::entity::Entity) -> bevy_ecs::entity::Entity {
     let start = position(sim.world(), player).expect("position");
@@ -106,7 +106,7 @@ fn presence_by_requirement_follows_the_players_memory() {
     sim.world()
         .get_mut::<game::systems::memory::Memory>(player)
         .expect("memory")
-        .remember(row("PellDead"), CLOCK);
+        .remember(content(), row("PellDead"), CLOCK);
 
     assert!(!visibility::present(sim.world(), orc, player));
 }

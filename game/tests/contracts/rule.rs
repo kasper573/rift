@@ -6,7 +6,7 @@ use game::systems::job::MinLevel;
 use game::systems::player::Xp;
 use game::systems::rule::{AnyOf, Encounter, Not, Requirement, RuleRefusal, Terms};
 
-use crate::support::{Sim, row};
+use crate::support::{Sim, content, row};
 
 static REWARD_ITEMS: LazyLock<[ItemStack; 1]> =
     LazyLock::new(|| [ItemStack::new(row("RustySword"), 1)]);
@@ -20,7 +20,7 @@ fn give(sim: &mut Sim, player: bevy_ecs::entity::Entity, stack: ItemStack) {
     sim.world()
         .get_mut::<Inventory>(player)
         .expect("bag")
-        .exchange(&[], &[stack])
+        .exchange(content(), &[], &[stack])
         .expect("fits");
 }
 
@@ -28,7 +28,7 @@ fn give(sim: &mut Sim, player: bevy_ecs::entity::Entity, stack: ItemStack) {
 fn level_requirements_follow_experience() {
     let mut sim = Sim::area(data::area::SPAWN_ID);
     let player = sim.join(1);
-    let needed = row::<data::job::Id>("Adventurer").get().levels[1].exp;
+    let needed = row::<data::job::Id>("Adventurer").get(content()).levels[1].exp;
 
     assert!(!MinLevel(2).met(sim.world(), player));
     sim.world().get_mut::<Xp>(player).expect("xp").gain(needed);

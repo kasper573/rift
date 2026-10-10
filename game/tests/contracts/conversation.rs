@@ -16,7 +16,7 @@ use game::systems::npc::Npc;
 use game::systems::player::commands_locked;
 use game::systems::stat::{self, StatKind};
 
-use crate::support::{Sim, errors, row};
+use crate::support::{Sim, content, errors, row};
 
 fn townsperson(sim: &mut Sim, who: data::npc::Id) -> Entity {
     let world = sim.world();
@@ -46,7 +46,7 @@ fn choice(conversation: &Conversation, label: &str) -> u32 {
     conversation
         .choices
         .iter()
-        .position(|choice| choice.label.words(&InputMap::default()) == label)
+        .position(|choice| choice.label.words(&InputMap::new(content())) == label)
         .unwrap_or_else(|| panic!("no choice {label:?}")) as u32
 }
 
@@ -54,7 +54,7 @@ fn give_gold(sim: &mut Sim, player: Entity, count: u32) {
     sim.world()
         .get_mut::<Inventory>(player)
         .expect("bag")
-        .exchange(&[], &[ItemStack::new(row("Gold"), count)])
+        .exchange(content(), &[], &[ItemStack::new(row("Gold"), count)])
         .expect("room for gold");
 }
 
@@ -240,7 +240,7 @@ fn two_players_see_their_own_icons_over_the_same_npc() {
         sim.world()
             .get_mut::<Memory>(regular)
             .expect("memory")
-            .remember(row("TobbVisits"), clock);
+            .remember(content(), row("TobbVisits"), clock);
     }
     sim.world().insert_resource(WallClock {
         now: UnixMillis(3 * 3_600_000),

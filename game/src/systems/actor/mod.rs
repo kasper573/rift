@@ -27,10 +27,16 @@ pub fn register(app: &mut App) {
         .replicate::<Name>();
 }
 
+pub fn model(assets: &AssetService, model: data::model::Id) -> &'static ActorModel {
+    assets.resolve(model.get(assets.content()).sheet, build_model)
+}
+
 pub fn check(assets: &AssetService) {
-    assets.resolve_all(data::model::TABLE.iter().map(|def| def.sheet), build_model);
-    for def in data::model::TABLE {
-        for bust in def.busts.iter().flat_map(bust::Busts::all) {
+    let content = assets.content();
+    let models = content.table::<bust::ModelDef>();
+    assets.resolve_all(models.rows().iter().map(|def| def.sheet), build_model);
+    for def in models.rows() {
+        for bust in def.busts.iter().flat_map(|busts| busts.all(content)) {
             if let Err(error) = assets.open(Path::new(bust.0)) {
                 panic!("bust {}: {error}", bust.0);
             }

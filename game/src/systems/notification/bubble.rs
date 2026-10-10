@@ -8,6 +8,7 @@ use ui::{BubbleLine, BubbleTail, FoldedSpeakers, SpeechBubble};
 use super::{Notification, NotificationKind, NotificationSent};
 use crate::core::audio::playback::SfxPlace;
 use crate::core::babble::{BabbleId, BabbleRank, Babbler, Babbling};
+use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::render::tile_to_window;
 use crate::core::tiling::{TilePos, Tiles};
@@ -246,6 +247,7 @@ fn forget(mut bubbles: ResMut<Bubbles>) {
 }
 
 fn place_bubbles(world: &mut World) {
+    let content = world.resource::<Content>().clone();
     let Some(window) = window_size(world) else {
         return;
     };
@@ -332,7 +334,7 @@ fn place_bubbles(world: &mut World) {
         let perch = room.settle(perch, size);
         let typed = typed_lines(world, speaking);
         let bubble = SpeechBubble {
-            speaker: speaking.speaker.get().display_name.to_owned(),
+            speaker: speaking.speaker.get(&content).display_name.to_owned(),
             replaced: speaking.replaced,
             lines: speaking.shown_lines(&typed),
             tail: perch.tail,
@@ -495,11 +497,12 @@ fn typed_lines(world: &World, speaking: &Speaking) -> Vec<bool> {
 }
 
 fn babble_of(world: &World, speaking: &Speaking) -> Option<BabbleId> {
+    let content = world.resource::<Content>();
     speaking
         .body
         .and_then(|body| world.get::<Babbler>(body))
         .map(|babbler| babbler.0)
-        .or(speaking.speaker.get().babble)
+        .or(speaking.speaker.get(content).babble)
 }
 
 fn spot(world: &mut World, speaking: &Speaking, window: Vec2) -> Spot {

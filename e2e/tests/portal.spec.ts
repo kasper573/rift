@@ -17,8 +17,8 @@ test("the forest road holds you without a pass and crosses with one", async ({ p
 
   await travel(page, road!.at);
   const held = await waitFor(page, ({ stage }) => stage, "Ilsa never halted you on the road");
-  expect(held.node).toBe("IlsaHalt");
-  expect((await probe(page)).area).toBe("Island");
+  expect(held.node).toBe("ilsa_halt");
+  expect((await probe(page)).area).toBe("island");
   await leaveConversation(page);
 
   await admin(page, [["/give RoadPass,1", /gave 1 Road Pass/]]);
@@ -31,7 +31,7 @@ test("the forest road holds you without a pass and crosses with one", async ({ p
         if (resemblance(scene, forest) >= MAP_MATCH) {
           return true;
         }
-        if ((await probe(page)).area === "Island") await travel(page, road!.at);
+        if ((await probe(page)).area === "island") await travel(page, road!.at);
         return false;
       },
       { message: "with a pass, clicking the warp should cross into the forest", timeout: 120_000, intervals: [1000] },

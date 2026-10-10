@@ -329,9 +329,7 @@ fn cross_portal(world: &mut World, entity: Entity) {
     let Some(area_id) = world.get::<area::AreaTag>(entity).map(|tag| tag.area) else {
         return;
     };
-    let area = world
-        .resource::<AssetService>()
-        .resolve(area_id.get().map, area::build_area);
+    let area = area::load(world.resource::<AssetService>(), area_id);
     let Some(portal) = area.portals.get(want) else {
         world.entity_mut(entity).remove::<DesiredPortal>();
         return;
@@ -370,9 +368,12 @@ fn teleport(
     ctx: &CommandCtx,
     x: f32,
     y: f32,
-    area: Option<area::Id>,
+    area: Option<String>,
     user: Option<String>,
 ) -> Result<String, String> {
+    let area = area
+        .map(|area| crate::core::content::named::<area::AreaDef>(world, &area))
+        .transpose()?;
     let target = match &user {
         Some(user) => crate::systems::player::by_user(world, user)
             .ok_or_else(|| format!("no player with user id `{user}` in your area"))?,
@@ -384,10 +385,7 @@ fn teleport(
         .map(|tag| tag.area)
         .ok_or_else(|| "target has no area".to_owned())?;
     let dest_area = area.unwrap_or(current);
-    let size = world
-        .resource::<AssetService>()
-        .resolve(dest_area.get().map, area::build_area)
-        .size;
+    let size = area::load(world.resource::<AssetService>(), dest_area).size;
     if !(0.0..=size.width).contains(&x) || !(0.0..=size.height).contains(&y) {
         return Err(format!(
             "({x},{y}) is outside {dest_area:?} ({}x{} tiles)",
@@ -550,11 +548,9 @@ impl Navigator {
 
 fn airborne(world: &World, entity: Entity) -> bool {
     let assets = world.resource::<AssetService>();
-    world.get::<Actor>(entity).is_some_and(|actor| {
-        assets
-            .resolve(actor.model.get().sheet, crate::systems::actor::build_model)
-            .airborne
-    })
+    world
+        .get::<Actor>(entity)
+        .is_some_and(|actor| crate::systems::actor::model(assets, actor.model).airborne)
 }
 
 fn within(nodes: &[Pos<Tiles>], bounds: Rect<Tiles>) -> Vec<Pos<Tiles>> {
