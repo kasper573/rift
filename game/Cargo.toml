@@ -77,10 +77,14 @@ bevy_picking.workspace = true
 bevy_replicon = { workspace = true, features = ["client", "server"] }
 bevy_state.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
-bevy_kira_audio = { version = "0.26.0-rc.1", default-features = false, features = ["wav"] }
+bevy_kira_audio = { version = "0.26.0-rc.1", default-features = false }
+# bevy_kira_audio fails to build without kira's symphonia feature, which otherwise only its own audio
+# loaders turn on.
+kira = { version = "0.10", default-features = false, features = ["symphonia"] }
 base64 = "0.22"
 symphonia = { version = "0.5", default-features = false, features = ["flac", "wav", "pcm"] }
 csv = "1"
+futures-timer = { version = "3", features = ["wasm-bindgen"] }
 derive_more = { version = "2", features = ["add", "add_assign"] }
 euclid = { version = "0.22", features = ["serde"] }
 pathfinding = "4"
