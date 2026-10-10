@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::core::assets::AssetRef;
 use crate::core::audio::decibels;
+use crate::core::audio::loader::AudioLoader;
 use crate::core::audio::mix::{AudioCategory, AudioMix};
 use crate::core::math::{Pos, Rng, Size};
 use crate::core::tiling::Tiles;
@@ -18,6 +19,7 @@ pub struct SfxPlugin;
 impl Plugin for SfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(bevy_kira_audio::AudioPlugin)
+            .register_asset_loader(AudioLoader)
             .init_resource::<Listener>()
             .init_resource::<AudioMix>()
             .init_resource::<Catalog>()

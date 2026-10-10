@@ -1,4 +1,4 @@
-pub mod decode;
+mod loader;
 pub mod mix;
 pub mod playback;
 pub mod soundscape;
