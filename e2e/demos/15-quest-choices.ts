@@ -31,10 +31,10 @@ test(
       await clickUi(page, "Play");
       await waitForWorld(page, loadReference("island.png"));
       await admin(page, [
-        ["/give OrcTusk,5", /gave 5 Orc Tusk/],
-        ["/give RoadPass,1", /gave 1 Road Pass/],
+        ["/give orc_tusk,5", /gave 5 Orc Tusk/],
+        ["/give road_pass,1", /gave 1 Road Pass/],
         ["/xp 40", /granted 40 xp/],
-        ["/quest TusksForTheChief,accept", /TusksForTheChief: Accept/],
+        ["/quest tusks_for_the_chief,accept", /tusks_for_the_chief: Accept/],
       ]);
     },
     play: async (page) => {

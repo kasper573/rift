@@ -27,7 +27,7 @@ test(
       await submitText(page, "/commands");
       await page.waitForTimeout(2500);
       await caption(page, "…such as handing out items, like gold");
-      await submitText(page, "/give Gold,50");
+      await submitText(page, "/give gold,50");
       await clickUi(page, "icons/equipment/bag.png");
       await page.waitForTimeout(600);
       await dragUi(page, "Inventory", { x: -330, y: -230 });
@@ -38,7 +38,7 @@ test(
       await waitFor(page, (snapshot) => findUi(snapshot, /xp 120$/), "the experience never arrived");
       await page.waitForTimeout(2000);
       await caption(page, "…or teleporting, even to another area");
-      await submitText(page, "/tp 20,20,Forest");
+      await submitText(page, "/tp 20,20,forest");
       await waitFor(page, (snapshot) => arrivedIn(snapshot, "forest"), "the teleport never landed");
       await page.waitForTimeout(3000);
       const name = (await probe(islander)).me!.name;

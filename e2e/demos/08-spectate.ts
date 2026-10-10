@@ -34,7 +34,7 @@ test(
       await signIn(explorer, await provisionAccount(explorer, ["admin"]));
       await clickUi(explorer, "Play");
       await waitForWorld(explorer, loadReference("island.png"));
-      await admin(explorer, [["/give RoadPass,1", /gave 1 Road Pass/]]);
+      await admin(explorer, [["/give road_pass,1", /gave 1 Road Pass/]]);
       const road = (await probe(explorer)).portals.find((portal) => portal.name === "forest-road")!;
       await travelTo(explorer, road.at);
       await waitFor(explorer, (snapshot) => arrivedIn(snapshot, road.to), "the explorer never reached the forest");

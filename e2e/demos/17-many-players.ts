@@ -30,12 +30,12 @@ test(
     setup: async (page, cast) => {
       other = await cast.newPage();
       for (const [player, commands] of [
-        [page, [["/xp 40", /granted 40 xp/], ["/give Gold,300", /gave 300 Gold/]]],
+        [page, [["/xp 40", /granted 40 xp/], ["/give gold,300", /gave 300 Gold/]]],
         [
           other,
           [
             ["/xp 40", /granted 40 xp/],
-            ["/quest TusksForTheChief,accept", /TusksForTheChief: Accept/],
+            ["/quest tusks_for_the_chief,accept", /tusks_for_the_chief: Accept/],
           ],
         ],
       ] as [Page, [string, RegExp][]][]) {

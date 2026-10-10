@@ -21,7 +21,7 @@ test("the forest road holds you without a pass and crosses with one", async ({ p
   expect((await probe(page)).area).toBe("island");
   await leaveConversation(page);
 
-  await admin(page, [["/give RoadPass,1", /gave 1 Road Pass/]]);
+  await admin(page, [["/give road_pass,1", /gave 1 Road Pass/]]);
   // Re-click the warp until the forest renders. Repeats just re-issue the (deterministic) crossing;
   // the long timeout is only room for a slow renderer.
   await expect

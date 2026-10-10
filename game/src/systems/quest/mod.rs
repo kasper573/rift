@@ -1411,5 +1411,5 @@ fn quest_command(
             }
         }
     }
-    Ok(format!("{quest:?}: {step:?}"))
+    Ok(format!("{}: {step:?}", quest.key(&content)))
 }

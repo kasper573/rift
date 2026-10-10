@@ -32,7 +32,7 @@ test(
       await signIn(page, await provisionAccount(page, ["admin"]));
       await clickUi(page, "Play");
       await waitForWorld(page, loadReference("island.png"));
-      await admin(page, [["/give RustySword,1", /gave 1 Rusty Sword/]]);
+      await admin(page, [["/give rusty_sword,1", /gave 1 Rusty Sword/]]);
     },
     play: async (page) => {
       await caption(page, "Seven townsfolk live around the harbour — name plates show who they are");

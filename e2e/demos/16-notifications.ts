@@ -37,9 +37,9 @@ test(
       await clickUi(page, "Play");
       await waitForWorld(page, loadReference("island.png"));
       await admin(page, [
-        ["/give FishSteak,1", /gave 1 Fish Steak/],
-        ["/give TribalHelmet,1", /gave 1 Tribal Helmet/],
-        ["/give CorsairCutlass,1", /gave 1 Corsair's Cutlass/],
+        ["/give fish_steak,1", /gave 1 Fish Steak/],
+        ["/give tribal_helmet,1", /gave 1 Tribal Helmet/],
+        ["/give corsair_cutlass,1", /gave 1 Corsair's Cutlass/],
         ["/xp 40", /granted 40 xp/],
       ]);
     },
@@ -149,7 +149,7 @@ test(
       await page.waitForTimeout(3000);
 
       await caption(page, "(Admin shortcut: on Mara's errand, with an Orc Chief close by)", { at: "top" });
-      await admin(page, [["/quest TusksForTheChief,accept", /TusksForTheChief: Accept/]]);
+      await admin(page, [["/quest tusks_for_the_chief,accept", /tusks_for_the_chief: Accept/]]);
       await waitFor(
         page,
         ({ feed }) => feed.includes("Quest accepted · Tusks for the Chief"),
@@ -157,7 +157,7 @@ test(
       );
       await caption(page, "Your own news slides quietly into the corner");
       await page.waitForTimeout(2500);
-      await admin(page, [["/spawn OrcChief", /spawned Orc Chief/]]);
+      await admin(page, [["/spawn orc_chief", /spawned Orc Chief/]]);
       await waitFor(
         page,
         ({ notifications }) => notifications.bubbles.some(({ npc }) => npc === "orc_chief"),

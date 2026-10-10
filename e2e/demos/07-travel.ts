@@ -29,7 +29,7 @@ test(
       await signIn(page, await provisionAccount(page, ["admin"]));
       await clickUi(page, "Play");
       await waitForWorld(page, loadReference("island.png"));
-      await admin(page, [["/give Gold,20", /gave 20 Gold/]]);
+      await admin(page, [["/give gold,20", /gave 20 Gold/]]);
     },
     play: async (page) => {
       await caption(page, "Warps lead to other areas — click one to cross");

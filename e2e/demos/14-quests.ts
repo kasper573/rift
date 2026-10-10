@@ -175,8 +175,8 @@ test(
       await caption(page, "(Admin shortcut: the chief falls, and the bag fills up)", { at: "top" });
       const room = 25 - (await probe(page)).bag.length;
       await admin(page, [
-        ["/quest TusksForTheChief,ready", /TusksForTheChief: Ready/],
-        [`/give RustySword,${room}`, /gave \d+ Rusty Sword/],
+        ["/quest tusks_for_the_chief,ready", /tusks_for_the_chief: Ready/],
+        [`/give rusty_sword,${room}`, /gave \d+ Rusty Sword/],
       ]);
       await waitFor(page, (snapshot) => onQuest(snapshot, "tusks_for_the_chief")?.ready, "the quest never got ready");
 
