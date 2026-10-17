@@ -5,8 +5,8 @@ use egui::{Align, Color32, FontId, Layout, Rect, Response, RichText, Sense, Stro
 use super::theme;
 
 pub use design_tokens::widgets::{
-    card_frame, chip, chip_coloured, combo_box, danger, key_hint, pill, primary, section,
-    tab_strip, toggle,
+    card_frame, chip, chip_colored, combo_box, danger, key_hint, pill, primary, section,
+    section_heading, tab_strip, toggle,
 };
 
 pub fn section_count(ui: &mut Ui, text: &str, count: impl Display) {
@@ -149,10 +149,10 @@ pub fn chip_closable(ui: &mut Ui, text: &str) -> (Response, bool) {
 pub const BADGE_SIZE: f32 = 16.0;
 
 pub fn badge(ui: &mut Ui, kind: &str) {
-    let colour = theme::badge_colour(kind);
+    let color = theme::badge_color(kind);
     let letter = theme::badge_letter(kind);
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(BADGE_SIZE), Sense::hover());
-    ui.painter().rect_filled(rect, 3.0, colour);
+    ui.painter().rect_filled(rect, 3.0, color);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
@@ -164,15 +164,12 @@ pub fn badge(ui: &mut Ui, kind: &str) {
 
 pub fn card_header(
     ui: &mut Ui,
-    kind: &str,
     title: &str,
     subtitle: &str,
     menu: impl FnOnce(&mut Ui),
 ) -> Response {
     let response = ui
         .horizontal(|ui| {
-            ui.label(theme::faint("≡"));
-            badge(ui, kind);
             ui.label(theme::strong(title).monospace());
             if !subtitle.is_empty() {
                 ui.label(
@@ -245,7 +242,7 @@ pub fn toggle_chip(ui: &mut Ui, text: &str, on: bool) -> Response {
     } else {
         (theme::RAISED, theme::MUTED)
     };
-    chip_coloured(ui, text, fill, ink)
+    chip_colored(ui, text, fill, ink)
 }
 
 pub fn mode_chip(ui: &mut Ui, text: &str, on: bool) -> Response {
@@ -254,11 +251,11 @@ pub fn mode_chip(ui: &mut Ui, text: &str, on: bool) -> Response {
     } else {
         (theme::RAISED, theme::TEXT)
     };
-    chip_coloured(ui, text, fill, ink)
+    chip_colored(ui, text, fill, ink)
 }
 
-pub fn card_title(ui: &mut Ui, kind: &str, title: &str) -> Response {
-    card_header(ui, kind, title, "", |_| {})
+pub fn card_title(ui: &mut Ui, title: &str) -> Response {
+    card_header(ui, title, "", |_| {})
 }
 
 pub fn rule(ui: &Ui) {

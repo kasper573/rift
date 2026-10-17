@@ -1,0 +1,12 @@
+{
+  "name": "Shake",
+  "params": [
+    {
+      "name": "amplitude",
+      "kind": "number",
+      "default": 0.04,
+      "min": 0.0,
+      "max": 0.5
+    }
+  ]
+}

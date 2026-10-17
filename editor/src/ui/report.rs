@@ -35,7 +35,7 @@ pub fn panel(ui: &mut Ui, folder: &str, text: &str, closable: bool) -> ReportAct
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing.y = 2.0;
                             for line in text.lines() {
-                                ui.label(coloured(line));
+                                ui.label(colored(line));
                             }
                         });
                 });
@@ -66,7 +66,7 @@ pub fn not_loaded(editor: &mut Editor, ctx: &Context) {
     let Some(project) = &editor.project else {
         return;
     };
-    let Some(report) = &project.report else {
+    let Some(report) = project.report.as_ref().filter(|_| project.broken_on_disk()) else {
         return;
     };
     let text = report.to_string();
@@ -129,7 +129,7 @@ pub fn not_loaded(editor: &mut Editor, ctx: &Context) {
     }
 }
 
-fn coloured(line: &str) -> RichText {
+fn colored(line: &str) -> RichText {
     let text = RichText::new(line).monospace().size(13.0);
     if line.starts_with('#') {
         text.color(theme::WARN)

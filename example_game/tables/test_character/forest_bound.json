@@ -1,7 +1,8 @@
 {
   "name": "Forest Bound",
-  "job": "adventurer",
+  "class": "fighter",
   "xp": 80,
+  "basic_attack": "slash",
   "bag": [
     {
       "item": "fish_steak"
@@ -13,6 +14,9 @@
       "item": "corsair_cutlass"
     }
   ],
+  "equipment": {
+    "weapon": "iron_sword"
+  },
   "quests": [
     {
       "quest": "tusks_for_the_chief",

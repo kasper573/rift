@@ -1,0 +1,32 @@
+{
+  "name": "Adventurer",
+  "icon": "icons/equipment/iron_sword.png",
+  "levels": [
+    {
+      "xp": 0,
+      "skill_points": 1
+    },
+    {
+      "xp": 30,
+      "stats": {
+        "max_health": 10.0
+      },
+      "skill_points": 1
+    },
+    {
+      "xp": 90,
+      "stats": {
+        "damage": 2.0
+      },
+      "skill_points": 1
+    },
+    {
+      "xp": 200,
+      "stats": {
+        "max_health": 15.0,
+        "damage": 2.0
+      },
+      "skill_points": 2
+    }
+  ]
+}

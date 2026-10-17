@@ -8,9 +8,7 @@
     "use": "heal01"
   },
   "kind": {
-    "type": "consumable",
-    "health_bonus": 25.0,
-    "lasts": 30.0
+    "type": "usable"
   },
   "modules": [
     {
@@ -22,9 +20,34 @@
       "max": 10
     },
     {
-      "type": "stat",
-      "stat": "damage",
-      "value": 3.0
+      "type": "inline_script",
+      "nodes": {
+        "drink": {
+          "type": "items",
+          "take": [
+            {
+              "item": "greater_health_potion"
+            }
+          ],
+          "done": "mend"
+        },
+        "mend": {
+          "type": "heal",
+          "by": 25.0,
+          "next": "stir"
+        },
+        "stir": {
+          "type": "apply_status",
+          "effect": "vigorous",
+          "power": 3.0,
+          "seconds": 30.0
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "drink"
+        }
+      }
     }
   ]
 }

@@ -1,0 +1,52 @@
+{
+  "name": "Guard",
+  "icon": "icons/weapon_and_tool/iron_shield.png",
+  "sfx": "block01",
+  "target": "self",
+  "cooldown": 20.0,
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 10.0,
+        "duration": 10.0
+      }
+    },
+    {
+      "cost": 1,
+      "stats": {
+        "power": 18.0,
+        "duration": 12.0
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "brace": {
+          "type": "apply_status",
+          "who": {
+            "type": "skill_targets"
+          },
+          "effect": "guarded",
+          "power": {
+            "type": "skill_stat",
+            "skill": "guard",
+            "stat": "power"
+          },
+          "seconds": {
+            "type": "skill_stat",
+            "skill": "guard",
+            "stat": "duration"
+          }
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "brace"
+        }
+      }
+    }
+  ]
+}

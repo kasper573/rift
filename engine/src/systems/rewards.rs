@@ -44,7 +44,7 @@ pub fn grant(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
                 continue;
             };
             if let Some(entity) = rewardee {
-                crate::systems::job::grant_xp(world, entity, loot.xp);
+                crate::systems::class::grant_xp(world, entity, loot.xp);
             }
             let drops: Vec<(ItemId, u32)> = loot
                 .items

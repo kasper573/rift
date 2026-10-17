@@ -1,0 +1,82 @@
+{
+  "name": "Aimed Shot",
+  "icon": "icons/weapon_and_tool/bow.png",
+  "sfx": "slash03",
+  "target": "single_enemy",
+  "range": 6.0,
+  "cooldown": 5.0,
+  "requires": {
+    "type": "wearing",
+    "item": "bow"
+  },
+  "cost": [
+    {
+      "item": "arrow"
+    }
+  ],
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 1.6
+      }
+    },
+    {
+      "cost": 1,
+      "stats": {
+        "power": 2.0
+      }
+    },
+    {
+      "cost": 2,
+      "stats": {
+        "power": 2.5,
+        "range": 1.0
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "hit": {
+          "type": "damage",
+          "who": {
+            "type": "skill_targets"
+          },
+          "by": {
+            "type": "multiply",
+            "a": {
+              "type": "stat",
+              "stat": "damage"
+            },
+            "b": {
+              "type": "skill_stat",
+              "skill": "aimed_shot",
+              "stat": "power"
+            }
+          },
+          "next": "show"
+        },
+        "show": {
+          "type": "vfx",
+          "vfx": "arrow_hit",
+          "on": {
+            "type": "skill_targets"
+          }
+        },
+        "swing": {
+          "type": "animate",
+          "action": "attack",
+          "wait": "apex",
+          "next": "hit"
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "swing"
+        }
+      }
+    }
+  ]
+}

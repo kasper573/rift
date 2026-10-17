@@ -1,0 +1,25 @@
+{
+  "name": "Well Fed",
+  "icon": "icons/food/fish_steak.png",
+  "category": "buff",
+  "description": "A full belly carries more.",
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "hold"
+        },
+        "hold": {
+          "type": "boost",
+          "stat": "max_health",
+          "by": {
+            "type": "status_power"
+          }
+        }
+      }
+    }
+  ]
+}

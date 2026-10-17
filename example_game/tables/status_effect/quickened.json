@@ -1,0 +1,28 @@
+{
+  "name": "Quickened",
+  "icon": "icons/food/green_apple.png",
+  "category": "buff",
+  "description": "Light on the feet.",
+  "vfx": {
+    "on_activate": "dash"
+  },
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "hold"
+        },
+        "hold": {
+          "type": "boost",
+          "stat": "movement_speed",
+          "by": {
+            "type": "status_power"
+          }
+        }
+      }
+    }
+  ]
+}

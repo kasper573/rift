@@ -28,6 +28,10 @@ pub enum ErrorPlace {
         row: usize,
         column: usize,
     },
+    Text {
+        line: usize,
+        column: usize,
+    },
 }
 
 pub const VERSION_RULE: &str = "content version";
@@ -103,9 +107,9 @@ impl ErrorPlace {
     pub fn location(&self, file: &str) -> String {
         match self {
             ErrorPlace::WholeFile => file.to_owned(),
-            ErrorPlace::Json { line, column, .. } | ErrorPlace::Csv { row: line, column } => {
-                format!("{file}:{line}:{column}")
-            }
+            ErrorPlace::Json { line, column, .. }
+            | ErrorPlace::Csv { row: line, column }
+            | ErrorPlace::Text { line, column } => format!("{file}:{line}:{column}"),
         }
     }
 
@@ -114,6 +118,7 @@ impl ErrorPlace {
             ErrorPlace::WholeFile => "whole file".to_owned(),
             ErrorPlace::Json { pointer, .. } => pointer.clone(),
             ErrorPlace::Csv { row, column } => format!("row {row}, column {column}"),
+            ErrorPlace::Text { line, column } => format!("line {line}, column {column}"),
         }
     }
 }
@@ -128,7 +133,9 @@ fn sort_key(error: &LoadError) -> SortKey<'_> {
             column,
             pointer,
         } => (*line, *column, pointer.clone()),
-        ErrorPlace::Csv { row, column } => (*row, *column, String::new()),
+        ErrorPlace::Csv { row, column } | ErrorPlace::Text { line: row, column } => {
+            (*row, *column, String::new())
+        }
     };
     let rank = match (
         error.problem.rule == VERSION_RULE,

@@ -1,0 +1,60 @@
+{
+  "name": "Veteran",
+  "class": "fighter",
+  "xp": 200,
+  "skills": [
+    {
+      "node": "cleave",
+      "rank": 2
+    },
+    {
+      "node": "guard",
+      "rank": 1
+    },
+    {
+      "node": "second_wind",
+      "rank": 1
+    }
+  ],
+  "hotbar": [
+    {
+      "slot": 0,
+      "entry": {
+        "skill": "cleave"
+      }
+    },
+    {
+      "slot": 1,
+      "entry": {
+        "skill": "guard"
+      }
+    },
+    {
+      "slot": 2,
+      "entry": {
+        "skill": "second_wind"
+      }
+    },
+    {
+      "slot": 3,
+      "entry": {
+        "item": "health_potion"
+      }
+    }
+  ],
+  "basic_attack": "slash",
+  "bag": [
+    {
+      "item": "health_potion",
+      "count": 3
+    },
+    {
+      "item": "throwing_knife",
+      "count": 10
+    }
+  ],
+  "equipment": {
+    "weapon": "iron_sword"
+  },
+  "start": "initial_spawn"
+}

@@ -1,0 +1,41 @@
+{
+  "name": "Keen Eye",
+  "icon": "icons/misc/lantern.png",
+  "kind": "passive",
+  "target": "self",
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 0.5
+      }
+    },
+    {
+      "cost": 1,
+      "stats": {
+        "power": 0.5
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "sharpen"
+        },
+        "sharpen": {
+          "type": "boost",
+          "stat": "range",
+          "by": {
+            "type": "skill_stat",
+            "skill": "keen_eye",
+            "stat": "power"
+          }
+        }
+      }
+    }
+  ]
+}

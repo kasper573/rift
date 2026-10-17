@@ -1,9 +1,1 @@
-{
-  "label": "Show or hide the conversation so far",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "KeyH"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/toggle_history.json

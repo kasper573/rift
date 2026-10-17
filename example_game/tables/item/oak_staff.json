@@ -1,0 +1,41 @@
+{
+  "name": "Oak Staff",
+  "icon": "icons/weapon_and_tool/wooden_staff.png",
+  "sfx": {
+    "pickup": "pickup_stone",
+    "trade": "trade_stone",
+    "drop": "block01"
+  },
+  "kind": {
+    "type": "equipment",
+    "slot": "weapon",
+    "requires": {
+      "type": "is_class",
+      "class": "hunter"
+    },
+    "grants": [
+      "thorn_lash"
+    ]
+  },
+  "modules": [
+    {
+      "type": "flavor",
+      "text": "Thorns sprout from the grain when a hunter grips it."
+    },
+    {
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "boost_damage"
+        },
+        "boost_damage": {
+          "type": "boost",
+          "stat": "damage",
+          "by": 2.0
+        }
+      }
+    }
+  ]
+}

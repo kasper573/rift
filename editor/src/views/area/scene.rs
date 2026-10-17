@@ -207,7 +207,7 @@ fn round_up(n: u32) -> u32 {
     n.div_ceil(256) * 256
 }
 
-fn render_target(world: &mut World, alloc: [u32; 2]) -> (Handle<Image>, egui::TextureId) {
+pub fn render_target(world: &mut World, alloc: [u32; 2]) -> (Handle<Image>, egui::TextureId) {
     let image = world
         .resource_mut::<Assets<Image>>()
         .add(target_image(alloc));

@@ -35,6 +35,19 @@
       }
     },
     {
+      "type": "sells",
+      "item": "shamans_draught",
+      "price": [
+        {
+          "item": "bone_token",
+          "count": 5
+        }
+      ],
+      "stock": {
+        "type": "unlimited"
+      }
+    },
+    {
       "type": "buys",
       "what": {
         "type": "item",

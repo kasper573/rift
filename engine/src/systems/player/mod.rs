@@ -2,7 +2,7 @@ pub mod session;
 pub mod snapshot;
 pub mod widget;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
@@ -12,29 +12,29 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::{Content, ContentId, ContentRow, ModuleRule, ModuleSet};
+use crate::core::math::Rgba;
 use crate::core::math::{Direction, Pos, Rng};
-use crate::core::tiling::Tiles;
-use crate::core::time::{PlaybackRate, Seconds, WallClock};
+use crate::core::tiling::{CellPos, TilePos, Tiles};
+use crate::core::time::{PlaybackRate, Seconds, UnixMillis, WallClock};
 use crate::systems::GameSettings;
 use crate::systems::account::Identity;
 use crate::systems::actor::model::ModelId;
-use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Rgba, Tint};
+use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Tint};
 use crate::systems::area::transition::{self, Discovered};
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::belongings;
+use crate::systems::class::{Class, ClassId};
 use crate::systems::combat::{self, HealthRegen};
 use crate::systems::dialogue::Heard;
-use crate::systems::effect::TimedEffects;
 use crate::systems::equipment::Equipment;
 use crate::systems::history::History;
-use crate::systems::item::Inventory;
-use crate::systems::job::{Job, JobId};
+use crate::systems::item::{Inventory, ItemId};
 use crate::systems::memory::Memory;
 use crate::systems::movement::{HeardMove, Position};
 use crate::systems::quest::QuestLog;
 use crate::systems::script::{EventKind, Place};
 use crate::systems::shop::{self, ShopLedger};
-use crate::systems::spectate::Spectators;
+use crate::systems::skill::{BasicAttack, Cooldowns, Hotbar, Learned};
 use crate::systems::stat::{self, StatKind, StatMap, Stats};
 use crate::systems::visibility::{self, OwnedBy};
 use crate::systems::{Character, WorldArea, drain_requests};
@@ -111,6 +111,7 @@ pub struct RespawnRequest;
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Welcome {
     pub id: ClientId,
+    pub now: UnixMillis,
 }
 
 /// High enough that nothing in the world can grind it down.
@@ -121,8 +122,11 @@ pub type PlayerDefId = ContentId<PlayerDef>;
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct PlayerDef {
     pub model: ModelId,
-    pub job: JobId,
+    pub class: ClassId,
     pub stats: StatMap,
+    #[schemars(extend("x-usage" = "worn at creation"))]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wearing: Vec<ItemId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<PlayerModule>,
 }
@@ -222,7 +226,10 @@ pub fn greet(add: On<Add<ClientId>>, clients: Query<&ClientId>, mut commands: Co
         return;
     };
     let conn = add.entity;
-    commands.queue(move |world: &mut World| visibility::send_to(world, conn, Welcome { id }));
+    commands.queue(move |world: &mut World| {
+        let now = world.resource::<WallClock>().now;
+        visibility::send_to(world, conn, Welcome { id, now });
+    });
 }
 
 pub fn client_left(
@@ -275,23 +282,24 @@ pub fn join(world: &mut World) {
         let Some(&client) = world.get::<ClientId>(client_entity) else {
             continue;
         };
-        let playing = world.resource::<Players>().0.contains_key(&client);
-        let spectating = world.resource::<Spectators>().0.contains_key(&client);
-        if playing || spectating {
+        if world.resource::<Players>().0.contains_key(&client) {
             continue;
         }
         let clock = *world.resource::<WallClock>();
         let (at, state) = match world.get::<JoinAs>(client_entity) {
-            Some(JoinAs { snapshot, start }) if start.area == zone => (
-                start.at,
-                snapshot::materialize(&content, snapshot, *start, clock, immortal),
-            ),
+            Some(JoinAs { snapshot, start }) if start.area == zone => {
+                let (snapshot, start) = (snapshot.clone(), *start);
+                (
+                    beside_anyone_standing_there(world, area, start.at),
+                    snapshot::materialize(&content, &snapshot, start, clock, immortal),
+                )
+            }
             _ => {
                 let name = world
                     .get::<Identity>(client_entity)
                     .map_or_else(|| format!("player {}", client.0), |id| id.name.clone());
                 let at = spawn_position(world, policy, zone, area);
-                let fresh = CharacterSnapshot::fresh(&name, def(&content).job);
+                let fresh = CharacterSnapshot::fresh(&content, &name, def(&content));
                 let start = Place { area: zone, at };
                 let state = snapshot::materialize(&content, &fresh, start, clock, immortal);
                 (at, state)
@@ -304,6 +312,23 @@ pub fn join(world: &mut World) {
 
 pub fn spawned(world: &mut World, player: Entity) {
     transition::raise_area(world, EventKind::Entered, player);
+}
+
+/// A character asked to start on a tile someone already stands on is put down on the nearest
+/// free one instead, so neither hides the other.
+fn beside_anyone_standing_there(
+    world: &mut World,
+    area: &area::Area,
+    at: Pos<Tiles>,
+) -> Pos<Tiles> {
+    let taken: HashSet<CellPos> = world
+        .query::<&Position>()
+        .iter(world)
+        .map(|position| position.pos.cell())
+        .collect();
+    area.grid
+        .nearest_walkable_where(at, |cell| !taken.contains(&cell))
+        .unwrap_or(at)
 }
 
 fn spawn_position(
@@ -336,8 +361,11 @@ pub struct CharacterState {
     pub inventory: Inventory,
     pub xp: Xp,
     pub equipment: Equipment,
-    pub job: Job,
-    pub timed: TimedEffects,
+    pub class: Class,
+    pub learned: Learned,
+    pub cooldowns: Cooldowns,
+    pub hotbar: Hotbar,
+    pub basic_attack: BasicAttack,
     pub memory: Memory,
     pub heard: Heard,
     pub ledger: ShopLedger,
@@ -355,10 +383,13 @@ impl CharacterState {
             inventory: world.get::<Inventory>(entity)?.clone(),
             xp: world.get::<Xp>(entity)?.clone(),
             equipment: world.get::<Equipment>(entity)?.clone(),
-            job: *world.get::<Job>(entity)?,
-            timed: world
-                .get::<TimedEffects>(entity)
-                .cloned()
+            class: *world.get::<Class>(entity)?,
+            learned: world.get::<Learned>(entity).cloned().unwrap_or_default(),
+            cooldowns: world.get::<Cooldowns>(entity).cloned().unwrap_or_default(),
+            hotbar: world.get::<Hotbar>(entity).cloned().unwrap_or_default(),
+            basic_attack: world
+                .get::<BasicAttack>(entity)
+                .copied()
                 .unwrap_or_default(),
             memory: world.get::<Memory>(entity).cloned().unwrap_or_default(),
             heard: world.get::<Heard>(entity).cloned().unwrap_or_default(),

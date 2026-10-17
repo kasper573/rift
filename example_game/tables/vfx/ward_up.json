@@ -1,0 +1,33 @@
+{
+  "name": "Ward up",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "flash",
+      "params": {
+        "color": [
+          120,
+          190,
+          255,
+          255
+        ],
+        "strength": 0.6
+      },
+      "duration": 0.25
+    },
+    {
+      "type": "shader",
+      "shader": "ring",
+      "params": {
+        "color": [
+          120,
+          190,
+          255,
+          255
+        ],
+        "width": 0.3
+      },
+      "duration": 0.45
+    }
+  ]
+}

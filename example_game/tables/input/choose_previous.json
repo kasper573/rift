@@ -1,9 +1,1 @@
-{
-  "label": "Move to the previous choice",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "ArrowUp"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/choose_previous.json

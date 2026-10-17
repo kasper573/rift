@@ -8,9 +8,7 @@
     "use": "heal01"
   },
   "kind": {
-    "type": "consumable",
-    "health_bonus": 10.0,
-    "lasts": 0.0
+    "type": "usable"
   },
   "modules": [
     {
@@ -20,6 +18,29 @@
     {
       "type": "stack",
       "max": 10
+    },
+    {
+      "type": "inline_script",
+      "nodes": {
+        "drink": {
+          "type": "items",
+          "take": [
+            {
+              "item": "health_potion"
+            }
+          ],
+          "done": "mend"
+        },
+        "mend": {
+          "type": "heal",
+          "by": 10.0
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "drink"
+        }
+      }
     }
   ]
 }

@@ -1,0 +1,10 @@
+{
+  "name": "Frost lance",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "frost_lance",
+      "duration": 0.9
+    }
+  ]
+}

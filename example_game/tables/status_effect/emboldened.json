@@ -1,0 +1,28 @@
+{
+  "name": "Emboldened",
+  "icon": "icons/weapon_and_tool/torch.png",
+  "category": "buff",
+  "description": "The war cry still rings: strikes come faster.",
+  "vfx": {
+    "on_activate": "cheered"
+  },
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "hold"
+        },
+        "hold": {
+          "type": "boost",
+          "stat": "attack_speed",
+          "by": {
+            "type": "status_power"
+          }
+        }
+      }
+    }
+  ]
+}

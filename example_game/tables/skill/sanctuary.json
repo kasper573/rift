@@ -1,0 +1,66 @@
+{
+  "name": "Sanctuary",
+  "icon": "icons/ore_and_gem/cut_topaz.png",
+  "sfx": "holy_chime",
+  "target": "area_ally",
+  "range": 6.0,
+  "area": {
+    "type": "rect",
+    "width": 3.0,
+    "height": 3.0
+  },
+  "cooldown": 15.0,
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 3.0,
+        "duration": 10.0
+      }
+    },
+    {
+      "cost": 1,
+      "stats": {
+        "power": 5.0,
+        "duration": 12.0
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "bless": {
+          "type": "apply_status",
+          "who": {
+            "type": "skill_targets"
+          },
+          "effect": "sanctified",
+          "power": {
+            "type": "skill_stat",
+            "skill": "sanctuary",
+            "stat": "power"
+          },
+          "seconds": {
+            "type": "skill_stat",
+            "skill": "sanctuary",
+            "stat": "duration"
+          }
+        },
+        "shine": {
+          "type": "vfx",
+          "vfx": "sanctuary",
+          "on": {
+            "type": "skill_area"
+          },
+          "next": "bless"
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "shine"
+        }
+      }
+    }
+  ]
+}

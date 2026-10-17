@@ -22,13 +22,13 @@ use crate::core::math::{Percent, Rng};
 use crate::core::time::{GameDay, Seconds, UnixMillis, WallClock};
 use crate::systems::area::{self, AreaDef, AreaId};
 use crate::systems::attention::{AttentionId, AttentionMark};
+use crate::systems::class;
 use crate::systems::dialogue::{self, ChoiceReveal, Revealable};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interface::{InterfaceIcon, InterfaceSound};
 use crate::systems::item::{
     INVENTORY_MAX, Inventory, ItemDef, ItemFlag, ItemId, ItemStack, scatter_drop,
 };
-use crate::systems::job;
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::NpcId;
 use crate::systems::player::{Owner, sender_player};
@@ -782,7 +782,7 @@ pub fn complete(world: &mut World, player: Entity, quest: QuestId) {
     if !def.daily() {
         log.tracked.retain(|&tracked| tracked != quest);
     }
-    job::grant_xp(world, player, def.xp);
+    class::grant_xp(world, player, def.xp);
     notification::notify(
         world,
         player,

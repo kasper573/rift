@@ -9,12 +9,10 @@ use super::{
 use crate::core::platform::ClientPlatform;
 use crate::core::text::{self, StyledLine, StyledSpan, TextLook};
 use crate::core::time::LocalClock;
-use crate::systems::actor::Name;
-use crate::systems::hud::{self, HudAudience, HudWindow};
+use crate::systems::hud::{self, HudWindow};
 use crate::systems::input::map::InputAction;
 use crate::systems::interface::{InterfaceIcon, InterfaceSound};
 use crate::systems::player::ClientId;
-use crate::systems::player::session::{self, ClientMode, Viewpoint};
 use crate::systems::screen::ClientScreen;
 
 const SIZE: Vec2 = Vec2::new(780.0, 460.0);
@@ -94,9 +92,6 @@ pub fn shown_tab(world: &World) -> Option<HistoryTab> {
 pub struct HistoryWindow;
 
 impl HudWindow for HistoryWindow {
-    fn audience(&self) -> HudAudience {
-        HudAudience::Everyone
-    }
     fn title(&self) -> &'static str {
         "History"
     }
@@ -121,7 +116,7 @@ impl HudWindow for HistoryWindow {
             world.resource_mut::<HistoryBook>().tab = tab;
             InterfaceSound::UiPage.play(world);
         }
-        let rows = rows(world, tab, watched_name(world));
+        let rows = rows(world, tab);
         let clock = world.resource::<ClientPlatform>().0.local_clock();
         egui::ScrollArea::vertical()
             .id_salt(("history", tab.title()))
@@ -144,12 +139,12 @@ impl HudWindow for HistoryWindow {
 pub(crate) fn tallied(text: &mut StyledLine, tally: Option<RecordTally>, icon: bool, ink: Color32) {
     match tally {
         Some(RecordTally::Change(change)) => {
-            let colour = match (change > 0, icon) {
+            let color = match (change > 0, icon) {
                 (true, true) => color::OK,
                 (true, false) => color::WARN,
                 (false, _) => ink.gamma_multiply(0.6),
             };
-            prefix(text, format!("{} ", signed(change)), colour);
+            prefix(text, format!("{} ", signed(change)), color);
         }
         Some(RecordTally::Progress { have, need }) => {
             text.pieces
@@ -161,7 +156,6 @@ pub(crate) fn tallied(text: &mut StyledLine, tally: Option<RecordTally>, icon: b
 
 #[derive(Clone, PartialEq)]
 enum Row {
-    Watching { name: String, count: usize },
     Trimmed,
     Empty(HistoryTab),
     Record(HistoryRecord),
@@ -222,15 +216,9 @@ fn lazily(ui: &mut Ui, id: Id, row: &Row, add: impl FnOnce(&mut Ui)) {
     ui.data_mut(|data| data.insert_temp(id, measured));
 }
 
-fn rows(world: &World, tab: HistoryTab, watched: Option<String>) -> Vec<Row> {
+fn rows(world: &World, tab: HistoryTab) -> Vec<Row> {
     let book = world.resource::<HistoryBook>();
     let mut rows = Vec::new();
-    if let Some(name) = watched {
-        rows.push(Row::Watching {
-            name,
-            count: book.records.len(),
-        });
-    }
     if book.records.first().is_some_and(|first| first.nth > 1) {
         rows.push(Row::Trimmed);
     }
@@ -248,33 +236,8 @@ fn rows(world: &World, tab: HistoryTab, watched: Option<String>) -> Vec<Row> {
     rows
 }
 
-fn watched_name(world: &World) -> Option<String> {
-    if session::mode(world) != ClientMode::Spectate {
-        return None;
-    }
-    world
-        .resource::<Viewpoint>()
-        .0
-        .and_then(|seen| world.get::<Name>(seen))
-        .map(|name| name.name.clone())
-}
-
 fn show_row(ui: &mut Ui, world: &mut World, row: &Row, clock: LocalClock) {
     match row {
-        Row::Watching { name, count } => {
-            egui::Frame::new()
-                .fill(color::INPUT)
-                .corner_radius(design_tokens::WIDGET_RADIUS)
-                .inner_margin(egui::Margin::symmetric(8, 4))
-                .show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    caption(
-                        ui,
-                        format!("Watching {name} · {count} records"),
-                        color::TEXT,
-                    );
-                });
-        }
         Row::Trimmed => caption(
             ui,
             format!("Older records are gone. The last {KEPT} are kept."),
@@ -296,11 +259,11 @@ fn empty_text(tab: HistoryTab) -> &'static str {
     }
 }
 
-fn caption(ui: &mut Ui, text: String, colour: Color32) {
+fn caption(ui: &mut Ui, text: String, color: Color32) {
     ui.label(
         RichText::new(text)
             .size(TextRole::Small.size())
-            .color(colour),
+            .color(color),
     );
 }
 
@@ -328,7 +291,7 @@ fn record_row(ui: &mut Ui, world: &mut World, record: &HistoryRecord, clock: Loc
         _ => {}
     }
     let line = record_line(entry);
-    let colour = match (entry.topic, entry.mark) {
+    let color = match (entry.topic, entry.mark) {
         (_, Some(HistoryMark::Failed)) | (HistoryTopic::Error, _) => color::DANGER,
         _ => color::TEXT,
     };
@@ -347,7 +310,7 @@ fn record_row(ui: &mut Ui, world: &mut World, record: &HistoryRecord, clock: Loc
         }
         let look = TextLook {
             size: TextRole::Body.size(),
-            color: colour,
+            color,
         };
         text::show(ui, world, &line, look, None);
     });
@@ -382,9 +345,9 @@ fn record_line(entry: &HistoryEntry) -> StyledLine {
     line
 }
 
-fn prefix(text: &mut StyledLine, label: String, colour: Color32) {
+fn prefix(text: &mut StyledLine, label: String, color: Color32) {
     text.pieces
-        .insert(0, StyledSpan::plain(label).ink(colour).into());
+        .insert(0, StyledSpan::plain(label).ink(color).into());
 }
 
 fn divider(ui: &mut Ui, text: String) {

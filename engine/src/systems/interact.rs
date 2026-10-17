@@ -13,7 +13,7 @@ use crate::systems::combat::Attitude;
 use crate::systems::dialogue;
 use crate::systems::interface::CursorShape;
 use crate::systems::player::{self, sender_player, session};
-use crate::systems::reach::{self, Pursuit, ReachAct};
+use crate::systems::reach::{self, Pursuit, ReachAct, ReachTarget};
 use crate::systems::script::{self, EventKind, RiftEvent, RiftInstances};
 use crate::systems::stat;
 use crate::systems::visibility;
@@ -88,7 +88,12 @@ pub fn interact_request(world: &mut World) {
         {
             continue;
         }
-        reach::intend(world, player, target, ReachAct::Interact);
+        reach::intend(
+            world,
+            player,
+            ReachTarget::Actor(target),
+            ReachAct::Interact,
+        );
     }
 }
 

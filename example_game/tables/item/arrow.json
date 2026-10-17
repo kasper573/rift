@@ -1,0 +1,22 @@
+{
+  "name": "Arrow",
+  "icon": "icons/weapon_and_tool/arrow.png",
+  "sfx": {
+    "pickup": "pickup_blade",
+    "trade": "trade_blade",
+    "drop": "block01"
+  },
+  "kind": {
+    "type": "resource"
+  },
+  "modules": [
+    {
+      "type": "flavor",
+      "text": "Fletched with gull feathers."
+    },
+    {
+      "type": "stack",
+      "max": 50
+    }
+  ]
+}

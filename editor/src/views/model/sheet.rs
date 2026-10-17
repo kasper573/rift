@@ -32,7 +32,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &Value) {
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        widgets::chip_coloured(ui, &sheet.image, theme::ACCENT_SOFT, theme::TEXT);
+        widgets::chip_colored(ui, &sheet.image, theme::ACCENT_SOFT, theme::TEXT);
         if let Some(first) = current.first() {
             let line = first.frame / sheet.columns.max(1);
             widgets::chip(

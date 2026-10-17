@@ -35,7 +35,7 @@ use crate::ui::browser::{self, BrowserAction};
 use crate::value::RowValue;
 use crate::views::area::{inspect, parts};
 use crate::views::script::{PendingScriptAction, ScriptOwner};
-use crate::views::{job, model, script, tileset, world};
+use crate::views::{class, model, script, skill, tileset, vfx, world};
 use crate::{forms, views};
 
 const WIDE: f32 = 760.0;
@@ -150,13 +150,19 @@ pub fn right_tabs(editor: &Editor) -> Vec<(RightTab, String)> {
         if !shown_in_centre {
             tabs.push((RightTab::Inspector, "Inspector".to_owned()));
         }
-    } else {
+    } else if !(shown_in_centre && views_with_own_form(&selection.table)) {
         tabs.push((RightTab::Inspector, "Inspector".to_owned()));
     }
     if !selection.is_game() {
         tabs.push((RightTab::UsedBy, "Used by".to_owned()));
     }
     tabs
+}
+
+/// The tables whose centre view lays the row's form out beside what it previews, so the panel
+/// would only repeat it.
+fn views_with_own_form(table: &str) -> bool {
+    table == vfx::TABLE || table == vfx::SHADER_TABLE
 }
 
 pub fn has_preview(editor: &Editor) -> bool {
@@ -174,11 +180,7 @@ pub fn show_row_tab(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str) {
         .id_salt(("row-tab", table, key))
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            egui::Frame::new()
-                .inner_margin(egui::Margin::symmetric(16, 10))
-                .show(ui, |ui| {
-                    row_form(editor, ui, table, key, ui.available_width() >= WIDE);
-                });
+            row_form(editor, ui, table, key, ui.available_width() >= WIDE);
         });
 }
 
@@ -186,12 +188,8 @@ pub fn show_rows_tab(editor: &mut Editor, ui: &mut Ui, table: &str, keys: &[Stri
     egui::ScrollArea::vertical()
         .id_salt(("rows-tab", table))
         .show(ui, |ui| {
-            egui::Frame::new()
-                .inner_margin(egui::Margin::symmetric(16, 10))
-                .show(ui, |ui| {
-                    let selection = RowSelection::rows(table, keys.to_vec());
-                    show_rows(editor, ui, &selection, ui.available_width() >= WIDE);
-                });
+            let selection = RowSelection::rows(table, keys.to_vec());
+            show_rows(editor, ui, &selection, ui.available_width() >= WIDE);
         });
 }
 
@@ -212,28 +210,6 @@ fn row_form(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, wide: bool
         .first()
         .and_then(|part| part.strip_prefix("/modules/"))
         .and_then(|index| index.parse().ok());
-    ui.horizontal(|ui| {
-        ui.label(
-            theme::muted(format!("{table}/{key}"))
-                .monospace()
-                .size(13.0),
-        );
-        if fixture {
-            ui.label(theme::faint("fixture").size(12.0));
-        }
-        if !wide && table != WorldMapDef::TABLE {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui
-                    .small_button("open")
-                    .on_hover_text("Open in a tab")
-                    .clicked()
-                {
-                    editor.open_tab(EditorTab::for_row(table, key));
-                }
-            });
-        }
-    });
-    ui.add_space(4.0);
     let shapes = editor.shapes.clone();
     let root = shapes.shape_of(table);
     let has_modules = root
@@ -246,7 +222,7 @@ fn row_form(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, wide: bool
         editor
             .status
             .left
-            .push("fixture · required by the engine".to_owned());
+            .push("fixture · a row every game has".to_owned());
     }
     let mut actions = Vec::new();
     let mut changed = FormChange::default();
@@ -268,8 +244,7 @@ fn row_form(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, wide: bool
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(LEFT_COLUMN);
-                        changed |=
-                            first_class_card(ui, &mut cx, table, key, fixture, root, &mut value);
+                        changed |= row_card(ui, &mut cx, table, key, fixture, root, &mut value);
                     });
                     ui.add_space(16.0);
                     ui.vertical(|ui| {
@@ -293,7 +268,7 @@ fn row_form(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, wide: bool
                 if wide {
                     ui.set_max_width(SINGLE_COLUMN);
                 }
-                changed |= first_class_card(ui, &mut cx, table, key, fixture, root, &mut value);
+                changed |= row_card(ui, &mut cx, table, key, fixture, root, &mut value);
                 if table == "input" {
                     ui.add_space(10.0);
                     changed |= bindings_section(ui, &mut value);
@@ -358,7 +333,7 @@ fn row_form(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, wide: bool
     }
 }
 
-fn first_class_card(
+fn row_card(
     ui: &mut Ui,
     cx: &mut FormCx,
     table: &str,
@@ -368,22 +343,12 @@ fn first_class_card(
     value: &mut Value,
 ) -> FormChange {
     let mut changed = FormChange::default();
-    let title = ["name", "title", "label"]
-        .iter()
-        .find_map(|field| value[*field].as_str().map(str::to_owned))
-        .unwrap_or_else(|| key.to_owned());
-    let title = if table == "input" {
-        key.to_owned()
-    } else {
-        title
-    };
     widgets::card_frame(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         widgets::card_header(
             ui,
-            table,
-            &title,
-            if fixture { "fixture" } else { "first-class" },
+            &format!("{table}/{key}"),
+            if fixture { "fixture" } else { "" },
             |ui| {
                 if ui.button("Copy as JSON").clicked() {
                     ui.ctx()
@@ -423,72 +388,34 @@ fn first_class_card(
             },
         );
         ui.add_space(4.0);
-        if fixture {
-            ui.horizontal(|ui| {
-                forms::label_column(ui).label(theme::muted("key"));
-                egui::Frame::new()
-                    .fill(theme::INPUT)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER))
-                    .corner_radius(4.0)
-                    .inner_margin(egui::Margin::symmetric(6, 2))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width() - 12.0);
-                        ui.horizontal(|ui| {
-                            ui.label(theme::mono(key));
-                            ui.label(theme::faint("fixture").size(12.0));
-                        });
-                    });
-            });
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                ui.label(theme::muted("Named in code as").size(12.0));
-                egui::Frame::new()
-                    .fill(theme::INPUT)
-                    .corner_radius(3.0)
-                    .inner_margin(egui::Margin::symmetric(4, 1))
-                    .show(ui, |ui| {
-                        ui.label(theme::code(code_name(table, key)).size(12.0));
-                    });
-            });
-        }
+        forms::error_line(ui, cx, "");
         if table == model::TABLE {
-            changed = model::inspect::first_class_body(ui, cx, value);
+            changed = model::inspect::row_body(ui, cx, value);
             return;
         }
         if table == tileset::TABLE {
-            changed = tileset::inspect::first_class_body(ui, cx, value);
+            changed = tileset::inspect::row_body(ui, cx, value);
             return;
         }
         let hidden: &[&str] = match table {
             "input" => &["modules", "bindings"],
-            job::TABLE => &["modules", "levels"],
+            class::TABLE => &["modules", "levels", "tree", "backdrop"],
+            skill::TABLE => &["modules", "levels"],
+            vfx::SHADER_TABLE => &["modules", "params"],
             _ => &["modules"],
         };
         changed = forms::object_without(ui, cx, schema, value, "", hidden);
-        if table == job::TABLE {
-            changed |= job::levels(ui, cx, value);
+        if table == class::TABLE {
+            changed |= class::levels(ui, cx, value);
+        }
+        if table == skill::TABLE {
+            changed |= skill::ranks(ui, cx, value);
+        }
+        if table == vfx::SHADER_TABLE {
+            changed |= vfx::shader_params(ui, cx, value);
         }
     });
     changed
-}
-
-fn code_name(table: &str, key: &str) -> String {
-    fn pascal(text: &str) -> String {
-        text.split(['_', '-'])
-            .map(|part| {
-                let mut chars = part.chars();
-                match chars.next() {
-                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                    None => String::new(),
-                }
-            })
-            .collect()
-    }
-    let kind = match table {
-        "input" => "InputAction".to_owned(),
-        _ => pascal(table),
-    };
-    format!("{kind}::{}", pascal(key))
 }
 
 enum ModuleOp {
@@ -621,8 +548,6 @@ fn modules_column(
             ui.set_width(ui.available_width());
             let header = ui
                 .horizontal(|ui| {
-                    ui.label(theme::faint("≡"));
-                    widgets::badge(ui, &tag);
                     ui.label(
                         theme::strong(if is_script {
                             tag.replace('_', " ")

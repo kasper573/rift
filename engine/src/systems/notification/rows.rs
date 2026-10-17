@@ -338,7 +338,7 @@ impl Clock {
     }
 
     pub(super) fn ends_after(self, stays: Seconds) -> Duration {
-        self.0 + stays.into()
+        self.0 + Duration::from(stays)
     }
 
     pub(super) fn lapsed(self, deadline: Duration) -> bool {

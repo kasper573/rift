@@ -134,6 +134,17 @@
       }
     },
     {
+      "type": "population",
+      "npc": "myconid",
+      "count": 5,
+      "roams": {
+        "x": 54.5,
+        "y": 29.5,
+        "w": 4.0,
+        "h": 3.0
+      }
+    },
+    {
       "type": "resident",
       "npc": "gnome_alchemist",
       "at": {

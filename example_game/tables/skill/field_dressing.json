@@ -1,0 +1,50 @@
+{
+  "name": "Field Dressing",
+  "icon": "icons/material/fabric.png",
+  "sfx": "heal01",
+  "target": "single_ally",
+  "range": 3.0,
+  "cooldown": 8.0,
+  "cost": [
+    {
+      "item": "bandage"
+    }
+  ],
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 15.0
+      }
+    },
+    {
+      "cost": 1,
+      "stats": {
+        "power": 24.0
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "bind": {
+          "type": "heal",
+          "who": {
+            "type": "skill_targets"
+          },
+          "by": {
+            "type": "skill_stat",
+            "skill": "field_dressing",
+            "stat": "power"
+          }
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "bind"
+        }
+      }
+    }
+  ]
+}

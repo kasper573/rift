@@ -2,6 +2,10 @@ use bevy_ecs::entity::Entity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::geometry::Footprint;
+use crate::core::math::Pos;
+use crate::core::tiling::Tiles;
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Value {
     Bool(bool),
@@ -9,6 +13,9 @@ pub enum Value {
     Num(f64),
     Text(String),
     Actor(Option<Entity>),
+    Actors(Vec<Entity>),
+    Point(Option<Pos<Tiles>>),
+    Area(Option<Footprint>),
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -19,12 +26,15 @@ pub enum ValueType {
     Number,
     Text,
     Actor,
+    Actors,
+    Point,
+    Area,
 }
 
 impl ValueType {
     pub fn accepts(self, given: ValueType) -> bool {
         match (self, given) {
-            (ValueType::Number, ValueType::Integer) => true,
+            (ValueType::Number, ValueType::Integer) | (ValueType::Actors, ValueType::Actor) => true,
             _ => self == given,
         }
     }
@@ -36,6 +46,9 @@ impl ValueType {
             ValueType::Number => Value::Num(0.0),
             ValueType::Text => Value::Text(String::new()),
             ValueType::Actor => Value::Actor(None),
+            ValueType::Actors => Value::Actors(Vec::new()),
+            ValueType::Point => Value::Point(None),
+            ValueType::Area => Value::Area(None),
         }
     }
 
@@ -46,6 +59,9 @@ impl ValueType {
             ValueType::Number => "number",
             ValueType::Text => "text",
             ValueType::Actor => "actor",
+            ValueType::Actors => "actors",
+            ValueType::Point => "point",
+            ValueType::Area => "area",
         }
     }
 }
@@ -58,6 +74,9 @@ impl Value {
             Value::Num(_) => ValueType::Number,
             Value::Text(_) => ValueType::Text,
             Value::Actor(_) => ValueType::Actor,
+            Value::Actors(_) => ValueType::Actors,
+            Value::Point(_) => ValueType::Point,
+            Value::Area(_) => ValueType::Area,
         }
     }
 
@@ -68,6 +87,9 @@ impl Value {
             Value::Num(n) => *n != 0.0,
             Value::Text(t) => !t.is_empty(),
             Value::Actor(a) => a.is_some(),
+            Value::Actors(all) => !all.is_empty(),
+            Value::Point(p) => p.is_some(),
+            Value::Area(a) => a.is_some(),
         }
     }
 
@@ -76,7 +98,8 @@ impl Value {
             Value::Bool(b) => i64::from(*b),
             Value::Int(i) => *i,
             Value::Num(n) => *n as i64,
-            Value::Text(_) | Value::Actor(_) => 0,
+            Value::Actors(all) => all.len() as i64,
+            Value::Text(_) | Value::Actor(_) | Value::Point(_) | Value::Area(_) => 0,
         }
     }
 
@@ -85,13 +108,38 @@ impl Value {
             Value::Bool(b) => f64::from(u8::from(*b)),
             Value::Int(i) => *i as f64,
             Value::Num(n) => *n,
-            Value::Text(_) | Value::Actor(_) => 0.0,
+            Value::Actors(all) => all.len() as f64,
+            Value::Text(_) | Value::Actor(_) | Value::Point(_) | Value::Area(_) => 0.0,
         }
     }
 
     pub fn as_actor(&self) -> Option<Entity> {
         match self {
             Value::Actor(actor) => *actor,
+            Value::Actors(all) => all.first().copied(),
+            _ => None,
+        }
+    }
+
+    pub fn as_actors(&self) -> Vec<Entity> {
+        match self {
+            Value::Actor(actor) => actor.iter().copied().collect(),
+            Value::Actors(all) => all.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn as_point(&self) -> Option<Pos<Tiles>> {
+        match self {
+            Value::Point(point) => *point,
+            Value::Area(area) => area.map(|area| area.at),
+            _ => None,
+        }
+    }
+
+    pub fn as_area(&self) -> Option<Footprint> {
+        match self {
+            Value::Area(area) => *area,
             _ => None,
         }
     }
@@ -111,12 +159,16 @@ impl Value {
             }
             Value::Text(t) => t.clone(),
             Value::Actor(a) => a.map(|a| format!("{a:?}")).unwrap_or_default(),
+            Value::Actors(all) => all.len().to_string(),
+            Value::Point(p) => p.map(|p| format!("{}, {}", p.x, p.y)).unwrap_or_default(),
+            Value::Area(a) => a.map(|a| a.shape.describe()).unwrap_or_default(),
         }
     }
 
     pub fn widened(self, to: ValueType) -> Value {
         match (to, self) {
             (ValueType::Number, Value::Int(i)) => Value::Num(i as f64),
+            (ValueType::Actors, Value::Actor(a)) => Value::Actors(a.into_iter().collect()),
             (_, value) => value,
         }
     }

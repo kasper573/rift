@@ -8,13 +8,13 @@ use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{ClientId as Sender, SendTargets, ToClients};
 use bevy_replicon::server::ServerSystems;
 use engine::core::content::{Content, ContentId, ContentRow, FilesystemFolder, key_of};
-use engine::core::math::{Pos, Rng};
+use engine::core::math::{Offset, Pos, Rng};
 use engine::core::script::Value;
 use engine::core::tiling::{TilePos, Tiles};
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
 use engine::systems::TICK_HZ;
-use engine::systems::account::Identity;
 use engine::systems::area::{self, Area, AreaId, AreaObject};
+use engine::systems::combat::Attitude;
 use engine::systems::dialogue::{Conversation, ConversationRequest};
 use engine::systems::input::map::InputMap;
 use engine::systems::interact::InteractRequest;
@@ -27,7 +27,7 @@ use engine::systems::notification::{
 use engine::systems::npc::{self, Npc, NpcId, Pack};
 use engine::systems::player::snapshot::JoinAs;
 use engine::systems::player::{AreaDrawn, ClientId, JoinRequest, Players, SpawnPolicy, SpawnRules};
-use engine::systems::script::condition;
+use engine::systems::script::{Owner as ScriptOwner, OwnerKind, RiftInstances, condition};
 use engine::systems::stat::{self, StatKind};
 use engine::systems::{GameSettings, WorldArea, from_client, load_content, start_server};
 
@@ -102,7 +102,13 @@ impl Sim {
         area::load(self.app.world().resource::<Content>(), self.area)
     }
 
+    /// One server tick: the wall clock moves with it, as the real server's does.
     pub fn tick(&mut self) {
+        let clock = *self.world().resource::<WallClock>();
+        self.world().insert_resource(WallClock {
+            now: clock.now.after(Seconds(1.0 / TICK_HZ.0)),
+            ..clock
+        });
         self.app.update();
     }
 
@@ -130,12 +136,6 @@ impl Sim {
 
     pub fn conn(&self, client: u32) -> Entity {
         self.conns[&client]
-    }
-
-    pub fn join_identified(&mut self, client: u32, identity: Identity) -> Entity {
-        let conn = self.connect(client);
-        self.world().entity_mut(conn).insert(identity);
-        self.enter(client)
     }
 
     pub fn join_as(&mut self, client: u32, join_as: JoinAs) -> Entity {
@@ -185,6 +185,25 @@ impl Sim {
             .filter(|node| map.grid.component(*node) == component)
             .find(|node| (min..=max).contains(&from.distance(*node)))
             .expect("a reachable walkable tile in range")
+    }
+
+    /// The walkable tile nearest to `from` moved by `offset`, in the same walkable region.
+    pub fn walkable_toward(&self, from: Pos<Tiles>, offset: Offset<Tiles>) -> Pos<Tiles> {
+        let map = self.map();
+        let component = map.grid.component(from);
+        let target = from + offset;
+        map.grid
+            .nodes()
+            .iter()
+            .copied()
+            .filter(|node| map.grid.component(*node) == component)
+            .min_by(|a, b| {
+                target
+                    .distance(*a)
+                    .partial_cmp(&target.distance(*b))
+                    .expect("finite")
+            })
+            .expect("a reachable walkable tile")
     }
 
     fn enter(&mut self, client: u32) -> Entity {
@@ -376,6 +395,20 @@ pub fn later(sim: &mut Sim, seconds: f32) {
         ..clock
     });
     settle(sim);
+}
+
+/// A hostile npc that neither wanders nor fights back: its scripts are dropped at spawn, so a
+/// test can count on where it stands.
+pub fn target_dummy(sim: &mut Sim, what: NpcId, at: Pos<Tiles>) -> Entity {
+    let world = sim.world();
+    let area = world.resource::<WorldArea>().0;
+    let dummy = npc::spawn(world, what, at, area, Pack(u32::MAX));
+    world
+        .resource_mut::<RiftInstances>()
+        .remove_owner(ScriptOwner::Entity(OwnerKind::Npc, dummy));
+    world.entity_mut(dummy).insert(Attitude::Hostile);
+    sim.tick();
+    dummy
 }
 
 pub fn slay(sim: &mut Sim, player: Entity, what: NpcId) {

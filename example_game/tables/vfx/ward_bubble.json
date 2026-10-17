@@ -1,0 +1,10 @@
+{
+  "name": "Ward bubble",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "ward_bubble",
+      "duration": 1.5
+    }
+  ]
+}

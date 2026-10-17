@@ -1,0 +1,31 @@
+{
+  "name": "Guarded",
+  "icon": "icons/weapon_and_tool/iron_shield.png",
+  "category": "buff",
+  "description": "Braced behind the shield: more health to lose.",
+  "vfx": {
+    "on_activate": "guard_up"
+  },
+  "sfx": {
+    "on_activate": "block01"
+  },
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "hold"
+        },
+        "hold": {
+          "type": "boost",
+          "stat": "max_health",
+          "by": {
+            "type": "status_power"
+          }
+        }
+      }
+    }
+  ]
+}

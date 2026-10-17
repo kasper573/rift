@@ -7,3 +7,5 @@ target
 !target/wasm
 docker/.env*
 *.md
+example_game
+editor

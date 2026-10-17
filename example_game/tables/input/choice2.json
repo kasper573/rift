@@ -1,9 +1,1 @@
-{
-  "label": "Pick the second choice",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "Digit2"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/choice2.json

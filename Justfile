@@ -15,8 +15,7 @@ test:
 
 # The website and game server binaries, and the roles the auth stack syncs from.
 build:
-    cargo build --release -p website -p engine --bin website --bin game-server --bin kc-roles
-    target/release/kc-roles > docker/keycloak/roles.conf
+    cargo build --release -p website -p engine --bin website --bin game-server
 
 # The browser client bundle the website serves; content syncs from the game server at boot.
 wasm:
@@ -33,7 +32,7 @@ archive out="target/archive":
     cargo build --release -p editor -p engine --bin editor --bin game-server --bin desktop-client
     rm -rf {{quote(out)}} && mkdir -p {{quote(out)}}
     cp target/release/{editor,game-server,desktop-client}{{ if os_family() == "windows" { ".exe" } else { "" } }} {{quote(out)}}
-    cp -r example_game {{quote(out / "content")}}
+    cp -rL example_game {{quote(out / "content")}}
 
 # The archive's pieces as separate downloads: the editor, game server and desktop client, stripped of
 # the symbol tables a profiler reads, the example game's content folder as rift-example-game.zip, and
@@ -93,9 +92,6 @@ reset:
 logs:
     {{compose}} logs --no-color
 
-kc-provision: build
-    {{compose}} up -d --build keycloak
-
 # No service names: compose's build sections are the single source of truth for what we publish.
 [doc("Builds and pushes the production images.")]
 push-images:
@@ -145,7 +141,7 @@ editor-showcase name scene seconds="8" input="" hook="":
     cargo build --release -p editor
     export WORK=$(mktemp -d)
     trap 'rm -rf "$WORK"' EXIT
-    cp -r example_game "$WORK/game"
+    cp -rL example_game "$WORK/game"
     just record {{quote(showcase_dir / "editor-" + kebabcase(name) + ".webm")}} "Rift editor" {{seconds}} {{quote(input)}} {{quote(hook)}} \
       target/release/editor "$WORK/game" --scene {{quote(scene)}} --user-folder "$WORK/user"
 
@@ -176,7 +172,7 @@ loadtest-stack-up: (up "-f docker/docker-compose.loadtest.yaml")
 # The content copy is synced in place, never replaced, so a running game server keeps the folder it mounted.
 [private]
 up flags services="":
-    mkdir -p target/stack/content && rsync -a --delete example_game/ target/stack/content/
+    mkdir -p target/stack/content && rsync -aL --delete example_game/ target/stack/content/
     docker network inspect rift >/dev/null 2>&1 || docker network create rift
     {{compose}} {{flags}} up -d --build --wait {{services}}
 

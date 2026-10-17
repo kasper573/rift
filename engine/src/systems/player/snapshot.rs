@@ -10,17 +10,19 @@ use crate::core::time::{Seconds, WallClock};
 use crate::systems::GameSettings;
 use crate::systems::actor::Name;
 use crate::systems::area::{self, AreaId, transition::Discovered};
+use crate::systems::class::{AccessRequirement, Class, ClassId, SkillPoints};
 use crate::systems::dialogue::Heard;
-use crate::systems::effect::{Effect, TimedEffect, TimedEffects};
 use crate::systems::equipment::{Equipment, EquipmentSlot};
 use crate::systems::history::{History, HistoryEntry};
 use crate::systems::item::{INVENTORY_MAX, Inventory, ItemId, ItemKind, ItemStack};
-use crate::systems::job::{Job, JobId};
 use crate::systems::memory::{Memory, MemoryId};
-use crate::systems::player::{CharacterState, SpawnPoint, Xp, def, player_stats};
+use crate::systems::player::{CharacterState, PlayerDef, SpawnPoint, Xp, def, player_stats};
 use crate::systems::quest::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::script::Place;
 use crate::systems::shop::{Sale, ShopId, ShopLedger};
+use crate::systems::skill::{
+    self, BasicAttack, Cooldowns, HOTBAR_SLOTS, Hotbar, HotbarEntry, Learned, Rank, SkillId,
+};
 use crate::systems::stat::StatMap;
 
 pub type TestCharacterId = ContentId<CharacterSnapshot>;
@@ -29,13 +31,18 @@ pub type TestCharacterId = ContentId<CharacterSnapshot>;
 #[serde(deny_unknown_fields)]
 pub struct CharacterSnapshot {
     pub name: String,
-    pub job: JobId,
+    pub class: ClassId,
     #[serde(default, skip_serializing_if = "serial::is_zero")]
     pub xp: u32,
+    #[schemars(extend("x-usage" = "learned ranks, by node of the class tree"))]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<SnapshotSkill>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hotbar: Vec<SnapshotSlot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basic_attack: Option<SkillId>,
     #[serde(default, skip_serializing_if = "StatMap::is_empty")]
     pub stats: StatMap,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub effects: Vec<SnapshotEffect>,
     #[schemars(extend("x-usage" = "from the bag"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bag: Vec<ItemStack>,
@@ -61,15 +68,32 @@ impl ContentRow for CharacterSnapshot {
 }
 
 impl CharacterSnapshot {
-    pub fn fresh(name: &str, job: JobId) -> CharacterSnapshot {
+    /// A character as the player row makes it: its class, and its gear already on.
+    pub fn fresh(content: &Content, name: &str, def: &PlayerDef) -> CharacterSnapshot {
+        let equipment = def
+            .wearing
+            .iter()
+            .filter_map(|&item| match item.get(content).kind {
+                ItemKind::Equipment { slot, .. } => Some((slot, item)),
+                _ => None,
+            })
+            .collect();
+        let basic_attack = def
+            .wearing
+            .iter()
+            .flat_map(|&item| skill::grants_of(content, item))
+            .copied()
+            .find(|skill| skill.get(content).basic_attack);
         CharacterSnapshot {
             name: name.to_owned(),
-            job,
+            class: def.class,
             xp: 0,
+            skills: Vec::new(),
+            hotbar: Vec::new(),
+            basic_attack,
             stats: StatMap::default(),
-            effects: Vec::new(),
             bag: Vec::new(),
-            equipment: BTreeMap::new(),
+            equipment,
             known_areas: Vec::new(),
             quests: Vec::new(),
             memories: Vec::new(),
@@ -94,11 +118,18 @@ pub enum AtInitialSpawn {
     InitialSpawn,
 }
 
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotSkill {
+    pub node: String,
+    pub rank: Rank,
+}
+
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SnapshotEffect {
-    pub effect: Effect,
-    pub left: Seconds,
+pub struct SnapshotSlot {
+    pub slot: u32,
+    pub entry: HotbarEntry,
 }
 
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -244,17 +275,19 @@ pub fn materialize(
         equipment: Equipment {
             slots: snapshot.equipment.clone(),
         },
-        job: Job { def: snapshot.job },
-        timed: TimedEffects(
+        class: Class {
+            def: snapshot.class,
+        },
+        learned: Learned(
             snapshot
-                .effects
+                .skills
                 .iter()
-                .map(|timed| TimedEffect {
-                    effect: timed.effect,
-                    until: clock.now.after(timed.left),
-                })
+                .map(|learned| (learned.node.clone(), learned.rank))
                 .collect(),
         ),
+        cooldowns: Cooldowns::default(),
+        hotbar: hotbar(snapshot),
+        basic_attack: BasicAttack(snapshot.basic_attack),
         memory,
         heard,
         ledger,
@@ -275,6 +308,8 @@ pub fn check_all(loading: &mut Loading) {
         check_start(&content, snapshot, &mut check);
         check_bag(&content, snapshot, &mut check);
         check_equipment(&content, snapshot, &mut check);
+        check_skills(&content, snapshot, &mut check);
+        check_hotbar(&content, snapshot, &mut check);
         check_quests(&content, snapshot, &mut check);
         check_memories(&content, snapshot, &mut check);
         check_shops(&content, snapshot, &mut check);
@@ -312,6 +347,14 @@ impl MemoryValue {
             MemoryValue::Text(text) => format!("{text:?}"),
         }
     }
+}
+
+fn hotbar(snapshot: &CharacterSnapshot) -> Hotbar {
+    let mut hotbar = Hotbar::default();
+    for held in &snapshot.hotbar {
+        hotbar.set(held.slot, held.entry);
+    }
+    hotbar
 }
 
 fn quest_log(content: &Content, snapshot: &CharacterSnapshot, clock: WallClock) -> QuestLog {
@@ -397,6 +440,161 @@ fn check_equipment(content: &Content, snapshot: &CharacterSnapshot, check: &mut 
                 "not wearable",
                 format!("{} on {slot}", worn.key(content)),
                 format!("an item made for the {slot} slot"),
+            );
+        }
+    }
+}
+
+fn check_skills(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowCheck) {
+    let class = snapshot.class.get(content);
+    let ranks: BTreeMap<String, Rank> = snapshot
+        .skills
+        .iter()
+        .map(|learned| (learned.node.clone(), learned.rank))
+        .collect();
+    let mut spent = SkillPoints(0);
+    for (index, learned) in snapshot.skills.iter().enumerate() {
+        if snapshot.skills[..index]
+            .iter()
+            .any(|earlier| earlier.node == learned.node)
+        {
+            check.error(
+                format!("/skills/{index}/node"),
+                "node listed twice",
+                &learned.node,
+                "each node once",
+            );
+            continue;
+        }
+        let Some(node) = class.tree.node(&learned.node) else {
+            check.problem(
+                format!("/skills/{index}/node"),
+                crate::core::content::ContentProblem::new(
+                    "unknown node",
+                    &learned.node,
+                    format!("a node of the {} tree", class.name),
+                )
+                .near(crate::core::content::id::nearest(
+                    class.tree.0.keys(),
+                    &learned.node,
+                )),
+            );
+            continue;
+        };
+        let def = node.skill.get(content);
+        if learned.rank.0 == 0 || learned.rank.0 > def.rank_count() {
+            check.error(
+                format!("/skills/{index}/rank"),
+                "rank out of range",
+                learned.rank.0,
+                format!("1 to {}, the ranks of {}", def.rank_count(), def.name),
+            );
+            continue;
+        }
+        spent += def.cost_to(learned.rank);
+        for requirement in &node.requires {
+            let met = match requirement {
+                AccessRequirement::Skill { node, rank } => {
+                    ranks.get(node).is_some_and(|held| held >= rank)
+                }
+                AccessRequirement::Level { level } => class.level_at(snapshot.xp) >= *level,
+                AccessRequirement::Condition { .. } => true,
+            };
+            if !met {
+                check.error(
+                    format!("/skills/{index}"),
+                    "not unlocked",
+                    format!("{} rank {}", def.name, learned.rank.0),
+                    format!(
+                        "its requirement met: {}",
+                        requirement.describe(content, &class.tree)
+                    ),
+                );
+            }
+        }
+    }
+    let granted = class.granted_points(snapshot.xp);
+    if spent > granted {
+        check.error(
+            "/skills",
+            "too many ranks",
+            format!("{} points spent", spent.0),
+            format!(
+                "at most {}, granted by level {}",
+                granted.0,
+                class.level_at(snapshot.xp)
+            ),
+        );
+    }
+}
+
+fn check_hotbar(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowCheck) {
+    let class = snapshot.class.get(content);
+    let known: Vec<SkillId> = snapshot
+        .skills
+        .iter()
+        .filter_map(|learned| Some(class.tree.node(&learned.node)?.skill))
+        .chain(
+            snapshot
+                .equipment
+                .values()
+                .flat_map(|&worn| skill::grants_of(content, worn).iter().copied()),
+        )
+        .collect();
+    let held = |item: ItemId| {
+        snapshot.bag.iter().any(|stack| stack.item == item)
+            || snapshot.equipment.values().any(|worn| *worn == item)
+    };
+    for (index, slot) in snapshot.hotbar.iter().enumerate() {
+        if slot.slot >= HOTBAR_SLOTS {
+            check.error(
+                format!("/hotbar/{index}/slot"),
+                "out of range",
+                slot.slot,
+                format!("0 to {}", HOTBAR_SLOTS - 1),
+            );
+        }
+        if snapshot.hotbar[..index]
+            .iter()
+            .any(|earlier| earlier.slot == slot.slot)
+        {
+            check.error(
+                format!("/hotbar/{index}/slot"),
+                "slot listed twice",
+                slot.slot,
+                "each slot once",
+            );
+        }
+        match slot.entry {
+            HotbarEntry::Skill(skill) if !known.contains(&skill) => check.error(
+                format!("/hotbar/{index}/entry"),
+                "skill not known",
+                skill.key(content),
+                "a skill learned in the tree or granted by worn gear",
+            ),
+            HotbarEntry::Item(item) if !held(item) => check.error(
+                format!("/hotbar/{index}/entry"),
+                "item not held",
+                item.key(content),
+                "an item in the bag or worn",
+            ),
+            _ => {}
+        }
+    }
+    if let Some(skill) = snapshot.basic_attack {
+        if !known.contains(&skill) {
+            check.error(
+                "/basic_attack",
+                "skill not known",
+                skill.key(content),
+                "a skill learned in the tree or granted by worn gear",
+            );
+        } else if !skill.get(content).basic_attack {
+            check.error(
+                "/basic_attack",
+                "not a basic attack",
+                skill.key(content),
+                "a skill flagged basic_attack",
             );
         }
     }

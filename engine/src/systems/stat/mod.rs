@@ -3,8 +3,8 @@ mod health;
 pub mod widget;
 
 pub use health::{
-    apply_damage, current_health, dead, fraction, heal, is_dead, max_health, refill, revive,
-    settle_health,
+    apply_damage, current_health, dead, fraction, heal, is_dead, max_health, refill, regenerate,
+    revive, settle_health,
 };
 
 use std::collections::BTreeMap;
@@ -14,8 +14,6 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
-
-use crate::systems::effect;
 
 #[derive(
     JsonSchema,
@@ -104,9 +102,29 @@ impl Stats {
     }
 }
 
+/// Where an actor's stat modifiers come from besides its own `Stats`: its class levels, the
+/// boosts its aspects hold, a chase under way.
+pub type Source = fn(&World, Entity) -> Vec<Stat>;
+
+#[derive(Resource, Default)]
+pub struct Sources(Vec<Source>);
+
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
-    app.replicate::<Stats>();
+    app.replicate::<Stats>().init_resource::<Sources>();
+}
+
+pub fn source(app: &mut App, source: Source) {
+    app.world_mut().resource_mut::<Sources>().0.push(source);
+}
+
+pub fn modifiers(world: &World, entity: Entity) -> Vec<Stat> {
+    world
+        .resource::<Sources>()
+        .0
+        .iter()
+        .flat_map(|source| source(world, entity))
+        .collect()
 }
 
 pub fn snapshot(world: &World, entity: Entity) -> Stats {
@@ -120,9 +138,8 @@ pub fn base(world: &World, entity: Entity, kind: StatKind) -> f32 {
 }
 
 pub fn effective(world: &World, entity: Entity, kind: StatKind) -> f32 {
-    let delta: f32 = effect::active_effects(world, entity)
+    let delta: f32 = modifiers(world, entity)
         .into_iter()
-        .map(|effect| effect.modifier(world, entity))
         .filter(|stat| stat.kind == kind)
         .map(|stat| stat.value)
         .sum();

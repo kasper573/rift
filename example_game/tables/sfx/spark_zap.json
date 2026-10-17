@@ -1,0 +1,12 @@
+{
+  "file": "audio/skills/spark_zap.wav",
+  "role": "combat",
+  "volume": {
+    "min": 0.4,
+    "max": 0.5
+  },
+  "pitch": {
+    "min": 0.9,
+    "max": 1.15
+  }
+}

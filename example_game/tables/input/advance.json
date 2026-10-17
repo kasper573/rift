@@ -1,18 +1,1 @@
-{
-  "label": "Finish or continue a line",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "Space"
-    },
-    {
-      "type": "key",
-      "key": "Enter"
-    },
-    {
-      "type": "click",
-      "button": "Left",
-      "times": 1
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/advance.json

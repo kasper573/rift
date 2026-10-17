@@ -1,0 +1,22 @@
+{
+  "name": "Cleave swoosh",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "swoosh",
+      "params": {
+        "color": [
+          255,
+          255,
+          255,
+          255
+        ],
+        "curve": 0.35,
+        "sweeps": 1.0,
+        "thickness": 0.12,
+        "trail": 0.35
+      },
+      "duration": 0.35
+    }
+  ]
+}

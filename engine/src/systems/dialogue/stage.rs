@@ -28,10 +28,9 @@ use crate::systems::interface::{InterfaceIcon, InterfaceSound};
 use crate::systems::item::{ItemId, card};
 use crate::systems::npc::Npc;
 use crate::systems::player;
-use crate::systems::player::session::{self, ClientMode, Viewpoint};
+use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 
-const READ_ALONG: Duration = Duration::from_millis(1800);
 const CHOICE_SHORTCUTS: [InputAction; 9] = [
     InputAction::Choice1,
     InputAction::Choice2,
@@ -73,10 +72,7 @@ impl Plugin for StagePlugin {
                 Update,
                 (
                     follow_conversation,
-                    stage_keys
-                        .run_if(not(egui_wants_any_keyboard_input))
-                        .run_if(session::in_mode(ClientMode::Play)),
-                    read_along.run_if(session::in_mode(ClientMode::Spectate)),
+                    stage_keys.run_if(not(egui_wants_any_keyboard_input)),
                     track_typing,
                 )
                     .chain()
@@ -176,7 +172,7 @@ pub fn choice_rects(world: &World) -> HashMap<usize, Rect> {
 }
 
 pub fn leavable(world: &World) -> bool {
-    session::mode(world) == ClientMode::Play && world.resource::<Stage>().shown.is_some()
+    world.resource::<Stage>().shown.is_some()
 }
 
 pub fn layer() -> egui::LayerId {
@@ -267,9 +263,7 @@ fn forget_stage(world: &mut World) {
 }
 
 fn follow_conversation(world: &mut World) {
-    let conversation = world
-        .resource::<Viewpoint>()
-        .0
+    let conversation = session::me(world)
         .and_then(|seen| world.get::<Conversation>(seen))
         .cloned();
     let Some(now) = conversation else {
@@ -511,23 +505,6 @@ fn pick_at(world: &mut World, index: usize) {
     }
 }
 
-fn read_along(world: &mut World) {
-    let now = world.resource::<Time>().elapsed();
-    let due = world
-        .resource::<Stage>()
-        .shown
-        .as_ref()
-        .is_some_and(|shown| {
-            !shown.last_line()
-                && shown
-                    .typed_since
-                    .is_some_and(|since| now.saturating_sub(since) >= READ_ALONG)
-        });
-    if due {
-        advance(world);
-    }
-}
-
 fn track_typing(world: &mut World) {
     let now = world.resource::<Time>().elapsed();
     let typing = typing_line(world).is_some();
@@ -541,9 +518,6 @@ fn track_typing(world: &mut World) {
 }
 
 fn request_pick(world: &mut World, index: usize) -> bool {
-    if session::mode(world) != ClientMode::Play {
-        return false;
-    }
     let mut stage = world.resource_mut::<Stage>();
     let Some(shown) = stage.shown.as_mut() else {
         return false;
@@ -578,9 +552,7 @@ fn babble_along(world: &mut World, by: Speaker, line: Entity) {
     let content = world.resource::<Content>().clone();
     let babble = match by {
         Speaker::Npc(npc) => npc.get(&content).voice(),
-        Speaker::Player => world
-            .resource::<Viewpoint>()
-            .0
+        Speaker::Player => session::me(world)
             .and_then(|seen| world.get::<Babbler>(seen))
             .map(|babbler| babbler.0),
         Speaker::Object | Speaker::Narrator => None,
@@ -714,7 +686,6 @@ fn dialogue_box(ui: &mut Ui, world: &mut World, screen: Rect) -> Rect {
             BOX_PADDING.x as i8,
             BOX_PADDING.y as i8,
         ));
-    let playing = session::mode(world) == ClientMode::Play;
     let held = ui.scope_builder(
         UiBuilder::new().id_salt("dialogue").sense(Sense::click()),
         |ui| {
@@ -733,12 +704,12 @@ fn dialogue_box(ui: &mut Ui, world: &mut World, screen: Rect) -> Rect {
         },
     );
     let dialogue = held.inner;
-    if playing && map::clicked(world, InputAction::Advance, &held.response) {
+    if map::clicked(world, InputAction::Advance, &held.response) {
         press_advance(world);
     }
     name_tag(ui, world, dialogue);
     continue_mark(ui, world, dialogue);
-    hint_bar(ui, world, dialogue, playing);
+    hint_bar(ui, world, dialogue);
     world.resource_mut::<StageDrawn>().dialogue = Some(dialogue);
     dialogue
 }
@@ -1063,12 +1034,8 @@ fn continue_mark(ui: &Ui, world: &World, dialogue: Rect) {
     }
 }
 
-fn hint_bar(ui: &mut Ui, world: &mut World, dialogue: Rect, playing: bool) {
-    let hint = if playing {
-        player_hint()
-    } else {
-        vec![TextPiece::text("Watching")]
-    };
+fn hint_bar(ui: &mut Ui, world: &mut World, dialogue: Rect) {
+    let hint = player_hint();
     let room = Rect::from_min_size(
         dialogue.left_bottom() + Vec2::new(16.0, -12.0),
         Vec2::new(dialogue.width() - 32.0, 24.0),
@@ -1280,9 +1247,7 @@ fn speaker_name(world: &World, who: Speaker) -> Option<String> {
             .and_then(|shown| shown.with)
             .and_then(|with| world.get::<Name>(with))
             .map(|name| name.name.clone()),
-        Speaker::Player => world
-            .resource::<Viewpoint>()
-            .0
+        Speaker::Player => session::me(world)
             .and_then(|seen| world.get::<Name>(seen))
             .map(|name| name.name.clone()),
         Speaker::Narrator => None,

@@ -1,9 +1,1 @@
-{
-  "label": "Pick the seventh choice",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "Digit7"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/choice7.json

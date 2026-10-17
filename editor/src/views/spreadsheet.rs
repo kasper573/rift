@@ -121,9 +121,9 @@ impl SpreadsheetColumn {
     pub fn origin(&self) -> String {
         match &self.source {
             ColumnSource::Key => "the row's key".to_owned(),
-            ColumnSource::First(path) if path.len() == 1 => "first-class".to_owned(),
+            ColumnSource::First(path) if path.len() == 1 => "the row itself".to_owned(),
             ColumnSource::First(path) => {
-                format!("the {} list, first-class", path[..path.len() - 1].join("."))
+                format!("the {} list", path[..path.len() - 1].join("."))
             }
             ColumnSource::Module { tag, path } if path.len() == 1 => format!("the {tag} module"),
             ColumnSource::Module { tag, path } => {
@@ -174,7 +174,7 @@ pub fn columns_of(editor: &Editor, table: &str, rows: &[SpreadsheetRow]) -> Vec<
             return;
         }
         let sub = match path.len() {
-            1 => "first-class".to_owned(),
+            1 => "row".to_owned(),
             _ => path[path.len() - 2].trim_end_matches('s').to_owned(),
         };
         columns.push(SpreadsheetColumn {
@@ -527,15 +527,10 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, table: &str) {
         .filter_map(|id| columns.iter().find(|c| c.id == *id))
         .collect();
     let mut view_changed = false;
-    egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(12, 8))
-        .show(ui, |ui| {
-            ui.set_min_size(ui.available_size());
-            view_changed |= toolbar(editor, ui, table, &columns, &mut view, rows.len(), total);
-            ui.add_space(6.0);
-            let shown: Vec<SpreadsheetColumn> = shown.into_iter().cloned().collect();
-            view_changed |= table_body(editor, ui, table, &rows, &shown, &mut view);
-        });
+    view_changed |= toolbar(editor, ui, table, &columns, &mut view, rows.len(), total);
+    ui.add_space(6.0);
+    let shown: Vec<SpreadsheetColumn> = shown.into_iter().cloned().collect();
+    view_changed |= table_body(editor, ui, table, &rows, &shown, &mut view);
     if view_changed {
         save_view(editor, table, view);
     }
@@ -851,7 +846,7 @@ fn table_body(
                         }
                         continue;
                     }
-                    let (text, colour) = match column.text(row) {
+                    let (text, color) = match column.text(row) {
                         Some(text) => (
                             text,
                             if column.source == ColumnSource::Key {
@@ -874,7 +869,7 @@ fn table_body(
                         align,
                         &text,
                         egui::FontId::monospace(12.5),
-                        colour,
+                        color,
                         *width - 10.0,
                     );
                 }
@@ -1382,7 +1377,7 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
     let values: Vec<f64> = rows.iter().filter_map(|row| column.number(row)).collect();
     widgets::card_frame(true).show(ui, |ui| {
         ui.vertical(|ui| {
-            widgets::card_title(ui, "column", &column.title);
+            widgets::card_title(ui, &column.title);
             widgets::kv_text(ui, "from", column.origin());
             if column.numeric && !values.is_empty() {
                 let (low, high) = span(&values);
@@ -1522,12 +1517,12 @@ fn histogram(ui: &mut Ui, values: &[f64], highlight: Option<f64>) {
             egui::pos2(x + 2.0, rect.min.y + bar_h - h.max(2.0)),
             egui::pos2(x + bar_w - 2.0, rect.min.y + bar_h),
         );
-        let colour = if highlight_bin == Some(index) {
+        let color = if highlight_bin == Some(index) {
             theme::SELECTION
         } else {
             theme::RAISED.gamma_multiply(1.6)
         };
-        painter.rect_filled(bar, 2.0, colour);
+        painter.rect_filled(bar, 2.0, color);
         let label = if integral && bins as f64 == high - low + 1.0 {
             (low + index as f64).to_string()
         } else {

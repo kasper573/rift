@@ -1,0 +1,31 @@
+{
+  "name": "Sanctified",
+  "icon": "icons/ore_and_gem/cut_topaz.png",
+  "category": "buff",
+  "description": "Standing in the light, wounds close on their own.",
+  "vfx": {
+    "during": "holy_motes"
+  },
+  "sfx": {
+    "on_activate": "holy_chime"
+  },
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "every": {
+          "type": "on",
+          "event": "interval",
+          "seconds": 2.0,
+          "next": "mend"
+        },
+        "mend": {
+          "type": "heal",
+          "by": {
+            "type": "status_power"
+          }
+        }
+      }
+    }
+  ]
+}

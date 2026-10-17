@@ -1,0 +1,65 @@
+{
+  "name": "Sunder",
+  "icon": "icons/weapon_and_tool/pickaxe.png",
+  "sfx": "slash03",
+  "target": "single_enemy",
+  "cooldown": 12.0,
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 2.0
+      }
+    },
+    {
+      "cost": 2,
+      "stats": {
+        "power": 2.6
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "hit": {
+          "type": "damage",
+          "who": {
+            "type": "skill_targets"
+          },
+          "by": {
+            "type": "multiply",
+            "a": {
+              "type": "stat",
+              "stat": "damage"
+            },
+            "b": {
+              "type": "skill_stat",
+              "skill": "sunder",
+              "stat": "power"
+            }
+          }
+        },
+        "show": {
+          "type": "vfx",
+          "vfx": "sunder_slash",
+          "on": {
+            "type": "skill_targets"
+          },
+          "next": "hit"
+        },
+        "swing": {
+          "type": "animate",
+          "action": "attack",
+          "wait": "apex",
+          "next": "show"
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "swing"
+        }
+      }
+    }
+  ]
+}

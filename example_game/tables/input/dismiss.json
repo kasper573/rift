@@ -1,9 +1,1 @@
-{
-  "label": "Close what's on top, stop typing, or leave the conversation",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "Escape"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/dismiss.json

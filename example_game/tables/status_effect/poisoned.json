@@ -1,0 +1,29 @@
+{
+  "name": "Poisoned",
+  "icon": "icons/potion/green_potion.png",
+  "category": "debuff",
+  "description": "Something in the blood bites, over and over.",
+  "vfx": {
+    "on_activate": "poison_bubbles",
+    "during": "poison_bubbles"
+  },
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "bite": {
+          "type": "damage",
+          "by": {
+            "type": "status_power"
+          }
+        },
+        "every": {
+          "type": "on",
+          "event": "interval",
+          "seconds": 2.0,
+          "next": "bite"
+        }
+      }
+    }
+  ]
+}

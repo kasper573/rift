@@ -16,7 +16,7 @@ use crate::core::time::Seconds;
 
 const TILE_SCREEN: f32 = 96.0;
 pub(crate) const SCALE: f32 = TILE_SCREEN / TILE.0;
-const PRESENT_LAYER: usize = 1;
+pub(crate) const PRESENT_LAYER: usize = 1;
 
 #[derive(Component)]
 pub(super) struct Screen;
@@ -143,6 +143,12 @@ pub(super) fn setup(
         RenderLayers::layer(PRESENT_LAYER),
         Screen,
     ));
+}
+
+pub(crate) fn world_texture(world: &World) -> Option<Handle<Image>> {
+    world
+        .get_resource::<WorldTargets>()
+        .map(|targets| targets.live.clone())
 }
 
 pub(super) fn match_display(

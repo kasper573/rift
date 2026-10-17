@@ -1,9 +1,1 @@
-{
-  "label": "Move to the next choice",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "ArrowDown"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/choose_next.json

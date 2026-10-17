@@ -14,6 +14,7 @@ use crate::forms::{FormChange, FormCx};
 use crate::picker;
 use crate::project::{ContentEdit, RowSelection};
 use crate::tabs::EditorTab;
+use crate::ui::assets::AssetKind;
 use crate::ui::{inspector, theme, widgets};
 use crate::views::area::palette;
 use crate::views::model::sounds;
@@ -56,11 +57,11 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
         });
 }
 
-pub fn first_class_body(ui: &mut Ui, cx: &mut FormCx, value: &mut Value) -> FormChange {
+pub fn row_body(ui: &mut Ui, cx: &mut FormCx, value: &mut Value) -> FormChange {
     let mut changed = FormChange::default();
     widgets::kv(ui, "image", |ui| {
         let mut file = value["image"].as_str().unwrap_or_default().to_owned();
-        if picker::asset(ui, cx, &mut file, "/image") {
+        if picker::asset_of(ui, cx, &[AssetKind::Image], &mut file, "/image") {
             value["image"] = Value::String(file);
             changed = FormChange::at("/image");
         }
@@ -108,7 +109,7 @@ fn tile_card(editor: &mut Editor, ui: &mut Ui, tileset: &OpenTileset, tile: u32)
     let mut picked = None;
     widgets::card_frame(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        widgets::card_title(ui, "tile", &format!("tile {tile} · {}, {}", cell.x, cell.y));
+        widgets::card_title(ui, &format!("tile {tile} · {}, {}", cell.x, cell.y));
         ui.add_space(4.0);
         if mode == TilesetMode::Surface {
             widgets::kv(ui, "surface", |ui| {
@@ -230,7 +231,7 @@ fn terrains_cards(editor: &mut Editor, ui: &mut Ui, tileset: &OpenTileset) {
         let response = widgets::card_frame(on)
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                widgets::card_header(ui, "terrain", set, "", |ui| {
+                widgets::card_header(ui, set, "", |ui| {
                     if ui.button("Remove this set").clicked() {
                         removed_set = Some(set.clone());
                         ui.close();
@@ -240,7 +241,7 @@ fn terrains_cards(editor: &mut Editor, ui: &mut Ui, tileset: &OpenTileset) {
                 widgets::kv(ui, "terrains", |ui| {
                     ui.horizontal_wrapped(|ui| {
                         for (index, terrain) in terrains.iter().enumerate() {
-                            ui.label(theme::mono(terrain).color(palette::terrain_colour(index)));
+                            ui.label(theme::mono(terrain).color(palette::terrain_color(index)));
                             if index == 0 {
                                 ui.label(theme::faint("base").size(11.0));
                             }

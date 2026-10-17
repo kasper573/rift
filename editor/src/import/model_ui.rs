@@ -1302,7 +1302,7 @@ pub fn inspect_reimport(editor: &mut Editor, ui: &mut Ui, key: &str) {
         let count = strip.after_count();
         widgets::card_frame(strip.needs_place() > 0).show(ui, |ui| {
             ui.vertical(|ui| {
-                widgets::card_title(ui, "model", &model::pretty(&strip.name));
+                widgets::card_title(ui, &model::pretty(&strip.name));
                 let mut followed: Vec<String> = Vec::new();
                 for cue in &strip.cues {
                     if let Some(to) = cue.to
@@ -1427,7 +1427,6 @@ pub fn inspect_reimport(editor: &mut Editor, ui: &mut Ui, key: &str) {
             ui.vertical(|ui| {
                 widgets::card_header(
                     ui,
-                    "model",
                     &format!("{} · lengths", model::pretty(&strip.name)),
                     "",
                     |_| {},

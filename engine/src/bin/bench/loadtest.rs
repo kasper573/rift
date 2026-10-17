@@ -250,10 +250,7 @@ fn fetch_ticket(http_url: &str, account: &str) -> Option<String> {
         rows: manifest.rows.hash,
     };
     let mut response = ureq::post(format!("{http_url}/session"))
-        .header(
-            "Authorization",
-            format!("Bearer {}", fake_token(account, &[])),
-        )
+        .header("Authorization", format!("Bearer {}", fake_token(account)))
         .header("Content-Type", "application/json")
         .send(serde_json::to_string(&request).ok()?)
         .ok()?;

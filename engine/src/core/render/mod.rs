@@ -33,6 +33,25 @@ pub fn dynamic_z(area_height: f32, base: f32, y: Tiles) -> f32 {
     base + (y + Tiles(1.0)).ratio(Tiles(area_height + 2.0))
 }
 
+/// The depth the shown area's ground ends at, so what lies flat on it sorts above the ground and
+/// under whoever stands there.
+#[derive(Resource, Clone, Copy, Default, PartialEq, Debug)]
+pub struct GroundDepth(pub f32);
+
+/// How the shown area's rows map to depths, for what is drawn over tiles yet must sort among the
+/// sprites standing on them, such as a bolt threading actors.
+#[derive(Resource, Clone, Copy, Default, PartialEq, Debug)]
+pub struct RowDepths {
+    pub height: f32,
+    pub base: f32,
+}
+
+impl RowDepths {
+    pub fn at(&self, y: Tiles) -> f32 {
+        dynamic_z(self.height, self.base, y)
+    }
+}
+
 /// The depth a sprite sorts by from its row, which `order_rows` turns into the depth it is drawn at.
 #[derive(Component, Clone, Copy, Default, PartialEq, Debug)]
 pub struct RowDepth(pub f32);
@@ -75,6 +94,8 @@ impl Plugin for RenderPlugin {
             .init_resource::<Animator>()
             .init_resource::<present::ScreenTint>()
             .init_resource::<present::Viewport>()
+            .init_resource::<GroundDepth>()
+            .init_resource::<RowDepths>()
             .init_resource::<transition::ActiveTransition>()
             .init_resource::<transition::ScreenTransitionPreference>()
             .configure_sets(

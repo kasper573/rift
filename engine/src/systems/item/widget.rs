@@ -10,7 +10,7 @@ use crate::core::assets::AssetRef;
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::text::{StyledLine, TextPiece};
-use crate::systems::hud::{self, HudAudience, HudWindow};
+use crate::systems::hud::{self, HudWindow};
 use crate::systems::input::map::{self, InputAction, InputMap, input};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::{
@@ -83,9 +83,6 @@ impl Plugin for CarryPlugin {
 pub struct InventoryWindow;
 
 impl HudWindow for InventoryWindow {
-    fn audience(&self) -> HudAudience {
-        HudAudience::Players
-    }
     fn title(&self) -> &'static str {
         "Inventory"
     }

@@ -1,8 +1,10 @@
 pub mod model;
 pub mod plate;
+pub mod playing;
 pub mod render;
 
 pub use model::{ActorModel, ModelDef, Timing};
+pub use playing::{Animate, LastAction, Playing, Wait};
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
@@ -11,11 +13,10 @@ use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
 
 use crate::core::content::{ContentRegistry, LoadStep};
-use crate::core::math::{Direction, Pos, Size};
+use crate::core::math::{Direction, Pos, Rgba, Size};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::PlaybackRate;
 use crate::systems::actor::model::ModelId;
-use crate::systems::combat::Swing;
 use crate::systems::movement::{Path, Position};
 use crate::systems::stat::{self, Stats};
 
@@ -23,6 +24,7 @@ pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
 
     app.replicate::<Actor>()
+        .replicate::<Playing>()
         .replicate_once::<Hitbox>()
         .replicate_once::<Name>();
 }
@@ -64,37 +66,10 @@ pub enum Action {
     Dead,
 }
 
-#[derive(
-    JsonSchema,
-    Serialize,
-    Deserialize,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Debug,
-    Default,
-)]
-#[serde(from = "[u8; 4]", into = "[u8; 4]")]
-#[schemars(extend("x-color" = true))]
-pub struct Rgba(pub u32);
-
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tint {
     pub rgba: Rgba,
-}
-
-impl Rgba {
-    pub const WHITE: Rgba = Rgba(0xffff_ffff);
-
-    pub fn color(self) -> bevy::color::Color {
-        let [r, g, b, a] = self.0.to_be_bytes();
-        bevy::color::Color::srgba_u8(r, g, b, a)
-    }
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -136,6 +111,20 @@ pub struct Name {
     pub name: String,
 }
 
+pub fn face_toward(world: &mut World, actor: Entity, toward: Pos<Tiles>) {
+    let Some(at) = world.get::<Position>(actor).map(|position| position.pos) else {
+        return;
+    };
+    let step = toward - at;
+    if step.x == 0.0 && step.y == 0.0 {
+        return;
+    }
+    if let Some(mut component) = world.get_mut::<Actor>(actor) {
+        let action = component.action;
+        set_facing(&mut component, Direction::from(step), action);
+    }
+}
+
 pub fn set_facing(actor: &mut Mut<Actor>, dir: Direction, action: Action) {
     if actor.dir != dir || actor.action != action {
         actor.dir = dir;
@@ -146,16 +135,16 @@ pub fn set_facing(actor: &mut Mut<Actor>, dir: Direction, action: Action) {
 type Situation = (
     &'static mut Actor,
     Option<&'static Stats>,
-    Has<Swing>,
+    Option<&'static Playing>,
     Has<Path>,
 );
 
 pub fn settle(mut actors: Query<Situation>) {
-    for (mut actor, stats, swinging, walking) in &mut actors {
+    for (mut actor, stats, playing, walking) in &mut actors {
         let action = if stats.is_some_and(stat::dead) {
             Action::Dead
-        } else if swinging {
-            Action::Attack
+        } else if let Some(playing) = playing {
+            playing.action
         } else if walking {
             match actor.action {
                 Action::Walk | Action::Run => actor.action,
@@ -171,17 +160,5 @@ pub fn settle(mut actors: Query<Situation>) {
 fn set_action(actor: &mut Mut<Actor>, action: Action) {
     if actor.action != action {
         actor.action = action;
-    }
-}
-
-impl From<[u8; 4]> for Rgba {
-    fn from(bytes: [u8; 4]) -> Rgba {
-        Rgba(u32::from_be_bytes(bytes))
-    }
-}
-
-impl From<Rgba> for [u8; 4] {
-    fn from(rgba: Rgba) -> [u8; 4] {
-        rgba.0.to_be_bytes()
     }
 }

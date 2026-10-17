@@ -9,7 +9,7 @@ use crate::app::Editor;
 use crate::project::ContentEdit;
 use crate::ui::dialogs::{self, DialogAnswer};
 use crate::ui::{theme, widgets};
-use crate::views::area::palette::terrain_colour;
+use crate::views::area::palette::terrain_color;
 use crate::{forms, rows};
 
 const CLOSEUP: f32 = 192.0;
@@ -215,9 +215,9 @@ pub fn legend(editor: &mut Editor, ui: &mut Ui, tileset: &OpenTileset) {
 }
 
 pub fn shape(painter: &egui::Painter, center: Pos2, radius: f32, index: usize, filled: bool) {
-    let colour = terrain_colour(index);
-    let stroke = Stroke::new(1.5, colour);
-    let fill = if filled { colour } else { Color32::TRANSPARENT };
+    let color = terrain_color(index);
+    let stroke = Stroke::new(1.5, color);
+    let fill = if filled { color } else { Color32::TRANSPARENT };
     match index % 4 {
         0 => {
             let rect = ERect::from_center_size(center, Vec2::splat(radius * 1.6));

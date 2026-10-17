@@ -11,10 +11,6 @@ game = true
 name = "game-server"
 path = "src/bin/server/main.rs"
 
-[[bin]]
-name = "kc-roles"
-path = "src/bin/kc_roles.rs"
-
 # Load generator: connects N headless replicon clients to an already-running real game server over
 # real websocket sockets. Server-only (no in-process server); see `just loadtest`.
 [[bin]]
@@ -117,6 +113,7 @@ dotenvy = "0.15"
 jsonc-parser = "0.34"
 blake3 = "1"
 schemars = "1"
+naga = { version = "30", features = ["wgsl-in"] }
 png = "0.18"
 tar = "0.4"
 flate2 = "1"

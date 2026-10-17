@@ -8,7 +8,10 @@
   },
   "kind": {
     "type": "equipment",
-    "slot": "weapon"
+    "slot": "weapon",
+    "grants": [
+      "slash"
+    ]
   },
   "modules": [
     {
@@ -16,9 +19,19 @@
       "text": "More rust than sword, but the edge still bites."
     },
     {
-      "type": "stat",
-      "stat": "damage",
-      "value": 3.0
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "boost_damage"
+        },
+        "boost_damage": {
+          "type": "boost",
+          "stat": "damage",
+          "by": 3.0
+        }
+      }
     }
   ]
 }

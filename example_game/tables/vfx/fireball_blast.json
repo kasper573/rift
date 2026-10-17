@@ -1,0 +1,10 @@
+{
+  "name": "Fireball blast",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "fireball",
+      "duration": 1.1
+    }
+  ]
+}

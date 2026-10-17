@@ -1,0 +1,45 @@
+{
+  "name": "Damage taken",
+  "params": [
+    {
+      "name": "amount",
+      "kind": "number"
+    }
+  ],
+  "layers": [
+    {
+      "type": "text",
+      "template": "-{amount}",
+      "color": [
+        255,
+        92,
+        92,
+        255
+      ],
+      "size": 16.0,
+      "duration": 0.9
+    },
+    {
+      "type": "shader",
+      "shader": "flash",
+      "params": {
+        "color": [
+          255,
+          255,
+          255,
+          255
+        ],
+        "strength": 1.0
+      },
+      "duration": 0.15
+    },
+    {
+      "type": "shader",
+      "shader": "shake",
+      "params": {
+        "amplitude": 0.05
+      },
+      "duration": 0.25
+    }
+  ]
+}

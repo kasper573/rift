@@ -96,7 +96,7 @@ pub fn strong(text: impl Into<String>) -> RichText {
     RichText::new(text).family(medium()).color(TEXT)
 }
 
-pub fn badge_colour(kind: &str) -> Color32 {
+pub fn badge_color(kind: &str) -> Color32 {
     match kind {
         "population" | "resident" | "npc" | "player" | "nameplate" | "tint" | "voice" => {
             Color32::from_rgb(214, 168, 42)

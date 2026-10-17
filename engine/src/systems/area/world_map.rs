@@ -80,7 +80,7 @@ pub struct Region {
     pub name: String,
     pub cards: Vec<super::AreaId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub colour: Option<RegionColour>,
+    pub color: Option<RegionColor>,
 }
 
 #[derive(
@@ -97,7 +97,7 @@ pub struct Region {
 )]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
-pub enum RegionColour {
+pub enum RegionColor {
     Amber,
     Green,
     Blue,

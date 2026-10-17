@@ -390,8 +390,8 @@ fn terrain_sheet(
                         let Some(index) = terrains.iter().position(|t| t == terrain) else {
                             continue;
                         };
-                        let colour = theme::alpha(terrain_colour(index), 110);
-                        painter.rect_filled(corner.quarter(cell).shrink(0.5), 0.0, colour);
+                        let color = theme::alpha(terrain_color(index), 110);
+                        painter.rect_filled(corner.quarter(cell).shrink(0.5), 0.0, color);
                     }
                     painter.rect_stroke(
                         cell,
@@ -419,7 +419,7 @@ fn terrain_sheet(
                 let response = ui
                     .horizontal(|ui| {
                         let (swatch, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                        ui.painter().rect_filled(swatch, 2.0, terrain_colour(index));
+                        ui.painter().rect_filled(swatch, 2.0, terrain_color(index));
                         if on {
                             ui.painter().rect_stroke(
                                 swatch,
@@ -458,6 +458,6 @@ fn terrain_sheet(
     });
 }
 
-pub fn terrain_colour(index: usize) -> Color32 {
+pub fn terrain_color(index: usize) -> Color32 {
     theme::TERRAIN[index % theme::TERRAIN.len()]
 }

@@ -6,7 +6,7 @@ use crate::core::content::Content;
 use crate::core::gui;
 use crate::core::text::{StyledLine, TextPiece};
 use crate::systems::equipment::{Equipment, EquipmentSlot, UnequipRequest};
-use crate::systems::hud::{self, HudAudience, HudWindow};
+use crate::systems::hud::{self, HudWindow};
 use crate::systems::input::map::{self, InputAction, input};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::widget::{SlotLook, slot};
@@ -16,9 +16,6 @@ use crate::systems::player::session;
 pub struct EquipmentWindow;
 
 impl HudWindow for EquipmentWindow {
-    fn audience(&self) -> HudAudience {
-        HudAudience::Players
-    }
     fn title(&self) -> &'static str {
         "Equipment"
     }
@@ -74,6 +71,13 @@ fn worn_slot(ui: &mut Ui, world: &mut World, kind: EquipmentSlot, item: ItemId) 
         faded: false,
     };
     let response = slot(ui, world, look, Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            format!("Worn as {}: {}", kind.label(), def.name),
+        )
+    });
     if map::clicked(world, InputAction::UseItem, &response) {
         world.write_message(UnequipRequest { slot: kind });
     } else if map::clicked(world, InputAction::InspectItem, &response) {

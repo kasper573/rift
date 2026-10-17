@@ -539,26 +539,26 @@ pub(super) fn overlay_surfaces(painter: &egui::Painter, frame: &AreaFrame, area:
             continue;
         };
         let key = surface.key(&frame.content);
-        let colour = match palette.iter().find(|(k, _)| k == key) {
-            Some((_, colour)) => *colour,
+        let color = match palette.iter().find(|(k, _)| k == key) {
+            Some((_, color)) => *color,
             None => {
                 let hue = (palette.len() as f32 * 0.37) % 1.0;
-                let colour = hsv(hue, 0.55, 0.95);
-                palette.push((key.to_owned(), colour));
-                colour
+                let color = hsv(hue, 0.55, 0.95);
+                palette.push((key.to_owned(), color));
+                color
             }
         };
         let rect = canvas.rect(cell.bounds());
         painter.rect_filled(
             rect,
             0.0,
-            Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), 70),
+            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 70),
         );
         painter.line_segment(
             [rect.left_bottom(), rect.right_top()],
             EStroke::new(
                 1.0,
-                Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), 120),
+                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 120),
             ),
         );
     }

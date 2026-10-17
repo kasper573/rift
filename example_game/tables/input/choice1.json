@@ -1,9 +1,1 @@
-{
-  "label": "Pick the first choice",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "Digit1"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/choice1.json

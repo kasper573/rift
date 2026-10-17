@@ -21,7 +21,7 @@ use crate::systems::player::{ArrivalHold, ClientId, CommandLock, Owner, Players}
 use crate::systems::quest::QuestLog;
 use crate::systems::script::condition::CompiledCondition;
 use crate::systems::shop::ShopView;
-use crate::systems::spectate::Spectators;
+use crate::systems::skill::ResetPrompt;
 
 pub const VIEW_DISTANCE: Tiles = Tiles(24.0);
 // Compared against squared distance to avoid a per-pair `sqrt`. Exact: `VIEW_DISTANCE` is a perfect
@@ -33,7 +33,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<ScopeBits>();
     app.init_resource::<Sights>();
     app.init_resource::<Slots>();
-    app.add_observer(grant_own_sight);
+    app.add_observer(grant_hidden_slots);
     app.add_observer(release_slot);
     app.add_observer(reveal_to_all);
 }
@@ -56,13 +56,6 @@ pub fn present(world: &World, subject: Entity, viewer: Entity) -> bool {
 
 pub fn coexist(world: &World, a: Entity, b: Entity) -> bool {
     present(world, a, b) && present(world, b, a)
-}
-
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-#[component(immutable)]
-pub struct PrivateSight {
-    pub own: ClientId,
-    pub watching: Option<ClientId>,
 }
 
 type Clients = QueryState<(Entity, &'static ClientId)>;
@@ -181,7 +174,7 @@ pub fn private_viewers(world: &mut World, player: Entity) -> Vec<Entity> {
         sights
             .0
             .iter(world)
-            .filter(|(_, sight)| sight.sees_privately(owner))
+            .filter(|(_, client)| **client == owner)
             .map(|(conn, _)| conn)
             .collect()
     })
@@ -200,22 +193,12 @@ pub fn send_to<M: Message>(world: &mut World, conn: Entity, message: M) {
     });
 }
 
-impl PrivateSight {
-    pub fn subject(self) -> ClientId {
-        self.watching.unwrap_or(self.own)
-    }
-
-    fn sees_privately(self, owner: ClientId) -> bool {
-        self.own == owner || self.watching == Some(owner)
-    }
-}
-
 #[derive(Component)]
 #[component(immutable)]
 pub struct OwnedBy(pub ClientId);
 
 impl VisibilityFilter for OwnedBy {
-    type ClientComponent = PrivateSight;
+    type ClientComponent = ClientId;
     type Scope = (
         Inventory,
         Conversation,
@@ -226,23 +209,16 @@ impl VisibilityFilter for OwnedBy {
         QuestLog,
         MoveTarget,
         HeardMove,
+        ResetPrompt,
     );
 
-    fn is_visible(&self, _: Entity, sight: Option<&PrivateSight>) -> bool {
-        sight.is_some_and(|sight| sight.sees_privately(self.0))
+    fn is_visible(&self, _: Entity, client: Option<&ClientId>) -> bool {
+        client == Some(&self.0)
     }
 }
 
-fn grant_own_sight(add: On<Add<ClientId>>, clients: Query<&ClientId>, mut commands: Commands) {
-    if let Ok(&own) = clients.get(add.entity) {
-        commands.entity(add.entity).insert((
-            PrivateSight {
-                own,
-                watching: None,
-            },
-            HiddenSlots::default(),
-        ));
-    }
+fn grant_hidden_slots(add: On<Add<ClientId>>, mut commands: Commands) {
+    commands.entity(add.entity).insert(HiddenSlots::default());
 }
 
 #[derive(Component, Clone, Copy)]
@@ -299,7 +275,7 @@ fn reveal_to_all(
 }
 
 #[derive(Resource)]
-struct Sights(QueryState<(Entity, &'static PrivateSight)>);
+struct Sights(QueryState<(Entity, &'static ClientId)>);
 
 impl FromWorld for Sights {
     fn from_world(world: &mut World) -> Self {
@@ -343,11 +319,7 @@ struct Sight {
 }
 
 fn sight(world: &World, client: ClientId) -> Option<Sight> {
-    let player = match world.resource::<Spectators>().0.get(&client) {
-        Some(spectator) => spectator.watching()?,
-        None => client,
-    };
-    let focus = world.resource::<Players>().0.get(&player).copied()?;
+    let focus = world.resource::<Players>().0.get(&client).copied()?;
     Some(Sight {
         focus,
         pos: position(world, focus),

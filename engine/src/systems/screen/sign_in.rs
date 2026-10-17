@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
 use bevy_egui::EguiPrimaryContextPass;
 use design_tokens::widgets;
-use strum::VariantArray;
 
 use super::connection::OVERLAY_BG;
 use super::{ClientScreen, note, pace_as_before, pace_slowly, panel, system_screen};
@@ -11,7 +10,6 @@ use crate::core::gui::{self, Band};
 use crate::core::net::auth::Credentials;
 use crate::core::platform::{ProviderPage, SignIn, StartParams};
 use crate::systems::GameSettings;
-use crate::systems::account::Role;
 use crate::systems::launch::fake_token;
 
 pub struct SignInPlugin;
@@ -93,7 +91,7 @@ fn sign_in_screen(world: &mut World) {
             world.remove_resource::<Waiting>();
         }
         Some(Choice::Account(account)) => {
-            signed_in(world, &fake_token(&account, Role::VARIANTS));
+            signed_in(world, &fake_token(&account));
         }
         None => {}
     }

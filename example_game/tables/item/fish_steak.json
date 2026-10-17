@@ -8,9 +8,7 @@
     "use": "heal01"
   },
   "kind": {
-    "type": "consumable",
-    "health_bonus": 15.0,
-    "lasts": 0.0
+    "type": "usable"
   },
   "modules": [
     {
@@ -20,6 +18,36 @@
     {
       "type": "stack",
       "max": 10
+    },
+    {
+      "type": "inline_script",
+      "nodes": {
+        "eat": {
+          "type": "items",
+          "take": [
+            {
+              "item": "fish_steak"
+            }
+          ],
+          "done": "mend"
+        },
+        "fill": {
+          "type": "apply_status",
+          "effect": "well_fed",
+          "power": 5.0,
+          "seconds": 60.0
+        },
+        "mend": {
+          "type": "heal",
+          "by": 15.0,
+          "next": "fill"
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "eat"
+        }
+      }
     }
   ]
 }

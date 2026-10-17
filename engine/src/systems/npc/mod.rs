@@ -13,27 +13,29 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::babble::{BabbleId, Babbler};
-use crate::core::content::{Content, ContentId, ContentRow, ModuleRule, ModuleSet, serial};
-use crate::core::math::{Direction, Percent, Pos, Rect, Rng};
+use crate::core::content::{
+    Content, ContentId, ContentRow, ModuleRule, ModuleSet, RowCheck, serial,
+};
+use crate::core::math::{Direction, Percent, Pos, Rect, Rgba, Rng};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::systems::actor::model::ModelId;
-use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox, Rgba, Tint};
+use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox, Tint};
 use crate::systems::area::{self, AreaId, AreaModule, AreaTag, Wild};
 use crate::systems::combat::{Attitude, Dead, Died};
 use crate::systems::dialogue;
-use crate::systems::effect::{self, Effect, TimedEffects};
 use crate::systems::interact::Interactive;
 use crate::systems::item::{ItemId, Reservation};
 use crate::systems::movement::{Position, position};
-use crate::systems::reach::{self, ReachAct};
 use crate::systems::script::condition::CompiledCondition;
 use crate::systems::script::query::TickRoster;
 use crate::systems::script::{
     EventKind, Owner, OwnerKind, OwnerRow, Reach, RiftEvent, RiftInstances, RiftScripts,
     ScriptModule, ScriptedRow, area_owner,
 };
+use crate::systems::skill::{Rank, SkillId};
 use crate::systems::stat::{StatMap, Stats};
+use crate::systems::status::Statuses;
 use crate::systems::visibility::{self, Presence};
 use crate::systems::{Character, WorldArea};
 
@@ -44,7 +46,6 @@ const CORPSE_LINGER: Seconds = Seconds(5.0);
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
     app.replicate_once::<Npc>();
-    effect::source(app, chase);
 }
 
 pub fn can_be_fought(scripts: &RiftScripts, npc: NpcId) -> bool {
@@ -56,16 +57,6 @@ pub fn can_be_fought(scripts: &RiftScripts, npc: NpcId) -> bool {
         })
         .reaches
         .contains(&Reach::Hostile)
-}
-
-pub fn chase(world: &World, entity: Entity) -> Vec<Effect> {
-    if world.get::<Npc>(entity).is_some()
-        && reach::intent(world, entity, ReachAct::Attack).is_some()
-    {
-        vec![Effect::Chasing]
-    } else {
-        Vec::new()
-    }
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -90,12 +81,53 @@ pub struct NpcDef {
     pub name: String,
     pub model: ModelId,
     pub stats: StatMap,
+    #[schemars(extend("x-usage" = "the skill a click on a target uses"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basic_attack: Option<SkillId>,
+    #[schemars(extend("x-usage" = "known at these ranks, for the scripts that will cast them"))]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<NpcSkill>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<NpcModule>,
 }
 
+#[derive(JsonSchema, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct NpcSkill {
+    pub skill: SkillId,
+    #[schemars(extend("default" = 1))]
+    #[serde(default = "first_rank", skip_serializing_if = "Rank::is_first")]
+    pub rank: Rank,
+}
+
+fn first_rank() -> Rank {
+    Rank::FIRST
+}
+
 impl ContentRow for NpcDef {
     const TABLE: &'static str = "npc";
+
+    fn check(&self, check: &mut RowCheck) {
+        let mut seen = std::collections::BTreeSet::new();
+        for (index, known) in self.skills.iter().enumerate() {
+            if !seen.insert(known.skill) {
+                check.error(
+                    format!("/skills/{index}/skill"),
+                    "skill twice",
+                    known.skill.raw(),
+                    "each skill listed once, at one rank",
+                );
+            }
+            if known.rank == Rank::NONE {
+                check.error(
+                    format!("/skills/{index}/rank"),
+                    "out of range",
+                    0,
+                    "1 or more",
+                );
+            }
+        }
+    }
 }
 
 impl ModuleSet for NpcDef {
@@ -542,7 +574,7 @@ pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
                 .entity_mut(id)
                 .insert((Attitude::Friendly, body::Body::default(), Near::default()))
                 .remove::<Reservation>()
-                .remove::<TimedEffects>();
+                .insert(Statuses::default());
             start_scripts(world, id, npc);
         }
     });

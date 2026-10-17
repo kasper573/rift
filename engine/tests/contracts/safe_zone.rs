@@ -4,7 +4,7 @@ use engine::core::tiling::{TilePos, Tiles};
 use engine::systems::area::{self, Area, Wild};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, position};
 use engine::systems::npc::{self, NpcId, Pack};
-use engine::systems::reach::{self, ReachAct};
+use engine::systems::reach;
 
 use testkit::{Sim, content, place, row, spawn_area};
 
@@ -54,7 +54,7 @@ fn a_wild_monster_gives_up_a_player_who_reaches_a_safe_zone() {
 
     assert!(on_safe_ground(sim.world(), player));
     assert!(!trespassed);
-    assert_eq!(reach::intent(sim.world(), skeleton, ReachAct::Attack), None);
+    assert_eq!(reach::attacking(sim.world(), skeleton), None);
 }
 
 #[test]
@@ -75,10 +75,7 @@ fn a_summoned_monster_follows_its_target_into_a_safe_zone() {
     );
 
     assert!(sim.run_until(10.0, |world| on_safe_ground(world, guard)));
-    assert_eq!(
-        reach::intent(sim.world(), guard, ReachAct::Attack),
-        Some(player)
-    );
+    assert_eq!(reach::attacking(sim.world(), guard), Some(player));
 }
 
 #[test]
@@ -164,7 +161,5 @@ fn summon(sim: &mut Sim, player: Entity, what: NpcId) -> Entity {
 }
 
 fn hunted_by(sim: &mut Sim, hunter: Entity, player: Entity) -> bool {
-    sim.run_until(5.0, |world| {
-        reach::intent(world, hunter, ReachAct::Attack) == Some(player)
-    })
+    sim.run_until(5.0, |world| reach::attacking(world, hunter) == Some(player))
 }

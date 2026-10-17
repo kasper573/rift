@@ -13,7 +13,7 @@ use crate::core::tiling::{TileSize, Tiles};
 use crate::core::time::Seconds;
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::movement::{Position, RenderPosition};
-use crate::systems::player::session::Viewpoint;
+use crate::systems::player::session::MyCharacter;
 use crate::systems::screen::ClientScreen;
 
 /// Time the follow camera takes to close half the gap to the player. Smaller is snappier, larger
@@ -51,7 +51,7 @@ struct Followed {
 #[allow(clippy::too_many_arguments)]
 fn track_player(
     time: Res<Time>,
-    viewpoint: Res<Viewpoint>,
+    viewpoint: Res<MyCharacter>,
     content: Res<Content>,
     characters: Query<(&RenderPosition, &Position, &AreaTag)>,
     window: Single<&Window, With<PrimaryWindow>>,

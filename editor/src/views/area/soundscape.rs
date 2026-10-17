@@ -3,6 +3,7 @@ use engine::core::audio;
 use serde_json::Value;
 
 use crate::forms::FormCx;
+use crate::ui::assets::AssetKind;
 use crate::ui::{theme, widgets};
 use crate::{forms, picker};
 
@@ -25,7 +26,13 @@ pub(super) fn soundscape_extras(
         let number = channel["channel"].as_u64().unwrap_or(0);
         widgets::kv(ui, &format!("channel {number}"), |ui| {
             let mut file = channel["file"].as_str().unwrap_or_default().to_owned();
-            if picker::asset(ui, cx, &mut file, &format!("{channel_path}/file")) {
+            if picker::asset_of(
+                ui,
+                cx,
+                &[AssetKind::Audio],
+                &mut file,
+                &format!("{channel_path}/file"),
+            ) {
                 channel["file"] = Value::String(file);
                 changed = true;
             }

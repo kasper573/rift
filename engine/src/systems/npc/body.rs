@@ -6,19 +6,20 @@ use strum::IntoStaticStr;
 use crate::core::content::Content;
 use crate::core::math::{Pos, Rng};
 use crate::core::script::{
-    Answer, Compiler, EffectDef, EffectStep, Eval, FlowCx, Name, ScriptFault, ValueType,
+    Answer, Compiler, EffectDef, EffectStep, Eval, FlowCx, Name, ScriptFault, Value, ValueType,
 };
 use crate::core::tiling::{TilePos, Tiles};
 use crate::systems::actor::{self, Actor};
 use crate::systems::area::{self, AreaTag, object};
 use crate::systems::dialogue;
 use crate::systems::movement;
-use crate::systems::npc::{Home, Roams};
-use crate::systems::reach::{self, ReachAct};
-use crate::systems::script::effect::{Arrow, Link};
+use crate::systems::npc::{Home, Npc, Roams};
+use crate::systems::reach;
+use crate::systems::script::effect::{Aim, Arrow, Link};
 use crate::systems::script::{
     Condition, EffectCall, FlowKey, OwnerKind, Place, Reach, RiftInstances, RiftScripting, query,
 };
+use crate::systems::skill;
 use crate::systems::stat;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -139,23 +140,6 @@ pub fn target(world: &World, npc: Entity) -> Option<Entity> {
     }
 }
 
-pub fn face_toward(world: &mut World, npc: Entity, toward: Pos<Tiles>) {
-    let Some(at) = movement::position(world, npc) else {
-        return;
-    };
-    let step = toward - at;
-    if step.x == 0.0 && step.y == 0.0 {
-        return;
-    }
-    let action = world
-        .get::<Actor>(npc)
-        .map(|actor| actor.action)
-        .unwrap_or_default();
-    if let Some(mut actor) = world.get_mut::<Actor>(npc) {
-        actor::set_facing(&mut actor, crate::core::math::Direction::from(step), action);
-    }
-}
-
 pub fn drive(
     world: &mut World,
     bodies: &mut QueryState<Entity, With<Body>>,
@@ -255,11 +239,21 @@ fn step(world: &mut World, npc: Entity, running: Running) -> Option<Outcome> {
             None
         }
         Act::Attack { target, within } => {
-            if reach::intent(world, npc, ReachAct::Attack) != Some(target) {
-                reach::intend(world, npc, target, ReachAct::Attack);
-            }
             if world.get_entity(target).is_err() || stat::is_dead(world, target) {
                 return Some(Outcome::Defeated);
+            }
+            let Some(skill) = world
+                .get::<Npc>(npc)
+                .and_then(|body| body.def.get(world.resource::<Content>()).basic_attack)
+            else {
+                return Some(Outcome::Lost);
+            };
+            let casting = reach::current(world, npc).is_some_and(|intent| {
+                intent.target.actor() == Some(target) && intent.cast() == Some(skill)
+            });
+            if !casting && skill::cast(world, npc, skill, skill::Aim::Actor(target), true).is_err()
+            {
+                return Some(Outcome::Lost);
             }
             let lost = (|| {
                 let at = movement::position(world, npc)?;
@@ -371,8 +365,12 @@ pub struct Stop {
     pub next: Arrow,
 }
 
+/// Turns an actor toward a place, an actor or a point: the owner when it is an actor such as an
+/// npc, else the subject, unless `who` names someone.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct FaceToward {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub who: Aim,
     pub toward: FaceTarget,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Arrow,
@@ -549,9 +547,6 @@ impl EffectDef<RiftScripting> for Stop {
 }
 
 impl EffectDef<RiftScripting> for FaceToward {
-    fn owners(&self) -> &'static [OwnerKind] {
-        NPC
-    }
     fn needs_subject(&self) -> bool {
         false
     }
@@ -567,16 +562,36 @@ impl EffectDef<RiftScripting> for FaceToward {
                 let at = place.at;
                 Box::new(move |_, _| Some(at))
             }
-            FaceTarget::Actor(actor) => {
-                let actor: Eval = cx.expr(actor, ValueType::Actor)?;
-                Box::new(move |world, cx| {
-                    query::actor(world, cx, &actor).and_then(|who| movement::position(world, who))
+            FaceTarget::Actor(target) => {
+                let (target, ty) = cx.typed(target)?;
+                if !matches!(ty, ValueType::Actor | ValueType::Point) {
+                    return Err(ScriptFault::new(
+                        "wrong type",
+                        format!("toward is {}, expected an actor or a point", ty.name()),
+                    ));
+                }
+                Box::new(move |world, cx| match target(world, cx) {
+                    Value::Actor(Some(who)) => movement::position(world, who),
+                    Value::Point(point) => point,
+                    _ => None,
                 })
             }
         };
+        let who = self
+            .who
+            .as_ref()
+            .map(|who| cx.expr(who, ValueType::Actor))
+            .transpose()?;
         Ok(Box::new(move |world, _, cx| {
-            if let (Some(npc), Some(at)) = (cx.owner, toward(world, cx)) {
-                face_toward(world, npc, at);
+            let turning = match &who {
+                Some(who) => query::actor(world, cx, who),
+                None => cx
+                    .owner
+                    .filter(|owner| world.get::<Actor>(*owner).is_some())
+                    .or(cx.subject),
+            };
+            if let (Some(turning), Some(at)) = (turning, toward(world, cx)) {
+                actor::face_toward(world, turning, at);
             }
             EffectStep::Done
         }))

@@ -15,7 +15,7 @@ use crate::systems::dialogue::{Conversation, ConversationPanel};
 use crate::systems::hud;
 use crate::systems::item::widget::{SlotLook, slot};
 use crate::systems::item::{self, Inventory, ItemStack};
-use crate::systems::player::session::Viewpoint;
+use crate::systems::player::session;
 
 const WIDTH: f32 = 480.0;
 const ICON: f32 = 20.0;
@@ -54,7 +54,7 @@ impl Moment {
 }
 
 fn moment(world: &World) -> Option<(QuestId, Moment)> {
-    let seen = world.resource::<Viewpoint>().0?;
+    let seen = session::me(world)?;
     let panel = world.get::<Conversation>(seen)?.panel.as_ref()?;
     Some(match *panel {
         ConversationPanel::QuestOffer(quest) => (quest, Moment::Offer),
@@ -76,9 +76,7 @@ fn show_card(ui: &mut Ui, world: &mut World) {
     let Some((quest, moment)) = moment(world) else {
         return;
     };
-    let inventory = world
-        .resource::<Viewpoint>()
-        .0
+    let inventory = session::me(world)
         .and_then(|seen| world.get::<Inventory>(seen))
         .cloned()
         .unwrap_or_else(Inventory::empty);
@@ -172,7 +170,7 @@ fn head(ui: &mut Ui, world: &mut World, def: &QuestDef) {
 
 fn hand_in_row(ui: &mut Ui, world: &mut World, stack: ItemStack, held: u32) {
     let content = world.resource::<Content>().clone();
-    let held_colour = if held >= stack.count {
+    let held_color = if held >= stack.count {
         color::MUTED
     } else {
         color::DANGER
@@ -182,7 +180,7 @@ fn hand_in_row(ui: &mut Ui, world: &mut World, stack: ItemStack, held: u32) {
             ui.label(
                 RichText::new(format!("{held} in your bag"))
                     .size(TextRole::Small.size())
-                    .color(held_colour),
+                    .color(held_color),
             );
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 caption(ui, "Hand in");
@@ -198,7 +196,7 @@ pub(super) fn objective_row(
     world: &mut World,
     objective: &Objective,
     progress: &Progress,
-    colour: Color32,
+    color: Color32,
 ) {
     let content = world.resource::<Content>().clone();
     ui.horizontal(|ui| {
@@ -207,12 +205,12 @@ pub(super) fn objective_row(
                 ui.label(
                     RichText::new(format!("{} / {}", progress.have, progress.need))
                         .family(family::medium())
-                        .color(colour),
+                        .color(color),
                 );
             }
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 hud::icon(ui, world, objective.icon(&content), ICON);
-                ui.add(Label::new(RichText::new(progress.label.as_str()).color(colour)).wrap());
+                ui.add(Label::new(RichText::new(progress.label.as_str()).color(color)).wrap());
             });
         });
     });
@@ -249,8 +247,8 @@ pub(super) fn picks(ui: &mut Ui, world: &mut World, def: &QuestDef) {
     });
 }
 
-pub(super) fn tag(ui: &mut Ui, label: &str, colour: Color32) {
-    widgets::pill(ui, label, colour);
+pub(super) fn tag(ui: &mut Ui, label: &str, color: Color32) {
+    widgets::pill(ui, label, color);
 }
 
 pub(super) fn section(ui: &mut Ui, label: &str) {

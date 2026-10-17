@@ -1,9 +1,1 @@
-{
-  "label": "Open or close the quest log",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "KeyL"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/toggle_quest_log.json

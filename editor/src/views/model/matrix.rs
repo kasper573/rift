@@ -310,7 +310,7 @@ pub fn timeline(editor: &mut Editor, ui: &mut Ui, key: &str, row: &Value) {
                                 }
                                 super::FrameCueKind::Step => "● step".to_owned(),
                             };
-                            widgets::chip_coloured(ui, &text, theme::ACCENT_SOFT, theme::TEXT);
+                            widgets::chip_colored(ui, &text, theme::ACCENT_SOFT, theme::TEXT);
                         }
                     });
                 });

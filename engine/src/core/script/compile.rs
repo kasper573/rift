@@ -214,6 +214,7 @@ impl<'c, V: Vocabulary> Call<'c, V> {
 
 pub struct Binding<'c, V: Vocabulary> {
     pub owner: V::OwnerKind,
+    pub row: Option<OwnerRow<V>>,
     pub label: String,
     pub call: Call<'c, V>,
 }
@@ -241,6 +242,26 @@ pub fn compile_owner<'c, V: Vocabulary>(
     label: &str,
     modules: &[&'c ScriptModule<V>],
 ) -> Result<Vec<Arc<Procedure<V>>>, ModuleErrors> {
+    compile_modules(content, owner, None, label, modules)
+}
+
+/// The scripts of one row, which may then read which row they belong to.
+pub fn compile_row<'c, V: Vocabulary>(
+    content: &'c Content,
+    row: OwnerRow<V>,
+    label: &str,
+    modules: &[&'c ScriptModule<V>],
+) -> Result<Vec<Arc<Procedure<V>>>, ModuleErrors> {
+    compile_modules(content, row.kind, Some(row), label, modules)
+}
+
+fn compile_modules<'c, V: Vocabulary>(
+    content: &'c Content,
+    owner: V::OwnerKind,
+    row: Option<OwnerRow<V>>,
+    label: &str,
+    modules: &[&'c ScriptModule<V>],
+) -> Result<Vec<Arc<Procedure<V>>>, ModuleErrors> {
     let mut procedures = Vec::new();
     let mut errors = Vec::new();
     let mut answered: HashMap<<V::Event as EventDef<V>>::Kind, Vec<String>> = HashMap::new();
@@ -249,6 +270,7 @@ pub fn compile_owner<'c, V: Vocabulary>(
             content,
             &Binding {
                 owner,
+                row,
                 label: label.to_owned(),
                 call: Call::of(module),
             },
@@ -513,6 +535,7 @@ fn compile_source<'c, V: Vocabulary>(
     let mut cx = Compiler {
         content,
         owner: binding.owner,
+        row: binding.row,
         label: source.label.clone(),
         variables,
         state: source.state.clone(),
@@ -684,6 +707,7 @@ fn compile_source<'c, V: Vocabulary>(
                     content,
                     &Binding {
                         owner: binding.owner,
+                        row: binding.row,
                         label: format!("{} › script/{}", source.label, script.key(content)),
                         call: Call::Shared {
                             script: *script,
@@ -1155,6 +1179,7 @@ pub fn nearest<'a>(wanted: &str, known: impl Iterator<Item = &'a str>) -> String
 pub struct Compiler<'c, V: Vocabulary> {
     pub content: &'c Content,
     owner: V::OwnerKind,
+    row: Option<OwnerRow<V>>,
     label: String,
     variables: HashMap<&'c str, (VariableType, Option<Bound<'c, V>>)>,
     state: Vec<(&'c str, ValueType)>,
@@ -1174,6 +1199,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
         Compiler {
             content,
             owner: V::OwnerKind::ANY,
+            row: None,
             label: "condition".to_owned(),
             variables: HashMap::new(),
             state: Vec::new(),
@@ -1189,6 +1215,15 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
 
     pub fn owner(&self) -> V::OwnerKind {
         self.owner
+    }
+
+    pub fn content(&self) -> &'c Content {
+        self.content
+    }
+
+    /// The row whose script this is, when it is a row's own.
+    pub fn owner_row(&self) -> Option<OwnerRow<V>> {
+        self.row
     }
 
     pub fn label(&self) -> &str {
@@ -1228,6 +1263,19 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
             None => {
                 self.subject_read = true;
                 Ok(Box::new(|_, cx: &FlowCx| Value::Actor(cx.subject)))
+            }
+        }
+    }
+
+    /// One actor or a set of them; the subject alone when nothing is named.
+    pub fn actors(&mut self, expr: Option<&'c Expr<V>>) -> Result<Eval, ScriptFault> {
+        match expr {
+            Some(expr) => self.expr(expr, ValueType::Actors),
+            None => {
+                self.subject_read = true;
+                Ok(Box::new(|_, cx: &FlowCx| {
+                    Value::Actors(cx.subject.into_iter().collect())
+                }))
             }
         }
     }
@@ -1465,6 +1513,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
                             (Value::Text(a), Value::Text(b)) => a == b,
                             (Value::Bool(a), Value::Bool(b)) => a == b,
                             (Value::Actor(a), Value::Actor(b)) => a == b,
+                            (Value::Point(a), Value::Point(b)) => a == b,
                             _ => a.as_num() == b.as_num(),
                         };
                         Value::Bool(equal != negate)

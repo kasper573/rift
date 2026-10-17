@@ -1,0 +1,47 @@
+{
+  "name": "Arcane Mind",
+  "icon": "icons/misc/book.png",
+  "kind": "passive",
+  "target": "self",
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 2.0
+      }
+    },
+    {
+      "cost": 1,
+      "stats": {
+        "power": 2.0
+      }
+    },
+    {
+      "cost": 1,
+      "stats": {
+        "power": 3.0
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "sharpen"
+        },
+        "sharpen": {
+          "type": "boost",
+          "stat": "damage",
+          "by": {
+            "type": "skill_stat",
+            "skill": "arcane_mind",
+            "stat": "power"
+          }
+        }
+      }
+    }
+  ]
+}

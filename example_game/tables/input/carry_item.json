@@ -1,9 +1,1 @@
-{
-  "label": "Carry an item out of your bag",
-  "bindings": [
-    {
-      "type": "drag",
-      "button": "Left"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/carry_item.json

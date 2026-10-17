@@ -96,7 +96,8 @@ fn a_lower_priority_act_waits_while_an_equal_one_interrupts() {
     let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let script = inline(json!({
-        "interacted": interacted("attack"),
+        "interacted": interacted("hostile"),
+        "hostile": { "type": "set_attitude", "attitude": "hostile", "next": "attack" },
         "attack": {
             "type": "attack",
             "target": { "type": "subject" },
@@ -143,7 +144,8 @@ fn an_attack_loses_a_target_that_leaves_its_range() {
     let mut sim = Sim::area(spawn_area());
     let player = sim.join(1);
     let script = inline(json!({
-        "interacted": interacted("attack"),
+        "interacted": interacted("hostile"),
+        "hostile": { "type": "set_attitude", "attitude": "hostile", "next": "attack" },
         "attack": {
             "type": "attack",
             "target": { "type": "subject" },
@@ -293,7 +295,7 @@ fn scripted_npc(sim: &mut Sim, beside: Entity, modules: &[&ScriptModule]) -> (En
     let spot = sim.walkable_near(at, Tiles(1.0), Tiles(1.5));
     let npc = npc::spawn(
         sim.world(),
-        row::<NpcId>("Grisha"),
+        row::<NpcId>("Orc"),
         spot,
         spawn_area(),
         Pack(u32::MAX),

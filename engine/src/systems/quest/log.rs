@@ -13,12 +13,12 @@ use super::{
 use crate::core::content::{Content, Fixture};
 use crate::core::time::UnixMillis;
 use crate::systems::dialogue::ChoiceReveal;
-use crate::systems::hud::{self, Confirm, HudAudience, HudWindow};
+use crate::systems::hud::{self, Confirm, HudWindow};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::widget::slot_note_source;
 use crate::systems::item::{Inventory, ItemFlag, ItemStack};
-use crate::systems::player::session::{self, ClientMode, Viewpoint};
+use crate::systems::player::session;
 use crate::systems::quest::QuestDef;
 use crate::systems::screen::ClientScreen;
 
@@ -40,9 +40,6 @@ impl Plugin for QuestLogPlugin {
 pub struct QuestLogWindow;
 
 impl HudWindow for QuestLogWindow {
-    fn audience(&self) -> HudAudience {
-        HudAudience::Players
-    }
     fn title(&self) -> &'static str {
         "Quests"
     }
@@ -109,7 +106,6 @@ struct Page {
     inventory: Inventory,
     now: UnixMillis,
     selected: Option<QuestId>,
-    playing: bool,
 }
 
 fn forget(mut browse: ResMut<Browse>) {
@@ -118,7 +114,7 @@ fn forget(mut browse: ResMut<Browse>) {
 
 impl Page {
     fn of(world: &World, tab: LogTab) -> Page {
-        let seen = world.resource::<Viewpoint>().0;
+        let seen = session::me(world);
         Page {
             parties: world.resource::<Parties>().clone(),
             tab,
@@ -132,7 +128,6 @@ impl Page {
                 .unwrap_or_else(Inventory::empty),
             now: super::card::clock_now(world),
             selected: world.resource::<Browse>().of(tab),
-            playing: session::mode(world) == ClientMode::Play,
         }
     }
 
@@ -261,11 +256,11 @@ fn row(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId, selected: bo
                     if page.log.tracked.contains(&quest) {
                         hud::icon(ui, world, &InterfaceIcon::Tracked.get(&content).image, 14.0);
                     }
-                    let (status, colour) = status(&content, page, quest);
+                    let (status, color) = status(&content, page, quest);
                     ui.label(
                         RichText::new(status)
                             .size(TextRole::Small.size())
-                            .color(colour),
+                            .color(color),
                     );
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         hud::icon(ui, world, def.icon(&content), ROW_ICON);
@@ -368,7 +363,7 @@ fn detail(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
     );
     let finished = page.finished(quest);
     for (index, (objective, mut progress)) in def.objectives().zip(progress).enumerate() {
-        let colour = match finished.map(|finished| finished.result) {
+        let color = match finished.map(|finished| finished.result) {
             Some(QuestResult::Completed) => color::OK,
             Some(QuestResult::Failed) => color::MUTED,
             None if progress.done() => color::OK,
@@ -376,7 +371,7 @@ fn detail(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
         };
         progress.counted &= finished.is_none();
         ui.push_id(("objective", index), |ui| {
-            objective_row(ui, world, objective, &progress, colour);
+            objective_row(ui, world, objective, &progress, color);
         });
     }
     if let Some(paths) = def.decision() {
@@ -402,7 +397,7 @@ fn detail(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
         ));
     }
     if let Some(finished) = finished {
-        let (outcome, colour) = match finished.result {
+        let (outcome, color) = match finished.result {
             QuestResult::Completed if finished.resets_in(page.now).is_some() => (
                 Countdown::ResetsDetail
                     .label(&page.log, quest, page.now)
@@ -416,13 +411,9 @@ fn detail(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
             ),
             QuestResult::Failed => ("Failed".to_owned(), color::DANGER),
         };
-        ui.label(
-            RichText::new(outcome)
-                .family(family::medium())
-                .color(colour),
-        );
+        ui.label(RichText::new(outcome).family(family::medium()).color(color));
     }
-    if page.playing && page.log.trackable(&content, quest) {
+    if page.log.trackable(&content, quest) {
         footer(ui, world, page, quest);
     }
 }
@@ -512,9 +503,7 @@ fn quest_note(world: &World, stack: ItemStack) -> Option<String> {
     if !stack.item.get(content).has(ItemFlag::Quest) {
         return None;
     }
-    let granted_by = world
-        .resource::<Viewpoint>()
-        .0
+    let granted_by = session::me(world)
         .and_then(|seen| world.get::<QuestLog>(seen))
         .and_then(|log| {
             log.active.iter().find(|active| {

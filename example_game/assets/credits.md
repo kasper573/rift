@@ -17,3 +17,4 @@ https://opengameart.org/content/rpg-the-secret-within-the-woods — "RPG - The S
 https://opengameart.org/content/jc-sounds-nature-ambient-pack-vol-1 — CC BY 4.0 - Credit: JC Sounds, cut to loops and levelled
 https://opengameart.org/content/jc-sounds-pirate-pack-vol-1 — CC BY 4.0 - Credit: JC Sounds, cut to loops and levelled
 https://opengameart.org/content/sea-and-river-wave-sounds
+assets/vfx/*.png — placeholder effect sheets drawn by a script, to be replaced by an effects pack

@@ -15,12 +15,11 @@ use crate::core::math::WindowPx;
 use crate::core::text::{self, StyledLine, TextLook};
 use crate::systems::input::map::{ActionInput, InputAction, InputMap};
 use crate::systems::interface::InterfaceIcon;
-use crate::systems::player::session::{ClientMode, SpectateStatus};
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings;
-use crate::systems::{equipment, history, item, player, quest, spectate, stat, terminal};
+use crate::systems::{equipment, history, item, player, quest, skill, stat, terminal};
 
-pub(crate) use panel::{Sizing, WindowFrame, widget, window};
+pub(crate) use panel::{GripCorner, Sizing, WindowFrame, corner_grip, widget, window};
 
 pub(crate) const WIDGET: WindowPx = WindowPx(48.0);
 const WINDOW_SIZE: Vec2 = Vec2::new(400.0, 200.0);
@@ -58,36 +57,22 @@ impl Plugin for HudPlugin {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum HudAudience {
-    Players,
-    Spectators,
-    Everyone,
-}
-
-impl HudAudience {
-    fn includes(self, mode: ClientMode) -> bool {
-        match self {
-            HudAudience::Players => mode == ClientMode::Play,
-            HudAudience::Spectators => mode == ClientMode::Spectate,
-            HudAudience::Everyone => true,
-        }
-    }
-}
-
 pub trait HudWidget: Send + Sync {
-    fn audience(&self) -> HudAudience;
     fn fallback(&self, screen: Rect) -> Pos2;
     fn show(&self, ui: &mut Ui, world: &mut World);
 }
 
 pub trait HudWindow: Send + Sync {
-    fn audience(&self) -> HudAudience;
     fn title(&self) -> &'static str;
     fn toggle(&self) -> InputAction;
     fn icon(&self) -> InterfaceIcon;
     fn size(&self) -> Vec2 {
         WINDOW_SIZE
+    }
+    /// The most body the window may be given, when its content has an edge it must never
+    /// show past.
+    fn body_limit(&self, _world: &World) -> Option<Vec2> {
+        None
     }
     fn show(&self, ui: &mut Ui, world: &mut World);
 }
@@ -194,7 +179,8 @@ pub(crate) fn file_icon(ui: &mut Ui, world: &mut World, file: &str, size: f32) -
 static WIDGETS: &[(&str, &dyn HudWidget)] = &[
     ("character", &player::widget::CharacterWidget),
     ("quests", &quest::tracker::QuestTrackerWidget),
-    ("spectator", &spectate::widget::SpectatorWidget),
+    (skill::bar::HOTBAR, &skill::bar::HotbarWidget),
+    (skill::bar::BASIC_ATTACK, &skill::bar::BasicAttackWidget),
 ];
 
 // Their launchers line up in this order.
@@ -202,25 +188,12 @@ static WINDOWS: &[&dyn HudWindow] = &[
     &item::widget::InventoryWindow,
     &equipment::widget::EquipmentWindow,
     &stat::widget::StatsWindow,
+    &skill::window::SkillsWindow,
     &quest::log::QuestLogWindow,
     &history::widget::HistoryWindow,
     &settings::SettingsWindow,
     &terminal::widget::TerminalWindow,
 ];
-
-fn widgets(mode: ClientMode) -> impl Iterator<Item = (&'static str, &'static dyn HudWidget)> {
-    WIDGETS
-        .iter()
-        .copied()
-        .filter(move |(_, widget)| widget.audience().includes(mode))
-}
-
-fn windows(mode: ClientMode) -> impl Iterator<Item = &'static dyn HudWindow> {
-    WINDOWS
-        .iter()
-        .copied()
-        .filter(move |window| window.audience().includes(mode))
-}
 
 #[derive(Resource, Default)]
 struct Open(HashSet<&'static str>);
@@ -248,18 +221,32 @@ fn forget_drawn(mut drawn: ResMut<WindowsDrawn>, mut hud: ResMut<HudDrawn>) {
     hud.0.clear();
 }
 
+/// Where a window stands this frame, while it is open.
+pub(crate) fn window_rect(world: &World, window: &dyn HudWindow) -> Option<Rect> {
+    let title = window.title();
+    if !window_open(world, title) {
+        return None;
+    }
+    panel::shown_rect(&gui::context(world)?, title)
+}
+
+/// The most a window may be given, when its content bounds it.
+pub(crate) fn window_limit(world: &World, window: &dyn HudWindow) -> Option<Vec2> {
+    let body = window.body_limit(world)?;
+    Some(body + panel::chrome(&gui::context(world)?))
+}
+
 fn draw_hud(world: &mut World) {
     let Some(gui) = gui::context(world) else {
         return;
     };
-    let mode = world.resource::<SpectateStatus>().mode();
     let screen = gui.content_rect();
-    for (name, shown) in widgets(mode) {
+    for &(name, shown) in WIDGETS {
         widget(world, &gui, name, shown.fallback(screen), |ui, world| {
             shown.show(ui, world);
         });
     }
-    for (slot, shown) in windows(mode).enumerate() {
+    for (slot, &shown) in WINDOWS.iter().enumerate() {
         let title = shown.title();
         if !window_open(world, title) {
             launcher(world, &gui, shown, launcher_pos(slot, screen));
@@ -275,6 +262,7 @@ fn draw_hud(world: &mut World) {
             title: Some(title),
             start: centered,
             sizing: Sizing::Resizable,
+            body_limit: shown.body_limit(world),
         };
         let mut open = true;
         window(world, &gui, frame, &mut open, |ui, world| {
@@ -377,8 +365,8 @@ fn launcher_pos(slot: usize, screen: Rect) -> Pos2 {
     )
 }
 
-fn toggle_keys(input: ActionInput, status: Res<SpectateStatus>, mut open: ResMut<Open>) {
-    for window in windows(status.mode()) {
+fn toggle_keys(input: ActionInput, mut open: ResMut<Open>) {
+    for window in WINDOWS {
         let title = window.title();
         if input.just_pressed(window.toggle()) && !open.0.remove(title) {
             open.0.insert(title);

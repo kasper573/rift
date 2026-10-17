@@ -1,0 +1,59 @@
+{
+  "name": "Spark",
+  "icon": "icons/ore_and_gem/diamond.png",
+  "sfx": "spark_zap",
+  "target": "single_enemy",
+  "basic_attack": true,
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 0.8
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "hit": {
+          "type": "damage",
+          "who": {
+            "type": "skill_targets"
+          },
+          "by": {
+            "type": "multiply",
+            "a": {
+              "type": "stat",
+              "stat": "damage"
+            },
+            "b": {
+              "type": "skill_stat",
+              "skill": "spark",
+              "stat": "power"
+            }
+          },
+          "next": "show"
+        },
+        "show": {
+          "type": "vfx",
+          "vfx": "spark_hit",
+          "on": {
+            "type": "skill_targets"
+          }
+        },
+        "swing": {
+          "type": "animate",
+          "action": "attack",
+          "wait": "apex",
+          "next": "hit"
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "swing"
+        }
+      }
+    }
+  ]
+}

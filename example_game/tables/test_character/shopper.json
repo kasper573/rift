@@ -1,6 +1,6 @@
 {
   "name": "Shopper",
-  "job": "adventurer",
+  "class": "fighter",
   "bag": [
     {
       "item": "gold",

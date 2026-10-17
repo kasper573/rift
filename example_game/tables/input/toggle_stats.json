@@ -1,9 +1,1 @@
-{
-  "label": "Open or close the stats",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "KeyK"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/toggle_stats.json

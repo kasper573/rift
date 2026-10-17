@@ -40,6 +40,7 @@ fn a_folder_written_from_scratch_lists_every_row_and_grid() {
 
 fn rows_and_grids(folder: &Path) -> BTreeSet<String> {
     let tables = WalkDir::new(folder.join("tables"))
+        .follow_links(true)
         .into_iter()
         .map(|entry| entry.expect("an entry"))
         .filter(|entry| entry.file_type().is_file())

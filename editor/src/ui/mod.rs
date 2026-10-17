@@ -20,9 +20,9 @@ use egui_dock::{DockArea, DockState, TabViewer};
 
 use crate::app::{BottomTab, CloseDialog, CloseThen, Editor, LeftTab, ModalDialog, RightTab};
 use crate::project::{RowSelection, row_file};
-use crate::tabs::EditorTab;
+use crate::tabs::{CloseTabs, EditorTab};
 use crate::views::script::ScriptKeys;
-use crate::views::{area, character, model, script, spreadsheet, tileset, world};
+use crate::views::{area, character, class, model, script, spreadsheet, tileset, vfx, world};
 use crate::{import, play, views};
 
 pub fn show(editor: &mut Editor, ctx: &Context) {
@@ -296,10 +296,14 @@ fn top_bar(editor: &mut Editor, root: &mut egui::Ui) {
                         let unsaved = project.unsaved().len();
                         if let Some(reason) = &project.read_only {
                             widgets::pill(ui, "read-only", theme::WARN).on_hover_text(reason);
+                        } else if project.loading() {
+                            widgets::pill(ui, "applying…", theme::MUTED);
+                            ui.ctx().request_repaint_after(Duration::from_millis(50));
+                        } else if let Some(report) = &project.report {
+                            widgets::pill(ui, "does not load", theme::DANGER)
+                                .on_hover_text(report_summary(report));
                         } else if unsaved > 0 {
                             widgets::pill(ui, &format!("{unsaved} unsaved"), theme::TEXT);
-                        } else if project.report.is_some() {
-                            widgets::pill(ui, "does not load", theme::DANGER);
                         } else {
                             widgets::pill(ui, "✔ saved", theme::OK);
                         }
@@ -434,7 +438,30 @@ fn workspace(editor: &mut Editor, root: &mut egui::Ui) {
                 .show_leaf_collapse_buttons(false)
                 .show_inside(ui, &mut viewer);
         });
+    if let Some(request) = editor.close_tabs.take() {
+        close_tabs(&mut dock, request);
+    }
     editor.dock = dock;
+}
+
+fn close_tabs(dock: &mut DockState<EditorTab>, request: CloseTabs) {
+    match request {
+        CloseTabs::All => dock.retain_tabs(|_| false),
+        CloseTabs::Others(kept) => dock.retain_tabs(|tab| *tab == kept),
+        CloseTabs::ToTheRight(from) => {
+            let Some(path) = dock.find_tab(&from) else {
+                return;
+            };
+            let Ok(leaf) = dock.leaf_mut(egui_dock::NodePath {
+                surface: path.surface,
+                node: path.node,
+            }) else {
+                return;
+            };
+            leaf.tabs.truncate(path.tab.0 + 1);
+            leaf.active = path.tab;
+        }
+    }
 }
 
 fn empty_centre(ui: &mut egui::Ui) {
@@ -446,15 +473,49 @@ fn empty_centre(ui: &mut egui::Ui) {
 
 const STATUS_HEIGHT: f32 = 28.0;
 
+fn report_summary(report: &engine::core::content::LoadReport) -> String {
+    const SHOWN: usize = 8;
+    let mut lines: Vec<String> = report
+        .errors
+        .iter()
+        .take(SHOWN)
+        .map(|error| match &error.at {
+            engine::core::content::ErrorPlace::Json { pointer, .. } if !pointer.is_empty() => {
+                format!("{} at {pointer}: {}", error.file, error.problem)
+            }
+            _ => format!("{}: {}", error.file, error.problem),
+        })
+        .collect();
+    if report.errors.len() > SHOWN {
+        lines.push(format!("… and {} more", report.errors.len() - SHOWN));
+    }
+    lines.join("\n")
+}
+
 fn status_bar(editor: &mut Editor, root: &mut egui::Ui) {
     let mut left = mem::take(&mut editor.status.left);
     if let Some(project) = &editor.project
-        && project.report.is_some()
+        && project.broken_on_disk()
     {
         left = vec![
             pretty_path(&project.root),
             "not loaded".to_owned(),
             "loads again by itself when a file changes".to_owned(),
+        ];
+    } else if let Some(report) = editor
+        .project
+        .as_ref()
+        .and_then(|project| project.report.as_ref())
+    {
+        let first = crate::project::EditRefusal::of(report);
+        left = vec![
+            "does not load".to_owned(),
+            if first.pointer.is_empty() {
+                first.file.clone()
+            } else {
+                format!("{} at {}", first.file, first.pointer)
+            },
+            first.sentence(),
         ];
     } else if left.is_empty() {
         let selection = &editor.selection;
@@ -502,6 +563,9 @@ struct Viewer<'a> {
     editor: &'a mut Editor,
 }
 
+/// The gutter every tab's content keeps from the tab body's edge, so views line up.
+const CONTENT_PADDING: egui::Margin = egui::Margin::symmetric(16, 10);
+
 impl TabViewer for Viewer<'_> {
     type Tab = EditorTab;
 
@@ -536,19 +600,57 @@ impl TabViewer for Viewer<'_> {
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut EditorTab) {
         match tab {
             EditorTab::World => world::show(self.editor, ui),
-            EditorTab::Row { table, key } if table == character::TABLE => {
-                character::show(self.editor, ui, key)
-            }
-            EditorTab::Row { table, key } => inspector::show_row_tab(self.editor, ui, table, key),
-            EditorTab::Rows { table, keys } => {
-                inspector::show_rows_tab(self.editor, ui, table, keys)
-            }
             EditorTab::Area { key } => area::show(self.editor, ui, key),
             EditorTab::Blueprint { key } => area::show_blueprint(self.editor, ui, key),
             EditorTab::Script(owner) => script::show(self.editor, ui, owner),
             EditorTab::Model { key } => model::show(self.editor, ui, key),
             EditorTab::Tileset { key } => tileset::show(self.editor, ui, key),
-            EditorTab::Spreadsheet { table } => spreadsheet::show(self.editor, ui, table),
+            EditorTab::Row { .. } | EditorTab::Rows { .. } | EditorTab::Spreadsheet { .. } => {
+                egui::Frame::new()
+                    .inner_margin(CONTENT_PADDING)
+                    .show(ui, |ui| {
+                        ui.set_min_size(ui.available_size());
+                        match tab {
+                            EditorTab::Row { table, key } if table == character::TABLE => {
+                                character::show(self.editor, ui, key)
+                            }
+                            EditorTab::Row { table, key } if table == class::TABLE => {
+                                class::show(self.editor, ui, key)
+                            }
+                            EditorTab::Row { table, key } if table == vfx::TABLE => {
+                                vfx::show_vfx(self.editor, ui, key)
+                            }
+                            EditorTab::Row { table, key } if table == vfx::SHADER_TABLE => {
+                                vfx::show_shader(self.editor, ui, key)
+                            }
+                            EditorTab::Row { table, key } => {
+                                inspector::show_row_tab(self.editor, ui, table, key)
+                            }
+                            EditorTab::Rows { table, keys } => {
+                                inspector::show_rows_tab(self.editor, ui, table, keys)
+                            }
+                            EditorTab::Spreadsheet { table } => {
+                                spreadsheet::show(self.editor, ui, table)
+                            }
+                            _ => {}
+                        }
+                    });
+            }
+        }
+    }
+
+    fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut EditorTab, _: egui_dock::NodePath) {
+        if ui.button("Close all").clicked() {
+            self.editor.close_tabs = Some(CloseTabs::All);
+            ui.close();
+        }
+        if ui.button("Close other tabs").clicked() {
+            self.editor.close_tabs = Some(CloseTabs::Others(tab.clone()));
+            ui.close();
+        }
+        if ui.button("Close tabs to the right").clicked() {
+            self.editor.close_tabs = Some(CloseTabs::ToTheRight(tab.clone()));
+            ui.close();
         }
     }
 

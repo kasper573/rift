@@ -1,12 +1,16 @@
 {
   "name": "Well Off",
-  "job": "adventurer",
+  "class": "fighter",
   "xp": 40,
+  "basic_attack": "slash",
   "bag": [
     {
       "item": "gold",
       "count": 300
     }
   ],
+  "equipment": {
+    "weapon": "iron_sword"
+  },
   "start": "initial_spawn"
 }

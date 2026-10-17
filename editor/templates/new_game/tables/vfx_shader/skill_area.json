@@ -1,0 +1,57 @@
+{
+  "name": "Skill area",
+  "params": [
+    {
+      "name": "color",
+      "kind": "color",
+      "default": [
+        120,
+        200,
+        255,
+        255
+      ]
+    },
+    {
+      "name": "rim",
+      "kind": "color",
+      "default": [
+        225,
+        245,
+        255,
+        255
+      ]
+    },
+    {
+      "name": "hostile_color",
+      "kind": "color",
+      "default": [
+        255,
+        96,
+        64,
+        255
+      ]
+    },
+    {
+      "name": "hostile_rim",
+      "kind": "color",
+      "default": [
+        255,
+        220,
+        150,
+        255
+      ]
+    },
+    {
+      "name": "hostile",
+      "kind": "bool",
+      "default": false
+    },
+    {
+      "name": "strength",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 2.0
+    }
+  ]
+}

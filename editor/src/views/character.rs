@@ -5,10 +5,11 @@ use engine::core::math::Pos;
 use engine::core::tiling::Tiles;
 use engine::systems::GameSettings;
 use engine::systems::area::{self, AreaDef, AreaModule};
-use engine::systems::job::{JobDef, JobLevel};
+use engine::systems::class::{ClassDef, ClassLevel};
 use engine::systems::npc::NpcId;
 use engine::systems::quest::{Objective, Parties, Party, QuestDef, QuestId, QuestLog, QuestResult};
 use engine::systems::script::RiftScripts;
+use engine::systems::skill::HOTBAR_SLOTS;
 use engine::systems::stat::StatKind;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -22,12 +23,15 @@ use crate::ui::browser::BrowserAction;
 use crate::ui::{inspector, theme, widgets};
 use crate::value::RowValue;
 use crate::views::area::AreaViews;
+use crate::views::class;
 use crate::{condition, forms, picker, play, schema};
 
 pub const TABLE: &str = "test_character";
 const NAV: f32 = 150.0;
 const COLUMN: f32 = 300.0;
 const MAP: Vec2 = Vec2::new(272.0, 96.0);
+const SLOT_WIDTH: f32 = 90.0;
+const HOTBAR_COLUMN: f32 = 440.0;
 
 #[derive(Default)]
 pub struct CharacterView {
@@ -44,6 +48,8 @@ pub enum CharacterSection {
     Stats,
     Bag,
     Equipment,
+    Skills,
+    Hotbar,
     Start,
     #[serde(rename = "areas")]
     AreasKnown,
@@ -56,11 +62,13 @@ pub enum CharacterSection {
 }
 
 impl CharacterSection {
-    const ALL: [CharacterSection; 11] = [
+    const ALL: [CharacterSection; 13] = [
         CharacterSection::Identity,
         CharacterSection::Stats,
         CharacterSection::Bag,
         CharacterSection::Equipment,
+        CharacterSection::Skills,
+        CharacterSection::Hotbar,
         CharacterSection::Start,
         CharacterSection::AreasKnown,
         CharacterSection::Quests,
@@ -82,6 +90,9 @@ impl CharacterSection {
             CharacterSection::Stats | CharacterSection::AreasKnown => {
                 (&[CharacterSection::Stats], &[CharacterSection::AreasKnown])
             }
+            CharacterSection::Skills | CharacterSection::Hotbar => {
+                (&[CharacterSection::Skills], &[CharacterSection::Hotbar])
+            }
             CharacterSection::Quests | CharacterSection::Memories => {
                 (&[CharacterSection::Quests], &[CharacterSection::Memories])
             }
@@ -98,6 +109,8 @@ impl CharacterSection {
             CharacterSection::Stats => "Stats and effects",
             CharacterSection::Bag => "Bag",
             CharacterSection::Equipment => "Equipment",
+            CharacterSection::Skills => "Skills",
+            CharacterSection::Hotbar => "Hotbar",
             CharacterSection::Start => "Start",
             CharacterSection::AreasKnown => "Areas known",
             CharacterSection::Quests => "Quests",
@@ -207,6 +220,8 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                                     CharacterSection::Equipment => {
                                         equipment(ui, &mut cx, &mut value)
                                     }
+                                    CharacterSection::Skills => skills(ui, &mut cx, &mut value),
+                                    CharacterSection::Hotbar => hotbar(ui, &mut cx, &mut value),
                                     CharacterSection::Start => start(
                                         ui,
                                         &mut cx,
@@ -273,6 +288,12 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
             "the start is where Play puts the character; Play here overrides it once".to_owned()
         }
         CharacterSection::Bag => "counts stop at each item's stack size".to_owned(),
+        CharacterSection::Skills => {
+            "ranks must fit the points the class grants at this xp".to_owned()
+        }
+        CharacterSection::Hotbar => {
+            "slots count from 0; a slot may hold a known skill or a held item".to_owned()
+        }
         _ => "every section is what the server keeps for a player".to_owned(),
     });
     if let Some(request) = pick {
@@ -297,27 +318,27 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
 
 fn identity(ui: &mut Ui, cx: &mut FormCx, value: &mut Value) -> FormChange {
     let mut changed = FormChange::default();
-    let jobs: Vec<String> = cx.files.keys_of("job").map(str::to_owned).collect();
+    let classes: Vec<String> = cx.files.keys_of("class").map(str::to_owned).collect();
     let xp = value["xp"].as_u64().unwrap_or(0) as u32;
-    let level = level_of(cx, value.text("job"), xp);
-    card(ui, "player", "Identity", |ui| {
+    let level = level_of(cx, value.text("class"), xp);
+    card(ui, "Identity", |ui| {
         widgets::kv(ui, "name", |ui| {
             changed |= forms::text(ui, cx, &mut value["name"], "/name");
         });
-        widgets::kv(ui, "job", |ui| {
-            let current = value.text("job").to_owned();
+        widgets::kv(ui, "class", |ui| {
+            let current = value.text("class").to_owned();
             let mut picked = current.clone();
-            widgets::combo_box("character-job")
+            widgets::combo_box("character-class")
                 .width(ui.available_width() - 8.0)
                 .selected_text(theme::mono(&current).size(13.0))
                 .show_ui(ui, |ui| {
-                    for job in &jobs {
-                        ui.selectable_value(&mut picked, job.clone(), job);
+                    for class in &classes {
+                        ui.selectable_value(&mut picked, class.clone(), class);
                     }
                 });
             if picked != current {
-                value["job"] = Value::String(picked);
-                changed = FormChange::at("/job");
+                value["class"] = Value::String(picked);
+                changed = FormChange::at("/class");
             }
         });
         widgets::kv(ui, "xp", |ui| {
@@ -350,7 +371,7 @@ fn generic(
         else {
             continue;
         };
-        card(ui, "player", title, |ui| {
+        card(ui, title, |ui| {
             if value.get(*field).is_none_or(Value::is_null) {
                 value[*field] = schema::template(cx.root, schema);
             }
@@ -368,7 +389,7 @@ fn bag(ui: &mut Ui, cx: &mut FormCx, value: &mut Value) -> FormChange {
     let items: Vec<String> = cx.files.keys_of("item").map(str::to_owned).collect();
     let count = value["bag"].as_array().map_or(0, Vec::len);
     let mut remove = None;
-    card(ui, "item", "Bag", |ui| {
+    card(ui, "Bag", |ui| {
         for index in 0..count {
             let path = format!("/bag/{index}");
             let stack = &mut value["bag"][index];
@@ -445,7 +466,7 @@ fn equipment(ui: &mut Ui, cx: &mut FormCx, value: &mut Value) -> FormChange {
             (*slot, items)
         })
         .collect();
-    card(ui, "equipment", "Equipment", |ui| {
+    card(ui, "Equipment", |ui| {
         for slot in slots {
             let current = value["equipment"][slot].as_str().map(str::to_owned);
             widgets::kv(ui, slot, |ui| {
@@ -484,6 +505,248 @@ fn equipment(ui: &mut Ui, cx: &mut FormCx, value: &mut Value) -> FormChange {
     changed
 }
 
+fn skills(ui: &mut Ui, cx: &mut FormCx, value: &mut Value) -> FormChange {
+    let mut changed = FormChange::default();
+    if !value["skills"].is_array() {
+        value["skills"] = Value::Array(Vec::new());
+    }
+    let class = value.text("class").to_owned();
+    let tree = tree_of(cx, &class);
+    let granted = class_points(cx, &class, value["xp"].as_u64().unwrap_or(0) as u32);
+    let count = value["skills"].as_array().map_or(0, Vec::len);
+    let mut remove = None;
+    let mut spent = 0;
+    card(ui, "Skills", |ui| {
+        for index in 0..count {
+            let path = format!("/skills/{index}");
+            let learned = &mut value["skills"][index];
+            let node = learned.text("node").to_owned();
+            let ranks = tree
+                .get(&node)
+                .map_or(1, |skill| class::tree::skill_ranks(cx.files, skill));
+            let held = learned["rank"].as_u64().unwrap_or(1) as u8;
+            spent += tree
+                .get(&node)
+                .map_or(0, |skill| rank_cost(cx, skill, held));
+            ui.horizontal(|ui| {
+                if ui
+                    .add(egui::Label::new(theme::faint("×")).sense(egui::Sense::click()))
+                    .on_hover_text("Forget")
+                    .clicked()
+                {
+                    remove = Some(index);
+                }
+                let mut picked = node.clone();
+                widgets::combo_box(("learned-node", index))
+                    .width(170.0)
+                    .selected_text(if node.is_empty() {
+                        theme::muted("pick a node…")
+                    } else {
+                        theme::mono(&node).size(13.0)
+                    })
+                    .show_ui(ui, |ui| {
+                        for key in tree.keys() {
+                            ui.selectable_value(&mut picked, key.clone(), key);
+                        }
+                    });
+                if picked != node {
+                    learned["node"] = Value::String(picked);
+                    changed = FormChange::at(&path);
+                }
+                let mut draft = held.min(ranks);
+                let response = forms::boxed_input(ui, Some(&format!("of {ranks}")), |ui| {
+                    ui.add(egui::DragValue::new(&mut draft).range(1..=ranks))
+                });
+                if (response.changed() || draft != held) && draft != held {
+                    learned["rank"] = Value::from(draft);
+                    changed = FormChange::at(&path);
+                }
+            });
+        }
+        if count == 0 {
+            ui.label(theme::muted("nothing learned").size(13.0));
+        }
+        if tree.is_empty() {
+            ui.label(theme::faint("the class has no tree to learn from").size(12.0));
+        } else if ui.button("+ skill").clicked()
+            && let Some(first) = tree.keys().next()
+            && let Some(list) = value["skills"].as_array_mut()
+        {
+            list.push(serde_json::json!({ "node": first, "rank": 1 }));
+            changed = FormChange::at("/skills");
+        }
+        let line = format!("{spent} of {granted} points spent");
+        if spent > granted {
+            ui.label(theme::warn(format!(
+                "{line} · more than the class grants at this xp"
+            )));
+        } else {
+            ui.label(theme::faint(line).size(12.0));
+        }
+    });
+    if let Some(index) = remove
+        && let Some(list) = value["skills"].as_array_mut()
+    {
+        list.remove(index);
+        changed = FormChange::at("/skills");
+    }
+    if value["skills"].as_array().is_some_and(Vec::is_empty) {
+        value.remove_field("skills");
+    }
+    changed
+}
+
+fn hotbar(ui: &mut Ui, cx: &mut FormCx, value: &mut Value) -> FormChange {
+    let mut changed = FormChange::default();
+    if !value["hotbar"].is_array() {
+        value["hotbar"] = Value::Array(Vec::new());
+    }
+    let count = value["hotbar"].as_array().map_or(0, Vec::len);
+    let mut remove = None;
+    widgets::card_frame(false).show(ui, |ui| {
+        ui.set_width(HOTBAR_COLUMN);
+        widgets::card_title(ui, "Hotbar");
+        widgets::kv(ui, "basic attack", |ui| {
+            let mut skill = value.text("basic_attack").to_owned();
+            if picker::row(ui, cx, "skill", &mut skill, "/basic_attack") {
+                if skill.is_empty() {
+                    value.remove_field("basic_attack");
+                } else {
+                    value["basic_attack"] = Value::String(skill);
+                }
+                changed = FormChange::at("/basic_attack");
+            }
+        });
+        ui.label(theme::faint("empty, a worn weapon that grants one fills it").size(12.0));
+        widgets::section(ui, "slots");
+        for index in 0..count {
+            let path = format!("/hotbar/{index}");
+            let entry = &mut value["hotbar"][index];
+            let (kind, held) = match &entry["entry"] {
+                Value::Object(fields) if fields.contains_key("item") => (
+                    "item",
+                    fields["item"].as_str().unwrap_or_default().to_owned(),
+                ),
+                Value::Object(fields) => (
+                    "skill",
+                    fields["skill"].as_str().unwrap_or_default().to_owned(),
+                ),
+                _ => ("skill", String::new()),
+            };
+            ui.horizontal(|ui| {
+                if ui
+                    .add(egui::Label::new(theme::faint("×")).sense(egui::Sense::click()))
+                    .on_hover_text("Empty the slot")
+                    .clicked()
+                {
+                    remove = Some(index);
+                }
+                let slot = entry["slot"].as_u64().unwrap_or(0) as u32;
+                let mut draft = slot;
+                let response = ui
+                    .allocate_ui_with_layout(
+                        egui::vec2(SLOT_WIDTH, ui.spacing().interact_size.y),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_width(SLOT_WIDTH);
+                            forms::boxed_input(ui, Some("slot"), |ui| {
+                                ui.add(egui::DragValue::new(&mut draft).range(0..=HOTBAR_SLOTS - 1))
+                            })
+                        },
+                    )
+                    .inner;
+                if response.changed() && draft != slot {
+                    entry["slot"] = Value::from(draft);
+                    changed = FormChange::at(&path);
+                }
+                let mut table = kind.to_owned();
+                let mut key = held.clone();
+                ui.scope(|ui| {
+                    ui.set_width(ui.available_width());
+                    if picker::row_among(
+                        ui,
+                        cx,
+                        &["skill", "item"],
+                        &mut table,
+                        &mut key,
+                        &format!("{path}/entry"),
+                    ) {
+                        entry["entry"] = serde_json::json!({ table: key });
+                        changed = FormChange::at(&path);
+                    }
+                });
+            });
+        }
+        if count == 0 {
+            ui.label(theme::muted("empty").size(13.0));
+        }
+        if ui.button("+ slot").clicked()
+            && let Some(list) = value["hotbar"].as_array_mut()
+        {
+            let next = list
+                .iter()
+                .filter_map(|slot| slot["slot"].as_u64())
+                .max()
+                .map_or(0, |slot| slot + 1);
+            list.push(serde_json::json!({ "slot": next, "entry": { "skill": "" } }));
+            changed = FormChange::at("/hotbar");
+        }
+    });
+    if let Some(index) = remove
+        && let Some(list) = value["hotbar"].as_array_mut()
+    {
+        list.remove(index);
+        changed = FormChange::at("/hotbar");
+    }
+    if value["hotbar"].as_array().is_some_and(Vec::is_empty) {
+        value.remove_field("hotbar");
+    }
+    changed
+}
+
+fn tree_of(cx: &FormCx, class: &str) -> BTreeMap<String, String> {
+    cx.files
+        .json(&row_file("class", class))
+        .and_then(|row| {
+            row["tree"].as_object().map(|tree| {
+                tree.iter()
+                    .map(|(node, held)| (node.clone(), held.text("skill").to_owned()))
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
+}
+
+fn class_points(cx: &FormCx, class: &str, xp: u32) -> u32 {
+    cx.files
+        .json(&row_file("class", class))
+        .and_then(|row| {
+            row["levels"].as_array().map(|levels| {
+                levels
+                    .iter()
+                    .filter(|level| level["xp"].as_u64().unwrap_or(0) <= u64::from(xp))
+                    .map(|level| level["skill_points"].as_u64().unwrap_or(0) as u32)
+                    .sum()
+            })
+        })
+        .unwrap_or(0)
+}
+
+fn rank_cost(cx: &FormCx, skill: &str, rank: u8) -> u32 {
+    cx.files
+        .json(&row_file("skill", skill))
+        .and_then(|row| {
+            row["levels"].as_array().map(|levels| {
+                levels
+                    .iter()
+                    .take(usize::from(rank))
+                    .map(|level| level["cost"].as_u64().unwrap_or(0) as u32)
+                    .sum()
+            })
+        })
+        .unwrap_or(0)
+}
+
 fn start(
     ui: &mut Ui,
     cx: &mut FormCx,
@@ -517,7 +780,7 @@ fn start(
             ),
         )
     };
-    card(ui, "player", "Start", |ui| {
+    card(ui, "Start", |ui| {
         widgets::kv(ui, "area", |ui| {
             if at_spawn {
                 ui.label(theme::mono(format!("area/ {area_key}")).size(13.0));
@@ -647,7 +910,7 @@ fn areas_known(ui: &mut Ui, cx: &mut FormCx, value: &mut Value) -> FormChange {
         .collect();
     let mut remove: Option<String> = None;
     let mut add: Option<String> = None;
-    card(ui, "area", "Areas known", |ui| {
+    card(ui, "Areas known", |ui| {
         ui.horizontal_wrapped(|ui| {
             for area in &known {
                 let (_, closed) = widgets::chip_closable(ui, &format!("area/{area}"));
@@ -1321,10 +1584,10 @@ struct MemoryDef {
     label: String,
 }
 
-fn card(ui: &mut Ui, badge: &str, title: &str, body: impl FnOnce(&mut Ui)) {
+fn card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
     widgets::card_frame(false).show(ui, |ui| {
         ui.set_width(COLUMN);
-        widgets::card_title(ui, badge, title);
+        widgets::card_title(ui, title);
         body(ui);
     });
 }
@@ -1339,17 +1602,17 @@ fn stack_max(cx: &FormCx, item: &str) -> Option<u32> {
         .map(|max| max as u32)
 }
 
-pub fn level_of(cx: &FormCx, job: &str, xp: u32) -> u32 {
+pub fn level_of(cx: &FormCx, class: &str, xp: u32) -> u32 {
     let Some(content) = cx.content.clone() else {
         return 0;
     };
     content
-        .by_key::<JobDef>(job)
-        .map(|job| levels_reached(&job.get(&content).levels, xp))
+        .by_key::<ClassDef>(class)
+        .map(|class| levels_reached(&class.get(&content).levels, xp))
         .unwrap_or(0)
 }
 
-fn levels_reached(tiers: &[JobLevel], xp: u32) -> u32 {
+fn levels_reached(tiers: &[ClassLevel], xp: u32) -> u32 {
     tiers.iter().filter(|tier| tier.xp <= xp).count() as u32
 }
 
@@ -1361,9 +1624,9 @@ pub fn preview_extras(editor: &mut Editor, ui: &mut Ui, key: &str) {
         return;
     };
     let xp = row["xp"].as_u64().unwrap_or(0) as u32;
-    let job = row.text("job");
+    let class = row.text("class");
     let tiers = content
-        .by_key::<JobDef>(job)
+        .by_key::<ClassDef>(class)
         .map(|id| id.get(&content).levels.clone())
         .unwrap_or_default();
     let level = levels_reached(&tiers, xp);
@@ -1394,6 +1657,39 @@ pub fn preview_extras(editor: &mut Editor, ui: &mut Ui, key: &str) {
         ),
     };
     widgets::kv_text(ui, "level", format!("{level}{next}"));
+    let granted: u32 = tiers
+        .iter()
+        .filter(|tier| tier.xp <= xp)
+        .map(|tier| tier.skill_points)
+        .sum();
+    let spent: u32 = row["skills"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|learned| {
+            let node = content
+                .by_key::<ClassDef>(class)?
+                .get(&content)
+                .tree
+                .0
+                .get(learned.text("node"))?
+                .skill;
+            let rank = learned["rank"].as_u64().unwrap_or(1) as u8;
+            Some(
+                node.get(&content)
+                    .cost_to(engine::systems::skill::Rank(rank))
+                    .0,
+            )
+        })
+        .sum();
+    widgets::kv_text(
+        ui,
+        "skill points",
+        format!(
+            "{spent} spent of {granted} · {} left",
+            granted.saturating_sub(spent)
+        ),
+    );
     widgets::kv_text(ui, "health", format!("{} of {}", health, health));
     widgets::kv_text(ui, "starts", starts);
     widgets::kv_code(ui, "file", row_file(TABLE, key));

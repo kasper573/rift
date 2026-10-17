@@ -1,7 +1,1 @@
-{
-  "image": "icons/cursors/book001.png",
-  "hotspot": {
-    "x": 4,
-    "y": 4
-  }
-}
+../../../editor/templates/new_game/tables/cursor/read.json

@@ -1,0 +1,28 @@
+{
+  "name": "Vigorous",
+  "icon": "icons/potion/red_potion_3.png",
+  "category": "buff",
+  "description": "The greater draught still burns in the arm.",
+  "vfx": {
+    "on_activate": "healed"
+  },
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "hold"
+        },
+        "hold": {
+          "type": "boost",
+          "stat": "damage",
+          "by": {
+            "type": "status_power"
+          }
+        }
+      }
+    }
+  ]
+}

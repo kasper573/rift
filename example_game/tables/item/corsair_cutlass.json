@@ -15,7 +15,10 @@
         "type": "level"
       },
       "b": 3
-    }
+    },
+    "grants": [
+      "slash"
+    ]
   },
   "modules": [
     {
@@ -23,9 +26,19 @@
       "text": "A gilded blade from a ship nobody remembers. Worth following the cross for."
     },
     {
-      "type": "stat",
-      "stat": "damage",
-      "value": 5.0
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "boost_damage"
+        },
+        "boost_damage": {
+          "type": "boost",
+          "stat": "damage",
+          "by": 5.0
+        }
+      }
     }
   ]
 }

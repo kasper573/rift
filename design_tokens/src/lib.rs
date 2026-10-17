@@ -2,8 +2,8 @@ pub mod widgets;
 
 use egui::epaint::Shadow;
 use egui::{
-    Color32, Context, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Stroke,
-    TextStyle,
+    Color32, Context, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, FontTweak,
+    Stroke, TextStyle,
 };
 
 pub mod color {
@@ -29,7 +29,7 @@ pub mod color {
     pub const DANGER: Color32 = Color32::from_rgb(226, 90, 90);
 }
 
-/// The colours prose marks words with: places, names, items, magic and danger.
+/// The colors prose marks words with: places, names, items, magic and danger.
 pub mod ink {
     use egui::Color32;
 
@@ -67,6 +67,12 @@ pub mod family {
         FontFamily::Name("prose-bold-italic".into())
     }
 }
+
+/// Every control (button, field, combo, slider row) stands this tall: a body text row of 17 points
+/// (14 points at Circular's line height of 1.2) inside the button padding, so an icon-only button
+/// or one set in a smaller face lines up with the text buttons beside it.
+pub const CONTROL_HEIGHT: f32 = 25.0;
+pub const BUTTON_PADDING: egui::Vec2 = egui::Vec2::new(8.0, 4.0);
 
 pub const WIDGET_RADIUS: CornerRadius = CornerRadius::same(4);
 pub const WINDOW_RADIUS: CornerRadius = CornerRadius::same(6);
@@ -134,8 +140,8 @@ pub fn apply(ctx: &Context) {
         style.text_styles.insert(text, role.font_id());
     }
     style.spacing.item_spacing = egui::vec2(6.0, 5.0);
-    style.spacing.button_padding = egui::vec2(8.0, 4.0);
-    style.spacing.interact_size.y = 22.0;
+    style.spacing.button_padding = BUTTON_PADDING;
+    style.spacing.interact_size.y = CONTROL_HEIGHT;
     style.interaction.selectable_labels = false;
     let visuals = &mut style.visuals;
     visuals.dark_mode = true;
@@ -187,10 +193,20 @@ pub fn apply(ctx: &Context) {
 /// both for the glyphs these lack.
 pub fn fonts(faces: ThemeFonts) -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
+    // Circular asks for its typographic metrics, whose 0.2 em line gap egui lays entirely under
+    // the descender, so its capitals land well above the middle of their row and every button's
+    // text rides high beside the icons centred on that row. Shifting the glyphs down by the gap
+    // puts the capitals on the row's middle as drawn.
+    let circular = |data: FontData| {
+        data.tweak(FontTweak {
+            y_offset_factor: 0.2,
+            ..FontTweak::default()
+        })
+    };
     let faces = [
-        ("circular-400", faces.circular_400),
-        ("circular-500", faces.circular_500),
-        ("circular-700", faces.circular_700),
+        ("circular-400", circular(faces.circular_400)),
+        ("circular-500", circular(faces.circular_500)),
+        ("circular-700", circular(faces.circular_700)),
         ("lato-400", faces.lato_400),
         ("lato-400-italic", faces.lato_400_italic),
         ("lato-700", faces.lato_700),

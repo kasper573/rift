@@ -198,7 +198,7 @@ const METER_CELLS: usize = 12;
 const METER_RANGE_DB: f32 = 48.0;
 const VEIL: &str = "{\\p1}m 0 0 l 1280 0 1280 720 0 720{\\p0}";
 
-// ASS colours are &HAABBGGRR, with 00 opaque.
+// ASS colors are &HAABBGGRR, with 00 opaque.
 const SCRIPT_HEAD: &str = "[Script Info]
 ScriptType: v4.00+
 PlayResX: 1280
@@ -207,7 +207,7 @@ WrapStyle: 0
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Format: Name, Fontname, Fontsize, PrimaryColor, SecondaryColor, OutlineColor, BackColor, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Caption,DejaVu Sans,24,&H00FFFFFF,&H00FFFFFF,&H48000000,&H48000000,0,0,0,0,100,100,0,0,3,10,0,2,190,190,48,1
 Style: CaptionTop,DejaVu Sans,24,&H00FFFFFF,&H00FFFFFF,&H48000000,&H48000000,0,0,0,0,100,100,0,0,3,10,0,8,190,190,48,1
 Style: Veil,DejaVu Sans,20,&H66100A08,&H66100A08,&H66100A08,&H66100A08,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1

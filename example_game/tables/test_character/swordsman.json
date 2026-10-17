@@ -1,6 +1,7 @@
 {
   "name": "Swordsman",
-  "job": "adventurer",
+  "class": "fighter",
+  "basic_attack": "slash",
   "bag": [
     {
       "item": "rusty_sword"
@@ -9,5 +10,8 @@
       "item": "greater_health_potion"
     }
   ],
+  "equipment": {
+    "weapon": "rusty_sword"
+  },
   "start": "initial_spawn"
 }

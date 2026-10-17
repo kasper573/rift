@@ -1,0 +1,72 @@
+{
+  "name": "Thorn Lash",
+  "icon": "icons/weapon_and_tool/wooden_staff.png",
+  "sfx": "slash02",
+  "target": "area_enemy",
+  "area": {
+    "type": "cone",
+    "angle": 70.0,
+    "length": 2.5
+  },
+  "cooldown": 3.0,
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 0.8
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "hit": {
+          "type": "damage",
+          "who": {
+            "type": "skill_targets"
+          },
+          "by": {
+            "type": "multiply",
+            "a": {
+              "type": "stat",
+              "stat": "damage"
+            },
+            "b": {
+              "type": "skill_stat",
+              "skill": "thorn_lash",
+              "stat": "power"
+            }
+          },
+          "next": "show"
+        },
+        "show": {
+          "type": "vfx",
+          "vfx": "thorns",
+          "on": {
+            "type": "skill_targets"
+          }
+        },
+        "sweep": {
+          "type": "vfx",
+          "vfx": "sweep",
+          "on": {
+            "type": "skill_area"
+          },
+          "next": "hit"
+        },
+        "swing": {
+          "type": "animate",
+          "action": "attack",
+          "wait": "apex",
+          "next": "sweep"
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "swing"
+        }
+      }
+    }
+  ]
+}

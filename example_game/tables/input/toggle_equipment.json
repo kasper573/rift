@@ -1,9 +1,1 @@
-{
-  "label": "Open or close the equipment",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "KeyE"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/toggle_equipment.json

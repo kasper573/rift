@@ -1,0 +1,65 @@
+{
+  "name": "Rally",
+  "icon": "icons/weapon_and_tool/hammer.png",
+  "sfx": "rising_chime",
+  "target": "area_ally",
+  "range": 4.0,
+  "area": {
+    "type": "circle",
+    "radius": 3.0
+  },
+  "cooldown": 25.0,
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 2.0,
+        "duration": 10.0
+      }
+    },
+    {
+      "cost": 2,
+      "stats": {
+        "power": 3.0,
+        "duration": 14.0
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "cheer": {
+          "type": "apply_status",
+          "who": {
+            "type": "skill_targets"
+          },
+          "effect": "rallied",
+          "power": {
+            "type": "skill_stat",
+            "skill": "rally",
+            "stat": "power"
+          },
+          "seconds": {
+            "type": "skill_stat",
+            "skill": "rally",
+            "stat": "duration"
+          }
+        },
+        "sweep": {
+          "type": "vfx",
+          "vfx": "rally",
+          "on": {
+            "type": "skill_area"
+          },
+          "next": "cheer"
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "sweep"
+        }
+      }
+    }
+  ]
+}

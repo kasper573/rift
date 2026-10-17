@@ -24,37 +24,37 @@ pub fn paint_card(painter: &Painter, rect: Rect, selected: bool) {
     );
 }
 
-pub fn hatch(painter: &Painter, rect: Rect, colour: Color32, scale: f32) {
-    painter.rect_filled(rect, 0.0, theme::alpha(colour, colour.a() / 3));
+pub fn hatch(painter: &Painter, rect: Rect, color: Color32, scale: f32) {
+    painter.rect_filled(rect, 0.0, theme::alpha(color, color.a() / 3));
     let painter = painter.with_clip_rect(rect);
     let step = (scale / 2.0).clamp(3.0, 12.0);
     let mut x = rect.min.x - rect.height();
     while x < rect.max.x {
         let a = Pos2::new(x, rect.max.y);
         let b = Pos2::new(x + rect.height(), rect.min.y);
-        painter.line_segment([a, b], Stroke::new(1.0, colour));
+        painter.line_segment([a, b], Stroke::new(1.0, color));
         x += step;
     }
 }
 
-pub fn dots(painter: &Painter, rect: Rect, colour: Color32) {
-    painter.rect_filled(rect, 0.0, theme::alpha(colour, 60));
+pub fn dots(painter: &Painter, rect: Rect, color: Color32) {
+    painter.rect_filled(rect, 0.0, theme::alpha(color, 60));
     let step = (rect.width() / 4.0).max(3.0);
     let mut y = rect.min.y + step / 2.0;
     while y < rect.max.y {
         let mut x = rect.min.x + step / 2.0;
         while x < rect.max.x {
-            painter.circle_filled(Pos2::new(x, y), (step / 5.0).max(1.0), colour);
+            painter.circle_filled(Pos2::new(x, y), (step / 5.0).max(1.0), color);
             x += step;
         }
         y += step;
     }
 }
 
-pub fn grid_lines(painter: &Painter, rect: Rect, colour: Color32) {
-    painter.rect_filled(rect, 0.0, theme::alpha(colour, 50));
+pub fn grid_lines(painter: &Painter, rect: Rect, color: Color32) {
+    painter.rect_filled(rect, 0.0, theme::alpha(color, 50));
     let step = (rect.width() / 3.0).max(3.0);
-    let stroke = Stroke::new(1.0, colour);
+    let stroke = Stroke::new(1.0, color);
     let mut x = rect.min.x + step;
     while x < rect.max.x {
         painter.line_segment([Pos2::new(x, rect.min.y), Pos2::new(x, rect.max.y)], stroke);
@@ -67,10 +67,10 @@ pub fn grid_lines(painter: &Painter, rect: Rect, colour: Color32) {
     }
 }
 
-pub fn stripes(painter: &Painter, rect: Rect, colour: Color32) {
-    painter.rect_filled(rect, 0.0, theme::alpha(colour, 50));
+pub fn stripes(painter: &Painter, rect: Rect, color: Color32) {
+    painter.rect_filled(rect, 0.0, theme::alpha(color, 50));
     let step = (rect.height() / 4.0).max(3.0);
-    let stroke = Stroke::new(1.0, colour);
+    let stroke = Stroke::new(1.0, color);
     let mut y = rect.min.y + step / 2.0;
     while y < rect.max.y {
         painter.line_segment([Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)], stroke);

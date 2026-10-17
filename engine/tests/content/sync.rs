@@ -129,7 +129,7 @@ fn a_file_gone_from_the_server_restarts_from_the_manifest() {
 fn a_deploy_fetches_only_what_changed_and_drops_what_it_replaced() {
     let before = TempFolder::of_template();
     let after = TempFolder::of_template();
-    after.edit("tables/job/adventurer.json", |row| {
+    after.edit("tables/class/adventurer.json", |row| {
         row["name"] = serde_json::Value::String("Wanderer".to_owned());
     });
     after.append("assets/audio/combat/slash03.wav", &[0; 16]);

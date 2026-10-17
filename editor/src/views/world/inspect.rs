@@ -4,19 +4,15 @@ use egui::{Align, Layout, Rect, RichText, Sense, Ui, Vec2};
 use engine::core::content::{ContentRow, Fixture};
 use engine::core::tiling::TilePos;
 use engine::systems::area::world_map::{
-    MAX_NOTE, MAX_SIZE, MIN_SIZE, RegionColour, WorldMap, WorldMapDef,
+    MAX_NOTE, MAX_SIZE, MIN_SIZE, RegionColor, WorldMap, WorldMapDef,
 };
 use engine::systems::area::{self, AreaId};
 use strum::VariantArray;
 
 use super::atlas::{OpenTarget, RowSource, RowSourceKind, WorldAtlas};
 use super::canvas::{line_badge, viridis};
-use super::filters::{
-    self, AreaRange, ColourField, ColourOf, ColourRanges, ColourShow, ColourTable,
-};
-use super::{
-    MapPart, MapTileHit, OpenWorldMap, region_colour, region_colour_name, select, toolbar,
-};
+use super::filters::{self, AreaRange, ColorField, ColorOf, ColorRanges, ColorShow, ColorTable};
+use super::{MapPart, MapTileHit, OpenWorldMap, region_color, region_color_name, select, toolbar};
 use crate::app::Editor;
 use crate::forms;
 use crate::project::{ContentEdit, RowSelection};
@@ -40,8 +36,8 @@ fn inspect_world(editor: &mut Editor, ui: &mut Ui) {
         route_panel(editor, ui, &map.atlas);
     } else if view.quest_line.is_some() {
         line_panel(editor, ui, &map);
-    } else if view.colour.is_some() {
-        colour_panel(editor, ui, &map.atlas);
+    } else if view.color.is_some() {
+        color_panel(editor, ui, &map.atlas);
     } else if !view.lenses.is_empty() {
         lens_panel(editor, ui, &map.atlas);
     } else {
@@ -232,19 +228,19 @@ struct DistanceRow<'a> {
     range: AreaRange,
 }
 
-fn colour_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
-    crumb(ui, "colour by");
-    let Some(colour) = editor.views.world.colour.clone() else {
+fn color_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
+    crumb(ui, "color by");
+    let Some(color) = editor.views.world.color.clone() else {
         return;
     };
     let Some(project) = editor.project.as_ref() else {
         return;
     };
-    let ranges = ColourRanges::of(atlas, &project.files, &colour);
-    let fields = ColourField::all(editor);
-    let mut next = colour.clone();
+    let ranges = ColorRanges::of(atlas, &project.files, &color);
+    let fields = ColorField::all(editor);
+    let mut next = color.clone();
     widgets::kv(ui, "value", |ui| {
-        widgets::combo_box("colour-value")
+        widgets::combo_box("color-value")
             .width(ui.available_width() - 8.0)
             .selected_text(theme::mono(next.field.text()).size(12.5))
             .show_ui(ui, |ui| {
@@ -254,30 +250,30 @@ fn colour_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
                 }
             });
     });
-    if next.field.table == ColourTable::Npc {
+    if next.field.table == ColorTable::Npc {
         widgets::kv(ui, "of", |ui| {
-            widgets::combo_box("colour-of")
+            widgets::combo_box("color-of")
                 .width(ui.available_width() - 8.0)
                 .selected_text(theme::mono(next.of.label()).size(12.5))
                 .show_ui(ui, |ui| {
-                    for &of in ColourOf::VARIANTS {
+                    for &of in ColorOf::VARIANTS {
                         ui.selectable_value(&mut next.of, of, of.label());
                     }
                 });
         });
     }
     widgets::kv(ui, "show", |ui| {
-        widgets::combo_box("colour-show")
+        widgets::combo_box("color-show")
             .width(ui.available_width() - 8.0)
             .selected_text(theme::mono(next.show.label()).size(12.5))
             .show_ui(ui, |ui| {
-                for &show in ColourShow::VARIANTS {
+                for &show in ColorShow::VARIANTS {
                     ui.selectable_value(&mut next.show, show, show.label());
                 }
             });
     });
     ui.add_space(6.0);
-    colour_bar(ui, &ranges, colour.field.name());
+    color_bar(ui, &ranges, color.field.name());
     ui.add_space(8.0);
     widgets::section(ui, "By distance from the initial spawn");
     let mut rows: Vec<DistanceRow> = ranges
@@ -290,7 +286,7 @@ fn colour_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
         })
         .collect();
     rows.sort_by_key(|row| (row.distance.unwrap_or(u32::MAX), row.key));
-    let shown = |row: &DistanceRow| row.range.shown(colour.show);
+    let shown = |row: &DistanceRow| row.range.shown(color.show);
     let bumps: Vec<bool> = rows
         .iter()
         .enumerate()
@@ -301,13 +297,13 @@ fn colour_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
             })
         })
         .collect();
-    egui::Grid::new("colour-rows")
+    egui::Grid::new("color-rows")
         .num_columns(3)
         .spacing([12.0, 3.0])
         .show(ui, |ui| {
             ui.label(theme::faint("area").size(11.0));
             ui.label(theme::faint("warps").size(11.0));
-            ui.label(theme::faint(colour.field.name()).size(11.0));
+            ui.label(theme::faint(color.field.name()).size(11.0));
             ui.end_row();
             for (row, bump) in rows.iter().zip(&bumps) {
                 ui.label(
@@ -330,12 +326,12 @@ fn colour_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
         ui.add_space(6.0);
         ui.label(theme::muted("▲ above the curve: stronger than areas further out.").size(12.0));
     }
-    if next != colour {
-        editor.views.world.colour = Some(next);
+    if next != color {
+        editor.views.world.color = Some(next);
     }
 }
 
-fn colour_bar(ui: &mut Ui, ranges: &ColourRanges, unit: &str) {
+fn color_bar(ui: &mut Ui, ranges: &ColorRanges, unit: &str) {
     const STEPS: usize = 40;
     let (bar, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 10.0), Sense::hover());
     for step in 0..STEPS {
@@ -641,7 +637,7 @@ fn inspect_cards(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, cards: &[
     let mut open_area = false;
     widgets::card_frame(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        widgets::card_title(ui, area::AreaDef::TABLE, &title);
+        widgets::card_title(ui, &title);
         if cards.len() == 1 {
             widgets::kv(ui, "area", |ui| {
                 open_area =
@@ -781,7 +777,7 @@ fn inspect_region(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, index: u
     let mut label: Option<String> = None;
     widgets::card_frame(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        widgets::card_title(ui, "region", &region.name);
+        widgets::card_title(ui, &region.name);
         widgets::kv(ui, "name", |ui| {
             let id = ui.id().with(("region-name", index));
             let typed = forms::drafted(ui, id, &region.name, |ui, draft| {
@@ -795,27 +791,27 @@ fn inspect_region(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, index: u
                 label = Some(format!("Rename region to {}", typed.trim()));
             }
         });
-        widgets::kv(ui, "colour", |ui| {
-            let mut picked = region.colour;
-            let current = region_colour_name(picked);
-            widgets::combo_box(("region-colour", index))
+        widgets::kv(ui, "color", |ui| {
+            let mut picked = region.color;
+            let current = region_color_name(picked);
+            widgets::combo_box(("region-color", index))
                 .width(ui.available_width() - 8.0)
-                .selected_text(theme::mono(current).size(12.5).color(region_colour(picked)))
+                .selected_text(theme::mono(current).size(12.5).color(region_color(picked)))
                 .show_ui(ui, |ui| {
-                    for colour in [None]
+                    for color in [None]
                         .into_iter()
-                        .chain(RegionColour::VARIANTS.iter().copied().map(Some))
+                        .chain(RegionColor::VARIANTS.iter().copied().map(Some))
                     {
                         ui.selectable_value(
                             &mut picked,
-                            colour,
-                            RichText::new(region_colour_name(colour)).color(region_colour(colour)),
+                            color,
+                            RichText::new(region_color_name(color)).color(region_color(color)),
                         );
                     }
                 });
-            if picked != region.colour {
-                next.regions[index].colour = picked;
-                label = Some(format!("Colour region {}", region.name));
+            if picked != region.color {
+                next.regions[index].color = picked;
+                label = Some(format!("Color region {}", region.name));
             }
         });
         let holds: Vec<&str> = region

@@ -13,7 +13,7 @@ use crate::systems::item::widget::{
     CarriedSlot, SlotAction, SlotVerdict, slot_action, slot_verdict_source,
 };
 use crate::systems::item::{Inventory, ItemCategory, ItemId, ItemStack, card};
-use crate::systems::player::session::{self, ClientMode, Viewpoint};
+use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 
 const COUNTER_WIDTH: f32 = 620.0;
@@ -51,10 +51,7 @@ impl Plugin for ShopCounterPlugin {
 }
 
 pub fn view(world: &World) -> Option<&ShopView> {
-    world
-        .resource::<Viewpoint>()
-        .0
-        .and_then(|seen| world.get::<ShopView>(seen))
+    session::me(world).and_then(|seen| world.get::<ShopView>(seen))
 }
 
 pub fn select(world: &mut World, tab: ShopTab, index: usize) {
@@ -81,7 +78,6 @@ struct Shelf {
     shown: ShopView,
     tab: ShopTab,
     selected: usize,
-    playing: bool,
 }
 
 struct Ware {
@@ -125,9 +121,7 @@ fn show_counter(ui: &mut Ui, world: &mut World) {
         return;
     };
     let shown = ui.scope(|ui| counter(ui, world, &shelf)).response;
-    if shelf.playing
-        && let Some(dropped) = shown.dnd_release_payload::<CarriedSlot>()
-    {
+    if let Some(dropped) = shown.dnd_release_payload::<CarriedSlot>() {
         request_sale(world, dropped.0);
     }
 }
@@ -139,7 +133,6 @@ fn shelf(world: &World) -> Option<Shelf> {
         shown,
         tab: browse.tab,
         selected: browse.selected,
-        playing: session::mode(world) == ClientMode::Play,
     })
 }
 
@@ -174,7 +167,7 @@ fn counter(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
                 });
             });
         });
-    let selling = shelf.playing && !wants.is_empty();
+    let selling = !wants.is_empty();
     egui::Panel::bottom(Id::new("shop-footer"))
         .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 6)))
         .show_separator_line(true)
@@ -323,11 +316,9 @@ fn detail(ui: &mut Ui, world: &mut World, shelf: &Shelf, ware: &Ware, index: usi
             {
                 ui.label(RichText::new(note).size(TextRole::Small.size()).color(ink));
             }
-            if shelf.playing {
-                ui.add_space(4.0);
-                if trade_button(ui, shelf.tab, ware).clicked() {
-                    trade(world, shelf.tab, index);
-                }
+            ui.add_space(4.0);
+            if trade_button(ui, shelf.tab, ware).clicked() {
+                trade(world, shelf.tab, index);
             }
         });
     egui::CentralPanel::default()
@@ -351,9 +342,6 @@ fn trade_button(ui: &mut Ui, tab: ShopTab, ware: &Ware) -> egui::Response {
 }
 
 fn trade(world: &mut World, tab: ShopTab, index: usize) {
-    if session::mode(world) != ClientMode::Play {
-        return;
-    }
     let index = index as u32;
     match tab {
         ShopTab::Wares => {
@@ -493,21 +481,16 @@ fn paid(content: &Content, pays: &[ItemStack], count: u32) -> String {
 }
 
 fn selling(world: &World) -> bool {
-    session::mode(world) == ClientMode::Play && view(world).is_some()
+    view(world).is_some()
 }
 
 fn request_sale(world: &mut World, slot: u32) {
     let content = world.resource::<Content>().clone();
-    if session::mode(world) != ClientMode::Play {
-        return;
-    }
     let Some(shown) = view(world) else {
         return;
     };
     let shop = shown.shop;
-    let Some(stack) = world
-        .resource::<Viewpoint>()
-        .0
+    let Some(stack) = session::me(world)
         .and_then(|seen| world.get::<Inventory>(seen))
         .and_then(|inventory| inventory.slots.get(slot as usize).copied())
     else {

@@ -229,7 +229,7 @@ pub fn card(editor: &mut Editor, ui: &mut Ui, tileset: &OpenTileset) {
     let mut fix_odd = None;
     widgets::card_frame(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        widgets::card_title(ui, "animation", "animation");
+        widgets::card_title(ui, "animation");
         ui.add_space(4.0);
         widgets::kv(ui, "frames", |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -549,7 +549,7 @@ fn still_card(editor: &mut Editor, ui: &mut Ui, tileset: &OpenTileset, selection
     let mut animate_now = false;
     widgets::card_frame(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        widgets::card_title(ui, "animation", "animation");
+        widgets::card_title(ui, "animation");
         ui.add_space(4.0);
         widgets::hint(ui, "None of these tiles animates yet.");
         animate_now = ui.button("+ Animate with a second frame").clicked();

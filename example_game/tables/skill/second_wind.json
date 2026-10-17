@@ -1,0 +1,51 @@
+{
+  "name": "Second Wind",
+  "icon": "icons/misc/heart.png",
+  "sfx": "heal01",
+  "target": "self",
+  "cooldown": 30.0,
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 12.0
+      }
+    },
+    {
+      "cost": 1,
+      "stats": {
+        "power": 18.0
+      }
+    },
+    {
+      "cost": 2,
+      "stats": {
+        "power": 26.0,
+        "cooldown": -5.0
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "breathe": {
+          "type": "heal",
+          "who": {
+            "type": "skill_targets"
+          },
+          "by": {
+            "type": "skill_stat",
+            "skill": "second_wind",
+            "stat": "power"
+          }
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "breathe"
+        }
+      }
+    }
+  ]
+}

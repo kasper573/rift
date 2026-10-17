@@ -1,0 +1,37 @@
+{
+  "name": "Healed",
+  "params": [
+    {
+      "name": "amount",
+      "kind": "number"
+    }
+  ],
+  "layers": [
+    {
+      "type": "text",
+      "template": "+{amount}",
+      "color": [
+        120,
+        232,
+        128,
+        255
+      ],
+      "duration": 0.9,
+      "size": 16
+    },
+    {
+      "type": "shader",
+      "shader": "tint",
+      "duration": 0.35,
+      "params": {
+        "color": [
+          120,
+          232,
+          128,
+          255
+        ],
+        "amount": 0.5
+      }
+    }
+  ]
+}

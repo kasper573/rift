@@ -20,6 +20,7 @@ use crate::core::render::tile_to_window;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
+use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::model::ModelId;
 use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox};
 use crate::systems::area::{self, AreaId, AreaObject, AreaTag};
@@ -28,6 +29,7 @@ use crate::systems::combat::Attitude;
 use crate::systems::dialogue::stage;
 use crate::systems::history::widget::{self as history, HistoryBook};
 use crate::systems::history::{HistoryMark, HistoryRecord, HistoryTopic};
+use crate::systems::hud;
 use crate::systems::input::gestures::{self, ClickClaim};
 use crate::systems::input::map::InputMap;
 use crate::systems::item::{self, DroppedItem, Inventory, ItemId};
@@ -38,8 +40,9 @@ use crate::systems::player::{Owner, commands_locked, session};
 use crate::systems::quest::{Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::script::{OwnerKind, OwnerRow, Reach, RiftScripts};
 use crate::systems::shop::{self, ShopId};
-use crate::systems::spectate::Spectating;
+use crate::systems::skill::{self, HotbarEntry, Rank, SkillId, bar::HotbarPress};
 use crate::systems::stat::{StatKind, Stats};
+use crate::systems::status::{self, StatusCategory};
 
 /// How a driver asks the client what it shows: the frame after a driver asks answers it.
 pub trait ProbeChannel {
@@ -51,6 +54,8 @@ pub fn install(app: &mut App, channel: impl ProbeChannel + 'static) {
     app.insert_non_send(Probe(Box::new(channel)))
         .init_resource::<ProbeInputSeen>()
         .init_resource::<DrawnUi>()
+        .init_resource::<VfxSeen>()
+        .add_observer(remember_vfx)
         .add_systems(PreUpdate, (count_input, read_accessibly))
         .add_systems(
             PostUpdate,
@@ -61,8 +66,7 @@ pub fn install(app: &mut App, channel: impl ProbeChannel + 'static) {
 
 /// One frame of the client. Content ids (de)serialize by key, so a driver reads a snapshot within a
 /// content scope. World positions are tiles, which `view` places in the window; window positions
-/// are the window's logical pixels. `viewpoint` is the character the camera follows: `me`, or the
-/// player a spectator watches.
+/// are the window's logical pixels.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ProbeSnapshot {
     pub frame: u32,
@@ -72,8 +76,6 @@ pub struct ProbeSnapshot {
     pub view: Option<ProbeView>,
     pub area: Option<AreaId>,
     pub me: Option<ProbeBody>,
-    pub viewpoint: Option<ProbeBody>,
-    pub spectating: Option<Spectating>,
     pub actors: Vec<ProbeBody>,
     pub props: Vec<ProbeFixture>,
     pub items: Vec<ProbeGroundItem>,
@@ -90,6 +92,11 @@ pub struct ProbeSnapshot {
     pub item_card: Option<ProbeItemCard>,
     pub bag: Vec<ProbeStack>,
     pub quests: ProbeQuests,
+    pub hotbar: Vec<ProbeSlot>,
+    pub statuses: Vec<ProbeStatus>,
+    pub vfx: Vec<ProbeVfx>,
+    pub basic_attack: Option<SkillId>,
+    pub skills: Option<ProbeSkills>,
     pub soundscape: ProbeSoundscape,
     pub transition: ScreenTransitionPhase,
 }
@@ -287,6 +294,58 @@ pub struct ProbeItemCard {
     pub rect: Rect<WindowPx>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ProbeSlot {
+    pub entry: HotbarEntry,
+    pub key: Option<String>,
+    pub cooling: bool,
+    pub blocked: bool,
+    pub dimmed: bool,
+    pub rebinding: bool,
+    pub pressed: Option<HotbarPress>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ProbeStatus {
+    pub effect: String,
+    pub category: StatusCategory,
+    pub left: Option<Seconds>,
+}
+
+/// A vfx seen starting lately, with the site it plays on; `over` once its time has run out. One
+/// shorter than the gap between two snapshots is still reported in the next.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ProbeVfx {
+    pub vfx: VfxId,
+    pub site: VfxSite,
+    pub over: bool,
+}
+
+/// The character's class, tree and bar as the client shows them.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ProbeSkills {
+    pub class: String,
+    pub level: u32,
+    pub to_spend: u32,
+    pub learned: Vec<(String, Rank)>,
+    pub planned: Vec<(String, Rank)>,
+    pub aiming: Option<SkillId>,
+    pub reset_prompt: bool,
+    /// The skills window, while open.
+    pub view: Option<ProbeTreeView>,
+}
+
+/// How the skills window shows the tree: the canvas (backdrop and nodes) pans within the
+/// viewport, which the canvas always fills, and the window stops growing at `max`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ProbeTreeView {
+    pub window: Rect<WindowPx>,
+    pub max: Option<Size<WindowPx>>,
+    pub viewport: Rect<WindowPx>,
+    pub canvas: Size<WindowPx>,
+    pub panned: Offset<WindowPx>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ProbeQuests {
     pub active: Vec<ProbeQuest>,
@@ -439,10 +498,8 @@ fn publish(world: &mut World) {
 
 fn snapshot(world: &mut World) -> ProbeSnapshot {
     let content = world.resource::<Content>().clone();
-    let me = session::my_character(world).map(|me| me.id());
-    let viewpoint = world.resource::<session::Viewpoint>().0;
-    let spectating = world.resource::<session::SpectateStatus>().0;
-    let area = viewpoint
+    let me = session::me(world);
+    let area = me
         .and_then(|seen| world.get::<AreaTag>(seen))
         .map(|tag| tag.area);
     let view = view(world);
@@ -536,7 +593,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 })
                 .collect(),
         }),
-        bag: viewpoint
+        bag: me
             .and_then(|seen| world.get::<Inventory>(seen))
             .map(|inventory| {
                 inventory
@@ -549,12 +606,40 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                     .collect()
             })
             .unwrap_or_default(),
-        quests: viewpoint
-            .and_then(|seen| quests(world, seen))
+        quests: me.and_then(|seen| quests(world, seen)).unwrap_or_default(),
+        statuses: me
+            .and_then(|seen| world.get::<status::Statuses>(seen).cloned())
+            .map(|statuses| {
+                let now = session::server_now(world);
+                statuses
+                    .0
+                    .iter()
+                    .map(|held| ProbeStatus {
+                        effect: held.effect.key(&content).to_owned(),
+                        category: held.effect.get(&content).category,
+                        left: held.until.zip(now).map(|(until, now)| until.since(now)),
+                    })
+                    .collect()
+            })
             .unwrap_or_default(),
+        vfx: vfx_seen(world),
+        hotbar: skill::bar::report(world)
+            .into_iter()
+            .map(|slot| ProbeSlot {
+                entry: slot.entry,
+                key: slot.key,
+                cooling: slot.cooling,
+                blocked: slot.blocked,
+                dimmed: slot.dimmed,
+                rebinding: slot.rebinding,
+                pressed: slot.pressed,
+            })
+            .collect(),
+        basic_attack: me
+            .and_then(|me| world.get::<skill::BasicAttack>(me))
+            .and_then(|slot| slot.0),
+        skills: me.and_then(|me| skills(world, me)),
         me: me.and_then(|me| body(world, me)),
-        viewpoint: viewpoint.and_then(|seen| body(world, seen)),
-        spectating,
         actors: actors(world, me, area),
         props: props(world, area),
         items: items(world, area),
@@ -619,6 +704,43 @@ fn soundscape(world: &World) -> ProbeSoundscape {
     }
 }
 
+fn skills(world: &World, me: Entity) -> Option<ProbeSkills> {
+    let content = world.resource::<Content>();
+    let class = crate::systems::class::of(world, me)?;
+    let learned = world
+        .get::<skill::Learned>(me)
+        .map(|learned| learned.0.iter().map(|(k, r)| (k.clone(), *r)).collect())
+        .unwrap_or_default();
+    Some(ProbeSkills {
+        class: class.key(content).to_owned(),
+        level: crate::systems::class::level(world, me),
+        to_spend: crate::systems::class::points_to_spend(world, me).0,
+        learned,
+        planned: world
+            .resource::<skill::window::Plan>()
+            .0
+            .iter()
+            .map(|(k, r)| (k.clone(), *r))
+            .collect(),
+        aiming: skill::aim::aiming(world).map(|aimed| aimed.skill),
+        reset_prompt: skill::prompt::showing(world),
+        view: tree_view(world),
+    })
+}
+
+fn tree_view(world: &World) -> Option<ProbeTreeView> {
+    let window = hud::window_rect(world, &skill::window::SkillsWindow)?;
+    let view = world.resource::<skill::window::TreeView>();
+    Some(ProbeTreeView {
+        window: window_rect(window),
+        max: hud::window_limit(world, &skill::window::SkillsWindow)
+            .map(|max| Size::new(max.x, max.y)),
+        viewport: window_rect(view.viewport),
+        canvas: Size::new(view.content.x, view.content.y),
+        panned: Offset::new(view.offset.x, view.offset.y),
+    })
+}
+
 fn quests(world: &World, seen: Entity) -> Option<ProbeQuests> {
     let content = world.resource::<Content>();
     let log = world.get::<QuestLog>(seen)?;
@@ -663,7 +785,7 @@ fn view(world: &mut World) -> Option<ProbeView> {
 }
 
 fn body(world: &World, entity: Entity) -> Option<ProbeBody> {
-    let viewer = world.resource::<session::Viewpoint>().0;
+    let viewer = session::me(world);
     let marks = viewer
         .and_then(|viewer| world.get::<Attention>(viewer))
         .map(|attention| attention.of(entity).to_vec())
@@ -727,7 +849,7 @@ fn actors(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Vec<Pr
 }
 
 fn props(world: &mut World, area: Option<AreaId>) -> Vec<ProbeFixture> {
-    let viewer = world.resource::<session::Viewpoint>().0;
+    let viewer = session::me(world);
     let attention = viewer
         .and_then(|viewer| world.get::<Attention>(viewer))
         .cloned();
@@ -978,5 +1100,37 @@ fn covered(world: &mut World) -> Vec<Rect<WindowPx>> {
         .map(|area| area.rect())
         .filter(|rect| rect.width() > 0.0 && rect.height() > 0.0)
         .map(window_rect)
+        .collect()
+}
+
+const VFX_MEMORY: Seconds = Seconds(3.0);
+
+#[derive(Resource, Default)]
+struct VfxSeen(Vec<VfxInstance>);
+
+fn remember_vfx(
+    add: On<Add<VfxInstance>>,
+    instances: Query<&VfxInstance>,
+    mut seen: ResMut<VfxSeen>,
+) {
+    if let Ok(instance) = instances.get(add.entity) {
+        seen.0.push(instance.clone());
+    }
+}
+
+fn vfx_seen(world: &mut World) -> Vec<ProbeVfx> {
+    let now = session::server_now(world);
+    let mut seen = world.resource_mut::<VfxSeen>();
+    if let Some(now) = now {
+        seen.0
+            .retain(|instance| now < instance.until.after(VFX_MEMORY));
+    }
+    seen.0
+        .iter()
+        .map(|instance| ProbeVfx {
+            vfx: instance.vfx,
+            site: instance.site.clone(),
+            over: now.is_some_and(|now| instance.until <= now),
+        })
         .collect()
 }

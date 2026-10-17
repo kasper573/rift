@@ -5,10 +5,11 @@ use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
 use driver::{
-    Pace, Player, Playtest, PlaytestSetup, area_key, area_named, arrived_in, clickable_point,
-    ground_near, hunting_ground, open, portal,
+    Pace, Player, Playtest, PlaytestSetup, aiming, area_key, area_named, arrived_in,
+    clickable_point, ground_near, hunting_ground, open, portal,
 };
 use engine::core::render::transition::ScreenTransitionPhase;
+use engine::core::tiling::TilePos;
 use engine::core::tiling::Tiles;
 use engine::systems::actor::Action;
 use engine::systems::input::map::InputAction;
@@ -17,12 +18,13 @@ use engine::systems::probe::{ProbeBody, ProbeSnapshot};
 // Runs play out alike, so they compare.
 const SEED: u64 = 1931;
 
-const WINDOWS: [InputAction; 5] = [
+const WINDOWS: [InputAction; 6] = [
     InputAction::ToggleInventory,
     InputAction::ToggleEquipment,
     InputAction::ToggleStats,
     InputAction::ToggleQuestLog,
     InputAction::ToggleSettings,
+    InputAction::ToggleSkills,
 ];
 
 fn main() {
@@ -81,6 +83,12 @@ fn main() {
                     .is_some_and(|me| me.action == Action::Attack)
             });
             watch(&mut me, "combat", Duration::from_secs(4))
+        },
+        {
+            cast_on_nearest_foe(&mut me, InputAction::Hotbar1);
+            me.act(InputAction::Hotbar2);
+            cast_on_nearest_foe(&mut me, InputAction::Hotbar3);
+            watch(&mut me, "skills", Duration::from_secs(4))
         },
     ];
     report(&scenes);
@@ -141,7 +149,7 @@ fn set_off(me: &mut Player) {
     me.click();
 }
 
-fn toggle(me: &mut Player, windows: [InputAction; 5]) {
+fn toggle(me: &mut Player, windows: [InputAction; 6]) {
     for window in windows {
         me.act(window);
     }
@@ -153,6 +161,30 @@ fn step_into(me: &mut Player, warp: &str) {
         |_| Some(gate.at),
         |snapshot| snapshot.transition != ScreenTransitionPhase::Idle,
     );
+}
+
+// Arms the slot and clicks the nearest foe in view, as a player casting at it would; with none in
+// view the cast is let go, so the scene still plays.
+fn cast_on_nearest_foe(me: &mut Player, slot: InputAction) {
+    me.act(slot);
+    me.wait_until("the skill armed", aiming);
+    let seen = me.snapshot();
+    let at = seen.me.as_ref().expect("the player").at;
+    let target = seen
+        .actors
+        .iter()
+        .filter(|actor| foe(&seen, actor) && clickable_point(&seen, actor.aim).is_some())
+        .min_by(|a, b| a.at.distance(at).0.total_cmp(&b.at.distance(at).0))
+        .cloned();
+    match target {
+        Some(target) => {
+            me.point_at_tile(target.at);
+            me.click();
+        }
+        None => {
+            me.act(InputAction::Dismiss);
+        }
+    }
 }
 
 // Bats flying out over the water are out of reach.

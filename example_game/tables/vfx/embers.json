@@ -1,0 +1,21 @@
+{
+  "name": "Embers",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "motes",
+      "params": {
+        "color": [
+          255,
+          150,
+          60,
+          255
+        ],
+        "count": 10.0,
+        "size": 0.05,
+        "speed": 1.4
+      },
+      "duration": 1.2
+    }
+  ]
+}

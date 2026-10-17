@@ -1,0 +1,51 @@
+{
+  "name": "Ward",
+  "icon": "icons/weapon_and_tool/wooden_shield.png",
+  "target": "self",
+  "cooldown": 20.0,
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 12.0,
+        "duration": 25.0
+      }
+    },
+    {
+      "cost": 1,
+      "stats": {
+        "power": 20.0,
+        "duration": 32.0
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "raise": {
+          "type": "apply_status",
+          "who": {
+            "type": "skill_targets"
+          },
+          "effect": "warded",
+          "power": {
+            "type": "skill_stat",
+            "skill": "ward",
+            "stat": "power"
+          },
+          "seconds": {
+            "type": "skill_stat",
+            "skill": "ward",
+            "stat": "duration"
+          }
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "raise"
+        }
+      }
+    }
+  ]
+}

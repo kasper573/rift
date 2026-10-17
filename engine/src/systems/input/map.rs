@@ -56,8 +56,17 @@ pub enum InputAction {
     Choice8,
     Choice9,
     ToggleHistory,
-    SpectatePrevious,
-    SpectateNext,
+    ToggleSkills,
+    Hotbar1,
+    Hotbar2,
+    Hotbar3,
+    Hotbar4,
+    Hotbar5,
+    Hotbar6,
+    Hotbar7,
+    Hotbar8,
+    Hotbar9,
+    PinToHotbar,
 }
 
 impl Fixture for InputAction {
@@ -74,7 +83,8 @@ impl InputAction {
             | InputAction::InspectItem
             | InputAction::UseItem
             | InputAction::DropItem
-            | InputAction::SellItem => &[GestureKind::Click],
+            | InputAction::SellItem
+            | InputAction::PinToHotbar => &[GestureKind::Click],
             InputAction::CarryItem => &[GestureKind::Drag],
             InputAction::SubmitText | InputAction::TakeDefault => &[GestureKind::Shortcut],
             _ => &[GestureKind::Press],

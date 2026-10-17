@@ -1,9 +1,1 @@
-{
-  "label": "Pick the third choice",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "Digit3"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/choice3.json

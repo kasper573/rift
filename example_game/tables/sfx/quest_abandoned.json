@@ -1,6 +1,1 @@
-{
-  "file": "audio/interface/quest_abandoned.wav",
-  "role": "interface",
-  "volume": 0.28,
-  "pitch": 1.0
-}
+../../../editor/templates/new_game/tables/sfx/quest_abandoned.json

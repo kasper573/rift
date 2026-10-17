@@ -10,6 +10,7 @@
     "movement_speed": 1.0,
     "range": 1.0
   },
+  "basic_attack": "strike",
   "modules": [
     {
       "type": "nameplate",

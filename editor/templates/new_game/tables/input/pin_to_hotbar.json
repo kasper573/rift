@@ -1,0 +1,11 @@
+{
+  "label": "Put something on the hotbar, or take it off",
+  "bindings": [
+    {
+      "type": "click",
+      "button": "Left",
+      "times": 1,
+      "shift": true
+    }
+  ]
+}

@@ -56,7 +56,6 @@ pub(super) fn show_rows(editor: &mut Editor, ui: &mut Ui, selection: &RowSelecti
                 ui.set_width(ui.available_width());
                 widgets::card_header(
                     ui,
-                    &table,
                     &format!("{} {}s", values.len(), table),
                     "shared fields",
                     |_| {},
@@ -129,7 +128,7 @@ pub(super) fn show_rows(editor: &mut Editor, ui: &mut Ui, selection: &RowSelecti
                 let agree = firsts.iter().all(|(_, _, module)| *module == firsts[0].2);
                 widgets::card_frame(false).show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    widgets::card_header(ui, tag, &tag.replace('_', " "), "", |_| {});
+                    widgets::card_header(ui, &tag.replace('_', " "), "", |_| {});
                     ui.add_space(4.0);
                     if agree {
                         let mut shared = firsts[0].2.clone();

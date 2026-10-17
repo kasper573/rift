@@ -1,0 +1,27 @@
+{
+  "name": "Defeated",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "flash",
+      "duration": 0.12,
+      "params": {
+        "color": [
+          255,
+          255,
+          255,
+          255
+        ],
+        "strength": 1.0
+      }
+    },
+    {
+      "type": "shader",
+      "shader": "shake",
+      "duration": 0.3,
+      "params": {
+        "amplitude": 0.06
+      }
+    }
+  ]
+}

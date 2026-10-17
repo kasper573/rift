@@ -10,6 +10,7 @@
     "movement_speed": 0.9,
     "range": 1.0
   },
+  "basic_attack": "strike",
   "modules": [
     {
       "type": "respawn",

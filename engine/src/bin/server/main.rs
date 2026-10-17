@@ -22,7 +22,7 @@ use engine::core::net::SessionRequest;
 use engine::core::net::auth::TokenClaims;
 use engine::core::platform::exit_when_stdin_closes;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
-use engine::systems::account::{AccountId, Identity, Role};
+use engine::systems::account::{AccountId, Identity};
 use engine::systems::area::{self, AreaDef, AreaId, transition};
 use engine::systems::launch::{
     AuthMode, BUILD_INFO_FLAG, LaunchSettings, OIDC_ENV_PREFIX, OidcConfig, ReadyLine,
@@ -31,7 +31,6 @@ use engine::systems::launch::{
 };
 use engine::systems::player::snapshot::{self, CharacterSnapshot, JoinAs};
 use engine::systems::player::{ClientId, SpawnPolicy, SpawnRules};
-use engine::systems::spectate::{self, SpectatorTransfer};
 use engine::systems::{GameSettings, load_content, server_app, start_server, step_areas};
 use engine::systems::{REPLICATION_INTERVAL, TICK_HZ};
 use metrics::{counter, gauge, histogram};
@@ -434,8 +433,7 @@ fn spawn_conn(
 }
 
 /// A client (and all its connections) that left its world and is waiting to be re-created in the
-/// destination world: a player whose character stepped through a cross-area portal, or a spectator
-/// whose player is in another world. Leaving blinds the connections to the source world, and the wait
+/// destination world: a player whose character stepped through a cross-area portal. Leaving blinds the connections to the source world, and the wait
 /// lets the resulting despawns reach them first, so their replication state is empty before the
 /// destination's fresh snapshot arrives over the same connections — no entity-id or tick collision
 /// between the two worlds. The wait is one replication period (not one tick): a world only replicates
@@ -444,12 +442,7 @@ struct Transfer {
     client: ClientId,
     dest: usize,
     departed_tick: u64,
-    arrival: Arrival,
-}
-
-enum Arrival {
-    Character(Box<transition::Traveler>),
-    Spectator(SpectatorTransfer),
+    traveler: Box<transition::Traveler>,
 }
 
 /// Phase 1: take everyone leaving their world this tick out of it, and queue the move.
@@ -460,27 +453,14 @@ fn begin_transfers(worlds: &mut [App], transfers: &mut Vec<Transfer>, tick: u64)
                 client: traveler.client,
                 dest: traveler.dest_area.index(),
                 departed_tick: tick,
-                arrival: Arrival::Character(Box::new(traveler)),
+                traveler: Box::new(traveler),
             });
         }
-    }
-    let arriving: Vec<(ClientId, usize)> = transfers
-        .iter()
-        .filter(|transfer| matches!(transfer.arrival, Arrival::Character(_)))
-        .map(|transfer| (transfer.client, transfer.dest))
-        .collect();
-    for spectator in spectate::coordinate(worlds, arriving.into_iter()) {
-        transfers.push(Transfer {
-            client: spectator.client,
-            dest: spectator.dest,
-            departed_tick: tick,
-            arrival: Arrival::Spectator(spectator),
-        });
     }
 }
 
 /// Phase 2: once the source world's despawns have been sent (a replication period after departing) —
-/// move every socket of the client to the destination world and re-create the player or spectator there.
+/// move every socket of the client to the destination world and re-create the player there.
 fn finish_transfers(
     worlds: &mut [App],
     conns: &mut HashMap<u64, Conn>,
@@ -496,7 +476,7 @@ fn finish_transfers(
         let Transfer {
             client,
             dest,
-            arrival,
+            traveler,
             ..
         } = transfers.remove(index);
         let movers: Vec<(u64, usize, Entity)> = conns
@@ -520,12 +500,7 @@ fn finish_transfers(
                 },
             );
         }
-        match arrival {
-            Arrival::Character(traveler) => {
-                transition::arrive(worlds[dest].world_mut(), *traveler);
-            }
-            Arrival::Spectator(spectator) => spectate::arrive(worlds[dest].world_mut(), spectator),
-        }
+        transition::arrive(worlds[dest].world_mut(), *traveler);
     }
 }
 
@@ -757,12 +732,6 @@ fn resolve(http: &Http, authorization: &str) -> Result<Identity, StatusCode> {
             .preferred_username
             .unwrap_or_else(|| claims.sub.clone()),
         id: AccountId(claims.sub),
-        roles: claims
-            .realm_access
-            .roles
-            .iter()
-            .filter_map(|role| role.parse::<Role>().ok())
-            .collect(),
     })
 }
 

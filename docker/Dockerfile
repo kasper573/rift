@@ -15,9 +15,9 @@ COPY target/release/website /usr/local/bin/website
 COPY target/wasm /wasm
 ENTRYPOINT ["website"]
 
+# No game in the image: each stack mounts the game folder it runs at /content.
 FROM runtime AS game-server
 # A static busybox supplies wget for the compose healthcheck without an apt layer.
 COPY --from=busybox:1.36-musl /bin/busybox /usr/bin/wget
 COPY target/release/game-server /usr/local/bin/game-server
-COPY example_game /content
 ENTRYPOINT ["game-server"]

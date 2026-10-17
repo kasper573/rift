@@ -97,7 +97,7 @@ pub fn card(editor: &mut Editor, ui: &mut Ui, surface: &str) {
     let mut play = false;
     widgets::card_frame(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        widgets::card_header(ui, "surface", &def.name, "first-class", |_| {});
+        widgets::card_header(ui, &def.name, "", |_| {});
         ui.add_space(4.0);
         widgets::kv(ui, "name", |ui| {
             let id = ui.id().with(("surface-name", surface));

@@ -1,0 +1,58 @@
+{
+  "name": "War Cry",
+  "icon": "icons/weapon_and_tool/torch.png",
+  "sfx": "rising_chime",
+  "target": "area_ally",
+  "range": 4.0,
+  "area": {
+    "type": "circle",
+    "radius": 4.0
+  },
+  "cooldown": 45.0,
+  "levels": [
+    {
+      "cost": 2,
+      "stats": {
+        "power": 0.3,
+        "duration": 8.0
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "roar": {
+          "type": "apply_status",
+          "who": {
+            "type": "skill_targets"
+          },
+          "effect": "emboldened",
+          "power": {
+            "type": "skill_stat",
+            "skill": "warcry",
+            "stat": "power"
+          },
+          "seconds": {
+            "type": "skill_stat",
+            "skill": "warcry",
+            "stat": "duration"
+          }
+        },
+        "sweep": {
+          "type": "vfx",
+          "vfx": "rally",
+          "on": {
+            "type": "skill_area"
+          },
+          "next": "roar"
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "sweep"
+        }
+      }
+    }
+  ]
+}

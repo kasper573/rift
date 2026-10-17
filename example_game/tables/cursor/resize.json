@@ -1,7 +1,1 @@
-{
-  "image": "icons/cursors/move006.png",
-  "hotspot": {
-    "x": 32,
-    "y": 31
-  }
-}
+../../../editor/templates/new_game/tables/cursor/resize.json

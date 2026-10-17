@@ -1,17 +1,19 @@
 use std::collections::{HashMap, HashSet};
 
 use egui::Ui;
-use engine::core::content::Content;
+use engine::core::content::{Content, LoadReport};
 use engine::core::script::VariableType;
 use serde_json::{Map, Value};
 
 use crate::drafts;
 use crate::project::{Project, ProjectFiles, row_file};
 use crate::schema::{self, SchemaKind, SchemaShapes, SchemaVariant};
+use crate::ui::assets::AssetKind;
 use crate::ui::{browser, theme, widgets};
 use crate::usages::ContentUsages;
 use crate::views::model::busts;
 use crate::views::script::nodes::NodeCatalogue;
+use crate::views::vfx;
 use crate::{audio, condition, picker, spans, thumbs, value};
 
 pub struct FormCx<'a> {
@@ -28,6 +30,8 @@ pub struct FormCx<'a> {
     pub owner_key: Option<String>,
     pub holes: Option<FormHoles>,
     pub autofocus: bool,
+    report: Option<&'a LoadReport>,
+    load_errors: HashMap<String, String>,
 }
 
 impl<'a> FormCx<'a> {
@@ -52,12 +56,21 @@ impl<'a> FormCx<'a> {
             owner_key: None,
             holes: None,
             autofocus: false,
+            report: project.report.as_ref(),
+            load_errors: HashMap::new(),
         }
     }
 
+    /// The row this form edits, whose load errors it then shows beside their fields.
     pub fn owned_by(mut self, table: &str, key: Option<&str>) -> FormCx<'a> {
         self.owner_table = Some(table.to_owned());
         self.owner_key = key.map(str::to_owned);
+        self.load_errors = match (self.report, key) {
+            (Some(report), Some(key)) => crate::project::errors_in(report, &row_file(table, key))
+                .into_iter()
+                .collect(),
+            _ => HashMap::new(),
+        };
         self
     }
 }
@@ -340,7 +353,7 @@ fn plain(
             "x-table" => {
                 return reference(ui, cx, schema, value, path);
             }
-            "x-asset" => return asset(ui, cx, value, path),
+            "x-asset" => return asset(ui, cx, schema, value, path),
             "x-place" => return place(ui, cx, schema, value, path),
             "x-color" => return color(ui, value, path),
             "x-face" => return face(ui, cx, value, path),
@@ -411,32 +424,38 @@ pub fn object_without(
         let nested = present
             && schema::marker(resolved).is_none()
             && matches!(schema::kind(cx.root, resolved), SchemaKind::Object);
-        let list_of_objects = present
-            && match schema::kind(cx.root, resolved) {
-                SchemaKind::Array(items) => matches!(
-                    schema::kind(cx.root, schema::resolve(cx.root, items)),
-                    SchemaKind::Object
-                ),
-                _ => false,
-            };
+        if let Some(sibling) = field.get("x-params-of").and_then(Value::as_str) {
+            changed |= params_map(
+                ui,
+                cx,
+                ParamsMapField {
+                    parent_schema: schema,
+                    field,
+                    name,
+                    sibling,
+                    path: &field_path,
+                    optional,
+                },
+                value,
+            );
+            continue;
+        }
+        let list_of_objects = match schema::kind(cx.root, resolved) {
+            SchemaKind::Array(items) => matches!(
+                schema::kind(cx.root, schema::resolve(cx.root, items)),
+                SchemaKind::Object | SchemaKind::Union(_)
+            ),
+            _ => false,
+        };
         if list_of_objects {
-            ui.horizontal(|ui| {
-                ui.label(theme::muted(name).monospace().size(13.0));
-                if optional
-                    && ui
-                        .add(
-                            egui::Label::new(theme::faint("✕").size(11.0))
-                                .sense(egui::Sense::click()),
-                        )
-                        .on_hover_text(format!("Unset {name}"))
-                        .clicked()
-                {
-                    value.as_object_mut().expect("object").remove(name);
-                    changed = FormChange::at(&field_path);
-                }
-            });
-            if let Some(child) = value.get_mut(name) {
-                changed |= self::value(ui, cx, field, child, &field_path);
+            widgets::section(ui, name);
+            let fields = value.as_object_mut().expect("object");
+            let child = fields
+                .entry(name.clone())
+                .or_insert_with(|| Value::Array(Vec::new()));
+            changed |= self::value(ui, cx, field, child, &field_path);
+            if optional && child.as_array().is_some_and(Vec::is_empty) {
+                fields.remove(name);
             }
             continue;
         }
@@ -516,6 +535,115 @@ pub fn object_without(
     changed
 }
 
+struct ParamsMapField<'a> {
+    parent_schema: &'a Value,
+    field: &'a Value,
+    name: &'a str,
+    sibling: &'a str,
+    path: &'a str,
+    optional: bool,
+}
+
+/// A map keyed by the parameters another row declares, that row named by a sibling field: a
+/// line per declared parameter, given or left to its default, and any key the row no longer
+/// declares shown so it can be dropped.
+fn params_map(ui: &mut Ui, cx: &mut FormCx, at: ParamsMapField, parent: &mut Value) -> FormChange {
+    let ParamsMapField {
+        parent_schema,
+        field,
+        name,
+        sibling,
+        path,
+        optional,
+    } = at;
+    let mut changed = FormChange::default();
+    widgets::section(ui, name);
+    let owner = parent[sibling].as_str().unwrap_or_default().to_owned();
+    let table = schema::properties(parent_schema)
+        .iter()
+        .find(|(field, _)| *field == sibling)
+        .and_then(|(_, schema)| schema::table_of(schema::resolve(cx.root, schema)))
+        .map(str::to_owned);
+    let Some(table) = table.filter(|_| !owner.is_empty()) else {
+        ui.label(theme::faint(format!("pick {sibling} first")).size(12.5));
+        return changed;
+    };
+    let specs = vfx::params_of(cx.files, &table, &owner);
+    let value_schema = schema::resolve(cx.root, field)
+        .get("additionalProperties")
+        .unwrap_or(&Value::Null);
+    let typed = schema::marker(schema::resolve(cx.root, value_schema)) == Some("x-param-fill");
+    let fields = parent.as_object_mut().expect("object");
+    let entries = fields
+        .entry(name.to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !entries.is_object() {
+        *entries = Value::Object(Map::new());
+    }
+    let entries = entries.as_object_mut().expect("object");
+    for spec in &specs {
+        let entry_path = format!("{path}/{}", spec.name);
+        if typed {
+            changed |= vfx::param_fill(ui, cx, spec, entries, &entry_path);
+            continue;
+        }
+        ui.horizontal(|ui| {
+            label_column(ui).label(theme::muted(&spec.name).monospace().size(13.0));
+            if let Some(entry) = entries.get_mut(&spec.name) {
+                ui.vertical(|ui| {
+                    ui.set_min_width(ui.available_width() - 24.0);
+                    changed |= self::value(ui, cx, value_schema, entry, &entry_path);
+                });
+                if ui
+                    .add(egui::Label::new(theme::faint("✕").size(11.0)).sense(egui::Sense::click()))
+                    .on_hover_text("Leave it to the vfx")
+                    .clicked()
+                {
+                    entries.remove(&spec.name);
+                    changed = FormChange::at(&entry_path);
+                }
+            } else if ui
+                .add(
+                    egui::Label::new(theme::faint("+ give").size(12.5)).sense(egui::Sense::click()),
+                )
+                .on_hover_text(format!(
+                    "Give {}; left out, the vfx uses its own",
+                    spec.name
+                ))
+                .clicked()
+            {
+                entries.insert(spec.name.clone(), schema::template(cx.root, value_schema));
+                changed = FormChange::at(&entry_path);
+            }
+        });
+        error_line(ui, cx, &entry_path);
+    }
+    let stale: Vec<String> = entries
+        .keys()
+        .filter(|key| !specs.iter().any(|spec| spec.name == **key))
+        .cloned()
+        .collect();
+    for key in stale {
+        ui.horizontal(|ui| {
+            if ui
+                .add(egui::Label::new(theme::faint("✕").size(11.0)).sense(egui::Sense::click()))
+                .on_hover_text("Drop it")
+                .clicked()
+            {
+                entries.remove(&key);
+                changed = FormChange::at(path);
+            }
+            ui.label(theme::warn(format!("{key} · not a parameter of {table}/{owner}")).size(12.5));
+        });
+        error_line(ui, cx, &format!("{path}/{key}"));
+    }
+    error_line(ui, cx, path);
+    if optional && entries.is_empty() {
+        fields.remove(name);
+    }
+    changed
+}
+
 fn union(
     ui: &mut Ui,
     cx: &mut FormCx,
@@ -537,6 +665,18 @@ fn union(
         });
         return changed;
     }
+    changed |= variant_picker(ui, cx, variants, value, path);
+    changed |= variant_body(ui, cx, variants, value, path);
+    changed
+}
+
+fn variant_picker(
+    ui: &mut Ui,
+    cx: &mut FormCx,
+    variants: &[SchemaVariant],
+    value: &mut Value,
+    path: &str,
+) -> FormChange {
     let current = schema::variant_of(variants, value).map(|variant| variant.tag.clone());
     let field = variants
         .first()
@@ -572,17 +712,29 @@ fn union(
             }
         }
         *value = fresh;
-        changed = FormChange::at(path);
+        return FormChange::at(path);
     }
-    if let Some(variant) = schema::variant_of(variants, value) {
-        let schema = variant.schema;
-        if let Some(kind) = geometry_of(schema) {
-            changed |= geometry(ui, cx, kind, value, path);
-        } else if schema::properties(schema).len() > 1 {
-            changed |= object(ui, cx, schema, value, path);
-        }
+    FormChange::default()
+}
+
+fn variant_body(
+    ui: &mut Ui,
+    cx: &mut FormCx,
+    variants: &[SchemaVariant],
+    value: &mut Value,
+    path: &str,
+) -> FormChange {
+    let Some(variant) = schema::variant_of(variants, value) else {
+        return FormChange::default();
+    };
+    let schema = variant.schema;
+    if let Some(kind) = geometry_of(schema) {
+        geometry(ui, cx, kind, value, path)
+    } else if schema::properties(schema).len() > 1 {
+        object(ui, cx, schema, value, path)
+    } else {
+        FormChange::default()
     }
-    changed
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -788,6 +940,18 @@ fn array(ui: &mut Ui, cx: &mut FormCx, items: &Value, value: &mut Value, path: &
                 SchemaKind::Array(_) | SchemaKind::Object | SchemaKind::Map(_)
             )
         });
+    let singular = path
+        .rsplit('/')
+        .next()
+        .map(|name| name.strip_suffix('s').unwrap_or(name).to_owned())
+        .filter(|name| !name.is_empty() && name.parse::<usize>().is_err())
+        .unwrap_or_else(|| "entry".to_owned());
+    let boxed = !inline
+        && schema::marker(item_schema).is_none()
+        && matches!(
+            schema::kind(cx.root, item_schema),
+            SchemaKind::Object | SchemaKind::Union(_)
+        );
     ui.vertical(|ui| {
         let list = value.as_array_mut().expect("array");
         let mut remove = None;
@@ -795,6 +959,51 @@ fn array(ui: &mut Ui, cx: &mut FormCx, items: &Value, value: &mut Value, path: &
         let count = list.len();
         for (index, item) in list.iter_mut().enumerate() {
             let item_path = format!("{path}/{index}");
+            if boxed {
+                widgets::card_frame(false).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        match schema::kind(cx.root, item_schema) {
+                            SchemaKind::Union(variants) => {
+                                changed |= variant_picker(ui, cx, &variants, item, &item_path);
+                            }
+                            _ => {
+                                ui.label(theme::strong(format!("{singular} {}", index + 1)));
+                            }
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let response = ui
+                                .add(
+                                    egui::Label::new(theme::faint("✕").size(11.0))
+                                        .sense(egui::Sense::click()),
+                                )
+                                .on_hover_text("Remove");
+                            if response.clicked() {
+                                remove = Some(index);
+                            }
+                            response.context_menu(|ui| {
+                                if index > 0 && ui.button("Move up").clicked() {
+                                    swap = Some((index, index - 1));
+                                    ui.close();
+                                }
+                                if index + 1 < count && ui.button("Move down").clicked() {
+                                    swap = Some((index, index + 1));
+                                    ui.close();
+                                }
+                            });
+                        });
+                    });
+                    ui.add_space(4.0);
+                    error_line(ui, cx, &item_path);
+                    changed |= match schema::kind(cx.root, item_schema) {
+                        SchemaKind::Union(variants) => {
+                            variant_body(ui, cx, &variants, item, &item_path)
+                        }
+                        _ => object(ui, cx, item_schema, item, &item_path),
+                    };
+                });
+                continue;
+            }
             ui.horizontal(|ui| {
                 let response = ui
                     .add(egui::Label::new(theme::faint("×")).sense(egui::Sense::click()))
@@ -892,18 +1101,32 @@ fn array(ui: &mut Ui, cx: &mut FormCx, items: &Value, value: &mut Value, path: &
             list.swap(a, b);
             changed = FormChange::at(path);
         }
-        let singular = path
-            .rsplit('/')
-            .next()
-            .map(|name| name.strip_suffix('s').unwrap_or(name).to_owned())
-            .filter(|name| !name.is_empty() && name.parse::<usize>().is_err())
-            .unwrap_or_else(|| "entry".to_owned());
+        error_line(ui, cx, path);
         if ui.button(format!("+ {singular}")).clicked() {
-            list.push(schema::template(cx.root, items));
+            let mut fresh = schema::template(cx.root, items);
+            name_newcomer(&mut fresh, list, &singular);
+            list.push(fresh);
             changed = FormChange::at(path);
         }
     });
     changed
+}
+
+// A new list item with a blank name gets one of its own, so it is valid as it lands and can be
+// told from the others.
+fn name_newcomer(item: &mut Value, siblings: &[Value], singular: &str) {
+    if item.get("name").and_then(Value::as_str) != Some("") {
+        return;
+    }
+    let taken: HashSet<&str> = siblings
+        .iter()
+        .filter_map(|sibling| sibling["name"].as_str())
+        .collect();
+    let fresh = (1..)
+        .map(|n| format!("{singular}_{n}"))
+        .find(|candidate| !taken.contains(candidate.as_str()))
+        .unwrap_or_default();
+    item["name"] = Value::String(fresh);
 }
 
 fn map(ui: &mut Ui, cx: &mut FormCx, values: &Value, value: &mut Value, path: &str) -> FormChange {
@@ -1113,11 +1336,16 @@ pub fn tiles(value: f32) -> String {
 }
 
 const INLINE_WIDTH: f32 = 64.0;
+const INLINE_TEXT_WIDTH: f32 = 150.0;
 const BOXED_INPUT_AROUND_TEXT: f32 = 40.0;
 
 fn inline_width(ui: &Ui, field: &Value) -> f32 {
     let Some(blank) = field.get("x-blank").and_then(Value::as_str) else {
-        return INLINE_WIDTH;
+        return if schema::type_names(field).contains(&"string") {
+            INLINE_TEXT_WIDTH
+        } else {
+            INLINE_WIDTH
+        };
     };
     let font = egui::TextStyle::Monospace.resolve(ui.style());
     let hint = ui.fonts_mut(|fonts| {
@@ -1192,31 +1420,13 @@ fn enum_combo(ui: &mut Ui, options: &[String], value: &mut Value, path: &str) ->
     FormChange::default()
 }
 
-fn color(ui: &mut Ui, value: &mut Value, path: &str) -> FormChange {
+pub fn color(ui: &mut Ui, value: &mut Value, path: &str) -> FormChange {
     let mut rgba = value::rgba(value);
-    let mut changed = FormChange::default();
-    ui.horizontal(|ui| {
-        let response = ui.color_edit_button_srgba_unmultiplied(&mut rgba);
-        if response.changed() {
-            *value = Value::Array(rgba.iter().map(|byte| Value::from(*byte)).collect());
-            changed = FormChange::at(path);
-        }
-        egui::Frame::new()
-            .fill(theme::INPUT)
-            .stroke(egui::Stroke::new(1.0, theme::BORDER))
-            .corner_radius(4.0)
-            .inner_margin(egui::Margin::symmetric(8, 3))
-            .show(ui, |ui| {
-                ui.label(
-                    theme::mono(format!(
-                        "{}, {}, {}, {}",
-                        rgba[0], rgba[1], rgba[2], rgba[3]
-                    ))
-                    .size(13.0),
-                );
-            });
-    });
-    changed
+    if ui.color_edit_button_srgba_unmultiplied(&mut rgba).changed() {
+        *value = Value::Array(rgba.iter().map(|byte| Value::from(*byte)).collect());
+        return FormChange::at(path);
+    }
+    FormChange::default()
 }
 
 pub fn raw_json(ui: &mut Ui, cx: &mut FormCx, value: &mut Value, path: &str) -> FormChange {
@@ -1266,9 +1476,19 @@ pub fn reference(
     FormChange::default()
 }
 
-fn asset(ui: &mut Ui, cx: &mut FormCx, value: &mut Value, path: &str) -> FormChange {
+fn asset(
+    ui: &mut Ui,
+    cx: &mut FormCx,
+    schema: &Value,
+    value: &mut Value,
+    path: &str,
+) -> FormChange {
+    let kinds: Vec<AssetKind> = schema["x-asset"]
+        .as_str()
+        .and_then(AssetKind::named)
+        .map_or_else(|| AssetKind::ALL.to_vec(), |kind| vec![kind]);
     let mut file = value.as_str().unwrap_or_default().to_owned();
-    if picker::asset(ui, cx, &mut file, path) {
+    if picker::asset_of(ui, cx, &kinds, &mut file, path) {
         *value = Value::String(file);
         return FormChange::at(path);
     }
@@ -1357,7 +1577,12 @@ pub fn committed(ui: &Ui, response: &egui::Response) -> bool {
 }
 
 pub fn error_line(ui: &mut Ui, cx: &FormCx, path: &str) {
-    if let Some(error) = cx.state.errors.get(path) {
+    if let Some(error) = cx
+        .state
+        .errors
+        .get(path)
+        .or_else(|| cx.load_errors.get(path))
+    {
         ui.colored_label(theme::DANGER, error);
     }
 }

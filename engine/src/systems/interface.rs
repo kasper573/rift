@@ -78,6 +78,7 @@ pub enum InterfaceIcon {
     ObjectiveDecide,
     WalkTarget,
     Terminal,
+    Skills,
 }
 
 impl Fixture for InterfaceIcon {

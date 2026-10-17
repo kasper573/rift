@@ -1,0 +1,10 @@
+{
+  "name": "Chain lightning",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "lightning",
+      "duration": 0.7
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 name = "design_tokens"
 version.workspace = true
 edition.workspace = true
-description = "The look the editor and the game share: colours, shapes, text roles, fonts and the themed egui helpers"
+description = "The look the editor and the game share: colors, shapes, text roles, fonts and the themed egui helpers"
 repository = "https://github.com/kasper573/rift"
 authors = ["kasper573"]
 

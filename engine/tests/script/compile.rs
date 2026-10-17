@@ -29,7 +29,7 @@ const FUNCTIONS: [&str; 2] = ["helper", "loops"];
 #[test]
 fn every_capability_compiles_for_exactly_the_owners_it_lists() {
     let capabilities = every_capability();
-    assert_eq!(capabilities.len(), 35);
+    assert_eq!(capabilities.len(), 38);
     for owner in OWNERS {
         for value in &capabilities {
             let parsed = effect(value.clone());
@@ -271,10 +271,13 @@ fn entry(owner: OwnerKind, next: &str) -> Value {
         OwnerKind::Object | OwnerKind::Npc => json!({
             "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": next
         }),
-        OwnerKind::Item => json!({ "type": "on", "event": "used", "next": next }),
+        OwnerKind::Item | OwnerKind::Skill => {
+            json!({ "type": "on", "event": "used", "next": next })
+        }
         OwnerKind::Area => json!({ "type": "on", "event": "discovered", "next": next }),
         OwnerKind::Quest => json!({ "type": "on", "event": "accepted", "next": next }),
         OwnerKind::Shop => json!({ "type": "on", "event": "bought", "next": next }),
+        OwnerKind::StatusEffect => json!({ "type": "on", "event": "activated", "next": next }),
         OwnerKind::Blueprint | OwnerKind::Any => unreachable!("no entry for {owner:?}"),
     }
 }
@@ -284,8 +287,8 @@ fn every_capability() -> Vec<Value> {
         json!({ "type": "warp", "to": { "area": "forest", "x": 3.0, "y": 18.0 } }),
         json!({ "type": "heal", "by": "full" }),
         json!({ "type": "damage", "by": 10.0 }),
-        json!({ "type": "buff", "stat": "health", "by": 10.0, "seconds": 10.0 }),
-        json!({ "type": "clear_buffs" }),
+        json!({ "type": "apply_status", "effect": "guarded", "power": 10.0, "seconds": 10.0 }),
+        json!({ "type": "remove_status", "category": "debuff" }),
         json!({ "type": "items", "take": [{ "item": "gold" }] }),
         json!({ "type": "use_item", "item": "tattered_map" }),
         json!({ "type": "equip", "item": "road_pass" }),
@@ -298,7 +301,6 @@ fn every_capability() -> Vec<Value> {
             "items": [{ "item": "gold" }]
         }),
         json!({ "type": "grant_xp", "xp": 1 }),
-        json!({ "type": "set_job", "job": "adventurer" }),
         json!({ "type": "remember", "memory": "bribed_ilsa" }),
         json!({ "type": "forget", "memories": ["bribed_ilsa"] }),
         json!({ "type": "offer_quest", "quest": "x_marks_the_spot" }),
@@ -315,6 +317,10 @@ fn every_capability() -> Vec<Value> {
         json!({ "type": "attack", "target": { "type": "subject" }, "within": 10.0, "priority": 5 }),
         json!({ "type": "stop", "priority": 9 }),
         json!({ "type": "face", "toward": { "type": "subject" } }),
+        json!({ "type": "animate", "action": "attack", "wait": "apex" }),
+        json!({ "type": "use_skill", "skill": "slash", "at": { "type": "subject" } }),
+        json!({ "type": "reset_skills" }),
+        json!({ "type": "vfx", "vfx": "damage_taken", "params": { "amount": 3.0 } }),
         json!({ "type": "set_attitude", "attitude": "hostile" }),
         json!({ "type": "spawn_npcs", "npc": "orc", "count": 1, "near": "subject", "shown": "everyone" }),
         json!({ "type": "despawn" }),

@@ -299,3 +299,19 @@ fn unit_pair(seconds: u32) -> (TimeUnit, TimeUnit) {
         .min(TIME_UNITS.len() - 2);
     (TIME_UNITS[big], TIME_UNITS[big + 1])
 }
+
+/// The server's wall clock as the welcome carried it, against the client's own uptime, so the
+/// client can tell how far along a server deadline is without a wall clock of its own.
+#[derive(Resource, Default)]
+pub struct ServerClock(Option<(UnixMillis, Seconds)>);
+
+impl ServerClock {
+    pub fn record(&mut self, then: UnixMillis, uptime: Seconds) {
+        self.0 = Some((then, uptime));
+    }
+
+    pub fn now(&self, uptime: Seconds) -> Option<UnixMillis> {
+        let (then, at) = self.0?;
+        Some(then.after(uptime - at))
+    }
+}

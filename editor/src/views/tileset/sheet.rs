@@ -22,7 +22,7 @@ use crate::{forms, rows, value};
 
 const WALKABLE: Color32 = Color32::from_rgb(110, 200, 110);
 const BLOCKS: Color32 = Color32::from_rgb(230, 90, 90);
-const SURFACE_COLOURS: [Color32; 6] = [
+const SURFACE_COLORS: [Color32; 6] = [
     Color32::from_rgb(230, 190, 90),
     Color32::from_rgb(120, 200, 110),
     Color32::from_rgb(170, 180, 200),
@@ -451,12 +451,12 @@ fn walk_mark(painter: &egui::Painter, cell: ERect, walk: Option<Walk>) {
 }
 
 fn surface_mark(painter: &egui::Painter, cell: ERect, index: usize) {
-    let colour = SURFACE_COLOURS[index % SURFACE_COLOURS.len()];
+    let color = SURFACE_COLORS[index % SURFACE_COLORS.len()];
     match index % 4 {
-        0 => patterns::dots(painter, cell, colour),
-        1 => patterns::hatch(painter, cell, colour, cell.width()),
-        2 => patterns::grid_lines(painter, cell, colour),
-        _ => patterns::stripes(painter, cell, colour),
+        0 => patterns::dots(painter, cell, color),
+        1 => patterns::hatch(painter, cell, color, cell.width()),
+        2 => patterns::grid_lines(painter, cell, color),
+        _ => patterns::stripes(painter, cell, color),
     }
 }
 

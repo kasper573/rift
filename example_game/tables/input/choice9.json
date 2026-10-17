@@ -1,9 +1,1 @@
-{
-  "label": "Pick the ninth choice",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "Digit9"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/choice9.json

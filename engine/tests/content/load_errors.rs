@@ -19,7 +19,7 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
             .to_string(),
     );
     folder.remove("tables/input/interact.json");
-    folder.write("tables/job/apprentice.json", "{ \"name\": 3 }");
+    folder.write("tables/class/apprentice.json", "{ \"name\": 3 }");
     folder.write(
         "tables/area/cove.json",
         &serde_json::to_string_pretty(&json!({
@@ -47,7 +47,7 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
         "tables/test_character/lost.json",
         &serde_json::to_string_pretty(&json!({
             "name": "Lost",
-            "job": "adventurer",
+            "class": "adventurer",
             "known_areas": ["cove"],
             "start": { "area": "start", "x": 40.0, "y": 40.0 }
         }))
@@ -155,4 +155,65 @@ fn a_binding_the_game_never_reads_for_its_action_is_refused() {
         vec![("unread binding", "a binding the game reads for this action")]
     );
     assert_eq!(report.errors[0].file, "tables/input/carry_item.json");
+}
+
+#[test]
+fn a_shader_that_does_not_compile_is_refused_at_its_line() {
+    let folder = TempFolder::of_template();
+    folder.write(
+        "assets/shaders/tint.wgsl",
+        "fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return oops;\n}\n",
+    );
+
+    let report = load(folder.path()).err().expect("refused");
+
+    let error = report
+        .errors
+        .iter()
+        .find(|error| error.file == "assets/shaders/tint.wgsl")
+        .expect("the shader is refused");
+    assert_eq!(error.problem.rule, "shader does not compile");
+    assert!(
+        matches!(error.at, ErrorPlace::Text { line: 2, .. }),
+        "{:?}",
+        error.at
+    );
+}
+
+#[test]
+fn a_shader_row_without_its_file_is_refused() {
+    let folder = TempFolder::of_template();
+    folder.remove("assets/shaders/tint.wgsl");
+
+    let report = load(folder.path()).err().expect("refused");
+
+    let error = report
+        .errors
+        .iter()
+        .find(|error| error.file == "tables/vfx_shader/tint.json")
+        .expect("the row is refused");
+    assert_eq!(error.problem.rule, "shader file missing");
+    assert_eq!(error.problem.expected, "assets/shaders/tint.wgsl");
+}
+
+#[test]
+fn a_layer_filling_a_parameter_its_shader_lacks_is_refused() {
+    let folder = TempFolder::of_template();
+    folder.edit("tables/vfx/healed.json", |row| {
+        row["layers"][1]["params"]["glow"] = json!(1.0);
+    });
+
+    let report = load(folder.path()).err().expect("refused");
+
+    let error = report
+        .errors
+        .iter()
+        .find(|error| error.file == "tables/vfx/healed.json")
+        .expect("the layer is refused");
+    assert_eq!(error.problem.rule, "unknown shader parameter");
+    assert!(
+        matches!(&error.at, ErrorPlace::Json { pointer, .. } if pointer == "/layers/1/params/glow"),
+        "{:?}",
+        error.at
+    );
 }

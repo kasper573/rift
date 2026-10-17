@@ -1,0 +1,19 @@
+{
+  "name": "Chill",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "tint",
+      "params": {
+        "amount": 0.5,
+        "color": [
+          150,
+          210,
+          255,
+          255
+        ]
+      },
+      "duration": 0.6
+    }
+  ]
+}

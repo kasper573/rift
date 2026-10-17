@@ -5,7 +5,7 @@ use engine::systems::npc::NpcDef;
 use engine::systems::quest::QuestDef;
 use engine::systems::shop::ShopDef;
 
-use super::filters::{ColourBy, ColourField, MapLens};
+use super::filters::{ColorBy, ColorField, MapLens};
 use super::{MapPart, OpenWorldMap, select};
 use crate::app::Editor;
 use crate::ui::{theme, widgets};
@@ -30,10 +30,10 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
                     ui.set_width(220.0);
                     layer_rows(editor, ui, map);
                 });
-                ui.menu_button(RichText::new("Colour by ▾").size(12.5), |ui| {
+                ui.menu_button(RichText::new("Color by ▾").size(12.5), |ui| {
                     ui.set_width(260.0);
-                    if let Some(colour) = colour_menu(editor, ui) {
-                        pick = Some(Pick::Colour(colour));
+                    if let Some(color) = color_menu(editor, ui) {
+                        pick = Some(Pick::Color(color));
                         ui.close();
                     }
                 });
@@ -55,7 +55,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
         Some(Chip::Lens(index)) => {
             view.lenses.remove(index);
         }
-        Some(Chip::Colour) => view.colour = None,
+        Some(Chip::Color) => view.color = None,
         Some(Chip::Line) => view.quest_line = None,
         Some(Chip::Route) => view.route = None,
         None => {}
@@ -105,7 +105,7 @@ pub fn layer_rows(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
 
 enum Chip {
     Lens(usize),
-    Colour,
+    Color,
     Line,
     Route,
 }
@@ -115,7 +115,7 @@ enum Pick {
     Area(String),
     Lens(MapLens),
     Line(String),
-    Colour(ColourBy),
+    Color(ColorBy),
 }
 
 struct SearchResult {
@@ -144,8 +144,8 @@ fn search_box(editor: &mut Editor, ui: &mut Ui, remove: &mut Option<Chip>) -> eg
                 for (index, lens) in view.lenses.iter().enumerate() {
                     chip(ui, &lens.chip(), Chip::Lens(index));
                 }
-                if let Some(colour) = &view.colour {
-                    chip(ui, &colour.chip(), Chip::Colour);
+                if let Some(color) = &view.color {
+                    chip(ui, &color.chip(), Chip::Color);
                 }
                 if let Some(line) = &view.quest_line {
                     chip(ui, &format!("quest line: {line}"), Chip::Line);
@@ -158,7 +158,7 @@ fn search_box(editor: &mut Editor, ui: &mut Ui, remove: &mut Option<Chip>) -> eg
                     );
                 }
                 let empty = view.lenses.is_empty()
-                    && view.colour.is_none()
+                    && view.color.is_none()
                     && view.quest_line.is_none()
                     && view.route.is_none();
                 let hint = if empty {
@@ -302,26 +302,21 @@ fn apply(editor: &mut Editor, map: &OpenWorldMap, pick: Pick) {
             }
         }
         Pick::Line(category) => view.quest_line = Some(category),
-        Pick::Colour(colour) => view.colour = Some(colour),
+        Pick::Color(color) => view.color = Some(color),
     }
 }
 
-fn colour_menu(editor: &mut Editor, ui: &mut Ui) -> Option<ColourBy> {
-    let fields = ColourField::all(editor);
+fn color_menu(editor: &mut Editor, ui: &mut Ui) -> Option<ColorBy> {
+    let fields = ColorField::all(editor);
     let mut picked = None;
     if ui
         .add(egui::Button::new(RichText::new("none").size(13.0)).frame(false))
         .clicked()
     {
-        editor.views.world.colour = None;
+        editor.views.world.color = None;
         ui.close();
     }
-    let current = editor
-        .views
-        .world
-        .colour
-        .as_ref()
-        .map(|colour| &colour.field);
+    let current = editor.views.world.color.as_ref().map(|color| &color.field);
     egui::ScrollArea::vertical()
         .max_height(360.0)
         .show(ui, |ui| {
@@ -335,7 +330,7 @@ fn colour_menu(editor: &mut Editor, ui: &mut Ui) -> Option<ColourBy> {
                     .frame(false)
                     .selected(current == Some(&field));
                 if ui.add(button).clicked() {
-                    picked = Some(ColourBy::new(field));
+                    picked = Some(ColorBy::new(field));
                 }
             }
         });

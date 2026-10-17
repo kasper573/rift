@@ -6,7 +6,7 @@ use engine::systems::area::AreaTag;
 use engine::systems::item::{DroppedItem, Inventory, PickupRequest, Reservation};
 use engine::systems::movement::{MoveRequest, MoveSeq, Position, position};
 use engine::systems::npc::{self, Pack};
-use engine::systems::reach::{self, ReachAct, Tether};
+use engine::systems::reach::{self, ReachAct, ReachTarget, Tether};
 
 use testkit::{Sim, row, spawn_area};
 
@@ -55,10 +55,18 @@ fn an_actor_holds_one_intent_at_a_time() {
     let item = drop_bone(&mut sim, at);
     let world = sim.world();
 
-    reach::intend(world, player, orc, ReachAct::Attack);
-    reach::intend(world, player, item, ReachAct::Pickup);
+    reach::intend(
+        world,
+        player,
+        ReachTarget::Actor(orc),
+        ReachAct::Cast {
+            skill: row("Slash"),
+            repeat: true,
+        },
+    );
+    reach::intend(world, player, ReachTarget::Actor(item), ReachAct::Pickup);
 
-    assert_eq!(reach::intent(world, player, ReachAct::Attack), None);
+    assert_eq!(reach::attacking(world, player), None);
     assert_eq!(reach::intent(world, player, ReachAct::Pickup), Some(item));
 }
 

@@ -1,0 +1,9 @@
+{
+  "label": "Open or close your skills",
+  "bindings": [
+    {
+      "type": "key",
+      "key": "KeyP"
+    }
+  ]
+}

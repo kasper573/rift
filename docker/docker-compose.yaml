@@ -72,10 +72,6 @@ services:
     command: start --optimized --import-realm
     volumes:
       - ./keycloak/import:/opt/keycloak/data/import
-      # roles.conf is generated from the engine crate; the entrypoint syncs the realm with it on every
-      # start. Mounted, not baked, so the image is independent of the roles and can be built before
-      # the file is generated.
-      - ./keycloak/roles.conf:/opt/keycloak/roles.conf
     # The image has neither curl nor wget, so bash speaks the readiness endpoint's HTTP itself.
     healthcheck:
       test:

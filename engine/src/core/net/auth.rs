@@ -6,16 +6,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Resource, Clone)]
 pub struct Credentials {
     pub authorization: String,
-    pub roles: Vec<String>,
 }
 
 impl Credentials {
     pub fn from_access_token(access_token: &str) -> Credentials {
         Credentials {
             authorization: format!("Bearer {access_token}"),
-            roles: TokenClaims::read_unverified(access_token)
-                .map(|claims| claims.realm_access.roles)
-                .unwrap_or_default(),
         }
     }
 }
@@ -29,19 +25,11 @@ pub struct TokenClaims {
     pub azp: Option<String>,
     #[serde(default)]
     pub preferred_username: Option<String>,
-    #[serde(default)]
-    pub realm_access: RealmAccess,
-}
-
-#[derive(Serialize, Deserialize, Default)]
-pub struct RealmAccess {
-    #[serde(default)]
-    pub roles: Vec<String>,
 }
 
 impl TokenClaims {
-    // Without verifying the signature: roles only gate client-side UI, and the server verifies the
-    // token independently on every session request.
+    // Without verifying the signature: the server verifies the token independently on every
+    // session request.
     pub fn read_unverified(token: &str) -> Option<TokenClaims> {
         let payload = token.split('.').nth(1)?;
         serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).ok()?).ok()

@@ -1,0 +1,28 @@
+{
+  "name": "Cheered",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "tint",
+      "params": {
+        "amount": 0.45,
+        "color": [
+          255,
+          214,
+          92,
+          255
+        ]
+      },
+      "duration": 0.5
+    },
+    {
+      "type": "shader",
+      "shader": "scale",
+      "params": {
+        "end": 1.15,
+        "start": 1.0
+      },
+      "duration": 0.4
+    }
+  ]
+}

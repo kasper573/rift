@@ -1,6 +1,6 @@
 {
   "model": "adventurer",
-  "job": "adventurer",
+  "class": "fighter",
   "stats": {
     "health": 30.0,
     "max_health": 30.0,
@@ -10,6 +10,9 @@
     "movement_speed": 4.0,
     "range": 1.5
   },
+  "wearing": [
+    "iron_sword"
+  ],
   "modules": [
     {
       "type": "regen",

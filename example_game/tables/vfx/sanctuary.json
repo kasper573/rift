@@ -1,0 +1,10 @@
+{
+  "name": "Sanctuary",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "sanctuary",
+      "duration": 1.4
+    }
+  ]
+}

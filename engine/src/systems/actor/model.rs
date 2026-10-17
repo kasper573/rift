@@ -13,7 +13,7 @@ use crate::core::content::media::{ImageSizes, VisiblePixelColumns, visible_colum
 use crate::core::content::{
     Content, ContentId, ContentRow, Loading, ModuleRule, ModuleSet, RowCheck, serial,
 };
-use crate::core::math::{Direction, Pos, Rect, Size, WorldPx};
+use crate::core::math::{Direction, FrameSize, Pos, Rect, Size, WorldPx};
 use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
 
@@ -100,13 +100,6 @@ pub struct Sheet {
     pub image: AssetRef,
     pub frame_size: FrameSize,
     pub actions: BTreeMap<Action, BTreeMap<Direction, Vec<SheetFrame>>>,
-}
-
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FrameSize {
-    pub width: u32,
-    pub height: u32,
 }
 
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]

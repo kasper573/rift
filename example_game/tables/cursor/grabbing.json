@@ -1,7 +1,1 @@
-{
-  "image": "icons/cursors/hand003.png",
-  "hotspot": {
-    "x": 32,
-    "y": 30
-  }
-}
+../../../editor/templates/new_game/tables/cursor/grabbing.json

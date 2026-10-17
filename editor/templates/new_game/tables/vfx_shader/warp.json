@@ -1,0 +1,19 @@
+{
+  "name": "Warp",
+  "params": [
+    {
+      "name": "amplitude",
+      "kind": "number",
+      "default": 0.05,
+      "min": 0.0,
+      "max": 0.3
+    },
+    {
+      "name": "frequency",
+      "kind": "number",
+      "default": 18.0,
+      "min": 0.0,
+      "max": 30.0
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "name": "Cleave",
+  "icon": "icons/weapon_and_tool/axe.png",
+  "sfx": "slash02",
+  "target": "area_enemy",
+  "area": {
+    "type": "cone",
+    "angle": 90.0,
+    "length": 2.0
+  },
+  "cooldown": 6.0,
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 1.2
+      }
+    },
+    {
+      "cost": 1,
+      "stats": {
+        "power": 1.5
+      }
+    },
+    {
+      "cost": 2,
+      "stats": {
+        "power": 1.9,
+        "radius": 0.5
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "hit": {
+          "type": "damage",
+          "who": {
+            "type": "skill_targets"
+          },
+          "by": {
+            "type": "multiply",
+            "a": {
+              "type": "stat",
+              "stat": "damage"
+            },
+            "b": {
+              "type": "skill_stat",
+              "skill": "cleave",
+              "stat": "power"
+            }
+          },
+          "next": "show"
+        },
+        "show": {
+          "type": "vfx",
+          "vfx": "slash_hit",
+          "on": {
+            "type": "skill_targets"
+          }
+        },
+        "sweep": {
+          "type": "vfx",
+          "vfx": "cleave_swoosh",
+          "on": {
+            "type": "skill_area"
+          },
+          "next": "hit"
+        },
+        "swing": {
+          "type": "animate",
+          "action": "attack",
+          "wait": "apex",
+          "next": "sweep"
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "swing"
+        }
+      }
+    }
+  ]
+}

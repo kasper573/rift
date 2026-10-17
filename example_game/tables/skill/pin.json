@@ -1,0 +1,84 @@
+{
+  "name": "Pin",
+  "icon": "icons/material/string.png",
+  "sfx": "slash03",
+  "target": "single_enemy",
+  "range": 6.0,
+  "cooldown": 12.0,
+  "requires": {
+    "type": "wearing",
+    "item": "bow"
+  },
+  "cost": [
+    {
+      "item": "arrow"
+    }
+  ],
+  "levels": [
+    {
+      "cost": 2,
+      "stats": {
+        "power": 1.2,
+        "duration": 3.0
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "hit": {
+          "type": "damage",
+          "who": {
+            "type": "skill_targets"
+          },
+          "by": {
+            "type": "multiply",
+            "a": {
+              "type": "stat",
+              "stat": "damage"
+            },
+            "b": {
+              "type": "skill_stat",
+              "skill": "pin",
+              "stat": "power"
+            }
+          },
+          "next": "show"
+        },
+        "show": {
+          "type": "vfx",
+          "vfx": "arrow_hit",
+          "on": {
+            "type": "skill_targets"
+          },
+          "next": "stick"
+        },
+        "stick": {
+          "type": "apply_status",
+          "who": {
+            "type": "skill_targets"
+          },
+          "effect": "pinned",
+          "power": 1.0,
+          "seconds": {
+            "type": "skill_stat",
+            "skill": "pin",
+            "stat": "duration"
+          }
+        },
+        "swing": {
+          "type": "animate",
+          "action": "attack",
+          "wait": "apex",
+          "next": "hit"
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "swing"
+        }
+      }
+    }
+  ]
+}

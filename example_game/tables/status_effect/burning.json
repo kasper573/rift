@@ -1,0 +1,29 @@
+{
+  "name": "Burning",
+  "icon": "icons/misc/candle.png",
+  "category": "debuff",
+  "description": "Flames cling to the cloak and bite every second.",
+  "vfx": {
+    "on_activate": "spark_hit",
+    "during": "embers"
+  },
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "bite": {
+          "type": "damage",
+          "by": {
+            "type": "status_power"
+          }
+        },
+        "every": {
+          "type": "on",
+          "event": "interval",
+          "seconds": 1.0,
+          "next": "bite"
+        }
+      }
+    }
+  ]
+}

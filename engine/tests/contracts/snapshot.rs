@@ -7,17 +7,16 @@ use engine::systems::GameSettings;
 use engine::systems::actor::Name;
 use engine::systems::area::AreaId;
 use engine::systems::area::transition::Discovered;
+use engine::systems::class::Class;
 use engine::systems::dialogue;
-use engine::systems::effect::{Effect, TimedEffects};
 use engine::systems::equipment::{Equipment, EquipmentSlot};
 use engine::systems::history::{History, HistoryEntry, HistoryTopic};
 use engine::systems::item::{Inventory, ItemStack};
-use engine::systems::job::Job;
 use engine::systems::memory;
 use engine::systems::movement::Position;
 use engine::systems::player::snapshot::{
     AtInitialSpawn, CharacterSnapshot, CharacterStart, HeardLine, JoinAs, MemoryValue, QuestState,
-    SnapshotEffect, SnapshotMemory, SnapshotQuest, SnapshotRecord, SnapshotShop,
+    SnapshotMemory, SnapshotQuest, SnapshotRecord, SnapshotShop,
 };
 use engine::systems::player::{SpawnPolicy, SpawnRules, Xp};
 use engine::systems::quest::{QuestLog, QuestResult};
@@ -56,15 +55,20 @@ fn a_character_joined_from_a_row_is_that_character() {
         world.get::<Name>(player).map(|name| name.name.as_str()),
         Some("Tess")
     );
-    assert_eq!(
-        world.get::<Position>(player).map(|position| position.pos),
-        Some(start.at)
+    let landed = world
+        .get::<Position>(player)
+        .map(|position| position.pos)
+        .expect("a position");
+    assert!(
+        landed.distance_to(start.at) <= 1.5,
+        "landed at {landed:?}, asked for {:?}",
+        start.at
     );
     assert_eq!(world.get::<Xp>(player), Some(&Xp { amount: 60 }));
     assert_eq!(
-        world.get::<Job>(player),
-        Some(&Job {
-            def: row("adventurer")
+        world.get::<Class>(player),
+        Some(&Class {
+            def: row("fighter")
         })
     );
     let stats = world.get::<Stats>(player).expect("stats");
@@ -82,10 +86,7 @@ fn a_character_joined_from_a_row_is_that_character() {
     );
     let known = world.get::<Discovered>(player).expect("known areas");
     assert!(known.knows(forest) && known.knows(row("island")));
-    let timed = world.get::<TimedEffects>(player).expect("effects");
-    assert_eq!(timed.0.len(), 1);
-    assert_eq!(timed.0[0].effect, Effect::Chasing);
-    assert_eq!(timed.0[0].until, LATER.now.after(Seconds(30.0)));
+    let joined_at = world.resource::<WallClock>().now;
     let log = world.get::<QuestLog>(player).expect("quest log");
     let tusks = log
         .active(row("tusks_for_the_chief"))
@@ -121,7 +122,7 @@ fn a_character_joined_from_a_row_is_that_character() {
     let records: Vec<_> = history.records().collect();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].entry.text, LineText::plain("Hello"));
-    assert_eq!(records[0].at, LATER.now.before(Seconds(5.0)));
+    assert_eq!(records[0].at, joined_at.before(Seconds(5.0)));
 }
 
 #[test]
@@ -175,13 +176,12 @@ fn returning_to(area: AreaId) -> Sim {
 fn tess(start: Place) -> CharacterSnapshot {
     CharacterSnapshot {
         name: "Tess".to_owned(),
-        job: row("adventurer"),
+        class: row("fighter"),
         xp: 60,
+        skills: Vec::new(),
+        hotbar: Vec::new(),
+        basic_attack: None,
         stats: StatMap(BTreeMap::from([(StatKind::Damage, 9.0)])),
-        effects: vec![SnapshotEffect {
-            effect: Effect::Chasing,
-            left: Seconds(30.0),
-        }],
         bag: vec![
             ItemStack::new(row("orc_tusk"), 5),
             ItemStack::new(row("gold"), 20),

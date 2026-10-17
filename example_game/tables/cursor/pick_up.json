@@ -1,7 +1,1 @@
-{
-  "image": "icons/cursors/hand001.png",
-  "hotspot": {
-    "x": 8,
-    "y": 8
-  }
-}
+../../../editor/templates/new_game/tables/cursor/pick_up.json

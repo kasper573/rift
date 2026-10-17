@@ -1,0 +1,31 @@
+{
+  "name": "Volley",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "ring",
+      "params": {
+        "color": [
+          255,
+          214,
+          92,
+          255
+        ],
+        "width": 0.25
+      },
+      "duration": 0.5
+    },
+    {
+      "type": "sprite",
+      "sheet": "vfx/impact.png",
+      "frame": {
+        "width": 32,
+        "height": 32
+      },
+      "frames": 6,
+      "fps": 16.0,
+      "scale": 1.5,
+      "delay": 0.15
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "name": "Arcanist",
+  "class": "mage",
+  "xp": 350,
+  "skills": [
+    {
+      "node": "fireball",
+      "rank": 1
+    },
+    {
+      "node": "frost_lance",
+      "rank": 1
+    },
+    {
+      "node": "chain_lightning",
+      "rank": 1
+    },
+    {
+      "node": "mend",
+      "rank": 1
+    },
+    {
+      "node": "sanctuary",
+      "rank": 1
+    },
+    {
+      "node": "ward",
+      "rank": 1
+    },
+    {
+      "node": "arcane_mind",
+      "rank": 1
+    }
+  ],
+  "hotbar": [
+    {
+      "slot": 0,
+      "entry": {
+        "skill": "fireball"
+      }
+    },
+    {
+      "slot": 1,
+      "entry": {
+        "skill": "frost_lance"
+      }
+    },
+    {
+      "slot": 2,
+      "entry": {
+        "skill": "chain_lightning"
+      }
+    },
+    {
+      "slot": 3,
+      "entry": {
+        "skill": "mend"
+      }
+    },
+    {
+      "slot": 4,
+      "entry": {
+        "skill": "sanctuary"
+      }
+    },
+    {
+      "slot": 5,
+      "entry": {
+        "skill": "ward"
+      }
+    }
+  ],
+  "basic_attack": "spark",
+  "bag": [
+    {
+      "item": "gold",
+      "count": 20
+    },
+    {
+      "item": "health_potion",
+      "count": 3
+    },
+    {
+      "item": "bog_water",
+      "count": 2
+    },
+    {
+      "item": "antidote"
+    }
+  ],
+  "equipment": {
+    "weapon": "ash_wand"
+  },
+  "start": "initial_spawn"
+}

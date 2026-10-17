@@ -518,23 +518,35 @@ impl Grid {
     }
 
     pub fn nearest_walkable(&self, p: Pos<Tiles>) -> Option<Pos<Tiles>> {
+        self.nearest_walkable_where(p, |_| true)
+    }
+
+    /// The walkable cell nearest `p` that `fits`, `p`'s own when it does. Of equally near cells the
+    /// southernmost wins, then the westernmost: an actor put down beside another is drawn in front
+    /// of it, not hidden behind it.
+    pub fn nearest_walkable_where(
+        &self,
+        p: Pos<Tiles>,
+        fits: impl Fn(CellPos) -> bool,
+    ) -> Option<Pos<Tiles>> {
         let from = p.cell();
-        if self.cell_walkable(from) {
+        if self.cell_walkable(from) && fits(from) {
             return Some(from.center());
         }
         let (width, height) = (self.size.width as i32, self.size.height as i32);
         for radius in 1..=width.max(height) {
             let mut best: Option<CellPos> = None;
             let mut best_d2 = i64::MAX;
-            for ny in (from.y - radius)..=(from.y + radius) {
+            for ny in ((from.y - radius)..=(from.y + radius)).rev() {
                 for nx in (from.x - radius)..=(from.x + radius) {
                     if (nx - from.x).abs() != radius && (ny - from.y).abs() != radius {
                         continue;
                     }
                     let d2 = i64::from(nx - from.x).pow(2) + i64::from(ny - from.y).pow(2);
-                    if self.cell_walkable(CellPos::new(nx, ny)) && d2 < best_d2 {
+                    let cell = CellPos::new(nx, ny);
+                    if self.cell_walkable(cell) && fits(cell) && d2 < best_d2 {
                         best_d2 = d2;
-                        best = Some(CellPos::new(nx, ny));
+                        best = Some(cell);
                     }
                 }
             }

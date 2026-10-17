@@ -1,0 +1,30 @@
+{
+  "name": "Guard up",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "tint",
+      "params": {
+        "amount": 0.55,
+        "color": [
+          120,
+          170,
+          255,
+          255
+        ]
+      },
+      "duration": 0.6
+    },
+    {
+      "type": "sprite",
+      "sheet": "vfx/sparkle.png",
+      "frame": {
+        "width": 32,
+        "height": 32
+      },
+      "frames": 6,
+      "fps": 12.0,
+      "anchor": "head"
+    }
+  ]
+}

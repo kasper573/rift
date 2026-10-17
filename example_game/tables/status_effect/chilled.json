@@ -1,0 +1,32 @@
+{
+  "name": "Chilled",
+  "icon": "icons/ore_and_gem/crystal.png",
+  "category": "debuff",
+  "description": "Frost in the joints: every step comes slow.",
+  "vfx": {
+    "on_activate": "chill_tint"
+  },
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "hold"
+        },
+        "hold": {
+          "type": "boost",
+          "stat": "movement_speed",
+          "by": {
+            "type": "multiply",
+            "a": {
+              "type": "status_power"
+            },
+            "b": -1.0
+          }
+        }
+      }
+    }
+  ]
+}

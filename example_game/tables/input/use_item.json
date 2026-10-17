@@ -1,10 +1,1 @@
-{
-  "label": "Use, wear or take off an item",
-  "bindings": [
-    {
-      "type": "click",
-      "button": "Left",
-      "times": 2
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/use_item.json

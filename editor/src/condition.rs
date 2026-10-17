@@ -36,7 +36,20 @@ fn is_operator(tag: &str) -> bool {
 }
 
 const GROUPS: [(&str, &[&str]); 7] = [
-    ("The character", &["level", "is_job", "stat", "buffed"]),
+    (
+        "The character",
+        &[
+            "level",
+            "is_class",
+            "stat",
+            "has_status",
+            "status_count",
+            "status_power",
+            "skill_rank",
+            "skill_stat",
+            "spent_skill_points",
+        ],
+    ),
     ("Bag and gear", &["holding", "free_slots", "wearing"]),
     (
         "Quests",

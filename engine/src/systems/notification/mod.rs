@@ -23,10 +23,10 @@ use crate::core::audio::playback::{PlaySfx, SfxId, SfxPlace};
 use crate::core::content::{Content, ContentId, ContentRow, Fixture, Loading, RowCheck};
 use crate::core::gui::{self, Band};
 use crate::core::math::Pos;
+use crate::core::math::Rgba;
 use crate::core::script::{Compiler, EffectDef, EffectStep, Name, ScriptFault, ValueType};
 use crate::core::tiling::Tiles;
 use crate::core::time::{Seconds, UnixMillis, WallClock};
-use crate::systems::actor::Rgba;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::movement::position;
@@ -125,6 +125,19 @@ pub struct NotificationSent {
 
 pub fn notify(world: &mut World, player: Entity, notification: Notification) {
     notify_from(world, player, None, notification);
+}
+
+/// An error the client raises for itself, shown like one the server sent.
+pub fn local_error(world: &mut World, text: impl Into<String>) {
+    let kind = NotificationKind::error(world.resource::<Content>());
+    show(
+        world,
+        NotificationSent {
+            notification: Notification::new(kind, LineText::plain(text.into())),
+            speaker: None,
+            at: UnixMillis(0),
+        },
+    );
 }
 
 pub fn error(world: &mut World, player: Entity, text: impl Into<String>) {

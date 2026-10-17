@@ -1,0 +1,133 @@
+{
+  "name": "Mage",
+  "icon": "icons/weapon_and_tool/magic_wand.png",
+  "flavour": "Fire in one hand, frost in the other, and the storm on call.",
+  "levels": [
+    {
+      "xp": 0,
+      "skill_points": 1
+    },
+    {
+      "xp": 30,
+      "stats": {
+        "damage": 2.0
+      },
+      "skill_points": 1
+    },
+    {
+      "xp": 90,
+      "stats": {
+        "max_health": 8.0
+      },
+      "skill_points": 1
+    },
+    {
+      "xp": 200,
+      "stats": {
+        "max_health": 8.0,
+        "damage": 3.0
+      },
+      "skill_points": 2
+    },
+    {
+      "xp": 350,
+      "stats": {
+        "damage": 2.0
+      },
+      "skill_points": 2
+    },
+    {
+      "xp": 550,
+      "stats": {
+        "max_health": 12.0,
+        "damage": 3.0
+      },
+      "skill_points": 2
+    }
+  ],
+  "tree": {
+    "arcane_mind": {
+      "skill": "arcane_mind",
+      "at": {
+        "x": 560.0,
+        "y": 200.0
+      }
+    },
+    "chain_lightning": {
+      "skill": "chain_lightning",
+      "requires": [
+        {
+          "type": "skill",
+          "node": "fireball"
+        },
+        {
+          "type": "skill",
+          "node": "frost_lance"
+        },
+        {
+          "type": "level",
+          "level": 3
+        }
+      ],
+      "at": {
+        "x": 160.0,
+        "y": 200.0
+      }
+    },
+    "fireball": {
+      "skill": "fireball",
+      "at": {
+        "x": 80.0,
+        "y": 60.0
+      }
+    },
+    "frost_lance": {
+      "skill": "frost_lance",
+      "at": {
+        "x": 240.0,
+        "y": 60.0
+      }
+    },
+    "mend": {
+      "skill": "mend",
+      "at": {
+        "x": 400.0,
+        "y": 60.0
+      }
+    },
+    "sanctuary": {
+      "skill": "sanctuary",
+      "requires": [
+        {
+          "type": "skill",
+          "node": "mend"
+        },
+        {
+          "type": "level",
+          "level": 4
+        }
+      ],
+      "at": {
+        "x": 400.0,
+        "y": 200.0
+      }
+    },
+    "ward": {
+      "skill": "ward",
+      "at": {
+        "x": 560.0,
+        "y": 60.0
+      }
+    }
+  },
+  "backdrop": {
+    "image": "backdrops/mage.png",
+    "frame": {
+      "x": -100.0,
+      "y": -120.0,
+      "width": 1000.0,
+      "height": 600.0
+    },
+    "fit": "cover"
+  }
+}

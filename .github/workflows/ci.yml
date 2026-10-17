@@ -198,9 +198,20 @@ jobs:
       - name: Upload docker runtime dependencies
         uses: burnett01/rsync-deployments@155b6d6c1219ab2224c20c58d423a3f1b850395f # v9
         with:
-          switches: -avz --delete
+          switches: -avz --delete --exclude content/
           path: docker/
           remote_path: ~/docker
+          remote_host: ${{ secrets.PROD_SSH_HOST }}
+          remote_user: ${{ secrets.PROD_SSH_USERNAME }}
+          remote_key: ${{ secrets.PROD_SSH_KEY }}
+      # Synced in place with its symlinks followed, so the running game server keeps the folder it
+      # mounted until the stack restarts on the new files.
+      - name: Upload the game
+        uses: burnett01/rsync-deployments@155b6d6c1219ab2224c20c58d423a3f1b850395f # v9
+        with:
+          switches: -avzL --delete
+          path: example_game/
+          remote_path: ~/docker/content
           remote_host: ${{ secrets.PROD_SSH_HOST }}
           remote_user: ${{ secrets.PROD_SSH_USERNAME }}
           remote_key: ${{ secrets.PROD_SSH_KEY }}
@@ -223,9 +234,10 @@ jobs:
 
             echo ${{ env.DOCKER_PASSWORD }} | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
             docker network inspect rift >/dev/null 2>&1 || docker network create rift
-            docker compose --profile prod pull
-            docker compose --profile prod down
-            if ! docker compose --profile prod up -d --remove-orphans --no-build; then
+            compose="docker compose -f docker-compose.yaml -f docker-compose.prod.yaml --profile prod"
+            $compose pull
+            $compose down
+            if ! $compose up -d --remove-orphans --no-build; then
               echo "🚨 docker-compose up failed — gathering all container logs"
               mkdir -p logs
               for id in $(docker ps -aq); do

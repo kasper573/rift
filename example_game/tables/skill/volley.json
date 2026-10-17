@@ -1,0 +1,89 @@
+{
+  "name": "Volley",
+  "icon": "icons/weapon_and_tool/arrow.png",
+  "sfx": "slash03",
+  "target": "area_enemy",
+  "range": 6.0,
+  "area": {
+    "type": "circle",
+    "radius": 2.0
+  },
+  "cooldown": 10.0,
+  "requires": {
+    "type": "wearing",
+    "item": "bow"
+  },
+  "cost": [
+    {
+      "item": "arrow",
+      "count": 3
+    }
+  ],
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 1.0
+      }
+    },
+    {
+      "cost": 2,
+      "stats": {
+        "power": 1.3,
+        "radius": 0.5
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "hit": {
+          "type": "damage",
+          "who": {
+            "type": "skill_targets"
+          },
+          "by": {
+            "type": "multiply",
+            "a": {
+              "type": "stat",
+              "stat": "damage"
+            },
+            "b": {
+              "type": "skill_stat",
+              "skill": "volley",
+              "stat": "power"
+            }
+          },
+          "next": "show"
+        },
+        "show": {
+          "type": "vfx",
+          "vfx": "arrow_hit",
+          "on": {
+            "type": "skill_targets"
+          }
+        },
+        "sweep": {
+          "type": "vfx",
+          "vfx": "volley_fall",
+          "on": {
+            "type": "skill_area"
+          },
+          "next": "hit"
+        },
+        "swing": {
+          "type": "animate",
+          "action": "attack",
+          "wait": "apex",
+          "next": "sweep"
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "swing"
+        }
+      }
+    }
+  ]
+}

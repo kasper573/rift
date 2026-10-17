@@ -1,0 +1,53 @@
+{
+  "name": "Level up",
+  "params": [
+    {
+      "name": "level",
+      "kind": "number"
+    }
+  ],
+  "layers": [
+    {
+      "type": "text",
+      "template": "Level {level}!",
+      "color": [
+        255,
+        214,
+        92,
+        255
+      ],
+      "size": 18.0,
+      "rise": 1.5,
+      "duration": 1.6
+    },
+    {
+      "type": "shader",
+      "shader": "flash",
+      "params": {
+        "color": [
+          255,
+          214,
+          92,
+          255
+        ],
+        "strength": 0.5
+      },
+      "duration": 0.5
+    },
+    {
+      "type": "sprite",
+      "sheet": "vfx/sparkle.png",
+      "frame": {
+        "width": 32,
+        "height": 32
+      },
+      "frames": 6,
+      "fps": 12.0,
+      "scale": 1.5,
+      "play": {
+        "type": "loop",
+        "seconds": 1.2
+      }
+    }
+  ]
+}

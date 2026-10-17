@@ -1,7 +1,11 @@
 {
   "name": "On Mara's Errand",
-  "job": "adventurer",
+  "class": "fighter",
   "xp": 40,
+  "basic_attack": "slash",
+  "equipment": {
+    "weapon": "iron_sword"
+  },
   "quests": [
     {
       "quest": "tusks_for_the_chief",

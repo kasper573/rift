@@ -43,8 +43,6 @@ pub fn script_cards(
         widgets::card_frame(true).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(theme::faint("≡"));
-                widgets::badge(ui, &tag);
                 ui.label(theme::strong(tag.replace('_', " ")).monospace());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.menu_button(theme::faint("…"), |ui| {
@@ -260,8 +258,8 @@ pub(super) fn outline_block(ui: &mut Ui, cx: &mut FormCx, module: &Value) {
                     if let Some(via) = &row.via {
                         ui.label(theme::code(format!("{via} →")).size(12.0));
                     }
-                    let (glyph, colour) = graph::kind_glyph(node);
-                    ui.label(RichText::new(glyph).color(colour).size(12.0));
+                    let (glyph, color) = graph::kind_glyph(node);
+                    ui.label(RichText::new(glyph).color(color).size(12.0));
                     ui.label(theme::mono(node.kind()).size(12.5).strong());
                     ui.label(theme::mono(&row.name).size(12.5).color(theme::CODE));
                     if !summary.is_empty() {

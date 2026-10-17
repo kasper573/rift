@@ -1,0 +1,16 @@
+{
+  "name": "Bite",
+  "layers": [
+    {
+      "type": "sprite",
+      "sheet": "vfx/slash.png",
+      "frame": {
+        "width": 32,
+        "height": 32
+      },
+      "frames": 6,
+      "fps": 18.0,
+      "scale": 0.7
+    }
+  ]
+}

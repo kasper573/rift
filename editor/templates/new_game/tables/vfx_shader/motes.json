@@ -1,0 +1,43 @@
+{
+  "name": "Motes",
+  "params": [
+    {
+      "name": "color",
+      "kind": "color",
+      "default": [
+        255,
+        220,
+        120,
+        255
+      ]
+    },
+    {
+      "name": "count",
+      "kind": "number",
+      "default": 24.0,
+      "min": 1.0,
+      "max": 64.0
+    },
+    {
+      "name": "speed",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 5.0
+    },
+    {
+      "name": "size",
+      "kind": "number",
+      "default": 0.07,
+      "min": 0.005,
+      "max": 0.2
+    },
+    {
+      "name": "spread",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 2.0
+    }
+  ]
+}

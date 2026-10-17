@@ -23,14 +23,25 @@
       "text": "The bone helmet of an orc chief. It earns you odd looks on the road."
     },
     {
-      "type": "stat",
-      "stat": "max_health",
-      "value": 8.0
-    },
-    {
-      "type": "stat",
-      "stat": "range",
-      "value": 0.2
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "boost_max_health"
+        },
+        "boost_max_health": {
+          "type": "boost",
+          "stat": "max_health",
+          "by": 8.0,
+          "next": "boost_range"
+        },
+        "boost_range": {
+          "type": "boost",
+          "stat": "range",
+          "by": 0.2
+        }
+      }
     }
   ]
 }

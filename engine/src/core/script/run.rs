@@ -502,6 +502,7 @@ impl<V: Vocabulary> Instances<V> {
         instance.flows.push(slot);
         let root = instance.procedures[procedure].clone();
         let locals = root.locals.iter().map(|(_, ty)| ty.zero()).collect();
+        let event = padded(event, &root, entry);
         let flow = Flow {
             owner,
             id,
@@ -807,6 +808,23 @@ pub struct TraceStep<V: Vocabulary> {
 pub struct FlowSteering {
     pub random: HashMap<String, usize>,
     pub step: bool,
+}
+
+/// A raiser may hand fewer values than the entry's event declares; the rest read as zero.
+fn padded<V: Vocabulary>(
+    mut event: Vec<Value>,
+    root: &Procedure<V>,
+    entry: StepIndex,
+) -> Vec<Value> {
+    let fields = root
+        .entries
+        .iter()
+        .find(|(at, _)| *at == entry)
+        .map_or(&[][..], |(_, raised)| raised.fields());
+    for (_, ty) in fields.iter().skip(event.len()) {
+        event.push(ty.zero());
+    }
+    event
 }
 
 fn run_flow<V: Vocabulary>(world: &mut World, key: FlowKey<V>, flow: Flow<V>, clock: TickClock) {

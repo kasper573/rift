@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashSet};
 use egui::{Align, Layout, Modifiers, Sense, Ui};
 
 use super::theme;
+use crate::picker::{self, Dragged};
 
 pub struct TreeNode<A> {
     pub id: String,
@@ -13,6 +14,8 @@ pub struct TreeNode<A> {
     pub unsaved: bool,
     pub note: Option<String>,
     pub actions: Vec<TreeAction<A>>,
+    /// What the pointer carries away when the leaf is dragged.
+    pub drag: Option<Dragged>,
 }
 
 pub struct TreeAction<A> {
@@ -76,6 +79,7 @@ impl<A> TreeNode<A> {
             unsaved: false,
             note: None,
             actions: Vec::new(),
+            drag: None,
         }
     }
 
@@ -156,7 +160,12 @@ fn node_line<A: Clone>(
     depth: usize,
 ) {
     let full = ui.available_rect_before_wrap();
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(full.width(), LINE), Sense::click());
+    let sense = if node.drag.is_some() {
+        Sense::click_and_drag()
+    } else {
+        Sense::click()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(full.width(), LINE), sense);
     let visible = ui.clip_rect().intersects(rect);
     if node.selected {
         ui.painter().rect_filled(rect, 3.0, theme::ACCENT_SOFT);
@@ -209,6 +218,9 @@ fn node_line<A: Clone>(
             if let Some(menu) = walk.hooks.menu.as_deref_mut() {
                 response.context_menu(|ui| menu(ui, &node.id));
             }
+            if let Some(dragged) = &node.drag {
+                picker::carry(ui, &response, dragged);
+            }
         }
     }
 }
@@ -256,7 +268,7 @@ fn line_button(ui: &mut Ui, glyph: &str, tip: &str) -> egui::Response {
 }
 
 fn leaf_line<A>(ui: &mut Ui, node: &TreeNode<A>, thumbs: &mut Option<&mut TreeThumbs<'_>>) {
-    let colour = if node.selected {
+    let color = if node.selected {
         theme::TEXT
     } else {
         theme::CODE
@@ -278,7 +290,7 @@ fn leaf_line<A>(ui: &mut Ui, node: &TreeNode<A>, thumbs: &mut Option<&mut TreeTh
     } else if matches!(node.icon, TreeIcon::Thumb(_)) {
         ui.add_space(18.0);
     }
-    ui.label(theme::mono(&node.label).size(13.0).color(colour));
+    ui.label(theme::mono(&node.label).size(13.0).color(color));
 }
 
 #[derive(Default)]

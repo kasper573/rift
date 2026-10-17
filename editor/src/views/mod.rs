@@ -1,12 +1,14 @@
 pub mod area;
 pub mod character;
-pub mod job;
+pub mod class;
 pub mod model;
 pub mod navigation;
 pub mod script;
+pub mod skill;
 pub mod sound;
 pub mod spreadsheet;
 pub mod tileset;
+pub mod vfx;
 pub mod world;
 
 use bevy::prelude::*;
@@ -37,6 +39,8 @@ pub struct EditorViews {
     pub spreadsheet: spreadsheet::SpreadsheetViews,
     pub sound: sound::SoundViews,
     pub character: character::CharacterView,
+    pub class: class::ClassViews,
+    pub vfx: vfx::VfxViews,
     pub assets: crate::ui::assets::AssetsState,
     pub preview: crate::ui::inspector::preview::InspectorPreviewState,
 }
@@ -65,6 +69,7 @@ impl EditorViews {
 pub fn sync(editor: &mut Editor, world: &mut World) {
     area::sync(editor, world);
     model::sounds::sync(editor, world);
+    vfx::sync(editor, world);
 }
 
 pub fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
@@ -168,6 +173,7 @@ pub fn inspect_parts(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection)
         "area" | "blueprint" => area::inspect_parts(editor, ui, selection),
         "model" => model::inspect_parts(editor, ui, selection),
         "tileset" => tileset::inspect_parts(editor, ui, selection),
+        class::TABLE => class::inspect::show(editor, ui, selection),
         _ => {
             ui.label(format!(
                 "{} parts of {}",

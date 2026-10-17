@@ -1,0 +1,22 @@
+{
+  "name": "Ring",
+  "params": [
+    {
+      "name": "color",
+      "kind": "color",
+      "default": [
+        255,
+        214,
+        92,
+        255
+      ]
+    },
+    {
+      "name": "width",
+      "kind": "number",
+      "default": 0.2,
+      "min": 0.02,
+      "max": 1.0
+    }
+  ]
+}

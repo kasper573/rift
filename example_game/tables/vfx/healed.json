@@ -1,0 +1,47 @@
+{
+  "name": "Healed",
+  "params": [
+    {
+      "name": "amount",
+      "kind": "number"
+    }
+  ],
+  "layers": [
+    {
+      "type": "text",
+      "template": "+{amount}",
+      "color": [
+        120,
+        232,
+        128,
+        255
+      ],
+      "size": 16.0,
+      "duration": 0.9
+    },
+    {
+      "type": "shader",
+      "shader": "tint",
+      "params": {
+        "amount": 0.5,
+        "color": [
+          120,
+          232,
+          128,
+          255
+        ]
+      },
+      "duration": 0.35
+    },
+    {
+      "type": "sprite",
+      "sheet": "vfx/sparkle.png",
+      "frame": {
+        "width": 32,
+        "height": 32
+      },
+      "frames": 6,
+      "fps": 12.0
+    }
+  ]
+}

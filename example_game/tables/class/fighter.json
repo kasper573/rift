@@ -1,0 +1,152 @@
+{
+  "name": "Fighter",
+  "icon": "icons/weapon_and_tool/iron_sword.png",
+  "flavour": "Steel in hand and nothing between you and the fight.",
+  "levels": [
+    {
+      "xp": 0,
+      "skill_points": 1
+    },
+    {
+      "xp": 30,
+      "stats": {
+        "max_health": 10.0
+      },
+      "skill_points": 1
+    },
+    {
+      "xp": 90,
+      "stats": {
+        "damage": 2.0
+      },
+      "skill_points": 1
+    },
+    {
+      "xp": 200,
+      "stats": {
+        "max_health": 15.0,
+        "damage": 2.0
+      },
+      "skill_points": 2
+    },
+    {
+      "xp": 350,
+      "stats": {
+        "max_health": 10.0
+      },
+      "skill_points": 2
+    },
+    {
+      "xp": 550,
+      "stats": {
+        "max_health": 15.0,
+        "damage": 3.0
+      },
+      "skill_points": 2
+    }
+  ],
+  "tree": {
+    "cleave": {
+      "skill": "cleave",
+      "at": {
+        "x": 80.0,
+        "y": 60.0
+      }
+    },
+    "guard": {
+      "skill": "guard",
+      "at": {
+        "x": 240.0,
+        "y": 60.0
+      }
+    },
+    "rally": {
+      "skill": "rally",
+      "requires": [
+        {
+          "type": "skill",
+          "node": "guard"
+        }
+      ],
+      "at": {
+        "x": 320.0,
+        "y": 200.0
+      }
+    },
+    "second_wind": {
+      "skill": "second_wind",
+      "requires": [
+        {
+          "type": "skill",
+          "node": "cleave"
+        },
+        {
+          "type": "skill",
+          "node": "guard"
+        }
+      ],
+      "at": {
+        "x": 160.0,
+        "y": 200.0
+      }
+    },
+    "sunder": {
+      "skill": "sunder",
+      "requires": [
+        {
+          "type": "level",
+          "level": 3
+        }
+      ],
+      "at": {
+        "x": 400.0,
+        "y": 60.0
+      }
+    },
+    "throw_knife": {
+      "skill": "throw_knife",
+      "at": {
+        "x": 560.0,
+        "y": 60.0
+      }
+    },
+    "toughness": {
+      "skill": "toughness",
+      "at": {
+        "x": 480.0,
+        "y": 200.0
+      }
+    },
+    "warcry": {
+      "skill": "warcry",
+      "requires": [
+        {
+          "type": "skill",
+          "node": "rally"
+        },
+        {
+          "type": "skill",
+          "node": "second_wind"
+        },
+        {
+          "type": "level",
+          "level": 4
+        }
+      ],
+      "at": {
+        "x": 240.0,
+        "y": 340.0
+      }
+    }
+  },
+  "backdrop": {
+    "image": "backdrops/fighter.png",
+    "frame": {
+      "x": -100.0,
+      "y": -120.0,
+      "width": 1000.0,
+      "height": 600.0
+    },
+    "fit": "cover"
+  }
+}

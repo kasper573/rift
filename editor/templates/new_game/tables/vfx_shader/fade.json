@@ -1,0 +1,22 @@
+{
+  "name": "Fade",
+  "params": [
+    {
+      "name": "color",
+      "kind": "color",
+      "default": [
+        0,
+        0,
+        0,
+        255
+      ]
+    },
+    {
+      "name": "strength",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 1.0
+    }
+  ]
+}

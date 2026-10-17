@@ -1,7 +1,1 @@
-{
-  "image": "icons/cursors/pointer003.png",
-  "hotspot": {
-    "x": 0,
-    "y": 0
-  }
-}
+../../../editor/templates/new_game/tables/cursor/default.json

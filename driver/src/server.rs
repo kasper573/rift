@@ -70,7 +70,7 @@ impl Server {
             start,
         };
         ureq::post(format!("{}{TEST_CHARACTER_ROUTE}", self.http_url()))
-            .header("Authorization", launch::fake_token(account, &[]))
+            .header("Authorization", launch::fake_token(account))
             .send(to_json(&request))
             .unwrap_or_else(|error| panic!("the game server refused {character}: {error}"));
     }
@@ -99,7 +99,9 @@ impl Drop for Server {
 }
 
 const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-const READY_WITHIN: Duration = Duration::from_secs(60);
+// Generous: a playtest shares its machine with the other playtests' clients and recorders, and a
+// starved server loads its content slowly.
+const READY_WITHIN: Duration = Duration::from_secs(180);
 
 fn run(binary: &Path, config: &ServerConfig, log: &Path) -> (Child, ServerReady) {
     let mut log: File = OpenOptions::new()

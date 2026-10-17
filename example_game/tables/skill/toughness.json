@@ -1,0 +1,47 @@
+{
+  "name": "Toughness",
+  "icon": "icons/equipment/leather_armor.png",
+  "kind": "passive",
+  "target": "self",
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 6.0
+      }
+    },
+    {
+      "cost": 1,
+      "stats": {
+        "power": 6.0
+      }
+    },
+    {
+      "cost": 1,
+      "stats": {
+        "power": 8.0
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "harden"
+        },
+        "harden": {
+          "type": "boost",
+          "stat": "max_health",
+          "by": {
+            "type": "skill_stat",
+            "skill": "toughness",
+            "stat": "power"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,12 +1,12 @@
 {
   "name": "Armed",
-  "job": "adventurer",
+  "class": "fighter",
   "bag": [
     {
-      "item": "rusty_sword"
+      "item": "bone_shield"
     },
     {
-      "item": "bone_shield"
+      "item": "rusty_sword"
     }
   ],
   "start": "initial_spawn"

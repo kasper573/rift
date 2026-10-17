@@ -86,7 +86,6 @@ fn tool_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
     widgets::card_frame(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
-            ui.label(theme::faint("≡"));
             ui.label(theme::strong(title).monospace());
         });
         ui.add_space(4.0);
@@ -355,17 +354,17 @@ fn walk_card(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
     tool_card(ui, "Paint walkability", |ui| {
         let view = editor.views.area.view_mut(view_key);
         widgets::kv(ui, "paint", |ui| {
-            for (value, label, colour) in [
+            for (value, label, color) in [
                 (Some(false), "blocked", theme::DANGER),
                 (Some(true), "walkable", theme::OK),
                 (None, "clear", theme::MUTED),
             ] {
                 let on = view.walk_value == value;
-                if widgets::chip_coloured(
+                if widgets::chip_colored(
                     ui,
                     label,
-                    if on { colour } else { theme::INPUT },
-                    if on { egui::Color32::WHITE } else { colour },
+                    if on { color } else { theme::INPUT },
+                    if on { egui::Color32::WHITE } else { color },
                 )
                 .clicked()
                 {
@@ -388,18 +387,18 @@ fn walk_card(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
 
 fn overlays_legend(ui: &mut Ui) {
     widgets::section(ui, "Overlays");
-    let swatch = |ui: &mut Ui, colour: egui::Color32, hatch: bool| {
+    let swatch = |ui: &mut Ui, color: egui::Color32, hatch: bool| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
         ui.painter().rect_stroke(
             rect,
             2.0,
-            egui::Stroke::new(1.0, colour),
+            egui::Stroke::new(1.0, color),
             egui::StrokeKind::Inside,
         );
         if hatch {
-            patterns::hatch(ui.painter(), rect, colour, 4.0);
+            patterns::hatch(ui.painter(), rect, color, 4.0);
         } else {
-            ui.painter().rect_filled(rect.shrink(3.0), 1.0, colour);
+            ui.painter().rect_filled(rect.shrink(3.0), 1.0, color);
         }
     };
     ui.horizontal(|ui| {
@@ -589,29 +588,23 @@ fn area_card(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, are
     let mut menu_action: Option<AreaMenu> = None;
     widgets::card_frame(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        widgets::card_header(
-            ui,
-            "area",
-            row["name"].as_str().unwrap_or(key),
-            "first-class",
-            |ui| {
-                if ui.button("Resize…").clicked() {
-                    menu_action = Some(AreaMenu::Resize);
-                    ui.close();
-                }
-                if ui
-                    .add(egui::Button::new("Play here").shortcut_text("F6"))
-                    .clicked()
-                {
-                    menu_action = Some(AreaMenu::Play);
-                    ui.close();
-                }
-                if ui.button("Open as row").clicked() {
-                    menu_action = Some(AreaMenu::OpenRow);
-                    ui.close();
-                }
-            },
-        );
+        widgets::card_header(ui, row["name"].as_str().unwrap_or(key), "", |ui| {
+            if ui.button("Resize…").clicked() {
+                menu_action = Some(AreaMenu::Resize);
+                ui.close();
+            }
+            if ui
+                .add(egui::Button::new("Play here").shortcut_text("F6"))
+                .clicked()
+            {
+                menu_action = Some(AreaMenu::Play);
+                ui.close();
+            }
+            if ui.button("Open as row").clicked() {
+                menu_action = Some(AreaMenu::OpenRow);
+                ui.close();
+            }
+        });
         ui.add_space(4.0);
         widgets::kv(ui, "name", |ui| {
             let response = forms::boxed_input(ui, None, |ui| {
@@ -716,7 +709,7 @@ fn spawn_card(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content) {
     let mut pick = false;
     widgets::card_frame(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        widgets::card_title(ui, "place", "initial spawn");
+        widgets::card_title(ui, "initial spawn");
         ui.add_space(4.0);
         {
             let Editor {
@@ -934,29 +927,23 @@ pub fn show_parts(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
             ui.add_space(4.0);
             widgets::card_frame(true).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                widgets::card_header(
-                    ui,
-                    "modules",
-                    &format!("{} modules", indices.len()),
-                    "",
-                    |ui| {
-                        if ui.button("Copy as JSON").clicked() {
-                            out.actions.push(super::AreaAction::Copy);
-                            ui.close();
-                        }
-                        if ui.button("Duplicate").clicked() {
-                            out.actions.push(super::AreaAction::Duplicate);
-                            ui.close();
-                        }
-                        if ui
-                            .add(egui::Button::new("Remove all").shortcut_text("Del"))
-                            .clicked()
-                        {
-                            out.actions.push(super::AreaAction::Delete);
-                            ui.close();
-                        }
-                    },
-                );
+                widgets::card_header(ui, &format!("{} modules", indices.len()), "", |ui| {
+                    if ui.button("Copy as JSON").clicked() {
+                        out.actions.push(super::AreaAction::Copy);
+                        ui.close();
+                    }
+                    if ui.button("Duplicate").clicked() {
+                        out.actions.push(super::AreaAction::Duplicate);
+                        ui.close();
+                    }
+                    if ui
+                        .add(egui::Button::new("Remove all").shortcut_text("Del"))
+                        .clicked()
+                    {
+                        out.actions.push(super::AreaAction::Delete);
+                        ui.close();
+                    }
+                });
                 ui.add_space(4.0);
                 changed |= placement::shared_values(ui, &mut cx, &mut row, &indices);
             });
@@ -1024,7 +1011,7 @@ fn module_inspector(
     let content = cx.content.clone();
     widgets::card_frame(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        widgets::card_header(ui, &kind, &shown_kind, "", |ui| {
+        widgets::card_header(ui, &shown_kind, "", |ui| {
             if ui.button("Copy as JSON").clicked() {
                 out.actions.push(super::AreaAction::Copy);
                 ui.close();
@@ -1098,7 +1085,7 @@ fn module_inspector(
                 widgets::section(ui, &format!("Values · {blueprint}"));
                 widgets::card_frame(false).show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    widgets::card_title(ui, "values", "values");
+                    widgets::card_title(ui, "values");
                     ui.add_space(4.0);
                     changed |= placement::placement_card(ui, cx, content.as_ref(), module, &path);
                 });

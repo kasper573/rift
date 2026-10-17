@@ -1,9 +1,1 @@
-{
-  "label": "Pick the fifth choice",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "Digit5"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/choice5.json

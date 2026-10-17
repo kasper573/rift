@@ -1,0 +1,37 @@
+{
+  "name": "Bow",
+  "icon": "icons/weapon_and_tool/bow.png",
+  "sfx": {
+    "pickup": "pickup_stone",
+    "trade": "trade_stone",
+    "drop": "block01"
+  },
+  "kind": {
+    "type": "equipment",
+    "slot": "weapon",
+    "grants": [
+      "shoot"
+    ]
+  },
+  "modules": [
+    {
+      "type": "flavor",
+      "text": "Yew and gut string. Anyone can draw it; few can aim it."
+    },
+    {
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "boost_damage"
+        },
+        "boost_damage": {
+          "type": "boost",
+          "stat": "damage",
+          "by": 3.0
+        }
+      }
+    }
+  ]
+}

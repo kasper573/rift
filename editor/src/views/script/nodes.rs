@@ -236,9 +236,10 @@ impl NodeEntry {
             "flow" | "dialogue" => "script",
             "memory" => "quest",
             "area" => "object",
-            "npc body" | "notification" | "chat" => "npc",
+            "npc body" | "notification" | "chat" | "actor" => "npc",
             "audio" => "sfx",
-            "stat" | "job" => "respawn",
+            "vfx" => "skill",
+            "stat" | "class" => "respawn",
             other => other,
         }
     }
@@ -954,7 +955,7 @@ impl NodeReads {
     }
 }
 
-const EFFECT_BLURBS: [(&str, &str, &str); 35] = [
+const EFFECT_BLURBS: [(&str, &str, &str); 39] = [
     (
         "warp",
         "area",
@@ -962,8 +963,21 @@ const EFFECT_BLURBS: [(&str, &str, &str); 35] = [
     ),
     ("heal", "stat", "Restores health up to the maximum"),
     ("damage", "stat", "Takes health, credited to an npc owner"),
-    ("buff", "stat", "Adds a timed effect to a stat"),
-    ("clear_buffs", "stat", "Ends every timed effect"),
+    (
+        "apply_status",
+        "status",
+        "Puts a status on actors, at a power, for a time or until removed",
+    ),
+    (
+        "remove_status",
+        "status",
+        "Takes a status off actors: one effect, a category or all",
+    ),
+    (
+        "boost",
+        "status",
+        "Holds a stat modifier while this status, item or passive skill is active",
+    ),
     (
         "items",
         "item",
@@ -988,8 +1002,7 @@ const EFFECT_BLURBS: [(&str, &str, &str); 35] = [
         "Removes ground items in range",
     ),
     ("move_items", "item", "Moves items from one bag to another"),
-    ("grant_xp", "job", "Grants experience as kills do"),
-    ("set_job", "job", "Sets the job"),
+    ("grant_xp", "class", "Grants experience as kills do"),
     ("remember", "memory", "Sets a memory, timed now"),
     ("forget", "memory", "Sets memories back to zero"),
     ("offer_quest", "quest", "Shows the offer card and pauses"),
@@ -1013,7 +1026,27 @@ const EFFECT_BLURBS: [(&str, &str, &str); 35] = [
     ),
     ("attack", "npc body", "Chases and swings at a target"),
     ("stop", "npc body", "Interrupts the body"),
-    ("face", "npc body", "Turns the body toward something"),
+    ("face", "actor", "Turns an actor toward something"),
+    (
+        "animate",
+        "actor",
+        "Plays a model action, waiting for its apex or end when asked",
+    ),
+    (
+        "use_skill",
+        "skill",
+        "Casts a skill as a player would, aimed at an actor or a point",
+    ),
+    (
+        "reset_skills",
+        "skill",
+        "Asks, then forgets every learned rank and returns the points",
+    ),
+    (
+        "vfx",
+        "vfx",
+        "Plays a vfx row on each actor, a point or an area named, along a path through the actors, or on a player's screen or widget",
+    ),
     (
         "set_attitude",
         "npc",

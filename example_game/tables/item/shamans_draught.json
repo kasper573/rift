@@ -1,0 +1,45 @@
+{
+  "name": "Shaman's Draught",
+  "icon": "icons/potion/green_potion_3.png",
+  "sfx": {
+    "pickup": "pickup_glass",
+    "trade": "trade_glass",
+    "drop": "landing01",
+    "use": "heal01"
+  },
+  "kind": {
+    "type": "usable"
+  },
+  "modules": [
+    {
+      "type": "flavor",
+      "text": "Drink to forget every skill and take the points back."
+    },
+    {
+      "type": "stack",
+      "max": 5
+    },
+    {
+      "type": "inline_script",
+      "nodes": {
+        "ask": {
+          "type": "reset_skills",
+          "accepted": "drink"
+        },
+        "drink": {
+          "type": "items",
+          "take": [
+            {
+              "item": "shamans_draught"
+            }
+          ]
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "ask"
+        }
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "model": "adventurer",
-  "job": "adventurer",
+  "class": "adventurer",
   "stats": {
     "health": 30.0,
     "max_health": 30.0,

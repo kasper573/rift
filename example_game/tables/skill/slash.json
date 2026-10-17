@@ -1,0 +1,59 @@
+{
+  "name": "Slash",
+  "icon": "icons/weapon_and_tool/wooden_sword.png",
+  "sfx": "slash01",
+  "target": "single_enemy",
+  "basic_attack": true,
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 1.0
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "hit": {
+          "type": "damage",
+          "who": {
+            "type": "skill_targets"
+          },
+          "by": {
+            "type": "multiply",
+            "a": {
+              "type": "stat",
+              "stat": "damage"
+            },
+            "b": {
+              "type": "skill_stat",
+              "skill": "slash",
+              "stat": "power"
+            }
+          },
+          "next": "show"
+        },
+        "show": {
+          "type": "vfx",
+          "vfx": "slash_hit",
+          "on": {
+            "type": "skill_targets"
+          }
+        },
+        "swing": {
+          "type": "animate",
+          "action": "attack",
+          "wait": "apex",
+          "next": "hit"
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "swing"
+        }
+      }
+    }
+  ]
+}

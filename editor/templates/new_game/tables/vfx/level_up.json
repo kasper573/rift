@@ -1,0 +1,38 @@
+{
+  "name": "Level up",
+  "params": [
+    {
+      "name": "level",
+      "kind": "number"
+    }
+  ],
+  "layers": [
+    {
+      "type": "text",
+      "template": "Level {level}!",
+      "color": [
+        255,
+        214,
+        92,
+        255
+      ],
+      "duration": 1.6,
+      "size": 18,
+      "rise": 1.5
+    },
+    {
+      "type": "shader",
+      "shader": "flash",
+      "duration": 0.5,
+      "params": {
+        "color": [
+          255,
+          214,
+          92,
+          255
+        ],
+        "strength": 0.5
+      }
+    }
+  ]
+}

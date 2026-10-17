@@ -1,9 +1,1 @@
-{
-  "label": "Open or close the terminal",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "KeyC"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/toggle_terminal.json

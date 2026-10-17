@@ -31,6 +31,8 @@ pub enum ClickClaim {
     Interface,
     Locked,
     Attack(Entity),
+    Aim(Entity),
+    AimAt(Pos<Tiles>),
     Pickup(Entity),
     Interact(Entity),
     Walk(Pos<Tiles>),
@@ -75,6 +77,7 @@ pub trait Gesture: Send + Sync {
 static GESTURES: &[&dyn Gesture] = &[
     &interface::InterfaceGesture,
     &locked::LockedGesture,
+    &crate::systems::skill::aim::AimGesture,
     &attack::AttackGesture,
     &pickup::PickupGesture,
     &interact::InteractGesture,

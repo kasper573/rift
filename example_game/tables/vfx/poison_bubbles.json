@@ -1,0 +1,37 @@
+{
+  "name": "Poison bubbles",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "tint",
+      "params": {
+        "amount": 0.45,
+        "color": [
+          90,
+          210,
+          70,
+          255
+        ],
+        "pulse": 1.2
+      },
+      "duration": 1.4
+    },
+    {
+      "type": "shader",
+      "shader": "motes",
+      "params": {
+        "color": [
+          120,
+          230,
+          90,
+          255
+        ],
+        "count": 8.0,
+        "size": 0.04,
+        "speed": 0.5,
+        "spread": 0.6
+      },
+      "duration": 1.4
+    }
+  ]
+}

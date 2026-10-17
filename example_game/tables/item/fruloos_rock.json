@@ -16,9 +16,19 @@
       "text": "It's a rock. Wearing it on your head was your idea."
     },
     {
-      "type": "stat",
-      "stat": "max_health",
-      "value": -10.0
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "boost_max_health"
+        },
+        "boost_max_health": {
+          "type": "boost",
+          "stat": "max_health",
+          "by": -10.0
+        }
+      }
     }
   ]
 }

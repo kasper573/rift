@@ -1,0 +1,67 @@
+{
+  "name": "Armsman",
+  "class": "fighter",
+  "xp": 200,
+  "skills": [
+    {
+      "node": "cleave",
+      "rank": 1
+    },
+    {
+      "node": "guard",
+      "rank": 1
+    },
+    {
+      "node": "sunder",
+      "rank": 1
+    },
+    {
+      "node": "throw_knife",
+      "rank": 1
+    }
+  ],
+  "hotbar": [
+    {
+      "slot": 0,
+      "entry": {
+        "skill": "cleave"
+      }
+    },
+    {
+      "slot": 1,
+      "entry": {
+        "skill": "guard"
+      }
+    },
+    {
+      "slot": 2,
+      "entry": {
+        "skill": "sunder"
+      }
+    },
+    {
+      "slot": 3,
+      "entry": {
+        "skill": "throw_knife"
+      }
+    }
+  ],
+  "basic_attack": "slash",
+  "bag": [
+    {
+      "item": "gold",
+      "count": 40
+    },
+    {
+      "item": "health_potion",
+      "count": 2
+    },
+    {
+      "item": "shamans_draught"
+    }
+  ],
+  "equipment": {
+    "weapon": "iron_sword"
+  },
+  "start": "initial_spawn"
+}

@@ -1,6 +1,5 @@
-# The local and e2e stacks mount a copy of the content folder over the image's example, as
-# production mounts its own: a chapter can then change the files and restart the server to show a
-# content deploy.
+# The local and e2e stacks play a copy of the example game, synced by `just up` with its symlinks
+# followed: a chapter can then change the files and restart the server to show a content deploy.
 services:
   rift-game-server:
     volumes:

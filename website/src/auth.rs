@@ -9,7 +9,7 @@ use openidconnect::core::{
     CoreJweContentEncryptionAlgorithm, CoreJwsSigningAlgorithm,
 };
 use openidconnect::{
-    AdditionalClaims, AuthUrl, AuthorizationCode, Client, ClientId, CsrfToken, EndSessionUrl,
+    AuthUrl, AuthorizationCode, Client, ClientId, CsrfToken, EmptyAdditionalClaims, EndSessionUrl,
     EndpointNotSet, EndpointSet, IdToken, IdTokenClaims, IdTokenVerifier, IssuerUrl,
     JsonWebKeySetUrl, LogoutRequest, Nonce, NonceVerifier, OAuth2TokenResponse, PkceCodeChallenge,
     PkceCodeVerifier, PostLogoutRedirectUrl, RedirectUrl, Scope, TokenResponse, TokenUrl, reqwest,
@@ -267,28 +267,14 @@ struct PendingSignIn {
     return_to: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct RealmClaims {
-    #[serde(default)]
-    realm_access: RealmRoles,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct RealmRoles {
-    #[serde(default)]
-    roles: Vec<String>,
-}
-
-impl AdditionalClaims for RealmClaims {}
-
 type RiftIdToken = IdToken<
-    RealmClaims,
+    EmptyAdditionalClaims,
     CoreGenderClaim,
     CoreJweContentEncryptionAlgorithm,
     CoreJwsSigningAlgorithm,
 >;
 
-type RiftClaims = IdTokenClaims<RealmClaims, CoreGenderClaim>;
+type RiftClaims = IdTokenClaims<EmptyAdditionalClaims, CoreGenderClaim>;
 
 type RiftClient =
     CoreClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;

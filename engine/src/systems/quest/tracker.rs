@@ -6,10 +6,10 @@ use super::card::Countdown;
 use super::{Parties, QuestId, QuestLog, QuestResult, ready_mark};
 use crate::core::assets::AssetRef;
 use crate::core::content::{Content, Fixture};
-use crate::systems::hud::{self, HudAudience, HudWidget};
+use crate::systems::hud::{self, HudWidget};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::Inventory;
-use crate::systems::player::session::Viewpoint;
+use crate::systems::player::session;
 
 const WIDTH: f32 = 230.0;
 const MARK: f32 = 16.0;
@@ -25,9 +25,6 @@ impl Plugin for QuestTrackerPlugin {
 pub struct QuestTrackerWidget;
 
 impl HudWidget for QuestTrackerWidget {
-    fn audience(&self) -> HudAudience {
-        HudAudience::Everyone
-    }
     fn fallback(&self, screen: Rect) -> Pos2 {
         Pos2::new(
             screen.right() - hud::WIDGET.0 - WIDTH - 24.0,
@@ -39,9 +36,7 @@ impl HudWidget for QuestTrackerWidget {
         if entries.is_empty() {
             return;
         }
-        let log = world
-            .resource::<Viewpoint>()
-            .0
+        let log = session::me(world)
             .and_then(|seen| world.get::<QuestLog>(seen))
             .cloned()
             .unwrap_or_default();
@@ -87,7 +82,7 @@ enum Count {
 }
 
 impl Tone {
-    fn colour(self) -> Color32 {
+    fn color(self) -> Color32 {
         match self {
             Tone::Plain => color::TEXT.gamma_multiply(0.75),
             Tone::Done => color::OK.gamma_multiply(0.7),
@@ -146,7 +141,7 @@ fn entry_rows(ui: &mut Ui, world: &mut World, log: &QuestLog, entry: &Entry) {
         });
     });
     for (label, count, tone) in &entry.rows {
-        let colour = tone.colour();
+        let color = tone.color();
         let count = match count {
             Count::Hidden => String::new(),
             Count::Fixed(count) => count.clone(),
@@ -158,11 +153,11 @@ fn entry_rows(ui: &mut Ui, world: &mut World, log: &QuestLog, entry: &Entry) {
             ui.add_space(8.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if !count.is_empty() {
-                    ui.label(RichText::new(count).size(small).color(colour));
+                    ui.label(RichText::new(count).size(small).color(color));
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     ui.add(
-                        Label::new(RichText::new(label.as_str()).size(small).color(colour)).wrap(),
+                        Label::new(RichText::new(label.as_str()).size(small).color(color)).wrap(),
                     );
                 });
             });
@@ -174,7 +169,7 @@ fn entry_rows(ui: &mut Ui, world: &mut World, log: &QuestLog, entry: &Entry) {
 fn entries(world: &World) -> Vec<Entry> {
     let content = world.resource::<Content>();
     let parties = world.resource::<Parties>();
-    let seen = world.resource::<Viewpoint>().0;
+    let seen = session::me(world);
     let Some(log) = seen.and_then(|seen| world.get::<QuestLog>(seen)) else {
         return Vec::new();
     };

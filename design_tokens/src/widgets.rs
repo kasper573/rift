@@ -8,14 +8,17 @@ use crate::{CHIP_RADIUS, HAIRLINE, color, family};
 /// A heading drawn in capitals that tells the accessibility tree its label as written.
 pub fn section(ui: &mut Ui, text: &str) {
     ui.add_space(6.0);
-    ui.label(
-        RichText::new(text.to_uppercase())
-            .size(11.0)
-            .color(color::MUTED)
-            .family(family::medium()),
-    )
-    .widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
+    ui.label(section_heading(text))
+        .widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
     ui.add_space(1.0);
+}
+
+/// A section's heading as text, for a heading row that carries more than the title.
+pub fn section_heading(text: &str) -> RichText {
+    RichText::new(text.to_uppercase())
+        .size(11.0)
+        .color(color::MUTED)
+        .family(family::medium())
 }
 
 /// One row of tabs with the active one underlined. Each tab tells the accessibility tree its own
@@ -131,10 +134,10 @@ pub fn slider(ui: &mut Ui, slider: egui::Slider) -> Response {
 }
 
 pub fn chip(ui: &mut Ui, text: &str) -> Response {
-    chip_coloured(ui, text, color::RAISED, color::TEXT)
+    chip_colored(ui, text, color::RAISED, color::TEXT)
 }
 
-pub fn chip_coloured(ui: &mut Ui, text: &str, fill: Color32, ink: Color32) -> Response {
+pub fn chip_colored(ui: &mut Ui, text: &str, fill: Color32, ink: Color32) -> Response {
     let response = egui::Frame::new()
         .fill(fill)
         .stroke(HAIRLINE)
@@ -147,22 +150,22 @@ pub fn chip_coloured(ui: &mut Ui, text: &str, fill: Color32, ink: Color32) -> Re
     response.interact(Sense::click())
 }
 
-pub fn pill(ui: &mut Ui, text: &str, colour: Color32) -> Response {
+pub fn pill(ui: &mut Ui, text: &str, color: Color32) -> Response {
     egui::Frame::new()
         .fill(Color32::from_rgba_unmultiplied(
-            colour.r(),
-            colour.g(),
-            colour.b(),
+            color.r(),
+            color.g(),
+            color.b(),
             40,
         ))
         .stroke(Stroke::new(
             1.0,
-            Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), 120),
+            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 120),
         ))
         .corner_radius(12.0)
         .inner_margin(egui::Margin::symmetric(10, 3))
         .show(ui, |ui| {
-            ui.label(RichText::new(text).size(13.0).color(colour).monospace());
+            ui.label(RichText::new(text).size(13.0).color(color).monospace());
         })
         .response
 }
@@ -175,7 +178,7 @@ pub fn primary(ui: &mut Ui, text: &str) -> Response {
                 .family(family::medium()),
         )
         .fill(color::ACCENT)
-        .stroke(Stroke::NONE),
+        .stroke(Stroke::new(HAIRLINE.width, color::ACCENT)),
     );
     if response.has_focus() {
         focus_ring(

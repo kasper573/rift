@@ -10,10 +10,12 @@ use crate::systems::hud::{self, Sizing, WindowFrame};
 use crate::systems::input::map::{self, InputAction, input};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::{ItemDef, ItemFlag, ItemId, ItemKind};
-use crate::systems::player::session::Viewpoint;
+use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::script::condition;
-use crate::systems::stat::Stat;
+use crate::systems::skill::{self, window::CarriedSkill};
+use crate::systems::stat::StatKind;
+use crate::systems::status;
 
 const WINDOW_KEY: &str = "Item";
 const WINDOW_SIZE: Vec2 = Vec2::new(300.0, 360.0);
@@ -86,9 +88,6 @@ pub fn tooltip(world: &World, response: &Response, item: ItemId) {
 pub fn overview(def: &ItemDef) -> String {
     let category = def.category().label();
     match &def.kind {
-        ItemKind::Consumable { health_bonus, .. } if *health_bonus > 0.0 => {
-            format!("{category} · restores {health_bonus} health")
-        }
         ItemKind::Equipment { slot, .. } => format!("{category} · {}", slot.label()),
         _ => category.to_owned(),
     }
@@ -103,7 +102,7 @@ pub fn inspect_hint() -> Vec<TextPiece> {
 
 pub fn use_verb(def: &ItemDef) -> Option<&'static str> {
     match def.kind {
-        ItemKind::Consumable { .. } | ItemKind::Usable => Some("use"),
+        ItemKind::Usable => Some("use"),
         ItemKind::Equipment { .. } => Some("wear"),
         ItemKind::Resource => None,
     }
@@ -127,8 +126,8 @@ pub fn sheet(ui: &mut Ui, world: &mut World, item: ItemId) {
     let tags = tags(def);
     if !tags.is_empty() {
         ui.horizontal_wrapped(|ui| {
-            for (label, colour) in tags {
-                widgets::pill(ui, label, colour);
+            for (label, color) in tags {
+                widgets::pill(ui, label, color);
             }
         });
     }
@@ -146,10 +145,71 @@ pub fn sheet(ui: &mut Ui, world: &mut World, item: ItemId) {
     }
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 3.0;
-        for (fact, colour) in facts(world, def) {
-            ui.label(RichText::new(fact).color(colour));
+        for (fact, color) in facts(world, item, def) {
+            ui.label(RichText::new(fact).color(color));
         }
     });
+    grants(ui, world, item);
+}
+
+const GRANT_ICON: f32 = 24.0;
+
+fn grants(ui: &mut Ui, world: &mut World, item: ItemId) {
+    let content = world.resource::<Content>().clone();
+    let granted = skill::grants_of(&content, item);
+    if granted.is_empty() {
+        return;
+    }
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new("Grants while worn")
+            .size(TextRole::Small.size())
+            .family(design_tokens::family::medium())
+            .color(color::MUTED),
+    );
+    for &granted in granted {
+        let def = granted.get(&content);
+        let response = ui
+            .horizontal(|ui| {
+                hud::icon(ui, world, &def.icon, GRANT_ICON);
+                ui.label(&def.name);
+                ui.label(
+                    RichText::new(def.target.describe())
+                        .size(TextRole::Small.size())
+                        .color(color::MUTED),
+                );
+                if def.basic_attack {
+                    widgets::pill(ui, skill::card::BASIC_ATTACK_MARK, color::WARN);
+                }
+            })
+            .response
+            .interact(egui::Sense::click_and_drag());
+        if map::drag_started(world, InputAction::CarryItem, &response) {
+            egui::DragAndDrop::set_payload(ui.ctx(), CarriedSkill(granted));
+        } else if map::clicked(world, InputAction::PinToHotbar, &response) {
+            skill::bar::pin(world, skill::HotbarEntry::Skill(granted));
+        }
+        let hint = StyledLine::new(vec![
+            TextPiece::text("Drag it to a slot · "),
+            input(InputAction::PinToHotbar),
+            TextPiece::text(" puts it on the hotbar"),
+        ]);
+        skill::card::tooltip(
+            &response,
+            world,
+            &skill::card::of(world, granted),
+            Some(&hint),
+        );
+    }
+    if granted.iter().any(|skill| skill.get(&content).basic_attack) {
+        ui.label(
+            RichText::new(
+                "Dropping the item on the basic attack slot picks its first basic attack",
+            )
+            .size(TextRole::Small.size())
+            .color(color::FAINT),
+        );
+    }
 }
 
 #[derive(Resource, Default)]
@@ -200,6 +260,7 @@ fn draw_card(world: &mut World) {
         title: None,
         start,
         sizing: Sizing::FitsContent,
+        body_limit: None,
     };
     let shown = hud::window(world, &gui, frame, &mut open, |ui, world| {
         egui::ScrollArea::vertical()
@@ -220,36 +281,25 @@ fn tags(def: &ItemDef) -> Vec<(&'static str, Color32)> {
     ]
     .into_iter()
     .filter(|(flag, ..)| def.has(*flag))
-    .map(|(_, label, colour)| (label, colour))
+    .map(|(_, label, color)| (label, color))
     .collect()
 }
 
-fn facts(world: &World, def: &ItemDef) -> Vec<(String, Color32)> {
+fn facts(world: &World, item: ItemId, def: &ItemDef) -> Vec<(String, Color32)> {
     let content = world.resource::<Content>();
     let plain = |fact: String| (fact, color::TEXT);
     let mut facts = Vec::new();
+    let boosts = status::boosts_of(content, item);
     match &def.kind {
-        ItemKind::Consumable {
-            health_bonus,
-            lasts,
-        } => {
-            if *health_bonus > 0.0 {
-                facts.push(plain(format!("Restores {health_bonus} health")));
-            }
-            facts.extend(
-                def.stats()
-                    .map(|stat| plain(format!("{} for {}s", modifier(stat), lasts.0))),
-            );
-        }
-        ItemKind::Equipment { slot, requires } => {
+        ItemKind::Equipment { slot, requires, .. } => {
             facts.push(plain(format!(
                 "Worn as your {}",
                 slot.label().to_lowercase()
             )));
-            facts.extend(def.stats().map(|stat| plain(modifier(stat))));
-            let viewer = world.resource::<Viewpoint>().0;
+            facts.extend(boosts.iter().map(|boost| plain(modifier(*boost))));
+            let viewer = session::me(world);
             facts.extend(requires.iter().map(|requirement| {
-                let colour = match viewer.map(|viewer| condition::holds(world, viewer, requirement))
+                let color = match viewer.map(|viewer| condition::holds(world, viewer, requirement))
                 {
                     Some(true) => color::OK,
                     Some(false) => color::DANGER,
@@ -257,14 +307,15 @@ fn facts(world: &World, def: &ItemDef) -> Vec<(String, Color32)> {
                 };
                 (
                     format!("Requires {}", condition::describe(content, requirement)),
-                    colour,
+                    color,
                 )
             }));
         }
         ItemKind::Usable => facts.push(plain("Can be used".to_owned())),
         ItemKind::Resource => facts.extend(
-            def.stats()
-                .map(|stat| plain(format!("{} while carried", modifier(stat)))),
+            boosts
+                .iter()
+                .map(|boost| plain(format!("{} while carried", modifier(*boost)))),
         ),
     }
     match def.stack_max() {
@@ -278,6 +329,10 @@ fn facts(world: &World, def: &ItemDef) -> Vec<(String, Color32)> {
     facts
 }
 
-fn modifier(stat: Stat) -> String {
-    format!("{:+} {}", stat.value, stat.label())
+fn modifier((stat, by): (StatKind, Option<f32>)) -> String {
+    let name: &'static str = stat.into();
+    match by {
+        Some(by) => format!("{by:+} {name}"),
+        None => format!("Boosts {name}"),
+    }
 }

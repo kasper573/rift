@@ -7,8 +7,9 @@ use bevy_state::prelude::{OnEnter, OnExit};
 
 use super::{ClientId, Owner, Welcome};
 use crate::core::render::transition::WorldViewSystems;
-use crate::systems::spectate::Spectating;
+use crate::core::time::{Seconds, ServerClock, UnixMillis};
 use crate::systems::stat;
+use bevy_time::Time;
 
 pub struct ClientSessionPlugin;
 
@@ -21,14 +22,13 @@ impl Plugin for ClientSessionPlugin {
         );
         crate::systems::protocol(app);
         app.init_resource::<MyClient>()
-            .init_resource::<MyCharacter>()
-            .init_resource::<SpectateStatus>()
-            .init_resource::<Viewpoint>();
+            .init_resource::<ServerClock>()
+            .init_resource::<MyCharacter>();
         app.add_systems(Update, record_welcome);
         app.add_systems(
             PreUpdate,
-            (record_spectating, track_characters.in_set(WorldViewSystems))
-                .chain()
+            track_character
+                .in_set(WorldViewSystems)
                 .after(ClientSystems::Receive),
         );
         app.add_systems(OnEnter(ClientState::Disconnected), forget_me);
@@ -42,49 +42,25 @@ impl Plugin for ClientSessionPlugin {
 #[derive(Resource, Default)]
 pub struct MyClient(pub Option<ClientId>);
 
+/// The character this client plays and sees the world through, once it stands in the world.
 #[derive(Resource, Default)]
-struct MyCharacter(Option<Entity>);
+pub struct MyCharacter(pub Option<Entity>);
 
-#[derive(Resource, Default)]
-pub struct SpectateStatus(pub Option<Spectating>);
-
-impl SpectateStatus {
-    pub fn mode(&self) -> ClientMode {
-        match self.0 {
-            Some(_) => ClientMode::Spectate,
-            None => ClientMode::Play,
-        }
-    }
+pub fn server_now(world: &World) -> Option<UnixMillis> {
+    let uptime = Seconds(world.resource::<Time>().elapsed_secs());
+    world.resource::<ServerClock>().now(uptime)
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ClientMode {
-    Play,
-    Spectate,
-}
-
-pub fn mode(world: &World) -> ClientMode {
-    world.resource::<SpectateStatus>().mode()
-}
-
-pub fn in_mode(mode: ClientMode) -> impl Fn(Res<SpectateStatus>) -> bool + Clone {
-    move |status| status.mode() == mode
-}
-
-/// The character this client sees the world through: its own, or the one it spectates. There is no
-/// other way to look at the world.
-#[derive(Resource, Default)]
-pub struct Viewpoint(pub Option<Entity>);
 
 pub fn my_id(world: &World) -> Option<ClientId> {
     world.resource::<MyClient>().0
 }
 
+pub fn me(world: &World) -> Option<Entity> {
+    world.resource::<MyCharacter>().0
+}
+
 pub fn my_character(world: &World) -> Option<EntityRef<'_>> {
-    world
-        .resource::<MyCharacter>()
-        .0
-        .and_then(|character| world.get_entity(character).ok())
+    me(world).and_then(|character| world.get_entity(character).ok())
 }
 
 pub fn is_dead(world: &World) -> bool {
@@ -99,53 +75,31 @@ pub fn is_alive(world: &World) -> bool {
     my_character(world).is_some_and(|entity| !stat::is_dead(world, entity.id()))
 }
 
-pub fn followed(world: &World) -> Option<ClientId> {
-    followed_client(
-        world.resource::<MyClient>(),
-        world.resource::<SpectateStatus>(),
-    )
-}
-
-fn record_welcome(mut welcomes: MessageReader<Welcome>, mut me: ResMut<MyClient>) {
+fn record_welcome(
+    mut welcomes: MessageReader<Welcome>,
+    time: Res<Time>,
+    mut me: ResMut<MyClient>,
+    mut clock: ResMut<ServerClock>,
+) {
     for welcome in welcomes.read() {
         me.0 = Some(welcome.id);
+        clock.record(welcome.now, Seconds(time.elapsed_secs()));
     }
 }
 
-fn record_spectating(mut told: MessageReader<Spectating>, mut status: ResMut<SpectateStatus>) {
-    if let Some(&latest) = told.read().last() {
-        status.0 = (latest != Spectating::Stopped).then_some(latest);
-    }
-}
-
-fn followed_client(me: &MyClient, status: &SpectateStatus) -> Option<ClientId> {
-    match status.0 {
-        Some(Spectating::Player(watched)) => Some(watched.player),
-        Some(Spectating::Nobody) => None,
-        Some(Spectating::Stopped) | None => me.0,
-    }
-}
-
-fn track_characters(
+fn track_character(
     me: Res<MyClient>,
-    status: Res<SpectateStatus>,
     characters: Query<(Entity, &Owner)>,
     mut mine: ResMut<MyCharacter>,
-    mut viewpoint: ResMut<Viewpoint>,
 ) {
-    let character_of = |client: ClientId| {
+    let my_character = me.0.and_then(|client| {
         characters
             .iter()
             .find(|(_, owner)| owner.client == client)
             .map(|(character, _)| character)
-    };
-    let my_character = me.0.and_then(character_of);
+    });
     if mine.0 != my_character {
         mine.0 = my_character;
-    }
-    let followed = followed_client(&me, &status).and_then(character_of);
-    if viewpoint.0 != followed {
-        viewpoint.0 = followed;
     }
 }
 
@@ -165,7 +119,6 @@ fn drop_replicated(world: &mut World) {
     }
 }
 
-fn forget_me(mut me: ResMut<MyClient>, mut status: ResMut<SpectateStatus>) {
+fn forget_me(mut me: ResMut<MyClient>) {
     me.0 = None;
-    status.0 = None;
 }

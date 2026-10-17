@@ -20,14 +20,14 @@ tables/area/cove/ground.csv:2:3  row 2, column 3
   rule      palette out of range
   found     "7"
   expected  0 to 0, an index into the area's 1 palette entries
+tables/class/apprentice.json:1:11  /name
+  rule      wrong type
+  found     integer `3`
+  expected  a string
 tables/input/interact.json  whole file
   rule      missing fixture
   found     no such file
   expected  one row for every input fixture the engine requires
-tables/job/apprentice.json:1:11  /name
-  rule      wrong type
-  found     integer `3`
-  expected  a string
 tables/sfx/splash.json:1:9  /file
   rule      missing file
   found     "audio/combat/splash.wav"

@@ -1,0 +1,1 @@
+../../../editor/templates/new_game/assets/shaders/shake.wgsl

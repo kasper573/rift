@@ -159,7 +159,7 @@ pub fn layout_job(spans: &Value, font: FontId, ink: Color32, wrap_width: f32) ->
             }
             Value::Object(map) => {
                 if let Some(ink) = map.get("ink").and_then(Value::as_str) {
-                    format.color = ink_colour(ink);
+                    format.color = ink_color(ink);
                 }
                 if map.contains_key("voice") || map.contains_key("motion") {
                     format.background = Color32::from_rgba_unmultiplied(255, 255, 255, 14);
@@ -179,7 +179,7 @@ pub fn layout_job(spans: &Value, font: FontId, ink: Color32, wrap_width: f32) ->
     job
 }
 
-pub fn ink_colour(ink: &str) -> Color32 {
+pub fn ink_color(ink: &str) -> Color32 {
     match ink {
         "danger" => theme::DANGER,
         "item" => Color32::from_rgb(86, 196, 176),

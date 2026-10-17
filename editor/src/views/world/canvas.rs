@@ -11,10 +11,10 @@ use engine::systems::area::AreaId;
 use engine::systems::area::world_map::WorldMapDef;
 
 use super::atlas::{AtlasWarp, RowSource, WorldAtlas};
-use super::filters::{self, ColourRanges};
+use super::filters::{self, ColorRanges};
 use super::interact::{self, MapDrag};
 use super::{
-    MAX_ZOOM, MIN_ZOOM, MapLayers, MapPart, MapTileHit, OpenWorldMap, region_colour, shows_areas,
+    MAX_ZOOM, MIN_ZOOM, MapLayers, MapPart, MapTileHit, OpenWorldMap, region_color, shows_areas,
 };
 use crate::app::Editor;
 use crate::ui::{patterns, theme, widgets};
@@ -235,7 +235,7 @@ pub fn viridis(t: f32) -> Color32 {
 
 struct Overlays<'a> {
     lit: Option<BTreeMap<AreaId, Vec<RowSource>>>,
-    colours: Option<ColourRanges>,
+    colors: Option<ColorRanges>,
     route: Option<Vec<&'a AtlasWarp>>,
 }
 
@@ -245,11 +245,11 @@ impl<'a> Overlays<'a> {
         let atlas = &map.atlas;
         Overlays {
             lit: filters::lit_areas(atlas, &view.lenses),
-            colours: view
-                .colour
+            colors: view
+                .color
                 .as_ref()
                 .zip(editor.project.as_ref())
-                .map(|(colour, project)| ColourRanges::of(atlas, &project.files, colour)),
+                .map(|(color, project)| ColorRanges::of(atlas, &project.files, color)),
             route: view
                 .route
                 .as_ref()
@@ -319,12 +319,12 @@ fn draw_card(editor: &mut Editor, painter: &Painter, drawing: &Drawing, card: &M
             if dimmed { DIM } else { Color32::WHITE },
         );
     }
-    if let Some(colours) = &overlays.colours
-        && let Some(colour) = &editor.views.world.colour
+    if let Some(colors) = &overlays.colors
+        && let Some(color) = &editor.views.world.color
     {
-        match colours.areas.get(&card.area) {
+        match colors.areas.get(&card.area) {
             Some(range) => {
-                let tint = viridis(colours.fraction(range.shown(colour.show)));
+                let tint = viridis(colors.fraction(range.shown(color.show)));
                 painter.rect_filled(card.art, 2.0, theme::alpha(tint, 150));
                 widgets::floating_chip(
                     painter,
@@ -495,14 +495,14 @@ fn draw_caption(painter: &Painter, atlas: &WorldAtlas, card: &MapCard, dimmed: b
     let ink = if dimmed { theme::FAINT } else { theme::TEXT };
     let top = card.art.max.y + 2.0;
     let width = card.caption_width - 2.0 * PAD;
-    let line = |text: &str, font: FontId, colour: Color32, y: f32| {
+    let line = |text: &str, font: FontId, color: Color32, y: f32| {
         widgets::text_within(
             painter,
             Pos2::new(card.frame.center().x, y),
             Align2::CENTER_TOP,
             text,
             font,
-            colour,
+            color,
             width,
         );
     };
@@ -710,8 +710,8 @@ fn overview_status(editor: &Editor, map: &OpenWorldMap, overlays: &Overlays) -> 
             "World · quest line {line} · {areas} areas, {quests} quests"
         )];
     }
-    if let (Some(colour), Some(_)) = (&view.colour, &overlays.colours) {
-        return vec![format!("World · {}", colour.sentence())];
+    if let (Some(color), Some(_)) = (&view.color, &overlays.colors) {
+        return vec![format!("World · {}", color.sentence())];
     }
     if let (Some(lit), Some(lens)) = (&overlays.lit, view.lenses.first()) {
         let sources: usize = lit.values().map(Vec::len).sum();
@@ -820,12 +820,12 @@ fn draw_regions(painter: &Painter, viewport: &Viewport<Tiles>, drawing: &Drawing
         };
         let screen = viewport.rect(navigation::rect_from_egui(r));
         let lit = drawing.selected.contains(&MapPart::Region(index));
-        let colour = region_colour(region.colour);
-        painter.rect_filled(screen, 6.0, theme::alpha(colour, 14));
+        let color = region_color(region.color);
+        painter.rect_filled(screen, 6.0, theme::alpha(color, 14));
         let stroke = if lit {
             Stroke::new(2.0, theme::SELECTION)
         } else {
-            Stroke::new(1.0, colour)
+            Stroke::new(1.0, color)
         };
         widgets::dashed_rect(painter, screen, stroke, 6.0, 4.0);
     }
@@ -851,7 +851,7 @@ fn draw_region_labels(
                 Align2::LEFT_BOTTOM,
                 &region.name,
                 theme::PANEL,
-                region_colour(region.colour),
+                region_color(region.color),
                 11.0,
             );
             Some((index, label))

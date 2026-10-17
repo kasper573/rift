@@ -33,7 +33,9 @@ fn play(shoot: &mut Shoot) {
     // Read in town: out there, monsters don't wait for the viewer.
     me.hold();
     me.look_out(PREY, |snapshot| nearest_prey(snapshot).is_some());
-    me.caption("Hover a monster to target it, click to attack");
+    me.caption(
+        "Hover a monster to target it; a click uses the basic attack in the slot by your hotbar",
+    );
     let loot = slay(&mut me);
     me.wait_until("the kill's XP in the feed", |snapshot| {
         snapshot

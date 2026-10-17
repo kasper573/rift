@@ -1,6 +1,1 @@
-{
-  "file": "audio/interface/open.wav",
-  "role": "interface",
-  "volume": 0.5,
-  "pitch": 1.0
-}
+../../../editor/templates/new_game/tables/sfx/ui_open.json

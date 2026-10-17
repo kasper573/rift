@@ -131,3 +131,49 @@ impl Rng {
         self.0.rand_range(range)
     }
 }
+
+#[derive(
+    JsonSchema,
+    Serialize,
+    Deserialize,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
+    Default,
+)]
+#[serde(from = "[u8; 4]", into = "[u8; 4]")]
+#[schemars(extend("x-color" = true))]
+pub struct Rgba(pub u32);
+
+impl Rgba {
+    pub const WHITE: Rgba = Rgba(0xffff_ffff);
+
+    pub fn color(self) -> bevy::color::Color {
+        let [r, g, b, a] = self.0.to_be_bytes();
+        bevy::color::Color::srgba_u8(r, g, b, a)
+    }
+}
+
+impl From<[u8; 4]> for Rgba {
+    fn from(bytes: [u8; 4]) -> Rgba {
+        Rgba(u32::from_be_bytes(bytes))
+    }
+}
+
+impl From<Rgba> for [u8; 4] {
+    fn from(rgba: Rgba) -> [u8; 4] {
+        rgba.0.to_be_bytes()
+    }
+}
+
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrameSize {
+    pub width: u32,
+    pub height: u32,
+}

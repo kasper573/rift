@@ -1,0 +1,29 @@
+{
+  "name": "Spark hit",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "flash",
+      "params": {
+        "color": [
+          190,
+          220,
+          255,
+          255
+        ],
+        "strength": 0.7
+      },
+      "duration": 0.2
+    },
+    {
+      "type": "sprite",
+      "sheet": "vfx/impact.png",
+      "frame": {
+        "width": 32,
+        "height": 32
+      },
+      "frames": 6,
+      "fps": 18.0
+    }
+  ]
+}

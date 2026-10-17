@@ -1,8 +1,1 @@
-{
-  "label": "Get back up after dying",
-  "bindings": [
-    {
-      "type": "any_key"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/respawn.json

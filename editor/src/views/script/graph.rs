@@ -435,16 +435,15 @@ impl SnarlViewer<ScriptGraphNode> for ScriptGraphViewer<'_> {
         self.click_to_select(ui, &name);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            let (glyph, colour) = kind_glyph(&node);
+            let (glyph, color) = kind_glyph(&node);
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
-            ui.painter()
-                .rect_filled(rect, 3.0, theme::alpha(colour, 70));
+            ui.painter().rect_filled(rect, 3.0, theme::alpha(color, 70));
             ui.painter().text(
                 rect.center(),
                 Align2::CENTER_CENTER,
                 glyph,
                 FontId::proportional(10.0),
-                colour,
+                color,
             );
             let title = card_title(&name, &node);
             ui.add(egui::Label::new(theme::strong(title).monospace().size(12.5)).truncate());

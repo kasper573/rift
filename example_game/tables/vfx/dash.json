@@ -1,0 +1,25 @@
+{
+  "name": "Dash",
+  "layers": [
+    {
+      "type": "sprite",
+      "sheet": "vfx/dust.png",
+      "frame": {
+        "width": 32,
+        "height": 32
+      },
+      "frames": 6,
+      "fps": 14.0,
+      "anchor": "feet"
+    },
+    {
+      "type": "shader",
+      "shader": "warp",
+      "params": {
+        "amplitude": 0.06,
+        "frequency": 20.0
+      },
+      "duration": 0.3
+    }
+  ]
+}

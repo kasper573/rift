@@ -265,8 +265,8 @@ fn draw(
             put(ui, "↑ back to ", &mono, theme::FAINT);
             put(ui, &target.name, &mono, theme::CODE);
         } else if let Some(node) = doc.nodes().get(&target.name) {
-            let (glyph, colour) = graph::kind_glyph(node);
-            put(ui, glyph, &FontId::proportional(12.0), colour);
+            let (glyph, color) = graph::kind_glyph(node);
+            put(ui, glyph, &FontId::proportional(12.0), color);
             put(ui, " ", &mono, theme::TEXT);
             put(
                 ui,

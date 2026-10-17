@@ -110,7 +110,7 @@ pub fn tag_line(sources: &[RowSource]) -> String {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, VariantArray, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ColourTable {
+pub enum ColorTable {
     Npc,
     Item,
     Quest,
@@ -118,33 +118,33 @@ pub enum ColourTable {
     Area,
 }
 
-impl ColourTable {
+impl ColorTable {
     pub fn table(self) -> &'static str {
         match self {
-            ColourTable::Npc => NpcDef::TABLE,
-            ColourTable::Item => ItemDef::TABLE,
-            ColourTable::Quest => QuestDef::TABLE,
-            ColourTable::Shop => ShopDef::TABLE,
-            ColourTable::Area => AreaDef::TABLE,
+            ColorTable::Npc => NpcDef::TABLE,
+            ColorTable::Item => ItemDef::TABLE,
+            ColorTable::Quest => QuestDef::TABLE,
+            ColorTable::Shop => ShopDef::TABLE,
+            ColorTable::Area => AreaDef::TABLE,
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct ColourField {
-    pub table: ColourTable,
+pub struct ColorField {
+    pub table: ColorTable,
     pub path: Vec<String>,
 }
 
-impl ColourField {
-    pub fn all(editor: &Editor) -> Vec<ColourField> {
-        ColourTable::VARIANTS
+impl ColorField {
+    pub fn all(editor: &Editor) -> Vec<ColorField> {
+        ColorTable::VARIANTS
             .iter()
             .filter_map(|&table| Some((table, editor.shapes.table(table.table())?)))
             .flat_map(|(table, shape)| {
                 schema::number_paths(&shape.shape)
                     .into_iter()
-                    .map(move |path| ColourField { table, path })
+                    .map(move |path| ColorField { table, path })
             })
             .collect()
     }
@@ -163,62 +163,62 @@ impl ColourField {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct ColourBy {
-    pub field: ColourField,
-    pub of: ColourOf,
-    pub show: ColourShow,
+pub struct ColorBy {
+    pub field: ColorField,
+    pub of: ColorOf,
+    pub show: ColorShow,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, VariantArray)]
-pub enum ColourOf {
+pub enum ColorOf {
     Placed,
     Hostile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, VariantArray)]
-pub enum ColourShow {
+pub enum ColorShow {
     Highest,
     Lowest,
 }
 
-impl ColourOf {
+impl ColorOf {
     pub fn label(self) -> &'static str {
         match self {
-            ColourOf::Placed => "npcs placed here",
-            ColourOf::Hostile => "hostile npcs placed here",
+            ColorOf::Placed => "npcs placed here",
+            ColorOf::Hostile => "hostile npcs placed here",
         }
     }
 }
 
-impl ColourShow {
+impl ColorShow {
     pub fn label(self) -> &'static str {
         match self {
-            ColourShow::Highest => "the highest",
-            ColourShow::Lowest => "the lowest",
+            ColorShow::Highest => "the highest",
+            ColorShow::Lowest => "the lowest",
         }
     }
 }
 
-impl ColourBy {
-    pub fn new(field: ColourField) -> ColourBy {
+impl ColorBy {
+    pub fn new(field: ColorField) -> ColorBy {
         let of = match field.table {
-            ColourTable::Npc => ColourOf::Hostile,
-            _ => ColourOf::Placed,
+            ColorTable::Npc => ColorOf::Hostile,
+            _ => ColorOf::Placed,
         };
-        ColourBy {
+        ColorBy {
             field,
             of,
-            show: ColourShow::Highest,
+            show: ColorShow::Highest,
         }
     }
 
     pub fn chip(&self) -> String {
-        format!("colour: {} {}", self.rows(), self.field.name())
+        format!("color: {} {}", self.rows(), self.field.name())
     }
 
     pub fn sentence(&self) -> String {
         format!(
-            "coloured by {} {} of {}s",
+            "colored by {} {} of {}s",
             self.show.label(),
             self.field.name(),
             self.rows()
@@ -227,7 +227,7 @@ impl ColourBy {
 
     fn rows(&self) -> &'static str {
         match (self.field.table, self.of) {
-            (ColourTable::Npc, ColourOf::Hostile) => "hostile npc",
+            (ColorTable::Npc, ColorOf::Hostile) => "hostile npc",
             (table, _) => table.table(),
         }
     }
@@ -248,10 +248,10 @@ impl AreaRange {
         }
     }
 
-    pub fn shown(&self, show: ColourShow) -> f64 {
+    pub fn shown(&self, show: ColorShow) -> f64 {
         match show {
-            ColourShow::Highest => self.high,
-            ColourShow::Lowest => self.low,
+            ColorShow::Highest => self.high,
+            ColorShow::Lowest => self.low,
         }
     }
 
@@ -269,30 +269,30 @@ impl AreaRange {
     }
 }
 
-pub struct ColourRanges {
+pub struct ColorRanges {
     pub areas: BTreeMap<AreaId, AreaRange>,
     pub low: f64,
     pub high: f64,
 }
 
-impl ColourRanges {
-    pub fn of(atlas: &WorldAtlas, files: &ProjectFiles, colour: &ColourBy) -> ColourRanges {
+impl ColorRanges {
+    pub fn of(atlas: &WorldAtlas, files: &ProjectFiles, color: &ColorBy) -> ColorRanges {
         let areas: BTreeMap<AreaId, AreaRange> = atlas
             .areas
             .keys()
-            .filter_map(|&area| Some((area, range_in(atlas, files, area, colour)?)))
+            .filter_map(|&area| Some((area, range_in(atlas, files, area, color)?)))
             .collect();
-        let shown = areas.values().map(|range| range.shown(colour.show));
+        let shown = areas.values().map(|range| range.shown(color.show));
         let low = shown.clone().fold(f64::INFINITY, f64::min);
         let high = shown.fold(f64::NEG_INFINITY, f64::max);
         if areas.is_empty() {
-            ColourRanges {
+            ColorRanges {
                 areas,
                 low: 0.0,
                 high: 1.0,
             }
         } else {
-            ColourRanges { areas, low, high }
+            ColorRanges { areas, low, high }
         }
     }
 
@@ -312,17 +312,17 @@ fn range_in(
     atlas: &WorldAtlas,
     files: &ProjectFiles,
     area: AreaId,
-    colour: &ColourBy,
+    color: &ColorBy,
 ) -> Option<AreaRange> {
     let info = &atlas.areas[&area];
-    let table = colour.field.table;
+    let table = color.field.table;
     let keys: BTreeSet<&str> = match table {
-        ColourTable::Area => BTreeSet::from([info.key.as_str()]),
-        ColourTable::Npc => info
+        ColorTable::Area => BTreeSet::from([info.key.as_str()]),
+        ColorTable::Npc => info
             .residents
             .iter()
             .chain(&info.populations)
-            .filter(|placed| colour.of == ColourOf::Placed || atlas.hostile(placed.npc))
+            .filter(|placed| color.of == ColorOf::Placed || atlas.hostile(placed.npc))
             .map(|placed| placed.key.as_str())
             .collect(),
         _ => info.rows_found(table.table()).collect(),
@@ -332,7 +332,7 @@ fn range_in(
         let Some(row) = files.json(&row_file(table.table(), key)) else {
             continue;
         };
-        for value in numbers_at(&row, &colour.field.path) {
+        for value in numbers_at(&row, &color.field.path) {
             range = Some(AreaRange::widen(range, value));
         }
     }

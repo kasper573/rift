@@ -1,0 +1,19 @@
+{
+  "name": "Sweep",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "ring",
+      "params": {
+        "color": [
+          120,
+          170,
+          255,
+          255
+        ],
+        "width": 0.3
+      },
+      "duration": 0.35
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "label": "Use hotbar slot 2",
+  "bindings": [
+    {
+      "type": "key",
+      "key": "Digit2"
+    }
+  ]
+}

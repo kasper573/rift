@@ -1,6 +1,1 @@
-{
-  "file": "audio/interface/tally_tick.wav",
-  "role": "interface",
-  "volume": 0.23,
-  "pitch": 1.0
-}
+../../../editor/templates/new_game/tables/sfx/tally_tick.json

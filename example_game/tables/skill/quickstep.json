@@ -1,0 +1,52 @@
+{
+  "name": "Quickstep",
+  "icon": "icons/food/green_apple.png",
+  "sfx": "dodge01",
+  "target": "self",
+  "cooldown": 15.0,
+  "levels": [
+    {
+      "cost": 1,
+      "stats": {
+        "power": 2.0,
+        "duration": 4.0
+      }
+    },
+    {
+      "cost": 1,
+      "stats": {
+        "power": 3.0,
+        "duration": 5.0
+      }
+    }
+  ],
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "dash": {
+          "type": "apply_status",
+          "who": {
+            "type": "skill_targets"
+          },
+          "effect": "quickened",
+          "power": {
+            "type": "skill_stat",
+            "skill": "quickstep",
+            "stat": "power"
+          },
+          "seconds": {
+            "type": "skill_stat",
+            "skill": "quickstep",
+            "stat": "duration"
+          }
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "dash"
+        }
+      }
+    }
+  ]
+}

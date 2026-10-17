@@ -41,6 +41,11 @@ pub const LONG: WaitBudget = WaitBudget {
     frames: 3600,
 };
 
+const NUDGE: WaitBudget = WaitBudget {
+    time: Duration::from_secs(2),
+    frames: 120,
+};
+
 impl Player {
     pub fn new(desktop: Desktop, pace: Pace) -> Player {
         Player { desktop, pace }
@@ -188,6 +193,11 @@ impl Player {
     pub fn drag_ui(&mut self, ui: impl Into<UiTarget>, by: Offset<WindowPx>) -> ProbeSnapshot {
         let from = self.aim_at_ui(&ui.into(), Aim::Click);
         let from = from.input.cursor.expect("the pointer is over the window");
+        self.drag(Button::Left, KeyModifiers::NONE, from + by)
+    }
+
+    pub fn drag_from(&mut self, from: Pos<WindowPx>, by: Offset<WindowPx>) -> ProbeSnapshot {
+        self.point_at(from);
         self.drag(Button::Left, KeyModifiers::NONE, from + by)
     }
 
@@ -440,8 +450,11 @@ impl Player {
     }
 
     // The first frame with the player standing in an area, done crossing into it.
+    // In the world and free to act: a newcomer's commands are held for a moment after arriving.
     pub fn in_world(&mut self) -> ProbeSnapshot {
-        self.wait_until("the player in the world", in_world)
+        self.wait_until("the player in the world", |snapshot| {
+            in_world(snapshot) && snapshot.me.as_ref().is_some_and(|me| !me.locked)
+        })
     }
 
     pub fn come_to_rest(&mut self) -> Pos<Tiles> {
@@ -606,20 +619,26 @@ impl Player {
 
     // A walk click can land on a townsperson who strolled under it, and leaving one conversation can
     // open another that someone held until the player was free.
+    // Presses Dismiss again whenever a press went unanswered, since one can land in a frame the
+    // stage is still settling and be lost.
     pub fn leave_conversation(&mut self) {
-        for _ in 0..5 {
+        let deadline = Deadline::from(&self.desktop, BUDGET);
+        loop {
             let Some(before) = self.snapshot().stage else {
                 return;
             };
             self.act(InputAction::Dismiss);
-            self.wait_until("the conversation to end", |snapshot| {
+            let moved_on = self.try_wait_for(NUDGE, |snapshot| {
                 snapshot
                     .stage
                     .as_ref()
                     .is_none_or(|stage| stage.with != before.with || stage.node != before.node)
+                    .then_some(())
             });
+            if moved_on.is_none() && deadline.passed(&self.desktop) {
+                self.desktop.give_up("the conversation to end");
+            }
         }
-        self.desktop.fail("conversations kept opening");
     }
 
     pub fn conversation_over(&mut self) {

@@ -536,10 +536,10 @@ fn palette(text: &str) -> Vec<PaletteRow> {
     grid::read_palette(file, &mut Vec::new()).expect("a palette")
 }
 
-fn fill(image: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, colour: [u8; 4]) {
+fn fill(image: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, color: [u8; 4]) {
     for dy in 0..h {
         for dx in 0..w {
-            image.put_pixel(x + dx, y + dy, image::Rgba(colour));
+            image.put_pixel(x + dx, y + dy, image::Rgba(color));
         }
     }
 }

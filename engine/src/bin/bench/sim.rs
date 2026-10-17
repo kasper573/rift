@@ -3,11 +3,13 @@ use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::ConnectedClient;
 use bevy_replicon::shared::backend::server_messages::ServerMessages;
 use engine::core::content::Content;
-use engine::core::time::{UnixMillis, UtcHour, WallClock};
+use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
 use engine::systems::area::AreaModule;
 use engine::systems::player::{ClientId, JoinRequest, SpawnPolicy, SpawnRules};
-use engine::systems::{GameSettings, from_client, server_app, start_server, step_areas};
+use engine::systems::{GameSettings, TICK_HZ, from_client, server_app, start_server, step_areas};
 use strum::AsRefStr;
+
+use crate::play;
 
 pub const PLAYERS_PER_AREA: usize = 25;
 
@@ -15,6 +17,15 @@ const CLOCK: WallClock = WallClock {
     now: UnixMillis(0),
     reset: UtcHour::MIDNIGHT,
 };
+
+/// The wall clock ticks with the worlds, so cooldowns and played actions run their course as they
+/// do on the live server.
+fn clock_after(ticks: usize) -> WallClock {
+    WallClock {
+        now: CLOCK.now.after(Seconds(ticks as f32 / TICK_HZ.0)),
+        ..CLOCK
+    }
+}
 
 /// Ticks stepped before sampling, so spawn waves and connect churn settle out of the measurement.
 pub const WARMUP: usize = 30;
@@ -85,17 +96,26 @@ pub fn connect(worlds: &mut [App], rosters: &[Roster]) {
 }
 
 /// Advances every world one tick across all cores — the same parallel area fan-out the real server
-/// uses, so the benchmark's capacity reflects the threaded server.
-pub fn step(worlds: &mut [App]) {
-    step_areas(worlds, CLOCK);
+/// uses, so the benchmark's capacity reflects the threaded server — after its players have made
+/// their moves.
+pub fn step(worlds: &mut [App], rosters: &[Roster], content: &Content) {
+    let ticks = TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    for (app, roster) in worlds.iter_mut().zip(rosters) {
+        play::act(app.world_mut(), content, roster, ticks);
+    }
+    step_areas(worlds, clock_after(ticks));
     consume_sent(worlds);
 }
+
+static TICKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Advances every world one tick on the calling thread only. Used by the profiler so CPU samples
 /// attribute cleanly to game systems instead of being scattered across rayon worker frames.
 #[cfg(feature = "profiling")]
 pub fn step_single_threaded(worlds: &mut [App]) {
+    let ticks = TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     for app in worlds.iter_mut() {
+        app.insert_resource(clock_after(ticks));
         app.update();
     }
     consume_sent(worlds);
@@ -125,10 +145,12 @@ fn build_world(layout: Layout, content: &Content, ordinal: u64) -> (App, Roster)
     });
     start_server(&mut app);
 
+    let zone = content.built::<GameSettings>().initial_spawn.area;
     let world = app.world_mut();
     let mut roster = Vec::with_capacity(PLAYERS_PER_AREA);
     for index in 0..PLAYERS_PER_AREA {
         let conn = world.spawn(ClientId(index as u32 + 1)).id();
+        play::join_as(world, content, zone, conn, index);
         from_client(world, conn, JoinRequest);
         roster.push(conn);
     }

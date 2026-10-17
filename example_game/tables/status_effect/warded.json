@@ -1,0 +1,34 @@
+{
+  "name": "Warded",
+  "icon": "icons/weapon_and_tool/wooden_shield.png",
+  "category": "buff",
+  "description": "A shell of arcane light that takes the blows meant for you.",
+  "vfx": {
+    "on_activate": "ward_up",
+    "during": "ward_bubble",
+    "on_expire": "ward_break"
+  },
+  "sfx": {
+    "on_activate": "rising_chime",
+    "on_expire": "block01"
+  },
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "hold"
+        },
+        "hold": {
+          "type": "boost",
+          "stat": "max_health",
+          "by": {
+            "type": "status_power"
+          }
+        }
+      }
+    }
+  ]
+}

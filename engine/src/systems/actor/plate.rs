@@ -20,7 +20,7 @@ use crate::systems::combat::Attitude;
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
 use crate::systems::player::Owner;
-use crate::systems::player::session::Viewpoint;
+use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 
 const HEAD_ROOM: f32 = 6.0;
@@ -94,7 +94,7 @@ pub fn draw_plates(world: &mut World) {
         return;
     }
     let content = world.resource::<Content>().clone();
-    let viewer = world.resource::<Viewpoint>().0;
+    let viewer = session::me(world);
     let labelled: Vec<(Entity, Label, Pos<Tiles>, Hitbox)> = world
         .query_filtered::<(
             Entity,

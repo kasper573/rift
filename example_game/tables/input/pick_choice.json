@@ -1,14 +1,1 @@
-{
-  "label": "Pick the selected choice, or the one clicked",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "Enter"
-    },
-    {
-      "type": "click",
-      "button": "Left",
-      "times": 1
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/pick_choice.json

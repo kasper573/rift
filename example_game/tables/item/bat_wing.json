@@ -19,9 +19,19 @@
       "max": 50
     },
     {
-      "type": "stat",
-      "stat": "movement_speed",
-      "value": 0.5
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "boost_movement_speed"
+        },
+        "boost_movement_speed": {
+          "type": "boost",
+          "stat": "movement_speed",
+          "by": 0.5
+        }
+      }
     }
   ]
 }

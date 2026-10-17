@@ -1,0 +1,48 @@
+{
+  "name": "Bog Water",
+  "icon": "icons/potion/water_bottle.png",
+  "sfx": {
+    "pickup": "pickup_glass",
+    "trade": "trade_glass",
+    "drop": "landing01",
+    "use": "heal01"
+  },
+  "kind": {
+    "type": "usable"
+  },
+  "modules": [
+    {
+      "type": "flavor",
+      "text": "Brown, warm and faintly alive. Nobody drinks this twice on purpose."
+    },
+    {
+      "type": "stack",
+      "max": 5
+    },
+    {
+      "type": "inline_script",
+      "nodes": {
+        "drink": {
+          "type": "items",
+          "take": [
+            {
+              "item": "bog_water"
+            }
+          ],
+          "done": "sicken"
+        },
+        "sicken": {
+          "type": "apply_status",
+          "effect": "poisoned",
+          "power": 2.0,
+          "seconds": 12.0
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "drink"
+        }
+      }
+    }
+  ]
+}

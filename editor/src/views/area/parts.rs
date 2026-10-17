@@ -226,7 +226,7 @@ pub(super) fn part_cards(
             let holeable = holes::holeable_fields(shapes, part);
             widgets::card_frame(true).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                widgets::card_header(ui, &kind, &kind.replace('_', " "), "", |ui| {
+                widgets::card_header(ui, &kind.replace('_', " "), "", |ui| {
                     if ui.button("Duplicate").clicked() {
                         duplicate = Some(index);
                         ui.close();

@@ -1,0 +1,125 @@
+{
+  "name": "Hunter",
+  "icon": "icons/weapon_and_tool/bow.png",
+  "flavour": "Patient, far-sighted and never where the claws land.",
+  "levels": [
+    {
+      "xp": 0,
+      "skill_points": 1
+    },
+    {
+      "xp": 30,
+      "stats": {
+        "max_health": 10.0
+      },
+      "skill_points": 1
+    },
+    {
+      "xp": 90,
+      "stats": {
+        "damage": 2.0
+      },
+      "skill_points": 1
+    },
+    {
+      "xp": 200,
+      "stats": {
+        "max_health": 15.0,
+        "damage": 2.0
+      },
+      "skill_points": 2
+    },
+    {
+      "xp": 350,
+      "stats": {
+        "max_health": 10.0
+      },
+      "skill_points": 2
+    },
+    {
+      "xp": 550,
+      "stats": {
+        "max_health": 15.0,
+        "damage": 3.0
+      },
+      "skill_points": 2
+    }
+  ],
+  "tree": {
+    "aimed_shot": {
+      "skill": "aimed_shot",
+      "at": {
+        "x": 80.0,
+        "y": 60.0
+      }
+    },
+    "field_dressing": {
+      "skill": "field_dressing",
+      "requires": [
+        {
+          "type": "skill",
+          "node": "quickstep"
+        }
+      ],
+      "at": {
+        "x": 320.0,
+        "y": 200.0
+      }
+    },
+    "keen_eye": {
+      "skill": "keen_eye",
+      "at": {
+        "x": 560.0,
+        "y": 200.0
+      }
+    },
+    "pin": {
+      "skill": "pin",
+      "requires": [
+        {
+          "type": "skill",
+          "node": "volley"
+        },
+        {
+          "type": "skill",
+          "node": "aimed_shot",
+          "rank": 2
+        }
+      ],
+      "at": {
+        "x": 200.0,
+        "y": 340.0
+      }
+    },
+    "quickstep": {
+      "skill": "quickstep",
+      "at": {
+        "x": 320.0,
+        "y": 60.0
+      }
+    },
+    "volley": {
+      "skill": "volley",
+      "requires": [
+        {
+          "type": "skill",
+          "node": "aimed_shot"
+        }
+      ],
+      "at": {
+        "x": 80.0,
+        "y": 200.0
+      }
+    }
+  },
+  "backdrop": {
+    "image": "backdrops/hunter.png",
+    "frame": {
+      "x": -80.0,
+      "y": -60.0,
+      "width": 800.0,
+      "height": 640.0
+    },
+    "fit": "contain"
+  }
+}

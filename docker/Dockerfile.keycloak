@@ -12,5 +12,3 @@ RUN /opt/keycloak/bin/kc.sh build
 
 FROM base AS runner
 COPY --from=builder /opt/keycloak/ /opt/keycloak/
-COPY keycloak/provision.sh /opt/keycloak/provision.sh
-ENTRYPOINT ["/opt/keycloak/provision.sh"]

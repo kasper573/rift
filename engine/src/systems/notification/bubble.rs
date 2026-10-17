@@ -22,7 +22,7 @@ use crate::systems::dialogue::stage;
 use crate::systems::hud;
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::NpcId;
-use crate::systems::player::session::Viewpoint;
+use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 
 const LINES: usize = 2;
@@ -375,10 +375,7 @@ fn place(world: &mut World) {
     let (now, still) = rows::motion_time(world, &gui);
     let content = world.resource::<Content>().clone();
     let mut room = Room::of(world, window);
-    let viewer = world
-        .resource::<Viewpoint>()
-        .0
-        .and_then(|seen| body_at(world, seen));
+    let viewer = session::me(world).and_then(|seen| body_at(world, seen));
     let talking_to = stage::view(world).and_then(|view| view.with);
     let mut bubbles = std::mem::take(&mut *world.resource_mut::<Bubbles>());
     let spots: Vec<Spot> = bubbles

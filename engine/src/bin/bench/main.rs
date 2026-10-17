@@ -1,3 +1,4 @@
+mod play;
 #[cfg(feature = "profiling")]
 mod profiling;
 mod search;
@@ -174,22 +175,22 @@ fn point(areas: usize, layout: sim::Layout, content_dir: &Path) -> Point {
     let content = load(content_dir);
     let (mut worlds, rosters) = sim::worlds(areas, layout, &content);
 
-    let sim = measure(&mut worlds).mean;
+    let sim = measure(&mut worlds, &rosters, &content).mean;
     sim::connect(&mut worlds, &rosters);
     Point {
-        full: measure(&mut worlds),
+        full: measure(&mut worlds, &rosters, &content),
         sim,
     }
 }
 
-fn measure(worlds: &mut [App]) -> Timings {
+fn measure(worlds: &mut [App], rosters: &[sim::Roster], content: &Content) -> Timings {
     for _ in 0..sim::WARMUP {
-        sim::step(worlds);
+        sim::step(worlds, rosters, content);
     }
     let mut samples = Vec::with_capacity(MEASURE);
     for _ in 0..MEASURE {
         let started = Instant::now();
-        sim::step(worlds);
+        sim::step(worlds, rosters, content);
         samples.push(started.elapsed().as_secs_f64() * 1000.0);
     }
     samples.sort_by(f64::total_cmp);

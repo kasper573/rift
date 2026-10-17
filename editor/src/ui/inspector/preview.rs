@@ -242,7 +242,7 @@ pub(super) fn draw_preview(
     );
     painter.image(thumb.texture.id(), sprite, uv, tint);
     if let Some(name) = value["name"].as_str() {
-        let colour = match attitude(&content, table, key, value) {
+        let color = match attitude(&content, table, key, value) {
             Some(true) => design_tokens::ink::DANGER,
             _ => Color32::WHITE,
         };
@@ -251,7 +251,7 @@ pub(super) fn draw_preview(
             egui::Align2::CENTER_BOTTOM,
             name,
             egui::FontId::proportional(13.0),
-            colour,
+            color,
         );
     }
 }
@@ -324,7 +324,7 @@ pub(super) fn quest_card(
                 ui.label(RichText::new("REWARDS").size(11.0).color(soft));
                 ui.horizontal_wrapped(|ui| {
                     if def.xp > 0 {
-                        widgets::chip_coloured(
+                        widgets::chip_colored(
                             ui,
                             &format!("{} XP", def.xp),
                             Color32::TRANSPARENT,
@@ -340,7 +340,7 @@ pub(super) fn quest_card(
                             } else {
                                 format!("{} ×{}", item.name, stack.count)
                             };
-                            widgets::chip_coloured(ui, &label, Color32::TRANSPARENT, ink);
+                            widgets::chip_colored(ui, &label, Color32::TRANSPARENT, ink);
                         });
                     }
                 });

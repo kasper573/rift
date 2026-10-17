@@ -1,0 +1,62 @@
+{
+  "name": "Swoosh",
+  "params": [
+    {
+      "name": "color",
+      "kind": "color",
+      "default": [
+        255,
+        255,
+        255,
+        255
+      ]
+    },
+    {
+      "name": "thickness",
+      "kind": "number",
+      "default": 0.18,
+      "min": 0.01,
+      "max": 1.0
+    },
+    {
+      "name": "sweeps",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.1,
+      "max": 5.0
+    },
+    {
+      "name": "along",
+      "kind": "bool",
+      "default": false
+    },
+    {
+      "name": "angle",
+      "kind": "number",
+      "default": 0.0,
+      "min": -180.0,
+      "max": 180.0
+    },
+    {
+      "name": "curve",
+      "kind": "number",
+      "default": 0.35,
+      "min": -1.0,
+      "max": 1.0
+    },
+    {
+      "name": "trail",
+      "kind": "number",
+      "default": 0.6,
+      "min": 0.0,
+      "max": 2.0
+    },
+    {
+      "name": "clip",
+      "kind": "number",
+      "default": 0.0,
+      "min": 0.0,
+      "max": 1.0
+    }
+  ]
+}

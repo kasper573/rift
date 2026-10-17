@@ -1,0 +1,30 @@
+{
+  "name": "Mend glow",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "ring",
+      "params": {
+        "color": [
+          120,
+          232,
+          128,
+          255
+        ],
+        "width": 0.25
+      },
+      "duration": 0.5
+    },
+    {
+      "type": "sprite",
+      "sheet": "vfx/sparkle.png",
+      "frame": {
+        "width": 32,
+        "height": 32
+      },
+      "frames": 6,
+      "fps": 12.0,
+      "anchor": "head"
+    }
+  ]
+}

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::time::{Seconds, UnixMillis, WallClock};
 use crate::systems::player::{ClientId, Owner, Players};
 use crate::systems::text::LineText;
-use crate::systems::visibility::{self, PrivateSight};
+use crate::systems::visibility;
 
 pub const KEPT: usize = 500;
 const MERGE_WITHIN: Seconds = Seconds(10.0);
@@ -210,17 +210,13 @@ pub fn record(world: &mut World, player: Entity, entry: HistoryEntry) {
 
 pub fn backfill(
     world: &mut World,
-    sights: &mut QueryState<(Entity, &PrivateSight), Changed<PrivateSight>>,
+    sights: &mut QueryState<(Entity, &ClientId), Added<ClientId>>,
     arrivals: &mut QueryState<Entity, Added<History>>,
 ) {
     let mut sends: Vec<(Entity, Entity)> = sights
         .iter(world)
         .filter_map(|(conn, sight)| {
-            let player = world
-                .resource::<Players>()
-                .0
-                .get(&sight.subject())
-                .copied()?;
+            let player = world.resource::<Players>().0.get(sight).copied()?;
             Some((conn, player))
         })
         .collect();

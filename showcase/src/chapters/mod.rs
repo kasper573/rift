@@ -1,20 +1,24 @@
+mod casting;
 mod chat;
 mod combat;
 mod come_back_later;
 mod conversation;
 mod deploy;
+mod effects;
 mod explore;
 mod history;
+mod hotbar;
 mod many_players;
 mod notifications;
 mod quest_choices;
 mod quests;
 mod shops;
 mod sign_in;
+mod skills;
 mod soundscape;
-mod spectate;
 mod townsfolk;
 mod travel;
+mod vfx;
 mod windows;
 
 use crate::shoot::Shoot;
@@ -33,10 +37,14 @@ pub const CHAPTERS: &[Chapter] = &[
     explore::CHAPTER,
     soundscape::CHAPTER,
     combat::CHAPTER,
+    skills::CHAPTER,
+    hotbar::CHAPTER,
+    casting::CHAPTER,
+    effects::CHAPTER,
+    vfx::CHAPTER,
     windows::CHAPTER,
     chat::CHAPTER,
     travel::CHAPTER,
-    spectate::CHAPTER,
     townsfolk::CHAPTER,
     conversation::CHAPTER,
     shops::CHAPTER,

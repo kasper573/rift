@@ -71,6 +71,86 @@
       }
     },
     {
+      "type": "sells",
+      "item": "iron_sword",
+      "price": [
+        {
+          "item": "gold",
+          "count": 30
+        }
+      ],
+      "stock": {
+        "type": "unlimited"
+      }
+    },
+    {
+      "type": "sells",
+      "item": "bow",
+      "price": [
+        {
+          "item": "gold",
+          "count": 35
+        }
+      ],
+      "stock": {
+        "type": "unlimited"
+      }
+    },
+    {
+      "type": "sells",
+      "item": "oak_staff",
+      "price": [
+        {
+          "item": "gold",
+          "count": 30
+        }
+      ],
+      "stock": {
+        "type": "unlimited"
+      }
+    },
+    {
+      "type": "sells",
+      "item": "arrow",
+      "count": 10,
+      "price": [
+        {
+          "item": "gold",
+          "count": 10
+        }
+      ],
+      "stock": {
+        "type": "unlimited"
+      }
+    },
+    {
+      "type": "sells",
+      "item": "bandage",
+      "price": [
+        {
+          "item": "gold",
+          "count": 4
+        }
+      ],
+      "stock": {
+        "type": "unlimited"
+      }
+    },
+    {
+      "type": "sells",
+      "item": "throwing_knife",
+      "count": 5,
+      "price": [
+        {
+          "item": "gold",
+          "count": 5
+        }
+      ],
+      "stock": {
+        "type": "unlimited"
+      }
+    },
+    {
       "type": "buys",
       "what": {
         "type": "item",

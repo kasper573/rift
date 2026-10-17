@@ -1,0 +1,46 @@
+{
+  "name": "Antidote",
+  "icon": "icons/potion/blue_potion.png",
+  "sfx": {
+    "pickup": "pickup_glass",
+    "trade": "trade_glass",
+    "drop": "landing01",
+    "use": "heal01"
+  },
+  "kind": {
+    "type": "usable"
+  },
+  "modules": [
+    {
+      "type": "flavor",
+      "text": "Bitter enough to chase anything out of the blood."
+    },
+    {
+      "type": "stack",
+      "max": 5
+    },
+    {
+      "type": "inline_script",
+      "nodes": {
+        "cleanse": {
+          "type": "remove_status",
+          "category": "debuff"
+        },
+        "drink": {
+          "type": "items",
+          "take": [
+            {
+              "item": "antidote"
+            }
+          ],
+          "done": "cleanse"
+        },
+        "used": {
+          "type": "on",
+          "event": "used",
+          "next": "drink"
+        }
+      }
+    }
+  ]
+}

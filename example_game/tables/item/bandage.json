@@ -1,0 +1,22 @@
+{
+  "name": "Bandage",
+  "icon": "icons/material/fabric.png",
+  "sfx": {
+    "pickup": "pickup_paper",
+    "trade": "trade_paper",
+    "drop": "landing01"
+  },
+  "kind": {
+    "type": "resource"
+  },
+  "modules": [
+    {
+      "type": "flavor",
+      "text": "Boiled linen, rolled tight."
+    },
+    {
+      "type": "stack",
+      "max": 20
+    }
+  ]
+}

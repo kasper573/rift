@@ -1,0 +1,28 @@
+{
+  "name": "Rallied",
+  "icon": "icons/weapon_and_tool/hammer.png",
+  "category": "buff",
+  "description": "Rallied to the banner: every blow lands harder.",
+  "vfx": {
+    "on_activate": "cheered"
+  },
+  "modules": [
+    {
+      "type": "inline_script",
+      "nodes": {
+        "activated": {
+          "type": "on",
+          "event": "activated",
+          "next": "hold"
+        },
+        "hold": {
+          "type": "boost",
+          "stat": "damage",
+          "by": {
+            "type": "status_power"
+          }
+        }
+      }
+    }
+  ]
+}

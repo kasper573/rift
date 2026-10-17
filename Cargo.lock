@@ -2433,6 +2433,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bstr"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bb31b46c14244e20ee9984b11bf5c992b91fb6939fea616e3512c8baecdbe5f"
+dependencies = [
+ "memchr",
+ "regex-automata",
+ "serde_core",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3502,12 +3513,13 @@ dependencies = [
  "ebur128",
  "egui",
  "egui-snarl",
+ "egui_code_editor",
  "egui_dock",
  "engine",
  "image",
  "include_dir",
  "notify",
- "opener",
+ "opener 0.9.0",
  "png",
  "process-wrap",
  "rayon",
@@ -3562,6 +3574,16 @@ dependencies = [
  "egui-scale",
  "slab",
  "smallvec",
+]
+
+[[package]]
+name = "egui_code_editor"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1728f5612c6390e47044bade9de8bc21cd9a64d55c0d60a371fa47ea72f063e3"
+dependencies = [
+ "egui",
+ "opener 0.8.5",
 ]
 
 [[package]]
@@ -3700,9 +3722,10 @@ dependencies = [
  "jsonwebtoken",
  "kira",
  "metrics",
+ "naga",
  "oauth2",
  "oorandom",
- "opener",
+ "opener 0.9.0",
  "pathfinding",
  "png",
  "postcard",
@@ -6507,6 +6530,17 @@ name = "oorandom"
 version = "11.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
+
+[[package]]
+name = "opener"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2b03ff07a220d0d0ec9a1f0f238951b7967a5a2e96aefcd21a117b1083415e9"
+dependencies = [
+ "bstr",
+ "normpath",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "opener"

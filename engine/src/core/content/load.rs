@@ -279,7 +279,7 @@ impl ContentFolder for FilesystemFolder {
         read.filter_map(Result::ok)
             .filter_map(|entry| {
                 let name = entry.file_name().to_str()?.to_owned();
-                let dir = entry.file_type().ok()?.is_dir();
+                let dir = std::fs::metadata(entry.path()).ok()?.is_dir();
                 Some(FolderEntry { name, dir })
             })
             .collect()
@@ -1443,8 +1443,11 @@ impl FileWriter {
         self.file(file, &bytes)
     }
 
+    /// A file shared with another folder through a symlink is written where the link points, so the
+    /// one copy changes rather than the link turning into a copy of its own.
     pub fn file(&mut self, file: &str, bytes: &[u8]) -> io::Result<()> {
-        let path = self.root.join(file);
+        let linked = self.root.join(file);
+        let path = std::fs::canonicalize(&linked).unwrap_or(linked);
         if std::fs::read(&path).is_ok_and(|current| current == bytes) {
             self.kept += 1;
             return Ok(());

@@ -28,7 +28,7 @@ pub fn sfx_file(editor: &Editor, sfx: &str) -> Option<String> {
         .and_then(|row| row["file"].as_str().map(str::to_owned))
 }
 
-pub fn draw_wave(painter: &egui::Painter, rect: ERect, bins: &[f32], colour: Color32) {
+pub fn draw_wave(painter: &egui::Painter, rect: ERect, bins: &[f32], color: Color32) {
     if bins.is_empty() || rect.width() <= 0.0 {
         return;
     }
@@ -46,7 +46,7 @@ pub fn draw_wave(painter: &egui::Painter, rect: ERect, bins: &[f32], colour: Col
     top.extend(bottom);
     painter.add(egui::Shape::convex_polygon(
         top,
-        colour.gamma_multiply(0.85),
+        color.gamma_multiply(0.85),
         egui::Stroke::NONE,
     ));
 }

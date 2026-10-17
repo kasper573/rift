@@ -1,0 +1,15 @@
+{
+  "name": "Arrow hit",
+  "layers": [
+    {
+      "type": "sprite",
+      "sheet": "vfx/impact.png",
+      "frame": {
+        "width": 32,
+        "height": 32
+      },
+      "frames": 6,
+      "fps": 16.0
+    }
+  ]
+}

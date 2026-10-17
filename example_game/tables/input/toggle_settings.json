@@ -1,9 +1,1 @@
-{
-  "label": "Open or close the settings",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "KeyO"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/toggle_settings.json

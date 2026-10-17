@@ -1,0 +1,23 @@
+{
+  "name": "Unspent",
+  "class": "fighter",
+  "xp": 90,
+  "basic_attack": "slash",
+  "bag": [
+    {
+      "item": "gold",
+      "count": 60
+    },
+    {
+      "item": "health_potion",
+      "count": 2
+    },
+    {
+      "item": "shamans_draught"
+    }
+  ],
+  "equipment": {
+    "weapon": "iron_sword"
+  },
+  "start": "initial_spawn"
+}

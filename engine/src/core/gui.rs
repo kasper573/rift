@@ -55,6 +55,10 @@ impl WorldLayers {
 #[derive(Resource, Clone)]
 pub struct GuiFonts(pub FontDefinitions);
 
+/// Where each named interface widget was drawn this pass, for what plays over a widget.
+#[derive(Resource, Default)]
+pub struct WidgetRects(pub HashMap<String, egui::Rect>);
+
 #[derive(Clone, Debug)]
 pub struct GuiImage {
     pub texture: egui::TextureId,
@@ -79,6 +83,7 @@ impl Plugin for GuiPlugin {
                 ..default()
             })
             .init_resource::<WorldLayers>()
+            .init_resource::<WidgetRects>()
             .init_resource::<GuiImages>()
             .init_resource::<GuiCursor>()
             .configure_sets(
@@ -314,12 +319,13 @@ fn set_motion(gui: &egui::Context, motion: MotionPreference) {
     gui.all_styles_mut(|style| style.animation_time = seconds);
 }
 
-fn forget_world_layers(mut layers: ResMut<WorldLayers>) {
+fn forget_world_layers(mut layers: ResMut<WorldLayers>, mut widgets: ResMut<WidgetRects>) {
     layers.0.clear();
+    widgets.0.clear();
 }
 
 /// bevy_egui blends every texture as premultiplied but samples a Bevy image as stored, which would
-/// show the colour of each transparent pixel; egui premultiplies the pixels it is handed itself.
+/// show the color of each transparent pixel; egui premultiplies the pixels it is handed itself.
 fn upload(world: &World, file: &str, handle: &Handle<Image>) -> Option<egui::TextureHandle> {
     let image = world.resource::<Assets<Image>>().get(handle)?;
     let rgba = image.clone().try_into_dynamic().ok()?.to_rgba8();

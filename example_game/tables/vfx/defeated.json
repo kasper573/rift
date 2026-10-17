@@ -1,0 +1,39 @@
+{
+  "name": "Defeated",
+  "layers": [
+    {
+      "type": "shader",
+      "shader": "flash",
+      "params": {
+        "color": [
+          255,
+          255,
+          255,
+          255
+        ],
+        "strength": 1.0
+      },
+      "duration": 0.12
+    },
+    {
+      "type": "shader",
+      "shader": "shake",
+      "params": {
+        "amplitude": 0.06
+      },
+      "duration": 0.3
+    },
+    {
+      "type": "sprite",
+      "sheet": "vfx/dust.png",
+      "frame": {
+        "width": 32,
+        "height": 32
+      },
+      "frames": 6,
+      "fps": 12.0,
+      "anchor": "feet",
+      "scale": 1.5
+    }
+  ]
+}

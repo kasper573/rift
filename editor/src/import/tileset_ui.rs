@@ -673,12 +673,12 @@ pub fn show_reimport(editor: &mut Editor, ui: &mut Ui, key: &str) {
             .show(ui, |ui| {
                 ui.set_width(panel.x - 20.0);
                 for line in text.lines() {
-                    let colour = match line.chars().next() {
+                    let color = match line.chars().next() {
                         Some('-') => theme::DANGER,
                         Some('+') => theme::OK,
                         _ => theme::MUTED,
                     };
-                    ui.label(theme::mono(line).color(colour));
+                    ui.label(theme::mono(line).color(color));
                 }
             });
         ui.add_space(8.0);
@@ -707,8 +707,8 @@ pub fn inspect_reimport(editor: &mut Editor, ui: &mut Ui, key: &str) {
     ui.add_space(6.0);
     widgets::card_frame(true).show(ui, |ui| {
         ui.vertical(|ui| {
-            widgets::card_title(ui, "tileset", &format!("importing {names}"));
-            for (mark, colour, text, count) in [
+            widgets::card_title(ui, &format!("importing {names}"));
+            for (mark, color, text, count) in [
                 ("✓", theme::OK, "found by their pixels", draft.plan.found),
                 (
                     "↻",
@@ -727,7 +727,7 @@ pub fn inspect_reimport(editor: &mut Editor, ui: &mut Ui, key: &str) {
                 draft.plan.blank_data,
             ))) {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(mark).color(colour));
+                    ui.label(egui::RichText::new(mark).color(color));
                     ui.label(theme::muted(text));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(theme::mono(count.to_string()));

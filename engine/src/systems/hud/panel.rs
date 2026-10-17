@@ -11,6 +11,7 @@ pub(crate) struct WindowFrame<'a> {
     pub title: Option<&'a str>,
     pub start: Rect,
     pub sizing: Sizing,
+    pub body_limit: Option<Vec2>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -32,7 +33,7 @@ pub(crate) fn widget<R>(
         .widget_pos(key)
         .map(|pos| Pos2::new(pos.x, pos.y));
     let rest = Rect::from_min_size(saved.unwrap_or(start), drawn_size(gui, id));
-    let at = standing(world, gui, key, rest).min;
+    let at = standing(world, gui, key, rest, None).min;
     let shown = egui::Area::new(id)
         .order(Band::Hud.order())
         .fixed_pos(at)
@@ -43,9 +44,13 @@ pub(crate) fn widget<R>(
     grab(
         world,
         &shown.response,
-        Held::new(key, Kept::Spot, Grip::Move, rect),
+        Held::new(key, Kept::Spot, Grip::Move, rect, None),
     );
     world.resource_mut::<HudDrawn>().0.push(rect);
+    world
+        .resource_mut::<gui::WidgetRects>()
+        .0
+        .insert(key.to_owned(), rect);
     shown.inner
 }
 
@@ -61,8 +66,10 @@ pub(crate) fn window<R>(
         title,
         start,
         sizing,
+        body_limit,
     } = frame;
     let id = panel_id(key);
+    let max = body_limit.map(|body| body + chrome(gui));
     let saved = world
         .resource::<UserSettings>()
         .window_placement(key)
@@ -74,7 +81,7 @@ pub(crate) fn window<R>(
             Vec2::new(start.width(), drawn_size(gui, id).y),
         ),
     };
-    let rect = standing(world, gui, key, rest);
+    let rect = standing(world, gui, key, rest, max);
     let shown = egui::Area::new(id)
         .order(Band::Hud.order())
         .fixed_pos(rect.min)
@@ -94,7 +101,8 @@ pub(crate) fn window<R>(
             let ((bar, inner), outer) = (framed.inner, framed.response.rect);
             let title_rect = Rect::from_min_max(outer.min, Pos2::new(outer.max.x, bar.max.y));
             let handle = ui.interact(title_rect, id.with("title"), Sense::drag());
-            let grip = (sizing == Sizing::Resizable).then(|| corner_grip(ui, id, outer));
+            let grip = (sizing == Sizing::Resizable)
+                .then(|| corner_grip(ui, id, outer, GripCorner::BottomRight));
             (handle, grip, inner)
         });
     let (handle, grip, inner) = shown.inner;
@@ -102,18 +110,22 @@ pub(crate) fn window<R>(
     grab(
         world,
         &handle,
-        Held::new(key, Kept::Placement, Grip::Move, outer),
+        Held::new(key, Kept::Placement, Grip::Move, outer, max),
     );
     if let Some(grip) = grip {
         grab(
             world,
             &grip,
-            Held::new(key, Kept::Placement, Grip::Resize, outer),
+            Held::new(key, Kept::Placement, Grip::Resize, outer, max),
         );
     }
     world.resource_mut::<WindowsDrawn>().now.insert(key);
     world.resource_mut::<HudDrawn>().0.push(outer);
     egui::InnerResponse::new(inner, shown.response)
+}
+
+pub(super) fn shown_rect(gui: &egui::Context, key: &str) -> Option<Rect> {
+    gui.memory(|memory| memory.area_rect(panel_id(key)))
 }
 
 pub(super) fn layer(key: &'static str) -> LayerId {
@@ -138,7 +150,11 @@ pub(super) fn arrange(world: &mut World) {
     }
     world.resource_mut::<Arranging>().0 = None;
     let screen = gui.content_rect();
-    let settled = within(snapped(world, held.rect(screen), held.grip), screen);
+    let settled = within(
+        snapped(world, held.rect(screen), held.grip),
+        screen,
+        held.max,
+    );
     let mut settings = world.resource_mut::<UserSettings>();
     match held.kept {
         Kept::Spot => settings.set_widget_pos(held.key, Pos::new(settled.min.x, settled.min.y)),
@@ -160,17 +176,19 @@ pub(super) struct Held {
     kept: Kept,
     grip: Grip,
     from: Rect,
+    max: Option<Vec2>,
     grab: Pos2,
     to: Pos2,
 }
 
 impl Held {
-    fn new(key: &'static str, kept: Kept, grip: Grip, from: Rect) -> Held {
+    fn new(key: &'static str, kept: Kept, grip: Grip, from: Rect, max: Option<Vec2>) -> Held {
         Held {
             key,
             kept,
             grip,
             from,
+            max,
             grab: Pos2::ZERO,
             to: Pos2::ZERO,
         }
@@ -186,10 +204,15 @@ impl Held {
                 self.from.min,
                 (self.from.size() + moved)
                     .max(MIN_WINDOW)
-                    .min(screen.max - self.from.min),
+                    .min(screen.max - self.from.min)
+                    .min(largest(self.max)),
             ),
         }
     }
+}
+
+fn largest(max: Option<Vec2>) -> Vec2 {
+    max.map_or(Vec2::INFINITY, |max| max.max(MIN_WINDOW))
 }
 
 #[derive(Clone, Copy)]
@@ -221,19 +244,27 @@ fn grab(world: &mut World, handle: &egui::Response, held: Held) {
     });
 }
 
-fn standing(world: &World, gui: &egui::Context, key: &str, rest: Rect) -> Rect {
+fn standing(world: &World, gui: &egui::Context, key: &str, rest: Rect, max: Option<Vec2>) -> Rect {
     let screen = gui.content_rect();
     let rect = world
         .resource::<Arranging>()
         .0
         .filter(|held| held.key == key)
         .map_or(rest, |held| held.rect(screen));
-    within(rect, screen)
+    within(rect, screen, max)
 }
 
-fn within(rect: Rect, screen: Rect) -> Rect {
-    let size = rect.size().min(screen.size());
+fn within(rect: Rect, screen: Rect, max: Option<Vec2>) -> Rect {
+    let size = rect.size().min(screen.size()).min(largest(max));
     Rect::from_min_size(rect.min.clamp(screen.min, screen.max - size), size)
+}
+
+/// What a window adds around its body: its frame and title bar.
+pub(super) fn chrome(gui: &egui::Context) -> Vec2 {
+    let style = gui.style_of(gui.theme());
+    let margin = egui::Frame::window(&style).total_margin().sum();
+    let title = gui.fonts_mut(|fonts| fonts.row_height(&egui::TextStyle::Heading.resolve(&style)));
+    margin + Vec2::new(0.0, title + style.spacing.item_spacing.y)
 }
 
 fn snapped(world: &World, rect: Rect, grip: Grip) -> Rect {
@@ -315,21 +346,47 @@ fn fitted<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.scope_builder(UiBuilder::new().max_rect(room), add).inner
 }
 
-fn corner_grip(ui: &mut Ui, id: Id, window: Rect) -> egui::Response {
+/// Which corner a resize grip sits in: the bottom right unless there is no room to pull there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GripCorner {
+    BottomRight,
+    TopRight,
+}
+
+pub(crate) fn corner_grip(ui: &mut Ui, id: Id, window: Rect, at: GripCorner) -> egui::Response {
     let size = ui.visuals().resize_corner_size;
-    let corner = Rect::from_min_max(window.max - Vec2::splat(size), window.max);
+    let (corner, cursor) = match at {
+        GripCorner::BottomRight => (
+            Rect::from_min_max(window.max - Vec2::splat(size), window.max),
+            egui::CursorIcon::ResizeNwSe,
+        ),
+        GripCorner::TopRight => (
+            Rect::from_min_max(
+                Pos2::new(window.max.x - size, window.min.y),
+                Pos2::new(window.max.x, window.min.y + size),
+            ),
+            egui::CursorIcon::ResizeNeSw,
+        ),
+    };
     let response = ui
         .interact(corner, id.with("grip"), Sense::drag())
-        .on_hover_cursor(egui::CursorIcon::ResizeNwSe);
+        .on_hover_cursor(cursor);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::ResizeHandle, ui.is_enabled(), "Resize")
     });
     let stroke = Stroke::new(1.0, ui.style().interact(&response).fg_stroke.color);
-    let tip = corner.max - Vec2::splat(f32::from(ui.visuals().window_corner_radius.se) / 2.0);
+    let inset = f32::from(ui.visuals().window_corner_radius.se) / 2.0;
+    let (tip, down) = match at {
+        GripCorner::BottomRight => (corner.max - Vec2::splat(inset), -1.0),
+        GripCorner::TopRight => (corner.right_top() + Vec2::new(-inset, inset), 1.0),
+    };
     let mut reach = 2.0;
     while reach <= size {
         ui.painter().line_segment(
-            [tip - Vec2::new(reach, 0.0), tip - Vec2::new(0.0, reach)],
+            [
+                tip - Vec2::new(reach, 0.0),
+                tip + Vec2::new(0.0, down * reach),
+            ],
             stroke,
         );
         reach += 4.0;

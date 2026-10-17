@@ -1,11 +1,1 @@
-{
-  "label": "Drop an item from your bag",
-  "bindings": [
-    {
-      "type": "click",
-      "button": "Left",
-      "times": 1,
-      "ctrl": true
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/drop_item.json

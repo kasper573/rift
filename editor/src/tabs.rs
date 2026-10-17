@@ -17,6 +17,14 @@ pub enum EditorTab {
     Spreadsheet { table: String },
 }
 
+/// What a tab's context menu asked to close, done once the dock is no longer being drawn.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CloseTabs {
+    All,
+    Others(EditorTab),
+    ToTheRight(EditorTab),
+}
+
 impl EditorTab {
     pub fn title(&self) -> String {
         match self {

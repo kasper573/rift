@@ -7,9 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::core::content::version;
-use crate::core::net::auth::{RealmAccess, TokenClaims};
+use crate::core::net::auth::TokenClaims;
 use crate::core::time::UtcHour;
-use crate::systems::account::Role;
 use crate::systems::player::SpawnPolicy;
 use crate::systems::script::Place;
 
@@ -21,14 +20,11 @@ pub const SETTINGS_FILE: &str = "rift.env";
 pub const TEST_CHARACTER_ROUTE: &str = "/test/character";
 
 /// What a server on fake auth takes as an account's sign-in.
-pub fn fake_token(account: &str, roles: &[Role]) -> String {
+pub fn fake_token(account: &str) -> String {
     TokenClaims {
         sub: account.to_owned(),
         azp: None,
         preferred_username: Some(account.to_owned()),
-        realm_access: RealmAccess {
-            roles: roles.iter().map(|role| role.as_ref().to_owned()).collect(),
-        },
     }
     .unsigned()
 }

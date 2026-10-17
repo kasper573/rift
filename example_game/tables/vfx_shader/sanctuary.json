@@ -1,0 +1,22 @@
+{
+  "name": "Sanctuary",
+  "params": [
+    {
+      "name": "color",
+      "kind": "color",
+      "default": [
+        255,
+        226,
+        150,
+        255
+      ]
+    },
+    {
+      "name": "rays",
+      "kind": "number",
+      "default": 5.0,
+      "min": 0.0,
+      "max": 12.0
+    }
+  ]
+}

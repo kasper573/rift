@@ -1,0 +1,9 @@
+{
+  "file": "audio/skills/holy_chime.wav",
+  "role": "combat",
+  "volume": {
+    "min": 0.35,
+    "max": 0.42
+  },
+  "pitch": 1.0
+}

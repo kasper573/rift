@@ -4,13 +4,14 @@ use bevy_ecs::prelude::*;
 use strum::VariantArray;
 
 use crate::core::content::{Content, Fixture};
+use crate::systems::class::{self, Class, SkillPoints};
 use crate::systems::equipment::{Equipment, EquipmentSlot};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::{Inventory, ItemId};
-use crate::systems::job::{self, Job};
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::Xp;
+use crate::systems::skill::Learned;
 use crate::systems::text::LineText;
 
 #[derive(Component, Clone, Debug, Default, PartialEq)]
@@ -19,13 +20,15 @@ pub struct Belongings {
     worn: BTreeMap<EquipmentSlot, ItemId>,
     xp: u32,
     level: u32,
+    points: SkillPoints,
 }
 
 pub type ChangedBelongings = Or<(
     Changed<Inventory>,
     Changed<Equipment>,
     Changed<Xp>,
-    Changed<Job>,
+    Changed<Class>,
+    Changed<Learned>,
 )>;
 
 pub fn of(world: &World, player: Entity) -> Belongings {
@@ -45,7 +48,8 @@ pub fn of(world: &World, player: Entity) -> Belongings {
         items,
         worn,
         xp: world.get::<Xp>(player).map_or(0, |xp| xp.amount),
-        level: job::level(world, player),
+        level: class::level(world, player),
+        points: class::points_to_spend(world, player),
     }
 }
 
@@ -122,13 +126,31 @@ fn changes(content: &Content, before: &Belongings, now: &Belongings) -> Vec<Noti
         }
     }
     if now.level > before.level {
+        let granted = now.points.0.saturating_sub(before.points.0);
+        let text = match granted {
+            0 => format!("Level {}", now.level),
+            1 => format!("Level {} · 1 skill point", now.level),
+            _ => format!("Level {} · {granted} skill points", now.level),
+        };
         told.push(Notification::new(
             NotificationKind::Milestone {
                 label: "Level up".into(),
                 topic: HistoryTopic::Notification,
                 sfx: Some(InterfaceSound::RisingChime.id(content)),
             },
-            LineText::plain(format!("Level {}", now.level)),
+            LineText::plain(text),
+        ));
+    }
+    if now.points > before.points {
+        told.push(Notification::new(
+            NotificationKind::Feed {
+                topic: HistoryTopic::Notification,
+                icon: None,
+                tally: Some(RecordTally::Change((now.points.0 - before.points.0) as i32)),
+                failure: false,
+                sfx: None,
+            },
+            LineText::plain("Skill points to spend"),
         ));
     }
     told

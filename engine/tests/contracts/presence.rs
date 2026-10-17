@@ -6,7 +6,7 @@ use engine::systems::item::{ItemId, ItemKind};
 use engine::systems::movement::position;
 use engine::systems::npc::{self, Pack};
 use engine::systems::player::ClientId;
-use engine::systems::reach::{self, ReachAct};
+use engine::systems::reach;
 use engine::systems::script::RiftQuery;
 use engine::systems::script::condition::{self, CompiledCondition};
 use engine::systems::stat::{self, StatKind};
@@ -50,7 +50,7 @@ fn a_friendly_npc_cannot_be_attacked() {
     sim.send(1, AttackRequest { target: grisha });
     sim.run_until(4.0, |_| false);
 
-    assert_eq!(reach::intent(sim.world(), player, ReachAct::Attack), None);
+    assert_eq!(reach::attacking(sim.world(), player), None);
     assert_eq!(stat::effective(sim.world(), grisha, StatKind::Health), full);
 }
 
@@ -74,7 +74,7 @@ fn a_monster_spawned_for_one_player_ignores_everyone_else() {
 
     let mut hunted = Vec::new();
     sim.run_until(3.0, |world| {
-        hunted.extend(reach::intent(world, skeleton, ReachAct::Attack));
+        hunted.extend(reach::attacking(world, skeleton));
         false
     });
 

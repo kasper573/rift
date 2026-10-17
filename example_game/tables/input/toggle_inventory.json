@@ -1,9 +1,1 @@
-{
-  "label": "Open or close the inventory",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "KeyI"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/toggle_inventory.json

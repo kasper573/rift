@@ -1,9 +1,0 @@
-{
-  "label": "Watch the next player",
-  "bindings": [
-    {
-      "type": "key",
-      "key": "ArrowRight"
-    }
-  ]
-}

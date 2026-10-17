@@ -1,0 +1,39 @@
+{
+  "name": "Lightning",
+  "params": [
+    {
+      "name": "color",
+      "kind": "color",
+      "default": [
+        140,
+        190,
+        255,
+        255
+      ]
+    },
+    {
+      "name": "core",
+      "kind": "color",
+      "default": [
+        255,
+        255,
+        255,
+        255
+      ]
+    },
+    {
+      "name": "jitter",
+      "kind": "number",
+      "default": 0.35,
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "name": "bolts",
+      "kind": "number",
+      "default": 2.0,
+      "min": 1.0,
+      "max": 4.0
+    }
+  ]
+}

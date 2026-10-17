@@ -9,7 +9,7 @@ use egui::{RichText, Ui};
 use engine::core::content::{Content, ContentScope, version, with_content};
 use engine::core::time::UtcHour;
 use engine::systems::GameSettings;
-use engine::systems::job::JobDef;
+use engine::systems::class::ClassDef;
 use engine::systems::launch::{
     self, BUILD_INFO_FLAG, BuildInfo, CLIENT_ENV_PREFIX, ClientConfig, ReadyLine,
     SERVER_ENV_PREFIX, ServerConfig, TEST_CHARACTER_ROUTE, TestCharacterRequest, fake_token,
@@ -355,9 +355,7 @@ pub fn top_bar(editor: &mut Editor, ui: &mut Ui) {
     let (play, arrow) = ui
         .scope(|ui| {
             ui.spacing_mut().item_spacing.x = 1.0;
-            let arrow = ui
-                .add(egui::Button::new(RichText::new("▾").size(12.0)).fill(theme::ACCENT))
-                .on_hover_text("Pick the test character");
+            let arrow = widgets::primary(ui, "▾").on_hover_text("Pick the test character");
             let play = widgets::primary(ui, "▸ Play").on_hover_text(
                 "Save, then play as the picked test character from its own start (F5)",
             );
@@ -591,16 +589,10 @@ pub fn test_characters(editor: &Editor) -> Vec<TestCharacter> {
             let level = content
                 .as_ref()
                 .and_then(|content| {
-                    row["job"]
+                    row["class"]
                         .as_str()
-                        .and_then(|job| content.by_key::<JobDef>(job))
-                        .map(|job| {
-                            job.get(content)
-                                .levels
-                                .iter()
-                                .filter(|tier| tier.xp <= xp)
-                                .count() as u32
-                        })
+                        .and_then(|class| content.by_key::<ClassDef>(class))
+                        .map(|class| class.get(content).level_at(xp))
                 })
                 .unwrap_or(0);
             let area = match &row["start"] {
@@ -891,7 +883,7 @@ fn spawn_client(
         game_server_url: format!("http://{LOCALHOST}:{}", ports.http),
         game_server_ws_url: format!("ws://{LOCALHOST}:{}", ports.ws),
         auth: launch::AuthMode::Fake,
-        access_token: Some(fake_token(character, &[])),
+        access_token: Some(fake_token(character)),
         profile_dir: profile,
         exit_on_stdin_eof: true,
         probe: None,
@@ -971,7 +963,7 @@ fn hand_over(
     }
     .map_err(|error| error.to_string())?;
     let response = ureq::post(format!("http://{LOCALHOST}:{http}{TEST_CHARACTER_ROUTE}"))
-        .header("Authorization", fake_token(character, &[]))
+        .header("Authorization", fake_token(character))
         .send(body.as_bytes());
     match response {
         Ok(_) => Ok(()),

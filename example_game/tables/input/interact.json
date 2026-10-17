@@ -1,9 +1,1 @@
-{
-  "label": "Walk, attack, talk or pick up",
-  "bindings": [
-    {
-      "type": "mouse",
-      "button": "Left"
-    }
-  ]
-}
+../../../editor/templates/new_game/tables/input/interact.json

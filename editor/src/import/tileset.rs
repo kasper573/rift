@@ -8,7 +8,7 @@ use super::formats::{self, AnimationExport};
 use crate::ui::widgets;
 
 pub const MAX_TILE_PX: u32 = 512;
-pub const MAX_COLOURS: usize = 256;
+pub const MAX_COLORS: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TileGridSettings {
@@ -523,22 +523,22 @@ pub fn anim_plan(
     let mut warnings = Vec::new();
     let mut fits = None;
     if kind_limits {
-        let mut colours = BTreeSet::new();
+        let mut colors = BTreeSet::new();
         let mut soft = false;
         for cell in &cells {
             if let Some(image) = tile_image(tileset, tile, cell.tile) {
                 for pixel in image.pixels() {
-                    colours.insert(pixel.0);
+                    colors.insert(pixel.0);
                     soft |= pixel[3] != 0 && pixel[3] != 255;
                 }
             }
         }
-        let over = colours.len() > MAX_COLOURS;
+        let over = colors.len() > MAX_COLORS;
         if over || soft {
             warnings.push(format!(
-                "the tiles have {}{}; a GIF keeps {MAX_COLOURS} colours and hard transparency, so the frames lose detail",
+                "the tiles have {}{}; a GIF keeps {MAX_COLORS} colors and hard transparency, so the frames lose detail",
                 if over {
-                    format!("{} colours", colours.len())
+                    format!("{} colors", colors.len())
                 } else {
                     String::new()
                 },
@@ -550,8 +550,8 @@ pub fn anim_plan(
             ));
         } else {
             fits = Some(format!(
-                "Fits a GIF's limits: {} colours, and no soft edges to lose.",
-                colours.len()
+                "Fits a GIF's limits: {} colors, and no soft edges to lose.",
+                colors.len()
             ));
         }
     }

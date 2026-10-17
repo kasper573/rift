@@ -15,7 +15,7 @@ use crate::core::render::screen::ToScreen;
 use crate::core::tiling::Tiles;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::player::RespawnRequest;
-use crate::systems::player::session::{self, Viewpoint};
+use crate::systems::player::session::{self, MyCharacter};
 use crate::systems::screen::ClientScreen;
 
 pub struct InputPlugin;
@@ -61,7 +61,7 @@ fn setup_highlight(mut commands: Commands) {
 
 fn update_tile_highlight(
     highlight: Option<Res<ActiveTileHighlight>>,
-    viewpoint: Res<Viewpoint>,
+    viewpoint: Res<MyCharacter>,
     content: Res<Content>,
     areas: Query<&AreaTag>,
     mut sprite: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<TileHighlight>>,
@@ -82,7 +82,7 @@ fn update_tile_highlight(
     transform.translation = highlight.pos.to_screen().extend(z);
 }
 
-fn highlight_z(content: &Content, viewpoint: &Viewpoint, areas: &Query<&AreaTag>) -> Option<f32> {
+fn highlight_z(content: &Content, viewpoint: &MyCharacter, areas: &Query<&AreaTag>) -> Option<f32> {
     let tag = areas.get(viewpoint.0?).ok()?;
     Some(area::load(content, tag.area).sort_base())
 }

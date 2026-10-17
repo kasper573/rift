@@ -1,0 +1,5 @@
+# Production plays the game folder its deploy syncs beside this file, symlinks followed.
+services:
+  rift-game-server:
+    volumes:
+      - ./content:/content

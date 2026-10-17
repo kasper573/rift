@@ -27,7 +27,7 @@ use crate::project::{
 };
 use crate::scenes::{self, Step};
 use crate::schema::SchemaShapes;
-use crate::tabs::EditorTab;
+use crate::tabs::{CloseTabs, EditorTab};
 use crate::thumbs::Thumbnail;
 use crate::user::{BrushSettings, EditorSettings, UserFolder, unix_seconds};
 use crate::views::area::placement::ReplaceScope;
@@ -37,6 +37,7 @@ use crate::views::script::{LinkNodeDialog, RenameNodeDialog, ScriptOwner};
 use crate::views::world::ArrangeDialog;
 use crate::views::{EditorCamera, EditorViews};
 use crate::{import, play, rows, ui, views};
+use engine::core::vfx::render::VfxMaterial;
 
 #[derive(Clone, Debug, Default)]
 pub struct EditorLaunch {
@@ -68,15 +69,19 @@ impl Plugin for EditorPlugin {
         if let Some(folder) = &self.launch.folder {
             editor.open_folder(folder);
         }
-        app.add_plugins((EguiPlugin::default(), bevy_tilemap::TilemapPlugin))
-            .insert_resource(editor)
-            .add_systems(Startup, setup_camera)
-            .add_systems(
-                PreUpdate,
-                theme_context.after(EguiPreUpdateSet::InitContexts),
-            )
-            .add_systems(EguiPrimaryContextPass, editor_ui)
-            .add_systems(Update, background);
+        app.add_plugins((
+            EguiPlugin::default(),
+            bevy_tilemap::TilemapPlugin,
+            bevy::sprite_render::Material2dPlugin::<VfxMaterial>::default(),
+        ))
+        .insert_resource(editor)
+        .add_systems(Startup, setup_camera)
+        .add_systems(
+            PreUpdate,
+            theme_context.after(EguiPreUpdateSet::InitContexts),
+        )
+        .add_systems(EguiPrimaryContextPass, editor_ui)
+        .add_systems(Update, background);
     }
 }
 
@@ -114,6 +119,7 @@ pub struct Editor {
     pub toast: Option<(String, Instant)>,
     pub start: StartScreen,
     pub open_tabs: Vec<EditorTab>,
+    pub close_tabs: Option<CloseTabs>,
     pub scene: Option<Vec<Step>>,
     pub clipboard: Option<Clipboard>,
     pub views: EditorViews,
@@ -412,6 +418,7 @@ impl Editor {
             toast: None,
             start: StartScreen::default(),
             open_tabs: Vec::new(),
+            close_tabs: None,
             scene: None,
             clipboard: None,
             views: EditorViews::default(),
@@ -657,6 +664,24 @@ impl Editor {
             self.toast("Read-only: nothing saved");
             return false;
         }
+        let was_loading = project.loading();
+        project.settle();
+        if was_loading {
+            self.views.content_changed();
+        }
+        let Some(project) = &mut self.project else {
+            return false;
+        };
+        if let Some(report) = &project.report {
+            let first = EditRefusal::of(report);
+            let at = if first.pointer.is_empty() {
+                first.file.clone()
+            } else {
+                format!("{} at {}", first.file, first.pointer)
+            };
+            self.toast(format!("Not saved · {at}: {}", first.sentence()));
+            return false;
+        }
         match project.save() {
             Ok(outcome) => {
                 let count = outcome.written.len() + outcome.removed.len();
@@ -720,6 +745,15 @@ impl Editor {
         self.project
             .as_ref()
             .and_then(|project| project.content.clone())
+    }
+
+    fn poll_project(&mut self) {
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        if project.poll() {
+            self.views.content_changed();
+        }
     }
 
     fn poll_outside(&mut self) {
@@ -831,6 +865,7 @@ fn editor_ui(world: &mut World) {
 
 fn background(world: &mut World) {
     world.resource_scope(|world, mut editor: Mut<Editor>| {
+        editor.poll_project();
         editor.poll_outside();
         editor.tick_journal();
         play::poll(&mut editor);
@@ -870,5 +905,9 @@ impl<T> ChannelInbox<T> {
             Ok(receiver) => receiver.try_recv(),
             Err(_) => Err(TryRecvError::Disconnected),
         }
+    }
+
+    pub fn recv(&self) -> Option<T> {
+        self.0.lock().ok().and_then(|receiver| receiver.recv().ok())
     }
 }
