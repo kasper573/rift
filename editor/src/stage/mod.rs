@@ -14,7 +14,7 @@ use ui::theme;
 use bevy::prelude::*;
 use engine::core::content::Content;
 use engine::core::geometry::{Footprint, Radians};
-use engine::core::math::{Direction, Pos, Rgba};
+use engine::core::math::{Direction, Offset, Pos, Rgba};
 use engine::core::render::ToScreen;
 use engine::core::time::{PlaybackRate, Seconds};
 use engine::core::units::Meters;
@@ -81,7 +81,7 @@ pub struct Posed {
 pub struct PosedActor {
     pub model: ModelId,
     pub action: Action,
-    pub dir: Direction,
+    pub facing: Radians,
     pub tint: Rgba,
     pub at: Pos<Meters>,
     pub plate: Option<PlateLabel>,
@@ -151,13 +151,29 @@ impl PosedActor {
         PosedActor {
             model,
             action: Action::Idle,
-            dir: Direction::S,
+            facing: Radians::SOUTH,
             tint: Rgba::WHITE,
             at,
             plate: None,
             held: None,
         }
     }
+}
+
+/// The way a sheet's strip of `direction` faces.
+pub fn facing_of(direction: Direction) -> Radians {
+    const D: f32 = std::f32::consts::FRAC_1_SQRT_2;
+    let (x, y) = match direction {
+        Direction::E => (1.0, 0.0),
+        Direction::SE => (D, D),
+        Direction::S => (0.0, 1.0),
+        Direction::SW => (-D, D),
+        Direction::W => (-1.0, 0.0),
+        Direction::NW => (-D, -D),
+        Direction::N => (0.0, -1.0),
+        Direction::NE => (D, -D),
+    };
+    Radians::of(Offset::new(x, y))
 }
 
 /// Where the stage stands: the game's initial spawn, which every scene is laid out around.
@@ -404,7 +420,7 @@ fn posed_frame<'a>(
             source: Source::Posed(index),
             model: actor.model,
             action: actor.action,
-            dir: actor.dir,
+            facing: actor.facing,
             tint: actor.tint,
             attack_rate: PlaybackRate(1.0),
             at: actor.at,
@@ -476,7 +492,7 @@ fn live_frame<'a>(
             source: Source::Live(shown.entity),
             model: shown.actor.model,
             action: shown.actor.action,
-            dir: shown.actor.dir,
+            facing: shown.actor.facing,
             tint: shown.actor.color,
             attack_rate: shown.actor.attack_rate,
             at: shown.at,

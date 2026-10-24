@@ -7,7 +7,8 @@ use super::TILE;
 use super::camera::WorldCamera;
 use super::present::{self, SCALE};
 use super::screen::ToScreen;
-use crate::core::math::{Direction, Pos};
+use crate::core::geometry::Radians;
+use crate::core::math::Pos;
 use crate::core::time::Seconds;
 use crate::core::units::{Cell, CellPos, Meters};
 
@@ -76,7 +77,7 @@ pub fn covering(transition: Res<ActiveTransition>) -> bool {
     transition.phase() == ScreenTransitionPhase::Out
 }
 
-pub fn freeze(world: &mut World, viewed_at: Pos<Meters>, heading: Direction) {
+pub fn freeze(world: &mut World, viewed_at: Pos<Meters>, heading: Radians) {
     let Some(from) = world_camera_marks(world, viewed_at) else {
         return;
     };
@@ -320,16 +321,7 @@ fn reach(marks: TargetMarks, size: Vec2) -> f32 {
         .fold(1.0, f32::max)
 }
 
-fn screen_heading(heading: Direction) -> Vec2 {
-    let (x, y) = match heading {
-        Direction::E => (1.0, 0.0),
-        Direction::SE => (1.0, 1.0),
-        Direction::S => (0.0, 1.0),
-        Direction::SW => (-1.0, 1.0),
-        Direction::W => (-1.0, 0.0),
-        Direction::NW => (-1.0, -1.0),
-        Direction::N => (0.0, -1.0),
-        Direction::NE => (1.0, -1.0),
-    };
-    Vec2::new(x, y).normalize()
+fn screen_heading(heading: Radians) -> Vec2 {
+    let heading = heading.heading();
+    Vec2::new(heading.x, heading.y)
 }

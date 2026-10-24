@@ -157,7 +157,7 @@ pub fn draw(editor: &mut Editor, ui: &mut Ui, key: &str, strip: ModelStrip, at: 
     let posed = Posed {
         actors: vec![PosedActor {
             action: strip.action,
-            dir: strip.direction,
+            facing: stage::facing_of(strip.direction),
             held: Some(at.seconds()),
             ..PosedActor::standing(model, stage::center(&content))
         }],

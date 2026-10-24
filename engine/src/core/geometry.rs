@@ -20,6 +20,9 @@ impl Degrees {
 }
 
 impl Radians {
+    /// Toward +y, which the camera looks down on: the way everyone first stands.
+    pub const SOUTH: Radians = Radians(std::f32::consts::FRAC_PI_2);
+
     pub fn of(heading: Offset<Meters>) -> Radians {
         Radians(heading.y.atan2(heading.x))
     }

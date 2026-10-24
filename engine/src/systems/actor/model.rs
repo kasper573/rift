@@ -14,6 +14,7 @@ use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, ContentProblem, ErrorPlace, FileWriter, Loading,
     MISSING_FILE, ModuleRule, ModuleSet, Nearby, PartSpec, Parts, RowCheck, Shape, serial,
 };
+use crate::core::geometry::Radians;
 use crate::core::math::{Direction, FrameSize, Pos, Rect, Size, WorldPx};
 use crate::core::time::{Millis, PlaybackRate, Seconds};
 use crate::core::units::Meters;
@@ -667,11 +668,11 @@ impl ActorModel {
     pub fn frame(
         &self,
         action: Action,
-        dir: Direction,
+        facing: Radians,
         t: Seconds,
         attack_speed: PlaybackRate,
     ) -> Rect<WorldPx> {
-        let strip = self.strip(action, dir);
+        let strip = self.strip(action, facing);
         let elapsed = (t.millis() * rate(action, attack_speed)).max(Millis(0.0));
         let total = total_ms(strip);
         let position = if action == Action::Dead {
@@ -691,8 +692,8 @@ impl ActorModel {
 
     /// How long an action plays and when it lands, at an attack speed: only an attack plays faster
     /// or slower for it.
-    pub fn timing(&self, action: Action, dir: Direction, attack_speed: PlaybackRate) -> Timing {
-        let strip = self.strip(action, dir);
+    pub fn timing(&self, action: Action, facing: Radians, attack_speed: PlaybackRate) -> Timing {
+        let strip = self.strip(action, facing);
         let rate = rate(action, attack_speed);
         let mut apex = Millis(0.0);
         let mut cursor = Millis(0.0);
@@ -713,12 +714,12 @@ impl ActorModel {
     pub fn cues(
         &self,
         action: Action,
-        dir: Direction,
+        facing: Radians,
         prev: Option<Seconds>,
         now: Seconds,
         attack_speed: PlaybackRate,
     ) -> (Vec<&SfxId>, bool) {
-        let strip = self.strip(action, dir);
+        let strip = self.strip(action, facing);
         let rate = rate(action, attack_speed);
         let authored = |t: Seconds| t.millis() * rate;
         let total = total_ms(strip);
@@ -735,8 +736,8 @@ impl ActorModel {
         (sfx, stepped)
     }
 
-    fn strip(&self, action: Action, dir: Direction) -> &[SheetFrame] {
-        &self.strips[action as usize][dir as usize]
+    fn strip(&self, action: Action, facing: Radians) -> &[SheetFrame] {
+        &self.strips[action as usize][Direction::from(facing.heading()) as usize]
     }
 
     fn region(&self, frame: u32) -> Rect<WorldPx> {

@@ -15,8 +15,9 @@ use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
+use crate::core::geometry::Radians;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin, Jumps, RenderValueSystems};
-use crate::core::math::{Direction, Offset, Pos, Rect, Rng, Size};
+use crate::core::math::{Offset, Pos, Rect, Rng, Size};
 use crate::core::time::Seconds;
 use crate::core::units::{
     Cell, CellPos, GridDims, GridSize, Meters, MetersPerSec, NEIGHBORS_8, TilePos, TileRect,
@@ -242,7 +243,7 @@ pub fn advance(world: &mut World, movers_query: &mut Movers, step_query: &mut St
         if let Some(step) = heading
             && let Some(actor) = actor.as_mut()
         {
-            set_facing(actor, Direction::from(step), gait(speed));
+            set_facing(actor, Radians::of(step), gait(speed));
         }
         if arrived {
             world.entity_mut(id).remove::<(MoveTarget, Path)>();

@@ -2,8 +2,9 @@ use bevy_ecs::prelude::*;
 use bevy_time::Time;
 
 use crate::core::content::Content;
+use crate::core::geometry::Radians;
 use crate::core::interpolate::{Jumps, Predicted};
-use crate::core::math::{Direction, Offset, Pos};
+use crate::core::math::{Offset, Pos};
 use crate::core::time::Seconds;
 use crate::core::units::{Meters, TilePos};
 use crate::systems::actor::render::RenderActor;
@@ -49,7 +50,7 @@ pub(super) struct Stride {
     at: Pos<Meters>,
     path: Path,
     target: Option<Pos<Meters>>,
-    facing: Direction,
+    facing: Radians,
     /// The latest [`MoveRequest`] sent for this character, to compare with its [`HeardMove`].
     sent: MoveSeq,
     /// The server's count of the character's jumps when the stride last looked.
@@ -76,7 +77,7 @@ pub(super) fn walk_ahead(world: &mut World) {
     let dt = Seconds(world.resource::<Time>().delta_secs());
     let shown = world
         .get::<Actor>(me)
-        .map(|actor| (actor.dir, actor.action));
+        .map(|actor| (actor.facing, actor.action));
     let Some(mut stride) = world.get_mut::<Stride>(me) else {
         return;
     };
@@ -101,7 +102,7 @@ pub(super) fn walk_ahead(world: &mut World) {
 }
 
 impl Stride {
-    fn new(server: &Position, facing: Direction) -> Stride {
+    fn new(server: &Position, facing: Radians) -> Stride {
         Stride {
             at: server.pos,
             path: Path::default(),
@@ -193,25 +194,25 @@ impl Stride {
         &mut self,
         heading: Option<Offset<Meters>>,
         gait: Action,
-        shown: Option<(Direction, Action)>,
+        shown: Option<(Radians, Action)>,
     ) -> RenderActor {
         match (heading, shown) {
-            (_, Some((dir, action @ (Action::Attack | Action::Dead)))) => {
-                RenderActor { dir, action }
+            (_, Some((facing, action @ (Action::Attack | Action::Dead)))) => {
+                RenderActor { facing, action }
             }
             (Some(step), _) => {
-                self.facing = Direction::from(step);
+                self.facing = Radians::of(step);
                 RenderActor {
-                    dir: self.facing,
+                    facing: self.facing,
                     action: gait,
                 }
             }
             (None, shown) => {
-                if let Some((dir, Action::Idle)) = shown {
-                    self.facing = dir;
+                if let Some((facing, Action::Idle)) = shown {
+                    self.facing = facing;
                 }
                 RenderActor {
-                    dir: self.facing,
+                    facing: self.facing,
                     action: Action::Idle,
                 }
             }
@@ -225,11 +226,11 @@ fn predicted_character(world: &mut World) -> Option<Entity> {
         let server = world.get::<Position>(me)?.clone();
         let actor = world.get::<Actor>(me)?;
         let pose = RenderActor {
-            dir: actor.dir,
+            facing: actor.facing,
             action: actor.action,
         };
         world.entity_mut(me).insert((
-            Stride::new(&server, pose.dir),
+            Stride::new(&server, pose.facing),
             Predicted,
             RenderPosition(server.pos),
             pose,

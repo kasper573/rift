@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
 
 use crate::core::content::{ContentRegistry, LoadStep};
-use crate::core::math::{Direction, Pos, Rgba, Size};
+use crate::core::geometry::Radians;
+use crate::core::math::{Pos, Rgba, Size};
 use crate::core::time::PlaybackRate;
 use crate::core::units::{Meters, TilePos};
 use crate::systems::movement::{Path, Position};
@@ -81,7 +82,7 @@ pub struct Tint {
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Actor {
     pub color: Rgba,
-    pub dir: Direction,
+    pub facing: Radians,
     pub action: Action,
     pub model: ModelId,
     pub attack_rate: PlaybackRate,
@@ -127,13 +128,13 @@ pub fn face_toward(world: &mut World, actor: Entity, toward: Pos<Meters>) {
     }
     if let Some(mut component) = world.get_mut::<Actor>(actor) {
         let action = component.action;
-        set_facing(&mut component, Direction::from(step), action);
+        set_facing(&mut component, Radians::of(step), action);
     }
 }
 
-pub fn set_facing(actor: &mut Mut<Actor>, dir: Direction, action: Action) {
-    if actor.dir != dir || actor.action != action {
-        actor.dir = dir;
+pub fn set_facing(actor: &mut Mut<Actor>, facing: Radians, action: Action) {
+    if actor.facing != facing || actor.action != action {
+        actor.facing = facing;
         actor.action = action;
     }
 }

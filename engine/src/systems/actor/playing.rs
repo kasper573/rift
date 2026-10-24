@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::{Action, Actor, ActorModel};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::Content;
-use crate::core::math::Direction;
+use crate::core::geometry::Radians;
 use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::core::time::{Millis, PlaybackRate, UnixMillis, WallClock};
 use crate::systems::script::effect::{self as effects, Audience};
@@ -115,17 +115,17 @@ pub fn play(
     world: &mut World,
     actor: Entity,
     action: Action,
-    toward: Option<Direction>,
+    toward: Option<Radians>,
 ) -> Option<Playing> {
     let content = world.resource::<Content>().clone();
     let now = world.resource::<WallClock>().now;
     let speed = PlaybackRate(stat::effective(world, actor, StatKind::AttackSpeed));
     let mut component = world.get_mut::<Actor>(actor)?;
-    let dir = toward.unwrap_or(component.dir);
-    super::set_facing(&mut component, dir, action);
+    let facing = toward.unwrap_or(component.facing);
+    super::set_facing(&mut component, facing, action);
     component.attack_rate = speed;
     let model = component.model;
-    let timing = ActorModel::get(&content, model).timing(action, dir, speed);
+    let timing = ActorModel::get(&content, model).timing(action, facing, speed);
     let playing = Playing {
         action,
         started: now,

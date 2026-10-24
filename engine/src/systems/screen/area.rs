@@ -13,9 +13,10 @@ use super::ClientScreen;
 use crate::core::audio::soundscape::Soundscape;
 use crate::core::content::Content;
 use crate::core::content::media::ImageSizes;
+use crate::core::geometry::Radians;
 use crate::core::gui::{self, Band};
 use crate::core::interpolate::RenderValueSystems;
-use crate::core::math::{Direction, Pos};
+use crate::core::math::Pos;
 use crate::core::render::screen::ToScreen;
 use crate::core::render::transition::{
     self, ActiveTransition, ScreenTransitionPhase, WorldViewSystems,
@@ -78,7 +79,7 @@ struct Crossing {
 struct Pose {
     character: Entity,
     at: Pos<Meters>,
-    heading: Direction,
+    heading: Radians,
     area: AreaId,
 }
 
@@ -170,7 +171,7 @@ fn pose_of(world: &World, character: Entity) -> Option<Pose> {
     Some(Pose {
         character,
         at: entity.get::<RenderPosition>()?.0,
-        heading: entity.get::<Actor>()?.dir,
+        heading: entity.get::<Actor>()?.facing,
         area: entity.get::<AreaTag>()?.area,
     })
 }

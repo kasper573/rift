@@ -151,12 +151,6 @@ contact-sheet video:
       -vf "fps=16/$(ffprobe -v error -show_entries format=duration -of csv=p=0 {{quote(video)}}),scale=640:-1,tile=4x4:padding=4" \
       {{quote(without_extension(video) + ".png")}}
 
-# Empty NAMES or ANIMATIONS mean all.
-[doc("Films actors in all eight directions through the game's sprite renderer: `just render-actor adventurer,dire-wolf walk,attack 2`.")]
-render-actor names="" animations="" loops="4":
-    RIFT_RENDER_CONTENT_DIR=example_game cargo run --quiet -p engine --bin render-actor -- {{quote(names)}} {{quote(animations)}} {{loops}} \
-      target/render/actor-{{ if names == "" { "all" } else { replace(names, ",", "+") } }}-{{ if animations == "" { "all" } else { replace(animations, ",", "+") } }}-x{{loops}}.mp4
-
 # Players are congested (all on the spawn tile, one shared view) by default; `dist` spreads them for distinct views.
 [doc("The server's highest area count sustained within the tick budget, then the client's frame rate through a playthrough.")]
 bench mode="":

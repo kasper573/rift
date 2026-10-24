@@ -334,7 +334,7 @@ fn draw_preview(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, pose: 
         };
         posed.actors.push(PosedActor {
             action: pose.action,
-            dir: pose.direction,
+            facing: stage::facing_of(pose.direction),
             tint: look.tint,
             plate: look.plate,
             held: (!pose.playing).then_some(Seconds(0.0)),

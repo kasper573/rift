@@ -3,8 +3,8 @@ use bevy::sprite::Anchor;
 
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::content::Content;
+use crate::core::geometry::Radians;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin};
-use crate::core::math::Direction;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::{Animator, Previous, RowDepth, atlas_rect, dynamic_z, place_sprite};
 use crate::core::time::{PlaybackRate, Seconds};
@@ -35,11 +35,11 @@ pub fn draw_actor_frame(
     sprite: &mut Sprite,
     model: &ActorModel,
     action: Action,
-    dir: Direction,
+    facing: Radians,
     elapsed: Seconds,
     attack_rate: PlaybackRate,
 ) {
-    let region = model.frame(action, dir, elapsed, attack_rate);
+    let region = model.frame(action, facing, elapsed, attack_rate);
     let drawn = model.drawn_size(region);
     sprite.rect = Some(atlas_rect(region));
     sprite.custom_size = Some(Vec2::new(drawn.width, drawn.height));
@@ -53,7 +53,7 @@ pub fn draw_actor_frame(
 /// ahead of the snapshots, takes them from its own walk.
 #[derive(Component, Clone, Copy, PartialEq)]
 pub struct RenderActor {
-    pub dir: Direction,
+    pub facing: Radians,
     pub action: Action,
 }
 
@@ -62,7 +62,7 @@ impl Interpolate for RenderActor {
 
     fn sample(actor: &Actor) -> RenderActor {
         RenderActor {
-            dir: actor.dir,
+            facing: actor.facing,
             action: actor.action,
         }
     }
@@ -116,7 +116,7 @@ fn sync_actors(
             &mut sprite,
             model,
             pose.action,
-            pose.dir,
+            pose.facing,
             playhead.elapsed,
             actor.attack_rate,
         );
@@ -137,7 +137,7 @@ fn sync_actors(
         };
         let (cues, stepped) = model.cues(
             pose.action,
-            pose.dir,
+            pose.facing,
             since,
             playhead.elapsed,
             actor.attack_rate,

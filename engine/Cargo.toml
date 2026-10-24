@@ -15,10 +15,6 @@ name = "loadtest"
 path = "src/bin/bench/loadtest.rs"
 
 [[bin]]
-name = "render-actor"
-path = "src/bin/render_actor.rs"
-
-[[bin]]
 name = "desktop-client"
 path = "src/bin/desktop_client/main.rs"
 

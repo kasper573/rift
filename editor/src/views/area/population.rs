@@ -1,5 +1,6 @@
 use engine::core::content::{Content, ContentFile};
-use engine::core::math::{Direction, Pos, Rng};
+use engine::core::geometry::Radians;
+use engine::core::math::{Pos, Rng};
 use engine::core::time::{PlaybackRate, Seconds};
 use engine::core::units::Meters;
 use engine::systems::actor::model::ModelId;
@@ -143,7 +144,12 @@ pub fn model_sprite(
         .form
         .thumbnails
         .image(ctx, &project.files, model.sheet().as_str())?;
-    let region = model.frame(Action::Idle, Direction::S, Seconds(0.0), PlaybackRate(1.0));
+    let region = model.frame(
+        Action::Idle,
+        Radians::SOUTH,
+        Seconds(0.0),
+        PlaybackRate(1.0),
+    );
     let drawn = model.drawn_size(region);
     let uv = thumbs::uv(
         thumb.size,

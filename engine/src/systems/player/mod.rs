@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use snapshot::{CharacterSnapshot, JoinAs};
 
 use crate::core::content::{Content, ContentFile, ContentId, ModuleRule, ModuleSet, Nearby};
-use crate::core::math::{Direction, Pos, Rgba, Rng};
+use crate::core::geometry::Radians;
+use crate::core::math::{Pos, Rgba, Rng};
 use crate::core::time::{PlaybackRate, Seconds, UnixMillis, WallClock};
 use crate::core::units::Meters;
 use crate::systems::account::Identity;
@@ -433,7 +434,7 @@ pub(crate) fn place(
                 Position::at(at),
                 Actor {
                     color: def.tint(),
-                    dir: Direction::S,
+                    facing: Radians::SOUTH,
                     action: Action::Idle,
                     model,
                     attack_rate: PlaybackRate::default(),

@@ -16,7 +16,8 @@ use crate::core::content::{
     Content, ContentFile, ContentId, Loading, ModuleRule, ModuleSet, NamedContent, Nearby,
     RowCheck, serial,
 };
-use crate::core::math::{Direction, Percent, Pos, Rect, Rgba, Rng};
+use crate::core::geometry::Radians;
+use crate::core::math::{Percent, Pos, Rect, Rgba, Rng};
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::core::units::{CellPos, Meters, TilePos};
 use crate::systems::actor::model::ModelId;
@@ -515,7 +516,7 @@ fn actor_bundle(content: &Content, def: &NpcDef, at: Pos<Meters>, area: AreaId) 
         Position::at(at),
         Actor {
             color: def.tint(),
-            dir: Direction::S,
+            facing: Radians::SOUTH,
             action: Action::Idle,
             model: def.model,
             attack_rate: PlaybackRate::default(),

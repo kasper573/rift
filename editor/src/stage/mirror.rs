@@ -12,7 +12,7 @@ use bevy::shader::Shader;
 use bevy_egui::EguiUserTextures;
 use engine::core::content::{Content, fields_file};
 use engine::core::geometry::Radians;
-use engine::core::math::{Direction, Pos, Rgba};
+use engine::core::math::{Pos, Rgba};
 use engine::core::render::{
     Animator, GroundDepth, RowDepth, RowDepths, ToScreen, dynamic_z, place_sprite,
 };
@@ -48,7 +48,7 @@ pub struct ActorPose {
     pub source: Source,
     pub model: ModelId,
     pub action: Action,
-    pub dir: Direction,
+    pub facing: Radians,
     pub tint: Rgba,
     pub attack_rate: PlaybackRate,
     pub at: Pos<Meters>,
@@ -267,7 +267,7 @@ impl Stage {
                     &mut sprite,
                     model,
                     pose.action,
-                    pose.dir,
+                    pose.facing,
                     elapsed,
                     pose.attack_rate,
                 );
