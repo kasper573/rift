@@ -1,5 +1,6 @@
 {
   "name": "Damage pop",
+  "stage": "text",
   "params": [
     {
       "name": "fill",

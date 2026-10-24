@@ -94,6 +94,11 @@ Everything you build gets shown to the user on video, from a player's point of v
 - Mechanics run in `testkit::Sim`: a bare world holding the test's game, stepped through only the real engine systems the test adds, in the server's order, with the clock advanced by the test rather than waited on. Never reimplement or stub a system to make a test pass. When a mechanic can't be exercised without the whole server or client, it isn't modular enough: refactor it until it can.
 - The Playwright suite (`e2e/`) tests the whole stack from a browser: the website, and whatever else a browser is served. Gameplay gets exactly one smoke test there, that a signed-up player appears in the game.
 
+## Builds on this machine
+
+- Run every cargo build or test inside a memory-capped scope so a runaway compile kills only itself, never the session that spawned it: `systemd-run --user --scope -q -p MemoryMax=22G -p MemorySwapMax=0 cargo …` (the recipes in the Justfile run plain cargo; wrap the `just` call the same way). A process that exceeds the cap dies with "Killed"; rerun it with fewer jobs (`CARGO_BUILD_JOBS=8`) rather than lifting the cap. Never run two cargo invocations at once.
+- Clean up unused cargo build output: `target/` grows by tens of gigabytes across profiles and feature sets and the disk is shared with everything else here. After a task, `cargo clean -p <crate>` for crates whose artifacts are stale, or `cargo clean` outright when `du -sh target` passes 50 GB.
+
 ## Verification
 
 Before you start work on a task run benchmarks via `just bench` and save the results to a temporary file.

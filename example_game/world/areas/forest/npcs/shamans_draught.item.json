@@ -1,6 +1,8 @@
 {
   "name": "Shaman's Draught",
+  "look": "world/props/bottle-green.prop",
   "icon": "assets/icons/potion/green_potion_3.png",
+  "card": "assets/cards/shamans_draught.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_glass.sfx",
     "trade": "sound-and-voice/sfx/trade_glass.sfx",

@@ -1,6 +1,8 @@
 {
   "name": "Oak Staff",
+  "look": "world/props/staff.prop",
   "icon": "assets/icons/weapon_and_tool/wooden_staff.png",
+  "card": "assets/cards/oak_staff.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_stone.sfx",
     "trade": "sound-and-voice/sfx/trade_stone.sfx",

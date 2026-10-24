@@ -1,6 +1,8 @@
 {
   "name": "Throwing Knife",
+  "look": "world/props/dagger.prop",
   "icon": "assets/icons/weapon_and_tool/knife.png",
+  "card": "assets/cards/throwing_knife.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_blade.sfx",
     "trade": "sound-and-voice/sfx/trade_blade.sfx",

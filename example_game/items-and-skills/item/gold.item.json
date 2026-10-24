@@ -1,6 +1,8 @@
 {
   "name": "Gold",
+  "look": "world/props/coins.prop",
   "icon": "assets/icons/misc/golden_coin.png",
+  "card": "assets/cards/gold.png",
   "sfx": {
     "pickup": "items-and-skills/item/pickup_coins.sfx",
     "trade": "items-and-skills/item/trade_coins.sfx",

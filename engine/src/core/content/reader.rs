@@ -251,6 +251,12 @@ impl FolderReader {
         self.listed.scope.paths_of::<Row>()
     }
 
+    /// The pixels of the image at `path`, when the folder holds one that decodes.
+    pub fn image_size(&self, path: &str) -> Option<(u32, u32)> {
+        let bytes = self.folder.read(path).ok()?;
+        super::media::image_size(path, &bytes)
+    }
+
     /// The files a fresh content file of `table` at `path` is kept in, written as the game writes
     /// them.
     pub fn fresh(&self, table: &str, path: &str) -> Result<BTreeMap<String, Vec<u8>>, String> {

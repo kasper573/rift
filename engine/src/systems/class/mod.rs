@@ -220,7 +220,6 @@ pub fn grant_xp(world: &mut World, entity: Entity, amount: u32) {
     let reached = level(world, entity);
     if reached > before {
         vfx::fixture::play(world, VfxFixture::LevelUp, VfxSite::Actor(entity));
-        vfx::fixture::play_for(world, entity, VfxFixture::LevelUp, VfxSite::Screen);
         let shown = format!("Level {reached}");
         notification::pop_as(world, entity, shown, VfxShaderFixture::LevelPop);
         let owner = area_owner(world);

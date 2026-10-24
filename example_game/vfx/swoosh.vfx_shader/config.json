@@ -1,5 +1,6 @@
 {
   "name": "Swoosh",
+  "stage": "billboard",
   "params": [
     {
       "name": "color",

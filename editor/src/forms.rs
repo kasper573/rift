@@ -715,10 +715,18 @@ pub fn object_without(
                 }
             }
             if let Some(child) = value.get_mut(name).filter(|_| present) {
-                ui.vertical(|ui| {
-                    ui.set_min_width(ui.available_width());
-                    changed |= self::value(ui, cx, field, child, &field_path);
-                });
+                let fixed = cx
+                    .locks
+                    .iter()
+                    .any(|lock| lock.fixed(&field_path).is_some());
+                ui.add_enabled_ui(!fixed, |ui| {
+                    ui.vertical(|ui| {
+                        ui.set_min_width(ui.available_width());
+                        changed |= self::value(ui, cx, field, child, &field_path);
+                    });
+                })
+                .response
+                .on_disabled_hover_text("Read by the engine as it is");
             } else {
                 ui.label(theme::faint("—"));
             }

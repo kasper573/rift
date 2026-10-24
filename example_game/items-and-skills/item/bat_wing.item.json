@@ -1,6 +1,8 @@
 {
   "name": "Bat Wing",
+  "look": "world/props/bat-wing.prop",
   "icon": "assets/icons/monster_part/feather.png",
+  "card": "assets/cards/bat_wing.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_flesh.sfx",
     "trade": "sound-and-voice/sfx/trade_flesh.sfx",

@@ -1,6 +1,8 @@
 {
   "name": "Health Potion",
+  "look": "world/props/bottle.prop",
   "icon": "assets/icons/potion/red_potion.png",
+  "card": "assets/cards/health_potion.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_glass.sfx",
     "trade": "sound-and-voice/sfx/trade_glass.sfx",

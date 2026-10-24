@@ -1,6 +1,8 @@
 {
   "name": "Tribal Helmet",
+  "look": "world/props/tribal-helmet.prop",
   "icon": "assets/icons/equipment/leather_helmet.png",
+  "card": "assets/cards/tribal_helmet.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_bone.sfx",
     "trade": "sound-and-voice/sfx/trade_bone.sfx",

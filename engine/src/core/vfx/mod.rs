@@ -4,8 +4,8 @@ pub mod shader;
 
 pub use play::{LayerTime, sprite_cell};
 pub use shader::{
-    BodyShape, CompiledVfxShaders, ParamKind, ShaderError, ShaderParam, SiteKind, VfxShaderDef,
-    VfxShaderId, prelude_names, shader_file,
+    BodyShape, CompiledVfxShaders, ParamKind, ShaderError, ShaderParam, SiteKind, Stage,
+    VfxShaderDef, VfxShaderId, prelude_names, shader_file,
 };
 
 use std::collections::BTreeMap;
@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use crate::core::assets::ImageRef;
 use crate::core::content::media::ImageSizes;
 use crate::core::content::{
-    ContentFile, ContentId, ContentRegistry, LoadStep, Loading, NamedContent, Nearby, RowCheck,
-    serial,
+    Content, ContentFile, ContentId, ContentRegistry, LoadStep, Loading, NamedContent, Nearby,
+    RowCheck, serial,
 };
 use crate::core::geometry::{PlacedShape, Radians};
 use crate::core::math::{FrameSize, Pos, Rgba};
@@ -396,10 +396,59 @@ impl From<WireParams> for VfxParams {
     }
 }
 
+impl VfxLayer {
+    /// The stage the layer plays on: a sprite is a billboard, a shader says.
+    pub fn stage(&self, content: &Content) -> Stage {
+        match self {
+            VfxLayer::Sprite { .. } => Stage::Billboard,
+            VfxLayer::Shader { shader, .. } => shader.get(content).stage,
+        }
+    }
+}
+
+impl VfxDef {
+    /// Refuses, at each layer, a stage that one of the `sites` the vfx plays on, `by` whom, cannot
+    /// take.
+    pub fn check_sites(
+        &self,
+        content: &Content,
+        sites: &[SiteKind],
+        by: &str,
+        check: &mut RowCheck,
+    ) {
+        for (index, layer) in self.layers.iter().enumerate() {
+            let stage = layer.stage(content);
+            for site in sites.iter().filter(|site| !stage.takes(**site)) {
+                check.error(
+                    format!("/layers/{index}"),
+                    "stage off its site",
+                    format!(
+                        "a {} layer played on {} site by {by}",
+                        stage.label(),
+                        site.label()
+                    ),
+                    format!(
+                        "a layer on a stage the site takes: {}",
+                        Stage::taken_by(*site)
+                    ),
+                );
+            }
+        }
+    }
+}
+
 fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let sizes = content.built::<ImageSizes>();
     for (id, def) in loading.rows::<VfxDef>(&content) {
+        if let Some(inside) = def.on_actors_inside {
+            let mut check = RowCheck::default();
+            let by = format!("{} on the actors inside it", id.path(&content));
+            inside
+                .get(&content)
+                .check_sites(&content, &[SiteKind::Actor], &by, &mut check);
+            loading.row_errors(inside, check);
+        }
         let mut check = RowCheck::default();
         for (index, layer) in def.layers.iter().enumerate() {
             let at = |field: &str| format!("/layers/{index}/{field}");

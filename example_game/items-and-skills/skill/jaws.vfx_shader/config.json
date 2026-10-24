@@ -1,5 +1,6 @@
 {
   "name": "Jaws",
+  "stage": "billboard",
   "params": [
     {
       "name": "color",

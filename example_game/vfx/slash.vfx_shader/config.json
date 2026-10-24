@@ -1,5 +1,6 @@
 {
   "name": "Slash",
+  "stage": "billboard",
   "params": [
     {
       "name": "color",

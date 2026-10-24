@@ -1,6 +1,8 @@
 {
   "name": "Bone Token",
+  "look": "world/props/coin.prop",
   "icon": "assets/icons/misc/silver_coin.png",
+  "card": "assets/cards/bone_token.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_bone.sfx",
     "trade": "sound-and-voice/sfx/trade_bone.sfx",

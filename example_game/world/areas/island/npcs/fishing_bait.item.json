@@ -1,6 +1,8 @@
 {
   "name": "Fishing Bait",
+  "look": "world/props/plate-food.prop",
   "icon": "assets/icons/monster_part/monster_meat.png",
+  "card": "assets/cards/fishing_bait.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_flesh.sfx",
     "trade": "sound-and-voice/sfx/trade_flesh.sfx",

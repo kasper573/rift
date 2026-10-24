@@ -418,7 +418,6 @@ pub fn client_app(
             movement::MovementRenderPlugin,
             combat::render::CombatRenderPlugin,
             item::render::ItemRenderPlugin,
-            area::object::render::ObjectRenderPlugin,
             view::CameraFollowPlugin,
             player::session::ClientSessionPlugin,
             input::PlayerInputPlugin,
@@ -612,6 +611,8 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Across, class::check_all)
         .hook(LoadStep::Across, npc::check_all)
         .hook(LoadStep::Across, skill::check_all)
+        .hook(LoadStep::Across, item::check_pictures)
+        .hook(LoadStep::Across, vfx::check_sites)
         .hook(LoadStep::Across, player::snapshot::check_all);
     registry
 }

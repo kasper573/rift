@@ -1,5 +1,3 @@
-pub mod render;
-
 use std::borrow::Cow;
 
 use bevy_app::App;
@@ -7,12 +5,12 @@ use bevy_ecs::prelude::*;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::ImageRef;
 use crate::core::content::Content;
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::units::{Cell, CellPos, Meters, TilePos};
 use crate::systems::WorldArea;
 use crate::systems::actor::Name as ActorName;
+use crate::systems::area::PropId;
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::interact::Interactive;
 use crate::systems::movement::Position;
@@ -39,7 +37,7 @@ pub struct ObjectDef {
     pub title: Option<String>,
     pub shape: ObjectShape,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub look: Option<ImageRef>,
+    pub look: Option<PropId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shown: Option<Condition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -240,7 +238,7 @@ pub fn spawn_all(world: &mut World) {
                 name: object.name.clone(),
                 title: object.title.clone(),
                 shape: object.shape,
-                look: object.look.as_ref().map(|look| look.path()),
+                look: object.look.map(|look| look.path(&content).to_owned()),
                 warp,
             },
         ));

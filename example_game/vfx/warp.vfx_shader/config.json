@@ -1,5 +1,6 @@
 {
   "name": "Warp",
+  "stage": "ground",
   "params": [
     {
       "name": "amplitude",

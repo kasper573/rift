@@ -1,5 +1,6 @@
 {
   "name": "Flash",
+  "stage": "surface",
   "params": [
     {
       "name": "color",

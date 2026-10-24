@@ -1,6 +1,8 @@
 {
   "name": "Fish Steak",
+  "look": "world/props/fish.prop",
   "icon": "assets/icons/food/fish_steak.png",
+  "card": "assets/cards/fish_steak.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_flesh.sfx",
     "trade": "sound-and-voice/sfx/trade_flesh.sfx",

@@ -1,6 +1,8 @@
 {
   "name": "Bone Shield",
+  "look": "world/props/shield-round.prop",
   "icon": "assets/icons/weapon_and_tool/wooden_shield.png",
+  "card": "assets/cards/bone_shield.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_bone.sfx",
     "trade": "sound-and-voice/sfx/trade_bone.sfx",

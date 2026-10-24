@@ -1,6 +1,8 @@
 {
   "name": "Just a rock",
+  "look": "world/props/rock-small.prop",
   "icon": "assets/icons/misc/rune_stone.png",
+  "card": "assets/cards/fruloos_rock.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_stone.sfx",
     "trade": "sound-and-voice/sfx/trade_stone.sfx",

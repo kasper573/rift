@@ -54,6 +54,13 @@ impl Game {
         let game = each::<VfxShaderFixture>(game, |game, key, locks| {
             game.shader(key).edit("vfx_shader", key, |shader| {
                 shader["params"] = Value::Array(locks.iter().filter_map(param).collect());
+                for lock in &locks {
+                    if let FixtureLock::Field { field, value } = lock
+                        && let Some(held) = shader.pointer_mut(field)
+                    {
+                        *held = value.clone();
+                    }
+                }
             })
         });
         each::<WorldMap>(game, |game, key, _| game.row("world_map", key, json!({})))

@@ -1,5 +1,6 @@
 {
   "name": "Scale",
+  "stage": "surface",
   "params": [
     {
       "name": "start",

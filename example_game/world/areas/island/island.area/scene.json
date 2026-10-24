@@ -59,7 +59,7 @@
           "x": 40.0,
           "y": 19.0
         },
-        "look": "assets/icons/misc/scroll.png",
+        "look": "world/props/sign.prop",
         "scripts": [
           {
             "script": "world/areas/island/scripts/notice_board.script.json"
@@ -75,7 +75,7 @@
           "x": 46.0,
           "y": 29.0
         },
-        "look": "assets/icons/misc/chest.png",
+        "look": "world/props/chest.prop",
         "scripts": [
           {
             "script": "world/areas/island/scripts/tide_chest.script.json"
@@ -91,7 +91,7 @@
           "x": 42.0,
           "y": 26.0
         },
-        "look": "assets/icons/misc/crate.png",
+        "look": "world/props/crate.prop",
         "scripts": [
           {
             "script": "world/areas/island/scripts/honesty_box.script.json"

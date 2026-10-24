@@ -19,13 +19,15 @@ use strum::{EnumDiscriminants, IntoStaticStr};
 
 use crate::core::assets::ImageRef;
 use crate::core::audio::playback::SfxId;
+use crate::core::content::media::ImageSizes;
 use crate::core::content::{
-    Content, ContentFile, ContentId, ModuleRule, ModuleSet, NamedContent, Nearby, serial,
+    Content, ContentFile, ContentId, Loading, ModuleRule, ModuleSet, NamedContent, Nearby,
+    RowCheck, serial,
 };
 use crate::core::math::{Offset, Pos};
 use crate::core::time::Seconds;
 use crate::core::units::{Meters, TilePos};
-use crate::systems::area::{self, AreaId, AreaTag};
+use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
 use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
@@ -327,10 +329,19 @@ pub struct ItemsDropped {
 
 pub type ItemId = ContentId<ItemDef>;
 
+/// The pixels of an item's icon, drawn in slots, the hotbar, equipment and shops.
+pub const ICON_SIZE: (u32, u32) = (32, 32);
+/// The pixels of an item's card art, painted for the item alone.
+pub const CARD_SIZE: (u32, u32) = (256, 180);
+
+/// A thing a character carries: its three pictures (the prop it is lying on the ground, the icon it
+/// is in a slot, the art on its card), its sounds, what kind of thing it is and what it does.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct ItemDef {
     pub name: String,
+    pub look: PropId,
     pub icon: ImageRef,
+    pub card: ImageRef,
     pub sfx: ItemSfx,
     pub kind: ItemKind,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -344,7 +355,9 @@ impl ContentFile for ItemDef {
         let sound = near.file()?;
         Ok(ItemDef {
             name: near.name(),
-            icon: near.image()?,
+            look: near.file()?,
+            icon: near.image_sized(ICON_SIZE)?,
+            card: near.image_sized(CARD_SIZE)?,
             sfx: ItemSfx {
                 pickup: sound,
                 trade: sound,
@@ -354,6 +367,31 @@ impl ContentFile for ItemDef {
             kind: ItemKind::Resource,
             modules: Vec::new(),
         })
+    }
+}
+
+/// Every item's icon and card art are the size their slots and cards draw.
+pub fn check_pictures(loading: &mut Loading) {
+    let content = loading.content();
+    let sizes = content.built::<ImageSizes>();
+    for (id, item) in loading.rows::<ItemDef>(&content) {
+        let mut check = RowCheck::default();
+        for (field, picture, wanted) in [
+            ("/icon", &item.icon, ICON_SIZE),
+            ("/card", &item.card, CARD_SIZE),
+        ] {
+            if let Some(&size) = sizes.0.get(picture.as_str())
+                && size != wanted
+            {
+                check.error(
+                    field,
+                    "wrong size",
+                    format!("{} × {} pixels", size.0, size.1),
+                    format!("{} × {} pixels", wanted.0, wanted.1),
+                );
+            }
+        }
+        loading.row_errors(id, check);
     }
 }
 

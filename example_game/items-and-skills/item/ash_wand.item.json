@@ -1,6 +1,8 @@
 {
   "name": "Ash Wand",
+  "look": "world/props/wand.prop",
   "icon": "assets/icons/weapon_and_tool/magic_wand.png",
+  "card": "assets/cards/ash_wand.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_stone.sfx",
     "trade": "sound-and-voice/sfx/trade_stone.sfx",

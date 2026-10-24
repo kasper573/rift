@@ -30,7 +30,8 @@ fn camp() -> Game {
         .npc("orc", 10.0, json!([]))
         .prop("plank", json!({ "type": "box", "width": 1.0, "depth": 1.0 }))
         .blueprint("pew", (1, 1), json!({}), pew)
-        .asset("icons/cap.png", png(16, 16))
+        .asset("icons/cap.png", png(32, 32))
+        .asset("art/badge_card.png", png(256, 180))
         .file("README.md", b"# Camp".to_vec())
         .edit_scene("area", support::AREA, |scene| {
             scene.as_array_mut().expect("a scene").push(

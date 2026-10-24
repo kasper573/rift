@@ -1,6 +1,8 @@
 {
   "name": "Antidote",
+  "look": "world/props/bottle-labeled.prop",
   "icon": "assets/icons/potion/blue_potion.png",
+  "card": "assets/cards/antidote.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_glass.sfx",
     "trade": "sound-and-voice/sfx/trade_glass.sfx",

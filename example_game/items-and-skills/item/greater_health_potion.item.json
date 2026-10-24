@@ -1,6 +1,8 @@
 {
   "name": "Greater Health Potion",
+  "look": "world/props/bottle-large.prop",
   "icon": "assets/icons/potion/red_potion_3.png",
+  "card": "assets/cards/greater_health_potion.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_glass.sfx",
     "trade": "sound-and-voice/sfx/trade_glass.sfx",

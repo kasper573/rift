@@ -33,6 +33,20 @@ impl<'a> Nearby<'a> {
         self.media(AssetKind::Image).map(ImageRef::new)
     }
 
+    /// The nearest image of `size` pixels, for a picture its drawing takes at one size alone.
+    pub fn image_sized(&self, (width, height): (u32, u32)) -> Result<ImageRef, String> {
+        let images = self
+            .reader
+            .media()
+            .iter()
+            .map(String::as_str)
+            .filter(|path| AssetKind::of(path) == Some(AssetKind::Image))
+            .filter(|path| self.reader.image_size(path) == Some((width, height)));
+        self.nearest(images)
+            .map(|path| ImageRef::new(path.to_owned()))
+            .ok_or_else(|| format!("it needs a {width} × {height} image: import one first"))
+    }
+
     pub fn audio(&self) -> Result<AudioRef, String> {
         self.media(AssetKind::Audio).map(AudioRef::new)
     }

@@ -1,5 +1,6 @@
 {
   "name": "Tint",
+  "stage": "surface",
   "params": [
     {
       "name": "color",

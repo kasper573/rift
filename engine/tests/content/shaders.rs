@@ -1,4 +1,4 @@
-use engine::core::vfx::{ParamKind, ShaderParam, VfxShaderDef};
+use engine::core::vfx::{ParamKind, ShaderParam, Stage, VfxShaderDef};
 
 const SOURCE: &str = "fn vfx(uv: vec2<f32>) -> vec4<f32> { return vec4<f32>(uv, 0.0, 1.0); }\n";
 
@@ -14,6 +14,7 @@ fn a_shaders_parameters_bind_in_whole_16_byte_rows_as_webgl2_requires() {
     for kinds in shapes {
         let def = VfxShaderDef {
             name: "Probe".to_owned(),
+            stage: Stage::Billboard,
             params: kinds
                 .iter()
                 .enumerate()

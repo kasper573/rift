@@ -1,6 +1,8 @@
 {
   "name": "Lucky Lure",
+  "look": "world/props/coin.prop",
   "icon": "assets/icons/ore_and_gem/pearl.png",
+  "card": "assets/cards/lucky_lure.png",
   "sfx": {
     "pickup": "world/areas/island/sfx/pickup_trinket.sfx",
     "trade": "world/areas/island/sfx/trade_trinket.sfx",

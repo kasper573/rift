@@ -1,6 +1,8 @@
 {
   "name": "Road Pass",
+  "look": "world/props/spellbook.prop",
   "icon": "assets/icons/misc/scroll.png",
+  "card": "assets/cards/road_pass.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_paper.sfx",
     "trade": "sound-and-voice/sfx/trade_paper.sfx",

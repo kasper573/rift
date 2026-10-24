@@ -1,5 +1,6 @@
 {
   "name": "skill_area",
+  "stage": "ground",
   "params": [
     {
       "name": "hostile",

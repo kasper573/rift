@@ -1,5 +1,6 @@
 use engine::core::content::{ErrorPlace, Fixture, LoadReport, SETTINGS_FILE};
 use engine::core::time::Seconds;
+use engine::core::vfx::Stage;
 use engine::systems::area::AreaDef;
 use engine::systems::input::map::InputFixture;
 use serde_json::{Value, json};
@@ -366,7 +367,7 @@ fn a_basic_attack_that_costs_or_cools_down_is_refused() {
 #[test]
 fn a_fixture_shader_without_the_parameter_the_engine_sets_is_refused() {
     let report = Game::new()
-        .shader("skill_area")
+        .shader_on("skill_area", Stage::Ground)
         .whole()
         .try_load()
         .err()

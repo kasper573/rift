@@ -18,15 +18,71 @@ pub type VfxShaderId = ContentId<VfxShaderDef>;
 pub const PARAMS_BYTES: usize = 128;
 
 /// A shader a game ships: the WGSL part of its bundle, `shader.wgsl`, defining
-/// `fn vfx(uv: vec2<f32>) -> vec4<f32>`, and the parameters it reads from `params`, each with the
-/// default it gets when a layer leaves it unfilled and, for a number, the range the designer means
-/// it to be set within. A flag is `true` or `false` in the data and 0.0 or 1.0 in the shader.
+/// `fn vfx(uv: vec2<f32>) -> vec4<f32>`, the stage it runs on, and the parameters it reads from
+/// `params`, each with the default it gets when a layer leaves it unfilled and, for a number, the
+/// range the designer means it to be set within. A flag is `true` or `false` in the data and 0.0 or
+/// 1.0 in the shader.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VfxShaderDef {
     pub name: String,
+    pub stage: Stage,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub params: Vec<ShaderParam>,
+}
+
+/// Where a shader runs: in the material of the thing it plays on, as a decal on the ground under
+/// it, on a quad facing the camera at it, over the whole screen, or in the text of a plate.
+#[derive(
+    JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    VariantArray,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum Stage {
+    Surface,
+    Ground,
+    Billboard,
+    Screen,
+    Text,
+}
+
+impl Stage {
+    /// Whether a layer on this stage plays on a site of `kind`: a surface needs a mesh, the ground
+    /// and a billboard a place in the world, the screen and the text their own sites.
+    pub fn takes(self, site: SiteKind) -> bool {
+        match self {
+            Stage::Surface => matches!(site, SiteKind::Actor | SiteKind::Object),
+            Stage::Ground | Stage::Billboard => matches!(
+                site,
+                SiteKind::Actor | SiteKind::Object | SiteKind::Area | SiteKind::Path
+            ),
+            Stage::Screen => site == SiteKind::Screen,
+            Stage::Text => site == SiteKind::Text,
+        }
+    }
+
+    /// The stages a site of `kind` takes, named.
+    pub fn taken_by(site: SiteKind) -> String {
+        Stage::VARIANTS
+            .iter()
+            .filter(|stage| stage.takes(site))
+            .map(|stage| stage.label())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    pub fn label(self) -> &'static str {
+        self.into()
+    }
 }
 
 pub const SHADER_SOURCE: PartSpec = PartSpec::File {
@@ -95,7 +151,7 @@ impl ParamKind {
 }
 
 /// What a shader is drawn on, as the prelude's `site.kind` and `SITE_*` constants name it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, VariantArray, IntoStaticStr)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, VariantArray, IntoStaticStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum SiteKind {
     Actor,
@@ -104,6 +160,20 @@ pub enum SiteKind {
     Path,
     Screen,
     Text,
+}
+
+impl SiteKind {
+    /// The site as a sentence names it: "an actor", "the screen".
+    pub fn label(self) -> &'static str {
+        match self {
+            SiteKind::Actor => "an actor",
+            SiteKind::Object => "an object",
+            SiteKind::Area => "an area",
+            SiteKind::Path => "a path",
+            SiteKind::Screen => "the screen",
+            SiteKind::Text => "a text",
+        }
+    }
 }
 
 /// The body of an area site, as the prelude's `site.shape` and `SHAPE_*` constants name it; a site
@@ -264,6 +334,7 @@ impl ContentFile for VfxShaderDef {
     fn fresh(near: &Nearby) -> Result<VfxShaderDef, String> {
         Ok(VfxShaderDef {
             name: near.name(),
+            stage: Stage::Billboard,
             params: Vec::new(),
         })
     }

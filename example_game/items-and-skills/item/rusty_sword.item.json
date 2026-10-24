@@ -1,6 +1,8 @@
 {
   "name": "Rusty Sword",
+  "look": "world/props/sword.prop",
   "icon": "assets/icons/weapon_and_tool/iron_sword.png",
+  "card": "assets/cards/rusty_sword.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_blade.sfx",
     "trade": "sound-and-voice/sfx/trade_blade.sfx",

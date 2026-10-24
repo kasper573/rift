@@ -1,6 +1,8 @@
 {
   "name": "Iron Sword",
+  "look": "world/props/sword.prop",
   "icon": "assets/icons/weapon_and_tool/silver_sword.png",
+  "card": "assets/cards/iron_sword.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_blade.sfx",
     "trade": "sound-and-voice/sfx/trade_blade.sfx",

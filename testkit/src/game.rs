@@ -9,12 +9,13 @@ use engine::core::content::{
     SETTINGS_FILE, Shape, content_path, name_of, table_of, version,
 };
 use engine::core::time::{Millis, Seconds};
-use engine::core::vfx::shader::SHADER_SOURCE;
+use engine::core::vfx::shader::{SHADER_SOURCE, Stage};
 use engine::systems::actor::Action;
 use engine::systems::actor::model::{MODEL_BUSTS, MODEL_GLB};
 use engine::systems::area::prop::PROP_GLB;
 use engine::systems::area::scene::SCENE;
 use engine::systems::area::terrain::{self, Paint, TerrainSize};
+use engine::systems::item;
 use serde_json::{Value, json};
 use strum::VariantArray;
 
@@ -54,6 +55,9 @@ pub const APEX: Millis = Millis(100.0);
 /// An area's ground as text, one string per row: `.` walkable, `#` blocked.
 #[derive(Clone)]
 pub struct Map(pub Vec<String>);
+
+/// The prop every item a test declares is lying on the ground as.
+const DROP: &str = "drop";
 
 /// The ground materials and the footstep of every area a test declares.
 pub const TURF: &str = "turf";
@@ -233,18 +237,23 @@ impl Game {
     /// changes hands.
     pub fn item(self, name: &str, fields: Value) -> Game {
         let icon = format!("icons/{name}.png");
+        let card = format!("cards/{name}_card.png");
         let sfx = path("sfx", "item");
         let mut row = json!({
             "name": name,
+            "look": path("prop", DROP),
             "icon": icon,
+            "card": card,
             "sfx": { "pickup": sfx, "trade": sfx, "drop": sfx },
         });
         for (field, value) in fields.as_object().expect("an item's fields") {
             row[field] = value.clone();
         }
         self.sfx("item")
+            .prop(DROP, json!({ "type": "none" }))
             .row("item", name, row)
-            .asset(&icon, png(1, 1))
+            .asset(&icon, png(item::ICON_SIZE.0, item::ICON_SIZE.1))
+            .asset(&card, png(item::CARD_SIZE.0, item::CARD_SIZE.1))
     }
 
     /// Every new character starts wearing `items`, the items declared under those names.
@@ -335,15 +344,24 @@ impl Game {
             .asset(&icon, png(1, 1))
     }
 
-    /// A visual effect shader that draws nothing, of no parameters.
+    /// A visual effect shader that draws nothing, of no parameters, on a billboard.
     pub fn shader(self, name: &str) -> Game {
-        self.row("vfx_shader", name, json!({ "name": name, "params": [] }))
-            .part(
-                "vfx_shader",
-                name,
-                &SHADER_SOURCE.named("", "wgsl"),
-                b"fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(0.0);\n}\n".to_vec(),
-            )
+        self.shader_on(name, Stage::Billboard)
+    }
+
+    /// A visual effect shader that draws nothing, of no parameters, on `stage`.
+    pub fn shader_on(self, name: &str, stage: Stage) -> Game {
+        self.row(
+            "vfx_shader",
+            name,
+            json!({ "name": name, "stage": stage, "params": [] }),
+        )
+        .part(
+            "vfx_shader",
+            name,
+            &SHADER_SOURCE.named("", "wgsl"),
+            b"fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(0.0);\n}\n".to_vec(),
+        )
     }
 
     /// A visual effect of one transparent frame, shown for a second.

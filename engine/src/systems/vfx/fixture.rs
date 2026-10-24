@@ -3,7 +3,9 @@ use strum::{IntoStaticStr, VariantArray};
 
 use crate::core::content::fixture::FixtureLock;
 use crate::core::content::{Content, ContentFile, Fixture, Nearby};
-use crate::core::vfx::{ParamKind, ShaderParam, VfxDef, VfxParams, VfxShaderDef, VfxSite};
+use crate::core::vfx::{
+    ParamKind, ShaderParam, SiteKind, Stage, VfxDef, VfxParams, VfxShaderDef, VfxSite,
+};
 
 /// The parameter the engine sets when it draws the ground an area skill is aimed at: whether the
 /// skill hurts whom it lands on.
@@ -25,6 +27,18 @@ impl Fixture for VfxFixture {
     const FOLDER: Option<&'static str> = Some("vfx");
 }
 
+impl VfxFixture {
+    /// The kinds of site the engine plays the fixture on.
+    pub fn sites(self) -> &'static [SiteKind] {
+        match self {
+            VfxFixture::DamageTaken
+            | VfxFixture::Healed
+            | VfxFixture::Defeated
+            | VfxFixture::LevelUp => &[SiteKind::Actor],
+        }
+    }
+}
+
 /// The shaders every game provides, drawn by the engine itself: the ground an area skill is aimed
 /// at, and the pops that burst out of actors, one look for each kind of moment they mark.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, VariantArray, IntoStaticStr)]
@@ -43,9 +57,9 @@ impl Fixture for VfxShaderFixture {
     const FOLDER: Option<&'static str> = Some("vfx");
 
     fn locks(self) -> Vec<FixtureLock> {
-        self.params()
-            .iter()
-            .map(|param| {
+        let stage = FixtureLock::field(crate::field!(VfxShaderDef, stage), &self.stage());
+        std::iter::once(stage)
+            .chain(self.params().iter().map(|param| {
                 FixtureLock::entry(
                     crate::field!(VfxShaderDef, params),
                     param,
@@ -54,12 +68,13 @@ impl Fixture for VfxShaderFixture {
                         crate::field!(ShaderParam, kind),
                     ],
                 )
-            })
+            }))
             .collect()
     }
 
     fn fresh(self, near: &Nearby) -> Result<VfxShaderDef, String> {
         Ok(VfxShaderDef {
+            stage: self.stage(),
             params: self.params(),
             ..VfxShaderDef::fresh(near)?
         })
@@ -67,6 +82,19 @@ impl Fixture for VfxShaderFixture {
 }
 
 impl VfxShaderFixture {
+    /// The stage the engine draws the fixture's shader on: the ground a skill is aimed at, the text
+    /// of a pop.
+    pub fn stage(self) -> Stage {
+        match self {
+            VfxShaderFixture::SkillArea => Stage::Ground,
+            VfxShaderFixture::Pop
+            | VfxShaderFixture::DamagePop
+            | VfxShaderFixture::HealPop
+            | VfxShaderFixture::StatusPop
+            | VfxShaderFixture::LevelPop => Stage::Text,
+        }
+    }
+
     /// The parameters the engine hands the fixture's shader.
     fn params(self) -> Vec<ShaderParam> {
         let set: &[(&str, ParamKind)] = match self {

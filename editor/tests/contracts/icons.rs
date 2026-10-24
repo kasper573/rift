@@ -44,16 +44,13 @@ fn an_image_stands_in_for_its_icon_only_while_it_is_small() {
 #[test]
 fn a_content_file_stands_in_by_the_picture_it_names() {
     let ctx = egui::Context::default();
-    let (_scratch, project) = open(
-        support::game()
-            .item("cap", json!({ "kind": { "type": "resource" } }))
-            .asset("icons/cap.png", png(16, 16)),
-    );
+    let (_scratch, project) =
+        open(support::game().item("cap", json!({ "kind": { "type": "resource" } })));
     let mut thumbs = Thumbnails::default();
     let mut budget = u32::MAX;
     let cap = testkit::path("item", "cap");
     let preview = icons::preview(&ctx, &mut thumbs, &project, &cap, &mut budget);
-    assert_eq!(preview.map(|cap| cap.size), Some(egui::vec2(16.0, 16.0)));
+    assert_eq!(preview.map(|cap| cap.size), Some(egui::vec2(32.0, 32.0)));
 }
 
 #[test]

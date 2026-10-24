@@ -1,6 +1,8 @@
 {
   "name": "Tattered Map",
+  "look": "world/props/spellbook-open.prop",
   "icon": "assets/icons/misc/map.png",
+  "card": "assets/cards/tattered_map.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_paper.sfx",
     "trade": "sound-and-voice/sfx/trade_paper.sfx",

@@ -1,6 +1,8 @@
 {
   "name": "Tobb's Letter",
+  "look": "world/props/books.prop",
   "icon": "assets/icons/misc/envolop.png",
+  "card": "assets/cards/tobbs_letter.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_paper.sfx",
     "trade": "sound-and-voice/sfx/trade_paper.sfx",

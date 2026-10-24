@@ -1,5 +1,6 @@
 {
   "name": "Lightning",
+  "stage": "ground",
   "params": [
     {
       "name": "color",

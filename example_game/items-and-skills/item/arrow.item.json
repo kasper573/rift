@@ -1,6 +1,8 @@
 {
   "name": "Arrow",
+  "look": "world/props/arrow.prop",
   "icon": "assets/icons/weapon_and_tool/arrow.png",
+  "card": "assets/cards/arrow.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_blade.sfx",
     "trade": "sound-and-voice/sfx/trade_blade.sfx",

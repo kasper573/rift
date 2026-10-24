@@ -1,6 +1,8 @@
 {
   "name": "Belfry Key",
+  "look": "world/props/key.prop",
   "icon": "assets/icons/misc/iron_key.png",
+  "card": "assets/cards/belfry_key.png",
   "sfx": {
     "pickup": "world/areas/island/sfx/pickup_trinket.sfx",
     "trade": "world/areas/island/sfx/trade_trinket.sfx",

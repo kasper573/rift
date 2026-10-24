@@ -1,5 +1,6 @@
 {
   "name": "Ward bubble",
+  "stage": "surface",
   "params": [
     {
       "name": "color",

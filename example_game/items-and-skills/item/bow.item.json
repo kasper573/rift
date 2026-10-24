@@ -1,6 +1,8 @@
 {
   "name": "Bow",
+  "look": "world/props/crossbow.prop",
   "icon": "assets/icons/weapon_and_tool/bow.png",
+  "card": "assets/cards/bow.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_stone.sfx",
     "trade": "sound-and-voice/sfx/trade_stone.sfx",

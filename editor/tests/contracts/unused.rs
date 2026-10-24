@@ -44,6 +44,10 @@ fn what_nothing_in_use_reaches_is_unused_at_any_depth() {
         vec![
             (path("item", "cap").as_str(), &UnusedRow::Unnamed),
             (
+                path("prop", "drop").as_str(),
+                &UnusedRow::NamedByUnused(vec![path("item", "cap")])
+            ),
+            (
                 path("model", "hermit").as_str(),
                 &UnusedRow::NamedByUnused(vec![path("npc", "hermit")])
             ),
@@ -55,7 +59,10 @@ fn what_nothing_in_use_reaches_is_unused_at_any_depth() {
         ]
     );
     let assets: Vec<&str> = project.unused.assets().collect();
-    assert_eq!(assets, ["icons/cap.png", "icons/stray.png"]);
+    assert_eq!(
+        assets,
+        ["cards/cap_card.png", "icons/cap.png", "icons/stray.png"]
+    );
 }
 
 #[test]

@@ -1,5 +1,6 @@
 {
   "name": "Fireball",
+  "stage": "ground",
   "params": [
     {
       "name": "heat",

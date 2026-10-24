@@ -1,6 +1,8 @@
 {
   "name": "Bog Water",
+  "look": "world/props/bottle-brown.prop",
   "icon": "assets/icons/potion/water_bottle.png",
+  "card": "assets/cards/bog_water.png",
   "sfx": {
     "pickup": "sound-and-voice/sfx/pickup_glass.sfx",
     "trade": "sound-and-voice/sfx/trade_glass.sfx",

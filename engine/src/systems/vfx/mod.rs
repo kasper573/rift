@@ -9,23 +9,29 @@ use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::{AppRuleExt, Replicated};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use strum::VariantArray;
 
-use crate::core::content::Content;
+use crate::core::content::{Content, Fixture, Loading, RowCheck};
 use crate::core::geometry::{PlacedShape, Radians, Shape, facing_from};
 use crate::core::math::Pos;
+use crate::core::script::Node;
 use crate::core::script::{
-    Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, NEXT, ScriptFault, ValueType,
+    Arrow, Compiler, EffectDef, EffectStep, Eval, Expr, FlowCx, NEXT, ScriptFault, ValueType,
 };
 use crate::core::time::{Seconds, WallClock};
 use crate::core::units::Meters;
-use crate::core::vfx::{ParamKind, ParamValue, VfxId, VfxInstance, VfxParams, VfxSite, WidgetName};
+use crate::core::vfx::{
+    ParamKind, ParamValue, SiteKind, VfxDef, VfxId, VfxInstance, VfxParams, VfxSite, WidgetName,
+};
 use crate::systems::WorldArea;
 use crate::systems::area::{AreaObject, AreaTag};
 use crate::systems::movement::{Position, position};
 use crate::systems::player::PlayedBy;
-use crate::systems::script::query::TickRoster;
-use crate::systems::script::{Condition, EffectCall, Reach, RiftScripting, RunnerKind};
+use crate::systems::script::effect::RiftEffect;
+use crate::systems::script::query::{RiftQueryKind, TickRoster};
+use crate::systems::script::{Condition, EffectCall, Reach, RiftScripting, RunnerKind, ScriptDef};
 use crate::systems::skill::{self, SkillDef};
+use crate::systems::status::StatusEffectDef;
 use crate::systems::visibility::Presence;
 
 /// How long an instance outlives its last layer, so a client sees the end before the entity goes.
@@ -33,6 +39,43 @@ const LINGER: Seconds = Seconds(0.25);
 
 pub fn register(app: &mut App) {
     app.replicate::<VfxInstance>();
+}
+
+/// Every vfx plays on sites its layers' stages take: a script names the site it plays a vfx on, the
+/// engine's fixtures and a status effect's vfx play on actors.
+pub fn check_sites(loading: &mut Loading) {
+    let content = loading.content();
+    let mut played: Vec<(VfxId, &[SiteKind], String)> = Vec::new();
+    for (id, script) in loading.rows::<ScriptDef>(&content) {
+        for (key, node) in &script.nodes {
+            if let Node::Effect(RiftEffect::Vfx(play)) = node {
+                let by = format!("{}, node {key}", id.path(&content));
+                played.push((play.vfx, play.sites(), by));
+            }
+        }
+    }
+    for fixture in VfxFixture::VARIANTS {
+        if let Some(vfx) = content.by_path::<VfxDef>(&fixture.path()) {
+            let by = format!("the engine, as the {} fixture", fixture.name());
+            played.push((vfx, fixture.sites(), by));
+        }
+    }
+    for (id, status) in loading.rows::<StatusEffectDef>(&content) {
+        let phases = [
+            status.vfx.on_activate,
+            status.vfx.during,
+            status.vfx.on_expire,
+        ];
+        for vfx in phases.into_iter().flatten() {
+            played.push((vfx, &[SiteKind::Actor], id.path(&content).to_owned()));
+        }
+    }
+    for (vfx, sites, by) in played {
+        let mut check = RowCheck::default();
+        vfx.get(&content)
+            .check_sites(&content, sites, &by, &mut check);
+        loading.row_errors(vfx, check);
+    }
 }
 
 /// How a vfx is dealt, beyond its site: `from` where the blow came, which heads a vfx on an actor
@@ -170,6 +213,33 @@ pub enum VfxTarget {
     Widget {
         name: String,
     },
+}
+
+impl PlayVfx {
+    /// The kinds of site the node plays its vfx on: a place is the actors `on` names, or the area
+    /// or point it names; without `on`, the subject.
+    pub fn sites(&self) -> &'static [SiteKind] {
+        match &self.site {
+            VfxTarget::Place => match self.on.as_ref().map(value_type) {
+                None | Some(Some(ValueType::Actor | ValueType::Actors)) => {
+                    &[SiteKind::Actor, SiteKind::Object]
+                }
+                Some(Some(ValueType::Point | ValueType::Area)) => &[SiteKind::Area],
+                Some(_) => &[SiteKind::Actor, SiteKind::Object, SiteKind::Area],
+            },
+            VfxTarget::Path => &[SiteKind::Path],
+            VfxTarget::Screen => &[SiteKind::Screen],
+            VfxTarget::Widget { .. } => &[SiteKind::Text],
+        }
+    }
+}
+
+/// What a condition yields when its own shape says, before any script compiles it.
+fn value_type(condition: &Condition) -> Option<ValueType> {
+    match condition {
+        Expr::Query(query) => RiftQueryKind::from(query).value_type(),
+        _ => None,
+    }
 }
 
 impl EffectDef<RiftScripting> for PlayVfx {

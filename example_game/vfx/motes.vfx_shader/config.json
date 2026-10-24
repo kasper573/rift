@@ -1,5 +1,6 @@
 {
   "name": "Motes",
+  "stage": "ground",
   "params": [
     {
       "name": "color",

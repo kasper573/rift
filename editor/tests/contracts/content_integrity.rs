@@ -32,7 +32,13 @@ fn orc_model(editor: &mut Editor) -> String {
 fn camp() -> Game {
     support::game()
         .npc("orc", 10.0, json!([]))
+        .prop(
+            "plank",
+            json!({ "type": "box", "width": 1.0, "depth": 1.0 }),
+        )
         .asset("icons/cap.png", png(16, 16))
+        .asset("art/badge.png", png(32, 32))
+        .asset("art/badge_card.png", png(256, 180))
 }
 
 #[test]

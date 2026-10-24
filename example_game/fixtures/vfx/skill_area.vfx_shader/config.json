@@ -1,5 +1,6 @@
 {
   "name": "Skill area",
+  "stage": "ground",
   "params": [
     {
       "name": "color",

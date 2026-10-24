@@ -71,6 +71,8 @@ pub enum FixtureLock {
     Entry { list: String, entry: Value },
     /// Every entry of the list at `list` is one of `variants`, by its `type`.
     Variants { list: String, variants: Vec<String> },
+    /// The field at `field` reads `value`.
+    Field { field: String, value: Value },
 }
 
 impl FixtureLock {
@@ -108,6 +110,25 @@ impl FixtureLock {
         }
     }
 
+    /// A lock holding the field at `field` to `value`.
+    pub fn field<T: Serialize>(field: &str, value: &T) -> FixtureLock {
+        FixtureLock::Field {
+            field: field.to_owned(),
+            value: serde_json::to_value(value).unwrap_or_default(),
+        }
+    }
+
+    /// The value the field at `field` is held to, when this lock holds it.
+    pub fn fixed(&self, field: &str) -> Option<&Value> {
+        match self {
+            FixtureLock::Field {
+                field: locked,
+                value,
+            } if locked == field => Some(value),
+            _ => None,
+        }
+    }
+
     /// The variants every entry of the list at `list` is held to, when this lock holds them.
     pub fn variants(&self, list: &str) -> Option<&[String]> {
         match self {
@@ -129,6 +150,17 @@ impl FixtureLock {
                         "fixture entry missing",
                         "no such entry",
                         format!("an entry with {entry}"),
+                    );
+                }
+            }
+            FixtureLock::Field { field, value } => {
+                let held = row.pointer(field).cloned().unwrap_or(Value::Null);
+                if held != *value {
+                    check.error(
+                        field.as_str(),
+                        "fixture field changed",
+                        held,
+                        format!("{value}, as the engine reads it"),
                     );
                 }
             }
