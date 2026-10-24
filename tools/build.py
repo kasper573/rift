@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""Builds the models no pack ships, to the style sheet: three trees with painted-cluster canopies
+and gnarled trunks, and the small bone-camp things.
+
+    build.py GAME
+
+Writes each model under the game folder, flat-shaded and coloured from the sheet's palette, as
+`restyle.py` does for pack models.
+"""
+
+import os
+import sys
+
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import glb  # noqa: E402
+import restyle  # noqa: E402
+
+PHI = (1 + 5**0.5) / 2
+ICOSAHEDRON = (
+    np.array(
+        [
+            [-1, PHI, 0], [1, PHI, 0], [-1, -PHI, 0], [1, -PHI, 0],
+            [0, -1, PHI], [0, 1, PHI], [0, -1, -PHI], [0, 1, -PHI],
+            [PHI, 0, -1], [PHI, 0, 1], [-PHI, 0, -1], [-PHI, 0, 1],
+        ],
+        np.float64,
+    )
+    / (1 + PHI**2) ** 0.5,
+    [
+        [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+        [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+        [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+        [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+    ],
+)
+
+
+def main():
+    if len(sys.argv) != 2:
+        sys.exit(__doc__)
+    game = sys.argv[1]
+    palette = restyle.read_palette(os.path.join(game, "assets/STYLE.md"))
+    for name, build in MODELS.items():
+        model = Model(palette)
+        build(model, np.random.default_rng(sum(map(ord, name))))
+        path = os.path.join(game, f"world/props/{name}.prop/model.glb")
+        print(f"world/props/{name}.prop/model.glb: {model.write(path)}")
+
+
+class Model:
+    def __init__(self, palette):
+        self.palette = palette
+        self.mesh = restyle.Mesh()
+
+    def triangles(self, corners, swatch, glow=False):
+        """Faces as an (n, 3, 3) array of corners, counter-clockwise seen from outside."""
+        corners = np.asarray(corners, np.float64).reshape(-1, 3)
+        count = len(corners)
+        self.mesh.add(
+            corners,
+            np.tile(self.palette[swatch], (count, 1)),
+            np.full(count, 0.0 if glow else 1.0),
+            np.zeros((count, 4), np.uint8),
+            np.zeros((count, 4), np.float32),
+        )
+
+    def blob(self, center, radius, swatch, squash=0.75, rng=None):
+        """A flattened icosahedron: one painted leaf cluster, its edges nudged so no two read alike."""
+        vertices, faces = ICOSAHEDRON
+        points = vertices * np.array([1.0, squash, 1.0]) * radius
+        if rng is not None:
+            points = points * rng.uniform(0.85, 1.15, (len(points), 1))
+        points = points + center
+        self.triangles(points[np.array(faces)], swatch)
+
+    def tube(self, path, radii, swatch, sides=6, cap=True):
+        """A tapered, bending tube through `path` points with a radius at each, polygonal."""
+        rings = []
+        for index, (point, radius) in enumerate(zip(path, radii)):
+            axis = path[min(index + 1, len(path) - 1)] - path[max(index - 1, 0)]
+            axis = axis / np.linalg.norm(axis)
+            side = np.cross(axis, [0.0, 0.0, 1.0] if abs(axis[2]) < 0.9 else [1.0, 0.0, 0.0])
+            side /= np.linalg.norm(side)
+            up = np.cross(side, axis)
+            angles = np.arange(sides) * 2 * np.pi / sides
+            rings.append(point + radius * (np.outer(np.cos(angles), side) + np.outer(np.sin(angles), up)))
+        faces = []
+        for low, high in zip(rings, rings[1:]):
+            for i in range(sides):
+                j = (i + 1) % sides
+                faces.append([low[i], low[j], high[j]])
+                faces.append([low[i], high[j], high[i]])
+        if cap:
+            top = rings[-1]
+            for i in range(1, sides - 1):
+                faces.append([top[0], top[i], top[i + 1]])
+        self.triangles(faces, swatch)
+
+    def cone(self, base, height, radius, swatch, sides=8, lift=0.0):
+        """A cone whose base is lifted by `lift` of its radius toward the middle, so a pine's tiers
+        hang like boughs."""
+        angles = np.arange(sides) * 2 * np.pi / sides
+        rim = base + np.stack([radius * np.cos(angles), np.full(sides, lift), radius * np.sin(angles)], axis=1)
+        apex = base + [0.0, height, 0.0]
+        center = base + [0.0, 0.0, 0.0]
+        faces = []
+        for i in range(sides):
+            j = (i + 1) % sides
+            faces.append([rim[i], apex, rim[j]])
+            faces.append([rim[j], center, rim[i]])
+        self.triangles(faces, swatch)
+
+    def write(self, path):
+        mesh = self.mesh
+        mesh.weld()
+        mesh.flatten()
+        low, high = mesh.bounds()
+        shift = np.eye(4)
+        shift[:3, 3] = [-(low[0] + high[0]) / 2, -low[1] - 0.02, -(low[2] + high[2]) / 2]
+        mesh.transform(shift)
+        writer = glb.Writer()
+        document = {
+            "scene": 0,
+            "scenes": [{"nodes": [0]}],
+            "nodes": [{"name": "model", "mesh": 0}],
+            "meshes": [{"name": "model", "primitives": [mesh.primitive(writer, skinned=False)]}],
+            "materials": [restyle.MATERIAL],
+        }
+        size = writer.write(path, document)
+        budget = restyle.BUDGET["prop"]
+        if mesh.triangles() > budget["triangles"] or size > budget["bytes"]:
+            sys.exit(f"{path}: {mesh.triangles()} tris, {size} bytes: over the prop budget")
+        return f"{mesh.triangles()} tris, {size} bytes, size {np.round(high - low, 2).tolist()} m"
+
+
+def trunk(model, rng, height, radius, bend=0.35, roots=4):
+    steps = 4
+    path = [np.array([0.0, -0.1, 0.0])]
+    for step in range(1, steps + 1):
+        lean = rng.normal(0, bend, 2) * (step / steps)
+        path.append(np.array([lean[0], height * step / steps, lean[1]]))
+    path = np.array(path)
+    radii = [radius * 1.25] + [radius * (1.1 - 0.7 * step / steps) for step in range(1, steps + 1)]
+    model.tube(path, radii, "bark", sides=7)
+    for root in range(roots):
+        angle = root * 2 * np.pi / roots + rng.uniform(-0.3, 0.3)
+        direction = np.array([np.cos(angle), 0.0, np.sin(angle)])
+        foot = direction * radius * 2.2 + [0.0, -0.1, 0.0]
+        knee = direction * radius * 1.1 + [0.0, radius * 0.6, 0.0]
+        model.tube(np.array([foot, knee, [0.0, radius * 1.4, 0.0]]), [radius * 0.35, radius * 0.45, radius * 0.6], "bark-dark", sides=5, cap=False)
+    return path[-1]
+
+
+def oak(model, rng, height=5.5, spread=2.6, clusters=11):
+    top = trunk(model, rng, height * 0.58, 0.4)
+    for arm in range(3):
+        angle = arm * 2 * np.pi / 3 + rng.uniform(-0.4, 0.4)
+        reach = np.array([np.cos(angle), 0.9, np.sin(angle)]) * spread * 0.45
+        model.tube(np.array([top, top + reach * 0.5, top + reach]), [0.22, 0.16, 0.1], "bark", sides=5)
+    crown = top + [0.0, height * 0.22, 0.0]
+    for index in range(clusters):
+        angle = index * 2 * np.pi / clusters * 2.3
+        ring = (index % 3) / 3.0
+        offset = np.array([np.cos(angle), 0.0, np.sin(angle)]) * spread * (0.35 + 0.45 * ring)
+        lift = (1.0 - ring) * spread * 0.45 + rng.uniform(-0.2, 0.2)
+        radius = spread * rng.uniform(0.42, 0.58)
+        swatch = "leaf-light" if ring < 0.2 else ("leaf" if ring < 0.5 else "leaf-dark")
+        model.blob(crown + offset + [0.0, lift, 0.0], radius, swatch, rng=rng)
+    model.blob(crown + [0.0, spread * 0.6, 0.0], spread * 0.5, "leaf-light", rng=rng)
+
+
+def tall_oak(model, rng):
+    oak(model, rng, height=7.5, spread=2.3, clusters=9)
+
+
+def pine(model, rng, height=7.0):
+    top = trunk(model, rng, height * 0.45, 0.26, bend=0.12, roots=3)
+    tiers = 4
+    for tier in range(tiers):
+        base = np.array([0.0, top[1] * 0.75 + (height * 0.55) * tier / tiers, 0.0])
+        radius = (1.0 - tier / (tiers + 0.6)) * height * 0.26
+        swatch = "leaf-light" if tier == tiers - 1 else ("leaf" if tier % 2 else "leaf-dark")
+        model.cone(base, height * 0.28, radius, swatch, sides=8, lift=-radius * 0.15)
+    model.cone(np.array([0.0, top[1] * 0.75 + height * 0.55, 0.0]), height * 0.18, height * 0.07, "leaf-light", sides=6)
+
+
+def bone(model, rng, at=np.zeros(3), yaw=0.0, pitch=0.0, length=0.45, swatch="bone"):
+    rotation = np.array([[np.cos(yaw), 0.0, np.sin(yaw)], [0.0, 1.0, 0.0], [-np.sin(yaw), 0.0, np.cos(yaw)]]) @ np.array(
+        [[np.cos(pitch), -np.sin(pitch), 0.0], [np.sin(pitch), np.cos(pitch), 0.0], [0.0, 0.0, 1.0]]
+    )
+    place = lambda p: (np.asarray(p) @ rotation.T) + at
+    half = length / 2
+    shaft = np.array([place([-half, 0.0, 0.0]), place([half, 0.0, 0.0])])
+    model.tube(shaft, [0.045, 0.045], swatch, sides=6, cap=False)
+    for end in (-1, 1):
+        for side in (-1, 1):
+            model.blob(place([end * half, 0.0, side * 0.05]), 0.075, swatch, squash=0.9)
+
+
+def bone_pile(model, rng):
+    for index in range(7):
+        angle = index * 2 * np.pi / 7
+        at = np.array([np.cos(angle), 0.0, np.sin(angle)]) * rng.uniform(0.15, 0.5) + [0.0, 0.05 + 0.04 * (index % 3), 0.0]
+        bone(model, rng, at, yaw=rng.uniform(0, np.pi), pitch=rng.uniform(-0.25, 0.25), length=rng.uniform(0.35, 0.55), swatch="bone" if index % 3 else "bone-dark")
+    model.blob(np.array([0.0, 0.16, 0.0]), 0.2, "bone", squash=0.85, rng=rng)
+    model.blob(np.array([0.05, 0.1, 0.14]), 0.08, "eyes", squash=0.6)
+    model.blob(np.array([-0.08, 0.1, 0.14]), 0.08, "eyes", squash=0.6)
+
+
+def bat_wing(model, rng):
+    root = np.zeros(3)
+    tips = [np.array([0.5, 0.15, 0.0]), np.array([0.42, -0.12, 0.0]), np.array([0.22, -0.26, 0.0])]
+    membrane = [[root, tips[0], tips[1]], [root, tips[1], tips[2]]]
+    model.triangles(membrane, "cloth-black")
+    model.triangles([[a, c, b] for a, b, c in membrane], "cloth-black")
+    for tip in tips:
+        model.tube(np.array([root, tip]), [0.03, 0.015], "hair", sides=4)
+
+
+def tusk(model, rng):
+    path = np.array([[0.0, 0.0, 0.0], [0.12, 0.05, 0.0], [0.22, 0.14, 0.0], [0.28, 0.26, 0.0]])
+    model.tube(path, [0.06, 0.05, 0.035, 0.012], "bone", sides=6)
+
+
+MODELS = {
+    "oak": oak,
+    "oak-tall": tall_oak,
+    "pine": pine,
+    "bone": lambda model, rng: bone(model, rng),
+    "bone-pile": bone_pile,
+    "bat-wing": bat_wing,
+    "tusk": tusk,
+}
+
+
+if __name__ == "__main__":
+    main()
