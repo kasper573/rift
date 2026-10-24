@@ -1,12 +1,40 @@
 {
   "name": "Sakura",
-  "blueprint": {
-    "map": {
-      "size": {
-        "width": 56,
-        "height": 84
-      },
-      "tile": 16
+  "terrain": {
+    "size": {
+      "width": 56,
+      "height": 84
+    },
+    "materials": [
+      "world/ground/grass.ground.json",
+      "world/ground/dirt.ground.json",
+      "world/ground/stone.ground.json",
+      "world/ground/water.ground.json"
+    ],
+    "max_slope": 38.0
+  },
+  "lighting": {
+    "sun": {
+      "elevation": 52.0,
+      "azimuth": 215.0,
+      "color": [
+        255,
+        236,
+        190
+      ]
+    },
+    "ambient": [
+      98,
+      122,
+      160
+    ],
+    "grade": {
+      "color": [
+        255,
+        255,
+        255
+      ],
+      "strength": 0.0
     }
   }
 }

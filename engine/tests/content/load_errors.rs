@@ -1,8 +1,9 @@
 use engine::core::content::{ErrorPlace, Fixture, LoadReport, SETTINGS_FILE};
 use engine::core::time::Seconds;
+use engine::systems::area::AreaDef;
 use engine::systems::input::map::InputFixture;
 use serde_json::{Value, json};
-use testkit::{Game, Map, path};
+use testkit::{Game, Map, path, png};
 
 use crate::support::game;
 
@@ -20,13 +21,8 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
         .edit("class", "hero", |hero| {
             hero["icon"] = json!("icons/heroo.png")
         })
-        .area("cove", &Map::open(4, 4), json!([]))
-        .part(
-            "area",
-            "cove",
-            "layers/ground.csv",
-            "0,0,0,0\n0,0,7,0\n0,0,0,0\n0,0,0,0\n",
-        )
+        .area("cove", &Map::open(8, 8), json!([]))
+        .part("area", "cove", "terrain/paint.png", png(8, 8))
         .row(
             "test_character",
             "lost",
@@ -80,9 +76,9 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
                 None
             ),
             (
-                "cove.area/layers/ground.csv",
-                ErrorPlace::Csv { row: 2, column: 3 },
-                "palette out of range",
+                "cove.area/terrain/paint.png",
+                ErrorPlace::WholeFile,
+                "wrong size",
                 None,
             ),
             (
@@ -110,7 +106,7 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
     let text = report.to_string();
     for at in [
         "fixtures/game.config.json:8:13  /player",
-        "cove.area/layers/ground.csv:2:3  row 2, column 3",
+        "cove.area/terrain/paint.png  whole file",
         "nearest   \"icons/hero.png\"",
     ] {
         assert!(text.contains(at), "the report says {at}:\n{text}");
@@ -118,40 +114,70 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
 }
 
 #[test]
-fn a_malformed_palette_names_the_row_and_column_of_each_bad_cell() {
-    let tileset = path("tileset", "start_ground");
-    let report = game()
-        .area("cove", &Map::open(4, 4), json!([]))
-        .part(
-            "area",
-            "cove",
-            "palette.csv",
-            format!("tileset,tile,flip\n{tileset},x,\n{tileset},0,sideways\n{tileset},0\n"),
-        )
-        .try_load()
-        .err()
-        .expect("refused");
+fn an_areas_terrain_parts_are_held_to_its_size_and_depth() {
+    struct Case {
+        part: &'static str,
+        png: Vec<u8>,
+        rule: &'static str,
+    }
+    let cases = [
+        Case {
+            part: "terrain/height.png",
+            png: png(17, 17),
+            rule: "wrong format",
+        },
+        Case {
+            part: "terrain/height.png",
+            png: grey16(16, 17),
+            rule: "wrong size",
+        },
+        Case {
+            part: "terrain/paint.png",
+            png: png(16, 15),
+            rule: "wrong size",
+        },
+        Case {
+            part: "terrain/paint.png",
+            png: b"not a png".to_vec(),
+            rule: "unreadable image",
+        },
+    ];
+    for case in cases {
+        let report = game()
+            .area("cove", &Map::open(8, 8), json!([]))
+            .part("area", "cove", case.part, case.png)
+            .try_load()
+            .err()
+            .expect("refused");
+        let rules = rules_in(&report, &format!("cove.area/{}", case.part));
+        assert!(
+            rules.iter().any(|(rule, _)| *rule == case.rule),
+            "{} with {}: {report}",
+            case.part,
+            case.rule
+        );
+    }
 
-    let palette: Vec<(ErrorPlace, &str)> = report
-        .errors
-        .iter()
-        .filter(|error| error.file == "cove.area/palette.csv")
-        .map(|error| (error.at.clone(), error.problem.expected.as_str()))
-        .collect();
-    assert_eq!(
-        palette,
-        vec![
-            (ErrorPlace::Csv { row: 2, column: 2 }, "a tile number"),
-            (
-                ErrorPlace::Csv { row: 3, column: 3 },
-                "empty, horizontal, vertical or both"
-            ),
-            (
-                ErrorPlace::Csv { row: 4, column: 1 },
-                "three fields: tileset,tile,flip"
-            ),
-        ]
-    );
+    let content = game()
+        .area("cove", &Map::open(8, 8), json!([]))
+        .part("area", "cove", "terrain/height.png", grey16(17, 17))
+        .part("area", "cove", "terrain/paint.png", png(16, 16))
+        .load();
+    assert!(content.by_path::<AreaDef>(&path("area", "cove")).is_some());
+}
+
+/// A 16-bit grey PNG of `width` × `height` black pixels.
+fn grey16(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut encoder = png::Encoder::new(&mut bytes, width, height);
+    encoder.set_color(png::ColorType::Grayscale);
+    encoder.set_depth(png::BitDepth::Sixteen);
+    let mut writer = encoder.write_header().expect("a png header");
+    writer
+        .write_image_data(&vec![0; (width * height * 2) as usize])
+        .expect("png pixels");
+    writer.finish().expect("a png");
+    bytes
 }
 
 #[test]

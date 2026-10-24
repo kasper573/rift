@@ -94,21 +94,6 @@ impl Thumbnails {
 
     /// The `frame`th cell, each `size` pixels, of the sheet at `path`, cut down to the pixels it
     /// draws, so what it shows fills the room it is given.
-    pub fn trimmed_cell(
-        &mut self,
-        ctx: &egui::Context,
-        files: &ProjectFiles,
-        path: &str,
-        size: (u32, u32),
-        frame: u32,
-        budget: &mut u32,
-    ) -> Option<Thumbnail> {
-        let key = format!("cell:{path}:{}x{}:{frame}", size.0, size.1);
-        self.load(ctx, files, key, path.to_owned(), budget, |image| {
-            cell(&image, size, frame).map(|cell| trimmed(&cell))
-        })
-    }
-
     pub fn icon(
         &mut self,
         ctx: &egui::Context,
@@ -201,45 +186,6 @@ fn decode(bytes: &[u8]) -> Option<RgbaImage> {
 fn to_color_image(image: RgbaImage) -> ColorImage {
     let size = [image.width() as usize, image.height() as usize];
     ColorImage::from_rgba_unmultiplied(size, image.as_raw())
-}
-
-/// The `frame`th cell of a sheet of `size` cells, laid out row by row, if the sheet holds it.
-fn cell(image: &RgbaImage, (width, height): (u32, u32), frame: u32) -> Option<RgbaImage> {
-    let columns = image
-        .width()
-        .checked_div(width)
-        .filter(|&columns| columns > 0)?;
-    let rows = image
-        .height()
-        .checked_div(height)
-        .filter(|&rows| rows > 0)?;
-    (frame < columns * rows).then(|| {
-        let (x, y) = ((frame % columns) * width, (frame / columns) * height);
-        image::imageops::crop_imm(image, x, y, width, height).to_image()
-    })
-}
-
-/// The picture without the transparent margins around what it draws; a picture that draws
-/// nothing stays whole.
-fn trimmed(image: &RgbaImage) -> RgbaImage {
-    let drawn = image
-        .enumerate_pixels()
-        .filter(|(_, _, pixel)| pixel[3] > 0);
-    let bounds = drawn.fold(None, |bounds: Option<(u32, u32, u32, u32)>, (x, y, _)| {
-        Some(match bounds {
-            None => (x, y, x, y),
-            Some((left, top, right, bottom)) => {
-                (left.min(x), top.min(y), right.max(x), bottom.max(y))
-            }
-        })
-    });
-    match bounds {
-        Some((left, top, right, bottom)) => {
-            image::imageops::crop_imm(image, left, top, right - left + 1, bottom - top + 1)
-                .to_image()
-        }
-        None => image.clone(),
-    }
 }
 
 fn shrink(image: RgbaImage, longest: u32) -> RgbaImage {

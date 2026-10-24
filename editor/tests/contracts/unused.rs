@@ -7,18 +7,17 @@ use testkit::{Game, path, png};
 
 use crate::support;
 
-/// Wren lives in the start, behind a rock blueprint drawn from its own tileset. The hermit lives
+/// Wren lives in the start, behind a rock blueprint placing a boulder prop. The hermit lives
 /// nowhere, a cap is worn by no one, and a stray icon is named by nothing.
 fn hermitage() -> Game {
     let rock = json!([
-        { "type": "scenery", "at": { "x": 0.0, "y": 0.0 }, "tileset": path("tileset", "rocks"), "tiles": [[0]] }
+        { "type": "prop", "prop": path("prop", "boulder"), "at": { "x": 0.0, "y": 0.0 } }
     ]);
     support::game()
         .npc("wren", 10.0, json!([]))
         .npc("hermit", 10.0, json!([]))
         .item("cap", json!({ "kind": { "type": "resource" } }))
-        .row("tileset", "rocks", json!({ "tile": 16, "tiles": {} }))
-        .part("tileset", "rocks", "image.png", png(16, 16))
+        .prop("boulder", json!({ "type": "circle", "radius": 0.5 }))
         .blueprint("rock", (1, 1), json!({}), rock)
         .asset("icons/stray.png", png(16, 16))
         .edit_scene("area", support::AREA, |scene| {
@@ -57,21 +56,6 @@ fn what_nothing_in_use_reaches_is_unused_at_any_depth() {
     );
     let assets: Vec<&str> = project.unused.assets().collect();
     assert_eq!(assets, ["icons/cap.png", "icons/stray.png"]);
-}
-
-#[test]
-fn a_tileset_named_only_by_a_palette_or_a_blueprint_scene_is_used_there() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(hermitage(), &scratch);
-    let project = support::settled(&mut editor);
-
-    assert!(
-        project
-            .unused
-            .row(&path("tileset", "start_ground"))
-            .is_none()
-    );
-    assert!(project.unused.row(&path("tileset", "rocks")).is_none());
 }
 
 #[test]
@@ -127,30 +111,21 @@ fn deleting_is_refused_while_something_left_behind_names_what_goes() {
 }
 
 #[test]
-fn renaming_a_tileset_rewrites_the_palettes_and_blueprint_scenes_that_name_it() {
+fn renaming_a_prop_rewrites_the_blueprint_scenes_that_name_it() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = support::open(hermitage(), &scratch);
 
-    rows::rename(&mut editor, &path("tileset", "start_ground"), "meadow").expect("renamed");
-    rows::rename(&mut editor, &path("tileset", "rocks"), "boulders").expect("renamed");
+    rows::rename(&mut editor, &path("prop", "boulder"), "stone").expect("renamed");
 
-    let project = support::settled(&mut editor);
-    let palette = project
-        .files
-        .text(&format!("{}/palette.csv", path("area", "start")))
-        .expect("the palette");
-    assert_eq!(
-        palette,
-        format!("tileset,tile,flip\n{},0,\n", path("tileset", "meadow"))
-    );
+    support::settled(&mut editor);
     let reader = editor.reader().expect("a reader");
-    let tilesets: Vec<Option<&str>> =
+    let props: Vec<Option<&str>> =
         nodes::modules(&nodes::scene_of(&editor, &path("blueprint", "rock")))
             .iter()
             .filter_map(|module| match module.module() {
-                AreaModule::Scenery(scenery) => Some(reader.path_of(scenery.tileset)),
+                AreaModule::Prop(prop) => Some(reader.path_of(prop.prop)),
                 _ => None,
             })
             .collect();
-    assert_eq!(tilesets, [Some(path("tileset", "boulders").as_str())]);
+    assert_eq!(props, [Some(path("prop", "stone").as_str())]);
 }

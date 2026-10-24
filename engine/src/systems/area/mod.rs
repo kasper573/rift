@@ -1,19 +1,24 @@
 pub mod blueprint;
-pub mod grid;
+pub mod ground;
+pub mod lighting;
 pub mod object;
+pub mod prop;
 pub mod scene;
-pub mod tileset;
+pub mod terrain;
 pub mod transition;
 pub mod walk;
 pub mod warp;
 pub mod world_map;
 
 pub use blueprint::{BlueprintDef, Flattened, PlacedBlueprint, Placement};
-pub use grid::{AreaGrids, Flip, PaletteEntry};
+pub use ground::{GroundDef, GroundId, SurfaceDef, SurfaceId, Walk};
+pub use lighting::{Lighting, PointLightDef};
 pub use object::{AreaObject, ObjectDef, ObjectShape};
-pub use scene::{Scene, SceneNode};
+pub use prop::{Footprint, PropDef, PropId, PropPlacement, Scatter};
+pub use scene::SceneNode;
+pub use terrain::{Heightfield, Paint, Terrain, TerrainSize};
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::sync::Arc;
 
@@ -31,27 +36,24 @@ use crate::core::audio::playback::SfxId;
 use crate::core::audio::soundscape::{
     SoundscapeChannel, SoundscapeLayer, SoundscapeShape, SoundscapeZone,
 };
-use crate::core::content::media::ImageSizes;
 use crate::core::content::{
-    Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, FileWriter,
-    LoadError, LoadStep, Loading, NamedContent, Nearby, PartSpec, Parts, RowCheck, Shape, serial,
+    Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, FileWriter, LoadStep,
+    Loading, NamedContent, Nearby, PartSpec, Parts, RowCheck, Shape, serial,
 };
+use crate::core::geometry::Degrees;
 use crate::core::math::{Offset, Pos, Rect, Size};
-use crate::core::render::dynamic_z;
-use crate::core::units::{Cell, CellPos, GridSize, Meters, TilePos, TileRect, TileSize};
-use crate::systems::area::tileset::TilesetId;
+use crate::core::units::{Cell, CellPos, Meters, TilePos, TileRect, TileSize};
+use crate::systems::actor::Pose;
 use crate::systems::movement;
 use crate::systems::npc::NpcId;
 use crate::systems::script::{self, Condition, OwnerRow, Reach, RiftScripts, ScriptModule};
 use blueprint::FlattenAt;
-use scene::{GroundLayer, SCENE_PARTS, SceneGrids, scene_file};
+use lighting::MAX_LIGHTS;
+use prop::MAX_PROPS;
+use scene::{SCENE, scene_file};
 
 pub type AreaId = ContentId<AreaDef>;
 
-pub const MAX_SIDE: u32 = 256;
-pub const MIN_SIDE: u32 = 4;
-pub const MAX_CELLS: u32 = 65_536;
-pub const MAX_GROUND_LAYERS: usize = 16;
 pub const MAX_POPULATION: u32 = 500;
 
 pub fn register(app: &mut App) {
@@ -62,18 +64,18 @@ pub fn register(app: &mut App) {
 
 pub fn content(registry: &mut ContentRegistry) {
     registry
-        .bundle::<tileset::TilesetDef>()
-        .file::<tileset::SurfaceDef>()
-        .named::<tileset::SurfaceDef>()
+        .bundle::<PropDef>()
+        .file::<GroundDef>()
+        .named::<GroundDef>()
+        .file::<SurfaceDef>()
+        .named::<SurfaceDef>()
         .bundle::<BlueprintDef>()
         .bundle::<AreaDef>()
         .named::<AreaDef>()
         .file::<world_map::WorldMapDef>()
-        .beside(grid::palette_beside(AreaDef::TABLE))
-        .beside(grid::palette_beside(BlueprintDef::TABLE))
         .json_part(scene::json_part(AreaDef::TABLE))
         .json_part(scene::json_part(BlueprintDef::TABLE))
-        .hook(LoadStep::Files, resolve_grids)
+        .hook(LoadStep::Files, prop::check_fitted)
         .hook(LoadStep::Expand, flatten_all)
         .hook(LoadStep::Assemble, build_all)
         .hook(LoadStep::Across, world_map::check_all);
@@ -96,12 +98,20 @@ pub fn same_area(world: &World, a: Entity, b: Entity) -> bool {
     area(a).is_some() && area(a) == area(b)
 }
 
-/// A place in the world: a blueprint with a name, whose own ground and modules are all it holds.
+/// A place in the world: a terrain, the light it stands in, and a scene of modules on it. Its scene,
+/// heights and paint are parts of its bundle.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AreaDef {
     pub name: String,
-    pub blueprint: BlueprintDef,
+    pub terrain: Terrain,
+    pub lighting: Lighting,
+    #[serde(skip)]
+    pub scene: Vec<SceneNode>,
+    #[serde(skip)]
+    pub heights: Heightfield,
+    #[serde(skip)]
+    pub paint: Paint,
 }
 
 impl ContentFile for AreaDef {
@@ -109,34 +119,29 @@ impl ContentFile for AreaDef {
     const SHAPE: Shape = Shape::Bundle;
 
     fn fresh(near: &Nearby) -> Result<AreaDef, String> {
-        let ground = SceneNode::GroundLayer(GroundLayer::named(GroundLayer::FIRST));
+        let size = TerrainSize {
+            width: 16,
+            height: 12,
+        };
+        let ground: GroundId = near.file()?;
         Ok(AreaDef {
             name: near.name(),
-            blueprint: BlueprintDef {
-                map: Tilemap::fresh(MapSize {
-                    width: 16,
-                    height: 12,
-                }),
-                variables: BTreeMap::new(),
-                scene: Scene {
-                    nodes: vec![ground],
-                    grids: SceneGrids::default(),
-                },
+            terrain: Terrain {
+                size,
+                materials: [ground; terrain::MATERIALS],
+                max_slope: Degrees(38.0),
             },
+            lighting: Lighting::day(),
+            scene: Vec::new(),
+            heights: Heightfield::flat(size),
+            paint: Paint::plain(size),
         })
     }
 
     fn check(&self, cx: &mut RowCheck) {
         cx.text("/name", &self.name, 1, 60);
-        self.blueprint.map.check("/blueprint/map", MIN_SIDE, cx);
-        if !self.blueprint.variables.is_empty() {
-            cx.error(
-                "/blueprint/variables",
-                "out of range",
-                format!("{} variables", self.blueprint.variables.len()),
-                "no variables: an area is never placed, so nothing fills them",
-            );
-        }
+        self.terrain.check("/terrain", cx);
+        self.lighting.check("/lighting", cx);
     }
 }
 
@@ -147,93 +152,74 @@ impl NamedContent for AreaDef {
 }
 
 impl Bundle for AreaDef {
-    const PARTS: &'static [PartSpec] = SCENE_PARTS;
-    const WRITTEN: &'static [PartSpec] = SCENE_PARTS;
+    const PARTS: &'static [PartSpec] = &[SCENE, terrain::HEIGHT, terrain::PAINT];
+    const WRITTEN: &'static [PartSpec] = &[SCENE, terrain::HEIGHT, terrain::PAINT];
 
     fn read_parts(&mut self, parts: &mut Parts) {
-        let blueprint = &mut self.blueprint;
-        scene::read(
-            &mut blueprint.scene,
-            &blueprint.map,
-            &blueprint.variables,
+        scene::read(&mut self.scene, &BTreeMap::new(), parts);
+        let size = self.terrain.size;
+        self.heights = read_part(
             parts,
+            terrain::HEIGHT,
+            || Heightfield::flat(size),
+            |bytes| Heightfield::decode(size, bytes),
+        );
+        self.paint = read_part(
+            parts,
+            terrain::PAINT,
+            || Paint::plain(size),
+            |bytes| Paint::decode(size, bytes),
         );
     }
 
     fn write_parts(&self, bundle: &str, writer: &mut FileWriter) -> io::Result<()> {
-        scene::write(&self.blueprint.scene, &self.blueprint.map, bundle, writer)
+        scene::write(&self.scene, bundle, writer)?;
+        let part = |spec: PartSpec| format!("{bundle}/{}", spec.named("", "png"));
+        if !self.heights.is_flat() {
+            writer.file(&part(terrain::HEIGHT), &self.heights.encode())?;
+        }
+        if !self.paint.is_plain() {
+            writer.file(&part(terrain::PAINT), &self.paint.encode())?;
+        }
+        Ok(())
     }
 }
 
 impl AreaDef {
-    pub fn map(&self) -> &Tilemap {
-        &self.blueprint.map
+    /// The area over a terrain of `size`, its heights and paint kept from the top-left corner.
+    pub fn resized(&self, size: TerrainSize) -> AreaDef {
+        let mut area = self.clone();
+        area.terrain.size = size;
+        area.heights = self.heights.resized(size);
+        area.paint = self.paint.resized(size);
+        area
     }
 
-    pub fn scene(&self) -> &Scene {
-        &self.blueprint.scene
+    pub fn size(&self) -> Size<Meters> {
+        self.terrain.size.meters()
     }
 }
 
-#[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Tilemap {
-    pub size: MapSize,
-    pub tile: u32,
-}
-
-impl Tilemap {
-    pub fn fresh(size: MapSize) -> Tilemap {
-        Tilemap { size, tile: 16 }
-    }
-
-    pub(super) fn check(&self, pointer: &str, min_side: u32, cx: &mut RowCheck) {
-        cx.range(
-            format!("{pointer}/size/width"),
-            self.size.width,
-            min_side,
-            MAX_SIDE,
-            "tiles",
-        );
-        cx.range(
-            format!("{pointer}/size/height"),
-            self.size.height,
-            min_side,
-            MAX_SIDE,
-            "tiles",
-        );
-        if self.size.width.saturating_mul(self.size.height) > MAX_CELLS {
-            cx.error(
-                format!("{pointer}/size"),
-                "out of range",
-                format!("{} cells", self.size.width * self.size.height),
-                format!("at most {MAX_CELLS} cells"),
-            );
+/// A part the bundle may leave out, `absent` then; one it keeps is `decode`d, and refused at its
+/// file when it doesn't.
+fn read_part<T>(
+    parts: &mut Parts,
+    spec: PartSpec,
+    absent: impl FnOnce() -> T,
+    decode: impl FnOnce(&[u8]) -> Result<T, ContentProblem>,
+) -> T {
+    let Some(file) = parts.file(spec) else {
+        return absent();
+    };
+    let Some(bytes) = parts.bytes(file) else {
+        return absent();
+    };
+    match decode(&bytes) {
+        Ok(part) => part,
+        Err(problem) => {
+            parts.error(file, crate::core::content::ErrorPlace::WholeFile, problem);
+            absent()
         }
-        cx.range(
-            format!("{pointer}/tile"),
-            self.tile,
-            1,
-            tileset::MAX_TILE_PX,
-            "pixels per tile",
-        );
-    }
-}
-
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MapSize {
-    pub width: u32,
-    pub height: u32,
-}
-
-impl MapSize {
-    pub fn grid(self) -> GridSize {
-        GridSize::new(self.width, self.height)
-    }
-
-    pub fn tiles(self) -> Size<Meters> {
-        Size::new(self.width as f32, self.height as f32)
     }
 }
 
@@ -243,7 +229,9 @@ pub enum AreaModule {
     Object(ObjectDef),
     SafeZone(SafeZone),
     Soundscape(SoundscapeDef),
-    Scenery(Scenery),
+    Prop(PropPlacement),
+    Scatter(Scatter),
+    Light(PointLightDef),
     Blueprint(Placement),
     Population(Population),
     Resident(Resident),
@@ -259,7 +247,9 @@ pub enum AreaModuleKind {
     Object,
     SafeZone,
     Soundscape,
-    Scenery,
+    Prop,
+    Scatter,
+    Light,
     Blueprint,
     Population,
     Resident,
@@ -278,7 +268,9 @@ impl AreaModule {
             AreaModule::Object(_) => AreaModuleKind::Object,
             AreaModule::SafeZone(_) => AreaModuleKind::SafeZone,
             AreaModule::Soundscape(_) => AreaModuleKind::Soundscape,
-            AreaModule::Scenery(_) => AreaModuleKind::Scenery,
+            AreaModule::Prop(_) => AreaModuleKind::Prop,
+            AreaModule::Scatter(_) => AreaModuleKind::Scatter,
+            AreaModule::Light(_) => AreaModuleKind::Light,
             AreaModule::Blueprint(_) => AreaModuleKind::Blueprint,
             AreaModule::Population(_) => AreaModuleKind::Population,
             AreaModule::Resident(_) => AreaModuleKind::Resident,
@@ -296,7 +288,16 @@ impl AreaModule {
                 "npcs",
             ),
             AreaModule::Soundscape(soundscape) => soundscape.check(pointer, cx),
-            AreaModule::Scenery(scenery) => scenery.check(pointer, cx),
+            AreaModule::Prop(prop) => prop.check(pointer, cx),
+            AreaModule::Scatter(scatter) => scatter.check(pointer, cx),
+            AreaModule::Light(light) => light.check(pointer, cx),
+            AreaModule::Resident(resident) => cx.range(
+                format!("{pointer}/facing"),
+                resident.facing.0,
+                0.0,
+                360.0,
+                "degrees",
+            ),
             _ => {}
         }
     }
@@ -402,159 +403,6 @@ impl SoundscapeDef {
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Scenery {
-    #[schemars(with = "serial::PosRow")]
-    #[serde(serialize_with = "serial::pos", deserialize_with = "serial::pos_from")]
-    pub at: Pos<Meters>,
-    pub tileset: TilesetId,
-    pub tiles: Vec<Vec<Option<SceneryTile>>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sort: Option<f32>,
-    #[serde(default, skip_serializing_if = "Flip::is_none")]
-    pub flip: Flip,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub blocks: Vec<[i32; 2]>,
-}
-
-impl Scenery {
-    fn check(&self, pointer: &str, cx: &mut RowCheck) {
-        let width = self.tiles.first().map_or(0, Vec::len);
-        if self.tiles.is_empty() || width == 0 {
-            cx.error(
-                format!("{pointer}/tiles"),
-                "out of range",
-                "no tiles",
-                "at least one row of tiles",
-            );
-        }
-        for (row, tiles) in self.tiles.iter().enumerate() {
-            if tiles.len() != width {
-                cx.error(
-                    format!("{pointer}/tiles/{row}"),
-                    "out of range",
-                    format!("a row of {} tiles", tiles.len()),
-                    format!("rows of {width} tiles, like the first"),
-                );
-            }
-        }
-        if let Some(sort) = self.sort {
-            cx.range(
-                format!("{pointer}/sort"),
-                sort,
-                0.0,
-                self.tiles.len() as f32,
-                "tiles from the top of the grid",
-            );
-        }
-    }
-
-    pub fn height(&self) -> usize {
-        self.tiles.len()
-    }
-
-    pub fn width(&self) -> usize {
-        self.tiles.first().map_or(0, Vec::len)
-    }
-
-    pub fn bounds(&self) -> Rect<Meters> {
-        let size = Size::new(self.width() as f32, self.height() as f32);
-        self.flip
-            .place(Rect::new(Pos::new(0.0, 0.0), size), self.at)
-    }
-
-    pub fn sort_line(&self) -> Option<Meters> {
-        Some(Meters(self.bounds().min().y + self.sort?))
-    }
-
-    /// The cell under the middle of the tile `[column, row]`, as the scenery is placed and flipped;
-    /// a block names its cell this way.
-    pub fn cell_under(&self, [column, row]: [i32; 2]) -> CellPos {
-        let middle = Pos::new(column as f32 + 0.5, row as f32 + 0.5);
-        (self.at + self.flip.apply(middle).to_vector()).cell()
-    }
-
-    /// Every tile of its grid as `[column, row]`, with the cell under it.
-    pub fn cells(&self) -> impl Iterator<Item = ([i32; 2], CellPos)> + '_ {
-        let (width, height) = (self.width() as i32, self.height() as i32);
-        (0..height)
-            .flat_map(move |row| (0..width).map(move |column| [column, row]))
-            .map(|tile| (tile, self.cell_under(tile)))
-    }
-}
-
-/// The depth each of `scenery` is drawn at in an area `height` tiles tall whose ground ends at
-/// `base`: a sorted one at its sort line, among whoever stands there, and a flat one under them
-/// all, later ones over earlier. The renderer orders equal depths as it likes, and that changes when
-/// unrelated scenery moves, so scenery sharing a sort line is spread just below it in scene order,
-/// staying under anyone standing on the line.
-pub fn scenery_depths(scenery: &[Scenery], height: f32, base: f32) -> Vec<f32> {
-    let flat_count = scenery.iter().filter(|s| s.sort_line().is_none()).count();
-    let mut flat_index = 0;
-    let mut depths: Vec<f32> = scenery
-        .iter()
-        .map(|s| match s.sort_line() {
-            Some(line) => dynamic_z(height, base, line),
-            None => {
-                flat_index += 1;
-                base - 1.0 + flat_index as f32 / (flat_count as f32 + 1.0)
-            }
-        })
-        .collect();
-    let mut lowest: HashMap<u32, f32> = HashMap::new();
-    for depth in depths.iter_mut().rev() {
-        let line = depth.to_bits();
-        let placed = lowest.get(&line).map_or(*depth, |below| below.next_down());
-        lowest.insert(line, placed);
-        *depth = placed;
-    }
-    depths
-}
-
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "SceneryTileRow", into = "SceneryTileRow")]
-pub struct SceneryTile {
-    pub tile: u32,
-    pub flip: Flip,
-}
-
-#[derive(JsonSchema, Serialize, Deserialize)]
-#[serde(untagged)]
-enum SceneryTileRow {
-    Tile(u32),
-    Flipped {
-        tile: u32,
-        #[serde(default)]
-        flip: Flip,
-    },
-}
-
-impl From<SceneryTileRow> for SceneryTile {
-    fn from(row: SceneryTileRow) -> SceneryTile {
-        match row {
-            SceneryTileRow::Tile(tile) => SceneryTile {
-                tile,
-                flip: Flip::None,
-            },
-            SceneryTileRow::Flipped { tile, flip } => SceneryTile { tile, flip },
-        }
-    }
-}
-
-impl From<SceneryTile> for SceneryTileRow {
-    fn from(tile: SceneryTile) -> SceneryTileRow {
-        if tile.flip.is_none() {
-            SceneryTileRow::Tile(tile.tile)
-        } else {
-            SceneryTileRow::Flipped {
-                tile: tile.tile,
-                flip: tile.flip,
-            }
-        }
-    }
-}
-
-#[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Population {
     pub npc: NpcId,
     #[schemars(extend("x-count" = true))]
@@ -569,6 +417,7 @@ pub struct Population {
     pub roams: Option<Rect<Meters>>,
 }
 
+/// An npc living at a spot of the area, facing a way and holding a pose there.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Resident {
@@ -576,8 +425,16 @@ pub struct Resident {
     #[schemars(with = "serial::PosRow")]
     #[serde(serialize_with = "serial::pos", deserialize_with = "serial::pos_from")]
     pub at: Pos<Meters>,
+    #[serde(default, skip_serializing_if = "Degrees::is_zero")]
+    pub facing: Degrees,
+    #[serde(default, skip_serializing_if = "is_idle")]
+    pub pose: Pose,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shown: Option<Condition>,
+}
+
+fn is_idle(pose: &Pose) -> bool {
+    *pose == Pose::Idle
 }
 
 pub struct PlacedModules(pub Vec<Vec<Flattened>>);
@@ -665,9 +522,14 @@ pub fn walkable(world: &World, tile: Pos<Meters>) -> bool {
         .is_some_and(|area| area.grid.walkable(tile))
 }
 
+/// An area as the game plays it: its ground, where it walks and flies, what stands and shines on
+/// it, and what it sounds like.
 pub struct Area {
     pub size: Size<Meters>,
-    pub tile: u32,
+    pub terrain: Terrain,
+    pub heights: Heightfield,
+    pub paint: Paint,
+    pub lighting: Lighting,
     pub grid: movement::Grid,
     pub wild_grid: movement::Grid,
     pub airspace: movement::Grid,
@@ -676,8 +538,9 @@ pub struct Area {
     pub safe_cells: Vec<bool>,
     pub footsteps: Vec<Option<SfxId>>,
     pub soundscape: Vec<SoundscapeZone>,
-    pub grids: Arc<AreaGrids>,
-    pub scenery: Vec<Scenery>,
+    /// Every prop standing in the area, scattered ones expanded.
+    pub props: Vec<PropPlacement>,
+    pub lights: Vec<PointLightDef>,
 }
 
 impl Area {
@@ -699,8 +562,9 @@ impl Area {
         }
     }
 
+    /// The depth the ground is drawn at: one terrain, under everything.
     pub fn sort_base(&self) -> f32 {
-        self.grids.ground.len() as f32
+        0.0
     }
 
     pub fn footstep_at(&self, c: CellPos) -> Option<&SfxId> {
@@ -723,8 +587,6 @@ impl Area {
 }
 
 pub struct Areas(Vec<Option<Arc<Area>>>);
-
-pub struct AreaGridSet(Vec<Option<Arc<AreaGrids>>>);
 
 pub fn load(content: &Content, area: AreaId) -> &Area {
     shared(content, area)
@@ -749,14 +611,10 @@ pub enum Pictured {
 
 /// What a bundle's scene makes, as the editor shows it.
 pub struct Picture {
-    /// The area the bundle makes with every node in it, as the game builds it.
+    /// The area the bundle makes with the nodes kept in it, as the game builds it.
     pub area: Arc<Area>,
     pub placed: Vec<Flattened>,
     pub placements: Vec<PlacedBlueprint>,
-    /// The ground drawn: the bundle's own cells, stamped by the placements kept.
-    pub ground: Arc<AreaGrids>,
-    /// The scenery drawn: what the nodes kept bring.
-    pub scenery: Vec<Scenery>,
 }
 
 /// Which module nodes a picture draws, each named by its path as `blueprint::flatten_kept` names
@@ -768,49 +626,51 @@ pub enum Kept<'a> {
 }
 
 /// The picture of `pictured`, drawing the module nodes `kept`. A blueprint is pictured on its own
-/// canvas with its holes filled by their defaults.
+/// flat canvas with its holes filled by their defaults.
 pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Picture> {
-    let own = content.built::<OwnGrids>();
-    let own = match pictured {
-        Pictured::Area(id) => own.areas.get(id.index())?.as_ref()?,
-        Pictured::Blueprint(id) => own.blueprints.get(id.index())?.as_ref()?,
-    };
     let mut errors = Vec::new();
-    let flatten = |keep: &dyn Fn(&[&str]) -> bool, errors: &mut Vec<_>| match pictured {
-        Pictured::Area(id) => content
-            .table::<AreaDef>()
-            .get(id)
-            .map(|def| blueprint::flatten_kept(content, &def.scene().nodes, keep, errors)),
-        Pictured::Blueprint(id) => Some(blueprint::flatten_blueprint(content, id, keep, errors)),
+    let keep: &dyn Fn(&[&str]) -> bool = match kept {
+        Kept::All => &|_| true,
+        Kept::Only(keep) => keep,
     };
-    let (area, placed, placements) = match pictured {
-        Pictured::Area(id) => (
-            shared(content, id).clone(),
-            self::placed(content, id).to_vec(),
-            self::placements(content, id).to_vec(),
-        ),
+    let (ground, flattening) = match pictured {
+        Pictured::Area(id) => {
+            let def = content.table::<AreaDef>().get(id)?;
+            let ground = Ground {
+                terrain: def.terrain.clone(),
+                heights: def.heights.clone(),
+                paint: def.paint.clone(),
+                lighting: def.lighting.clone(),
+            };
+            (
+                ground,
+                blueprint::flatten_kept(content, &def.scene, keep, &mut errors),
+            )
+        }
         Pictured::Blueprint(id) => {
             let def = content.table::<BlueprintDef>().get(id)?;
-            let all = flatten(&|_| true, &mut errors)?;
-            let grids = Arc::new(stamp_placed(content, own, &all.placements, &mut errors));
-            let area = Arc::new(build_area(content, &def.map, grids, &all.modules));
-            (area, all.modules, all.placements)
+            let first = content.ids::<GroundDef>().next()?;
+            let ground = Ground {
+                terrain: Terrain {
+                    size: def.size,
+                    materials: [first; terrain::MATERIALS],
+                    max_slope: Degrees(terrain::MAX_SLOPE.0),
+                },
+                heights: Heightfield::flat(def.size),
+                paint: Paint::plain(def.size),
+                lighting: Lighting::day(),
+            };
+            (
+                ground,
+                blueprint::flatten_blueprint(content, id, keep, &mut errors),
+            )
         }
     };
-    let (ground, scenery) = match kept {
-        Kept::All => (area.grids.clone(), area.scenery.clone()),
-        Kept::Only(keep) => {
-            let kept = flatten(keep, &mut errors)?;
-            let ground = Arc::new(stamp_placed(content, own, &kept.placements, &mut errors));
-            (ground, sceneries(&kept.modules))
-        }
-    };
+    let (area, _) = build_area(content, &ground, &flattening.modules);
     Some(Picture {
-        area,
-        placed,
-        placements,
-        ground,
-        scenery,
+        area: Arc::new(area),
+        placed: flattening.modules,
+        placements: flattening.placements,
     })
 }
 
@@ -823,138 +683,23 @@ pub fn of_in<'c>(content: &'c Content, world: &World, entity: Entity) -> Option<
     Some(load(content, area))
 }
 
-/// The grids every area and blueprint paints itself, before placements stamp theirs.
-struct OwnGrids {
-    areas: Vec<Option<AreaGrids>>,
-    blueprints: Vec<Option<AreaGrids>>,
-}
-
-fn resolve_grids(loading: &mut Loading) {
-    let content = loading.content();
-    let sizes = content.built::<ImageSizes>();
-    let mut errors = Vec::new();
-    let mut own = OwnGrids {
-        areas: content.ids::<AreaDef>().map(|_| None).collect(),
-        blueprints: content.ids::<BlueprintDef>().map(|_| None).collect(),
-    };
-    for (id, def) in loading.rows::<AreaDef>(&content) {
-        own.areas[id.index()] = own_grids(
-            &content,
-            sizes,
-            &def.blueprint,
-            id.path(&content),
-            &mut errors,
-        );
-    }
-    for (id, def) in loading.rows::<BlueprintDef>(&content) {
-        own.blueprints[id.index()] =
-            own_grids(&content, sizes, def, id.path(&content), &mut errors);
-    }
-    for (id, _) in loading.rows::<AreaDef>(&content) {
-        if own.areas[id.index()].is_none() {
-            loading.fail(id);
-        }
-    }
-    for (id, _) in loading.rows::<BlueprintDef>(&content) {
-        if own.blueprints[id.index()].is_none() {
-            loading.fail(id);
-        }
-    }
-    loading.extend_errors(errors);
-    loading.built(own);
-}
-
-fn own_grids(
-    content: &Content,
-    sizes: &ImageSizes,
-    def: &BlueprintDef,
-    bundle: &str,
-    errors: &mut Vec<LoadError>,
-) -> Option<AreaGrids> {
-    let scene = &def.scene;
-    let palette = grid::resolve_palette(
-        content,
-        sizes,
-        &def.map,
-        &format!("{bundle}/{}", scene::PALETTE_FILE),
-        &scene.grids.palette,
-        errors,
-    )?;
-    Some(AreaGrids {
-        size: def.map.size.grid(),
-        palette,
-        palette_keys: scene.grids.palette.clone(),
-        ground: blueprint::layer_grids(scene, &def.map),
-        walk: scene.grids.walk.clone(),
-    })
-}
-
-/// The cells of `own` with every one of `placements` stamped over them.
-fn stamp_placed(
-    content: &Content,
-    own: &AreaGrids,
-    placements: &[PlacedBlueprint],
-    errors: &mut Vec<blueprint::FlattenError>,
-) -> AreaGrids {
-    let grids = content.built::<OwnGrids>();
-    let blueprints = content.table::<BlueprintDef>();
-    let grids_of = |blueprint: blueprint::BlueprintId| {
-        Some((
-            blueprints.get(blueprint)?,
-            grids.blueprints.get(blueprint.index())?.as_ref()?,
-        ))
-    };
-    blueprint::stamp(own, placements, grids_of, content, errors)
-}
-
-fn sceneries(modules: &[Flattened]) -> Vec<Scenery> {
-    modules
-        .iter()
-        .filter_map(|placed| match &placed.module {
-            AreaModule::Scenery(scenery) => Some(scenery.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
 fn flatten_all(loading: &mut Loading) {
     let content = loading.content();
-    let own = content.built::<OwnGrids>();
     let mut placed: Vec<Vec<Flattened>> = content.ids::<AreaDef>().map(|_| Vec::new()).collect();
     let mut placements: Vec<Vec<PlacedBlueprint>> =
         content.ids::<AreaDef>().map(|_| Vec::new()).collect();
-    let mut stamped: Vec<Option<Arc<AreaGrids>>> = content.ids::<AreaDef>().map(|_| None).collect();
     let loaded: BTreeSet<blueprint::BlueprintId> = loading
         .rows::<BlueprintDef>(&content)
         .into_iter()
         .map(|(id, _)| id)
         .collect();
-    let blueprints = content.table::<BlueprintDef>();
     for (id, def) in loading.rows::<AreaDef>(&content) {
         let mut errors = Vec::new();
-        let flattening = blueprint::flatten(&content, &def.scene().nodes, &mut errors);
+        let flattening = blueprint::flatten(&content, &def.scene, &mut errors);
         let places_a_failed_blueprint = flattening
             .placements
             .iter()
             .any(|placed| !loaded.contains(&placed.blueprint));
-        if let Some(area) = &own.areas[id.index()]
-            && !places_a_failed_blueprint
-        {
-            let grids_of = |blueprint: blueprint::BlueprintId| {
-                Some((
-                    blueprints.get(blueprint)?,
-                    own.blueprints[blueprint.index()].as_ref()?,
-                ))
-            };
-            let grids = blueprint::stamp(
-                area,
-                &flattening.placements,
-                grids_of,
-                &content,
-                &mut errors,
-            );
-            stamped[id.index()] = Some(Arc::new(grids));
-        }
         if !errors.is_empty() || places_a_failed_blueprint {
             loading.fail(id);
         }
@@ -972,19 +717,13 @@ fn flatten_all(loading: &mut Loading) {
     }
     loading.built(PlacedModules(placed));
     loading.built(PlacedBlueprints(placements));
-    loading.built(AreaGridSet(stamped));
 }
 
 fn build_all(loading: &mut Loading) {
     let content = loading.content();
-    let grids = content.built::<AreaGridSet>();
-    let sizes = content.built::<ImageSizes>();
     let mut areas: Vec<Option<Arc<Area>>> = content.ids::<AreaDef>().map(|_| None).collect();
     let mut reported: BTreeSet<(String, String)> = BTreeSet::new();
     for (id, def) in loading.rows::<AreaDef>(&content) {
-        let Some(grids) = grids.0[id.index()].clone() else {
-            continue;
-        };
         let modules = placed(&content, id);
         for module in modules {
             let (file, pointer) = module.site(&content, id);
@@ -996,10 +735,16 @@ fn build_all(loading: &mut Loading) {
                 }
             }
         }
-        let map = def.map();
+        let ground = Ground {
+            terrain: def.terrain.clone(),
+            heights: def.heights.clone(),
+            paint: def.paint.clone(),
+            lighting: def.lighting.clone(),
+        };
         let mut check = RowCheck::default();
-        check_bounds(&content, map, modules, sizes, &mut check);
-        let area = build_area(&content, map, grids, modules);
+        check_bounds(&content, &ground.terrain, modules, &mut check);
+        let (area, budget) = build_area(&content, &ground, modules);
+        check.extend(budget);
         check_placed(&content, id, &area, modules, &mut check);
         let scene = scene_file(id.path(&content));
         for error in check.into_errors() {
@@ -1010,14 +755,18 @@ fn build_all(loading: &mut Loading) {
     loading.built(Areas(areas));
 }
 
-/// The area a map, its stamped grids and its flattened modules make: where it walks, flies, is
-/// safe and sounds.
-fn build_area(
-    content: &Content,
-    map: &Tilemap,
-    grids: Arc<AreaGrids>,
-    modules: &[Flattened],
-) -> Area {
+/// The ground an area is built on: what its config and parts say before any module stands on it.
+struct Ground {
+    terrain: Terrain,
+    heights: Heightfield,
+    paint: Paint,
+    lighting: Lighting,
+}
+
+/// The area a ground and its flattened modules make: where it walks, flies, is safe and sounds,
+/// what stands and shines on it. With it, the problems of too much standing or shining there.
+fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Area, RowCheck) {
+    let mut check = RowCheck::default();
     let safe_zones: Vec<Rect<Meters>> = modules
         .iter()
         .filter_map(|placed| match &placed.module {
@@ -1025,12 +774,51 @@ fn build_area(
             _ => None,
         })
         .collect();
-    let scenery = sceneries(modules);
-    let walk = walk::grids(content, &grids, &scenery, &safe_zones);
-    let size = map.size.grid();
-    Area {
-        size: map.size.tiles(),
-        tile: map.tile,
+    let mut props: Vec<PropPlacement> = Vec::new();
+    let mut lights: Vec<PointLightDef> = Vec::new();
+    for placed in modules {
+        match &placed.module {
+            AreaModule::Prop(prop) => props.push(prop.clone()),
+            AreaModule::Scatter(scatter) => props.extend(scatter.expand()),
+            AreaModule::Light(light) => {
+                if lights.len() == MAX_LIGHTS {
+                    check.error(
+                        module_pointer(placed, ""),
+                        "too many lights",
+                        format!("light {} of the area", lights.len() + 1),
+                        format!("at most {MAX_LIGHTS} lights in an area"),
+                    );
+                }
+                lights.push(light.clone());
+            }
+            _ => {}
+        }
+        if props.len() > MAX_PROPS
+            && matches!(placed.module, AreaModule::Prop(_) | AreaModule::Scatter(_))
+        {
+            check.error(
+                module_pointer(placed, ""),
+                "too many props",
+                format!("{} props standing in the area", props.len()),
+                format!("at most {MAX_PROPS} props in an area, scattered ones counted"),
+            );
+        }
+    }
+    let walk = walk::grids(
+        content,
+        &ground.terrain,
+        &ground.heights,
+        &ground.paint,
+        &props,
+        &safe_zones,
+    );
+    let size = ground.terrain.size.grid();
+    let area = Area {
+        size: ground.terrain.size.meters(),
+        terrain: ground.terrain.clone(),
+        heights: ground.heights.clone(),
+        paint: ground.paint.clone(),
+        lighting: ground.lighting.clone(),
         grid: movement::Grid::new(size, walk.walk),
         wild_grid: movement::Grid::new(size, walk.wild),
         airspace: movement::Grid::new(size, walk.airspace),
@@ -1045,9 +833,10 @@ fn build_area(
                 _ => None,
             })
             .collect(),
-        grids,
-        scenery,
-    }
+        props,
+        lights,
+    };
+    (area, check)
 }
 
 /// Where in the area's scene a problem with `placed` is reported: at its own node and field, or at
@@ -1060,77 +849,37 @@ fn module_pointer(placed: &Flattened, field: &str) -> String {
     }
 }
 
-fn check_bounds(
-    content: &Content,
-    map: &Tilemap,
-    modules: &[Flattened],
-    sizes: &ImageSizes,
-    check: &mut RowCheck,
-) {
-    let bounds = map.size.tiles().bounds();
+fn check_bounds(content: &Content, terrain: &Terrain, modules: &[Flattened], check: &mut RowCheck) {
+    let bounds = terrain.size.bounds();
     let outside = |at: Pos<Meters>| !bounds.contains(at);
+    let rect_outside =
+        |rect: Rect<Meters>| outside(rect.min()) || outside(rect.max() - Offset::new(0.001, 0.001));
     for placed in modules {
         let site = |field: &str| module_pointer(placed, field);
         let what = placed.describe(content);
         let out = |check: &mut RowCheck, at: Pos<Meters>| {
             check.error(
                 site(""),
-                "outside the map",
-                format!("{what} lands outside the map at {}, {}", at.x, at.y),
+                "outside the terrain",
+                format!("{what} lands outside the terrain at {}, {}", at.x, at.y),
                 format!(
-                    "everything inside the {} × {} map",
-                    map.size.width, map.size.height
+                    "everything inside the {} × {} m terrain",
+                    terrain.size.width, terrain.size.height
                 ),
             );
         };
         match &placed.module {
             AreaModule::Object(object) => {
-                let b = object.shape.bounds();
-                if outside(b.min()) || outside(b.max() - Offset::new(0.001, 0.001)) {
+                if rect_outside(object.shape.bounds()) {
                     out(check, object.shape.origin());
                 }
             }
-            AreaModule::Scenery(scenery) => {
-                let tileset = scenery.tileset.get(content);
-                if tileset.tile != map.tile {
-                    check.error(
-                        site("/tileset"),
-                        "tile size mismatch",
-                        format!("{} against {}", map.tile, tileset.tile),
-                        format!("tilesets of {} px tiles, the area's", map.tile),
-                    );
-                }
-                let count = sizes
-                    .0
-                    .get(tileset.image.as_str())
-                    .map(|&(w, h)| tileset.grid(w, h).count());
-                for (row, tiles) in scenery.tiles.iter().enumerate() {
-                    for (column, tile) in tiles.iter().enumerate() {
-                        let Some(tile) = tile else {
-                            continue;
-                        };
-                        let square = walk::tile_square(scenery, column, row);
-                        if outside(square.origin) {
-                            out(check, square.origin);
-                        }
-                        if let Some(count) = count
-                            && tile.tile >= count
-                        {
-                            check.error(
-                                site(&format!("/tiles/{row}/{column}")),
-                                "tile out of range",
-                                format!("tile {} of {count}", tile.tile),
-                                format!("0 to {}", count.saturating_sub(1)),
-                            );
-                        }
-                    }
-                }
+            AreaModule::Prop(prop) if outside(prop.at) => out(check, prop.at),
+            AreaModule::Scatter(scatter) if rect_outside(scatter.region) => {
+                out(check, scatter.region.origin)
             }
-            AreaModule::Resident(resident) => {
-                if outside(resident.at) {
-                    out(check, resident.at);
-                }
-            }
+            AreaModule::Light(light) if outside(light.at) => out(check, light.at),
+            AreaModule::Resident(resident) if outside(resident.at) => out(check, resident.at),
             AreaModule::Population(Population {
                 roams: Some(roams), ..
             }) if outside(roams.min()) => out(check, roams.min()),
@@ -1189,7 +938,7 @@ fn check_placed(
                         ContentProblem::new(
                             "not walkable",
                             format!("{}, {}", at.x, at.y),
-                            "a point object on a walkable cell",
+                            "a point object on walkable ground",
                         )
                         .near(nearest_cell(at)),
                     );
@@ -1212,7 +961,7 @@ fn check_placed(
                         ContentProblem::new(
                             "not walkable",
                             format!("{} {}, {}", key, resident.at.x, resident.at.y),
-                            "a resident on a walkable cell",
+                            "a resident on walkable ground",
                         )
                         .near(nearest_cell(resident.at)),
                     );
@@ -1239,7 +988,7 @@ fn check_placed(
                         site(""),
                         "no wild ground",
                         format!("{} in {}", population.npc.path(content), id.path(content)),
-                        "a walkable cell outside every safe zone to spawn on",
+                        "walkable ground outside every safe zone to spawn on",
                     );
                 }
             }
@@ -1258,7 +1007,7 @@ fn check_placed(
                 pointer.clone(),
                 "warp object has no ground",
                 name.clone(),
-                "a warp object covering at least one walkable cell",
+                "a warp object covering some walkable ground",
             );
         }
         for (_, other, other_name) in &warps[index + 1..] {
@@ -1296,7 +1045,7 @@ pub fn check_place(content: &Content, place: script::Place) -> Result<(), Conten
         ContentProblem::new(
             rule,
             found,
-            format!("a place on a walkable cell of {key}, outside every warp object"),
+            format!("a place on walkable ground of {key}, outside every warp object"),
         )
         .near(nearest)
     };

@@ -1,0 +1,11 @@
+{
+  "name": "Dirt",
+  "color": [
+    120,
+    96,
+    64,
+    255
+  ],
+  "surface": "world/surface/sand.surface.json",
+  "walk": "walkable"
+}

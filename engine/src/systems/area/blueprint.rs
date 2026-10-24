@@ -5,11 +5,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::grid::{AreaGrids, Flip, LayerGrid, PaletteEntry};
-use super::scene::{
-    self, Holes, ModuleNode, SCENE_FILE, SCENE_PARTS, Scene, SceneNode, scene_file,
-};
-use super::{AreaId, AreaModule, MapSize, ObjectShape, Tilemap};
+use super::scene::{self, Holes, ModuleNode, SCENE, SCENE_FILE, SceneNode, scene_file};
+use super::terrain::TerrainSize;
+use super::{AreaId, AreaModule, ObjectShape};
 use crate::core::audio::soundscape::SoundscapeShape;
 use crate::core::content::id::{Leaf, in_scope, nearest, nearest_path, read_aside};
 use crate::core::content::load::{ParseError, parse_value, shape_problem};
@@ -18,9 +16,10 @@ use crate::core::content::{
     Bundle, CONFIG_FILE, Content, ContentFile, ContentId, ContentProblem, ContentScope, FileWriter,
     Nearby, PartSpec, Parts, RowCheck, Shape, serial, valid_key, with_content,
 };
-use crate::core::math::{Pos, Rect, Size};
+use crate::core::geometry::Degrees;
+use crate::core::math::{Pos, Rect};
 use crate::core::script::{VarValue, Variable, VariableType, Vocabulary};
-use crate::core::units::{Cell, CellPos, GridDims, Meters, TilePos};
+use crate::core::units::Meters;
 use crate::systems::script::{Place, RiftScripting, ScriptModule};
 
 pub type BlueprintId = ContentId<BlueprintDef>;
@@ -31,17 +30,17 @@ pub const MAX_PARTS: usize = 4096;
 pub const MAX_AREA_PARTS: usize = 65_536;
 pub const MAX_VARIABLES: usize = 32;
 
-/// A reusable piece of an area: a box of ground with a scene graph of modules on it, placed as one
-/// node of an area or of another blueprint. Its variables are holes in its modules that each
+/// A reusable piece of an area: a stretch of ground with a scene graph of modules on it, placed as
+/// one node of an area or of another blueprint. Its variables are holes in its modules that each
 /// placement fills.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlueprintDef {
-    pub map: Tilemap,
+    pub size: TerrainSize,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub variables: BTreeMap<String, Variable<RiftScripting>>,
     #[serde(skip)]
-    pub scene: Scene,
+    pub scene: Vec<SceneNode>,
 }
 
 impl ContentFile for BlueprintDef {
@@ -50,17 +49,17 @@ impl ContentFile for BlueprintDef {
 
     fn fresh(_: &Nearby) -> Result<BlueprintDef, String> {
         Ok(BlueprintDef {
-            map: Tilemap::fresh(MapSize {
+            size: TerrainSize {
                 width: 4,
                 height: 4,
-            }),
+            },
             variables: BTreeMap::new(),
-            scene: Scene::default(),
+            scene: Vec::new(),
         })
     }
 
     fn check(&self, cx: &mut RowCheck) {
-        self.map.check("/map", 1, cx);
+        self.size.check("/size", 1, cx);
         cx.count(
             "/variables",
             self.variables.len(),
@@ -82,12 +81,12 @@ impl ContentFile for BlueprintDef {
 }
 
 impl Bundle for BlueprintDef {
-    const PARTS: &'static [PartSpec] = SCENE_PARTS;
-    const WRITTEN: &'static [PartSpec] = SCENE_PARTS;
+    const PARTS: &'static [PartSpec] = &[SCENE];
+    const WRITTEN: &'static [PartSpec] = &[SCENE];
 
     fn read_parts(&mut self, parts: &mut Parts) {
-        scene::read(&mut self.scene, &self.map, &self.variables, parts);
-        let used = scene::holes(&self.scene.nodes);
+        scene::read(&mut self.scene, &self.variables, parts);
+        let used = scene::holes(&self.scene);
         for name in self.variables.keys() {
             if !used.contains(name) {
                 parts.json_error(
@@ -104,7 +103,7 @@ impl Bundle for BlueprintDef {
     }
 
     fn write_parts(&self, bundle: &str, writer: &mut FileWriter) -> io::Result<()> {
-        scene::write(&self.scene, &self.map, bundle, writer)
+        scene::write(&self.scene, bundle, writer)
     }
 }
 
@@ -182,7 +181,9 @@ pub(super) fn write_module(
         AreaModule::Object(fields) => serde_json::to_string(fields),
         AreaModule::SafeZone(fields) => serde_json::to_string(fields),
         AreaModule::Soundscape(fields) => serde_json::to_string(fields),
-        AreaModule::Scenery(fields) => serde_json::to_string(fields),
+        AreaModule::Prop(fields) => serde_json::to_string(fields),
+        AreaModule::Scatter(fields) => serde_json::to_string(fields),
+        AreaModule::Light(fields) => serde_json::to_string(fields),
         AreaModule::Blueprint(fields) => serde_json::to_string(fields),
         AreaModule::Population(fields) => serde_json::to_string(fields),
         AreaModule::Resident(fields) => serde_json::to_string(fields),
@@ -330,8 +331,9 @@ pub struct Placement {
     #[schemars(with = "serial::PosRow")]
     #[serde(serialize_with = "serial::pos", deserialize_with = "serial::pos_from")]
     pub at: Pos<Meters>,
-    #[serde(default, skip_serializing_if = "Flip::is_none")]
-    pub flip: Flip,
+    /// A quarter turn, so what the blueprint places keeps its rectangles square to the world.
+    #[serde(default, skip_serializing_if = "Degrees::is_zero")]
+    pub yaw: Degrees,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub values: BTreeMap<String, VarValue<RiftScripting>>,
 }
@@ -375,15 +377,15 @@ impl Flattened {
     }
 }
 
-/// A blueprint placed in an area, at any depth: where its cells and modules land, and the scripts
-/// that run once for it.
+/// A blueprint placed in an area, at any depth: where its modules land, and the scripts that run
+/// once for it.
 #[derive(Clone)]
 pub struct PlacedBlueprint {
     pub blueprint: BlueprintId,
     pub origin: String,
     pub chain: Vec<(BlueprintId, String)>,
     pub at: Pos<Meters>,
-    pub flip: Flip,
+    pub yaw: Degrees,
     pub values: BTreeMap<String, Value>,
     /// Each script with the path of its node in the blueprint's scene.
     pub scripts: Vec<(String, ScriptModule)>,
@@ -408,8 +410,8 @@ pub struct FlattenError {
     pub problem: ContentProblem,
 }
 
-/// The modules an area's scene adds up to, in tree order: folders dissolve, ground layers are left to
-/// the grids, and each placement brings its blueprint's modules, placed.
+/// The modules an area's scene adds up to, in tree order: folders dissolve and each placement brings
+/// its blueprint's modules, placed.
 pub fn flatten(
     content: &Content,
     nodes: &[SceneNode],
@@ -451,7 +453,7 @@ pub fn flatten_kept(
                     keep,
                     holes_open: false,
                 };
-                cx.expand(placement, placement.at, placement.flip, &placement.values);
+                cx.expand(placement, placement.at, placement.yaw, &placement.values);
             }
             module => out.push(Flattened {
                 module: module.clone(),
@@ -491,7 +493,7 @@ pub fn flatten_blueprint(
     let placement = Placement {
         blueprint,
         at: Pos::new(0.0, 0.0),
-        flip: Flip::None,
+        yaw: Degrees(0.0),
         values: BTreeMap::new(),
     };
     let mut cx = Expansion {
@@ -505,7 +507,7 @@ pub fn flatten_blueprint(
         keep: &|path| keep(&path[1..]),
         holes_open: true,
     };
-    cx.expand(&placement, placement.at, placement.flip, &placement.values);
+    cx.expand(&placement, placement.at, placement.yaw, &placement.values);
     let own = |chain: &mut Vec<(BlueprintId, String)>, origin: &mut String| {
         if !chain.is_empty() {
             *origin = chain.remove(0).1;
@@ -585,7 +587,7 @@ impl Expansion<'_> {
         &mut self,
         placement: &Placement,
         at: Pos<Meters>,
-        flip: Flip,
+        yaw: Degrees,
         values: &BTreeMap<String, VarValue<RiftScripting>>,
     ) {
         let content = self.content.clone();
@@ -678,7 +680,7 @@ impl Expansion<'_> {
             origin: self.origin.clone(),
             chain: self.chain.clone(),
             at,
-            flip,
+            yaw,
             values: filled.clone(),
             scripts: Vec::new(),
         });
@@ -688,7 +690,7 @@ impl Expansion<'_> {
         let above: Vec<&str> = std::iter::once(self.origin.as_str())
             .chain(self.chain.iter().map(|(_, pointer)| pointer.as_str()))
             .collect();
-        scene::walk(&def.scene.nodes, &mut |pointer, node, _| {
+        scene::walk(&def.scene, &mut |pointer, node, _| {
             if let SceneNode::Module(node) = node {
                 let path: Vec<&str> = above.iter().copied().chain([pointer]).collect();
                 if keep(&path) {
@@ -745,8 +747,8 @@ impl Expansion<'_> {
                     self.placements[placed].scripts.push((pointer, script))
                 }
                 AreaModule::Blueprint(nested) => {
-                    let nested_at = at_of(at, flip, nested.at);
-                    let nested_flip = nested.flip.compose(flip);
+                    let nested_at = at_of(at, yaw, nested.at);
+                    let nested_yaw = Degrees(nested.yaw.0 + yaw.0);
                     let values_at = FlattenAt::Blueprint(
                         placement.blueprint,
                         SCENE_FILE,
@@ -763,10 +765,10 @@ impl Expansion<'_> {
                         keep: self.keep,
                         holes_open: false,
                     };
-                    inner.expand(&nested, nested_at, nested_flip, &nested.values);
+                    inner.expand(&nested, nested_at, nested_yaw, &nested.values);
                 }
                 mut module => {
-                    place(&mut module, at, flip);
+                    place(&mut module, at, yaw);
                     self.out.push(Flattened {
                         module,
                         origin: self.origin.clone(),
@@ -822,124 +824,14 @@ impl Expansion<'_> {
 }
 
 /// Where a point given in a placed blueprint's own coordinates lands.
-fn at_of(at: Pos<Meters>, flip: Flip, point: Pos<Meters>) -> Pos<Meters> {
-    at + flip.apply(point).to_vector()
+fn at_of(at: Pos<Meters>, yaw: Degrees, point: Pos<Meters>) -> Pos<Meters> {
+    at + yaw.rotate(point.to_vector())
 }
 
-/// The ground an area shows once every placed blueprint painted into it: layer by layer of the same
-/// name, each placement's cells over what's under them in tree order, a placement's own blueprint
-/// under the placements inside it. Forced walk cells merge the same way, and each placement's
-/// palette entries join the area's, flipped as the placement is.
-pub fn stamp<'a>(
-    area: &AreaGrids,
-    placements: &[PlacedBlueprint],
-    grids_of: impl Fn(BlueprintId) -> Option<(&'a BlueprintDef, &'a AreaGrids)>,
-    content: &Content,
-    errors: &mut Vec<FlattenError>,
-) -> AreaGrids {
-    let mut out = area.clone();
-    let size = out.size;
-    for placement in placements {
-        let Some((def, grids)) = grids_of(placement.blueprint) else {
-            continue;
-        };
-        let site = match placement.chain.last() {
-            None => FlattenAt::Area(placement.origin.clone()),
-            Some((blueprint, pointer)) => {
-                FlattenAt::Blueprint(*blueprint, SCENE_FILE, pointer.clone())
-            }
-        };
-        let cells: Vec<(usize, CellPos)> = def
-            .map
-            .size
-            .grid()
-            .cells()
-            .enumerate()
-            .map(|(index, cell)| {
-                let square = Rect::new(Pos::new(cell.x as f32, cell.y as f32), Size::splat(1.0));
-                (
-                    index,
-                    placement.flip.place(square, placement.at).origin.cell(),
-                )
-            })
-            .collect();
-        let mut off_edge = false;
-        for layer in &grids.ground {
-            if layer.cells.iter().all(Option::is_none) {
-                continue;
-            }
-            let Some(target) = out.ground.iter().position(|known| known.name == layer.name) else {
-                errors.push(FlattenError {
-                    at: site.clone(),
-                    problem: ContentProblem::new(
-                        "missing layer",
-                        format!(
-                            "{} paints layer {}, which the area has none of",
-                            placement.blueprint.name(content),
-                            layer.name
-                        ),
-                        format!("a ground layer named {} in the area", layer.name),
-                    ),
-                });
-                continue;
-            };
-            for &(index, cell) in &cells {
-                let Some(tile) = layer.cells[index] else {
-                    continue;
-                };
-                let Some(to) = cell.index(size) else {
-                    off_edge = true;
-                    continue;
-                };
-                let Some(entry) = grids.palette.get(tile as usize) else {
-                    continue;
-                };
-                let entry = PaletteEntry {
-                    flip: entry.flip.compose(placement.flip),
-                    ..*entry
-                };
-                let at = out.palette_index(entry, content);
-                out.ground[target].cells[to] = Some(at);
-            }
-        }
-        for &(index, cell) in &cells {
-            let Some(forced) = grids.walk.get(index).copied().flatten() else {
-                continue;
-            };
-            match cell.index(size) {
-                Some(to) => out.walk[to] = Some(forced),
-                None => off_edge = true,
-            }
-        }
-        if off_edge {
-            errors.push(FlattenError {
-                at: site,
-                problem: ContentProblem::new(
-                    "outside the map",
-                    format!(
-                        "cells of {} land outside the map",
-                        placement.blueprint.name(content)
-                    ),
-                    format!(
-                        "every painted cell inside the {} × {} map",
-                        size.width, size.height
-                    ),
-                ),
-            });
-        }
-    }
-    out
-}
-
-/// The layers of `grids` in tree order with the cells painted in each.
-pub fn layer_grids(def_scene: &Scene, map: &Tilemap) -> Vec<LayerGrid> {
-    scene::layers(&def_scene.nodes)
-        .into_iter()
-        .map(|layer| LayerGrid {
-            name: layer.name.clone(),
-            cells: def_scene.grids.layer(&layer.name, map),
-        })
-        .collect()
+/// Where a rectangle given in a placed blueprint's own coordinates lands: turned by the quarter
+/// turns of `yaw`, it stays a rectangle.
+fn rect_of(at: Pos<Meters>, yaw: Degrees, rect: Rect<Meters>) -> Rect<Meters> {
+    Rect::from_points([at_of(at, yaw, rect.min()), at_of(at, yaw, rect.max())])
 }
 
 fn typed_value(
@@ -993,9 +885,10 @@ fn strings(json: &Value, into: &mut Vec<String>) {
     }
 }
 
-pub fn place(module: &mut AreaModule, at: Pos<Meters>, flip: Flip) {
-    let point = |p: Pos<Meters>| at + flip.apply(p).to_vector();
-    let rect = |r: Rect<Meters>| flip.place(r, at);
+pub fn place(module: &mut AreaModule, at: Pos<Meters>, yaw: Degrees) {
+    let point = |p: Pos<Meters>| at_of(at, yaw, p);
+    let rect = |r: Rect<Meters>| rect_of(at, yaw, r);
+    let turned = |facing: Degrees| Degrees((facing.0 + yaw.0).rem_euclid(360.0));
     match module {
         AreaModule::Object(object) => {
             object.shape = match object.shape {
@@ -1010,14 +903,19 @@ pub fn place(module: &mut AreaModule, at: Pos<Meters>, flip: Flip) {
                 SoundscapeShape::Ellipse(r) => SoundscapeShape::Ellipse(rect(r)),
             };
         }
-        AreaModule::Scenery(scenery) => {
-            scenery.at = point(scenery.at);
-            scenery.flip = scenery.flip.compose(flip);
+        AreaModule::Prop(prop) => {
+            prop.at = point(prop.at);
+            prop.yaw = turned(prop.yaw);
         }
+        AreaModule::Scatter(scatter) => scatter.region = rect(scatter.region),
+        AreaModule::Light(light) => light.at = point(light.at),
         AreaModule::Population(population) => {
             population.roams = population.roams.map(rect);
         }
-        AreaModule::Resident(resident) => resident.at = point(resident.at),
+        AreaModule::Resident(resident) => {
+            resident.at = point(resident.at);
+            resident.facing = turned(resident.facing);
+        }
         AreaModule::Blueprint(_) | AreaModule::Script(_) => {}
     }
 }

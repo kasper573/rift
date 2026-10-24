@@ -4,8 +4,8 @@ use engine::core::math::Pos;
 use engine::core::units::{CellPos, Meters};
 use engine::systems::area::AreaModuleKind;
 use engine::systems::area::blueprint::BlueprintDef;
+use engine::systems::area::prop::PropDef;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
-use engine::systems::area::tileset::TilesetDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::script::ScriptDef;
 
@@ -20,8 +20,11 @@ pub fn named_table(kind: AreaModuleKind) -> Option<&'static str> {
         AreaModuleKind::Population | AreaModuleKind::Resident => Some(NpcDef::TABLE),
         AreaModuleKind::Blueprint => Some(BlueprintDef::TABLE),
         AreaModuleKind::Script => Some(ScriptDef::TABLE),
-        AreaModuleKind::Scenery => Some(TilesetDef::TABLE),
-        AreaModuleKind::Object | AreaModuleKind::SafeZone | AreaModuleKind::Soundscape => None,
+        AreaModuleKind::Prop | AreaModuleKind::Scatter => Some(PropDef::TABLE),
+        AreaModuleKind::Object
+        | AreaModuleKind::SafeZone
+        | AreaModuleKind::Soundscape
+        | AreaModuleKind::Light => None,
     }
 }
 

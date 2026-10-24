@@ -303,7 +303,7 @@ fn act(editor: &mut Editor, action: TreeAction) {
             Err(error) => editor.toast(error),
         },
         TreeAction::ImportMedia(folder) => {
-            let Some(sources) = crate::import::picked_files(
+            let Some(sources) = rows::picked_files(
                 rfd::FileDialog::new()
                     .set_title("Import media")
                     .add_filter("media", &media_extensions()),

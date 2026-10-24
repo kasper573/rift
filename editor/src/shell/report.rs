@@ -116,7 +116,6 @@ pub fn not_loaded(editor: &mut Editor, ctx: &Context) {
         && let Some(project) = &mut editor.project
     {
         project.reload();
-        editor.views.content_changed();
     }
 }
 

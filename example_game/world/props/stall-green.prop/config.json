@@ -1,0 +1,8 @@
+{
+  "footprint": {
+    "type": "box",
+    "width": 2.5,
+    "depth": 2.5
+  },
+  "fade": true
+}

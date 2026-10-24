@@ -28,15 +28,14 @@ fn a_reference_is_placed_where_it_is_read_not_where_its_key_is_first_written() {
 
 #[test]
 fn a_blueprint_part_names_its_rows_even_around_a_hole_with_no_default() {
-    let game = game().blueprint(
+    let game = game().prop("rock", json!({ "type": "none" })).blueprint(
         "rock",
         (1, 1),
         json!({ "x": { "type": "number" } }),
         json!([{
-            "type": "scenery",
+            "type": "prop",
+            "prop": path("prop", "rock"),
             "at": { "x": { "var": "x" }, "y": 0.0 },
-            "tileset": path("tileset", "start_ground"),
-            "tiles": [[0]]
         }]),
     );
     let scene = format!("{}/scene.json", path("blueprint", "rock"));
@@ -44,26 +43,12 @@ fn a_blueprint_part_names_its_rows_even_around_a_hole_with_no_default() {
 
     let references = registry().references(&content, &file, &text);
 
-    let tilesets: Vec<(&str, &str)> = references
+    let props: Vec<(&str, &str)> = references
         .iter()
-        .filter(|reference| reference.kind == LeafKind::Row("tileset"))
+        .filter(|reference| reference.kind == LeafKind::Row("prop"))
         .map(|reference| (reference.value.as_str(), reference.pointer.as_str()))
         .collect();
-    assert_eq!(tilesets, [("start_ground.tileset", "/0/tileset")]);
-}
-
-#[test]
-fn an_areas_palette_names_each_tileset_at_its_line() {
-    let (content, file, text) = loaded_with_text(game(), "start.area/palette.csv");
-
-    let references = registry().references(&content, &file, &text);
-
-    let tilesets: Vec<(&str, usize, bool)> = references
-        .iter()
-        .filter(|reference| reference.kind == LeafKind::Row("tileset"))
-        .map(|reference| (reference.value.as_str(), reference.line, reference.known))
-        .collect();
-    assert_eq!(tilesets, [("start_ground.tileset", 2, true)]);
+    assert_eq!(props, [("rock.prop", "/0/prop")]);
 }
 
 fn loaded_with_text(game: testkit::Game, file: &str) -> (Content, String, String) {

@@ -163,8 +163,8 @@ fn check_standalone(metadata: &Metadata, out: &mut Vec<String>) {
     }
 }
 
-/// A shipped game loads as a whole game, and every JSON and CSV file in it reads exactly as the
-/// editor writes it, so saving it in the editor changes only what was edited.
+/// A shipped game loads as a whole game, and every file of a kind the editor writes reads exactly
+/// as the editor writes it, so saving it in the editor changes only what was edited.
 fn check_shipped_game(name: &str, folder: &Path, scratch: &Path, out: &mut Vec<String>) {
     let content = match load_content(Arc::new(FilesystemFolder(folder.to_path_buf())), "lint") {
         Ok(content) => content,
@@ -194,23 +194,18 @@ fn check_shipped_game(name: &str, folder: &Path, scratch: &Path, out: &mut Vec<S
     }
 }
 
-/// Every file of the kinds the editor writes: the JSON of settings and content, and the CSV of grids.
+/// Every file of the kinds the editor writes.
 fn written_kinds(folder: &Path) -> BTreeSet<String> {
     WalkDir::new(folder)
         .follow_links(true)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|ext| ext == "json" || ext == "csv")
-        })
         .map(|entry| {
             let relative = entry.path().strip_prefix(folder).unwrap_or(entry.path());
             relative.to_string_lossy().replace('\\', "/")
         })
+        .filter(|file| registry().writes(file))
         .collect()
 }
 

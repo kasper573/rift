@@ -27,7 +27,7 @@ use super::{
 };
 use crate::core::assets::ImageRef;
 use crate::core::content::Content;
-use crate::core::geometry::{Footprint, Radians, Shape};
+use crate::core::geometry::{PlacedShape, Radians, Shape};
 use crate::core::gui::{self, Band, WidgetRects};
 use crate::core::math::{Pos, Rgba, Size};
 use crate::core::render::present::{self, PRESENT_LAYER, PresentScale};
@@ -496,7 +496,7 @@ impl SiteFrame {
     }
 
     /// The quad an area site is drawn on, around its footprint's outline, with the footprint on it.
-    pub fn area(footprint: &Footprint) -> SiteFrame {
+    pub fn area(footprint: &PlacedShape) -> SiteFrame {
         let (center, size) = bounds(&footprint.outline());
         let size = size.max(Vec2::ONE);
         let at = footprint.at.to_screen();

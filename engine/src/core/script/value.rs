@@ -3,7 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::IntoStaticStr;
 
-use crate::core::geometry::Footprint;
+use crate::core::geometry::PlacedShape;
 use crate::core::math::Pos;
 use crate::core::units::Meters;
 
@@ -16,7 +16,7 @@ pub enum Value {
     Actor(Option<Entity>),
     Actors(Vec<Entity>),
     Point(Option<Pos<Meters>>),
-    Area(Option<Footprint>),
+    Area(Option<PlacedShape>),
 }
 
 #[derive(
@@ -132,7 +132,7 @@ impl Value {
         }
     }
 
-    pub fn as_area(&self) -> Option<Footprint> {
+    pub fn as_area(&self) -> Option<PlacedShape> {
         match self {
             Value::Area(area) => *area,
             _ => None,

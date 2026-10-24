@@ -378,8 +378,7 @@ pub fn cards_beside(
             else {
                 continue;
             };
-            let map = def.blueprint.map.size;
-            let size = Size::new(map.width as f32, map.height as f32);
+            let size = def.size();
             let at = right_of(card_rect(size, card), footprint(size, card.size));
             let beside = AreaCard {
                 size: card.size,

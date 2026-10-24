@@ -1,0 +1,7 @@
+{
+  "footprint": {
+    "type": "circle",
+    "radius": 0.4
+  },
+  "fade": true
+}

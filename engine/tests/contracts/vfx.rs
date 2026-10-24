@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
-use engine::core::geometry::{Degrees, Footprint, Radians, Shape};
+use engine::core::geometry::{Degrees, PlacedShape, Radians, Shape};
 use engine::core::math::{Offset, Pos, Rgba};
 use engine::core::time::UnixMillis;
 use engine::core::units::Meters;
@@ -126,7 +126,7 @@ fn an_area_vfx_reaches_the_targets_it_struck_and_not_the_caster() {
     assert!(sim.run_until(10.0, |world| any_shown(world, "blast")));
 
     let blasts = instances(&mut sim, "blast");
-    let circles: Vec<Footprint> = blasts
+    let circles: Vec<PlacedShape> = blasts
         .iter()
         .filter_map(|blast| match blast.site {
             VfxSite::Area(footprint) => Some(footprint),
@@ -183,7 +183,7 @@ fn an_instance_arrives_as_the_server_sent_it_whatever_its_parameters_and_site() 
     };
     let on_an_area = VfxInstance {
         vfx: sim.id("swoosh"),
-        site: VfxSite::Area(Footprint {
+        site: VfxSite::Area(PlacedShape {
             at: Pos::new(3.0, 4.0),
             facing: Radians(0.5),
             shape: Shape::Cone {

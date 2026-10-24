@@ -86,6 +86,22 @@ pub fn pos_from<'de, U, D: Deserializer<'de>>(deserializer: D) -> Result<Pos<U>,
     Ok(Pos::new(x, y))
 }
 
+pub fn points<U, S: Serializer>(points: &[Pos<U>], serializer: S) -> Result<S::Ok, S::Error> {
+    let rows: Vec<PosRow> = points
+        .iter()
+        .map(|point| PosRow {
+            x: point.x,
+            y: point.y,
+        })
+        .collect();
+    rows.serialize(serializer)
+}
+
+pub fn points_from<'de, U, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Pos<U>>, D::Error> {
+    let rows = Vec::<PosRow>::deserialize(deserializer)?;
+    Ok(rows.into_iter().map(|row| Pos::new(row.x, row.y)).collect())
+}
+
 pub fn one() -> u32 {
     1
 }
@@ -96,6 +112,14 @@ pub fn is_one(count: &u32) -> bool {
 
 pub fn is_zero(count: &u32) -> bool {
     *count == 0
+}
+
+pub fn yes() -> bool {
+    true
+}
+
+pub fn is_true(flag: &bool) -> bool {
+    *flag
 }
 
 pub fn is_false(flag: &bool) -> bool {

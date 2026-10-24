@@ -110,11 +110,11 @@ pub fn badge(ui: &mut Ui, kind: &str) {
 pub fn badge_color(kind: &str) -> Color32 {
     match kind {
         "population" | "resident" | "npc" | "player" | "nameplate" | "tint" | "voice" => ink::OCHRE,
-        "object" | "safe_zone" | "area" | "walk" | "ground_layer" => ink::VERDIGRIS,
+        "object" | "safe_zone" | "area" | "walk" | "ground" | "terrain" => ink::VERDIGRIS,
         "script" | "shown" | "requires" => ink::TYRIAN,
         "soundscape" | "sfx" | "babble" | "step" => ink::GOLD,
         "loot" | "item" | "stack" | "reward" | "hold" | "deliver" | "offer" | "shop" => ink::AZURE,
-        "blueprint" | "scenery" | "tileset" | "model" | "bust" => ink::INK2,
+        "blueprint" | "prop" | "scatter" | "light" | "model" | "bust" => ink::INK2,
         "respawn" | "quest" | "defeat" | "hand_in" | "task" | "decide" | "pick_one" => ink::RUBRIC,
         _ => ink::INK3,
     }
@@ -127,7 +127,8 @@ pub fn badge_letter(kind: &str) -> String {
         "object" => "P".to_owned(),
         "safe_zone" => "Z".to_owned(),
         "soundscape" => "A".to_owned(),
-        "blueprint" | "scenery" => "L".to_owned(),
+        "blueprint" => "L".to_owned(),
+        "prop" | "scatter" => "T".to_owned(),
         "loot" | "item" => "I".to_owned(),
         "respawn" => "F".to_owned(),
         "quest" => "R".to_owned(),

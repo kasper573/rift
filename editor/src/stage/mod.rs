@@ -3,6 +3,7 @@
 //! items as they lie dropped, vfx through the game's presenters. A scene is either posed by the
 //! designer, or taken live from a server world running the game's own mechanics.
 
+mod images;
 pub mod live;
 mod mirror;
 
@@ -13,12 +14,11 @@ use ui::theme;
 
 use bevy::prelude::*;
 use engine::core::content::Content;
-use engine::core::geometry::{Footprint, Radians};
+use engine::core::geometry::{PlacedShape, Radians};
 use engine::core::math::{Pos, Rgba};
 use engine::core::render::ToScreen;
 use engine::core::time::Seconds;
 use engine::core::units::Meters;
-use engine::core::vfx::render::SiteTexture;
 use engine::core::vfx::{VfxLayer, VfxParams};
 use engine::systems::GameSettings;
 use engine::systems::actor::plate::{self, PlateLabel};
@@ -28,13 +28,12 @@ use engine::systems::skill::SkillId;
 use engine::systems::status::StatusEffectId;
 use ui::egui::{Color32, Pos2, Ui, Vec2 as EVec2};
 
+use self::images::Images;
 use self::live::LiveWorld;
 use self::mirror::{ActorPose, Site, Source, Stage, VfxPose};
 use crate::app::Editor;
 use crate::project::ProjectFiles;
 use crate::thumbs;
-
-use crate::views::area::scene::{AreaSceneRequest, AreaSceneSpec, AreaScenes};
 
 pub const SIZE: [u32; 2] = [384, 288];
 pub const ZOOM: f32 = 2.0;
@@ -47,6 +46,7 @@ pub struct Stages {
     requests: Vec<Request>,
     stages: HashMap<String, Stage>,
     live: HashMap<String, LiveWorld>,
+    images: Images,
     indices: Vec<usize>,
 }
 
@@ -58,6 +58,14 @@ impl Stages {
             indices.push(index);
             Stage::spawn(world, index)
         })
+    }
+
+    fn render(&mut self, world: &mut World, key: &str, frame: &mirror::Frame) {
+        self.stage(world, key);
+        let Stages { stages, images, .. } = self;
+        if let Some(stage) = stages.get_mut(key) {
+            stage.render(world, images, frame);
+        }
     }
 }
 
@@ -105,7 +113,7 @@ pub struct PosedVfx {
 #[derive(Clone, PartialEq)]
 pub enum PosedSite {
     Actor(usize),
-    Area(Footprint),
+    Area(PlacedShape),
     Screen,
 }
 
@@ -142,7 +150,6 @@ impl Shown {
 struct Request {
     key: String,
     scene: Scene,
-    ground: bool,
 }
 
 impl PosedActor {
@@ -189,29 +196,18 @@ pub fn show(
     let px = ZOOM * fit;
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, theme::CANVAS);
     if ground {
-        let ppp = ui.ctx().pixels_per_point();
-        let generation = editor
-            .project
-            .as_ref()
-            .map_or(0, |project| project.generation);
-        let scene_key = ground_key(key);
-        editor.views.area.requests.push(AreaSceneRequest {
-            key: scene_key.clone(),
-            spec: AreaSceneSpec::area(spawn.area.path(&content)),
-            width: (rect.width() * ppp) as u32,
-            height: (rect.height() * ppp) as u32,
-            center: spawn.at,
-            zoom: px * ppp,
-            generation,
-            live: true,
-        });
-        painter.rect_filled(rect, 4.0, theme::CANVAS);
-        if let Some(scene) = editor.views.area.scenes.by_path.get(&scene_key) {
-            painter.image(scene.texture, rect, scene.uv(), Color32::WHITE);
-        }
-    } else {
-        painter.rect_filled(rect, 4.0, theme::CANVAS);
+        let area = spawn.area.path(&content).to_owned();
+        crate::views::area::ground::draw_area(
+            editor,
+            &painter,
+            &ground_key(key),
+            &area,
+            rect,
+            spawn.at,
+            px,
+        );
     }
     let shown = Shown {
         rect,
@@ -237,7 +233,6 @@ pub fn show(
     editor.views.stage.requests.push(Request {
         key: key.to_owned(),
         scene,
-        ground,
     });
     Some(shown)
 }
@@ -276,8 +271,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     };
     let real = world.resource::<Time<Real>>().delta();
     for request in requests {
-        let behind = behind(&views.area.scenes, &request);
-        let mut frame = match &request.scene {
+        let frame = match &request.scene {
             Scene::Posed(posed) => posed_frame(posed, content, files),
             Scene::Live(scenario) => {
                 let live = match stages.live.get_mut(&request.key) {
@@ -299,10 +293,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                 live_frame(live, content, files)
             }
         };
-        frame.behind = behind;
-        stages
-            .stage(world, &request.key)
-            .render(world, &mut views.area.scenes, &frame);
+        stages.render(world, &request.key, &frame);
     }
 }
 
@@ -310,7 +301,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
 /// the footprint's reach, kept where it falls inside, gives the candidates; picks start at even
 /// strides through them and relax to the middle of the candidates nearest each, so they end up
 /// evenly apart and well inside whatever the shape is.
-pub fn spread(footprint: &Footprint, count: u32) -> Vec<Pos<Meters>> {
+pub fn spread(footprint: &PlacedShape, count: u32) -> Vec<Pos<Meters>> {
     let reach = footprint.reach().0.max(0.1);
     let golden = PI * (3.0 - 5f32.sqrt());
     let inside: Vec<Pos<Meters>> = (0..SPREAD_CANDIDATES)
@@ -372,19 +363,6 @@ pub fn spread(footprint: &Footprint, count: u32) -> Vec<Pos<Meters>> {
 
 fn ground_key(key: &str) -> String {
     format!("{key}/ground")
-}
-
-fn behind(scenes: &AreaScenes, request: &Request) -> Option<SiteTexture> {
-    if !request.ground {
-        return None;
-    }
-    let scene = scenes.by_path.get(&ground_key(&request.key))?;
-    let uv = scene.uv();
-    Some(SiteTexture {
-        image: scene.image.clone(),
-        rect: Rect::from_corners(Vec2::new(uv.min.x, uv.min.y), Vec2::new(uv.max.x, uv.max.y)),
-        pixel: Vec2::ONE / Vec2::new(scene.alloc[0] as f32, scene.alloc[1] as f32),
-    })
 }
 
 fn posed_frame<'a>(

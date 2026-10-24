@@ -63,9 +63,9 @@ fn a_kind_that_keeps_its_icon_never_stands_in_by_its_files_pictures() {
         open(support::game().area("field", &testkit::Map::open(4, 4), json!([])));
     let mut thumbs = Thumbnails::default();
     let mut budget = u32::MAX;
-    let tileset = testkit::path("tileset", "field_ground");
-    assert!(icons::preview(&ctx, &mut thumbs, &project, &tileset, &mut budget).is_none());
-    assert!(icons::picture(&ctx, &mut thumbs, &project, &tileset, &mut budget).is_none());
+    let field = testkit::path("area", "field");
+    assert!(icons::preview(&ctx, &mut thumbs, &project, &field, &mut budget).is_none());
+    assert!(icons::picture(&ctx, &mut thumbs, &project, &field, &mut budget).is_none());
 }
 
 /// `game` written to a scratch folder and opened, loaded through.

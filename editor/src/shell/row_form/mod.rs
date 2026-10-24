@@ -13,7 +13,6 @@ use engine::core::content::{ContentFile, MODULES, ModuleRule, fields_file, name_
 use engine::core::vfx::VfxShaderDef;
 use engine::systems::actor::ModelDef;
 use engine::systems::actor::model::ModelModule;
-use engine::systems::area::tileset::TilesetDef;
 use engine::systems::class::ClassDef;
 use engine::systems::item::ItemDef;
 use engine::systems::quest::{ObjectiveKind, QuestDef};
@@ -47,7 +46,7 @@ use crate::project::{ContentEdit, Project, RowSelection};
 use crate::rows::new_file_into;
 use crate::shell::browser::{self, RowMenu};
 use crate::tabs::{file_title, shown_path};
-use crate::views::{class, model, skill, tileset, vfx};
+use crate::views::{class, model, skill, vfx};
 use crate::{make, schema, stage};
 use ui::input::{clear_draft, draft_of, set_draft};
 
@@ -326,12 +325,6 @@ fn row_card(
                         editor.write_content(&label, &key, &model)
                     }));
                 }
-            }
-            return;
-        }
-        if table == TilesetDef::TABLE {
-            if let Ok(tileset) = cx.project.read::<TilesetDef>(key) {
-                tileset::inspect::row_body(ui, cx, &tileset);
             }
             return;
         }

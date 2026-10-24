@@ -6,7 +6,7 @@ use engine::core::content::{FolderReader, write};
 use engine::systems::GameSettings;
 use engine::systems::actor::model::{GenericExpression, ModelDef, ModelModule};
 use engine::systems::area::AreaDef;
-use engine::systems::area::tileset::SurfaceDef;
+use engine::systems::area::SurfaceDef;
 use serde_json::json;
 use testkit::{Game, path};
 
@@ -122,28 +122,12 @@ fn a_file_writes_back_exactly_as_writing_the_whole_game_does() {
     let start: AreaDef = reader.read(&area).expect("reads");
     let files = reader.write(&area, &start).expect("writes").files;
     assert!(files.contains_key(&format!("{area}/scene.json")));
-    assert!(files.contains_key(&format!("{area}/layers/ground.csv")));
     same_as_whole(files);
     let hero = path("model", "hero");
     let model: ModelDef = reader.read(&hero).expect("reads");
     same_as_whole(reader.write(&hero, &model).expect("writes").files);
     let settings: GameSettings = reader.settings().expect("reads");
     same_as_whole(reader.write_settings(&settings).expect("writes"));
-}
-
-#[test]
-fn a_part_an_area_no_longer_writes_is_removed() {
-    let game = game();
-    let reader = reader(&game);
-    let area = path("area", "start");
-    let mut start: AreaDef = reader.read(&area).expect("reads");
-    start.blueprint.scene.grids.layers.clear();
-
-    let written = reader.write(&area, &start).expect("writes");
-
-    let ground = format!("{area}/layers/ground.csv");
-    assert!(!written.files.contains_key(&ground));
-    assert_eq!(written.removed, [ground]);
 }
 
 fn renames(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
@@ -161,15 +145,18 @@ fn text(files: &BTreeMap<String, Vec<u8>>, file: &str) -> String {
 fn a_rename_writes_the_new_path_wherever_a_file_names_the_old_one() {
     let game = game();
     let area = path("area", "start");
-    let ground = path("tileset", "start_ground");
-    let meadow = path("tileset", "meadow");
+    let turf = path("ground", testkit::TURF);
+    let meadow = path("ground", "meadow");
 
     let written = reader(&game)
-        .rewritten(&area, &renames(&[(&ground, &meadow)]))
+        .rewritten(&area, &renames(&[(&turf, &meadow)]))
         .expect("rewritten");
 
-    let palette = text(&written.files, &format!("{area}/palette.csv"));
-    assert_eq!(palette, format!("tileset,tile,flip\n{meadow},0,\n"));
+    let config = text(&written.files, &format!("{area}/config.json"));
+    assert!(
+        config.contains(&meadow) && !config.contains(&turf),
+        "{config}"
+    );
     assert!(written.removed.is_empty());
 }
 

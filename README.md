@@ -16,7 +16,7 @@ editor grow by building it: every feature is made for it and proven on it.
 | [`editor/`](editor) | The editor: opens a game folder, edits it through the engine's own loader and writer, and play-tests it on the engine's binaries. |
 | [`example_game/`](example_game) | The example game: a game folder like any other, and what production runs. |
 | [`ui/`](ui) | The interface the editor and the game share: colors, shapes, text roles, fonts and every general-purpose egui component, so both look and behave alike. |
-| [`bevy/`](bevy) | Bevy plugins that know nothing of rift: a tilemap renderer and a server-authoritative terminal. |
+| [`bevy/`](bevy) | Bevy plugins that know nothing of rift: a server-authoritative terminal. |
 | [`testkit/`](testkit), [`driver/`](driver), [`showcase/`](showcase) | Testing and showing the game: small games declared in code and a bare world of only the systems a test runs, and real clients driven by real input for the showcase's recorded chapters. |
 | [`website/`](website), [`service/`](service), [`docker/`](docker), [`e2e/`](e2e) | The hosted game: the website, the stack it runs in, and the browser suite that tests it. |
 
@@ -96,10 +96,8 @@ just archive              # the release: the three binaries and the example cont
 
 The editor edits the folder in place, with undo across every file, and plays it through the two game
 binaries it finds beside itself (or in the folder its settings name). New games start from the
-templates built into the editor. Art comes in through the import dialogs: drop an Aseprite or
-TexturePacker export, a sheet, a numbered sequence, a GIF or an APNG onto a model or a tileset, and
-the editor maps it onto the model or tileset, keeps the cues and tile data that still fit, and watches the file
-for changes.
+templates built into the editor. Art comes in as glTF: drop a `.glb` onto a model or a prop, and the
+editor keeps the cues and footprint that still fit the new rig, and watches the file for changes.
 
 A content deploy needs no client build: the server restarts on the new folder, and players reconnect,
 sync the changed files and rejoin. The game server's image carries no game. Each stack mounts a game

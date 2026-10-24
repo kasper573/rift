@@ -12,12 +12,13 @@ use engine::core::time::{Millis, Seconds};
 use engine::core::vfx::shader::SHADER_SOURCE;
 use engine::systems::actor::Action;
 use engine::systems::actor::model::{MODEL_BUSTS, MODEL_GLB};
-use engine::systems::area::scene::{LAYERS, PALETTE, SCENE, WALK};
-use engine::systems::area::tileset::TILESET_IMAGE;
+use engine::systems::area::prop::PROP_GLB;
+use engine::systems::area::scene::SCENE;
+use engine::systems::area::terrain::{self, Paint, TerrainSize};
 use serde_json::{Value, json};
 use strum::VariantArray;
 
-use crate::art::{glb, png, wav};
+use crate::art::{glb, png, wav, wav_of};
 
 /// A game folder held in memory, of only the files a test declares, loaded by the engine's own
 /// loader against every type a game is made of. A file the test leaves out is simply absent, so a
@@ -44,9 +45,6 @@ impl Declared for Content {
     }
 }
 
-/// The size in pixels of the tiles of every area and blueprint a test declares.
-pub const TILE: u32 = 16;
-
 /// How long every clip of a declared model plays.
 pub const CLIP: Millis = Millis(300.0);
 
@@ -56,6 +54,11 @@ pub const APEX: Millis = Millis(100.0);
 /// An area's ground as text, one string per row: `.` walkable, `#` blocked.
 #[derive(Clone)]
 pub struct Map(pub Vec<String>);
+
+/// The ground materials and the footstep of every area a test declares.
+pub const TURF: &str = "turf";
+pub const ROCK: &str = "rock";
+const STEP: &str = "step";
 
 /// The path of the file of type `table` a test declares as `name`: the fixture of that name where
 /// the engine has one, and otherwise `<name>.<table>.json`, or the bundle `<name>.<table>`, at the
@@ -395,7 +398,13 @@ impl Game {
         .part("model", name, &MODEL_GLB.named("", "glb"), glb(&rig))
     }
 
-    /// A blueprint `width` × `height` tiles, of `variables`, whose scene holds `nodes`.
+    /// A prop of a model nobody would notice, taking up `footprint` of the ground.
+    pub fn prop(self, name: &str, footprint: Value) -> Game {
+        self.row("prop", name, json!({ "footprint": footprint }))
+            .part("prop", name, &PROP_GLB.named("", "glb"), glb(&[]))
+    }
+
+    /// A blueprint `width` × `height` metres, of `variables`, whose scene holds `nodes`.
     pub fn blueprint(
         self,
         name: &str,
@@ -404,7 +413,7 @@ impl Game {
         nodes: Value,
     ) -> Game {
         let mut fields = json!({
-            "map": { "size": { "width": width, "height": height }, "tile": TILE },
+            "size": { "width": width, "height": height },
         });
         if variables
             .as_object()
@@ -433,60 +442,99 @@ impl Game {
         self
     }
 
-    /// An area of `map`'s ground, painted in one ground layer with one plain tile, with `modules`
-    /// after it in its scene.
+    /// An area of `map`'s ground: flat turf, painted rock where the map is blocked and beyond a map
+    /// smaller than the smallest terrain, lit by day, with `modules` in its scene.
     pub fn area(self, name: &str, map: &Map, modules: Value) -> Game {
-        let tileset = format!("{name}_ground");
         let (width, height) = map.size();
-        let ground = vec![vec!["0"; width]; height];
-        let walk: Vec<Vec<&str>> = map
-            .0
-            .iter()
-            .map(|row| {
-                row.chars()
-                    .map(|cell| if cell == '#' { "0" } else { "1" })
-                    .collect()
-            })
-            .collect();
-        let mut scene = vec![json!({ "type": "ground_layer", "name": "ground" })];
-        scene.extend(
-            modules
-                .as_array()
-                .expect("an area's modules")
-                .iter()
-                .cloned(),
+        let size = TerrainSize {
+            width: (width as u32).max(terrain::MIN_SIDE),
+            height: (height as u32).max(terrain::MIN_SIDE),
+        };
+        let blocked = |x: usize, y: usize| {
+            map.0
+                .get(y)
+                .and_then(|row| row.as_bytes().get(x))
+                .is_none_or(|cell| *cell == b'#')
+        };
+        let game = self.grounds().row(
+            "area",
+            name,
+            json!({
+                "name": name,
+                "terrain": {
+                    "size": { "width": size.width, "height": size.height },
+                    "materials": [
+                        path("ground", TURF), path("ground", TURF),
+                        path("ground", TURF), path("ground", ROCK),
+                    ],
+                    "max_slope": 38.0,
+                },
+                "lighting": {
+                    "sun": { "elevation": 52.0, "azimuth": 215.0, "color": [255, 236, 190] },
+                    "ambient": [98, 122, 160],
+                    "grade": { "color": [255, 255, 255], "strength": 0.0 },
+                },
+            }),
         );
-        self.row("tileset", &tileset, json!({ "tile": TILE, "tiles": {} }))
+        let game = game.part("area", name, &SCENE.named("", "json"), json_bytes(&modules));
+        let padded = size.width as usize > width || size.height as usize > height;
+        if !padded && !map.0.iter().any(|row| row.contains('#')) {
+            return game;
+        }
+        let paint = Paint::from_fn(size, |column, row| {
+            let (x, y) = (
+                (column / terrain::SAMPLES_PER_METER) as usize,
+                (row / terrain::SAMPLES_PER_METER) as usize,
+            );
+            if blocked(x, y) {
+                [0, 0, 0, 255]
+            } else {
+                [255, 0, 0, 0]
+            }
+        });
+        game.part(
+            "area",
+            name,
+            &terrain::PAINT.named("", "png"),
+            paint.encode(),
+        )
+    }
+
+    /// The two ground materials every declared area is painted with: turf to walk on and rock that
+    /// blocks, each sounding like a step, a tick of a clip unlike any other declared sound.
+    pub fn grounds(self) -> Game {
+        self.sfx(STEP)
             .part(
-                "tileset",
-                &tileset,
-                &TILESET_IMAGE.named("", "png"),
-                png(TILE, TILE),
+                "sfx",
+                STEP,
+                &SFX_CLIP.named("", "wav"),
+                wav_of(&[0, 64, 0, -64, 0, 64, 0, -64]),
             )
             .row(
-                "area",
-                name,
+                "surface",
+                TURF,
+                json!({ "name": "Turf", "footstep": path("sfx", STEP) }),
+            )
+            .row(
+                "ground",
+                TURF,
                 json!({
-                    "name": name,
-                    "blueprint": {
-                        "map": { "size": { "width": width, "height": height }, "tile": TILE },
-                    },
+                    "name": "Turf",
+                    "color": [106, 143, 59, 255],
+                    "surface": path("surface", TURF),
+                    "walk": "walkable",
                 }),
             )
-            .part(
-                "area",
-                name,
-                &SCENE.named("", "json"),
-                json_bytes(&json!(scene)),
+            .row(
+                "ground",
+                ROCK,
+                json!({
+                    "name": "Rock",
+                    "color": [96, 96, 104, 255],
+                    "surface": path("surface", TURF),
+                    "walk": "blocks",
+                }),
             )
-            .part(
-                "area",
-                name,
-                &PALETTE.named("", "csv"),
-                format!("tileset,tile,flip\n{},0,\n", path("tileset", &tileset)),
-            )
-            .part("area", name, &LAYERS.named("ground", "csv"), csv(&ground))
-            .part("area", name, &WALK.named("", "csv"), csv(&walk))
     }
 
     pub fn load(self) -> Content {
@@ -595,13 +643,4 @@ pub fn stats(health: f32) -> Value {
 
 fn json_bytes(value: &Value) -> Vec<u8> {
     serde_json::to_vec_pretty(value).expect("json")
-}
-
-fn csv(rows: &[Vec<&str>]) -> Vec<u8> {
-    let mut text = String::new();
-    for row in rows {
-        text.push_str(&row.join(","));
-        text.push('\n');
-    }
-    text.into_bytes()
 }

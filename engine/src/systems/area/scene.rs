@@ -5,53 +5,26 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::blueprint::{self, BlueprintDef};
-use super::grid::{
-    GridFile, PaletteRow, palette_cell, read_grid, read_palette, walk_cell, write_grid_cells,
-    write_palette, write_walk,
-};
-use super::{AreaModule, AreaModuleKind, MAX_GROUND_LAYERS, Tilemap};
+use super::{AreaModule, AreaModuleKind};
 use crate::core::content::load::{JsonPart, ParseError, parse_value, shape_problem};
-use crate::core::content::{
-    Content, ContentProblem, ErrorPlace, FileWriter, PartSpec, Parts, serial, valid_name,
-};
+use crate::core::content::{Content, ContentProblem, FileWriter, PartSpec, Parts, serial};
 use crate::core::script::Variable;
 use crate::systems::script::RiftScripting;
 
 pub const SCENE_FILE: &str = "scene.json";
-pub const PALETTE_FILE: &str = "palette.csv";
-pub const WALK_FILE: &str = "walk.csv";
-pub const LAYERS_FOLDER: &str = "layers";
 
 pub const SCENE: PartSpec = PartSpec::File {
     name: "scene",
     exts: &["json"],
 };
-pub const PALETTE: PartSpec = PartSpec::File {
-    name: "palette",
-    exts: &["csv"],
-};
-pub const WALK: PartSpec = PartSpec::File {
-    name: "walk",
-    exts: &["csv"],
-};
-pub const LAYERS: PartSpec = PartSpec::Keyed {
-    folder: LAYERS_FOLDER,
-    exts: &["csv"],
-};
-
-/// What an area's or a blueprint's bundle keeps besides its config: its scene graph and the grids
-/// its ground layers, walk and palette are painted in.
-pub const SCENE_PARTS: &[PartSpec] = &[SCENE, PALETTE, WALK, LAYERS];
 
 /// Folders of a scene nest at most this deep.
 pub const MAX_FOLDER_DEPTH: usize = 16;
 
-/// One node of a scene graph. Folders only organize and ground layers name the grids their cells
-/// are painted in; every other node is a module.
+/// One node of a scene graph. Folders only organize; every other node is a module.
 #[derive(Clone)]
 pub enum SceneNode {
     Folder(SceneFolder),
-    GroundLayer(GroundLayer),
     Module(ModuleNode),
 }
 
@@ -61,32 +34,6 @@ pub struct SceneFolder {
     pub hidden: bool,
     pub locked: bool,
     pub children: Vec<SceneNode>,
-}
-
-/// A layer of ground, painted in `layers/<name>.csv` of its bundle. Layers draw under every module,
-/// later ones in the tree over earlier ones, and placed blueprints paint into the layer of the same
-/// name.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GroundLayer {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "serial::is_false")]
-    pub hidden: bool,
-    #[serde(default, skip_serializing_if = "serial::is_false")]
-    pub locked: bool,
-}
-
-impl GroundLayer {
-    /// The name of the layer a new scene starts with.
-    pub const FIRST: &str = "ground";
-
-    pub fn named(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            hidden: false,
-            locked: false,
-        }
-    }
 }
 
 /// A module of a scene, with the label and flags the editor keeps for its node; the game never
@@ -110,7 +57,6 @@ impl SceneNode {
     pub fn label(&self) -> Option<&str> {
         match self {
             SceneNode::Folder(folder) => Some(&folder.label),
-            SceneNode::GroundLayer(_) => None,
             SceneNode::Module(node) => node.label.as_deref(),
         }
     }
@@ -118,7 +64,6 @@ impl SceneNode {
     pub fn hidden(&self) -> bool {
         match self {
             SceneNode::Folder(folder) => folder.hidden,
-            SceneNode::GroundLayer(layer) => layer.hidden,
             SceneNode::Module(node) => node.hidden,
         }
     }
@@ -126,7 +71,6 @@ impl SceneNode {
     pub fn locked(&self) -> bool {
         match self {
             SceneNode::Folder(folder) => folder.locked,
-            SceneNode::GroundLayer(layer) => layer.locked,
             SceneNode::Module(node) => node.locked,
         }
     }
@@ -169,61 +113,13 @@ pub fn walk<'a>(nodes: &'a [SceneNode], visit: &mut impl FnMut(&str, &'a SceneNo
     inner(nodes, "", 0, visit);
 }
 
-/// The scene's ground layers in tree order, which is the order they draw in.
-pub fn layers(nodes: &[SceneNode]) -> Vec<&GroundLayer> {
-    let mut layers = Vec::new();
-    walk(nodes, &mut |_, node, _| {
-        if let SceneNode::GroundLayer(layer) = node {
-            layers.push(layer);
-        }
-    });
-    layers
-}
-
-/// A scene and the grids painted for it.
-#[derive(Clone, Default)]
-pub struct Scene {
-    pub nodes: Vec<SceneNode>,
-    pub grids: SceneGrids,
-}
-
-/// The grids of a bundle as written: its palette's rows, its forced walk cells and the cells of
-/// each ground layer by name, one per cell of the map, empty where nothing is painted. Only the
-/// layers the scene's nodes name are written.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct SceneGrids {
-    pub palette: Vec<PaletteRow>,
-    pub walk: Vec<Option<bool>>,
-    pub layers: BTreeMap<String, Vec<Option<u32>>>,
-}
-
-impl SceneGrids {
-    pub fn empty(map: &Tilemap) -> SceneGrids {
-        SceneGrids {
-            palette: Vec::new(),
-            walk: vec![None; map.size.grid().area() as usize],
-            layers: BTreeMap::new(),
-        }
-    }
-
-    /// The cells of the layer named `name`, empty when nothing is painted in it.
-    pub fn layer(&self, name: &str, map: &Tilemap) -> Vec<Option<u32>> {
-        self.layers
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| vec![None; map.size.grid().area() as usize])
-    }
-}
-
-/// Reads the scene and the grids of the bundle `parts` holds, reporting every problem with its
-/// structure at its node.
+/// Reads the scene of the bundle `parts` holds, reporting every problem with its structure at its
+/// node.
 pub fn read(
-    scene: &mut Scene,
-    map: &Tilemap,
+    scene: &mut Vec<SceneNode>,
     variables: &BTreeMap<String, Variable<RiftScripting>>,
     parts: &mut Parts,
 ) {
-    scene.grids = SceneGrids::empty(map);
     let Some(file) = parts.required(SCENE) else {
         return;
     };
@@ -240,44 +136,12 @@ pub fn read(
         return;
     }
     check(&nodes, parts);
-    scene.grids = read_grids(&nodes, map, parts);
-    scene.nodes = nodes;
+    *scene = nodes;
 }
 
-pub fn write(
-    scene: &Scene,
-    map: &Tilemap,
-    bundle: &str,
-    writer: &mut FileWriter,
-) -> io::Result<()> {
-    let files = files_of(&scene.nodes).map_err(io::Error::other)?;
-    writer.json(&format!("{bundle}/{SCENE_FILE}"), &files)?;
-    let size = map.size.grid();
-    let grids = &scene.grids;
-    if !grids.palette.is_empty() {
-        writer.file(
-            &format!("{bundle}/{PALETTE_FILE}"),
-            write_palette(&grids.palette).as_bytes(),
-        )?;
-    }
-    if grids.walk.iter().any(Option::is_some) {
-        writer.file(
-            &format!("{bundle}/{WALK_FILE}"),
-            write_walk(size, &grids.walk).as_bytes(),
-        )?;
-    }
-    for layer in layers(&scene.nodes) {
-        let Some(cells) = grids.layers.get(&layer.name) else {
-            continue;
-        };
-        if cells.iter().any(Option::is_some) {
-            writer.file(
-                &format!("{bundle}/{LAYERS_FOLDER}/{}.csv", layer.name),
-                write_grid_cells(size, cells).as_bytes(),
-            )?;
-        }
-    }
-    Ok(())
+pub fn write(scene: &[SceneNode], bundle: &str, writer: &mut FileWriter) -> io::Result<()> {
+    let files = files_of(scene).map_err(io::Error::other)?;
+    writer.json(&format!("{bundle}/{SCENE_FILE}"), &files)
 }
 
 /// `nodes` as a scene file holds them, in the scope being written in: how nodes travel apart from
@@ -326,7 +190,6 @@ fn read_part(content: &Content, bundle: &str, value: &Value) -> Result<(), Parse
 #[serde(tag = "type", rename_all = "snake_case")]
 enum NodeFile {
     Folder(FolderFile<NodeFile>),
-    GroundLayer(GroundLayer),
     #[serde(untagged)]
     Module(ModuleFile),
 }
@@ -337,7 +200,6 @@ enum NodeFile {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum NodeOut {
     Folder(FolderFile<NodeOut>),
-    GroundLayer(GroundLayer),
     #[serde(untagged)]
     Module(ModuleOut),
 }
@@ -403,20 +265,18 @@ impl From<NonEmpty> for String {
     }
 }
 
-/// What a node that isn't a module says it is, read apart so a folder or a layer node that fails
-/// to read as one is reported as what it says it is rather than as an unknown module.
+/// What a node that isn't a module says it is, read apart so a folder node that fails to read as
+/// one is reported as what it says it is rather than as an unknown module.
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum StructureFile {
     Folder(FolderFile<NodeFile>),
-    GroundLayer(GroundLayer),
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum StructureKind {
     Folder,
-    GroundLayer,
 }
 
 #[derive(Deserialize)]
@@ -464,7 +324,6 @@ fn read_node(
                 children: inner.nodes,
             }));
         }
-        NodeFile::GroundLayer(layer) => read.nodes.push(SceneNode::GroundLayer(layer.clone())),
         NodeFile::Module(file) => {
             let json = Value::Object(file.module.clone());
             if parse_value::<StructureTag>(&json).is_ok() {
@@ -475,9 +334,6 @@ fn read_node(
                 match parse_value::<StructureFile>(&whole) {
                     Ok(StructureFile::Folder(folder)) => {
                         read_node(&NodeFile::Folder(folder), pointer, variables, read)
-                    }
-                    Ok(StructureFile::GroundLayer(layer)) => {
-                        read.nodes.push(SceneNode::GroundLayer(layer))
                     }
                     Err(error) => read
                         .problems
@@ -525,7 +381,6 @@ fn files_of(nodes: &[SceneNode]) -> Result<Vec<NodeOut>, serde_json::Error> {
                     locked: folder.locked,
                     children: files_of(&folder.children)?,
                 }),
-                SceneNode::GroundLayer(layer) => NodeOut::GroundLayer(layer.clone()),
                 SceneNode::Module(node) => NodeOut::Module(ModuleOut {
                     kind: node.module.kind(),
                     label: node.label.clone(),
@@ -539,7 +394,6 @@ fn files_of(nodes: &[SceneNode]) -> Result<Vec<NodeOut>, serde_json::Error> {
 }
 
 fn check(nodes: &[SceneNode], parts: &mut Parts) {
-    let mut layers: Vec<(String, String)> = Vec::new();
     walk(nodes, &mut |pointer, node, depth| {
         if depth >= MAX_FOLDER_DEPTH && matches!(node, SceneNode::Folder(_)) {
             parts.json_error(
@@ -552,38 +406,10 @@ fn check(nodes: &[SceneNode], parts: &mut Parts) {
                 ),
             );
         }
-        match node {
-            SceneNode::GroundLayer(layer) => {
-                if !valid_name(&layer.name) {
-                    parts.json_error(
-                        SCENE_FILE,
-                        &format!("{pointer}/name"),
-                        ContentProblem::new(
-                            "invalid name",
-                            format!("{:?}", layer.name),
-                            crate::core::content::files::NAME_RULE,
-                        ),
-                    );
-                }
-                if let Some((_, first)) = layers
-                    .iter()
-                    .find(|(name, _)| name.eq_ignore_ascii_case(&layer.name))
-                {
-                    parts.json_error(
-                        SCENE_FILE,
-                        &format!("{pointer}/name"),
-                        ContentProblem::new(
-                            "duplicate name",
-                            format!("layer {} at {first} and {pointer}", layer.name),
-                            "ground layer names unique in the scene",
-                        ),
-                    );
-                }
-                layers.push((layer.name.clone(), pointer.to_owned()));
-            }
-            SceneNode::Module(node)
-                if matches!(node.module, AreaModule::Blueprint(_)) && node.label.is_none() =>
-            {
+        if let SceneNode::Module(node) = node
+            && let AreaModule::Blueprint(placement) = &node.module
+        {
+            if node.label.is_none() {
                 parts.json_error(
                     SCENE_FILE,
                     pointer,
@@ -594,20 +420,19 @@ fn check(nodes: &[SceneNode], parts: &mut Parts) {
                     ),
                 );
             }
-            SceneNode::Module(_) | SceneNode::Folder(_) => {}
+            if placement.yaw.quarter_turns().is_none() {
+                parts.json_error(
+                    SCENE_FILE,
+                    &format!("{pointer}/yaw"),
+                    ContentProblem::new(
+                        "not a quarter turn",
+                        format!("{}°", placement.yaw.0),
+                        "a placement turned by 0, 90, 180 or 270 degrees",
+                    ),
+                );
+            }
         }
     });
-    if layers.len() > MAX_GROUND_LAYERS {
-        parts.json_error(
-            SCENE_FILE,
-            "",
-            ContentProblem::new(
-                "out of range",
-                format!("{} ground layers", layers.len()),
-                format!("at most {MAX_GROUND_LAYERS} ground layers"),
-            ),
-        );
-    }
     check_labels(nodes, "", parts);
 }
 
@@ -634,75 +459,6 @@ fn check_labels(nodes: &[SceneNode], prefix: &str, parts: &mut Parts) {
             check_labels(&folder.children, &format!("{pointer}/children"), parts);
         }
     }
-}
-
-fn read_grids(nodes: &[SceneNode], map: &Tilemap, parts: &mut Parts) -> SceneGrids {
-    let mut grids = SceneGrids::empty(map);
-    let size = map.size.grid();
-    if let Some(file) = parts.file(PALETTE)
-        && let Some(text) = parts.text(file)
-    {
-        let path = parts.path(file);
-        grids.palette = read_palette(
-            GridFile {
-                path: &path,
-                text: &text,
-            },
-            parts.errors(),
-        )
-        .unwrap_or_default();
-    }
-    if let Some(file) = parts.file(WALK)
-        && let Some(text) = parts.text(file)
-    {
-        let path = parts.path(file);
-        if let Some(walk) = read_grid(
-            GridFile {
-                path: &path,
-                text: &text,
-            },
-            size,
-            walk_cell,
-            parts.errors(),
-        ) {
-            grids.walk = walk;
-        }
-    }
-    let names: Vec<String> = layers(nodes)
-        .iter()
-        .map(|layer| layer.name.clone())
-        .collect();
-    for (name, file) in parts.keyed(LAYERS) {
-        if !names.iter().any(|known| known == name) {
-            parts.error(
-                file,
-                ErrorPlace::WholeFile,
-                ContentProblem::new(
-                    "unknown part",
-                    format!("file {file}"),
-                    "a grid for a ground layer node of the scene",
-                ),
-            );
-            continue;
-        }
-        let Some(text) = parts.text(file) else {
-            continue;
-        };
-        let path = parts.path(file);
-        let entries = grids.palette.len();
-        if let Some(cells) = read_grid(
-            GridFile {
-                path: &path,
-                text: &text,
-            },
-            size,
-            |field| palette_cell(field, entries),
-            parts.errors(),
-        ) {
-            grids.layers.insert(name.to_owned(), cells);
-        }
-    }
-    grids
 }
 
 /// The variables the holes of every module node name.

@@ -24,6 +24,7 @@ use crate::app::{
 };
 use crate::icons;
 use crate::keymap::{EditorKey, KeyScope};
+use crate::play;
 use crate::project::{ContentEdit, files};
 use crate::rows::{self, UsageDecision};
 use crate::shell::{self, start};
@@ -32,11 +33,9 @@ use crate::templates::{self, GameTemplate};
 use crate::views::area::{pick, placement, resize};
 use crate::views::script;
 use crate::views::world;
-use crate::{import, play};
 use ui::input::InputField;
 
 pub fn show(editor: &mut Editor, ctx: &Context) {
-    import::show_readings(editor, ctx);
     let mut dialogs = std::mem::take(&mut editor.dialogs);
     let shown = dialogs.len();
     let mut keep = Vec::new();
@@ -512,11 +511,8 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
             };
             ctx.data_mut(|d| d.remove_temp::<bool>(compare_id));
             conflicts.remove(0);
-            if take {
-                if let Some(project) = &mut editor.project {
-                    project.take_disk(&conflict);
-                }
-                editor.views.content_changed();
+            if take && let Some(project) = &mut editor.project {
+                project.take_disk(&conflict);
             }
             (!conflicts.is_empty()).then_some(ModalDialog::Conflicts(conflicts))
         }
@@ -640,9 +636,6 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
         }
         ModalDialog::Arrange(dialog) => {
             world::arrange_dialog(editor, ctx, dialog).map(ModalDialog::Arrange)
-        }
-        ModalDialog::Import(dialog) => {
-            import::dialog(editor, ctx, *dialog).map(|next| ModalDialog::Import(Box::new(next)))
         }
         ModalDialog::RenameNode(dialog) => {
             script::rename_node_dialog(editor, ctx, dialog).map(ModalDialog::RenameNode)

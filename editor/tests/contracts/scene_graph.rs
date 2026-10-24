@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use editor::app::Editor;
 use editor::project::RowSelection;
@@ -7,13 +7,13 @@ use editor::user::TreeView;
 use editor::views::area::flags::{SceneFlags, SceneLevel};
 use editor::views::area::nodes::{self, Landing, NodeFlag, SceneTree};
 use editor::views::area::scene_tree::{self, SceneNarrowing, SceneSource};
-use editor::views::area::{AreaSnapshot, drop_gone, layers, placement};
+use editor::views::area::{AreaSnapshot, drop_gone, placement};
 use engine::core::content::{ContentFile, write};
 use engine::systems::area::AreaDef;
-use engine::systems::area::scene::{self, GroundLayer, SceneNode, scene_file};
+use engine::systems::area::scene::{self, SceneNode, scene_file};
 use engine::systems::registry;
 use serde_json::{Value, json};
-use testkit::{Game, path, png};
+use testkit::{Game, path};
 
 use crate::support::{self, area, folder, names, object};
 
@@ -178,10 +178,10 @@ fn hiding_a_row_shows_in_the_open_view_before_the_folder_loads_again() {
 
     let hidden = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
     assert!(hidden.flags.hidden(&rug));
-    assert_ne!(hidden.picture.ground, shown.picture.ground);
+    assert_ne!(hidden.picture.area.props, shown.picture.area.props);
     support::settled(&mut editor);
     let loaded = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
-    assert_eq!(loaded.picture.ground, hidden.picture.ground);
+    assert_eq!(loaded.picture.area.props, hidden.picture.area.props);
 }
 
 #[test]
@@ -189,20 +189,17 @@ fn grouping_and_naming_the_folder_is_one_undo_step() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let mut editor = open(objects_game(), &scratch);
     let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
-    let rows = ["/1".to_owned(), "/2".to_owned()];
+    let rows = ["/0".to_owned(), "/1".to_owned()];
 
     let (id, step) = scene_tree::group(&mut editor, &snapshot, &rows).expect("grouped");
     let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
     scene_tree::rename_grouped(&mut editor, &snapshot, &id, "Storage", &step);
 
     let scene = nodes::scene_of(&editor, &area());
-    assert_eq!(scene[1].label(), Some("Storage"));
-    assert_eq!(names(nodes::children_of(&scene[1])), ["a", "b"]);
+    assert_eq!(scene[0].label(), Some("Storage"));
+    assert_eq!(names(nodes::children_of(&scene[0])), ["a", "b"]);
     editor.undo();
-    assert_eq!(
-        names(&nodes::scene_of(&editor, &area()))[1..],
-        ["a", "b", "c"]
-    );
+    assert_eq!(names(&nodes::scene_of(&editor, &area())), ["a", "b", "c"]);
 }
 
 #[test]
@@ -211,7 +208,7 @@ fn a_scene_the_editor_saves_reads_as_the_engine_writes_it() {
     let mut editor = open(objects_game(), &scratch);
     nodes::change_scene(&mut editor, &area(), |scene| {
         let mut tree = SceneTree::new(scene);
-        let made = tree.group(&["/1".to_owned(), "/2".to_owned()], "Guards")?;
+        let made = tree.group(&["/0".to_owned(), "/1".to_owned()], "Guards")?;
         tree.set_flag(&[made], NodeFlag::Locked, true);
         Some("Lock the guards".to_owned())
     });
@@ -251,16 +248,16 @@ fn deleting_a_folder_takes_all_it_holds_in_one_step() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let mut editor = open(objects_game(), &scratch);
     let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
-    let (id, _) = scene_tree::group(&mut editor, &snapshot, &["/1".to_owned(), "/2".to_owned()])
+    let (id, _) = scene_tree::group(&mut editor, &snapshot, &["/0".to_owned(), "/1".to_owned()])
         .expect("grouped");
     let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
 
     scene_tree::delete_rows(&mut editor, &snapshot, &[id]);
 
-    assert_eq!(names(&nodes::scene_of(&editor, &area()))[1..], ["c"]);
+    assert_eq!(names(&nodes::scene_of(&editor, &area())), ["c"]);
     editor.undo();
     assert_eq!(
-        names(&nodes::scene_of(&editor, &area()))[1..],
+        names(&nodes::scene_of(&editor, &area())),
         ["New folder", "a", "b", "c"]
     );
 }
@@ -279,12 +276,12 @@ fn a_selected_folder_moves_what_it_holds_that_is_shown_and_unlocked() {
     let mut editor = open(game, &scratch);
     let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
 
-    let moved = snapshot.selected_modules(&HashSet::from(["/1".to_owned()]));
+    let moved = snapshot.selected_modules(&HashSet::from(["/0".to_owned()]));
 
-    assert_eq!(moved, ["/1/children/0"]);
+    assert_eq!(moved, ["/0/children/0"]);
     assert!(
         snapshot
-            .folder_box(&HashSet::from(["/1".to_owned()]))
+            .folder_box(&HashSet::from(["/0".to_owned()]))
             .is_some_and(|(_, label)| label == "Pews")
     );
 }
@@ -307,7 +304,6 @@ fn rows_never_drop_onto_a_placement_or_into_themselves() {
     let mut editor = open(game, &scratch);
     let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
     let project = editor.project.as_ref().expect("a project");
-    let cells = HashMap::new();
     let source = SceneSource::new(
         project,
         &snapshot,
@@ -317,7 +313,6 @@ fn rows_never_drop_onto_a_placement_or_into_themselves() {
             view: &TreeView::default(),
             kept: &mut None,
         },
-        &cells,
         false,
     );
     let into = |folder: &str| TreeDrop {
@@ -326,58 +321,20 @@ fn rows_never_drop_onto_a_placement_or_into_themselves() {
         onto: None,
     };
 
-    assert!(source.drop_tip(&["/2".to_owned()], &into("/1")).is_ok());
+    assert!(source.drop_tip(&["/1".to_owned()], &into("/0")).is_ok());
     assert!(
         source
-            .drop_tip(&["/1".to_owned()], &into("/1/children/0"))
+            .drop_tip(&["/0".to_owned()], &into("/0/children/0"))
             .is_err()
     );
     let onto_a_placement = TreeDrop {
-        onto: Some("/2".to_owned()),
+        onto: Some("/1".to_owned()),
         ..into("")
     };
     assert!(
         source
-            .drop_tip(&["/1".to_owned()], &onto_a_placement)
+            .drop_tip(&["/0".to_owned()], &onto_a_placement)
             .is_err()
-    );
-}
-
-#[test]
-fn renaming_a_layer_renames_it_in_every_blueprint_painting_into_it() {
-    let scratch = tempfile::tempdir().expect("a scratch folder");
-    let mut editor = open(painted_game(), &scratch);
-    let rug = path("blueprint", "rug");
-
-    layers::rename(&mut editor, &area(), "ground", "carpet").expect("renamed");
-
-    for bundle in [area(), rug.clone()] {
-        assert_eq!(
-            layers::names(&nodes::scene_of(&editor, &bundle)),
-            ["carpet"]
-        );
-    }
-    assert!(
-        support::content(&mut editor)
-            .by_path::<AreaDef>(&area())
-            .is_some()
-    );
-    editor.undo();
-    assert_eq!(layers::names(&nodes::scene_of(&editor, &rug)), ["ground"]);
-
-    nodes::change_scene(&mut editor, &rug, |scene| {
-        let carpet = SceneNode::GroundLayer(GroundLayer::named("carpet"));
-        SceneTree::new(scene).append("", vec![carpet]);
-        Some("Add a layer".to_owned())
-    });
-    let refused = layers::rename(&mut editor, &area(), "ground", "carpet");
-    assert!(
-        refused.is_err(),
-        "a name taken anywhere the layer reaches is refused"
-    );
-    assert_eq!(
-        layers::names(&nodes::scene_of(&editor, &area())),
-        ["ground"]
     );
 }
 
@@ -419,7 +376,7 @@ fn a_change_on_disk_drops_only_the_selected_nodes_it_took_away() {
     assert!(drop_gone(&mut editor).is_none());
 }
 
-/// An area of three objects after its ground layer.
+/// An area of three objects.
 fn objects_game() -> Game {
     support::game().edit_scene("area", support::AREA, |scene| {
         let rows = scene.as_array_mut().expect("a scene");
@@ -427,30 +384,22 @@ fn objects_game() -> Game {
     })
 }
 
-/// An area whose ground layer a rug blueprint paints into from its placement.
+/// An area with a rug, a blueprint of one mat prop, placed in it.
 fn painted_game() -> Game {
     support::game()
-        .row("tileset", "wood", json!({ "tile": 16, "tiles": {} }))
-        .part("tileset", "wood", "image.png", png(16, 16))
+        .prop("mat", json!({ "type": "box", "width": 1.0, "depth": 1.0 }))
         .blueprint(
             "rug",
             (1, 1),
             json!({}),
-            json!([{ "type": "ground_layer", "name": "ground" }]),
+            json!([{ "type": "prop", "prop": path("prop", "mat"), "at": { "x": 0.0, "y": 0.0 } }]),
         )
-        .part(
-            "blueprint",
-            "rug",
-            "palette.csv",
-            format!("tileset,tile,flip\n{},0,\n", path("tileset", "wood")).into_bytes(),
-        )
-        .part("blueprint", "rug", "layers/ground.csv", b"0\n".to_vec())
         .edit_scene("area", support::AREA, |scene| {
             scene.as_array_mut().expect("a scene").push(json!({
                 "type": "blueprint",
                 "label": "rug",
                 "blueprint": path("blueprint", "rug"),
-                "at": { "x": 1.0, "y": 1.0 }
+                "at": { "x": 3.0, "y": 3.0 }
             }));
         })
 }

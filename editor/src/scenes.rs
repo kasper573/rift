@@ -2,17 +2,15 @@ use std::path::PathBuf;
 
 use engine::core::content::ContentFile;
 use engine::systems::actor::model::ModelDef;
+use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
-use engine::systems::area::tileset::TilesetDef;
 use engine::systems::area::world_map::{Note, Region};
-use engine::systems::area::{self, AreaDef};
 use engine::systems::class::ClassDef;
 use engine::systems::script::ScriptDef;
 use serde::Deserialize;
 use strum::VariantNames;
 
 use crate::app::{BottomTab, Clipboard, Editor, ModalDialog, SceneClip};
-use crate::import::ImportStep;
 use crate::project::{ContentEdit, RowSelection};
 use crate::tabs::EditorTab;
 use crate::views::area::resize::ResizeDialog;
@@ -21,10 +19,6 @@ use crate::views::character::CharacterSection;
 use crate::views::class;
 use crate::views::model::{self, ModelPage, busts};
 use crate::views::script::{PendingScriptAction, ScriptRow};
-use crate::views::tileset::{
-    self, NewSurfaceDialog, NewTerrainSetDialog, SheetRect, TileBlueprintDialog, TileSheetDialog,
-    TilesetMode, WalkBrush,
-};
 use crate::views::world::{
     self, ColorBy, ColorField, MapLens, MapLook, MapPart, MapRoute, OpenWorldMap, arrange,
 };
@@ -83,10 +77,8 @@ pub enum SceneStep {
     },
     Bottom(BottomTab),
     Model(ModelStep),
-    Tileset(TilesetStep),
     Sheet(SheetStep),
     World(WorldStep),
-    Import(ImportStep),
     Section(CharacterSection),
     Tree {
         key: String,
@@ -112,47 +104,6 @@ pub enum ModelStep {
     Busts(Option<String>),
     Bottom(BottomTab),
     Drop(PathBuf),
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TilesetStep {
-    Open(String),
-    Mode(TilesetMode),
-    Brush(SceneBrush),
-    Select(TileSelection),
-    Tile(u32),
-    Set(String),
-    Terrain(usize),
-    Closeup(u32),
-    Bottom(BottomTab),
-    Zoom(f32),
-    Dialog(TilesetDialogName),
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SceneBrush {
-    Walk(WalkBrush),
-    Surface(String),
-    NoSurface,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-pub struct TileSelection {
-    pub x: u32,
-    pub y: u32,
-    pub w: u32,
-    pub h: u32,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TilesetDialogName {
-    Blueprint,
-    Surface,
-    Set,
-    None,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -251,19 +202,15 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
             editor.open_tab(EditorTab::for_row(table, key));
         }
         SceneStep::Resize(key) => {
-            let size = editor
-                .project
-                .as_ref()
-                .and_then(|p| p.content.clone())
-                .and_then(|c| c.by_path::<AreaDef>(key).map(|id| area::load(&c, id).size));
             editor.open_tab(EditorTab::Area { key: key.clone() });
-            editor.dialogs.push(ModalDialog::Resize(ResizeDialog {
-                bundle: key.clone(),
-                width: size.map_or(0, |s| s.width as u32),
-                height: size.map_or(0, |s| s.height as u32),
-                anchor: (-1, -1),
-                error: None,
-            }));
+            if let Some(Ok(area)) = editor.read::<AreaDef>(key) {
+                editor
+                    .dialogs
+                    .push(ModalDialog::Resize(ResizeDialog::for_bundle(
+                        key,
+                        area.terrain.size,
+                    )));
+            }
         }
         SceneStep::Row { table, key } => {
             editor.open_row(table, key);
@@ -332,13 +279,11 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         ),
         SceneStep::Bottom(tab) => editor.panels.bottom = *tab,
         SceneStep::Model(step) => model_step(editor, step),
-        SceneStep::Tileset(step) => tileset_step(editor, step),
         SceneStep::Sheet(step) => sheet_step(editor, step),
         SceneStep::World(step) => {
             editor.open_tab(EditorTab::World);
             world_step(editor, step);
         }
-        SceneStep::Import(step) => editor.jobs.script.push_back(step.clone()),
         SceneStep::Section(section) => editor.views.character.section = *section,
         SceneStep::Tree { key, node } => {
             editor.open_tab(EditorTab::for_row(ClassDef::TABLE, key));
@@ -488,73 +433,6 @@ fn model_step(editor: &mut Editor, step: &ModelStep) {
         }
         ModelStep::Bottom(tab) => editor.panels.bottom = *tab,
         ModelStep::Drop(path) => editor.views.model.drops.push(path.clone()),
-    }
-}
-
-fn tileset_step(editor: &mut Editor, step: &TilesetStep) {
-    if let TilesetStep::Open(key) = step {
-        editor.select(RowSelection::row(TilesetDef::TABLE, key));
-        editor.open_tab(EditorTab::Tileset { key: key.clone() });
-        return;
-    }
-    let key = match shell::active_tab(editor) {
-        Some(EditorTab::Tileset { key }) => key,
-        _ if editor.selection.table == TilesetDef::TABLE && !editor.selection.keys.is_empty() => {
-            editor.selection.keys[0].clone()
-        }
-        _ => return,
-    };
-    tileset::ensure_view(editor, &key);
-    match step {
-        TilesetStep::Open(_) => {}
-        TilesetStep::Mode(mode) => tileset::set_mode(editor, &key, *mode),
-        TilesetStep::Brush(brush) => {
-            let view = editor.views.tileset.view_mut(&key);
-            match brush {
-                SceneBrush::Walk(walk) => view.walk = *walk,
-                SceneBrush::Surface(surface) => view.surface = Some(surface.clone()),
-                SceneBrush::NoSurface => view.surface = None,
-            }
-        }
-        TilesetStep::Select(selection) => {
-            let view = editor.views.tileset.view_mut(&key);
-            view.selection = Some(SheetRect {
-                x: selection.x,
-                y: selection.y,
-                w: selection.w.max(1),
-                h: selection.h.max(1),
-            });
-            if view.mode == TilesetMode::Animation {
-                tileset::select_part(editor, &key, tileset::ANIMATION_PART);
-            }
-        }
-        TilesetStep::Tile(tile) => tileset::select_tile(editor, &key, *tile),
-        TilesetStep::Set(set) => editor.views.tileset.view_mut(&key).pick_set(set.clone()),
-        TilesetStep::Terrain(index) => editor.views.tileset.view_mut(&key).terrain = *index,
-        TilesetStep::Closeup(tile) => {
-            let view = editor.views.tileset.view_mut(&key);
-            view.closeup = Some(*tile);
-            view.tile = Some(*tile);
-        }
-        TilesetStep::Bottom(tab) => editor.panels.bottom = *tab,
-        TilesetStep::Zoom(zoom) => editor.views.tileset.view_mut(&key).zoom = *zoom,
-        TilesetStep::Dialog(name) => {
-            editor.views.tileset.view_mut(&key).dialog = match name {
-                TilesetDialogName::Blueprint => {
-                    Some(TileSheetDialog::MakeBlueprint(TileBlueprintDialog {
-                        name: format!("{key}_part"),
-                        error: None,
-                    }))
-                }
-                TilesetDialogName::Surface => {
-                    Some(TileSheetDialog::NewSurface(NewSurfaceDialog::default()))
-                }
-                TilesetDialogName::Set => Some(TileSheetDialog::NewTerrainSet(
-                    NewTerrainSetDialog::default(),
-                )),
-                TilesetDialogName::None => None,
-            };
-        }
     }
 }
 

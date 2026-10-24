@@ -616,7 +616,7 @@ pub(super) fn pasted(
 ) -> Option<(Vec<SceneNode>, usize)> {
     let reader = editor.reader()?;
     let variables = nodes::bundle_of(editor, &clip.from)
-        .map(|from| from.blueprint().variables.clone())
+        .map(|from| from.variables().clone())
         .unwrap_or_default();
     let mut read = match clip.nodes.read(&reader, &variables) {
         Ok(read) => read,
@@ -660,7 +660,6 @@ fn settle_holes(nodes: &mut [SceneNode], variables: &BTreeMap<String, Variable>)
                     .count();
                 module.holes.0.clear();
             }
-            SceneNode::GroundLayer(_) => {}
         }
     }
     open

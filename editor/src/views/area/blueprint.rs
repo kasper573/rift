@@ -3,16 +3,15 @@ use ui::words;
 
 use engine::core::content::locate::escape;
 use engine::core::content::{Content, ContentFile, FolderReader, name_of, parent_of, rescoped};
+use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect};
 use engine::core::units::Meters;
+use engine::systems::area::AreaModule;
 use engine::systems::area::blueprint::{BlueprintDef, Placement};
-use engine::systems::area::scene::{
-    self, GroundLayer, Holes, ModuleNode, Scene, SceneGrids, SceneNode,
-};
-use engine::systems::area::{AreaModule, MapSize, Tilemap};
+use engine::systems::area::scene::{self, Holes, ModuleNode, SceneNode};
+use engine::systems::area::terrain::TerrainSize;
 use engine::systems::script::Variable;
 
-use super::grid::GridDraft;
 use super::{AreaSnapshot, nodes, placement, shapes};
 use crate::app::Editor;
 use crate::moves::free_path;
@@ -22,8 +21,7 @@ use crate::tabs::file_title;
 
 /// Makes a blueprint of the selection at once: a new bundle beside the one being edited holds the
 /// selected nodes, or what a selected folder holds, and one placement of it takes their place. The
-/// blueprint is named after the folder or node, and starts with the ground layers of the scene it
-/// came from, so what it paints lands in layers of the same name.
+/// blueprint is named after the folder or node.
 pub fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSnapshot) {
     let bundle = frame.bundle.clone();
     let Some(own) = nodes::bundle_of(editor, &bundle) else {
@@ -72,8 +70,7 @@ pub fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSnapshot) 
     );
     let named = scene::holes(&held);
     let variables: BTreeMap<String, Variable> = own
-        .blueprint()
-        .variables
+        .variables()
         .iter()
         .filter(|(name, _)| named.contains(name))
         .map(|(name, variable)| (name.clone(), variable.clone()))
@@ -82,26 +79,15 @@ pub fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSnapshot) 
     for node in &mut shifted {
         shift_tree(node, -origin.x, -origin.y);
     }
-    let layers = GridDraft::of(&bundle, own.blueprint())
-        .layer_names()
-        .into_iter()
-        .map(|name| SceneNode::GroundLayer(GroundLayer::named(name)));
-    let map = Tilemap {
-        size: MapSize {
+    let made = BlueprintDef {
+        size: TerrainSize {
             width: (bounds.max().x - origin.x + 0.5).ceil().max(1.0) as u32,
             height: (bounds.max().y - origin.y + 0.5).ceil().max(1.0) as u32,
         },
-        tile: own.blueprint().map.tile,
-    };
-    let made = BlueprintDef {
         variables,
-        scene: Scene {
-            nodes: layers.chain(shifted).collect(),
-            grids: SceneGrids::empty(&map),
-        },
-        map,
+        scene: shifted,
     };
-    let count = nodes::modules(&made.scene.nodes).len();
+    let count = nodes::modules(&made.scene).len();
     let mut edit = ContentEdit::new(format!("Make blueprint {}", name_of(&path)));
     if let Err(error) = edit.write_content(project, &path, &made) {
         editor.toast(error);
@@ -109,12 +95,12 @@ pub fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSnapshot) 
     }
     let after = project.reader_after(&edit);
     let Some(written) = after.id_of::<BlueprintDef>(&path).and_then(|made| {
-        let mut changed = own.blueprint().clone();
+        let mut changed = own.draft();
         changed.variables = rescoped(&changed.variables, reader.scope(), after.scope()).ok()?;
-        changed.scene.nodes = nodes::CopiedNodes::of(&reader, &changed.scene.nodes)?
+        changed.nodes = nodes::CopiedNodes::of(&reader, &changed.nodes)?
             .read(&after, &changed.variables)
             .ok()?;
-        *nodes::node_mut(&mut changed.scene.nodes, &first)? = SceneNode::Module(ModuleNode {
+        *nodes::node_mut(&mut changed.nodes, &first)? = SceneNode::Module(ModuleNode {
             label: Some(label.clone()),
             holes: Holes(
                 named
@@ -125,12 +111,12 @@ pub fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSnapshot) 
             ..ModuleNode::new(AreaModule::Blueprint(Placement {
                 blueprint: made,
                 at: origin,
-                flip: Default::default(),
+                yaw: Degrees::default(),
                 values: BTreeMap::new(),
             }))
         });
-        nodes::SceneTree::new(&mut changed.scene.nodes).remove(&selected[1..]);
-        changed.scene.nodes = nodes::CopiedNodes::of(&after, &changed.scene.nodes)?
+        nodes::SceneTree::new(&mut changed.nodes).remove(&selected[1..]);
+        changed.nodes = nodes::CopiedNodes::of(&after, &changed.nodes)?
             .read(&after, &changed.variables)
             .ok()?;
         Some(changed)
@@ -138,16 +124,7 @@ pub fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSnapshot) 
         editor.toast("The new blueprint doesn't read where it was made");
         return;
     };
-    let wrote = match own {
-        nodes::SceneBundle::Area(area) => {
-            let mut area = (*area).clone();
-            area.blueprint = written;
-            edit.write_content_in(&after, &bundle, &area).map(|_| ())
-        }
-        nodes::SceneBundle::Blueprint(_) => {
-            edit.write_content_in(&after, &bundle, &written).map(|_| ())
-        }
-    };
+    let wrote = own.write_in(&mut edit, &after, &bundle, |draft| *draft = written);
     if let Err(error) = wrote.and_then(|()| editor.try_apply(edit)) {
         editor.toast(error);
         return;
@@ -160,16 +137,15 @@ pub fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSnapshot) 
     ));
 }
 
-/// The nodes of `bundle` selected, ground layers aside, in tree order and without any held by
-/// another selected folder.
+/// The nodes of `bundle` selected, in tree order and without any held by another selected folder.
 fn selected_nodes(editor: &Editor, bundle: &str, scene: &[SceneNode]) -> Vec<String> {
     let selected = super::selected_parts(editor, bundle);
     let mut found: Vec<String> = Vec::new();
-    nodes::walk(scene, &mut |pointer, node| {
+    nodes::walk(scene, &mut |pointer, _| {
         let inside_found = found
             .iter()
             .any(|folder| pointer.starts_with(&format!("{folder}/")));
-        if selected.contains(pointer) && !nodes::is_layer(node) && !inside_found {
+        if selected.contains(pointer) && !inside_found {
             found.push(pointer.to_owned());
         }
     });
@@ -202,7 +178,6 @@ pub fn shift_tree(node: &mut SceneNode, dx: f32, dy: f32) {
             }
         }
         SceneNode::Module(module) => shapes::shift(&mut module.module, dx, dy),
-        SceneNode::GroundLayer(_) => {}
     }
 }
 

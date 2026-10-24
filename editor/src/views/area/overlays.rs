@@ -9,17 +9,16 @@ use engine::core::audio::soundscape::EDGE_FALLOFF;
 use engine::core::math::{Pos, Rect};
 use engine::core::units::{Cell, CellPos, GridDims, GridSize, Meters, TileSize};
 use engine::systems::area::blueprint::BlueprintDef;
+use engine::systems::area::prop::PropDef;
 use engine::systems::area::{self, AreaModule, AreaModuleKind, Pictured};
-use ui::egui::{Color32, Pos2, Rect as ERect, Sense, Stroke as EStroke, Ui, Vec2};
+use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Vec2};
 
 use super::population;
-use super::{AreaFrame, AreaTool, nodes, scenery, selected_parts, shapes};
+use super::{AreaFrame, AreaTool, selected_parts, shapes};
 use crate::app::Editor;
 use crate::forms;
-use crate::keymap::EditorKey;
 use crate::views::navigation::Viewport;
 
-pub(super) const SORT_LINE: Color32 = ui::ink::AZURE;
 const LABEL_GAP: f32 = 2.0;
 const LABEL_SHIFTS: u32 = 3;
 
@@ -30,7 +29,7 @@ pub(super) fn overlay_grid(
     lines: bool,
 ) {
     let canvas = frame.canvas;
-    let bounds = Rect::new(Pos::new(-0.5, -0.5), area.size);
+    let bounds = area.size.bounds();
     if matches!(frame.pictured, Pictured::Blueprint(_)) {
         let rect = canvas.rect(bounds).expand(1.0);
         paint::dashed_rect(painter, rect, EStroke::new(1.5, theme::DROP), 6.0, 4.0);
@@ -106,30 +105,6 @@ pub(super) fn overlay_walk(painter: &egui::Painter, frame: &AreaFrame, area: &ar
             );
         },
     );
-    if canvas.scale() < 8.0 {
-        return;
-    }
-    let visible = canvas.visible();
-    for cell in size.cells() {
-        let bounds = cell.bounds();
-        let Some(index) = cell.index(size) else {
-            continue;
-        };
-        let Some(walk) = area.grids.walk[index] else {
-            continue;
-        };
-        if !visible.intersects(&bounds) {
-            continue;
-        }
-        let rect = canvas.rect(bounds);
-        let mark = ERect::from_min_size(rect.min, Vec2::splat((canvas.scale() * 0.25).max(2.0)));
-        let color = if walk {
-            Color32::from_rgb(90, 200, 120)
-        } else {
-            Color32::from_rgb(220, 90, 90)
-        };
-        painter.rect_filled(mark, 0.0, color);
-    }
 }
 
 /// Hands `draw` the cells in view that `picked` takes, each row's neighbours joined into one run,
@@ -170,7 +145,9 @@ pub fn module_color(kind: Option<AreaModuleKind>) -> Color32 {
         Some(AreaModuleKind::Object) => Color32::from_rgb(255, 200, 80),
         Some(AreaModuleKind::SafeZone) => Color32::from_rgb(90, 160, 255),
         Some(AreaModuleKind::Soundscape) => Color32::from_rgb(170, 110, 255),
-        Some(AreaModuleKind::Scenery) => Color32::from_rgb(140, 220, 140),
+        Some(AreaModuleKind::Prop) => Color32::from_rgb(140, 220, 140),
+        Some(AreaModuleKind::Scatter) => Color32::from_rgb(110, 190, 110),
+        Some(AreaModuleKind::Light) => Color32::from_rgb(255, 240, 160),
         Some(AreaModuleKind::Blueprint) => Color32::from_rgb(90, 220, 220),
         Some(AreaModuleKind::Population) => Color32::from_rgb(255, 120, 120),
         Some(AreaModuleKind::Resident) => Color32::from_rgb(255, 160, 200),
@@ -232,10 +209,7 @@ pub(super) fn overlay_modules(
             );
             continue;
         }
-        if matches!(kind, AreaModuleKind::Blueprint | AreaModuleKind::Scenery)
-            && !is_selected
-            && !is_hovered
-        {
+        if kind == AreaModuleKind::Blueprint && !is_selected && !is_hovered {
             continue;
         }
         let color = module_color(Some(kind));
@@ -256,6 +230,28 @@ pub(super) fn overlay_modules(
                     ellipse_points(rect, 48),
                     EStroke::new(width, color),
                 ));
+            }
+            AreaModuleKind::Prop => {
+                draw_prop(painter, frame, module, color, width);
+            }
+            AreaModuleKind::Light => {
+                if let AreaModule::Light(light) = module {
+                    painter.circle_stroke(
+                        rect.center(),
+                        (canvas.scale() * 0.3).max(3.0),
+                        EStroke::new(width, color),
+                    );
+                    let reach = Rect::new(
+                        light.at - engine::core::math::Offset::new(light.radius.0, light.radius.0),
+                        engine::core::math::Size::splat(light.radius.0 * 2.0),
+                    );
+                    painter.add(egui::Shape::dashed_line(
+                        &ellipse_points(canvas.rect(reach), 48),
+                        EStroke::new(1.0, ink::wash(color, 0.5)),
+                        6.0,
+                        6.0,
+                    ));
+                }
             }
             AreaModuleKind::Resident | AreaModuleKind::Object if shapes::is_point(module) => {
                 painter.circle_stroke(
@@ -296,104 +292,6 @@ pub(super) fn overlay_modules(
             }
         }
     }
-}
-
-pub(super) fn overlay_selected_scenery(
-    editor: &mut Editor,
-    ui: &Ui,
-    painter: &egui::Painter,
-    view_key: &str,
-    frame: &AreaFrame,
-    area: &area::Area,
-) {
-    let Some(node) = scenery::selected_scenery(editor, frame) else {
-        return;
-    };
-    let Some(AreaModule::Scenery(scenery)) = frame.module(&node) else {
-        return;
-    };
-    let rect = scenery.bounds();
-    let canvas = frame.canvas;
-    let grids = area.grids.clone();
-    let size = area.size.grid();
-    for (_, cell) in scenery.cells() {
-        if let Some(cell_index) = cell.index(size)
-            && grids.walk[cell_index] == Some(false)
-        {
-            paint::hatched(
-                painter,
-                canvas.rect(cell.bounds()),
-                ink::wash(theme::BLOCKED, 0.55),
-                canvas.scale(),
-            );
-        }
-    }
-    let at = scenery.at;
-    for [dx, dy] in &scenery.blocks {
-        let cell = CellPos::new(at.x.round() as i32 + dx, at.y.round() as i32 + dy);
-        paint::hatched(
-            painter,
-            canvas.rect(cell.bounds()),
-            Color32::from_rgba_unmultiplied(220, 120, 60, 140),
-            canvas.scale(),
-        );
-    }
-    let height = rect.size.height;
-    let sort = scenery.sort.unwrap_or(height - 1.0);
-    let line_y = rect.min().y + sort;
-    let a = canvas.to_screen(Pos::new(rect.min().x, line_y));
-    let b = canvas.to_screen(Pos::new(rect.max().x, line_y));
-    painter.add(egui::Shape::dashed_line(
-        &[a, b],
-        EStroke::new(2.0, SORT_LINE),
-        8.0,
-        5.0,
-    ));
-    let handle = ERect::from_center_size(b + Vec2::new(10.0, 0.0), Vec2::splat(10.0));
-    painter.rect_filled(handle, 2.0, SORT_LINE);
-    frame
-        .labels
-        .chip(a + Vec2::new(4.0, -6.0), "sort line", SORT_LINE);
-    let grab = ui.interact(
-        ERect::from_min_max(a, b).expand2(Vec2::new(16.0, 6.0)),
-        ui.id().with((view_key, "sort-line")),
-        Sense::drag(),
-    );
-    if grab.hovered() || grab.dragged() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-    }
-    if grab.drag_stopped()
-        && let Some(pointer) = grab.interact_pointer_pos()
-    {
-        let shift = ui.input(|i| EditorKey::FineStep.held(i));
-        let tile_y = canvas.to_tile(pointer).y - rect.min().y;
-        let snapped = if shift {
-            (tile_y * 16.0).round() / 16.0
-        } else {
-            tile_y.round()
-        };
-        let new_sort = snapped.clamp(0.0, height);
-        if (new_sort - sort).abs() > f32::EPSILON {
-            nodes::change_scene(editor, &frame.bundle, |scene| {
-                let AreaModule::Scenery(scenery) =
-                    &mut nodes::module_node_mut(scene, &node)?.module
-                else {
-                    return None;
-                };
-                scenery.sort = Some(new_sort);
-                Some("Move the sort line of the scenery".to_owned())
-            });
-        }
-    }
-    editor.status.left.push(format!(
-        "scenery · {} · {} tiles",
-        frame.reader.path_of(scenery.tileset).unwrap_or_default(),
-        scenery::tile_count(scenery)
-    ));
-    editor.status.left.push(format!(
-        "drag the sort line · {} snaps to 1/16",
-        EditorKey::FineStep.name()
-    ));
 }
 
 pub(super) fn overlay_soundscape_reach(
@@ -589,20 +487,77 @@ pub fn hsv(h: f32, s: f32, v: f32) -> Color32 {
     Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }
 
-pub(super) fn overlay_sort_lines(painter: &egui::Painter, frame: &AreaFrame, area: &area::Area) {
+/// A prop as its footprint stands on the ground, or a stake where it has none, and the props a
+/// scatter strews shown by the area that holds them.
+fn draw_prop(
+    painter: &egui::Painter,
+    frame: &AreaFrame,
+    module: &AreaModule,
+    color: Color32,
+    width: f32,
+) {
+    let AreaModule::Prop(prop) = module else {
+        return;
+    };
     let canvas = frame.canvas;
-    for scenery in &area.scenery {
-        let Some(line) = scenery.sort_line() else {
+    let footprint = frame
+        .reader
+        .path_of(prop.prop)
+        .and_then(|path| frame.content.by_path::<PropDef>(path))
+        .map(|id| id.get(&frame.content).footprint.clone())
+        .filter(|footprint| !footprint.is_none());
+    match footprint {
+        Some(footprint) => {
+            let points: Vec<Pos2> = footprint
+                .outline(prop.at, prop.yaw, prop.scale)
+                .into_iter()
+                .map(|point| canvas.to_screen(point))
+                .collect();
+            painter.add(egui::Shape::closed_line(points, EStroke::new(width, color)));
+        }
+        None => {
+            painter.circle_stroke(
+                canvas.to_screen(prop.at),
+                (canvas.scale() * 0.25).max(3.0),
+                EStroke::new(width, color),
+            );
+        }
+    }
+    let heading =
+        canvas.to_screen(prop.at + prop.yaw.rotate(engine::core::math::Offset::new(0.0, -0.5)));
+    painter.line_segment(
+        [canvas.to_screen(prop.at), heading],
+        EStroke::new(width, color),
+    );
+}
+
+/// Every prop the area stands, scattered ones too, as faint marks under the module outlines.
+pub(super) fn overlay_props(painter: &egui::Painter, frame: &AreaFrame, area: &area::Area) {
+    let canvas = frame.canvas;
+    if canvas.scale() < 4.0 {
+        return;
+    }
+    let visible = canvas.visible();
+    let color = ink::wash(module_color(Some(AreaModuleKind::Prop)), 0.45);
+    for prop in &area.props {
+        if !visible.contains(prop.at) {
             continue;
-        };
-        let width = scenery.tiles.first().map_or(0, Vec::len) as f32;
-        let a = canvas.to_screen(Pos::new(scenery.at.x, line.0));
-        let b = canvas.to_screen(Pos::new(scenery.at.x + width, line.0));
-        painter.add(egui::Shape::dashed_line(
-            &[a, b],
-            EStroke::new(1.5, SORT_LINE),
-            6.0,
-            4.0,
-        ));
+        }
+        let def = prop.prop.get(&frame.content);
+        let points: Vec<Pos2> = def
+            .footprint
+            .outline(prop.at, prop.yaw, prop.scale)
+            .into_iter()
+            .map(|point| canvas.to_screen(point))
+            .collect();
+        if points.len() >= 3 {
+            painter.add(egui::Shape::closed_line(points, EStroke::new(1.0, color)));
+        } else {
+            painter.circle_stroke(
+                canvas.to_screen(prop.at),
+                (canvas.scale() * 0.2).max(2.0),
+                EStroke::new(1.0, color),
+            );
+        }
     }
 }

@@ -1,0 +1,11 @@
+{
+  "name": "Water",
+  "color": [
+    52,
+    96,
+    150,
+    255
+  ],
+  "surface": "world/surface/rock.surface.json",
+  "walk": "blocks"
+}

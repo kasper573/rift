@@ -2,7 +2,6 @@
 resolver = "3"
 members = [
     "ui",
-    "bevy/tilemap",
     "bevy/terminal",
     "engine",
     "driver",

@@ -35,11 +35,11 @@ use ui::{float, ink, sheet};
 use crate::app::{BottomTab, CloseDialog, CloseThen, Editor, ModalDialog};
 use crate::icons::IconTone;
 use crate::keymap::EditorKey;
+use crate::play;
 use crate::project::{self, EditRefusal};
 use crate::tabs::{DockRequest, EditorTab};
 use crate::views::script::{self, ScriptKeys};
-use crate::views::{self, area, character, class, model, spreadsheet, tileset, vfx, world};
-use crate::{import, play};
+use crate::views::{self, area, character, class, model, spreadsheet, vfx, world};
 
 pub fn show(editor: &mut Editor, ctx: &Context) {
     editor.status.right.clear();
@@ -58,7 +58,7 @@ pub fn show(editor: &mut Editor, ctx: &Context) {
     if editor.project.is_some() {
         workspace(editor, &mut root);
         report::not_loaded(editor, ctx);
-        import::tick(editor, ctx);
+        dropped_files(editor, ctx);
     } else {
         start::show(editor, &mut root);
     }
@@ -549,7 +549,6 @@ impl TabViewer for Viewer<'_> {
             EditorTab::Blueprint { key } => area::show_blueprint(self.editor, ui, key),
             EditorTab::Script(owner) => script::show(self.editor, ui, owner),
             EditorTab::Model { key } => model::show(self.editor, ui, key),
-            EditorTab::Tileset { key } => tileset::show(self.editor, ui, key),
             EditorTab::Row { table, key } if table == ClassDef::TABLE => {
                 class::show(self.editor, ui, key)
             }
@@ -623,7 +622,6 @@ impl TabViewer for Viewer<'_> {
             | EditorTab::World
             | EditorTab::Script(_)
             | EditorTab::Model { .. }
-            | EditorTab::Tileset { .. }
             | EditorTab::Spreadsheet { .. } => [false, false],
             EditorTab::Row { table, key } if table == ClassDef::TABLE => [
                 false,
@@ -643,4 +641,24 @@ fn toast(editor: &mut Editor, ctx: &Context) {
         return;
     }
     float::toast(ctx, text, since);
+}
+
+/// Files dropped onto the window go to the model tab in front, which takes busts and rigs; anywhere
+/// else they have no place to land.
+fn dropped_files(editor: &mut Editor, ctx: &Context) {
+    let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
+        i.raw
+            .dropped_files
+            .iter()
+            .map(|file| file.path().to_path_buf())
+            .collect()
+    });
+    if dropped.is_empty() {
+        return;
+    }
+    if matches!(active_tab(editor), Some(EditorTab::Model { .. })) {
+        editor.views.model.drops = dropped;
+    } else {
+        editor.toast("Drop files onto a model's tab to add them to it");
+    }
 }

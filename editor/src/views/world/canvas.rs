@@ -27,7 +27,6 @@ use super::{
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::tabs::shown_path;
-use crate::views::area::scene;
 use crate::views::navigation::{self, Viewport};
 
 const LABEL: f32 = 28.0;
@@ -152,7 +151,6 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
         hovered,
         layers: editor.views.world.layers,
         zoomed: shows_areas(viewport.zoom),
-        ppp: ui.ctx().pixels_per_point(),
     };
     if drawing.layers.regions {
         draw_regions(&painter, &viewport, &drawing);
@@ -281,7 +279,6 @@ struct Drawing<'a> {
     hovered: Option<AreaId>,
     layers: MapLayers,
     zoomed: bool,
-    ppp: f32,
 }
 
 fn draw_card(editor: &mut Editor, painter: &Painter, drawing: &Drawing, card: &MapCard) {
@@ -308,26 +305,26 @@ fn draw_card(editor: &mut Editor, painter: &Painter, drawing: &Drawing, card: &M
         );
     }
     let px_per_tile = card.art.width() / info.size.width.max(1.0);
-    let scene_key = format!("world:{key}");
-    let rendered = card.art.size() * drawing.ppp;
-    let rendered = rendered * rendered_scale(rendered);
-    let width = rendered.x.round().clamp(1.0, 4096.0) as u32;
-    editor.views.area.requests.push(scene::AreaSceneRequest {
-        key: scene_key.clone(),
-        spec: scene::AreaSceneSpec::area(key),
-        width,
-        height: rendered.y.round().clamp(1.0, 4096.0) as u32,
-        center: Pos::new(info.size.width / 2.0, info.size.height / 2.0),
-        zoom: width as f32 / (info.size.width.max(1.0) * TILE.0),
-        generation: atlas.generation,
-        live: false,
-    });
     painter.rect_filled(card.art, 2.0, theme::INPUT);
-    if let Some(scene) = editor.views.area.scenes.by_path.get(&scene_key) {
-        painter.image(
-            scene.texture,
-            card.art,
-            scene.uv(),
+    if let Some(project) = editor.project.as_ref()
+        && let Some(content) = project.content.clone()
+        && let Some(id) = content.by_path::<area::AreaDef>(key)
+    {
+        let art = editor.views.area.grounds.of_area(
+            &painter.ctx().clone(),
+            &format!("world:{key}"),
+            atlas.generation,
+            &content,
+            id,
+        );
+        let canvas = Viewport {
+            screen: card.art,
+            center: Pos::new(info.size.width / 2.0 - 0.5, info.size.height / 2.0 - 0.5),
+            zoom: px_per_tile / TILE.0,
+        };
+        art.draw(
+            &painter.with_clip_rect(card.art),
+            canvas,
             if dimmed { DIM } else { Color32::WHITE },
         );
     }
@@ -1306,12 +1303,4 @@ fn tile_facts(map: &OpenWorldMap, hit: &MapTileHit) -> String {
             |(door, metres)| format!("door {door} {} m away", metres.round()),
         );
     format!("{walkable} · {safe} · {nearest_npc} · {nearest_door}")
-}
-
-/// How much larger than its `pixels` on screen a card's art renders: up to the next step of a
-/// ladder of √2 steps, so zooming renders the cards again only as it crosses a step, and the
-/// picture scales between steps.
-fn rendered_scale(pixels: Vec2) -> f32 {
-    let longest = pixels.max_elem().max(1.0);
-    2f32.powf((longest.log2() * 2.0).ceil() / 2.0) / longest
 }

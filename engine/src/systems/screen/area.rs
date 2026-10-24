@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-use std::time::Duration;
 use ui::egui;
 use ui::float;
 
@@ -12,21 +10,18 @@ use ui::ink::Ground;
 use super::ClientScreen;
 use crate::core::audio::soundscape::Soundscape;
 use crate::core::content::Content;
-use crate::core::content::media::ImageSizes;
 use crate::core::geometry::Radians;
 use crate::core::gui::{self, Band};
 use crate::core::interpolate::RenderValueSystems;
 use crate::core::math::Pos;
-use crate::core::render::screen::ToScreen;
 use crate::core::render::transition::{
     self, ActiveTransition, ScreenTransitionPhase, WorldViewSystems,
 };
-use crate::core::render::{GroundDepth, RowDepths, TILE};
+use crate::core::render::{GroundDepth, RowDepths};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time::Seconds;
-use crate::core::units::{Meters, TileSize};
+use crate::core::units::Meters;
 use crate::systems::actor::Actor;
-use crate::systems::area::tileset::{self, TilesetId};
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::movement::RenderPosition;
@@ -37,18 +32,15 @@ pub struct AreaScreenPlugin;
 
 impl Plugin for AreaScreenPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SpawnedArea>()
+        app.init_resource::<ShownArea>()
             .init_resource::<Crossing>()
-            .init_resource::<RetainedImages>()
-            .add_plugins(bevy_tilemap::TilemapPlugin)
             .add_systems(
                 Update,
                 (
                     carry_view_across
                         .after(RenderValueSystems)
                         .before(WorldViewSystems),
-                    (spawn_area_tiles, play_area_soundscape).in_set(WorldViewSystems),
-                    retain_loaded_images,
+                    (show_area, play_area_soundscape).in_set(WorldViewSystems),
                 )
                     .run_if(in_state(ClientScreen::Area)),
             )
@@ -63,11 +55,9 @@ impl Plugin for AreaScreenPlugin {
     }
 }
 
+/// The area the view is set up for: its ground depths are in place and its soundscape plays.
 #[derive(Resource, Default)]
-struct SpawnedArea {
-    area: Option<AreaId>,
-    images: Vec<Handle<Image>>,
-}
+struct ShownArea(Option<AreaId>);
 
 #[derive(Resource, Default, Clone, Copy)]
 struct Crossing {
@@ -87,8 +77,8 @@ struct Pose {
 struct Held {
     since: Seconds,
     pose: Pose,
-    /// The first frame that draws a newly drawable area uploads its images to the GPU, a long
-    /// frame. The view is revealed only after it, so that frame passes under the full cover.
+    /// The first frame that draws a newly shown area is a long one. The view is revealed only
+    /// after it, so that frame passes under the full cover.
     rendered: bool,
 }
 
@@ -113,7 +103,7 @@ pub fn carry_view_across(world: &mut World) {
             }
             (Some(pose), None, _) => (Some(pose), Some(Held::new(now, pose))),
             (Some(pose), Some(held), _) => {
-                let drawable = area_drawable(world, pose.area);
+                let drawable = world.resource::<ShownArea>().0 == Some(pose.area);
                 if now - held.since > ARRIVAL_PATIENCE || (drawable && held.rendered) {
                     reveal(world, pose);
                     (Some(pose), None)
@@ -145,7 +135,6 @@ pub fn carry_view_across(world: &mut World) {
 
 fn reveal(world: &mut World, pose: Pose) {
     transition::reveal(world, pose.at);
-    release_unshown_images(world);
     world.write_message(AreaDrawn);
 }
 
@@ -176,28 +165,6 @@ fn pose_of(world: &World, character: Entity) -> Option<Pose> {
     })
 }
 
-fn area_drawable(world: &mut World, area: AreaId) -> bool {
-    if world.resource::<SpawnedArea>().area != Some(area) {
-        return false;
-    }
-    let on_show = images_on_show(world);
-    let images = world.resource::<Assets<Image>>();
-    on_show.iter().all(|image| images.contains(image))
-}
-
-fn images_on_show(world: &mut World) -> Vec<Handle<Image>> {
-    let spawned = world.resource::<SpawnedArea>().images.clone();
-    spawned
-        .into_iter()
-        .chain(
-            world
-                .query::<&Sprite>()
-                .iter(world)
-                .map(|sprite| sprite.image.clone()),
-        )
-        .collect()
-}
-
 /// Leaving the area scene keeps the last view under the veil, so a lost connection or a content
 /// deploy shows the loading and reconnect cards over a frozen world and reveals the next one from
 /// where the character lands.
@@ -219,50 +186,15 @@ fn leave_area(world: &mut World) {
         last_seen: None,
         held,
     };
-    world.resource_mut::<SpawnedArea>().area = None;
-    world.resource_mut::<RetainedImages>().0.clear();
+    world.resource_mut::<ShownArea>().0 = None;
 }
 
-/// Images loaded since the last crossing finished, and those it ended up showing, stay loaded until
-/// the next one finishes. What the area left behind shares with the next (the player's own sheet, a
-/// common tileset) then survives its departure, instead of unloading and decoding again moments
-/// later.
-#[derive(Resource, Default)]
-struct RetainedImages(Vec<Handle<Image>>);
-
-fn retain_loaded_images(
-    mut events: MessageReader<AssetEvent<Image>>,
-    mut images: ResMut<Assets<Image>>,
-    mut retained: ResMut<RetainedImages>,
-) {
-    for event in events.read() {
-        if let AssetEvent::LoadedWithDependencies { id } = *event
-            && let Some(image) = images.get_strong_handle(id)
-        {
-            retained.0.push(image);
-        }
-    }
-}
-
-fn release_unshown_images(world: &mut World) {
-    let shown: HashSet<AssetId<Image>> = images_on_show(world).iter().map(Handle::id).collect();
-    world
-        .resource_mut::<RetainedImages>()
-        .0
-        .retain(|image| shown.contains(&image.id()));
-}
-
-#[expect(clippy::too_many_arguments)]
-fn spawn_area_tiles(
+/// Sets the view up for the area the character stands in, once per area entered.
+fn show_area(
     viewpoint: Res<MyCharacter>,
     areas: Query<&AreaTag>,
-    assets: Res<AssetServer>,
     content: Res<Content>,
-    mut spawned: ResMut<SpawnedArea>,
-    tiles: Query<Entity, With<bevy_tilemap::MapTile>>,
-    mut images: ResMut<Assets<Image>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<bevy_tilemap::TilemapMaterial>>,
+    mut shown: ResMut<ShownArea>,
     mut commands: Commands,
 ) {
     let Some(area_id) = viewpoint
@@ -272,11 +204,8 @@ fn spawn_area_tiles(
     else {
         return;
     };
-    if spawned.area == Some(area_id) {
+    if shown.0 == Some(area_id) {
         return;
-    }
-    for tile in &tiles {
-        commands.entity(tile).despawn();
     }
     let area = area::load(&content, area_id);
     commands.insert_resource(GroundDepth(area.sort_base()));
@@ -284,88 +213,7 @@ fn spawn_area_tiles(
         height: area.size.height,
         base: area.sort_base(),
     });
-    let origin = area.size.bounds().min().to_screen();
-    let mut loaded = Vec::new();
-    let sheets = TileSheets::new(
-        &content,
-        &area.grids,
-        area.scenery.iter().map(|scenery| scenery.tileset),
-        |def| {
-            let image = assets.load(def.image.path());
-            loaded.push(image.clone());
-            image
-        },
-    );
-    let grids = &area.grids;
-    let size = grids.size;
-    for (index, layer) in grids.ground.iter().enumerate() {
-        let cells: Vec<Option<bevy_tilemap::GridCell>> = layer
-            .cells
-            .iter()
-            .map(|cell| {
-                let entry = grids.entry(*cell)?;
-                Some(bevy_tilemap::GridCell {
-                    sheet: sheets.index(entry.tileset)?,
-                    tile: entry.tile,
-                    flip_x: entry.flip.horizontal(),
-                    flip_y: entry.flip.vertical(),
-                })
-            })
-            .collect();
-        bevy_tilemap::spawn_grid_layer(
-            &mut commands,
-            &mut bevy_tilemap::TilemapAssets {
-                images: &mut images,
-                meshes: &mut meshes,
-                materials: &mut materials,
-            },
-            &sheets.sheets,
-            &bevy_tilemap::GridLayer {
-                width: size.width,
-                height: size.height,
-                cells: &cells,
-            },
-            bevy_tilemap::LayerPlacement {
-                origin,
-                tile_px: TILE.0,
-                z: index as f32,
-            },
-            (),
-        );
-    }
-    let depths = area::scenery_depths(&area.scenery, area.size.height, area.sort_base());
-    for (scenery, z) in area.scenery.iter().zip(depths) {
-        let Some(sheet) = sheets.index(scenery.tileset) else {
-            continue;
-        };
-        for (row, tiles) in scenery.tiles.iter().enumerate() {
-            for (column, tile) in tiles.iter().enumerate() {
-                let Some(tile) = tile else {
-                    continue;
-                };
-                let square = area::walk::tile_square(scenery, column, row);
-                let flip = tile.flip.compose(scenery.flip);
-                bevy_tilemap::spawn_tile_sprite(
-                    &mut commands,
-                    &sheets.sheets,
-                    bevy_tilemap::TileSprite {
-                        sheet,
-                        tile: tile.tile,
-                        flip_x: flip.horizontal(),
-                        flip_y: flip.vertical(),
-                        bottom_left: square.max().to_screen().with_x(square.min().to_screen().x),
-                        z,
-                    },
-                    TILE.0,
-                    (),
-                );
-            }
-        }
-    }
-    *spawned = SpawnedArea {
-        area: Some(area_id),
-        images: loaded,
-    };
+    shown.0 = Some(area_id);
 }
 
 fn play_area_soundscape(
@@ -391,62 +239,6 @@ fn silence_soundscape(mut soundscape: ResMut<Soundscape>) {
     soundscape.0.clear();
 }
 
-pub struct TileSheets {
-    pub tilesets: Vec<TilesetId>,
-    pub sheets: Vec<bevy_tilemap::TileSheet>,
-}
-
-impl TileSheets {
-    pub fn new(
-        content: &Content,
-        grids: &area::AreaGrids,
-        scenery: impl Iterator<Item = TilesetId>,
-        mut image_of: impl FnMut(&tileset::TilesetDef) -> Handle<Image>,
-    ) -> TileSheets {
-        let sizes = content.built::<ImageSizes>();
-        let mut tilesets: Vec<TilesetId> = grids
-            .palette
-            .iter()
-            .map(|entry| entry.tileset)
-            .chain(scenery)
-            .collect();
-        tilesets.sort_by_key(|id| id.index());
-        tilesets.dedup();
-        let sheets = tilesets
-            .iter()
-            .map(|&id| {
-                let def = id.get(content);
-                let (width, height) = sizes.0.get(def.image.as_str()).copied().unwrap_or((0, 0));
-                bevy_tilemap::TileSheet {
-                    image: image_of(def),
-                    size: Vec2::new(width as f32, height as f32),
-                    tile: Vec2::splat(def.tile as f32),
-                    animations: def
-                        .animations(width, height)
-                        .map(|(tile, frames)| bevy_tilemap::TileAnimation {
-                            tile,
-                            frames: frames
-                                .iter()
-                                .map(|frame| bevy_tilemap::TileAnimationFrame {
-                                    tile: frame.tile,
-                                    lasts: Duration::from_millis(u64::from(frame.ms)),
-                                })
-                                .collect(),
-                        })
-                        .collect(),
-                }
-            })
-            .collect();
-        TileSheets { tilesets, sheets }
-    }
-
-    pub fn index(&self, tileset: TilesetId) -> Option<usize> {
-        self.tilesets.iter().position(|&id| id == tileset)
-    }
-}
-
-/// The death notice reads over any ground, so its line sits on the dusk of notices. It takes no clicks:
-/// respawning is a key the line names.
 fn death_notice(world: &mut World) {
     let Some(gui) = gui::context(world) else {
         return;

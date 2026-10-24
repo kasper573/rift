@@ -101,8 +101,7 @@ pub fn folder(label: &str, children: Vec<SceneNode>) -> SceneNode {
     })
 }
 
-/// What names each node of `nodes`, depth first: an object's name, a folder's label, a layer's
-/// name.
+/// What names each node of `nodes`, depth first: an object's name, a folder's label.
 pub fn names(nodes: &[SceneNode]) -> Vec<String> {
     let mut found = Vec::new();
     editor::views::area::nodes::walk(nodes, &mut |_, node| {
@@ -111,7 +110,6 @@ pub fn names(nodes: &[SceneNode]) -> Vec<String> {
                 module: AreaModule::Object(object),
                 ..
             }) => object.name.clone(),
-            SceneNode::GroundLayer(layer) => Some(layer.name.clone()),
             node => node.label().map(str::to_owned),
         };
         found.push(name.unwrap_or_default());

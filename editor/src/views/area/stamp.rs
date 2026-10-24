@@ -5,32 +5,32 @@ use ui::input;
 use ui::theme;
 
 use engine::core::content::{Content, ContentScope, FolderReader, parent_of, rescoped};
+use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::script::VariableType;
 use engine::core::units::{Meters, TilePos};
 use engine::systems::area::blueprint::{BlueprintDef, BlueprintId, Placement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
-use engine::systems::area::{self, AreaModule, Flip};
+use engine::systems::area::{self, AreaModule};
 use engine::systems::script::VarValue;
 use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Ui, Vec2};
 
 use super::{AreaFrame, AreaSnapshot, modules, select, shapes};
 use crate::app::Editor;
 use crate::keymap::EditorKey;
-
-use crate::{rows, thumbs};
+use crate::rows;
 
 /// A placement of the blueprint `blueprint`, an id among the paths it was read against.
 pub fn placement_node(
     blueprint: BlueprintId,
     at: Pos<Meters>,
-    flip: Flip,
+    yaw: Degrees,
     values: BTreeMap<String, VarValue>,
 ) -> SceneNode {
     SceneNode::Module(ModuleNode::new(AreaModule::Blueprint(Placement {
         blueprint,
         at,
-        flip,
+        yaw,
         values,
     })))
 }
@@ -105,7 +105,7 @@ pub fn stamp_panel(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &
                 .project
                 .as_ref()
                 .and_then(|project| super::placement::holds_itself(project, &area_key, key));
-            let response = blueprint_card(editor, ui, content, key, *count, selected, card);
+            let response = blueprint_card(ui, content, key, *count, selected, card);
             match refused {
                 Some(reason) => {
                     ui.painter()
@@ -179,7 +179,6 @@ pub(super) fn stamp_values(editor: &Editor, stamp: Option<&str>) -> BTreeMap<Str
 }
 
 pub(super) fn blueprint_card(
-    editor: &mut Editor,
     ui: &mut Ui,
     content: &Content,
     key: &str,
@@ -200,7 +199,7 @@ pub(super) fn blueprint_card(
         rect.min + Vec2::new(6.0, 6.0),
         Vec2::new(card.x - 12.0, card.x - 12.0),
     );
-    draw_blueprint_art(editor, ui, content, key, art);
+    draw_blueprint_art(ui, content, key, art);
     if count > 0 {
         painter.text(
             Pos2::new(rect.center().x, rect.max.y - 10.0),
@@ -215,117 +214,84 @@ pub(super) fn blueprint_card(
     response.on_hover_text(key)
 }
 
-pub fn draw_blueprint_art(
-    editor: &mut Editor,
-    ui: &mut Ui,
-    content: &Content,
-    key: &str,
-    into: ERect,
-) {
-    let sceneries = content
-        .by_path::<BlueprintDef>(key)
-        .map(|blueprint| {
-            super::scene::parts_scenery(
-                content,
-                &Placement {
-                    blueprint,
-                    at: Pos::new(0.0, 0.0),
-                    flip: Flip::None,
-                    values: BTreeMap::new(),
-                },
-            )
+/// The blueprint's modules as outlines, fitted into `into`: what a placement of it would stand on
+/// the ground.
+pub fn draw_blueprint_art(ui: &mut Ui, content: &Content, key: &str, into: ERect) {
+    let Some(id) = content.by_path::<BlueprintDef>(key) else {
+        return;
+    };
+    let def = id.get(content);
+    let mut errors = Vec::new();
+    let flattening = area::blueprint::flatten_blueprint(content, id, &|_| true, &mut errors);
+    let modules: Vec<(Rect<Meters>, Color32)> = flattening
+        .modules
+        .iter()
+        .filter_map(|placed| {
+            let bounds = shapes::bounds(&placed.module, None)?;
+            Some((
+                bounds,
+                super::overlays::module_color(Some(placed.module.kind())),
+            ))
         })
-        .unwrap_or_default();
-    if sceneries.is_empty() {
-        ui.painter_at(into).text(
+        .collect();
+    let painter = ui.painter_at(into);
+    if modules.is_empty() {
+        painter.text(
             into.center(),
             egui::Align2::CENTER_CENTER,
-            "no art",
+            "empty",
             egui::FontId::proportional(11.0),
             theme::FAINT,
         );
         return;
     }
-    let extent = super::scene::scenery_extent(&sceneries).unwrap_or_default();
-    let (min, max) = (extent.min(), extent.max());
-    let span = (max.x - min.x).max(max.y - min.y).max(1.0);
+    let canvas_bounds = def.size.bounds();
+    let span = canvas_bounds
+        .size
+        .width
+        .max(canvas_bounds.size.height)
+        .max(1.0);
     let scale = (into.width() / span).min(into.height() / span);
-    let origin =
-        into.center() - Vec2::new((max.x - min.x) * scale / 2.0, (max.y - min.y) * scale / 2.0);
-    let ctx = ui.ctx().clone();
-    let painter = ui.painter_at(into);
-    for scenery in &sceneries {
-        let def = scenery.tileset.get(content);
-        let image = def.image.as_str().to_owned();
-        let Some(project) = editor.project.as_ref() else {
-            return;
-        };
-        let Some(thumb) = editor.form.thumbnails.image(&ctx, &project.files, &image) else {
-            continue;
-        };
-        let grid = def.grid(thumb.size[0] as u32, thumb.size[1] as u32);
-        for (row, tiles) in scenery.tiles.iter().enumerate() {
-            for (column, tile) in tiles.iter().enumerate() {
-                let Some(tile) = tile else {
-                    continue;
-                };
-                let region = grid.region(tile.tile);
-                let mut uv = thumbs::uv(
-                    thumb.size,
-                    region.min().x,
-                    region.min().y,
-                    region.size.width,
-                    region.size.height,
-                );
-                let flip = Flip::of(
-                    tile.flip.horizontal() != scenery.flip.horizontal(),
-                    tile.flip.vertical() != scenery.flip.vertical(),
-                );
-                if flip.horizontal() {
-                    uv = ERect::from_min_max(
-                        Pos2::new(uv.max.x, uv.min.y),
-                        Pos2::new(uv.min.x, uv.max.y),
-                    );
-                }
-                if flip.vertical() {
-                    uv = ERect::from_min_max(
-                        Pos2::new(uv.min.x, uv.max.y),
-                        Pos2::new(uv.max.x, uv.min.y),
-                    );
-                }
-                let x = scenery.at.x + column as f32 - min.x;
-                let y = scenery.at.y + row as f32 - min.y;
-                let cell = ERect::from_min_size(
-                    origin + Vec2::new(x * scale, y * scale),
-                    Vec2::splat(scale + 0.5),
-                );
-                painter.image(thumb.texture.id(), cell, uv, Color32::WHITE);
-            }
-        }
+    let origin = into.center()
+        - Vec2::new(
+            canvas_bounds.size.width * scale / 2.0,
+            canvas_bounds.size.height * scale / 2.0,
+        );
+    let to_screen = |at: Pos<Meters>| {
+        origin
+            + Vec2::new(
+                (at.x - canvas_bounds.min().x) * scale,
+                (at.y - canvas_bounds.min().y) * scale,
+            )
+    };
+    for (bounds, color) in modules {
+        let rect = ERect::from_min_max(to_screen(bounds.min()), to_screen(bounds.max()));
+        painter.rect_stroke(
+            rect.expand(0.5),
+            0.0,
+            EStroke::new(1.0, color),
+            egui::StrokeKind::Inside,
+        );
     }
 }
 
-pub fn flip_stamp(editor: &mut Editor, view_key: &str, horizontal: bool) {
+/// Turns the stamp a quarter turn, clockwise or counter.
+pub fn turn_stamp(editor: &mut Editor, view_key: &str, clockwise: bool) {
     let Some(stamp) = editor.views.area.view(view_key).stamp.clone() else {
         return;
     };
     let settings = editor.settings.stamps.entry(stamp).or_default();
-    if horizontal {
-        settings.flip_x = !settings.flip_x;
-    } else {
-        settings.flip_y = !settings.flip_y;
-    }
+    settings.quarter_turns = (settings.quarter_turns + if clockwise { 1 } else { 3 }) % 4;
     editor.save_settings();
 }
 
-pub(super) fn stamp_flip(editor: &Editor, stamp: &str) -> Flip {
-    let settings = editor
+pub(super) fn stamp_yaw(editor: &Editor, stamp: &str) -> Degrees {
+    let quarters = editor
         .settings
         .stamps
         .get(stamp)
-        .cloned()
-        .unwrap_or_default();
-    Flip::of(settings.flip_x, settings.flip_y)
+        .map_or(0, |settings| settings.quarter_turns);
+    Degrees(f32::from(quarters % 4) * 90.0)
 }
 
 /// What one placement of the stamp covers, `values` read among `reader`'s paths.
@@ -336,12 +302,12 @@ pub fn stamp_footprint(
     stamp: &str,
     values: &BTreeMap<String, VarValue>,
 ) -> Size<Meters> {
-    let flip = stamp_flip(editor, stamp);
+    let yaw = stamp_yaw(editor, stamp);
     let loaded = content
         .by_path::<BlueprintDef>(stamp)
         .and_then(|blueprint| {
             let values = rescoped(values, reader.scope(), &ContentScope::of(content)).ok()?;
-            Some(placement_node(blueprint, Pos::new(0.0, 0.0), flip, values))
+            Some(placement_node(blueprint, Pos::new(0.0, 0.0), yaw, values))
         });
     let mut errors = Vec::new();
     let flattening = area::blueprint::flatten(content, loaded.as_slice(), &mut errors);
@@ -414,7 +380,7 @@ pub(super) fn place_stamps(
     ) else {
         return;
     };
-    let flip = stamp_flip(editor, stamp);
+    let yaw = stamp_yaw(editor, stamp);
     let mut taken: HashSet<String> = frame.object_names();
     let mut modules = Vec::new();
     for at in &placed {
@@ -433,7 +399,7 @@ pub(super) fn place_stamps(
                 own.insert(name.clone(), VarValue::Str(fresh));
             }
         }
-        modules.push(placement_node(blueprint, *at, flip, own));
+        modules.push(placement_node(blueprint, *at, yaw, own));
     }
     let count = modules.len();
     let label = if count == 1 {

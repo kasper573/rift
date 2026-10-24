@@ -8,17 +8,16 @@ use ui::paint;
 use ui::theme;
 use ui::words;
 
-use super::brush::{BrushStrokeKind, eyedrop, fill, grid_stroke, paint_preview, pick_place};
 use super::modules::{context_menu_at, open_add_menu, show_add_menu};
 use super::select::{
     copy_selection, delete_selection, duplicate_selection, move_selection, paste_anchor,
     paste_in_place, select_input, selected_nodes, snapped_delta, start_paste,
 };
 use super::{
-    AreaDrag, AreaFrame, AreaTool, Armed, MAX_ZOOM, MIN_ZOOM, blueprint, grid, nodes, placement,
-    shapes, stamp,
+    AreaDrag, AreaFrame, AreaTool, MAX_ZOOM, MIN_ZOOM, blueprint, nodes, pins, placement, shapes,
+    stamp,
 };
-use crate::app::{Clipboard, Editor};
+use crate::app::{Clipboard, Editor, PlacePick};
 use crate::keymap::EditorKey;
 use crate::tabs::file_title;
 use crate::views::navigation::{self, Viewport};
@@ -65,24 +64,18 @@ pub fn rail(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
         ui.add_space(2.0);
     }
     if let Some(tool) = switched {
-        took(editor, view_key, tool);
+        took(editor, tool);
     }
 }
 
-/// What taking a tool brings along: its bottom tab, and for a brush, a layer to paint into.
-fn took(editor: &mut Editor, view_key: &str, tool: AreaTool) {
+/// What taking a tool brings along: its bottom tab.
+fn took(editor: &mut Editor, tool: AreaTool) {
     if let Some(bottom) = tool.bottom_tab() {
         editor.panels.bottom = bottom;
-    }
-    let walking = editor.views.area.view(view_key).armed == Armed::Walk;
-    let walk_brush = matches!(tool, AreaTool::Paint | AreaTool::Fill | AreaTool::Erase);
-    if tool.paints() && !(walking && walk_brush) {
-        super::arm_a_layer(editor, view_key);
     }
 }
 
 fn tool_icon(painter: &egui::Painter, tool: AreaTool, c: Pos2, ink: Color32) {
-    let stroke = EStroke::new(1.6, ink);
     let p = |x: f32, y: f32| Pos2::new(c.x + x, c.y + y);
     match tool {
         AreaTool::Select => {
@@ -99,35 +92,6 @@ fn tool_icon(painter: &egui::Painter, tool: AreaTool, c: Pos2, ink: Color32) {
                 ink,
                 EStroke::NONE,
             ));
-        }
-        AreaTool::Paint => {
-            painter.line_segment([p(-6.0, 6.0), p(3.0, -3.0)], EStroke::new(2.2, ink));
-            painter.line_segment([p(3.0, -3.0), p(6.0, -6.0)], EStroke::new(3.5, ink));
-            painter.circle_filled(p(-6.0, 6.0), 2.0, ink);
-        }
-        AreaTool::Terrain => {
-            painter.rect_stroke(
-                ERect::from_min_max(p(-6.0, -6.0), p(3.0, 3.0)),
-                1.0,
-                stroke,
-                egui::StrokeKind::Middle,
-            );
-            painter.rect_filled(ERect::from_min_max(p(-2.0, -2.0), p(7.0, 7.0)), 1.0, ink);
-        }
-        AreaTool::Fill => {
-            painter.add(egui::Shape::closed_line(
-                vec![p(-6.0, -1.0), p(0.0, -7.0), p(6.0, -1.0), p(0.0, 5.0)],
-                stroke,
-            ));
-            painter.circle_filled(p(5.5, 5.0), 2.2, ink);
-        }
-        AreaTool::Erase => {
-            painter.line_segment([p(-5.0, -5.0), p(5.0, 5.0)], EStroke::new(2.0, ink));
-            painter.line_segment([p(-5.0, 5.0), p(5.0, -5.0)], EStroke::new(2.0, ink));
-        }
-        AreaTool::Eyedropper => {
-            painter.line_segment([p(-6.0, 6.0), p(2.0, -2.0)], EStroke::new(2.0, ink));
-            painter.circle_filled(p(4.0, -4.0), 3.0, ink);
         }
         AreaTool::Stamp => {
             painter.rect_filled(ERect::from_min_max(p(-7.0, 3.0), p(7.0, 7.0)), 1.0, ink);
@@ -172,46 +136,12 @@ pub fn input(
         );
         return;
     }
-    let view = editor.views.area.view(view_key);
-    let tool = view.tool;
-    let walking = view.armed == Armed::Walk;
-    let walk_locked = walking && view.walk_locked;
-    let walk_value = view.walk_value;
+    let tool = editor.views.area.view(view_key).tool;
     if response.secondary_clicked() {
         context_menu_at(editor, view_key, frame);
     }
     match tool {
         AreaTool::Select => select_input(editor, ui, view_key, frame, modifiers),
-        _ if walk_locked && tool.paints() => {}
-        AreaTool::Paint if walking => {
-            grid_stroke(editor, view_key, frame, BrushStrokeKind::Walk(walk_value))
-        }
-        AreaTool::Erase if walking => {
-            grid_stroke(editor, view_key, frame, BrushStrokeKind::Walk(None))
-        }
-        AreaTool::Paint => grid_stroke(editor, view_key, frame, BrushStrokeKind::Paint),
-        AreaTool::Erase => grid_stroke(editor, view_key, frame, BrushStrokeKind::Erase),
-        AreaTool::Terrain => grid_stroke(editor, view_key, frame, BrushStrokeKind::Terrain),
-        AreaTool::Fill => {
-            if response.clicked()
-                && let Some(cell) = frame.pointer_cell()
-            {
-                fill(editor, view_key, frame, cell);
-            }
-        }
-        AreaTool::Eyedropper => {
-            if response.clicked()
-                && let Some(cell) = frame.pointer_cell()
-            {
-                eyedrop(
-                    editor,
-                    view_key,
-                    frame,
-                    cell,
-                    EditorKey::Topmost.held_among(modifiers),
-                );
-            }
-        }
         AreaTool::Stamp => stamp::stamp_input(editor, ui, view_key, frame),
         AreaTool::Module => {
             if response.clicked()
@@ -232,9 +162,59 @@ pub fn input(
     show_add_menu(ui, editor, view_key, frame);
 }
 
+/// A place being picked for a file's field: the cell under the pointer, shown as the game would
+/// take it, and taken by a click.
+fn pick_place(
+    editor: &mut Editor,
+    painter: &egui::Painter,
+    frame: &AreaFrame,
+    pick: &PlacePick,
+    fine: bool,
+) {
+    let Some(area_id) = frame.area_id() else {
+        return;
+    };
+    let Some(tile) = frame.pointer_tile else {
+        return;
+    };
+    let at = super::select::snap_to(tile, fine);
+    let place = engine::systems::script::Place { area: area_id, at };
+    let verdict = engine::systems::area::check_place(&frame.content, place);
+    let color = if verdict.is_ok() {
+        Color32::from_rgb(255, 230, 120)
+    } else {
+        theme::DANGER
+    };
+    painter.circle_stroke(frame.canvas.to_screen(at), 6.0, EStroke::new(2.0, color));
+    let what = match &verdict {
+        Ok(()) => "click to pick".to_owned(),
+        Err(problem) => problem.expected.clone(),
+    };
+    frame.labels.chip(
+        frame.canvas.to_screen(at) + Vec2::new(10.0, -6.0),
+        format!(
+            "{}, {} · {what}",
+            crate::forms::metres(at.x),
+            crate::forms::metres(at.y)
+        ),
+        color,
+    );
+    editor.status.left.push(format!(
+        "picking a place for {} · {} cancels",
+        file_title(&pick.file),
+        EditorKey::Cancel.name()
+    ));
+    if frame.response.clicked() {
+        if let Err(problem) = verdict {
+            editor.toast(format!("{}: {}", problem.rule, problem.expected));
+            return;
+        }
+        pins::commit_pick(editor, &frame.bundle, at);
+    }
+}
+
 pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, frame: &AreaFrame) {
     let canvas = frame.canvas;
-    let brush = editor.settings.brush.clone();
     let view = editor.views.area.view(view_key);
     let accent = Color32::from_rgb(255, 230, 120);
     match view.drag() {
@@ -335,7 +315,7 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
             EditorKey::Cancel.name()
         ));
         editor.status.left.push(format!(
-            "{} pastes at the same tiles",
+            "{} pastes at the same spot",
             EditorKey::PasteInPlace.name()
         ));
     }
@@ -343,56 +323,7 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
     let Some(cell) = frame.pointer_cell() else {
         return;
     };
-    let walking = view.armed == Armed::Walk;
-    let covered = match &view.armed {
-        Armed::Layer { name, .. } if view.tool.paints() => frame.covering(cell, name),
-        _ => None,
-    };
-    if let Some(placement) = &covered {
-        under_placement_tip(frame, placement, &view.armed);
-    }
     match view.tool {
-        AreaTool::Paint | AreaTool::Erase => {
-            let cells = grid::brush_cells(cell, brush.size);
-            if let Some(rect) = grid::rect_of_cells(&cells) {
-                let color = if view.tool == AreaTool::Erase || walking {
-                    Color32::from_rgb(255, 120, 120)
-                } else {
-                    accent
-                };
-                if covered.is_some() {
-                    paint::dashed_rect(
-                        painter,
-                        canvas.rect(rect),
-                        EStroke::new(1.5, color),
-                        5.0,
-                        3.0,
-                    );
-                } else {
-                    painter.rect_stroke(
-                        canvas.rect(rect),
-                        0.0,
-                        EStroke::new(1.5, color),
-                        egui::StrokeKind::Inside,
-                    );
-                }
-                if view.tool == AreaTool::Paint && !walking {
-                    paint_preview(editor, painter, view_key, frame, &cells);
-                }
-            }
-        }
-        AreaTool::Terrain => {
-            let cells = grid::brush_cells(cell, brush.size);
-            if let Some(rect) = grid::rect_of_cells(&cells) {
-                let outline = rect.inflate(0.5, 0.5);
-                painter.rect_stroke(
-                    canvas.rect(outline),
-                    0.0,
-                    EStroke::new(1.5, Color32::from_rgb(140, 220, 140)),
-                    egui::StrokeKind::Inside,
-                );
-            }
-        }
         AreaTool::Module if view.placing.is_some() => {
             let kind = view.placing.expect("a kind being placed");
             let color = super::overlays::module_color(Some(kind));
@@ -404,7 +335,7 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
                 color,
             );
         }
-        AreaTool::Fill | AreaTool::Eyedropper | AreaTool::Module => {
+        AreaTool::Module => {
             painter.rect_stroke(
                 canvas.rect(cell.bounds()),
                 0.0,
@@ -438,12 +369,6 @@ pub fn keys(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame)
         }
         return;
     }
-    if pressed(EditorKey::BrushSmaller) {
-        editor.update_brush(|brush| brush.size = brush.size.saturating_sub(1).max(1));
-    }
-    if pressed(EditorKey::BrushBigger) {
-        editor.update_brush(|brush| brush.size = (brush.size + 1).min(9));
-    }
     let mut switched = None;
     {
         let view = editor.views.area.view_mut(view_key);
@@ -456,41 +381,25 @@ pub fn keys(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame)
         if pressed(EditorKey::WalkOverlay) {
             view.walk_overlay = !view.walk_overlay;
         }
-        if view.tool == AreaTool::Terrain
-            && let Some(index) = EditorKey::Pick.digit(&input)
-        {
-            view.terrain.terrain = index;
-        }
     }
     if let Some(tool) = switched {
-        took(editor, view_key, tool);
+        took(editor, tool);
     }
-    let view_tool = editor.views.area.view(view_key).tool;
-    let flip_across = pressed(EditorKey::FlipHorizontal);
-    if flip_across || pressed(EditorKey::FlipVertical) {
-        let horizontal = flip_across;
-        match view_tool {
-            AreaTool::Paint | AreaTool::Fill => {
-                editor.update_brush(|brush| {
-                    if horizontal {
-                        brush.flip_x = !brush.flip_x;
-                    } else {
-                        brush.flip_y = !brush.flip_y;
-                    }
-                });
-            }
-            AreaTool::Stamp => stamp::flip_stamp(editor, view_key, horizontal),
+    let clockwise = pressed(EditorKey::TurnClockwise);
+    if clockwise || pressed(EditorKey::TurnCounter) {
+        match editor.views.area.view(view_key).tool {
+            AreaTool::Stamp => stamp::turn_stamp(editor, view_key, clockwise),
             _ => {
-                let flipped = selected_nodes(editor, frame);
-                if !flipped.is_empty() {
+                let turned = selected_nodes(editor, frame);
+                if !turned.is_empty() {
                     nodes::change_scene(editor, &frame.bundle, |scene| {
-                        for node in &flipped {
-                            shapes::flip_field(
+                        for node in &turned {
+                            shapes::turn(
                                 &mut nodes::module_node_mut(scene, node)?.module,
-                                horizontal,
+                                clockwise,
                             );
                         }
-                        Some(format!("Flip {} modules", flipped.len()))
+                        Some(format!("Turn {} modules", turned.len()))
                     });
                 }
             }
@@ -577,29 +486,4 @@ pub fn keys(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame)
         let tile = view.cursor_cell.map(|c| c.center()).unwrap_or(view.center);
         super::modules::open_menu(ui.ctx(), view, view_key, at, tile);
     }
-}
-
-/// Says that the cell under the brush shows what a placement paints, so a stroke on the bundle's
-/// own cells there won't show.
-fn under_placement_tip(frame: &AreaFrame, placement: &str, armed: &Armed) {
-    let Armed::Layer { name, .. } = armed else {
-        return;
-    };
-    let label = frame
-        .module(placement)
-        .map(|module| shapes::label(module, frame.reader.as_ref()))
-        .unwrap_or_default();
-    if let Some(bounds) = frame.module_bounds(placement) {
-        paint::dashed_rect(
-            &frame.response.ctx.layer_painter(frame.response.layer_id),
-            frame.canvas.rect(bounds),
-            EStroke::new(1.0, theme::DROP),
-            4.0,
-            3.0,
-        );
-    }
-    frame.response.clone().on_hover_text_at_pointer(format!(
-        "This cell shows {label}'s {name}: the stroke paints the {name} beneath it. \
-         Double-click {label} in the scene to edit it in place instead."
-    ));
 }

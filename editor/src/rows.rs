@@ -461,6 +461,12 @@ pub fn make_fixture(editor: &mut Editor, path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The files picked in the system's dialog, when any were.
+pub fn picked_files(dialog: rfd::FileDialog) -> Option<Vec<std::path::PathBuf>> {
+    // The desktop portal answers a cancelled pick with no files rather than with none.
+    dialog.pick_files().filter(|files| !files.is_empty())
+}
+
 fn import_name(source: &std::path::Path) -> String {
     source
         .file_name()
@@ -1077,7 +1083,7 @@ fn decision_picker(
         let unpackable = table == BlueprintDef::TABLE && group.whole_modules;
         let label = match group.decision {
             UsageDecision::Repoint(_) => "Replace with…".to_owned(),
-            UsageDecision::Unpack => "Unpack into scenery".to_owned(),
+            UsageDecision::Unpack => "Unpack into its parts".to_owned(),
             _ => remove_label.clone(),
         };
         controls::combo(("decision", index))
@@ -1087,7 +1093,7 @@ fn decision_picker(
                     && ui
                         .selectable_label(
                             group.decision == UsageDecision::Unpack,
-                            "Unpack into scenery",
+                            "Unpack into its parts",
                         )
                         .on_hover_text(
                             "Each placement becomes its parts, placed, and looks exactly the same",

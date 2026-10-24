@@ -151,7 +151,7 @@ impl<'a> Parts<'a> {
         let files: &'a [String] = self.files;
         files
             .iter()
-            .find(|file| *file != CONFIG_FILE && spec.matches(file) && !file.contains('/'))
+            .find(|file| *file != CONFIG_FILE && spec.matches(file))
             .map(String::as_str)
     }
 
@@ -189,18 +189,28 @@ impl<'a> Parts<'a> {
     }
 
     pub fn text(&mut self, part: &str) -> Option<String> {
-        let file = self.path(part);
-        let read = self.folder.read(&file).and_then(|bytes| {
-            String::from_utf8(bytes)
-                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "not UTF-8"))
-        });
-        match read {
+        let bytes = self.bytes(part)?;
+        match String::from_utf8(bytes) {
             Ok(text) => Some(text),
+            Err(_) => {
+                self.error(
+                    part,
+                    ErrorPlace::WholeFile,
+                    ContentProblem::new("unreadable file", "not UTF-8", "a readable UTF-8 file"),
+                );
+                None
+            }
+        }
+    }
+
+    pub fn bytes(&mut self, part: &str) -> Option<Vec<u8>> {
+        match self.folder.read(&self.path(part)) {
+            Ok(bytes) => Some(bytes),
             Err(error) => {
                 self.error(
                     part,
                     ErrorPlace::WholeFile,
-                    ContentProblem::new("unreadable file", error, "a readable UTF-8 file"),
+                    ContentProblem::new("unreadable file", error, "a readable file"),
                 );
                 None
             }

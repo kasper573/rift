@@ -8,31 +8,32 @@ use ui::words;
 use engine::core::content::{
     Content, ContentFile, ContentScope, FolderReader, name_of, rescoped, table_of,
 };
+use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect};
 use engine::core::script::VariableType;
-use engine::core::units::Meters;
+use engine::core::units::{Cell, Meters, TilePos};
 use engine::systems::area::blueprint::{
     self, BlueprintDef, BlueprintId, Flattened, PlacedBlueprint, Placement,
 };
-use engine::systems::area::object::ObjectDef;
+use engine::systems::area::object::{ObjectDef, ObjectShape};
 use engine::systems::area::scene::{ModuleNode, SceneFolder, SceneNode};
-use engine::systems::area::{self, AreaDef, AreaId, AreaModule, Flip};
+use engine::systems::area::{self, AreaDef, AreaId, AreaModule};
 use engine::systems::script::{Place, VarValue, Variable, condition};
 use serde_json::Value;
 use ui::controls;
 use ui::egui::{RichText, Stroke as EStroke, Ui, Vec2};
 use ui::glyph::{self, Mark};
 
-use super::grid::GridDraft;
 use super::inspect::Followups;
+use super::stamp::object_names;
 use super::{AreaFrame, AreaSnapshot, nodes, shapes};
 use crate::app::{Editor, ModalDialog, PickRowDialog, PickRowThen};
 use crate::forms::{self, FormCx};
 use crate::keymap::EditorKey;
 use crate::project::files::content_of;
 use crate::project::{IdPaths, Project, RowSelection};
-use crate::schema;
 use crate::tabs::file_title;
+use crate::{rows, schema};
 
 /// What each placement of a scene covers on the map, by its node's pointer: the modules it brings,
 /// placed.
@@ -361,7 +362,7 @@ pub struct AreaPlacement {
     pub node: String,
     pub blueprint: String,
     pub at: Pos<Meters>,
-    pub flip: Flip,
+    pub yaw: Degrees,
     pub values: BTreeMap<String, VarValue>,
     /// The blueprint as its files read now.
     pub def: Arc<BlueprintDef>,
@@ -396,7 +397,7 @@ pub fn resolve_in_place(
 /// The placement at `node` in the scene of the blueprint `current` places, placed as it lands.
 fn nested_place(editor: &Editor, current: &AreaPlacement, node: &str) -> Option<AreaPlacement> {
     let reader = editor.reader()?;
-    let part = nodes::module_node(&current.def.scene.nodes, node)?;
+    let part = nodes::module_node(&current.def.scene, node)?;
     let placed = placed_part(&reader, part, current)?;
     match &placed {
         AreaModule::Blueprint(placement) => placement_of(editor, node, placement),
@@ -417,7 +418,7 @@ impl AreaPlacement {
             def: project.read::<BlueprintDef>(&blueprint).ok()?,
             blueprint,
             at: placement.at,
-            flip: placement.flip,
+            yaw: placement.yaw,
             values: placement.values.clone(),
         })
     }
@@ -432,7 +433,7 @@ pub fn placed_part(
 ) -> Option<AreaModule> {
     let mut module =
         blueprint::fill_module(reader.scope(), part, &place.values, &place.def.variables)?;
-    blueprint::place(&mut module, place.at, place.flip);
+    blueprint::place(&mut module, place.at, place.yaw);
     Some(module)
 }
 
@@ -448,7 +449,7 @@ pub fn parts_in_place(frame: &AreaFrame, place: &AreaPlacement) -> Vec<PartView>
     let reader = frame.reader.clone();
     let row = super::scene_tree::place_row(frame);
     let mut out = Vec::new();
-    for part in nodes::modules(&place.def.scene.nodes) {
+    for part in nodes::modules(&place.def.scene) {
         let flags = frame.flags.row(&format!("{row}/in{}", part.pointer));
         if flags.hidden.on() {
             continue;
@@ -481,8 +482,15 @@ pub(super) fn nested_bounds(
     placement: &Placement,
 ) -> Option<Rect<Meters>> {
     let loaded = rescoped(placement, reader.scope(), &ContentScope::of(content)).ok()?;
-    let scenery = super::scene::parts_scenery(content, &loaded);
-    Some(super::scene::scenery_extent(&scenery).unwrap_or_else(|| shapes::cell_rect(placement.at)))
+    let node = SceneNode::Module(ModuleNode::new(AreaModule::Blueprint(loaded)));
+    let mut errors = Vec::new();
+    let flattening = blueprint::flatten(content, std::slice::from_ref(&node), &mut errors);
+    let bounds = flattening
+        .modules
+        .iter()
+        .filter_map(|placed| shapes::bounds(&placed.module, None))
+        .reduce(|a, b| a.union(&b));
+    Some(bounds.unwrap_or_else(|| shapes::cell_rect(placement.at)))
 }
 
 pub fn start_in_place(editor: &mut Editor, view_key: &str, area_key: &str, node: &str) {
@@ -598,10 +606,8 @@ pub fn move_parts_in_place(
     dx: f32,
     dy: f32,
 ) {
-    let (bx, by) = (
-        if place.flip.horizontal() { -dx } else { dx },
-        if place.flip.vertical() { -dy } else { dy },
-    );
+    let local = Degrees(-place.yaw.0).rotate(engine::core::math::Offset::new(dx, dy));
+    let (bx, by) = (local.x, local.y);
     let count = placement_count(&frame.content, &place.blueprint);
     nodes::change_scene(editor, &place.blueprint, |scene| {
         for part in parts {
@@ -616,8 +622,7 @@ pub fn move_parts_in_place(
 }
 
 /// The blueprint a placement places, as nodes of the scene it is placed in: its folders and
-/// labels as they are, its modules with holes filled and positions placed. Ground layers stay
-/// behind, since their cells are stamped into the layers of the same name instead.
+/// labels as they are, its modules with holes filled and positions placed.
 pub fn unpacked(reader: &FolderReader, place: &AreaPlacement) -> Option<Vec<SceneNode>> {
     fn unpack(
         nodes: &[SceneNode],
@@ -627,7 +632,6 @@ pub fn unpacked(reader: &FolderReader, place: &AreaPlacement) -> Option<Vec<Scen
         let mut out = Vec::new();
         for node in nodes {
             match node {
-                SceneNode::GroundLayer(_) => {}
                 SceneNode::Folder(folder) => out.push(SceneNode::Folder(SceneFolder {
                     children: unpack(&folder.children, reader, place)?,
                     ..folder.clone()
@@ -641,7 +645,7 @@ pub fn unpacked(reader: &FolderReader, place: &AreaPlacement) -> Option<Vec<Scen
         }
         Some(out)
     }
-    unpack(&place.def.scene.nodes, reader, place)
+    unpack(&place.def.scene, reader, place)
 }
 
 /// Points `placement` at the blueprint `to` declaring `variables`, dropping the values that don't
@@ -682,8 +686,7 @@ fn value_carries(variable: &Variable, value: &VarValue) -> bool {
     )
 }
 
-/// Replaces a placement with a folder of the same label holding what it places, and paints what it
-/// painted into the bundle's own layers, as one step.
+/// Replaces a placement with a folder of the same label holding what it places, as one step.
 pub fn unpack(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
     let bundle = frame.bundle.clone();
     let Some(ModuleNode {
@@ -703,33 +706,18 @@ pub fn unpack(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
         editor.toast(format!("{label} doesn't unpack: a hole of it has no value"));
         return;
     };
-    let mut missing = Vec::new();
-    let applied = nodes::change_blueprint(editor, &bundle, |own| {
-        *nodes::node_mut(&mut own.scene.nodes, node)? = SceneNode::Folder(SceneFolder {
+    let applied = nodes::change_scene(editor, &bundle, |scene| {
+        *nodes::node_mut(scene, node)? = SceneNode::Folder(SceneFolder {
             label: label.clone(),
             hidden: false,
             locked: false,
             children,
         });
-        let mut draft = GridDraft::of(&bundle, own);
-        missing = draft.stamp(
-            &GridDraft::of(&place.blueprint, &place.def),
-            place.at,
-            place.flip,
-        );
-        draft.apply_to(own);
         Some(format!("Unpack {label} into a folder"))
     });
     if applied {
         nodes::select(editor, &bundle, vec![node.to_owned()]);
-        let mut said = "Unpacked into a folder; Ctrl Z puts the placement back".to_owned();
-        if !missing.is_empty() {
-            said.push_str(&format!(
-                ". Its cells in {} had no layer here to land in",
-                missing.join(", ")
-            ));
-        }
-        editor.toast(said);
+        editor.toast("Unpacked into a folder; Ctrl Z puts the placement back");
     }
 }
 
@@ -794,11 +782,6 @@ pub(super) fn placement_extras(
     if let Some(content) = cx.content.clone() {
         form::hint(ui, &placement_count(&content, &key));
     }
-    if let Ok(def) = cx.project.read::<BlueprintDef>(&key)
-        && let Some(said) = painted(&key, &def)
-    {
-        form::hint(ui, &said);
-    }
     ui.horizontal_wrapped(|ui| {
         if controls::marked(ui, Mark::Grid, "Edit blueprint").clicked() {
             out.actions
@@ -848,7 +831,7 @@ fn chain_to(
     }
     let reader = project.reader();
     let def = project.read::<BlueprintDef>(from).ok()?;
-    nodes::modules(&def.scene.nodes)
+    nodes::modules(&def.scene)
         .iter()
         .filter_map(|module| match module.module() {
             AreaModule::Blueprint(placement) => reader.path_of(placement.blueprint),
@@ -861,30 +844,93 @@ fn chain_to(
         })
 }
 
-/// What placing the blueprint at `key` paints into the scene it's placed in, when it paints at all.
-fn painted(key: &str, def: &BlueprintDef) -> Option<String> {
-    let draft = GridDraft::of(key, def);
-    let layers: Vec<&str> = draft
-        .ground
-        .iter()
-        .filter(|layer| layer.cells.iter().any(Option::is_some))
-        .map(|layer| layer.name.as_str())
-        .collect();
-    let forced = draft.walk.iter().filter(|cell| cell.is_some()).count();
-    let layers = match layers.as_slice() {
-        [] => None,
-        [one] => Some(format!("paints {one} into the layer of the same name")),
-        [first @ .., last] => Some(format!(
-            "paints {} and {last} into the layers of the same name",
-            first.join(", ")
-        )),
+/// Adds an object to the area the warp object at `node` leads to, on the nearest walkable cell
+/// beside its arrival, with the object's scripts pointed back here, so the player can come back.
+pub fn return_door(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
+    let area_key = &frame.bundle;
+    let Some(AreaModule::Object(object)) = frame.module(node) else {
+        return;
     };
-    let forced =
-        (forced > 0).then(|| format!("forces {forced} walk cell{}", words::plural(forced)));
-    let said: Vec<String> = [layers, forced].into_iter().flatten().collect();
-    (!said.is_empty()).then(|| {
-        let mut said = said.join(" and ");
-        said[..1].make_ascii_uppercase();
-        said
-    })
+    let Some((target_area, target_at)) = warp_destinations(object, frame.reader.as_ref())
+        .into_iter()
+        .next()
+    else {
+        editor.toast("The object has no warp to return from");
+        return;
+    };
+    let Some(content) = editor.project.as_ref().and_then(|p| p.content.clone()) else {
+        return;
+    };
+    let Some(here_id) = content.by_path::<AreaDef>(area_key) else {
+        return;
+    };
+    let Some(there_id) = content.by_path::<AreaDef>(&target_area) else {
+        return;
+    };
+    let here = area::load(&content, here_id);
+    let there = area::load(&content, there_id);
+    let door_bounds = object.shape.bounds();
+    let back_to = here
+        .grid
+        .nodes()
+        .iter()
+        .filter(|cell| !door_bounds.contains(**cell))
+        .min_by(|a, b| {
+            a.distance(door_bounds.center())
+                .0
+                .total_cmp(&b.distance(door_bounds.center()).0)
+        })
+        .copied();
+    let Some(back_to) = back_to else {
+        editor.toast("No walkable cell outside the door to come back to");
+        return;
+    };
+    let arrival = target_at.cell();
+    let Some(beside_arrival) = there
+        .grid
+        .nearest_walkable_where(target_at, |cell| cell != arrival)
+    else {
+        editor.toast("The destination has no walkable cell beside the arrival for a door back");
+        return;
+    };
+    let mut names = object_names(area::placed(&content, there_id));
+    let Some(here_in_files) = frame.reader.id_of::<AreaDef>(area_key) else {
+        return;
+    };
+    let name = rows::free_name(
+        &format!("{}_back", object.name.as_deref().unwrap_or("door")),
+        &names,
+    );
+    names.insert(name.clone());
+    let cell = beside_arrival.cell();
+    let mut door = ObjectDef {
+        name: Some(name),
+        title: None,
+        shape: ObjectShape::Point(cell.center()),
+        look: None,
+        shown: None,
+        scripts: object.scripts.clone(),
+    };
+    redirect_places(
+        &mut door,
+        Place {
+            area: here_in_files,
+            at: back_to,
+        },
+    );
+    let door = SceneNode::Module(ModuleNode::new(AreaModule::Object(door)));
+    let applied = nodes::change_scene(editor, &target_area, |scene| {
+        nodes::SceneTree::new(scene).append("", vec![door]);
+        Some(format!(
+            "Return door from {} to {}",
+            file_title(&target_area),
+            file_title(area_key)
+        ))
+    });
+    if applied {
+        editor.toast(format!(
+            "Added a door back in {target_area} at {}, {}",
+            cell.x, cell.y
+        ));
+    }
 }

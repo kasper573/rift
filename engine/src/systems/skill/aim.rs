@@ -5,7 +5,7 @@ use ui::ink;
 
 use super::{CastAim, Rank, SkillId, Targeting, UseSkillRequest, casting};
 use crate::core::content::{Content, Fixture};
-use crate::core::geometry::{Footprint, Shape};
+use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::math::Pos;
 use crate::core::time::Seconds;
 use crate::core::units::{Meters, TilePos};
@@ -189,7 +189,7 @@ pub fn draw_aim(world: &mut World) {
         return;
     };
     let range = super::range_of(world, me, aimed.skill, aimed.rank);
-    let reach = Footprint::cast(Shape::Circle { radius: range }, from, from);
+    let reach = PlacedShape::cast(Shape::Circle { radius: range }, from, from);
     let Some(ring) = reach
         .outline()
         .iter()
@@ -233,12 +233,12 @@ fn clear_surface(world: &mut World) {
 }
 
 /// Where the armed skill's area lies, with whether the skill harms what it takes.
-fn aimed_area(world: &mut World, aimed: Aimed) -> Option<(Footprint, bool)> {
+fn aimed_area(world: &mut World, aimed: Aimed) -> Option<(PlacedShape, bool)> {
     let me = session::me(world)?;
     let content = world.resource::<Content>().clone();
     let def = aimed.skill.get(&content);
     let shape = def.area_at(aimed.rank)?;
     let from = movement::position(world, me)?;
     let point = render::cursor_tile(world)?;
-    Some((Footprint::cast(shape, from, point), def.target.hostile()))
+    Some((PlacedShape::cast(shape, from, point), def.target.hostile()))
 }

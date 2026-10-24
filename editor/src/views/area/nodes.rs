@@ -5,42 +5,69 @@ use engine::core::content::{
     ContentFile, ContentProblem, FolderReader, Unreadable, name_of, numbered, table_of,
     with_content,
 };
-use engine::field;
 use engine::systems::area::blueprint::{BlueprintDef, Placement};
 use engine::systems::area::scene::{self, ModuleNode, SceneFolder, SceneNode};
+use engine::systems::area::terrain::TerrainSize;
 use engine::systems::area::{AreaDef, AreaModule};
 use engine::systems::script::Variable;
 
 use crate::app::Editor;
 use crate::project::{ContentEdit, Project, RowSelection};
 
-/// An area or a blueprint as the files hold it now, read as the game reads it: a scene and the
-/// grids painted for it.
+/// An area or a blueprint as the files hold it now, read as the game reads it: a scene graph on a
+/// stretch of ground.
 #[derive(Clone)]
 pub enum SceneBundle {
     Area(Arc<AreaDef>),
     Blueprint(Arc<BlueprintDef>),
 }
 
+/// A bundle's scene as an edit changes it: its nodes, and the variables a blueprint's holes name.
+/// An area has no variables; an edit that gives it some is refused.
+#[derive(Clone, Default)]
+pub struct SceneDraft {
+    pub nodes: Vec<SceneNode>,
+    pub variables: BTreeMap<String, Variable>,
+}
+
 impl SceneBundle {
-    pub fn blueprint(&self) -> &BlueprintDef {
+    pub fn nodes(&self) -> &[SceneNode] {
         match self {
-            SceneBundle::Area(area) => &area.blueprint,
-            SceneBundle::Blueprint(blueprint) => blueprint,
+            SceneBundle::Area(area) => &area.scene,
+            SceneBundle::Blueprint(blueprint) => &blueprint.scene,
         }
     }
 
-    pub fn nodes(&self) -> &[SceneNode] {
-        &self.blueprint().scene.nodes
+    pub fn variables(&self) -> &BTreeMap<String, Variable> {
+        static NONE: BTreeMap<String, Variable> = BTreeMap::new();
+        match self {
+            SceneBundle::Area(_) => &NONE,
+            SceneBundle::Blueprint(blueprint) => &blueprint.variables,
+        }
     }
 
-    /// Writes this bundle at `path` with its blueprint changed by `change`, as part of `edit`.
+    /// The ground the scene stands on, in whole metres.
+    pub fn size(&self) -> TerrainSize {
+        match self {
+            SceneBundle::Area(area) => area.terrain.size,
+            SceneBundle::Blueprint(blueprint) => blueprint.size,
+        }
+    }
+
+    pub fn draft(&self) -> SceneDraft {
+        SceneDraft {
+            nodes: self.nodes().to_vec(),
+            variables: self.variables().clone(),
+        }
+    }
+
+    /// Writes this bundle at `path` with its scene changed by `change`, as part of `edit`.
     pub fn write(
         &self,
         edit: &mut ContentEdit,
         project: &Project,
         path: &str,
-        change: impl FnOnce(&mut BlueprintDef),
+        change: impl FnOnce(&mut SceneDraft),
     ) -> Result<(), String> {
         self.write_in(edit, &project.reader(), path, change)
     }
@@ -52,17 +79,23 @@ impl SceneBundle {
         edit: &mut ContentEdit,
         reader: &FolderReader,
         path: &str,
-        change: impl FnOnce(&mut BlueprintDef),
+        change: impl FnOnce(&mut SceneDraft),
     ) -> Result<(), String> {
+        let mut draft = self.draft();
+        change(&mut draft);
         match self {
             SceneBundle::Area(area) => {
+                if !draft.variables.is_empty() {
+                    return Err("an area has no variables to fill holes with".to_owned());
+                }
                 let mut area = (**area).clone();
-                change(&mut area.blueprint);
+                area.scene = draft.nodes;
                 edit.write_content_in(reader, path, &area)?;
             }
             SceneBundle::Blueprint(blueprint) => {
                 let mut blueprint = (**blueprint).clone();
-                change(&mut blueprint);
+                blueprint.scene = draft.nodes;
+                blueprint.variables = draft.variables;
                 edit.write_content_in(reader, path, &blueprint)?;
             }
         }
@@ -156,11 +189,10 @@ impl SceneModule {
     }
 }
 
-/// The tag a node is badged and filtered by: its module's kind, or a ground layer's or a folder's.
+/// The tag a node is badged and filtered by: its module's kind, or a folder's.
 pub fn kind_tag(node: &SceneNode) -> &'static str {
     match node {
         SceneNode::Folder(_) => FOLDER,
-        SceneNode::GroundLayer(_) => GROUND_LAYER,
         SceneNode::Module(module) => module.module.kind().tag(),
     }
 }
@@ -185,7 +217,6 @@ pub fn children_of(node: &SceneNode) -> &[SceneNode] {
 }
 
 pub const FOLDER: &str = "folder";
-pub const GROUND_LAYER: &str = "ground_layer";
 
 /// Every module node of `nodes` in tree order, through its folders.
 /// A bundle's own modules in tree order, each also found at once by its pointer.
@@ -234,18 +265,6 @@ pub fn walk<'a>(nodes: &'a [SceneNode], visit: &mut impl FnMut(&str, &'a SceneNo
 
 pub fn is_folder(node: &SceneNode) -> bool {
     matches!(node, SceneNode::Folder(_))
-}
-
-pub fn is_layer(node: &SceneNode) -> bool {
-    matches!(node, SceneNode::GroundLayer(_))
-}
-
-/// The name of the ground layer `node` is.
-pub fn layer_name(node: &SceneNode) -> Option<&str> {
-    match node {
-        SceneNode::GroundLayer(layer) => Some(&layer.name),
-        _ => None,
-    }
 }
 
 /// The node of `nodes` at `pointer`.
@@ -311,12 +330,10 @@ pub fn label_of(node: &SceneNode) -> Option<&str> {
     node.label()
 }
 
-/// Labels `node` `label`; a ground layer goes by its name and keeps it.
 pub fn set_label(node: &mut SceneNode, label: String) {
     match node {
         SceneNode::Folder(folder) => folder.label = label,
         SceneNode::Module(module) => module.label = Some(label),
-        SceneNode::GroundLayer(_) => {}
     }
 }
 
@@ -403,24 +420,22 @@ pub fn scene_edit(
     bundle: &str,
     change: impl FnOnce(&mut Vec<SceneNode>) -> Option<String>,
 ) -> Option<ContentEdit> {
-    blueprint_edit(editor, bundle, |blueprint| {
-        change(&mut blueprint.scene.nodes)
-    })
+    draft_edit(editor, bundle, |draft| change(&mut draft.nodes))
 }
 
-/// An edit of the blueprint of `bundle`, its own or an area's: `change` changes it and names the
-/// step, or answers `None` to make no step.
-pub fn blueprint_edit(
+/// An edit of the scene of `bundle` and the variables its holes name: `change` changes them and
+/// names the step, or answers `None` to make no step.
+pub fn draft_edit(
     editor: &Editor,
     bundle: &str,
-    change: impl FnOnce(&mut BlueprintDef) -> Option<String>,
+    change: impl FnOnce(&mut SceneDraft) -> Option<String>,
 ) -> Option<ContentEdit> {
     let project = editor.project.as_ref()?;
     let read = bundle_of(editor, bundle)?;
     let mut label = None;
     let mut edit = ContentEdit::new(String::new());
-    read.write(&mut edit, project, bundle, |blueprint| {
-        label = change(blueprint);
+    read.write(&mut edit, project, bundle, |draft| {
+        label = change(draft);
     })
     .ok()?;
     edit.label = label?;
@@ -435,12 +450,12 @@ pub fn change_scene(
     scene_edit(editor, bundle, change).is_some_and(|edit| editor.apply(edit))
 }
 
-pub fn change_blueprint(
+pub fn change_draft(
     editor: &mut Editor,
     bundle: &str,
-    change: impl FnOnce(&mut BlueprintDef) -> Option<String>,
+    change: impl FnOnce(&mut SceneDraft) -> Option<String>,
 ) -> bool {
-    blueprint_edit(editor, bundle, change).is_some_and(|edit| editor.apply(edit))
+    draft_edit(editor, bundle, change).is_some_and(|edit| editor.apply(edit))
 }
 
 /// Adds `new` to the insertion folder of `bundle` as one step, and selects what it added.
@@ -465,14 +480,6 @@ pub fn add(editor: &mut Editor, bundle: &str, new: Vec<SceneNode>, label: &str) 
 pub fn select(editor: &mut Editor, bundle: &str, pointers: Vec<String>) {
     editor.selection =
         RowSelection::parts(table_of(bundle).unwrap_or(AreaDef::TABLE), bundle, pointers);
-}
-
-/// The pointer in a bundle's fields of the box an area or a blueprint is painted in.
-pub fn map_pointer(bundle: &str) -> &'static str {
-    match table_of(bundle) {
-        Some(AreaDef::TABLE) => field!(AreaDef, blueprint.map),
-        _ => field!(BlueprintDef, map),
-    }
 }
 
 /// Where moved nodes land among what a folder holds.
@@ -519,8 +526,6 @@ impl NodeFlag {
         let flag = match (node, self) {
             (SceneNode::Folder(folder), NodeFlag::Hidden) => &mut folder.hidden,
             (SceneNode::Folder(folder), NodeFlag::Locked) => &mut folder.locked,
-            (SceneNode::GroundLayer(layer), NodeFlag::Hidden) => &mut layer.hidden,
-            (SceneNode::GroundLayer(layer), NodeFlag::Locked) => &mut layer.locked,
             (SceneNode::Module(module), NodeFlag::Hidden) => &mut module.hidden,
             (SceneNode::Module(module), NodeFlag::Locked) => &mut module.locked,
         };

@@ -79,7 +79,6 @@ pub struct ContentRegistry {
     module_sets: Vec<ModuleSetOf>,
     named: Vec<(&'static str, ShownNameOf)>,
     list_kinds: Vec<ListKind>,
-    beside: Vec<BesideFile>,
     json_parts: Vec<JsonPart>,
     // Hashing every shape takes a while, and a registry is read far more often than it changes.
     version: OnceLock<ContentVersion>,
@@ -159,23 +158,6 @@ impl ModuleSetOf {
             },
         }
     }
-}
-
-/// A part of a type's bundles that isn't JSON and names content of its own, as a palette names
-/// tilesets.
-pub struct BesideFile {
-    pub table: &'static str,
-    pub name: &'static str,
-    /// Every content file the part names, where it is written.
-    pub names: fn(&str) -> Vec<BesideName>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BesideName {
-    pub table: &'static str,
-    pub path: String,
-    pub line: usize,
-    pub column: usize,
 }
 
 /// A JSON part of a type's bundles that names content, read the way the bundle's type reads it, so
@@ -303,11 +285,6 @@ impl ContentRegistry {
         self
     }
 
-    pub fn beside(&mut self, file: BesideFile) -> &mut ContentRegistry {
-        self.beside.push(file);
-        self
-    }
-
     pub fn json_part(&mut self, part: JsonPart) -> &mut ContentRegistry {
         self.json_parts.push(part);
         self
@@ -390,6 +367,25 @@ impl ContentRegistry {
                 parts: row.parts(),
             })
             .collect()
+    }
+
+    /// Whether `file` is one the writer writes: the JSON of settings and content, the CSV of
+    /// grids, or a bundle part its type writes back. Every other file is kept as it is.
+    pub fn writes(&self, file: &str) -> bool {
+        if file.ends_with(".json") || file.ends_with(".csv") {
+            return true;
+        }
+        let Some((bundle, part)) = bundle_of(file) else {
+            return false;
+        };
+        let Some(table) = table_of(bundle) else {
+            return false;
+        };
+        self.rows
+            .iter()
+            .filter(|row| row.name() == table)
+            .flat_map(|row| row.written_parts())
+            .any(|spec| spec.matches(part))
     }
 
     pub fn shape_of(&self, table: &str) -> Option<Shape> {
@@ -481,16 +477,7 @@ impl ContentRegistry {
     pub fn names_content(&self, file: &str) -> bool {
         file == SETTINGS_FILE
             || self.loader_of_fields(file).is_some()
-            || self.beside_of(file).is_some()
             || self.json_part_of(file).is_some()
-    }
-
-    fn beside_of(&self, file: &str) -> Option<&BesideFile> {
-        let (bundle, part) = bundle_of(file)?;
-        let table = table_of(bundle)?;
-        self.beside
-            .iter()
-            .find(|beside| beside.table == table && beside.name == part)
     }
 
     fn json_part_of<'f>(&self, file: &'f str) -> Option<(&JsonPart, &'f str)> {
@@ -518,25 +505,6 @@ impl ContentRegistry {
     }
 
     pub fn references(&self, content: &Content, file: &str, text: &str) -> Vec<Reference> {
-        if let Some(beside) = self.beside_of(file) {
-            return (beside.names)(text)
-                .into_iter()
-                .map(|named| Reference {
-                    known: content.table_named(named.table).is_some_and(|files| {
-                        files
-                            .paths()
-                            .binary_search_by(|path| path.as_bytes().cmp(named.path.as_bytes()))
-                            .is_ok()
-                    }),
-                    kind: LeafKind::Row(named.table),
-                    value: named.path,
-                    pointer: String::new(),
-                    key: false,
-                    line: named.line,
-                    column: named.column,
-                })
-                .collect();
-        }
         let json_part = self.json_part_of(file);
         let parse: &dyn Fn(&serde_json::Value) -> ParseResult = if file == SETTINGS_FILE {
             let Some(loader) = self.settings.as_deref() else {

@@ -25,8 +25,12 @@ pub fn glb(clips: &[(&str, Seconds)]) -> Vec<u8> {
 
 /// A WAV of a moment of silence.
 pub fn wav() -> Vec<u8> {
+    wav_of(&[0; 8])
+}
+
+/// A WAV of `samples`, a moment long.
+pub fn wav_of(samples: &[i16]) -> Vec<u8> {
     const RATE: u32 = 8000;
-    const SAMPLES: usize = 8;
     let spec = hound::WavSpec {
         channels: 1,
         sample_rate: RATE,
@@ -35,8 +39,8 @@ pub fn wav() -> Vec<u8> {
     };
     let mut bytes = Cursor::new(Vec::new());
     let mut writer = hound::WavWriter::new(&mut bytes, spec).expect("a wav header");
-    for _ in 0..SAMPLES {
-        writer.write_sample(0i16).expect("a wav sample");
+    for sample in samples {
+        writer.write_sample(*sample).expect("a wav sample");
     }
     writer.finalize().expect("a wav");
     bytes.into_inner()

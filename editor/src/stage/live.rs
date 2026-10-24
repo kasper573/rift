@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 
 use bevy::prelude::*;
 use engine::core::content::Content;
-use engine::core::geometry::{Footprint, Shape};
+use engine::core::geometry::{PlacedShape, Shape};
 use engine::core::math::Pos;
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
 use engine::core::units::{Meters, TilePos};
@@ -374,7 +374,7 @@ fn skill_setup(
             let shape = def.area.unwrap_or(Shape::Circle {
                 radius: Meters(1.5),
             });
-            let footprint = Footprint::cast(shape, spawn.at, point);
+            let footprint = PlacedShape::cast(shape, spawn.at, point);
             let mut targets = Vec::new();
             let spots: Vec<Pos<Meters>> = spread(&footprint, CROWD * 2)
                 .into_iter()

@@ -259,7 +259,7 @@ fn show_babble_bank(editor: &mut Editor, ui: &mut Ui, key: &str) {
         import = ui.button("Import letters…").clicked();
     });
     if import
-        && let Some(sources) = crate::import::picked_files(
+        && let Some(sources) = rows::picked_files(
             rfd::FileDialog::new()
                 .set_title(format!(
                     "Letters for {}, each named by its letter",

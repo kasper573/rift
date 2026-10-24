@@ -26,6 +26,10 @@ pub struct Meters(pub f32);
 pub type CellPos = euclid::default::Point2D<i32>;
 pub type GridSize = euclid::default::Size2D<u32>;
 
+/// The corner of an area's ground: cells are centred on whole metres, so the cell `(0, 0)` and the
+/// ground begin half a metre before the origin.
+pub const GROUND_ORIGIN: Pos<Meters> = Pos::new(-0.5, -0.5);
+
 pub const NEIGHBORS_4: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 pub const NEIGHBORS_8: [(i32, i32); 8] = [
     (1, 0),
@@ -151,7 +155,7 @@ pub trait TileSize {
 
 impl TileSize for Size<Meters> {
     fn bounds(self) -> Rect<Meters> {
-        Rect::new(Pos::new(-0.5, -0.5), self)
+        Rect::new(GROUND_ORIGIN, self)
     }
 
     fn grid(self) -> GridSize {

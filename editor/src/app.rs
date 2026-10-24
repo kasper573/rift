@@ -26,7 +26,6 @@ use strum::IntoStaticStr;
 use ui::egui_dock::DockState;
 
 use crate::forms::{FormCx, FormState};
-use crate::import::{self, ImportJobs, ImportRecords};
 use crate::play::{self, PlayTest};
 use crate::project::journal::{RecoveryJournal, RecoveryJournalData, RecoveryJournalFile};
 use crate::project::lock::ProjectLock;
@@ -40,7 +39,7 @@ use crate::schema::SchemaShapes;
 use crate::shell::{self, row_form};
 use crate::tabs::{self, DockRequest, EditorTab, TabOpening};
 use crate::thumbs::Thumbnail;
-use crate::user::{BrushSettings, EditorSettings, UserFolder};
+use crate::user::{EditorSettings, UserFolder};
 use crate::views::area::ResizeDialog;
 use crate::views::area::nodes::CopiedNodes;
 use crate::views::script::{LinkNodeDialog, RenameNodeDialog, ScriptRow};
@@ -80,7 +79,6 @@ impl Plugin for EditorPlugin {
         app.add_plugins((
             EguiPlugin::default(),
             FrameCountPlugin,
-            bevy_tilemap::TilemapPlugin,
             bevy::sprite_render::Material2dPlugin::<VfxMaterial>::default(),
         ))
         .insert_resource(editor)
@@ -142,8 +140,6 @@ pub struct Editor {
     pub clipboard: Option<Clipboard>,
     pub views: EditorViews,
     pub play: play::PlayTest,
-    pub imports: import::ImportRecords,
-    pub jobs: import::ImportJobs,
     pub pick: Option<PlacePick>,
     pub quit: bool,
     pub frame: u64,
@@ -194,7 +190,6 @@ pub enum BottomTab {
     #[default]
     History,
     Output,
-    Palette,
     Blueprints,
     #[strum(serialize = "May do")]
     MayDo,
@@ -204,8 +199,6 @@ pub enum BottomTab {
     Timeline,
     Sheet,
     Sounds,
-    Surfaces,
-    Mixes,
     Listen,
 }
 
@@ -248,7 +241,6 @@ pub enum ModalDialog {
     Keys,
     Resize(ResizeDialog),
     Arrange(ArrangeDialog),
-    Import(Box<import::ImportDialog>),
     PickRow(PickRowDialog),
     RenameNode(RenameNodeDialog),
     LinkNode(LinkNodeDialog),
@@ -440,8 +432,6 @@ impl Editor {
             clipboard: None,
             views: EditorViews::default(),
             play: PlayTest::default(),
-            imports: ImportRecords::default(),
-            jobs: ImportJobs::default(),
             pick: None,
             quit: false,
             frame: 0,
@@ -593,12 +583,6 @@ impl Editor {
                 self.selection = RowSelection::default();
                 self.form = FormState::default();
                 self.views = EditorViews::default();
-                self.imports = ImportRecords::load(&self.user, folder);
-                if let Some(problem) = self.imports.unreadable.clone() {
-                    self.toast(format!(
-                        "Import records are unreadable and will not be saved: {problem}"
-                    ));
-                }
                 self.start.failed = None;
                 self.start.report = None;
                 self.start.watch = None;
@@ -653,7 +637,6 @@ impl Editor {
         match outcome {
             Ok(()) => {
                 self.form.errors.clear();
-                self.views.content_changed();
                 if self
                     .preview
                     .as_ref()
@@ -692,7 +675,6 @@ impl Editor {
     pub fn return_to(&mut self, applied: AppliedStep) {
         self.selection = applied.viewpoint.selection;
         self.views.restore_camera(applied.viewpoint.camera);
-        self.views.content_changed();
     }
 
     fn revisit(&mut self, travel: fn(&mut Project) -> Option<AppliedStep>, verb: &str) {
@@ -711,11 +693,7 @@ impl Editor {
             self.toast("Read-only: nothing saved");
             return false;
         }
-        let was_loading = project.loading();
         project.settle();
-        if was_loading {
-            self.views.content_changed();
-        }
         let Some(project) = &mut self.project else {
             return false;
         };
@@ -878,16 +856,6 @@ impl Editor {
             .icon(ctx, &project.files, path, &mut budget)
     }
 
-    pub fn update_brush(&mut self, change: impl FnOnce(&mut BrushSettings)) {
-        change(&mut self.settings.brush);
-        self.save_settings();
-    }
-
-    pub fn set_brush(&mut self, brush: BrushSettings) {
-        self.settings.brush = brush;
-        self.save_settings();
-    }
-
     pub fn loaded(&self) -> Option<Content> {
         self.project
             .as_ref()
@@ -925,9 +893,7 @@ impl Editor {
         let Some(project) = &mut self.project else {
             return;
         };
-        if project.poll() {
-            self.views.content_changed();
-        }
+        project.poll();
         self.take_refused();
     }
 
@@ -936,7 +902,6 @@ impl Editor {
         let Some(refused) = self.project.as_mut().and_then(Project::take_refused) else {
             return;
         };
-        self.views.content_changed();
         self.refused(&refused.label, &refused.refusal);
     }
 
@@ -990,7 +955,6 @@ impl Editor {
             };
             let text = crate::views::area::drop_gone(self).unwrap_or(text);
             self.toast(text);
-            self.views.content_changed();
         }
         if !outcome.conflicts.is_empty() {
             self.dialogs.push(ModalDialog::Conflicts(outcome.conflicts));
@@ -1078,7 +1042,6 @@ fn background(world: &mut World) {
         editor.poll_outside();
         editor.tick_journal();
         play::poll(&mut editor);
-        import::poll(&mut editor);
         views::sync(&mut editor, world);
     });
 }

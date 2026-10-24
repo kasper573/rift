@@ -1,12 +1,31 @@
 {
   "name": "The potter's house",
-  "blueprint": {
-    "map": {
-      "size": {
-        "width": 23,
-        "height": 14
-      },
-      "tile": 16
+  "terrain": {
+    "size": {
+      "width": 23,
+      "height": 14
+    },
+    "materials": [
+      "world/ground/floor.ground.json",
+      "world/ground/floor.ground.json",
+      "world/ground/floor.ground.json",
+      "world/ground/wall.ground.json"
+    ],
+    "max_slope": 38.0
+  },
+  "lighting": {
+    "ambient": [
+      70,
+      80,
+      105
+    ],
+    "grade": {
+      "color": [
+        90,
+        110,
+        170
+      ],
+      "strength": 0.55
     }
   }
 }

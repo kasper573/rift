@@ -341,7 +341,6 @@ pub fn follow(editor: &mut Editor, moves: &[PathMove]) {
             *key = to;
         }
     }
-    editor.imports.moved(&moved);
     editor.views.area.moved(&moved);
     if let Some(project) = &editor.project {
         let folder = UserFolder::folder_key(&project.root);

@@ -38,14 +38,13 @@ use ui::controls;
 use ui::egui::{Align, Layout, Ui, Vec2};
 use ui::glyph::{self, Mark};
 
-use super::area::scene::{AreaSceneRequest, AreaSceneSpec};
+use super::area::ground::GroundArts;
 use crate::app::{Editor, PlacePick};
 use crate::forms::{self, FormAction, FormChange, FormCx};
 use crate::project::ContentEdit;
 use crate::shell::browser::BrowserAction;
 use crate::shell::{row_form, widgets};
 use crate::tabs::{EditorTab, file_title, shown_path};
-use crate::views::area::AreaViews;
 use crate::{picker, play, stage};
 use ui::input::{InputField, NumberField};
 
@@ -267,7 +266,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                                         &mut cx,
                                         &sheet,
                                         character,
-                                        &mut views.area,
+                                        &mut views.area.grounds,
                                         &mut pick,
                                         project.generation,
                                     ),
@@ -726,17 +725,11 @@ fn start(
     cx: &mut FormCx,
     sheet: &Sheet,
     character: &mut CharacterSnapshot,
-    area: &mut AreaViews,
+    grounds: &mut GroundArts,
     pick: &mut Option<PlacePick>,
     generation: u64,
 ) -> FormChange {
     let mut changed = FormChange::default();
-    let scene_key = format!("character:{}", sheet.key);
-    let texture = area
-        .scenes
-        .by_path
-        .get(&scene_key)
-        .map(|scene| (scene.texture, scene.uv()));
     let spawn = cx.project.settings().ok().map(|settings| {
         (
             sheet.path_of(settings.initial_spawn.area),
@@ -787,27 +780,29 @@ fn start(
         {
             let size = area::load(&content, area_id).size;
             let (rect, _) = ui.allocate_exact_size(MAP, egui::Sense::hover());
-            let ppp = ui.ctx().pixels_per_point();
             let px_per_tile = 8.0;
             let half = MAP / px_per_tile / 2.0;
             let center = Pos::<Meters>::new(
                 kept_in_view(at.x, half.x, size.width),
                 kept_in_view(at.y, half.y, size.height),
             );
-            area.requests.push(AreaSceneRequest {
-                key: scene_key.clone(),
-                spec: AreaSceneSpec::area(&area_key),
-                width: (MAP.x * ppp) as u32,
-                height: (MAP.y * ppp) as u32,
-                center,
-                zoom: px_per_tile / TILE.0 * ppp,
-                generation,
-                live: true,
-            });
             ui.painter().rect_filled(rect, 4.0, theme::INPUT);
-            if let Some((texture, uv)) = texture {
-                ui.painter().image(texture, rect, uv, egui::Color32::WHITE);
-            }
+            let art = grounds.of_area(
+                ui.ctx(),
+                &format!("character:{}", sheet.key),
+                generation,
+                &content,
+                area_id,
+            );
+            art.draw(
+                &ui.painter_at(rect),
+                crate::views::navigation::Viewport {
+                    screen: rect,
+                    center,
+                    zoom: px_per_tile / TILE.0,
+                },
+                egui::Color32::WHITE,
+            );
             let marker = rect.center()
                 + egui::vec2(
                     (at.x - center.x) * px_per_tile,

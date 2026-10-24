@@ -10,7 +10,8 @@ use engine::core::vfx::shader::VfxShaderDef;
 use engine::systems::actor::ModelDef;
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
-use engine::systems::area::tileset::{SurfaceDef, TilesetDef};
+use engine::systems::area::ground::{GroundDef, SurfaceDef};
+use engine::systems::area::prop::PropDef;
 use engine::systems::area::world_map::WorldMapDef;
 use engine::systems::attention::AttentionDef;
 use engine::systems::class::ClassDef;
@@ -150,7 +151,8 @@ impl KindFamily {
         Some(match table {
             AreaDef::TABLE
             | BlueprintDef::TABLE
-            | TilesetDef::TABLE
+            | PropDef::TABLE
+            | GroundDef::TABLE
             | SurfaceDef::TABLE
             | WorldMapDef::TABLE => KindFamily::World,
             NpcDef::TABLE
@@ -191,7 +193,8 @@ pub fn of_table(table: &str) -> KindIcon {
     let icon = match table {
         AreaDef::TABLE => KindIcon::plain(phosphor::MAP_TRIFOLD),
         BlueprintDef::TABLE => KindIcon::plain(phosphor::STAMP),
-        TilesetDef::TABLE => KindIcon::plain(phosphor::SQUARES_FOUR).unpictured(),
+        PropDef::TABLE => KindIcon::plain(phosphor::TREE).unpictured(),
+        GroundDef::TABLE => KindIcon::plain(phosphor::SQUARES_FOUR).unpictured(),
         SurfaceDef::TABLE => KindIcon::plain(phosphor::FOOTPRINTS),
         WorldMapDef::TABLE => KindIcon::plain(phosphor::GLOBE_HEMISPHERE_WEST),
         NpcDef::TABLE => KindIcon::plain(phosphor::ROBOT).unpictured(),
@@ -257,30 +260,21 @@ pub const NOTE: KindIcon = KindIcon::plain(phosphor::NOTE);
 pub const IMAGE: KindIcon = KindIcon::plain(phosphor::IMAGE);
 pub const TABLE: KindIcon = KindIcon::plain(phosphor::TABLE);
 
-/// The picture a file is known by: the picture itself for an image, a content file's icon or
-/// image, a model's first idle frame facing the camera, a character's model's, a tileset's
-/// first tiles.
+/// The picture a file is known by: the picture itself for an image, or a content file's icon or
+/// image.
 pub struct Picture {
     pub path: String,
-    pub frame: PictureFrame,
-}
-
-pub enum PictureFrame {
-    Whole,
-    Tile(u32),
 }
 
 pub fn picture_of(project: &Project, path: &str) -> Option<Picture> {
     if AssetKind::of(path) == Some(AssetKind::Image) {
         return Some(Picture {
             path: path.to_owned(),
-            frame: PictureFrame::Whole,
         });
     }
     let whole = |image: &ImageRef| {
         Some(Picture {
             path: image.as_str().to_owned(),
-            frame: PictureFrame::Whole,
         })
     };
     let table = table_of(path)?;
@@ -293,13 +287,6 @@ pub fn picture_of(project: &Project, path: &str) -> Option<Picture> {
         AttentionDef::TABLE => whole(&project.read::<AttentionDef>(path).ok()?.icon),
         InterfaceIconDef::TABLE => whole(&project.read::<InterfaceIconDef>(path).ok()?.image),
         CursorDef::TABLE => whole(&project.read::<CursorDef>(path).ok()?.image),
-        TilesetDef::TABLE => {
-            let tileset = project.read::<TilesetDef>(path).ok()?;
-            Some(Picture {
-                path: tileset.image.as_str().to_owned(),
-                frame: PictureFrame::Tile(tileset.tile),
-            })
-        }
         _ => None,
     }
 }
@@ -386,18 +373,7 @@ fn shown(
         uv,
         size,
     };
-    Some(match picture.frame {
-        PictureFrame::Whole => {
-            let thumb = thumbnails.image_within(ctx, files, &picture.path, budget)?;
-            let size = Vec2::new(thumb.size[0] as f32, thumb.size[1] as f32);
-            ready(thumb, thumbs::FULL_UV, size)
-        }
-        PictureFrame::Tile(tile) => {
-            let thumb = thumbnails.image_within(ctx, files, &picture.path, budget)?;
-            let block = Vec2::splat(tile as f32 * 2.0)
-                .min(Vec2::new(thumb.size[0] as f32, thumb.size[1] as f32));
-            let uv = thumbs::uv(thumb.size, 0.0, 0.0, block.x, block.y);
-            ready(thumb, uv, block)
-        }
-    })
+    let thumb = thumbnails.image_within(ctx, files, &picture.path, budget)?;
+    let size = Vec2::new(thumb.size[0] as f32, thumb.size[1] as f32);
+    Some(ready(thumb, thumbs::FULL_UV, size))
 }

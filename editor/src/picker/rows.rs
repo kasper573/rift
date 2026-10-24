@@ -4,7 +4,7 @@ use engine::core::content::{Content, ContentFile, fields_file, name_of, parent_o
 use engine::field;
 use engine::systems::actor::ModelDef;
 use engine::systems::area::blueprint::BlueprintDef;
-use engine::systems::area::tileset::TilesetDef;
+use engine::systems::area::prop::PropDef;
 use engine::systems::area::{self, AreaDef, AreaModule};
 use engine::systems::attention::AttentionDef;
 use engine::systems::class::{ClassDef, SkillNode};
@@ -25,7 +25,7 @@ use crate::tabs::shown_path;
 const PICTURE_TABLES: [&str; 6] = [
     ModelDef::TABLE,
     ItemDef::TABLE,
-    TilesetDef::TABLE,
+    PropDef::TABLE,
     AttentionDef::TABLE,
     InterfaceIconDef::TABLE,
     CursorDef::TABLE,

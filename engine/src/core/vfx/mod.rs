@@ -21,7 +21,7 @@ use crate::core::content::{
     ContentFile, ContentId, ContentRegistry, LoadStep, Loading, NamedContent, Nearby, RowCheck,
     serial,
 };
-use crate::core::geometry::{Footprint, Radians};
+use crate::core::geometry::{PlacedShape, Radians};
 use crate::core::math::{FrameSize, Pos, Rgba};
 use crate::core::time::{Hertz, Seconds, UnixMillis};
 use crate::core::units::Meters;
@@ -174,7 +174,7 @@ pub struct VfxInstance {
 pub enum VfxSite {
     Actor(#[entities] Entity),
     Object(#[entities] Entity),
-    Area(Footprint),
+    Area(PlacedShape),
     Path(Vec<Pos<Meters>>),
     Screen,
     Widget(WidgetName),

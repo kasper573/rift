@@ -7,7 +7,7 @@ use ui::chip;
 use ui::egui;
 use ui::theme;
 
-use engine::core::geometry::{Degrees, Footprint, Shape};
+use engine::core::geometry::{Degrees, PlacedShape, Shape};
 use engine::core::math::Pos;
 use engine::core::render::ToScreen;
 use engine::core::time::Seconds;
@@ -278,10 +278,10 @@ impl VfxTarget {
         }
     }
 
-    fn footprint(&self, at: Pos<Meters>) -> Option<Footprint> {
+    fn footprint(&self, at: Pos<Meters>) -> Option<PlacedShape> {
         match self {
             VfxTarget::Area { shape, facing } | VfxTarget::Crowd { shape, facing, .. } => {
-                Some(Footprint {
+                Some(PlacedShape {
                     at,
                     facing: facing.radians(),
                     shape: *shape,

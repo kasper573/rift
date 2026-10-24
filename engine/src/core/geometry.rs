@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use crate::core::math::{Offset, Pos};
 use crate::core::units::{Meters, TilePos};
 
-#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
+)]
 #[schemars(extend("x-unit" = "°"))]
 pub struct Degrees(pub f32);
 
@@ -16,6 +18,33 @@ const OUTLINE_STEPS: usize = 40;
 impl Degrees {
     pub fn radians(self) -> Radians {
         Radians(self.0.to_radians())
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0.0
+    }
+
+    /// The angle as whole quarter turns, when it is one: a placement turns only by right angles,
+    /// so what it places keeps its rectangles square to the world.
+    pub fn quarter_turns(self) -> Option<u8> {
+        let quarters = self.0 / 90.0;
+        let whole = quarters.round();
+        ((quarters - whole).abs() < 1e-4).then(|| whole.rem_euclid(4.0) as u8)
+    }
+
+    /// `offset` turned by the angle about the origin; a right angle turns it exactly.
+    pub fn rotate(self, offset: Offset<Meters>) -> Offset<Meters> {
+        let Offset { x, y, .. } = offset;
+        match self.quarter_turns() {
+            Some(0) => offset,
+            Some(1) => Offset::new(-y, x),
+            Some(2) => Offset::new(-x, -y),
+            Some(3) => Offset::new(y, -x),
+            _ => {
+                let (sin, cos) = self.radians().0.sin_cos();
+                Offset::new(x * cos - y * sin, x * sin + y * cos)
+            }
+        }
     }
 }
 
@@ -127,22 +156,22 @@ impl Shape {
 /// A shape placed in the world. It travels the wire inside replicated components, and postcard
 /// cannot read the internally tagged `Shape`, so it serializes through an externally tagged twin.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
-#[serde(from = "WireFootprint", into = "WireFootprint")]
-pub struct Footprint {
+#[serde(from = "WirePlacedShape", into = "WirePlacedShape")]
+pub struct PlacedShape {
     pub at: Pos<Meters>,
     pub facing: Radians,
     pub shape: Shape,
 }
 
-impl Footprint {
+impl PlacedShape {
     /// Where a cast from `from` toward `point` lays a shape down: a circle or a rectangle sits on
     /// the point, a cone or a line reaches out from the caster toward it.
-    pub fn cast(shape: Shape, from: Pos<Meters>, point: Pos<Meters>) -> Footprint {
+    pub fn cast(shape: Shape, from: Pos<Meters>, point: Pos<Meters>) -> PlacedShape {
         let at = match shape {
             Shape::Cone { .. } | Shape::Line { .. } => from,
             Shape::Circle { .. } | Shape::Rect { .. } => point,
         };
-        Footprint {
+        PlacedShape {
             at,
             facing: facing_from(from, point),
             shape,
@@ -180,7 +209,7 @@ impl Footprint {
         self.shape.reach()
     }
 
-    /// The points around the footprint's edge, enough for a drawn ring or a bounding box.
+    /// The points around the shape's edge, enough for a drawn ring or a bounding box.
     pub fn outline(&self) -> Vec<Pos<Meters>> {
         let steps = OUTLINE_STEPS;
         let heading = self.facing.heading();
@@ -236,7 +265,7 @@ pub fn facing_from(from: Pos<Meters>, toward: Pos<Meters>) -> Radians {
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
-struct WireFootprint {
+struct WirePlacedShape {
     at: Pos<Meters>,
     facing: Radians,
     shape: WireShape,
@@ -250,31 +279,31 @@ enum WireShape {
     Line { length: Meters, width: Meters },
 }
 
-impl From<Footprint> for WireFootprint {
-    fn from(footprint: Footprint) -> WireFootprint {
-        let shape = match footprint.shape {
+impl From<PlacedShape> for WirePlacedShape {
+    fn from(placed: PlacedShape) -> WirePlacedShape {
+        let shape = match placed.shape {
             Shape::Circle { radius } => WireShape::Circle { radius },
             Shape::Rect { width, height } => WireShape::Rect { width, height },
             Shape::Cone { angle, length } => WireShape::Cone { angle, length },
             Shape::Line { length, width } => WireShape::Line { length, width },
         };
-        WireFootprint {
-            at: footprint.at,
-            facing: footprint.facing,
+        WirePlacedShape {
+            at: placed.at,
+            facing: placed.facing,
             shape,
         }
     }
 }
 
-impl From<WireFootprint> for Footprint {
-    fn from(wire: WireFootprint) -> Footprint {
+impl From<WirePlacedShape> for PlacedShape {
+    fn from(wire: WirePlacedShape) -> PlacedShape {
         let shape = match wire.shape {
             WireShape::Circle { radius } => Shape::Circle { radius },
             WireShape::Rect { width, height } => Shape::Rect { width, height },
             WireShape::Cone { angle, length } => Shape::Cone { angle, length },
             WireShape::Line { length, width } => Shape::Line { length, width },
         };
-        Footprint {
+        PlacedShape {
             at: wire.at,
             facing: wire.facing,
             shape,

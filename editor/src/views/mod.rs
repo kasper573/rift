@@ -7,7 +7,6 @@ pub mod script;
 pub mod skill;
 pub mod sound;
 pub mod spreadsheet;
-pub mod tileset;
 pub mod vfx;
 pub mod world;
 
@@ -40,7 +39,6 @@ pub struct EditorViews {
     pub world: world::WorldView,
     pub script: script::ScriptViews,
     pub model: model::ModelViews,
-    pub tileset: tileset::TilesetViews,
     pub spreadsheet: spreadsheet::SpreadsheetViews,
     pub sound: sound::SoundViews,
     pub character: character::CharacterView,
@@ -65,10 +63,6 @@ impl EditorViews {
             self.area.restore_camera(&camera);
         }
     }
-
-    pub fn content_changed(&mut self) {
-        self.area.content_changed();
-    }
 }
 
 /// The content file at `key` as the game reads it, or `None` once `ui` says why it doesn't read.
@@ -83,7 +77,6 @@ pub fn read_shown<Row: ContentFile>(editor: &Editor, ui: &mut Ui, key: &str) -> 
 }
 
 pub fn sync(editor: &mut Editor, world: &mut World) {
-    area::sync(editor, world);
     sound::sync(editor, world);
     crate::stage::sync(editor, world);
 }
@@ -91,15 +84,13 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
 pub fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
     let mut tabs: Vec<BottomTab> = match shell::active_tab(editor) {
         Some(EditorTab::Area { .. }) | Some(EditorTab::Blueprint { .. }) => {
-            let mut tabs = vec![BottomTab::Palette, BottomTab::Blueprints];
+            let mut tabs = vec![BottomTab::Blueprints];
             if editor.views.sound.listening.is_some() {
                 tabs.push(BottomTab::Listen);
             }
             tabs
         }
         Some(EditorTab::Script(_)) => vec![BottomTab::MayDo, BottomTab::UsedBy, BottomTab::Run],
-        Some(EditorTab::Model { .. }) => Vec::new(),
-        Some(EditorTab::Tileset { key }) => tileset::bottom_tabs(editor, &key),
         _ => Vec::new(),
     };
     if used_by_subject(editor).is_some() && !tabs.contains(&BottomTab::UsedBy) {
@@ -129,22 +120,18 @@ pub fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
 
 pub fn bottom_show(editor: &mut Editor, ui: &mut Ui, tab: BottomTab) {
     match (shell::active_tab(editor), tab) {
-        (Some(EditorTab::Area { key }), BottomTab::Palette | BottomTab::Blueprints) => {
+        (Some(EditorTab::Area { key }), BottomTab::Blueprints) => {
             area::bottom(editor, ui, &area::view_key(&key), tab)
         }
         (Some(EditorTab::Area { .. }) | Some(EditorTab::Blueprint { .. }), BottomTab::Listen) => {
             sound::panel(editor, ui)
         }
-        (Some(EditorTab::Blueprint { key }), BottomTab::Palette | BottomTab::Blueprints) => {
+        (Some(EditorTab::Blueprint { key }), BottomTab::Blueprints) => {
             area::bottom(editor, ui, &area::view_key(&key), tab)
         }
         (Some(EditorTab::Script(owner)), BottomTab::MayDo | BottomTab::UsedBy | BottomTab::Run) => {
             script::bottom(editor, ui, &owner, tab)
         }
-        (
-            Some(EditorTab::Tileset { key }),
-            BottomTab::Surfaces | BottomTab::Mixes | BottomTab::Timeline,
-        ) => tileset::bottom(editor, ui, &key, tab),
         (_, BottomTab::UsedBy) => {
             let Some(subject) = used_by_subject(editor) else {
                 return;

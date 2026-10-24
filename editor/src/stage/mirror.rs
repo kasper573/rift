@@ -24,9 +24,9 @@ use engine::systems::area::{self, AreaId};
 use engine::systems::item::ItemId;
 use engine::systems::item::render::drop_sprite;
 
+use super::images::{self, Images};
 use super::{SIZE, ZOOM};
 use crate::project::{ProjectFiles, hash};
-use crate::views::area::scene;
 
 const FIRST_LAYER: usize = 500;
 const SPRITE_DEPTH_ABOVE_GROUND: f32 = 0.001;
@@ -92,7 +92,7 @@ pub struct Stage {
 
 impl Stage {
     pub fn spawn(world: &mut World, index: usize) -> Stage {
-        let (image, texture) = scene::render_target(world, SIZE);
+        let (image, texture) = images::render_target(world, SIZE);
         let layer = RenderLayers::none().with(FIRST_LAYER + index);
         let camera = world
             .spawn((
@@ -127,7 +127,7 @@ impl Stage {
 
     /// Brings the picture up to the frame: items and vfx presented as the game presents them, and
     /// names kept for the window to letter over where each actor stands.
-    pub fn render(&mut self, world: &mut World, scenes: &mut scene::AreaScenes, frame: &Frame) {
+    pub fn render(&mut self, world: &mut World, images: &mut Images, frame: &Frame) {
         let area = area::load(frame.content, frame.area);
         world.insert_resource(GroundDepth(area.sort_base()));
         world.insert_resource(RowDepths {
@@ -149,8 +149,8 @@ impl Stage {
                 pose.plate.clone().map(|label| (top, label))
             })
             .collect();
-        self.sync_items(world, scenes, frame);
-        self.sync_vfx(world, scenes, frame);
+        self.sync_items(world, images, frame);
+        self.sync_vfx(world, images, frame);
     }
 
     pub fn despawn(mut self, world: &mut World) {
@@ -170,7 +170,7 @@ impl Stage {
         }
     }
 
-    fn sync_items(&mut self, world: &mut World, scenes: &mut scene::AreaScenes, frame: &Frame) {
+    fn sync_items(&mut self, world: &mut World, images: &mut Images, frame: &Frame) {
         if self.items.len() != frame.items.len() {
             for item in self.items.drain(..) {
                 world.despawn(item);
@@ -189,7 +189,7 @@ impl Stage {
         let count = frame.items.len() as f32;
         for (index, (item, entity)) in frame.items.iter().zip(&self.items).enumerate() {
             let icon = item.get(frame.content).icon.as_str();
-            let image = scene::image_handle(scenes, frame.files, icon, world);
+            let image = images.handle(frame.files, icon, world);
             let at = Pos::<Meters>::new(
                 frame.center.x + (index as f32 - (count - 1.0) / 2.0) * 1.5,
                 frame.center.y,
@@ -204,7 +204,7 @@ impl Stage {
         }
     }
 
-    fn sync_vfx(&mut self, world: &mut World, scenes: &mut scene::AreaScenes, frame: &Frame) {
+    fn sync_vfx(&mut self, world: &mut World, images: &mut Images, frame: &Frame) {
         let wanted: HashMap<Source, String> = frame
             .vfx
             .iter()
@@ -231,7 +231,7 @@ impl Stage {
             if !self.pieces.contains_key(&pose.owner) {
                 let files = frame.files;
                 let pieces = vfx_render::pieces_for(world, &pose.layers, &mut |world, sheet| {
-                    scene::image_handle(scenes, files, sheet.as_str(), world)
+                    images.handle(files, sheet.as_str(), world)
                 });
                 for piece in &pieces {
                     world.entity_mut(*piece).insert(self.layer.clone());

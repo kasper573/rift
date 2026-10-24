@@ -3,14 +3,12 @@ use std::sync::Arc;
 use ui::chip;
 use ui::egui;
 use ui::form;
-use ui::paint;
 use ui::panel;
 use ui::theme;
 use ui::words;
 
 use engine::core::content::{ContentFile, name_of};
 use engine::core::script::Variable;
-use engine::core::units::TilePos;
 use engine::field;
 use engine::systems::area::blueprint::{BlueprintDef, Placement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
@@ -18,13 +16,12 @@ use engine::systems::area::{AreaModule, AreaModuleKind, Pictured};
 use engine::systems::script::RiftScripting;
 use strum::VariantArray;
 use ui::controls;
-use ui::egui::{Align, Layout, Sense, Ui, Vec2};
+use ui::egui::{Align, Layout, Ui};
 use ui::glyph::{self, Mark};
 
-use super::grid::GridDraft;
 use super::nodes::SceneBundle;
 use super::scene_tree::{self, SceneAction, SceneNarrowing, SceneSource, Toggle};
-use super::{AreaSnapshot, WALK_ROW, layers, nodes, placement, resize, shapes};
+use super::{AreaSnapshot, nodes, placement, resize, shapes};
 use crate::app::{Editor, ModalDialog, PickRowDialog, PickRowThen};
 use crate::forms::{self, FormCx};
 use crate::keymap::EditorKey;
@@ -47,9 +44,6 @@ pub struct ScenePanel {
     pub cut: Vec<String>,
     /// The rows the tree last showed selected, to tell a pick on the map from one in the tree.
     shown: Vec<String>,
-    /// How many cells each ground layer holds, by name, as of the project's generation `counted`.
-    cells: HashMap<String, usize>,
-    counted: Option<u64>,
     /// What the filter and Show last left of the scene.
     narrowed: Option<Arc<scene_tree::Narrowed>>,
     /// What another part of the view asked of the scene graph, done on its next frame.
@@ -60,7 +54,7 @@ pub struct ScenePanel {
     typed_at: f64,
 }
 
-/// The view's left panel: where the bundle is, its boxes, then its scene graph under the Walk row.
+/// The view's left panel: where the bundle is, its boxes, then its scene graph.
 pub fn show(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
     let bundle = editor.views.area.view(view_key).bundle.clone();
     if let Some(folder) = breadcrumb::show(ui, &bundle) {
@@ -82,8 +76,6 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
     ui.add_space(4.0);
     filter_row(editor, ui, view_key);
     ui.add_space(4.0);
-    walk_row(editor, ui, view_key, &snapshot);
-    ui.add_space(2.0);
     scene_graph(editor, ui, view_key, &snapshot);
 }
 
@@ -92,8 +84,7 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
     let def = snapshot.def.clone();
     let folded = editor.settings.boxes_folded;
     let size = snapshot.size();
-    let tile = snapshot.area().tile;
-    let facts = format!("{} × {} · {tile} px", size.width, size.height);
+    let facts = format!("{} × {} m", size.width, size.height);
     let area = matches!(snapshot.pictured, Pictured::Area(_));
     let title = match &def {
         SceneBundle::Area(area) => area.name.clone(),
@@ -155,13 +146,27 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
             ui.label(theme::faint("BLUEPRINT").size(10.5));
         }
         form::kv(ui, "size", |ui| {
-            input::boxed(ui, Some("tiles"), |ui| {
+            input::boxed(ui, Some("m"), |ui| {
                 ui.label(format!("{} × {}", size.width, size.height))
             });
         });
-        form::kv(ui, "tile", |ui| {
-            input::boxed(ui, Some("px"), |ui| ui.label(tile.to_string()));
-        });
+        if let SceneBundle::Area(held) = &def {
+            form::kv_text(
+                ui,
+                "ground",
+                held.terrain
+                    .materials
+                    .iter()
+                    .map(|ground| snapshot.reader.path_of(*ground).map(name_of).unwrap_or("?"))
+                    .collect::<Vec<_>>()
+                    .join(" · "),
+            );
+            form::kv_text(
+                ui,
+                "slope",
+                format!("walks up to {}°", held.terrain.max_slope.0),
+            );
+        }
         if let SceneBundle::Blueprint(blueprint) = &def {
             variables_changed = variables(editor, ui, &bundle, blueprint, &mut actions);
         }
@@ -194,15 +199,14 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
         );
     }
     match menu {
-        Some(BoxMenu::Resize) => editor
-            .dialogs
-            .push(ModalDialog::Resize(resize::ResizeDialog {
-                bundle: bundle.clone(),
-                width: size.width as u32,
-                height: size.height as u32,
-                anchor: (-1, -1),
-                error: None,
-            })),
+        Some(BoxMenu::Resize) => {
+            editor
+                .dialogs
+                .push(ModalDialog::Resize(resize::ResizeDialog::for_bundle(
+                    &bundle,
+                    def.size(),
+                )))
+        }
         Some(BoxMenu::Play) => views::play_here(editor),
         Some(BoxMenu::OpenRow) => editor.open_tab(EditorTab::Row {
             table: engine::core::content::table_of(&bundle)
@@ -449,158 +453,19 @@ fn filter_row(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
     }
 }
 
-/// Every kind of node Show ▾ offers: ground layers and every kind of module.
+/// Every kind of node Show ▾ offers: every kind of module.
 fn scene_kinds() -> Vec<String> {
-    std::iter::once(nodes::GROUND_LAYER.to_owned())
-        .chain(
-            AreaModuleKind::VARIANTS
-                .iter()
-                .map(|kind| kind.tag().to_owned()),
-        )
+    AreaModuleKind::VARIANTS
+        .iter()
+        .map(|kind| kind.tag().to_owned())
         .collect()
-}
-
-/// The Walk row pinned above the tree: the bundle's forced walk cells, its eye the walk overlay and
-/// its padlock against the walk brush. It is no node: it can't move, nest or go.
-fn walk_row(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &AreaSnapshot) {
-    let forced = GridDraft::own(editor, &snapshot.bundle)
-        .map_or(0, |draft| draft.walk.iter().flatten().count());
-    let selected = super::armed(editor, snapshot) == super::Armed::Walk;
-    let (overlay, locked) = {
-        let view = editor.views.area.view(view_key);
-        (view.walk_overlay, view.walk_locked)
-    };
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::click());
-    let painter = ui.painter();
-    if selected {
-        painter.rect_filled(rect, 3.0, theme::SELECTION);
-    } else if response.hovered() {
-        paint::row_wash(painter, rect);
-    }
-    let badge =
-        egui::Rect::from_center_size(rect.left_center() + Vec2::new(12.0, 0.0), Vec2::splat(14.0));
-    painter.rect_filled(badge, 3.0, widgets::badge_color("walk"));
-    painter.text(
-        badge.center(),
-        egui::Align2::CENTER_CENTER,
-        "W",
-        egui::FontId::monospace(10.0),
-        ui::ink::CREAM,
-    );
-    painter.text(
-        rect.left_center() + Vec2::new(26.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        "Walk",
-        egui::FontId::monospace(13.0),
-        theme::TEXT,
-    );
-    let detail = match forced {
-        0 => "none forced".to_owned(),
-        n => format!("{n} forced"),
-    };
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Walk, {detail}"))
-    });
-    painter.text(
-        rect.right_center() - Vec2::new(36.0, 0.0),
-        egui::Align2::RIGHT_CENTER,
-        &detail,
-        egui::FontId::proportional(12.0),
-        theme::FAINT,
-    );
-    let mut toggled = None;
-    for (index, (on, off, is_on, said)) in [
-        (Mark::Lock, Mark::Unlock, locked, "Lock the walk brush"),
-        (Mark::Eye, Mark::EyeSlash, overlay, "The walk overlay"),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let center = rect.right_center() - Vec2::new(7.0 + index as f32 * 14.0, 0.0);
-        let hit = egui::Rect::from_center_size(center, Vec2::splat(14.0));
-        let button = ui
-            .interact(hit, ui.id().with(("walk toggle", index)), Sense::click())
-            .on_hover_text(said);
-        button.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, is_on, said)
-        });
-        let color = if is_on { theme::TEXT } else { theme::FAINT };
-        (if is_on { on } else { off }).paint(
-            ui.painter(),
-            egui::Rect::from_center_size(center, Vec2::splat(11.0)),
-            color,
-        );
-        if button.clicked() {
-            toggled = Some(index);
-        }
-    }
-    let mut clear = false;
-    response.context_menu(|ui| {
-        if ui
-            .add(widgets::shortcut_button(
-                "Paint forced cells",
-                EditorKey::Confirm,
-            ))
-            .clicked()
-        {
-            nodes::select(editor, &snapshot.bundle, vec![WALK_ROW.to_owned()]);
-            ui.close();
-        }
-        let overlay_said = if overlay {
-            "Hide the overlay"
-        } else {
-            "Show the overlay"
-        };
-        if ui
-            .add(widgets::shortcut_button(
-                overlay_said,
-                EditorKey::WalkOverlay,
-            ))
-            .clicked()
-        {
-            toggled = Some(1);
-            ui.close();
-        }
-        if ui
-            .add_enabled(
-                forced > 0,
-                egui::Button::new(format!("Clear forced cells ({forced})")),
-            )
-            .clicked()
-        {
-            clear = true;
-            ui.close();
-        }
-        ui.separator();
-        if ui.button(if locked { "Unlock" } else { "Lock" }).clicked() {
-            toggled = Some(0);
-            ui.close();
-        }
-    });
-    let view = editor.views.area.view_mut(view_key);
-    match toggled {
-        Some(0) => view.walk_locked = !view.walk_locked,
-        Some(_) => view.walk_overlay = !view.walk_overlay,
-        None => {
-            if response.clicked() {
-                view.walk_overlay = true;
-                nodes::select(editor, &snapshot.bundle, vec![WALK_ROW.to_owned()]);
-            }
-        }
-    }
-    if clear {
-        layers::clear_forced(editor, &snapshot.bundle);
-    }
 }
 
 fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &AreaSnapshot) {
     let Some(project) = &editor.project else {
         return;
     };
-    let generation = project.generation;
     let key = scene_tree::tree_key(project, &snapshot.bundle);
-    count_cells(editor, view_key, snapshot, generation);
     let lit = lit_row(editor, snapshot);
     let selected = scene_tree::selected_ids(snapshot, &editor.selection);
     let placing = editor.views.area.view(view_key).placing;
@@ -632,7 +497,6 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
             view: shown_kinds,
             kept: &mut panel.narrowed,
         },
-        &panel.cells,
         clipboard.is_some() || !panel.cut.is_empty(),
     );
     source.lit = lit;
@@ -641,7 +505,7 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
         ui.label(theme::faint(format!("{hits} of {total}")).size(12.0));
     }
     let mut open = shown_kinds.open.clone();
-    let empty = snapshot.nodes().iter().all(nodes::is_layer);
+    let empty = snapshot.nodes().is_empty();
     let (response, changed) = egui::ScrollArea::vertical()
         .id_salt(("scene graph", view_key))
         .auto_shrink([false, false])
@@ -760,38 +624,13 @@ fn empty_state(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
     }
 }
 
-fn count_cells(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, generation: u64) {
-    let panel = &editor.views.area.view(view_key).scene;
-    if panel.counted == Some(generation) {
-        return;
-    }
-    let cells: HashMap<String, usize> = GridDraft::own(editor, &snapshot.bundle)
-        .map(|draft| {
-            draft
-                .ground
-                .iter()
-                .map(|layer| (layer.name.clone(), layers::cell_count(&draft, &layer.name)))
-                .collect()
-        })
-        .unwrap_or_default();
-    let panel = &mut editor.views.area.view_mut(view_key).scene;
-    panel.cells = cells;
-    panel.counted = Some(generation);
-}
-
 /// The row of the locked module the pointer is over on the map, lit so it can be found.
 fn lit_row(editor: &Editor, snapshot: &AreaSnapshot) -> Option<String> {
     let hover = editor.views.area.hover.as_ref()?;
     if hover.area != snapshot.bundle {
         return None;
     }
-    let view = editor.views.area.view(&super::view_key(&snapshot.bundle));
-    match &view.armed {
-        super::Armed::Layer { name, .. } if view.tool.paints() => {
-            snapshot.covering(hover.tile.cell(), name)
-        }
-        _ => snapshot.locked_hit(hover.tile),
-    }
+    snapshot.locked_hit(hover.tile)
 }
 
 /// Follows a selection made in the tree: the map and inspector take it, and selecting a row
@@ -852,14 +691,6 @@ fn act(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, action: Sce
                 begin_rename(editor, &id);
             }
         }
-        SceneAction::NewLayer(folder) => {
-            let bundle = bundle_of(&folder_child(&folder, snapshot));
-            let into = scene_tree::folder_pointer(snapshot, &folder);
-            if let Some(pointer) = layers::add(editor, &bundle, &into) {
-                let id = format!("{}{pointer}", scene_tree::prefix_of(snapshot, &bundle));
-                begin_rename(editor, &id);
-            }
-        }
         SceneAction::Rename(id) => begin_rename(editor, &id),
         SceneAction::ShowOnMap(id) => show_on_map(editor, view_key, snapshot, &id),
         SceneAction::OpenBlueprint(id) => {
@@ -892,11 +723,6 @@ fn act(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, action: Sce
                 placement::replace_dialog(editor, &fresh, scene_tree::local(&id));
             }
         }
-        SceneAction::Split(id) => super::run_action(
-            editor,
-            snapshot,
-            super::AreaAction::Split(scene_tree::local(&id).to_owned()),
-        ),
         SceneAction::ReturnDoor(id) => super::run_action(
             editor,
             snapshot,
@@ -956,9 +782,6 @@ fn act(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, action: Sce
             }
         }
         SceneAction::Delete(ids) => scene_tree::delete_rows(editor, snapshot, &ids),
-        SceneAction::PaintInto(id) => {
-            editor.selection = scene_tree::selection_of(snapshot, &[id]);
-        }
         SceneAction::OpenAll | SceneAction::CloseAll => {
             let open = matches!(action, SceneAction::OpenAll);
             let mut folders = Vec::new();
@@ -991,15 +814,6 @@ fn act(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, action: Sce
         SceneAction::UnlockEverything => {
             scene_tree::clear_all(editor, &snapshot.bundle, Toggle::Lock)
         }
-    }
-}
-
-/// A row inside `folder`, to tell which scene the folder's children belong to.
-fn folder_child(folder: &str, snapshot: &AreaSnapshot) -> String {
-    if scene_tree::is_place_row(snapshot, folder) {
-        format!("{folder}/in/0")
-    } else {
-        format!("{folder}/children/0")
     }
 }
 

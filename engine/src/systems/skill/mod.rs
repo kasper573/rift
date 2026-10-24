@@ -30,7 +30,7 @@ use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, NamedContent,
     Nearby, RowCheck, serial,
 };
-use crate::core::geometry::{Footprint, Shape};
+use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::math::Pos;
 use crate::core::script::FlowCx;
 use crate::core::time::{Seconds, UnixMillis};
@@ -746,13 +746,13 @@ pub fn targets(world: &World, cx: &FlowCx, skill: SkillId) -> Vec<Entity> {
 }
 
 /// The ground a cast covers, from the caster toward the aimed point.
-pub fn footprint(world: &World, cx: &FlowCx, skill: SkillId) -> Option<Footprint> {
+pub fn footprint(world: &World, cx: &FlowCx, skill: SkillId) -> Option<PlacedShape> {
     let caster = cx.subject?;
     let def = skill.get(world.resource::<Content>());
     let shape = def.area_at(used_rank(cx))?;
     let from = movement::position(world, caster)?;
     let point = aimed_point(world, cx, skill).unwrap_or(from);
-    Some(Footprint::cast(shape, from, point))
+    Some(PlacedShape::cast(shape, from, point))
 }
 
 pub fn aimed_point(world: &World, cx: &FlowCx, skill: SkillId) -> Option<Pos<Meters>> {

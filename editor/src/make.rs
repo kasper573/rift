@@ -11,7 +11,7 @@ use engine::core::vfx::VfxShaderDef;
 use engine::core::vfx::shader::SHADER_SOURCE;
 use engine::systems::actor::Action;
 use engine::systems::actor::model::{MODEL_GLB, ModelDef};
-use engine::systems::area::tileset::{TILESET_IMAGE, TilesetDef};
+use engine::systems::area::prop::{PROP_GLB, PropDef};
 use engine::systems::item::{ItemDef, ItemKind, ItemModule};
 use engine::systems::script::{Node, RiftEvent, RunnerKind, ScriptDef, ScriptId, ScriptModule};
 use engine::systems::skill::{SkillDef, SkillModule};
@@ -116,7 +116,6 @@ fn blank_parts(table: &str) -> Vec<(String, FileBytes)> {
             .chars()
             .map(|letter| (BABBLE_LETTERS.named(&letter.to_string(), "wav"), silence()))
             .collect(),
-        TilesetDef::TABLE => vec![(TILESET_IMAGE.named("", "png"), default("blank.png"))],
         ModelDef::TABLE => {
             let clips: Vec<(&str, Seconds)> = Action::VARIANTS
                 .iter()
@@ -127,6 +126,10 @@ fn blank_parts(table: &str) -> Vec<(String, FileBytes)> {
                 FileBytes::from(placeholder_rig(&clips)),
             )]
         }
+        PropDef::TABLE => vec![(
+            PROP_GLB.named("", "glb"),
+            FileBytes::from(placeholder_rig(&[])),
+        )],
         VfxShaderDef::TABLE => vec![(SHADER_SOURCE.named("", "wgsl"), default("shader.wgsl"))],
         _ => Vec::new(),
     }

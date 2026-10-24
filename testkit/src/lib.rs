@@ -11,8 +11,8 @@ mod script;
 mod sim;
 mod talk;
 
-pub use art::{glb, png, wav};
-pub use game::{APEX, CLIP, Declared, Game, Map, TILE, path, stats};
+pub use art::{glb, png, wav, wav_of};
+pub use game::{APEX, CLIP, Declared, Game, Map, ROCK, TURF, path, stats};
 pub use script::{dialogue, hunting, said};
 pub use sim::{Sim, drawn_seed};
 pub use talk::{labels, lines, locked};

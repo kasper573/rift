@@ -66,7 +66,6 @@ bevy = { workspace = true, features = [
     "web",
 ] }
 ui = { path = "../ui" }
-bevy_tilemap = { path = "../bevy/tilemap" }
 bevy_terminal = { path = "../bevy/terminal" }
 bevy_app.workspace = true
 bevy_ecs.workspace = true
@@ -85,7 +84,6 @@ bevy_kira_audio = { version = "0.27", default-features = false }
 kira = { version = "0.12", default-features = false, features = ["symphonia"] }
 base64 = "0.23"
 symphonia = { version = "0.6", default-features = false, features = ["flac", "wav", "pcm"] }
-csv = "1"
 futures-timer = { version = "3", features = ["wasm-bindgen"] }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 derive_more = { version = "2", features = ["add", "add_assign"] }

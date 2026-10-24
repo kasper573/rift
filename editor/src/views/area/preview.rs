@@ -11,8 +11,7 @@ use ui::sheet;
 use ui::theme;
 use ui::words;
 
-use super::scene::{AreaSceneRequest, AreaSceneSpec};
-use super::{pins, select};
+use super::{ground, pins, select};
 use crate::app::{Clipboard, Editor};
 use crate::forms;
 use crate::keymap::EditorKey;
@@ -51,7 +50,6 @@ pub fn pick_preview(editor: &mut Editor, ui: &mut Ui) {
     let Some(content) = project.content.clone() else {
         return;
     };
-    let generation = project.generation;
     let mut area_key = pick.area.clone().or_else(|| {
         let place = project.value_at::<Place>(&pick.file, &pick.pointer)?;
         project.reader().path_of(place.area).map(str::to_owned)
@@ -94,29 +92,23 @@ pub fn pick_preview(editor: &mut Editor, ui: &mut Ui) {
     let width = ui.available_width();
     let height = (width * area.size.height / area.size.width.max(1.0)).clamp(80.0, 360.0);
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
-    let ppp = ui.ctx().pixels_per_point();
     let zoom = navigation::fit_zoom(
         rect.size(),
         Vec2::new(area.size.width, area.size.height),
         TILE.0,
     );
     let center = Pos::new(area.size.width / 2.0 - 0.5, area.size.height / 2.0 - 0.5);
-    let view_key = format!("pick:{area_key}");
-    editor.views.area.requests.push(AreaSceneRequest {
-        key: view_key.clone(),
-        spec: AreaSceneSpec::area(&area_key),
-        width: (rect.width() * ppp).round().max(1.0) as u32,
-        height: (rect.height() * ppp).round().max(1.0) as u32,
-        center,
-        zoom: zoom * ppp,
-        generation,
-        live: true,
-    });
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 4.0, theme::INPUT);
-    if let Some(scene) = editor.views.area.scenes.by_path.get(&view_key) {
-        painter.image(scene.texture, rect, scene.uv(), egui::Color32::WHITE);
-    }
+    ground::draw_area(
+        editor,
+        &painter,
+        &format!("pick:{area_key}"),
+        &area_key,
+        rect,
+        center,
+        zoom * TILE.0,
+    );
     let canvas = navigation::Viewport {
         screen: rect,
         center,
@@ -175,7 +167,7 @@ pub fn pick_preview(editor: &mut Editor, ui: &mut Ui) {
     form::hint(
         ui,
         &format!(
-            "Click a cell for its centre, {} click for any point, in 1/16 tiles. {} keeps the old place.",
+            "Click a cell for its centre, {} click for any point, in 1/16 m. {} keeps the old place.",
             EditorKey::Unsnapped.name(),
             EditorKey::Cancel.name()
         ),

@@ -6,14 +6,17 @@ use ui::theme;
 use engine::core::audio::mix::AudioCategory;
 use engine::core::audio::soundscape::SoundscapeShape;
 use engine::core::content::{FolderReader, Nearby};
-use engine::core::math::{Offset, Pos, Rect, Size};
+use engine::core::geometry::Degrees;
+use engine::core::math::{Pos, Rect, Rgb, Size};
 use engine::core::units::{Cell, CellPos, Meters, TilePos};
+use engine::systems::actor::Pose;
 use engine::systems::area::blueprint::Placement;
+use engine::systems::area::lighting::PointLightDef;
 use engine::systems::area::object::{ObjectDef, ObjectShape};
+use engine::systems::area::prop::{PropPlacement, ScaleRange, Scatter};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{
-    AreaModule, AreaModuleKind, Flip, Population, Resident, SafeZone, Scenery, SoundChannel,
-    SoundscapeDef,
+    AreaModule, AreaModuleKind, Population, Resident, SafeZone, SoundChannel, SoundscapeDef,
 };
 use engine::systems::script::{Place, ScriptModule};
 use ui::egui::{Pos2, RichText, Ui, Vec2};
@@ -261,12 +264,6 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
                             ui.close();
                         }
                     }
-                    if matches!(module, AreaModule::Scenery(_))
-                        && ui.button("Split into tiles").clicked()
-                    {
-                        action = Some(MenuAction::Area(AreaAction::Split(node.clone())));
-                        ui.close();
-                    }
                     if matches!(module, AreaModule::Object(_))
                         && ui.button("Return door…").clicked()
                     {
@@ -346,11 +343,16 @@ pub const ADD_MENU: &[(&str, &[(AreaModuleKind, &str)])] = &[
         ],
     ),
     (
-        "Copies",
+        "Things",
         &[
-            (AreaModuleKind::Blueprint, "a blueprint, placed"),
-            (AreaModuleKind::Scenery, "tiles drawn as one"),
+            (AreaModuleKind::Prop, "one model standing here"),
+            (AreaModuleKind::Scatter, "models strewn over a rect"),
+            (AreaModuleKind::Light, "a point light"),
         ],
+    ),
+    (
+        "Copies",
+        &[(AreaModuleKind::Blueprint, "a blueprint, placed")],
     ),
     (
         "Area-wide",
@@ -361,9 +363,10 @@ pub const ADD_MENU: &[(&str, &[(AreaModuleKind, &str)])] = &[
 /// What a module of `kind` first covers when it is placed at `cell`.
 pub fn template_bounds(kind: AreaModuleKind, cell: CellPos) -> Rect<Meters> {
     match kind {
-        AreaModuleKind::SafeZone | AreaModuleKind::Soundscape | AreaModuleKind::Population => {
-            spot_rect(cell)
-        }
+        AreaModuleKind::SafeZone
+        | AreaModuleKind::Soundscape
+        | AreaModuleKind::Population
+        | AreaModuleKind::Scatter => spot_rect(cell),
         _ => cell.bounds(),
     }
 }
@@ -379,7 +382,6 @@ pub fn module_template(
     named: Option<&str>,
 ) -> Result<AreaModule, String> {
     let at = cell.map(|cell| Pos::new(cell.x as f32, cell.y as f32));
-    let corner = at.map(|at| at - Offset::new(0.5, 0.5));
     let placed = || format!("a {} is placed on the map", kind.tag().replace('_', " "));
     let named = named.unwrap_or_default();
     let unnamed = || format!("{named} can't be named by a {}", kind.tag());
@@ -414,21 +416,36 @@ pub fn module_template(
         AreaModuleKind::Resident => AreaModule::Resident(Resident {
             npc: reader.id_of(named).ok_or_else(unnamed)?,
             at: at.ok_or_else(placed)?,
+            facing: Degrees::default(),
+            pose: Pose::Idle,
             shown: None,
         }),
         AreaModuleKind::Blueprint => AreaModule::Blueprint(Placement {
             blueprint: reader.id_of(named).ok_or_else(unnamed)?,
             at: at.ok_or_else(placed)?,
-            flip: Flip::default(),
+            yaw: Degrees::default(),
             values: BTreeMap::new(),
         }),
-        AreaModuleKind::Scenery => AreaModule::Scenery(Scenery {
-            at: corner.ok_or_else(placed)?,
-            tileset: reader.id_of(named).ok_or_else(unnamed)?,
-            tiles: Vec::new(),
-            sort: None,
-            flip: Flip::default(),
-            blocks: Vec::new(),
+        AreaModuleKind::Prop => AreaModule::Prop(PropPlacement {
+            prop: reader.id_of(named).ok_or_else(unnamed)?,
+            at: at.ok_or_else(placed)?,
+            yaw: Degrees::default(),
+            scale: 1.0,
+        }),
+        AreaModuleKind::Scatter => AreaModule::Scatter(Scatter {
+            props: vec![reader.id_of(named).ok_or_else(unnamed)?],
+            region: spot_rect(cell.ok_or_else(placed)?),
+            per_square_meter: 0.25,
+            seed: 1,
+            scale: ScaleRange::default(),
+        }),
+        AreaModuleKind::Light => AreaModule::Light(PointLightDef {
+            at: at.ok_or_else(placed)?,
+            color: Rgb::WHITE,
+            intensity: 20.0,
+            radius: Meters(6.0),
+            height: Meters(2.0),
+            flicker: 0.0,
         }),
         AreaModuleKind::Script => AreaModule::Script(ScriptModule {
             script: reader.id_of(named).ok_or_else(unnamed)?,
@@ -450,9 +467,7 @@ pub fn add_module(
     let (bundle, tile) = match frame.in_place.last() {
         Some(place) if editor.selection.keys.first() == Some(&place.blueprint) => (
             place.blueprint.clone(),
-            place
-                .flip
-                .apply(Pos::new(tile.x - place.at.x, tile.y - place.at.y)),
+            Pos::new(0.0, 0.0) + Degrees(-place.yaw.0).rotate(tile - place.at),
         ),
         _ => (frame.bundle.clone(), tile),
     };

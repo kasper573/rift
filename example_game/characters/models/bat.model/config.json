@@ -11,11 +11,11 @@
       "name": "walk",
       "cues": [
         {
-          "at": 312,
+          "at": 312.0,
           "step": true
         },
         {
-          "at": 938,
+          "at": 938.0,
           "step": true
         }
       ]
@@ -24,11 +24,11 @@
       "name": "run",
       "cues": [
         {
-          "at": 312,
+          "at": 312.0,
           "step": true
         },
         {
-          "at": 938,
+          "at": 938.0,
           "step": true
         }
       ]
@@ -37,7 +37,7 @@
       "name": "attack",
       "cues": [
         {
-          "at": 394,
+          "at": 394.0,
           "apex": true,
           "sound": "sound-and-voice/sfx/bite01.sfx"
         }
@@ -47,7 +47,7 @@
       "name": "death",
       "cues": [
         {
-          "at": 0,
+          "at": 0.0,
           "sound": "sound-and-voice/sfx/death01.sfx"
         }
       ]

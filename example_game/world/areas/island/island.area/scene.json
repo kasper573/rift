@@ -1,24 +1,6 @@
 [
   {
     "type": "folder",
-    "label": "Ground",
-    "children": [
-      {
-        "type": "ground_layer",
-        "name": "background"
-      },
-      {
-        "type": "ground_layer",
-        "name": "under"
-      },
-      {
-        "type": "ground_layer",
-        "name": "upper"
-      }
-    ]
-  },
-  {
-    "type": "folder",
     "label": "Monsters",
     "children": [
       {
@@ -296,51 +278,6 @@
             "volume": 0.28
           }
         ]
-      },
-      {
-        "type": "blueprint",
-        "label": "Palm",
-        "blueprint": "world/areas/island/blueprints/palm.blueprint",
-        "at": {
-          "x": 36.0,
-          "y": 19.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Leaning palm",
-        "blueprint": "world/areas/island/blueprints/leaning_palm.blueprint",
-        "at": {
-          "x": 39.0,
-          "y": 20.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Tall palm",
-        "blueprint": "world/areas/island/blueprints/tall_palm.blueprint",
-        "at": {
-          "x": 24.0,
-          "y": 22.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Hammock",
-        "blueprint": "world/areas/island/blueprints/hammock.blueprint",
-        "at": {
-          "x": 32.0,
-          "y": 23.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Palm (1)",
-        "blueprint": "world/areas/island/blueprints/palm.blueprint",
-        "at": {
-          "x": 22.0,
-          "y": 26.0
-        }
       }
     ]
   },
@@ -372,51 +309,6 @@
             "pan": -0.2
           }
         ]
-      },
-      {
-        "type": "blueprint",
-        "label": "Palm",
-        "blueprint": "world/areas/island/blueprints/palm.blueprint",
-        "at": {
-          "x": 94.0,
-          "y": 19.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Leaning palm",
-        "blueprint": "world/areas/island/blueprints/leaning_palm.blueprint",
-        "at": {
-          "x": 97.0,
-          "y": 20.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Tall palm",
-        "blueprint": "world/areas/island/blueprints/tall_palm.blueprint",
-        "at": {
-          "x": 82.0,
-          "y": 22.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Hammock",
-        "blueprint": "world/areas/island/blueprints/hammock.blueprint",
-        "at": {
-          "x": 90.0,
-          "y": 23.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Palm (1)",
-        "blueprint": "world/areas/island/blueprints/palm.blueprint",
-        "at": {
-          "x": 80.0,
-          "y": 26.0
-        }
       }
     ]
   },
@@ -448,51 +340,6 @@
             "pan": -0.2
           }
         ]
-      },
-      {
-        "type": "blueprint",
-        "label": "Palm",
-        "blueprint": "world/areas/island/blueprints/palm.blueprint",
-        "at": {
-          "x": 36.0,
-          "y": 66.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Leaning palm",
-        "blueprint": "world/areas/island/blueprints/leaning_palm.blueprint",
-        "at": {
-          "x": 39.0,
-          "y": 67.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Tall palm",
-        "blueprint": "world/areas/island/blueprints/tall_palm.blueprint",
-        "at": {
-          "x": 24.0,
-          "y": 69.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Hammock",
-        "blueprint": "world/areas/island/blueprints/hammock.blueprint",
-        "at": {
-          "x": 32.0,
-          "y": 70.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Palm (1)",
-        "blueprint": "world/areas/island/blueprints/palm.blueprint",
-        "at": {
-          "x": 22.0,
-          "y": 73.0
-        }
       }
     ]
   },
@@ -524,51 +371,6 @@
             "pan": -0.2
           }
         ]
-      },
-      {
-        "type": "blueprint",
-        "label": "Palm",
-        "blueprint": "world/areas/island/blueprints/palm.blueprint",
-        "at": {
-          "x": 94.0,
-          "y": 66.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Leaning palm",
-        "blueprint": "world/areas/island/blueprints/leaning_palm.blueprint",
-        "at": {
-          "x": 97.0,
-          "y": 67.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Tall palm",
-        "blueprint": "world/areas/island/blueprints/tall_palm.blueprint",
-        "at": {
-          "x": 82.0,
-          "y": 69.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Hammock",
-        "blueprint": "world/areas/island/blueprints/hammock.blueprint",
-        "at": {
-          "x": 90.0,
-          "y": 70.0
-        }
-      },
-      {
-        "type": "blueprint",
-        "label": "Palm (1)",
-        "blueprint": "world/areas/island/blueprints/palm.blueprint",
-        "at": {
-          "x": 80.0,
-          "y": 73.0
-        }
       }
     ]
   }

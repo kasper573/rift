@@ -1,18 +1,23 @@
 use engine::core::audio::soundscape::SoundscapeShape;
 use engine::core::content::name_of;
+use engine::core::geometry::Degrees;
 use engine::core::math::{Offset, Pos, Rect, Size};
 use engine::core::units::Meters;
+use engine::systems::area::prop::Scatter;
 use engine::systems::area::scene::SceneNode;
-use engine::systems::area::{AreaModule, Flip, ObjectShape, Scenery};
+use engine::systems::area::{AreaModule, ObjectShape};
 
 use crate::project::IdPaths;
 
+/// Where `module` takes room on the map; a placement by what its blueprint brings, when known.
 pub fn bounds(module: &AreaModule, placement_bounds: Option<Rect<Meters>>) -> Option<Rect<Meters>> {
     match module {
         AreaModule::Object(object) => Some(object.shape.bounds()),
         AreaModule::SafeZone(zone) => Some(zone.rect),
         AreaModule::Soundscape(soundscape) => Some(soundscape.shape.bounds()),
-        AreaModule::Scenery(scenery) => Some(scenery.bounds()),
+        AreaModule::Prop(prop) => Some(cell_rect(prop.at)),
+        AreaModule::Scatter(scatter) => Some(scatter.region),
+        AreaModule::Light(light) => Some(cell_rect(light.at)),
         AreaModule::Blueprint(placement) => {
             placement_bounds.or_else(|| Some(cell_rect(placement.at)))
         }
@@ -32,7 +37,7 @@ pub fn is_ellipse(module: &AreaModule) -> bool {
 pub fn is_point(module: &AreaModule) -> bool {
     match module {
         AreaModule::Object(object) => matches!(object.shape, ObjectShape::Point(_)),
-        AreaModule::Resident(_) => true,
+        AreaModule::Resident(_) | AreaModule::Prop(_) | AreaModule::Light(_) => true,
         _ => false,
     }
 }
@@ -41,11 +46,7 @@ pub fn cell_rect(at: Pos<Meters>) -> Rect<Meters> {
     Rect::new(at - Offset::new(0.5, 0.5), Size::splat(1.0))
 }
 
-pub fn scenery_rect(scenery: &Scenery) -> Rect<Meters> {
-    scenery.bounds()
-}
-
-/// Moves what places `module` on the map by `dx`, `dy`, snapped to sixteenths of a tile.
+/// Moves what places `module` on the map by `dx`, `dy`, snapped to sixteenths of a metre.
 pub fn shift(module: &mut AreaModule, dx: f32, dy: f32) {
     let moved = |at: Pos<Meters>| Pos::new(sixteenth(at.x + dx), sixteenth(at.y + dy));
     let moved_rect = |rect: Rect<Meters>| Rect::new(moved(rect.origin), rect.size);
@@ -63,7 +64,9 @@ pub fn shift(module: &mut AreaModule, dx: f32, dy: f32) {
             };
         }
         AreaModule::SafeZone(zone) => zone.rect = moved_rect(zone.rect),
-        AreaModule::Scenery(scenery) => scenery.at = moved(scenery.at),
+        AreaModule::Prop(prop) => prop.at = moved(prop.at),
+        AreaModule::Scatter(scatter) => scatter.region = moved_rect(scatter.region),
+        AreaModule::Light(light) => light.at = moved(light.at),
         AreaModule::Blueprint(placement) => placement.at = moved(placement.at),
         AreaModule::Resident(resident) => resident.at = moved(resident.at),
         AreaModule::Population(population) => population.roams = population.roams.map(moved_rect),
@@ -71,7 +74,7 @@ pub fn shift(module: &mut AreaModule, dx: f32, dy: f32) {
     }
 }
 
-/// Sizes the box of `module` `w` by `h`, snapped to sixteenths of a tile, when it has one.
+/// Sizes the box of `module` `w` by `h`, snapped to sixteenths of a metre, when it has one.
 pub fn resize(module: &mut AreaModule, w: f32, h: f32) {
     let size = Size::new(sixteenth(w.max(0.0625)), sixteenth(h.max(0.0625)));
     if let Some(rect) = sized_rect(module) {
@@ -82,18 +85,21 @@ pub fn resize(module: &mut AreaModule, w: f32, h: f32) {
 pub fn has_size(module: &AreaModule) -> bool {
     match module {
         AreaModule::Object(object) => matches!(object.shape, ObjectShape::Rect(_)),
-        AreaModule::Soundscape(_) | AreaModule::SafeZone(_) => true,
+        AreaModule::Soundscape(_) | AreaModule::SafeZone(_) | AreaModule::Scatter(_) => true,
         AreaModule::Population(population) => population.roams.is_some(),
         _ => false,
     }
 }
 
-/// Turns the flip of a scenery or a placement over the axis `horizontal` names.
-pub fn flip_field(module: &mut AreaModule, horizontal: bool) {
-    let turn = Flip::of(horizontal, !horizontal);
+/// Turns `module` a quarter turn, clockwise or counter, when it has a way to face: a placement, a
+/// prop or a resident.
+pub fn turn(module: &mut AreaModule, clockwise: bool) {
+    let quarter = Degrees(if clockwise { 90.0 } else { -90.0 });
+    let turned = |yaw: Degrees| Degrees((yaw.0 + quarter.0).rem_euclid(360.0));
     match module {
-        AreaModule::Scenery(scenery) => scenery.flip = scenery.flip.compose(turn),
-        AreaModule::Blueprint(placement) => placement.flip = placement.flip.compose(turn),
+        AreaModule::Blueprint(placement) => placement.yaw = turned(placement.yaw),
+        AreaModule::Prop(prop) => prop.yaw = turned(prop.yaw),
+        AreaModule::Resident(resident) => resident.facing = turned(resident.facing),
         _ => {}
     }
 }
@@ -121,23 +127,21 @@ pub fn label(module: &AreaModule, paths: &impl IdPaths) -> String {
         AreaModule::Resident(resident) => {
             format!("resident {}", named(paths.path_of(resident.npc)))
         }
-        AreaModule::Scenery(scenery) => {
-            format!("scenery {}", named(paths.path_of(scenery.tileset)))
-        }
+        AreaModule::Prop(prop) => format!("prop {}", named(paths.path_of(prop.prop))),
+        AreaModule::Scatter(scatter) => format!("scatter of {}", scatter_names(scatter, paths)),
         AreaModule::Script(script) => format!("script {}", named(paths.path_of(script.script))),
         other => other.kind().tag().replace('_', " "),
     }
 }
 
-/// What a node reads as in a scene graph: its label, a ground layer's name, or what the module is:
-/// a stamp its tileset, a resident its npc.
+/// What a node reads as in a scene graph: its label, or what the module is: a placement its
+/// blueprint, a resident its npc, a prop its file.
 pub fn node_label(node: &SceneNode, paths: &impl IdPaths) -> String {
     if let Some(label) = node.label() {
         return label.to_owned();
     }
     let named = |path: Option<&str>| name_of(path.unwrap_or_default()).to_owned();
     let module = match node {
-        SceneNode::GroundLayer(layer) => return layer.name.clone(),
         SceneNode::Folder(_) => return "folder".to_owned(),
         SceneNode::Module(module) => &module.module,
     };
@@ -145,7 +149,8 @@ pub fn node_label(node: &SceneNode, paths: &impl IdPaths) -> String {
         AreaModule::Object(object) => object.name.clone().unwrap_or_else(|| "object".to_owned()),
         AreaModule::Resident(resident) => named(paths.path_of(resident.npc)),
         AreaModule::Population(population) => named(paths.path_of(population.npc)),
-        AreaModule::Scenery(scenery) => named(paths.path_of(scenery.tileset)),
+        AreaModule::Prop(prop) => named(paths.path_of(prop.prop)),
+        AreaModule::Scatter(scatter) => scatter_names(scatter, paths),
         AreaModule::Script(script) => named(paths.path_of(script.script)),
         AreaModule::Blueprint(placement) => named(paths.path_of(placement.blueprint)),
         other => other.kind().tag().replace('_', " "),
@@ -179,9 +184,25 @@ pub fn node_detail(module: &AreaModule, paths: &impl IdPaths) -> String {
     match module {
         AreaModule::Population(population) => format!("× {}", population.count),
         AreaModule::Resident(resident) => point(resident.at),
+        AreaModule::Prop(prop) => point(prop.at),
+        AreaModule::Light(light) => point(light.at),
+        AreaModule::Scatter(scatter) => format!("× {}", scatter.count()),
         AreaModule::Object(object) if is_point(module) => point(object.shape.bounds().center()),
         AreaModule::Blueprint(_) | AreaModule::Script(_) => String::new(),
         _ => bounds(module, None).map(size).unwrap_or_default(),
+    }
+}
+
+fn scatter_names(scatter: &Scatter, paths: &impl IdPaths) -> String {
+    let names: Vec<String> = scatter
+        .props
+        .iter()
+        .map(|prop| name_of(paths.path_of(*prop).unwrap_or_default()).to_owned())
+        .collect();
+    match names.as_slice() {
+        [] => "nothing".to_owned(),
+        [one] => one.clone(),
+        [first, rest @ ..] => format!("{first} +{}", rest.len()),
     }
 }
 
@@ -195,6 +216,7 @@ fn sized_rect(module: &mut AreaModule) -> Option<&mut Rect<Meters>> {
             SoundscapeShape::Rect(rect) | SoundscapeShape::Ellipse(rect) => Some(rect),
         },
         AreaModule::SafeZone(zone) => Some(&mut zone.rect),
+        AreaModule::Scatter(scatter) => Some(&mut scatter.region),
         AreaModule::Population(population) => population.roams.as_mut(),
         _ => None,
     }

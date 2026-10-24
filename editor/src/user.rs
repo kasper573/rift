@@ -101,7 +101,6 @@ pub struct EditorSettings {
     pub recent: Vec<PathBuf>,
     pub recent_at: BTreeMap<String, UnixMillis>,
     pub binaries: Option<PathBuf>,
-    pub brush: BrushSettings,
     pub stamps: BTreeMap<String, StampSettings>,
     pub cameras: BTreeMap<String, CameraSettings>,
     pub listeners: BTreeMap<String, [f32; 2]>,
@@ -136,31 +135,11 @@ impl TreeView {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct BrushSettings {
-    pub size: u32,
-    pub random: bool,
-    pub flip_x: bool,
-    pub flip_y: bool,
-}
-
-impl Default for BrushSettings {
-    fn default() -> BrushSettings {
-        BrushSettings {
-            size: 1,
-            random: false,
-            flip_x: false,
-            flip_y: false,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct StampSettings {
-    pub flip_x: bool,
-    pub flip_y: bool,
+    /// How many quarter turns clockwise each placement is turned.
+    pub quarter_turns: u8,
     pub spacing: Option<u32>,
     pub values: BTreeMap<String, serde_json::Value>,
 }

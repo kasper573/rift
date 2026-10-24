@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use engine::core::content::{ContentFolder, ContentId, FolderReader};
-use engine::core::math::Pos;
+use engine::core::content::{ContentFolder, FolderReader};
+use engine::core::geometry::Degrees;
+use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::Meters;
 use engine::systems::area::blueprint::BlueprintDef;
-use engine::systems::area::grid::Flip;
-use engine::systems::area::{self, AreaDef, AreaModule, Scenery, SceneryTile, walk};
+use engine::systems::area::{self, AreaDef, AreaModule};
 use serde_json::{Value, json};
-use testkit::{Game, path, png};
+use testkit::{Game, path};
 
 use crate::support::game;
 
@@ -15,30 +15,34 @@ use crate::support::game;
 fn a_placement_flattens_to_exactly_its_parts_nested_ones_included() {
     let content = placing(
         game()
-            .blueprint("tree", (1, 1), json!({}), json!([tree()]))
+            .prop("rock", json!({ "type": "none" }))
+            .blueprint("tree", (1, 1), json!({}), json!([rock_at_x(0.0)]))
             .blueprint("grove", (4, 2), json!({}), grove()),
         json!([
-            placement("Grove", "grove", 6.0, 4.0, "horizontal"),
-            placement("Tree", "tree", 2.0, 2.0, "none"),
+            placement("Grove", "grove", 6.0, 4.0, 0.0),
+            placement("Tree", "tree", 2.0, 2.0, 0.0),
         ]),
     )
     .load();
     let start = start(&content);
     let placed = area::placed(&content, start);
 
-    let parts: Vec<(&str, usize, Pos<Meters>, Flip)> = placed
+    let parts: Vec<(&str, usize, Pos<Meters>)> = placed
         .iter()
         .map(|part| {
-            let (at, flip) = scenery_at(&part.module);
-            (part.origin.as_str(), part.chain.len(), at, flip)
+            (
+                part.origin.as_str(),
+                part.chain.len(),
+                prop_at(&part.module).0,
+            )
         })
         .collect();
     assert_eq!(
         parts,
         vec![
-            ("/1", 1, Pos::new(6.0, 4.0), Flip::Horizontal),
-            ("/1", 2, Pos::new(4.0, 5.0), Flip::Horizontal),
-            ("/2", 1, Pos::new(2.0, 2.0), Flip::None),
+            ("/1", 1, Pos::new(6.0, 4.0)),
+            ("/1", 2, Pos::new(8.0, 5.0)),
+            ("/2", 1, Pos::new(2.0, 2.0)),
         ]
     );
 }
@@ -46,13 +50,13 @@ fn a_placement_flattens_to_exactly_its_parts_nested_ones_included() {
 #[test]
 fn folders_dissolve_into_their_modules_in_tree_order() {
     let content = placing(
-        game(),
+        game().prop("rock", json!({ "type": "none" })),
         json!([
             { "type": "folder", "label": "Rocks", "hidden": true, "children": [
-                scenery_at_x(4.0),
-                { "type": "folder", "label": "More", "locked": true, "children": [scenery_at_x(5.0)] },
+                rock_at_x(4.0),
+                { "type": "folder", "label": "More", "locked": true, "children": [rock_at_x(5.0)] },
             ] },
-            scenery_at_x(6.0),
+            rock_at_x(6.0),
         ]),
     )
     .load();
@@ -60,7 +64,7 @@ fn folders_dissolve_into_their_modules_in_tree_order() {
 
     let order: Vec<(f32, &str)> = area::placed(&content, start)
         .iter()
-        .map(|part| (scenery_at(&part.module).0.x, part.origin.as_str()))
+        .map(|part| (prop_at(&part.module).0.x, part.origin.as_str()))
         .collect();
     assert_eq!(
         order,
@@ -73,144 +77,134 @@ fn folders_dissolve_into_their_modules_in_tree_order() {
 }
 
 #[test]
-fn a_placed_blueprint_paints_its_ground_into_the_areas_layer_of_the_same_name() {
-    let content = placing(
-        rugs(game()),
-        json!([
-            placement("Rug", "rug", 2.0, 3.0, "none"),
-            placement("Rug (1)", "rug", 5.0, 3.0, "horizontal"),
-            placement("Rug (2)", "rug", 4.0, 3.0, "none"),
-            placement("Rug (3)", "rug", 8.0, 3.0, "horizontal"),
-        ]),
-    )
-    .load();
-    let start = start(&content);
-    let grids = &area::load(&content, start).grids;
-    let layer = &grids.ground[0];
-    let at = |x: usize, y: usize| {
-        grids
-            .entry(layer.cells[y * 10 + x])
-            .map(|entry| (entry.tile, entry.flip))
+fn a_placement_turned_by_quarter_turns_turns_what_it_places_about_its_spot() {
+    let turned = |yaw: f32| {
+        let content = placing(
+            game().prop("rock", json!({ "type": "none" })).blueprint(
+                "camp",
+                (4, 4),
+                json!({}),
+                json!([
+                    { "type": "prop", "prop": path("prop", "rock"), "at": { "x": 2.0, "y": 1.0 }, "yaw": 30.0 },
+                    { "type": "safe_zone", "rect": { "x": 1.0, "y": 0.0, "w": 2.0, "h": 1.0 } },
+                    { "type": "resident", "npc": path("npc", "wren"), "at": { "x": 1.0, "y": 0.0 }, "facing": 350.0 },
+                ]),
+            ),
+            json!([placement("Camp", "camp", 4.0, 4.0, yaw)]),
+        )
+        .npc("wren", 10.0, json!([]))
+        .load();
+        let start = start(&content);
+        let placed = area::placed(&content, start);
+        let (at, yaw) = prop_at(&placed[0].module);
+        let zone = match &placed[1].module {
+            AreaModule::SafeZone(zone) => zone.rect,
+            _ => panic!("not a safe zone"),
+        };
+        let (home, facing) = match &placed[2].module {
+            AreaModule::Resident(resident) => (resident.at, resident.facing),
+            _ => panic!("not a resident"),
+        };
+        (at, yaw, zone, home, facing)
     };
 
     assert_eq!(
-        at(1, 3),
-        Some((0, Flip::None)),
-        "the area's own ground stays"
-    );
-    assert_eq!(at(2, 3), Some((1, Flip::None)));
-    assert_eq!(
-        at(3, 3),
-        Some((0, Flip::None)),
-        "an empty cell keeps what's under it"
-    );
-    assert_eq!(at(4, 3), Some((1, Flip::None)), "the later placement wins");
-    assert_eq!(
-        at(7, 3),
-        Some((1, Flip::Horizontal)),
-        "a flip mirrors cells and tiles"
-    );
-}
-
-#[test]
-fn a_placed_blueprints_forced_walk_cells_merge_into_the_areas() {
-    let content = placing(
-        rugs(game()).part("blueprint", "rug", "walk.csv", "0,\n"),
-        json!([placement("Rug", "rug", 6.0, 6.0, "none")]),
-    )
-    .load();
-    let start = start(&content);
-    let grid = &area::load(&content, start).grid;
-
-    assert!(!grid.walkable(Pos::new(6.0, 6.0)));
-    assert!(grid.walkable(Pos::new(7.0, 6.0)));
-}
-
-#[test]
-fn a_placed_blueprints_scenery_blocks_the_cells_it_names_wherever_it_lands() {
-    for (flip, blocked, open) in [
-        ("none", (6.0, 5.0), [(5.0, 5.0), (6.0, 4.0), (7.0, 5.0)]),
+        turned(0.0),
         (
-            "horizontal",
-            (4.0, 5.0),
-            [(5.0, 5.0), (4.0, 4.0), (3.0, 5.0)],
-        ),
-    ] {
-        let mut hut = scenery(json!([[0, 0], [0, 0]]));
-        hut["at"] = json!({ "x": -0.5, "y": -0.5 });
-        hut["blocks"] = json!([[1, 1]]);
-        let game = game()
-            .row(
-                "tileset",
-                "start_ground",
-                json!({ "tile": testkit::TILE, "tiles": { "0": { "walk": "walkable" } } }),
-            )
-            .remove(&format!("{}/walk.csv", path("area", "start")))
-            .blueprint("hut", (2, 2), json!({}), json!([hut]));
-        let content = placing(game, json!([placement("Hut", "hut", 5.0, 4.0, flip)])).load();
-        let grid = &area::load(&content, start(&content)).grid;
-
-        assert!(!grid.walkable(Pos::new(blocked.0, blocked.1)), "{flip}");
-        for (x, y) in open {
-            assert!(grid.walkable(Pos::new(x, y)), "{flip} {x}, {y}");
-        }
-    }
+            Pos::new(6.0, 5.0),
+            Degrees(30.0),
+            Rect::new(Pos::new(5.0, 4.0), Size::new(2.0, 1.0)),
+            Pos::new(5.0, 4.0),
+            Degrees(350.0),
+        )
+    );
+    assert_eq!(
+        turned(90.0),
+        (
+            Pos::new(3.0, 6.0),
+            Degrees(120.0),
+            Rect::new(Pos::new(3.0, 5.0), Size::new(1.0, 2.0)),
+            Pos::new(4.0, 5.0),
+            Degrees(80.0),
+        )
+    );
+    assert_eq!(
+        turned(180.0),
+        (
+            Pos::new(2.0, 3.0),
+            Degrees(210.0),
+            Rect::new(Pos::new(1.0, 3.0), Size::new(2.0, 1.0)),
+            Pos::new(3.0, 4.0),
+            Degrees(170.0),
+        )
+    );
 }
 
 #[test]
-fn a_placement_painting_a_layer_the_area_lacks_is_refused_at_the_placement() {
+fn a_placement_turned_by_anything_but_a_quarter_turn_is_refused() {
     let report = placing(
-        rugs(game()).edit_scene("blueprint", "rug", |scene| {
-            scene[0]["name"] = json!("rug");
-        }),
-        json!([placement("Rug", "rug", 2.0, 3.0, "none")]),
+        game().prop("rock", json!({ "type": "none" })).blueprint(
+            "tree",
+            (1, 1),
+            json!({}),
+            json!([rock_at_x(0.0)]),
+        ),
+        json!([placement("Tree", "tree", 2.0, 2.0, 45.0)]),
     )
-    .part("blueprint", "rug", "layers/rug.csv", "0,\n")
-    .remove(&format!("{}/layers/ground.csv", path("blueprint", "rug")))
     .try_load()
     .err()
     .expect("refused");
 
-    let missing: Vec<(&str, &str)> = report
+    let refused: Vec<(&str, &str)> = report
         .errors
         .iter()
-        .filter(|error| error.problem.rule == "missing layer")
+        .filter(|error| error.problem.rule == "not a quarter turn")
         .map(|error| (error.file.as_str(), pointer(&error.at)))
         .collect();
-    assert_eq!(missing, [("start.area/scene.json", "/1")], "{report}");
+    assert_eq!(refused, [("start.area/scene.json", "/1/yaw")], "{report}");
 }
 
 #[test]
-fn a_placement_whose_ground_lands_past_the_edge_is_refused() {
+fn a_placement_whose_parts_land_past_the_edge_is_refused() {
     let report = placing(
-        rugs(game()),
-        json!([placement("Rug", "rug", 10.0, 3.0, "none")]),
+        game().prop("rock", json!({ "type": "none" })).blueprint(
+            "tree",
+            (1, 1),
+            json!({}),
+            json!([rock_at_x(0.0)]),
+        ),
+        json!([placement("Tree", "tree", 12.0, 3.0, 0.0)]),
     )
     .try_load()
     .err()
     .expect("refused");
 
-    assert!(rules(&report).contains(&"outside the map"), "{report}");
+    assert!(rules(&report).contains(&"outside the terrain"), "{report}");
 }
 
 #[test]
 fn a_placement_needs_a_label_of_its_own_among_its_siblings() {
-    let mut unlabelled = placement("Tree", "tree", 2.0, 2.0, "none");
+    let trees = || {
+        game().prop("rock", json!({ "type": "none" })).blueprint(
+            "tree",
+            (1, 1),
+            json!({}),
+            json!([rock_at_x(0.0)]),
+        )
+    };
+    let mut unlabelled = placement("Tree", "tree", 2.0, 2.0, 0.0);
     unlabelled.as_object_mut().expect("a node").remove("label");
-    let report = placing(
-        game().blueprint("tree", (1, 1), json!({}), json!([tree()])),
-        json!([unlabelled]),
-    )
-    .try_load()
-    .err()
-    .expect("refused");
+    let report = placing(trees(), json!([unlabelled]))
+        .try_load()
+        .err()
+        .expect("refused");
     assert!(rules(&report).contains(&"missing field"), "{report}");
 
     let report = placing(
-        game().blueprint("tree", (1, 1), json!({}), json!([tree()])),
+        trees(),
         json!([
-            placement("Tree", "tree", 2.0, 2.0, "none"),
-            placement("tree", "tree", 4.0, 2.0, "none"),
+            placement("Tree", "tree", 2.0, 2.0, 0.0),
+            placement("tree", "tree", 4.0, 2.0, 0.0),
         ]),
     )
     .try_load()
@@ -224,28 +218,25 @@ fn a_placement_needs_a_label_of_its_own_among_its_siblings() {
 fn an_area_with_variables_is_refused() {
     let report = game()
         .edit("area", "start", |area| {
-            area["blueprint"]["variables"] = json!({ "x": { "type": "number", "default": 1.0 } });
+            area["variables"] = json!({ "x": { "type": "number", "default": 1.0 } });
         })
         .try_load()
         .err()
         .expect("refused");
 
-    assert!(rules(&report).contains(&"out of range"), "{report}");
+    assert!(rules(&report).contains(&"unknown field"), "{report}");
 }
 
 #[test]
 fn a_blueprint_holding_itself_is_refused() {
     let report = placing(
-        game().blueprint(
+        game().prop("rock", json!({ "type": "none" })).blueprint(
             "loop",
             (2, 1),
             json!({}),
-            json!([
-                scenery(json!([[0]])),
-                placement("Loop", "loop", 1.0, 0.0, "none"),
-            ]),
+            json!([rock_at_x(0.0), placement("Loop", "loop", 1.0, 0.0, 0.0),]),
         ),
-        json!([placement("Loop", "loop", 2.0, 2.0, "none")]),
+        json!([placement("Loop", "loop", 2.0, 2.0, 0.0)]),
     )
     .try_load()
     .err()
@@ -269,37 +260,12 @@ fn nesting_loads_up_to_eight_levels_and_is_refused_past_them() {
 }
 
 #[test]
-fn a_scenerys_bounds_cover_exactly_its_tiles_however_it_is_flipped() {
-    for flip in [Flip::None, Flip::Horizontal, Flip::Vertical, Flip::Both] {
-        let tile = SceneryTile {
-            tile: 338,
-            flip: Flip::None,
-        };
-        let scenery = Scenery {
-            at: Pos::new(5.0, 7.0),
-            tileset: ContentId::new(0),
-            tiles: vec![vec![Some(tile); 3]; 2],
-            sort: None,
-            flip,
-            blocks: Vec::new(),
-        };
-
-        let covered = (0..2)
-            .flat_map(|row| (0..3).map(move |column| (column, row)))
-            .map(|(column, row)| walk::tile_square(&scenery, column, row))
-            .reduce(|a, b| a.union(&b));
-
-        assert_eq!(covered, Some(scenery.bounds()), "{flip:?}");
-    }
-}
-
-#[test]
 fn a_placed_blueprint_naming_an_unknown_file_is_reported_once_at_the_blueprint() {
-    let mut bad = scenery(json!([[0]]));
-    bad["tileset"] = json!("nowhere.tileset");
+    let mut bad = rock_at_x(0.0);
+    bad["prop"] = json!("nowhere.prop");
     let report = placing(
         game().blueprint("bad", (1, 1), json!({}), json!([bad])),
-        json!([placement("Bad", "bad", 2.0, 2.0, "none")]),
+        json!([placement("Bad", "bad", 2.0, 2.0, 0.0)]),
     )
     .try_load()
     .err()
@@ -318,16 +284,21 @@ fn a_placed_blueprint_naming_an_unknown_file_is_reported_once_at_the_blueprint()
 fn a_placement_fills_each_hole_with_the_value_it_gives_or_its_variables_default() {
     let rock = |variables: Value, values: Value| {
         let content = placing(
-            game().blueprint("rock", (1, 1), variables, json!([holed_rock()])),
+            game().prop("rock", json!({ "type": "none" })).blueprint(
+                "rock",
+                (1, 1),
+                variables,
+                json!([holed_rock()]),
+            ),
             json!([with_values(
-                placement("Rock", "rock", 2.0, 2.0, "none"),
+                placement("Rock", "rock", 2.0, 2.0, 0.0),
                 values
             )]),
         )
         .load();
         area::placed(&content, start(&content))
             .iter()
-            .map(|part| scenery_at(&part.module).0)
+            .map(|part| prop_at(&part.module).0)
             .collect::<Vec<Pos<Meters>>>()
     };
 
@@ -347,6 +318,7 @@ fn a_placement_fills_each_hole_with_the_value_it_gives_or_its_variables_default(
 #[test]
 fn a_hole_naming_no_variable_of_its_blueprint_is_reported_at_the_hole() {
     let report = game()
+        .prop("rock", json!({ "type": "none" }))
         .blueprint(
             "rock",
             (1, 1),
@@ -372,15 +344,14 @@ fn a_hole_naming_no_variable_of_its_blueprint_is_reported_at_the_hole() {
 
 #[test]
 fn a_blueprint_writes_its_holes_back_where_it_read_them() {
-    let game = game().blueprint(
+    let game = game().prop("rock", json!({ "type": "none" })).blueprint(
         "rock",
         (1, 1),
-        json!({ "x": { "type": "number" }, "set": { "type": "row", "table": "tileset" } }),
+        json!({ "x": { "type": "number" }, "look": { "type": "row", "table": "prop" } }),
         json!([{
-            "type": "scenery",
+            "type": "prop",
+            "prop": { "var": "look" },
             "at": { "x": { "var": "x" }, "y": 0.0 },
-            "tileset": { "var": "set" },
-            "tiles": [[0]],
             "label": "Rock",
         }]),
     );
@@ -399,10 +370,9 @@ fn a_blueprint_writes_its_holes_back_where_it_read_them() {
 
 fn holed_rock() -> Value {
     json!({
-        "type": "scenery",
+        "type": "prop",
+        "prop": path("prop", "rock"),
         "at": { "x": { "var": "x" }, "y": 0.0 },
-        "tileset": path("tileset", "start_ground"),
-        "tiles": [[0]],
     })
 }
 
@@ -411,98 +381,54 @@ fn with_values(mut placement: Value, values: Value) -> Value {
     placement
 }
 
-fn tree() -> Value {
-    let mut trunk = scenery(json!([[0]]));
-    trunk["sort"] = json!(0.5);
-    trunk
-}
-
 fn grove() -> Value {
-    json!([
-        scenery(json!([[0, 0]])),
-        placement("Tree", "tree", 2.0, 1.0, "none"),
-    ])
+    json!([rock_at_x(0.0), placement("Tree", "tree", 2.0, 1.0, 0.0),])
 }
 
-fn scenery(tiles: Value) -> Value {
+fn rock_at_x(x: f32) -> Value {
     json!({
-        "type": "scenery",
-        "at": { "x": 0.0, "y": 0.0 },
-        "tileset": path("tileset", "start_ground"),
-        "tiles": tiles,
+        "type": "prop",
+        "prop": path("prop", "rock"),
+        "at": { "x": x, "y": 0.0 },
     })
 }
 
-fn scenery_at_x(x: f32) -> Value {
-    let mut scenery = scenery(json!([[0]]));
-    scenery["at"]["x"] = json!(x);
-    scenery
-}
-
-fn placement(label: &str, blueprint: &str, x: f32, y: f32, flip: &str) -> Value {
+fn placement(label: &str, blueprint: &str, x: f32, y: f32, yaw: f32) -> Value {
     let mut node = json!({
         "type": "blueprint",
         "label": label,
         "blueprint": path("blueprint", blueprint),
         "at": { "x": x, "y": y },
     });
-    if flip != "none" {
-        node["flip"] = json!(flip);
+    if yaw != 0.0 {
+        node["yaw"] = json!(yaw);
     }
     node
 }
 
-/// A tileset of two tiles, and a rug two tiles wide whose left cell paints its second one into
-/// the ground layer, its right cell left empty.
-fn rugs(game: Game) -> Game {
-    game.row(
-        "tileset",
-        "rugs",
-        json!({ "tile": testkit::TILE, "tiles": {} }),
-    )
-    .part(
-        "tileset",
-        "rugs",
-        "image.png",
-        png(2 * testkit::TILE, testkit::TILE),
-    )
-    .blueprint(
-        "rug",
-        (2, 1),
-        json!({}),
-        json!([{ "type": "ground_layer", "name": "ground" }]),
-    )
-    .part(
-        "blueprint",
-        "rug",
-        "palette.csv",
-        format!("tileset,tile,flip\n{},1,\n", path("tileset", "rugs")),
-    )
-    .part("blueprint", "rug", "layers/ground.csv", "0,\n")
-}
-
 /// Blueprints nested from `level{top}` down to the deepest level allowed, placed in the start.
 fn nest(top: usize) -> Game {
-    let mut game = game();
+    let mut game = game().prop("rock", json!({ "type": "none" }));
     for depth in top..=area::blueprint::MAX_DEPTH {
         let nodes = if depth == area::blueprint::MAX_DEPTH {
-            json!([scenery(json!([[0]]))])
+            json!([rock_at_x(0.0)])
         } else {
             let next = format!("level{}", depth + 1);
-            json!([placement(&next, &next, 0.0, 0.0, "none")])
+            json!([placement(&next, &next, 0.0, 0.0, 0.0)])
         };
         game = game.blueprint(&format!("level{depth}"), (1, 1), json!({}), nodes);
     }
     let top = format!("level{top}");
-    placing(game, json!([placement(&top, &top, 2.0, 2.0, "none")]))
+    placing(game, json!([placement(&top, &top, 2.0, 2.0, 0.0)]))
 }
 
-/// The start area with `nodes` after its ground layer in its scene.
+/// The start area with `nodes` in its scene after an empty folder, so every node's pointer starts
+/// at one.
 fn placing(game: Game, nodes: Value) -> Game {
     game.edit_scene("area", "start", |scene| {
-        let scene = scene.as_array_mut().expect("a scene");
-        scene.truncate(1);
-        scene.extend(nodes.as_array().expect("nodes").iter().cloned());
+        let mut nodes = nodes.as_array().expect("nodes").clone();
+        nodes.insert(0, json!({ "type": "folder", "label": "Ground" }));
+        *scene = Value::Array(nodes);
     })
 }
 
@@ -527,12 +453,9 @@ fn rules(report: &engine::core::content::LoadReport) -> Vec<&str> {
         .collect()
 }
 
-fn scenery_at(module: &AreaModule) -> (Pos<Meters>, Flip) {
+fn prop_at(module: &AreaModule) -> (Pos<Meters>, Degrees) {
     match module {
-        AreaModule::Scenery(scenery) => (scenery.at, scenery.flip),
-        other => panic!(
-            "not scenery: {}",
-            serde_json::to_value(other).expect("json")
-        ),
+        AreaModule::Prop(prop) => (prop.at, prop.yaw),
+        other => panic!("not a prop: {}", serde_json::to_value(other).expect("json")),
     }
 }

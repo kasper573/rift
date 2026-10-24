@@ -1,12 +1,40 @@
 {
   "name": "start",
-  "blueprint": {
-    "map": {
-      "size": {
-        "width": 16,
-        "height": 12
-      },
-      "tile": 16
+  "terrain": {
+    "size": {
+      "width": 16,
+      "height": 12
+    },
+    "materials": [
+      "grass.ground.json",
+      "grass.ground.json",
+      "grass.ground.json",
+      "grass.ground.json"
+    ],
+    "max_slope": 38.0
+  },
+  "lighting": {
+    "sun": {
+      "elevation": 52.0,
+      "azimuth": 215.0,
+      "color": [
+        255,
+        236,
+        190
+      ]
+    },
+    "ambient": [
+      98,
+      122,
+      160
+    ],
+    "grade": {
+      "color": [
+        255,
+        255,
+        255
+      ],
+      "strength": 0.0
     }
   }
 }

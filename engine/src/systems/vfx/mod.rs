@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
-use crate::core::geometry::{Footprint, Radians, Shape, facing_from};
+use crate::core::geometry::{PlacedShape, Radians, Shape, facing_from};
 use crate::core::math::Pos;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, NEXT, ScriptFault, ValueType,
@@ -92,7 +92,7 @@ pub fn spawn(
 /// ones standing inside `footprint`, or everyone standing in it.
 fn reached(
     world: &World,
-    footprint: &Footprint,
+    footprint: &PlacedShape,
     struck: Option<&[Entity]>,
 ) -> Vec<(Entity, Pos<Meters>)> {
     let area = world.resource::<WorldArea>().0;
@@ -257,7 +257,7 @@ impl EffectDef<RiftScripting> for PlayVfx {
                         spawn(world, vfx, site, filled.clone(), dealt);
                     }
                     let footprint = value.as_area().or_else(|| {
-                        value.as_point().map(|point| Footprint {
+                        value.as_point().map(|point| PlacedShape {
                             at: point,
                             facing: Radians::default(),
                             shape: Shape::Circle {

@@ -1,0 +1,11 @@
+{
+  "name": "Plank floor",
+  "color": [
+    150,
+    110,
+    70,
+    255
+  ],
+  "surface": "world/surface/wood.surface.json",
+  "walk": "walkable"
+}

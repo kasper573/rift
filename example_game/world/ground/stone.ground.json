@@ -1,0 +1,11 @@
+{
+  "name": "Stone",
+  "color": [
+    128,
+    128,
+    128,
+    255
+  ],
+  "surface": "world/surface/rock.surface.json",
+  "walk": "walkable"
+}

@@ -12,7 +12,7 @@ use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaModule, AreaModuleKind};
 use serde_json::json;
 use strum::VariantArray;
-use testkit::{Game, path, png};
+use testkit::{Game, path};
 
 use crate::support::{self, area, folder, names, object};
 
@@ -119,20 +119,20 @@ fn new_nodes_land_in_the_selected_folder_or_beside_the_selected_node() {
     let mut editor = open(chapel(), &scratch);
     let door = object("door");
 
-    nodes::select(&mut editor, &area(), vec!["/1".to_owned()]);
-    assert_eq!(nodes::insertion_folder(&editor, &area()), "/1");
-    nodes::select(&mut editor, &area(), vec!["/1/children/0".to_owned()]);
-    assert_eq!(nodes::insertion_folder(&editor, &area()), "/1");
+    nodes::select(&mut editor, &area(), vec!["/0".to_owned()]);
+    assert_eq!(nodes::insertion_folder(&editor, &area()), "/0");
+    nodes::select(&mut editor, &area(), vec!["/0/children/0".to_owned()]);
+    assert_eq!(nodes::insertion_folder(&editor, &area()), "/0");
     nodes::select(&mut editor, &area(), Vec::new());
     assert_eq!(nodes::insertion_folder(&editor, &area()), "");
 
-    nodes::select(&mut editor, &area(), vec!["/1/children/1".to_owned()]);
+    nodes::select(&mut editor, &area(), vec!["/0/children/1".to_owned()]);
     assert!(nodes::add(&mut editor, &area(), vec![door], "Add a door"));
 
     let scene = nodes::scene_of(&editor, &area());
-    let added = nodes::node(&scene, "/1/children/2").expect("the door");
+    let added = nodes::node(&scene, "/0/children/2").expect("the door");
     assert_eq!(names(std::slice::from_ref(added)), ["door"]);
-    assert_eq!(editor.selection.parts, ["/1/children/2"]);
+    assert_eq!(editor.selection.parts, ["/0/children/2"]);
 }
 
 #[test]
@@ -161,17 +161,17 @@ fn a_new_placement_takes_its_blueprints_name_numbered_past_its_siblings() {
             .id_of(&path("blueprint", "pew"))
             .expect("the pew blueprint"),
         at: Pos::new(5.0, 5.0),
-        flip: Default::default(),
+        yaw: Default::default(),
         values: Default::default(),
     })));
 
-    nodes::select(&mut editor, &area(), vec!["/1".to_owned()]);
+    nodes::select(&mut editor, &area(), vec!["/0".to_owned()]);
     nodes::add(&mut editor, &area(), vec![pew.clone(), pew], "Add pews");
 
     let scene = nodes::scene_of(&editor, &area());
     let label = |pointer: &str| nodes::node(&scene, pointer).and_then(SceneNode::label);
-    assert_eq!(label("/1/children/2"), Some("pew (2)"));
-    assert_eq!(label("/1/children/3"), Some("pew (3)"));
+    assert_eq!(label("/0/children/2"), Some("pew (2)"));
+    assert_eq!(label("/0/children/3"), Some("pew (3)"));
 }
 
 #[test]
@@ -180,22 +180,22 @@ fn making_a_blueprint_of_a_folder_leaves_one_placement_and_the_area_as_it_was() 
     let mut editor = open(chapel(), &scratch);
     let before = shown(support::content(&mut editor));
 
-    nodes::select(&mut editor, &area(), vec!["/1".to_owned()]);
+    nodes::select(&mut editor, &area(), vec!["/0".to_owned()]);
     let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
     run_action(&mut editor, &snapshot, AreaAction::MakeBlueprint);
 
     let made = path("blueprint", "pews");
     let scene = nodes::scene_of(&editor, &area());
     let reader = editor.reader().expect("a reader");
-    let placed = nodes::placement_of(&scene[1]).expect("a placement");
-    assert_eq!(scene[1].label(), Some("Pews"));
+    let placed = nodes::placement_of(&scene[0]).expect("a placement");
+    assert_eq!(scene[0].label(), Some("Pews"));
     assert_eq!(reader.path_of(placed.blueprint), Some(made.as_str()));
-    assert_eq!(editor.selection.parts, ["/1"]);
+    assert_eq!(editor.selection.parts, ["/0"]);
     let content = support::content(&mut editor);
     let blueprint = content
         .by_path::<BlueprintDef>(&made)
         .expect("the new blueprint loads");
-    let kinds: Vec<&str> = nodes::modules(&blueprint.get(content).scene.nodes)
+    let kinds: Vec<&str> = nodes::modules(&blueprint.get(content).scene)
         .iter()
         .map(|module| module.module().kind().tag())
         .collect();
@@ -205,7 +205,7 @@ fn making_a_blueprint_of_a_folder_leaves_one_placement_and_the_area_as_it_was() 
     editor.undo();
     let content = support::content(&mut editor);
     assert!(content.by_path::<BlueprintDef>(&made).is_none());
-    assert!(nodes::is_folder(&nodes::scene_of(&editor, &area())[1]));
+    assert!(nodes::is_folder(&nodes::scene_of(&editor, &area())[0]));
 }
 
 #[test]
@@ -218,19 +218,25 @@ fn unpacking_a_placement_leaves_a_folder_of_what_it_placed_and_the_area_as_it_wa
     run_action(
         &mut editor,
         &snapshot,
-        AreaAction::Unpack("/1/children/1".to_owned()),
+        AreaAction::Unpack("/0/children/1".to_owned()),
     );
 
     let scene = nodes::scene_of(&editor, &area());
-    let unpacked = nodes::node(&scene, "/1/children/1").expect("the folder");
+    let unpacked = nodes::node(&scene, "/0/children/1").expect("the folder");
     assert!(nodes::is_folder(unpacked));
     assert_eq!(unpacked.label(), Some("pew (1)"));
     assert!(matches!(
         nodes::children_of(unpacked),
-        [SceneNode::Module(ModuleNode {
-            module: AreaModule::Scenery(_),
-            ..
-        })]
+        [
+            SceneNode::Module(ModuleNode {
+                module: AreaModule::Prop(_),
+                ..
+            }),
+            SceneNode::Module(ModuleNode {
+                module: AreaModule::Prop(_),
+                ..
+            })
+        ]
     ));
     assert_eq!(shown(support::content(&mut editor)), before);
 }
@@ -243,12 +249,12 @@ fn a_placement_covers_on_the_map_what_it_places() {
     let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
 
     assert_eq!(
-        snapshot.module_bounds("/1/children/1"),
+        snapshot.module_bounds("/0/children/1"),
         Some(Rect::new(Pos::new(2.0, 4.0), Size::new(2.0, 1.0)))
     );
     assert_eq!(
         snapshot.hit(Pos::new(3.5, 4.5)).as_deref(),
-        Some("/1/children/1")
+        Some("/0/children/1")
     );
 }
 
@@ -271,11 +277,7 @@ fn a_blueprint_made_of_modules_with_holes_takes_their_variables_and_its_placemen
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let mut editor = open(signposted(), &scratch);
     let signpost = path("blueprint", "signpost");
-    let scene = nodes::scene_of(&editor, &signpost);
-    let door = (0..scene.len())
-        .map(|index| format!("/{index}"))
-        .find(|pointer| !nodes::node(&scene, pointer).is_some_and(nodes::is_layer))
-        .expect("the door");
+    let door = "/0".to_owned();
     editor.selection = RowSelection::parts(BlueprintDef::TABLE, &signpost, vec![door.clone()]);
     let snapshot = AreaSnapshot::for_bundle(&mut editor, &signpost).expect("the signpost is open");
     run_action(&mut editor, &snapshot, AreaAction::MakeBlueprint);
@@ -325,14 +327,14 @@ fn signposted() -> Game {
     )
 }
 
-/// A chapel: its ground layer, then a folder of two pews placed from a blueprint.
+/// A chapel: a folder of two pews placed from a blueprint of two planks side by side.
 fn chapel() -> Game {
     let pew = json!([
-        { "type": "scenery", "at": { "x": 0.0, "y": 0.0 }, "tileset": path("tileset", "wood"), "tiles": [[0, 0]] }
+        { "type": "prop", "prop": path("prop", "plank"), "at": { "x": 0.5, "y": 0.5 } },
+        { "type": "prop", "prop": path("prop", "plank"), "at": { "x": 1.5, "y": 0.5 } }
     ]);
     support::game()
-        .row("tileset", "wood", json!({ "tile": 16, "tiles": {} }))
-        .part("tileset", "wood", "image.png", png(16, 16))
+        .prop("plank", json!({ "type": "box", "width": 1.0, "depth": 1.0 }))
         .blueprint("pew", (2, 1), json!({}), pew)
         .edit_scene("area", support::AREA, |scene| {
             let pews = json!({ "type": "folder", "label": "Pews", "children": [
@@ -343,18 +345,18 @@ fn chapel() -> Game {
         })
 }
 
-/// What an area shows of its scenery, wherever in its scene each piece comes from.
+/// What an area shows of its props, wherever in its scene each piece comes from.
 fn shown(content: &Content) -> Vec<String> {
     let id = content.by_path::<AreaDef>(&area()).expect("the area");
     let mut shown: Vec<String> = area::load(content, id)
-        .scenery
+        .props
         .iter()
-        .map(|scenery| {
+        .map(|prop| {
             format!(
-                "{} at {:?} of {:?}",
-                scenery.tileset.path(content),
-                scenery.bounds(),
-                scenery.tiles
+                "{} at {:?} turned {:?}",
+                prop.prop.path(content),
+                prop.at,
+                prop.yaw
             )
         })
         .collect();

@@ -116,6 +116,21 @@ impl From<Rgba> for egui::Color32 {
     }
 }
 
+/// A colour with no alpha, written `[r, g, b]`: lights, the sun and a grade are never translucent.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[serde(transparent)]
+#[schemars(extend("x-color" = true))]
+pub struct Rgb(pub [u8; 3]);
+
+impl Rgb {
+    pub const WHITE: Rgb = Rgb([255, 255, 255]);
+
+    pub fn color(self) -> bevy::color::Color {
+        let [r, g, b] = self.0;
+        bevy::color::Color::srgb_u8(r, g, b)
+    }
+}
+
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FrameSize {

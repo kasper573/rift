@@ -79,6 +79,10 @@ impl RowCheck {
         }
     }
 
+    pub fn extend(&mut self, other: RowCheck) {
+        self.errors.extend(other.errors);
+    }
+
     pub fn into_errors(self) -> Vec<RowError> {
         self.errors
     }

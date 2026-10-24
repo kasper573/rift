@@ -1,3 +1,4 @@
+mod areas;
 mod blueprints;
 mod files;
 mod load_errors;

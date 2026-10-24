@@ -10,7 +10,7 @@ use walkdir::WalkDir;
 use crate::support::game;
 
 #[test]
-fn a_folder_written_from_scratch_lists_every_json_and_csv_file() {
+fn a_folder_written_from_scratch_lists_every_file_of_a_written_kind() {
     let game = rich_game();
     let declared = written_kinds(&game);
     let out = tempfile::tempdir().expect("a temp folder");
@@ -27,7 +27,7 @@ fn writing_a_written_folder_back_changes_no_bytes() {
     let game = rich_game();
     let out = tempfile::tempdir().expect("a temp folder");
     for (path, bytes) in game.folder().files {
-        if !written_kind(&path) {
+        if !game.registry().writes(&path) {
             let file = out.path().join(&path);
             std::fs::create_dir_all(file.parent().expect("a parent folder")).expect("folders");
             std::fs::write(file, bytes).expect("an asset");
@@ -43,7 +43,7 @@ fn writing_a_written_folder_back_changes_no_bytes() {
     assert_eq!(again.kept(), first.written().len());
 }
 
-/// A game of files of many types, bundles among them, and the grids of its area.
+/// A game of files of many types, bundles among them, and the terrain of its area.
 fn rich_game() -> Game {
     game()
         .sword()
@@ -80,17 +80,12 @@ fn load(registry: &ContentRegistry, folder: &Path) -> Content {
 }
 
 fn written_kinds(game: &Game) -> BTreeSet<String> {
+    let registry = game.registry();
     game.folder()
         .files
         .into_keys()
-        .filter(|path| written_kind(path))
+        .filter(|path| registry.writes(path))
         .collect()
-}
-
-/// The JSON of settings and content and the CSV of grids, which the writer writes; media and
-/// shader sources are files the editor keeps as they are.
-fn written_kind(path: &str) -> bool {
-    path.ends_with(".json") || path.ends_with(".csv")
 }
 
 fn on_disk(folder: &Path) -> BTreeSet<String> {

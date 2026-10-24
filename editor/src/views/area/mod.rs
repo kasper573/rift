@@ -1,13 +1,10 @@
 pub mod blueprint;
-pub mod brush;
 pub mod flags;
-pub mod grid;
+pub mod ground;
 pub mod inspect;
-pub mod layers;
 pub mod modules;
 pub mod nodes;
 pub mod overlays;
-pub mod palette;
 pub mod panel;
 pub mod pick;
 pub mod pins;
@@ -15,15 +12,12 @@ pub mod placement;
 pub mod population;
 pub mod preview;
 pub mod resize;
-pub mod scene;
 pub mod scene_tree;
-pub mod scenery;
 pub mod select;
 pub mod shapes;
 pub mod soundscape;
 pub mod stamp;
 pub mod status;
-pub mod terrain;
 pub mod tools;
 
 pub use resize::ResizeDialog;
@@ -37,11 +31,11 @@ use ui::egui;
 use ui::theme;
 use ui::words;
 
-use bevy::prelude::World;
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
-use engine::core::math::{Offset, Pos, Rect, Size};
+use engine::core::geometry::Degrees;
+use engine::core::math::{Pos, Rect, Size};
 use engine::core::render::TILE;
-use engine::core::units::{CellPos, GridDims, Meters, TilePos, TileSize};
+use engine::core::units::{CellPos, Meters, TilePos, TileSize};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaId, AreaModule, AreaModuleKind, Picture, Pictured};
@@ -51,8 +45,8 @@ use ui::glyph::{self, Mark};
 
 use self::flags::{SceneFlags, SceneLevel};
 use self::overlays::{
-    AreaLabels, overlay_grid, overlay_modules, overlay_populations, overlay_selected_scenery,
-    overlay_sort_lines, overlay_soundscape_reach, overlay_surfaces, overlay_walk,
+    AreaLabels, overlay_grid, overlay_modules, overlay_populations, overlay_props,
+    overlay_soundscape_reach, overlay_surfaces, overlay_walk,
 };
 use self::status::status_bar;
 use crate::app::{BottomTab, Editor};
@@ -84,8 +78,7 @@ fn camera_key(project: &Project, view_key: &str) -> String {
 
 #[derive(Default)]
 pub struct AreaViews {
-    pub scenes: scene::AreaScenes,
-    pub requests: Vec<scene::AreaSceneRequest>,
+    pub grounds: ground::GroundArts,
     pub views: HashMap<String, AreaViewState>,
     pub hover: Option<AreaHover>,
     pub active: Option<String>,
@@ -107,45 +100,21 @@ pub enum AreaAction {
     GoTo(String, Pos<Meters>),
     Unpack(String),
     Replace(String),
-    Split(String),
     ReturnDoor(String),
-    AdoptBlocks(String),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, VariantArray, AsRefStr)]
 pub enum AreaTool {
     #[default]
     Select,
-    Paint,
-    Terrain,
-    Fill,
-    Erase,
-    Eyedropper,
     Stamp,
     Module,
 }
 
 impl AreaTool {
-    /// Whether the tool paints the cells of the armed layer or walk.
-    pub fn paints(self) -> bool {
-        matches!(
-            self,
-            AreaTool::Paint
-                | AreaTool::Terrain
-                | AreaTool::Fill
-                | AreaTool::Erase
-                | AreaTool::Eyedropper
-        )
-    }
-
     pub fn key(self) -> EditorKey {
         match self {
             AreaTool::Select => EditorKey::SelectTool,
-            AreaTool::Paint => EditorKey::PaintTool,
-            AreaTool::Terrain => EditorKey::TerrainTool,
-            AreaTool::Fill => EditorKey::FillTool,
-            AreaTool::Erase => EditorKey::EraseTool,
-            AreaTool::Eyedropper => EditorKey::EyedropperTool,
             AreaTool::Stamp => EditorKey::StampTool,
             AreaTool::Module => EditorKey::ModuleTool,
         }
@@ -153,9 +122,6 @@ impl AreaTool {
 
     pub fn bottom_tab(self) -> Option<BottomTab> {
         match self {
-            AreaTool::Paint | AreaTool::Terrain | AreaTool::Fill | AreaTool::Eyedropper => {
-                Some(BottomTab::Palette)
-            }
             AreaTool::Stamp => Some(BottomTab::Blueprints),
             _ => None,
         }
@@ -171,40 +137,25 @@ pub struct AreaViewState {
     pub zoom: f32,
     pub tool: AreaTool,
     pub walk_overlay: bool,
-    /// Keeps the walk brush off, as a layer's padlock keeps the brushes off it.
-    pub walk_locked: bool,
     pub grid_lines: bool,
     pub overlay_modules: bool,
     pub overlay_surfaces: bool,
-    pub overlay_sort_lines: bool,
-    pub gesture: Option<AreaGesture>,
-    pub pick: brush::TilePick,
-    pub terrain: brush::TerrainPick,
+    pub drag: Option<AreaDrag>,
     pub stamp: Option<String>,
     pub listener: Option<Pos<Meters>>,
     pub paste: Option<PasteGhost>,
     pub cursor_cell: Option<CellPos>,
-    pub tileset_search: String,
     pub blueprint_search: String,
-    pub palette_lens: palette::PaletteLens,
     pub menu: Option<modules::AreaMenuAnchor>,
     pub population_previews: HashMap<String, PopulationPreview>,
-    pub walk_value: Option<bool>,
     pub skipped: Option<String>,
-    /// The area a blueprint is drawn over in its own tab, a view setting only.
-    pub backdrop: Option<String>,
     /// The row shown alone for now, every other row's own flags kept as they are.
     pub show_only: Option<String>,
-    /// What the selection arms the brushes with, as last seen.
-    pub armed: Armed,
-    /// The layer the brushes last painted, armed again when a brush is taken with nothing armed.
-    pub last_layer: Option<String>,
     /// The kind of module the Module tool places at the next click, into the insertion folder.
     pub placing: Option<AreaModuleKind>,
     pub scene: panel::ScenePanel,
     cache: Option<SnapshotCache>,
     fitted: bool,
-    backdrop_chosen: bool,
 }
 
 impl AreaViewState {
@@ -213,27 +164,20 @@ impl AreaViewState {
             bundle: bundle.to_owned(),
             zoom: 2.0,
             overlay_modules: true,
-            walk_value: Some(false),
             ..AreaViewState::default()
         }
     }
 
     pub fn drag(&self) -> Option<&AreaDrag> {
-        match &self.gesture {
-            Some(AreaGesture::Drag(drag)) => Some(drag),
-            _ => None,
-        }
+        self.drag.as_ref()
     }
 
     pub fn drag_mut(&mut self) -> Option<&mut AreaDrag> {
-        match &mut self.gesture {
-            Some(AreaGesture::Drag(drag)) => Some(drag),
-            _ => None,
-        }
+        self.drag.as_mut()
     }
 
     pub fn set_drag(&mut self, drag: AreaDrag) {
-        self.gesture = Some(AreaGesture::Drag(drag));
+        self.drag = Some(drag);
     }
 
     pub fn set_tool(&mut self, tool: AreaTool) {
@@ -242,45 +186,11 @@ impl AreaViewState {
     }
 
     pub fn cancel_gesture(&mut self) -> bool {
-        self.gesture.take().is_some() | self.placing.take().is_some()
+        self.drag.take().is_some() | self.placing.take().is_some()
     }
 
     pub fn take_drag(&mut self) -> Option<AreaDrag> {
-        match self.gesture.take() {
-            Some(AreaGesture::Drag(drag)) => Some(drag),
-            other => {
-                self.gesture = other;
-                None
-            }
-        }
-    }
-
-    pub fn stroke(&self) -> Option<&brush::BrushStroke> {
-        match &self.gesture {
-            Some(AreaGesture::Stroke(stroke)) => Some(stroke),
-            _ => None,
-        }
-    }
-
-    pub fn stroke_mut(&mut self) -> Option<&mut brush::BrushStroke> {
-        match &mut self.gesture {
-            Some(AreaGesture::Stroke(stroke)) => Some(stroke),
-            _ => None,
-        }
-    }
-
-    pub fn set_stroke(&mut self, stroke: brush::BrushStroke) {
-        self.gesture = Some(AreaGesture::Stroke(stroke));
-    }
-
-    pub fn take_stroke(&mut self) -> Option<brush::BrushStroke> {
-        match self.gesture.take() {
-            Some(AreaGesture::Stroke(stroke)) => Some(stroke),
-            other => {
-                self.gesture = other;
-                None
-            }
-        }
+        self.drag.take()
     }
 }
 
@@ -288,11 +198,6 @@ impl AreaViewState {
 pub struct PopulationPreview {
     pub hidden: bool,
     pub seed: u64,
-}
-
-pub enum AreaGesture {
-    Drag(AreaDrag),
-    Stroke(brush::BrushStroke),
 }
 
 #[derive(Clone, Debug)]
@@ -339,7 +244,6 @@ pub struct PasteGhost {
 impl AreaViews {
     pub fn close(&mut self) {
         self.views.clear();
-        self.requests.clear();
         self.active = None;
     }
 
@@ -360,14 +264,6 @@ impl AreaViews {
         }
     }
 
-    pub fn content_changed(&mut self) {
-        for view in self.views.values_mut() {
-            if matches!(view.gesture, Some(AreaGesture::Stroke(_))) {
-                view.gesture = None;
-            }
-        }
-    }
-
     pub fn ensure_view(&mut self, bundle: &str) -> &mut AreaViewState {
         self.views
             .entry(view_key(bundle))
@@ -382,40 +278,14 @@ impl AreaViews {
         self.views.get_mut(key).expect("an open area view")
     }
 
-    /// Points what the views have picked, stamp and draw behind at where `moved` took it.
+    /// Points what the views stamp with at where `moved` took it.
     pub fn moved(&mut self, moved: &dyn Fn(&str) -> Option<String>) {
         for view in self.views.values_mut() {
-            for picked in [
-                &mut view.pick.tileset,
-                &mut view.terrain.tileset,
-                &mut view.stamp,
-                &mut view.backdrop,
-            ] {
-                if let Some(to) = picked.as_deref().and_then(moved) {
-                    *picked = Some(to);
-                }
+            if let Some(to) = view.stamp.as_deref().and_then(moved) {
+                view.stamp = Some(to);
             }
         }
     }
-}
-
-pub fn sync(editor: &mut Editor, world: &mut World) {
-    let requests = std::mem::take(&mut editor.views.area.requests);
-    let (content, files) = match &editor.project {
-        Some(project) => (project.content.clone(), &project.files),
-        None => {
-            scene::clear(&mut editor.views.area.scenes, world);
-            return;
-        }
-    };
-    let Editor { views, .. } = editor;
-    scene::sync(
-        &mut views.area.scenes,
-        requests,
-        content.as_ref(),
-        files,
-        world,
-    );
 }
 
 /// The tab of an area: its scene graph on the left, its map, and the inspector.
@@ -448,18 +318,10 @@ pub fn bottom(editor: &mut Editor, ui: &mut Ui, view_key: &str, tab: BottomTab) 
         ui.label(theme::muted("The folder does not load."));
         return;
     }
-    match tab {
-        BottomTab::Palette => {
-            if let Some(snapshot) = AreaSnapshot::for_view(editor, view_key) {
-                palette::show(editor, ui, view_key, &snapshot);
-            }
-        }
-        BottomTab::Blueprints => {
-            if let Some(snapshot) = AreaSnapshot::for_view(editor, view_key) {
-                stamp::stamp_panel(editor, ui, view_key, &snapshot);
-            }
-        }
-        _ => {}
+    if tab == BottomTab::Blueprints
+        && let Some(snapshot) = AreaSnapshot::for_view(editor, view_key)
+    {
+        stamp::stamp_panel(editor, ui, view_key, &snapshot);
     }
 }
 
@@ -486,9 +348,7 @@ fn show_canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
     let full = ui.available_rect_before_wrap();
     let rail = ERect::from_min_size(full.min, Vec2::new(rail_width, full.height()));
     let canvas_rect = ERect::from_min_max(Pos2::new(rail.max.x, full.min.y), full.max);
-    choose_backdrop_once(editor, view_key, &snapshot);
     fit_once(editor, view_key, &snapshot, canvas_rect);
-    rearm(editor, view_key, &snapshot);
     let mut canvas_ui = ui.new_child(egui::UiBuilder::new().max_rect(canvas_rect));
     canvas(editor, &mut canvas_ui, view_key, snapshot);
     banners(editor, ui, view_key, canvas_rect);
@@ -510,18 +370,12 @@ fn fit_once(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, canvas
         .cameras
         .get(&camera_key(project, view_key))
         .cloned();
-    let backdrop = editor.views.area.view(view_key).backdrop.clone();
-    let framed = backdrop.and_then(|area| {
-        let shift = backdrop_shift(snapshot, &area)?;
-        let id = snapshot.content.by_path::<AreaDef>(&area)?;
-        Some((area::load(&snapshot.content, id).size, shift))
-    });
     let view = editor.views.area.view_mut(view_key);
     if view.fitted {
         return;
     }
-    let (size, shift) = framed.unwrap_or((snapshot.size(), Offset::zero()));
-    view.center = Pos::new(size.width / 2.0 - 0.5, size.height / 2.0 - 0.5) - shift;
+    let size = snapshot.size();
+    view.center = Pos::new(size.width / 2.0 - 0.5, size.height / 2.0 - 0.5);
     let fit = navigation::fit_zoom(canvas.size(), Vec2::new(size.width, size.height), TILE.0)
         * FIT_MARGIN;
     view.zoom = fit.clamp(MIN_ZOOM, MAX_FIT_ZOOM);
@@ -529,109 +383,6 @@ fn fit_once(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, canvas
     if let Some(camera) = remembered {
         view.center = Pos::new(camera.x, camera.y);
         view.zoom = camera.zoom;
-    }
-}
-
-/// A blueprint's tab starts over the first area that places it, so it is judged on the ground it
-/// stands on.
-fn choose_backdrop_once(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot) {
-    if !matches!(snapshot.pictured, Pictured::Blueprint(_))
-        || editor.views.area.view(view_key).backdrop_chosen
-    {
-        return;
-    }
-    let first = placement::first_area_using(editor, &snapshot.bundle);
-    let view = editor.views.area.view_mut(view_key);
-    view.backdrop = first;
-    view.backdrop_chosen = true;
-}
-
-/// What the selection arms the brushes with: a ground layer of the bundle's own, or its walk.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum Armed {
-    #[default]
-    Nothing,
-    Layer {
-        pointer: String,
-        name: String,
-    },
-    Walk,
-}
-
-/// The selection part that stands for the Walk row, which is no node of the scene.
-pub const WALK_ROW: &str = "walk";
-
-pub fn armed(editor: &Editor, snapshot: &AreaSnapshot) -> Armed {
-    let parts: Vec<&String> = selected_parts_of(editor, &snapshot.bundle);
-    match parts.as_slice() {
-        [part] if *part == WALK_ROW => Armed::Walk,
-        [part] => match nodes::node(snapshot.nodes(), part).and_then(nodes::layer_name) {
-            Some(name) => Armed::Layer {
-                pointer: (*part).clone(),
-                name: name.to_owned(),
-            },
-            None => Armed::Nothing,
-        },
-        _ => Armed::Nothing,
-    }
-}
-
-/// Follows the selection with the tool in hand: selecting a layer takes a brush to it, selecting the
-/// Walk row takes the walk brush, and selecting anything else puts the brushes down.
-fn rearm(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot) {
-    let now = armed(editor, snapshot);
-    let view = editor.views.area.view_mut(view_key);
-    if view.armed == now {
-        return;
-    }
-    let brushing = view.tool.paints();
-    match &now {
-        Armed::Layer { name, .. } => {
-            view.last_layer = Some(name.clone());
-            if !brushing {
-                view.set_tool(AreaTool::Paint);
-            }
-        }
-        Armed::Walk => {
-            if !matches!(
-                view.tool,
-                AreaTool::Paint | AreaTool::Fill | AreaTool::Erase
-            ) {
-                view.set_tool(AreaTool::Paint);
-            }
-        }
-        Armed::Nothing if brushing => view.set_tool(AreaTool::Select),
-        Armed::Nothing => {}
-    }
-    view.armed = now;
-    if view.tool.paints() {
-        editor.panels.bottom = BottomTab::Palette;
-    }
-}
-
-/// Takes a brush with nothing armed: arms the layer painted last, or the bundle's topmost layer.
-pub fn arm_a_layer(editor: &mut Editor, view_key: &str) {
-    let Some(snapshot) = AreaSnapshot::for_view(editor, view_key) else {
-        return;
-    };
-    if armed(editor, &snapshot) != Armed::Nothing {
-        return;
-    }
-    let last = editor.views.area.view(view_key).last_layer.clone();
-    let mut found: Vec<(String, String)> = Vec::new();
-    nodes::walk(snapshot.nodes(), &mut |pointer, node| {
-        if let Some(name) = nodes::layer_name(node) {
-            found.push((pointer.to_owned(), name.to_owned()));
-        }
-    });
-    let pick = found
-        .iter()
-        .find(|(_, name)| Some(name) == last.as_ref())
-        .or(found.last());
-    if let Some((pointer, name)) = pick.cloned() {
-        nodes::select(editor, &snapshot.bundle, vec![pointer.clone()]);
-        let view = editor.views.area.view_mut(view_key);
-        view.armed = Armed::Layer { pointer, name };
     }
 }
 
@@ -717,64 +468,6 @@ fn banners(editor: &mut Editor, ui: &mut Ui, view_key: &str, canvas_rect: ERect)
             );
         });
     }
-    let view = editor.views.area.view(view_key);
-    let brushing = view.tool.paints() && view.in_place.is_empty();
-    if brushing {
-        let (said, ink) = match armed(editor, &snapshot) {
-            Armed::Layer { pointer, name } if snapshot.flags.locked(&pointer) => {
-                (format!("{name} is locked: no brush paints it"), theme::WARN)
-            }
-            Armed::Layer { pointer, name } if snapshot.flags.hidden(&pointer) => (
-                format!("{name} is hidden: show it to paint it"),
-                theme::WARN,
-            ),
-            Armed::Layer { name, .. } => {
-                (format!("{} into {name}", view.tool.as_ref()), theme::TEXT)
-            }
-            Armed::Walk if view.walk_locked => (
-                "Walk is locked: the walk brush is off".to_owned(),
-                theme::WARN,
-            ),
-            Armed::Walk => ("Paint forced walk cells".to_owned(), theme::TEXT),
-            Armed::Nothing => (
-                "Select a ground layer to paint into".to_owned(),
-                theme::WARN,
-            ),
-        };
-        chip(&mut child, &mut |ui| {
-            glyph::show(ui, Mark::Grid, 13.0, ink);
-            ui.label(theme::mono(&said).size(13.0).color(ink));
-        });
-    }
-    if let Pictured::Blueprint(_) = snapshot.pictured {
-        let areas: Vec<String> = snapshot.content.table::<AreaDef>().paths().to_vec();
-        let backdrop = editor.views.area.view(view_key).backdrop.clone();
-        let mut picked = backdrop.clone();
-        chip(&mut child, &mut |ui| {
-            glyph::show(ui, Mark::Eye, 13.0, theme::MUTED);
-            ui.label(theme::mono("backdrop").size(13.0).color(theme::TEXT));
-            controls::combo((view_key, "backdrop"))
-                .selected_text(theme::mono(
-                    picked.as_deref().map_or("none", file_title).to_owned(),
-                ))
-                .show_ui(ui, |ui| {
-                    if ui.selectable_label(picked.is_none(), "none").clicked() {
-                        picked = None;
-                    }
-                    for area in &areas {
-                        if ui
-                            .selectable_label(picked.as_ref() == Some(area), theme::mono(area))
-                            .clicked()
-                        {
-                            picked = Some(area.clone());
-                        }
-                    }
-                });
-        });
-        if picked != backdrop {
-            editor.views.area.view_mut(view_key).backdrop = picked;
-        }
-    }
     if done {
         let view = editor.views.area.view_mut(view_key);
         view.in_place.pop();
@@ -787,58 +480,29 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, theme::CANVAS);
     let bundle = snapshot.bundle.clone();
-    let ppp = ui.ctx().pixels_per_point();
     let generation = editor.project.as_ref().map_or(0, |p| p.generation);
-    let width = (rect.width() * ppp).round().max(1.0) as u32;
-    let height = (rect.height() * ppp).round().max(1.0) as u32;
-    let (center, zoom, backdrop) = {
+    let (center, zoom) = {
         let view = editor.views.area.view(view_key);
-        (view.center, view.zoom, view.backdrop.clone())
+        (view.center, view.zoom)
     };
-    let backdrop = backdrop
-        .filter(|_| matches!(snapshot.pictured, Pictured::Blueprint(_)))
-        .and_then(|area| {
-            let shift = backdrop_shift(&snapshot, &area)?;
-            Some((area, shift))
-        });
-    if let Some((area, shift)) = &backdrop {
-        let key = format!("{view_key}#backdrop");
-        editor.views.area.requests.push(scene::AreaSceneRequest {
-            key: key.clone(),
-            spec: scene::AreaSceneSpec::ground(area),
-            width,
-            height,
-            center: center + *shift,
-            zoom: zoom * ppp,
-            generation,
-            live: true,
-        });
-        if let Some(scene) = editor.views.area.scenes.by_path.get(&key) {
-            painter.image(scene.texture, rect, scene.uv(), Color32::from_gray(150));
-        }
-    }
-    editor.views.area.requests.push(scene::AreaSceneRequest {
-        key: view_key.to_owned(),
-        spec: scene::AreaSceneSpec {
-            drawn: scene::Drawn::Picture(snapshot.picture.clone()),
-            hidden_ground: snapshot.hidden_ground(),
-            see_through: backdrop.is_some(),
-        },
-        width,
-        height,
-        center,
-        zoom: zoom * ppp,
-        generation,
-        live: true,
-    });
-    if let Some(scene) = editor.views.area.scenes.by_path.get(view_key) {
-        painter.image(scene.texture, rect, scene.uv(), Color32::WHITE);
-    }
     let canvas = Viewport {
         screen: rect,
         center,
         zoom,
     };
+    let area = snapshot.picture.area.clone();
+    editor
+        .views
+        .area
+        .grounds
+        .of(
+            ui.ctx(),
+            &format!("{view_key}#{}", snapshot.made),
+            generation,
+            &snapshot.content,
+            &area,
+        )
+        .draw(&painter, canvas, Color32::WHITE);
     let hovered = response.hover_pos().filter(|_| response.hovered());
     let pointer_tile = hovered.map(|p| canvas.to_tile(p));
     if let Some(tile) = pointer_tile {
@@ -848,7 +512,6 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
         });
     }
     let is_area = matches!(snapshot.pictured, Pictured::Area(_));
-    let area = snapshot.picture.area.clone();
     let frame = AreaFrame {
         snapshot,
         canvas,
@@ -868,8 +531,8 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
     if is_area {
         editor.views.area.active = Some(bundle.clone());
     }
+    overlay_props(&painter, &frame, &area);
     overlay_populations(editor, &painter, view_key, &frame, &area);
-    overlay_selected_scenery(editor, ui, &painter, view_key, &frame, &area);
     overlay_soundscape_reach(editor, &painter, &frame);
     let view = editor.views.area.view(view_key);
     if view.overlay_surfaces {
@@ -877,9 +540,6 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
     }
     if view.walk_overlay {
         overlay_walk(&painter, &frame, &area);
-    }
-    if view.overlay_sort_lines {
-        overlay_sort_lines(&painter, &frame, &area);
     }
     if view.overlay_modules || !editor.selection.parts.is_empty() {
         overlay_modules(editor, &painter, view_key, &frame);
@@ -926,28 +586,6 @@ fn locked_tip(editor: &Editor, view_key: &str, frame: &AreaFrame) {
         None => format!("{what} is locked: a click selects what's under it"),
     };
     frame.response.clone().on_hover_text_at_pointer(text);
-}
-
-/// How far the backdrop's tiles sit from the blueprint's: where the area first places it, or else
-/// the blueprint's middle over the area's.
-fn backdrop_shift(snapshot: &AreaSnapshot, area: &str) -> Option<Offset<Meters>> {
-    let Pictured::Blueprint(blueprint) = snapshot.pictured else {
-        return None;
-    };
-    let content = &snapshot.content;
-    let area_id = content.by_path::<AreaDef>(area)?;
-    let placed = area::placements(content, area_id)
-        .iter()
-        .find(|placed| placed.blueprint == blueprint)
-        .map(|placed| placed.at);
-    let at = placed.unwrap_or_else(|| {
-        let (size, own) = (area::load(content, area_id).size, snapshot.size());
-        Pos::new(
-            ((size.width - own.width) / 2.0).round(),
-            ((size.height - own.height) / 2.0).round(),
-        )
-    });
-    Some(Offset::new(at.x, at.y))
 }
 
 /// What a view shows of its bundle: the scene as the editor holds it, the picture it makes with
@@ -1116,7 +754,7 @@ impl AreaSnapshot {
     }
 
     pub fn in_map(&self, tile: Pos<Meters>) -> bool {
-        area::walk::in_map(self.size().grid(), tile)
+        self.size().bounds().contains(tile)
     }
 
     /// The bundle's own scene, as its files read now.
@@ -1130,7 +768,7 @@ impl AreaSnapshot {
         let top = levels.next()?;
         let mut node = nodes::node(self.nodes(), top)?;
         for (pointer, place) in levels.zip(self.in_place.iter()) {
-            node = nodes::node(&place.def.scene.nodes, &format!("/{pointer}"))?;
+            node = nodes::node(&place.def.scene, &format!("/{pointer}"))?;
         }
         Some(node)
     }
@@ -1240,34 +878,6 @@ impl AreaSnapshot {
             .collect()
     }
 
-    /// The placement whose painted cells cover `cell` in the ground layer `layer`, the last in tree
-    /// order since it wins the cell: the pointer of its node in the bundle's scene.
-    pub fn covering(&self, cell: CellPos, layer: &str) -> Option<String> {
-        self.picture
-            .placements
-            .iter()
-            .rev()
-            .find(|placement| {
-                let def = placement.blueprint.get(&self.content);
-                let mut cells = def.map.size.grid().cells().enumerate().map(|(index, at)| {
-                    let square = Rect::new(Pos::new(at.x as f32, at.y as f32), Size::splat(1.0));
-                    (
-                        index,
-                        placement.flip.place(square, placement.at).origin.cell(),
-                    )
-                });
-                let Some((index, _)) = cells.find(|(_, placed)| *placed == cell) else {
-                    return false;
-                };
-                let draft = grid::GridDraft::of(placement.blueprint.path(&self.content), def);
-                draft
-                    .layer_index(layer)
-                    .and_then(|painted| draft.ground[painted].cells.get(index).copied().flatten())
-                    .is_some()
-            })
-            .map(|placement| placement.origin.clone())
-    }
-
     /// The locked module under `tile` a click passes through, for the tip that says what locks it.
     pub fn locked_hit(&self, tile: Pos<Meters>) -> Option<String> {
         self.targets
@@ -1275,20 +885,6 @@ impl AreaSnapshot {
             .filter(|target| target.shown && target.locked && target.bounds.contains(tile))
             .min_by(|a, b| a.bounds.area().total_cmp(&b.bounds.area()))
             .map(|target| target.pointer.clone())
-    }
-
-    /// The names of the bundle's own ground layers left out of the editor's picture.
-    pub fn hidden_ground(&self) -> Vec<String> {
-        let mut hidden = Vec::new();
-        nodes::walk(self.nodes(), &mut |pointer, node| {
-            if let Some(name) = nodes::layer_name(node)
-                && self.flags.hidden(pointer)
-            {
-                hidden.push(name.to_owned());
-            }
-        });
-        hidden.sort();
-        hidden
     }
 }
 
@@ -1317,7 +913,7 @@ fn snapshot_parts(
     for (depth, place) in in_place.iter().enumerate() {
         levels.push(SceneLevel {
             under: place_id_of(&in_place[..=depth]),
-            scene: &place.def.scene.nodes,
+            scene: &place.def.scene,
         });
     }
     let flags = SceneFlags::of(&levels, show_only);
@@ -1380,10 +976,12 @@ fn place_id_of(chain: &[placement::AreaPlacement]) -> String {
 }
 
 impl AreaFrame<'_> {
-    pub fn origin(&self) -> (Pos<Meters>, area::Flip) {
+    /// Where the scene being edited stands on the map, and how it is turned: the placement edited
+    /// in place, or the bundle's own origin.
+    pub fn origin(&self) -> (Pos<Meters>, Degrees) {
         match self.in_place.last() {
-            Some(place) => (place.at, place.flip),
-            None => (Pos::new(0.0, 0.0), area::Flip::None),
+            Some(place) => (place.at, place.yaw),
+            None => (Pos::new(0.0, 0.0), Degrees::default()),
         }
     }
 
@@ -1480,7 +1078,7 @@ pub fn drop_gone(editor: &mut Editor) -> Option<String> {
     editor
         .selection
         .parts
-        .retain(|part| part == WALK_ROW || nodes::node(&scene, part).is_some());
+        .retain(|part| nodes::node(&scene, part).is_some());
     let gone = before - editor.selection.parts.len();
     let what = match (gone, editor.selection.parts.is_empty()) {
         (0, _) => return None,
@@ -1507,8 +1105,6 @@ pub fn run_action(editor: &mut Editor, frame: &AreaSnapshot, action: AreaAction)
         AreaAction::GoTo(area, at) => open_area_at(editor, &area, Some(at), None),
         AreaAction::Unpack(node) => placement::unpack(editor, frame, &node),
         AreaAction::Replace(node) => placement::replace_dialog(editor, frame, &node),
-        AreaAction::Split(node) => scenery::split_scenery(editor, frame, &node),
-        AreaAction::ReturnDoor(node) => scenery::return_door(editor, frame, &node),
-        AreaAction::AdoptBlocks(node) => scenery::adopt_blocks(editor, frame, &node),
+        AreaAction::ReturnDoor(node) => placement::return_door(editor, frame, &node),
     }
 }
