@@ -5,12 +5,12 @@ use super::present::PresentScale;
 use super::screen::{ToScreen, ToTile};
 use crate::core::gui;
 use crate::core::math::Pos;
-use crate::core::tiling::Tiles;
+use crate::core::units::Meters;
 
 #[derive(Component)]
 pub(crate) struct WorldCamera;
 
-pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
+pub fn cursor_tile(world: &mut World) -> Option<Pos<Meters>> {
     if gui::pointer_claimed(world) {
         return None;
     }
@@ -32,7 +32,7 @@ pub fn cursor_tile(world: &mut World) -> Option<Pos<Tiles>> {
     Some(point.to_tile())
 }
 
-pub fn tile_to_window(world: &mut World, tile: Pos<Tiles>) -> Option<Vec2> {
+pub fn tile_to_window(world: &mut World, tile: Pos<Meters>) -> Option<Vec2> {
     let scale = *world.resource::<PresentScale>();
     let (camera, transform) = world
         .query_filtered::<(&Camera, &GlobalTransform), With<WorldCamera>>()
@@ -45,7 +45,7 @@ fn project(
     scale: PresentScale,
     camera: &Camera,
     transform: &GlobalTransform,
-    tile: Pos<Tiles>,
+    tile: Pos<Meters>,
 ) -> Option<Vec2> {
     let point = camera
         .world_to_viewport(transform, tile.to_screen().extend(0.0))

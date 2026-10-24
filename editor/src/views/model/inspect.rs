@@ -832,7 +832,7 @@ pub fn row_body(ui: &mut Ui, model: &mut ModelDef) -> FormChange {
         let hitbox = &mut model.hitbox;
         if NumberField::of([&mut hitbox.width, &mut hitbox.height])
             .range(0.1..=8.0)
-            .unit("tiles")
+            .unit("m")
             .show(ui)
         {
             changed = FormChange::at("/hitbox");

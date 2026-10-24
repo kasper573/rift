@@ -1,5 +1,5 @@
 use engine::core::math::{Offset, Rect};
-use engine::core::tiling::{Cell, TilePos, Tiles};
+use engine::core::units::{Cell, Meters, TilePos};
 use engine::systems::area::{AreaModule, AreaModuleKind};
 use strum::VariantArray;
 use ui::egui;
@@ -282,7 +282,7 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
         && let Some(tile) = frame.pointer_tile
     {
         let at = paste_anchor(tile);
-        let mut whole: Option<Rect<Tiles>> = None;
+        let mut whole: Option<Rect<Meters>> = None;
         let ghosts = nodes::modules(&ghost.nodes);
         for module in &ghosts {
             let mut placed = module.module().clone();

@@ -41,7 +41,7 @@ use bevy::prelude::World;
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
 use engine::core::math::{Offset, Pos, Rect, Size};
 use engine::core::render::TILE;
-use engine::core::tiling::{CellPos, GridDims, TilePos, TileSize, Tiles};
+use engine::core::units::{CellPos, GridDims, Meters, TilePos, TileSize};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaId, AreaModule, AreaModuleKind, Picture, Pictured};
@@ -94,7 +94,7 @@ pub struct AreaViews {
 #[derive(Clone, Debug)]
 pub struct AreaHover {
     pub area: String,
-    pub tile: Pos<Tiles>,
+    pub tile: Pos<Meters>,
 }
 
 #[derive(Clone, Debug)]
@@ -104,7 +104,7 @@ pub enum AreaAction {
     Delete,
     OpenBlueprint(String),
     MakeBlueprint,
-    GoTo(String, Pos<Tiles>),
+    GoTo(String, Pos<Meters>),
     Unpack(String),
     Replace(String),
     Split(String),
@@ -167,7 +167,7 @@ pub struct AreaViewState {
     /// The area or blueprint bundle the view edits.
     pub bundle: String,
     pub in_place: Vec<String>,
-    pub center: Pos<Tiles>,
+    pub center: Pos<Meters>,
     pub zoom: f32,
     pub tool: AreaTool,
     pub walk_overlay: bool,
@@ -181,7 +181,7 @@ pub struct AreaViewState {
     pub pick: brush::TilePick,
     pub terrain: brush::TerrainPick,
     pub stamp: Option<String>,
-    pub listener: Option<Pos<Tiles>>,
+    pub listener: Option<Pos<Meters>>,
     pub paste: Option<PasteGhost>,
     pub cursor_cell: Option<CellPos>,
     pub tileset_search: String,
@@ -298,16 +298,16 @@ pub enum AreaGesture {
 #[derive(Clone, Debug)]
 pub enum AreaDrag {
     Box {
-        from: Pos<Tiles>,
+        from: Pos<Meters>,
     },
     Move {
-        from: Pos<Tiles>,
+        from: Pos<Meters>,
         moved: bool,
     },
     Resize {
         part: String,
         corner: ResizeCorner,
-        start: Rect<Tiles>,
+        start: Rect<Meters>,
     },
     Pin {
         file: String,
@@ -315,8 +315,8 @@ pub enum AreaDrag {
     },
     InitialSpawn,
     Stamp {
-        placed: Vec<Pos<Tiles>>,
-        last: Pos<Tiles>,
+        placed: Vec<Pos<Meters>>,
+        last: Pos<Meters>,
     },
 }
 
@@ -930,7 +930,7 @@ fn locked_tip(editor: &Editor, view_key: &str, frame: &AreaFrame) {
 
 /// How far the backdrop's tiles sit from the blueprint's: where the area first places it, or else
 /// the blueprint's middle over the area's.
-fn backdrop_shift(snapshot: &AreaSnapshot, area: &str) -> Option<Offset<Tiles>> {
+fn backdrop_shift(snapshot: &AreaSnapshot, area: &str) -> Option<Offset<Meters>> {
     let Pictured::Blueprint(blueprint) = snapshot.pictured else {
         return None;
     };
@@ -966,7 +966,7 @@ pub struct AreaSnapshot {
     pub flags: Arc<SceneFlags>,
     pub modules: Arc<nodes::SceneModules>,
     pub in_place: Vec<placement::AreaPlacement>,
-    pub placement_bounds: Arc<HashMap<String, Rect<Tiles>>>,
+    pub placement_bounds: Arc<HashMap<String, Rect<Meters>>>,
     targets: Arc<[MapTarget]>,
 }
 
@@ -974,7 +974,7 @@ pub struct AreaSnapshot {
 /// every frame.
 struct MapTarget {
     pointer: String,
-    bounds: Rect<Tiles>,
+    bounds: Rect<Meters>,
     shown: bool,
     locked: bool,
 }
@@ -998,15 +998,15 @@ struct SnapshotParts {
     flags: Arc<SceneFlags>,
     modules: Arc<nodes::SceneModules>,
     in_place: Vec<placement::AreaPlacement>,
-    placement_bounds: Arc<HashMap<String, Rect<Tiles>>>,
+    placement_bounds: Arc<HashMap<String, Rect<Meters>>>,
     targets: Arc<[MapTarget]>,
 }
 
 pub struct AreaFrame<'a> {
     pub snapshot: AreaSnapshot,
-    pub canvas: Viewport<Tiles>,
+    pub canvas: Viewport<Meters>,
     pub pointer: Option<Pos2>,
-    pub pointer_tile: Option<Pos<Tiles>>,
+    pub pointer_tile: Option<Pos<Meters>>,
     pub response: &'a egui::Response,
     pub labels: AreaLabels,
 }
@@ -1111,11 +1111,11 @@ impl AreaSnapshot {
         }
     }
 
-    pub fn size(&self) -> Size<Tiles> {
+    pub fn size(&self) -> Size<Meters> {
         self.area().size
     }
 
-    pub fn in_map(&self, tile: Pos<Tiles>) -> bool {
+    pub fn in_map(&self, tile: Pos<Meters>) -> bool {
         area::walk::in_map(self.size().grid(), tile)
     }
 
@@ -1143,12 +1143,12 @@ impl AreaSnapshot {
         self.module_node(pointer).map(|node| &node.module)
     }
 
-    pub fn module_bounds(&self, pointer: &str) -> Option<Rect<Tiles>> {
+    pub fn module_bounds(&self, pointer: &str) -> Option<Rect<Meters>> {
         self.bounds_of(self.modules.get(pointer)?)
     }
 
     /// Where `module`, one of the bundle's own, takes room on the map.
-    pub fn bounds_of(&self, module: &nodes::SceneModule) -> Option<Rect<Tiles>> {
+    pub fn bounds_of(&self, module: &nodes::SceneModule) -> Option<Rect<Meters>> {
         shapes::bounds(
             module.module(),
             self.placement_bounds.get(&module.pointer).copied(),
@@ -1161,7 +1161,7 @@ impl AreaSnapshot {
         !self.flags.hidden(pointer) && !self.flags.locked(pointer) && self.in_place.is_empty()
     }
 
-    pub fn hit(&self, tile: Pos<Tiles>) -> Option<String> {
+    pub fn hit(&self, tile: Pos<Meters>) -> Option<String> {
         if !self.in_place.is_empty() {
             return None;
         }
@@ -1201,7 +1201,7 @@ impl AreaSnapshot {
 
     /// The box around what the selected folders of `parts` hold on the map, with the label of the
     /// first, when a folder is selected.
-    pub fn folder_box(&self, parts: &HashSet<String>) -> Option<(Rect<Tiles>, String)> {
+    pub fn folder_box(&self, parts: &HashSet<String>) -> Option<(Rect<Meters>, String)> {
         let folders: Vec<&String> = parts
             .iter()
             .filter(|part| self.scene_node(part).is_some_and(nodes::is_folder))
@@ -1269,7 +1269,7 @@ impl AreaSnapshot {
     }
 
     /// The locked module under `tile` a click passes through, for the tip that says what locks it.
-    pub fn locked_hit(&self, tile: Pos<Tiles>) -> Option<String> {
+    pub fn locked_hit(&self, tile: Pos<Meters>) -> Option<String> {
         self.targets
             .iter()
             .filter(|target| target.shown && target.locked && target.bounds.contains(tile))
@@ -1380,7 +1380,7 @@ fn place_id_of(chain: &[placement::AreaPlacement]) -> String {
 }
 
 impl AreaFrame<'_> {
-    pub fn origin(&self) -> (Pos<Tiles>, area::Flip) {
+    pub fn origin(&self) -> (Pos<Meters>, area::Flip) {
         match self.in_place.last() {
             Some(place) => (place.at, place.flip),
             None => (Pos::new(0.0, 0.0), area::Flip::None),
@@ -1391,7 +1391,7 @@ impl AreaFrame<'_> {
         self.pointer_tile.map(|t| t.cell())
     }
 
-    pub fn drag_tile(&self) -> Option<Pos<Tiles>> {
+    pub fn drag_tile(&self) -> Option<Pos<Meters>> {
         self.pointer_tile.or_else(|| {
             self.response
                 .interact_pointer_pos()
@@ -1443,7 +1443,12 @@ fn remember_camera(editor: &mut Editor, view_key: &str) {
     }
 }
 
-pub fn open_area_at(editor: &mut Editor, area: &str, at: Option<Pos<Tiles>>, part: Option<String>) {
+pub fn open_area_at(
+    editor: &mut Editor,
+    area: &str,
+    at: Option<Pos<Meters>>,
+    part: Option<String>,
+) {
     editor.open_tab(EditorTab::Area {
         key: area.to_owned(),
     });

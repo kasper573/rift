@@ -33,8 +33,8 @@ use crate::core::content::{
 use crate::core::geometry::{Footprint, Shape};
 use crate::core::math::Pos;
 use crate::core::script::FlowCx;
-use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{Seconds, UnixMillis};
+use crate::core::units::{Meters, TilePos};
 use crate::systems::area::AreaTag;
 use crate::systems::class::{self, NodeKey, SkillPoints, SkillTree};
 use crate::systems::equipment::{self, Equipment};
@@ -87,7 +87,7 @@ pub struct SkillDef {
     pub target: Targeting,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = 4.0))]
-    pub range: Option<Tiles>,
+    pub range: Option<Meters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub area: Option<Shape>,
     #[serde(default, skip_serializing_if = "Seconds::is_zero")]
@@ -202,7 +202,7 @@ impl ContentFile for SkillDef {
         if let Some(range) = self.range
             && range.0 <= 0.0
         {
-            check.error("/range", "out of range", range.0, "more than 0 tiles");
+            check.error("/range", "out of range", range.0, "more than 0 m");
         }
         for (index, stack) in self.cost.iter().enumerate() {
             if stack.count == 0 {
@@ -379,7 +379,7 @@ impl SkillStat {
     pub fn unit(self) -> Option<&'static str> {
         match self {
             SkillStat::Cooldown | SkillStat::Duration => Some("s"),
-            SkillStat::Range | SkillStat::Radius => Some("tiles"),
+            SkillStat::Range | SkillStat::Radius => Some("m"),
             SkillStat::Power => None,
         }
     }
@@ -570,7 +570,7 @@ impl SkillDef {
 
     pub fn area_at(&self, rank: Rank) -> Option<Shape> {
         self.area
-            .map(|shape| shape.grown(Tiles(self.stat(rank, SkillStat::Radius))))
+            .map(|shape| shape.grown(Meters(self.stat(rank, SkillStat::Radius))))
     }
 }
 
@@ -698,12 +698,12 @@ pub fn first_flagged_grant(
 
 /// The reach of a skill from an actor: the row's range, or the actor's Range stat when unset,
 /// plus whatever its ranks add.
-pub fn range_of(world: &World, actor: Entity, skill: SkillId, rank: Rank) -> Tiles {
+pub fn range_of(world: &World, actor: Entity, skill: SkillId, rank: Rank) -> Meters {
     let def = skill.get(world.resource::<Content>());
     let base = def
         .range
-        .unwrap_or_else(|| Tiles(stat::effective(world, actor, StatKind::Range)));
-    Tiles((base.0 + def.stat(rank, SkillStat::Range)).max(0.0))
+        .unwrap_or_else(|| Meters(stat::effective(world, actor, StatKind::Range)));
+    Meters((base.0 + def.stat(rank, SkillStat::Range)).max(0.0))
 }
 
 /// Whom a cast lands on, read from the use that raised the running script: the caster, the aimed
@@ -729,7 +729,7 @@ pub fn targets(world: &World, cx: &FlowCx, skill: SkillId) -> Vec<Entity> {
             let Some(area) = world.get::<AreaTag>(caster).map(|tag| tag.area) else {
                 return Vec::new();
             };
-            let mut inside: Vec<(Entity, Tiles)> = roster
+            let mut inside: Vec<(Entity, Meters)> = roster
                 .iter()
                 .filter(|listed| listed.area == area && footprint.contains(listed.at))
                 .filter(|listed| casting::fits(world, caster, listed.entity, def.target))
@@ -755,7 +755,7 @@ pub fn footprint(world: &World, cx: &FlowCx, skill: SkillId) -> Option<Footprint
     Some(Footprint::cast(shape, from, point))
 }
 
-pub fn aimed_point(world: &World, cx: &FlowCx, skill: SkillId) -> Option<Pos<Tiles>> {
+pub fn aimed_point(world: &World, cx: &FlowCx, skill: SkillId) -> Option<Pos<Meters>> {
     let caster = cx.subject?;
     match skill.get(world.resource::<Content>()).target {
         Targeting::Caster => movement::position(world, caster),

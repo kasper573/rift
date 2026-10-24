@@ -8,8 +8,8 @@ use crate::core::math::Pos;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, NEXT, REFUSED, ScriptFault, ValueType,
 };
-use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
+use crate::core::units::{Meters, TilePos};
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::equipment::{self, EquipmentSlot};
 use crate::systems::movement::{Position, position};
@@ -342,7 +342,7 @@ impl EffectDef<RiftScripting> for ClearGroundItems {
             let Some((area, center)) = at(world, cx) else {
                 return EffectStep::Done;
             };
-            let within = Tiles(within(world, cx).as_num() as f32);
+            let within = Meters(within(world, cx).as_num() as f32);
             let cleared: Vec<Entity> = world
                 .iter_entities()
                 .filter(|entity| entity.get::<DroppedItem>().is_some())
@@ -443,7 +443,7 @@ pub fn move_between(
     Ok(())
 }
 
-type SpotEval = Box<dyn Fn(&World, &FlowCx) -> Option<(AreaId, Pos<Tiles>)> + Send + Sync>;
+type SpotEval = Box<dyn Fn(&World, &FlowCx) -> Option<(AreaId, Pos<Meters>)> + Send + Sync>;
 
 fn spot<'c>(
     cx: &mut Compiler<'c, RiftScripting>,
@@ -465,7 +465,7 @@ fn spot<'c>(
     })
 }
 
-fn standing(world: &World, who: Entity) -> Option<(AreaId, Pos<Tiles>)> {
+fn standing(world: &World, who: Entity) -> Option<(AreaId, Pos<Meters>)> {
     Some((world.get::<AreaTag>(who)?.area, position(world, who)?))
 }
 

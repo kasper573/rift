@@ -15,8 +15,8 @@ use crate::core::gui::{self, Band};
 use crate::core::math::Pos;
 use crate::core::render::tile_to_window;
 use crate::core::text::{self, StyledLine, Typewriter};
-use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
+use crate::core::units::{Meters, TilePos};
 use crate::systems::actor::{Action, Actor, plate};
 use crate::systems::combat::Attitude;
 use crate::systems::dialogue::stage;
@@ -33,7 +33,7 @@ const FULL_IN_SMALL_WINDOW: usize = 2;
 const SMALL_WINDOW: f32 = 960.0;
 const REPLACE_AFTER: Seconds = Seconds(2.0);
 const READ_LINGERS: Seconds = Seconds(0.6);
-const FIGHTING_WITHIN: Tiles = Tiles(3.0);
+const FIGHTING_WITHIN: Meters = Meters(3.0);
 const EDGE: f32 = 8.0;
 const CROWN_GAP: f32 = 4.0;
 
@@ -901,7 +901,7 @@ fn egui_rect(rect: Rect) -> egui::Rect {
     )
 }
 
-fn body_at(world: &World, body: Entity) -> Option<Pos<Tiles>> {
+fn body_at(world: &World, body: Entity) -> Option<Pos<Meters>> {
     world
         .get::<RenderPosition>(body)
         .map(|rendered| rendered.0)
@@ -914,7 +914,7 @@ fn dead(world: &World, body: Entity) -> bool {
         .is_some_and(|actor| actor.action == Action::Dead)
 }
 
-fn fighting(world: &World, body: Entity, viewer: Option<Pos<Tiles>>) -> bool {
+fn fighting(world: &World, body: Entity, viewer: Option<Pos<Meters>>) -> bool {
     let hostile = world.get::<Attitude>(body) == Some(&Attitude::Hostile);
     let attacking = world
         .get::<Actor>(body)

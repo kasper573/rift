@@ -974,7 +974,7 @@ fn geometry(
         ),
     };
     let typed = typed(ui, id, &current, |ui, draft| {
-        InputField::new(draft).unit("tiles").show(ui)
+        InputField::new(draft).unit("m").show(ui)
     });
     let mut changed = FormChange::default();
     if let Typed::Cancelled = typed {
@@ -1781,7 +1781,7 @@ fn number_field(
     changed
 }
 
-pub fn tiles(value: f32) -> String {
+pub fn metres(value: f32) -> String {
     ((value as f64 * 1000.0).round() / 1000.0).to_string()
 }
 

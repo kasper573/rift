@@ -9,8 +9,8 @@ use crate::core::render::camera::WorldCamera;
 use crate::core::render::present::{SCALE, target_size};
 use crate::core::render::screen::ToScreen;
 use crate::core::render::{TILE, snap_to_screen};
-use crate::core::tiling::{TileSize, Tiles};
 use crate::core::time::Seconds;
+use crate::core::units::{Meters, TileSize};
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::player::session::MyCharacter;
@@ -37,7 +37,7 @@ impl Plugin for CameraFollowPlugin {
 /// continuous tiles rather than read back from the pixel-snapped [`Transform`], so smoothing doesn't
 /// feed on its own rounding.
 #[derive(Resource, Default)]
-struct FollowCenter(Option<(Followed, Pos<Tiles>)>);
+struct FollowCenter(Option<(Followed, Pos<Meters>)>);
 
 /// Who the camera follows, where: the camera glides after them only while this stays the same, and
 /// cuts to them when it changes, as they jump, cross into another area, or someone else is followed.
@@ -92,10 +92,10 @@ fn track_player(
 
 fn camera_center(
     content: &Content,
-    at: Pos<Tiles>,
+    at: Pos<Meters>,
     area_id: AreaId,
     half: Vec2,
-) -> Option<Pos<Tiles>> {
+) -> Option<Pos<Meters>> {
     let area = area::load(content, area_id);
     let bounds = area.size.bounds();
     let lo = Pos::new(bounds.min().x + half.x, bounds.min().y + half.y);

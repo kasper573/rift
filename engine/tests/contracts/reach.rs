@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
-use engine::core::tiling::Tiles;
 use engine::core::time::Seconds;
+use engine::core::units::Meters;
 use engine::systems::area::{AreaDef, AreaTag};
 use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::item::{self, DroppedItem, Inventory, ItemDef, PickupRequest, Reservation};
@@ -104,7 +104,7 @@ fn yard() -> Sim {
     sim
 }
 
-fn brute(sim: &mut Sim, at: Pos<Tiles>) -> Entity {
+fn brute(sim: &mut Sim, at: Pos<Meters>) -> Entity {
     let area = sim.id::<AreaDef>("yard");
     let brute = sim.id::<NpcDef>("brute");
     let brute = npc::spawn(&mut sim.world, brute, at, area, Pack(u32::MAX));
@@ -112,7 +112,7 @@ fn brute(sim: &mut Sim, at: Pos<Tiles>) -> Entity {
     brute
 }
 
-fn drop_bone(sim: &mut Sim, at: Pos<Tiles>) -> Entity {
+fn drop_bone(sim: &mut Sim, at: Pos<Meters>) -> Entity {
     let area = sim.id::<AreaDef>("yard");
     let bone = sim.id::<ItemDef>("bone");
     sim.world

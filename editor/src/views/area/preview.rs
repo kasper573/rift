@@ -158,8 +158,8 @@ pub fn pick_preview(editor: &mut Editor, ui: &mut Ui) {
         response.clone().on_hover_ui(|ui| {
             ui.label(theme::strong(format!(
                 "{}, {} · {}",
-                forms::tiles(at.x),
-                forms::tiles(at.y),
+                forms::metres(at.x),
+                forms::metres(at.y),
                 if ok { "walkable" } else { "refused" }
             )));
             ui.label(theme::muted(format!("{why} · click to pick")).size(12.0));

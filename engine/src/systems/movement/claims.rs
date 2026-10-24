@@ -4,7 +4,7 @@ use bevy_ecs::world::DeferredWorld;
 use bevy_platform::collections::HashMap;
 
 use crate::core::math::Pos;
-use crate::core::tiling::{CellPos, TilePos, Tiles};
+use crate::core::units::{CellPos, Meters, TilePos};
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::stat;
 
@@ -33,7 +33,7 @@ impl TileClaims {
 }
 
 impl TileClaim {
-    pub fn at(area: AreaId, pos: Pos<Tiles>) -> TileClaim {
+    pub fn at(area: AreaId, pos: Pos<Meters>) -> TileClaim {
         TileClaim {
             area,
             cell: pos.cell(),
@@ -80,7 +80,7 @@ pub fn others_on(world: &World, entity: Entity, cell: CellPos) -> u16 {
 }
 
 /// Claims `pos`'s tile for the actor; a fallen actor claims nothing.
-pub(super) fn claim(world: &mut World, entity: Entity, pos: Pos<Tiles>) {
+pub(super) fn claim(world: &mut World, entity: Entity, pos: Pos<Meters>) {
     if stat::is_dead(world, entity) {
         world.entity_mut(entity).remove::<TileClaim>();
         return;

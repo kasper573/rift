@@ -12,10 +12,10 @@ use crate::core::audio::mix::{AudioCategory, AudioMix};
 use crate::core::audio::playback::{Listener, PositionalAudio};
 use crate::core::content::serial;
 use crate::core::math::{Pos, Rect, Size};
-use crate::core::tiling::Tiles;
 use crate::core::time::Seconds;
+use crate::core::units::Meters;
 
-pub const EDGE_FALLOFF: Tiles = Tiles(4.0);
+pub const EDGE_FALLOFF: Meters = Meters(4.0);
 // The quickest the mix may swing from silence to full. Proximity drives every change, and this only
 // catches the jumps, like travelling between areas, so they glide instead of cutting.
 const SLEW: Seconds = Seconds(0.75);
@@ -39,7 +39,7 @@ pub struct Soundscape(pub Vec<SoundscapeZone>);
 #[derive(Clone, Debug, PartialEq)]
 pub struct SoundscapeZone {
     pub shape: SoundscapeShape,
-    pub emit: Tiles,
+    pub emit: Meters,
     pub channels: BTreeMap<SoundscapeChannel, SoundscapeLayer>,
 }
 
@@ -52,7 +52,7 @@ pub enum SoundscapeShape {
             serialize_with = "serial::rect",
             deserialize_with = "serial::rect_from"
         )]
-        Rect<Tiles>,
+        Rect<Meters>,
     ),
     Ellipse(
         #[schemars(with = "serial::RectRow")]
@@ -60,7 +60,7 @@ pub enum SoundscapeShape {
             serialize_with = "serial::rect",
             deserialize_with = "serial::rect_from"
         )]
-        Rect<Tiles>,
+        Rect<Meters>,
     ),
 }
 
@@ -95,24 +95,24 @@ pub struct SoundscapeVoice {
 }
 
 impl SoundscapeZone {
-    pub fn reach(&self) -> Tiles {
+    pub fn reach(&self) -> Meters {
         EDGE_FALLOFF + self.emit
     }
 
-    pub fn heard_from(&self, at: Pos<Tiles>) -> Option<PositionalAudio> {
+    pub fn heard_from(&self, at: Pos<Meters>) -> Option<PositionalAudio> {
         let heard = PositionalAudio::of(at, self.shape.nearest(at), Size::splat(self.reach().0));
         heard.audible().then_some(heard)
     }
 }
 
 impl SoundscapeShape {
-    pub fn bounds(self) -> Rect<Tiles> {
+    pub fn bounds(self) -> Rect<Meters> {
         match self {
             SoundscapeShape::Rect(bounds) | SoundscapeShape::Ellipse(bounds) => bounds,
         }
     }
 
-    pub fn nearest(self, at: Pos<Tiles>) -> Pos<Tiles> {
+    pub fn nearest(self, at: Pos<Meters>) -> Pos<Meters> {
         match self {
             SoundscapeShape::Rect(bounds) => at.clamp(bounds.min(), bounds.max()),
             SoundscapeShape::Ellipse(bounds) => {
@@ -272,7 +272,7 @@ fn mix(
     }
 }
 
-fn wanted_layers(soundscape: &Soundscape, at: Pos<Tiles>) -> Vec<WantedLayer> {
+fn wanted_layers(soundscape: &Soundscape, at: Pos<Meters>) -> Vec<WantedLayer> {
     let mut wanted: Vec<WantedLayer> = Vec::new();
     for zone in &soundscape.0 {
         let Some(heard) = zone.heard_from(at) else {
@@ -308,7 +308,7 @@ fn wanted_layers(soundscape: &Soundscape, at: Pos<Tiles>) -> Vec<WantedLayer> {
     wanted
 }
 
-fn unit_circle(bounds: Rect<Tiles>, at: Pos<Tiles>) -> euclid::Vector2D<f32, Tiles> {
+fn unit_circle(bounds: Rect<Meters>, at: Pos<Meters>) -> euclid::Vector2D<f32, Meters> {
     (at - bounds.center()).component_div(bounds.size.to_vector() / 2.0)
 }
 

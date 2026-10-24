@@ -15,7 +15,7 @@ use bevy_egui::{
 };
 use engine::core::content::{Content, ContentFile, FolderReader, Unreadable, fields_file, version};
 use engine::core::math::Pos;
-use engine::core::tiling::{CellPos, Tiles};
+use engine::core::units::{CellPos, Meters};
 use engine::core::vfx::render::{VfxAssets, VfxMaterial};
 use engine::systems;
 use engine::systems::area::AreaModuleKind;
@@ -314,7 +314,7 @@ pub struct SceneClip {
     pub from: String,
     pub nodes: CopiedNodes,
     pub count: usize,
-    pub origin: Pos<Tiles>,
+    pub origin: Pos<Meters>,
 }
 
 /// Modules copied out of the list of the row `from`.

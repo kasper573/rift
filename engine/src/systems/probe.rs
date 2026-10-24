@@ -20,8 +20,8 @@ use crate::core::math::{Offset, Pos, Rect, Size, WindowPx};
 use crate::core::platform::ClientPlatform;
 use crate::core::render::tile_to_window;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
-use crate::core::tiling::{CellPos, TilePos, Tiles};
 use crate::core::time::{self, Seconds};
+use crate::core::units::{CellPos, Meters, TilePos};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::model::ModelId;
 use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox};
@@ -136,7 +136,7 @@ pub struct ProbeView {
 }
 
 impl ProbeView {
-    pub fn window_point(&self, at: Pos<Tiles>) -> Pos<WindowPx> {
+    pub fn window_point(&self, at: Pos<Meters>) -> Pos<WindowPx> {
         self.origin + Offset::new(at.x * self.tile.x, at.y * self.tile.y)
     }
 }
@@ -148,13 +148,13 @@ pub struct ProbeBody {
     pub model: ModelId,
     pub flies: bool,
     pub player: bool,
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     /// Where it shows on screen, which runs behind `at` for others and ahead of it for the player's
     /// own walk.
-    pub drawn: Pos<Tiles>,
+    pub drawn: Pos<Meters>,
     /// Where a click takes it rather than whatever stands in front of it.
-    pub aim: Pos<Tiles>,
-    pub hitbox: Rect<Tiles>,
+    pub aim: Pos<Meters>,
+    pub hitbox: Rect<Meters>,
     pub action: Action,
     /// The tile it stands still on; none while it walks.
     pub resting: Option<CellPos>,
@@ -173,9 +173,9 @@ pub struct ProbeObject {
     pub id: Entity,
     pub name: Option<String>,
     pub title: Option<String>,
-    pub at: Pos<Tiles>,
-    pub aim: Pos<Tiles>,
-    pub hitbox: Rect<Tiles>,
+    pub at: Pos<Meters>,
+    pub aim: Pos<Meters>,
+    pub hitbox: Rect<Meters>,
     pub marks: Vec<AttentionId>,
 }
 
@@ -184,15 +184,15 @@ pub struct ProbeGroundItem {
     pub id: Entity,
     pub item: ItemId,
     pub count: u32,
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ProbeWarp {
     pub name: String,
     pub to: AreaId,
-    pub at: Pos<Tiles>,
-    pub rect: Rect<Tiles>,
+    pub at: Pos<Meters>,
+    pub rect: Rect<Meters>,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -377,9 +377,9 @@ pub struct ProbeSoundscape {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ProbeSoundZone {
-    pub bounds: Rect<Tiles>,
+    pub bounds: Rect<Meters>,
     pub ellipse: bool,
-    pub reach: Tiles,
+    pub reach: Meters,
     pub proximity: f32,
     pub tracks: Vec<ProbeTrack>,
 }
@@ -883,10 +883,10 @@ fn objects(world: &mut World, area: Option<AreaId>) -> Vec<ProbeObject> {
         .collect()
 }
 
-fn aim(world: &mut World, entity: Entity, hitbox: Rect<Tiles>) -> Pos<Tiles> {
+fn aim(world: &mut World, entity: Entity, hitbox: Rect<Meters>) -> Pos<Meters> {
     const STEPS: u8 = 5;
     let center = hitbox.center();
-    let mut spots: Vec<Pos<Tiles>> = (0..STEPS)
+    let mut spots: Vec<Pos<Meters>> = (0..STEPS)
         .flat_map(|x| (0..STEPS).map(move |y| (x, y)))
         .map(|(x, y)| {
             hitbox.origin
@@ -903,7 +903,7 @@ fn aim(world: &mut World, entity: Entity, hitbox: Rect<Tiles>) -> Pos<Tiles> {
         .unwrap_or(center)
 }
 
-fn clicked(world: &mut World, spot: Pos<Tiles>) -> Option<Entity> {
+fn clicked(world: &mut World, spot: Pos<Meters>) -> Option<Entity> {
     match gestures::claim_at(world, Some(spot)) {
         ClickClaim::Attack(entity) | ClickClaim::Interact(entity) => Some(entity),
         _ => None,

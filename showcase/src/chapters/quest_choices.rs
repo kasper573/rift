@@ -1,5 +1,5 @@
 use driver::{UiTarget, finished, holding, input_name, noticed, on_quest};
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::input::map::InputAction;
 use engine::systems::quest::QuestResult;
 
@@ -50,7 +50,7 @@ fn play(shoot: &mut Shoot) {
     me.cross("forest-road");
 
     me.caption("Finding the standing stone completes the objective");
-    me.walk_into("standing-stone", Tiles(4.0));
+    me.walk_into("standing-stone", Meters(4.0));
     me.interact_with("standing-stone");
     me.wait_until("the stone found", |snapshot| {
         on_quest(snapshot, "x_marks_the_spot").is_some_and(|quest| quest.ready)
@@ -65,7 +65,7 @@ fn play(shoot: &mut Shoot) {
     });
 
     me.caption("Ugra, the clan's shaman, knows about Mara's errand");
-    me.walk_into("ugra", Tiles(3.0));
+    me.walk_into("ugra", Meters(3.0));
     me.talk_to("ugra");
     me.read_to_choices();
     me.pick("The Shaman's Plea");

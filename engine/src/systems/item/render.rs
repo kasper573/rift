@@ -6,8 +6,8 @@ use crate::core::content::Content;
 use crate::core::math::{Pos, WorldPx};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::{RowDepth, ToScreen, dynamic_z, place_sprite};
-use crate::core::tiling::Tiles;
 use crate::core::time::Seconds;
+use crate::core::units::Meters;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::item::{DroppedItem, ItemConsumed, ItemsDropped};
 use crate::systems::movement::{Position, RenderPosition};
@@ -150,7 +150,7 @@ fn animate_drops(
     }
 }
 
-fn drop_z(content: &Content, tag: &AreaTag, pos: Pos<Tiles>) -> f32 {
+fn drop_z(content: &Content, tag: &AreaTag, pos: Pos<Meters>) -> f32 {
     let area = area::load(content, tag.area);
-    dynamic_z(area.size.height, area.sort_base(), Tiles(pos.y))
+    dynamic_z(area.size.height, area.sort_base(), Meters(pos.y))
 }

@@ -1,6 +1,6 @@
 use engine::core::content::{ContentFile, table_of};
 use engine::core::math::{Pos, Rect, Size};
-use engine::core::tiling::GridSize;
+use engine::core::units::GridSize;
 use engine::systems::area::{self, AreaDef, AreaModule, MapSize};
 use engine::systems::script::Place;
 use ui::controls;

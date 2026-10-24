@@ -12,7 +12,7 @@ use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::render::TILE;
 use crate::core::render::screen::ToScreen;
-use crate::core::tiling::Tiles;
+use crate::core::units::Meters;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::player::RespawnRequest;
 use crate::systems::player::session::{self, MyCharacter};
@@ -40,7 +40,7 @@ impl Plugin for PlayerInputPlugin {
 
 #[derive(Resource)]
 pub struct ActiveTileHighlight {
-    pub pos: Pos<Tiles>,
+    pub pos: Pos<Meters>,
     pub image: Handle<Image>,
 }
 

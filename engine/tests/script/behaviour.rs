@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
-use engine::core::tiling::{TilePos, Tiles};
+use engine::core::units::{Meters, TilePos};
 use engine::systems::combat::{AttackRequest, Attitude};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::body;
@@ -9,8 +9,8 @@ use testkit::Sim;
 
 use crate::game::{field, health, spawn};
 
-const FAR: Pos<Tiles> = Pos::new(28.0, 28.0);
-const STROLLER_HOME: Pos<Tiles> = Pos::new(26.0, 4.0);
+const FAR: Pos<Meters> = Pos::new(28.0, 28.0);
+const STROLLER_HOME: Pos<Meters> = Pos::new(26.0, 4.0);
 
 #[test]
 fn an_aggressive_monster_picks_a_character_in_its_aggro_range_and_drops_one_beyond_it() {
@@ -72,20 +72,20 @@ fn idle_stroll_keeps_its_leash() {
     let (mut sim, _) = field();
     let stroller = sim.npc("stroller");
     let home = STROLLER_HOME;
-    let leash = Tiles(3.0);
+    let leash = Meters(3.0);
 
-    let mut farthest = Tiles(0.0);
+    let mut farthest = Meters(0.0);
     let mut moved = false;
     sim.run_until(90.0, |world| {
         let here = position(world, stroller).expect("position");
-        farthest = Tiles(farthest.0.max(here.distance(home).0));
+        farthest = Meters(farthest.0.max(here.distance(home).0));
         moved |= here != home;
         false
     });
 
     assert!(moved, "the stroller never strolled");
     assert!(
-        farthest <= Tiles(leash.0 + 1.0),
+        farthest <= Meters(leash.0 + 1.0),
         "strayed {farthest:?} from home"
     );
 }

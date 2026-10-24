@@ -3,7 +3,7 @@ use bevy_ecs::prelude::*;
 use bevy_replicon::prelude::FromClient;
 use engine::core::content::Content;
 use engine::core::math::Pos;
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
 use engine::systems::area::transition::{self, Crossing};
 use engine::systems::memory::{self, MemoryDef};
@@ -67,7 +67,7 @@ impl Sim {
 
     /// Hands `player` over from this area's server to `to`'s, the way a crossing does, landing at
     /// `at` and drawing the area there: the character as it arrived.
-    pub fn cross(&mut self, player: Entity, to: &mut Sim, at: Pos<Tiles>) -> Entity {
+    pub fn cross(&mut self, player: Entity, to: &mut Sim, at: Pos<Meters>) -> Entity {
         let client = self.world.get::<PlayedBy>(player).expect("a player").client;
         let dest_area = to.world.resource::<WorldArea>().0;
         to.connect(client.0);

@@ -14,7 +14,7 @@ use engine::core::babble::{BabbleDef, BabbleRank, Babbling};
 use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::text::{StyledLine, Typewriter};
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::area::{self, AreaId};
 use ui::egui::Ui;
 
@@ -25,7 +25,7 @@ pub const BABBLE_SAMPLE: &str = "The quick brown fox jumps over the lazy dog";
 
 pub struct ListeningPoint {
     pub area: String,
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     pub heard: Vec<HeardZone>,
 }
 
@@ -33,11 +33,11 @@ pub struct ListeningPoint {
 pub struct HeardZone {
     pub name: String,
     pub gain: f32,
-    pub outside: Tiles,
+    pub outside: Meters,
     pub zone: SoundscapeZone,
 }
 
-pub fn listen(editor: &mut Editor, content: &Content, area_id: AreaId, at: Pos<Tiles>) {
+pub fn listen(editor: &mut Editor, content: &Content, area_id: AreaId, at: Pos<Meters>) {
     let area = area::load(content, area_id);
     let heard = area
         .soundscape
@@ -55,7 +55,7 @@ pub fn listen(editor: &mut Editor, content: &Content, area_id: AreaId, at: Pos<T
             Some(HeardZone {
                 name: format!("soundscape {} · {stem}", index + 1),
                 gain: positional.proximity,
-                outside: Tiles(((at - zone.shape.nearest(at)).length() - zone.emit.0).max(0.0)),
+                outside: Meters(((at - zone.shape.nearest(at)).length() - zone.emit.0).max(0.0)),
                 zone: zone.clone(),
             })
         })
@@ -252,11 +252,7 @@ pub fn panel(editor: &Editor, ui: &mut Ui) {
                 let reach = if heard.outside.0 <= 0.0 {
                     "inside".to_owned()
                 } else {
-                    format!(
-                        "{:.1} tiles out · {:.0}%",
-                        heard.outside.0,
-                        heard.gain * 100.0
-                    )
+                    format!("{:.1} m out · {:.0}%", heard.outside.0, heard.gain * 100.0)
                 };
                 ui.label(theme::mono(channel.0.to_string()));
                 ui.label(theme::mono(format!(

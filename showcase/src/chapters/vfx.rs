@@ -4,7 +4,7 @@ use driver::{
     status_on_me,
 };
 use engine::core::math::Pos;
-use engine::core::tiling::{TilePos, Tiles};
+use engine::core::units::{Meters, TilePos};
 use engine::core::vfx::VfxSite;
 use engine::systems::input::map::InputAction;
 use engine::systems::probe::{ProbeBody, ProbeSnapshot};
@@ -26,14 +26,14 @@ const PREY: &str = "ghoul";
 fn play(shoot: &mut Shoot) {
     let ring = pack_ground(AREA, PREY);
     // Beside the pack rather than above or below it, so the pack stays in the wider half of the view.
-    let ground: Vec<_> = ground_near(AREA, ring, Tiles(4.0)..=Tiles(6.5))
+    let ground: Vec<_> = ground_near(AREA, ring, Meters(4.0)..=Meters(6.5))
         .into_iter()
         .filter(|tile| (tile.y - ring.y).abs() <= 1.5)
         .collect();
     let mine = *ground.first().expect("ground beside the pack");
     let theirs = *ground
         .iter()
-        .find(|tile| tile.distance(mine) >= Tiles(1.0))
+        .find(|tile| tile.distance(mine) >= Meters(1.0))
         .expect("room for two beside the pack");
     let player = shoot.join_as("arcanist", Some(place(mine)));
     let mut friend = shoot.join_as("armsman", Some(place(theirs)));
@@ -124,7 +124,7 @@ fn play(shoot: &mut Shoot) {
 
 // Where the pack is converging on the player, once two or more have come close, so the chain's
 // circle still holds them when they arrive.
-fn closing_pack(snapshot: &ProbeSnapshot) -> Option<Pos<Tiles>> {
+fn closing_pack(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
     let me = snapshot.me.as_ref()?.at;
     let close: Vec<_> = snapshot
         .actors
@@ -168,13 +168,13 @@ fn sunder_nearest(friend: &mut Player) {
     );
 }
 
-fn place(at: Pos<Tiles>) -> Place {
+fn place(at: Pos<Meters>) -> Place {
     Place { area: id(AREA), at }
 }
 
 /// The nearest living prey on the friend's screen: where the pack is now, which the cone sweeps
 /// at, rather than where it roams, which may lie out of the friend's view.
-fn foe_in_view(snapshot: &ProbeSnapshot) -> Option<Pos<Tiles>> {
+fn foe_in_view(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
     let foe = nearest_npc(snapshot, PREY)?.at;
     clickable_point(snapshot, foe).map(|_| foe)
 }

@@ -8,7 +8,7 @@ use driver::{
     input_name, nearest_npc, npc_is, resident_home, surrounded_by,
 };
 use engine::core::math::{Offset, Pos};
-use engine::core::tiling::{TilePos, Tiles};
+use engine::core::units::{Meters, TilePos};
 use engine::systems::actor::Action;
 use engine::systems::input::map::InputAction;
 use engine::systems::probe::{ProbeBody, ProbeGroundItem, ProbeSnapshot};
@@ -137,7 +137,7 @@ fn slay(me: &mut Player) -> Vec<ProbeGroundItem> {
         let near: Vec<ProbeGroundItem> = snapshot
             .items
             .iter()
-            .filter(|item| item.at.distance(fell) < Tiles(2.5))
+            .filter(|item| item.at.distance(fell) < Meters(2.5))
             .cloned()
             .collect();
         (!near.is_empty()).then_some(near)
@@ -222,7 +222,7 @@ fn nearest_prey(snapshot: &ProbeSnapshot) -> Option<&ProbeBody> {
         .min_by(|a, b| a.at.distance_to(me).total_cmp(&b.at.distance_to(me)))
 }
 
-fn safe(snapshot: &ProbeSnapshot, at: Pos<Tiles>) -> bool {
+fn safe(snapshot: &ProbeSnapshot, at: Pos<Meters>) -> bool {
     area_name(snapshot).is_some_and(|area| area_named(area).safe(at))
 }
 
@@ -231,11 +231,11 @@ fn safe_here(snapshot: &ProbeSnapshot) -> bool {
 }
 
 // The ground in town nearest the player, a couple of tiles in from every edge.
-fn in_town(snapshot: &ProbeSnapshot) -> Pos<Tiles> {
+fn in_town(snapshot: &ProbeSnapshot) -> Pos<Meters> {
     let me = snapshot.me.as_ref().expect("the player").at;
     let area = area_named(area_name(snapshot).expect("an area"));
     let grid = &area.grid;
-    let deep = |at: Pos<Tiles>| {
+    let deep = |at: Pos<Meters>| {
         [(-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0)]
             .into_iter()
             .all(|(x, y)| area.safe(at + Offset::new(x, y)))

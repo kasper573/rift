@@ -5,7 +5,7 @@ use driver::{
 };
 use engine::core::geometry::Shape;
 use engine::core::math::Pos;
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::core::vfx::VfxSite;
 use engine::systems::input::map::InputAction;
 use engine::systems::probe::{ProbeBody, ProbeSnapshot};
@@ -114,7 +114,7 @@ fn play(shoot: &mut Shoot) {
 fn aim_then_cast(
     me: &mut Star,
     slot: InputAction,
-    at: Pos<Tiles>,
+    at: Pos<Meters>,
     done: impl Fn(&ProbeSnapshot) -> bool,
 ) {
     me.aim_skill(slot, at);
@@ -125,14 +125,14 @@ fn aim_then_cast(
 /// The prey with the most others inside a circle of `radius` around it, once that is at least one
 /// other: the pack fights back after the fireball and runs at the caster, so the circle goes where
 /// it is now rather than where it roams.
-fn crowd(snapshot: &ProbeSnapshot, radius: Tiles) -> Option<Pos<Tiles>> {
-    let prey: Vec<Pos<Tiles>> = snapshot
+fn crowd(snapshot: &ProbeSnapshot, radius: Meters) -> Option<Pos<Meters>> {
+    let prey: Vec<Pos<Meters>> = snapshot
         .actors
         .iter()
         .filter(|actor| actor.health > 0.0 && npc_is(actor, PREY))
         .map(|actor| actor.at)
         .collect();
-    let around = |at: Pos<Tiles>| {
+    let around = |at: Pos<Meters>| {
         prey.iter()
             .filter(|other| other.distance_to(at) <= radius.0)
             .count()
@@ -148,7 +148,7 @@ fn still(body: &ProbeBody) -> bool {
     body.resting.is_some()
 }
 
-fn chain_radius() -> Tiles {
+fn chain_radius() -> Meters {
     match id::<SkillDef>("chain_lightning").get(content()).area {
         Some(Shape::Circle { radius }) => radius,
         area => panic!("Chain Lightning strikes a circle, not {area:?}"),
@@ -163,7 +163,7 @@ fn chained_through_several(snapshot: &ProbeSnapshot) -> bool {
 
 /// The nearest living prey on the friend's screen: where the pack is now, which the cone sweeps
 /// at, rather than where it roams, which may lie out of the friend's view.
-fn foe_in_view(snapshot: &ProbeSnapshot) -> Option<Pos<Tiles>> {
+fn foe_in_view(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
     let foe = nearest_npc(snapshot, PREY)?.at;
     clickable_point(snapshot, foe).map(|_| foe)
 }

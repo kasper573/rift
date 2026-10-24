@@ -14,12 +14,12 @@ use bevy::sprite_render::Material2dPlugin;
 
 use crate::core::interpolate::RenderValueSystems;
 use crate::core::math::{Pos, Rect as WorldRect, WorldPx};
-use crate::core::tiling::Tiles;
 use crate::core::time::Seconds;
+use crate::core::units::Meters;
 
 pub const TILE: WorldPx = WorldPx(16.0);
 
-pub fn place_sprite(transform: &mut Transform, pos: Pos<Tiles>) {
+pub fn place_sprite(transform: &mut Transform, pos: Pos<Meters>) {
     let screen = pos.to_screen();
     transform.translation.x = screen.x;
     transform.translation.y = screen.y;
@@ -29,8 +29,8 @@ pub fn snap_to_screen(at: Vec2) -> Vec2 {
     (at * present::SCALE).round() / present::SCALE
 }
 
-pub fn dynamic_z(area_height: f32, base: f32, y: Tiles) -> f32 {
-    base + (y + Tiles(1.0)).ratio(Tiles(area_height + 2.0))
+pub fn dynamic_z(area_height: f32, base: f32, y: Meters) -> f32 {
+    base + (y + Meters(1.0)).ratio(Meters(area_height + 2.0))
 }
 
 /// The depth the shown area's ground ends at, so what lies flat on it sorts above the ground and
@@ -47,7 +47,7 @@ pub struct RowDepths {
 }
 
 impl RowDepths {
-    pub fn at(&self, y: Tiles) -> f32 {
+    pub fn at(&self, y: Meters) -> f32 {
         dynamic_z(self.height, self.base, y)
     }
 }

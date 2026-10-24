@@ -3,14 +3,14 @@ use bevy::window::SystemCursorIcon;
 
 use crate::core::gui;
 use crate::core::math::Pos;
-use crate::core::tiling::Tiles;
+use crate::core::units::Meters;
 use crate::systems::input::gestures::{ClickClaim, Cursor, Gesture};
 use crate::systems::interface::CursorShape;
 
 pub struct InterfaceGesture;
 
 impl Gesture for InterfaceGesture {
-    fn claim(&self, world: &mut World, tile: Option<Pos<Tiles>>) -> Option<ClickClaim> {
+    fn claim(&self, world: &mut World, tile: Option<Pos<Meters>>) -> Option<ClickClaim> {
         (tile.is_none() && gui::pointer_claimed(world)).then_some(ClickClaim::Interface)
     }
 

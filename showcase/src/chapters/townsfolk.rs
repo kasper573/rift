@@ -2,7 +2,7 @@ use driver::{
     Player, UiTarget, content, holding, input_name, object_named, resident_home, townsperson,
 };
 use engine::core::math::{Offset, Pos};
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::input::gestures::ClickClaim;
 use engine::systems::input::map::InputAction;
 use engine::systems::probe::ProbeSnapshot;
@@ -82,6 +82,6 @@ fn play(shoot: &mut Shoot) {
 }
 
 // Clear of what it stands below, so the click walks there instead of using it.
-fn walk_below(me: &mut Player, target: impl Fn(&ProbeSnapshot) -> Option<Pos<Tiles>>) {
+fn walk_below(me: &mut Player, target: impl Fn(&ProbeSnapshot) -> Option<Pos<Meters>>) {
     me.walk_toward(|snapshot| target(snapshot).map(|at| at + Offset::new(0.0, 2.5)));
 }

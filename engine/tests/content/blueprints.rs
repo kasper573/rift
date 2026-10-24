@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use engine::core::content::{ContentFolder, ContentId, FolderReader};
 use engine::core::math::Pos;
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::grid::Flip;
 use engine::systems::area::{self, AreaDef, AreaModule, Scenery, SceneryTile, walk};
@@ -26,7 +26,7 @@ fn a_placement_flattens_to_exactly_its_parts_nested_ones_included() {
     let start = start(&content);
     let placed = area::placed(&content, start);
 
-    let parts: Vec<(&str, usize, Pos<Tiles>, Flip)> = placed
+    let parts: Vec<(&str, usize, Pos<Meters>, Flip)> = placed
         .iter()
         .map(|part| {
             let (at, flip) = scenery_at(&part.module);
@@ -328,7 +328,7 @@ fn a_placement_fills_each_hole_with_the_value_it_gives_or_its_variables_default(
         area::placed(&content, start(&content))
             .iter()
             .map(|part| scenery_at(&part.module).0)
-            .collect::<Vec<Pos<Tiles>>>()
+            .collect::<Vec<Pos<Meters>>>()
     };
 
     assert_eq!(
@@ -527,7 +527,7 @@ fn rules(report: &engine::core::content::LoadReport) -> Vec<&str> {
         .collect()
 }
 
-fn scenery_at(module: &AreaModule) -> (Pos<Tiles>, Flip) {
+fn scenery_at(module: &AreaModule) -> (Pos<Meters>, Flip) {
     match module {
         AreaModule::Scenery(scenery) => (scenery.at, scenery.flip),
         other => panic!(

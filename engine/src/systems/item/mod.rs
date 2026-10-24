@@ -23,8 +23,8 @@ use crate::core::content::{
     Content, ContentFile, ContentId, ModuleRule, ModuleSet, NamedContent, Nearby, serial,
 };
 use crate::core::math::{Offset, Pos};
-use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
+use crate::core::units::{Meters, TilePos};
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::equipment;
 use crate::systems::movement::{Position, position};
@@ -40,8 +40,8 @@ use crate::systems::visibility::{self, Presence, seen_by};
 pub const INVENTORY_MAX: u32 = 25;
 const RESERVATION_TTL: Seconds = Seconds(60.0);
 const DROP_TTL: Seconds = Seconds(120.0);
-const DROP_RADIUS: Tiles = Tiles(1.0);
-const PICKUP_RANGE: Tiles = Tiles(1.0);
+const DROP_RADIUS: Meters = Meters(1.0);
+const PICKUP_RANGE: Meters = Meters(1.0);
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -322,7 +322,7 @@ pub struct ItemConsumed {
 pub struct ItemsDropped {
     #[entities]
     pub items: Vec<Entity>,
-    pub from: Pos<Tiles>,
+    pub from: Pos<Meters>,
 }
 
 pub type ItemId = ContentId<ItemDef>;
@@ -583,7 +583,7 @@ pub fn pickup_request(world: &mut World) {
     });
 }
 
-pub fn pickable_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
+pub fn pickable_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
     let me = crate::systems::player::session::my_id(world);
     let cell = point.cell();
     world
@@ -669,7 +669,7 @@ pub fn scatter_drop(
 
 pub fn scatter_at(
     world: &mut World,
-    from: Pos<Tiles>,
+    from: Pos<Meters>,
     area_id: AreaId,
     drops: &[(ItemId, u32)],
     reserved_by: Option<ClientId>,
@@ -749,7 +749,7 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
     }
 }
 
-fn scatter_pos(from: Pos<Tiles>, index: usize, count: usize, area: &area::Area) -> Pos<Tiles> {
+fn scatter_pos(from: Pos<Meters>, index: usize, count: usize, area: &area::Area) -> Pos<Meters> {
     let rest = from.snap();
     if count == 1 {
         return area.grid.nearest_walkable(from).unwrap_or(rest);

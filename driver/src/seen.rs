@@ -2,7 +2,7 @@ use bevy_ecs::entity::Entity;
 use engine::core::content::Fixture;
 use engine::core::math::{Offset, Pos, Rect, WindowPx};
 use engine::core::render::transition::ScreenTransitionPhase;
-use engine::core::tiling::{CellPos, TilePos, Tiles};
+use engine::core::units::{CellPos, Meters, TilePos};
 use engine::core::vfx::{VfxDef, VfxSite};
 use engine::systems::actor::Action;
 use engine::systems::area::AreaDef;
@@ -196,7 +196,7 @@ pub fn erred(snapshot: &ProbeSnapshot, saying: &str) -> bool {
 }
 
 /// Where the tile shows in the window, if it does, clear of the interface over it.
-pub fn clickable_point(snapshot: &ProbeSnapshot, tile: Pos<Tiles>) -> Option<Pos<WindowPx>> {
+pub fn clickable_point(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> Option<Pos<WindowPx>> {
     let point = snapshot.view?.window_point(tile);
     let window = Rect::from_size(snapshot.screen?);
     (window.contains(point) && !snapshot.covered.iter().any(|cover| cover.contains(point)))
@@ -204,12 +204,12 @@ pub fn clickable_point(snapshot: &ProbeSnapshot, tile: Pos<Tiles>) -> Option<Pos
 }
 
 /// Ground a click walks onto: in view, and clear of anyone or anything a click would use instead.
-pub fn open(snapshot: &ProbeSnapshot, tile: Pos<Tiles>) -> bool {
+pub fn open(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
     clickable_point(snapshot, tile).is_some() && !taken(snapshot, tile)
 }
 
 /// Someone or something stands there, or lies there.
-pub fn taken(snapshot: &ProbeSnapshot, tile: Pos<Tiles>) -> bool {
+pub fn taken(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
     snapshot
         .actors
         .iter()
@@ -226,7 +226,7 @@ pub fn taken(snapshot: &ProbeSnapshot, tile: Pos<Tiles>) -> bool {
 
 /// Anyone walking can step under the pointer between the frame that shows ground clear and the
 /// click landing there, so ground within a tile of them is left alone while they pass.
-pub fn passed_by(snapshot: &ProbeSnapshot, tile: Pos<Tiles>) -> bool {
+pub fn passed_by(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
     let me = snapshot.me.as_ref().map(|me| me.id);
     snapshot
         .actors
@@ -237,7 +237,7 @@ pub fn passed_by(snapshot: &ProbeSnapshot, tile: Pos<Tiles>) -> bool {
 
 /// Anyone at all can be under the pointer by the time a click lands: who walks may walk onto the
 /// ground, and who stands may set off. Ground picked freely keeps a tile clear of everyone.
-pub fn beside_anyone(snapshot: &ProbeSnapshot, tile: Pos<Tiles>) -> bool {
+pub fn beside_anyone(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
     let me = snapshot.me.as_ref().map(|me| me.id);
     snapshot
         .actors
@@ -246,10 +246,10 @@ pub fn beside_anyone(snapshot: &ProbeSnapshot, tile: Pos<Tiles>) -> bool {
         .any(|actor| actor.hitbox.inflate(PASSING.0, PASSING.0).contains(tile))
 }
 
-const PASSING: Tiles = Tiles(1.0);
+const PASSING: Meters = Meters(1.0);
 
 /// Stepping into a warp takes it.
-pub fn in_warp(snapshot: &ProbeSnapshot, tile: Pos<Tiles>) -> bool {
+pub fn in_warp(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
     snapshot.warps.iter().any(|warp| warp.rect.contains(tile))
 }
 
@@ -490,7 +490,7 @@ pub fn playing<'a>(snapshot: &'a ProbeSnapshot, vfx: &str) -> Vec<&'a ProbeVfx> 
 }
 
 /// The tile two east of the other player: where a friend walks to stand with them, in full view.
-pub fn beside_other_player(snapshot: &ProbeSnapshot) -> Option<Pos<Tiles>> {
+pub fn beside_other_player(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
     other_player(snapshot).map(|star| star.at + Offset::new(2.0, 0.0))
 }
 

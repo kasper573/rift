@@ -1,7 +1,7 @@
 use crate::tabs::file_title;
 use engine::core::content::ContentFile;
 use engine::core::math::Pos;
-use engine::core::tiling::{CellPos, Tiles};
+use engine::core::units::{CellPos, Meters};
 use engine::systems::area::AreaModuleKind;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
@@ -77,7 +77,7 @@ pub fn add_picked(
     );
 }
 
-pub fn listen(editor: &mut Editor, frame: &AreaFrame, tile: Pos<Tiles>) {
+pub fn listen(editor: &mut Editor, frame: &AreaFrame, tile: Pos<Meters>) {
     let Some(area) = frame.area_id() else {
         return;
     };

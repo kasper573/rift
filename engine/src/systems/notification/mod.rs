@@ -27,8 +27,8 @@ use crate::core::gui::{self, Band};
 use crate::core::math::{Pos, Rgba};
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, ValueType};
 use crate::core::text::TextMotion;
-use crate::core::tiling::Tiles;
 use crate::core::time::{Seconds, WallClock};
+use crate::core::units::Meters;
 use crate::core::vfx::{VfxParams, VfxShaderId};
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
@@ -434,7 +434,7 @@ impl EffectDef<RiftScripting> for Notify {
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct SoundPlayed {
     pub sfx: SfxId,
-    pub at: Option<Pos<Tiles>>,
+    pub at: Option<Pos<Meters>>,
 }
 
 pub fn play_sound(

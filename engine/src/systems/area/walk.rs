@@ -4,7 +4,7 @@ use super::tileset::{TilesetDef, Walk};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::Content;
 use crate::core::math::{Pos, Rect, Size};
-use crate::core::tiling::{Cell, CellPos, GridDims, GridSize, TilePos, TileRect, Tiles};
+use crate::core::units::{Cell, CellPos, GridDims, GridSize, Meters, TilePos, TileRect};
 
 const OBSCURING_CUTOFF: f32 = 0.4;
 
@@ -21,7 +21,7 @@ pub fn grids(
     content: &Content,
     grids: &AreaGrids,
     scenery: &[Scenery],
-    safe_zones: &[Rect<Tiles>],
+    safe_zones: &[Rect<Meters>],
 ) -> WalkGrids {
     let size = grids.size;
     let votes = votes(content, grids, scenery);
@@ -47,12 +47,12 @@ pub fn grids(
     }
 }
 
-pub fn tile_square(scenery: &Scenery, column: usize, row: usize) -> Rect<Tiles> {
+pub fn tile_square(scenery: &Scenery, column: usize, row: usize) -> Rect<Meters> {
     let cell = Rect::new(Pos::new(column as f32, row as f32), Size::splat(1.0));
     scenery.flip.place(cell, scenery.at)
 }
 
-pub fn in_map(size: GridSize, at: Pos<Tiles>) -> bool {
+pub fn in_map(size: GridSize, at: Pos<Meters>) -> bool {
     at.cell().index(size).is_some()
 }
 
@@ -121,7 +121,7 @@ fn votes(content: &Content, grids: &AreaGrids, scenery: &[Scenery]) -> Vec<CellV
     votes
 }
 
-fn scenery_tiles(scenery: &Scenery) -> impl Iterator<Item = (u32, Rect<Tiles>)> + '_ {
+fn scenery_tiles(scenery: &Scenery) -> impl Iterator<Item = (u32, Rect<Meters>)> + '_ {
     scenery
         .tiles
         .iter()
@@ -141,7 +141,7 @@ fn scenery_blocks(scenery: &Scenery) -> impl Iterator<Item = CellPos> + '_ {
         .map(|&block| scenery.cell_under(block))
 }
 
-fn cell_overlap(rect: &Rect<Tiles>, cell: CellPos) -> f32 {
+fn cell_overlap(rect: &Rect<Meters>, cell: CellPos) -> f32 {
     rect.intersection(&cell.bounds())
         .map_or(0.0, |overlap| overlap.area())
 }

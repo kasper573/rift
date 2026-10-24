@@ -5,7 +5,7 @@ use ui::paint;
 use ui::theme;
 
 use engine::core::math::{Pos, Rect, Rng, Size};
-use engine::core::tiling::{Cell, CellPos, TilePos, TileSize};
+use engine::core::units::{Cell, CellPos, TilePos, TileSize};
 use engine::systems::area::tileset::TilesetDef;
 use engine::systems::area::{self, Flip};
 use engine::systems::script::Place;

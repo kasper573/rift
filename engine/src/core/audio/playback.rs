@@ -19,10 +19,10 @@ use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, FileWriter, Nearby, PartSpec, Parts, Shape,
 };
 use crate::core::math::{Pos, Rng, Size};
-use crate::core::tiling::Tiles;
 use crate::core::time::{PlaybackRate, Seconds};
+use crate::core::units::Meters;
 
-const HALF_VIEW: Size<Tiles> = Size::new(12.0, 9.0);
+const HALF_VIEW: Size<Meters> = Size::new(12.0, 9.0);
 const STACK_WINDOW: Seconds = Seconds(0.1);
 
 pub struct SfxPlugin;
@@ -103,7 +103,7 @@ pub enum SfxScalar {
 }
 
 #[derive(Resource, Default)]
-pub struct Listener(pub Option<Pos<Tiles>>);
+pub struct Listener(pub Option<Pos<Meters>>);
 
 #[derive(Message)]
 pub struct PlaySfx {
@@ -134,7 +134,7 @@ pub struct SfxTune {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SfxPlace {
-    World(Pos<Tiles>),
+    World(Pos<Meters>),
     Interface,
 }
 
@@ -165,7 +165,7 @@ impl PositionalAudio {
         pan: 0.0,
     };
 
-    pub fn of(listener: Pos<Tiles>, source: Pos<Tiles>, reach: Size<Tiles>) -> PositionalAudio {
+    pub fn of(listener: Pos<Meters>, source: Pos<Meters>, reach: Size<Meters>) -> PositionalAudio {
         let offset = source - listener;
         let dx = offset.x.abs() / reach.width;
         let dy = offset.y.abs() / reach.height;
@@ -434,7 +434,7 @@ impl Speakers<'_> {
     }
 }
 
-fn heard_at(place: SfxPlace, listener: Option<Pos<Tiles>>) -> Option<PositionalAudio> {
+fn heard_at(place: SfxPlace, listener: Option<Pos<Meters>>) -> Option<PositionalAudio> {
     let heard = match (place, listener) {
         (SfxPlace::Interface, _) => PositionalAudio::CENTERED,
         (SfxPlace::World(at), Some(listener)) => PositionalAudio::of(listener, at, HALF_VIEW),

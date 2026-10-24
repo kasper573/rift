@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, ValueType};
-use crate::core::tiling::{TilePos, Tiles};
+use crate::core::units::{Meters, TilePos};
 use crate::systems::actor::Name as ActorName;
 use crate::systems::area::AreaTag;
 use crate::systems::input::map::InputMap;
@@ -74,7 +74,7 @@ impl EffectDef<RiftScripting> for Say {
             };
             let spoken: Vec<_> = values.iter().map(|value| value(world, cx)).collect();
             let within = within.as_ref().map_or(VIEW_DISTANCE, |within| {
-                Tiles(within(world, cx).as_num() as f32)
+                Meters(within(world, cx).as_num() as f32)
             });
             say(world, speaker, LineText::spoken(&spans, &spoken), within);
             EffectStep::Done
@@ -85,7 +85,7 @@ impl EffectDef<RiftScripting> for Say {
     }
 }
 
-pub fn say(world: &mut World, speaker: Entity, text: LineText, within: Tiles) {
+pub fn say(world: &mut World, speaker: Entity, text: LineText, within: Meters) {
     let name = world
         .get::<ActorName>(speaker)
         .map(|name| name.name.clone())

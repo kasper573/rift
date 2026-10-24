@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::movement::{self, position};
@@ -110,8 +110,8 @@ fn fight() -> (Sim, Entity) {
 }
 
 /// A monster turned hostile that stands where it's put and never strikes back.
-fn brute(sim: &mut Sim, player: Entity, offset: Offset<Tiles>) -> Entity {
-    let at: Pos<Tiles> = position(&sim.world, player).expect("the player") + offset;
+fn brute(sim: &mut Sim, player: Entity, offset: Offset<Meters>) -> Entity {
+    let at: Pos<Meters> = position(&sim.world, player).expect("the player") + offset;
     let area = sim.id::<AreaDef>("field");
     let brute = sim.id::<NpcDef>("brute");
     let brute = npc::spawn(&mut sim.world, brute, at, area, Pack(u32::MAX));

@@ -10,7 +10,7 @@ use ui::words;
 
 use engine::core::content::{ContentFile, name_of};
 use engine::core::script::Variable;
-use engine::core::tiling::TilePos;
+use engine::core::units::TilePos;
 use engine::field;
 use engine::systems::area::blueprint::{BlueprintDef, Placement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};

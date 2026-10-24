@@ -1,5 +1,5 @@
 use engine::core::math::Pos;
-use engine::core::tiling::{Cell, TilePos, Tiles};
+use engine::core::units::{Cell, Meters, TilePos};
 use engine::systems::area::object::{ObjectDef, ObjectShape};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaModule, Scenery, SceneryTile};
@@ -95,7 +95,7 @@ pub fn split_scenery(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
     let mut kept = scenery.tiles.clone();
     let mut placed = 0;
     for tile in tiles_of(scenery) {
-        let cell = Pos::<Tiles>::new(
+        let cell = Pos::<Meters>::new(
             rect.min().x + tile.offset.0 as f32 + 0.5,
             rect.min().y + tile.offset.1 as f32 + 0.5,
         )

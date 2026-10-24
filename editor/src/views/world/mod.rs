@@ -19,7 +19,7 @@ use atlas::WorldAtlas;
 use engine::core::content::{Content, ContentFile, ContentScope, Fixture, rescoped};
 use engine::core::math::{Pos, Size};
 use engine::core::render::TILE;
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::area::world_map::{
     AreaCard, Note, Region, RegionColor, WorldMap, WorldMapDef,
 };
@@ -42,7 +42,7 @@ const MAX_ZOOM: f32 = 8.0;
 
 #[derive(Default)]
 pub struct WorldView {
-    pub center: Pos<Tiles>,
+    pub center: Pos<Meters>,
     pub zoom: f32,
     pub fitted: bool,
     pub lenses: Vec<MapLens>,
@@ -68,7 +68,7 @@ pub struct MapRoute {
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapTileHit {
     pub area: String,
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
 }
 
 pub struct MapLook {
@@ -399,19 +399,19 @@ fn card_at(card: &AreaCard) -> Pos2 {
     Pos2::new(card.at.x, card.at.y)
 }
 
-fn card_rect(size: Size<Tiles>, card: &AreaCard) -> Rect {
+fn card_rect(size: Size<Meters>, card: &AreaCard) -> Rect {
     Rect::from_center_size(card_at(card), footprint(size, card.size))
 }
 
-fn art_rect(size: Size<Tiles>, card: &AreaCard) -> Rect {
+fn art_rect(size: Size<Meters>, card: &AreaCard) -> Rect {
     Rect::from_center_size(card_at(card), art_size(size, card.size))
 }
 
-fn art_size(size: Size<Tiles>, percent: u32) -> Vec2 {
+fn art_size(size: Size<Meters>, percent: u32) -> Vec2 {
     Vec2::new(size.width, size.height) * (percent as f32 / 100.0)
 }
 
-fn footprint(size: Size<Tiles>, percent: u32) -> Vec2 {
+fn footprint(size: Size<Meters>, percent: u32) -> Vec2 {
     art_size(size, percent).max(MIN_FOOTPRINT)
 }
 
@@ -472,7 +472,7 @@ fn region_from_selection(editor: &mut Editor, map: &OpenWorldMap) {
     }
 }
 
-fn add_note(editor: &mut Editor, map: &OpenWorldMap, at: Pos<Tiles>) {
+fn add_note(editor: &mut Editor, map: &OpenWorldMap, at: Pos<Meters>) {
     let index = map.layout.notes.len();
     let added = map.change(editor, ContentEdit::new("Add a note"), |layout| {
         layout.notes.push(Note {

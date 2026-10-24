@@ -1,6 +1,6 @@
 use driver::Player;
 use engine::core::math::{Pos, Rect};
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::probe::{ProbeSoundZone, ProbeVoice};
 
 use crate::chapters::Chapter;
@@ -64,7 +64,7 @@ fn play(shoot: &mut Shoot) {
     listen_from(&mut me, home);
 }
 
-fn listen_from(me: &mut Player, spot: Pos<Tiles>) {
+fn listen_from(me: &mut Player, spot: Pos<Meters>) {
     me.walk_near(spot);
     mixed(me);
 }
@@ -93,7 +93,7 @@ fn mixed(me: &mut Player) {
     });
 }
 
-fn beyond(zone: &ProbeSoundZone) -> Pos<Tiles> {
+fn beyond(zone: &ProbeSoundZone) -> Pos<Meters> {
     let Rect { origin, size } = zone.bounds;
     Pos::new(origin.x + size.width + zone.reach.0 + 1.0, origin.y)
 }

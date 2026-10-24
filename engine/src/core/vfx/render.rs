@@ -35,8 +35,8 @@ use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::{
     self as render, GroundDepth, RowDepth, RowDepths, TILE, ToScreen, atlas_rect,
 };
-use crate::core::tiling::Tiles;
 use crate::core::time::{Seconds, server_now};
+use crate::core::units::Meters;
 
 pub struct VfxRenderPlugin;
 
@@ -70,7 +70,7 @@ pub struct ShaderOverlay {
 /// The margin around every world site that a shader layer may draw on, so spent matter (smoke,
 /// sparks, mist) can drift clear of the body and dissolve; the prelude fades the margin's outer
 /// edge, and the screen is drawn as is.
-pub const MARGIN: Tiles = Tiles(2.0);
+pub const MARGIN: Meters = Meters(2.0);
 
 /// How many points of a path site a shader can read; a longer path keeps its first ones.
 pub const MAX_PATH_POINTS: usize = 16;
@@ -430,7 +430,7 @@ impl SiteFrame {
             VfxSite::Path(points) => {
                 let south = points.iter().map(|point| point.y).fold(f32::MIN, f32::max);
                 Some(SiteFrame {
-                    depth: Some(world.resource::<RowDepths>().at(Tiles(south))),
+                    depth: Some(world.resource::<RowDepths>().at(Meters(south))),
                     ..SiteFrame::path(points)
                 })
             }
@@ -534,11 +534,11 @@ impl SiteFrame {
 
     /// The quad a path site is drawn on, half a tile clear of its points on every side, facing
     /// from its first point to its last.
-    pub fn path(points: &[Pos<Tiles>]) -> SiteFrame {
+    pub fn path(points: &[Pos<Meters>]) -> SiteFrame {
         let (center, size) = bounds(points);
         let size = size + Vec2::splat(TILE.0);
         let corner = Vec2::new(center.x - size.x / 2.0, center.y + size.y / 2.0);
-        let uv = |at: Pos<Tiles>| {
+        let uv = |at: Pos<Meters>| {
             let screen = at.to_screen();
             Vec2::new(
                 (screen.x - corner.x) / size.x,
@@ -974,7 +974,7 @@ pub fn settle_overdrawn(world: &mut World, overdrawn: &HashSet<Entity>) {
     }
 }
 
-fn bounds(points: &[Pos<Tiles>]) -> (Vec2, Vec2) {
+fn bounds(points: &[Pos<Meters>]) -> (Vec2, Vec2) {
     let screen: Vec<Vec2> = points.iter().map(|point| point.to_screen()).collect();
     let min = screen.iter().fold(Vec2::MAX, |min, at| min.min(*at));
     let max = screen.iter().fold(Vec2::MIN, |max, at| max.max(*at));

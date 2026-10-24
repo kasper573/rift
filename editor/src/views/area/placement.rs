@@ -10,7 +10,7 @@ use engine::core::content::{
 };
 use engine::core::math::{Pos, Rect};
 use engine::core::script::VariableType;
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::area::blueprint::{
     self, BlueprintDef, BlueprintId, Flattened, PlacedBlueprint, Placement,
 };
@@ -36,8 +36,8 @@ use crate::tabs::file_title;
 
 /// What each placement of a scene covers on the map, by its node's pointer: the modules it brings,
 /// placed.
-pub fn placement_bounds(placed: &[Flattened]) -> HashMap<String, Rect<Tiles>> {
-    let mut out: HashMap<String, Rect<Tiles>> = HashMap::new();
+pub fn placement_bounds(placed: &[Flattened]) -> HashMap<String, Rect<Meters>> {
+    let mut out: HashMap<String, Rect<Meters>> = HashMap::new();
     for placed in placed {
         if placed.chain.is_empty() {
             continue;
@@ -231,7 +231,7 @@ pub(super) fn short_value(value: &VarValue, project: &Project) -> String {
 }
 
 /// Every place the object's scripts lead to, by the path of its area and its tile.
-pub fn warp_destinations(object: &ObjectDef, paths: &impl IdPaths) -> Vec<(String, Pos<Tiles>)> {
+pub fn warp_destinations(object: &ObjectDef, paths: &impl IdPaths) -> Vec<(String, Pos<Meters>)> {
     object
         .scripts
         .iter()
@@ -360,7 +360,7 @@ pub struct AreaPlacement {
     /// placement before it.
     pub node: String,
     pub blueprint: String,
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     pub flip: Flip,
     pub values: BTreeMap<String, VarValue>,
     /// The blueprint as its files read now.
@@ -439,7 +439,7 @@ pub fn placed_part(
 pub struct PartView {
     pub part: String,
     pub module: AreaModule,
-    pub bounds: Option<Rect<Tiles>>,
+    pub bounds: Option<Rect<Meters>>,
     pub nested: Option<String>,
     pub locked: bool,
 }
@@ -479,7 +479,7 @@ pub(super) fn nested_bounds(
     content: &Content,
     reader: &FolderReader,
     placement: &Placement,
-) -> Option<Rect<Tiles>> {
+) -> Option<Rect<Meters>> {
     let loaded = rescoped(placement, reader.scope(), &ContentScope::of(content)).ok()?;
     let scenery = super::scene::parts_scenery(content, &loaded);
     Some(super::scene::scenery_extent(&scenery).unwrap_or_else(|| shapes::cell_rect(placement.at)))

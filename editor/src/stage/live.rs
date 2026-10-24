@@ -10,8 +10,8 @@ use bevy::prelude::*;
 use engine::core::content::Content;
 use engine::core::geometry::{Footprint, Shape};
 use engine::core::math::Pos;
-use engine::core::tiling::{TilePos, Tiles};
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
+use engine::core::units::{Meters, TilePos};
 use engine::core::vfx::VfxInstance;
 use engine::systems::actor::plate::{self, PlateLabel};
 use engine::systems::actor::{Action, Actor, ModelId};
@@ -78,7 +78,7 @@ enum Phase {
 pub struct LiveActor {
     pub entity: Entity,
     pub actor: Actor,
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     pub plate: Option<PlateLabel>,
 }
 
@@ -335,7 +335,7 @@ fn skill_setup(
         snapshot.bag.push(ItemStack::new(stack.item, stack.count));
     }
     let area = area::load(content, spawn.area);
-    let free = |at: Pos<Tiles>| area.grid.nearest_walkable_where(at, |_| true).unwrap_or(at);
+    let free = |at: Pos<Meters>| area.grid.nearest_walkable_where(at, |_| true).unwrap_or(at);
     let caster = join(world, snapshot.clone(), spawn, ClientId(1))?.actor;
     let ally = || {
         let mut friend =
@@ -371,10 +371,12 @@ fn skill_setup(
         }
         Targeting::AreaEnemy | Targeting::AreaAlly => {
             let point = Pos::new(spawn.at.x + AREA_REACH, spawn.at.y);
-            let shape = def.area.unwrap_or(Shape::Circle { radius: Tiles(1.5) });
+            let shape = def.area.unwrap_or(Shape::Circle {
+                radius: Meters(1.5),
+            });
             let footprint = Footprint::cast(shape, spawn.at, point);
             let mut targets = Vec::new();
-            let spots: Vec<Pos<Tiles>> = spread(&footprint, CROWD * 2)
+            let spots: Vec<Pos<Meters>> = spread(&footprint, CROWD * 2)
                 .into_iter()
                 .filter(|spot| spot.distance(spawn.at).0 >= CLEAR_OF_CASTER)
                 .take(CROWD as usize)
@@ -419,7 +421,7 @@ fn spawn_sturdy(
     world: &mut World,
     content: &Content,
     model: ModelId,
-    at: Pos<Tiles>,
+    at: Pos<Meters>,
     area: AreaId,
 ) -> Entity {
     let def = NpcDef {

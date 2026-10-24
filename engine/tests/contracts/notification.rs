@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::Content;
 use engine::core::math::{Offset, Pos};
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::core::vfx::{VfxParams, VfxShaderDef, VfxShaderId};
 use engine::systems::area::{self, AreaDef};
 use engine::systems::combat::{self, Attitude};
@@ -19,8 +19,8 @@ use engine::systems::{actor, belongings, class, script, stat, vfx};
 use serde_json::json;
 use testkit::{Game, Map, Sim, path};
 
-const BESIDE_PIER: Pos<Tiles> = Pos::new(8.0, 6.0);
-const ON_PIER: Pos<Tiles> = Pos::new(10.0, 6.0);
+const BESIDE_PIER: Pos<Meters> = Pos::new(8.0, 6.0);
+const ON_PIER: Pos<Meters> = Pos::new(10.0, 6.0);
 
 #[test]
 fn stepping_onto_the_pier_narrates_the_gulls_once_even_during_a_conversation() {

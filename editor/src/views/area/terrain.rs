@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use engine::core::content::Content;
 use engine::core::math::Rng;
-use engine::core::tiling::{Cell, CellPos};
+use engine::core::units::{Cell, CellPos};
 use engine::systems::area::grid::Flip;
 use engine::systems::area::tileset::TilesetDef;
 

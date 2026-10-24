@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::math::{Offset, Pos};
-use crate::core::tiling::{TilePos, Tiles};
+use crate::core::units::{Meters, TilePos};
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
 #[schemars(extend("x-unit" = "°"))]
@@ -20,47 +20,47 @@ impl Degrees {
 }
 
 impl Radians {
-    pub fn of(heading: Offset<Tiles>) -> Radians {
+    pub fn of(heading: Offset<Meters>) -> Radians {
         Radians(heading.y.atan2(heading.x))
     }
 
-    pub fn heading(self) -> Offset<Tiles> {
+    pub fn heading(self) -> Offset<Meters> {
         Offset::new(self.0.cos(), self.0.sin())
     }
 }
 
-/// A region in tiles, laid down at a point and turned toward a heading: the circle and the
+/// A region in metres, laid down at a point and turned toward a heading: the circle and the
 /// rectangle sit centred on the point, the cone's apex and the line's start are the point.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Shape {
     Circle {
         #[schemars(extend("default" = 2.0))]
-        radius: Tiles,
+        radius: Meters,
     },
     Rect {
         #[schemars(extend("default" = 3.0))]
-        width: Tiles,
+        width: Meters,
         #[schemars(extend("default" = 3.0))]
-        height: Tiles,
+        height: Meters,
     },
     Cone {
         #[schemars(extend("default" = 60.0))]
         angle: Degrees,
         #[schemars(extend("default" = 3.0))]
-        length: Tiles,
+        length: Meters,
     },
     Line {
         #[schemars(extend("default" = 4.0))]
-        length: Tiles,
+        length: Meters,
         #[schemars(extend("default" = 1.0))]
-        width: Tiles,
+        width: Meters,
     },
 }
 
 impl Shape {
-    pub fn grown(self, by: Tiles) -> Shape {
-        let grow = |tiles: Tiles| Tiles((tiles.0 + by.0).max(0.0));
+    pub fn grown(self, by: Meters) -> Shape {
+        let grow = |metres: Meters| Meters((metres.0 + by.0).max(0.0));
         match self {
             Shape::Circle { radius } => Shape::Circle {
                 radius: grow(radius),
@@ -81,11 +81,11 @@ impl Shape {
     }
 
     /// The farthest a point of the shape lies from its anchor.
-    pub fn reach(self) -> Tiles {
+    pub fn reach(self) -> Meters {
         match self {
             Shape::Circle { radius } => radius,
             Shape::Rect { width, height } => {
-                Tiles((width.0 * width.0 + height.0 * height.0).sqrt() / 2.0)
+                Meters((width.0 * width.0 + height.0 * height.0).sqrt() / 2.0)
             }
             Shape::Cone { length, .. } | Shape::Line { length, .. } => length,
         }
@@ -93,13 +93,13 @@ impl Shape {
 
     pub fn describe(self) -> String {
         match self {
-            Shape::Circle { radius } => format!("{} tiles around", radius.0),
-            Shape::Rect { width, height } => format!("{} by {} tiles", width.0, height.0),
+            Shape::Circle { radius } => format!("{} m around", radius.0),
+            Shape::Rect { width, height } => format!("{} by {} m", width.0, height.0),
             Shape::Cone { angle, length } => {
-                format!("a {}° cone, {} tiles long", angle.0, length.0)
+                format!("a {}° cone, {} m long", angle.0, length.0)
             }
             Shape::Line { length, width } => {
-                format!("a line {} tiles long, {} wide", length.0, width.0)
+                format!("a line {} m long, {} wide", length.0, width.0)
             }
         }
     }
@@ -110,7 +110,7 @@ impl Shape {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(from = "WireFootprint", into = "WireFootprint")]
 pub struct Footprint {
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     pub facing: Radians,
     pub shape: Shape,
 }
@@ -118,7 +118,7 @@ pub struct Footprint {
 impl Footprint {
     /// Where a cast from `from` toward `point` lays a shape down: a circle or a rectangle sits on
     /// the point, a cone or a line reaches out from the caster toward it.
-    pub fn cast(shape: Shape, from: Pos<Tiles>, point: Pos<Tiles>) -> Footprint {
+    pub fn cast(shape: Shape, from: Pos<Meters>, point: Pos<Meters>) -> Footprint {
         let at = match shape {
             Shape::Cone { .. } | Shape::Line { .. } => from,
             Shape::Circle { .. } | Shape::Rect { .. } => point,
@@ -130,7 +130,7 @@ impl Footprint {
         }
     }
 
-    pub fn contains(&self, point: Pos<Tiles>) -> bool {
+    pub fn contains(&self, point: Pos<Meters>) -> bool {
         let offset = point - self.at;
         match self.shape {
             Shape::Circle { radius } => offset.length() <= radius.0,
@@ -157,12 +157,12 @@ impl Footprint {
         }
     }
 
-    pub fn reach(&self) -> Tiles {
+    pub fn reach(&self) -> Meters {
         self.shape.reach()
     }
 
     /// The points around the footprint's edge, enough for a drawn ring or a bounding box.
-    pub fn outline(&self) -> Vec<Pos<Tiles>> {
+    pub fn outline(&self) -> Vec<Pos<Meters>> {
         let steps = OUTLINE_STEPS;
         let heading = self.facing.heading();
         let side = Offset::new(-heading.y, heading.x);
@@ -200,7 +200,7 @@ impl Footprint {
         }
     }
 
-    fn local(&self, offset: Offset<Tiles>) -> (f32, f32) {
+    fn local(&self, offset: Offset<Meters>) -> (f32, f32) {
         let heading = self.facing.heading();
         let along = offset.x * heading.x + offset.y * heading.y;
         let across = -offset.x * heading.y + offset.y * heading.x;
@@ -208,8 +208,8 @@ impl Footprint {
     }
 }
 
-pub fn facing_from(from: Pos<Tiles>, toward: Pos<Tiles>) -> Radians {
-    if from.distance(toward) == Tiles(0.0) {
+pub fn facing_from(from: Pos<Meters>, toward: Pos<Meters>) -> Radians {
+    if from.distance(toward) == Meters(0.0) {
         Radians(std::f32::consts::FRAC_PI_2)
     } else {
         Radians::of(toward - from)
@@ -218,17 +218,17 @@ pub fn facing_from(from: Pos<Tiles>, toward: Pos<Tiles>) -> Radians {
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 struct WireFootprint {
-    at: Pos<Tiles>,
+    at: Pos<Meters>,
     facing: Radians,
     shape: WireShape,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 enum WireShape {
-    Circle { radius: Tiles },
-    Rect { width: Tiles, height: Tiles },
-    Cone { angle: Degrees, length: Tiles },
-    Line { length: Tiles, width: Tiles },
+    Circle { radius: Meters },
+    Rect { width: Meters, height: Meters },
+    Cone { angle: Degrees, length: Meters },
+    Line { length: Meters, width: Meters },
 }
 
 impl From<Footprint> for WireFootprint {

@@ -1,6 +1,6 @@
 use engine::core::content::table_of;
 use engine::core::math::{Offset, Pos, Rect};
-use engine::core::tiling::{TilePos, Tiles};
+use engine::core::units::{Meters, TilePos};
 use engine::systems::area::AreaModule;
 use engine::systems::area::scene::SceneNode;
 use engine::systems::script::Variable;
@@ -119,7 +119,7 @@ impl SelectScope<'_> {
         matches!(self, SelectScope::Area)
     }
 
-    fn tile(&self, frame: &AreaFrame) -> Option<Pos<Tiles>> {
+    fn tile(&self, frame: &AreaFrame) -> Option<Pos<Meters>> {
         match self {
             SelectScope::Area => frame.pointer_tile,
             SelectScope::Blueprint { .. } => frame.drag_tile(),
@@ -146,7 +146,7 @@ impl SelectScope<'_> {
         }
     }
 
-    fn hit(&self, frame: &AreaFrame, tile: Pos<Tiles>) -> Option<String> {
+    fn hit(&self, frame: &AreaFrame, tile: Pos<Meters>) -> Option<String> {
         match self {
             SelectScope::Area => frame.hit(tile),
             SelectScope::Blueprint { parts, .. } => parts
@@ -162,7 +162,7 @@ impl SelectScope<'_> {
     }
 
     /// What a box over `rect` takes, and how many it passes over because they're hidden or locked.
-    fn contained(&self, frame: &AreaFrame, rect: Rect<Tiles>) -> (Vec<String>, Skipped) {
+    fn contained(&self, frame: &AreaFrame, rect: Rect<Meters>) -> (Vec<String>, Skipped) {
         let mut skipped = Skipped::default();
         let taken = match self {
             SelectScope::Area => frame
@@ -251,7 +251,7 @@ fn start_select_drag(
     view_key: &str,
     frame: &AreaFrame,
     scope: &SelectScope,
-    tile: Pos<Tiles>,
+    tile: Pos<Meters>,
     hit: Option<String>,
 ) {
     if scope.is_area() {
@@ -326,7 +326,7 @@ fn set_drag(editor: &mut Editor, view_key: &str, drag: AreaDrag) {
     editor.views.area.view_mut(view_key).set_drag(drag);
 }
 
-pub(super) fn track_move(view: &mut AreaViewState, tile: Pos<Tiles>) {
+pub(super) fn track_move(view: &mut AreaViewState, tile: Pos<Meters>) {
     if let Some(AreaDrag::Move { from, moved }) = view.drag_mut()
         && (tile.x - from.x).abs() + (tile.y - from.y).abs() > 0.25
     {
@@ -386,7 +386,7 @@ pub(super) fn handle_at(
     frame: &AreaFrame,
     node: &str,
     pointer: Pos2,
-) -> Option<(String, ResizeCorner, Rect<Tiles>)> {
+) -> Option<(String, ResizeCorner, Rect<Meters>)> {
     let module = frame.module(node)?;
     if !shapes::has_size(module) {
         return None;
@@ -481,7 +481,7 @@ fn finish_select_drag(
     }
 }
 
-pub fn snap_to(p: Pos<Tiles>, fine: bool) -> Pos<Tiles> {
+pub fn snap_to(p: Pos<Meters>, fine: bool) -> Pos<Meters> {
     if fine {
         Pos::new(sixteenth(p.x), sixteenth(p.y))
     } else {
@@ -489,7 +489,7 @@ pub fn snap_to(p: Pos<Tiles>, fine: bool) -> Pos<Tiles> {
     }
 }
 
-pub(super) fn snapped_delta(from: Pos<Tiles>, to: Pos<Tiles>, fine: bool) -> (f32, f32) {
+pub(super) fn snapped_delta(from: Pos<Meters>, to: Pos<Meters>, fine: bool) -> (f32, f32) {
     let (dx, dy) = (to.x - from.x, to.y - from.y);
     if fine {
         (sixteenth(dx), sixteenth(dy))
@@ -570,17 +570,17 @@ pub(super) fn finish_paste(
     view_key: &str,
     frame: &AreaFrame,
     ghost: PasteGhost,
-    tile: Pos<Tiles>,
+    tile: Pos<Meters>,
 ) {
     editor.views.area.view_mut(view_key).paste = None;
     paste_at(editor, frame, &ghost.clip, paste_anchor(tile));
 }
 
-pub(super) fn paste_anchor(tile: Pos<Tiles>) -> Pos<Tiles> {
+pub(super) fn paste_anchor(tile: Pos<Meters>) -> Pos<Meters> {
     Pos::new(tile.x.round() - 0.5, tile.y.round() - 0.5)
 }
 
-pub(super) fn paste_at(editor: &mut Editor, frame: &AreaFrame, clip: &SceneClip, at: Pos<Tiles>) {
+pub(super) fn paste_at(editor: &mut Editor, frame: &AreaFrame, clip: &SceneClip, at: Pos<Meters>) {
     let Some((pasted, open)) = pasted(editor, clip, &frame.bundle) else {
         return;
     };

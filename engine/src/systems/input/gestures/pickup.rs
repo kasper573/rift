@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::core::math::Pos;
-use crate::core::tiling::Tiles;
+use crate::core::units::Meters;
 use crate::systems::input::gestures::{ClickClaim, Cursor, Gesture};
 use crate::systems::interface::CursorShape;
 use crate::systems::item::{self, PickupRequest};
@@ -10,7 +10,7 @@ use crate::systems::player::session;
 pub struct PickupGesture;
 
 impl Gesture for PickupGesture {
-    fn claim(&self, world: &mut World, tile: Option<Pos<Tiles>>) -> Option<ClickClaim> {
+    fn claim(&self, world: &mut World, tile: Option<Pos<Meters>>) -> Option<ClickClaim> {
         if !session::is_alive(world) {
             return None;
         }

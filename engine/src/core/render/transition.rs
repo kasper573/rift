@@ -8,8 +8,8 @@ use super::camera::WorldCamera;
 use super::present::{self, SCALE};
 use super::screen::ToScreen;
 use crate::core::math::{Direction, Pos};
-use crate::core::tiling::{Cell, CellPos, Tiles};
 use crate::core::time::Seconds;
+use crate::core::units::{Cell, CellPos, Meters};
 
 #[derive(
     Serialize,
@@ -76,7 +76,7 @@ pub fn covering(transition: Res<ActiveTransition>) -> bool {
     transition.phase() == ScreenTransitionPhase::Out
 }
 
-pub fn freeze(world: &mut World, viewed_at: Pos<Tiles>, heading: Direction) {
+pub fn freeze(world: &mut World, viewed_at: Pos<Meters>, heading: Direction) {
     let Some(from) = world_camera_marks(world, viewed_at) else {
         return;
     };
@@ -91,7 +91,7 @@ pub fn freeze(world: &mut World, viewed_at: Pos<Tiles>, heading: Direction) {
     });
 }
 
-pub fn reveal(world: &mut World, viewed_at: Pos<Tiles>) {
+pub fn reveal(world: &mut World, viewed_at: Pos<Meters>) {
     if let Some(cut) = world.resource_mut::<ActiveTransition>().0.as_mut()
         && cut.arrival.is_none()
     {
@@ -218,7 +218,7 @@ struct Cut {
 
 struct Arrival {
     at: Seconds,
-    viewed_at: Pos<Tiles>,
+    viewed_at: Pos<Meters>,
 }
 
 #[derive(Clone, Copy)]
@@ -267,7 +267,7 @@ fn tile_texels() -> f32 {
     TILE.0 * SCALE
 }
 
-fn world_camera_marks(world: &mut World, viewed_at: Pos<Tiles>) -> Option<TargetMarks> {
+fn world_camera_marks(world: &mut World, viewed_at: Pos<Meters>) -> Option<TargetMarks> {
     let (camera, transform) = world
         .query_filtered::<(&Camera, &GlobalTransform), With<WorldCamera>>()
         .single(world)
@@ -278,9 +278,9 @@ fn world_camera_marks(world: &mut World, viewed_at: Pos<Tiles>) -> Option<Target
 fn target_marks(
     camera: &Camera,
     transform: &GlobalTransform,
-    viewed_at: Pos<Tiles>,
+    viewed_at: Pos<Meters>,
 ) -> Option<TargetMarks> {
-    let project = |at: Pos<Tiles>| {
+    let project = |at: Pos<Meters>| {
         camera
             .world_to_viewport(transform, at.to_screen().extend(0.0))
             .ok()

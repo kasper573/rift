@@ -13,7 +13,7 @@ use bevy_replicon::shared::replication::visibility::VisibilityScope;
 use fixedbitset::FixedBitSet;
 
 use crate::core::math::Pos;
-use crate::core::tiling::Tiles;
+use crate::core::units::Meters;
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::attention::Attention;
 use crate::systems::dialogue::Conversation;
@@ -26,7 +26,7 @@ use crate::systems::shop::ShopView;
 use crate::systems::skill::{BasicAttack, Cooldowns, Hotbar, Learned, ResetPrompt};
 use crate::systems::status::Boosts;
 
-pub const VIEW_DISTANCE: Tiles = Tiles(24.0);
+pub const VIEW_DISTANCE: Meters = Meters(24.0);
 // Compared against squared distance to avoid a per-pair `sqrt`. Exact: `VIEW_DISTANCE` is a perfect
 // square in f32, so `d <= VIEW_DISTANCE` iff `d² <= VIEW_DISTANCE²` for all inputs.
 const VIEW_DISTANCE_SQ: f32 = VIEW_DISTANCE.0 * VIEW_DISTANCE.0;
@@ -294,13 +294,13 @@ fn entity_scope_bit(world: &mut World) -> FilterBit {
 
 struct Subject {
     entity: Entity,
-    pos: Pos<Tiles>,
+    pos: Pos<Meters>,
     area: Option<AreaId>,
 }
 
 struct Sight {
     focus: Entity,
-    pos: Option<Pos<Tiles>>,
+    pos: Option<Pos<Meters>>,
     area: Option<AreaId>,
 }
 

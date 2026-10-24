@@ -3,13 +3,13 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::core::math::Pos;
-use crate::core::tiling::{Cell, TilePos, Tiles};
+use crate::core::units::{Cell, Meters, TilePos};
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::movement::{self, Aim, Approach, position};
 use crate::systems::skill::SkillId;
 use crate::systems::{stat, visibility};
 
-const DIAGONAL_MARGIN: Tiles = Tiles(std::f32::consts::SQRT_2 - 1.0);
+const DIAGONAL_MARGIN: Meters = Meters(std::f32::consts::SQRT_2 - 1.0);
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ReachIntent {
@@ -57,7 +57,7 @@ pub fn mirror_engaged(
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ReachTarget {
     Actor(Entity),
-    Point(Pos<Tiles>),
+    Point(Pos<Meters>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,9 +81,9 @@ pub enum Pursuit {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tether {
-    pub anchor: Pos<Tiles>,
+    pub anchor: Pos<Meters>,
     pub area: AreaId,
-    pub range: Tiles,
+    pub range: Meters,
     pub with: Option<Entity>,
 }
 
@@ -95,14 +95,14 @@ impl ReachTarget {
         }
     }
 
-    pub fn point(self) -> Option<Pos<Tiles>> {
+    pub fn point(self) -> Option<Pos<Meters>> {
         match self {
             ReachTarget::Point(point) => Some(point),
             ReachTarget::Actor(_) => None,
         }
     }
 
-    pub fn position(self, world: &World) -> Option<Pos<Tiles>> {
+    pub fn position(self, world: &World) -> Option<Pos<Meters>> {
         match self {
             ReachTarget::Actor(actor) => position(world, actor),
             ReachTarget::Point(point) => Some(point),
@@ -123,7 +123,7 @@ impl Tether {
     pub fn around(
         world: &World,
         actor: Entity,
-        range: Tiles,
+        range: Meters,
         with: Option<Entity>,
     ) -> Option<Tether> {
         Some(Tether {
@@ -189,7 +189,7 @@ pub fn intent(world: &World, actor: Entity, act: ReachAct) -> Option<Entity> {
 /// Walks the actor into reach of what it intends to act on, by way of [`movement::approach`], and
 /// tells whether it's there. Two actors coming for each other meet between them, each covering the
 /// share of the gap its pace allows, rather than both heading for the other's tile.
-pub fn pursue(world: &mut World, actor: Entity, range: Tiles) -> Pursuit {
+pub fn pursue(world: &mut World, actor: Entity, range: Meters) -> Pursuit {
     let Some(target) = pursued(world, actor) else {
         return Pursuit::Lost;
     };
@@ -209,7 +209,7 @@ pub fn pursue(world: &mut World, actor: Entity, range: Tiles) -> Pursuit {
 
 /// Spreads an actor that has arrived out over the tiles in reach, by way of
 /// [`movement::settle`], while it waits to act again.
-pub fn settle(world: &mut World, actor: Entity, range: Tiles) {
+pub fn settle(world: &mut World, actor: Entity, range: Meters) {
     if let Some(target) = pursued(world, actor) {
         let aim = aim(world, actor, target);
         movement::settle(world, actor, aim, range + DIAGONAL_MARGIN);
@@ -260,7 +260,12 @@ fn coming_for(world: &World, actor: Entity, target: Entity) -> bool {
 
 /// Where an actor out of reach of one coming for it heads while neither has set out yet: the tile
 /// on the line between them that each reaches at once, going at their own paces.
-fn meeting_point(world: &World, actor: Entity, target: Entity, reach: Tiles) -> Option<Pos<Tiles>> {
+fn meeting_point(
+    world: &World,
+    actor: Entity,
+    target: Entity,
+    reach: Meters,
+) -> Option<Pos<Meters>> {
     if !coming_for(world, target, actor)
         || movement::moving(world, actor)
         || movement::moving(world, target)

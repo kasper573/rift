@@ -38,7 +38,7 @@ use crate::core::content::{
 };
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::render::dynamic_z;
-use crate::core::tiling::{Cell, CellPos, GridSize, TilePos, TileRect, TileSize, Tiles};
+use crate::core::units::{Cell, CellPos, GridSize, Meters, TilePos, TileRect, TileSize};
 use crate::systems::area::tileset::TilesetId;
 use crate::systems::movement;
 use crate::systems::npc::NpcId;
@@ -232,7 +232,7 @@ impl MapSize {
         GridSize::new(self.width, self.height)
     }
 
-    pub fn tiles(self) -> Size<Tiles> {
+    pub fn tiles(self) -> Size<Meters> {
         Size::new(self.width as f32, self.height as f32)
     }
 }
@@ -310,7 +310,7 @@ pub struct SafeZone {
         serialize_with = "serial::rect",
         deserialize_with = "serial::rect_from"
     )]
-    pub rect: Rect<Tiles>,
+    pub rect: Rect<Meters>,
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -344,7 +344,7 @@ fn is_ambience(category: &AudioCategory) -> bool {
 
 impl SoundscapeDef {
     fn check(&self, pointer: &str, cx: &mut RowCheck) {
-        cx.range(format!("{pointer}/emit"), self.emit, 0.0, 32.0, "tiles");
+        cx.range(format!("{pointer}/emit"), self.emit, 0.0, 32.0, "m");
         cx.count(
             format!("{pointer}/channels"),
             self.channels.len(),
@@ -380,7 +380,7 @@ impl SoundscapeDef {
     pub fn zone(&self) -> SoundscapeZone {
         SoundscapeZone {
             shape: self.shape,
-            emit: Tiles(self.emit),
+            emit: Meters(self.emit),
             channels: self
                 .channels
                 .iter()
@@ -405,7 +405,7 @@ impl SoundscapeDef {
 pub struct Scenery {
     #[schemars(with = "serial::PosRow")]
     #[serde(serialize_with = "serial::pos", deserialize_with = "serial::pos_from")]
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     pub tileset: TilesetId,
     pub tiles: Vec<Vec<Option<SceneryTile>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -456,14 +456,14 @@ impl Scenery {
         self.tiles.first().map_or(0, Vec::len)
     }
 
-    pub fn bounds(&self) -> Rect<Tiles> {
+    pub fn bounds(&self) -> Rect<Meters> {
         let size = Size::new(self.width() as f32, self.height() as f32);
         self.flip
             .place(Rect::new(Pos::new(0.0, 0.0), size), self.at)
     }
 
-    pub fn sort_line(&self) -> Option<Tiles> {
-        Some(Tiles(self.bounds().min().y + self.sort?))
+    pub fn sort_line(&self) -> Option<Meters> {
+        Some(Meters(self.bounds().min().y + self.sort?))
     }
 
     /// The cell under the middle of the tile `[column, row]`, as the scenery is placed and flipped;
@@ -566,7 +566,7 @@ pub struct Population {
         deserialize_with = "serial::opt_rect_from",
         skip_serializing_if = "Option::is_none"
     )]
-    pub roams: Option<Rect<Tiles>>,
+    pub roams: Option<Rect<Meters>>,
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -575,7 +575,7 @@ pub struct Resident {
     pub npc: NpcId,
     #[schemars(with = "serial::PosRow")]
     #[serde(serialize_with = "serial::pos", deserialize_with = "serial::pos_from")]
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shown: Option<Condition>,
 }
@@ -658,7 +658,7 @@ pub fn warp_objects(content: &Content, area: AreaId) -> Vec<(u32, &ObjectDef)> {
         .collect()
 }
 
-pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
+pub fn walkable(world: &World, tile: Pos<Meters>) -> bool {
     crate::systems::player::session::my_character(world)
         .map(|me| me.id())
         .and_then(|entity| of(world, entity))
@@ -666,13 +666,13 @@ pub fn walkable(world: &World, tile: Pos<Tiles>) -> bool {
 }
 
 pub struct Area {
-    pub size: Size<Tiles>,
+    pub size: Size<Meters>,
     pub tile: u32,
     pub grid: movement::Grid,
     pub wild_grid: movement::Grid,
     pub airspace: movement::Grid,
     pub wild_airspace: movement::Grid,
-    pub safe_zones: Vec<Rect<Tiles>>,
+    pub safe_zones: Vec<Rect<Meters>>,
     pub safe_cells: Vec<bool>,
     pub footsteps: Vec<Option<SfxId>>,
     pub soundscape: Vec<SoundscapeZone>,
@@ -681,7 +681,7 @@ pub struct Area {
 }
 
 impl Area {
-    pub fn safe(&self, at: Pos<Tiles>) -> bool {
+    pub fn safe(&self, at: Pos<Meters>) -> bool {
         at.cell()
             .index(self.size.grid())
             .is_some_and(|index| self.safe_cells[index])
@@ -708,13 +708,13 @@ impl Area {
         self.footsteps[i].as_ref()
     }
 
-    pub fn fallback_spawn(&self) -> Pos<Tiles> {
+    pub fn fallback_spawn(&self) -> Pos<Meters> {
         self.grid
             .nearest_walkable(self.center())
             .unwrap_or_else(|| self.center())
     }
 
-    pub fn center(&self) -> Pos<Tiles> {
+    pub fn center(&self) -> Pos<Meters> {
         Pos::new(
             (self.size.width / 2.0).floor(),
             (self.size.height / 2.0).floor(),
@@ -1018,7 +1018,7 @@ fn build_area(
     grids: Arc<AreaGrids>,
     modules: &[Flattened],
 ) -> Area {
-    let safe_zones: Vec<Rect<Tiles>> = modules
+    let safe_zones: Vec<Rect<Meters>> = modules
         .iter()
         .filter_map(|placed| match &placed.module {
             AreaModule::SafeZone(zone) => Some(zone.rect),
@@ -1068,11 +1068,11 @@ fn check_bounds(
     check: &mut RowCheck,
 ) {
     let bounds = map.size.tiles().bounds();
-    let outside = |at: Pos<Tiles>| !bounds.contains(at);
+    let outside = |at: Pos<Meters>| !bounds.contains(at);
     for placed in modules {
         let site = |field: &str| module_pointer(placed, field);
         let what = placed.describe(content);
-        let out = |check: &mut RowCheck, at: Pos<Tiles>| {
+        let out = |check: &mut RowCheck, at: Pos<Meters>| {
             check.error(
                 site(""),
                 "outside the map",
@@ -1150,13 +1150,13 @@ fn check_placed(
         .into_iter()
         .map(|(index, object)| (index, object, object.display_name(index)))
         .collect();
-    let in_warp = |at: Pos<Tiles>| {
+    let in_warp = |at: Pos<Meters>| {
         warps
             .iter()
             .find(|(_, object, _)| object.shape.covers(at))
             .map(|(_, _, name)| name.clone())
     };
-    let nearest_cell = |at: Pos<Tiles>| {
+    let nearest_cell = |at: Pos<Meters>| {
         area.grid
             .nearest_walkable(at)
             .map(|cell| format!("{}, {}", cell.x, cell.y))

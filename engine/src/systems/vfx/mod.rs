@@ -16,8 +16,8 @@ use crate::core::math::Pos;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, NEXT, ScriptFault, ValueType,
 };
-use crate::core::tiling::Tiles;
 use crate::core::time::{Seconds, WallClock};
+use crate::core::units::Meters;
 use crate::core::vfx::{ParamKind, ParamValue, VfxId, VfxInstance, VfxParams, VfxSite, WidgetName};
 use crate::systems::WorldArea;
 use crate::systems::area::{AreaObject, AreaTag};
@@ -40,7 +40,7 @@ pub fn register(app: &mut App) {
 /// then reaches instead of everyone standing in it.
 #[derive(Default)]
 pub struct Delivery {
-    pub from: Option<Pos<Tiles>>,
+    pub from: Option<Pos<Meters>>,
     pub struck: Option<Vec<Entity>>,
 }
 
@@ -94,7 +94,7 @@ fn reached(
     world: &World,
     footprint: &Footprint,
     struck: Option<&[Entity]>,
-) -> Vec<(Entity, Pos<Tiles>)> {
+) -> Vec<(Entity, Pos<Meters>)> {
     let area = world.resource::<WorldArea>().0;
     world
         .get_resource::<TickRoster>()
@@ -260,7 +260,9 @@ impl EffectDef<RiftScripting> for PlayVfx {
                         value.as_point().map(|point| Footprint {
                             at: point,
                             facing: Radians::default(),
-                            shape: Shape::Circle { radius: Tiles(0.5) },
+                            shape: Shape::Circle {
+                                radius: Meters(0.5),
+                            },
                         })
                     });
                     if let Some(footprint) = footprint {
@@ -318,8 +320,8 @@ impl ParamFiller {
 
 /// Where a path through actors runs: from the subject, when there is one, to the actor nearest it,
 /// then the one nearest that, until every actor is passed.
-fn chained(world: &World, from: Option<Entity>, actors: &[Entity]) -> Vec<Pos<Tiles>> {
-    let mut left: Vec<Pos<Tiles>> = actors
+fn chained(world: &World, from: Option<Entity>, actors: &[Entity]) -> Vec<Pos<Meters>> {
+    let mut left: Vec<Pos<Meters>> = actors
         .iter()
         .filter_map(|actor| position(world, *actor))
         .collect();
@@ -347,7 +349,7 @@ fn spawn_at(
     vfx: VfxId,
     site: VfxSite,
     params: VfxParams,
-    at: Pos<Tiles>,
+    at: Pos<Meters>,
     heading: Radians,
     presence: Option<Presence>,
 ) -> Entity {

@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
 use crate::core::math::Pos;
-use crate::core::tiling::Tiles;
 use crate::core::time::Seconds;
+use crate::core::units::Meters;
 use crate::core::vfx::VfxSite;
 use crate::systems::actor::{self, Actor};
 use crate::systems::npc::Pack;
@@ -92,7 +92,7 @@ pub struct AttackRequest {
     pub target: Entity,
 }
 
-pub fn enemy_at(world: &mut World, point: Pos<Tiles>) -> Option<Entity> {
+pub fn enemy_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
     let me = session::my_character(world).map(|entity| entity.id())?;
     actor::frontmost_at(world, point, Some(me), |world, entity| {
         world.get::<Actor>(entity).is_some() && relation(world, me, entity) == Relation::Enemy
@@ -193,7 +193,7 @@ pub fn defeats(world: &mut World) {
     }
 }
 
-pub fn revive(world: &mut World, entity: Entity, at: Pos<Tiles>) {
+pub fn revive(world: &mut World, entity: Entity, at: Pos<Meters>) {
     reach::forget(world, entity);
     stat::revive(world, entity);
     world.entity_mut(entity).remove::<Dead>();

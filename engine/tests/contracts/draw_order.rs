@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use engine::core::content::ContentId;
 use engine::core::math::Pos;
 use engine::core::render::{RowDepth, dynamic_z, order_rows};
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::area::{self, Flip, Scenery};
 
 const ROW: f32 = 3.5;
@@ -59,7 +59,7 @@ fn scenery_sharing_a_sort_line_draws_in_scene_order_under_who_stands_there() {
         lying(),
     ];
     let depths = area::scenery_depths(&scenery, height, base);
-    let line = dynamic_z(height, base, Tiles(4.0));
+    let line = dynamic_z(height, base, Meters(4.0));
 
     assert!(depths[0] < depths[2] && depths[2] < depths[4]);
     assert!(depths[4] < line.next_up());

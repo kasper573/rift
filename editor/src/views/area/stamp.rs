@@ -7,7 +7,7 @@ use ui::theme;
 use engine::core::content::{Content, ContentScope, FolderReader, parent_of, rescoped};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::script::VariableType;
-use engine::core::tiling::{TilePos, Tiles};
+use engine::core::units::{Meters, TilePos};
 use engine::systems::area::blueprint::{BlueprintDef, BlueprintId, Placement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaModule, Flip};
@@ -23,7 +23,7 @@ use crate::{rows, thumbs};
 /// A placement of the blueprint `blueprint`, an id among the paths it was read against.
 pub fn placement_node(
     blueprint: BlueprintId,
-    at: Pos<Tiles>,
+    at: Pos<Meters>,
     flip: Flip,
     values: BTreeMap<String, VarValue>,
 ) -> SceneNode {
@@ -335,7 +335,7 @@ pub fn stamp_footprint(
     reader: &FolderReader,
     stamp: &str,
     values: &BTreeMap<String, VarValue>,
-) -> Size<Tiles> {
+) -> Size<Meters> {
     let flip = stamp_flip(editor, stamp);
     let loaded = content
         .by_path::<BlueprintDef>(stamp)
@@ -345,7 +345,7 @@ pub fn stamp_footprint(
         });
     let mut errors = Vec::new();
     let flattening = area::blueprint::flatten(content, loaded.as_slice(), &mut errors);
-    let mut bounds: Option<Rect<Tiles>> = None;
+    let mut bounds: Option<Rect<Meters>> = None;
     for placed in flattening.modules {
         if let Some(b) = shapes::bounds(&placed.module, None) {
             bounds = Some(bounds.map_or(b, |known| known.union(&b)));
@@ -405,7 +405,7 @@ pub(super) fn place_stamps(
     frame: &AreaFrame,
     stamp: &str,
     values: &BTreeMap<String, VarValue>,
-    placed: Vec<Pos<Tiles>>,
+    placed: Vec<Pos<Meters>>,
 ) {
     let reader = frame.reader.clone();
     let (Some(blueprint), Some(Ok(def))) = (
@@ -477,7 +477,7 @@ pub fn stamp_overlay(
     let values = stamp_values(editor, Some(&stamp));
     let footprint = stamp_footprint(editor, &frame.content, &frame.reader, &stamp, &values);
     let color = Color32::from_rgb(90, 220, 220);
-    let draw_ghost = |at: Pos<Tiles>| {
+    let draw_ghost = |at: Pos<Meters>| {
         let rect = Rect::new(Pos::new(at.x - 0.5, at.y - 0.5), footprint);
         painter.rect_stroke(
             canvas.rect(rect),

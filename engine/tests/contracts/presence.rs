@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
 use engine::core::script::Value;
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest};
 use engine::systems::item::{ItemDef, ItemKind};
@@ -164,8 +164,8 @@ fn arena() -> Sim {
     sim
 }
 
-fn spawn(sim: &mut Sim, key: &str, near: Entity, offset: Offset<Tiles>) -> Entity {
-    let at: Pos<Tiles> = position(&sim.world, near).expect("a position") + offset;
+fn spawn(sim: &mut Sim, key: &str, near: Entity, offset: Offset<Meters>) -> Entity {
+    let at: Pos<Meters> = position(&sim.world, near).expect("a position") + offset;
     let area = sim.id::<AreaDef>("arena");
     let def = sim.id::<NpcDef>(key);
     npc::spawn(&mut sim.world, def, at, area, Pack(u32::MAX))

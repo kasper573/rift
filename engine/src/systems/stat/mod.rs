@@ -52,8 +52,8 @@ impl StatKind {
     pub const fn unit(self) -> Option<&'static str> {
         match self {
             StatKind::AttackDelay => Some("ms"),
-            StatKind::MovementSpeed => Some("tiles/s"),
-            StatKind::Range => Some("tiles"),
+            StatKind::MovementSpeed => Some("m/s"),
+            StatKind::Range => Some("m"),
             StatKind::Health | StatKind::MaxHealth | StatKind::Damage | StatKind::AttackSpeed => {
                 None
             }

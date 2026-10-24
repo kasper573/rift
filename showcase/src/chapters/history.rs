@@ -1,5 +1,5 @@
 use driver::{UiTarget, input_name, on_quest, told_by};
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::history::HistoryMark;
 use engine::systems::input::map::InputAction;
 use engine::systems::interface::InterfaceIcon;
@@ -46,7 +46,7 @@ fn play(shoot: &mut Shoot) {
     me.on_stage("news");
     me.answer_first_choices();
 
-    me.walk_into("ferry-pier", Tiles(1.0));
+    me.walk_into("ferry-pier", Meters(1.0));
     me.wait_until("the gulls to squabble", |snapshot| {
         told_by(snapshot, "Gulls")
     });

@@ -4,7 +4,7 @@ use super::AreaObject;
 use crate::core::content::Content;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::{RowDepth, TILE, dynamic_z, place_sprite};
-use crate::core::tiling::{TilePos, Tiles};
+use crate::core::units::{Meters, TilePos};
 use crate::systems::actor::Hitbox;
 use crate::systems::area::{self, AreaTag};
 use crate::systems::movement::Position;
@@ -62,7 +62,7 @@ fn place_objects(
         *depth = RowDepth(dynamic_z(
             area.size.height,
             area.sort_base(),
-            Tiles(position.pos.y),
+            Meters(position.pos.y),
         ));
         let center = position.pos.hitbox(hitbox.size).center();
         place_sprite(&mut transform, center);

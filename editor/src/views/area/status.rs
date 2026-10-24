@@ -1,4 +1,4 @@
-use engine::core::tiling::{Cell, TilePos};
+use engine::core::units::{Cell, TilePos};
 use engine::systems::area::{self, Pictured};
 use ui::egui;
 use ui::egui::{Rect as ERect, Vec2};

@@ -7,7 +7,7 @@ use ui::words;
 use engine::core::content::name_of;
 use engine::core::math::Pos;
 use engine::core::render::TILE;
-use engine::core::tiling::{TilePos, Tiles};
+use engine::core::units::{Meters, TilePos};
 use engine::systems::area::world_map::WorldMapDef;
 use engine::systems::area::{self, AreaId};
 use ui::egui::epaint::QuadraticBezierShape;
@@ -66,7 +66,7 @@ pub struct MapEdge {
 
 pub struct MapCanvas {
     pub response: Response,
-    pub viewport: Viewport<Tiles>,
+    pub viewport: Viewport<Meters>,
     pub cards: Vec<MapCard>,
     pub edges: Vec<MapEdge>,
     pub region_labels: Vec<(usize, Rect)>,
@@ -351,7 +351,7 @@ fn draw_card(editor: &mut Editor, painter: &Painter, drawing: &Drawing, card: &M
             None => paint::hatched(painter, card.art, NO_VALUE, 8.0),
         }
     }
-    let on_art = |at: Pos<Tiles>| card.art.min + Vec2::new(at.x, at.y) * px_per_tile;
+    let on_art = |at: Pos<Meters>| card.art.min + Vec2::new(at.x, at.y) * px_per_tile;
     if drawing.zoomed {
         for door in &info.doors {
             painter.rect_stroke(
@@ -536,7 +536,7 @@ fn draw_caption(painter: &Painter, atlas: &WorldAtlas, card: &MapCard, dimmed: b
     );
 }
 
-fn place(map: &OpenWorldMap, layout: &WorldMapDef, viewport: &Viewport<Tiles>) -> Vec<MapCard> {
+fn place(map: &OpenWorldMap, layout: &WorldMapDef, viewport: &Viewport<Meters>) -> Vec<MapCard> {
     let mut cards = layout
         .cards
         .iter()
@@ -769,7 +769,7 @@ fn fit(editor: &mut Editor, map: &OpenWorldMap, rect: Rect) {
     view.fitted = true;
 }
 
-fn navigate(editor: &mut Editor, ui: &Ui, response: &Response, rect: Rect) -> Viewport<Tiles> {
+fn navigate(editor: &mut Editor, ui: &Ui, response: &Response, rect: Rect) -> Viewport<Meters> {
     let view = &mut editor.views.world;
     let mut viewport = Viewport {
         screen: rect,
@@ -815,7 +815,7 @@ fn distance_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     (p - (a + ab * t)).length()
 }
 
-fn draw_regions(painter: &Painter, viewport: &Viewport<Tiles>, drawing: &Drawing) {
+fn draw_regions(painter: &Painter, viewport: &Viewport<Meters>, drawing: &Drawing) {
     let layout = drawing.shown;
     for (index, region) in layout.regions.iter().enumerate() {
         let Some(r) = drawing.map.region_rect(layout, region) else {
@@ -836,7 +836,7 @@ fn draw_regions(painter: &Painter, viewport: &Viewport<Tiles>, drawing: &Drawing
 
 fn draw_region_labels(
     painter: &Painter,
-    viewport: &Viewport<Tiles>,
+    viewport: &Viewport<Meters>,
     drawing: &Drawing,
 ) -> Vec<(usize, Rect)> {
     let layout = drawing.shown;
@@ -987,7 +987,7 @@ pub fn line_badge(painter: &Painter, at: Pos2, badge: &str, branch: bool) {
     );
 }
 
-fn draw_notes(painter: &Painter, viewport: &Viewport<Tiles>, drawing: &Drawing) -> Vec<Rect> {
+fn draw_notes(painter: &Painter, viewport: &Viewport<Meters>, drawing: &Drawing) -> Vec<Rect> {
     drawing
         .shown
         .notes
@@ -1078,7 +1078,7 @@ fn draw_edge_tags(painter: &Painter, atlas: &WorldAtlas, cards: &[MapCard], rect
 fn draw_drag(
     painter: &Painter,
     map: &OpenWorldMap,
-    viewport: &Viewport<Tiles>,
+    viewport: &Viewport<Meters>,
     cards: &[MapCard],
     drag: &MapDrag,
     pointer: Option<Pos2>,
@@ -1186,7 +1186,7 @@ fn minimap(
     painter: &Painter,
     map: &OpenWorldMap,
     layout: &WorldMapDef,
-    viewport: &Viewport<Tiles>,
+    viewport: &Viewport<Meters>,
 ) {
     let Some(bounds) = map.bounds(layout) else {
         return;
@@ -1289,7 +1289,7 @@ fn tile_facts(map: &OpenWorldMap, hit: &MapTileHit) -> String {
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map_or_else(
             || "no npc placed".to_owned(),
-            |(npc, tiles)| format!("{} {} tiles away", shown_path(npc), tiles.round()),
+            |(npc, metres)| format!("{} {} m away", shown_path(npc), metres.round()),
         );
     let nearest_door = info
         .doors
@@ -1303,7 +1303,7 @@ fn tile_facts(map: &OpenWorldMap, hit: &MapTileHit) -> String {
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map_or_else(
             || "no door".to_owned(),
-            |(door, tiles)| format!("door {door} {} tiles away", tiles.round()),
+            |(door, metres)| format!("door {door} {} m away", metres.round()),
         );
     format!("{walkable} · {safe} · {nearest_npc} · {nearest_door}")
 }

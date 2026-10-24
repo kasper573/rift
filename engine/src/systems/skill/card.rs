@@ -253,10 +253,7 @@ fn use_line(def: &SkillDef, rank: Rank) -> String {
         parts.push(shape.describe());
     }
     if let Some(range) = def.range {
-        parts.push(format!(
-            "{} tiles",
-            range.0 + def.stat(rank, SkillStat::Range)
-        ));
+        parts.push(format!("{} m", range.0 + def.stat(rank, SkillStat::Range)));
     }
     let cooldown = def.cooldown_at(rank);
     if cooldown.0 > 0.0 {

@@ -6,7 +6,7 @@ use engine::core::content::{
     Content, ContentFile, ContentId, ContentScope, FilesystemFolder, with_content,
 };
 use engine::core::math::{Offset, Pos, Rect};
-use engine::core::tiling::{TilePos, Tiles};
+use engine::core::units::{Meters, TilePos};
 use engine::systems::area::{self, Area, AreaDef, AreaModule};
 use engine::systems::input::map::{InputAction, InputMap};
 use engine::systems::load_content;
@@ -104,7 +104,7 @@ pub fn resident_home(area: &str, npc: &str) -> Place {
 }
 
 /// The middle of the ground where the monster roams: its own corner of the area, or all of it.
-pub fn hunting_ground(area: &str, npc: &str) -> Pos<Tiles> {
+pub fn hunting_ground(area: &str, npc: &str) -> Pos<Meters> {
     let npc = id(npc);
     let whole = Rect::from_size(area_named(area).size);
     area::modules(content(), id(area))
@@ -119,7 +119,7 @@ pub fn hunting_ground(area: &str, npc: &str) -> Pos<Tiles> {
 
 /// The middle of the tightest ground a pack of the monster keeps to: where several of them stand
 /// close enough together for one cast to reach them all.
-pub fn pack_ground(area: &str, npc: &str) -> Pos<Tiles> {
+pub fn pack_ground(area: &str, npc: &str) -> Pos<Meters> {
     let npc = id(npc);
     area::modules(content(), id(area))
         .filter_map(|module| match module {
@@ -132,7 +132,7 @@ pub fn pack_ground(area: &str, npc: &str) -> Pos<Tiles> {
 }
 
 /// A place `by` tiles east of a spot and a tile down from its row, clear of whoever stands there.
-pub fn east_of(area: &str, spot: Pos<Tiles>, by: f32) -> Place {
+pub fn east_of(area: &str, spot: Pos<Meters>, by: f32) -> Place {
     Place {
         area: id(area),
         at: spot + Offset::new(by, 1.0),
@@ -140,25 +140,25 @@ pub fn east_of(area: &str, spot: Pos<Tiles>, by: f32) -> Place {
 }
 
 /// A marked spot: a named object, or where a townsperson lives.
-pub fn marker_at(area: &str, name: &str) -> Pos<Tiles> {
+pub fn marker_at(area: &str, name: &str) -> Pos<Meters> {
     placed_object(area, name).unwrap_or_else(|| resident_home(area, name).at)
 }
 
 /// Ground in view beside the player, farthest from anyone first, so nobody strolls under the
 /// pointer.
-pub fn open_ground_beside(snapshot: &ProbeSnapshot) -> Vec<Pos<Tiles>> {
+pub fn open_ground_beside(snapshot: &ProbeSnapshot) -> Vec<Pos<Meters>> {
     let me = snapshot.me.as_ref().expect("the player").at;
-    let room = |tile: &Pos<Tiles>| {
+    let room = |tile: &Pos<Meters>| {
         snapshot
             .actors
             .iter()
             .map(|actor| actor.at.distance_to(*tile))
             .fold(f32::INFINITY, f32::min)
     };
-    let mut ground: Vec<Pos<Tiles>> = ground_near(
+    let mut ground: Vec<Pos<Meters>> = ground_near(
         area_name(snapshot).expect("an area"),
         me,
-        Tiles(2.0)..=Tiles(4.0),
+        Meters(2.0)..=Meters(4.0),
     )
     .into_iter()
     .filter(|tile| clickable_point(snapshot, *tile).is_some())
@@ -168,10 +168,14 @@ pub fn open_ground_beside(snapshot: &ProbeSnapshot) -> Vec<Pos<Tiles>> {
 }
 
 /// Nearest first, and only what can be walked to from the spot.
-pub fn ground_near(area: &str, at: Pos<Tiles>, within: RangeInclusive<Tiles>) -> Vec<Pos<Tiles>> {
+pub fn ground_near(
+    area: &str,
+    at: Pos<Meters>,
+    within: RangeInclusive<Meters>,
+) -> Vec<Pos<Meters>> {
     let grid = &area_named(area).grid;
     let reach = grid.region(grid.nearest_walkable(at).expect("walkable ground near"));
-    let mut ground: Vec<Pos<Tiles>> = grid
+    let mut ground: Vec<Pos<Meters>> = grid
         .nodes()
         .iter()
         .copied()
@@ -181,7 +185,7 @@ pub fn ground_near(area: &str, at: Pos<Tiles>, within: RangeInclusive<Tiles>) ->
     ground
 }
 
-fn placed_object(area: &str, object: &str) -> Option<Pos<Tiles>> {
+fn placed_object(area: &str, object: &str) -> Option<Pos<Meters>> {
     area::objects(area::placed(content(), id(area)))
         .find(|(_, def)| def.name.as_deref() == Some(object))
         .map(|(_, def)| def.shape.center())

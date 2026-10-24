@@ -14,7 +14,7 @@ use crate::core::content::{Content, Fixture};
 use crate::core::script::{
     self, Answer, BoxEnding, ChoiceOffer, ChoiceState, DialogueView, RevealDef, ScriptFault,
 };
-use crate::core::tiling::Tiles;
+use crate::core::units::Meters;
 use crate::systems::actor::Name;
 use crate::systems::actor::model::Expression;
 use crate::systems::attention::{AttentionId, AttentionMark};
@@ -154,7 +154,7 @@ pub fn heard(world: &World, player: Entity, script: &str, node: &str) -> bool {
         .is_some_and(|heard| heard.has(script, node))
 }
 
-pub const DEFAULT_REACH: Tiles = Tiles(2.0);
+pub const DEFAULT_REACH: Meters = Meters(2.0);
 
 pub struct Revealable {
     pub needs: bool,
@@ -491,7 +491,7 @@ fn begin(world: &mut World, flow: FlowKey, subject: Entity) -> bool {
             _ => None,
         })
         .reduce(f32::max)
-        .map_or(DEFAULT_REACH, Tiles);
+        .map_or(DEFAULT_REACH, Meters);
     let tether = with.and_then(|with| Tether::around(world, subject, reach, Some(with)));
     reach::forget(world, subject);
     let step = next_step(world);

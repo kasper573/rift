@@ -6,7 +6,7 @@ use super::Home;
 use crate::core::content::Content;
 use crate::core::math::{Offset, Pos};
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, REFUSED, ScriptFault};
-use crate::core::tiling::{TilePos, Tiles};
+use crate::core::units::{Meters, TilePos};
 use crate::systems::area::{self, AreaTag};
 use crate::systems::combat::Attitude;
 use crate::systems::movement::{self, position};
@@ -19,7 +19,7 @@ use crate::systems::script::{
 use crate::systems::stat;
 use crate::systems::visibility::Presence;
 
-const RING: Tiles = Tiles(1.5);
+const RING: Meters = Meters(1.5);
 const MAX_SPAWNED: u32 = 20;
 
 /// Hostile or friendly, until set again.
@@ -228,7 +228,7 @@ pub fn dismiss(world: &mut World, summons: &mut QueryState<(Entity, &'static Sum
     }
 }
 
-fn ring(region: &area::Area, at: Pos<Tiles>, index: u32, count: u32) -> Pos<Tiles> {
+fn ring(region: &area::Area, at: Pos<Meters>, index: u32, count: u32) -> Pos<Meters> {
     let angle = std::f32::consts::TAU * index as f32 / count as f32;
     let spot = at + Offset::new(angle.cos() * RING.0, angle.sin() * RING.0);
     region.grid.nearest_walkable(spot).unwrap_or(at.snap())

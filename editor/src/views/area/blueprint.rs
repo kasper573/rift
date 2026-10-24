@@ -4,7 +4,7 @@ use ui::words;
 use engine::core::content::locate::escape;
 use engine::core::content::{Content, ContentFile, FolderReader, name_of, parent_of, rescoped};
 use engine::core::math::{Pos, Rect};
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::area::blueprint::{BlueprintDef, Placement};
 use engine::systems::area::scene::{
     self, GroundLayer, Holes, ModuleNode, Scene, SceneGrids, SceneNode,
@@ -66,7 +66,7 @@ pub fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSnapshot) 
         &format!("{name}.{}", BlueprintDef::TABLE),
         &[],
     );
-    let origin: Pos<Tiles> = Pos::new(
+    let origin: Pos<Meters> = Pos::new(
         (bounds.min().x + 0.5).floor(),
         (bounds.min().y + 0.5).floor(),
     );
@@ -182,7 +182,7 @@ pub(super) fn covered(
     content: &Content,
     reader: &FolderReader,
     nodes: &[SceneNode],
-) -> Option<Rect<Tiles>> {
+) -> Option<Rect<Meters>> {
     nodes::modules(nodes)
         .iter()
         .filter_map(|module| match module.module() {
@@ -207,7 +207,7 @@ pub fn shift_tree(node: &mut SceneNode, dx: f32, dy: f32) {
 }
 
 /// Where the modules among `nodes` start on the map: the top-left of what they cover.
-pub fn selection_origin(nodes: &[SceneNode]) -> Option<Pos<Tiles>> {
+pub fn selection_origin(nodes: &[SceneNode]) -> Option<Pos<Meters>> {
     super::nodes::modules(nodes)
         .iter()
         .filter_map(|module| shapes::bounds(module.module(), None))

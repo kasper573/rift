@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
 use engine::systems::class::{self, NodeKey, SkillPoints};
 use engine::systems::combat::{self, AttackRequest, Attitude};
@@ -592,8 +592,8 @@ fn skill_entry(sim: &Sim, key: &str) -> HotbarEntry {
 }
 
 /// A monster turned hostile that stands where it's put and never strikes back.
-fn dummy(sim: &mut Sim, player: Entity, offset: Offset<Tiles>) -> Entity {
-    let at: Pos<Tiles> = position(&sim.world, player).expect("the player") + offset;
+fn dummy(sim: &mut Sim, player: Entity, offset: Offset<Meters>) -> Entity {
+    let at: Pos<Meters> = position(&sim.world, player).expect("the player") + offset;
     let area = sim.id::<AreaDef>("yard");
     let def = sim.id::<NpcDef>("dummy");
     let dummy = npc::spawn(&mut sim.world, def, at, area, Pack(u32::MAX));

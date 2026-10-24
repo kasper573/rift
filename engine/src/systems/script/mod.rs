@@ -25,7 +25,7 @@ use crate::core::script::{
     self, BoxEnding, DialogueView, Expr, Instances, LineDef, RunnerKindDef, ScriptError, Scripts,
     TextDef, Vocabulary, compile::compile_row,
 };
-use crate::core::tiling::Tiles;
+use crate::core::units::Meters;
 use crate::systems::WorldArea;
 use crate::systems::actor::model::Expression;
 use crate::systems::area::scene::scene_file;
@@ -118,7 +118,7 @@ pub type EffectCall = script::EffectCall<RiftScripting>;
 #[schemars(inline)]
 pub struct Place {
     pub area: AreaId,
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
 }
 
 #[derive(JsonSchema, Serialize, Deserialize)]

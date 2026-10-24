@@ -8,7 +8,7 @@ use ui::theme;
 use engine::core::audio::soundscape::EDGE_FALLOFF;
 use engine::core::math::{Pos, Rect};
 use engine::core::render::TILE;
-use engine::core::tiling::{Cell, CellPos, GridDims, GridSize, TileSize, Tiles};
+use engine::core::units::{Cell, CellPos, GridDims, GridSize, Meters, TileSize};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::{self, AreaModule, AreaModuleKind, Pictured};
 use ui::egui::{Color32, Pos2, Rect as ERect, Sense, Stroke as EStroke, Ui, Vec2};
@@ -136,13 +136,13 @@ pub(super) fn overlay_walk(painter: &egui::Painter, frame: &AreaFrame, area: &ar
 /// Hands `draw` the cells in view that `picked` takes, each row's neighbours joined into one run,
 /// as a large map holds thousands of them.
 pub(super) fn cell_runs(
-    canvas: Viewport<Tiles>,
+    canvas: Viewport<Meters>,
     size: GridSize,
     picked: impl Fn(CellPos) -> bool,
-    mut draw: impl FnMut(Rect<Tiles>),
+    mut draw: impl FnMut(Rect<Meters>),
 ) {
     let visible = canvas.visible();
-    let mut run: Option<Rect<Tiles>> = None;
+    let mut run: Option<Rect<Meters>> = None;
     for cell in size.cells() {
         let bounds = cell.bounds();
         let taken = visible.intersects(&bounds) && picked(cell);
@@ -424,7 +424,7 @@ pub(super) fn overlay_soundscape_reach(
         }
         frame.labels.chip(
             rect.left_bottom() + Vec2::new(0.0, 22.0),
-            format!("heard within {} tiles", forms::tiles(reach)),
+            format!("heard within {} m", forms::metres(reach)),
             Color32::from_rgb(190, 150, 255),
         );
     }
@@ -564,8 +564,8 @@ pub(super) fn overlay_surfaces(painter: &egui::Painter, frame: &AreaFrame, area:
 
 fn draw_sprite(
     painter: &egui::Painter,
-    canvas: Viewport<Tiles>,
-    at: Pos<Tiles>,
+    canvas: Viewport<Meters>,
+    at: Pos<Meters>,
     sprite: &NpcSprite,
     alpha: u8,
 ) -> ERect {

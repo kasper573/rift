@@ -1,4 +1,4 @@
-use engine::core::tiling::TilePos;
+use engine::core::units::TilePos;
 use engine::systems::area::world_map::{MAX_SIZE, MIN_SIZE, WorldMapDef};
 use engine::systems::area::{self, AreaId};
 use engine::systems::script::Place;

@@ -1,7 +1,7 @@
 use bevy_ecs::entity::Entity;
 use bevy_ecs::schedule::IntoScheduleConfigs;
 use engine::core::math::{Offset, Pos};
-use engine::core::tiling::{TilePos, Tiles};
+use engine::core::units::{Meters, TilePos};
 use engine::systems::movement::{self, HeardMove, MoveRequest, MoveSeq, position};
 use engine::systems::player::CommandLock;
 use serde_json::json;
@@ -146,7 +146,7 @@ struct Walk {
     sim: Sim,
     conn: Entity,
     player: Entity,
-    start: Pos<Tiles>,
+    start: Pos<Meters>,
     asked: MoveSeq,
 }
 
@@ -171,12 +171,12 @@ impl Walk {
         }
     }
 
-    fn toward(mut self, to: Offset<Tiles>) -> Walk {
+    fn toward(mut self, to: Offset<Meters>) -> Walk {
         self.ask(to);
         self
     }
 
-    fn ask(&mut self, to: Offset<Tiles>) {
+    fn ask(&mut self, to: Offset<Meters>) {
         self.asked = MoveSeq(self.asked.0 + 1);
         let pos = self.start + to;
         self.sim.send(
@@ -194,7 +194,7 @@ impl Walk {
         }
     }
 
-    fn at(&mut self) -> Offset<Tiles> {
+    fn at(&mut self) -> Offset<Meters> {
         position(&self.sim.world, self.player).expect("the player") - self.start
     }
 
@@ -206,11 +206,11 @@ impl Walk {
             .expect("the latest move heard")
     }
 
-    fn trail(&mut self) -> Vec<Offset<Tiles>> {
+    fn trail(&mut self) -> Vec<Offset<Meters>> {
         self.trail_while(|_| {})
     }
 
-    fn trail_while(&mut self, mut each_tick: impl FnMut(&mut Walk)) -> Vec<Offset<Tiles>> {
+    fn trail_while(&mut self, mut each_tick: impl FnMut(&mut Walk)) -> Vec<Offset<Meters>> {
         (0..TICKS)
             .map(|_| {
                 self.sim.tick();
@@ -223,7 +223,7 @@ impl Walk {
 }
 
 // Walks the way `once` went, asking each tick for the tile `ahead` tiles past the one nearest.
-fn spam(once: &[Offset<Tiles>], ahead: usize) -> Vec<Offset<Tiles>> {
+fn spam(once: &[Offset<Meters>], ahead: usize) -> Vec<Offset<Meters>> {
     let tiles = tiles_passed(once);
     let mut walk = Walk::start().toward(tiles[1]);
     walk.trail_while(|walk| {
@@ -239,7 +239,7 @@ fn spam(once: &[Offset<Tiles>], ahead: usize) -> Vec<Offset<Tiles>> {
     })
 }
 
-fn arrival(trail: &[Offset<Tiles>]) -> usize {
+fn arrival(trail: &[Offset<Meters>]) -> usize {
     let end = trail.last().expect("a trail");
     trail
         .iter()
@@ -247,7 +247,7 @@ fn arrival(trail: &[Offset<Tiles>]) -> usize {
         .expect("the end of the trail")
 }
 
-fn assert_keeps_to_the_line(trail: &[Offset<Tiles>], end: Offset<Tiles>) {
+fn assert_keeps_to_the_line(trail: &[Offset<Meters>], end: Offset<Meters>) {
     let length = end.length();
     for at in trail {
         let off = (at.x * end.y - at.y * end.x).abs() / length;
@@ -260,7 +260,7 @@ fn assert_keeps_to_the_line(trail: &[Offset<Tiles>], end: Offset<Tiles>) {
 
 // A walk steps from tile to neighboring tile, so the tile nearest it changes halfway through each
 // step: the tiles nearest it in turn are the tiles it passes.
-fn tiles_passed(trail: &[Offset<Tiles>]) -> Vec<Offset<Tiles>> {
+fn tiles_passed(trail: &[Offset<Meters>]) -> Vec<Offset<Meters>> {
     let mut tiles = vec![Offset::zero()];
     for at in trail {
         let nearest = at.to_point().snap().to_vector();

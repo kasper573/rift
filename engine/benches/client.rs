@@ -9,8 +9,8 @@ use driver::{
     clickable_point, ground_near, hunting_ground, open, warp_named,
 };
 use engine::core::render::transition::ScreenTransitionPhase;
-use engine::core::tiling::TilePos;
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
+use engine::core::units::TilePos;
 use engine::systems::actor::Action;
 use engine::systems::input::map::InputAction;
 use engine::systems::probe::{ProbeBody, ProbeSnapshot};
@@ -140,7 +140,7 @@ fn set_off(me: &mut Player) {
     let seen = me.snapshot();
     let area = area_name(&seen).expect("the player is in an area");
     let at = seen.me.as_ref().expect("the player").at;
-    let far = ground_near(area, at, Tiles(5.0)..=Tiles(8.0))
+    let far = ground_near(area, at, Meters(5.0)..=Meters(8.0))
         .into_iter()
         .rev()
         .find(|tile| open(&seen, *tile))

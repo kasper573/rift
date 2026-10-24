@@ -23,8 +23,8 @@ use crate::core::content::{
 };
 use crate::core::geometry::{Footprint, Radians};
 use crate::core::math::{FrameSize, Pos, Rgba};
-use crate::core::tiling::Tiles;
 use crate::core::time::{Hertz, Seconds, UnixMillis};
+use crate::core::units::Meters;
 
 pub type VfxId = ContentId<VfxDef>;
 
@@ -175,7 +175,7 @@ pub enum VfxSite {
     Actor(#[entities] Entity),
     Object(#[entities] Entity),
     Area(Footprint),
-    Path(Vec<Pos<Tiles>>),
+    Path(Vec<Pos<Meters>>),
     Screen,
     Widget(WidgetName),
 }

@@ -217,7 +217,7 @@ fn events_section(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
                 glyph::show(ui, Mark::CaretRight, 12.0, theme::FAINT);
                 ui.label(theme::strong(&event).monospace().size(13.0));
                 ui.label(
-                    theme::muted(detail.replace(" tiles", ""))
+                    theme::muted(detail.replace(" m", ""))
                         .monospace()
                         .size(12.5),
                 );

@@ -16,8 +16,8 @@ use bevy_replicon::prelude::{ClientId as Sender, SendTargets, ToClients};
 use engine::core::content::{Content, ContentFile, ContentScope, FolderReader};
 use engine::core::math::Pos;
 use engine::core::script::{FlowSteering, Pause, RunnerKindDef, Value as ScriptValue, ValueType};
-use engine::core::tiling::Tiles;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
+use engine::core::units::Meters;
 use engine::systems::actor::Name;
 use engine::systems::area::{self, AreaId, AreaModule, AreaObject};
 use engine::systems::class::{self, Class, ClassDef, ClassId};
@@ -1134,7 +1134,7 @@ fn start_run(
     Ok(run)
 }
 
-fn area_for(content: &Content, owner: &ScriptBinding) -> Option<(AreaId, Pos<Tiles>)> {
+fn area_for(content: &Content, owner: &ScriptBinding) -> Option<(AreaId, Pos<Meters>)> {
     let spawn = content.built::<GameSettings>().initial_spawn;
     match owner.row.kind {
         RunnerKind::Area | RunnerKind::Object | RunnerKind::Blueprint => {
@@ -1164,7 +1164,7 @@ fn locate_owner(
     world: &mut World,
     owner: &ScriptBinding,
     area_id: AreaId,
-    at: Pos<Tiles>,
+    at: Pos<Meters>,
 ) -> Result<Owner, String> {
     Ok(match owner.row.kind {
         RunnerKind::Area => Owner::Row(RunnerKind::Area, area_id.raw()),

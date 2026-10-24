@@ -9,8 +9,8 @@ use crate::core::math::Pos;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, NEXT, REFUSED, ScriptFault, Value, ValueType,
 };
-use crate::core::tiling::Tiles;
 use crate::core::time::WallClock;
+use crate::core::units::Meters;
 use crate::systems::actor::{self, playing};
 use crate::systems::combat::{self, Relation};
 use crate::systems::item::Inventory;
@@ -35,7 +35,7 @@ pub struct UseSkillRequest {
 #[derive(Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq)]
 pub enum CastAim {
     Actor(#[entities] Entity),
-    Point(Pos<Tiles>),
+    Point(Pos<Meters>),
     None,
 }
 

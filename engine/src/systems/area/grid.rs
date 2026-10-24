@@ -15,7 +15,7 @@ use crate::core::content::{
     LoadError, with_content,
 };
 use crate::core::math::{Pos, Rect};
-use crate::core::tiling::{GridSize, Tiles};
+use crate::core::units::{GridSize, Meters};
 use crate::systems::area::tileset::TilesetId;
 
 #[derive(
@@ -71,7 +71,7 @@ impl Flip {
         )
     }
 
-    pub fn place(self, r: Rect<Tiles>, at: Pos<Tiles>) -> Rect<Tiles> {
+    pub fn place(self, r: Rect<Meters>, at: Pos<Meters>) -> Rect<Meters> {
         let x = if self.horizontal() {
             at.x - (r.origin.x + r.size.width)
         } else {
@@ -85,7 +85,7 @@ impl Flip {
         Rect::new(Pos::new(x, y), r.size)
     }
 
-    pub fn apply(self, p: Pos<Tiles>) -> Pos<Tiles> {
+    pub fn apply(self, p: Pos<Meters>) -> Pos<Meters> {
         Pos::new(
             if self.horizontal() { -p.x } else { p.x },
             if self.vertical() { -p.y } else { p.y },

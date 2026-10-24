@@ -6,8 +6,8 @@ use strum::{EnumDiscriminants, EnumString, IntoStaticStr};
 use crate::core::content::serial;
 use crate::core::math::Pos;
 use crate::core::script::{EventDef, ScriptFault, Value, ValueType};
-use crate::core::tiling::Tiles;
 use crate::core::time::Seconds;
+use crate::core::units::Meters;
 use crate::systems::attention::AttentionId;
 use crate::systems::interact::Verb;
 use crate::systems::item::ItemId;
@@ -46,7 +46,7 @@ pub enum RiftEvent {
     LeveledUp,
     Interacted {
         verb: Verb,
-        reach: Tiles,
+        reach: Meters,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         marks: Vec<AttentionId>,
         #[serde(default, skip_serializing_if = "serial::is_false")]
@@ -54,10 +54,10 @@ pub enum RiftEvent {
     },
     Heard {
         words: Vec<String>,
-        within: Tiles,
+        within: Meters,
     },
     CameNear {
-        within: Tiles,
+        within: Meters,
         by: Who,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         npc: Option<NpcId>,
@@ -120,7 +120,7 @@ pub const USED_POINT: usize = 1;
 pub const USED_RANK: usize = 2;
 
 /// A `Used` payload laid out as `USED_FIELDS` lists it.
-pub fn used_payload(target: Option<Entity>, point: Option<Pos<Tiles>>, rank: i64) -> Vec<Value> {
+pub fn used_payload(target: Option<Entity>, point: Option<Pos<Meters>>, rank: i64) -> Vec<Value> {
     let mut fields = vec![Value::Actor(None); USED_FIELDS.len()];
     fields[USED_TARGET] = Value::Actor(target);
     fields[USED_POINT] = Value::Point(point);

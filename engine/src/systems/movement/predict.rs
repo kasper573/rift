@@ -4,8 +4,8 @@ use bevy_time::Time;
 use crate::core::content::Content;
 use crate::core::interpolate::{Jumps, Predicted};
 use crate::core::math::{Direction, Offset, Pos};
-use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
+use crate::core::units::{Meters, TilePos};
 use crate::systems::actor::render::RenderActor;
 use crate::systems::actor::{Action, Actor};
 use crate::systems::movement::{
@@ -20,7 +20,7 @@ use crate::systems::stat;
 /// the tile it's stepping off included, carries the walk on to its end: asking again along the way
 /// keeps a walk going, so asking for every tile of a line as the walk crosses them walks it exactly
 /// as asking once for its end does.
-pub fn request_walk(world: &mut World, goal: Pos<Tiles>) {
+pub fn request_walk(world: &mut World, goal: Pos<Meters>) {
     let Some(me) = predicted_character(world) else {
         return;
     };
@@ -46,9 +46,9 @@ pub fn request_walk(world: &mut World, goal: Pos<Tiles>) {
 /// goes, which is where the stride was going anyway unless the server sent the character elsewhere.
 #[derive(Component)]
 pub(super) struct Stride {
-    at: Pos<Tiles>,
+    at: Pos<Meters>,
     path: Path,
-    target: Option<Pos<Tiles>>,
+    target: Option<Pos<Meters>>,
     facing: Direction,
     /// The latest [`MoveRequest`] sent for this character, to compare with its [`HeardMove`].
     sent: MoveSeq,
@@ -113,7 +113,7 @@ impl Stride {
     }
 
     /// Where a walk through `goal` ends: at the stride's own end when `goal` lies on the way to it.
-    fn end_through(&self, goal: Pos<Tiles>) -> Pos<Tiles> {
+    fn end_through(&self, goal: Pos<Meters>) -> Pos<Meters> {
         let Some(end) = self.target else {
             return goal;
         };
@@ -130,7 +130,7 @@ impl Stride {
     }
 
     /// Plans the walk to `goal` as the server does, returning whether it found a way there.
-    fn head_for(&mut self, navigator: &Navigator, goal: Pos<Tiles>) -> bool {
+    fn head_for(&mut self, navigator: &Navigator, goal: Pos<Meters>) -> bool {
         match navigator.plan(self.at, Some(&self.path), goal) {
             Some(tiles) => {
                 self.path = Path { tiles };
@@ -152,8 +152,8 @@ impl Stride {
     fn follow(
         &mut self,
         navigator: &Navigator,
-        server_goal: Option<Pos<Tiles>>,
-        server: Pos<Tiles>,
+        server_goal: Option<Pos<Meters>>,
+        server: Pos<Meters>,
     ) {
         let goal = server_goal.unwrap_or(server);
         if self.target.unwrap_or(self.at) == goal {
@@ -173,13 +173,13 @@ impl Stride {
         }
     }
 
-    fn snap(&mut self, to: Pos<Tiles>) {
+    fn snap(&mut self, to: Pos<Meters>) {
         self.at = to;
         self.path = Path::default();
         self.target = None;
     }
 
-    fn advance(&mut self, distance: Tiles) -> Option<Offset<Tiles>> {
+    fn advance(&mut self, distance: Meters) -> Option<Offset<Meters>> {
         let heading = walk(&mut self.at, &mut self.path, distance);
         if self.path.tiles.is_empty() {
             self.target = None;
@@ -191,7 +191,7 @@ impl Stride {
     /// can't: a swing or a death shows as soon as the server's word of it arrives.
     fn pose(
         &mut self,
-        heading: Option<Offset<Tiles>>,
+        heading: Option<Offset<Meters>>,
         gait: Action,
         shown: Option<(Direction, Action)>,
     ) -> RenderActor {

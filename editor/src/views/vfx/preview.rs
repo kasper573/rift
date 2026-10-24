@@ -10,8 +10,8 @@ use ui::theme;
 use engine::core::geometry::{Degrees, Footprint, Shape};
 use engine::core::math::Pos;
 use engine::core::render::ToScreen;
-use engine::core::tiling::Tiles;
 use engine::core::time::Seconds;
+use engine::core::units::Meters;
 use engine::core::vfx::{ParamValue, VfxLayer, VfxParams};
 use engine::systems::actor::{Action, ModelDef};
 use strum::{EnumDiscriminants, IntoStaticStr, VariantArray};
@@ -261,11 +261,15 @@ impl VfxTarget {
                 action: Action::Idle,
             },
             VfxTargetKind::Area => VfxTarget::Area {
-                shape: Shape::Circle { radius: Tiles(1.5) },
+                shape: Shape::Circle {
+                    radius: Meters(1.5),
+                },
                 facing: Degrees(0.0),
             },
             VfxTargetKind::Crowd => VfxTarget::Crowd {
-                shape: Shape::Circle { radius: Tiles(2.5) },
+                shape: Shape::Circle {
+                    radius: Meters(2.5),
+                },
                 facing: Degrees(0.0),
                 count: FIRST_CROWD,
                 action: Action::Idle,
@@ -274,7 +278,7 @@ impl VfxTarget {
         }
     }
 
-    fn footprint(&self, at: Pos<Tiles>) -> Option<Footprint> {
+    fn footprint(&self, at: Pos<Meters>) -> Option<Footprint> {
         match self {
             VfxTarget::Area { shape, facing } | VfxTarget::Crowd { shape, facing, .. } => {
                 Some(Footprint {
@@ -327,21 +331,23 @@ fn shape_fields(ui: &mut Ui, shape: &mut Shape) {
     if picked != current {
         *shape = match picked {
             "rect" => Shape::Rect {
-                width: Tiles(3.0),
-                height: Tiles(2.0),
+                width: Meters(3.0),
+                height: Meters(2.0),
             },
             "cone" => Shape::Cone {
                 angle: Degrees(90.0),
-                length: Tiles(2.5),
+                length: Meters(2.5),
             },
             "line" => Shape::Line {
-                length: Tiles(4.0),
-                width: Tiles(1.0),
+                length: Meters(4.0),
+                width: Meters(1.0),
             },
-            _ => Shape::Circle { radius: Tiles(1.5) },
+            _ => Shape::Circle {
+                radius: Meters(1.5),
+            },
         };
     }
-    let tiles = |ui: &mut Ui, label: &str, value: &mut Tiles| {
+    let metres = |ui: &mut Ui, label: &str, value: &mut Meters| {
         ui.label(theme::faint(label).size(12.0));
         NumberField::new(&mut value.0)
             .range(0.1..=12.0)
@@ -349,10 +355,10 @@ fn shape_fields(ui: &mut Ui, shape: &mut Shape) {
             .show(ui);
     };
     match shape {
-        Shape::Circle { radius } => tiles(ui, "radius", radius),
+        Shape::Circle { radius } => metres(ui, "radius", radius),
         Shape::Rect { width, height } => {
-            tiles(ui, "width", width);
-            tiles(ui, "height", height);
+            metres(ui, "width", width);
+            metres(ui, "height", height);
         }
         Shape::Cone { angle, length } => {
             ui.label(theme::faint("angle").size(12.0));
@@ -361,11 +367,11 @@ fn shape_fields(ui: &mut Ui, shape: &mut Shape) {
                 .unit("°")
                 .width(FIELD_WIDTH)
                 .show(ui);
-            tiles(ui, "length", length);
+            metres(ui, "length", length);
         }
         Shape::Line { length, width } => {
-            tiles(ui, "length", length);
-            tiles(ui, "width", width);
+            metres(ui, "length", length);
+            metres(ui, "width", width);
         }
     }
 }

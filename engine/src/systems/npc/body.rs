@@ -8,7 +8,7 @@ use crate::core::math::{Pos, Rng};
 use crate::core::script::{
     Answer, Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, ScriptFault, Value, ValueType,
 };
-use crate::core::tiling::{TilePos, Tiles};
+use crate::core::units::{Meters, TilePos};
 use crate::systems::actor::{self, Actor};
 use crate::systems::area::{self, AreaTag, object};
 use crate::systems::movement::{self, Approach};
@@ -44,9 +44,9 @@ impl Priority {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Act {
-    Wander { leash: Option<Tiles> },
-    WalkTo { to: Destination, within: Tiles },
-    Attack { target: Entity, within: Tiles },
+    Wander { leash: Option<Meters> },
+    WalkTo { to: Destination, within: Meters },
+    Attack { target: Entity, within: Meters },
     Stop,
 }
 
@@ -69,7 +69,7 @@ impl Outcome {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Destination {
-    Place(Pos<Tiles>),
+    Place(Pos<Meters>),
     Object(Entity),
     Actor(Entity),
 }
@@ -284,7 +284,7 @@ fn destination(
     world: &World,
     npc: Entity,
     to: Destination,
-    within: Tiles,
+    within: Meters,
 ) -> Option<movement::Aim> {
     let spot = match to {
         Destination::Place(at) => at,
@@ -299,7 +299,7 @@ fn destination(
     )))
 }
 
-fn wander(world: &mut World, npc: Entity, leash: Option<Tiles>) {
+fn wander(world: &mut World, npc: Entity, leash: Option<Meters>) {
     let Some(at) = movement::position(world, npc) else {
         return;
     };
@@ -438,7 +438,7 @@ impl EffectDef<RiftScripting> for Wander {
         Ok(Box::new(move |world, _, cx| {
             let leash = leash
                 .as_ref()
-                .map(|leash| Tiles(leash(world, cx).as_num() as f32));
+                .map(|leash| Meters(leash(world, cx).as_num() as f32));
             if let Some(npc) = cx.owner {
                 order(world, npc, Act::Wander { leash }, priority, None);
             }
@@ -491,7 +491,7 @@ impl EffectDef<RiftScripting> for WalkTo {
             let Some(to) = to(world, cx) else {
                 return EffectStep::Output(Outcome::Blocked.name());
             };
-            let within = Tiles(within(world, cx).as_num() as f32);
+            let within = Meters(within(world, cx).as_num() as f32);
             order(world, npc, Act::WalkTo { to, within }, priority, Some(flow));
             EffectStep::Pause
         }))
@@ -526,7 +526,7 @@ impl EffectDef<RiftScripting> for Attack {
             let Some(target) = query::actor(world, cx, &target) else {
                 return EffectStep::Output(Outcome::Lost.name());
             };
-            let within = Tiles(within(world, cx).as_num() as f32);
+            let within = Meters(within(world, cx).as_num() as f32);
             order(
                 world,
                 npc,
@@ -573,7 +573,7 @@ impl EffectDef<RiftScripting> for FaceToward {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let toward: Aimed<Pos<Tiles>> = match &self.toward {
+        let toward: Aimed<Pos<Meters>> = match &self.toward {
             FaceTarget::Place(place) => {
                 let at = place.at;
                 Box::new(move |_, _| Some(at))

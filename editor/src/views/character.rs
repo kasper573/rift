@@ -13,8 +13,8 @@ use engine::core::content::{Content, ContentFile, ContentId, FolderReader, field
 use engine::core::math::Pos;
 use engine::core::render::TILE;
 use engine::core::script::ValueType;
-use engine::core::tiling::{TilePos, Tiles};
 use engine::core::time::Seconds;
+use engine::core::units::{Meters, TilePos};
 use engine::field;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::class::{ClassDef, NodeKey, SkillTree};
@@ -773,10 +773,10 @@ fn start(
         form::kv(ui, "at", |ui| {
             if at_spawn {
                 ui.label(theme::mono(format!("{}, {}", at.x, at.y)).size(13.0));
-                ui.label(theme::faint("tiles").size(12.0));
+                ui.label(theme::faint("m").size(12.0));
             } else if let CharacterStart::At(place) = &mut character.start {
                 let (mut x, mut y) = (at.x, at.y);
-                if NumberField::of([&mut x, &mut y]).unit("tiles").show(ui) {
+                if NumberField::of([&mut x, &mut y]).unit("m").show(ui) {
                     place.at = Pos::new(x, y);
                     changed = FormChange::at(path);
                 }
@@ -790,7 +790,7 @@ fn start(
             let ppp = ui.ctx().pixels_per_point();
             let px_per_tile = 8.0;
             let half = MAP / px_per_tile / 2.0;
-            let center = Pos::<Tiles>::new(
+            let center = Pos::<Meters>::new(
                 kept_in_view(at.x, half.x, size.width),
                 kept_in_view(at.y, half.y, size.height),
             );

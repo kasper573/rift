@@ -13,8 +13,8 @@ use crate::core::content::{Content, Fixture};
 use crate::core::math::{Pos, Rng};
 use crate::core::render::camera::tile_to_window;
 use crate::core::render::transition::WorldViewSystems;
-use crate::core::tiling::Tiles;
 use crate::core::time::Seconds;
+use crate::core::units::Meters;
 use crate::core::vfx::render::{
     ParamsUniform, Run, SiteFrame, SiteTexture, compiled_shader, hide, place_in_depth,
     present_shader, screen_layer, shader_piece,
@@ -231,7 +231,7 @@ fn forget(world: &mut World) {
 fn origin(world: &mut World, actor: Entity) -> Option<Vec2> {
     let at = world.get::<RenderPosition>(actor)?.0;
     let height = world.get::<Hitbox>(actor)?.size.height;
-    let low = Pos::<Tiles>::new(at.x, at.y + 0.5 - height * BODY_SHARE);
+    let low = Pos::<Meters>::new(at.x, at.y + 0.5 - height * BODY_SHARE);
     tile_to_window(world, low)
 }
 

@@ -14,7 +14,7 @@ use crate::core::math::{Pos, Size};
 use crate::core::render::tile_to_window;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::text::{self, TextShadow};
-use crate::core::tiling::Tiles;
+use crate::core::units::Meters;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
 use crate::systems::area::AreaObject;
 use crate::systems::attention;
@@ -107,7 +107,7 @@ pub fn label_of(world: &World, content: &Content, actor: Entity) -> Option<Plate
 }
 
 /// Where a plate hangs from: the top of the hitbox of an actor standing at `at`.
-pub fn head(at: Pos<Tiles>, hitbox: Size<Tiles>) -> Pos<Tiles> {
+pub fn head(at: Pos<Meters>, hitbox: Size<Meters>) -> Pos<Meters> {
     Pos::new(at.x, at.y + 0.5 - hitbox.height)
 }
 
@@ -148,7 +148,7 @@ pub fn draw_plates(world: &mut World) {
     }
     let content = world.resource::<Content>().clone();
     let viewer = session::me(world);
-    let labelled: Vec<(Entity, PlateLabel, Pos<Tiles>, Hitbox)> = world
+    let labelled: Vec<(Entity, PlateLabel, Pos<Meters>, Hitbox)> = world
         .query_filtered::<(
             Entity,
             Option<&Name>,

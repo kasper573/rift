@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::assets::ImageRef;
 use crate::core::content::{ContentFile, ContentId, Fixture, Nearby};
 use crate::core::math::Pos;
-use crate::core::tiling::{TilePos, Tiles};
+use crate::core::units::{Meters, TilePos};
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::interact::{self, Interactive};
 use crate::systems::movement::Position;
@@ -15,7 +15,7 @@ use crate::systems::player::Players;
 use crate::systems::{stat, visibility};
 
 const REFRESH_ROUNDS: u32 = 3;
-const MARKED_RANGE: Tiles = Tiles(visibility::VIEW_DISTANCE.0 + 4.0);
+const MARKED_RANGE: Meters = Meters(visibility::VIEW_DISTANCE.0 + 4.0);
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -126,7 +126,7 @@ pub fn update(
     *turn = (*turn + 1) % REFRESH_ROUNDS;
     let marking = world.resource::<MarkSources>().0.clone();
     let badging = world.resource::<BadgeSources>().0.clone();
-    let players: Vec<(Entity, Option<AreaId>, Option<Pos<Tiles>>)> = world
+    let players: Vec<(Entity, Option<AreaId>, Option<Pos<Meters>>)> = world
         .resource::<Players>()
         .0
         .values()

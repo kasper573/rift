@@ -5,13 +5,13 @@ use bevy_ecs::prelude::*;
 use super::claims::{TileClaim, TileClaims, claim_of, others_on};
 use super::{Grid, MoveTarget, Navigator, Path, airborne, goto, moving, position, relocate};
 use crate::core::math::Pos;
-use crate::core::tiling::{Cell, CellPos, TilePos, Tiles};
+use crate::core::units::{Cell, CellPos, Meters, TilePos};
 use crate::systems::area::{AreaId, AreaTag};
 
 /// What an approach ends beside.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Aim {
-    Point(Pos<Tiles>),
+    Point(Pos<Meters>),
     /// An actor or thing where it stands, or mid-step, where its step lands.
     Actor(Entity),
     /// An actor coming for the approacher, met at the tile it claimed.
@@ -72,7 +72,7 @@ impl Aim {
 /// reach; while that actor walks, nearness counts before emptiness. A berth is kept while it stays
 /// in reach, so an approach never wavers, and one that lies in reach mid-walk is still walked to,
 /// so no one stops mid-step onto a tile nobody chose.
-pub fn approach(world: &mut World, entity: Entity, aim: Aim, reach: Tiles) -> Approach {
+pub fn approach(world: &mut World, entity: Entity, aim: Aim, reach: Meters) -> Approach {
     let (Some(at), Some(sight)) = (position(world, entity), aim.sight(world)) else {
         return Approach::Unreachable;
     };
@@ -104,7 +104,7 @@ pub fn approach(world: &mut World, entity: Entity, aim: Aim, reach: Tiles) -> Ap
 /// Moves a resting actor in reach of what it aims at to a better berth: off the tile the actor it
 /// aims at claimed, or onto one claimed by at least two fewer, the smallest gap that evens a crowd
 /// out without two actors trading places back and forth.
-pub fn settle(world: &mut World, entity: Entity, aim: Aim, reach: Tiles) {
+pub fn settle(world: &mut World, entity: Entity, aim: Aim, reach: Meters) {
     if moving(world, entity) || aim.actor() == Some(entity) {
         return;
     }
@@ -130,14 +130,14 @@ pub fn settle(world: &mut World, entity: Entity, aim: Aim, reach: Tiles) {
 
 /// The walkable tile at `spot` when no one claims it, else the nearest one no one claims:
 /// southernmost, then westernmost, of equally near ones.
-pub fn place_beside(world: &World, area: AreaId, grid: &Grid, spot: Pos<Tiles>) -> Pos<Tiles> {
+pub fn place_beside(world: &World, area: AreaId, grid: &Grid, spot: Pos<Meters>) -> Pos<Meters> {
     let claims = world.resource::<TileClaims>();
     grid.nearest_walkable_where(spot, |cell| claims.on(area, cell) == 0)
         .unwrap_or(spot)
 }
 
 /// Puts the actor down at `spot`, or beside it when someone else claims it.
-pub fn relocate_beside(world: &mut World, entity: Entity, spot: Pos<Tiles>) {
+pub fn relocate_beside(world: &mut World, entity: Entity, spot: Pos<Meters>) {
     world.entity_mut(entity).remove::<TileClaim>();
     let at = match (
         world.get::<AreaTag>(entity).map(|tag| tag.area),
@@ -151,7 +151,7 @@ pub fn relocate_beside(world: &mut World, entity: Entity, spot: Pos<Tiles>) {
 
 /// `spot` while some tile within `reach` of it is free for the actor, else the nearest free tile
 /// it can walk to, so an actor sent to a taken spot stops beside it rather than on someone.
-pub fn vacant_near(world: &World, entity: Entity, spot: Pos<Tiles>, reach: Tiles) -> Pos<Tiles> {
+pub fn vacant_near(world: &World, entity: Entity, spot: Pos<Meters>, reach: Meters) -> Pos<Meters> {
     let (Some(at), Some(navigator)) = (position(world, entity), Navigator::of(world, entity))
     else {
         return spot;
@@ -179,7 +179,7 @@ pub fn reachable(world: &World, entity: Entity, cell: CellPos) -> bool {
 
 /// Where an actor stands, or mid-step on foot, the tile its step lands on. A flyer goes straight
 /// for where it's headed, however far, so it is met where it is.
-pub fn footing(world: &World, entity: Entity) -> Option<Pos<Tiles>> {
+pub fn footing(world: &World, entity: Entity) -> Option<Pos<Meters>> {
     let at = position(world, entity)?;
     let landing = world
         .get::<Path>(entity)
@@ -189,18 +189,18 @@ pub fn footing(world: &World, entity: Entity) -> Option<Pos<Tiles>> {
 }
 
 struct Sight {
-    origin: Pos<Tiles>,
-    footing: Option<Pos<Tiles>>,
+    origin: Pos<Meters>,
+    footing: Option<Pos<Meters>>,
     avoid: [Option<CellPos>; 2],
     nearest_first: bool,
 }
 
 impl Sight {
-    fn reaches(&self, cell: CellPos, reach: Tiles) -> bool {
+    fn reaches(&self, cell: CellPos, reach: Meters) -> bool {
         cell.center().distance(self.origin) <= reach
     }
 
-    fn berths(&self, cell: CellPos, reach: Tiles) -> bool {
+    fn berths(&self, cell: CellPos, reach: Meters) -> bool {
         self.reaches(cell, reach) && !self.avoid.contains(&Some(cell))
     }
 }
@@ -208,9 +208,9 @@ impl Sight {
 fn berth(
     world: &World,
     entity: Entity,
-    at: Pos<Tiles>,
+    at: Pos<Meters>,
     sight: &Sight,
-    reach: Tiles,
+    reach: Meters,
     nearest_first: bool,
 ) -> Option<CellPos> {
     let navigator = Navigator::of(world, entity)?;
@@ -235,7 +235,7 @@ fn berth(
 struct Candidate {
     cell: CellPos,
     claims: u16,
-    distance: Tiles,
+    distance: Meters,
     avoided: bool,
 }
 
@@ -255,7 +255,7 @@ impl Candidate {
     }
 }
 
-fn around(origin: Pos<Tiles>, reach: Tiles) -> impl Iterator<Item = CellPos> {
+fn around(origin: Pos<Meters>, reach: Meters) -> impl Iterator<Item = CellPos> {
     let center = origin.cell();
     let reach = reach.0.ceil() as i32;
     (-reach..=reach).flat_map(move |dy| (-reach..=reach).map(move |dx| center.step((dx, dy))))

@@ -23,7 +23,7 @@ use crate::core::gui::{self, Band};
 use crate::core::math::Pos;
 use crate::core::render;
 use crate::core::render::transition::WorldViewSystems;
-use crate::core::tiling::Tiles;
+use crate::core::units::Meters;
 use crate::systems::interface::CursorShape;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
@@ -35,10 +35,10 @@ pub enum ClickClaim {
     Locked,
     Attack(Entity),
     Aim(Entity),
-    AimAt(Pos<Tiles>),
+    AimAt(Pos<Meters>),
     Pickup(Entity),
     Interact(Entity),
-    Walk(Pos<Tiles>),
+    Walk(Pos<Meters>),
     Nothing,
 }
 
@@ -47,7 +47,7 @@ pub fn claim(world: &mut World) -> ClickClaim {
     claim_at(world, tile)
 }
 
-pub fn claim_at(world: &mut World, tile: Option<Pos<Tiles>>) -> ClickClaim {
+pub fn claim_at(world: &mut World, tile: Option<Pos<Meters>>) -> ClickClaim {
     GESTURES
         .iter()
         .find_map(|gesture| gesture.claim(world, tile))
@@ -64,7 +64,7 @@ pub enum Cursor {
 /// A gesture takes a click by claiming it from the tile under the pointer, which is `None` while the
 /// pointer is off the world or over the interface.
 pub trait Gesture: Send + Sync {
-    fn claim(&self, world: &mut World, tile: Option<Pos<Tiles>>) -> Option<ClickClaim>;
+    fn claim(&self, world: &mut World, tile: Option<Pos<Meters>>) -> Option<ClickClaim>;
     fn drive(&self, world: &mut World, claim: Option<ClickClaim>, start: bool);
     fn cursor(&self, world: &mut World, claim: ClickClaim) -> Option<Cursor>;
     fn tile_highlight(

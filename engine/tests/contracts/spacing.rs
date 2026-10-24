@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bevy_ecs::message::Message;
 use bevy_ecs::prelude::*;
 use engine::core::math::Pos;
-use engine::core::tiling::{Cell, CellPos, TilePos, Tiles};
+use engine::core::units::{Cell, CellPos, Meters, TilePos};
 use engine::systems::area::warp::warp;
 use engine::systems::area::{AreaDef, AreaId};
 use engine::systems::combat::{self, AttackRequest, Attitude};
@@ -324,19 +324,19 @@ impl Arena {
         self.sim.send(conn, message);
     }
 
-    fn at(&self, dx: i32, dy: i32) -> Pos<Tiles> {
+    fn at(&self, dx: i32, dy: i32) -> Pos<Meters> {
         self.origin.step((dx, dy)).center()
     }
 
-    fn fighter(&mut self, at: Pos<Tiles>) -> Entity {
+    fn fighter(&mut self, at: Pos<Meters>) -> Entity {
         self.brute(at, FIGHTERS)
     }
 
-    fn victim(&mut self, at: Pos<Tiles>) -> Entity {
+    fn victim(&mut self, at: Pos<Meters>) -> Entity {
         self.brute(at, VICTIMS)
     }
 
-    fn brute(&mut self, at: Pos<Tiles>, pack: Pack) -> Entity {
+    fn brute(&mut self, at: Pos<Meters>, pack: Pack) -> Entity {
         let area = self.area;
         let def = self.sim.id::<NpcDef>("brute");
         let brute = npc::spawn(self.world(), def, at, area, pack);
@@ -350,7 +350,7 @@ impl Arena {
             attacker,
             Act::Attack {
                 target,
-                within: Tiles(40.0),
+                within: Meters(40.0),
             },
             Priority(9),
             None,

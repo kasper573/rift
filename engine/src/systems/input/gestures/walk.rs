@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::core::content::{Content, Fixture};
 use crate::core::math::Pos;
 use crate::core::render;
-use crate::core::tiling::{TilePos, Tiles};
+use crate::core::units::{Meters, TilePos};
 use crate::systems::input::gestures::{ActiveTileHighlight, ClickClaim, Cursor, Gesture};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::{CursorShape, InterfaceIcon};
@@ -16,11 +16,11 @@ pub struct WalkGesture;
 /// so a walk led by the pointer never reaches its end and waits for the next ask.
 #[derive(Resource, Default)]
 struct WalkState {
-    last_tile: Option<Pos<Tiles>>,
+    last_tile: Option<Pos<Meters>>,
 }
 
 impl Gesture for WalkGesture {
-    fn claim(&self, world: &mut World, tile: Option<Pos<Tiles>>) -> Option<ClickClaim> {
+    fn claim(&self, world: &mut World, tile: Option<Pos<Meters>>) -> Option<ClickClaim> {
         if !session::is_alive(world) {
             return None;
         }
@@ -81,7 +81,7 @@ fn repeat(world: &mut World) {
     stamp(world, tile);
 }
 
-fn stamp(world: &mut World, tile: Pos<Tiles>) {
+fn stamp(world: &mut World, tile: Pos<Meters>) {
     world
         .get_resource_or_insert_with(WalkState::default)
         .last_tile = Some(tile);

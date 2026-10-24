@@ -20,8 +20,8 @@ use crate::core::time::Seconds;
     derive_more::Sub,
     derive_more::SubAssign,
 )]
-#[schemars(extend("x-unit" = "tiles"))]
-pub struct Tiles(pub f32);
+#[schemars(extend("x-unit" = "m"))]
+pub struct Meters(pub f32);
 
 pub type CellPos = euclid::default::Point2D<i32>;
 pub type GridSize = euclid::default::Size2D<u32>;
@@ -41,41 +41,41 @@ pub const NEIGHBORS_8: [(i32, i32); 8] = [
 #[derive(
     JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
 )]
-pub struct TilesPerSec(pub Tiles);
+pub struct MetersPerSec(pub Meters);
 
-impl Tiles {
-    pub fn ratio(self, other: Tiles) -> f32 {
+impl Meters {
+    pub fn ratio(self, other: Meters) -> f32 {
         self.0 / other.0
     }
 }
 
-impl Mul<f32> for TilesPerSec {
-    type Output = TilesPerSec;
-    fn mul(self, factor: f32) -> TilesPerSec {
-        TilesPerSec(Tiles(self.0.0 * factor))
+impl Mul<f32> for MetersPerSec {
+    type Output = MetersPerSec;
+    fn mul(self, factor: f32) -> MetersPerSec {
+        MetersPerSec(Meters(self.0.0 * factor))
     }
 }
 
-impl Mul<Seconds> for TilesPerSec {
-    type Output = Tiles;
-    fn mul(self, time: Seconds) -> Tiles {
-        Tiles(self.0.0 * time.0)
+impl Mul<Seconds> for MetersPerSec {
+    type Output = Meters;
+    fn mul(self, time: Seconds) -> Meters {
+        Meters(self.0.0 * time.0)
     }
 }
 
 pub trait Cell {
-    fn center(self) -> Pos<Tiles>;
-    fn bounds(self) -> Rect<Tiles>;
+    fn center(self) -> Pos<Meters>;
+    fn bounds(self) -> Rect<Meters>;
     fn index(self, size: GridSize) -> Option<usize>;
     fn step(self, offset: (i32, i32)) -> CellPos;
 }
 
 impl Cell for CellPos {
-    fn center(self) -> Pos<Tiles> {
+    fn center(self) -> Pos<Meters> {
         Pos::new(self.x as f32, self.y as f32)
     }
 
-    fn bounds(self) -> Rect<Tiles> {
+    fn bounds(self) -> Rect<Meters> {
         Rect::new(
             Pos::new(self.x as f32 - 0.5, self.y as f32 - 0.5),
             Size::splat(1.0),
@@ -95,19 +95,19 @@ impl Cell for CellPos {
 
 pub trait TilePos {
     fn cell(self) -> CellPos;
-    fn snap(self) -> Pos<Tiles>;
+    fn snap(self) -> Pos<Meters>;
     fn on_center(self) -> bool;
-    fn distance(self, other: Pos<Tiles>) -> Tiles;
-    fn toward(self, target: Pos<Tiles>, by: Tiles) -> Pos<Tiles>;
-    fn hitbox(self, size: Size<Tiles>) -> Rect<Tiles>;
+    fn distance(self, other: Pos<Meters>) -> Meters;
+    fn toward(self, target: Pos<Meters>, by: Meters) -> Pos<Meters>;
+    fn hitbox(self, size: Size<Meters>) -> Rect<Meters>;
 }
 
-impl TilePos for Pos<Tiles> {
+impl TilePos for Pos<Meters> {
     fn cell(self) -> CellPos {
         CellPos::new(self.x.round() as i32, self.y.round() as i32)
     }
 
-    fn snap(self) -> Pos<Tiles> {
+    fn snap(self) -> Pos<Meters> {
         self.cell().center()
     }
 
@@ -116,15 +116,15 @@ impl TilePos for Pos<Tiles> {
         resting(self.x) && resting(self.y)
     }
 
-    fn distance(self, other: Pos<Tiles>) -> Tiles {
-        Tiles(self.distance_to(other))
+    fn distance(self, other: Pos<Meters>) -> Meters {
+        Meters(self.distance_to(other))
     }
 
-    fn toward(self, target: Pos<Tiles>, by: Tiles) -> Pos<Tiles> {
+    fn toward(self, target: Pos<Meters>, by: Meters) -> Pos<Meters> {
         self + (target - self).normalize() * by.0
     }
 
-    fn hitbox(self, size: Size<Tiles>) -> Rect<Tiles> {
+    fn hitbox(self, size: Size<Meters>) -> Rect<Meters> {
         Rect::new(
             self + Offset::new(-size.width / 2.0, 0.5 - size.height),
             size,
@@ -136,7 +136,7 @@ pub trait TileRect {
     fn tiles(self) -> impl Iterator<Item = CellPos>;
 }
 
-impl TileRect for Rect<Tiles> {
+impl TileRect for Rect<Meters> {
     fn tiles(self) -> impl Iterator<Item = CellPos> {
         let min = self.min().cell();
         let max = self.max().cell();
@@ -145,12 +145,12 @@ impl TileRect for Rect<Tiles> {
 }
 
 pub trait TileSize {
-    fn bounds(self) -> Rect<Tiles>;
+    fn bounds(self) -> Rect<Meters>;
     fn grid(self) -> GridSize;
 }
 
-impl TileSize for Size<Tiles> {
-    fn bounds(self) -> Rect<Tiles> {
+impl TileSize for Size<Meters> {
+    fn bounds(self) -> Rect<Meters> {
         Rect::new(Pos::new(-0.5, -0.5), self)
     }
 
@@ -172,8 +172,8 @@ impl GridDims for GridSize {
 
 #[derive(Clone, Copy)]
 pub struct PixelsPerTile {
-    x: euclid::Scale<f32, WorldPx, Tiles>,
-    y: euclid::Scale<f32, WorldPx, Tiles>,
+    x: euclid::Scale<f32, WorldPx, Meters>,
+    y: euclid::Scale<f32, WorldPx, Meters>,
 }
 
 impl PixelsPerTile {
@@ -184,14 +184,14 @@ impl PixelsPerTile {
         }
     }
 
-    pub fn point(self, p: Pos<WorldPx>) -> Pos<Tiles> {
+    pub fn point(self, p: Pos<WorldPx>) -> Pos<Meters> {
         Pos::new(
             self.x.transform_point(p).x - 0.5,
             self.y.transform_point(p).y - 0.5,
         )
     }
 
-    pub fn rect(self, r: Rect<WorldPx>) -> Rect<Tiles> {
+    pub fn rect(self, r: Rect<WorldPx>) -> Rect<Meters> {
         Rect::new(
             self.point(r.origin),
             Size::new(r.size.width * self.x.get(), r.size.height * self.y.get()),

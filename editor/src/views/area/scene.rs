@@ -14,7 +14,7 @@ use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::content::Content;
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::render::{TILE, ToScreen};
-use engine::core::tiling::{TileSize, Tiles};
+use engine::core::units::{Meters, TileSize};
 use engine::systems::area::blueprint::Placement;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaGrids, AreaModule, Picture, Scenery};
@@ -27,7 +27,7 @@ pub struct AreaSceneRequest {
     pub spec: AreaSceneSpec,
     pub width: u32,
     pub height: u32,
-    pub center: Pos<Tiles>,
+    pub center: Pos<Meters>,
     pub zoom: f32,
     pub generation: u64,
     // A still scene keeps its last frame until something about it changes, so the world map's
@@ -92,7 +92,7 @@ pub struct AreaScene {
     generation: u64,
     seen_at: Duration,
     zoom: f32,
-    center: Pos<Tiles>,
+    center: Pos<Meters>,
     changed_at: Duration,
     settling: u32,
     active: bool,
@@ -382,7 +382,7 @@ fn spawn(
     );
 }
 
-pub fn scenery_extent(sceneries: &[Scenery]) -> Option<Rect<Tiles>> {
+pub fn scenery_extent(sceneries: &[Scenery]) -> Option<Rect<Meters>> {
     sceneries
         .iter()
         .map(Scenery::bounds)
@@ -461,7 +461,7 @@ pub fn image_handle(
 
 /// What a scene spawns tiles for.
 struct Pictured {
-    size: Size<Tiles>,
+    size: Size<Meters>,
     sort_base: f32,
     ground: Arc<AreaGrids>,
     scenery: Vec<Scenery>,

@@ -7,8 +7,8 @@ use engine::core::script::{
     Arrow, DialogueNode, EffectDef, EventDef, Exit, Expr, Fill, NodeKind, REFUSED, RunnerKindDef,
     Target, VarValue,
 };
-use engine::core::tiling::Tiles;
 use engine::core::time::Seconds;
+use engine::core::units::Meters;
 use engine::systems::actor::model::Expression;
 use engine::systems::interact::Verb;
 use engine::systems::item::ItemStack;
@@ -607,10 +607,10 @@ pub fn fresh_event(reader: &FolderReader, event: &str, nearby: schema::Nearby) -
     match &mut event {
         RiftEvent::Interacted { verb, reach, .. } => {
             *verb = Verb::Talk;
-            *reach = Tiles(1.5);
+            *reach = Meters(1.5);
         }
         RiftEvent::CameNear { within, .. } | RiftEvent::Heard { within, .. } => {
-            *within = Tiles(4.0);
+            *within = Meters(4.0);
         }
         _ => {}
     }
@@ -1134,7 +1134,7 @@ fn event_pieces(text: &NodeText, event: &RiftEvent) -> Vec<SummaryPiece> {
             strong(verb.label().to_lowercase()),
             muted(" · reach "),
             strong(reach.0.to_string()),
-            muted(" tiles"),
+            muted(" m"),
         ],
         RiftEvent::CameNear { within, by, .. } => vec![
             strong(who(*by)),

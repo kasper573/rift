@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::Pos;
-use engine::core::tiling::{TilePos, Tiles};
+use engine::core::units::{Meters, TilePos};
 use engine::systems::area::transition::Crossing;
 use engine::systems::area::warp::warp;
 use engine::systems::area::{self, AreaDef};
@@ -16,7 +16,7 @@ use engine::systems::{npc, stat};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, dialogue, labels, lines, locked};
 
-const ROAD: Pos<Tiles> = Pos::new(13.0, 6.0);
+const ROAD: Pos<Meters> = Pos::new(13.0, 6.0);
 
 #[test]
 fn an_arrival_holds_until_the_client_reports_its_area_drawn_or_the_patience_runs_out() {
@@ -97,7 +97,7 @@ fn without_a_pass_the_road_is_ground_and_the_warden_halts_you_each_time_you_step
     assert!(halted(&mut sim, player), "the warden never stopped you");
     let halt = sim.conversation(1).expect("halted");
     assert_eq!(halt.with, Some(warden));
-    assert!(position(&sim.world, player).is_some_and(|at| at.distance(ROAD) < Tiles(0.5)));
+    assert!(position(&sim.world, player).is_some_and(|at| at.distance(ROAD) < Meters(0.5)));
     assert!(commands_locked(&sim.world, player));
     assert!(!labels(&halt).contains(&"I have a pass.".to_owned()));
     assert!(locked(&halt, "I'm ready for the road."));
@@ -375,7 +375,7 @@ fn arriving(sim: &mut Sim) -> Entity {
     sim.player(1)
 }
 
-fn walk(sim: &mut Sim, to: Pos<Tiles>) {
+fn walk(sim: &mut Sim, to: Pos<Meters>) {
     let conn = sim.conn(1);
     sim.send(
         conn,
@@ -386,9 +386,9 @@ fn walk(sim: &mut Sim, to: Pos<Tiles>) {
     );
 }
 
-fn arrived(sim: &mut Sim, player: Entity, at: Pos<Tiles>) -> bool {
+fn arrived(sim: &mut Sim, player: Entity, at: Pos<Meters>) -> bool {
     sim.run_until(15.0, |world| {
-        position(world, player).is_some_and(|here| here.distance(at) < Tiles(0.5))
+        position(world, player).is_some_and(|here| here.distance(at) < Meters(0.5))
     })
 }
 

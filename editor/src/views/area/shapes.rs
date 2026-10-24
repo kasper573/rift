@@ -1,13 +1,13 @@
 use engine::core::audio::soundscape::SoundscapeShape;
 use engine::core::content::name_of;
 use engine::core::math::{Offset, Pos, Rect, Size};
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::area::scene::SceneNode;
 use engine::systems::area::{AreaModule, Flip, ObjectShape, Scenery};
 
 use crate::project::IdPaths;
 
-pub fn bounds(module: &AreaModule, placement_bounds: Option<Rect<Tiles>>) -> Option<Rect<Tiles>> {
+pub fn bounds(module: &AreaModule, placement_bounds: Option<Rect<Meters>>) -> Option<Rect<Meters>> {
     match module {
         AreaModule::Object(object) => Some(object.shape.bounds()),
         AreaModule::SafeZone(zone) => Some(zone.rect),
@@ -37,18 +37,18 @@ pub fn is_point(module: &AreaModule) -> bool {
     }
 }
 
-pub fn cell_rect(at: Pos<Tiles>) -> Rect<Tiles> {
+pub fn cell_rect(at: Pos<Meters>) -> Rect<Meters> {
     Rect::new(at - Offset::new(0.5, 0.5), Size::splat(1.0))
 }
 
-pub fn scenery_rect(scenery: &Scenery) -> Rect<Tiles> {
+pub fn scenery_rect(scenery: &Scenery) -> Rect<Meters> {
     scenery.bounds()
 }
 
 /// Moves what places `module` on the map by `dx`, `dy`, snapped to sixteenths of a tile.
 pub fn shift(module: &mut AreaModule, dx: f32, dy: f32) {
-    let moved = |at: Pos<Tiles>| Pos::new(sixteenth(at.x + dx), sixteenth(at.y + dy));
-    let moved_rect = |rect: Rect<Tiles>| Rect::new(moved(rect.origin), rect.size);
+    let moved = |at: Pos<Meters>| Pos::new(sixteenth(at.x + dx), sixteenth(at.y + dy));
+    let moved_rect = |rect: Rect<Meters>| Rect::new(moved(rect.origin), rect.size);
     match module {
         AreaModule::Object(object) => {
             object.shape = match object.shape {
@@ -162,18 +162,18 @@ pub fn node_detail(module: &AreaModule, paths: &impl IdPaths) -> String {
     {
         return format!("→ {}", name_of(&area));
     }
-    let size = |rect: Rect<Tiles>| {
+    let size = |rect: Rect<Meters>| {
         format!(
             "{} × {}",
-            crate::forms::tiles(rect.size.width),
-            crate::forms::tiles(rect.size.height)
+            crate::forms::metres(rect.size.width),
+            crate::forms::metres(rect.size.height)
         )
     };
-    let point = |at: Pos<Tiles>| {
+    let point = |at: Pos<Meters>| {
         format!(
             "{}, {}",
-            crate::forms::tiles(at.x),
-            crate::forms::tiles(at.y)
+            crate::forms::metres(at.x),
+            crate::forms::metres(at.y)
         )
     };
     match module {
@@ -185,7 +185,7 @@ pub fn node_detail(module: &AreaModule, paths: &impl IdPaths) -> String {
     }
 }
 
-fn sized_rect(module: &mut AreaModule) -> Option<&mut Rect<Tiles>> {
+fn sized_rect(module: &mut AreaModule) -> Option<&mut Rect<Meters>> {
     match module {
         AreaModule::Object(object) => match &mut object.shape {
             ObjectShape::Rect(rect) => Some(rect),

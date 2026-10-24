@@ -20,7 +20,7 @@ use crate::core::content::{
 };
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::script::{VarValue, Variable, VariableType, Vocabulary};
-use crate::core::tiling::{Cell, CellPos, GridDims, TilePos, Tiles};
+use crate::core::units::{Cell, CellPos, GridDims, Meters, TilePos};
 use crate::systems::script::{Place, RiftScripting, ScriptModule};
 
 pub type BlueprintId = ContentId<BlueprintDef>;
@@ -329,7 +329,7 @@ pub struct Placement {
     pub blueprint: BlueprintId,
     #[schemars(with = "serial::PosRow")]
     #[serde(serialize_with = "serial::pos", deserialize_with = "serial::pos_from")]
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     #[serde(default, skip_serializing_if = "Flip::is_none")]
     pub flip: Flip,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -382,7 +382,7 @@ pub struct PlacedBlueprint {
     pub blueprint: BlueprintId,
     pub origin: String,
     pub chain: Vec<(BlueprintId, String)>,
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     pub flip: Flip,
     pub values: BTreeMap<String, Value>,
     /// Each script with the path of its node in the blueprint's scene.
@@ -584,7 +584,7 @@ impl Expansion<'_> {
     fn expand(
         &mut self,
         placement: &Placement,
-        at: Pos<Tiles>,
+        at: Pos<Meters>,
         flip: Flip,
         values: &BTreeMap<String, VarValue<RiftScripting>>,
     ) {
@@ -822,7 +822,7 @@ impl Expansion<'_> {
 }
 
 /// Where a point given in a placed blueprint's own coordinates lands.
-fn at_of(at: Pos<Tiles>, flip: Flip, point: Pos<Tiles>) -> Pos<Tiles> {
+fn at_of(at: Pos<Meters>, flip: Flip, point: Pos<Meters>) -> Pos<Meters> {
     at + flip.apply(point).to_vector()
 }
 
@@ -993,9 +993,9 @@ fn strings(json: &Value, into: &mut Vec<String>) {
     }
 }
 
-pub fn place(module: &mut AreaModule, at: Pos<Tiles>, flip: Flip) {
-    let point = |p: Pos<Tiles>| at + flip.apply(p).to_vector();
-    let rect = |r: Rect<Tiles>| flip.place(r, at);
+pub fn place(module: &mut AreaModule, at: Pos<Meters>, flip: Flip) {
+    let point = |p: Pos<Meters>| at + flip.apply(p).to_vector();
+    let rect = |r: Rect<Meters>| flip.place(r, at);
     match module {
         AreaModule::Object(object) => {
             object.shape = match object.shape {

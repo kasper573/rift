@@ -23,7 +23,7 @@ use engine::core::content::{
     parent_of, table_of,
 };
 use engine::core::math::Pos;
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::{self, GameSettings};
 
 use self::files::content_holding;
@@ -248,7 +248,7 @@ pub struct EditViewpoint {
 pub struct AreaCameraState {
     /// The area or blueprint bundle the camera looks at.
     pub bundle: String,
-    pub center: Pos<Tiles>,
+    pub center: Pos<Meters>,
     pub zoom: f32,
 }
 

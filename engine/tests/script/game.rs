@@ -5,7 +5,7 @@ use engine::core::content::id::Leaf;
 use engine::core::content::{Content, ContentScope, with_content};
 use engine::core::math::{Offset, Pos};
 use engine::core::script::compile::compile_owner;
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest};
 use engine::systems::dialogue::{self, ConversationRequest};
@@ -85,8 +85,8 @@ pub fn field() -> (Sim, Entity) {
 }
 
 /// The character of the npc row under `key`, spawned `offset` away from `near`, in `pack`.
-pub fn spawn(sim: &mut Sim, key: &str, near: Entity, offset: Offset<Tiles>, pack: u32) -> Entity {
-    let at: Pos<Tiles> = position(&sim.world, near).expect("a position") + offset;
+pub fn spawn(sim: &mut Sim, key: &str, near: Entity, offset: Offset<Meters>, pack: u32) -> Entity {
+    let at: Pos<Meters> = position(&sim.world, near).expect("a position") + offset;
     let area = sim.id::<AreaDef>("field");
     let def = sim.id::<NpcDef>(key);
     npc::spawn(&mut sim.world, def, at, area, Pack(pack))

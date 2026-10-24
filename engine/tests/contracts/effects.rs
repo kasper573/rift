@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use bevy_ecs::prelude::*;
 use engine::core::content::Content;
 use engine::core::math::{Offset, Pos};
-use engine::core::tiling::Tiles;
 use engine::core::time::Seconds;
+use engine::core::units::Meters;
 use engine::core::vfx::{VfxDef, VfxInstance, VfxSite};
 use engine::systems::area::AreaDef;
 use engine::systems::class::NodeKey;
@@ -504,7 +504,7 @@ fn knows_fireball(sim: &mut Sim, player: Entity) {
         )])));
 }
 
-fn cast_fireball(sim: &mut Sim, at: Pos<Tiles>) {
+fn cast_fireball(sim: &mut Sim, at: Pos<Meters>) {
     let conn = sim.conn(1);
     let fireball = sim.id::<SkillDef>("fireball");
     sim.send(
@@ -517,7 +517,7 @@ fn cast_fireball(sim: &mut Sim, at: Pos<Tiles>) {
 }
 
 /// A hostile dummy that stands where it's put and never fights back.
-fn dummy(sim: &mut Sim, at: Pos<Tiles>) -> Entity {
+fn dummy(sim: &mut Sim, at: Pos<Meters>) -> Entity {
     let area = sim.id::<AreaDef>("clinic");
     let def = sim.id::<NpcDef>("dummy");
     let dummy = npc::spawn(&mut sim.world, def, at, area, Pack(u32::MAX));

@@ -13,7 +13,7 @@ use ui::theme;
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
 use engine::core::math::{Pos, Rect, Rng, Size};
 use engine::core::script::VariableType;
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::field;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::object::ObjectDef;
@@ -1216,7 +1216,7 @@ fn object_extras(
     ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {
         for (area, at) in &destinations {
-            let where_ = format!("{area} · {}, {}", forms::tiles(at.x), forms::tiles(at.y));
+            let where_ = format!("{area} · {}, {}", forms::metres(at.x), forms::metres(at.y));
             if ui
                 .button("→ Go to destination")
                 .on_hover_text(where_)
@@ -1301,7 +1301,7 @@ fn spans(scene: &[SceneNode], pointers: &[String], paths: &impl IdPaths) -> Stri
 
 /// The rect of every cell of a map of `size`: where a population roams when it is given no rect,
 /// so the one it is first given.
-fn whole_map(size: MapSize) -> Rect<Tiles> {
+fn whole_map(size: MapSize) -> Rect<Meters> {
     Rect::new(
         Pos::new(-0.5, -0.5),
         Size::new(size.width as f32, size.height as f32),

@@ -8,8 +8,8 @@ use super::{Condition, RiftScripting};
 use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::script::{Compiler, Eval, FlowCx, QueryDef, ScriptFault, Value, ValueType};
-use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::{Seconds, WallClock};
+use crate::core::units::{Meters, TilePos};
 use crate::systems::area::transition::Discovered;
 use crate::systems::area::{self, Area, AreaId, AreaTag, object};
 use crate::systems::class::{self, ClassId};
@@ -39,8 +39,8 @@ pub struct TickRoster {
 
 #[derive(Clone, Copy)]
 struct Bounds {
-    min: Pos<Tiles>,
-    max: Pos<Tiles>,
+    min: Pos<Meters>,
+    max: Pos<Meters>,
 }
 
 impl Bounds {
@@ -59,7 +59,7 @@ impl Bounds {
         ))
     }
 
-    fn reaches(self, from: Pos<Tiles>, within: Tiles) -> bool {
+    fn reaches(self, from: Pos<Meters>, within: Meters) -> bool {
         from.x + within.0 >= self.min.x
             && from.x - within.0 <= self.max.x
             && from.y + within.0 >= self.min.y
@@ -70,7 +70,7 @@ impl Bounds {
 #[derive(Clone, Copy)]
 pub struct Listed {
     pub entity: Entity,
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     pub area: AreaId,
     pub npc: Option<NpcId>,
     pub character: bool,
@@ -92,7 +92,7 @@ impl TickRoster {
         }
     }
 
-    fn may_reach(&self, among: Among, from: Pos<Tiles>, within: Tiles) -> bool {
+    fn may_reach(&self, among: Among, from: Pos<Meters>, within: Meters) -> bool {
         let reaches =
             |bounds: Option<Bounds>| bounds.is_some_and(|bounds| bounds.reaches(from, within));
         match among {
@@ -691,7 +691,7 @@ impl QueryDef<RiftScripting> for RiftQuery {
                 let (among, npc) = (*among, *npc);
                 let within = cx.expr(within, ValueType::Number)?;
                 Box::new(move |world, cx| {
-                    let within = Tiles(within(world, cx).as_num() as f32);
+                    let within = Meters(within(world, cx).as_num() as f32);
                     Value::Actor(nearest(world, cx, among, npc, within))
                 })
             }
@@ -699,7 +699,7 @@ impl QueryDef<RiftScripting> for RiftQuery {
                 let (among, npc) = (*among, *npc);
                 let within = cx.expr(within, ValueType::Number)?;
                 Box::new(move |world, cx| {
-                    let within = Tiles(within(world, cx).as_num() as f32);
+                    let within = Meters(within(world, cx).as_num() as f32);
                     Value::Int(around(world, cx, among, npc, within).count() as i64)
                 })
             }
@@ -761,7 +761,7 @@ impl QueryDef<RiftScripting> for RiftQuery {
                 let at = cx.opt_expr(at.as_deref(), ValueType::Actor)?;
                 let within = cx.expr(within, ValueType::Number)?;
                 Box::new(move |world, cx| {
-                    let within = Tiles(within(world, cx).as_num() as f32);
+                    let within = Meters(within(world, cx).as_num() as f32);
                     let center = match &at {
                         Some(at) => {
                             actor(world, cx, at).and_then(|who| movement::position(world, who))
@@ -857,7 +857,7 @@ pub fn is_character(world: &World, who: Entity) -> bool {
     world.get::<PlayedBy>(who).is_some()
 }
 
-fn distance(world: &World, from: Entity, to: Entity) -> Option<Tiles> {
+fn distance(world: &World, from: Entity, to: Entity) -> Option<Meters> {
     Some(movement::position(world, from)?.distance(movement::position(world, to)?))
 }
 
@@ -866,7 +866,7 @@ pub fn nearest(
     cx: &FlowCx,
     among: Among,
     npc: Option<NpcId>,
-    within: Tiles,
+    within: Meters,
 ) -> Option<Entity> {
     around(world, cx, among, npc, within)
         .min_by(|(a, da), (b, db)| da.0.total_cmp(&db.0).then(a.cmp(b)))
@@ -878,8 +878,8 @@ pub fn around<'w>(
     cx: &FlowCx,
     among: Among,
     npc: Option<NpcId>,
-    within: Tiles,
-) -> impl Iterator<Item = (Entity, Tiles)> + 'w {
+    within: Meters,
+) -> impl Iterator<Item = (Entity, Meters)> + 'w {
     let scan = Scan::of(world, cx, among, within);
     let candidates: &'w [Listed] = match &scan {
         Some(scan) => scan.roster.among(among),
@@ -915,7 +915,7 @@ pub fn around<'w>(
 struct Scan<'w> {
     roster: &'w TickRoster,
     owner: Entity,
-    from: Pos<Tiles>,
+    from: Pos<Meters>,
     area: AreaId,
     shelter: Option<&'w Area>,
     attackers: Vec<Entity>,
@@ -923,7 +923,7 @@ struct Scan<'w> {
 }
 
 impl<'w> Scan<'w> {
-    fn of(world: &'w World, cx: &FlowCx, among: Among, within: Tiles) -> Option<Scan<'w>> {
+    fn of(world: &'w World, cx: &FlowCx, among: Among, within: Meters) -> Option<Scan<'w>> {
         let owner = cx.owner?;
         let from = movement::position(world, owner)?;
         let area = world.get::<AreaTag>(owner)?.area;

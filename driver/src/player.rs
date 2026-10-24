@@ -5,7 +5,7 @@ use bevy_ecs::entity::Entity;
 use bevy_input::keyboard::KeyCode;
 use bevy_input::mouse::MouseButton;
 use engine::core::math::{Offset, Pos, Rect, WindowPx};
-use engine::core::tiling::{Cell, TilePos, Tiles};
+use engine::core::units::{Cell, Meters, TilePos};
 use engine::systems::area;
 use engine::systems::input::gestures::ClickClaim;
 use engine::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers};
@@ -135,7 +135,7 @@ impl Player {
         self.desktop.sweep_pointer(through)
     }
 
-    pub fn point_at_tile(&mut self, tile: Pos<Tiles>) -> ProbeSnapshot {
+    pub fn point_at_tile(&mut self, tile: Pos<Meters>) -> ProbeSnapshot {
         let seen = self.snapshot();
         let Some(at) = clickable_point(&seen, tile) else {
             self.desktop.fail(&format!("{tile:?} is out of view"));
@@ -282,15 +282,15 @@ impl Player {
 
     /// Walks there and comes to rest, and returns where: anyone standing on the tile stops the
     /// player short.
-    pub fn walk_to(&mut self, tile: Pos<Tiles>) -> Pos<Tiles> {
+    pub fn walk_to(&mut self, tile: Pos<Meters>) -> Pos<Meters> {
         self.walk_toward(|_| Some(tile))
     }
 
     /// As `walk_to`, for a goal re-read every frame, as something that moves.
     pub fn walk_toward(
         &mut self,
-        goal: impl Fn(&ProbeSnapshot) -> Option<Pos<Tiles>>,
-    ) -> Pos<Tiles> {
+        goal: impl Fn(&ProbeSnapshot) -> Option<Pos<Meters>>,
+    ) -> Pos<Meters> {
         self.travel_to(&goal, |snapshot| {
             goal(snapshot).is_some_and(|goal| hemmed_in(snapshot, goal))
         });
@@ -298,7 +298,7 @@ impl Player {
     }
 
     /// The ground the player can walk to nearest the spot that nobody stands on, clear of warps.
-    pub fn walk_near(&mut self, spot: Pos<Tiles>) -> Pos<Tiles> {
+    pub fn walk_near(&mut self, spot: Pos<Meters>) -> Pos<Meters> {
         let seen = self.in_world();
         let grid = grid_of(&seen);
         let me = seen.me.as_ref().expect("the player").at;
@@ -318,17 +318,17 @@ impl Player {
         self.walk_to(ground)
     }
 
-    pub fn walk_by(&mut self, offset: Offset<Tiles>) -> Pos<Tiles> {
+    pub fn walk_by(&mut self, offset: Offset<Meters>) -> Pos<Meters> {
         let me = self.in_world().me.expect("the player").at;
         self.walk_near(me + offset)
     }
 
     /// Into a marked spot of the area: a named object, or a townsperson's home.
-    pub fn walk_into(&mut self, marker: &str, reach: Tiles) -> Pos<Tiles> {
+    pub fn walk_into(&mut self, marker: &str, reach: Meters) -> Pos<Meters> {
         let seen = self.in_world();
         let area = area_name(&seen).expect("the player is in an area");
         let at = marker_at(area, marker);
-        let inside = |me: Pos<Tiles>| (me.x - at.x).abs().max((me.y - at.y).abs()) <= reach.0;
+        let inside = |me: Pos<Meters>| (me.x - at.x).abs().max((me.y - at.y).abs()) <= reach.0;
         self.travel_to(
             |_| Some(at),
             |snapshot| snapshot.me.as_ref().is_some_and(|me| inside(me.at)),
@@ -363,7 +363,7 @@ impl Player {
     /// it, one click on the farthest open ground in view at a time.
     pub fn travel_to(
         &mut self,
-        goal: impl Fn(&ProbeSnapshot) -> Option<Pos<Tiles>>,
+        goal: impl Fn(&ProbeSnapshot) -> Option<Pos<Meters>>,
         arrived: impl Fn(&ProbeSnapshot) -> bool,
     ) {
         let deadline = Deadline::from(&self.desktop, LONG);
@@ -438,7 +438,7 @@ impl Player {
     }
 
     /// Heads for where `npc` roams, and ends once `done` holds.
-    pub fn look_out(&mut self, npc: &str, done: impl Fn(&ProbeSnapshot) -> bool) -> Pos<Tiles> {
+    pub fn look_out(&mut self, npc: &str, done: impl Fn(&ProbeSnapshot) -> bool) -> Pos<Meters> {
         let area = area_name(&self.snapshot()).expect("an area");
         let ground = hunting_ground(area, npc);
         self.look_for(&format!("{npc} in sight"), ground, done);
@@ -450,7 +450,7 @@ impl Player {
     pub fn look_for(
         &mut self,
         what: &str,
-        place: Pos<Tiles>,
+        place: Pos<Meters>,
         found: impl Fn(&ProbeSnapshot) -> bool,
     ) -> ProbeSnapshot {
         self.travel_to(|_| Some(place), &found);
@@ -464,7 +464,7 @@ impl Player {
         })
     }
 
-    pub fn come_to_rest(&mut self) -> Pos<Tiles> {
+    pub fn come_to_rest(&mut self) -> Pos<Meters> {
         self.wait_for("the player to come to rest", |snapshot| {
             snapshot
                 .me
@@ -478,7 +478,7 @@ impl Player {
     fn engage<T>(
         &mut self,
         what: &str,
-        locate: impl Fn(&ProbeSnapshot) -> Option<(Entity, Pos<Tiles>, Pos<Tiles>)>,
+        locate: impl Fn(&ProbeSnapshot) -> Option<(Entity, Pos<Meters>, Pos<Meters>)>,
         done: impl Fn(&ProbeSnapshot) -> Option<T>,
     ) -> T {
         let found = self.reach(
@@ -522,7 +522,7 @@ impl Player {
     }
 
     /// Arms the skill in the slot and points at the tile, ready to cast.
-    pub fn aim_skill(&mut self, slot: InputAction, at: Pos<Tiles>) {
+    pub fn aim_skill(&mut self, slot: InputAction, at: Pos<Meters>) {
         self.act(slot);
         self.wait_until("the skill armed", aiming);
         self.point_at_tile(at);
@@ -537,7 +537,7 @@ impl Player {
     pub fn cast_at(
         &mut self,
         slot: InputAction,
-        at: Pos<Tiles>,
+        at: Pos<Meters>,
         done: impl Fn(&ProbeSnapshot) -> bool,
     ) {
         self.aim_skill(slot, at);
@@ -776,7 +776,7 @@ impl Player {
         &mut self,
         what: &str,
         budget: WaitBudget,
-        locate: impl Fn(&ProbeSnapshot) -> Option<(Entity, Pos<Tiles>, Pos<Tiles>)>,
+        locate: impl Fn(&ProbeSnapshot) -> Option<(Entity, Pos<Meters>, Pos<Meters>)>,
         takes: impl Fn(&ProbeSnapshot, Entity) -> bool,
         done: impl Fn(&ProbeSnapshot) -> Option<T>,
     ) -> Option<T> {
@@ -905,7 +905,7 @@ const TYPING: Duration = Duration::from_millis(45);
 // An element that keeps moving out from under the pointer is chased this many times before giving
 // up.
 const AIM_ATTEMPTS: u32 = 60;
-const NEAR: Tiles = Tiles(1.5);
+const NEAR: Meters = Meters(1.5);
 const SCROLLS: u32 = 12;
 const FIRST_CHOICES: u32 = 3;
 const SET_OFF: WaitBudget = WaitBudget {
@@ -935,7 +935,7 @@ fn grid_of(snapshot: &ProbeSnapshot) -> &'static Grid {
 
 // At rest, with someone standing on every step left of the way: as close as they let the player
 // come.
-fn hemmed_in(snapshot: &ProbeSnapshot, goal: Pos<Tiles>) -> bool {
+fn hemmed_in(snapshot: &ProbeSnapshot, goal: Pos<Meters>) -> bool {
     let Some(me) = snapshot.me.as_ref().filter(|me| at_rest(me)) else {
         return false;
     };
@@ -950,9 +950,9 @@ fn hemmed_in(snapshot: &ProbeSnapshot, goal: Pos<Tiles>) -> bool {
 fn detour(
     snapshot: &ProbeSnapshot,
     grid: &Grid,
-    target: Pos<Tiles>,
+    target: Pos<Meters>,
     left: usize,
-) -> Option<Pos<Tiles>> {
+) -> Option<Pos<Meters>> {
     grid.nodes()
         .iter()
         .copied()
@@ -973,7 +973,7 @@ fn in_the_way(seen: &ProbeSnapshot, target: Entity) -> bool {
 
 // The goal itself, or for a goal off the walkways (someone behind a counter), the ground the player
 // can walk to nearest it.
-fn reachable_near(grid: &Grid, from: Pos<Tiles>, goal: Pos<Tiles>) -> Option<Pos<Tiles>> {
+fn reachable_near(grid: &Grid, from: Pos<Meters>, goal: Pos<Meters>) -> Option<Pos<Meters>> {
     let region = grid.region(grid.nearest_walkable(from)?)?;
     grid.nodes()
         .iter()

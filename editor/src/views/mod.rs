@@ -17,7 +17,7 @@ use ui::theme;
 
 use bevy::prelude::*;
 use engine::core::content::ContentFile;
-use engine::core::tiling::TilePos;
+use engine::core::units::TilePos;
 use engine::systems::area::AreaDef;
 use engine::systems::script::Place;
 use ui::egui::Ui;

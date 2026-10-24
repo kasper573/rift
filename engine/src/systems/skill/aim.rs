@@ -7,8 +7,8 @@ use super::{CastAim, Rank, SkillId, Targeting, UseSkillRequest, casting};
 use crate::core::content::{Content, Fixture};
 use crate::core::geometry::{Footprint, Shape};
 use crate::core::math::Pos;
-use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::Seconds;
+use crate::core::units::{Meters, TilePos};
 use crate::core::vfx::render::ShaderOverlay;
 use crate::core::vfx::{ParamValue, VfxParams, VfxSite};
 use crate::core::{gui, render};
@@ -126,7 +126,7 @@ pub fn surface(world: &mut World) {
 pub struct AimGesture;
 
 impl Gesture for AimGesture {
-    fn claim(&self, world: &mut World, tile: Option<Pos<Tiles>>) -> Option<ClickClaim> {
+    fn claim(&self, world: &mut World, tile: Option<Pos<Meters>>) -> Option<ClickClaim> {
         let aimed = aiming(world)?;
         if !session::is_alive(world) {
             return None;
@@ -210,7 +210,7 @@ pub fn draw_aim(world: &mut World) {
 
 /// What a skill of the targeting cast at a tile lands on: the fitting actor there, the point
 /// itself for an area, or nothing fitting.
-fn aim_at(world: &mut World, tile: Pos<Tiles>, targeting: Targeting) -> Option<CastAim> {
+fn aim_at(world: &mut World, tile: Pos<Meters>, targeting: Targeting) -> Option<CastAim> {
     match targeting {
         Targeting::SingleAlly | Targeting::SingleEnemy => {
             let me = session::me(world)?;

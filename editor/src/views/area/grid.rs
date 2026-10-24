@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use engine::core::content::{Content, ContentFile, table_of};
 use engine::core::math::{Pos, Rect, Size};
-use engine::core::tiling::{Cell, CellPos, GridDims, GridSize, NEIGHBORS_4, TilePos, Tiles};
+use engine::core::units::{Cell, CellPos, GridDims, GridSize, Meters, NEIGHBORS_4, TilePos};
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::grid::{Flip, LayerGrid, PaletteRow};
@@ -261,7 +261,7 @@ impl GridDraft {
     /// Makes what a placement of `placed` at `at`, flipped as `flip`, paints this bundle's own:
     /// its cells into the layers of the same name and its forced walk cells. Answers the names of
     /// the layers it paints that this bundle has none of.
-    pub fn stamp(&mut self, placed: &GridDraft, at: Pos<Tiles>, flip: Flip) -> Vec<String> {
+    pub fn stamp(&mut self, placed: &GridDraft, at: Pos<Meters>, flip: Flip) -> Vec<String> {
         let mut missing = Vec::new();
         for cell in placed.cells() {
             let from = placed.index(cell).expect("a cell of the grid");
@@ -382,7 +382,7 @@ pub fn brush_cells(center: CellPos, size: u32) -> Vec<CellPos> {
         .collect()
 }
 
-pub fn rect_of_cells(cells: &[CellPos]) -> Option<Rect<Tiles>> {
+pub fn rect_of_cells(cells: &[CellPos]) -> Option<Rect<Meters>> {
     let min_x = cells.iter().map(|c| c.x).min()?;
     let min_y = cells.iter().map(|c| c.y).min()?;
     let max_x = cells.iter().map(|c| c.x).max()?;

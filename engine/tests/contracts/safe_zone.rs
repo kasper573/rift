@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::Pos;
-use engine::core::tiling::{TilePos, Tiles};
+use engine::core::units::{Meters, TilePos};
 use engine::systems::area::{self, AreaDef, Wild};
 use engine::systems::combat::{self, AttackRequest};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, position};
@@ -9,9 +9,9 @@ use engine::systems::{actor, reach, script, skill, stat};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, hunting, path};
 
-const LAIR: Pos<Tiles> = Pos::new(1.0, 4.0);
-const DOORSTEP: Pos<Tiles> = Pos::new(4.0, 4.0);
-const REFUGE: Pos<Tiles> = Pos::new(8.0, 4.0);
+const LAIR: Pos<Meters> = Pos::new(1.0, 4.0);
+const DOORSTEP: Pos<Meters> = Pos::new(4.0, 4.0);
+const REFUGE: Pos<Meters> = Pos::new(8.0, 4.0);
 
 #[test]
 fn wild_monsters_never_set_foot_in_a_safe_zone() {
@@ -115,7 +115,7 @@ fn a_wild_flyer_flies_around_a_safe_zone_instead_of_over_it() {
     let mut trespassed = false;
     let arrived = sim.run_until(60.0, |world| {
         trespassed |= on_safe_ground(world, bat);
-        position(world, bat).is_some_and(|at| at.distance(to) < Tiles(0.01))
+        position(world, bat).is_some_and(|at| at.distance(to) < Meters(0.01))
     });
 
     assert!(arrived, "the bat never got there");
@@ -190,7 +190,7 @@ fn border(modules: Value) -> Sim {
     sim
 }
 
-fn spawn(sim: &mut Sim, key: &str, at: Pos<Tiles>) -> Entity {
+fn spawn(sim: &mut Sim, key: &str, at: Pos<Meters>) -> Entity {
     let area = sim.id::<AreaDef>("border");
     let def = sim.id::<NpcDef>(key);
     npc::spawn(&mut sim.world, def, at, area, npc::Pack(u32::MAX))

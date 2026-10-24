@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::assets::ImageRef;
 use crate::core::content::Content;
 use crate::core::math::{Offset, Pos, Rect, Size};
-use crate::core::tiling::{Cell, CellPos, TilePos, Tiles};
+use crate::core::units::{Cell, CellPos, Meters, TilePos};
 use crate::systems::WorldArea;
 use crate::systems::actor::{Hitbox, Name as ActorName};
 use crate::systems::area::{self, AreaId, AreaTag};
@@ -57,8 +57,8 @@ impl ObjectDef {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ObjectShape {
-    Point(Pos<Tiles>),
-    Rect(Rect<Tiles>),
+    Point(Pos<Meters>),
+    Rect(Rect<Meters>),
 }
 
 #[derive(JsonSchema, Serialize, Deserialize)]
@@ -152,7 +152,7 @@ impl From<ObjectShape> for ShapeRow {
 }
 
 impl ObjectShape {
-    pub fn covers(&self, at: Pos<Tiles>) -> bool {
+    pub fn covers(&self, at: Pos<Meters>) -> bool {
         self.covers_cell(at.cell())
     }
 
@@ -163,21 +163,21 @@ impl ObjectShape {
         }
     }
 
-    pub fn origin(&self) -> Pos<Tiles> {
+    pub fn origin(&self) -> Pos<Meters> {
         match self {
             ObjectShape::Point(point) => *point,
             ObjectShape::Rect(rect) => rect.origin,
         }
     }
 
-    pub fn center(&self) -> Pos<Tiles> {
+    pub fn center(&self) -> Pos<Meters> {
         match self {
             ObjectShape::Point(point) => *point,
             ObjectShape::Rect(rect) => rect.center(),
         }
     }
 
-    pub fn bounds(&self) -> Rect<Tiles> {
+    pub fn bounds(&self) -> Rect<Meters> {
         match self {
             ObjectShape::Point(point) => {
                 Rect::new(*point - Offset::new(0.5, 0.5), Size::new(1.0, 1.0))
@@ -330,7 +330,7 @@ pub fn track(
     if placed.is_empty() {
         return;
     }
-    let positions: Vec<(Entity, Pos<Tiles>, AreaId)> = actors
+    let positions: Vec<(Entity, Pos<Meters>, AreaId)> = actors
         .iter(world)
         .map(|(entity, at, tag)| (entity, at.pos, tag.area))
         .collect();

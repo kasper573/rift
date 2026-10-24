@@ -16,8 +16,8 @@ use engine::core::math::{Direction, Pos, Rgba};
 use engine::core::render::{
     Animator, GroundDepth, RowDepth, RowDepths, ToScreen, dynamic_z, place_sprite,
 };
-use engine::core::tiling::Tiles;
 use engine::core::time::{PlaybackRate, Seconds};
+use engine::core::units::Meters;
 use engine::core::vfx::render::{self as vfx_render, Presentation, SiteFrame, SiteTexture};
 use engine::core::vfx::{
     ShaderError, SiteKind, VfxLayer, VfxParams, VfxShaderDef, VfxSite, shader_file,
@@ -51,7 +51,7 @@ pub struct ActorPose {
     pub dir: Direction,
     pub tint: Rgba,
     pub attack_rate: PlaybackRate,
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     /// Held at this moment of the action, or animated from when the sprite came to stand in it.
     pub held: Option<Seconds>,
     pub plate: Option<PlateLabel>,
@@ -79,7 +79,7 @@ pub struct Frame<'a> {
     pub content: &'a Content,
     pub files: &'a ProjectFiles,
     pub area: AreaId,
-    pub center: Pos<Tiles>,
+    pub center: Pos<Meters>,
     pub now: f64,
     pub actors: Vec<ActorPose>,
     pub items: Vec<ItemId>,
@@ -277,7 +277,7 @@ impl Stage {
             if let Some(mut transform) = staged.get_mut::<Transform>() {
                 place_sprite(&mut transform, pose.at);
             }
-            staged.insert(RowDepth(dynamic_z(height, base, Tiles(pose.at.y))));
+            staged.insert(RowDepth(dynamic_z(height, base, Meters(pose.at.y))));
         }
     }
 
@@ -301,7 +301,7 @@ impl Stage {
         for (index, (item, entity)) in frame.items.iter().zip(&self.items).enumerate() {
             let icon = item.get(frame.content).icon.as_str();
             let image = scene::image_handle(scenes, frame.files, icon, world);
-            let at = Pos::<Tiles>::new(
+            let at = Pos::<Meters>::new(
                 frame.center.x + (index as f32 - (count - 1.0) / 2.0) * 1.5,
                 frame.center.y,
             );
@@ -410,7 +410,7 @@ impl Stage {
             Site::World(VfxSite::Path(points)) => {
                 let south = points.iter().map(|point| point.y).fold(f32::MIN, f32::max);
                 Some(SiteFrame {
-                    depth: Some(world.resource::<RowDepths>().at(Tiles(south))),
+                    depth: Some(world.resource::<RowDepths>().at(Meters(south))),
                     ..SiteFrame::path(points)
                 })
             }

@@ -6,7 +6,7 @@ use editor::views::area::{AreaAction, AreaSnapshot, modules, nodes, placement, r
 use engine::core::content::{Content, ContentFile};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::script::VariableType;
-use engine::core::tiling::CellPos;
+use engine::core::units::CellPos;
 use engine::systems::area::blueprint::{self, BlueprintDef, Placement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaModule, AreaModuleKind};

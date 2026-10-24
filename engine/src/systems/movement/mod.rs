@@ -17,10 +17,10 @@ use serde::{Deserialize, Serialize};
 use crate::core::content::Content;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin, Jumps, RenderValueSystems};
 use crate::core::math::{Direction, Offset, Pos, Rect, Rng, Size};
-use crate::core::tiling::{
-    Cell, CellPos, GridDims, GridSize, NEIGHBORS_8, TilePos, TileRect, Tiles, TilesPerSec,
-};
 use crate::core::time::Seconds;
+use crate::core::units::{
+    Cell, CellPos, GridDims, GridSize, Meters, MetersPerSec, NEIGHBORS_8, TilePos, TileRect,
+};
 use crate::systems::actor::{Action, Actor, ActorModel, set_facing};
 use crate::systems::player::{may_command, sender_player};
 use crate::systems::stat::{self, StatKind};
@@ -37,14 +37,14 @@ pub fn register(app: &mut App) {
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Position {
-    pub pos: Pos<Tiles>,
+    pub pos: Pos<Meters>,
     /// Counts each time the server put the entity somewhere rather than walked it there, so a client
     /// shows it there at once rather than a walk that never happened.
     pub jumps: Jumps,
 }
 
 impl Position {
-    pub fn at(pos: Pos<Tiles>) -> Position {
+    pub fn at(pos: Pos<Meters>) -> Position {
         Position {
             pos,
             jumps: Jumps::default(),
@@ -54,7 +54,7 @@ impl Position {
 
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MoveRequest {
-    pub pos: Pos<Tiles>,
+    pub pos: Pos<Meters>,
     pub seq: MoveSeq,
 }
 
@@ -67,7 +67,7 @@ pub struct MoveSeq(pub u32);
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub struct HeardMove(pub MoveSeq);
 
-pub fn position(world: &World, entity: Entity) -> Option<Pos<Tiles>> {
+pub fn position(world: &World, entity: Entity) -> Option<Pos<Meters>> {
     world.get::<Position>(entity).map(|p| p.pos)
 }
 
@@ -84,7 +84,7 @@ impl Plugin for MovementRenderPlugin {
 /// them, rather than read live, so every client-side depiction of an entity (sprite, camera, health
 /// bar, hitbox, positional audio) reads this, never [`Position`].
 #[derive(Component, Clone, Copy, PartialEq)]
-pub struct RenderPosition(pub Pos<Tiles>);
+pub struct RenderPosition(pub Pos<Meters>);
 
 impl Interpolate for RenderPosition {
     type Source = Position;
@@ -102,7 +102,7 @@ impl Interpolate for RenderPosition {
     }
 }
 
-const RUN_SPEED: TilesPerSec = TilesPerSec(Tiles(2.0));
+const RUN_SPEED: MetersPerSec = MetersPerSec(Meters(2.0));
 
 /// Remaining waypoints, stored back-to-front: the next cell to walk is `tiles.last()`, so advancing
 /// pops it off the end in O(1) instead of shifting the whole vec from the front.
@@ -125,7 +125,7 @@ impl Path {
 /// it whenever the path ends elsewhere. Only a player's goes out, for its own client to follow.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MoveTarget {
-    pub pos: Pos<Tiles>,
+    pub pos: Pos<Meters>,
 }
 
 pub fn move_request(world: &mut World) {
@@ -144,7 +144,7 @@ pub fn move_request(world: &mut World) {
     }
 }
 
-pub fn relocate(world: &mut World, entity: Entity, pos: Pos<Tiles>) {
+pub fn relocate(world: &mut World, entity: Entity, pos: Pos<Meters>) {
     world.entity_mut(entity).remove::<(MoveTarget, Path)>();
     if let Some(mut position) = world.get_mut::<Position>(entity) {
         position.pos = pos;
@@ -183,7 +183,7 @@ pub fn moving(world: &World, entity: Entity) -> bool {
 
 /// Sends the actor walking to `pos`, exactly there, and claims its tile. A walk already headed there
 /// carries on untouched, and one heading elsewhere turns toward it without dropping the step it's on.
-pub fn goto(world: &mut World, entity: Entity, pos: Pos<Tiles>) {
+pub fn goto(world: &mut World, entity: Entity, pos: Pos<Meters>) {
     if world
         .get::<MoveTarget>(entity)
         .is_none_or(|target| target.pos != pos)
@@ -250,15 +250,15 @@ pub fn advance(world: &mut World, movers_query: &mut Movers, step_query: &mut St
     }
 }
 
-pub fn speed_of(world: &World, entity: Entity) -> TilesPerSec {
-    TilesPerSec(Tiles(stat::effective(
+pub fn speed_of(world: &World, entity: Entity) -> MetersPerSec {
+    MetersPerSec(Meters(stat::effective(
         world,
         entity,
         StatKind::MovementSpeed,
     )))
 }
 
-fn gait(speed: TilesPerSec) -> Action {
+fn gait(speed: MetersPerSec) -> Action {
     if speed >= RUN_SPEED {
         Action::Run
     } else {
@@ -268,15 +268,15 @@ fn gait(speed: TilesPerSec) -> Action {
 
 /// Walks `at` along `path` for `distance`, dropping each waypoint it reaches. Returns the heading of
 /// the last stretch walked, if it walked at all.
-fn walk(at: &mut Pos<Tiles>, path: &mut Path, distance: Tiles) -> Option<Offset<Tiles>> {
+fn walk(at: &mut Pos<Meters>, path: &mut Path, distance: Meters) -> Option<Offset<Meters>> {
     let mut heading = None;
     let mut remaining = distance;
-    while remaining > Tiles(1e-6)
+    while remaining > Meters(1e-6)
         && let Some(next) = path.next()
     {
         let target = next.center();
         let gap = at.distance(target);
-        if gap < Tiles(1e-4) {
+        if gap < Meters(1e-4) {
             *at = target;
             path.tiles.pop();
             continue;
@@ -288,20 +288,20 @@ fn walk(at: &mut Pos<Tiles>, path: &mut Path, distance: Tiles) -> Option<Offset<
             path.tiles.pop();
         } else {
             *at = at.toward(target, remaining);
-            remaining = Tiles(0.0);
+            remaining = Meters(0.0);
         }
     }
     heading
 }
 
-fn plan(world: &World, entity: Entity, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
+fn plan(world: &World, entity: Entity, goal: Pos<Meters>) -> Option<Vec<CellPos>> {
     let at = position(world, entity)?;
     Navigator::of(world, entity)?.plan(at, world.get::<Path>(entity), goal)
 }
 
 const ORTHOGONAL: u64 = 1000;
 const DIAGONAL: u64 = 1414;
-const FLIGHT_SAMPLE: Tiles = Tiles(0.25);
+const FLIGHT_SAMPLE: Meters = Meters(0.25);
 
 /// Route costs are scaled by this, leaving the bits below it to break ties between equally cheap
 /// routes without ever outweighing a real difference in cost.
@@ -315,8 +315,8 @@ pub struct Grid {
     size: GridSize,
     walkable: Vec<bool>,
     regions: Vec<Option<WalkRegion>>,
-    nodes: Vec<Pos<Tiles>>,
-    nodes_by_region: Vec<Vec<Pos<Tiles>>>,
+    nodes: Vec<Pos<Meters>>,
+    nodes_by_region: Vec<Vec<Pos<Meters>>>,
 }
 
 /// A stretch of walkable ground, every tile of which can be walked to from every other.
@@ -327,7 +327,7 @@ impl Grid {
     pub fn new(size: GridSize, walkable: Vec<bool>) -> Grid {
         let regions = regions(size, &walkable);
         let mut nodes = Vec::new();
-        let mut nodes_by_region: Vec<Vec<Pos<Tiles>>> = Vec::new();
+        let mut nodes_by_region: Vec<Vec<Pos<Meters>>> = Vec::new();
         for (cell, region) in size.cells().zip(&regions) {
             let Some(WalkRegion(region)) = *region else {
                 continue;
@@ -347,30 +347,34 @@ impl Grid {
         }
     }
 
-    pub fn walkable(&self, p: Pos<Tiles>) -> bool {
+    pub fn walkable(&self, p: Pos<Meters>) -> bool {
         self.cell_walkable(p.cell())
     }
 
-    pub fn region(&self, p: Pos<Tiles>) -> Option<WalkRegion> {
+    pub fn region(&self, p: Pos<Meters>) -> Option<WalkRegion> {
         self.region_at_cell(p.cell())
     }
 
-    pub fn nodes(&self) -> &[Pos<Tiles>] {
+    pub fn nodes(&self) -> &[Pos<Meters>] {
         &self.nodes
     }
 
     /// The random pickers draw only among the tiles that `fits`, so a caller can pass over tiles
     /// someone has claimed.
-    pub fn random_node(&self, rng: &mut Rng, fits: impl Fn(CellPos) -> bool) -> Option<Pos<Tiles>> {
+    pub fn random_node(
+        &self,
+        rng: &mut Rng,
+        fits: impl Fn(CellPos) -> bool,
+    ) -> Option<Pos<Meters>> {
         pick(rng, &self.nodes, fits)
     }
 
     pub fn random_reachable(
         &self,
         rng: &mut Rng,
-        from: Pos<Tiles>,
+        from: Pos<Meters>,
         fits: impl Fn(CellPos) -> bool,
-    ) -> Option<Pos<Tiles>> {
+    ) -> Option<Pos<Meters>> {
         let WalkRegion(region) = self.region(from)?;
         pick(rng, &self.nodes_by_region[region], fits)
     }
@@ -378,19 +382,19 @@ impl Grid {
     pub fn random_node_within(
         &self,
         rng: &mut Rng,
-        bounds: Rect<Tiles>,
+        bounds: Rect<Meters>,
         fits: impl Fn(CellPos) -> bool,
-    ) -> Option<Pos<Tiles>> {
+    ) -> Option<Pos<Meters>> {
         pick(rng, &within(&self.nodes, bounds), fits)
     }
 
     pub fn random_reachable_within(
         &self,
         rng: &mut Rng,
-        from: Pos<Tiles>,
-        bounds: Rect<Tiles>,
+        from: Pos<Meters>,
+        bounds: Rect<Meters>,
         fits: impl Fn(CellPos) -> bool,
-    ) -> Option<Pos<Tiles>> {
+    ) -> Option<Pos<Meters>> {
         let nodes = bounds.tiles().map(Cell::center);
         self.random_reachable_among(rng, from, nodes.filter(|&node| bounds.contains(node)), fits)
     }
@@ -398,11 +402,11 @@ impl Grid {
     pub fn random_reachable_near(
         &self,
         rng: &mut Rng,
-        from: Pos<Tiles>,
-        center: Pos<Tiles>,
-        radius: Tiles,
+        from: Pos<Meters>,
+        center: Pos<Meters>,
+        radius: Meters,
         fits: impl Fn(CellPos) -> bool,
-    ) -> Option<Pos<Tiles>> {
+    ) -> Option<Pos<Meters>> {
         let square = Rect::new(
             center - Offset::new(radius.0, radius.0),
             Size::new(2.0 * radius.0, 2.0 * radius.0),
@@ -419,12 +423,12 @@ impl Grid {
     fn random_reachable_among(
         &self,
         rng: &mut Rng,
-        from: Pos<Tiles>,
-        nodes: impl Iterator<Item = Pos<Tiles>>,
+        from: Pos<Meters>,
+        nodes: impl Iterator<Item = Pos<Meters>>,
         fits: impl Fn(CellPos) -> bool,
-    ) -> Option<Pos<Tiles>> {
+    ) -> Option<Pos<Meters>> {
         let region = self.region(from)?;
-        let reachable: Vec<Pos<Tiles>> = nodes
+        let reachable: Vec<Pos<Meters>> = nodes
             .filter(|&node| self.region(node) == Some(region))
             .collect();
         pick(rng, &reachable, fits)
@@ -436,7 +440,7 @@ impl Grid {
 
     /// The cheapest walk between two cells, both ends included.
     pub fn path(&self, start: CellPos, goal: CellPos) -> Option<Vec<CellPos>> {
-        self.route(start.center(), &[(start, Tiles(0.0))], goal)
+        self.route(start.center(), &[(start, Meters(0.0))], goal)
     }
 
     /// The cheapest walk to `goal` for an actor at `at` setting off from one of `footing`'s cells,
@@ -445,8 +449,8 @@ impl Grid {
     /// straight wherever the grid allows, and a walk continued along that line stays on it.
     pub fn route(
         &self,
-        at: Pos<Tiles>,
-        footing: &[(CellPos, Tiles)],
+        at: Pos<Meters>,
+        footing: &[(CellPos, Meters)],
         goal: CellPos,
     ) -> Option<Vec<CellPos>> {
         if !footing.iter().any(|&(cell, _)| self.connects(cell, goal)) {
@@ -492,7 +496,7 @@ impl Grid {
         Some(path.into_iter().flatten().collect())
     }
 
-    pub fn nearest_walkable(&self, p: Pos<Tiles>) -> Option<Pos<Tiles>> {
+    pub fn nearest_walkable(&self, p: Pos<Meters>) -> Option<Pos<Meters>> {
         self.nearest_walkable_where(p, |_| true)
     }
 
@@ -501,9 +505,9 @@ impl Grid {
     /// of it, not hidden behind it.
     pub fn nearest_walkable_where(
         &self,
-        p: Pos<Tiles>,
+        p: Pos<Meters>,
         fits: impl Fn(CellPos) -> bool,
-    ) -> Option<Pos<Tiles>> {
+    ) -> Option<Pos<Meters>> {
         let from = p.cell();
         if self.cell_walkable(from) && fits(from) {
             return Some(from.center());
@@ -569,7 +573,12 @@ impl<'c> Navigator<'c> {
     /// The waypoints, back to front, of a walk to `goal` by an actor at `at` walking `path`. A goal
     /// the walk already passes keeps the walk as it is up to there; any other is routed afresh from
     /// where the actor stands.
-    fn plan(&self, at: Pos<Tiles>, path: Option<&Path>, goal: Pos<Tiles>) -> Option<Vec<CellPos>> {
+    fn plan(
+        &self,
+        at: Pos<Meters>,
+        path: Option<&Path>,
+        goal: Pos<Meters>,
+    ) -> Option<Vec<CellPos>> {
         let end = goal.cell();
         if let Some(path) = path
             && let Some(on_the_way) = path.tiles.iter().position(|&cell| cell == end)
@@ -589,7 +598,7 @@ impl<'c> Navigator<'c> {
 
     /// The cells an actor at `at` can set off from, each with how far it is: the one it stands on,
     /// or mid-step on foot, both ends of the step, so it can carry on or turn straight back.
-    fn footing(&self, at: Pos<Tiles>, path: Option<&Path>) -> Vec<(CellPos, Tiles)> {
+    fn footing(&self, at: Pos<Meters>, path: Option<&Path>) -> Vec<(CellPos, Meters)> {
         let here = at.cell();
         let Some(next) = path
             .and_then(Path::next)
@@ -604,7 +613,7 @@ impl<'c> Navigator<'c> {
             .collect()
     }
 
-    fn clear(&self, from: Pos<Tiles>, to: Pos<Tiles>) -> bool {
+    fn clear(&self, from: Pos<Meters>, to: Pos<Meters>) -> bool {
         let samples = (from.distance(to).0 / FLIGHT_SAMPLE.0).ceil().max(1.0) as u32;
         (0..=samples).all(|i| {
             self.grid
@@ -615,7 +624,7 @@ impl<'c> Navigator<'c> {
 
 /// Stops a walk at `at`: at the end of the step it's on if it's mid-step, where it turns to the
 /// returned goal, or else on the tile it stands on, where the walk ends.
-fn halt_walk(at: &mut Pos<Tiles>, path: &mut Path) -> Option<Pos<Tiles>> {
+fn halt_walk(at: &mut Pos<Meters>, path: &mut Path) -> Option<Pos<Meters>> {
     match path.next().filter(|_| !at.on_center()) {
         Some(next) => {
             *path = Path { tiles: vec![next] };
@@ -632,7 +641,7 @@ fn halt_walk(at: &mut Pos<Tiles>, path: &mut Path) -> Option<Pos<Tiles>> {
 }
 
 /// The cell an actor at `at`, mid-step toward `next`, is stepping off.
-fn stepping_off(at: Pos<Tiles>, next: CellPos) -> CellPos {
+fn stepping_off(at: Pos<Meters>, next: CellPos) -> CellPos {
     let toward = |cell: i32, from: f32| {
         let gap = cell as f32 - from;
         if gap > 1e-4 {
@@ -659,7 +668,7 @@ fn airborne(world: &World, entity: Entity) -> bool {
         .is_some_and(|actor| ActorModel::get(content, actor.model).airborne())
 }
 
-fn within(nodes: &[Pos<Tiles>], bounds: Rect<Tiles>) -> Vec<Pos<Tiles>> {
+fn within(nodes: &[Pos<Meters>], bounds: Rect<Meters>) -> Vec<Pos<Meters>> {
     nodes
         .iter()
         .copied()
@@ -669,8 +678,12 @@ fn within(nodes: &[Pos<Tiles>], bounds: Rect<Tiles>) -> Vec<Pos<Tiles>> {
 
 /// Draws a node that fits, each as likely as any other. Most nodes fit, so a few draws find one
 /// without sifting the whole set; only when they keep missing is the set sifted.
-fn pick(rng: &mut Rng, nodes: &[Pos<Tiles>], fits: impl Fn(CellPos) -> bool) -> Option<Pos<Tiles>> {
-    let mut draw = |nodes: &[Pos<Tiles>]| {
+fn pick(
+    rng: &mut Rng,
+    nodes: &[Pos<Meters>],
+    fits: impl Fn(CellPos) -> bool,
+) -> Option<Pos<Meters>> {
+    let mut draw = |nodes: &[Pos<Meters>]| {
         (!nodes.is_empty()).then(|| nodes[rng.rand_range(0..nodes.len() as u32) as usize])
     };
     for _ in 0..PICK_DRAWS {
@@ -679,7 +692,7 @@ fn pick(rng: &mut Rng, nodes: &[Pos<Tiles>], fits: impl Fn(CellPos) -> bool) -> 
             return Some(node);
         }
     }
-    let fitting: Vec<Pos<Tiles>> = nodes
+    let fitting: Vec<Pos<Meters>> = nodes
         .iter()
         .copied()
         .filter(|node| fits(node.cell()))

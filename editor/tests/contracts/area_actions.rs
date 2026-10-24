@@ -11,7 +11,7 @@ use editor::views::area::terrain::{self, TerrainBrush};
 use editor::views::area::{AreaAction, AreaSnapshot, AreaTool, nodes, run_action};
 use engine::core::content::ContentFile;
 use engine::core::math::{Pos, Rect, Rng, Size};
-use engine::core::tiling::{CellPos, TilePos};
+use engine::core::units::{CellPos, TilePos};
 use engine::systems::area::object::ObjectShape;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::tileset::TilesetDef;
@@ -473,7 +473,7 @@ fn a_door_back_from_a_warps_destination_stands_beside_where_the_warp_lands() {
     };
     assert_ne!(
         back.cell(),
-        Pos::<engine::core::tiling::Tiles>::new(3.0, 3.0).cell()
+        Pos::<engine::core::units::Meters>::new(3.0, 3.0).cell()
     );
     assert!(
         (back.x - 3.0).abs() <= 1.0 && (back.y - 3.0).abs() <= 1.0,

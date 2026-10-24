@@ -14,8 +14,8 @@ use strum::{AsRefStr, EnumString, VariantArray};
 
 use crate::core::content::{ContentRegistry, LoadStep};
 use crate::core::math::{Direction, Pos, Rgba, Size};
-use crate::core::tiling::{TilePos, Tiles};
 use crate::core::time::PlaybackRate;
+use crate::core::units::{Meters, TilePos};
 use crate::systems::movement::{Path, Position};
 use crate::systems::stat::{self, Stats};
 
@@ -89,12 +89,12 @@ pub struct Actor {
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Hitbox {
-    pub size: Size<Tiles>,
+    pub size: Size<Meters>,
 }
 
 pub fn frontmost_at(
     world: &mut World,
-    point: Pos<Tiles>,
+    point: Pos<Meters>,
     except: Option<Entity>,
     accept: impl Fn(&World, Entity) -> bool,
 ) -> Option<Entity> {
@@ -117,7 +117,7 @@ pub struct Name {
     pub name: String,
 }
 
-pub fn face_toward(world: &mut World, actor: Entity, toward: Pos<Tiles>) {
+pub fn face_toward(world: &mut World, actor: Entity, toward: Pos<Meters>) {
     let Some(at) = world.get::<Position>(actor).map(|position| position.pos) else {
         return;
     };

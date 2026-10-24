@@ -1,6 +1,6 @@
 use engine::core::content::{Content, SETTINGS_FILE, name_of};
 use engine::core::math::Pos;
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::area::scene::SCENE_FILE;
 use engine::systems::area::{self, AreaDef, AreaId, AreaModule, ObjectShape};
 use engine::systems::script::Place;
@@ -20,7 +20,7 @@ pub const INITIAL_SPAWN: &str = "/initial_spawn";
 pub struct ArrivalPin {
     pub file: String,
     pub pointer: String,
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     pub initial_spawn: bool,
 }
 
@@ -83,7 +83,7 @@ impl ArrivalPin {
 }
 
 /// Puts the place `at` in `area_key` where the place being picked goes, and ends the pick.
-pub fn commit_pick(editor: &mut Editor, area_key: &str, at: Pos<Tiles>) {
+pub fn commit_pick(editor: &mut Editor, area_key: &str, at: Pos<Meters>) {
     let Some(PlacePick { file, pointer, .. }) = editor.pick.clone() else {
         return;
     };
@@ -179,7 +179,13 @@ pub fn open_pin(editor: &mut Editor, pin: PinHit) {
     }
 }
 
-pub fn move_pin(editor: &mut Editor, frame: &AreaFrame, file: &str, pointer: &str, at: Pos<Tiles>) {
+pub fn move_pin(
+    editor: &mut Editor,
+    frame: &AreaFrame,
+    file: &str,
+    pointer: &str,
+    at: Pos<Meters>,
+) {
     let Some(project) = editor.project.as_ref() else {
         return;
     };
@@ -194,7 +200,7 @@ pub fn move_pin(editor: &mut Editor, frame: &AreaFrame, file: &str, pointer: &st
     editor.apply(edit);
 }
 
-pub fn set_spawn(editor: &mut Editor, area_key: &str, at: Pos<Tiles>) {
+pub fn set_spawn(editor: &mut Editor, area_key: &str, at: Pos<Meters>) {
     let Some(project) = editor.project.as_ref() else {
         return;
     };

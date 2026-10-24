@@ -15,8 +15,8 @@ use crate::core::content::{
     MISSING_FILE, ModuleRule, ModuleSet, Nearby, PartSpec, Parts, RowCheck, Shape, serial,
 };
 use crate::core::math::{Direction, FrameSize, Pos, Rect, Size, WorldPx};
-use crate::core::tiling::Tiles;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
+use crate::core::units::Meters;
 
 pub type ModelId = ContentId<ModelDef>;
 
@@ -153,8 +153,8 @@ impl ContentFile for ModelDef {
     }
 
     fn check(&self, cx: &mut RowCheck) {
-        cx.range("/hitbox/width", self.hitbox.width, 0.1, 8.0, "tiles");
-        cx.range("/hitbox/height", self.hitbox.height, 0.1, 8.0, "tiles");
+        cx.range("/hitbox/width", self.hitbox.width, 0.1, 8.0, "m");
+        cx.range("/hitbox/height", self.hitbox.height, 0.1, 8.0, "m");
         check_strips(&self.sprites, cx);
         let sheet = &self.sprites;
         cx.range(
@@ -209,7 +209,7 @@ pub struct HitboxSize {
 }
 
 impl HitboxSize {
-    pub fn tiles(self) -> Size<Tiles> {
+    pub fn tiles(self) -> Size<Meters> {
         Size::new(self.width, self.height)
     }
 }
@@ -648,7 +648,7 @@ impl ActorModel {
         self.figure
     }
 
-    pub fn hitbox(&self) -> Size<Tiles> {
+    pub fn hitbox(&self) -> Size<Meters> {
         self.def.hitbox.tiles()
     }
 

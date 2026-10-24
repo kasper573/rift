@@ -10,7 +10,7 @@ use editor::views::{character, spreadsheet};
 use engine::core::audio::playback::{SfxDef, SfxScalar};
 use engine::core::content::Fixture;
 use engine::core::math::Pos;
-use engine::core::tiling::{TilePos, Tiles};
+use engine::core::units::{Meters, TilePos};
 use engine::core::vfx::{ParamFill, ParamValue, VfxDef, VfxLayer};
 use engine::systems::area::world_map::{WorldMap, WorldMapDef};
 use engine::systems::class::{AccessRequirement, ClassDef, NodeKey};
@@ -56,10 +56,10 @@ fn a_test_character_shows_where_it_starts_in_an_area_of_any_size() {
 
 #[test]
 fn a_test_character_set_up_for_a_quest_moment_starts_beside_whom_it_is_with() {
-    let (giver, taker) = (Pos::<Tiles>::new(2.0, 2.0), Pos::<Tiles>::new(6.0, 5.0));
+    let (giver, taker) = (Pos::<Meters>::new(2.0, 2.0), Pos::<Meters>::new(6.0, 5.0));
     for (moment, with) in [("just offered", giver), ("ready to hand in", taker)] {
         let scratch = tempfile::tempdir().expect("scratch");
-        let resident = |npc: &str, at: Pos<Tiles>| json!({ "type": "resident", "npc": path("npc", npc), "at": { "x": at.x, "y": at.y } });
+        let resident = |npc: &str, at: Pos<Meters>| json!({ "type": "resident", "npc": path("npc", npc), "at": { "x": at.x, "y": at.y } });
         let talks = |quest: Value| {
             json!({
                 "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "quest" },

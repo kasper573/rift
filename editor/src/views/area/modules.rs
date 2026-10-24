@@ -7,7 +7,7 @@ use engine::core::audio::mix::AudioCategory;
 use engine::core::audio::soundscape::SoundscapeShape;
 use engine::core::content::{FolderReader, Nearby};
 use engine::core::math::{Offset, Pos, Rect, Size};
-use engine::core::tiling::{Cell, CellPos, TilePos, Tiles};
+use engine::core::units::{Cell, CellPos, Meters, TilePos};
 use engine::systems::area::blueprint::Placement;
 use engine::systems::area::object::{ObjectDef, ObjectShape};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
@@ -29,7 +29,7 @@ use crate::tabs::file_title;
 #[derive(Clone, Copy)]
 pub struct AreaMenuAnchor {
     pub at: Pos2,
-    pub tile: Pos<Tiles>,
+    pub tile: Pos<Meters>,
 }
 
 pub(super) fn context_menu_at(editor: &mut Editor, view_key: &str, frame: &AreaFrame) {
@@ -61,7 +61,7 @@ pub(super) fn open_add_menu(
     editor: &mut Editor,
     view_key: &str,
     frame: &AreaFrame,
-    tile: Pos<Tiles>,
+    tile: Pos<Meters>,
 ) {
     if let Some(view) = editor.views.area.views.get_mut(view_key) {
         let at = frame.pointer.unwrap_or(frame.canvas.screen.center());
@@ -74,7 +74,7 @@ pub(super) fn open_menu(
     view: &mut AreaViewState,
     view_key: &str,
     at: Pos2,
-    tile: Pos<Tiles>,
+    tile: Pos<Meters>,
 ) {
     egui::Popup::open_id(ctx, menu_id(view_key));
     view.menu = Some(AreaMenuAnchor { at, tile });
@@ -359,7 +359,7 @@ pub const ADD_MENU: &[(&str, &[(AreaModuleKind, &str)])] = &[
 ];
 
 /// What a module of `kind` first covers when it is placed at `cell`.
-pub fn template_bounds(kind: AreaModuleKind, cell: CellPos) -> Rect<Tiles> {
+pub fn template_bounds(kind: AreaModuleKind, cell: CellPos) -> Rect<Meters> {
     match kind {
         AreaModuleKind::SafeZone | AreaModuleKind::Soundscape | AreaModuleKind::Population => {
             spot_rect(cell)
@@ -445,7 +445,7 @@ pub fn add_module(
     view_key: &str,
     frame: &AreaFrame,
     kind: AreaModuleKind,
-    tile: Pos<Tiles>,
+    tile: Pos<Meters>,
 ) {
     let (bundle, tile) = match frame.in_place.last() {
         Some(place) if editor.selection.keys.first() == Some(&place.blueprint) => (
@@ -570,7 +570,7 @@ pub fn place_modules(
     PlaceOutcome::Partly { skipped, reason }
 }
 
-fn spot_rect(cell: CellPos) -> Rect<Tiles> {
+fn spot_rect(cell: CellPos) -> Rect<Meters> {
     Rect::new(
         Pos::new(cell.x as f32 - 0.5, cell.y as f32 - 0.5),
         Size::splat(2.0),

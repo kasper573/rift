@@ -5,7 +5,7 @@ use editor::views::area::grid::GridDraft;
 use editor::views::area::{AreaAction, AreaSnapshot, run_action};
 use editor::views::tileset::{SheetRect, TileBlueprintDialog, TileSheetDialog};
 use engine::core::math::Pos;
-use engine::core::tiling::{CellPos, Tiles};
+use engine::core::units::{CellPos, Meters};
 use serde_json::json;
 use testkit::path;
 
@@ -107,7 +107,7 @@ fn a_blueprint_cut_from_a_sheet_blocks_the_cells_painted_on_it_once_it_makes_the
         let grid = &snapshot.area().grid;
         (0..2)
             .flat_map(|y| (0..3).map(move |x| (x, y)))
-            .filter(|&(x, y)| !grid.walkable(Pos::<Tiles>::new(x as f32, y as f32)))
+            .filter(|&(x, y)| !grid.walkable(Pos::<Meters>::new(x as f32, y as f32)))
             .collect()
     };
     assert_eq!(blocked(&mut editor), painted, "painted on the walk grid");

@@ -1,7 +1,7 @@
 use engine::core::content::{Content, ContentFile};
 use engine::core::math::{Direction, Pos, Rng};
-use engine::core::tiling::Tiles;
 use engine::core::time::{PlaybackRate, Seconds};
+use engine::core::units::Meters;
 use engine::systems::actor::model::ModelId;
 use engine::systems::actor::{Action, ActorModel};
 use engine::systems::area::{self, Population};
@@ -87,9 +87,13 @@ pub(super) fn from_npc(ui: &mut Ui, cx: &mut FormCx, npc: &str) {
 }
 
 /// Where a preview of `population` stands its npcs in `area`, rolled from `seed`.
-pub fn population_places(area: &area::Area, population: &Population, seed: u64) -> Vec<Pos<Tiles>> {
+pub fn population_places(
+    area: &area::Area,
+    population: &Population,
+    seed: u64,
+) -> Vec<Pos<Meters>> {
     let count = population.count as usize;
-    let nodes: Vec<Pos<Tiles>> = match population.roams {
+    let nodes: Vec<Pos<Meters>> = match population.roams {
         Some(bounds) => area
             .wild_grid
             .nodes()

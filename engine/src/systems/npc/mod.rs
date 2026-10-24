@@ -17,8 +17,8 @@ use crate::core::content::{
     RowCheck, serial,
 };
 use crate::core::math::{Direction, Percent, Pos, Rect, Rgba, Rng};
-use crate::core::tiling::{CellPos, TilePos, Tiles};
 use crate::core::time::{PlaybackRate, Seconds};
+use crate::core::units::{CellPos, Meters, TilePos};
 use crate::systems::actor::model::ModelId;
 use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox, Tint};
 use crate::systems::area::{self, AreaId, AreaModule, AreaTag, Wild};
@@ -81,10 +81,10 @@ pub struct Npc {
 pub struct Pack(pub u32);
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Home(pub Pos<Tiles>);
+pub struct Home(pub Pos<Meters>);
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Roams(pub Rect<Tiles>);
+pub struct Roams(pub Rect<Meters>);
 
 #[derive(Component, Default)]
 pub struct Near(Vec<Entity>);
@@ -319,7 +319,7 @@ fn spawn_wild(
     content: &Content,
     area_id: AreaId,
     npc: NpcId,
-    roams: Option<Rect<Tiles>>,
+    roams: Option<Rect<Meters>>,
     pack: Pack,
 ) {
     let grid = &area::load(content, area_id).wild_grid;
@@ -338,12 +338,12 @@ fn spawn_wild(
 
 /// A bare actor of the definition, with none of an NPC's scripts or standing; `spawn` makes a
 /// whole NPC of it.
-pub fn spawn_actor(world: &mut World, def: &NpcDef, at: Pos<Tiles>, area: AreaId) -> Entity {
+pub fn spawn_actor(world: &mut World, def: &NpcDef, at: Pos<Meters>, area: AreaId) -> Entity {
     let content = world.resource::<Content>().clone();
     world.spawn(actor_bundle(&content, def, at, area)).id()
 }
 
-pub fn spawn(world: &mut World, def: NpcId, at: Pos<Tiles>, area: AreaId, pack: Pack) -> Entity {
+pub fn spawn(world: &mut World, def: NpcId, at: Pos<Meters>, area: AreaId, pack: Pack) -> Entity {
     let content = world.resource::<Content>().clone();
     let row = def.get(&content);
     let mut entity = world.spawn((
@@ -419,9 +419,9 @@ pub fn defeated(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
 
 struct Watcher {
     npc: Entity,
-    at: Pos<Tiles>,
+    at: Pos<Meters>,
     area: AreaId,
-    reach: Tiles,
+    reach: Meters,
 }
 
 pub fn approach(world: &mut World) {
@@ -447,7 +447,7 @@ pub fn approach(world: &mut World) {
                     _ => None,
                 })
                 .max_by(|a, b| a.0.total_cmp(&b.0))
-                .unwrap_or(Tiles(0.0));
+                .unwrap_or(Meters(0.0));
             Some(Watcher {
                 npc,
                 at: listed.at,
@@ -490,7 +490,7 @@ pub fn approach(world: &mut World) {
             let is_npc = world.get::<Npc>(other).is_some();
             let def = world.get::<Npc>(other).map(|npc| npc.def);
             let distance =
-                position(world, other).map_or(Tiles(f32::MAX), |there| there.distance(at));
+                position(world, other).map_or(Meters(f32::MAX), |there| there.distance(at));
             world.resource_mut::<RiftInstances>().raise(
                 Owner::Entity(RunnerKind::Npc, npc),
                 EventKind::CameNear,
@@ -510,7 +510,7 @@ pub fn approach(world: &mut World) {
     }
 }
 
-fn actor_bundle(content: &Content, def: &NpcDef, at: Pos<Tiles>, area: AreaId) -> impl Bundle {
+fn actor_bundle(content: &Content, def: &NpcDef, at: Pos<Meters>, area: AreaId) -> impl Bundle {
     let character = Character::new(
         Position::at(at),
         Actor {
@@ -554,8 +554,8 @@ fn roaming_spot(
     rng: &mut Rng,
     claims: &TileClaims,
     area: AreaId,
-    roams: Option<Rect<Tiles>>,
-) -> Option<Pos<Tiles>> {
+    roams: Option<Rect<Meters>>,
+) -> Option<Pos<Meters>> {
     let mut draw = |fits: &dyn Fn(CellPos) -> bool| match roams {
         Some(bounds) => grid.random_node_within(rng, bounds, fits),
         None => grid.random_node(rng, fits),

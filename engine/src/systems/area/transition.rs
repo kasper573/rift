@@ -5,7 +5,7 @@ use bevy_ecs::prelude::*;
 use super::AreaId;
 use crate::core::content::Content;
 use crate::core::math::Pos;
-use crate::core::tiling::Tiles;
+use crate::core::units::Meters;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic};
 use crate::systems::npc::Npc;
 use crate::systems::player::{CharacterState, ClientId, PlayedBy, Players};
@@ -15,7 +15,7 @@ use crate::systems::text::LineText;
 #[derive(Component, Clone, Copy)]
 pub struct Crossing {
     pub dest_area: AreaId,
-    pub dest: Pos<Tiles>,
+    pub dest: Pos<Meters>,
 }
 
 #[derive(Component, Clone, Debug, Default)]
@@ -38,7 +38,7 @@ impl Discovered {
 pub struct Traveler {
     pub client: ClientId,
     pub dest_area: AreaId,
-    pub dest: Pos<Tiles>,
+    pub dest: Pos<Meters>,
     pub state: CharacterState,
 }
 
@@ -71,8 +71,8 @@ pub fn leave(
     world: &mut World,
     entity: Entity,
     dest_area: AreaId,
-    dest: Pos<Tiles>,
-    spawn: Pos<Tiles>,
+    dest: Pos<Meters>,
+    spawn: Pos<Meters>,
 ) -> Option<Traveler> {
     let content = world.resource::<Content>().clone();
     let mut state = CharacterState::of(world, entity, spawn)?;

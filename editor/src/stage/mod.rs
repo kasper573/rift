@@ -16,8 +16,8 @@ use engine::core::content::Content;
 use engine::core::geometry::{Footprint, Radians};
 use engine::core::math::{Direction, Pos, Rgba};
 use engine::core::render::ToScreen;
-use engine::core::tiling::Tiles;
 use engine::core::time::{PlaybackRate, Seconds};
+use engine::core::units::Meters;
 use engine::core::vfx::render::SiteTexture;
 use engine::core::vfx::{VfxLayer, VfxParams};
 use engine::systems::GameSettings;
@@ -83,7 +83,7 @@ pub struct PosedActor {
     pub action: Action,
     pub dir: Direction,
     pub tint: Rgba,
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     pub plate: Option<PlateLabel>,
     /// Held at this moment of the action, or animated.
     pub held: Option<Seconds>,
@@ -127,7 +127,7 @@ pub struct Shown {
     pub rect: egui::Rect,
     /// Screen points per world pixel.
     pub px: f32,
-    pub center: Pos<Tiles>,
+    pub center: Pos<Meters>,
     /// What a live scenario reports: its cast count, or why a cast refuses.
     pub report: Option<String>,
 }
@@ -147,7 +147,7 @@ struct Request {
 }
 
 impl PosedActor {
-    pub fn standing(model: ModelId, at: Pos<Tiles>) -> PosedActor {
+    pub fn standing(model: ModelId, at: Pos<Meters>) -> PosedActor {
         PosedActor {
             model,
             action: Action::Idle,
@@ -161,7 +161,7 @@ impl PosedActor {
 }
 
 /// Where the stage stands: the game's initial spawn, which every scene is laid out around.
-pub fn center(content: &Content) -> Pos<Tiles> {
+pub fn center(content: &Content) -> Pos<Meters> {
     content.built::<GameSettings>().initial_spawn.at
 }
 
@@ -312,10 +312,10 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
 /// the footprint's reach, kept where it falls inside, gives the candidates; picks start at even
 /// strides through them and relax to the middle of the candidates nearest each, so they end up
 /// evenly apart and well inside whatever the shape is.
-pub fn spread(footprint: &Footprint, count: u32) -> Vec<Pos<Tiles>> {
+pub fn spread(footprint: &Footprint, count: u32) -> Vec<Pos<Meters>> {
     let reach = footprint.reach().0.max(0.1);
     let golden = PI * (3.0 - 5f32.sqrt());
-    let inside: Vec<Pos<Tiles>> = (0..SPREAD_CANDIDATES)
+    let inside: Vec<Pos<Meters>> = (0..SPREAD_CANDIDATES)
         .map(|index| {
             let radius = reach * ((index as f32 + 0.5) / SPREAD_CANDIDATES as f32).sqrt();
             let angle = index as f32 * golden;
@@ -335,7 +335,7 @@ pub fn spread(footprint: &Footprint, count: u32) -> Vec<Pos<Tiles>> {
             (stride as usize).min(inside.len() - 1)
         })
         .collect();
-    let nearest = |to: Pos<Tiles>, among: &[usize]| {
+    let nearest = |to: Pos<Meters>, among: &[usize]| {
         among
             .iter()
             .copied()

@@ -22,8 +22,8 @@ use crate::core::render::transition::{
 };
 use crate::core::render::{GroundDepth, RowDepths, TILE};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
-use crate::core::tiling::{TileSize, Tiles};
 use crate::core::time::Seconds;
+use crate::core::units::{Meters, TileSize};
 use crate::systems::actor::Actor;
 use crate::systems::area::tileset::{self, TilesetId};
 use crate::systems::area::{self, AreaId, AreaTag};
@@ -77,7 +77,7 @@ struct Crossing {
 #[derive(Clone, Copy)]
 struct Pose {
     character: Entity,
-    at: Pos<Tiles>,
+    at: Pos<Meters>,
     heading: Direction,
     area: AreaId,
 }

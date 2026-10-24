@@ -2,8 +2,8 @@ use bevy_ecs::prelude::*;
 use engine::core::content::Fixture;
 use engine::core::math::Offset;
 use engine::core::script::Value as Recalled;
-use engine::core::tiling::{TilePos, Tiles};
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
+use engine::core::units::{Meters, TilePos};
 use engine::systems::attention::{self, Attention, AttentionId, AttentionMark};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
@@ -43,7 +43,7 @@ fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
     assert!(sim.run_until(1.0, |world| !moving(world, player)));
     let at = position(&sim.world, player).expect("position");
     let keeper_at = position(&sim.world, keeper).expect("position");
-    assert!(at.distance(keeper_at) <= Tiles(2.0 + std::f32::consts::SQRT_2));
+    assert!(at.distance(keeper_at) <= Meters(2.0 + std::f32::consts::SQRT_2));
     assert!(commands_locked(&sim.world, player));
 
     let conn = sim.conn(1);
@@ -56,7 +56,7 @@ fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
     );
     sim.run(2.0);
     let still = position(&sim.world, player).expect("position");
-    assert!(still.distance(at) < Tiles(0.5));
+    assert!(still.distance(at) < Meters(0.5));
 
     sim.send(conn, ConversationRequest::Leave { step: opened.step });
     sim.tick();

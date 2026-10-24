@@ -4,7 +4,7 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::Content;
 use engine::core::math::Pos;
-use engine::core::tiling::{TilePos, Tiles};
+use engine::core::units::{Meters, TilePos};
 use engine::systems::area::AreaId;
 use engine::systems::from_client;
 use engine::systems::movement::Position;
@@ -89,7 +89,7 @@ fn player_of(world: &World, conn: Entity) -> Option<Entity> {
     world.resource::<Players>().0.get(client).copied()
 }
 
-fn nearest_npc(world: &mut World, at: Pos<Tiles>) -> Option<(Entity, Pos<Tiles>)> {
+fn nearest_npc(world: &mut World, at: Pos<Meters>) -> Option<(Entity, Pos<Meters>)> {
     world
         .query_filtered::<(Entity, &Position), With<Npc>>()
         .iter(world)

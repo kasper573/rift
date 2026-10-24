@@ -5,7 +5,7 @@ use engine::core::content::id::LeafKind;
 use engine::core::content::{Content, ContentFile, fields_file, name_of};
 use engine::core::math::{Pos, Size};
 use engine::core::script::Expr;
-use engine::core::tiling::Tiles;
+use engine::core::units::Meters;
 use engine::systems::GameSettings;
 use engine::systems::area::{self, AreaDef, AreaId, AreaModule, AreaModuleKind, ObjectShape};
 use engine::systems::item::ItemDef;
@@ -40,7 +40,7 @@ pub struct WorldAtlas {
 pub struct AtlasArea {
     pub key: String,
     pub name: String,
-    pub size: Size<Tiles>,
+    pub size: Size<Meters>,
     pub modules: HashSet<AreaModuleKind>,
     pub text: String,
     pub residents: Vec<PlacedNpc>,
@@ -53,20 +53,20 @@ pub struct AtlasArea {
 pub struct PlacedNpc {
     pub npc: NpcId,
     pub key: String,
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     pub count: u32,
 }
 
 pub struct AtlasDoor {
-    pub at: Pos<Tiles>,
+    pub at: Pos<Meters>,
     pub owner: usize,
 }
 
 pub struct AtlasWarp {
     pub from: AreaId,
     pub to: AreaId,
-    pub at: Option<Pos<Tiles>>,
-    pub landing: Pos<Tiles>,
+    pub at: Option<Pos<Meters>>,
+    pub landing: Pos<Meters>,
     pub owner: usize,
 }
 
@@ -75,7 +75,7 @@ pub struct AtlasOwner {
     pub kind: RunnerKind,
     pub name: String,
     pub label: String,
-    pub at: Option<Pos<Tiles>>,
+    pub at: Option<Pos<Meters>>,
     pub reaches: Vec<Reach>,
     pub opens: OpenTarget,
 }
@@ -311,7 +311,7 @@ impl WorldAtlas {
         name_of(self.key(id))
     }
 
-    pub fn size(&self, id: AreaId) -> Size<Tiles> {
+    pub fn size(&self, id: AreaId) -> Size<Meters> {
         self.areas[&id].size
     }
 

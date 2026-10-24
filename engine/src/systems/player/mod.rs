@@ -14,8 +14,8 @@ use snapshot::{CharacterSnapshot, JoinAs};
 
 use crate::core::content::{Content, ContentFile, ContentId, ModuleRule, ModuleSet, Nearby};
 use crate::core::math::{Direction, Pos, Rgba, Rng};
-use crate::core::tiling::Tiles;
 use crate::core::time::{PlaybackRate, Seconds, UnixMillis, WallClock};
+use crate::core::units::Meters;
 use crate::systems::account::Identity;
 use crate::systems::actor::model::ModelId;
 use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Tint};
@@ -354,7 +354,7 @@ fn spawn_position(
     policy: SpawnPolicy,
     zone: AreaId,
     area: &area::Area,
-) -> Pos<Tiles> {
+) -> Pos<Meters> {
     let spawn = world.resource::<GameSettings>().initial_spawn;
     let fallback = || area.fallback_spawn();
     match policy {
@@ -368,7 +368,7 @@ fn spawn_position(
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct SpawnPoint(pub Pos<Tiles>);
+pub struct SpawnPoint(pub Pos<Meters>);
 
 #[derive(Bundle)]
 pub struct CharacterState {
@@ -391,7 +391,7 @@ pub struct CharacterState {
 }
 
 impl CharacterState {
-    pub fn of(world: &World, entity: Entity, spawn: Pos<Tiles>) -> Option<CharacterState> {
+    pub fn of(world: &World, entity: Entity, spawn: Pos<Meters>) -> Option<CharacterState> {
         Some(CharacterState {
             name: world.get::<Name>(entity)?.clone(),
             spawn: SpawnPoint(spawn),
@@ -420,7 +420,7 @@ pub(crate) fn place(
     world: &mut World,
     client: ClientId,
     zone: AreaId,
-    at: Pos<Tiles>,
+    at: Pos<Meters>,
     state: CharacterState,
 ) -> Entity {
     let content = world.resource::<Content>().clone();

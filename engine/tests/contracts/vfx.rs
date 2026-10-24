@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use bevy_ecs::prelude::*;
 use engine::core::geometry::{Degrees, Footprint, Radians, Shape};
 use engine::core::math::{Offset, Pos, Rgba};
-use engine::core::tiling::Tiles;
 use engine::core::time::UnixMillis;
+use engine::core::units::Meters;
 use engine::core::vfx::{ParamValue, VfxDef, VfxInstance, VfxParams, VfxSite};
 use engine::systems::area::AreaDef;
 use engine::systems::class::{self, NodeKey};
@@ -188,7 +188,7 @@ fn an_instance_arrives_as_the_server_sent_it_whatever_its_parameters_and_site() 
             facing: Radians(0.5),
             shape: Shape::Cone {
                 angle: Degrees(90.0),
-                length: Tiles(2.5),
+                length: Meters(2.5),
             },
         }),
         params: VfxParams::default(),
@@ -342,7 +342,7 @@ fn learn(sim: &mut Sim, player: Entity, node: &str) {
         )])));
 }
 
-fn cast(sim: &mut Sim, skill: &str, at: Pos<Tiles>) {
+fn cast(sim: &mut Sim, skill: &str, at: Pos<Meters>) {
     let conn = sim.conn(1);
     let skill = sim.id::<SkillDef>(skill);
     sim.send(

@@ -5,7 +5,7 @@ use strum::IntoStaticStr;
 
 use crate::core::geometry::Footprint;
 use crate::core::math::Pos;
-use crate::core::tiling::Tiles;
+use crate::core::units::Meters;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Value {
@@ -15,7 +15,7 @@ pub enum Value {
     Text(String),
     Actor(Option<Entity>),
     Actors(Vec<Entity>),
-    Point(Option<Pos<Tiles>>),
+    Point(Option<Pos<Meters>>),
     Area(Option<Footprint>),
 }
 
@@ -124,7 +124,7 @@ impl Value {
         }
     }
 
-    pub fn as_point(&self) -> Option<Pos<Tiles>> {
+    pub fn as_point(&self) -> Option<Pos<Meters>> {
         match self {
             Value::Point(point) => *point,
             Value::Area(area) => area.map(|area| area.at),
