@@ -1,6 +1,6 @@
 {
   "name": "Huntress",
-  "model": "world/areas/frostmere/areas/cabin/npcs/huntress.model",
+  "model": "characters/models/rogue.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

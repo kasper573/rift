@@ -1,6 +1,6 @@
 {
   "name": "Fisher Boy",
-  "model": "world/areas/mirefen/areas/stilt/npcs/fisher_boy.model",
+  "model": "characters/models/woodsman.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

@@ -1,6 +1,6 @@
 {
   "name": "Frost Wraith",
-  "model": "world/areas/frostmere/npcs/frost_wraith.model",
+  "model": "characters/models/skeleton-mage.model",
   "stats": {
     "health": 34.0,
     "max_health": 34.0,

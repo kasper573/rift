@@ -37,8 +37,6 @@ use crate::project::files::FolderIndex;
 use crate::project::{Project, ProjectFiles};
 use crate::thumbs::{self, Thumbnails};
 
-use crate::views::model::{self, ModelStrip};
-
 /// The largest picture, in pixels each way, that still reads as an icon; a bigger one leaves its
 /// file to its kind's icon.
 pub const PREVIEW_MAX: f32 = 64.0;
@@ -196,11 +194,11 @@ pub fn of_table(table: &str) -> KindIcon {
         TilesetDef::TABLE => KindIcon::plain(phosphor::SQUARES_FOUR).unpictured(),
         SurfaceDef::TABLE => KindIcon::plain(phosphor::FOOTPRINTS),
         WorldMapDef::TABLE => KindIcon::plain(phosphor::GLOBE_HEMISPHERE_WEST),
-        NpcDef::TABLE => KindIcon::plain(phosphor::ROBOT),
-        PlayerDef::TABLE => KindIcon::plain(phosphor::USER),
+        NpcDef::TABLE => KindIcon::plain(phosphor::ROBOT).unpictured(),
+        PlayerDef::TABLE => KindIcon::plain(phosphor::USER).unpictured(),
         CharacterSnapshot::TABLE => KindIcon::badged(phosphor::USER, phosphor::FLASK),
         ClassDef::TABLE => KindIcon::plain(phosphor::SHIELD_STAR),
-        ModelDef::TABLE => KindIcon::plain(phosphor::PERSON_ARMS_SPREAD),
+        ModelDef::TABLE => KindIcon::plain(phosphor::PERSON_ARMS_SPREAD).unpictured(),
         ItemDef::TABLE => KindIcon::plain(phosphor::BACKPACK),
         SkillDef::TABLE => KindIcon::plain(phosphor::LIGHTNING),
         StatusEffectDef::TABLE => KindIcon::plain(phosphor::HEARTBEAT),
@@ -249,6 +247,7 @@ pub fn of_media(path: &str) -> KindIcon {
         Some(AssetKind::Image) => IMAGE,
         Some(AssetKind::Audio) => KindIcon::plain(phosphor::FILE_AUDIO),
         Some(AssetKind::Font) => KindIcon::plain(phosphor::TEXT_AA),
+        Some(AssetKind::Model) => KindIcon::plain(phosphor::CUBE).unpictured(),
         None => FILE,
     }
 }
@@ -267,7 +266,6 @@ pub struct Picture {
 }
 
 pub enum PictureFrame {
-    Sprite { size: (u32, u32), frame: u32 },
     Whole,
     Tile(u32),
 }
@@ -285,15 +283,11 @@ pub fn picture_of(project: &Project, path: &str) -> Option<Picture> {
             frame: PictureFrame::Whole,
         })
     };
-    let worn = |model| sprite(&*project.read_id::<ModelDef>(model)?);
     let table = table_of(path)?;
     if !of_table(table).pictured {
         return None;
     }
     match table {
-        ModelDef::TABLE => sprite(&*project.read::<ModelDef>(path).ok()?),
-        NpcDef::TABLE => worn(project.read::<NpcDef>(path).ok()?.model),
-        PlayerDef::TABLE => worn(project.read::<PlayerDef>(path).ok()?.model),
         ItemDef::TABLE => whole(&project.read::<ItemDef>(path).ok()?.icon),
         SkillDef::TABLE => whole(&project.read::<SkillDef>(path).ok()?.icon),
         AttentionDef::TABLE => whole(&project.read::<AttentionDef>(path).ok()?.icon),
@@ -357,14 +351,9 @@ pub fn preview(
 ) -> Option<Preview> {
     let files = &project.files;
     let picture = picture_of(project, path)?;
-    let small = match picture.frame {
-        PictureFrame::Sprite { size, .. } => {
-            size.0 as f32 <= PREVIEW_MAX && size.1 as f32 <= PREVIEW_MAX
-        }
-        PictureFrame::Whole | PictureFrame::Tile(_) => thumbnails
-            .dimensions(files, &picture.path)
-            .is_some_and(|[w, h]| w as f32 <= PREVIEW_MAX && h as f32 <= PREVIEW_MAX),
-    };
+    let small = thumbnails
+        .dimensions(files, &picture.path)
+        .is_some_and(|[w, h]| w as f32 <= PREVIEW_MAX && h as f32 <= PREVIEW_MAX);
     if !small {
         return None;
     }
@@ -398,11 +387,6 @@ fn shown(
         size,
     };
     Some(match picture.frame {
-        PictureFrame::Sprite { size, frame } => {
-            let thumb = thumbnails.trimmed_cell(ctx, files, &picture.path, size, frame, budget)?;
-            let drawn = Vec2::new(thumb.size[0] as f32, thumb.size[1] as f32);
-            ready(thumb, thumbs::FULL_UV, drawn)
-        }
         PictureFrame::Whole => {
             let thumb = thumbnails.image_within(ctx, files, &picture.path, budget)?;
             let size = Vec2::new(thumb.size[0] as f32, thumb.size[1] as f32);
@@ -415,16 +399,5 @@ fn shown(
             let uv = thumbs::uv(thumb.size, 0.0, 0.0, block.x, block.y);
             ready(thumb, uv, block)
         }
-    })
-}
-
-fn sprite(model: &ModelDef) -> Option<Picture> {
-    let idle = model::strip_of(model, ModelStrip::default());
-    Some(Picture {
-        path: model.sprites.image.as_str().to_owned(),
-        frame: PictureFrame::Sprite {
-            size: model::frame_size(model)?,
-            frame: idle.first().map_or(0, |frame| frame.frame),
-        },
     })
 }

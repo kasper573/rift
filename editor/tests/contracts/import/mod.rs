@@ -1,309 +1,20 @@
 mod art;
 mod exports;
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
 use ui::egui;
 
-use editor::import::formats::{self, ExportFormat, ExportStrip};
-use editor::import::model::{self, CuePlacement};
+use editor::import::formats;
 use editor::import::records::{ImportMapping, ImportRecord};
 use editor::import::tileset;
 use editor::views::area::grid::BundlePalette;
-use editor::views::model::{ModelStrip, strip_of};
 use editor::views::tileset::SheetRect;
 use engine::core::content::FolderReader;
-use engine::core::math::Direction;
-use engine::systems::actor::model::SheetFrame;
-use engine::systems::actor::{Action, ModelDef};
 use engine::systems::area::grid::{self, PaletteRow};
 use engine::systems::area::tileset::{TilesetDef, Walk};
 use image::RgbaImage;
 use testkit::path;
 
-use self::art::{FRAME, TILE, fill};
-
-#[test]
-fn an_aseprite_sheet_imports_to_the_expected_row_and_image() {
-    let dir = tempfile::tempdir().expect("a scratch folder");
-    let (reader, row) = art::walker();
-    let sheet = art::walker_sheet();
-    let strips = strips_of(&row, &sheet);
-    let files = exports::aseprite(dir.path(), "walker", &strips, true);
-    let dropped = formats::sort_out(&files).expect("a sheet and its json");
-    let export = formats::decode(&dropped).expect("decodes");
-    assert_eq!(export.kind, ExportFormat::SheetJson);
-    assert_eq!(export.frame, FRAME);
-    assert!(export.timed());
-    let plan = plan_for(&row, &reader, &sheet, &export, None);
-    assert!(plan.missing.is_empty());
-    assert_eq!(plan.ready(), Ok(()));
-    assert_eq!(plan.cues_kept(), plan.cues_total);
-    let built = model::build(
-        &plan,
-        &export,
-        row.clone(),
-        &reader,
-        &path("model", "walker"),
-    )
-    .expect("builds");
-    assert_eq!(
-        built.image,
-        format!("{}/sprites.png", path("model", "walker"))
-    );
-    let image = formats::decode_image_bytes(&built.png).expect("a png");
-    assert_eq!(image.dimensions(), (8 * FRAME.0, 40 * FRAME.1));
-    for (name, frames) in &strips {
-        let after = strip_of(&built.row, strip_named(name));
-        assert_eq!(after.len(), frames.len(), "{name}");
-        for (frame, (pixels, ms)) in after.iter().zip(frames) {
-            assert_eq!(frame.ms, *ms, "{name}");
-            let index = frame.frame;
-            let cut = image::imageops::crop_imm(
-                &image,
-                (index % 8) * FRAME.0,
-                (index / 8) * FRAME.1,
-                FRAME.0,
-                FRAME.1,
-            )
-            .to_image();
-            assert_eq!(
-                formats::pixel_hash(&cut),
-                formats::pixel_hash(pixels),
-                "{name} pixels"
-            );
-        }
-    }
-    assert_eq!(built.row.hitbox, row.hitbox);
-    assert_eq!(built.row.modules.len(), row.modules.len());
-    assert_eq!(
-        apex(&built.row, Direction::S),
-        vec![false, false, false, false, false, true, false, false]
-    );
-}
-
-#[test]
-fn a_texturepacker_sheet_with_rotated_frames_imports_alike() {
-    let dir = tempfile::tempdir().expect("a scratch folder");
-    let (reader, row) = art::walker();
-    let sheet = art::walker_sheet();
-    let strips = strips_of(&row, &sheet);
-    let files = exports::texturepacker(dir.path(), "walker", &strips);
-    let export = formats::decode(&formats::sort_out(&files).unwrap()).expect("decodes");
-    assert!(!export.timed(), "TexturePacker carries no durations");
-    for (name, frames) in &strips {
-        let strip = export.strip(name).expect(name);
-        for (frame, (pixels, _)) in strip.frames.iter().zip(frames) {
-            assert_eq!(frame.hash, formats::pixel_hash(pixels), "{name} unrotated");
-        }
-    }
-    let (mapping, notes) = model::default_mapping(&export);
-    assert!(mapping.values().all(Option::is_some));
-    assert!(
-        notes
-            .values()
-            .all(|note| *note == model::MappingNote::ByName)
-    );
-    let asked: BTreeMap<String, u32> = export.strips.iter().map(|s| (s.tag.clone(), 90)).collect();
-    let plan = model::plan(
-        Some(&row),
-        &reader,
-        Some(&sheet),
-        &export,
-        &mapping,
-        &asked,
-        None,
-    );
-    let strip = plan.strips.iter().find(|s| s.name == "walk_s").unwrap();
-    assert!(strip.lengths.iter().all(|ms| *ms == 90));
-}
-
-#[test]
-fn a_grid_asks_the_frame_size_and_maps_rows_by_order() {
-    let dir = tempfile::tempdir().expect("a scratch folder");
-    let (_, row) = art::walker();
-    let sheet = art::walker_sheet();
-    let strips = strips_of(&row, &sheet);
-    let file = exports::grid(dir.path(), "walker", &strips, FRAME);
-    let mut export = formats::decode(&formats::sort_out(&[file]).unwrap()).expect("decodes");
-    assert_eq!(export.kind, ExportFormat::Grid);
-    assert!(export.strips.is_empty());
-    assert!(export.cut_grid(FRAME.0 + 2, FRAME.1).is_err());
-    export.cut_grid(FRAME.0, FRAME.1).expect("cuts");
-    assert_eq!(export.strips.len(), 40);
-    let (mapping, notes) = model::default_mapping(&export);
-    assert_eq!(mapping["row 1"].as_deref(), Some("idle_s"));
-    assert_eq!(mapping["row 40"].as_deref(), Some("death_w"));
-    assert!(
-        notes
-            .values()
-            .all(|note| *note == model::MappingNote::ByOrder)
-    );
-}
-
-#[test]
-fn a_numbered_sequence_imports_and_a_gap_is_refused() {
-    let dir = tempfile::tempdir().expect("a scratch folder");
-    let (_, row) = art::walker();
-    let sheet = art::walker_sheet();
-    let strips = strips_of(&row, &sheet);
-    let files = exports::sequence(dir.path(), &strips[8..11]);
-    let export = formats::decode(&formats::sort_out(&files).unwrap()).expect("decodes");
-    assert_eq!(export.kind, ExportFormat::Sequence);
-    assert_eq!(export.strips.len(), 3);
-    assert_eq!(export.strip("walk_s").unwrap().frames.len(), 8);
-    let gap: Vec<PathBuf> = files
-        .into_iter()
-        .filter(|f| !f.ends_with("walk_sw_4.png"))
-        .collect();
-    let refused = formats::decode(&formats::sort_out(&gap).unwrap()).unwrap_err();
-    assert!(refused.contains("walk_sw skips"), "{refused}");
-}
-
-#[test]
-fn a_gif_and_an_apng_carry_their_lengths() {
-    let dir = tempfile::tempdir().expect("a scratch folder");
-    let water = art::tileset();
-    let frames = art::water(&water);
-    let gif = exports::gif(dir.path(), "beach-water", &frames, 25);
-    let export = formats::decode(&formats::sort_out(&[gif]).unwrap()).expect("decodes");
-    assert_eq!(export.kind, ExportFormat::Gif);
-    assert_eq!(export.frame, (art::WATER * TILE, art::WATER * TILE));
-    let strip = &export.strips[0];
-    assert_eq!(strip.tag, "beach-water");
-    assert_eq!(
-        strip.frames.iter().map(|f| f.ms).collect::<Vec<_>>(),
-        vec![Some(250); 4]
-    );
-    let apng = exports::apng(dir.path(), "beach-water", &frames, (1, 3));
-    let export = formats::decode(&formats::sort_out(&[apng]).unwrap()).expect("decodes");
-    assert_eq!(export.kind, ExportFormat::Apng);
-    assert_eq!(export.strips[0].frames[0].ms, Some(333), "half up");
-    for (frame, pixels) in export.strips[0].frames.iter().zip(&frames) {
-        assert_eq!(frame.hash, formats::pixel_hash(pixels));
-    }
-}
-
-#[test]
-fn importing_again_keeps_the_cues_that_still_fit_and_asks_for_the_rest() {
-    let dir = tempfile::tempdir().expect("a scratch folder");
-    let (reader, row) = art::walker();
-    let sheet = art::walker_sheet();
-    let mut strips = strips_of(&row, &sheet);
-    let run_e = strips.iter_mut().find(|(name, _)| name == "run_e").unwrap();
-    run_e.1.remove(5);
-    run_e.1.remove(4);
-    let attack_s = strips
-        .iter_mut()
-        .find(|(name, _)| name == "attack_s")
-        .unwrap();
-    attack_s.1.remove(2);
-    attack_s.1.remove(1);
-    let files = exports::aseprite(dir.path(), "walker", &strips, true);
-    let export = formats::decode(&formats::sort_out(&files).unwrap()).expect("decodes");
-    let plan = plan_for(&row, &reader, &sheet, &export, None);
-    let run = plan.strips.iter().find(|s| s.name == "run_e").unwrap();
-    assert_eq!(run.before.len(), 8);
-    assert_eq!(run.after_count(), 6);
-    let steps: Vec<(usize, Option<usize>)> =
-        run.cues.iter().map(|cue| (cue.from, cue.to)).collect();
-    assert_eq!(
-        steps,
-        vec![(0, Some(0)), (4, None)],
-        "the first step follows its frame, the fifth has nothing to follow"
-    );
-    assert_eq!(run.needs_place(), 1);
-    let attack = plan.strips.iter().find(|s| s.name == "attack_s").unwrap();
-    assert!(
-        attack
-            .cues
-            .iter()
-            .all(|cue| cue.from == 5 && cue.to == Some(3) && cue.by_pixels)
-    );
-    assert_eq!(plan.ready(), Err("one cue needs a place".to_owned()));
-    let mut plan = plan;
-    plan.strip_mut("run_e").unwrap().cues[1].choice = Some(CuePlacement::Frame(3));
-    assert_eq!(plan.ready(), Ok(()));
-    let built = model::build(&plan, &export, row.clone(), &reader, "walker").expect("builds");
-    let after = strip_of(&built.row, strip_named("run_e"));
-    assert_eq!(after.len(), 6);
-    assert!(after[0].step);
-    assert!(after[3].step);
-    assert_eq!(
-        apex(&built.row, Direction::S),
-        vec![false, false, false, true, false, false]
-    );
-    let sound = strip_of(&built.row, strip_named("attack_s"))[3]
-        .sound
-        .expect("the attack's sound");
-    assert_eq!(reader.path_of(sound), Some(path("sfx", "slash03").as_str()));
-}
-
-#[test]
-fn importing_again_asks_before_replacing_lengths_edited_here() {
-    let dir = tempfile::tempdir().expect("a scratch folder");
-    let (reader, mut row) = art::walker();
-    let sheet = art::walker_sheet();
-    let strips = strips_of(&row, &sheet);
-    let files = exports::aseprite(dir.path(), "walker", &strips, false);
-    let export = formats::decode(&formats::sort_out(&files).unwrap()).expect("decodes");
-    let (mapping, _) = model::default_mapping(&export);
-    let plan = model::plan(
-        Some(&row),
-        &reader,
-        Some(&sheet),
-        &export,
-        &mapping,
-        &BTreeMap::new(),
-        None,
-    );
-    let built = model::build(&plan, &export, row.clone(), &reader, "walker").unwrap();
-    let record = model::record(&export, "walker", &mapping, built.lengths.clone());
-    assert_eq!(record.strips["attack_s"], art::ATTACK_MS.to_vec());
-    let attack = row
-        .sprites
-        .actions
-        .get_mut(&Action::Attack)
-        .and_then(|strips| strips.get_mut(&Direction::S))
-        .expect("an attack facing south");
-    attack[4].ms = 90;
-    attack[5].ms = 80;
-    let plan = model::plan(
-        Some(&row),
-        &reader,
-        Some(&sheet),
-        &export,
-        &mapping,
-        &BTreeMap::new(),
-        Some(&record),
-    );
-    assert!(!plan.decided());
-    assert_eq!(plan.retimed(), 1);
-    let attack = plan.strips.iter().find(|s| s.name == "attack_s").unwrap();
-    let retimed = attack.retimed.as_ref().expect("asks which lengths win");
-    assert_eq!(retimed.here[4], 90);
-    assert!(retimed.keep_here);
-    assert_eq!(attack.final_lengths()[4], 90);
-    let mut export_wins = attack.clone();
-    export_wins.retimed.as_mut().unwrap().keep_here = false;
-    assert_eq!(export_wins.final_lengths()[4], 60);
-    let untouched = plan.strips.iter().find(|s| s.name == "walk_s").unwrap();
-    assert!(untouched.retimed.is_none());
-    let same = model::plan(
-        Some(&row),
-        &reader,
-        Some(&sheet),
-        &export,
-        &mapping,
-        &BTreeMap::new(),
-        None,
-    );
-    assert_eq!(
-        same.retimed(),
-        0,
-        "without a record the export's lengths simply win"
-    );
-}
+use self::art::{TILE, fill};
 
 #[test]
 fn a_tileset_grid_is_cut_whole_and_a_wider_one_keeps_tile_data_and_palettes() {
@@ -601,17 +312,6 @@ fn an_animation_lands_on_a_block_reusing_frames_found_by_pixels() {
 fn import_records_written_by_earlier_editors_still_read() {
     let written = serde_json::json!([
         {
-            "export": "/art/walker.png",
-            "files": ["/art/walker.png", "/art/walker.json"],
-            "table": "model",
-            "key": "walker",
-            "mapping": { "idle": "idle_s", "flourish": "skip" },
-            "size": 10,
-            "hash": "0011",
-            "strips": { "idle_s": [100, 120] },
-            "part": ""
-        },
-        {
             "export": "/art/beach.png",
             "files": ["/art/beach.png"],
             "table": "tileset",
@@ -636,7 +336,7 @@ fn import_records_written_by_earlier_editors_still_read() {
     ]);
     let records: Vec<ImportRecord> = serde_json::from_value(written).expect("reads");
     assert_eq!(
-        records[1].mapping,
+        records[0].mapping,
         ImportMapping::Grid {
             grid: tileset::TileGridSettings {
                 tile: 16,
@@ -648,16 +348,8 @@ fn import_records_written_by_earlier_editors_still_read() {
     );
     assert_eq!(
         records.iter().map(ImportRecord::block).collect::<Vec<_>>(),
-        vec![None, None, Some(tileset::TileBlock { column: 3, row: 4 })]
+        vec![None, Some(tileset::TileBlock { column: 3, row: 4 })]
     );
-    let strips = ["idle", "flourish"].map(|tag| ExportStrip {
-        tag: tag.to_owned(),
-        frames: Vec::new(),
-    });
-    let export = formats::AnimationExport::new(Vec::new(), ExportFormat::SheetJson, strips.into());
-    let mapping = model::recorded_mapping(&records[0], &export);
-    assert_eq!(mapping["idle"], Some("idle_s".to_owned()));
-    assert_eq!(mapping["flourish"], None, "a skipped tag stays skipped");
     let rewritten: Vec<ImportRecord> =
         serde_json::from_value(serde_json::to_value(&records).unwrap()).expect("reads back");
     assert!(
@@ -705,74 +397,10 @@ fn beach_game() -> testkit::Game {
         .whole()
 }
 
-fn strip_named(name: &str) -> ModelStrip {
-    let (action, direction) = name.split_once('_').expect("action_direction");
-    ModelStrip::parse(action, direction).expect("a strip of a model")
-}
-
-fn apex(row: &ModelDef, direction: Direction) -> Vec<bool> {
-    strip_of(
-        row,
-        ModelStrip {
-            action: Action::Attack,
-            direction,
-        },
-    )
-    .iter()
-    .map(|frame: &SheetFrame| frame.apex)
-    .collect()
-}
-
-fn strips_of(row: &ModelDef, sheet: &RgbaImage) -> Vec<(String, Vec<(RgbaImage, u32)>)> {
-    let size = row.sprites.frame_size;
-    let (fw, fh) = (size.width, size.height);
-    let columns = sheet.width() / fw;
-    model::strip_names()
-        .into_iter()
-        .map(|name| {
-            let frames = strip_of(row, strip_named(&name))
-                .iter()
-                .map(|frame| {
-                    let index = frame.frame;
-                    let cut = image::imageops::crop_imm(
-                        sheet,
-                        (index % columns) * fw,
-                        (index / columns) * fh,
-                        fw,
-                        fh,
-                    )
-                    .to_image();
-                    (cut, frame.ms)
-                })
-                .collect();
-            (name, frames)
-        })
-        .collect()
-}
-
 fn palette(text: &str) -> Vec<PaletteRow> {
     let file = grid::GridFile {
         path: "palette.csv",
         text,
     };
     grid::read_palette(file, &mut Vec::new()).expect("a palette")
-}
-
-fn plan_for(
-    row: &ModelDef,
-    reader: &FolderReader,
-    sheet: &RgbaImage,
-    export: &formats::AnimationExport,
-    record: Option<&ImportRecord>,
-) -> model::ModelImportPlan {
-    let (mapping, _) = model::default_mapping(export);
-    model::plan(
-        Some(row),
-        reader,
-        Some(sheet),
-        export,
-        &mapping,
-        &BTreeMap::new(),
-        record,
-    )
 }

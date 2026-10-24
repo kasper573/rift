@@ -1,6 +1,6 @@
 {
   "name": "Orc Chief",
-  "model": "characters/model/orc.model",
+  "model": "characters/models/barbarian.model",
   "stats": {
     "health": 60.0,
     "max_health": 60.0,

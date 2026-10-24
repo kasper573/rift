@@ -1,6 +1,6 @@
-//! The stage's picture: an offscreen camera over sprites drawn with the game's frames, anchor and
-//! row depths, and vfx pieces presented by the game's own presenters, mirroring whatever scene is
-//! requested of it.
+//! The stage's picture: an offscreen camera over the items as they lie dropped and the vfx pieces
+//! presented by the game's own presenters, mirroring whatever scene is requested of it. Actors hang
+//! their plates over where they stand; their rigs are drawn once the stage renders the world in 3D.
 
 use std::collections::{HashMap, HashSet};
 use ui::egui;
@@ -12,19 +12,14 @@ use bevy::shader::Shader;
 use bevy_egui::EguiUserTextures;
 use engine::core::content::{Content, fields_file};
 use engine::core::geometry::Radians;
-use engine::core::math::{Pos, Rgba};
-use engine::core::render::{
-    Animator, GroundDepth, RowDepth, RowDepths, ToScreen, dynamic_z, place_sprite,
-};
-use engine::core::time::{PlaybackRate, Seconds};
+use engine::core::math::Pos;
+use engine::core::render::{GroundDepth, RowDepth, RowDepths, ToScreen, place_sprite};
+use engine::core::time::Seconds;
 use engine::core::units::Meters;
 use engine::core::vfx::render::{self as vfx_render, Presentation, SiteFrame, SiteTexture};
-use engine::core::vfx::{
-    ShaderError, SiteKind, VfxLayer, VfxParams, VfxShaderDef, VfxSite, shader_file,
-};
+use engine::core::vfx::{ShaderError, VfxLayer, VfxParams, VfxShaderDef, VfxSite, shader_file};
+use engine::systems::actor::ModelId;
 use engine::systems::actor::plate::{self, PlateLabel};
-use engine::systems::actor::render::{ACTOR_ANCHOR, draw_actor_frame};
-use engine::systems::actor::{Action, ActorModel, ModelId};
 use engine::systems::area::{self, AreaId};
 use engine::systems::item::ItemId;
 use engine::systems::item::render::drop_sprite;
@@ -36,24 +31,17 @@ use crate::views::area::scene;
 const FIRST_LAYER: usize = 500;
 const SPRITE_DEPTH_ABOVE_GROUND: f32 = 0.001;
 
-/// What a staged sprite stands for: an actor the scene posed, or an entity of a live world.
+/// Whom a staged actor stands for: one the scene posed, or an entity of a live world.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Source {
     Posed(usize),
     Live(Entity),
 }
 
-/// An actor as the stage draws it this frame.
+/// An actor as the stage places it this frame: where it stands and the plate over its head.
 pub struct ActorPose {
-    pub source: Source,
     pub model: ModelId,
-    pub action: Action,
-    pub facing: Radians,
-    pub tint: Rgba,
-    pub attack_rate: PlaybackRate,
     pub at: Pos<Meters>,
-    /// Held at this moment of the action, or animated from when the sprite came to stand in it.
-    pub held: Option<Seconds>,
     pub plate: Option<PlateLabel>,
 }
 
@@ -80,7 +68,6 @@ pub struct Frame<'a> {
     pub files: &'a ProjectFiles,
     pub area: AreaId,
     pub center: Pos<Meters>,
-    pub now: f64,
     pub actors: Vec<ActorPose>,
     pub items: Vec<ItemId>,
     pub vfx: Vec<VfxPose>,
@@ -97,17 +84,10 @@ pub struct Stage {
     camera: Entity,
     image: Handle<Image>,
     layer: RenderLayers,
-    animator: Animator,
-    actors: HashMap<Source, Staged>,
     items: Vec<Entity>,
     pieces: HashMap<Source, (String, Vec<Entity>)>,
     /// The last shader compiled for each shader key, by the hash of the text it was composed from.
     shaders: HashMap<String, (String, Result<Handle<Shader>, ShaderError>)>,
-}
-
-struct Staged {
-    entity: Entity,
-    model: ModelId,
 }
 
 impl Stage {
@@ -139,16 +119,14 @@ impl Stage {
             camera,
             image,
             layer,
-            animator: Animator::default(),
-            actors: HashMap::new(),
             items: Vec::new(),
             pieces: HashMap::new(),
             shaders: HashMap::new(),
         }
     }
 
-    /// Brings the picture up to the frame: sprites posed and placed as the game places them, vfx
-    /// presented over them, and names kept for the window to letter.
+    /// Brings the picture up to the frame: items and vfx presented as the game presents them, and
+    /// names kept for the window to letter over where each actor stands.
     pub fn render(&mut self, world: &mut World, scenes: &mut scene::AreaScenes, frame: &Frame) {
         let area = area::load(frame.content, frame.area);
         world.insert_resource(GroundDepth(area.sort_base()));
@@ -166,12 +144,11 @@ impl Stage {
             .actors
             .iter()
             .filter_map(|pose| {
-                let hitbox = pose.model.get(frame.content).hitbox.tiles();
-                let top = plate::head(pose.at, hitbox).to_screen();
+                let height = pose.model.get(frame.content).hitbox.height;
+                let top = plate::head(pose.at, height).to_screen();
                 pose.plate.clone().map(|label| (top, label))
             })
             .collect();
-        self.sync_actors(world, scenes, frame, area.size.height, area.sort_base());
         self.sync_items(world, scenes, frame);
         self.sync_vfx(world, scenes, frame);
     }
@@ -185,99 +162,11 @@ impl Stage {
     }
 
     fn clear(&mut self, world: &mut World) {
-        for staged in self.actors.drain().map(|(_, staged)| staged) {
-            world.despawn(staged.entity);
-        }
         for item in self.items.drain(..) {
             world.despawn(item);
         }
         for piece in self.pieces.drain().flat_map(|(_, (_, pieces))| pieces) {
             world.despawn(piece);
-        }
-    }
-
-    fn sync_actors(
-        &mut self,
-        world: &mut World,
-        scenes: &mut scene::AreaScenes,
-        frame: &Frame,
-        height: f32,
-        base: f32,
-    ) {
-        let wanted: HashSet<Source> = frame.actors.iter().map(|pose| pose.source).collect();
-        let gone: Vec<Source> = self
-            .actors
-            .iter()
-            .filter(|(source, staged)| {
-                !wanted.contains(source)
-                    || frame
-                        .actors
-                        .iter()
-                        .any(|pose| pose.source == **source && pose.model != staged.model)
-            })
-            .map(|(source, _)| *source)
-            .collect();
-        for source in gone {
-            if let Some(staged) = self.actors.remove(&source) {
-                world.despawn(staged.entity);
-            }
-        }
-        for pose in &frame.actors {
-            let model = ActorModel::get(frame.content, pose.model);
-            let image = scene::image_handle(scenes, frame.files, model.sheet().as_str(), world);
-            let entity = match self.actors.get(&pose.source) {
-                Some(staged) => staged.entity,
-                None => {
-                    let entity = world
-                        .spawn((
-                            Sprite {
-                                image: image.clone(),
-                                ..default()
-                            },
-                            ACTOR_ANCHOR,
-                            Transform::default(),
-                            RowDepth::default(),
-                            self.layer.clone(),
-                        ))
-                        .id();
-                    self.actors.insert(
-                        pose.source,
-                        Staged {
-                            entity,
-                            model: pose.model,
-                        },
-                    );
-                    entity
-                }
-            };
-            let elapsed = match pose.held {
-                Some(held) => held,
-                None => {
-                    self.animator
-                        .advance(entity, pose.action as u64, Seconds(frame.now as f32))
-                        .elapsed
-                }
-            };
-            let mut staged = world.entity_mut(entity);
-            if let Some(mut sprite) = staged.get_mut::<Sprite>() {
-                if sprite.image != image {
-                    sprite.image = image;
-                }
-                draw_actor_frame(
-                    &mut sprite,
-                    model,
-                    pose.action,
-                    pose.facing,
-                    elapsed,
-                    pose.attack_rate,
-                );
-                let alpha = sprite.color.alpha();
-                sprite.color = pose.tint.color().with_alpha(alpha);
-            }
-            if let Some(mut transform) = staged.get_mut::<Transform>() {
-                place_sprite(&mut transform, pose.at);
-            }
-            staged.insert(RowDepth(dynamic_z(height, base, Meters(pose.at.y))));
         }
     }
 
@@ -383,10 +272,10 @@ impl Stage {
         vfx_render::settle_overdrawn(world, &overdrawn);
     }
 
-    /// The site frame of a staged actor, measured as the game measures a sprite's.
-    pub fn actor_frame(&self, world: &World, source: Source) -> Option<SiteFrame> {
-        let staged = self.actors.get(&source)?;
-        SiteFrame::sprite(world, staged.entity, SiteKind::Actor)
+    /// The site frame of a staged actor: none until the stage draws rigs, so a vfx on an actor
+    /// waits for that.
+    pub fn actor_frame(&self, _world: &World, _source: Source) -> Option<SiteFrame> {
+        None
     }
 
     fn frame_of(

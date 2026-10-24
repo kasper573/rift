@@ -1,6 +1,6 @@
 {
   "name": "Fairy",
-  "model": "world/areas/glimmercap/areas/mushroom/npcs/fairy.model",
+  "model": "characters/models/mage.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

@@ -1,6 +1,6 @@
 {
   "name": "Tea Master",
-  "model": "world/areas/sakura/areas/teahouse/npcs/tea_master.model",
+  "model": "characters/models/mage.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

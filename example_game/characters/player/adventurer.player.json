@@ -1,5 +1,5 @@
 {
-  "model": "characters/player/adventurer.model",
+  "model": "characters/models/knight.model",
   "class": "characters/class/fighter.class.json",
   "stats": {
     "health": 30.0,

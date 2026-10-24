@@ -113,7 +113,7 @@ fn hidden_files_are_left_alone() {
 #[test]
 fn a_bundles_part_is_never_named_from_outside_it() {
     let report = refused(game().edit("class", "hero", |hero| {
-        hero["icon"] = json!(format!("{}/sprites.png", path("model", "hero")));
+        hero["icon"] = json!(format!("{}/model.glb", path("model", "hero")));
     }));
 
     assert_eq!(only(&report, "hero.class.json").0, "part of a bundle");

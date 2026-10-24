@@ -1,6 +1,6 @@
 {
   "name": "Sand Mummy",
-  "model": "world/areas/sunscar/npcs/sand_mummy.model",
+  "model": "characters/models/skeleton.model",
   "stats": {
     "health": 38.0,
     "max_health": 38.0,

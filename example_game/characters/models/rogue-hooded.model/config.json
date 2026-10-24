@@ -1,0 +1,69 @@
+{
+  "hitbox": {
+    "radius": 0.4,
+    "height": 2.3
+  },
+  "clips": {
+    "idle": {
+      "name": "idle"
+    },
+    "walk": {
+      "name": "walk",
+      "cues": [
+        {
+          "at": 267,
+          "step": true
+        },
+        {
+          "at": 800,
+          "step": true
+        }
+      ]
+    },
+    "run": {
+      "name": "run",
+      "cues": [
+        {
+          "at": 200,
+          "step": true
+        },
+        {
+          "at": 600,
+          "step": true
+        }
+      ]
+    },
+    "attack": {
+      "name": "attack",
+      "cues": [
+        {
+          "at": 525,
+          "apex": true,
+          "sound": "sound-and-voice/sfx/slash03.sfx"
+        }
+      ]
+    },
+    "death": {
+      "name": "death",
+      "cues": [
+        {
+          "at": 0,
+          "sound": "sound-and-voice/sfx/death01.sfx"
+        }
+      ]
+    },
+    "talk": {
+      "name": "talk"
+    }
+  },
+  "poses": {
+    "sit": {
+      "name": "sit"
+    }
+  },
+  "modules": [
+    {
+      "type": "bust"
+    }
+  ]
+}

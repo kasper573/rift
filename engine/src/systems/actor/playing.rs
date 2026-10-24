@@ -125,7 +125,7 @@ pub fn play(
     super::set_facing(&mut component, facing, action);
     component.attack_rate = speed;
     let model = component.model;
-    let timing = ActorModel::get(&content, model).timing(action, facing, speed);
+    let timing = ActorModel::get(&content, model).timing(action, speed);
     let playing = Playing {
         action,
         started: now,

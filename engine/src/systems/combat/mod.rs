@@ -94,7 +94,7 @@ pub struct AttackRequest {
 
 pub fn enemy_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
     let me = session::my_character(world).map(|entity| entity.id())?;
-    actor::frontmost_at(world, point, Some(me), |world, entity| {
+    actor::target_at(world, point, Some(me), |world, entity| {
         world.get::<Actor>(entity).is_some() && relation(world, me, entity) == Relation::Enemy
     })
 }

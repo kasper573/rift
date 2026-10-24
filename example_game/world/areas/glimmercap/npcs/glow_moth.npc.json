@@ -1,6 +1,6 @@
 {
   "name": "Glow Moth",
-  "model": "world/areas/glimmercap/npcs/glow_moth.model",
+  "model": "characters/models/bat.model",
   "stats": {
     "health": 14.0,
     "max_health": 14.0,

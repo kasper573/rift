@@ -14,9 +14,9 @@ use ui::theme;
 use bevy::prelude::*;
 use engine::core::content::Content;
 use engine::core::geometry::{Footprint, Radians};
-use engine::core::math::{Direction, Offset, Pos, Rgba};
+use engine::core::math::{Pos, Rgba};
 use engine::core::render::ToScreen;
-use engine::core::time::{PlaybackRate, Seconds};
+use engine::core::time::Seconds;
 use engine::core::units::Meters;
 use engine::core::vfx::render::SiteTexture;
 use engine::core::vfx::{VfxLayer, VfxParams};
@@ -143,7 +143,6 @@ struct Request {
     key: String,
     scene: Scene,
     ground: bool,
-    now: f64,
 }
 
 impl PosedActor {
@@ -158,22 +157,6 @@ impl PosedActor {
             held: None,
         }
     }
-}
-
-/// The way a sheet's strip of `direction` faces.
-pub fn facing_of(direction: Direction) -> Radians {
-    const D: f32 = std::f32::consts::FRAC_1_SQRT_2;
-    let (x, y) = match direction {
-        Direction::E => (1.0, 0.0),
-        Direction::SE => (D, D),
-        Direction::S => (0.0, 1.0),
-        Direction::SW => (-D, D),
-        Direction::W => (-1.0, 0.0),
-        Direction::NW => (-D, -D),
-        Direction::N => (0.0, -1.0),
-        Direction::NE => (D, -D),
-    };
-    Radians::of(Offset::new(x, y))
 }
 
 /// Where the stage stands: the game's initial spawn, which every scene is laid out around.
@@ -255,7 +238,6 @@ pub fn show(
         key: key.to_owned(),
         scene,
         ground,
-        now: ui.input(|input| input.time),
     });
     Some(shown)
 }
@@ -296,7 +278,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     for request in requests {
         let behind = behind(&views.area.scenes, &request);
         let mut frame = match &request.scene {
-            Scene::Posed(posed) => posed_frame(posed, content, files, &request),
+            Scene::Posed(posed) => posed_frame(posed, content, files),
             Scene::Live(scenario) => {
                 let live = match stages.live.get_mut(&request.key) {
                     Some(live) if live.generation == generation && !live.stale => live,
@@ -314,7 +296,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                 };
                 live.reconcile(scenario);
                 live.step(real);
-                live_frame(live, content, files, &request)
+                live_frame(live, content, files)
             }
         };
         frame.behind = behind;
@@ -409,22 +391,14 @@ fn posed_frame<'a>(
     posed: &Posed,
     content: &'a Content,
     files: &'a ProjectFiles,
-    request: &Request,
 ) -> mirror::Frame<'a> {
     let spawn = content.built::<GameSettings>().initial_spawn;
     let actors = posed
         .actors
         .iter()
-        .enumerate()
-        .map(|(index, actor)| ActorPose {
-            source: Source::Posed(index),
+        .map(|actor| ActorPose {
             model: actor.model,
-            action: actor.action,
-            facing: actor.facing,
-            tint: actor.tint,
-            attack_rate: PlaybackRate(1.0),
             at: actor.at,
-            held: actor.held,
             plate: actor.plate.clone(),
         })
         .collect();
@@ -464,7 +438,6 @@ fn posed_frame<'a>(
         files,
         area: spawn.area,
         center: spawn.at,
-        now: request.now,
         actors,
         items: posed.items.clone(),
         vfx,
@@ -481,7 +454,6 @@ fn live_frame<'a>(
     live: &mut LiveWorld,
     content: &'a Content,
     files: &'a ProjectFiles,
-    request: &Request,
 ) -> mirror::Frame<'a> {
     let spawn = content.built::<GameSettings>().initial_spawn;
     let now = live.now();
@@ -489,14 +461,8 @@ fn live_frame<'a>(
         .actors()
         .into_iter()
         .map(|shown| ActorPose {
-            source: Source::Live(shown.entity),
             model: shown.actor.model,
-            action: shown.actor.action,
-            facing: shown.actor.facing,
-            tint: shown.actor.color,
-            attack_rate: shown.actor.attack_rate,
             at: shown.at,
-            held: None,
             plate: shown.plate,
         })
         .collect();
@@ -517,7 +483,6 @@ fn live_frame<'a>(
         files,
         area: spawn.area,
         center: spawn.at,
-        now: request.now,
         actors,
         items: Vec::new(),
         vfx,

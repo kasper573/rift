@@ -1,6 +1,6 @@
 {
   "name": "Harbour Guard",
-  "model": "world/areas/island/npcs/guard.model",
+  "model": "characters/models/knight.model",
   "stats": {
     "health": 30.0,
     "max_health": 30.0,

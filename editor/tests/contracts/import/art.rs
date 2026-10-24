@@ -1,17 +1,5 @@
-use std::sync::Arc;
-
-use editor::import::{formats, model};
-use engine::core::content::FolderReader;
-use engine::systems::actor::ModelDef;
 use image::{Rgba, RgbaImage};
 use serde_json::{Value, json};
-use testkit::{Game, path};
-
-/// A frame of the walker's sheet, in pixels.
-pub const FRAME: (u32, u32) = (12, 16);
-pub const FRAMES_A_STRIP: u32 = 8;
-/// How long each frame of the walker's attack lasts, in milliseconds.
-pub const ATTACK_MS: [u32; 8] = [120, 110, 110, 100, 60, 70, 110, 120];
 
 pub const TILE: u32 = 16;
 pub const COLUMNS: u32 = 36;
@@ -25,78 +13,6 @@ pub const STILL_WATER: u32 = 16;
 pub const PAVED: u32 = 450;
 /// A transparent tile that carries data all the same.
 pub const BLANK_WITH_DATA: u32 = COLUMNS * ROWS - 1;
-
-/// The walker as the game reads it, in a game holding the sound it plays, and what reads that
-/// game.
-pub fn walker() -> (FolderReader, ModelDef) {
-    let sheet = formats::encode_png(&walker_sheet()).expect("a png");
-    let game = Game::new()
-        .sfx("slash03")
-        .row("model", "walker", walker_row())
-        .part("model", "walker", "sprites.png", sheet);
-    let reader = FolderReader::new(game.registry(), Arc::new(game.folder()));
-    let walker = reader
-        .read::<ModelDef>(&path("model", "walker"))
-        .unwrap_or_else(|errors| panic!("the walker reads: {errors:?}"));
-    (reader, walker)
-}
-
-/// A model row of every strip the importer knows, eight frames each laid out a strip a row:
-/// footsteps on the first and fifth frame of its walks and runs, and an attack landing, with a
-/// sound, on the sixth.
-fn walker_row() -> Value {
-    let mut actions = serde_json::Map::new();
-    for (row, name) in model::strip_names().iter().enumerate() {
-        let (action, direction) = name.split_once('_').expect("action_direction");
-        let frames: Vec<Value> = (0..FRAMES_A_STRIP)
-            .map(|column| {
-                let mut frame = json!({ "frame": row as u32 * FRAMES_A_STRIP + column, "ms": 100 });
-                match action {
-                    "walk" | "run" if column == 0 || column == 4 => frame["step"] = json!(true),
-                    "attack" => {
-                        frame["ms"] = json!(ATTACK_MS[column as usize]);
-                        if column == 5 {
-                            frame["apex"] = json!(true);
-                            frame["sound"] = json!(path("sfx", "slash03"));
-                        }
-                    }
-                    _ => {}
-                }
-                frame
-            })
-            .collect();
-        actions
-            .entry(action)
-            .or_insert_with(|| json!({}))
-            .as_object_mut()
-            .expect("directions")
-            .insert(direction.to_owned(), Value::Array(frames));
-    }
-    json!({
-        "hitbox": { "width": 0.8, "height": 1.6 },
-        "sprites": {
-            "frame_size": { "width": FRAME.0, "height": FRAME.1 },
-            "actions": actions,
-        },
-        "modules": [],
-    })
-}
-
-/// The walker's sheet: every frame a figure of its own colour on a transparent margin, so no two
-/// frames look alike.
-pub fn walker_sheet() -> RgbaImage {
-    let strips = model::strip_names().len() as u32;
-    let mut sheet = RgbaImage::new(FRAMES_A_STRIP * FRAME.0, strips * FRAME.1);
-    for index in 0..strips * FRAMES_A_STRIP {
-        let (x, y) = (
-            (index % FRAMES_A_STRIP) * FRAME.0,
-            (index / FRAMES_A_STRIP) * FRAME.1,
-        );
-        let color = [(index % 256) as u8, (index / 256) as u8, 200, 255];
-        fill(&mut sheet, x + 2, y + 1, FRAME.0 - 4, FRAME.1 - 2, color);
-    }
-    sheet
-}
 
 /// A tileset row with a paved tile, a transparent tile carrying data, and the water's first block
 /// animated through its four frames.

@@ -1,6 +1,6 @@
 {
   "name": "Jarl",
-  "model": "world/areas/frostmere/areas/longhouse/npcs/jarl.model",
+  "model": "characters/models/knight.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

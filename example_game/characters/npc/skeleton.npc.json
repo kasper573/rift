@@ -1,6 +1,6 @@
 {
   "name": "Skeleton",
-  "model": "characters/npc/skeleton.model",
+  "model": "characters/models/skeleton.model",
   "stats": {
     "health": 18.0,
     "max_health": 18.0,

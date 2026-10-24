@@ -19,7 +19,7 @@ use crate::core::time::{PlaybackRate, Seconds, UnixMillis, WallClock};
 use crate::core::units::Meters;
 use crate::systems::account::Identity;
 use crate::systems::actor::model::ModelId;
-use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Tint};
+use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Pose, Tint};
 use crate::systems::area::transition::{self, Discovered};
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::class::{Class, ClassId};
@@ -436,12 +436,11 @@ pub(crate) fn place(
                     color: def.tint(),
                     facing: Radians::SOUTH,
                     action: Action::Idle,
+                    pose: Pose::Idle,
                     model,
                     attack_rate: PlaybackRate::default(),
                 },
-                Hitbox {
-                    size: ActorModel::get(&content, model).hitbox(),
-                },
+                Hitbox(ActorModel::get(&content, model).hitbox()),
                 AreaTag { area: zone },
             ),
             OwnedBy(client),

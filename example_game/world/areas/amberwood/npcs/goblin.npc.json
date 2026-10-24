@@ -1,6 +1,6 @@
 {
   "name": "Goblin",
-  "model": "world/areas/amberwood/npcs/goblin.model",
+  "model": "characters/models/barbarian.model",
   "stats": {
     "health": 20.0,
     "max_health": 20.0,

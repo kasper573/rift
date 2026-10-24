@@ -3,16 +3,20 @@ use engine::core::babble::{BABBLE_LETTERS, BabbleBankDef, LETTERS};
 use std::collections::BTreeMap;
 
 use engine::core::content::files::name_of;
+use engine::core::content::gltf::placeholder_rig;
 use engine::core::content::{ContentFile, FolderReader, Nearby};
 use engine::core::script::Arrow;
+use engine::core::time::Seconds;
 use engine::core::vfx::VfxShaderDef;
 use engine::core::vfx::shader::SHADER_SOURCE;
-use engine::systems::actor::model::{MODEL_SPRITES, ModelDef};
+use engine::systems::actor::Action;
+use engine::systems::actor::model::{MODEL_GLB, ModelDef};
 use engine::systems::area::tileset::{TILESET_IMAGE, TilesetDef};
 use engine::systems::item::{ItemDef, ItemKind, ItemModule};
 use engine::systems::script::{Node, RiftEvent, RunnerKind, ScriptDef, ScriptId, ScriptModule};
 use engine::systems::skill::{SkillDef, SkillModule};
 use include_dir::{Dir, include_dir};
+use strum::VariantArray;
 
 use crate::project::{ContentEdit, FileBytes, Project};
 use crate::rows;
@@ -21,8 +25,8 @@ static DEFAULTS: Dir = include_dir!("$CARGO_MANIFEST_DIR/defaults");
 
 /// Writes a fresh content file of `table` at `path` into `edit`: what its type holds when a
 /// designer makes one, written as the game writes it; for a bundle the media parts it can't load
-/// without, blank: a clip of short silence, an empty image; and beside it the files it can't load
-/// without: an active skill's script answering used.
+/// without, blank: a clip of short silence, an empty image, a rig of nothing visible; and beside it
+/// the files it can't load without: an active skill's script answering used.
 pub fn content_file(
     edit: &mut ContentEdit,
     project: &Project,
@@ -113,7 +117,16 @@ fn blank_parts(table: &str) -> Vec<(String, FileBytes)> {
             .map(|letter| (BABBLE_LETTERS.named(&letter.to_string(), "wav"), silence()))
             .collect(),
         TilesetDef::TABLE => vec![(TILESET_IMAGE.named("", "png"), default("blank.png"))],
-        ModelDef::TABLE => vec![(MODEL_SPRITES.named("", "png"), default("blank.png"))],
+        ModelDef::TABLE => {
+            let clips: Vec<(&str, Seconds)> = Action::VARIANTS
+                .iter()
+                .map(|action| (action.as_ref(), Seconds(1.0)))
+                .collect();
+            vec![(
+                MODEL_GLB.named("", "glb"),
+                FileBytes::from(placeholder_rig(&clips)),
+            )]
+        }
         VfxShaderDef::TABLE => vec![(SHADER_SOURCE.named("", "wgsl"), default("shader.wgsl"))],
         _ => Vec::new(),
     }

@@ -1,6 +1,6 @@
 {
   "name": "Bog Lurker",
-  "model": "world/areas/mirefen/npcs/bog_lurker.model",
+  "model": "characters/models/barbarian.model",
   "stats": {
     "health": 32.0,
     "max_health": 32.0,

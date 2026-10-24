@@ -18,7 +18,6 @@ use ui::egui::{Color32, Context, Rect, Sense, TextureHandle, Ui, Vec2};
 use ui::glyph::{self, Mark};
 
 use super::formats::{self, AnimationExport, ExportFormat};
-use super::model_ui::TextureCache;
 use super::records::{DueReimport, ImportMapping, ImportRecord};
 use super::tileset::{self, AnimPlan, TileBlock, TileGridCut, TileGridSettings, TilePlan};
 use crate::app::Editor;
@@ -77,6 +76,27 @@ pub struct AnimationDialog {
 }
 
 const NEW_TILE_PX: u32 = 16;
+
+#[derive(Default)]
+pub struct TextureCache {
+    map: std::collections::HashMap<String, TextureHandle>,
+}
+
+impl TextureCache {
+    pub fn of(&mut self, ctx: &Context, hash: &str, image: &RgbaImage) -> TextureHandle {
+        self.map
+            .entry(hash.to_owned())
+            .or_insert_with(|| {
+                let size = [image.width() as usize, image.height() as usize];
+                ctx.load_texture(
+                    format!("import-{hash}"),
+                    egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()),
+                    egui::TextureOptions::NEAREST,
+                )
+            })
+            .clone()
+    }
+}
 
 fn image_of(editor: &Editor, tileset: &str) -> Option<RgbaImage> {
     super::asset_image(editor, &parts::tileset_image(tileset))

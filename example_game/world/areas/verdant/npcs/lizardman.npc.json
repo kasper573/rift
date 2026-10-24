@@ -1,6 +1,6 @@
 {
   "name": "Lizardman",
-  "model": "world/areas/verdant/npcs/lizardman.model",
+  "model": "characters/models/skeleton-warrior.model",
   "stats": {
     "health": 38.0,
     "max_health": 38.0,

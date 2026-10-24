@@ -1,6 +1,6 @@
 {
   "name": "Lava Golem",
-  "model": "world/areas/emberfall/npcs/lava_golem.model",
+  "model": "characters/models/barbarian.model",
   "stats": {
     "health": 90.0,
     "max_health": 90.0,

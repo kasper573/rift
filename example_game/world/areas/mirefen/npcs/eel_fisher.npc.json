@@ -1,6 +1,6 @@
 {
   "name": "Eel Fisher",
-  "model": "world/areas/mirefen/npcs/eel_fisher.model",
+  "model": "characters/models/woodsman.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

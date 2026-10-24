@@ -19,6 +19,7 @@ pub enum AssetKind {
     Image,
     Audio,
     Font,
+    Model,
 }
 
 impl AssetKind {
@@ -27,6 +28,7 @@ impl AssetKind {
             AssetKind::Image => &["png"],
             AssetKind::Audio => &["flac", "wav"],
             AssetKind::Font => &["ttf", "otf"],
+            AssetKind::Model => &["glb"],
         }
     }
 
@@ -99,6 +101,7 @@ macro_rules! asset_ref {
 
 asset_ref!(ImageRef, Image);
 asset_ref!(AudioRef, Audio);
+asset_ref!(ModelRef, Model);
 
 /// How much a file weighs to download.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

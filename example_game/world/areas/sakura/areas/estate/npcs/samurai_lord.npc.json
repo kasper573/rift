@@ -1,6 +1,6 @@
 {
   "name": "Samurai Lord",
-  "model": "world/areas/sakura/areas/estate/npcs/samurai_lord.model",
+  "model": "characters/models/knight.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

@@ -6,33 +6,39 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
 
-use super::Action;
-use crate::core::assets::{FileSize, ImageRef};
+use super::{Action, Pose};
+use crate::core::assets::{FileSize, ImageRef, ModelRef};
 use crate::core::audio::playback::SfxId;
-use crate::core::content::media::{ImageSizes, VisiblePixelColumns, visible_columns};
+use crate::core::content::gltf::GltfInfo;
+use crate::core::content::media::{GltfInfos, VisiblePixelColumns, visible_columns};
 use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, ContentProblem, ErrorPlace, FileWriter, Loading,
     MISSING_FILE, ModuleRule, ModuleSet, Nearby, PartSpec, Parts, RowCheck, Shape, serial,
 };
-use crate::core::geometry::Radians;
-use crate::core::math::{Direction, FrameSize, Pos, Rect, Size, WorldPx};
+use crate::core::geometry::Capsule;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
 use crate::core::units::Meters;
 
 pub type ModelId = ContentId<ModelDef>;
 
+/// A character's rig: a glTF binary with one clip for each action and a clip for each pose it can
+/// hold, cues at moments on those clips, the capsule it is hit in, and its busts.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelDef {
-    pub hitbox: HitboxSize,
-    pub sprites: SpriteSheet,
+    #[serde(skip)]
+    pub model: ModelRef,
+    pub hitbox: Capsule,
+    pub clips: BTreeMap<Action, Clip>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub poses: BTreeMap<Pose, Clip>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<ModelModule>,
 }
 
-pub const MODEL_SPRITES: PartSpec = PartSpec::File {
-    name: "sprites",
-    exts: &["png"],
+pub const MODEL_GLB: PartSpec = PartSpec::File {
+    name: "model",
+    exts: &["glb"],
 };
 
 pub const MODEL_BUSTS: PartSpec = PartSpec::Keyed {
@@ -40,15 +46,37 @@ pub const MODEL_BUSTS: PartSpec = PartSpec::Keyed {
     exts: &["png"],
 };
 
+/// An animation of the model's glTF, named as it is there, with the moments on it that matter to
+/// the game.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Clip {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cues: Vec<Cue>,
+}
+
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Cue {
+    pub at: Millis,
+    #[serde(default, skip_serializing_if = "serial::is_false")]
+    pub step: bool,
+    #[serde(default, skip_serializing_if = "serial::is_false")]
+    pub apex: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound: Option<SfxId>,
+}
+
 impl Bundle for ModelDef {
-    const PARTS: &'static [PartSpec] = &[MODEL_SPRITES, MODEL_BUSTS];
+    const PARTS: &'static [PartSpec] = &[MODEL_GLB, MODEL_BUSTS];
 
     fn read_parts(&mut self, parts: &mut Parts) {
-        if let Some(sheet) = parts.required(MODEL_SPRITES) {
-            self.sprites.image = ImageRef::new(parts.path(sheet));
-            if let Some(size) = parts.image_size(sheet) {
+        if let Some(glb) = parts.required(MODEL_GLB) {
+            self.model = ModelRef::new(parts.path(glb));
+            if let Some(info) = parts.gltf_info(glb) {
                 let mut cx = RowCheck::default();
-                check_sheet(&self.sprites, size, &mut cx);
+                check_rig(self, &info, parts.weight(glb), &mut cx);
                 parts.config_errors(cx);
             }
         }
@@ -118,60 +146,70 @@ impl ContentFile for ModelDef {
     const SHAPE: Shape = Shape::Bundle;
 
     fn fresh(_: &Nearby) -> Result<ModelDef, String> {
-        let still = || {
-            vec![SheetFrame {
-                frame: 0,
-                ms: 100,
-                step: false,
-                apex: false,
-                sound: None,
-            }]
-        };
-        let strips = || {
-            Direction::VARIANTS
-                .iter()
-                .map(|&direction| (direction, still()))
-                .collect()
-        };
         Ok(ModelDef {
-            hitbox: HitboxSize {
-                width: 1.0,
-                height: 1.0,
+            model: ModelRef::default(),
+            hitbox: Capsule {
+                radius: Meters(0.4),
+                height: Meters(1.8),
             },
-            sprites: SpriteSheet {
-                image: ImageRef::default(),
-                frame_size: FrameSize {
-                    width: 1,
-                    height: 1,
-                },
-                actions: Action::VARIANTS
-                    .iter()
-                    .map(|&action| (action, strips()))
-                    .collect(),
-            },
+            clips: Action::VARIANTS
+                .iter()
+                .map(|&action| {
+                    let cues = if action.takes_apex() {
+                        vec![Cue {
+                            at: Millis(400.0),
+                            step: false,
+                            apex: true,
+                            sound: None,
+                        }]
+                    } else {
+                        Vec::new()
+                    };
+                    (
+                        action,
+                        Clip {
+                            name: action.as_ref().to_owned(),
+                            cues,
+                        },
+                    )
+                })
+                .collect(),
+            poses: BTreeMap::new(),
             modules: Vec::new(),
         })
     }
 
     fn check(&self, cx: &mut RowCheck) {
-        cx.range("/hitbox/width", self.hitbox.width, 0.1, 8.0, "m");
-        cx.range("/hitbox/height", self.hitbox.height, 0.1, 8.0, "m");
-        check_strips(&self.sprites, cx);
-        let sheet = &self.sprites;
-        cx.range(
-            "/sprites/frame_size/width",
-            sheet.frame_size.width,
-            1,
-            MAX_FRAME_PX,
-            "pixels",
-        );
-        cx.range(
-            "/sprites/frame_size/height",
-            sheet.frame_size.height,
-            1,
-            MAX_FRAME_PX,
-            "pixels",
-        );
+        cx.range("/hitbox/radius", self.hitbox.radius.0, 0.1, 4.0, "m");
+        cx.range("/hitbox/height", self.hitbox.height.0, 0.2, 8.0, "m");
+        for &action in Action::VARIANTS {
+            match self.clips.get(&action) {
+                Some(clip) => check_clip(
+                    clip,
+                    &format!("/clips/{}", action.as_ref()),
+                    action.takes_apex(),
+                    cx,
+                ),
+                None => cx.error(
+                    "/clips",
+                    "missing clip",
+                    format!("no {} clip", action.as_ref()),
+                    format!("a clip for every action: {}", listed(Action::VARIANTS)),
+                ),
+            }
+        }
+        for (pose, clip) in &self.poses {
+            let pointer = format!("/poses/{}", pose.as_ref());
+            if *pose == Pose::Idle {
+                cx.error(
+                    &pointer,
+                    "pose is an action",
+                    "a clip for the idle pose",
+                    "the idle action's clip, which idling plays already",
+                );
+            }
+            check_clip(clip, &pointer, false, cx);
+        }
         for (index, module) in self.modules.iter().enumerate() {
             if let ModelModule::Scale { factor } = module {
                 cx.range(
@@ -200,41 +238,6 @@ impl ModuleSet for ModelDef {
     fn rule(_: &ModelModule) -> ModuleRule {
         ModuleRule::AtMostOne
     }
-}
-
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HitboxSize {
-    pub width: f32,
-    pub height: f32,
-}
-
-impl HitboxSize {
-    pub fn tiles(self) -> Size<Meters> {
-        Size::new(self.width, self.height)
-    }
-}
-
-#[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SpriteSheet {
-    #[serde(skip)]
-    pub image: ImageRef,
-    pub frame_size: FrameSize,
-    pub actions: BTreeMap<Action, BTreeMap<Direction, Vec<SheetFrame>>>,
-}
-
-#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SheetFrame {
-    pub frame: u32,
-    pub ms: u32,
-    #[serde(default, skip_serializing_if = "serial::is_false")]
-    pub step: bool,
-    #[serde(default, skip_serializing_if = "serial::is_false")]
-    pub apex: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sound: Option<SfxId>,
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -270,6 +273,19 @@ impl ModelDef {
         self.modules
             .iter()
             .any(|module| matches!(module, ModelModule::Airborne))
+    }
+
+    /// Every clip the model names, with where it stands in the config.
+    pub fn named_clips(&self) -> impl Iterator<Item = (String, &Clip)> {
+        let actions = self
+            .clips
+            .iter()
+            .map(|(action, clip)| (format!("/clips/{}", action.as_ref()), clip));
+        let poses = self
+            .poses
+            .iter()
+            .map(|(pose, clip)| (format!("/poses/{}", pose.as_ref()), clip));
+        actions.chain(poses)
     }
 }
 
@@ -412,18 +428,22 @@ impl GenericBusts {
     }
 }
 
-pub const MAX_STRIP_FRAMES: usize = 256;
-pub const MAX_FRAME_PX: u32 = 8192;
+// A character is downloaded by every client that sees it, and drawn many times a frame.
+pub const MAX_CHARACTER_BYTES: FileSize = FileSize::kib(4 * 1024);
+pub const MAX_CHARACTER_TRIANGLES: usize = 4000;
+pub const MAX_JOINTS: usize = 64;
+pub const MIN_CLIP: Millis = Millis(100.0);
+pub const MAX_CLIP: Millis = Millis(60_000.0);
+pub const MAX_CUES: usize = 32;
 // The client loads every bust at startup, so each one, and the whole cast, must stay a quick download.
 pub const MAX_BUST_BYTES: FileSize = FileSize::kib(120);
 pub const MAX_CAST_BYTES: FileSize = FileSize::kib(3 * 1024);
-pub const MAX_FRAME_MS: u32 = 60_000;
 
 pub struct Models(pub Vec<Option<ActorModel>>);
 
 pub fn build_all(loading: &mut Loading) {
     let content = loading.content();
-    let sizes = content.built::<ImageSizes>();
+    let infos = content.built::<GltfInfos>();
     let mut models: Vec<Option<ActorModel>> = content.ids::<ModelDef>().map(|_| None).collect();
     let rows = loading.rows::<ModelDef>(&content);
     let files = bust_files(loading, &rows);
@@ -440,47 +460,107 @@ pub fn build_all(loading: &mut Loading) {
                 );
             }
         }
-        if check.is_empty() {
-            let image = sizes.0.get(def.sprites.image.as_str()).copied();
-            models[id.index()] = Some(ActorModel::new(def, image, busts.figure));
-        } else {
-            loading.row_errors(id, check);
-            loading.fail(id);
+        // A model whose glb is missing or unreadable was refused at that file already.
+        let info = infos.0.get(def.model.as_str());
+        match info {
+            Some(info) if check.is_empty() => {
+                models[id.index()] = Some(ActorModel::new(def, info, busts.figure));
+            }
+            _ => {
+                loading.row_errors(id, check);
+                loading.fail(id);
+            }
         }
     }
     loading.built(Models(models));
 }
 
-/// What a model's sheet must be to its config: whole frames, each of the frames the strips show.
-fn check_sheet(sheet: &SpriteSheet, (width, height): (u32, u32), cx: &mut RowCheck) {
-    let frame = sheet.frame_size;
-    if width % frame.width.max(1) != 0 || height % frame.height.max(1) != 0 {
+/// What a clip must be on its own: a name, a few cues, and an apex only where a hit lands.
+fn check_clip(clip: &Clip, pointer: &str, takes_apex: bool, cx: &mut RowCheck) {
+    cx.text(format!("{pointer}/name"), &clip.name, 1, 64);
+    cx.count(
+        format!("{pointer}/cues"),
+        clip.cues.len(),
+        0,
+        MAX_CUES,
+        "cues",
+    );
+    let apexes: Vec<usize> = clip
+        .cues
+        .iter()
+        .enumerate()
+        .filter(|(_, cue)| cue.apex)
+        .map(|(index, _)| index)
+        .collect();
+    if takes_apex && apexes.len() != 1 {
         cx.error(
-            "/sprites/frame_size",
-            "image size",
-            format!(
-                "{width} × {height}, not a multiple of {} × {}",
-                frame.width, frame.height
-            ),
-            "an image of whole frames",
+            format!("{pointer}/cues"),
+            "apex out of place",
+            format!("{} apex cues", apexes.len()),
+            "exactly one cue marked apex, where the hit lands",
+        );
+    } else if !takes_apex && !apexes.is_empty() {
+        cx.error(
+            format!("{pointer}/cues"),
+            "apex out of place",
+            format!("apex cues at {}", listed_indices(&apexes)),
+            "an apex in the attack clip only",
         );
     }
-    let frames = (width / frame.width.max(1)) * (height / frame.height.max(1));
-    for (action, strips) in &sheet.actions {
-        for (direction, strip) in strips {
-            for (index, shown) in strip.iter().enumerate() {
-                if shown.frame >= frames {
-                    cx.error(
-                        format!(
-                            "/sprites/actions/{}/{}/{index}/frame",
-                            action.as_ref(),
-                            direction.as_ref()
-                        ),
-                        "tile out of range",
-                        format!("frame {} of {frames}", shown.frame),
-                        format!("0 to {}", frames.saturating_sub(1)),
-                    );
-                }
+    for (index, cue) in clip.cues.iter().enumerate() {
+        if cue.at.0 < 0.0 {
+            cx.error(
+                format!("{pointer}/cues/{index}/at"),
+                "cue before the clip",
+                format!("{} ms", cue.at.0),
+                "a moment from 0 ms",
+            );
+        }
+    }
+}
+
+/// What a model's config must be to its glb: within the style budget, every clip an animation
+/// there, long enough to see and short enough to wait for, with every cue on it.
+fn check_rig(def: &ModelDef, info: &GltfInfo, weight: Option<FileSize>, cx: &mut RowCheck) {
+    if let Some(weight) = weight
+        && weight > MAX_CHARACTER_BYTES
+    {
+        cx.error(
+            "",
+            "model too heavy",
+            format!("model.glb weighs {weight}"),
+            format!("at most {MAX_CHARACTER_BYTES}"),
+        );
+    }
+    cx.range("", info.triangles, 0, MAX_CHARACTER_TRIANGLES, "triangles");
+    cx.range("", info.joints, 0, MAX_JOINTS, "joints");
+    for (pointer, clip) in def.named_clips() {
+        let Some(found) = info.clip(&clip.name) else {
+            cx.error(
+                format!("{pointer}/name"),
+                "unknown clip",
+                format!("no animation {:?} in model.glb", clip.name),
+                format!("one of {}", listed(&info.clip_names())),
+            );
+            continue;
+        };
+        let length = found.length.millis();
+        if length < MIN_CLIP || length > MAX_CLIP {
+            cx.error(
+                format!("{pointer}/name"),
+                "clip length",
+                format!("{:?} plays {} ms", clip.name, length.0),
+                format!("{} ms to {} ms", MIN_CLIP.0, MAX_CLIP.0),
+            );
+        }
+        for (index, cue) in clip.cues.iter().enumerate() {
+            if cue.at > length {
+                cx.error(
+                    format!("{pointer}/cues/{index}/at"),
+                    "cue past the clip",
+                    format!("{} ms into a clip of {} ms", cue.at.0, length.0),
+                    "a moment within the clip",
+                );
             }
         }
     }
@@ -531,76 +611,10 @@ fn check_busts(busts: &[MeasuredBust], cx: &mut RowCheck) {
     }
 }
 
-/// What a model's strips must be on their own: frames for every action in every direction, each
-/// shown a while, with one apex in each attack strip at most.
-fn check_strips(sheet: &SpriteSheet, cx: &mut RowCheck) {
-    for &action in Action::VARIANTS {
-        let Some(strips) = sheet.actions.get(&action) else {
-            cx.error(
-                "/sprites/actions",
-                "missing frames",
-                format!("no {} action", action.as_ref()),
-                format!("every action: {}", listed(Action::VARIANTS)),
-            );
-            continue;
-        };
-        for &direction in Direction::VARIANTS {
-            let pointer = format!(
-                "/sprites/actions/{}/{}",
-                action.as_ref(),
-                direction.as_ref()
-            );
-            let Some(strip) = strips.get(&direction) else {
-                cx.error(
-                    format!("/sprites/actions/{}", action.as_ref()),
-                    "missing frames",
-                    format!("direction {} has no frames", direction.as_ref()),
-                    format!(
-                        "1 to {MAX_STRIP_FRAMES} frames in each of {}",
-                        listed(Direction::VARIANTS)
-                    ),
-                );
-                continue;
-            };
-            cx.count(&pointer, strip.len(), 1, MAX_STRIP_FRAMES, "frames");
-            let mut apexes = Vec::new();
-            for (index, frame) in strip.iter().enumerate() {
-                cx.range(
-                    format!("{pointer}/{index}/ms"),
-                    frame.ms,
-                    1,
-                    MAX_FRAME_MS,
-                    "whole milliseconds",
-                );
-                if frame.apex {
-                    apexes.push(index);
-                }
-            }
-            if (apexes.len() > 1) || (!apexes.is_empty() && !action.takes_apex()) {
-                cx.error(
-                    &pointer,
-                    "apex out of place",
-                    format!(
-                        "{} · {}: frames {}",
-                        action.as_ref(),
-                        direction.as_ref(),
-                        apexes
-                            .iter()
-                            .map(|i| i.to_string())
-                            .collect::<Vec<_>>()
-                            .join(" and ")
-                    ),
-                    "one apex, in attack strips only",
-                );
-            }
-        }
-    }
-}
-
 pub struct ActorModel {
     def: ModelDef,
-    columns: u32,
-    strips: Vec<Vec<Vec<SheetFrame>>>,
+    lengths: BTreeMap<Action, Seconds>,
+    pose_lengths: BTreeMap<Pose, Seconds>,
     figure: Option<BustFigure>,
 }
 
@@ -622,25 +636,24 @@ impl ActorModel {
             .unwrap_or_else(|| panic!("model {} failed to load", model.path(content)))
     }
 
-    // Only a sheet that passed the load checks, with frames for every action and direction, gets here.
-    fn new(def: &ModelDef, image: Option<(u32, u32)>, figure: Option<BustFigure>) -> ActorModel {
-        let sheet = &def.sprites;
-        let columns = image
-            .map_or(1, |(width, _)| width / sheet.frame_size.width.max(1))
-            .max(1);
-        let strips = Action::VARIANTS
-            .iter()
-            .map(|action| {
-                Direction::VARIANTS
-                    .iter()
-                    .map(|direction| sheet.actions[action][direction].clone())
-                    .collect()
-            })
-            .collect();
+    // Only a config that passed the load checks, with a clip in the glb for every action, gets here.
+    fn new(def: &ModelDef, info: &GltfInfo, figure: Option<BustFigure>) -> ActorModel {
+        let length = |clip: &Clip| {
+            info.clip(&clip.name)
+                .map_or(Seconds(0.0), |clip| clip.length)
+        };
         ActorModel {
             def: def.clone(),
-            columns,
-            strips,
+            lengths: def
+                .clips
+                .iter()
+                .map(|(action, clip)| (*action, length(clip)))
+                .collect(),
+            pose_lengths: def
+                .poses
+                .iter()
+                .map(|(pose, clip)| (*pose, length(clip)))
+                .collect(),
             figure,
         }
     }
@@ -649,107 +662,74 @@ impl ActorModel {
         self.figure
     }
 
-    pub fn hitbox(&self) -> Size<Meters> {
-        self.def.hitbox.tiles()
+    pub fn hitbox(&self) -> Capsule {
+        self.def.hitbox
     }
 
-    pub fn sheet(&self) -> &ImageRef {
-        &self.def.sprites.image
+    pub fn model(&self) -> &ModelRef {
+        &self.def.model
     }
 
     pub fn airborne(&self) -> bool {
         self.def.airborne()
     }
 
-    pub fn drawn_size(&self, frame: Rect<WorldPx>) -> Size<WorldPx> {
-        frame.size * self.def.scale()
+    pub fn scale(&self) -> f32 {
+        self.def.scale()
     }
 
-    pub fn frame(
-        &self,
-        action: Action,
-        facing: Radians,
-        t: Seconds,
-        attack_speed: PlaybackRate,
-    ) -> Rect<WorldPx> {
-        let strip = self.strip(action, facing);
-        let elapsed = (t.millis() * rate(action, attack_speed)).max(Millis(0.0));
-        let total = total_ms(strip);
-        let position = if action == Action::Dead {
-            elapsed
-        } else {
-            elapsed % total
-        };
-        let mut cursor = Millis(0.0);
-        for frame in strip {
-            cursor += Millis(frame.ms as f32);
-            if position < cursor {
-                return self.region(frame.frame);
-            }
-        }
-        self.region(strip[strip.len() - 1].frame)
+    pub fn clip(&self, action: Action) -> &Clip {
+        &self.def.clips[&action]
+    }
+
+    /// How long the action's clip plays once, as authored.
+    pub fn length(&self, action: Action) -> Seconds {
+        self.lengths[&action]
+    }
+
+    /// The clip held in a pose, with its length, when the model has one.
+    pub fn pose(&self, pose: Pose) -> Option<(&Clip, Seconds)> {
+        Some((self.def.poses.get(&pose)?, *self.pose_lengths.get(&pose)?))
     }
 
     /// How long an action plays and when it lands, at an attack speed: only an attack plays faster
     /// or slower for it.
-    pub fn timing(&self, action: Action, facing: Radians, attack_speed: PlaybackRate) -> Timing {
-        let strip = self.strip(action, facing);
+    pub fn timing(&self, action: Action, attack_speed: PlaybackRate) -> Timing {
         let rate = rate(action, attack_speed);
-        let mut apex = Millis(0.0);
-        let mut cursor = Millis(0.0);
-        for frame in strip {
-            if frame.apex {
-                apex = cursor;
-            }
-            cursor += Millis(frame.ms as f32);
-        }
+        let apex = self
+            .clip(action)
+            .cues
+            .iter()
+            .find(|cue| cue.apex)
+            .map_or(Millis(0.0), |cue| cue.at);
         Timing {
-            duration: cursor.seconds() / rate,
+            duration: self.length(action) / rate,
             apex: apex.seconds() / rate,
         }
     }
 
-    /// `prev` is the playback position at the previous sample, or `None` when the action just
-    /// started, in which case every cue up to `now` fires.
+    /// The cues crossed between the previous sample and `now` of an action's playback: the sounds
+    /// to play and whether a foot came down. `prev` is `None` when the action just started, in
+    /// which case every cue up to `now` fires.
     pub fn cues(
         &self,
         action: Action,
-        facing: Radians,
         prev: Option<Seconds>,
         now: Seconds,
         attack_speed: PlaybackRate,
     ) -> (Vec<&SfxId>, bool) {
-        let strip = self.strip(action, facing);
         let rate = rate(action, attack_speed);
         let authored = |t: Seconds| t.millis() * rate;
-        let total = total_ms(strip);
+        let total = self.length(action).millis();
         let once = action == Action::Dead;
         let (mut sfx, mut stepped) = (Vec::new(), false);
-        let mut cursor = Millis(0.0);
-        for frame in strip {
-            if crossed(once, total, cursor, prev.map(authored), authored(now)) {
-                sfx.extend(frame.sound.as_ref());
-                stepped |= frame.step;
+        for cue in &self.clip(action).cues {
+            if crossed(once, total, cue.at, prev.map(authored), authored(now)) {
+                sfx.extend(cue.sound.as_ref());
+                stepped |= cue.step;
             }
-            cursor += Millis(frame.ms as f32);
         }
         (sfx, stepped)
-    }
-
-    fn strip(&self, action: Action, facing: Radians) -> &[SheetFrame] {
-        &self.strips[action as usize][Direction::from(facing.heading()) as usize]
-    }
-
-    fn region(&self, frame: u32) -> Rect<WorldPx> {
-        let size = self.def.sprites.frame_size;
-        let frame_size = Size::new(size.width as f32, size.height as f32);
-        Rect::new(
-            Pos::new(
-                (frame % self.columns) as f32 * frame_size.width,
-                (frame / self.columns) as f32 * frame_size.height,
-            ),
-            frame_size,
-        )
     }
 }
 
@@ -767,15 +747,11 @@ fn rate(action: Action, attack_speed: PlaybackRate) -> PlaybackRate {
     }
 }
 
-fn total_ms(strip: &[SheetFrame]) -> Millis {
-    Millis(strip.iter().map(|frame| frame.ms as f32).sum())
-}
-
 fn crossed(once: bool, total: Millis, at: Millis, prev: Option<Millis>, now: Millis) -> bool {
     let count = |t: Millis| {
         if t < at {
             0
-        } else if once {
+        } else if once || total.0 <= 0.0 {
             1
         } else {
             (t - at).ratio(total) as i64 + 1
@@ -849,4 +825,12 @@ fn bust_files(loading: &Loading, rows: &[(ModelId, &ModelDef)]) -> Vec<BustFiles
 
 fn listed<T: AsRef<str>>(all: &[T]) -> String {
     all.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(", ")
+}
+
+fn listed_indices(indices: &[usize]) -> String {
+    indices
+        .iter()
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(" and ")
 }

@@ -1,6 +1,6 @@
 {
   "name": "Panther",
-  "model": "world/areas/verdant/npcs/panther.model",
+  "model": "characters/models/rogue-hooded.model",
   "stats": {
     "health": 30.0,
     "max_health": 30.0,

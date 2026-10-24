@@ -98,7 +98,7 @@ pub fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
             tabs
         }
         Some(EditorTab::Script(_)) => vec![BottomTab::MayDo, BottomTab::UsedBy, BottomTab::Run],
-        Some(EditorTab::Model { key }) => model::bottom_tabs(editor, &key),
+        Some(EditorTab::Model { .. }) => Vec::new(),
         Some(EditorTab::Tileset { key }) => tileset::bottom_tabs(editor, &key),
         _ => Vec::new(),
     };
@@ -141,10 +141,6 @@ pub fn bottom_show(editor: &mut Editor, ui: &mut Ui, tab: BottomTab) {
         (Some(EditorTab::Script(owner)), BottomTab::MayDo | BottomTab::UsedBy | BottomTab::Run) => {
             script::bottom(editor, ui, &owner, tab)
         }
-        (
-            Some(EditorTab::Model { key }),
-            BottomTab::Timeline | BottomTab::Sheet | BottomTab::Sounds,
-        ) => model::bottom(editor, ui, &key, tab),
         (
             Some(EditorTab::Tileset { key }),
             BottomTab::Surfaces | BottomTab::Mixes | BottomTab::Timeline,

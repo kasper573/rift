@@ -1,6 +1,6 @@
 {
   "name": "Ghost",
-  "model": "world/areas/gloomhollow/npcs/ghost.model",
+  "model": "characters/models/skeleton-mage.model",
   "stats": {
     "health": 30.0,
     "max_health": 30.0,

@@ -343,12 +343,21 @@ pub fn in_conversation(world: &World, player: Entity) -> bool {
     world.get::<ConversationSession>(player).is_some()
 }
 
-pub type Sessions = QueryState<&'static ConversationSession>;
+pub type Sessions = QueryState<(Entity, &'static ConversationSession)>;
 
 pub fn counterparts(world: &World, sessions: &mut Sessions) -> Vec<Entity> {
     sessions
         .iter(world)
-        .filter_map(|session| session.with)
+        .filter_map(|(_, session)| session.with)
+        .collect()
+}
+
+/// Everyone in a conversation: each player talking and whoever they talk with.
+pub fn parties(world: &World, sessions: &mut Sessions) -> Vec<Entity> {
+    sessions
+        .iter(world)
+        .flat_map(|(player, session)| [Some(player), session.with])
+        .flatten()
         .collect()
 }
 

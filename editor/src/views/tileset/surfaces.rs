@@ -13,12 +13,12 @@ use ui::panel;
 use ui::sheet;
 use ui::theme;
 
+use super::sounds;
 use super::{NewSurfaceDialog, TileSheetDialog};
 use crate::app::Editor;
 use crate::project::ContentEdit;
 use crate::shell::row_form;
 use crate::tabs::shown_path;
-use crate::views::model::sounds;
 use crate::{picker, rows};
 use ui::input::InputField;
 

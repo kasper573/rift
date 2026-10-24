@@ -868,7 +868,7 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
     if is_area {
         editor.views.area.active = Some(bundle.clone());
     }
-    overlay_populations(editor, ui, &painter, view_key, &frame, &area);
+    overlay_populations(editor, &painter, view_key, &frame, &area);
     overlay_selected_scenery(editor, ui, &painter, view_key, &frame, &area);
     overlay_soundscape_reach(editor, &painter, &frame);
     let view = editor.views.area.view(view_key);

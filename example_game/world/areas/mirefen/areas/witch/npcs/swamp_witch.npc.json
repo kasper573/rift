@@ -1,6 +1,6 @@
 {
   "name": "Swamp Witch",
-  "model": "world/areas/mirefen/areas/witch/npcs/swamp_witch.model",
+  "model": "characters/models/mage.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

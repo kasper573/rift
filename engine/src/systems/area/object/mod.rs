@@ -12,7 +12,7 @@ use crate::core::content::Content;
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::units::{Cell, CellPos, Meters, TilePos};
 use crate::systems::WorldArea;
-use crate::systems::actor::{Hitbox, Name as ActorName};
+use crate::systems::actor::Name as ActorName;
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::interact::Interactive;
 use crate::systems::movement::Position;
@@ -226,7 +226,6 @@ pub fn spawn_all(world: &mut World) {
             script::Reach::Warp(place) => Some(*place),
             _ => None,
         });
-        let bounds = object.shape.bounds();
         let mut entity = world.spawn((
             Position::at(match object.shape {
                 ObjectShape::Point(point) => point,
@@ -247,9 +246,6 @@ pub fn spawn_all(world: &mut World) {
         ));
         if object.look.is_some() || object.title.is_some() || interactive.is_some() {
             entity.insert(bevy_replicon::prelude::Replicated);
-        }
-        if object.look.is_some() || interactive.is_some() {
-            entity.insert(Hitbox { size: bounds.size });
         }
         if let Some(title) = &object.title {
             entity.insert(ActorName {

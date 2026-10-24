@@ -19,8 +19,7 @@ use crate::views::area::resize::ResizeDialog;
 use crate::views::area::{self as area_view, blueprint};
 use crate::views::character::CharacterSection;
 use crate::views::class;
-use crate::views::model::strip::TimingSetBy;
-use crate::views::model::{self, FrameCueKind, ModelPage, ModelStrip, busts};
+use crate::views::model::{self, ModelPage, busts};
 use crate::views::script::{PendingScriptAction, ScriptRow};
 use crate::views::tileset::{
     self, NewSurfaceDialog, NewTerrainSetDialog, SheetRect, TileBlueprintDialog, TileSheetDialog,
@@ -110,43 +109,9 @@ pub enum DialogName {
 #[serde(rename_all = "snake_case")]
 pub enum ModelStep {
     Open(String),
-    Strip(StripView),
-    Timing(StripView),
-    Cues(StripView),
-    Hitbox,
     Busts(Option<String>),
     Bottom(BottomTab),
-    SetBy(SetTiming),
-    Surface(String),
     Drop(PathBuf),
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct StripView {
-    #[serde(default)]
-    pub strip: Option<StripName>,
-    #[serde(default)]
-    pub frames: Vec<usize>,
-    #[serde(default)]
-    pub cue: Option<FrameCueKind>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct StripName {
-    pub action: String,
-    pub direction: String,
-}
-
-impl StripName {
-    pub fn strip(&self) -> Option<ModelStrip> {
-        ModelStrip::parse(&self.action, &self.direction)
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct SetTiming {
-    pub by: TimingSetBy,
-    pub text: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -503,10 +468,6 @@ fn model_step(editor: &mut Editor, step: &ModelStep) {
     model::ensure_view(editor, &key);
     match step {
         ModelStep::Open(_) => {}
-        ModelStep::Strip(view) => show_strip(editor, &key, ModelPage::Matrix, view),
-        ModelStep::Timing(view) => show_strip(editor, &key, ModelPage::Timing, view),
-        ModelStep::Cues(view) => show_strip(editor, &key, ModelPage::Cues, view),
-        ModelStep::Hitbox => editor.views.model.view_mut(&key).page = ModelPage::Hitbox,
         ModelStep::Busts(face) => {
             let view = editor.views.model.view_mut(&key);
             view.page = ModelPage::Busts;
@@ -526,33 +487,7 @@ fn model_step(editor: &mut Editor, step: &ModelStep) {
             }
         }
         ModelStep::Bottom(tab) => editor.panels.bottom = *tab,
-        ModelStep::SetBy(timing) => {
-            let view = editor.views.model.view_mut(&key);
-            view.timing.set_by = timing.by;
-            view.timing.text = timing.text.clone();
-        }
-        ModelStep::Surface(name) => editor.views.model.view_mut(&key).surface = Some(name.clone()),
         ModelStep::Drop(path) => editor.views.model.drops.push(path.clone()),
-    }
-}
-
-fn show_strip(editor: &mut Editor, key: &str, page: ModelPage, step: &StripView) {
-    let view = editor.views.model.view_mut(key);
-    if let Some(strip) = step.strip.as_ref().and_then(StripName::strip) {
-        view.strip = strip;
-    }
-    view.page = page;
-    view.frames = step.frames.iter().map(|f| f.saturating_sub(1)).collect();
-    view.cue = None;
-    view.preview.playing = false;
-    view.preview.position = 0.0;
-    let strip = view.strip;
-    match (view.frames.first().copied(), step.cue) {
-        (Some(frame), Some(kind)) => {
-            view.cue = Some((frame, kind));
-            model::select_cue(editor, key, strip, frame, kind);
-        }
-        _ => model::select_frames(editor, key, strip),
     }
 }
 

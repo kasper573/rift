@@ -1,6 +1,6 @@
 {
   "name": "Myconid",
-  "model": "world/areas/glimmercap/npcs/myconid.model",
+  "model": "characters/models/barbarian.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

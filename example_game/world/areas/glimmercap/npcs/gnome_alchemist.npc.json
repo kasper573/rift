@@ -1,6 +1,6 @@
 {
   "name": "Gnome Alchemist",
-  "model": "world/areas/glimmercap/npcs/gnome_alchemist.model",
+  "model": "characters/models/mage.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

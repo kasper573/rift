@@ -10,6 +10,7 @@ use ui::sheet;
 use ui::theme;
 
 use super::sheet::TileBrush;
+use super::sounds;
 use super::terrain::{self, MixCompleteness, TerrainSetTiles, TileCorner};
 use super::{
     ANIMATION_PART, NewTerrainSetDialog, OpenTileset, TERRAINS_PART, TileBlueprintDialog,
@@ -20,7 +21,6 @@ use crate::forms::FormCx;
 use crate::project::{ContentEdit, RowSelection};
 use crate::tabs::shown_path;
 use crate::views::area::palette;
-use crate::views::model::sounds;
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
     let (Some(key), Some(part)) = (selection.keys.first(), selection.parts.first()) else {

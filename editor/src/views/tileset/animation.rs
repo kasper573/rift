@@ -8,19 +8,17 @@ use ui::paint;
 use ui::panel;
 use ui::theme;
 
-use engine::systems::actor::Action;
-use engine::systems::actor::model::SheetFrame;
 use engine::systems::area::tileset::{MAX_TILE_FRAME_MS, MAX_TILE_FRAMES, TileFrame};
 use strum::{IntoStaticStr, VariantArray};
 use ui::egui::{Color32, Pos2, Rect as ERect, Sense, Stroke, Ui, Vec2};
 use ui::glyph::{self, Mark};
 
+use super::preview;
 use super::{OpenTileset, SheetRect, change_tileset, sheet, tile_mut};
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::project::ContentEdit;
 use crate::tabs::shown_path;
-use crate::views::model::{self, preview};
 use ui::input::InputField;
 use ui::words;
 
@@ -188,7 +186,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, tileset: &OpenTileset) {
     let dt = ui.input(|i| i.stable_dt).min(0.1);
     let view = editor.views.tileset.view_mut(key);
     preview::keys(ui, &mut view.preview, &frames);
-    preview::tick(&mut view.preview, dt, &frames, Action::Idle);
+    preview::tick(&mut view.preview, dt, &frames, false);
     if let Some(common) = &common {
         keys(editor, ui, key, common);
     }
@@ -444,16 +442,11 @@ fn offset_text(offset: i64, unit: OffsetUnit, columns: i64) -> String {
     }
 }
 
-fn reference_frames(common: Option<&CommonAnimation>) -> Vec<SheetFrame> {
-    let Some(common) = common else {
-        return Vec::new();
-    };
-    let anchor = common.tiles[0];
-    common
-        .frames
-        .iter()
-        .map(|frame| model::plain_frame(frame.on(anchor).tile, frame.ms))
-        .collect()
+/// How long each frame of the animation shows.
+fn reference_frames(common: Option<&CommonAnimation>) -> Vec<u32> {
+    common.map_or_else(Vec::new, |common| {
+        common.frames.iter().map(|frame| frame.ms).collect()
+    })
 }
 
 fn keys(editor: &mut Editor, ui: &Ui, key: &str, common: &CommonAnimation) {

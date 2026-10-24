@@ -2,7 +2,7 @@ use engine::core::audio::playback::{SFX_CLIP, SfxDef};
 use engine::core::babble::{BABBLE_LETTERS, BabbleBankDef, BabbleDef, LETTERS};
 use engine::core::content::{Content, ContentFile, MODULES};
 use engine::core::gui::ImageSource;
-use engine::core::math::{Direction, Rgba};
+use engine::core::math::Rgba;
 use engine::core::time::Seconds;
 use engine::systems::GameSettings;
 use engine::systems::actor::Action;
@@ -39,7 +39,6 @@ use ui::input::InputField;
 
 pub struct RowPreviewState {
     pub action: Action,
-    pub direction: Direction,
     pub playing: bool,
     pub started: f64,
     /// The model a status effect is shown on; the player's until one is picked.
@@ -51,7 +50,6 @@ impl Default for RowPreviewState {
     fn default() -> RowPreviewState {
         RowPreviewState {
             action: Action::Idle,
-            direction: Direction::S,
             playing: true,
             started: 0.0,
             status_model: None,
@@ -62,7 +60,6 @@ impl Default for RowPreviewState {
 
 pub(super) struct Pose {
     action: Action,
-    direction: Direction,
     playing: bool,
 }
 
@@ -104,7 +101,6 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str) {
     let state = &editor.views.preview;
     let pose = Pose {
         action: state.action,
-        direction: state.direction,
         playing: state.playing,
     };
     draw_preview(editor, ui, table, key, &pose);
@@ -123,14 +119,6 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str) {
                 .show_ui(ui, |ui| {
                     for &action in Action::VARIANTS {
                         ui.selectable_value(&mut state.action, action, action.as_ref());
-                    }
-                });
-            controls::combo("preview-direction")
-                .selected_text(state.direction.as_ref())
-                .width(56.0)
-                .show_ui(ui, |ui| {
-                    for &direction in Direction::VARIANTS {
-                        ui.selectable_value(&mut state.direction, direction, direction.as_ref());
                     }
                 });
             let (mark, word) = if state.playing {
@@ -334,7 +322,6 @@ fn draw_preview(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, pose: 
         };
         posed.actors.push(PosedActor {
             action: pose.action,
-            facing: stage::facing_of(pose.direction),
             tint: look.tint,
             plate: look.plate,
             held: (!pose.playing).then_some(Seconds(0.0)),

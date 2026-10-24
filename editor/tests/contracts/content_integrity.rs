@@ -41,9 +41,9 @@ fn an_edit_writing_a_field_its_type_does_not_have_is_refused_and_changes_nothing
     let mut editor = support::open(camp(), &scratch);
     let before = files(&mut editor);
     let config = fields_file(&path("model", "orc"));
-    let mut edit = ContentEdit::new("give the sheet an image field");
+    let mut edit = ContentEdit::new("give the model a sheet");
     edit.update_json(&before, &config, |model| {
-        model["sprites"]["image"] = json!("icons/cap.png");
+        model["sprites"] = json!("icons/cap.png");
         Some(())
     })
     .expect("the model is there");
@@ -204,19 +204,19 @@ fn a_sound_and_a_voice_take_their_clips_from_files_under_the_names_their_types_g
 }
 
 #[test]
-fn replacing_a_sheet_with_one_too_small_for_its_frames_is_refused() {
+fn a_cue_placed_past_the_end_of_its_clip_is_refused() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = support::open(camp(), &scratch);
     let config = fields_file(&path("model", "orc"));
-    let mut edit = ContentEdit::new("show a frame the sheet lacks");
+    let mut edit = ContentEdit::new("land the attack after the clip ends");
     edit.update_json(&files(&mut editor), &config, |model| {
-        model["sprites"]["actions"]["idle"]["s"][0]["frame"] = json!(3);
+        model["clips"]["attack"]["cues"][0]["at"] = json!(testkit::CLIP.0 * 2.0);
         Some(())
     })
     .expect("the model is there");
 
     let refused = editor.try_apply(edit).expect_err("refused");
-    assert!(refused.contains("tile out of range"), "{refused}");
+    assert!(refused.contains("cue past the clip"), "{refused}");
 }
 
 /// The orc's npc made to wear the elf's model, applied but not yet loaded.

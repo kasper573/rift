@@ -1,6 +1,6 @@
 {
   "name": "Nomad Merchant",
-  "model": "world/areas/sunscar/npcs/nomad_merchant.model",
+  "model": "characters/models/rogue.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

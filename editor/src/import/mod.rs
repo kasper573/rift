@@ -1,14 +1,9 @@
 pub mod formats;
-pub mod model;
-mod model_ui;
 pub mod records;
 pub mod tileset;
 mod tileset_ui;
 
-pub use model_ui::{
-    ModelReimport, inspect_reimport as inspect_model_reimport, show_reimport as show_model_reimport,
-};
-pub use records::{ImportRecord, ImportRecords, recorded_lengths};
+pub use records::{ImportRecord, ImportRecords};
 pub use tileset_ui::{
     TilesetReimport, inspect_reimport as inspect_tileset_reimport,
     show_reimport as show_tileset_reimport,
@@ -21,7 +16,6 @@ use ui::dialog;
 use ui::theme;
 
 use engine::core::content::{ContentFile, fields_file};
-use engine::systems::actor::ModelDef;
 use engine::systems::area::tileset::TilesetDef;
 use formats::{AnimationExport, DroppedFiles};
 use image::RgbaImage;
@@ -30,13 +24,10 @@ use ui::egui::{Context, Ui};
 use ui::glyph::{self, Mark};
 
 use crate::app::{ChannelInbox, Editor, ModalDialog};
-use crate::project::ContentEdit;
 use crate::rows;
-use crate::scenes::StripName;
 use crate::shell::active_tab;
 use crate::tabs::EditorTab;
 use crate::tabs::shown_path;
-use crate::views::model::{ModelPage, strip_of, write_strip};
 
 pub const IMPORT_PART: &str = "/import";
 
@@ -45,17 +36,10 @@ pub const IMPORT_PART: &str = "/import";
 pub enum ImportStep {
     Files(Vec<PathBuf>),
     Apply,
-    Retime {
-        strip: StripName,
-        frame: usize,
-        ms: u32,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ImportTarget {
-    Model(String),
-    NewModel,
     Tileset(String),
     NewTileset,
     Animation(String),
@@ -70,7 +54,6 @@ pub struct ImportReading {
 }
 
 pub enum ImportDialog {
-    Model(Box<model_ui::ModelDialog>),
     Tileset(Box<tileset_ui::TilesetDialog>),
     Animation(Box<tileset_ui::AnimationDialog>),
 }
@@ -84,9 +67,6 @@ pub struct ImportJobs {
 
 pub fn dialog(editor: &mut Editor, ctx: &Context, dialog: ImportDialog) -> Option<ImportDialog> {
     match dialog {
-        ImportDialog::Model(dialog) => {
-            model_ui::dialog(editor, ctx, *dialog).map(|next| ImportDialog::Model(Box::new(next)))
-        }
         ImportDialog::Tileset(dialog) => tileset_ui::dialog(editor, ctx, *dialog)
             .map(|next| ImportDialog::Tileset(Box::new(next))),
         ImportDialog::Animation(dialog) => tileset_ui::animation_dialog(editor, ctx, *dialog)
@@ -160,23 +140,11 @@ pub fn tick(editor: &mut Editor, ctx: &Context) {
             .collect()
     });
     if !dropped.is_empty() {
-        let busts = match active_tab(editor) {
-            Some(EditorTab::Model { key }) => editor
-                .views
-                .model
-                .views
-                .get(&key)
-                .is_some_and(|view| view.page == ModelPage::Busts),
-            _ => false,
-        };
-        if busts {
+        if matches!(active_tab(editor), Some(EditorTab::Model { .. })) {
             editor.views.model.drops = dropped;
         } else {
             self::dropped(editor, dropped);
         }
-    }
-    if !ctx.egui_wants_keyboard_input() {
-        model_ui::apply_settled(editor);
     }
     scripted(editor);
 }
@@ -204,12 +172,6 @@ fn scripted(editor: &mut Editor) {
                 .position(|dialog| matches!(dialog, ModalDialog::Import(_)))
             else {
                 match active_tab(editor) {
-                    Some(EditorTab::Model { key })
-                        if editor.views.model.reimports.contains_key(&key) =>
-                    {
-                        editor.jobs.script.pop_front();
-                        model_ui::apply_reimport(editor, &key, false);
-                    }
                     Some(EditorTab::Tileset { key })
                         if editor.views.tileset.reimports.contains_key(&key) =>
                     {
@@ -225,9 +187,6 @@ fn scripted(editor: &mut Editor) {
             };
             editor.jobs.script.pop_front();
             let kept = match *dialog {
-                ImportDialog::Model(dialog) => {
-                    model_ui::apply_now(editor, *dialog).map(|d| ImportDialog::Model(Box::new(d)))
-                }
                 ImportDialog::Tileset(dialog) => tileset_ui::apply_now(editor, *dialog)
                     .map(|d| ImportDialog::Tileset(Box::new(d))),
                 ImportDialog::Animation(dialog) => tileset_ui::apply_animation_now(editor, *dialog)
@@ -238,24 +197,6 @@ fn scripted(editor: &mut Editor) {
                     .dialogs
                     .insert(index, ModalDialog::Import(Box::new(kept)));
             }
-        }
-        ImportStep::Retime { strip, frame, ms } => {
-            editor.jobs.script.pop_front();
-            let Some(EditorTab::Model { key }) = active_tab(editor) else {
-                return;
-            };
-            let Some(Ok(row)) = editor.read::<ModelDef>(&key) else {
-                return;
-            };
-            let Some(strip) = strip.strip() else {
-                return;
-            };
-            let mut frames = strip_of(&row, strip);
-            if let Some(target) = frames.get_mut(frame.saturating_sub(1)) {
-                target.ms = ms;
-            }
-            let label = format!("Retime {} of {key}", strip.name());
-            write_strip(editor, &key, strip, &frames, ContentEdit::new(label));
         }
     }
 }
@@ -273,21 +214,19 @@ pub fn dropped(editor: &mut Editor, files: Vec<PathBuf>) {
         }
     };
     let target = match active_tab(editor) {
-        Some(EditorTab::Model { key }) => ImportTarget::Model(key),
         Some(EditorTab::Tileset { key }) => match dropped {
             DroppedFiles::Png(_) => ImportTarget::Tileset(key),
             _ => ImportTarget::Animation(key),
         },
         _ => match dropped {
             DroppedFiles::Png(_) => ImportTarget::NewTileset,
-            _ => ImportTarget::NewModel,
+            _ => {
+                editor.toast("Not imported: an animation export goes onto an open tileset");
+                return;
+            }
         },
     };
     begin(editor, target, dropped, None);
-}
-
-pub fn start_for_model(editor: &mut Editor, key: &str) {
-    pick_files(editor, ImportTarget::Model(key.to_owned()));
 }
 
 pub fn start_for_tileset(editor: &mut Editor, key: &str) {
@@ -300,8 +239,6 @@ pub fn start_animation(editor: &mut Editor, key: &str) {
 
 fn pick_files(editor: &mut Editor, target: ImportTarget) {
     let title = match &target {
-        ImportTarget::Model(key) => format!("Import onto {}", shown_path(key)),
-        ImportTarget::NewModel => "Import a model".to_owned(),
         ImportTarget::Tileset(key) => format!("Import onto {}", shown_path(key)),
         ImportTarget::NewTileset => "Import a tileset".to_owned(),
         ImportTarget::Animation(key) => format!("Import an animation onto {}", shown_path(key)),
@@ -375,7 +312,6 @@ fn start_again(editor: &mut Editor, due: records::DueReimport) {
         return;
     };
     let target = match (due.table.as_str(), due.block) {
-        (ModelDef::TABLE, _) => ImportTarget::Model(due.key.clone()),
         (TilesetDef::TABLE, Some(_)) => ImportTarget::Animation(due.key.clone()),
         (TilesetDef::TABLE, None) => ImportTarget::Tileset(due.key.clone()),
         _ => return,
@@ -393,8 +329,6 @@ fn start_again(editor: &mut Editor, due: records::DueReimport) {
 
 fn land(editor: &mut Editor, job: ImportReading, export: AnimationExport) {
     let next = match &job.target {
-        ImportTarget::Model(key) => model_ui::land(editor, key, export, job.again.as_ref()),
-        ImportTarget::NewModel => model_ui::land_new(editor, export),
         ImportTarget::Tileset(key) => tileset_ui::land(editor, key, export, job.again.as_ref()),
         ImportTarget::NewTileset => tileset_ui::land_new(editor, export),
         ImportTarget::Animation(key) => {

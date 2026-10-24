@@ -1,6 +1,6 @@
 {
   "name": "Blacksmith",
-  "model": "world/areas/emberfall/areas/forge/npcs/blacksmith.model",
+  "model": "characters/models/woodsman.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

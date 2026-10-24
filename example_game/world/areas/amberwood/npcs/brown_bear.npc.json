@@ -1,6 +1,6 @@
 {
   "name": "Brown Bear",
-  "model": "world/areas/amberwood/npcs/brown_bear.model",
+  "model": "characters/models/barbarian.model",
   "stats": {
     "health": 45.0,
     "max_health": 45.0,

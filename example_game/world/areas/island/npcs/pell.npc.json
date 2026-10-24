@@ -1,6 +1,6 @@
 {
   "name": "Pell",
-  "model": "world/areas/island/npcs/pell.model",
+  "model": "characters/models/rogue.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

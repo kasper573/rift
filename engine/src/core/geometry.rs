@@ -32,6 +32,22 @@ impl Radians {
     }
 }
 
+/// An actor's body for hit tests: a capsule standing on its feet, `radius` wide around its
+/// position and `height` tall.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Capsule {
+    pub radius: Meters,
+    pub height: Meters,
+}
+
+impl Capsule {
+    /// Whether a point on the ground lies under the capsule standing at `at`.
+    pub fn covers(self, at: Pos<Meters>, point: Pos<Meters>) -> bool {
+        (point - at).length() <= self.radius.0
+    }
+}
+
 /// A region in metres, laid down at a point and turned toward a heading: the circle and the
 /// rectangle sit centred on the point, the cone's apex and the line's start are the point.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]

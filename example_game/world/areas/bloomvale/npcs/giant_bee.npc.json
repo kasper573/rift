@@ -1,6 +1,6 @@
 {
   "name": "Giant Bee",
-  "model": "world/areas/bloomvale/npcs/giant_bee.model",
+  "model": "characters/models/bat.model",
   "stats": {
     "health": 10.0,
     "max_health": 10.0,

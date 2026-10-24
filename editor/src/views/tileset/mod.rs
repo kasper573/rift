@@ -1,6 +1,8 @@
 pub mod animation;
 pub mod inspect;
+pub mod preview;
 pub mod sheet;
+pub mod sounds;
 pub mod surfaces;
 pub mod terrain;
 
@@ -20,14 +22,13 @@ use serde::Deserialize;
 use strum::{EnumString, IntoStaticStr, VariantArray};
 use ui::egui::{Color32, Pos2, Rect as ERect, Stroke, Ui, Vec2};
 
+use self::preview::StripPreview;
 use crate::app::{BottomTab, Editor};
 use crate::import;
 use crate::project::{ContentEdit, RowSelection};
 use crate::shell::{row_form, sidebar};
 use crate::tabs::shown_path;
 use crate::thumbs::{self, Thumbnail};
-use crate::views::model::preview::StripPreview;
-use crate::views::model::sounds;
 
 pub const TERRAINS_PART: &str = "/terrains";
 const TILES_PART: &str = "/tiles/";

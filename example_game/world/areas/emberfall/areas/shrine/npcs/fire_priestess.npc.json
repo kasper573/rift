@@ -1,6 +1,6 @@
 {
   "name": "Fire Priestess",
-  "model": "world/areas/emberfall/areas/shrine/npcs/fire_priestess.model",
+  "model": "characters/models/mage.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

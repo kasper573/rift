@@ -4,6 +4,7 @@ use engine::core::math::Offset;
 use engine::core::script::Value as Recalled;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::{Meters, TilePos};
+use engine::systems::actor::{self, Action, Actor};
 use engine::systems::attention::{self, Attention, AttentionId, AttentionMark};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
@@ -45,6 +46,8 @@ fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
     let keeper_at = position(&sim.world, keeper).expect("position");
     assert!(at.distance(keeper_at) <= Meters(2.0 + std::f32::consts::SQRT_2));
     assert!(commands_locked(&sim.world, player));
+    assert_eq!(action(&sim.world, player), Action::Talk);
+    assert_eq!(action(&sim.world, keeper), Action::Talk);
 
     let conn = sim.conn(1);
     sim.send(
@@ -62,6 +65,12 @@ fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
     sim.tick();
     assert!(sim.conversation(1).is_none());
     assert!(!commands_locked(&sim.world, player));
+    assert_eq!(action(&sim.world, player), Action::Idle);
+    assert_eq!(action(&sim.world, keeper), Action::Idle);
+}
+
+fn action(world: &World, actor: Entity) -> Action {
+    world.get::<Actor>(actor).expect("an actor").action
 }
 
 #[test]
@@ -298,7 +307,12 @@ fn inn() -> Sim {
             dialogue::hold,
             dialogue::refresh,
         ))
-        .add((stat::settle_health, combat::defeats, attention::update));
+        .add((
+            stat::settle_health,
+            combat::defeats,
+            actor::settle,
+            attention::update,
+        ));
     script::spawn_stateless(&mut sim.world);
     npc::spawn_all(&mut sim.world);
     sim

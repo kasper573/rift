@@ -1,6 +1,6 @@
 {
   "name": "Lumberjack",
-  "model": "world/areas/amberwood/npcs/lumberjack.model",
+  "model": "characters/models/woodsman.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

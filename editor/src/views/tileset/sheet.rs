@@ -15,6 +15,7 @@ use ui::input;
 use ui::paint;
 use ui::theme;
 
+use super::sounds;
 use super::{
     ANIMATION_PART, OpenTileset, SheetLayout, SheetRect, TileBlueprintDialog, TilesetMode,
     TilesetView, WalkBrush, change_tileset, tile_mut,
@@ -24,7 +25,6 @@ use crate::keymap::EditorKey;
 use crate::project::{ContentEdit, RowSelection};
 use crate::rows;
 use crate::tabs::file_title;
-use crate::views::model::sounds;
 use ui::input::InputField;
 
 const WALKABLE: Color32 = Color32::from_rgb(110, 200, 110);

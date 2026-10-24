@@ -230,7 +230,7 @@ fn forget(world: &mut World) {
 /// Where a pop bursts from, in window pixels: low on the actor's body, toward its feet.
 fn origin(world: &mut World, actor: Entity) -> Option<Vec2> {
     let at = world.get::<RenderPosition>(actor)?.0;
-    let height = world.get::<Hitbox>(actor)?.size.height;
+    let height = world.get::<Hitbox>(actor)?.0.height.0;
     let low = Pos::<Meters>::new(at.x, at.y + 0.5 - height * BODY_SHARE);
     tile_to_window(world, low)
 }

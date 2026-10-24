@@ -4,6 +4,7 @@ use serde::de::DeserializeOwned;
 
 use super::check::RowCheck;
 use super::files::{CONFIG_FILE, valid_name};
+use super::gltf::GltfInfo;
 use super::id::{ContentScope, with_content};
 use super::load::{ContentFolder, FileWriter, parse_json, reference_errors, shape_error};
 use super::locate::JsonIndex;
@@ -119,6 +120,13 @@ impl<'a> Parts<'a> {
         let path = self.path(part);
         let bytes = self.folder.read(&path).ok()?;
         super::media::image_size(&path, &bytes)
+    }
+
+    /// What the model at `part` holds, when it reads.
+    pub fn gltf_info(&self, part: &str) -> Option<GltfInfo> {
+        let path = self.path(part);
+        let bytes = self.folder.read(&path).ok()?;
+        super::media::gltf_info(&path, &bytes)
     }
 
     /// How much the file at `part` weighs.

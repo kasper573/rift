@@ -15,6 +15,7 @@ use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::Listener;
 use crate::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
 use crate::core::content::{Content, ContentScope, with_content};
+use crate::core::geometry::Capsule;
 use crate::core::gui::{self, GuiContext, WorldLayers};
 use crate::core::math::{Offset, Pos, Rect, Size, WindowPx};
 use crate::core::platform::ClientPlatform;
@@ -791,7 +792,7 @@ fn body(world: &World, entity: Entity) -> Option<ProbeBody> {
     let entity = world.get_entity(entity).ok()?;
     let npc = entity.get::<Npc>().map(|npc| npc.def);
     let at = entity.get::<Position>()?.pos;
-    let hitbox = at.hitbox(entity.get::<Hitbox>()?.size);
+    let hitbox = footprint(at, entity.get::<Hitbox>()?.0);
     let actor = entity.get::<Actor>()?;
     let model = actor.model;
     let flies = ActorModel::get(world.resource::<Content>(), model).airborne();
@@ -853,12 +854,12 @@ fn objects(world: &mut World, area: Option<AreaId>) -> Vec<ProbeObject> {
         .and_then(|viewer| world.get::<Attention>(viewer))
         .cloned();
     let objects: Vec<(Entity, ProbeObject)> = world
-        .query::<(Entity, &AreaObject, &Position, &Hitbox, &AreaTag)>()
+        .query::<(Entity, &AreaObject, &Position, &AreaTag)>()
         .iter(world)
         .filter(|(.., tag)| area.is_none_or(|area| tag.area == area))
         .filter(|(_, object, ..)| object.look.is_some())
-        .map(|(entity, object, at, hitbox, _)| {
-            let hitbox = at.pos.hitbox(hitbox.size);
+        .map(|(entity, object, at, _)| {
+            let hitbox = object.shape.bounds();
             let seen = ProbeObject {
                 id: entity,
                 name: object.name.clone(),
@@ -881,6 +882,15 @@ fn objects(world: &mut World, area: Option<AreaId>) -> Vec<ProbeObject> {
             ..seen
         })
         .collect()
+}
+
+/// The ground a capsule standing at `at` covers, as the square around it.
+fn footprint(at: Pos<Meters>, capsule: Capsule) -> Rect<Meters> {
+    let radius = capsule.radius.0;
+    Rect::new(
+        at - Offset::new(radius, radius),
+        Size::new(radius * 2.0, radius * 2.0),
+    )
 }
 
 fn aim(world: &mut World, entity: Entity, hitbox: Rect<Meters>) -> Pos<Meters> {

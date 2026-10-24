@@ -3,6 +3,7 @@ pub mod check;
 pub mod files;
 pub mod fixture;
 pub mod fresh;
+pub mod gltf;
 pub mod id;
 pub mod key;
 pub mod load;

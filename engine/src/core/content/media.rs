@@ -4,6 +4,7 @@ use std::sync::{LazyLock, Mutex};
 
 use rayon::prelude::*;
 
+use super::gltf::{self, GltfInfo};
 use super::load::{FileHashes, Loading};
 use super::report::{ContentProblem, ErrorPlace};
 use crate::core::assets::AssetKind;
@@ -11,9 +12,19 @@ use crate::core::audio;
 
 pub struct ImageSizes(pub HashMap<String, (u32, u32)>);
 
-/// What decoding a media file found: an image's size, nothing more for a sound or a font, or why
-/// it does not decode.
-type MediaCheck = Result<Option<(u32, u32)>, MediaProblem>;
+/// What the loader learnt of every model, by its path from the game folder.
+pub struct GltfInfos(pub HashMap<String, GltfInfo>);
+
+/// What decoding a media file found: an image's size, a model's measure, nothing more for a sound
+/// or a font, or why it does not decode.
+type MediaCheck = Result<Decoded, MediaProblem>;
+
+#[derive(Clone)]
+enum Decoded {
+    Plain,
+    Image((u32, u32)),
+    Model(GltfInfo),
+}
 
 #[derive(Clone)]
 struct MediaProblem {
@@ -48,12 +59,16 @@ pub fn check_media(loading: &mut Loading) {
         })
         .collect();
     let mut sizes = HashMap::new();
+    let mut models = HashMap::new();
     for (path, result) in checked {
         match result {
-            Ok(Some(size)) => {
+            Ok(Decoded::Image(size)) => {
                 sizes.insert(path, size);
             }
-            Ok(None) => {}
+            Ok(Decoded::Model(info)) => {
+                models.insert(path, info);
+            }
+            Ok(Decoded::Plain) => {}
             Err(problem) => loading.file_error(
                 path,
                 ErrorPlace::WholeFile,
@@ -62,6 +77,7 @@ pub fn check_media(loading: &mut Loading) {
         }
     }
     loading.built(ImageSizes(sizes));
+    loading.built(GltfInfos(models));
 }
 
 /// Decoding the same bytes again finds the same, so each is decoded once per process however often
@@ -84,10 +100,23 @@ fn remembered(hash: &str, decode: impl FnOnce() -> MediaCheck) -> MediaCheck {
 
 /// The size in pixels of the image at `path` of `bytes`, when it decodes.
 pub(super) fn image_size(path: &str, bytes: &[u8]) -> Option<(u32, u32)> {
+    match decoded(path, bytes)? {
+        Decoded::Image(size) => Some(size),
+        _ => None,
+    }
+}
+
+/// What the model at `path` of `bytes` holds, when it reads.
+pub(super) fn gltf_info(path: &str, bytes: &[u8]) -> Option<GltfInfo> {
+    match decoded(path, bytes)? {
+        Decoded::Model(info) => Some(info),
+        _ => None,
+    }
+}
+
+fn decoded(path: &str, bytes: &[u8]) -> Option<Decoded> {
     let hash = blake3::hash(bytes).to_hex();
-    remembered(hash.as_str(), || decode(path, bytes))
-        .ok()
-        .flatten()
+    remembered(hash.as_str(), || decode(path, bytes)).ok()
 }
 
 /// Why the media file at `path` of `bytes` does not decode, when it does not.
@@ -100,27 +129,40 @@ pub(super) fn problem_of(path: &str, bytes: &[u8]) -> Option<ContentProblem> {
 
 fn decode(path: &str, bytes: &[u8]) -> MediaCheck {
     match AssetKind::of(path) {
-        Some(AssetKind::Image) => decode_png(bytes).map(Some).map_err(|found| MediaProblem {
-            rule: "unreadable image",
-            found,
-            expected: "a PNG that decodes",
-        }),
+        Some(AssetKind::Image) => {
+            decode_png(bytes)
+                .map(Decoded::Image)
+                .map_err(|found| MediaProblem {
+                    rule: "unreadable image",
+                    found,
+                    expected: "a PNG that decodes",
+                })
+        }
         Some(AssetKind::Audio) => audio::loader::decode(bytes.to_vec())
             .and_then(audio::loader::DecodedAudio::into_sound)
-            .map(|_| None)
+            .map(|_| Decoded::Plain)
             .map_err(|error| MediaProblem {
                 rule: "unreadable sound",
                 found: error.to_string(),
                 expected: "a WAV or FLAC file of one or two channels that decodes",
             }),
         Some(AssetKind::Font) => ttf_parser::Face::parse(bytes, 0)
-            .map(|_| None)
+            .map(|_| Decoded::Plain)
             .map_err(|error| MediaProblem {
                 rule: "unreadable font",
                 found: error.to_string(),
                 expected: "a TrueType or OpenType font",
             }),
-        None => Ok(None),
+        Some(AssetKind::Model) => {
+            gltf::inspect(bytes)
+                .map(Decoded::Model)
+                .map_err(|found| MediaProblem {
+                    rule: "unreadable model",
+                    found,
+                    expected: "a glTF binary that validates",
+                })
+        }
+        None => Ok(Decoded::Plain),
     }
 }
 

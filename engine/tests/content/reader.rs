@@ -22,7 +22,7 @@ fn a_bundle_reads_with_its_parts() {
     let model: ModelDef = reader(&game).read(&path("model", "hero")).expect("reads");
 
     let hero = path("model", "hero");
-    assert_eq!(model.sprites.image.as_str(), format!("{hero}/sprites.png"));
+    assert_eq!(model.model.as_str(), format!("{hero}/model.glb"));
     let busts = model
         .modules
         .iter()

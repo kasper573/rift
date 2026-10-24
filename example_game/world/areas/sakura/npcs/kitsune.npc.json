@@ -1,6 +1,6 @@
 {
   "name": "Kitsune",
-  "model": "world/areas/sakura/npcs/kitsune.model",
+  "model": "characters/models/rogue.model",
   "stats": {
     "health": 24.0,
     "max_health": 24.0,

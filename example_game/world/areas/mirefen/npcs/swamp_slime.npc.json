@@ -1,6 +1,6 @@
 {
   "name": "Swamp Slime",
-  "model": "world/areas/mirefen/npcs/swamp_slime.model",
+  "model": "characters/models/skeleton-rogue.model",
   "stats": {
     "health": 16.0,
     "max_health": 16.0,

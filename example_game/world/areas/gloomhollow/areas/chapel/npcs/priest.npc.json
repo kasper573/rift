@@ -1,6 +1,6 @@
 {
   "name": "Priest",
-  "model": "world/areas/gloomhollow/areas/chapel/npcs/priest.model",
+  "model": "characters/models/mage.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

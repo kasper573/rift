@@ -1,16 +1,12 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use engine::core::content::ContentFile;
-use engine::systems::actor::ModelDef;
 use serde::{Deserialize, Serialize};
 
 use super::tileset::{TileBlock, TileGridSettings};
-use crate::app::Editor;
 use crate::project::watch::{FolderChange, FolderWatcher};
 use crate::user::UserFolder;
-use crate::views::model::ModelStrip;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImportRecord {
@@ -20,7 +16,6 @@ pub struct ImportRecord {
     pub mapping: ImportMapping,
     pub size: u64,
     pub hash: String,
-    pub strips: BTreeMap<String, Vec<u32>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,7 +23,6 @@ pub struct ImportRecord {
 pub enum ImportMapping {
     Grid { grid: TileGridSettings },
     Animation { animation: TileBlock },
-    Strips(BTreeMap<String, Option<String>>),
 }
 
 impl ImportRecord {
@@ -41,7 +35,6 @@ impl ImportRecord {
             mapping,
             size,
             hash,
-            strips: BTreeMap::new(),
         }
     }
 
@@ -255,15 +248,6 @@ impl ImportRecords {
         });
         true
     }
-}
-
-pub fn recorded_lengths(editor: &Editor, key: &str, strip: ModelStrip) -> Option<Vec<u32>> {
-    editor
-        .imports
-        .record_for(ModelDef::TABLE, key)?
-        .strips
-        .get(&strip.record_key())
-        .cloned()
 }
 
 fn fingerprint(files: &[PathBuf]) -> (u64, String) {

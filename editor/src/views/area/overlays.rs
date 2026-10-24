@@ -7,13 +7,12 @@ use ui::theme;
 
 use engine::core::audio::soundscape::EDGE_FALLOFF;
 use engine::core::math::{Pos, Rect};
-use engine::core::render::TILE;
 use engine::core::units::{Cell, CellPos, GridDims, GridSize, Meters, TileSize};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::{self, AreaModule, AreaModuleKind, Pictured};
 use ui::egui::{Color32, Pos2, Rect as ERect, Sense, Stroke as EStroke, Ui, Vec2};
 
-use super::population::{self, NpcSprite};
+use super::population;
 use super::{AreaFrame, AreaTool, nodes, scenery, selected_parts, shapes};
 use crate::app::Editor;
 use crate::forms;
@@ -432,14 +431,12 @@ pub(super) fn overlay_soundscape_reach(
 
 pub(super) fn overlay_populations(
     editor: &mut Editor,
-    ui: &Ui,
     painter: &egui::Painter,
     view_key: &str,
     frame: &AreaFrame,
     area: &area::Area,
 ) {
     let canvas = frame.canvas;
-    let ctx = ui.ctx().clone();
     let live: HashSet<String> = frame
         .modules
         .iter()
@@ -460,14 +457,8 @@ pub(super) fn overlay_populations(
         if preview.hidden {
             continue;
         }
-        let Some(npc) = frame.reader.path_of(population.npc) else {
-            continue;
-        };
-        let Some(sprite) = population::npc_sprite(editor, &ctx, &frame.content, npc) else {
-            continue;
-        };
         for at in population::population_places(area, population, preview.seed) {
-            draw_sprite(painter, canvas, at, &sprite, 200);
+            draw_stand(painter, canvas, at);
         }
     }
 }
@@ -562,31 +553,14 @@ pub(super) fn overlay_surfaces(painter: &egui::Painter, frame: &AreaFrame, area:
     }
 }
 
-fn draw_sprite(
-    painter: &egui::Painter,
-    canvas: Viewport<Meters>,
-    at: Pos<Meters>,
-    sprite: &NpcSprite,
-    alpha: u8,
-) -> ERect {
-    let shown = sprite.drawn * canvas.scale() / TILE.0;
+/// Where someone stands, as the shadow at their feet.
+fn draw_stand(painter: &egui::Painter, canvas: Viewport<Meters>, at: Pos<Meters>) {
     let feet = canvas.to_screen(at) + Vec2::new(0.0, canvas.scale() * 0.5);
-    let rect = ERect::from_min_max(
-        feet - Vec2::new(shown.x / 2.0, shown.y),
-        feet + Vec2::new(shown.x / 2.0, 0.0),
-    );
     painter.add(egui::Shape::ellipse_filled(
         feet,
-        Vec2::new(shown.x * 0.35, shown.x * 0.12),
+        Vec2::new(canvas.scale() * 0.35, canvas.scale() * 0.12),
         Color32::from_rgba_unmultiplied(0, 0, 0, 70),
     ));
-    painter.image(
-        sprite.texture,
-        rect,
-        sprite.uv,
-        Color32::from_rgba_unmultiplied(255, 255, 255, alpha),
-    );
-    rect
 }
 
 fn ellipse_points(rect: ERect, segments: usize) -> Vec<Pos2> {

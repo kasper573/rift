@@ -1,4 +1,5 @@
 use engine::core::content::{ErrorPlace, Fixture, LoadReport, SETTINGS_FILE};
+use engine::core::time::Seconds;
 use engine::systems::input::map::InputFixture;
 use serde_json::{Value, json};
 use testkit::{Game, Map, path};
@@ -168,6 +169,81 @@ fn a_model_missing_a_generic_bust_is_refused_naming_it() {
             "missing file",
             "a bust for every generic expression in busts/"
         )]
+    );
+}
+
+#[test]
+fn a_models_clips_are_held_to_its_rig() {
+    struct Case {
+        case: &'static str,
+        change: fn(&mut Value),
+        rule: &'static str,
+    }
+    let cases = [
+        Case {
+            case: "an action without a clip",
+            change: |model| {
+                model["clips"].as_object_mut().expect("clips").remove("run");
+            },
+            rule: "missing clip",
+        },
+        Case {
+            case: "a clip the rig does not animate",
+            change: |model| model["clips"]["walk"]["name"] = json!("stroll"),
+            rule: "unknown clip",
+        },
+        Case {
+            case: "an attack landing nowhere",
+            change: |model| model["clips"]["attack"]["cues"] = json!([]),
+            rule: "apex out of place",
+        },
+        Case {
+            case: "an apex on an idle",
+            change: |model| model["clips"]["idle"]["cues"] = json!([{ "at": 0, "apex": true }]),
+            rule: "apex out of place",
+        },
+        Case {
+            case: "a cue after the clip ends",
+            change: |model| {
+                model["clips"]["attack"]["cues"][0]["at"] = json!(testkit::CLIP.0 * 2.0)
+            },
+            rule: "cue past the clip",
+        },
+        Case {
+            case: "a pose the idle action already plays",
+            change: |model| model["poses"] = json!({ "idle": { "name": "idle" } }),
+            rule: "pose is an action",
+        },
+    ];
+    for case in cases {
+        let report = game()
+            .edit("model", "hero", case.change)
+            .try_load()
+            .err()
+            .unwrap_or_else(|| panic!("{}: refused", case.case));
+        let rules: Vec<&str> = rules_in(&report, "hero.model/config.json")
+            .into_iter()
+            .map(|(rule, _)| rule)
+            .collect();
+        assert_eq!(rules, [case.rule], "{}", case.case);
+    }
+
+    let short = testkit::glb(&[
+        ("idle", Seconds(0.05)),
+        ("walk", Seconds(1.0)),
+        ("run", Seconds(1.0)),
+        ("attack", Seconds(1.0)),
+        ("death", Seconds(1.0)),
+        ("talk", Seconds(1.0)),
+    ]);
+    let report = game()
+        .part("model", "hero", "model.glb", short)
+        .try_load()
+        .err()
+        .expect("refused");
+    assert_eq!(
+        rules_in(&report, "hero.model/config.json"),
+        [("clip length", "100 ms to 60000 ms")]
     );
 }
 

@@ -8,16 +8,16 @@ use engine::core::content::{
     CONFIG_FILE, Content, ContentFile, ContentId, ContentRegistry, LoadReport, MemoryFolder,
     SETTINGS_FILE, Shape, content_path, name_of, table_of, version,
 };
-use engine::core::math::Direction;
+use engine::core::time::{Millis, Seconds};
 use engine::core::vfx::shader::SHADER_SOURCE;
 use engine::systems::actor::Action;
-use engine::systems::actor::model::{MODEL_BUSTS, MODEL_SPRITES};
+use engine::systems::actor::model::{MODEL_BUSTS, MODEL_GLB};
 use engine::systems::area::scene::{LAYERS, PALETTE, SCENE, WALK};
 use engine::systems::area::tileset::TILESET_IMAGE;
 use serde_json::{Value, json};
 use strum::VariantArray;
 
-use crate::art::{png, wav};
+use crate::art::{glb, png, wav};
 
 /// A game folder held in memory, of only the files a test declares, loaded by the engine's own
 /// loader against every type a game is made of. A file the test leaves out is simply absent, so a
@@ -46,6 +46,12 @@ impl Declared for Content {
 
 /// The size in pixels of the tiles of every area and blueprint a test declares.
 pub const TILE: u32 = 16;
+
+/// How long every clip of a declared model plays.
+pub const CLIP: Millis = Millis(300.0);
+
+/// When a declared model's attack lands.
+pub const APEX: Millis = Millis(100.0);
 
 /// An area's ground as text, one string per row: `.` walkable, `#` blocked.
 #[derive(Clone)]
@@ -357,38 +363,36 @@ impl Game {
         .asset(&sheet, png(1, 1))
     }
 
-    /// A model of one transparent frame, a tile wide and `height` tall, shown 100 ms a step for every
-    /// action and heading; an attack lands on its second step, of three.
+    /// A model of a rig nobody would notice, half a metre around and `height` tall, with a clip
+    /// named after every action, each [`CLIP`] long; its attack lands at [`APEX`].
     pub fn model(self, name: &str, height: f32, modules: Value) -> Game {
-        let step = json!({ "frame": 0, "ms": 100 });
-        let apex = json!({ "frame": 0, "ms": 100, "apex": true });
-        let actions: serde_json::Map<String, Value> = Action::VARIANTS
+        let clips: serde_json::Map<String, Value> = Action::VARIANTS
             .iter()
             .map(|action| {
-                let strip = match action {
-                    Action::Attack => json!([step, apex, step]),
-                    _ => json!([step]),
+                let cues = match action {
+                    Action::Attack => json!([{ "at": APEX.0, "apex": true }]),
+                    _ => json!([]),
                 };
-                let strips: serde_json::Map<String, Value> = Direction::VARIANTS
-                    .iter()
-                    .map(|direction| (direction.as_ref().to_owned(), strip.clone()))
-                    .collect();
-                (action.as_ref().to_owned(), Value::Object(strips))
+                (
+                    action.as_ref().to_owned(),
+                    json!({ "name": action.as_ref(), "cues": cues }),
+                )
             })
+            .collect();
+        let rig: Vec<(&str, Seconds)> = Action::VARIANTS
+            .iter()
+            .map(|action| (action.as_ref(), CLIP.seconds()))
             .collect();
         self.row(
             "model",
             name,
             json!({
-                "hitbox": { "width": 1.0, "height": height },
-                "sprites": {
-                    "frame_size": { "width": 1, "height": 1 },
-                    "actions": actions,
-                },
+                "hitbox": { "radius": 0.5, "height": height },
+                "clips": clips,
                 "modules": modules,
             }),
         )
-        .part("model", name, &MODEL_SPRITES.named("", "png"), png(1, 1))
+        .part("model", name, &MODEL_GLB.named("", "glb"), glb(&rig))
     }
 
     /// A blueprint `width` × `height` tiles, of `variables`, whose scene holds `nodes`.

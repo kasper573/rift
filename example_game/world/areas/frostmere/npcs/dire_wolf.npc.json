@@ -1,6 +1,6 @@
 {
   "name": "Dire Wolf",
-  "model": "world/areas/frostmere/npcs/dire_wolf.model",
+  "model": "characters/models/barbarian.model",
   "stats": {
     "health": 26.0,
     "max_health": 26.0,

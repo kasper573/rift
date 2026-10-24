@@ -1,6 +1,6 @@
 {
   "name": "Ugra",
-  "model": "world/areas/forest/npcs/ugra.model",
+  "model": "characters/models/barbarian.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

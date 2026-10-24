@@ -3,11 +3,12 @@ use std::fs::File;
 use std::io::{BufReader, Cursor};
 use std::path::{Path, PathBuf};
 
-use engine::systems::actor::model::MAX_FRAME_PX;
 use image::codecs::gif::GifDecoder;
 use image::codecs::png::PngDecoder;
 use image::{AnimationDecoder, GenericImage, ImageDecoder, RgbaImage};
 use serde::Deserialize;
+
+const MAX_FRAME_PX: u32 = 8192;
 
 pub const MAX_IMAGE_PX: u32 = 16384;
 pub const DEFAULT_MS: u32 = 100;

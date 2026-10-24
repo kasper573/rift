@@ -1,6 +1,6 @@
 {
   "name": "Ilsa",
-  "model": "world/areas/island/npcs/ilsa.model",
+  "model": "characters/models/woodsman.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

@@ -1,5 +1,8 @@
 use std::io::Cursor;
 
+use engine::core::content::gltf::placeholder_rig;
+use engine::core::time::Seconds;
+
 /// A PNG of `width` × `height` transparent pixels: an image a row can name, the right size and no
 /// more.
 pub fn png(width: u32, height: u32) -> Vec<u8> {
@@ -13,6 +16,11 @@ pub fn png(width: u32, height: u32) -> Vec<u8> {
         .expect("png pixels");
     writer.finish().expect("a png");
     bytes
+}
+
+/// A glTF binary of one triangle animated by `clips`, each named and as long as given.
+pub fn glb(clips: &[(&str, Seconds)]) -> Vec<u8> {
+    placeholder_rig(clips)
 }
 
 /// A WAV of a moment of silence.

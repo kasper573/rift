@@ -1,6 +1,6 @@
 {
   "name": "Wild Boar",
-  "model": "world/areas/bloomvale/npcs/wild_boar.model",
+  "model": "characters/models/barbarian.model",
   "stats": {
     "health": 22.0,
     "max_health": 22.0,

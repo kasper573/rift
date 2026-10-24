@@ -1,25 +1,18 @@
-use engine::core::content::{Content, ContentFile};
-use engine::core::geometry::Radians;
+use engine::core::content::ContentFile;
 use engine::core::math::{Pos, Rng};
-use engine::core::time::{PlaybackRate, Seconds};
 use engine::core::units::Meters;
-use engine::systems::actor::model::ModelId;
-use engine::systems::actor::{Action, ActorModel};
 use engine::systems::area::{self, Population};
 use engine::systems::npc::{NpcDef, NpcModule};
 use engine::systems::stat::StatKind;
 use ui::chip;
-use ui::egui;
-use ui::egui::{Ui, Vec2};
+use ui::egui::Ui;
 use ui::form;
 use ui::sheet;
 use ui::theme;
 
 use super::placement::short_value;
-use crate::app::Editor;
 use crate::forms::{FormAction, FormCx};
 use crate::tabs::shown_path;
-use crate::thumbs;
 
 /// What the npc at `npc` brings to every module placing it: when it respawns, its scripts and its
 /// health, and a way to open it.
@@ -114,53 +107,4 @@ pub fn population_places(
     (0..count)
         .map(|_| nodes[rng.rand_range(0..nodes.len() as u32) as usize])
         .collect()
-}
-
-pub struct NpcSprite {
-    pub texture: egui::TextureId,
-    pub uv: egui::Rect,
-    pub drawn: Vec2,
-}
-
-pub fn npc_sprite(
-    editor: &mut Editor,
-    ctx: &egui::Context,
-    content: &Content,
-    npc: &str,
-) -> Option<NpcSprite> {
-    let def = content.by_path::<NpcDef>(npc)?.get(content);
-    model_sprite(editor, ctx, content, def.model)
-}
-
-pub fn model_sprite(
-    editor: &mut Editor,
-    ctx: &egui::Context,
-    content: &Content,
-    model: ModelId,
-) -> Option<NpcSprite> {
-    let model = ActorModel::get(content, model);
-    let project = editor.project.as_ref()?;
-    let thumb = editor
-        .form
-        .thumbnails
-        .image(ctx, &project.files, model.sheet().as_str())?;
-    let region = model.frame(
-        Action::Idle,
-        Radians::SOUTH,
-        Seconds(0.0),
-        PlaybackRate(1.0),
-    );
-    let drawn = model.drawn_size(region);
-    let uv = thumbs::uv(
-        thumb.size,
-        region.min().x,
-        region.min().y,
-        region.size.width,
-        region.size.height,
-    );
-    Some(NpcSprite {
-        texture: thumb.texture.id(),
-        uv,
-        drawn: Vec2::new(drawn.width, drawn.height),
-    })
 }

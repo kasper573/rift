@@ -1,6 +1,6 @@
 {
   "name": "Orc",
-  "model": "characters/model/orc.model",
+  "model": "characters/models/barbarian.model",
   "stats": {
     "health": 25.0,
     "max_health": 25.0,

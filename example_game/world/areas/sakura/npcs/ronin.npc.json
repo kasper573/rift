@@ -1,6 +1,6 @@
 {
   "name": "Ronin",
-  "model": "world/areas/sakura/npcs/ronin.model",
+  "model": "characters/models/knight.model",
   "stats": {
     "health": 34.0,
     "max_health": 34.0,

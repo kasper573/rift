@@ -21,7 +21,7 @@ use crate::core::math::{Percent, Pos, Rect, Rgba, Rng};
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::core::units::{CellPos, Meters, TilePos};
 use crate::systems::actor::model::ModelId;
-use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox, Tint};
+use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox, Pose, Tint};
 use crate::systems::area::{self, AreaId, AreaModule, AreaTag, Wild};
 use crate::systems::combat::{Attitude, Dead, Died};
 use crate::systems::interact::Interactive;
@@ -518,12 +518,11 @@ fn actor_bundle(content: &Content, def: &NpcDef, at: Pos<Meters>, area: AreaId) 
             color: def.tint(),
             facing: Radians::SOUTH,
             action: Action::Idle,
+            pose: Pose::Idle,
             model: def.model,
             attack_rate: PlaybackRate::default(),
         },
-        Hitbox {
-            size: ActorModel::get(content, def.model).hitbox(),
-        },
+        Hitbox(ActorModel::get(content, def.model).hitbox()),
         AreaTag { area },
     );
     (character, def.stats.clone())

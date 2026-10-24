@@ -1,6 +1,6 @@
 {
   "name": "Scorpion",
-  "model": "world/areas/sunscar/npcs/scorpion.model",
+  "model": "characters/models/skeleton-rogue.model",
   "stats": {
     "health": 18.0,
     "max_health": 18.0,

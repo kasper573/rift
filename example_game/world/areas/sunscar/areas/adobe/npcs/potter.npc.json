@@ -1,6 +1,6 @@
 {
   "name": "Potter",
-  "model": "world/areas/sunscar/areas/adobe/npcs/potter.model",
+  "model": "characters/models/woodsman.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

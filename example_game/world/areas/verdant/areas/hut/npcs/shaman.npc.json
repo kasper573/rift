@@ -1,6 +1,6 @@
 {
   "name": "Shaman",
-  "model": "world/areas/verdant/areas/hut/npcs/shaman.model",
+  "model": "characters/models/mage.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

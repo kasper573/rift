@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 pub mod model;
 pub mod plate;
 pub mod playing;
@@ -13,10 +15,12 @@ use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
 
 use crate::core::content::{ContentRegistry, LoadStep};
-use crate::core::geometry::Radians;
-use crate::core::math::{Pos, Rgba, Size};
+use crate::core::geometry::{Capsule, Radians};
+use crate::core::math::{Pos, Rgba};
 use crate::core::time::PlaybackRate;
-use crate::core::units::{Meters, TilePos};
+use crate::core::units::Meters;
+use crate::systems::area::AreaObject;
+use crate::systems::dialogue;
 use crate::systems::movement::{Path, Position};
 use crate::systems::stat::{self, Stats};
 
@@ -64,13 +68,40 @@ pub enum Action {
     #[serde(rename = "death")]
     #[strum(serialize = "death")]
     Dead,
+    Talk,
 }
 
 impl Action {
-    /// Whether the action's strips mark the frame its hit lands on.
+    /// Whether the action's clip marks the moment its hit lands.
     pub fn takes_apex(self) -> bool {
         self == Action::Attack
     }
+}
+
+/// How an actor holds itself while idle: standing, or sitting when its model has a clip for it.
+#[derive(
+    JsonSchema,
+    Serialize,
+    Deserialize,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
+    Default,
+    VariantArray,
+    EnumString,
+    AsRefStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum Pose {
+    #[default]
+    Idle,
+    Sit,
 }
 
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,33 +115,40 @@ pub struct Actor {
     pub color: Rgba,
     pub facing: Radians,
     pub action: Action,
+    pub pose: Pose,
     pub model: ModelId,
     pub attack_rate: PlaybackRate,
 }
 
-#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Hitbox {
-    pub size: Size<Meters>,
-}
+/// The capsule an actor is hit in, standing at its position.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct Hitbox(pub Capsule);
 
-pub fn frontmost_at(
+/// Whom a point on the ground picks: the nearest actor standing over it or object lying under it
+/// that `accept` takes, the dead and `except` passed over.
+pub fn target_at(
     world: &mut World,
     point: Pos<Meters>,
     except: Option<Entity>,
     accept: impl Fn(&World, Entity) -> bool,
 ) -> Option<Entity> {
-    let hits: Vec<(Entity, f32)> = world
+    let mut hits: Vec<(Entity, f32)> = world
         .query::<(Entity, &Position, &Hitbox)>()
         .iter(world)
-        .filter(|(entity, at, hitbox)| {
-            Some(*entity) != except && at.pos.hitbox(hitbox.size).contains(point)
-        })
-        .map(|(entity, at, _)| (entity, at.pos.y))
+        .filter(|(entity, at, hitbox)| Some(*entity) != except && hitbox.0.covers(at.pos, point))
+        .map(|(entity, at, _)| (entity, (point - at.pos).length()))
         .collect();
+    hits.extend(
+        world
+            .query::<(Entity, &AreaObject)>()
+            .iter(world)
+            .filter(|(entity, object)| Some(*entity) != except && object.shape.covers(point))
+            .map(|(entity, object)| (entity, (point - object.shape.center()).length())),
+    );
+    hits.sort_by(|(_, a), (_, b)| a.total_cmp(b));
     hits.into_iter()
-        .filter(|&(entity, _)| !stat::is_dead(world, entity) && accept(world, entity))
-        .max_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(entity, _)| entity)
+        .find(|&entity| !stat::is_dead(world, entity) && accept(world, entity))
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -139,15 +177,18 @@ pub fn set_facing(actor: &mut Mut<Actor>, facing: Radians, action: Action) {
     }
 }
 
-type Situation = (
+pub type Situations = QueryState<(
+    Entity,
     &'static mut Actor,
     Option<&'static Stats>,
     Option<&'static Playing>,
     Has<Path>,
-);
+)>;
 
-pub fn settle(mut actors: Query<Situation>) {
-    for (mut actor, stats, playing, walking) in &mut actors {
+/// Picks every actor's action from its state: dead, playing, walking, in conversation, or idle.
+pub fn settle(world: &mut World, actors: &mut Situations, sessions: &mut dialogue::Sessions) {
+    let talking: HashSet<Entity> = dialogue::parties(world, sessions).into_iter().collect();
+    for (entity, mut actor, stats, playing, walking) in actors.iter_mut(world) {
         let action = if stats.is_some_and(stat::dead) {
             Action::Dead
         } else if let Some(playing) = playing {
@@ -157,6 +198,8 @@ pub fn settle(mut actors: Query<Situation>) {
                 Action::Walk | Action::Run => actor.action,
                 _ => Action::Walk,
             }
+        } else if talking.contains(&entity) {
+            Action::Talk
         } else {
             Action::Idle
         };

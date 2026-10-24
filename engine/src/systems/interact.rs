@@ -83,7 +83,7 @@ pub fn interaction_of(world: &World, target: Entity) -> Option<Interactive> {
 
 pub fn interactable_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
     let me = session::my_character(world).map(|entity| entity.id());
-    actor::frontmost_at(world, point, me, |world, entity| {
+    actor::target_at(world, point, me, |world, entity| {
         interaction_of(world, entity).is_some()
     })
 }

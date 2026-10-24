@@ -1,6 +1,6 @@
 {
   "name": "Silk Prince",
-  "model": "world/areas/sunscar/areas/pavilion/npcs/silk_prince.model",
+  "model": "characters/models/knight.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

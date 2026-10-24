@@ -1,6 +1,6 @@
 {
   "name": "Ghoul",
-  "model": "world/areas/gloomhollow/npcs/ghoul.model",
+  "model": "characters/models/skeleton-warrior.model",
   "stats": {
     "health": 42.0,
     "max_health": 42.0,

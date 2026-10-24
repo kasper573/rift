@@ -214,7 +214,7 @@ fn aim_at(world: &mut World, tile: Pos<Meters>, targeting: Targeting) -> Option<
     match targeting {
         Targeting::SingleAlly | Targeting::SingleEnemy => {
             let me = session::me(world)?;
-            actor::frontmost_at(world, tile, None, |world, entity| {
+            actor::target_at(world, tile, None, |world, entity| {
                 world.get::<Actor>(entity).is_some() && casting::fits(world, me, entity, targeting)
             })
             .map(CastAim::Actor)
