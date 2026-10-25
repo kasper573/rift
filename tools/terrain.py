@@ -1,6 +1,6 @@
 """Relief and shores for every area of a game whose paint came from hard cells: puddles too small
-to be water become the area's third material, the ground sinks below the water level where water
-is painted and rises inland into gentle hills, the paint blends across the shoreline, and the area's
+to be water become stone, the ground sinks below the water level where water is painted and rises
+inland into gentle hills, a band of sand (or dirt) runs along the shoreline, and the area's
 second material is laid as a band of shore along the water.
 Run as `python3 -I tools/terrain.py example_game`; every area under the sun with a paint part is
 rewritten, and interiors keep their flat floors. Name an area folder after the game to rewrite
@@ -111,44 +111,53 @@ def heights(signed, columns, rows):
     return WATER_LEVEL + np.where(signed >= 0.0, land, water)
 
 
-def repaint(weights, signed):
-    water = 1.0 - smoothstep(-0.75, 0.75, signed)
-    shore = (1.0 - water) * (1.0 - smoothstep(1.0, 2.5, signed))
-    rest = 1.0 - water - shore
-    land = np.stack([blur(weights[..., i]) for i in range(3)], axis=-1)
-    total = land.sum(axis=-1, keepdims=True)
-    land = np.where(total > 0.0, land / np.maximum(total, 1e-6), [1.0, 0.0, 0.0])
-    painted = land * rest[..., None]
-    painted[..., 1] += shore
-    return np.concatenate([painted, water[..., None]], axis=-1)
+def repaint(index, signed, shore_index, water_index):
+    """Water where the ground sinks, a band of the shore terrain along it, the land's paint beyond."""
+    water = signed < 0.0
+    shore = ~water & (signed < 2.5) if shore_index is not None else np.zeros_like(water)
+    land = index.copy()
+    land[water] = water_index
+    land[shore] = shore_index
+    return land
 
 
-def to_bytes(painted):
-    scaled = painted * 255.0
-    bytes_ = np.floor(scaled).astype(np.int32)
-    short = 255 - bytes_.sum(axis=-1)
-    top = np.argmax(scaled - bytes_, axis=-1)
-    np.put_along_axis(bytes_, top[..., None], np.take_along_axis(bytes_, top[..., None], -1) + short[..., None], -1)
-    return np.clip(bytes_, 0, 255).astype(np.uint8)
+def terrain_index(terrains, name):
+    """The index of the terrain file called `name`, if the area lists one."""
+    for i, path in enumerate(terrains):
+        if os.path.basename(path) == f"{name}.terrain.json":
+            return i
+    return None
 
 
 def relief(area):
-    folder = os.path.join(area, "terrain")
-    paint_file = os.path.join(folder, "paint.png")
-    with open(os.path.join(area, "config.json")) as config:
-        sunlit = json.load(config).get("lighting", {}).get("sun") is not None
+    paint_file = os.path.join(area, "paint.png")
+    with open(os.path.join(area, "config.json")) as file:
+        config = json.load(file)
+    sunlit = config.get("lighting", {}).get("sun") is not None
     if not sunlit or not os.path.exists(paint_file):
         return False
-    weights = np.asarray(Image.open(paint_file).convert("RGBA"), dtype=np.float32) / 255.0
-    rows, columns = weights.shape[:2]
-    small = puddles(weights[..., 3] > 0.5)
-    weights[small] = [0.0, 0.0, 1.0, 0.0]
-    signed = shore_distance(blur(blur(weights[..., 3])) > 0.5)
-    Image.fromarray(to_bytes(repaint(weights, signed)), "RGBA").save(paint_file)
+    terrains = config["terrains"]
+    water_index = terrain_index(terrains, "water")
+    if water_index is None:
+        return False
+    shore_index = terrain_index(terrains, "sand")
+    if shore_index is None:
+        shore_index = terrain_index(terrains, "dirt")
+    puddle_index = terrain_index(terrains, "stone")
+    index = np.array(Image.open(paint_file).convert("L"), dtype=np.uint8)
+    rows, columns = index.shape
+    water = index == water_index
+    small = puddles(water)
+    if puddle_index is not None:
+        index[small] = puddle_index
+    else:
+        index[small] = 0
+    signed = shore_distance(blur(blur((index == water_index).astype(np.float32))) > 0.5)
+    Image.fromarray(repaint(index, signed, shore_index, water_index), "L").save(paint_file)
     corner = np.pad(signed, ((0, 1), (0, 1)), mode="edge")
     field = heights(corner, columns + 1, rows + 1)
     level = np.clip((field - LOWEST) / (HIGHEST - LOWEST), 0.0, 1.0)
-    Image.fromarray(np.round(level * 65535.0).astype(np.uint16)).save(os.path.join(folder, "height.png"))
+    Image.fromarray(np.round(level * 65535.0).astype(np.uint16)).save(os.path.join(area, "height.png"))
     return True
 
 

@@ -11,7 +11,7 @@ use crate::core::math::{Pos, Rect};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
-use crate::core::units::Meters;
+use crate::core::units::{Meters, TileSize};
 use crate::core::vfx::render::SiteExtent;
 use crate::systems::player::session::MyCharacter;
 use crate::systems::screen::ClientScreen;
@@ -74,7 +74,7 @@ fn show_area(world: &mut World) {
     let area = super::shared(&content, area_id).clone();
     world.insert_resource(GroundHeights {
         heights: area.heights.clone(),
-        bounds: area.terrain.size.bounds(),
+        bounds: area.size.bounds(),
     });
     world.insert_resource(scenery::grade(&area.lighting));
     world.insert_resource(scenery::climate(&area));

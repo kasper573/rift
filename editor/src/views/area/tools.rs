@@ -3,6 +3,7 @@
 
 use engine::core::math::{Offset, Rect};
 use engine::core::units::{Meters, TileSize};
+use engine::systems::area::TerrainDef;
 use engine::systems::area::{AreaModule, AreaModuleKind};
 use strum::VariantArray;
 use ui::egui;
@@ -252,12 +253,26 @@ fn brush_input(
         && let Some(tile) = frame.drag_tile()
     {
         let what = match tool {
-            AreaTool::Paint => StrokeKind::Paint {
-                slot: view.paint_slot,
-            },
+            AreaTool::Paint => {
+                let picked = view
+                    .paint_terrain
+                    .as_deref()
+                    .and_then(|path| frame.reader.id_of::<TerrainDef>(path));
+                let Some(terrain) = picked else {
+                    editor.toast("Pick a terrain to paint with in the inspector");
+                    return;
+                };
+                StrokeKind::Paint { terrain }
+            }
             _ => StrokeKind::Sculpt(sculpt_mode(view.sculpt, modifiers)),
         };
-        let mut stroke = Stroke::begin(&area, tile, what);
+        let Some(mut stroke) = Stroke::begin(&area, tile, what) else {
+            editor.toast(format!(
+                "{} already names every terrain a paint can; pick one it has",
+                frame.bundle
+            ));
+            return;
+        };
         stroke.apply(&view.brush, tile, seconds.max(1.0 / 60.0), view.level);
         view.stroke = Some(stroke);
     } else if response.dragged_by(egui::PointerButton::Primary)
@@ -490,12 +505,18 @@ fn brush_overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame
     let canvas = &frame.canvas;
     let (color, what) = match view.tool {
         AreaTool::Paint => {
-            let slot = view
-                .paint_slot
-                .min(frame.area().terrain.materials.len() - 1);
-            let ground = frame.area().terrain.materials[slot].get(&frame.content);
-            let [r, g, b, _] = <[u8; 4]>::from(ground.color);
-            (Color32::from_rgb(r, g, b), ground.name.clone())
+            let picked = view
+                .paint_terrain
+                .as_deref()
+                .and_then(|path| editor.read::<TerrainDef>(path))
+                .and_then(Result::ok);
+            match picked {
+                Some(terrain) => {
+                    let [r, g, b, _] = <[u8; 4]>::from(terrain.color);
+                    (Color32::from_rgb(r, g, b), terrain.name.clone())
+                }
+                None => (Color32::GRAY, "no terrain picked".to_owned()),
+            }
         }
         _ => {
             let modifiers = painter.ctx().input(|i| i.modifiers);
@@ -522,7 +543,7 @@ fn brush_overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame
             "{what} · {} m · {}",
             crate::forms::metres(view.brush.radius.0),
             match view.tool {
-                AreaTool::Paint => format!("{}% strength", (view.brush.strength * 100.0).round()),
+                AreaTool::Paint => format!("{}% fray", (view.brush.falloff * 100.0).round()),
                 _ => format!(
                     "{} inverts · {} smooths",
                     EditorKey::ExtendSelection.name(),

@@ -3,7 +3,7 @@ use editor::views::area::{AreaSnapshot, contours, nodes, place, scatter};
 use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::Meters;
-use engine::systems::area::{AreaDef, AreaModule};
+use engine::systems::area::{AreaDef, AreaModule, TerrainDef};
 use serde_json::json;
 use testkit::{Game, Map, path};
 
@@ -30,7 +30,8 @@ fn a_sculpt_stroke_lands_in_the_height_map() {
     let mut editor = support::open(support::game(), &scratch);
     let at = Pos::new(4.0, 4.0);
     let before = terrain(&editor);
-    let mut stroke = Stroke::begin(&before, at, StrokeKind::Sculpt(SculptMode::Raise));
+    let mut stroke =
+        Stroke::begin(&before, at, StrokeKind::Sculpt(SculptMode::Raise)).expect("a sculpt stroke");
     stroke.apply(&Brush::default(), at, 0.2, Meters(0.0));
     assert!(commit(&mut editor, &area(), &stroke));
     support::settled(&mut editor);
@@ -45,7 +46,8 @@ fn a_sculpt_stroke_lands_in_the_height_map() {
         "the ground beyond the brush keeps its height"
     );
 
-    let mut lowered = Stroke::begin(&raised, at, StrokeKind::Sculpt(SculptMode::Level));
+    let mut lowered =
+        Stroke::begin(&raised, at, StrokeKind::Sculpt(SculptMode::Level)).expect("a sculpt stroke");
     lowered.apply(&Brush::default(), at, 60.0, Meters(0.0));
     assert!(commit(&mut editor, &area(), &lowered));
     support::settled(&mut editor);
@@ -61,27 +63,37 @@ fn a_sculpt_stroke_lands_in_the_height_map() {
 }
 
 #[test]
-fn a_paint_stroke_lands_in_the_paint_map() {
+fn a_paint_stroke_lands_in_the_paint_map_and_lists_a_new_terrain() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = support::open(support::game(), &scratch);
     let at = Pos::new(4.0, 4.0);
     let before = terrain(&editor);
-    let mut stroke = Stroke::begin(&before, at, StrokeKind::Paint { slot: 1 });
-    stroke.apply(&Brush::default(), at, 4.0, Meters(0.0));
+    let reader = editor.reader().expect("a reader");
+    let rock = path("terrain", testkit::ROCK);
+    let id = reader
+        .id_of::<TerrainDef>(&rock)
+        .expect("rock is a terrain");
+    let mut stroke =
+        Stroke::begin(&before, at, StrokeKind::Paint { terrain: id }).expect("room for a terrain");
+    stroke.apply(&Brush::default(), at, 0.1, Meters(0.0));
     assert!(commit(&mut editor, &area(), &stroke));
     support::settled(&mut editor);
     let painted = terrain(&editor);
-    let (column, row) = painted.paint.pixel_at(at);
-    let weights = painted.paint.weights(column, row);
-    assert!(
-        weights[1] > weights[0],
-        "the painted material leads under the brush: {weights:?}"
-    );
-    let (column, row) = painted.paint.pixel_at(Pos::new(0.5, 0.5));
+    let reader = editor.reader().expect("a reader");
+    let under = painted.terrains[usize::from(painted.paint.at(at))];
     assert_eq!(
-        painted.paint.weights(column, row),
-        before.paint.weights(column, row),
-        "the paint beyond the brush keeps its weights"
+        reader.path_of(under),
+        Some(rock.as_str()),
+        "rock lies under the brush"
+    );
+    assert_eq!(
+        painted.paint.at(Pos::new(0.5, 0.5)),
+        before.paint.at(Pos::new(0.5, 0.5)),
+        "the paint beyond the brush keeps its terrain"
+    );
+    assert!(
+        painted.terrains.len() >= before.terrains.len(),
+        "a terrain painted for the first time joins the area's list"
     );
 }
 
@@ -139,7 +151,8 @@ fn contours_follow_the_whole_metres_of_a_hill() {
     let flat = terrain(&editor);
     assert!(contours::trace(&flat.heights).is_empty());
     let at = Pos::new(8.0, 8.0);
-    let mut stroke = Stroke::begin(&flat, at, StrokeKind::Sculpt(SculptMode::Raise));
+    let mut stroke =
+        Stroke::begin(&flat, at, StrokeKind::Sculpt(SculptMode::Raise)).expect("a sculpt stroke");
     stroke.apply(&Brush::default(), at, 8.0, Meters(0.0));
     let traced = contours::trace(&stroke.heights);
     let heights: Vec<f32> = traced.iter().map(|contour| contour.height.0).collect();

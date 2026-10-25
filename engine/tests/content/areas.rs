@@ -1,6 +1,6 @@
 use engine::core::content::{Content, LoadReport, write};
+use engine::core::ground::{self as ground, GroundSize, Heightfield, Paint};
 use engine::core::math::{Pos, Rect, Size};
-use engine::core::terrain::{self, Heightfield, Paint, TerrainSize};
 use engine::core::units::{GROUND_ORIGIN, Meters};
 use engine::core::vfx::shader::Stage;
 use engine::systems::area::{self, AreaDef, AreaId};
@@ -13,12 +13,12 @@ use crate::support::game;
 /// two metres per metre in the east.
 fn hill() -> Heightfield {
     Heightfield::from_fn(
-        TerrainSize {
+        GroundSize {
             width: 8,
             height: 8,
         },
         |column, _| {
-            let x = column as f32 / terrain::SAMPLES_PER_METER as f32 + GROUND_ORIGIN.x;
+            let x = column as f32 / ground::SAMPLES_PER_METER as f32 + GROUND_ORIGIN.x;
             Meters(match x {
                 x if x <= 4.0 => 0.0,
                 x if x <= 6.0 => (x - 4.0) * 0.5,
@@ -36,7 +36,7 @@ fn the_ground_walks_where_it_is_flat_enough_and_painted_walkable() {
     ]);
     let content = game()
         .area("hill", &map, json!([]))
-        .part("area", "hill", "terrain/height.png", hill().encode())
+        .part("area", "hill", "height.png", hill().encode())
         .load();
     let hill = area::load(&content, area_id(&content, "hill"));
     let walks = |x: f32, y: f32| hill.mesh.walkable(Pos::new(x, y));
@@ -154,37 +154,31 @@ fn a_footprint_is_refused_when_it_crosses_itself_or_was_fitted_to_a_model_since_
 
 #[test]
 fn an_areas_heights_and_paint_write_back_as_they_were_read() {
-    let size = TerrainSize {
+    let size = GroundSize {
         width: 8,
         height: 8,
     };
-    let paint = Paint::from_fn(size, |column, row| {
-        if column < 4 && row < 4 {
-            [0, 0, 255, 0]
-        } else {
-            [255, 0, 0, 0]
-        }
-    });
+    let paint = Paint::from_fn(size, |column, row| u8::from(column < 4 && row < 4));
     let game = game()
         .area("hill", &Map::open(8, 8), json!([]))
-        .part("area", "hill", "terrain/height.png", hill().encode())
-        .part("area", "hill", "terrain/paint.png", paint.encode());
+        .part("area", "hill", "height.png", hill().encode())
+        .part("area", "hill", "paint.png", paint.encode());
     let out = tempfile::tempdir().expect("a folder");
 
     write(game.registry(), game.load(), out.path()).expect("written");
 
     let hill_area = out.path().join(path("area", "hill"));
     assert_eq!(
-        std::fs::read(hill_area.join("terrain/height.png")).expect("the heights"),
+        std::fs::read(hill_area.join("height.png")).expect("the heights"),
         hill().encode()
     );
     assert_eq!(
-        std::fs::read(hill_area.join("terrain/paint.png")).expect("the paint"),
+        std::fs::read(hill_area.join("paint.png")).expect("the paint"),
         paint.encode()
     );
     let start = out.path().join(path("area", "start"));
     assert!(
-        !start.join("terrain/height.png").exists(),
+        !start.join("height.png").exists(),
         "a flat area keeps no height file"
     );
 }
@@ -321,7 +315,7 @@ fn a_grounds_cover_names_a_cover_stage_shader_fills_only_what_it_declares_and_gr
     ];
     for (rule, grown) in cases {
         let report = game()
-            .edit("ground", testkit::TURF, |row| row["cover"] = grown.clone())
+            .edit("terrain", testkit::TURF, |row| row["cover"] = grown.clone())
             .try_load()
             .err()
             .expect("refused");
@@ -333,7 +327,7 @@ fn a_grounds_cover_names_a_cover_stage_shader_fills_only_what_it_declares_and_gr
         json!({ "seed": 42, "pieces": [blade(0.1, 0.8), pebble(0.001)] }),
     ] {
         game()
-            .edit("ground", testkit::TURF, |row| {
+            .edit("terrain", testkit::TURF, |row| {
                 row["cover"] = cover(
                     "blades",
                     json!({ "tip": [120, 200, 90, 255] }),

@@ -9,9 +9,9 @@ use bevy::window::PrimaryWindow;
 use serde::{Deserialize, Serialize};
 
 use crate::core::geometry::{Degrees, Radians};
+use crate::core::ground::{HIGHEST, Heightfield, LOWEST};
 use crate::core::gui;
 use crate::core::math::{Pos, Rect};
-use crate::core::terrain::{HIGHEST, Heightfield, LOWEST};
 use crate::core::time::Seconds;
 use crate::core::units::Meters;
 

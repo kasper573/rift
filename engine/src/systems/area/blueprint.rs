@@ -16,9 +16,9 @@ use crate::core::content::{
     Nearby, PartSpec, Parts, RowCheck, Shape, serial, valid_key, with_content,
 };
 use crate::core::geometry::Degrees;
+use crate::core::ground::GroundSize;
 use crate::core::math::{Pos, Rect};
 use crate::core::script::{VarValue, Variable, VariableType, Vocabulary};
-use crate::core::terrain::TerrainSize;
 use crate::core::units::Meters;
 use crate::systems::script::{Place, RiftScripting, ScriptModule};
 
@@ -36,7 +36,7 @@ pub const MAX_VARIABLES: usize = 32;
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlueprintDef {
-    pub size: TerrainSize,
+    pub size: GroundSize,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub variables: BTreeMap<String, Variable<RiftScripting>>,
     #[serde(skip)]
@@ -49,7 +49,7 @@ impl ContentFile for BlueprintDef {
 
     fn fresh(_: &Nearby) -> Result<BlueprintDef, String> {
         Ok(BlueprintDef {
-            size: TerrainSize {
+            size: GroundSize {
                 width: 4,
                 height: 4,
             },

@@ -3,8 +3,8 @@ use ui::egui;
 use ui::egui::{Color32, ColorImage, TextureHandle, TextureOptions};
 
 use engine::core::content::Content;
+use engine::core::ground::SAMPLES_PER_METER;
 use engine::core::math::{Pos, Rect};
-use engine::core::terrain::SAMPLES_PER_METER;
 use engine::core::units::{GROUND_ORIGIN, Meters, TileSize};
 use engine::systems::area::{self, AreaDef, AreaId};
 
@@ -90,31 +90,20 @@ impl GroundArts {
 
 fn picture(content: &Content, area: &area::Area) -> ColorImage {
     let colors: Vec<[f32; 3]> = area
-        .terrain
-        .materials
+        .terrains
         .iter()
-        .map(|ground| {
-            let [r, g, b, _] = <[u8; 4]>::from(ground.get(content).color);
+        .map(|terrain| {
+            let [r, g, b, _] = <[u8; 4]>::from(terrain.get(content).color);
             [r as f32, g as f32, b as f32]
         })
         .collect();
-    let (columns, rows) = area.terrain.size.paint_pixels();
+    let (columns, rows) = area.paint.pixels();
     let step = 1.0 / SAMPLES_PER_METER as f32;
     let mut pixels = Vec::with_capacity((columns * rows) as usize);
     for row in 0..rows {
         for column in 0..columns {
-            let weights = area.paint.weights(column, row);
-            let total: f32 = weights.iter().map(|w| *w as f32).sum();
-            let mut color = [0.0f32; 3];
-            if total > 0.0 {
-                for (weight, material) in weights.iter().zip(&colors) {
-                    for (channel, value) in color.iter_mut().zip(material) {
-                        *channel += value * (*weight as f32) / total;
-                    }
-                }
-            } else {
-                color = colors[0];
-            }
+            let index = usize::from(area.paint.index(column, row)).min(colors.len() - 1);
+            let color = colors[index];
             let at = Pos::<Meters>::new(
                 GROUND_ORIGIN.x + (column as f32 + 0.5) * step,
                 GROUND_ORIGIN.y + (row as f32 + 0.5) * step,

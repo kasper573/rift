@@ -5,7 +5,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
-use crate::core::terrain::{Heightfield, SAMPLES_PER_METER};
+use crate::core::ground::{Heightfield, SAMPLES_PER_METER};
 use crate::core::units::GROUND_ORIGIN;
 
 /// The terrain's mesh, in the world's metres from the ground's corner, each sample coloured by

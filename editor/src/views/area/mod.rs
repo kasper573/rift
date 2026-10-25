@@ -188,8 +188,8 @@ pub struct AreaViewState {
     pub sculpt: SculptMode,
     /// The height a level stroke pulls the ground toward.
     pub level: Meters,
-    /// Which of the area's four materials the paint brush lays.
-    pub paint_slot: usize,
+    /// The terrain file the paint brush lays, once one is picked.
+    pub paint_terrain: Option<String>,
     pub stroke: Option<Stroke>,
     pub placeable: Option<Placeable>,
     /// How a prop placed next is turned.

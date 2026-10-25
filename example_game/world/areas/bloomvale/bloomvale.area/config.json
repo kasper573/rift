@@ -1,18 +1,16 @@
 {
   "name": "Bloomvale",
-  "terrain": {
-    "size": {
-      "width": 88,
-      "height": 64
-    },
-    "materials": [
-      "world/ground/grass.ground.json",
-      "world/ground/dirt.ground.json",
-      "world/ground/stone.ground.json",
-      "world/ground/water.ground.json"
-    ],
-    "max_slope": 38.0
+  "size": {
+    "width": 88,
+    "height": 64
   },
+  "max_slope": 38.0,
+  "terrains": [
+    "world/terrain/grass.terrain.json",
+    "world/terrain/dirt.terrain.json",
+    "world/terrain/stone.terrain.json",
+    "world/terrain/water.terrain.json"
+  ],
   "lighting": {
     "sun": {
       "elevation": 52.0,

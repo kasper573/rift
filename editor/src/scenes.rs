@@ -38,7 +38,7 @@ pub enum SceneStep {
         #[serde(default)]
         blueprint: Option<String>,
         #[serde(default)]
-        material: Option<usize>,
+        terrain: Option<String>,
     },
     Overlay(area_view::AreaOverlay),
     Resize(String),
@@ -224,13 +224,13 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
             tool,
             prop,
             blueprint,
-            material,
+            terrain,
         } => {
             if let Some(bundle) = last_opened_bundle(editor) {
                 let view = editor.views.area.ensure_view(&bundle);
                 view.set_tool(*tool);
-                if let Some(slot) = material {
-                    view.paint_slot = *slot;
+                if let Some(terrain) = terrain {
+                    view.paint_terrain = Some(terrain.clone());
                 }
                 view.placeable = match (prop, blueprint) {
                     (Some(prop), _) => Some(area_view::Placeable::Prop(prop.clone())),
@@ -260,8 +260,7 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
                 editor
                     .dialogs
                     .push(ModalDialog::Resize(ResizeDialog::for_bundle(
-                        key,
-                        area.terrain.size,
+                        key, area.size,
                     )));
             }
         }

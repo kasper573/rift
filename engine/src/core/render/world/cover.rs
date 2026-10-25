@@ -10,8 +10,8 @@ use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
+use crate::core::ground::{Heightfield, SAMPLES_PER_METER};
 use crate::core::math::{Pos, Rng};
-use crate::core::terrain::{Heightfield, SAMPLES_PER_METER};
 use crate::core::units::{GROUND_ORIGIN, Meters};
 
 /// Cells of paint along a chunk's side; a chunk is one mesh, culled as one.

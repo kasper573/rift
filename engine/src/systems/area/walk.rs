@@ -1,11 +1,10 @@
-use super::ground::{GroundDef, Walk};
+use super::Ground;
 use super::prop::PropPlacement;
-use super::terrain::Terrain;
+use super::terrain::{TerrainDef, Walk};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::Content;
 use crate::core::geometry::corners;
 use crate::core::math::{Pos, Rect};
-use crate::core::terrain::{Heightfield, Paint};
 use crate::core::units::{Cell, CellPos, GridDims, GridSize, Meters};
 use crate::systems::movement::{AGENT_RADIUS, NavMesh};
 
@@ -18,32 +17,31 @@ pub struct WalkMeshes {
     pub footsteps: Vec<Option<SfxId>>,
 }
 
-/// The ground blocks where it is painted mostly with a material that blocks, where it is steeper
-/// than the terrain allows, and under every prop's footprint; a safe zone keeps the wild out of it.
-/// The air knows only the bounds and, for the wild, the safe zones.
-pub fn meshes(
+/// The ground blocks where it is painted mostly with a terrain that blocks, where it is steeper
+/// than `max_slope`, and under every prop's footprint; a safe zone keeps the wild out of it. The
+/// air knows only the bounds and, for the wild, the safe zones.
+pub(super) fn meshes(
     content: &Content,
-    terrain: &Terrain,
-    heights: &Heightfield,
-    paint: &Paint,
+    ground: &Ground,
     props: &[PropPlacement],
     safe_zones: &[Rect<Meters>],
 ) -> WalkMeshes {
-    let size = terrain.size.grid();
-    let bounds = terrain.size.bounds();
-    let materials: Vec<&GroundDef> = terrain
-        .materials
+    let size = ground.size.grid();
+    let bounds = ground.size.bounds();
+    let (heights, paint, max_slope) = (&ground.heights, &ground.paint, ground.max_slope);
+    let terrains: Vec<&TerrainDef> = ground
+        .terrains
         .iter()
-        .map(|ground| ground.get(content))
+        .map(|terrain| terrain.get(content))
         .collect();
+    let terrain_of = |index: u8| terrains[usize::from(index).min(terrains.len() - 1)];
     let cells: Vec<CellPos> = size.cells().collect();
-    let dominant: Vec<usize> = cells.iter().map(|cell| paint.dominant(*cell)).collect();
+    let dominant: Vec<u8> = cells.iter().map(|cell| paint.dominant(*cell)).collect();
     let blocked: Vec<bool> = cells
         .iter()
         .zip(&dominant)
-        .map(|(cell, material)| {
-            materials[*material].walk != Walk::Walkable
-                || heights.steepest(*cell) > terrain.max_slope
+        .map(|(cell, index)| {
+            terrain_of(*index).walk != Walk::Walkable || heights.steepest(*cell) > max_slope
         })
         .collect();
     let footprints = props.iter().filter_map(|placed| {
@@ -64,7 +62,7 @@ pub fn meshes(
         .collect();
     let footsteps = dominant
         .iter()
-        .map(|material| Some(materials[*material].surface.get(content).footstep))
+        .map(|index| Some(terrain_of(*index).surface.get(content).footstep))
         .collect();
     WalkMeshes {
         walk: NavMesh::build(bounds, ground.iter().cloned(), AGENT_RADIUS),

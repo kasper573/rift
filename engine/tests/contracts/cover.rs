@@ -1,13 +1,13 @@
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
+use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::render::world::cover::{
     BladeShape, Mark, Patch, Piece, Spread, blades, sheet, strew_places, strewn,
 };
-use engine::core::terrain::{Heightfield, SAMPLES_PER_METER, TerrainSize};
 use engine::core::units::Meters;
 
-const SIZE: TerrainSize = TerrainSize {
+const SIZE: GroundSize = GroundSize {
     width: 16,
     height: 16,
 };

@@ -4,8 +4,8 @@ use ui::words;
 use engine::core::content::locate::escape;
 use engine::core::content::{Content, ContentFile, FolderReader, name_of, parent_of, rescoped};
 use engine::core::geometry::Degrees;
+use engine::core::ground::GroundSize;
 use engine::core::math::{Pos, Rect};
-use engine::core::terrain::TerrainSize;
 use engine::core::units::Meters;
 use engine::systems::area::AreaModule;
 use engine::systems::area::blueprint::{BlueprintDef, Placement};
@@ -80,7 +80,7 @@ pub fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSnapshot) 
         shift_tree(node, -origin.x, -origin.y);
     }
     let made = BlueprintDef {
-        size: TerrainSize {
+        size: GroundSize {
             width: (bounds.max().x - origin.x + 0.5).ceil().max(1.0) as u32,
             height: (bounds.max().y - origin.y + 0.5).ceil().max(1.0) as u32,
         },

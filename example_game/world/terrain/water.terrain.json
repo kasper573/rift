@@ -1,0 +1,17 @@
+{
+  "name": "Water",
+  "color": [
+    58,
+    118,
+    160,
+    255
+  ],
+  "surface": "world/surface/rock.surface.json",
+  "walk": "blocks",
+  "cover": {
+    "shader": "world/terrain/ripples.vfx_shader",
+    "sheet": {
+      "level": 0.0
+    }
+  }
+}

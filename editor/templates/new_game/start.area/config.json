@@ -1,18 +1,13 @@
 {
   "name": "start",
-  "terrain": {
-    "size": {
-      "width": 16,
-      "height": 12
-    },
-    "materials": [
-      "grass.ground.json",
-      "grass.ground.json",
-      "grass.ground.json",
-      "grass.ground.json"
-    ],
-    "max_slope": 38.0
+  "size": {
+    "width": 16,
+    "height": 12
   },
+  "max_slope": 38.0,
+  "terrains": [
+    "grass.terrain.json"
+  ],
   "lighting": {
     "sun": {
       "elevation": 52.0,

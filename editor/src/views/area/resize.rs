@@ -1,5 +1,5 @@
 use engine::core::content::{ContentFile, table_of};
-use engine::core::terrain::{self, TerrainSize};
+use engine::core::ground::{self, GroundSize};
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use ui::controls;
@@ -24,7 +24,7 @@ pub struct ResizeDialog {
 }
 
 impl ResizeDialog {
-    pub fn for_bundle(bundle: &str, size: TerrainSize) -> ResizeDialog {
+    pub fn for_bundle(bundle: &str, size: GroundSize) -> ResizeDialog {
         ResizeDialog {
             bundle: bundle.to_owned(),
             width: size.width,
@@ -42,7 +42,7 @@ pub fn resize_dialog(
     let mut outcome = None;
     let old = nodes::bundle_of(editor, &dialog.bundle).map(|bundle| bundle.size());
     let smallest = match table_of(&dialog.bundle) {
-        Some(AreaDef::TABLE) => terrain::MIN_SIDE,
+        Some(AreaDef::TABLE) => ground::MIN_SIDE,
         _ => 1,
     };
     dialog::card(ctx, "resize", 420.0, |ui| {
@@ -68,7 +68,7 @@ pub fn resize_dialog(
                 if response.changed() {
                     ui.ctx().data_mut(|d| d.insert_temp(id, draft.clone()));
                     if let Ok(parsed) = draft.trim().parse::<u32>() {
-                        *value = parsed.clamp(smallest, terrain::MAX_SIDE);
+                        *value = parsed.clamp(smallest, ground::MAX_SIDE);
                     }
                 }
                 if response.lost_focus() {
@@ -110,7 +110,7 @@ pub fn resize_dialog(
 }
 
 fn resize(editor: &mut Editor, dialog: &ResizeDialog) -> Result<(), String> {
-    let size = TerrainSize {
+    let size = GroundSize {
         width: dialog.width,
         height: dialog.height,
     };

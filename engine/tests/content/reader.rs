@@ -145,8 +145,8 @@ fn text(files: &BTreeMap<String, Vec<u8>>, file: &str) -> String {
 fn a_rename_writes_the_new_path_wherever_a_file_names_the_old_one() {
     let game = game();
     let area = path("area", "start");
-    let turf = path("ground", testkit::TURF);
-    let meadow = path("ground", "meadow");
+    let turf = path("terrain", testkit::TURF);
+    let meadow = path("terrain", "meadow");
 
     let written = reader(&game)
         .rewritten(&area, &renames(&[(&turf, &meadow)]))

@@ -1,18 +1,14 @@
 {
   "name": "The forest",
-  "terrain": {
-    "size": {
-      "width": 45,
-      "height": 31
-    },
-    "materials": [
-      "world/ground/grass.ground.json",
-      "world/ground/dirt.ground.json",
-      "world/ground/stone.ground.json",
-      "world/ground/water.ground.json"
-    ],
-    "max_slope": 38.0
+  "size": {
+    "width": 45,
+    "height": 31
   },
+  "max_slope": 38.0,
+  "terrains": [
+    "world/terrain/grass.terrain.json",
+    "world/terrain/stone.terrain.json"
+  ],
   "lighting": {
     "sun": {
       "elevation": 52.0,

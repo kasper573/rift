@@ -1,4 +1,4 @@
-//! What stands in a world for an area: its terrain as one coloured mesh, the covers its grounds
+//! What stands in a world for an area: its ground as one coloured mesh, the covers its terrains
 //! grow, its props as scenes on the ground, its point lights and its sun, every one a child of one
 //! root. The client stands the area the player is in; the editor stands the area it edits, on
 //! render layers of its own, and both light it alike for the hour.
@@ -8,13 +8,14 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::light::{AmbientLight, NotShadowCaster, Skybox};
 use bevy::prelude::*;
 
-use super::ground::{CoverPiece, PieceShape};
 use super::prop::PropId;
+use super::terrain::{CoverPiece, PieceShape};
 use super::{Area, Lighting, PointLightDef, PropPlacement};
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
 use crate::core::geometry::Radians;
 use crate::core::geometry::{PlacedShape, Shape};
+use crate::core::ground::{Heightfield, Paint};
 use crate::core::math::Pos;
 use crate::core::math::Rng;
 use crate::core::render::present::AreaGrade;
@@ -25,9 +26,8 @@ use crate::core::render::world::sky::{self, Daylight, SkyColors};
 use crate::core::render::world::terrain;
 use crate::core::render::world::toon::{ToonMaterial, toon_of};
 use crate::core::render::world_point;
-use crate::core::terrain::{Heightfield, MATERIALS, Paint};
 use crate::core::time::Seconds;
-use crate::core::units::Meters;
+use crate::core::units::{Meters, TileSize};
 use crate::core::vfx::ParamFill;
 use crate::core::vfx::cover::{self as cover_vfx, Climate, CoverMaterial};
 use crate::core::vfx::render::{self as vfx_render, ParamsUniform, Run, SiteFrame};
@@ -71,11 +71,11 @@ pub fn spawn(world: &mut World, content: &Content, area: &Area, layers: RenderLa
     Scenery { root, terrain, sun }
 }
 
-/// Whether every cover shader `area`'s grounds draw with is compiled, so the scenery can stand
+/// Whether every cover shader `area`'s terrains draw with is compiled, so the scenery can stand
 /// whole: the shaders follow the content into the world a frame behind it.
 pub fn shaders_ready(world: &World, content: &Content, area: &Area) -> bool {
-    area.terrain.materials.iter().all(|ground| {
-        ground
+    area.terrains.iter().all(|terrain| {
+        terrain
             .get(content)
             .cover
             .as_ref()
@@ -170,27 +170,26 @@ pub fn grade(lighting: &Lighting) -> AreaGrade {
     }
 }
 
-/// The terrain's mesh: `heights` coloured by `paint` with the area's materials.
+/// The ground's mesh: `heights` coloured by `paint` with the area's terrains, blended between the
+/// paint's pixels so a boundary softens over a half metre.
 pub fn terrain_mesh(content: &Content, area: &Area, heights: &Heightfield, paint: &Paint) -> Mesh {
-    let palette: [[f32; 4]; MATERIALS] = area.terrain.materials.map(|ground| {
-        let color = ground.get(content).color.color().to_linear();
-        [color.red, color.green, color.blue, 1.0]
-    });
+    let palette: Vec<[f32; 3]> = area
+        .terrains
+        .iter()
+        .map(|terrain| {
+            let color = terrain.get(content).color.color().to_linear();
+            [color.red, color.green, color.blue]
+        })
+        .collect();
+    let last = palette.len().saturating_sub(1);
     terrain::mesh(heights, |column, row| {
-        let weights = paint.weights(column, row);
-        let total: f32 = weights
-            .iter()
-            .map(|weight| f32::from(*weight))
-            .sum::<f32>()
-            .max(1.0);
-        let mut color = [0.0; 4];
-        for (material, weight) in weights.iter().enumerate() {
-            let share = f32::from(*weight) / total;
+        let mut color = [0.0, 0.0, 0.0, 1.0];
+        for share in paint.blend_at(Heightfield::sample_pos(column, row)) {
+            let swatch = palette[usize::from(share.terrain).min(last)];
             for channel in 0..3 {
-                color[channel] += palette[material][channel] * share;
+                color[channel] += swatch[channel] * share.weight;
             }
         }
-        color[3] = 1.0;
         color
     })
 }
@@ -211,13 +210,13 @@ fn spawn_terrain(world: &mut World, content: &Content, area: &Area, root: Entity
         .id()
 }
 
-/// Each ground material with a cover gets it laid over the whole area, a mesh per chunk and piece
+/// Each terrain with a cover gets it laid over the whole area, a mesh per chunk and piece
 /// so the camera culls what it does not see, scattered alike on every client from the cover's
-/// seed, drawn through the ground's cover shader with the area as its site. A prop piece's
+/// seed, drawn through the terrain's cover shader with the area as its site. A prop piece's
 /// chunks wait for the prop to load.
 fn spawn_covers(world: &mut World, content: &Content, area: &Area, root: Entity) {
-    let (columns, rows) = area.terrain.size.paint_pixels();
-    let bounds = area.terrain.size.bounds();
+    let (columns, rows) = area.paint.pixels();
+    let bounds = area.size.bounds();
     let site = PlacedShape {
         at: Pos::new(
             bounds.origin.x + bounds.size.width / 2.0,
@@ -234,8 +233,8 @@ fn spawn_covers(world: &mut World, content: &Content, area: &Area, root: Entity)
         let bounds = models.0.get(&prop.get(content).model.path())?.bounds;
         Some((bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z))
     };
-    for (slot, ground) in area.terrain.materials.iter().enumerate() {
-        let ground = ground.get(content);
+    for (slot, terrain) in area.terrains.iter().enumerate() {
+        let ground = terrain.get(content);
         let Some(cover_def) = &ground.cover else {
             continue;
         };
@@ -266,12 +265,10 @@ fn spawn_covers(world: &mut World, content: &Content, area: &Area, root: Entity)
         let blended = material(world, AlphaMode::Blend);
         let masked = material(world, AlphaMode::Mask(0.5));
         let share = |column: u32, row: u32| {
-            let weights = area.paint.weights(column, row);
-            let total: f32 = weights.iter().map(|weight| f32::from(*weight)).sum();
-            if total <= 0.0 {
-                0.0
+            if usize::from(area.paint.index(column, row)) == slot {
+                1.0
             } else {
-                f32::from(weights[slot]) / total
+                0.0
             }
         };
         let ground_color = ground.color.color().to_linear();

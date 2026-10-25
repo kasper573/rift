@@ -1,4 +1,5 @@
 use engine::core::content::{ErrorPlace, Fixture, LoadReport, SETTINGS_FILE};
+use engine::core::ground::{GroundSize, Paint};
 use engine::core::time::Seconds;
 use engine::core::vfx::Stage;
 use engine::systems::area::AreaDef;
@@ -23,7 +24,7 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
             hero["icon"] = json!("icons/heroo.png")
         })
         .area("cove", &Map::open(8, 8), json!([]))
-        .part("area", "cove", "terrain/paint.png", png(8, 8))
+        .part("area", "cove", "paint.png", png(8, 8))
         .row(
             "test_character",
             "lost",
@@ -77,7 +78,7 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
                 None
             ),
             (
-                "cove.area/terrain/paint.png",
+                "cove.area/paint.png",
                 ErrorPlace::WholeFile,
                 "wrong size",
                 None,
@@ -107,7 +108,7 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
     let text = report.to_string();
     for at in [
         "fixtures/game.config.json:8:13  /player",
-        "cove.area/terrain/paint.png  whole file",
+        "cove.area/paint.png  whole file",
         "nearest   \"icons/hero.png\"",
     ] {
         assert!(text.contains(at), "the report says {at}:\n{text}");
@@ -123,22 +124,27 @@ fn an_areas_terrain_parts_are_held_to_its_size_and_depth() {
     }
     let cases = [
         Case {
-            part: "terrain/height.png",
+            part: "height.png",
             png: png(17, 17),
             rule: "wrong format",
         },
         Case {
-            part: "terrain/height.png",
+            part: "height.png",
             png: grey16(16, 17),
             rule: "wrong size",
         },
         Case {
-            part: "terrain/paint.png",
+            part: "paint.png",
             png: png(16, 15),
             rule: "wrong size",
         },
         Case {
-            part: "terrain/paint.png",
+            part: "paint.png",
+            png: png(16, 16),
+            rule: "wrong format",
+        },
+        Case {
+            part: "paint.png",
             png: b"not a png".to_vec(),
             rule: "unreadable image",
         },
@@ -161,8 +167,17 @@ fn an_areas_terrain_parts_are_held_to_its_size_and_depth() {
 
     let content = game()
         .area("cove", &Map::open(8, 8), json!([]))
-        .part("area", "cove", "terrain/height.png", grey16(17, 17))
-        .part("area", "cove", "terrain/paint.png", png(16, 16))
+        .part("area", "cove", "height.png", grey16(17, 17))
+        .part(
+            "area",
+            "cove",
+            "paint.png",
+            Paint::plain(GroundSize {
+                width: 8,
+                height: 8,
+            })
+            .encode(),
+        )
         .load();
     assert!(content.by_path::<AreaDef>(&path("area", "cove")).is_some());
 }

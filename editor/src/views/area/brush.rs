@@ -4,10 +4,11 @@
 
 use std::sync::Arc;
 
+use engine::core::ground::{Heightfield, Paint, SAMPLES_PER_METER};
 use engine::core::math::{Offset, Pos};
-use engine::core::terrain::{Heightfield, MATERIALS, Paint, SAMPLES_PER_METER};
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::AreaDef;
+use engine::systems::area::TerrainId;
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, VariantArray};
 
@@ -25,8 +26,6 @@ const SCULPT_RATE: f32 = 6.0;
 const SMOOTH_RATE: f32 = 4.0;
 /// How much of the way toward the anchor a second of full-strength flattening goes.
 const FLATTEN_RATE: f32 = 4.0;
-/// Full weight a second of full-strength painting lays.
-const PAINT_RATE: f32 = 3.0;
 
 /// How wide and hard a brush is, and how its strength falls toward its edge: 0 keeps full
 /// strength to the rim, 1 falls off from the centre.
@@ -88,6 +87,8 @@ pub enum SculptMode {
 pub struct Stroke {
     pub heights: Arc<Heightfield>,
     pub paint: Arc<Paint>,
+    /// The area's terrains, with the one a paint stroke lays added when the area lacked it.
+    pub terrains: Vec<TerrainId>,
     pub revision: u64,
     pub anchor: Meters,
     pub what: StrokeKind,
@@ -96,19 +97,25 @@ pub struct Stroke {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StrokeKind {
     Sculpt(SculptMode),
-    Paint { slot: usize },
+    Paint { terrain: TerrainId },
 }
 
 impl Stroke {
-    /// A stroke starting on `area`'s terrain at `at`.
-    pub fn begin(area: &AreaDef, at: Pos<Meters>, what: StrokeKind) -> Stroke {
-        Stroke {
+    /// A stroke starting on `area`'s ground at `at`; none when the area already names every
+    /// terrain the paint can and `what` lays yet another.
+    pub fn begin(area: &AreaDef, at: Pos<Meters>, what: StrokeKind) -> Option<Stroke> {
+        let mut terrains = area.terrains.clone();
+        if let StrokeKind::Paint { terrain } = what {
+            terrain_index(&mut terrains, terrain)?;
+        }
+        Some(Stroke {
             anchor: area.heights.height_at(at),
             heights: Arc::new(area.heights.clone()),
             paint: Arc::new(area.paint.clone()),
+            terrains,
             revision: 0,
             what,
-        }
+        })
     }
 
     /// Applies the brush at `at` for `seconds` of stroke.
@@ -128,8 +135,9 @@ impl Stroke {
                     anchor,
                 );
             }
-            StrokeKind::Paint { slot } => {
-                paint(Arc::make_mut(&mut self.paint), brush, slot, at, seconds);
+            StrokeKind::Paint { terrain } => {
+                let index = terrain_index(&mut self.terrains, terrain).unwrap_or(0);
+                paint(Arc::make_mut(&mut self.paint), brush, index, at);
             }
         }
         self.revision += 1;
@@ -176,38 +184,40 @@ pub fn sculpt(
     }
 }
 
-/// Lays the material `slot` under the brush at `at` for `seconds` of stroke, taking its weight
-/// from the other materials in proportion.
-pub fn paint(paint: &mut Paint, brush: &Brush, slot: usize, at: Pos<Meters>, seconds: f32) {
+/// Lays the terrain `index` under the brush at `at`: wholly where the brush is strong, and
+/// dithered toward its rim as its falloff weakens, so a painted edge frays instead of cutting.
+pub fn paint(paint: &mut Paint, brush: &Brush, index: u8, at: Pos<Meters>) {
     let (columns, rows) = paint.pixels();
     let half = 0.5 / SAMPLES_PER_METER as f32;
     for (column, row, distance) in under((columns, rows), brush, at + Offset::new(-half, -half)) {
-        let weight = brush.weight(distance) * brush.strength;
-        if weight <= 0.0 {
-            continue;
+        let weight = brush.weight(distance);
+        if weight > 0.0 && weight >= dither(column, row) {
+            paint.set(column, row, index);
         }
-        let weights = paint.weights(column, row);
-        let laid = (PAINT_RATE * weight * seconds).min(1.0);
-        let mut shares = weights.map(|w| f32::from(w) / 255.0);
-        let total: f32 = shares.iter().sum();
-        if total > 0.0 {
-            for share in &mut shares {
-                *share /= total;
-            }
-        }
-        for (index, share) in shares.iter_mut().enumerate() {
-            *share = if index == slot {
-                *share + (1.0 - *share) * laid
-            } else {
-                *share * (1.0 - laid)
-            };
-        }
-        let mut bytes = [0u8; MATERIALS];
-        for (byte, share) in bytes.iter_mut().zip(shares) {
-            *byte = (share * 255.0).round().clamp(0.0, 255.0) as u8;
-        }
-        paint.set_weights(column, row, bytes);
     }
+}
+
+/// The index the paint names `terrain` by in `terrains`, listing it when it is new; none when the
+/// list is full.
+pub fn terrain_index(terrains: &mut Vec<TerrainId>, terrain: TerrainId) -> Option<u8> {
+    if let Some(index) = terrains.iter().position(|known| *known == terrain) {
+        return u8::try_from(index).ok();
+    }
+    if terrains.len() >= engine::core::ground::MAX_TERRAINS {
+        return None;
+    }
+    terrains.push(terrain);
+    u8::try_from(terrains.len() - 1).ok()
+}
+
+/// A threshold in 0..1 fixed to the pixel, so a stroke's rim frays the same way however often the
+/// brush passes over it.
+fn dither(column: u32, row: u32) -> f32 {
+    let mut hash = column.wrapping_mul(0x9E37_79B1) ^ row.wrapping_mul(0x85EB_CA77);
+    hash ^= hash >> 15;
+    hash = hash.wrapping_mul(0x2C1B_3C6D);
+    hash ^= hash >> 12;
+    (hash & 0xFFFF) as f32 / 65536.0
 }
 
 /// The samples of a grid two to the metre within the brush at `at`, each with its distance from
@@ -245,17 +255,18 @@ pub fn commit(editor: &mut Editor, bundle: &str, stroke: &Stroke) -> bool {
     let mut area = (*area).clone();
     let label = match stroke.what {
         StrokeKind::Sculpt(mode) => format!("{} the ground of {bundle}", title(mode.as_ref())),
-        StrokeKind::Paint { slot } => format!(
+        StrokeKind::Paint { terrain } => format!(
             "Paint {} on {bundle}",
             project
                 .reader()
-                .path_of(area.terrain.materials[slot.min(MATERIALS - 1)])
+                .path_of(terrain)
                 .map(crate::tabs::file_title)
-                .unwrap_or("ground")
+                .unwrap_or("terrain")
         ),
     };
     area.heights = (*stroke.heights).clone();
     area.paint = (*stroke.paint).clone();
+    area.terrains = stroke.terrains.clone();
     let mut edit = ContentEdit::new(label);
     if let Err(error) = edit.write_content(project, bundle, &area) {
         editor.toast(error);

@@ -33,7 +33,7 @@ pub struct VfxShaderDef {
 
 /// Where a shader runs: in the material of the thing it plays on, as a decal on the ground under
 /// it, on a quad facing the camera at it, over the whole screen, in the text of a plate, or as the
-/// cover a ground material grows or lies under.
+/// cover a terrain grows or lies under.
 #[derive(
     JsonSchema,
     Clone,

@@ -1,18 +1,14 @@
 {
   "name": "The lord's estate",
-  "terrain": {
-    "size": {
-      "width": 38,
-      "height": 28
-    },
-    "materials": [
-      "world/ground/floor.ground.json",
-      "world/ground/floor.ground.json",
-      "world/ground/floor.ground.json",
-      "world/ground/wall.ground.json"
-    ],
-    "max_slope": 38.0
+  "size": {
+    "width": 38,
+    "height": 28
   },
+  "max_slope": 38.0,
+  "terrains": [
+    "world/terrain/floor.terrain.json",
+    "world/terrain/wall.terrain.json"
+  ],
   "lighting": {
     "ambient": [
       70,

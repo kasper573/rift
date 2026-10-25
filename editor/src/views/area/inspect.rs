@@ -10,10 +10,11 @@ use ui::theme;
 
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
 use engine::core::geometry::Degrees;
+use engine::core::ground::GroundSize;
 use engine::core::math::{Pos, Rng};
 use engine::core::script::VariableType;
-use engine::core::terrain::TerrainSize;
 use engine::core::units::{Meters, TileSize};
+use engine::systems::area::TerrainDef;
 use engine::systems::area::prop::PropDef;
 use strum::VariantArray;
 
@@ -140,53 +141,87 @@ fn sculpt_card(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
 }
 
 fn paint_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &super::AreaSnapshot) {
-    let area = snapshot.area();
-    let materials: Vec<(String, ui::egui::Color32, bool)> = area
-        .terrain
-        .materials
-        .iter()
-        .map(|id| {
-            let ground = id.get(&snapshot.content);
-            let [r, g, b, _] = ground.color.0.to_be_bytes();
-            (
-                ground.name.clone(),
-                ui::egui::Color32::from_rgb(r, g, b),
-                ground.walk == engine::systems::area::ground::Walk::Blocks,
-            )
-        })
-        .collect();
-    let view = editor.views.area.view_mut(view_key);
+    let viewed = snapshot.bundle.clone();
+    let mut picked = editor
+        .views
+        .area
+        .view(view_key)
+        .paint_terrain
+        .clone()
+        .unwrap_or_default();
+    let mut actions = Vec::new();
+    let mut changed = false;
     tool_card(ui, "Paint", |ui| {
-        form::kv(ui, "material", |ui| {
-            for (slot, (name, color, blocks)) in materials.iter().enumerate() {
-                let ink = if color.r() as u32 + color.g() as u32 + color.b() as u32 > 380 {
-                    ui::egui::Color32::BLACK
-                } else {
-                    ui::egui::Color32::WHITE
-                };
-                let on = view.paint_slot == slot;
-                let response = chip::colored(ui, name.clone(), *color, ink);
-                if *blocks {
-                    ui::paint::hatched(ui.painter(), response.rect, ui::ink::wash(ink, 0.35), 8.0);
-                    response.clone().on_hover_text("blocks walking");
-                }
-                if on {
-                    ui.painter().rect_stroke(
-                        response.rect.expand(1.0),
-                        3.0,
-                        ui::egui::Stroke::new(1.5, theme::ACCENT),
-                        ui::egui::StrokeKind::Outside,
+        {
+            let Editor {
+                project,
+                form,
+                shapes,
+                ..
+            } = editor;
+            let project = project.as_ref().expect("project");
+            let root = Value::Null;
+            let mut cx = FormCx::new(project, &root, shapes, form, &mut actions)
+                .editing(table_of(&viewed).unwrap_or_default(), Some(&viewed));
+            form::kv(ui, "terrain", |ui| {
+                changed = picker::row(
+                    ui,
+                    &mut cx,
+                    TerrainDef::TABLE,
+                    &mut picked,
+                    "/paint/terrain",
+                );
+            });
+        }
+        match editor.read::<TerrainDef>(&picked).and_then(Result::ok) {
+            Some(terrain) => {
+                let [r, g, b, _] = terrain.color.0.to_be_bytes();
+                let color = ui::egui::Color32::from_rgb(r, g, b);
+                let blocks = terrain.walk == engine::systems::area::Walk::Blocks;
+                form::kv(ui, "", |ui| {
+                    let (rect, _) = ui.allocate_exact_size(
+                        ui::egui::Vec2::new(ui.available_width(), 14.0),
+                        ui::egui::Sense::hover(),
                     );
-                }
-                if response.clicked() {
-                    view.paint_slot = slot;
+                    ui.painter().rect_filled(rect, 3.0, color);
+                    if blocks {
+                        ui::paint::hatched(
+                            ui.painter(),
+                            rect,
+                            ui::ink::wash(theme::TEXT, 0.4),
+                            8.0,
+                        );
+                    }
+                });
+                if blocks {
+                    form::hint(ui, "Nobody walks where this terrain is painted.");
                 }
             }
+            None => form::hint(
+                ui,
+                "Pick a terrain file to paint with; any in the game will do.",
+            ),
+        }
+        let view = editor.views.area.view_mut(view_key);
+        form::kv(ui, "radius", |ui| {
+            let mut radius = view.brush.radius.0;
+            if controls::slider(ui, &mut radius, SMALLEST_RADIUS.0..=LARGEST_RADIUS.0).changed() {
+                view.brush.radius = Meters(radius);
+            }
+            controls::key_hint_text(ui, &EditorKey::BrushLarger.name(), "grows");
         });
-        brush_fields(ui, &mut view.brush);
+        form::kv(ui, "fray", |ui| {
+            controls::slider(ui, &mut view.brush.falloff, 0.0..=1.0)
+                .on_hover_text("how far in from the rim the edge dithers");
+        });
     });
+    for action in actions {
+        row_form::act(editor, action, AreaDef::TABLE, "");
+    }
+    if changed && !picked.is_empty() {
+        editor.views.area.view_mut(view_key).paint_terrain = Some(picked);
+    }
 }
-
 fn prop_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, prop: &str) {
     let def = editor.read::<PropDef>(prop).and_then(Result::ok);
     let view = editor.views.area.view_mut(view_key);
@@ -641,7 +676,7 @@ fn module_inspector(
     cx: &mut FormCx,
     view: Option<&mut AreaViewState>,
     bundle: &str,
-    size: TerrainSize,
+    size: GroundSize,
     draft: &mut SceneDraft,
     node: &str,
     out: &mut Followups,

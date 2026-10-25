@@ -5,7 +5,7 @@ use engine::core::content::{
     ContentFile, ContentProblem, FolderReader, Unreadable, name_of, numbered, table_of,
     with_content,
 };
-use engine::core::terrain::TerrainSize;
+use engine::core::ground::GroundSize;
 use engine::systems::area::blueprint::{BlueprintDef, Placement};
 use engine::systems::area::scene::{self, ModuleNode, SceneFolder, SceneNode};
 use engine::systems::area::{AreaDef, AreaModule};
@@ -47,9 +47,9 @@ impl SceneBundle {
     }
 
     /// The ground the scene stands on, in whole metres.
-    pub fn size(&self) -> TerrainSize {
+    pub fn size(&self) -> GroundSize {
         match self {
-            SceneBundle::Area(area) => area.terrain.size,
+            SceneBundle::Area(area) => area.size,
             SceneBundle::Blueprint(blueprint) => blueprint.size,
         }
     }

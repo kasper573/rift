@@ -8,14 +8,14 @@ use engine::core::content::{
     CONFIG_FILE, Content, ContentFile, ContentId, ContentRegistry, LoadReport, MemoryFolder,
     SETTINGS_FILE, Shape, content_path, name_of, table_of, version,
 };
-use engine::core::terrain::{MIN_SIDE, Paint, SAMPLES_PER_METER, TerrainSize};
+use engine::core::ground::{GroundSize, MIN_SIDE, Paint, SAMPLES_PER_METER};
 use engine::core::time::{Millis, Seconds};
 use engine::core::vfx::shader::{SHADER_SOURCE, Stage};
 use engine::systems::actor::Action;
 use engine::systems::actor::model::{MODEL_BUSTS, MODEL_GLB};
+use engine::systems::area;
 use engine::systems::area::prop::PROP_GLB;
 use engine::systems::area::scene::SCENE;
-use engine::systems::area::terrain;
 use engine::systems::item;
 use serde_json::{Value, json};
 use strum::VariantArray;
@@ -60,7 +60,7 @@ pub struct Map(pub Vec<String>);
 /// The prop every item a test declares is lying on the ground as.
 const DROP: &str = "drop";
 
-/// The ground materials and the footstep of every area a test declares.
+/// The terrains and the footstep of every area a test declares.
 pub const TURF: &str = "turf";
 pub const ROCK: &str = "rock";
 const STEP: &str = "step";
@@ -473,7 +473,7 @@ impl Game {
     /// smaller than the smallest terrain, lit by day, with `modules` in its scene.
     pub fn area(self, name: &str, map: &Map, modules: Value) -> Game {
         let (width, height) = map.size();
-        let size = TerrainSize {
+        let size = GroundSize {
             width: (width as u32).max(MIN_SIDE),
             height: (height as u32).max(MIN_SIDE),
         };
@@ -483,19 +483,14 @@ impl Game {
                 .and_then(|row| row.as_bytes().get(x))
                 .is_none_or(|cell| *cell == b'#')
         };
-        let game = self.grounds().row(
+        let game = self.terrains().row(
             "area",
             name,
             json!({
                 "name": name,
-                "terrain": {
-                    "size": { "width": size.width, "height": size.height },
-                    "materials": [
-                        path("ground", TURF), path("ground", TURF),
-                        path("ground", TURF), path("ground", ROCK),
-                    ],
-                    "max_slope": 38.0,
-                },
+                "size": { "width": size.width, "height": size.height },
+                "max_slope": 38.0,
+                "terrains": [path("terrain", TURF), path("terrain", ROCK)],
                 "lighting": {
                     "sun": { "elevation": 52.0, "azimuth": 215.0, "color": [255, 236, 190] },
                     "ambient": [98, 122, 160],
@@ -513,23 +508,14 @@ impl Game {
                 (column / SAMPLES_PER_METER) as usize,
                 (row / SAMPLES_PER_METER) as usize,
             );
-            if blocked(x, y) {
-                [0, 0, 0, 255]
-            } else {
-                [255, 0, 0, 0]
-            }
+            u8::from(blocked(x, y))
         });
-        game.part(
-            "area",
-            name,
-            &terrain::PAINT.named("", "png"),
-            paint.encode(),
-        )
+        game.part("area", name, &area::PAINT.named("", "png"), paint.encode())
     }
 
-    /// The two ground materials every declared area is painted with: turf to walk on and rock that
+    /// The two terrains every declared area is painted with: turf to walk on and rock that
     /// blocks, each sounding like a step, a tick of a clip unlike any other declared sound.
-    pub fn grounds(self) -> Game {
+    pub fn terrains(self) -> Game {
         self.sfx(STEP)
             .part(
                 "sfx",
@@ -543,7 +529,7 @@ impl Game {
                 json!({ "name": "Turf", "footstep": path("sfx", STEP) }),
             )
             .row(
-                "ground",
+                "terrain",
                 TURF,
                 json!({
                     "name": "Turf",
@@ -553,7 +539,7 @@ impl Game {
                 }),
             )
             .row(
-                "ground",
+                "terrain",
                 ROCK,
                 json!({
                     "name": "Rock",

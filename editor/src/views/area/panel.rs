@@ -9,10 +9,8 @@ use ui::words;
 
 use engine::core::content::{ContentFile, name_of};
 use engine::core::script::Variable;
-use engine::core::terrain::MATERIALS;
 use engine::field;
 use engine::systems::area::blueprint::{BlueprintDef, Placement};
-use engine::systems::area::ground::{GroundDef, GroundId};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{AreaModule, AreaModuleKind, Pictured};
 use engine::systems::script::RiftScripting;
@@ -27,7 +25,6 @@ use super::{AreaSnapshot, nodes, placement, resize, shapes};
 use crate::app::{Editor, ModalDialog, PickRowDialog, PickRowThen};
 use crate::forms::{self, FormCx};
 use crate::keymap::EditorKey;
-use crate::picker;
 use crate::project::files::content_of;
 use crate::shell::tree::{self, DropAt, TreeSource, TreeState};
 use crate::shell::widgets::{self, KindMark};
@@ -97,7 +94,6 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
     let mut menu = None;
     let mut renamed = None;
     let mut variables_changed = None;
-    let mut grounds_changed = None;
     let mut actions = Vec::new();
     panel::card(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
@@ -155,12 +151,22 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
             });
         });
         if let SceneBundle::Area(held) = &def {
-            grounds_changed = ground_pickers(editor, ui, &bundle, snapshot, held);
             form::kv_text(
                 ui,
-                "slope",
-                format!("walks up to {}°", held.terrain.max_slope.0),
+                "terrains",
+                held.terrains
+                    .iter()
+                    .map(|terrain| {
+                        snapshot
+                            .reader
+                            .path_of(*terrain)
+                            .map(name_of)
+                            .unwrap_or("?")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" · "),
             );
+            form::kv_text(ui, "slope", format!("walks up to {}°", held.max_slope.0));
         }
         if let SceneBundle::Blueprint(blueprint) = &def {
             variables_changed = variables(editor, ui, &bundle, blueprint, &mut actions);
@@ -175,12 +181,6 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
             let mut area = (**area).clone();
             area.name = name;
             let label = format!("Rename area {}", file_title(&bundle));
-            editor.write_content(&label, &bundle, &area);
-        }
-        (SceneBundle::Area(area), _) if let Some(materials) = grounds_changed => {
-            let mut area = (**area).clone();
-            area.terrain.materials = materials;
-            let label = format!("Change the ground of {}", file_title(&bundle));
             editor.write_content(&label, &bundle, &area);
         }
         (SceneBundle::Blueprint(blueprint), _) if let Some(variables) = variables_changed => {
@@ -1067,65 +1067,4 @@ fn typeahead(
         editor.selection = scene_tree::selection_of(snapshot, &[found]);
     }
     ui.ctx().request_repaint();
-}
-
-/// The area's four ground materials, each picked among the game's ground files; the four as
-/// changed when one was.
-fn ground_pickers(
-    editor: &mut Editor,
-    ui: &mut Ui,
-    bundle: &str,
-    snapshot: &AreaSnapshot,
-    held: &engine::systems::area::AreaDef,
-) -> Option<[GroundId; MATERIALS]> {
-    let mut paths: Vec<String> = held
-        .terrain
-        .materials
-        .iter()
-        .map(|ground| {
-            snapshot
-                .reader
-                .path_of(*ground)
-                .unwrap_or_default()
-                .to_owned()
-        })
-        .collect();
-    let mut changed = false;
-    let mut actions = Vec::new();
-    {
-        let Editor {
-            project,
-            form,
-            shapes,
-            ..
-        } = editor;
-        let project = project.as_ref().expect("a project");
-        let root = serde_json::Value::Null;
-        let mut cx = FormCx::new(project, &root, shapes, form, &mut actions)
-            .editing(engine::systems::area::AreaDef::TABLE, Some(bundle));
-        form::kv(ui, "ground", |ui| {
-            ui.vertical(|ui| {
-                for (slot, path) in paths.iter_mut().enumerate() {
-                    let pointer = format!("/terrain/materials/{slot}");
-                    changed |= picker::row(ui, &mut cx, GroundDef::TABLE, path, &pointer);
-                }
-            });
-        });
-    }
-    for action in actions {
-        row_form::act(
-            editor,
-            action,
-            engine::systems::area::AreaDef::TABLE,
-            bundle,
-        );
-    }
-    if !changed {
-        return None;
-    }
-    let ids: Vec<GroundId> = paths
-        .iter()
-        .filter_map(|path| snapshot.reader.id_of::<GroundDef>(path))
-        .collect();
-    ids.try_into().ok()
 }

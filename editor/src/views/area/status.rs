@@ -64,15 +64,9 @@ pub(super) fn status_bar(
             } else {
                 "blocked".to_owned()
             };
-            let (column, row) = area.paint.pixel_at(tile);
-            let weights = area.paint.weights(column, row);
-            let material = weights
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, weight)| **weight)
-                .map_or(0, |(index, _)| index);
-            let ground = area.terrain.materials[material].get(&frame.content);
-            what.push_str(&format!(" · {}", ground.name));
+            let index = usize::from(area.paint.at(tile)).min(area.terrains.len() - 1);
+            let terrain = area.terrains[index].get(&frame.content);
+            what.push_str(&format!(" · {}", terrain.name));
             let height = area.heights.height_at(tile).0;
             if height.abs() >= 0.05 {
                 what.push_str(&format!(" · {height:+.1} m"));

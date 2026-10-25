@@ -1,5 +1,4 @@
 pub mod blueprint;
-pub mod ground;
 pub mod lighting;
 pub mod object;
 pub mod prop;
@@ -14,12 +13,11 @@ pub mod weather;
 pub mod world_map;
 
 pub use blueprint::{BlueprintDef, Flattened, PlacedBlueprint, Placement};
-pub use ground::{GroundDef, GroundId, SurfaceDef, SurfaceId, Walk};
 pub use lighting::{Lighting, PointLightDef};
 pub use object::{AreaObject, ObjectDef, ObjectShape};
 pub use prop::{Footprint, PropDef, PropId, PropPlacement, Scatter};
 pub use scene::SceneNode;
-pub use terrain::Terrain;
+pub use terrain::{SurfaceDef, SurfaceId, TerrainDef, TerrainId, Walk};
 pub use weather::{DayCycle, Weather, Wind};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,8 +43,8 @@ use crate::core::content::{
     Loading, NamedContent, Nearby, PartSpec, Parts, RowCheck, Shape, serial,
 };
 use crate::core::geometry::Degrees;
+use crate::core::ground::{GroundSize, Heightfield, MAX_TERRAINS, MIN_SIDE, Paint};
 use crate::core::math::{Offset, Pos, Rect, Size};
-use crate::core::terrain::{Heightfield, MATERIALS, Paint, TerrainSize};
 use crate::core::units::{GridDims, Meters, TileSize};
 use crate::systems::actor::Pose;
 use crate::systems::movement;
@@ -71,8 +69,8 @@ pub fn register(app: &mut App) {
 pub fn content(registry: &mut ContentRegistry) {
     registry
         .bundle::<PropDef>()
-        .file::<GroundDef>()
-        .named::<GroundDef>()
+        .file::<TerrainDef>()
+        .named::<TerrainDef>()
         .file::<SurfaceDef>()
         .named::<SurfaceDef>()
         .bundle::<BlueprintDef>()
@@ -82,7 +80,7 @@ pub fn content(registry: &mut ContentRegistry) {
         .json_part(scene::json_part(AreaDef::TABLE))
         .json_part(scene::json_part(BlueprintDef::TABLE))
         .hook(LoadStep::Files, prop::check_fitted)
-        .hook(LoadStep::Across, ground::check_all)
+        .hook(LoadStep::Across, terrain::check_all)
         .hook(LoadStep::Expand, flatten_all)
         .hook(LoadStep::Assemble, build_all)
         .hook(LoadStep::Across, world_map::check_all);
@@ -105,13 +103,30 @@ pub fn same_area(world: &World, a: Entity, b: Entity) -> bool {
     area(a).is_some() && area(a) == area(b)
 }
 
-/// A place in the world: a terrain, the light it stands in, and a scene of modules on it. Its scene,
-/// heights and paint are parts of its bundle.
+pub const MIN_SLOPE: Degrees = Degrees(10.0);
+pub const MAX_SLOPE: Degrees = Degrees(60.0);
+
+pub const HEIGHT: PartSpec = PartSpec::File {
+    name: "height",
+    exts: &["png"],
+};
+pub const PAINT: PartSpec = PartSpec::File {
+    name: "paint",
+    exts: &["png"],
+};
+
+/// A place in the world: a stretch of ground painted with terrains, the light it stands in, and a
+/// scene of modules on it. Its scene, heights and paint are parts of its bundle.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AreaDef {
     pub name: String,
-    pub terrain: Terrain,
+    pub size: GroundSize,
+    /// How steep a slope still walks.
+    pub max_slope: Degrees,
+    /// The terrains the paint names by their index here: the first is the ground where nothing is
+    /// painted. The editor adds a terrain as it is first painted.
+    pub terrains: Vec<TerrainId>,
     pub lighting: Lighting,
     #[serde(default, skip_serializing_if = "Weather::is_still")]
     pub weather: Weather,
@@ -128,18 +143,15 @@ impl ContentFile for AreaDef {
     const SHAPE: Shape = Shape::Bundle;
 
     fn fresh(near: &Nearby) -> Result<AreaDef, String> {
-        let size = TerrainSize {
+        let size = GroundSize {
             width: 16,
             height: 12,
         };
-        let ground: GroundId = near.file()?;
         Ok(AreaDef {
             name: near.name(),
-            terrain: Terrain {
-                size,
-                materials: [ground; MATERIALS],
-                max_slope: Degrees(38.0),
-            },
+            size,
+            max_slope: Degrees(38.0),
+            terrains: vec![near.file()?],
             lighting: Lighting::day(),
             weather: Weather::breezy(),
             scene: Vec::new(),
@@ -150,7 +162,30 @@ impl ContentFile for AreaDef {
 
     fn check(&self, cx: &mut RowCheck) {
         cx.text("/name", &self.name, 1, 60);
-        self.terrain.check("/terrain", cx);
+        self.size.check("/size", MIN_SIDE, cx);
+        cx.range(
+            "/max_slope",
+            self.max_slope.0,
+            MIN_SLOPE.0,
+            MAX_SLOPE.0,
+            "degrees of slope",
+        );
+        cx.range(
+            "/terrains",
+            self.terrains.len(),
+            1,
+            MAX_TERRAINS,
+            "terrains",
+        );
+        let highest = usize::from(self.paint.highest());
+        if highest >= self.terrains.len() {
+            cx.error(
+                "/terrains",
+                "paint names a missing terrain",
+                format!("the paint names terrain {highest}"),
+                format!("terrains 0 to {} listed", self.terrains.len() - 1),
+            );
+        }
         self.lighting.check("/lighting", cx);
         self.weather.check("/weather", cx);
     }
@@ -163,21 +198,21 @@ impl NamedContent for AreaDef {
 }
 
 impl Bundle for AreaDef {
-    const PARTS: &'static [PartSpec] = &[SCENE, terrain::HEIGHT, terrain::PAINT];
-    const WRITTEN: &'static [PartSpec] = &[SCENE, terrain::HEIGHT, terrain::PAINT];
+    const PARTS: &'static [PartSpec] = &[SCENE, HEIGHT, PAINT];
+    const WRITTEN: &'static [PartSpec] = &[SCENE, HEIGHT, PAINT];
 
     fn read_parts(&mut self, parts: &mut Parts) {
         scene::read(&mut self.scene, &BTreeMap::new(), parts);
-        let size = self.terrain.size;
+        let size = self.size;
         self.heights = read_part(
             parts,
-            terrain::HEIGHT,
+            HEIGHT,
             || Heightfield::flat(size),
             |bytes| Heightfield::decode(size, bytes),
         );
         self.paint = read_part(
             parts,
-            terrain::PAINT,
+            PAINT,
             || Paint::plain(size),
             |bytes| Paint::decode(size, bytes),
         );
@@ -187,27 +222,39 @@ impl Bundle for AreaDef {
         scene::write(&self.scene, bundle, writer)?;
         let part = |spec: PartSpec| format!("{bundle}/{}", spec.named("", "png"));
         if !self.heights.is_flat() {
-            writer.file(&part(terrain::HEIGHT), &self.heights.encode())?;
+            writer.file(&part(HEIGHT), &self.heights.encode())?;
         }
         if !self.paint.is_plain() {
-            writer.file(&part(terrain::PAINT), &self.paint.encode())?;
+            writer.file(&part(PAINT), &self.paint.encode())?;
         }
         Ok(())
     }
 }
 
 impl AreaDef {
-    /// The area over a terrain of `size`, its heights and paint kept from the top-left corner.
-    pub fn resized(&self, size: TerrainSize) -> AreaDef {
+    /// The area over ground of `size`, its heights and paint kept from the top-left corner.
+    pub fn resized(&self, size: GroundSize) -> AreaDef {
         let mut area = self.clone();
-        area.terrain.size = size;
+        area.size = size;
         area.heights = self.heights.resized(size);
         area.paint = self.paint.resized(size);
         area
     }
 
     pub fn size(&self) -> Size<Meters> {
-        self.terrain.size.meters()
+        self.size.meters()
+    }
+
+    /// The index the paint names `terrain` by, listing it when it is new.
+    pub fn terrain_index(&mut self, terrain: TerrainId) -> Option<u8> {
+        if let Some(index) = self.terrains.iter().position(|known| *known == terrain) {
+            return u8::try_from(index).ok();
+        }
+        if self.terrains.len() >= MAX_TERRAINS {
+            return None;
+        }
+        self.terrains.push(terrain);
+        u8::try_from(self.terrains.len() - 1).ok()
     }
 }
 
@@ -546,7 +593,8 @@ pub fn walkable(world: &World, at: Pos<Meters>) -> bool {
 /// it, and what it sounds like.
 pub struct Area {
     pub size: Size<Meters>,
-    pub terrain: Terrain,
+    pub max_slope: Degrees,
+    pub terrains: Vec<TerrainId>,
     pub heights: Heightfield,
     pub paint: Paint,
     pub lighting: Lighting,
@@ -654,7 +702,9 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
         Pictured::Area(id) => {
             let def = content.table::<AreaDef>().get(id)?;
             let ground = Ground {
-                terrain: def.terrain.clone(),
+                size: def.size,
+                max_slope: def.max_slope,
+                terrains: def.terrains.clone(),
                 heights: def.heights.clone(),
                 paint: def.paint.clone(),
                 lighting: def.lighting.clone(),
@@ -667,13 +717,11 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
         }
         Pictured::Blueprint(id) => {
             let def = content.table::<BlueprintDef>().get(id)?;
-            let first = content.ids::<GroundDef>().next()?;
+            let first = content.ids::<TerrainDef>().next()?;
             let ground = Ground {
-                terrain: Terrain {
-                    size: def.size,
-                    materials: [first; MATERIALS],
-                    max_slope: Degrees(terrain::MAX_SLOPE.0),
-                },
+                size: def.size,
+                max_slope: MAX_SLOPE,
+                terrains: vec![first],
                 heights: Heightfield::flat(def.size),
                 paint: Paint::plain(def.size),
                 lighting: Lighting::day(),
@@ -755,14 +803,16 @@ fn build_all(loading: &mut Loading) {
             }
         }
         let ground = Ground {
-            terrain: def.terrain.clone(),
+            size: def.size,
+            max_slope: def.max_slope,
+            terrains: def.terrains.clone(),
             heights: def.heights.clone(),
             paint: def.paint.clone(),
             lighting: def.lighting.clone(),
             weather: def.weather,
         };
         let mut check = RowCheck::default();
-        check_bounds(&content, &ground.terrain, modules, &mut check);
+        check_bounds(&content, ground.size, modules, &mut check);
         let (area, budget) = build_area(&content, &ground, modules);
         check.extend(budget);
         check_placed(&content, id, &area, modules, &mut check);
@@ -776,8 +826,10 @@ fn build_all(loading: &mut Loading) {
 }
 
 /// The ground an area is built on: what its config and parts say before any module stands on it.
-struct Ground {
-    terrain: Terrain,
+pub(super) struct Ground {
+    size: GroundSize,
+    max_slope: Degrees,
+    terrains: Vec<TerrainId>,
     heights: Heightfield,
     paint: Paint,
     lighting: Lighting,
@@ -825,17 +877,11 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
             );
         }
     }
-    let walk = walk::meshes(
-        content,
-        &ground.terrain,
-        &ground.heights,
-        &ground.paint,
-        &props,
-        &safe_zones,
-    );
+    let walk = walk::meshes(content, ground, &props, &safe_zones);
     let area = Area {
-        size: ground.terrain.size.meters(),
-        terrain: ground.terrain.clone(),
+        size: ground.size.meters(),
+        max_slope: ground.max_slope,
+        terrains: ground.terrains.clone(),
         heights: ground.heights.clone(),
         paint: ground.paint.clone(),
         lighting: ground.lighting.clone(),
@@ -869,8 +915,8 @@ fn module_pointer(placed: &Flattened, field: &str) -> String {
     }
 }
 
-fn check_bounds(content: &Content, terrain: &Terrain, modules: &[Flattened], check: &mut RowCheck) {
-    let bounds = terrain.size.bounds();
+fn check_bounds(content: &Content, size: GroundSize, modules: &[Flattened], check: &mut RowCheck) {
+    let bounds = size.bounds();
     let outside = |at: Pos<Meters>| !bounds.contains(at);
     let rect_outside =
         |rect: Rect<Meters>| outside(rect.min()) || outside(rect.max() - Offset::new(0.001, 0.001));
@@ -883,8 +929,8 @@ fn check_bounds(content: &Content, terrain: &Terrain, modules: &[Flattened], che
                 "outside the terrain",
                 format!("{what} lands outside the terrain at {}, {}", at.x, at.y),
                 format!(
-                    "everything inside the {} × {} m terrain",
-                    terrain.size.width, terrain.size.height
+                    "everything inside the {} × {} m ground",
+                    size.width, size.height
                 ),
             );
         };

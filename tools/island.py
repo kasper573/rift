@@ -20,6 +20,8 @@ TREES = {"oak": 5, "oak-tall": 2, "pine": 3}
 ROCKS = {"rock-small": 2, "rock-small-b": 2, "rock-large": 1, "rock-tall": 1, "rock-flat": 1, "rock-wide": 1}
 BUSHES = {"bush": 2, "bush-small": 2, "bush-large": 1}
 SEED = 20261025
+TERRAINS = ["world/terrain/grass.terrain.json", "world/terrain/meadow.terrain.json", "world/terrain/sand.terrain.json", "world/terrain/water.terrain.json"]
+GRASS, MEADOW, SAND, WATER = range(4)
 
 
 def coast(columns, rows):
@@ -71,14 +73,12 @@ def shore_distance(land):
 
 
 def paint(land, x, y):
-    weights = np.zeros(land.shape + (4,), dtype=np.float32)
-    weights[..., 3] = ~land
+    """The terrain index of every half metre: grass, meadow patches on the land, water beyond it."""
     meadow = np.zeros(land.shape, dtype=np.float32)
     for mx, my, radius in MEADOWS:
-        meadow = np.maximum(meadow, 0.5 * np.clip(1.5 - np.hypot(x - mx, y - my) / radius, 0.0, 1.0))
-    weights[..., 2] = land * meadow
-    weights[..., 0] = land * (1.0 - meadow)
-    return np.round(weights * 255.0).astype(np.uint8)
+        meadow = np.maximum(meadow, np.clip(1.5 - np.hypot(x - mx, y - my) / radius, 0.0, 1.0))
+    index = np.where(meadow > 0.75, MEADOW, GRASS)
+    return np.where(land, index, WATER).astype(np.uint8)
 
 
 def in_town(px, py):
@@ -130,11 +130,15 @@ def main():
     game = area[: area.index("/world/")] if "/world/" in area else os.path.dirname(area)
     with open(os.path.join(game, "fixtures", "game.config.json")) as file:
         settings = json.load(file)
-    size = config["terrain"]["size"]
+    size = config["size"]
+    config["terrains"] = TERRAINS
+    with open(os.path.join(area, "config.json"), "w") as file:
+        json.dump(config, file, indent=2)
+        file.write("\n")
     columns, rows = size["width"] * SAMPLES_PER_METER, size["height"] * SAMPLES_PER_METER
     land, x, y = coast(columns, rows)
     land = guaranteed(land, x, y, placed_points(scene, settings))
-    Image.fromarray(paint(land, x, y), "RGBA").save(os.path.join(area, "terrain", "paint.png"))
+    Image.fromarray(paint(land, x, y), "L").save(os.path.join(area, "paint.png"))
     scene = [node for node in scene if not (node["type"] == "folder" and node.get("label") == "Landscape")]
     scene.append({"type": "folder", "label": "Landscape", "children": landscape(land, x, y, np.random.default_rng(SEED))})
     with open(scene_file, "w") as file:

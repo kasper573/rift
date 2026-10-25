@@ -1,12 +1,12 @@
 use bevy::prelude::*;
 use engine::core::geometry::Degrees;
+use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::render::camera::ground_hit;
 use engine::core::render::{CameraRig, capsule_hit, world_point};
-use engine::core::terrain::{Heightfield, SAMPLES_PER_METER, TerrainSize};
 use engine::core::units::{MeterPos, Meters};
 
-const SIZE: TerrainSize = TerrainSize {
+const SIZE: GroundSize = GroundSize {
     width: 32,
     height: 32,
 };

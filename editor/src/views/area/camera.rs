@@ -8,7 +8,7 @@ use bevy::prelude::{Ray3d, Transform, Vec2, Vec3};
 use engine::core::geometry::{Degrees, Radians};
 use engine::core::math::{Pos, Rect};
 use engine::core::render::camera::{FOV, PITCH, View, ground_hit, world_point};
-use engine::core::units::{MeterPos, Meters};
+use engine::core::units::{MeterPos, Meters, TileSize};
 use engine::systems::area::Area;
 use serde::{Deserialize, Serialize};
 use ui::egui::{Pos2, Rect as ERect};
@@ -171,7 +171,7 @@ impl AreaCanvas {
     pub fn to_tile(&self, screen: Pos2) -> Option<Pos<Meters>> {
         ground_hit(
             &self.area.heights,
-            self.area.terrain.size.bounds().inflate(0.5, 0.5),
+            self.area.size.bounds().inflate(0.5, 0.5),
             self.ray(screen),
         )
     }
@@ -183,7 +183,7 @@ impl AreaCanvas {
 
     /// The ground the canvas may show anything of.
     pub fn visible(&self) -> Rect<Meters> {
-        self.area.terrain.size.bounds().inflate(4.0, 4.0)
+        self.area.size.bounds().inflate(4.0, 4.0)
     }
 
     /// The box on the screen around a rectangle of ground.

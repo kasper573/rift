@@ -10,8 +10,8 @@ use engine::core::vfx::shader::VfxShaderDef;
 use engine::systems::actor::ModelDef;
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
-use engine::systems::area::ground::{GroundDef, SurfaceDef};
 use engine::systems::area::prop::PropDef;
+use engine::systems::area::terrain::{SurfaceDef, TerrainDef};
 use engine::systems::area::world_map::WorldMapDef;
 use engine::systems::attention::AttentionDef;
 use engine::systems::class::ClassDef;
@@ -152,7 +152,7 @@ impl KindFamily {
             AreaDef::TABLE
             | BlueprintDef::TABLE
             | PropDef::TABLE
-            | GroundDef::TABLE
+            | TerrainDef::TABLE
             | SurfaceDef::TABLE
             | WorldMapDef::TABLE => KindFamily::World,
             NpcDef::TABLE
@@ -194,7 +194,7 @@ pub fn of_table(table: &str) -> KindIcon {
         AreaDef::TABLE => KindIcon::plain(phosphor::MAP_TRIFOLD),
         BlueprintDef::TABLE => KindIcon::plain(phosphor::STAMP),
         PropDef::TABLE => KindIcon::plain(phosphor::TREE).unpictured(),
-        GroundDef::TABLE => KindIcon::plain(phosphor::SQUARES_FOUR).unpictured(),
+        TerrainDef::TABLE => KindIcon::plain(phosphor::SQUARES_FOUR).unpictured(),
         SurfaceDef::TABLE => KindIcon::plain(phosphor::FOOTPRINTS),
         WorldMapDef::TABLE => KindIcon::plain(phosphor::GLOBE_HEMISPHERE_WEST),
         NpcDef::TABLE => KindIcon::plain(phosphor::ROBOT).unpictured(),

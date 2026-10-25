@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
+use engine::core::ground::Heightfield;
 use engine::core::math::Pos;
-use engine::core::terrain::Heightfield;
 use engine::core::units::Meters;
 
 /// Metres of height between contour lines.
