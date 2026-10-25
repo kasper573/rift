@@ -16,7 +16,8 @@ use ui::theme;
 
 use bevy::prelude::*;
 use engine::core::content::ContentFile;
-use engine::core::units::TilePos;
+use engine::core::math::Pos;
+use engine::core::units::{Cell, CellPos, Meters};
 use engine::systems::area::AreaDef;
 use engine::systems::script::Place;
 use ui::egui::Ui;
@@ -29,6 +30,14 @@ use crate::shell::row_form::usages;
 use crate::shell::{self};
 use crate::stage::Stages;
 use crate::tabs::EditorTab;
+
+pub(crate) fn cell_at(at: Pos<Meters>) -> CellPos {
+    CellPos::new(at.x.round() as i32, at.y.round() as i32)
+}
+
+pub(crate) fn snap(at: Pos<Meters>) -> Pos<Meters> {
+    cell_at(at).center()
+}
 
 #[derive(Component)]
 pub struct EditorCamera;
@@ -192,7 +201,7 @@ pub fn play_here(editor: &mut Editor) {
         editor,
         Some(Place {
             area,
-            at: hover.tile.snap(),
+            at: snap(hover.tile),
         }),
     );
 }

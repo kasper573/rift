@@ -4,7 +4,7 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::Content;
 use engine::core::math::Pos;
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::AreaId;
 use engine::systems::from_client;
 use engine::systems::movement::Position;

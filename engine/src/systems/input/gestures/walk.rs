@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::core::content::{Content, Fixture};
 use crate::core::math::Pos;
 use crate::core::render;
-use crate::core::units::{Meters, TilePos};
+use crate::core::units::Meters;
 use crate::systems::input::gestures::{ActiveTileHighlight, ClickClaim, Cursor, Gesture};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::{CursorShape, InterfaceIcon};
@@ -12,20 +12,20 @@ use crate::systems::{area, combat, movement};
 
 pub struct WalkGesture;
 
-/// The tile last asked for. A held button asks again as soon as the pointer is over another tile,
-/// so a walk led by the pointer never reaches its end and waits for the next ask.
+/// The point last asked for. A held button asks again as soon as the pointer moves, so a walk led
+/// by the pointer never reaches its end and waits for the next ask.
 #[derive(Resource, Default)]
 struct WalkState {
-    last_tile: Option<Pos<Meters>>,
+    last: Option<Pos<Meters>>,
 }
 
 impl Gesture for WalkGesture {
-    fn claim(&self, world: &mut World, tile: Option<Pos<Meters>>) -> Option<ClickClaim> {
+    fn claim(&self, world: &mut World, point: Option<Pos<Meters>>) -> Option<ClickClaim> {
         if !session::is_alive(world) {
             return None;
         }
-        let tile = tile?.snap();
-        area::walkable(world, tile).then_some(ClickClaim::Walk(tile))
+        let point = point?;
+        area::walkable(world, point).then_some(ClickClaim::Walk(point))
     }
 
     fn drive(&self, world: &mut World, claim: Option<ClickClaim>, start: bool) {
@@ -33,9 +33,9 @@ impl Gesture for WalkGesture {
             repeat(world);
             return;
         }
-        if let Some(ClickClaim::Walk(tile)) = claim {
-            movement::request_walk(world, tile);
-            stamp(world, tile);
+        if let Some(ClickClaim::Walk(point)) = claim {
+            movement::request_walk(world, point);
+            stamp(world, point);
         }
     }
 
@@ -70,19 +70,16 @@ fn repeat(world: &mut World) {
     if combat::enemy_at(world, point).is_some() {
         return;
     }
-    let tile = point.snap();
-    let last_tile = world
+    let last = world
         .get_resource::<WalkState>()
-        .and_then(|state| state.last_tile);
-    if !area::walkable(world, tile) || last_tile == Some(tile) {
+        .and_then(|state| state.last);
+    if !area::walkable(world, point) || last == Some(point) {
         return;
     }
-    movement::request_walk(world, tile);
-    stamp(world, tile);
+    movement::request_walk(world, point);
+    stamp(world, point);
 }
 
-fn stamp(world: &mut World, tile: Pos<Meters>) {
-    world
-        .get_resource_or_insert_with(WalkState::default)
-        .last_tile = Some(tile);
+fn stamp(world: &mut World, point: Pos<Meters>) {
+    world.get_resource_or_insert_with(WalkState::default).last = Some(point);
 }

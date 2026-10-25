@@ -2,7 +2,7 @@ use bevy_ecs::entity::Entity;
 use engine::core::content::Fixture;
 use engine::core::math::{Offset, Pos, Rect, WindowPx};
 use engine::core::render::transition::ScreenTransitionPhase;
-use engine::core::units::{CellPos, Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::core::vfx::{VfxDef, VfxSite};
 use engine::systems::actor::Action;
 use engine::systems::area::AreaDef;
@@ -10,6 +10,7 @@ use engine::systems::attention::AttentionMark;
 use engine::systems::history::HistoryTopic;
 use engine::systems::interface::InterfaceIcon;
 use engine::systems::item::ItemDef;
+use engine::systems::movement::SPACING;
 use engine::systems::npc::NpcDef;
 use engine::systems::probe::{
     ProbeBody, ProbeObject, ProbeQuest, ProbeSnapshot, ProbeTreeView, ProbeUiElement, ProbeVfx,
@@ -42,7 +43,7 @@ pub fn area_name(snapshot: &ProbeSnapshot) -> Option<&'static str> {
 }
 
 pub fn at_rest(body: &ProbeBody) -> bool {
-    body.action == Action::Idle && body.at.on_center()
+    body.action == Action::Idle && body.resting
 }
 
 pub fn me_at_rest(snapshot: &ProbeSnapshot) -> bool {
@@ -68,24 +69,27 @@ pub fn npc_is(body: &ProbeBody, npc: &str) -> bool {
     body.npc == Some(id::<NpcDef>(npc))
 }
 
-/// Whether at least `count` living `npc`s stand still on the tiles around the player, each on a
-/// tile of its own.
+/// Whether at least `count` living `npc`s stand still within arm's reach of the resting player,
+/// no two bodies overlapping.
 pub fn surrounded_by(snapshot: &ProbeSnapshot, npc: &str, count: usize) -> bool {
-    let Some(mine) = snapshot.me.as_ref().and_then(|me| me.resting) else {
+    let Some(mine) = snapshot.me.as_ref().filter(|me| me.resting).map(|me| me.at) else {
         return false;
     };
-    let around: Vec<CellPos> = snapshot
+    let around: Vec<Pos<Meters>> = snapshot
         .actors
         .iter()
-        .filter(|actor| actor.health > 0.0 && npc_is(actor, npc))
-        .filter_map(|actor| actor.resting)
-        .filter(|tile| (tile.x - mine.x).abs().max((tile.y - mine.y).abs()) <= 1)
+        .filter(|actor| actor.health > 0.0 && npc_is(actor, npc) && actor.resting)
+        .map(|actor| actor.at)
+        .filter(|at| at.distance(mine) <= Meters(1.5))
         .collect();
-    let mut tiles = around.clone();
-    tiles.push(mine);
-    tiles.sort_by_key(|tile| (tile.x, tile.y));
-    tiles.dedup();
-    around.len() >= count && tiles.len() == around.len() + 1
+    let mut bodies = around.clone();
+    bodies.push(mine);
+    let apart = bodies.iter().enumerate().all(|(index, a)| {
+        bodies[index + 1..]
+            .iter()
+            .all(|b| a.distance(*b) >= Meters(SPACING.0 - 1e-3))
+    });
+    around.len() >= count && apart
 }
 
 pub fn marked(snapshot: &ProbeSnapshot, npc: &str, mark: AttentionMark) -> bool {
@@ -221,7 +225,7 @@ pub fn taken(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
         || snapshot
             .items
             .iter()
-            .any(|item| item.at.cell() == tile.cell())
+            .any(|item| item.at.distance(tile) <= Meters(0.5))
 }
 
 /// Anyone walking can step under the pointer between the frame that shows ground clear and the

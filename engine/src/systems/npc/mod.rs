@@ -19,14 +19,14 @@ use crate::core::content::{
 use crate::core::geometry::Radians;
 use crate::core::math::{Percent, Pos, Rect, Rgba, Rng};
 use crate::core::time::{PlaybackRate, Seconds};
-use crate::core::units::{CellPos, Meters, TilePos};
+use crate::core::units::{MeterPos, Meters};
 use crate::systems::actor::model::ModelId;
 use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox, Pose, Tint};
 use crate::systems::area::{self, AreaId, AreaModule, AreaTag, Wild};
 use crate::systems::combat::{Attitude, Dead, Died};
 use crate::systems::interact::Interactive;
 use crate::systems::item::{ItemId, Reservation};
-use crate::systems::movement::{self, Position, TileClaims, position};
+use crate::systems::movement::{self, NavMesh, Position, Spots, position};
 use crate::systems::script::condition::CompiledCondition;
 use crate::systems::script::query::TickRoster;
 use crate::systems::script::{
@@ -301,8 +301,8 @@ pub fn spawn_all(world: &mut World) {
             }
             AreaModule::Resident(resident) => {
                 let pack = next_pack(world);
-                let grid = &area::load(&content, area_id).grid;
-                let at = movement::place_beside(world, area_id, grid, resident.at);
+                let mesh = &area::load(&content, area_id).mesh;
+                let at = movement::place_beside(world, area_id, mesh, resident.at);
                 let entity = spawn(world, resident.npc, at, area_id, pack);
                 world.entity_mut(entity).insert(Home(resident.at));
                 if let Some(shown) = &resident.shown {
@@ -323,11 +323,11 @@ fn spawn_wild(
     roams: Option<Rect<Meters>>,
     pack: Pack,
 ) {
-    let grid = &area::load(content, area_id).wild_grid;
+    let mesh = &area::load(content, area_id).wild_mesh;
     let at = world
         .resource_scope(|world, mut rng: Mut<Rng>| {
-            let claims = world.resource::<TileClaims>();
-            roaming_spot(grid, &mut rng, claims, area_id, roams)
+            let spots = world.resource::<Spots>();
+            roaming_spot(mesh, &mut rng, spots, area_id, roams)
         })
         .expect("validated at startup: populations have ground outside the safe zones");
     let entity = spawn(world, npc, at, area_id, pack);
@@ -550,17 +550,17 @@ fn start_scripts(world: &mut World, entity: Entity, def: NpcId) {
 
 /// A walkable spot within `roams`, or anywhere without it, that nobody stands on if there is one.
 fn roaming_spot(
-    grid: &movement::Grid,
+    mesh: &NavMesh,
     rng: &mut Rng,
-    claims: &TileClaims,
+    spots: &Spots,
     area: AreaId,
     roams: Option<Rect<Meters>>,
 ) -> Option<Pos<Meters>> {
-    let mut draw = |fits: &dyn Fn(CellPos) -> bool| match roams {
-        Some(bounds) => grid.random_node_within(rng, bounds, fits),
-        None => grid.random_node(rng, fits),
+    let mut draw = |fits: &dyn Fn(Pos<Meters>) -> bool| match roams {
+        Some(bounds) => mesh.random_point_within(rng, bounds, fits),
+        None => mesh.random_point(rng, fits),
     };
-    draw(&|cell| claims.on(area, cell) == 0).or_else(|| draw(&|_| true))
+    draw(&|at| spots.crowding(area, at, None) == 0).or_else(|| draw(&|_| true))
 }
 
 type NpcIds = QueryState<Entity, With<Npc>>;
@@ -595,12 +595,12 @@ pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
             else {
                 continue;
             };
-            let grid = region.grid_for(area::wild(world, id));
+            let mesh = region.mesh_for(area::wild(world, id), false);
             let roams = world.get::<Roams>(id).map(|roams| roams.0);
-            let claims = world.resource::<TileClaims>();
+            let spots = world.resource::<Spots>();
             let at = match world.get::<Home>(id) {
                 Some(&Home(home)) => Some(home),
-                None => roaming_spot(grid, &mut rng, claims, area_id, roams),
+                None => roaming_spot(mesh, &mut rng, spots, area_id, roams),
             }
             .unwrap_or_else(|| region.fallback_spawn());
             crate::systems::combat::revive(world, id, at);

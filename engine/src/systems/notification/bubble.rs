@@ -16,7 +16,7 @@ use crate::core::math::Pos;
 use crate::core::render::tile_to_window;
 use crate::core::text::{self, StyledLine, Typewriter};
 use crate::core::time::Seconds;
-use crate::core::units::{Meters, TilePos};
+use crate::core::units::{MeterPos, Meters};
 use crate::systems::actor::{Action, Actor, plate};
 use crate::systems::combat::Attitude;
 use crate::systems::dialogue::stage;

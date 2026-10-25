@@ -1,6 +1,6 @@
 use engine::core::content::table_of;
 use engine::core::math::{Offset, Pos, Rect};
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::Meters;
 use engine::systems::area::AreaModule;
 use engine::systems::area::scene::SceneNode;
 use engine::systems::script::Variable;
@@ -18,6 +18,7 @@ use super::{
 use crate::app::{Clipboard, Editor, SceneClip};
 use crate::keymap::EditorKey;
 use crate::project::RowSelection;
+use crate::views::{cell_at, snap};
 
 /// The modules of the scene of `bundle` the selection moves, in tree order: those selected and
 /// what selected folders hold.
@@ -101,7 +102,7 @@ pub(super) fn select_input(
             None => {}
         }
         if scope.is_area() {
-            editor.views.area.view_mut(view_key).cursor_cell = Some(tile.cell());
+            editor.views.area.view_mut(view_key).cursor_cell = Some(cell_at(tile));
         }
     }
 }
@@ -485,7 +486,7 @@ pub fn snap_to(p: Pos<Meters>, fine: bool) -> Pos<Meters> {
     if fine {
         Pos::new(sixteenth(p.x), sixteenth(p.y))
     } else {
-        p.snap()
+        snap(p)
     }
 }
 

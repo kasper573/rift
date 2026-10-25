@@ -88,7 +88,6 @@ futures-timer = { version = "3", features = ["wasm-bindgen"] }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 derive_more = { version = "2", features = ["add", "add_assign"] }
 euclid = { version = "0.22", features = ["serde"] }
-pathfinding = "4"
 fixedbitset = "0.5"
 oorandom = "11"
 getrandom = "0.4"
@@ -133,6 +132,8 @@ web-sys = { version = "0.3", features = [
     "Node",
 ] }
 gltf = { version = "1.4", default-features = false, features = ["names"] }
+polyanya = "0.17"
+glam = "0.32"
 
 # Native-only: crates the server/bench/lint binaries need that have no wasm build (tokio, axum, …),
 # plus the desktop windowing features the client code needs to compile natively.

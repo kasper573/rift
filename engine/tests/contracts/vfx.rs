@@ -11,7 +11,6 @@ use engine::systems::class::{self, NodeKey};
 use engine::systems::combat::{self, Attitude};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef, Pack};
-use engine::systems::player::PlayedBy;
 use engine::systems::skill::{self, CastAim, Rank, SkillDef, UseSkillRequest};
 use engine::systems::stat::{self, StatKind};
 use engine::systems::visibility::Presence;
@@ -53,9 +52,8 @@ fn healing_shows_but_regeneration_does_not() {
 }
 
 #[test]
-fn a_level_reached_plays_on_the_actor_for_everyone_and_on_the_screen_for_the_player_alone() {
+fn a_level_reached_plays_on_the_actor_for_everyone() {
     let (mut sim, player) = arena();
-    let client = sim.world.get::<PlayedBy>(player).expect("owner").client;
 
     class::grant_xp(&mut sim.world, player, 30);
     sim.tick();
@@ -68,17 +66,11 @@ fn a_level_reached_plays_on_the_actor_for_everyone_and_on_the_screen_for_the_pla
         .filter(|(instance, _)| instance.vfx == level_up)
         .map(|(instance, presence)| (instance.clone(), presence.cloned()))
         .collect();
-    assert_eq!(shown.len(), 2);
-    let on_actor = shown
-        .iter()
-        .find(|(instance, _)| instance.site == VfxSite::Actor(player))
-        .expect("one on the actor");
-    assert!(on_actor.1.is_none());
-    let on_screen = shown
-        .iter()
-        .find(|(instance, _)| instance.site == VfxSite::Screen)
-        .expect("one on the screen");
-    assert!(matches!(on_screen.1, Some(Presence::For(shown)) if shown == client));
+    let [(on_actor, presence)] = shown.as_slice() else {
+        panic!("one level-up vfx, found {}", shown.len());
+    };
+    assert_eq!(on_actor.site, VfxSite::Actor(player));
+    assert!(presence.is_none());
 }
 
 #[test]

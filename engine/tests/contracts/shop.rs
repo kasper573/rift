@@ -220,7 +220,7 @@ fn market() -> Sim {
                     "name": "box",
                     "title": "Honesty box",
                     "shape": { "type": "point", "x": 7.0, "y": 10.0 },
-                    "look": "objects/box.png",
+                    "look": path("prop", "box"),
                     "scripts": [{ "script": "box_use.script.json" }],
                 },
             ]),
@@ -234,7 +234,7 @@ fn market() -> Sim {
                 "shop": { "type": "open_shop", "shop": "box.shop.json" },
             }),
         )
-        .asset("objects/box.png", testkit::png(1, 1))
+        .prop("box", json!({ "type": "none" }))
         .hero("market", 7.0, 7.0)
         .item("gold", json!({ "name": "Gold", "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 100_000 }] }))
         .resource("potion", 1000)

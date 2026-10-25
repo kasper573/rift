@@ -4,7 +4,7 @@ use driver::{
     status_on_me,
 };
 use engine::core::math::Pos;
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::core::vfx::VfxSite;
 use engine::systems::input::map::InputAction;
 use engine::systems::probe::{ProbeBody, ProbeSnapshot};
@@ -77,7 +77,7 @@ fn play(shoot: &mut Shoot) {
     );
     friend.walk_toward(beside_other_player);
     let ally = me.wait_for("the friend standing beside me", |snapshot| {
-        other_player_within(snapshot, 4.5).filter(|ally| ally.resting.is_some())
+        other_player_within(snapshot, 4.5).filter(|ally| ally.resting)
     });
     me.cast_at(InputAction::Hotbar5, ally.at, |snapshot| {
         played_on(snapshot, "holy_motes", ally.id)

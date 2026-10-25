@@ -26,7 +26,7 @@ use crate::core::content::{
 };
 use crate::core::math::{Offset, Pos};
 use crate::core::time::Seconds;
-use crate::core::units::{Meters, TilePos};
+use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
 use crate::systems::movement::{Position, position};
@@ -43,6 +43,8 @@ pub const INVENTORY_MAX: u32 = 25;
 const RESERVATION_TTL: Seconds = Seconds(60.0);
 const DROP_TTL: Seconds = Seconds(120.0);
 const DROP_RADIUS: Meters = Meters(1.0);
+/// How far from a dropped item a click still picks it up.
+const PICK_REACH: Meters = Meters(0.5);
 const PICKUP_RANGE: Meters = Meters(1.0);
 
 pub fn register(app: &mut App) {
@@ -623,14 +625,20 @@ pub fn pickup_request(world: &mut World) {
 
 pub fn pickable_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
     let me = crate::systems::player::session::my_id(world);
-    let cell = point.cell();
     world
         .query::<(Entity, &Position, &DroppedItem, Option<&Reservation>)>()
         .iter(world)
-        .find_map(|(entity, at, _, reservation)| {
-            let allowed = reservation.is_none_or(|reservation| reservation.allows(me));
-            (at.pos.cell() == cell && allowed).then_some(entity)
+        .filter(|(_, at, _, reservation)| {
+            at.pos.distance(point) <= PICK_REACH
+                && reservation.is_none_or(|reservation| reservation.allows(me))
         })
+        .min_by(|a, b| {
+            a.1.pos
+                .distance(point)
+                .0
+                .total_cmp(&b.1.pos.distance(point).0)
+        })
+        .map(|(entity, ..)| entity)
 }
 
 pub fn pickups(world: &mut World, intents: &mut reach::Intents) {
@@ -788,11 +796,10 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
 }
 
 fn scatter_pos(from: Pos<Meters>, index: usize, count: usize, area: &area::Area) -> Pos<Meters> {
-    let rest = from.snap();
     if count == 1 {
-        return area.grid.nearest_walkable(from).unwrap_or(rest);
+        return area.mesh.nearest(from).unwrap_or(from);
     }
     let angle = std::f32::consts::TAU * index as f32 / count as f32;
     let spread = from + Offset::new(angle.cos() * DROP_RADIUS.0, angle.sin() * DROP_RADIUS.0);
-    area.grid.nearest_walkable(spread).unwrap_or(rest)
+    area.mesh.nearest(spread).unwrap_or(from)
 }

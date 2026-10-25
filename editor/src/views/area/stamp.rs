@@ -8,7 +8,7 @@ use engine::core::content::{Content, ContentScope, FolderReader, parent_of, resc
 use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::script::VariableType;
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::blueprint::{BlueprintDef, BlueprintId, Placement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaModule};

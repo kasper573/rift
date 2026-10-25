@@ -44,7 +44,7 @@ use bevy_app::App;
 use bevy_ecs::message::{Message, Messages};
 use bevy_ecs::prelude::{Bundle, Entity, Res, ResMut, Resource, World};
 use bevy_replicon::prelude::{FromClient, Replicated};
-use movement::{Position, TileClaim};
+use movement::{Position, Spot};
 use schemars::JsonSchema;
 use skill::Cooldowns;
 use status::{ActiveAspects, Boosts, Statuses};
@@ -130,7 +130,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     insert_content(world, content);
     world.init_resource::<script::RiftInstances>();
     world.init_resource::<player::Players>();
-    world.init_resource::<movement::TileClaims>();
+    world.init_resource::<movement::Spots>();
     world.init_resource::<area::transition::Departures>();
     world.init_resource::<combat::RegenAt>();
     world.init_resource::<skill::reset::PendingResets>();
@@ -168,7 +168,7 @@ pub struct GameSettings {
 pub struct Character {
     pub replicated: Replicated,
     pub position: Position,
-    pub claim: TileClaim,
+    pub spot: Spot,
     pub actor: Actor,
     pub hitbox: Hitbox,
     pub area: AreaTag,
@@ -182,7 +182,10 @@ impl Character {
     pub fn new(position: Position, actor: Actor, hitbox: Hitbox, area: AreaTag) -> Character {
         Character {
             replicated: Replicated,
-            claim: TileClaim::at(area.area, position.pos),
+            spot: Spot {
+                area: area.area,
+                at: position.pos,
+            },
             position,
             actor,
             hitbox,

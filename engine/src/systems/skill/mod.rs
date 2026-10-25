@@ -34,7 +34,7 @@ use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::math::Pos;
 use crate::core::script::FlowCx;
 use crate::core::time::{Seconds, UnixMillis};
-use crate::core::units::{Meters, TilePos};
+use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::AreaTag;
 use crate::systems::class::{self, NodeKey, SkillPoints, SkillTree};
 use crate::systems::equipment::{self, Equipment};

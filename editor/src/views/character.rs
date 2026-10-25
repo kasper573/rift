@@ -14,13 +14,14 @@ use engine::core::math::Pos;
 use engine::core::render::TILE;
 use engine::core::script::ValueType;
 use engine::core::time::Seconds;
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::field;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::class::{ClassDef, NodeKey, SkillTree};
 use engine::systems::equipment::EquipmentSlot;
 use engine::systems::item::{ItemDef, ItemKind, ItemStack};
 use engine::systems::memory::MemoryDef;
+use engine::systems::movement;
 use engine::systems::player::snapshot::{
     AtInitialSpawn, CharacterSnapshot, CharacterStart, MemoryValue, QuestState, SnapshotMemory,
     SnapshotQuest, SnapshotSkill, SnapshotSlot,
@@ -1322,9 +1323,11 @@ fn apply_moment(
     let beside_party = moment.party(sheet, parties, quest).and_then(|party| {
         let (content, _) = parties?;
         let home = area::residence(content, party.npc?)?;
-        let beside = area::load(content, home.area)
-            .grid
-            .nearest_walkable_where(home.at, |cell| cell != home.at.cell())?;
+        let beside = area::load(content, home.area).mesh.nearest_where(
+            home.at,
+            movement::SPACING,
+            |at| at.distance(home.at) >= movement::SPACING,
+        )?;
         Some(Place {
             area: sheet.now(content, home.area)?,
             at: beside,

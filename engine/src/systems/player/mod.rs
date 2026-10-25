@@ -325,7 +325,7 @@ pub fn join(world: &mut World) {
             Some(JoinAs { snapshot, start }) if start.area == zone => {
                 let (snapshot, start) = (snapshot.clone(), *start);
                 (
-                    movement::place_beside(world, zone, &area.grid, start.at),
+                    movement::place_beside(world, zone, &area.mesh, start.at),
                     snapshot::materialize(&content, &snapshot, start, clock),
                 )
             }
@@ -334,7 +334,7 @@ pub fn join(world: &mut World) {
                     .get::<Identity>(client_entity)
                     .map_or_else(|| format!("player {}", client.0), |id| id.name.clone());
                 let spawn = spawn_position(world, policy, zone, area);
-                let at = movement::place_beside(world, zone, &area.grid, spawn);
+                let at = movement::place_beside(world, zone, &area.mesh, spawn);
                 let fresh = CharacterSnapshot::of_player(&content, &name, def(&content));
                 let start = Place { area: zone, at };
                 let state = snapshot::materialize(&content, &fresh, start, clock);
@@ -362,8 +362,8 @@ fn spawn_position(
         SpawnPolicy::Map if spawn.area == zone => spawn.at,
         SpawnPolicy::Map => fallback(),
         SpawnPolicy::Dist => area
-            .grid
-            .random_node(&mut world.resource_mut::<Rng>(), |_| true)
+            .mesh
+            .random_point(&mut world.resource_mut::<Rng>(), |_| true)
             .unwrap_or_else(fallback),
     }
 }

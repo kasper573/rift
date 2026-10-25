@@ -22,7 +22,7 @@ use crate::core::platform::ClientPlatform;
 use crate::core::render::tile_to_window;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::time::{self, Seconds};
-use crate::core::units::{CellPos, Meters, TilePos};
+use crate::core::units::Meters;
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::model::ModelId;
 use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox};
@@ -157,8 +157,8 @@ pub struct ProbeBody {
     pub aim: Pos<Meters>,
     pub hitbox: Rect<Meters>,
     pub action: Action,
-    /// The tile it stands still on; none while it walks.
-    pub resting: Option<CellPos>,
+    /// Whether it stands still rather than walks.
+    pub resting: bool,
     pub health: f32,
     pub max_health: f32,
     pub npc: Option<NpcId>,
@@ -810,8 +810,7 @@ fn body(world: &World, entity: Entity) -> Option<ProbeBody> {
         aim: hitbox.center(),
         hitbox,
         action: actor.action,
-        resting: (at.on_center() && !matches!(actor.action, Action::Walk | Action::Run))
-            .then(|| at.cell()),
+        resting: !matches!(actor.action, Action::Walk | Action::Run),
         health: stat(StatKind::Health),
         max_health: stat(StatKind::MaxHealth),
         npc,

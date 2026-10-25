@@ -8,9 +8,10 @@ use driver::{
     input_name, nearest_npc, npc_is, resident_home, surrounded_by,
 };
 use engine::core::math::{Offset, Pos};
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::actor::Action;
 use engine::systems::input::map::InputAction;
+use engine::systems::movement::SPACING;
 use engine::systems::probe::{ProbeBody, ProbeGroundItem, ProbeSnapshot};
 
 use crate::chapters::Chapter;
@@ -234,16 +235,12 @@ fn safe_here(snapshot: &ProbeSnapshot) -> bool {
 fn in_town(snapshot: &ProbeSnapshot) -> Pos<Meters> {
     let me = snapshot.me.as_ref().expect("the player").at;
     let area = area_named(area_name(snapshot).expect("an area"));
-    let grid = &area.grid;
+    let mesh = &area.mesh;
     let deep = |at: Pos<Meters>| {
         [(-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0)]
             .into_iter()
             .all(|(x, y)| area.safe(at + Offset::new(x, y)))
     };
-    grid.nodes()
-        .iter()
-        .copied()
-        .filter(|node| grid.region(*node) == grid.region(me) && deep(*node))
-        .min_by(|a, b| a.distance_to(me).total_cmp(&b.distance_to(me)))
+    mesh.nearest_where(me, SPACING, |spot| mesh.connects(me, spot) && deep(spot))
         .expect("ground in town")
 }

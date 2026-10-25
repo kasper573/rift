@@ -42,9 +42,10 @@ use crate::core::content::{
 };
 use crate::core::geometry::Degrees;
 use crate::core::math::{Offset, Pos, Rect, Size};
-use crate::core::units::{Cell, CellPos, Meters, TilePos, TileRect, TileSize};
+use crate::core::units::{GridDims, Meters, TileSize};
 use crate::systems::actor::Pose;
 use crate::systems::movement;
+use crate::systems::movement::NavMesh;
 use crate::systems::npc::NpcId;
 use crate::systems::script::{self, Condition, OwnerRow, Reach, RiftScripts, ScriptModule};
 use blueprint::FlattenAt;
@@ -515,11 +516,11 @@ pub fn warp_objects(content: &Content, area: AreaId) -> Vec<(u32, &ObjectDef)> {
         .collect()
 }
 
-pub fn walkable(world: &World, tile: Pos<Meters>) -> bool {
+pub fn walkable(world: &World, at: Pos<Meters>) -> bool {
     crate::systems::player::session::my_character(world)
         .map(|me| me.id())
         .and_then(|entity| of(world, entity))
-        .is_some_and(|area| area.grid.walkable(tile))
+        .is_some_and(|area| area.mesh.walkable(at))
 }
 
 /// An area as the game plays it: its ground, where it walks and flies, what stands and shines on
@@ -530,12 +531,11 @@ pub struct Area {
     pub heights: Heightfield,
     pub paint: Paint,
     pub lighting: Lighting,
-    pub grid: movement::Grid,
-    pub wild_grid: movement::Grid,
-    pub airspace: movement::Grid,
-    pub wild_airspace: movement::Grid,
+    pub mesh: NavMesh,
+    pub wild_mesh: NavMesh,
+    pub airspace: NavMesh,
+    pub wild_airspace: NavMesh,
     pub safe_zones: Vec<Rect<Meters>>,
-    pub safe_cells: Vec<bool>,
     pub footsteps: Vec<Option<SfxId>>,
     pub soundscape: Vec<SoundscapeZone>,
     /// Every prop standing in the area, scattered ones expanded.
@@ -545,20 +545,17 @@ pub struct Area {
 
 impl Area {
     pub fn safe(&self, at: Pos<Meters>) -> bool {
-        at.cell()
-            .index(self.size.grid())
-            .is_some_and(|index| self.safe_cells[index])
+        self.safe_zones.iter().any(|zone| zone.contains(at))
     }
 
-    pub fn grid_for(&self, wild: bool) -> &movement::Grid {
-        if wild { &self.wild_grid } else { &self.grid }
-    }
-
-    pub fn airspace_for(&self, wild: bool) -> &movement::Grid {
-        if wild {
-            &self.wild_airspace
-        } else {
-            &self.airspace
+    /// The mesh an actor moves on: the ground or, flying, the air, each cut around the safe zones
+    /// for the wild.
+    pub fn mesh_for(&self, wild: bool, flies: bool) -> &NavMesh {
+        match (wild, flies) {
+            (false, false) => &self.mesh,
+            (true, false) => &self.wild_mesh,
+            (false, true) => &self.airspace,
+            (true, true) => &self.wild_airspace,
         }
     }
 
@@ -567,14 +564,14 @@ impl Area {
         0.0
     }
 
-    pub fn footstep_at(&self, c: CellPos) -> Option<&SfxId> {
-        let i = c.index(self.size.grid())?;
+    pub fn footstep_at(&self, at: Pos<Meters>) -> Option<&SfxId> {
+        let i = self.size.grid().index_of(at)?;
         self.footsteps[i].as_ref()
     }
 
     pub fn fallback_spawn(&self) -> Pos<Meters> {
-        self.grid
-            .nearest_walkable(self.center())
+        self.mesh
+            .nearest(self.center())
             .unwrap_or_else(|| self.center())
     }
 
@@ -804,7 +801,7 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
             );
         }
     }
-    let walk = walk::grids(
+    let walk = walk::meshes(
         content,
         &ground.terrain,
         &ground.heights,
@@ -812,19 +809,17 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
         &props,
         &safe_zones,
     );
-    let size = ground.terrain.size.grid();
     let area = Area {
         size: ground.terrain.size.meters(),
         terrain: ground.terrain.clone(),
         heights: ground.heights.clone(),
         paint: ground.paint.clone(),
         lighting: ground.lighting.clone(),
-        grid: movement::Grid::new(size, walk.walk),
-        wild_grid: movement::Grid::new(size, walk.wild),
-        airspace: movement::Grid::new(size, walk.airspace),
-        wild_airspace: movement::Grid::new(size, walk.wild_airspace),
+        mesh: walk.walk,
+        wild_mesh: walk.wild,
+        airspace: walk.airspace,
+        wild_airspace: walk.wild_airspace,
         safe_zones,
-        safe_cells: walk.safe_cells,
         footsteps: walk.footsteps,
         soundscape: modules
             .iter()
@@ -905,11 +900,7 @@ fn check_placed(
             .find(|(_, object, _)| object.shape.covers(at))
             .map(|(_, _, name)| name.clone())
     };
-    let nearest_cell = |at: Pos<Meters>| {
-        area.grid
-            .nearest_walkable(at)
-            .map(|cell| format!("{}, {}", cell.x, cell.y))
-    };
+    let nearest_ground = |at: Pos<Meters>| area.mesh.nearest(at).map(describe_point);
     let mut names: Vec<(String, String)> = Vec::new();
     let mut seen_residents: Vec<NpcId> = Vec::new();
     for placed in modules {
@@ -931,16 +922,16 @@ fn check_placed(
                     }
                 }
                 if let ObjectShape::Point(at) = object.shape
-                    && !area.grid.walkable(at)
+                    && !area.mesh.walkable(at)
                 {
                     check.problem(
                         site("/shape"),
                         ContentProblem::new(
                             "not walkable",
-                            format!("{}, {}", at.x, at.y),
+                            describe_point(at),
                             "a point object on walkable ground",
                         )
-                        .near(nearest_cell(at)),
+                        .near(nearest_ground(at)),
                     );
                 }
             }
@@ -955,15 +946,15 @@ fn check_placed(
                     );
                 }
                 seen_residents.push(resident.npc);
-                if !area.grid.walkable(resident.at) {
+                if !area.mesh.walkable(resident.at) {
                     check.problem(
                         site("/at"),
                         ContentProblem::new(
                             "not walkable",
-                            format!("{} {}, {}", key, resident.at.x, resident.at.y),
+                            format!("{key} {}", describe_point(resident.at)),
                             "a resident on walkable ground",
                         )
-                        .near(nearest_cell(resident.at)),
+                        .near(nearest_ground(resident.at)),
                     );
                 } else if let Some(door) = in_warp(resident.at) {
                     check.error(
@@ -978,10 +969,9 @@ fn check_placed(
                 }
             }
             AreaModule::Population(population) => {
-                let ground = area.wild_grid.nodes();
                 let has_ground = match population.roams {
-                    Some(bounds) => ground.iter().any(|&node| bounds.contains(node)),
-                    None => !ground.is_empty(),
+                    Some(bounds) => area.wild_mesh.covers(bounds),
+                    None => !area.wild_mesh.is_empty(),
                 };
                 if !has_ground {
                     check.error(
@@ -997,11 +987,10 @@ fn check_placed(
     }
     for (index, (object_index, object, name)) in warps.iter().enumerate() {
         let pointer = module_pointer(&modules[*object_index as usize], "");
-        let covered = object
-            .shape
-            .bounds()
-            .tiles()
-            .any(|cell| object.shape.covers_cell(cell) && area.grid.walkable(cell.center()));
+        let covered = match object.shape {
+            ObjectShape::Point(at) => area.mesh.walkable(at),
+            ObjectShape::Rect(rect) => area.mesh.covers(rect),
+        };
         if !covered {
             check.error(
                 pointer.clone(),
@@ -1036,12 +1025,11 @@ pub fn check_place(content: &Content, place: script::Place) -> Result<(), Conten
     let warps = warp_objects(content, place.area);
     let problem = |rule: &'static str, found: String| {
         let nearest = area
-            .grid
-            .nodes()
-            .iter()
-            .filter(|cell| !warps.iter().any(|(_, object)| object.shape.covers(**cell)))
-            .min_by(|a, b| a.distance(place.at).0.total_cmp(&b.distance(place.at).0))
-            .map(|cell| format!("{}, {}", cell.x, cell.y));
+            .mesh
+            .nearest_where(place.at, movement::SPACING, |at| {
+                !warps.iter().any(|(_, object)| object.shape.covers(at))
+            })
+            .map(describe_point);
         ContentProblem::new(
             rule,
             found,
@@ -1049,10 +1037,10 @@ pub fn check_place(content: &Content, place: script::Place) -> Result<(), Conten
         )
         .near(nearest)
     };
-    if !area.grid.walkable(place.at) {
+    if !area.mesh.walkable(place.at) {
         return Err(problem(
             "not walkable",
-            format!("{key} {}, {}", place.at.x, place.at.y),
+            format!("{key} {}", describe_point(place.at)),
         ));
     }
     for &(index, object) in &warps {
@@ -1069,4 +1057,8 @@ pub fn check_place(content: &Content, place: script::Place) -> Result<(), Conten
         }
     }
     Ok(())
+}
+
+fn describe_point(at: Pos<Meters>) -> String {
+    format!("{:.2}, {:.2}", at.x, at.y)
 }

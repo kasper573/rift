@@ -10,7 +10,7 @@ use super::screen::ToScreen;
 use crate::core::geometry::Radians;
 use crate::core::math::Pos;
 use crate::core::time::Seconds;
-use crate::core::units::{Cell, CellPos, Meters};
+use crate::core::units::{GROUND_ORIGIN, Meters};
 
 #[derive(
     Serialize,
@@ -288,7 +288,7 @@ fn target_marks(
     };
     Some(TargetMarks {
         viewed: project(viewed_at)?,
-        tile_origin: project(CellPos::new(0, 0).bounds().min())?,
+        tile_origin: project(GROUND_ORIGIN)?,
     })
 }
 

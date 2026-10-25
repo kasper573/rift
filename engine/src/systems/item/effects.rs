@@ -9,7 +9,7 @@ use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, NEXT, REFUSED, ScriptFault, ValueType,
 };
 use crate::core::time::Seconds;
-use crate::core::units::{Meters, TilePos};
+use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::equipment::{self, EquipmentSlot};
 use crate::systems::movement::{Position, position};

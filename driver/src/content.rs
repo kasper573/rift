@@ -6,10 +6,11 @@ use engine::core::content::{
     Content, ContentFile, ContentId, ContentScope, FilesystemFolder, with_content,
 };
 use engine::core::math::{Offset, Pos, Rect};
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::{self, Area, AreaDef, AreaModule};
 use engine::systems::input::map::{InputAction, InputMap};
 use engine::systems::load_content;
+use engine::systems::movement::NavMesh;
 use engine::systems::probe::ProbeSnapshot;
 use engine::systems::script::Place;
 use serde::Serialize;
@@ -173,13 +174,10 @@ pub fn ground_near(
     at: Pos<Meters>,
     within: RangeInclusive<Meters>,
 ) -> Vec<Pos<Meters>> {
-    let grid = &area_named(area).grid;
-    let reach = grid.region(grid.nearest_walkable(at).expect("walkable ground near"));
-    let mut ground: Vec<Pos<Meters>> = grid
-        .nodes()
-        .iter()
-        .copied()
-        .filter(|tile| grid.region(*tile) == reach && within.contains(&tile.distance(at)))
+    let mesh = &area_named(area).mesh;
+    let from = mesh.nearest(at).expect("walkable ground near");
+    let mut ground: Vec<Pos<Meters>> = lattice(mesh)
+        .filter(|tile| mesh.connects(from, *tile) && within.contains(&tile.distance(at)))
         .collect();
     ground.sort_by(|a, b| a.distance_to(at).total_cmp(&b.distance_to(at)));
     ground
@@ -189,4 +187,14 @@ fn placed_object(area: &str, object: &str) -> Option<Pos<Meters>> {
     area::objects(area::placed(content(), id(area)))
         .find(|(_, def)| def.name.as_deref() == Some(object))
         .map(|(_, def)| def.shape.center())
+}
+
+/// The walkable points of the mesh on whole metres, the candidates a chapter picks ground from.
+pub fn lattice(mesh: &NavMesh) -> impl Iterator<Item = Pos<Meters>> + '_ {
+    let bounds = mesh.bounds();
+    let (min, max) = (bounds.min(), bounds.max());
+    let xs = (min.x.ceil() as i32)..=(max.x.floor() as i32);
+    let ys = (min.y.ceil() as i32)..=(max.y.floor() as i32);
+    ys.flat_map(move |y| xs.clone().map(move |x| Pos::new(x as f32, y as f32)))
+        .filter(move |point| mesh.walkable(*point))
 }

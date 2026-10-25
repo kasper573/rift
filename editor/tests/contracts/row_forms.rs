@@ -10,12 +10,13 @@ use editor::views::{character, spreadsheet};
 use engine::core::audio::playback::{SfxDef, SfxScalar};
 use engine::core::content::Fixture;
 use engine::core::math::Pos;
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::core::vfx::{ParamFill, ParamValue, VfxDef, VfxLayer};
 use engine::systems::area::world_map::{WorldMap, WorldMapDef};
 use engine::systems::class::{AccessRequirement, ClassDef, NodeKey};
 use engine::systems::item::{ItemDef, ItemKind, ItemModule};
 use engine::systems::memory::{MemoryDef, Resets};
+use engine::systems::movement;
 use engine::systems::notification::{NotificationDef, NotificationDefKind};
 use engine::systems::npc::NpcDef;
 use engine::systems::player::snapshot::{CharacterSnapshot, CharacterStart};
@@ -128,10 +129,11 @@ fn a_test_character_set_up_for_a_quest_moment_starts_beside_whom_it_is_with() {
         let CharacterStart::At(start) = character.start else {
             panic!("{moment}: the character starts at a place");
         };
-        let (cell, beside) = (start.at.cell(), with.cell());
+        let apart = start.at.distance(with);
         assert!(
-            cell != beside && (cell.x - beside.x).abs() <= 1 && (cell.y - beside.y).abs() <= 1,
-            "{moment}: starts on {cell:?}, beside {beside:?}"
+            apart >= movement::SPACING && apart <= Meters(movement::SPACING.0 * 3.0),
+            "{moment}: starts at {:?}, beside {with:?}",
+            start.at
         );
     }
 }

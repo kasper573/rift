@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::Pos;
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::{self, AreaDef, Wild};
 use engine::systems::combat::{self, AttackRequest};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, position};
@@ -11,7 +11,7 @@ use testkit::{Game, Map, Sim, hunting, path};
 
 const LAIR: Pos<Meters> = Pos::new(1.0, 4.0);
 const DOORSTEP: Pos<Meters> = Pos::new(4.0, 4.0);
-const REFUGE: Pos<Meters> = Pos::new(8.0, 4.0);
+const REFUGE: Pos<Meters> = Pos::new(9.5, 4.0);
 
 #[test]
 fn wild_monsters_never_set_foot_in_a_safe_zone() {

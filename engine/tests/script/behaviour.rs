@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::combat::{AttackRequest, Attitude};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::body;

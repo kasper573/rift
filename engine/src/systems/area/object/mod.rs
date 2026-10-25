@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
 use crate::core::math::{Offset, Pos, Rect, Size};
-use crate::core::units::{Cell, CellPos, Meters, TilePos};
+use crate::core::units::Meters;
 use crate::systems::WorldArea;
 use crate::systems::actor::Name as ActorName;
 use crate::systems::area::PropId;
@@ -150,14 +150,13 @@ impl From<ObjectShape> for ShapeRow {
 }
 
 impl ObjectShape {
+    /// Whether `at` stands on the object: within the square metre around a point, or in a rect.
     pub fn covers(&self, at: Pos<Meters>) -> bool {
-        self.covers_cell(at.cell())
-    }
-
-    pub fn covers_cell(&self, cell: CellPos) -> bool {
         match self {
-            ObjectShape::Point(point) => point.cell() == cell,
-            ObjectShape::Rect(rect) => rect.contains(cell.center()),
+            ObjectShape::Point(point) => {
+                (at.x - point.x).abs() <= 0.5 && (at.y - point.y).abs() <= 0.5
+            }
+            ObjectShape::Rect(rect) => rect.contains(at),
         }
     }
 
@@ -329,12 +328,11 @@ pub fn track(
         .map(|(entity, at, tag)| (entity, at.pos, tag.area))
         .collect();
     for (actor, at, area_id) in positions {
-        let cell = at.cell();
         now.clear();
         now.extend(
             placed
                 .iter()
-                .filter(|object| object.area == area_id && object.shape.covers_cell(cell))
+                .filter(|object| object.area == area_id && object.shape.covers(at))
                 .filter(|object| crate::systems::visibility::present(world, object.entity, actor))
                 .map(|object| object.entity),
         );

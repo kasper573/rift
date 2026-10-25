@@ -9,8 +9,8 @@ use driver::{
     clickable_point, ground_near, hunting_ground, open, warp_named,
 };
 use engine::core::render::transition::ScreenTransitionPhase;
+use engine::core::units::MeterPos;
 use engine::core::units::Meters;
-use engine::core::units::TilePos;
 use engine::systems::actor::Action;
 use engine::systems::input::map::InputAction;
 use engine::systems::probe::{ProbeBody, ProbeSnapshot};
@@ -192,10 +192,6 @@ fn foe(snapshot: &ProbeSnapshot, actor: &ProbeBody) -> bool {
     let (Some(me), Some(area)) = (snapshot.me.as_ref(), area_name(snapshot)) else {
         return false;
     };
-    let grid = &area_named(area).grid;
-    !actor.player
-        && !actor.friendly
-        && actor.health > 0.0
-        && grid.walkable(actor.at)
-        && grid.region(actor.at) == grid.region(me.at)
+    let mesh = &area_named(area).mesh;
+    !actor.player && !actor.friendly && actor.health > 0.0 && mesh.connects(me.at, actor.at)
 }

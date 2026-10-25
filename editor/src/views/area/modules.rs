@@ -8,7 +8,7 @@ use engine::core::audio::soundscape::SoundscapeShape;
 use engine::core::content::{FolderReader, Nearby};
 use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Rgb, Size};
-use engine::core::units::{Cell, CellPos, Meters, TilePos};
+use engine::core::units::{Cell, CellPos, Meters};
 use engine::systems::actor::Pose;
 use engine::systems::area::blueprint::Placement;
 use engine::systems::area::lighting::PointLightDef;
@@ -28,6 +28,7 @@ use crate::keymap::EditorKey;
 use crate::play;
 use crate::shell::widgets;
 use crate::tabs::file_title;
+use crate::views::{cell_at, snap};
 
 #[derive(Clone, Copy)]
 pub struct AreaMenuAnchor {
@@ -40,7 +41,7 @@ pub(super) fn context_menu_at(editor: &mut Editor, view_key: &str, frame: &AreaF
         return;
     };
     let view = editor.views.area.view_mut(view_key);
-    view.cursor_cell = Some(tile.cell());
+    view.cursor_cell = Some(cell_at(tile));
     view.take_drag();
     let selecting = view.tool == AreaTool::Select;
     if selecting
@@ -134,7 +135,7 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
     .open_memory(None)
     .show(|ui| {
         ui.set_min_width(220.0);
-        let cell = tile.cell();
+        let cell = cell_at(tile);
         ui.label(RichText::new(format!("{}, {}", cell.x, cell.y)).weak());
         let character =
             play::current_character(editor).unwrap_or_else(|| "a test character".to_owned());
@@ -297,13 +298,13 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
             if let Some(area) = frame.area_id() {
                 let place = Place {
                     area,
-                    at: tile.snap(),
+                    at: snap(tile),
                 };
                 play::start(editor, Some(place));
             }
         }
         MenuAction::PlayFromStart => play::start(editor, None),
-        MenuAction::SetSpawn => pins::set_spawn(editor, &frame.bundle, tile.snap()),
+        MenuAction::SetSpawn => pins::set_spawn(editor, &frame.bundle, snap(tile)),
         MenuAction::Listen => {
             editor.views.area.view_mut(view_key).listener = Some(tile);
             pick::listen(editor, frame, tile);
@@ -474,16 +475,16 @@ pub fn add_module(
     let stamp = editor.views.area.view(view_key).stamp.clone();
     match (kind, stamp) {
         (AreaModuleKind::Blueprint, Some(stamp)) => {
-            pick::add_picked(editor, &bundle, kind, Some(tile.cell()), &stamp)
+            pick::add_picked(editor, &bundle, kind, Some(cell_at(tile)), &stamp)
         }
         (kind, _) if pick::named_table(kind).is_some() => {
-            pick::pick_then_add(editor, &bundle, kind, Some(tile.cell()))
+            pick::pick_then_add(editor, &bundle, kind, Some(cell_at(tile)))
         }
         (kind, _) => {
             let Some(reader) = editor.reader() else {
                 return;
             };
-            match module_template(&reader, &bundle, kind, Some(tile.cell()), None) {
+            match module_template(&reader, &bundle, kind, Some(cell_at(tile)), None) {
                 Ok(module) => {
                     let label = format!(
                         "Add {} to {}",

@@ -11,13 +11,14 @@ use engine::core::content::{
 use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect};
 use engine::core::script::VariableType;
-use engine::core::units::{Cell, Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::blueprint::{
     self, BlueprintDef, BlueprintId, Flattened, PlacedBlueprint, Placement,
 };
 use engine::systems::area::object::{ObjectDef, ObjectShape};
 use engine::systems::area::scene::{ModuleNode, SceneFolder, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaId, AreaModule};
+use engine::systems::movement;
 use engine::systems::script::{Place, VarValue, Variable, condition};
 use serde_json::Value;
 use ui::controls;
@@ -871,24 +872,19 @@ pub fn return_door(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
     let there = area::load(&content, there_id);
     let door_bounds = object.shape.bounds();
     let back_to = here
-        .grid
-        .nodes()
-        .iter()
-        .filter(|cell| !door_bounds.contains(**cell))
-        .min_by(|a, b| {
-            a.distance(door_bounds.center())
-                .0
-                .total_cmp(&b.distance(door_bounds.center()).0)
-        })
-        .copied();
+        .mesh
+        .nearest_where(door_bounds.center(), movement::SPACING, |at| {
+            !door_bounds.contains(at)
+        });
     let Some(back_to) = back_to else {
         editor.toast("No walkable cell outside the door to come back to");
         return;
     };
-    let arrival = target_at.cell();
     let Some(beside_arrival) = there
-        .grid
-        .nearest_walkable_where(target_at, |cell| cell != arrival)
+        .mesh
+        .nearest_where(target_at, movement::SPACING, |at| {
+            at.distance(target_at) >= movement::SPACING
+        })
     else {
         editor.toast("The destination has no walkable cell beside the arrival for a door back");
         return;
@@ -902,11 +898,10 @@ pub fn return_door(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
         &names,
     );
     names.insert(name.clone());
-    let cell = beside_arrival.cell();
     let mut door = ObjectDef {
         name: Some(name),
         title: None,
-        shape: ObjectShape::Point(cell.center()),
+        shape: ObjectShape::Point(beside_arrival),
         look: None,
         shown: None,
         scripts: object.scripts.clone(),
@@ -929,8 +924,8 @@ pub fn return_door(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
     });
     if applied {
         editor.toast(format!(
-            "Added a door back in {target_area} at {}, {}",
-            cell.x, cell.y
+            "Added a door back in {target_area} at {:.1}, {:.1}",
+            beside_arrival.x, beside_arrival.y
         ));
     }
 }

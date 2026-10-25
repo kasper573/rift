@@ -30,18 +30,6 @@ pub type GridSize = euclid::default::Size2D<u32>;
 /// ground begin half a metre before the origin.
 pub const GROUND_ORIGIN: Pos<Meters> = Pos::new(-0.5, -0.5);
 
-pub const NEIGHBORS_4: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
-pub const NEIGHBORS_8: [(i32, i32); 8] = [
-    (1, 0),
-    (-1, 0),
-    (0, 1),
-    (0, -1),
-    (1, 1),
-    (1, -1),
-    (-1, 1),
-    (-1, -1),
-];
-
 #[derive(
     JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
 )]
@@ -67,11 +55,11 @@ impl Mul<Seconds> for MetersPerSec {
     }
 }
 
+/// A metre cell of an area's ground, the grain its terrain is painted and sloped at.
 pub trait Cell {
     fn center(self) -> Pos<Meters>;
     fn bounds(self) -> Rect<Meters>;
     fn index(self, size: GridSize) -> Option<usize>;
-    fn step(self, offset: (i32, i32)) -> CellPos;
 }
 
 impl Cell for CellPos {
@@ -91,35 +79,15 @@ impl Cell for CellPos {
         let inside = self.x >= 0 && self.y >= 0 && self.x < w && self.y < h;
         inside.then(|| (self.y * w + self.x) as usize)
     }
-
-    fn step(self, (dx, dy): (i32, i32)) -> CellPos {
-        CellPos::new(self.x + dx, self.y + dy)
-    }
 }
 
-pub trait TilePos {
-    fn cell(self) -> CellPos;
-    fn snap(self) -> Pos<Meters>;
-    fn on_center(self) -> bool;
+pub trait MeterPos {
     fn distance(self, other: Pos<Meters>) -> Meters;
     fn toward(self, target: Pos<Meters>, by: Meters) -> Pos<Meters>;
     fn hitbox(self, size: Size<Meters>) -> Rect<Meters>;
 }
 
-impl TilePos for Pos<Meters> {
-    fn cell(self) -> CellPos {
-        CellPos::new(self.x.round() as i32, self.y.round() as i32)
-    }
-
-    fn snap(self) -> Pos<Meters> {
-        self.cell().center()
-    }
-
-    fn on_center(self) -> bool {
-        let resting = |c: f32| (c - c.round()).abs() < 1e-3;
-        resting(self.x) && resting(self.y)
-    }
-
+impl MeterPos for Pos<Meters> {
     fn distance(self, other: Pos<Meters>) -> Meters {
         Meters(self.distance_to(other))
     }
@@ -133,18 +101,6 @@ impl TilePos for Pos<Meters> {
             self + Offset::new(-size.width / 2.0, 0.5 - size.height),
             size,
         )
-    }
-}
-
-pub trait TileRect {
-    fn tiles(self) -> impl Iterator<Item = CellPos>;
-}
-
-impl TileRect for Rect<Meters> {
-    fn tiles(self) -> impl Iterator<Item = CellPos> {
-        let min = self.min().cell();
-        let max = self.max().cell();
-        (min.y..=max.y).flat_map(move |y| (min.x..=max.x).map(move |x| CellPos::new(x, y)))
     }
 }
 
@@ -165,12 +121,18 @@ impl TileSize for Size<Meters> {
 
 pub trait GridDims {
     fn cells(self) -> impl Iterator<Item = CellPos>;
+    /// The index of the cell under `at`, none off the grid.
+    fn index_of(self, at: Pos<Meters>) -> Option<usize>;
 }
 
 impl GridDims for GridSize {
     fn cells(self) -> impl Iterator<Item = CellPos> {
         let (w, h) = (self.width as i32, self.height as i32);
         (0..h).flat_map(move |y| (0..w).map(move |x| CellPos::new(x, y)))
+    }
+
+    fn index_of(self, at: Pos<Meters>) -> Option<usize> {
+        CellPos::new(at.x.round() as i32, at.y.round() as i32).index(self)
     }
 }
 

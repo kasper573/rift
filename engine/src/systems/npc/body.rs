@@ -8,7 +8,7 @@ use crate::core::math::{Pos, Rng};
 use crate::core::script::{
     Answer, Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, ScriptFault, Value, ValueType,
 };
-use crate::core::units::{Meters, TilePos};
+use crate::core::units::{MeterPos, Meters};
 use crate::systems::actor::{self, Actor};
 use crate::systems::area::{self, AreaTag, object};
 use crate::systems::movement::{self, Approach};
@@ -304,18 +304,17 @@ fn wander(world: &mut World, npc: Entity, leash: Option<Meters>) {
         return;
     };
     let content = world.resource::<Content>().clone();
-    let Some(area) = area::of_in(&content, world, npc) else {
+    let Some(mesh) = movement::mesh_of(&content, world, npc) else {
         return;
     };
-    let grid = area.grid_for(area::wild(world, npc));
     let home = world.get::<Home>(npc).map(|home| home.0);
     let roams = world.get::<Roams>(npc).map(|roams| roams.0);
     let goal = world.resource_scope(|world, mut rng: Mut<Rng>| {
-        let free = |cell| movement::others_on(world, npc, cell) == 0;
+        let free = |spot| movement::crowding(world, npc, spot) == 0;
         match (leash.zip(home), roams) {
-            (Some((leash, home)), _) => grid.random_reachable_near(&mut rng, at, home, leash, free),
-            (None, Some(roams)) => grid.random_reachable_within(&mut rng, at, roams, free),
-            (None, None) => grid.random_reachable(&mut rng, at, free),
+            (Some((leash, home)), _) => mesh.random_reachable_near(&mut rng, at, home, leash, free),
+            (None, Some(roams)) => mesh.random_reachable_within(&mut rng, at, roams, free),
+            (None, None) => mesh.random_reachable(&mut rng, at, free),
         }
     });
     if let Some(goal) = goal {

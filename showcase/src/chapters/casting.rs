@@ -145,7 +145,7 @@ fn crowd(snapshot: &ProbeSnapshot, radius: Meters) -> Option<Pos<Meters>> {
 
 /// A friend aimed at stands where the click lands, rather than walking out from under it.
 fn still(body: &ProbeBody) -> bool {
-    body.resting.is_some()
+    body.resting
 }
 
 fn chain_radius() -> Meters {

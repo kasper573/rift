@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::Pos;
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::transition::Crossing;
 use engine::systems::area::warp::warp;
 use engine::systems::area::{self, AreaDef};
@@ -49,9 +49,7 @@ fn a_warp_taken_mid_stride_leaves_you_standing_where_it_put_you() {
 
     walk(&mut sim, away);
     assert!(
-        sim.run_until(5.0, |world| {
-            !position(world, player).is_some_and(|at| at.on_center())
-        }),
+        sim.run_until(5.0, |world| { position(world, player) != Some(start) }),
         "you never set off"
     );
     let to = Place {

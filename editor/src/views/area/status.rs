@@ -1,4 +1,3 @@
-use engine::core::units::TilePos;
 use engine::systems::area::{self, Pictured};
 use ui::egui;
 use ui::egui::{Rect as ERect, Vec2};
@@ -9,6 +8,7 @@ use super::{AreaFrame, placement};
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::tabs::file_title;
+use crate::views::cell_at;
 
 pub(super) fn status_bar(
     editor: &mut Editor,
@@ -52,11 +52,11 @@ pub(super) fn status_bar(
         left.push(format!("{said} in {name}"));
     }
     if let Some(tile) = frame.pointer_tile {
-        let cell = tile.cell();
+        let cell = cell_at(tile);
         left.push(format!("{}, {} m", cell.x, cell.y));
         if frame.in_map(tile) {
             let area = frame.area();
-            let mut what = if area.grid.walkable(tile) {
+            let mut what = if area.mesh.walkable(tile) {
                 "walkable".to_owned()
             } else {
                 "blocked".to_owned()
@@ -68,7 +68,7 @@ pub(super) fn status_bar(
             if height.abs() >= 0.05 {
                 what.push_str(&format!(" · {height:+.1} m"));
             }
-            if let Some(surface) = area.footstep_at(cell) {
+            if let Some(surface) = area.footstep_at(tile) {
                 what.push_str(&format!(" · {}", file_title(surface.path(&frame.content))));
             }
             left.push(what);

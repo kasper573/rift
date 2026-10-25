@@ -1,4 +1,3 @@
-use engine::core::units::TilePos;
 use engine::systems::area::world_map::{MAX_SIZE, MIN_SIZE, WorldMapDef};
 use engine::systems::area::{self, AreaId};
 use engine::systems::script::Place;
@@ -15,6 +14,7 @@ use crate::keymap::EditorKey;
 use crate::play;
 use crate::project::ContentEdit;
 use crate::shell::widgets;
+use crate::views::snap;
 use crate::views::{area as area_view, navigation};
 
 const SNAP_PX: f32 = 8.0;
@@ -341,9 +341,9 @@ fn card_menu(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, hit: &MapTile
     let Some(id) = map.atlas.id(&hit.area) else {
         return;
     };
-    let cell = hit.at.snap();
+    let cell = snap(hit.at);
     let place = Place { area: id, at: cell };
-    if area::load(&map.content, id).grid.walkable(cell) {
+    if area::load(&map.content, id).mesh.walkable(cell) {
         let character = play::current_character(editor).unwrap_or_else(|| "…".to_owned());
         if ui
             .add(widgets::shortcut_button(
@@ -569,7 +569,7 @@ fn keys(
     }
     if keys.enter {
         match (&hover, canvas.hovered) {
-            (Some(hit), _) => area_view::open_area_at(editor, &hit.area, Some(hit.at.snap()), None),
+            (Some(hit), _) => area_view::open_area_at(editor, &hit.area, Some(snap(hit.at)), None),
             (None, Some(area)) => area_view::open_area_at(editor, map.atlas.key(area), None, None),
             (None, None) => {}
         }
@@ -577,13 +577,13 @@ fn keys(
     if keys.play
         && let Some(hit) = &hover
         && let Some(id) = map.atlas.id(&hit.area)
-        && area::load(&map.content, id).grid.walkable(hit.at.snap())
+        && area::load(&map.content, id).mesh.walkable(snap(hit.at))
     {
         play::start(
             editor,
             Some(Place {
                 area: id,
-                at: hit.at.snap(),
+                at: snap(hit.at),
             }),
         );
     }

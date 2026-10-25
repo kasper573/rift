@@ -1,5 +1,5 @@
 use engine::core::math::{Offset, Rect};
-use engine::core::units::{Cell, Meters, TilePos};
+use engine::core::units::{Cell, CellPos, Meters};
 use engine::systems::area::{AreaModule, AreaModuleKind};
 use strum::VariantArray;
 use ui::egui;
@@ -20,6 +20,7 @@ use super::{
 use crate::app::{Clipboard, Editor, PlacePick};
 use crate::keymap::EditorKey;
 use crate::tabs::file_title;
+use crate::views::cell_at;
 use crate::views::navigation::{self, Viewport};
 
 pub fn rail(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
@@ -148,7 +149,7 @@ pub fn input(
                 && let Some(tile) = frame.pointer_tile
             {
                 let view = editor.views.area.view_mut(view_key);
-                view.cursor_cell = Some(tile.cell());
+                view.cursor_cell = Some(cell_at(tile));
                 match view.placing.take() {
                     Some(kind) => {
                         view.set_tool(AreaTool::Select);
@@ -465,8 +466,8 @@ pub fn keys(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame)
             move_selection(editor, frame, x as f32 * step, y as f32 * step);
         } else {
             let view = editor.views.area.view_mut(view_key);
-            let cursor = view.cursor_cell.unwrap_or_else(|| view.center.cell());
-            view.cursor_cell = Some(cursor.step((x, y)));
+            let cursor = view.cursor_cell.unwrap_or_else(|| cell_at(view.center));
+            view.cursor_cell = Some(CellPos::new(cursor.x + x, cursor.y + y));
         }
     }
     if pressed(EditorKey::SelectAtCursor)

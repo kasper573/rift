@@ -697,9 +697,7 @@ impl<'a> Nearby<'a> {
             .from
             .and_then(|from| content.by_path::<AreaDef>(from))
             .or_else(|| content.by_path::<AreaDef>(&self.content(AreaDef::TABLE)?))?;
-        let at = area::load(content, area)
-            .grid
-            .nearest_walkable(Pos::new(0.0, 0.0))?;
+        let at = area::load(content, area).mesh.nearest(Pos::new(0.0, 0.0))?;
         let place = Place { area, at };
         with_content(ContentScope::of(content), || serde_json::to_value(place))
             .0
@@ -714,9 +712,7 @@ impl<'a> Nearby<'a> {
         let mut place: Place = with_content(scope(), || serde_json::from_value(place.clone()))
             .0
             .ok()?;
-        place.at = area::load(content, place.area)
-            .grid
-            .nearest_walkable(place.at)?;
+        place.at = area::load(content, place.area).mesh.nearest(place.at)?;
         with_content(scope(), || serde_json::to_value(place)).0.ok()
     }
 

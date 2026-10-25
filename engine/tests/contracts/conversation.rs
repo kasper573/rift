@@ -3,7 +3,7 @@ use engine::core::content::Fixture;
 use engine::core::math::Offset;
 use engine::core::script::Value as Recalled;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::actor::{self, Action, Actor};
 use engine::systems::attention::{self, Attention, AttentionId, AttentionMark};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};

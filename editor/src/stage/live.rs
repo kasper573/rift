@@ -11,7 +11,7 @@ use engine::core::content::Content;
 use engine::core::geometry::{PlacedShape, Shape};
 use engine::core::math::Pos;
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::core::vfx::VfxInstance;
 use engine::systems::actor::plate::{self, PlateLabel};
 use engine::systems::actor::{Action, Actor, ModelId};
@@ -335,7 +335,7 @@ fn skill_setup(
         snapshot.bag.push(ItemStack::new(stack.item, stack.count));
     }
     let area = area::load(content, spawn.area);
-    let free = |at: Pos<Meters>| area.grid.nearest_walkable_where(at, |_| true).unwrap_or(at);
+    let free = |at: Pos<Meters>| area.mesh.nearest(at).unwrap_or(at);
     let caster = join(world, snapshot.clone(), spawn, ClientId(1))?.actor;
     let ally = || {
         let mut friend =

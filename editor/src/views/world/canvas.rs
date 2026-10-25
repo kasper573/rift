@@ -7,7 +7,7 @@ use ui::words;
 use engine::core::content::name_of;
 use engine::core::math::Pos;
 use engine::core::render::TILE;
-use engine::core::units::{Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::world_map::WorldMapDef;
 use engine::systems::area::{self, AreaId};
 use ui::egui::epaint::QuadraticBezierShape;
@@ -28,6 +28,7 @@ use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::tabs::shown_path;
 use crate::views::navigation::{self, Viewport};
+use crate::views::snap;
 
 const LABEL: f32 = 28.0;
 const PAD: f32 = 3.0;
@@ -1266,9 +1267,9 @@ fn tile_facts(map: &OpenWorldMap, hit: &MapTileHit) -> String {
         return String::new();
     };
     let info = &atlas.areas[&id];
-    let cell = hit.at.snap();
+    let cell = snap(hit.at);
     let loaded = area::load(&map.content, id);
-    let walkable = if loaded.grid.walkable(cell) {
+    let walkable = if loaded.mesh.walkable(cell) {
         "walkable"
     } else {
         "not walkable"

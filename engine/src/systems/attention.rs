@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::assets::ImageRef;
 use crate::core::content::{ContentFile, ContentId, Fixture, Nearby};
 use crate::core::math::Pos;
-use crate::core::units::{Meters, TilePos};
+use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::interact::{self, Interactive};
 use crate::systems::movement::Position;

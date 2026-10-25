@@ -87,24 +87,16 @@ pub fn population_places(
     seed: u64,
 ) -> Vec<Pos<Meters>> {
     let count = population.count as usize;
-    let nodes: Vec<Pos<Meters>> = match population.roams {
-        Some(bounds) => area
-            .wild_grid
-            .nodes()
-            .iter()
-            .copied()
-            .filter(|p| bounds.contains(*p))
-            .collect(),
-        None => area.wild_grid.nodes().to_vec(),
-    };
-    if nodes.is_empty() {
-        return Vec::new();
-    }
     let mut rng = Rng::new(
         seed.wrapping_mul(0x9E37_79B9_7F4A_7C15)
             .wrapping_add(population.count as u64),
     );
     (0..count)
-        .map(|_| nodes[rng.rand_range(0..nodes.len() as u32) as usize])
+        .filter_map(|_| match population.roams {
+            Some(bounds) => area
+                .wild_mesh
+                .random_point_within(&mut rng, bounds, |_| true),
+            None => area.wild_mesh.random_point(&mut rng, |_| true),
+        })
         .collect()
 }

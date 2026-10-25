@@ -5,14 +5,14 @@ use bevy_ecs::entity::Entity;
 use bevy_input::keyboard::KeyCode;
 use bevy_input::mouse::MouseButton;
 use engine::core::math::{Offset, Pos, Rect, WindowPx};
-use engine::core::units::{Cell, Meters, TilePos};
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::area;
 use engine::systems::input::gestures::ClickClaim;
 use engine::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers};
-use engine::systems::movement::Grid;
+use engine::systems::movement::{NavMesh, SPACING};
 use engine::systems::probe::{ProbeBody, ProbeShop, ProbeSnapshot, ProbeStage, ProbeUiElement};
 
-use crate::content::{content, hunting_ground, marker_at};
+use crate::content::{content, hunting_ground, lattice, marker_at};
 use crate::desktop::{BUDGET, Button, Deadline, Desktop, WaitBudget};
 use crate::recording::Footage;
 use crate::seen::{
@@ -300,20 +300,15 @@ impl Player {
     /// The ground the player can walk to nearest the spot that nobody stands on, clear of warps.
     pub fn walk_near(&mut self, spot: Pos<Meters>) -> Pos<Meters> {
         let seen = self.in_world();
-        let grid = grid_of(&seen);
+        let mesh = mesh_of(&seen);
         let me = seen.me.as_ref().expect("the player").at;
-        let region = grid.nearest_walkable(me).and_then(|at| grid.region(at));
-        let ground = grid
-            .nodes()
-            .iter()
-            .copied()
-            .filter(|tile| {
-                grid.region(*tile) == region
-                    && !in_warp(&seen, *tile)
-                    && !taken(&seen, *tile)
-                    && !beside_anyone(&seen, *tile)
+        let ground = mesh
+            .nearest_where(spot, SPACING, |tile| {
+                mesh.connects(me, tile)
+                    && !in_warp(&seen, tile)
+                    && !taken(&seen, tile)
+                    && !beside_anyone(&seen, tile)
             })
-            .min_by(|a, b| a.distance_to(spot).total_cmp(&b.distance_to(spot)))
             .expect("ground the player can walk to");
         self.walk_to(ground)
     }
@@ -342,13 +337,10 @@ impl Player {
         let seen = self.in_world();
         let gate = warp_named(&seen, warp).clone();
         if gate.rect.contains(seen.me.as_ref().expect("the player").at) {
-            let grid = grid_of(&seen);
-            let off = grid
-                .nodes()
-                .iter()
-                .copied()
-                .filter(|tile| open(&seen, *tile) && !in_warp(&seen, *tile))
-                .min_by(|a, b| a.distance_to(gate.at).total_cmp(&b.distance_to(gate.at)))
+            let off = mesh_of(&seen)
+                .nearest_where(gate.at, SPACING, |tile| {
+                    open(&seen, tile) && !in_warp(&seen, tile)
+                })
                 .expect("open ground beside the warp");
             self.walk_to(off);
         }
@@ -383,18 +375,18 @@ impl Player {
             else {
                 continue;
             };
-            let grid = grid_of(&seen);
-            let target = reachable_near(grid, me.at, goal).expect("ground the player can walk to");
-            if at_rest(me) && me.at.cell() == target.cell() {
+            let mesh = mesh_of(&seen);
+            let target = reachable_near(mesh, me.at, goal).expect("ground the player can walk to");
+            if at_rest(me) && me.at.distance(target) < CLICK_SLACK {
                 return;
             }
-            let Some(path) = grid.path(me.at.cell(), target.cell()) else {
+            let Some(path) = mesh.route(me.at, target) else {
                 continue;
             };
-            let hop = path[1..]
+            let hop = path
                 .iter()
                 .rev()
-                .map(|cell| cell.center())
+                .copied()
                 .find(|tile| {
                     open(&seen, *tile)
                         && if *tile == target {
@@ -404,16 +396,19 @@ impl Player {
                         }
                         && (!in_warp(&seen, *tile) || *tile == target)
                 })
-                .or_else(|| detour(&seen, grid, target, path.len()));
+                .or_else(|| detour(&seen, mesh, target, length(me.at, &path)));
             // Those standing in the way move on, or `arrived` says how close is close enough.
             let Some(hop) = hop else {
                 continue;
             };
             let onto_goal = hop == target;
             let wanted = |claim: &ClickClaim| match claim {
-                ClickClaim::Walk(tile) if onto_goal => tile.cell() == target.cell(),
+                ClickClaim::Walk(tile) if onto_goal => tile.distance(target) < CLICK_SLACK,
                 ClickClaim::Walk(tile) => {
-                    tile.cell() == hop.cell() || path[1..].contains(&tile.cell())
+                    tile.distance(hop) < CLICK_SLACK
+                        || path
+                            .iter()
+                            .any(|corner| corner.distance(*tile) < CLICK_SLACK)
                 }
                 _ => false,
             };
@@ -906,6 +901,8 @@ const TYPING: Duration = Duration::from_millis(45);
 // up.
 const AIM_ATTEMPTS: u32 = 60;
 const NEAR: Meters = Meters(1.5);
+/// How far a click may land from the ground point it aimed at, through the window's pixels.
+const CLICK_SLACK: Meters = Meters(0.25);
 const SCROLLS: u32 = 12;
 const FIRST_CHOICES: u32 = 3;
 const SET_OFF: WaitBudget = WaitBudget {
@@ -929,8 +926,19 @@ fn bindings(action: InputAction) -> Vec<InputBinding> {
     InputMap::new(content()).bindings(action).to_vec()
 }
 
-fn grid_of(snapshot: &ProbeSnapshot) -> &'static Grid {
-    &area::load(content(), snapshot.area.expect("the player is in an area")).grid
+fn mesh_of(snapshot: &ProbeSnapshot) -> &'static NavMesh {
+    &area::load(content(), snapshot.area.expect("the player is in an area")).mesh
+}
+
+/// How far a walk from `from` along `corners` goes.
+fn length(from: Pos<Meters>, corners: &[Pos<Meters>]) -> Meters {
+    let mut at = from;
+    let mut total = 0.0;
+    for &corner in corners {
+        total += at.distance(corner).0;
+        at = corner;
+    }
+    Meters(total)
 }
 
 // At rest, with someone standing on every step left of the way: as close as they let the player
@@ -939,29 +947,27 @@ fn hemmed_in(snapshot: &ProbeSnapshot, goal: Pos<Meters>) -> bool {
     let Some(me) = snapshot.me.as_ref().filter(|me| at_rest(me)) else {
         return false;
     };
-    let grid = grid_of(snapshot);
-    reachable_near(grid, me.at, goal)
-        .and_then(|target| grid.path(me.at.cell(), target.cell()))
-        .is_some_and(|path| path[1..].iter().all(|cell| taken(snapshot, cell.center())))
+    let mesh = mesh_of(snapshot);
+    reachable_near(mesh, me.at, goal)
+        .and_then(|target| mesh.route(me.at, target))
+        .is_some_and(|path| path.iter().all(|corner| taken(snapshot, *corner)))
 }
 
 // With everything in view along the way taken by those standing on it, the open ground in view with
 // the least of the way left, should it leave less than `left`: a walk around them.
 fn detour(
     snapshot: &ProbeSnapshot,
-    grid: &Grid,
+    mesh: &NavMesh,
     target: Pos<Meters>,
-    left: usize,
+    left: Meters,
 ) -> Option<Pos<Meters>> {
-    grid.nodes()
-        .iter()
-        .copied()
+    lattice(mesh)
         .filter(|tile| {
             open(snapshot, *tile) && !beside_anyone(snapshot, *tile) && !in_warp(snapshot, *tile)
         })
-        .filter_map(|tile| Some((tile, grid.path(tile.cell(), target.cell())?.len())))
+        .filter_map(|tile| Some((tile, length(tile, &mesh.route(tile, target)?))))
         .filter(|(_, way)| *way < left)
-        .min_by_key(|(_, way)| *way)
+        .min_by(|a, b| a.1.0.total_cmp(&b.1.0))
         .map(|(tile, _)| tile)
 }
 
@@ -973,13 +979,9 @@ fn in_the_way(seen: &ProbeSnapshot, target: Entity) -> bool {
 
 // The goal itself, or for a goal off the walkways (someone behind a counter), the ground the player
 // can walk to nearest it.
-fn reachable_near(grid: &Grid, from: Pos<Meters>, goal: Pos<Meters>) -> Option<Pos<Meters>> {
-    let region = grid.region(grid.nearest_walkable(from)?)?;
-    grid.nodes()
-        .iter()
-        .copied()
-        .filter(|node| grid.region(*node) == Some(region))
-        .min_by(|a, b| a.distance_to(goal).total_cmp(&b.distance_to(goal)))
+fn reachable_near(mesh: &NavMesh, from: Pos<Meters>, goal: Pos<Meters>) -> Option<Pos<Meters>> {
+    let from = mesh.nearest(from)?;
+    mesh.nearest_where(goal, SPACING, |point| mesh.connects(from, point))
 }
 
 fn pointer_binding(action: InputAction) -> (MouseButton, u8, KeyModifiers) {

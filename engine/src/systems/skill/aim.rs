@@ -8,7 +8,7 @@ use crate::core::content::{Content, Fixture};
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::math::Pos;
 use crate::core::time::Seconds;
-use crate::core::units::{Meters, TilePos};
+use crate::core::units::Meters;
 use crate::core::vfx::render::ShaderOverlay;
 use crate::core::vfx::{ParamValue, VfxParams, VfxSite};
 use crate::core::{gui, render};
@@ -139,7 +139,7 @@ impl Gesture for AimGesture {
         Some(match aim_at(world, tile, targeting) {
             Some(CastAim::Actor(target)) => ClickClaim::Aim(target),
             Some(CastAim::Point(point)) => ClickClaim::AimAt(point),
-            Some(CastAim::None) | None => ClickClaim::AimAt(tile.snap()),
+            Some(CastAim::None) | None => ClickClaim::AimAt(tile),
         })
     }
 

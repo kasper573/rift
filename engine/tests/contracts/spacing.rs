@@ -1,13 +1,11 @@
-use std::collections::HashMap;
-
 use bevy_ecs::message::Message;
 use bevy_ecs::prelude::*;
-use engine::core::math::Pos;
-use engine::core::units::{Cell, CellPos, Meters, TilePos};
+use engine::core::math::{Offset, Pos};
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::warp::warp;
 use engine::systems::area::{AreaDef, AreaId};
 use engine::systems::combat::{self, AttackRequest, Attitude};
-use engine::systems::movement::{self, MoveRequest, MoveSeq, moving, position};
+use engine::systems::movement::{self, MoveRequest, MoveSeq, SPACING, moving, position};
 use engine::systems::npc::body::{self, Act, Priority};
 use engine::systems::npc::{self, Npc, NpcDef, Pack};
 use engine::systems::script::{self, Place};
@@ -17,11 +15,13 @@ use testkit::{Game, Map, Sim, path};
 
 const FIGHTERS: Pack = Pack(1);
 const VICTIMS: Pack = Pack(2);
+/// How far a brute strikes from, the `range` of its stats.
+const REACH: Meters = Meters(1.5);
 
 #[test]
-fn two_actors_reaching_for_each_other_end_on_neighbouring_tiles() {
-    for gap in [2, 3, 4, 5] {
-        for direction in [(1, 0), (0, 1), (1, 1), (-1, 0)] {
+fn two_actors_reaching_for_each_other_end_in_reach_with_their_bodies_apart() {
+    for gap in [2.0, 3.0, 4.0, 5.0] {
+        for direction in [(1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (-1.0, 0.0)] {
             let mut arena = Arena::new();
             let player = arena.player();
             let foe = arena.fighter(arena.at(direction.0 * gap, direction.1 * gap));
@@ -29,39 +29,48 @@ fn two_actors_reaching_for_each_other_end_on_neighbouring_tiles() {
             arena.send(AttackRequest { target: foe });
             arena.attack(foe, player);
             let rested_apart = arena.watch(4.0, |world| {
-                !(resting(world, player)
-                    && resting(world, foe)
-                    && cell(world, player) == cell(world, foe))
+                !(resting(world, player) && resting(world, foe) && overlapping(world, player, foe))
             });
 
-            assert!(rested_apart, "gap {gap} {direction:?}: rested on one tile");
+            assert!(
+                rested_apart,
+                "gap {gap} {direction:?}: rested on one another"
+            );
             let world = arena.world();
             assert!(resting(world, player) && resting(world, foe));
-            assert_eq!(
-                apart(cell(world, player), cell(world, foe)),
-                1,
-                "gap {gap} {direction:?}"
+            assert!(
+                in_reach(world, player, foe) && !overlapping(world, player, foe),
+                "gap {gap} {direction:?}: {:?} and {:?}",
+                at(world, player),
+                at(world, foe)
             );
         }
     }
 }
 
 #[test]
-fn reach_met_mid_step_never_lands_on_the_target() {
-    for offset in [(3, 0), (2, 1), (3, 2), (-2, 3), (4, -1), (1, -3)] {
+fn reach_met_on_the_way_never_lands_on_the_target() {
+    for offset in [
+        (3.0, 0.0),
+        (2.0, 1.0),
+        (3.0, 2.0),
+        (-2.0, 3.0),
+        (4.0, -1.0),
+        (1.0, -3.0),
+    ] {
         let mut arena = Arena::new();
         let player = arena.player();
         let target = arena.victim(arena.at(offset.0, offset.1));
 
         arena.send(AttackRequest { target });
         let never_on_it = arena.watch(4.0, |world| {
-            !(resting(world, player) && cell(world, player) == cell(world, target))
+            !(resting(world, player) && overlapping(world, player, target))
         });
 
         assert!(never_on_it, "{offset:?}: came to rest on the target");
         let world = arena.world();
         assert!(resting(world, player), "{offset:?}");
-        assert_eq!(apart(cell(world, player), cell(world, target)), 1);
+        assert!(in_reach(world, player, target) && !overlapping(world, player, target));
     }
 }
 
@@ -71,13 +80,13 @@ fn a_pack_from_one_side_fills_distinct_berths_where_its_target_stops() {
         let mut arena = Arena::new();
         let player = arena.player();
         let pack: Vec<Entity> = (0..4)
-            .map(|row| arena.fighter(arena.at(4, row - 1)))
+            .map(|row| arena.fighter(arena.at(4.0, row as f32 - 1.0)))
             .collect();
 
         for &fighter in &pack {
             arena.attack(fighter, player);
         }
-        let away = arena.at(-4, 0);
+        let away = arena.at(-4.0, 0.0);
         if walks_away {
             arena.send(MoveRequest {
                 pos: away,
@@ -90,22 +99,21 @@ fn a_pack_from_one_side_fills_distinct_berths_where_its_target_stops() {
         if walks_away {
             assert_eq!(position(world, player), Some(away));
         }
-        let target = cell(world, player);
-        let mut tiles: Vec<CellPos> = pack.iter().map(|&f| cell(world, f)).collect();
         assert!(
             pack.iter().all(|&f| resting(world, f)),
             "walks away: {walks_away}"
         );
         assert!(
-            tiles.iter().all(|&tile| apart(tile, target) == 1),
-            "walks away: {walks_away}, {tiles:?}"
+            pack.iter()
+                .all(|&f| in_reach(world, f, player) && !overlapping(world, f, player)),
+            "walks away: {walks_away}, {:?}",
+            positions(world, &pack)
         );
-        tiles.sort_by_key(|tile| (tile.x, tile.y));
-        tiles.dedup();
         assert_eq!(
-            tiles.len(),
-            pack.len(),
-            "walks away: {walks_away}, two of the pack share a tile"
+            overlapping_pairs(world, &pack),
+            0,
+            "walks away: {walks_away}, two of the pack share a berth: {:?}",
+            positions(world, &pack)
         );
     }
 }
@@ -114,29 +122,27 @@ fn a_pack_from_one_side_fills_distinct_berths_where_its_target_stops() {
 fn berths_hold_while_the_target_steps_within_reach() {
     let mut arena = Arena::new();
     let player = arena.player();
-    let fighter = arena.fighter(arena.at(0, 3));
+    let fighter = arena.fighter(arena.at(0.0, 3.0));
     arena.attack(fighter, player);
     arena.run(4.0);
-    let berth = cell(arena.world(), fighter);
+    let berth = at(arena.world(), fighter);
 
-    let step = arena.at(1, 0);
+    let step = arena.origin.lerp(berth, 0.3);
     arena.send(MoveRequest {
         pos: step,
         seq: MoveSeq(1),
     });
-    let held = arena.watch(3.0, |world| {
-        position(world, fighter) == Some(berth.center())
-    });
+    let held = arena.watch(3.0, |world| position(world, fighter) == Some(berth));
 
     assert!(held, "the fighter left a berth still in reach");
     assert_eq!(position(arena.world(), player), Some(step));
 }
 
 #[test]
-fn a_ground_click_onto_an_occupied_tile_is_honoured() {
+fn a_ground_click_onto_an_occupied_spot_is_honoured() {
     let mut arena = Arena::new();
     let player = arena.player();
-    let spot = arena.at(3, 1);
+    let spot = arena.at(3.0, 1.0);
     arena.victim(spot);
 
     arena.send(MoveRequest {
@@ -160,110 +166,114 @@ fn no_attacker_is_ever_held_out_of_reach_however_many_come_and_go() {
         arena.run(8.0);
 
         let world = arena.world();
-        let crowded = crowds(world, &pack);
         assert!(
             pack.iter().all(|&fighter| resting(world, fighter)),
             "{count}"
         );
         assert!(in_reach_of(world, &pack, player), "{count}");
-        assert_eq!(crowded.len(), 8, "{count}: {crowded:?}");
-        assert!(
-            crowded.values().all(|&crowd| crowd <= 2),
-            "{count}: {crowded:?}"
+        assert_eq!(
+            overlapping_pairs(world, &pack),
+            0,
+            "{count}: {:?}",
+            positions(world, &pack)
         );
 
-        let alone = pack
-            .iter()
-            .position(|&fighter| crowded[&cell(world, fighter)] == 1)
-            .unwrap_or(0);
-        let gone = pack.remove(alone);
+        let gone = pack.remove(0);
         npc::despawn(world, gone);
         arena.run(6.0);
 
         let world = arena.world();
-        let crowded = crowds(world, &pack);
         assert!(in_reach_of(world, &pack, player), "{count} after one left");
-        assert_eq!(crowded.len(), 8, "{count} after one left: {crowded:?}");
-        assert!(
-            crowded.values().all(|&crowd| crowd <= 2),
-            "{count} after one left"
+        assert_eq!(
+            overlapping_pairs(world, &pack),
+            0,
+            "{count} after one left: {:?}",
+            positions(world, &pack)
         );
     }
 }
 
 #[test]
 fn players_and_npcs_pick_berths_alike() {
-    for offset in [(3, 0), (3, 2), (-2, 4), (0, -3)] {
+    for offset in [(3.0, 0.0), (3.0, 2.0), (-2.0, 4.0), (0.0, -3.0)] {
         let berths = [true, false].map(|as_player| {
             let mut arena = Arena::new();
             let player = arena.player();
-            let target = arena.victim(arena.at(0, 0));
+            let target = arena.victim(arena.at(0.0, 0.0));
             let attacker = if as_player {
                 let start = arena.at(offset.0, offset.1);
                 movement::relocate(arena.world(), player, start);
                 arena.send(AttackRequest { target });
                 player
             } else {
-                let aside = arena.at(-5, -5);
+                let aside = arena.at(-5.0, -5.0);
                 movement::relocate(arena.world(), player, aside);
                 let fighter = arena.fighter(arena.at(offset.0, offset.1));
                 arena.attack(fighter, target);
                 fighter
             };
             let arrived = arena.watch_until(4.0, |world| {
-                resting(world, attacker) && apart(cell(world, attacker), cell(world, target)) == 1
+                resting(world, attacker)
+                    && in_reach(world, attacker, target)
+                    && !overlapping(world, attacker, target)
             });
             assert!(arrived, "{offset:?} as player: {as_player}");
-            cell(arena.world(), attacker)
+            at(arena.world(), attacker)
         });
 
-        assert_eq!(berths[0], berths[1], "{offset:?}");
+        assert!(
+            berths[0].distance(berths[1]) < Meters(1e-3),
+            "{offset:?}: {berths:?}"
+        );
     }
 }
 
 #[test]
-fn wandering_never_ends_on_a_claimed_tile() {
+fn wandering_never_ends_on_a_taken_spot() {
     let mut arena = Arena::new();
-    for (dx, dy) in [(0, 0), (1, 0), (-1, 1), (0, -2), (2, 2)] {
+    for (dx, dy) in [(0.0, 0.0), (1.0, 0.0), (-1.0, 1.0), (0.0, -2.0), (2.0, 2.0)] {
         arena.victim(arena.at(dx, dy));
     }
     npc::spawn_all(arena.world());
 
     let apart = arena.watch(20.0, |world| {
-        let mut resting_on: HashMap<CellPos, u32> = HashMap::new();
         let mut actors = world.query_filtered::<Entity, With<Npc>>();
-        for actor in actors.iter(world).collect::<Vec<_>>() {
-            if resting(world, actor) {
-                *resting_on.entry(cell(world, actor)).or_default() += 1;
-            }
-        }
-        resting_on.values().all(|&count| count == 1)
+        let resting: Vec<Entity> = actors
+            .iter(world)
+            .filter(|&actor| resting(world, actor))
+            .collect();
+        overlapping_pairs(world, &resting) == 0
     });
 
-    assert!(apart, "a wanderer came to rest on a claimed tile");
+    assert!(apart, "a wanderer came to rest on a taken spot");
 }
 
 #[test]
-fn joiners_at_the_spawn_land_on_distinct_tiles_around_it() {
+fn joiners_at_the_spawn_land_on_distinct_spots_around_it() {
     let mut sim = field();
     let players: Vec<Entity> = (1..=4).map(|client| sim.join(client)).collect();
     let world = &sim.world;
-    let mut tiles: Vec<CellPos> = players.iter().map(|&p| cell(world, p)).collect();
-    let spawn = tiles[0];
+    let spawn = at(world, players[0]);
     assert!(
-        tiles.iter().all(|&tile| apart(tile, spawn) <= 1),
-        "{tiles:?}"
+        players
+            .iter()
+            .all(|&player| at(world, player).distance(spawn) <= Meters(SPACING.0 + 1e-3)),
+        "{:?}",
+        positions(world, &players)
     );
-    tiles.sort_by_key(|tile| (tile.x, tile.y));
-    tiles.dedup();
-    assert_eq!(tiles.len(), players.len());
+    assert_eq!(
+        overlapping_pairs(world, &players),
+        0,
+        "{:?}",
+        positions(world, &players)
+    );
 }
 
 #[test]
-fn a_warp_onto_an_occupied_tile_lands_on_the_nearest_free_one() {
+fn a_warp_onto_an_occupied_spot_lands_on_the_nearest_free_one() {
     let mut arena = Arena::new();
     let player = arena.player();
-    let spot = arena.at(4, 0);
+    let spot = arena.at(4.0, 0.0);
     arena.victim(spot);
     let to = Place {
         area: arena.area,
@@ -271,7 +281,11 @@ fn a_warp_onto_an_occupied_tile_lands_on_the_nearest_free_one() {
     };
     warp(arena.world(), player, to).expect("warped");
 
-    assert_eq!(cell(&arena.sim.world, player), arena.at(4, 1).cell());
+    let landed = at(&arena.sim.world, player);
+    assert!(
+        (landed.distance(spot).0 - SPACING.0).abs() < 1e-3,
+        "landed at {landed:?}, {spot:?} taken"
+    );
 }
 
 #[test]
@@ -279,34 +293,41 @@ fn a_berth_whose_holder_is_gone_or_fallen_is_free_again() {
     let leave: [fn(&mut World, Entity); 2] = [npc::despawn, |world, holder| {
         combat::inflict(world, holder, None, 1_000_000.0)
     }];
+    let berth = {
+        let mut control = Arena::new();
+        let player = control.player();
+        let fighter = control.fighter(control.at(0.0, 3.0));
+        control.attack(fighter, player);
+        control.run(4.0);
+        at(control.world(), fighter)
+    };
     for (case, leave) in leave.into_iter().enumerate() {
         let mut arena = Arena::new();
         let player = arena.player();
-        let berth = arena.at(0, 1);
         let holder = arena.victim(berth);
         leave(arena.world(), holder);
         arena.run(0.2);
 
-        let fighter = arena.fighter(arena.at(0, 3));
+        let fighter = arena.fighter(arena.at(0.0, 3.0));
         arena.attack(fighter, player);
         arena.run(4.0);
 
-        assert_eq!(cell(arena.world(), fighter), berth.cell(), "case {case}");
+        assert_eq!(at(arena.world(), fighter), berth, "case {case}");
     }
 }
 
 struct Arena {
     sim: Sim,
     area: AreaId,
-    origin: CellPos,
+    origin: Pos<Meters>,
 }
 
 impl Arena {
-    /// A player alone in the middle of open ground they can walk all over, twelve tiles each way.
+    /// A player alone in the middle of open ground they can walk all over, twelve metres each way.
     fn new() -> Arena {
         let mut sim = field();
         let player = sim.join(1);
-        let origin = cell(&sim.world, player);
+        let origin = at(&sim.world, player);
         let area = sim.id::<AreaDef>("field");
         Arena { sim, area, origin }
     }
@@ -324,8 +345,8 @@ impl Arena {
         self.sim.send(conn, message);
     }
 
-    fn at(&self, dx: i32, dy: i32) -> Pos<Meters> {
-        self.origin.step((dx, dy)).center()
+    fn at(&self, dx: f32, dy: f32) -> Pos<Meters> {
+        self.origin + Offset::new(dx, dy)
     }
 
     fn fighter(&mut self, at: Pos<Meters>) -> Entity {
@@ -362,8 +383,7 @@ impl Arena {
         let fighters: Vec<Entity> = (0..count)
             .map(|index| {
                 let angle = std::f32::consts::TAU * index as f32 / count as f32;
-                let (dx, dy) = (4.0 * angle.cos(), 4.0 * angle.sin());
-                self.fighter(self.at(dx.round() as i32, dy.round() as i32))
+                self.fighter(self.at(4.0 * angle.cos(), 4.0 * angle.sin()))
             })
             .collect();
         for &fighter in &fighters {
@@ -460,28 +480,35 @@ fn field() -> Sim {
 }
 
 fn resting(world: &World, actor: Entity) -> bool {
-    !moving(world, actor) && position(world, actor).is_some_and(|at| at.on_center())
+    !moving(world, actor)
 }
 
-fn cell(world: &World, actor: Entity) -> CellPos {
-    position(world, actor).expect("position").cell()
+fn at(world: &World, actor: Entity) -> Pos<Meters> {
+    position(world, actor).expect("position")
 }
 
-fn apart(a: CellPos, b: CellPos) -> i32 {
-    (a.x - b.x).abs().max((a.y - b.y).abs())
+fn positions(world: &World, actors: &[Entity]) -> Vec<Pos<Meters>> {
+    actors.iter().map(|&actor| at(world, actor)).collect()
 }
 
-fn crowds(world: &World, actors: &[Entity]) -> HashMap<CellPos, u32> {
-    let mut crowds = HashMap::new();
-    for &actor in actors {
-        *crowds.entry(cell(world, actor)).or_default() += 1;
-    }
-    crowds
+/// Whether the two bodies stand on one another, two just touching not counted.
+fn overlapping(world: &World, a: Entity, b: Entity) -> bool {
+    at(world, a).distance(at(world, b)) < Meters(SPACING.0 - 1e-3)
+}
+
+fn overlapping_pairs(world: &World, actors: &[Entity]) -> usize {
+    actors
+        .iter()
+        .enumerate()
+        .flat_map(|(index, &a)| actors[index + 1..].iter().map(move |&b| (a, b)))
+        .filter(|&(a, b)| overlapping(world, a, b))
+        .count()
+}
+
+fn in_reach(world: &World, actor: Entity, target: Entity) -> bool {
+    at(world, actor).distance(at(world, target)) <= Meters(REACH.0 + 1e-3)
 }
 
 fn in_reach_of(world: &World, actors: &[Entity], target: Entity) -> bool {
-    let target = cell(world, target);
-    actors
-        .iter()
-        .all(|&actor| apart(cell(world, actor), target) <= 1)
+    actors.iter().all(|&actor| in_reach(world, actor, target))
 }

@@ -38,7 +38,7 @@ fn the_ground_walks_where_it_is_flat_enough_and_painted_walkable() {
         .part("area", "hill", "terrain/height.png", hill().encode())
         .load();
     let hill = area::load(&content, area_id(&content, "hill"));
-    let walks = |x: f32, y: f32| hill.grid.walkable(Pos::new(x, y));
+    let walks = |x: f32, y: f32| hill.mesh.walkable(Pos::new(x, y));
 
     assert!(walks(2.0, 2.0), "flat ground");
     assert!(walks(4.0, 2.0), "a gentle slope");
@@ -70,10 +70,10 @@ fn a_props_footprint_blocks_the_ground_under_it_and_a_scatter_strews_the_same_pr
     let content = field().load();
     let field_area = area::load(&content, area_id(&content, "field"));
 
-    assert!(!field_area.grid.walkable(Pos::new(4.0, 4.0)));
-    assert!(field_area.grid.walkable(Pos::new(5.0, 4.0)));
+    assert!(!field_area.mesh.walkable(Pos::new(4.0, 4.0)));
+    assert!(field_area.mesh.walkable(Pos::new(5.0, 4.0)));
     assert!(
-        field_area.grid.walkable(Pos::new(1.0, 6.0)),
+        field_area.mesh.walkable(Pos::new(1.0, 6.0)),
         "a tuft takes no ground"
     );
     assert_eq!(field_area.props.len(), 2 + 32);

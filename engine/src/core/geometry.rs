@@ -1,8 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::math::{Offset, Pos};
-use crate::core::units::{Meters, TilePos};
+use crate::core::math::{Offset, Pos, Rect};
+use crate::core::units::{MeterPos, Meters};
 
 #[derive(
     JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
@@ -59,6 +59,17 @@ impl Radians {
     pub fn heading(self) -> Offset<Meters> {
         Offset::new(self.0.cos(), self.0.sin())
     }
+}
+
+/// The corners of a rectangle, going round it.
+pub fn corners(rect: Rect<Meters>) -> [Pos<Meters>; 4] {
+    let (min, max) = (rect.min(), rect.max());
+    [
+        Pos::new(min.x, min.y),
+        Pos::new(max.x, min.y),
+        Pos::new(max.x, max.y),
+        Pos::new(min.x, max.y),
+    ]
 }
 
 /// An actor's body for hit tests: a capsule standing on its feet, `radius` wide around its

@@ -3,13 +3,11 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::core::math::Pos;
-use crate::core::units::{Cell, Meters, TilePos};
+use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::movement::{self, Aim, Approach, position};
 use crate::systems::skill::SkillId;
 use crate::systems::{stat, visibility};
-
-const DIAGONAL_MARGIN: Meters = Meters(std::f32::consts::SQRT_2 - 1.0);
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ReachIntent {
@@ -137,8 +135,7 @@ impl Tether {
     pub fn holds(&self, world: &World, actor: Entity) -> bool {
         !stat::is_dead(world, actor)
             && world.get::<AreaTag>(actor).map(|tag| tag.area) == Some(self.area)
-            && position(world, actor)
-                .is_some_and(|at| at.distance(self.anchor) <= self.range + DIAGONAL_MARGIN)
+            && position(world, actor).is_some_and(|at| at.distance(self.anchor) <= self.range)
             && self.with.is_none_or(|with| {
                 stat::stands(world, with) && visibility::coexist(world, actor, with)
             })
@@ -188,12 +185,12 @@ pub fn intent(world: &World, actor: Entity, act: ReachAct) -> Option<Entity> {
 
 /// Walks the actor into reach of what it intends to act on, by way of [`movement::approach`], and
 /// tells whether it's there. Two actors coming for each other meet between them, each covering the
-/// share of the gap its pace allows, rather than both heading for the other's tile.
+/// share of the gap its pace allows, rather than both heading for where the other stands.
 pub fn pursue(world: &mut World, actor: Entity, range: Meters) -> Pursuit {
     let Some(target) = pursued(world, actor) else {
         return Pursuit::Lost;
     };
-    let reach = range + DIAGONAL_MARGIN;
+    let reach = range;
     if let ReachTarget::Actor(target) = target
         && let Some(meeting) = meeting_point(world, actor, target, reach)
     {
@@ -207,12 +204,12 @@ pub fn pursue(world: &mut World, actor: Entity, range: Meters) -> Pursuit {
     }
 }
 
-/// Spreads an actor that has arrived out over the tiles in reach, by way of
+/// Spreads an actor that has arrived out over the ground in reach, by way of
 /// [`movement::settle`], while it waits to act again.
 pub fn settle(world: &mut World, actor: Entity, range: Meters) {
     if let Some(target) = pursued(world, actor) {
         let aim = aim(world, actor, target);
-        movement::settle(world, actor, aim, range + DIAGONAL_MARGIN);
+        movement::settle(world, actor, aim, range);
     }
 }
 
@@ -258,7 +255,7 @@ fn coming_for(world: &World, actor: Entity, target: Entity) -> bool {
     current(world, actor).is_some_and(|intent| intent.target.actor() == Some(target))
 }
 
-/// Where an actor out of reach of one coming for it heads while neither has set out yet: the tile
+/// Where an actor out of reach of one coming for it heads while neither has set out yet: the point
 /// on the line between them that each reaches at once, going at their own paces.
 fn meeting_point(
     world: &World,
@@ -282,7 +279,9 @@ fn meeting_point(
     if pace + theirs <= 0.0 {
         return None;
     }
-    let meeting = at.lerp(there, pace / (pace + theirs)).cell();
-    (meeting != there.cell() && meeting != at.cell() && movement::reachable(world, actor, meeting))
-        .then(|| meeting.center())
+    let meeting = at.lerp(there, pace / (pace + theirs));
+    (meeting.distance(there) > movement::SPACING
+        && meeting.distance(at) > movement::SPACING
+        && movement::reachable(world, actor, meeting))
+    .then_some(meeting)
 }

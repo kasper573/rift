@@ -35,7 +35,7 @@ use engine::core::content::{Content, ContentFile, FolderReader, table_of};
 use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::render::TILE;
-use engine::core::units::{CellPos, Meters, TilePos, TileSize};
+use engine::core::units::{CellPos, Meters, TileSize};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaId, AreaModule, AreaModuleKind, Picture, Pictured};
@@ -54,6 +54,7 @@ use crate::keymap::EditorKey;
 use crate::project::{AreaCameraState, Project, RowSelection};
 use crate::shell::{sidebar, widgets};
 use crate::tabs::{EditorTab, file_title};
+use crate::views::cell_at;
 use crate::views::navigation::{self, Viewport};
 use crate::{play, user};
 
@@ -986,7 +987,7 @@ impl AreaFrame<'_> {
     }
 
     pub fn pointer_cell(&self) -> Option<CellPos> {
-        self.pointer_tile.map(|t| t.cell())
+        self.pointer_tile.map(cell_at)
     }
 
     pub fn drag_tile(&self) -> Option<Pos<Meters>> {

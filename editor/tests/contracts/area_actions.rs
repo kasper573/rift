@@ -7,10 +7,11 @@ use editor::views::area::scene_tree;
 use editor::views::area::{AreaAction, AreaSnapshot, nodes, run_action};
 use engine::core::content::ContentFile;
 use engine::core::math::{Pos, Rect, Size};
-use engine::core::units::TilePos;
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::object::ObjectShape;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{AreaDef, AreaModule};
+use engine::systems::movement;
 use serde_json::{Value, json};
 
 use crate::support::{self, Frames, area, key};
@@ -341,12 +342,10 @@ fn a_door_back_from_a_warps_destination_stands_beside_where_the_warp_lands() {
     let [ObjectShape::Point(back)] = doors.as_slice() else {
         panic!("one door back: {doors:?}");
     };
-    assert_ne!(
-        back.cell(),
-        Pos::<engine::core::units::Meters>::new(3.0, 3.0).cell()
-    );
+    let door = Pos::<Meters>::new(3.0, 3.0);
     assert!(
-        (back.x - 3.0).abs() <= 1.0 && (back.y - 3.0).abs() <= 1.0,
+        back.distance(door) >= movement::SPACING
+            && back.distance(door) <= Meters(movement::SPACING.0 * 3.0),
         "{back:?}"
     );
 }

@@ -96,7 +96,7 @@ Everything you build gets shown to the user on video, from a player's point of v
 
 ## Builds on this machine
 
-- Run every cargo build or test inside a memory-capped scope so a runaway compile kills only itself, never the session that spawned it: `systemd-run --user --scope -q -p MemoryMax=22G -p MemorySwapMax=0 cargo …` (the recipes in the Justfile run plain cargo; wrap the `just` call the same way). A process that exceeds the cap dies with "Killed"; rerun it with fewer jobs (`CARGO_BUILD_JOBS=8`) rather than lifting the cap. Never run two cargo invocations at once.
+- Run every cargo build or test inside a memory-capped scope so a runaway compile kills only itself, never the session that spawned it: `systemd-run --user --scope -q -p MemoryMax=22G -p MemorySwapMax=0 cargo …` (the recipes in the Justfile run plain cargo; wrap the `just` call the same way). A process that exceeds the cap dies with "Killed"; rerun it with fewer jobs (`CARGO_BUILD_JOBS=8`) rather than lifting the cap.
 - Clean up unused cargo build output: `target/` grows by tens of gigabytes across profiles and feature sets and the disk is shared with everything else here. After a task, `cargo clean -p <crate>` for crates whose artifacts are stale, or `cargo clean` outright when `du -sh target` passes 50 GB.
 
 ## Verification

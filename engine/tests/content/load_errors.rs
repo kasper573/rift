@@ -62,7 +62,7 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
                 SETTINGS_FILE,
                 json(3, 20, "/initial_spawn"),
                 "not walkable",
-                Some("9, 7")
+                Some("9.15, 7.15")
             ),
             (
                 SETTINGS_FILE,
@@ -98,7 +98,7 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
                 "lost.test_character.json",
                 json(7, 12, "/start"),
                 "not walkable",
-                Some("9, 7"),
+                Some("9.15, 7.15"),
             ),
             ("splash.sfx", ErrorPlace::WholeFile, "missing file", None),
         ],

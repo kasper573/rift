@@ -6,36 +6,35 @@ use crate::core::geometry::Radians;
 use crate::core::interpolate::{Jumps, Predicted};
 use crate::core::math::{Offset, Pos};
 use crate::core::time::Seconds;
-use crate::core::units::{Meters, TilePos};
+use crate::core::units::Meters;
 use crate::systems::actor::render::RenderActor;
 use crate::systems::actor::{Action, Actor};
 use crate::systems::movement::{
-    HeardMove, MoveRequest, MoveSeq, MoveTarget, Navigator, Path, Position, RenderPosition, gait,
-    halt_walk, speed_of, stepping_off, walk,
+    HeardMove, MoveRequest, MoveSeq, MoveTarget, NavMesh, Path, Position, RenderPosition, gait,
+    mesh_of, plan_on, speed_of, walk,
 };
 use crate::systems::player::{commands_locked, session};
 use crate::systems::stat;
 
 /// Asks the server to walk the client's own character to `goal`, and sets off on screen at once
-/// rather than a round trip later, when the server's walk shows up. A goal the walk already passes,
-/// the tile it's stepping off included, carries the walk on to its end: asking again along the way
-/// keeps a walk going, so asking for every tile of a line as the walk crosses them walks it exactly
-/// as asking once for its end does.
+/// rather than a round trip later, when the server's walk shows up. A goal the walk already passes
+/// carries the walk on to its end: asking again along the way keeps a walk going, so asking for
+/// every point of a line as the walk crosses them walks it exactly as asking once for its end does.
 pub fn request_walk(world: &mut World, goal: Pos<Meters>) {
     let Some(me) = predicted_character(world) else {
         return;
     };
     let free = !stat::is_dead(world, me) && !commands_locked(world, me);
     let content = world.resource::<Content>().clone();
-    let navigator = Navigator::of_in(&content, world, me);
+    let mesh = mesh_of(&content, world, me);
     let Some(mut stride) = world.get_mut::<Stride>(me) else {
         return;
     };
     let goal = stride.end_through(goal);
     stride.sent = MoveSeq(stride.sent.0 + 1);
     let seq = stride.sent;
-    if free && let Some(navigator) = navigator {
-        stride.head_for(&navigator, goal);
+    if free && let Some(mesh) = mesh {
+        stride.head_for(mesh, goal);
     }
     world.write_message(MoveRequest { pos: goal, seq });
 }
@@ -62,9 +61,9 @@ pub(super) fn walk_ahead(world: &mut World) {
         return;
     };
     let content = world.resource::<Content>().clone();
-    let (Some(server), Some(navigator)) = (
+    let (Some(server), Some(mesh)) = (
         world.get::<Position>(me).cloned(),
-        Navigator::of_in(&content, world, me),
+        mesh_of(&content, world, me),
     ) else {
         return;
     };
@@ -84,7 +83,7 @@ pub(super) fn walk_ahead(world: &mut World) {
     stride.track(&server);
     let heading = if alive {
         if heard >= stride.sent {
-            stride.follow(&navigator, server_goal, server.pos);
+            stride.follow(mesh, server_goal, server.pos);
         }
         stride.advance(speed * dt)
     } else {
@@ -115,26 +114,17 @@ impl Stride {
 
     /// Where a walk through `goal` ends: at the stride's own end when `goal` lies on the way to it.
     fn end_through(&self, goal: Pos<Meters>) -> Pos<Meters> {
-        let Some(end) = self.target else {
-            return goal;
-        };
-        let cell = goal.cell();
-        let underfoot = match self.path.next() {
-            Some(next) if !self.at.on_center() => stepping_off(self.at, next),
-            _ => self.at.cell(),
-        };
-        if cell == underfoot || self.path.tiles.contains(&cell) {
-            end
-        } else {
-            goal
+        match self.target {
+            Some(end) if self.path.passes(self.at, goal) => end,
+            _ => goal,
         }
     }
 
     /// Plans the walk to `goal` as the server does, returning whether it found a way there.
-    fn head_for(&mut self, navigator: &Navigator, goal: Pos<Meters>) -> bool {
-        match navigator.plan(self.at, Some(&self.path), goal) {
-            Some(tiles) => {
-                self.path = Path { tiles };
+    fn head_for(&mut self, mesh: &NavMesh, goal: Pos<Meters>) -> bool {
+        match plan_on(mesh, self.at, Some(&self.path), goal) {
+            Some(corners) => {
+                self.path = Path { corners };
                 self.target = Some(goal);
                 true
             }
@@ -146,22 +136,17 @@ impl Stride {
     }
 
     fn halt(&mut self) {
-        self.target = halt_walk(&mut self.at, &mut self.path);
+        self.path = Path::default();
+        self.target = None;
     }
 
     /// Heads where the server's walk ends, or with none, where the server has the character stand.
-    fn follow(
-        &mut self,
-        navigator: &Navigator,
-        server_goal: Option<Pos<Meters>>,
-        server: Pos<Meters>,
-    ) {
+    fn follow(&mut self, mesh: &NavMesh, server_goal: Option<Pos<Meters>>, server: Pos<Meters>) {
         let goal = server_goal.unwrap_or(server);
         if self.target.unwrap_or(self.at) == goal {
             return;
         }
-        let walked_there = server_goal.is_some() || server.on_center();
-        if !walked_there || !self.head_for(navigator, goal) {
+        if !self.head_for(mesh, goal) {
             self.snap(server);
         }
     }
@@ -176,13 +161,12 @@ impl Stride {
 
     fn snap(&mut self, to: Pos<Meters>) {
         self.at = to;
-        self.path = Path::default();
-        self.target = None;
+        self.halt();
     }
 
     fn advance(&mut self, distance: Meters) -> Option<Offset<Meters>> {
         let heading = walk(&mut self.at, &mut self.path, distance);
-        if self.path.tiles.is_empty() {
+        if self.path.corners.is_empty() {
             self.target = None;
         }
         heading

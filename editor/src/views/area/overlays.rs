@@ -7,7 +7,7 @@ use ui::theme;
 
 use engine::core::audio::soundscape::EDGE_FALLOFF;
 use engine::core::math::{Pos, Rect};
-use engine::core::units::{Cell, CellPos, GridDims, GridSize, Meters, TileSize};
+use engine::core::units::{Cell, GridDims, Meters, TileSize};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
 use engine::systems::area::{self, AreaModule, AreaModuleKind, Pictured};
@@ -79,64 +79,17 @@ pub(super) fn overlay_grid(
 
 pub(super) fn overlay_walk(painter: &egui::Painter, frame: &AreaFrame, area: &area::Area) {
     let canvas = frame.canvas;
-    let size = area.size.grid();
-    cell_runs(
-        canvas,
-        size,
-        |cell| !area.grid.walkable(cell.center()),
-        |run| {
-            paint::hatched(
-                painter,
-                canvas.rect(run),
-                ink::wash(theme::BLOCKED, 0.43),
-                canvas.scale(),
-            )
-        },
-    );
-    cell_runs(
-        canvas,
-        size,
-        |cell| area.grid.walkable(cell.center()) && !area.wild_grid.walkable(cell.center()),
-        |run| {
-            painter.rect_filled(
-                canvas.rect(run),
-                0.0,
-                Color32::from_rgba_unmultiplied(80, 120, 220, 40),
-            );
-        },
-    );
-}
-
-/// Hands `draw` the cells in view that `picked` takes, each row's neighbours joined into one run,
-/// as a large map holds thousands of them.
-pub(super) fn cell_runs(
-    canvas: Viewport<Meters>,
-    size: GridSize,
-    picked: impl Fn(CellPos) -> bool,
-    mut draw: impl FnMut(Rect<Meters>),
-) {
-    let visible = canvas.visible();
-    let mut run: Option<Rect<Meters>> = None;
-    for cell in size.cells() {
-        let bounds = cell.bounds();
-        let taken = visible.intersects(&bounds) && picked(cell);
-        if let Some(open) = run
-            && taken
-            && open.max_y() == bounds.max_y()
-            && open.max_x() == bounds.min_x()
-        {
-            run = Some(open.union(&bounds));
-            continue;
-        }
-        if let Some(done) = run.take() {
-            draw(done);
-        }
-        if taken {
-            run = Some(bounds);
-        }
+    let outline = EStroke::new(1.0, ink::wash(theme::BLOCKED, 0.43));
+    for polygon in area.mesh.polygons() {
+        let corners = polygon.iter().map(|at| canvas.to_screen(*at)).collect();
+        painter.add(egui::Shape::closed_line(corners, outline));
     }
-    if let Some(done) = run {
-        draw(done);
+    for zone in &area.safe_zones {
+        painter.rect_filled(
+            canvas.rect(*zone),
+            0.0,
+            Color32::from_rgba_unmultiplied(80, 120, 220, 40),
+        );
     }
 }
 
@@ -422,7 +375,7 @@ pub(super) fn overlay_surfaces(painter: &egui::Painter, frame: &AreaFrame, area:
         if !visible.contains(tile) {
             continue;
         }
-        let Some(surface) = area.footstep_at(cell) else {
+        let Some(surface) = area.footstep_at(tile) else {
             continue;
         };
         let key = surface.path(&frame.content);
