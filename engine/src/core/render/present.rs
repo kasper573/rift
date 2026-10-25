@@ -14,7 +14,7 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::Material2d;
 use bevy::window::PrimaryWindow;
 
-use super::camera::{self, FOV, WorldCamera};
+use super::camera::{self, WorldCamera};
 use super::transition::{ActiveTransition, CutUniform};
 use crate::core::platform::ClientPlatform;
 use crate::core::time::Seconds;
@@ -158,7 +158,7 @@ pub(super) fn setup(
             ..default()
         },
         camera_target,
-        world_projection(target_w, target_h),
+        camera::projection(target_w, target_h),
         Msaa::Off,
         DepthPrepass,
         NormalPrepass,
@@ -223,7 +223,7 @@ pub(super) fn fit(
         targets.size = (target_w, target_h);
         targets.live = images.add(world_target(target_w, target_h));
         if let Ok((mut target, mut projection)) = camera.single_mut() {
-            *projection = world_projection(target_w, target_h);
+            *projection = camera::projection(target_w, target_h);
             if let Ok((_, screen)) = quad.single() {
                 targets.bind(&mut target, &screen.0, &mut materials);
             }
@@ -284,15 +284,6 @@ pub(super) fn hold_frame(world: &mut World) {
             }
         }
     });
-}
-
-fn world_projection(width: u32, height: u32) -> Projection {
-    Projection::Perspective(PerspectiveProjection {
-        fov: FOV.radians().0,
-        near: camera::NEAR,
-        aspect_ratio: width as f32 / height as f32,
-        ..default()
-    })
 }
 
 fn world_target(width: u32, height: u32) -> Image {

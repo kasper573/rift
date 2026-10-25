@@ -5,6 +5,7 @@ pub mod object;
 pub mod prop;
 pub mod render;
 pub mod scene;
+pub mod scenery;
 pub mod terrain;
 pub mod transition;
 pub mod walk;
@@ -1090,8 +1091,7 @@ pub fn check_islands(content: &Content, spawn: script::Place) -> Vec<(IslandSite
         let mut report = |site: IslandSite, what: String, at: Pos<Meters>| {
             let nearest = area
                 .mesh
-                .nearest_where(at, movement::SPACING, |point| reaches(point, None))
-                .map(describe_point);
+                .nearest_where(at, movement::SPACING, |point| reaches(point, None));
             problems.push((
                 site,
                 ContentProblem::new(
@@ -1099,7 +1099,8 @@ pub fn check_islands(content: &Content, spawn: script::Place) -> Vec<(IslandSite
                     format!("{what} at {}", describe_point(at)),
                     "ground a warp into the area or the spawn reaches",
                 )
-                .near(nearest),
+                .near(nearest.map(describe_point))
+                .at_spot(nearest),
             ));
         };
         let modules = placed(content, id);

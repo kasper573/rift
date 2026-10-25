@@ -15,7 +15,7 @@ use bevy_egui::{
 };
 use engine::core::content::{Content, ContentFile, FolderReader, Unreadable, fields_file, version};
 use engine::core::math::Pos;
-use engine::core::units::{CellPos, Meters};
+use engine::core::units::Meters;
 use engine::systems;
 use engine::systems::area::AreaModuleKind;
 use engine::systems::frame_rate::{self, FrameCountPlugin, FrameRates};
@@ -77,6 +77,8 @@ impl Plugin for EditorPlugin {
         }
         app.add_plugins((EguiPlugin::default(), FrameCountPlugin))
             .insert_resource(editor)
+            .init_resource::<crate::thumbs::props::ReadThumbnails>()
+            .add_observer(crate::thumbs::props::took)
             .add_systems(Startup, setup_camera)
             .add_systems(
                 PreUpdate,
@@ -129,6 +131,7 @@ pub struct Editor {
     pub scene: Option<Vec<SceneStep>>,
     pub clipboard: Option<Clipboard>,
     pub views: EditorViews,
+    pub prop_thumbnails: crate::thumbs::props::PropThumbnails,
     pub play: play::PlayTest,
     pub pick: Option<PlacePick>,
     pub quit: bool,
@@ -180,6 +183,7 @@ pub enum BottomTab {
     #[default]
     History,
     Output,
+    Palette,
     Blueprints,
     #[strum(serialize = "May do")]
     MayDo,
@@ -250,7 +254,7 @@ pub enum PickRowThen {
     AddModule {
         area: String,
         kind: AreaModuleKind,
-        at: Option<CellPos>,
+        at: Option<Pos<Meters>>,
     },
     ReplaceBlueprint {
         area: String,
@@ -421,6 +425,7 @@ impl Editor {
             scene: None,
             clipboard: None,
             views: EditorViews::default(),
+            prop_thumbnails: Default::default(),
             play: PlayTest::default(),
             pick: None,
             quit: false,

@@ -6,7 +6,6 @@ use editor::views::area::{AreaAction, AreaSnapshot, modules, nodes, placement, r
 use engine::core::content::{Content, ContentFile};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::script::VariableType;
-use engine::core::units::CellPos;
 use engine::systems::area::blueprint::{self, BlueprintDef, Placement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaModule, AreaModuleKind};
@@ -48,7 +47,7 @@ fn a_module_placed_on_the_map_naming_no_file_lands_in_the_area_as_the_game_takes
     for kind in unnamed {
         let reader = editor.reader().expect("a reader");
         let module =
-            modules::module_template(&reader, &area(), kind, Some(CellPos::new(2, 2)), None)
+            modules::module_template(&reader, &area(), kind, Some(Pos::new(2.0, 2.0)), None)
                 .unwrap_or_else(|why| panic!("{}: {why}", kind.tag()));
 
         let added = nodes::add(

@@ -7,14 +7,17 @@ pub mod cover;
 pub mod decal;
 pub mod fade;
 pub mod lights;
+pub mod mannequin;
 pub mod sky;
 pub mod terrain;
 pub mod toon;
 
+use bevy::app::HierarchyPropagatePlugin;
+use bevy::camera::visibility::RenderLayers;
 use bevy::pbr::MaterialPlugin;
 use bevy::prelude::*;
 
-use super::camera;
+use super::camera::{self, CameraRig};
 
 pub struct WorldScenePlugin;
 
@@ -28,16 +31,24 @@ impl Plugin for WorldScenePlugin {
         app.add_plugins((
             MaterialPlugin::<toon::ToonMaterial>::default(),
             MaterialPlugin::<decal::DecalMaterial>::default(),
+            HierarchyPropagatePlugin::<RenderLayers>::new(PostUpdate),
         ))
         .init_resource::<toon::ToonCache>()
+        .init_resource::<super::GroundHeights>()
         .add_observer(toon::toon_scenes)
+        .add_observer(mannequin::start)
         .add_systems(
             Update,
-            (lights::flicker, fade::fade_occluders, cover::strew_loaded),
+            (
+                lights::flicker,
+                fade::fade_occluders.run_if(resource_exists::<CameraRig>),
+                cover::strew_loaded,
+            ),
         )
         .add_systems(
             PostUpdate,
             (decal::lay_decals, billboard::face_camera)
+                .run_if(resource_exists::<CameraRig>)
                 .after(camera::place)
                 .before(bevy::transform::TransformSystems::Propagate),
         );

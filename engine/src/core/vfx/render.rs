@@ -48,9 +48,12 @@ use crate::core::render::{CameraRig, GroundHeights, ground_height, world_point};
 use crate::core::time::{Seconds, server_now};
 use crate::core::units::Meters;
 
-pub struct VfxRenderPlugin;
+/// The materials every vfx stage and every cover is drawn with, the content's shaders compiled
+/// for them, and the weather the covers read: what any world that draws content needs, the
+/// client's and the editor's alike.
+pub struct VfxMaterialsPlugin;
 
-impl Plugin for VfxRenderPlugin {
+impl Plugin for VfxMaterialsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<VfxMaterial>::default())
             .add_plugins(MaterialPlugin::<VfxWorldMaterial>::default())
@@ -58,14 +61,23 @@ impl Plugin for VfxRenderPlugin {
             .add_plugins(MaterialPlugin::<super::cover::CoverMaterial>::default())
             .init_resource::<VfxShaders>()
             .init_resource::<VfxAssets>()
-            .add_observer(unswap_removed)
             .add_systems(
                 Update,
                 (
                     load_shaders.run_if(resource_exists_and_changed::<Content>),
                     super::cover::blow,
                 ),
-            )
+            );
+    }
+}
+
+/// The client's vfx: instances and overlays drawn on their sites as the game plays them.
+pub struct VfxRenderPlugin;
+
+impl Plugin for VfxRenderPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(VfxMaterialsPlugin)
+            .add_observer(unswap_removed)
             .add_systems(
                 PostUpdate,
                 sync.in_set(WorldViewSystems)
@@ -370,7 +382,9 @@ impl SiteFrame {
         let frame = match site {
             VfxSite::Actor(entity) => SiteFrame::thing(world, *entity, SiteKind::Actor)?,
             VfxSite::Object(entity) => SiteFrame::thing(world, *entity, SiteKind::Object)?,
-            VfxSite::Area(footprint) => SiteFrame::area(world, footprint),
+            VfxSite::Area(footprint) => {
+                SiteFrame::of_area(footprint, |at| ground_height(world, at))
+            }
             VfxSite::Path(points) => SiteFrame::path(world, points),
             VfxSite::Screen => {
                 let window = world
@@ -429,8 +443,8 @@ impl SiteFrame {
     }
 
     /// The patch an area site is drawn on, around its footprint's outline, with the footprint on
-    /// it.
-    fn area(world: &World, footprint: &PlacedShape) -> SiteFrame {
+    /// it, laid on ground `ground` high.
+    pub fn of_area(footprint: &PlacedShape, ground: impl Fn(Pos<Meters>) -> Meters) -> SiteFrame {
         let (center, size) = bounds(&footprint.outline());
         let size = size.max(Vec2::ONE);
         let min = center - size / 2.0;
@@ -450,7 +464,7 @@ impl SiteFrame {
         SiteFrame {
             kind: SiteKind::Area,
             place: SitePlace::World {
-                at: world_point(at, ground_height(world, at)),
+                at: world_point(at, ground(at)),
                 footprint: size,
                 height: size.y,
                 body: None,

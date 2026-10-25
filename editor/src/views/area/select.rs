@@ -18,7 +18,6 @@ use super::{
 use crate::app::{Clipboard, Editor, SceneClip};
 use crate::keymap::EditorKey;
 use crate::project::RowSelection;
-use crate::views::{cell_at, snap};
 
 /// The modules of the scene of `bundle` the selection moves, in tree order: those selected and
 /// what selected folders hold.
@@ -101,9 +100,6 @@ pub(super) fn select_input(
             }
             None => {}
         }
-        if scope.is_area() {
-            editor.views.area.view_mut(view_key).cursor_cell = Some(cell_at(tile));
-        }
     }
 }
 
@@ -149,7 +145,7 @@ impl SelectScope<'_> {
 
     fn hit(&self, frame: &AreaFrame, tile: Pos<Meters>) -> Option<String> {
         match self {
-            SelectScope::Area => frame.hit(tile),
+            SelectScope::Area => frame.hit_pointer().or_else(|| frame.hit(tile)),
             SelectScope::Blueprint { parts, .. } => parts
                 .iter()
                 .filter(|part| !part.locked && part.bounds.is_some_and(|b| b.contains(tile)))
@@ -393,12 +389,13 @@ pub(super) fn handle_at(
         return None;
     }
     let bounds = frame.module_bounds(node)?;
-    let rect = frame.canvas.rect(bounds);
+    let (min, max) = (bounds.min(), bounds.max());
+    let at = |x: f32, y: f32| frame.canvas.to_screen(Pos::new(x, y));
     let corners = [
-        (ResizeCorner::TopLeft, rect.min),
-        (ResizeCorner::TopRight, Pos2::new(rect.max.x, rect.min.y)),
-        (ResizeCorner::BottomLeft, Pos2::new(rect.min.x, rect.max.y)),
-        (ResizeCorner::BottomRight, rect.max),
+        (ResizeCorner::TopLeft, at(min.x, min.y)),
+        (ResizeCorner::TopRight, at(max.x, min.y)),
+        (ResizeCorner::BottomLeft, at(min.x, max.y)),
+        (ResizeCorner::BottomRight, at(max.x, max.y)),
     ];
     corners
         .into_iter()
@@ -434,6 +431,7 @@ fn finish_select_drag(
             editor.selection = RowSelection::parts(scope.table(frame), scope.key(frame), parts);
             skipped.tell(editor, count);
         }
+        AreaDrag::Scatter { .. } => {}
         AreaDrag::Move { from, moved } => {
             if !moved {
                 return;
@@ -482,11 +480,12 @@ fn finish_select_drag(
     }
 }
 
+/// Snaps a ground point to the half metre, or the sixteenth when `fine`.
 pub fn snap_to(p: Pos<Meters>, fine: bool) -> Pos<Meters> {
     if fine {
         Pos::new(sixteenth(p.x), sixteenth(p.y))
     } else {
-        snap(p)
+        Pos::new((p.x * 2.0).round() / 2.0, (p.y * 2.0).round() / 2.0)
     }
 }
 
@@ -495,7 +494,7 @@ pub(super) fn snapped_delta(from: Pos<Meters>, to: Pos<Meters>, fine: bool) -> (
     if fine {
         (sixteenth(dx), sixteenth(dy))
     } else {
-        (dx.round(), dy.round())
+        ((dx * 2.0).round() / 2.0, (dy * 2.0).round() / 2.0)
     }
 }
 

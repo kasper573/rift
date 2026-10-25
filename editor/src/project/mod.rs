@@ -22,8 +22,6 @@ use engine::core::content::{
     LoadError, LoadReport, MISSING_FILE, NamedContent, ReadRow, SETTINGS_FILE, Unreadable,
     parent_of, table_of,
 };
-use engine::core::math::Pos;
-use engine::core::units::Meters;
 use engine::systems::{self, GameSettings};
 
 use self::files::content_holding;
@@ -189,7 +187,7 @@ impl ContentEdit {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EditRefusal {
     pub file: String,
     pub pointer: String,
@@ -248,8 +246,7 @@ pub struct EditViewpoint {
 pub struct AreaCameraState {
     /// The area or blueprint bundle the camera looks at.
     pub bundle: String,
-    pub center: Pos<Meters>,
-    pub zoom: f32,
+    pub camera: crate::views::area::camera::OrbitCamera,
 }
 
 pub struct AppliedStep {

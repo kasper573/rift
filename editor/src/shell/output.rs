@@ -10,6 +10,7 @@ use crate::play;
 
 pub fn show(editor: &mut Editor, ui: &mut Ui) {
     moved_outside(editor, ui);
+    crate::views::area::problems::output(editor, ui);
     ui.horizontal(|ui| {
         ui.label(theme::faint(format!("{} lines", editor.output.lines.len())).size(12.0));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

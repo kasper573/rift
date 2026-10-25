@@ -9,9 +9,15 @@ use ui::sheet;
 use ui::theme;
 
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
+use engine::core::geometry::Degrees;
+use engine::core::math::{Pos, Rng};
 use engine::core::script::VariableType;
 use engine::core::terrain::TerrainSize;
-use engine::core::units::TileSize;
+use engine::core::units::{Meters, TileSize};
+use engine::systems::area::prop::PropDef;
+use strum::VariantArray;
+
+use super::brush::{Brush, LARGEST_RADIUS, SMALLEST_RADIUS, SculptMode};
 use engine::field;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::object::ObjectDef;
@@ -80,12 +86,152 @@ pub fn sidebar(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
 fn tool(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &super::AreaSnapshot) {
     let content = snapshot.content.clone();
     match editor.views.area.view(view_key).tool {
-        AreaTool::Stamp => stamp_card(editor, ui, view_key, &content),
+        AreaTool::Sculpt => sculpt_card(editor, ui, view_key),
+        AreaTool::Paint => paint_card(editor, ui, view_key, snapshot),
+        AreaTool::Place => match editor.views.area.view(view_key).placeable.clone() {
+            Some(super::Placeable::Prop(prop)) => prop_card(editor, ui, view_key, &prop),
+            _ => stamp_card(editor, ui, view_key, &content),
+        },
+        AreaTool::Scatter => scatter_card(editor, ui, view_key),
         AreaTool::Select | AreaTool::Module => form::nothing_selected(
             ui,
             "Select nodes in the scene or on the map, or take a tool with settings, to inspect them here.",
         ),
     }
+}
+
+fn brush_fields(ui: &mut Ui, brush: &mut Brush) {
+    form::kv(ui, "radius", |ui| {
+        let mut radius = brush.radius.0;
+        if controls::slider(ui, &mut radius, SMALLEST_RADIUS.0..=LARGEST_RADIUS.0).changed() {
+            brush.radius = Meters(radius);
+        }
+        controls::key_hint_text(ui, &EditorKey::BrushLarger.name(), "grows");
+    });
+    form::kv(ui, "strength", |ui| {
+        controls::slider(ui, &mut brush.strength, 0.0..=1.0);
+    });
+    form::kv(ui, "falloff", |ui| {
+        controls::slider(ui, &mut brush.falloff, 0.0..=1.0);
+    });
+}
+
+fn sculpt_card(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
+    let view = editor.views.area.view_mut(view_key);
+    tool_card(ui, "Sculpt", |ui| {
+        form::kv(ui, "mode", |ui| {
+            for mode in SculptMode::VARIANTS {
+                if chip::mode(ui, mode.as_ref(), view.sculpt == *mode).clicked() {
+                    view.sculpt = *mode;
+                }
+            }
+        });
+        form::hint(ui, "Ctrl smooths, Shift inverts while you drag.");
+        brush_fields(ui, &mut view.brush);
+        if view.sculpt == SculptMode::Level {
+            form::kv(ui, "level", |ui| {
+                let mut level = view.level.0;
+                if controls::slider(ui, &mut level, -8.0..=16.0).changed() {
+                    view.level = Meters(level);
+                }
+            });
+        }
+    });
+}
+
+fn paint_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &super::AreaSnapshot) {
+    let area = snapshot.area();
+    let materials: Vec<(String, ui::egui::Color32, bool)> = area
+        .terrain
+        .materials
+        .iter()
+        .map(|id| {
+            let ground = id.get(&snapshot.content);
+            let [r, g, b, _] = ground.color.0.to_be_bytes();
+            (
+                ground.name.clone(),
+                ui::egui::Color32::from_rgb(r, g, b),
+                ground.walk == engine::systems::area::ground::Walk::Blocks,
+            )
+        })
+        .collect();
+    let view = editor.views.area.view_mut(view_key);
+    tool_card(ui, "Paint", |ui| {
+        form::kv(ui, "material", |ui| {
+            for (slot, (name, color, blocks)) in materials.iter().enumerate() {
+                let ink = if color.r() as u32 + color.g() as u32 + color.b() as u32 > 380 {
+                    ui::egui::Color32::BLACK
+                } else {
+                    ui::egui::Color32::WHITE
+                };
+                let on = view.paint_slot == slot;
+                let response = chip::colored(ui, name.clone(), *color, ink);
+                if *blocks {
+                    ui::paint::hatched(ui.painter(), response.rect, ui::ink::wash(ink, 0.35), 8.0);
+                    response.clone().on_hover_text("blocks walking");
+                }
+                if on {
+                    ui.painter().rect_stroke(
+                        response.rect.expand(1.0),
+                        3.0,
+                        ui::egui::Stroke::new(1.5, theme::ACCENT),
+                        ui::egui::StrokeKind::Outside,
+                    );
+                }
+                if response.clicked() {
+                    view.paint_slot = slot;
+                }
+            }
+        });
+        brush_fields(ui, &mut view.brush);
+    });
+}
+
+fn prop_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, prop: &str) {
+    let def = editor.read::<PropDef>(prop).and_then(Result::ok);
+    let view = editor.views.area.view_mut(view_key);
+    tool_card(ui, "Place", |ui| {
+        form::kv_text(ui, "prop", prop);
+        if let Some(def) = def
+            && let Some(bounds) = def.footprint.bounds(Pos::new(0.0, 0.0), Degrees(0.0), 1.0)
+        {
+            form::kv_text(
+                ui,
+                "footprint",
+                format!(
+                    "{} × {} m",
+                    crate::forms::metres(bounds.size.width),
+                    crate::forms::metres(bounds.size.height)
+                ),
+            );
+        }
+        form::kv(ui, "turned", |ui| {
+            ui.label(theme::mono(format!("{}°", view.place_yaw.0.round())));
+            controls::key_hint_text(ui, &EditorKey::TurnClockwise.name(), "turns");
+        });
+        form::kv(ui, "snap", |ui| {
+            ui.label(theme::muted("half metres").size(12.5));
+            controls::key_hint_text(ui, &EditorKey::Unsnapped.name(), "for 1/16");
+        });
+        form::hint(
+            ui,
+            "Click the ground to place one. Pick another prop in the palette below.",
+        );
+    });
+}
+
+fn scatter_card(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
+    let view = editor.views.area.view(view_key);
+    tool_card(ui, "Scatter", |ui| {
+        match view.prop() {
+            Some(prop) => form::kv_text(ui, "prop", prop),
+            None => form::hint(ui, "Pick a prop in the palette below."),
+        }
+        form::hint(
+            ui,
+            "Drag a region on the ground to scatter copies of the prop over it. Reseed a scatter from its card to lay them out anew.",
+        );
+    });
 }
 
 fn folder_card(editor: &mut Editor, ui: &mut Ui, snapshot: &super::AreaSnapshot, pointer: &str) {
@@ -188,7 +334,7 @@ fn tool_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
 }
 
 fn stamp_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, content: &Content) {
-    let stamp = editor.views.area.view(view_key).stamp.clone();
+    let stamp = editor.views.area.view(view_key).stamp().map(str::to_owned);
     let viewed = super::viewed_bundle(view_key)
         .expect("an area or blueprint view")
         .to_owned();
@@ -216,14 +362,15 @@ fn stamp_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, content: &Conten
                     "/stamp/blueprint",
                 ) && !picked.is_empty()
                 {
-                    editor.views.area.view_mut(view_key).stamp = Some(picked.clone());
+                    editor.views.area.view_mut(view_key).placeable =
+                        Some(super::Placeable::Blueprint(picked.clone()));
                 }
             });
         }
         for action in actions {
             row_form::act(editor, action, AreaDef::TABLE, "");
         }
-        let Some(stamp) = editor.views.area.view(view_key).stamp.clone() else {
+        let Some(stamp) = editor.views.area.view(view_key).stamp().map(str::to_owned) else {
             form::hint(
                 ui,
                 "Pick a blueprint below, then click to place one or drag a line.",
@@ -291,7 +438,7 @@ fn stamp_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, content: &Conten
                 });
         });
         form::kv(ui, "snap", |ui| {
-            ui.label(theme::muted("whole metres").size(12.5));
+            ui.label(theme::muted("half metres").size(12.5));
             controls::key_hint_text(ui, &EditorKey::Unsnapped.name(), "for 1/16");
         });
         if variables.is_empty() {
@@ -604,6 +751,17 @@ fn module_inspector(
         }
         AreaModule::Soundscape(soundscape) => {
             changed |= soundscape_extras(ui, cx, soundscape, &path)
+        }
+        AreaModule::Scatter(scatter) => {
+            ui.add_space(4.0);
+            if ui
+                .button("Reseed")
+                .on_hover_text("lays the copies out anew")
+                .clicked()
+            {
+                scatter.seed = Rng::random_seed();
+                changed = true;
+            }
         }
         AreaModule::Script(_) if holes_here => {
             form::hint(

@@ -2,19 +2,24 @@ use std::collections::BTreeMap;
 use std::fmt::{self, Display};
 use ui::words;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+use crate::core::math::Pos;
+use crate::core::units::Meters;
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct LoadError {
     pub file: String,
     pub at: ErrorPlace,
     pub problem: ContentProblem,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ContentProblem {
     pub rule: &'static str,
     pub found: String,
     pub expected: String,
     pub nearest: Option<String>,
+    /// A point of the ground where what is wrong would be fine, when the rule knows one.
+    pub spot: Option<Pos<Meters>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,11 +90,16 @@ impl ContentProblem {
             found: found.to_string(),
             expected: expected.to_string(),
             nearest: None,
+            spot: None,
         }
     }
 
     pub fn near(self, nearest: Option<String>) -> ContentProblem {
         ContentProblem { nearest, ..self }
+    }
+
+    pub fn at_spot(self, spot: Option<Pos<Meters>>) -> ContentProblem {
+        ContentProblem { spot, ..self }
     }
 
     pub fn unknown_row(table: &str, path: &str, nearest: Option<&str>) -> ContentProblem {

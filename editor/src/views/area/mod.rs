@@ -1,17 +1,24 @@
 pub mod blueprint;
+pub mod brush;
+pub mod camera;
+pub mod contours;
 pub mod flags;
 pub mod ground;
 pub mod inspect;
 pub mod modules;
 pub mod nodes;
 pub mod overlays;
+pub mod palette;
 pub mod panel;
 pub mod pick;
 pub mod pins;
+pub mod place;
 pub mod placement;
 pub mod population;
 pub mod preview;
+pub mod problems;
 pub mod resize;
+pub mod scatter;
 pub mod scene_tree;
 pub mod select;
 pub mod shapes;
@@ -19,6 +26,7 @@ pub mod soundscape;
 pub mod stamp;
 pub mod status;
 pub mod tools;
+pub mod viewport;
 
 pub use resize::ResizeDialog;
 
@@ -29,40 +37,42 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ui::controls;
 use ui::egui;
 
-use crate::views::navigation::PX_PER_METER;
 use ui::theme;
 use ui::words;
 
+use bevy::prelude::{Quat, Transform};
+use engine::core::content::media::GltfInfos;
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
 use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Size};
-use engine::core::units::{CellPos, Meters, TileSize};
+use engine::core::render::world_point;
+use engine::core::units::{Meters, TileSize};
+use engine::systems::actor::{Action, ActorModel};
 use engine::systems::area::blueprint::BlueprintDef;
+use engine::systems::area::prop::PropDef;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaId, AreaModule, AreaModuleKind, Picture, Pictured};
+use engine::systems::npc::NpcDef;
+use serde::Deserialize;
 use strum::{AsRefStr, VariantArray};
 use ui::egui::{Color32, Pos2, Rect as ERect, Sense, Ui, Vec2};
 use ui::glyph::{self, Mark};
 
+use self::brush::{Brush, SculptMode, Stroke};
+use self::camera::{AreaCanvas, OrbitCamera};
 use self::flags::{SceneFlags, SceneLevel};
 use self::overlays::{
-    AreaLabels, overlay_grid, overlay_modules, overlay_populations, overlay_props,
-    overlay_soundscape_reach, overlay_surfaces, overlay_walk,
+    AreaLabels, overlay_bounds, overlay_contours, overlay_footprints, overlay_modules,
+    overlay_navmesh, overlay_soundscape_reach,
 };
 use self::status::status_bar;
+use self::viewport::{Request, Standing, StrokeTerrain, Viewports};
 use crate::app::{BottomTab, Editor};
 use crate::keymap::EditorKey;
+use crate::play;
 use crate::project::{AreaCameraState, Project, RowSelection};
 use crate::shell::{sidebar, widgets};
 use crate::tabs::{EditorTab, file_title};
-use crate::views::cell_at;
-use crate::views::navigation::{self, Viewport};
-use crate::{play, user};
-
-pub const MIN_ZOOM: f32 = 0.125;
-pub const MAX_ZOOM: f32 = 16.0;
-const MAX_FIT_ZOOM: f32 = 4.0;
-const FIT_MARGIN: f32 = 0.94;
 
 /// The key of the view of an area or blueprint bundle.
 pub fn view_key(bundle: &str) -> String {
@@ -82,6 +92,7 @@ fn camera_key(project: &Project, view_key: &str) -> String {
 pub struct AreaViews {
     pub grounds: ground::GroundArts,
     pub views: HashMap<String, AreaViewState>,
+    pub viewports: Viewports,
     pub hover: Option<AreaHover>,
     pub active: Option<String>,
 }
@@ -105,29 +116,60 @@ pub enum AreaAction {
     ReturnDoor(String),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, VariantArray, AsRefStr)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, VariantArray, AsRefStr, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AreaTool {
     #[default]
     Select,
-    Stamp,
+    Sculpt,
+    Paint,
+    Place,
+    Scatter,
     Module,
+}
+
+/// What the view can draw over its picture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AreaOverlay {
+    Navmesh,
+    Contours,
+    Footprints,
+    Modules,
 }
 
 impl AreaTool {
     pub fn key(self) -> EditorKey {
         match self {
             AreaTool::Select => EditorKey::SelectTool,
-            AreaTool::Stamp => EditorKey::StampTool,
+            AreaTool::Sculpt => EditorKey::SculptTool,
+            AreaTool::Paint => EditorKey::PaintTool,
+            AreaTool::Place => EditorKey::PlaceTool,
+            AreaTool::Scatter => EditorKey::ScatterTool,
             AreaTool::Module => EditorKey::ModuleTool,
         }
     }
 
+    /// The bottom tab a tool works from, brought up when the tool is taken.
     pub fn bottom_tab(self) -> Option<BottomTab> {
         match self {
-            AreaTool::Stamp => Some(BottomTab::Blueprints),
+            AreaTool::Place | AreaTool::Scatter => Some(BottomTab::Palette),
             _ => None,
         }
     }
+
+    /// Whether the tool shapes the terrain, which only an area has.
+    pub fn shapes_terrain(self) -> bool {
+        matches!(self, AreaTool::Sculpt | AreaTool::Paint)
+    }
+}
+
+/// What the Place tool puts down at a click: a prop from the palette, or a blueprint from the
+/// Blueprints tab, whichever was picked last.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Placeable {
+    Prop(String),
+    Blueprint(String),
 }
 
 #[derive(Default)]
@@ -135,19 +177,27 @@ pub struct AreaViewState {
     /// The area or blueprint bundle the view edits.
     pub bundle: String,
     pub in_place: Vec<String>,
-    pub center: Pos<Meters>,
-    pub zoom: f32,
+    pub camera: OrbitCamera,
     pub tool: AreaTool,
-    pub walk_overlay: bool,
-    pub grid_lines: bool,
+    pub overlay_navmesh: bool,
+    pub overlay_contours: bool,
+    pub overlay_footprints: bool,
     pub overlay_modules: bool,
-    pub overlay_surfaces: bool,
     pub drag: Option<AreaDrag>,
-    pub stamp: Option<String>,
+    pub brush: Brush,
+    pub sculpt: SculptMode,
+    /// The height a level stroke pulls the ground toward.
+    pub level: Meters,
+    /// Which of the area's four materials the paint brush lays.
+    pub paint_slot: usize,
+    pub stroke: Option<Stroke>,
+    pub placeable: Option<Placeable>,
+    /// How a prop placed next is turned.
+    pub place_yaw: Degrees,
     pub listener: Option<Pos<Meters>>,
     pub paste: Option<PasteGhost>,
-    pub cursor_cell: Option<CellPos>,
     pub blueprint_search: String,
+    pub palette_search: String,
     pub menu: Option<modules::AreaMenuAnchor>,
     pub population_previews: HashMap<String, PopulationPreview>,
     pub skipped: Option<String>,
@@ -156,6 +206,7 @@ pub struct AreaViewState {
     /// The kind of module the Module tool places at the next click, into the insertion folder.
     pub placing: Option<AreaModuleKind>,
     pub scene: panel::ScenePanel,
+    pub contours: contours::ContourCache,
     cache: Option<SnapshotCache>,
     fitted: bool,
 }
@@ -164,7 +215,6 @@ impl AreaViewState {
     fn new(bundle: &str) -> AreaViewState {
         AreaViewState {
             bundle: bundle.to_owned(),
-            zoom: 2.0,
             overlay_modules: true,
             ..AreaViewState::default()
         }
@@ -187,12 +237,38 @@ impl AreaViewState {
         self.cancel_gesture();
     }
 
+    pub fn toggle(&mut self, overlay: AreaOverlay) {
+        let flag = match overlay {
+            AreaOverlay::Navmesh => &mut self.overlay_navmesh,
+            AreaOverlay::Contours => &mut self.overlay_contours,
+            AreaOverlay::Footprints => &mut self.overlay_footprints,
+            AreaOverlay::Modules => &mut self.overlay_modules,
+        };
+        *flag = !*flag;
+    }
+
     pub fn cancel_gesture(&mut self) -> bool {
-        self.drag.take().is_some() | self.placing.take().is_some()
+        self.drag.take().is_some() | self.placing.take().is_some() | self.stroke.take().is_some()
     }
 
     pub fn take_drag(&mut self) -> Option<AreaDrag> {
         self.drag.take()
+    }
+
+    /// The blueprint the Place tool stamps, when one is picked.
+    pub fn stamp(&self) -> Option<&str> {
+        match &self.placeable {
+            Some(Placeable::Blueprint(blueprint)) => Some(blueprint),
+            _ => None,
+        }
+    }
+
+    /// The prop the Place and Scatter tools put down, when one is picked.
+    pub fn prop(&self) -> Option<&str> {
+        match &self.placeable {
+            Some(Placeable::Prop(prop)) => Some(prop),
+            _ => None,
+        }
     }
 }
 
@@ -225,6 +301,9 @@ pub enum AreaDrag {
         placed: Vec<Pos<Meters>>,
         last: Pos<Meters>,
     },
+    Scatter {
+        from: Pos<Meters>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -254,15 +333,13 @@ impl AreaViews {
         let view = self.views.get(&view_key(bundle))?;
         Some(AreaCameraState {
             bundle: bundle.clone(),
-            center: view.center,
-            zoom: view.zoom,
+            camera: view.camera,
         })
     }
 
     pub fn restore_camera(&mut self, camera: &AreaCameraState) {
         if let Some(view) = self.views.get_mut(&view_key(&camera.bundle)) {
-            view.center = camera.center;
-            view.zoom = camera.zoom;
+            view.camera = camera.camera;
         }
     }
 
@@ -280,12 +357,16 @@ impl AreaViews {
         self.views.get_mut(key).expect("an open area view")
     }
 
-    /// Points what the views stamp with at where `moved` took it.
+    /// Points what the views place at where `moved` took it.
     pub fn moved(&mut self, moved: &dyn Fn(&str) -> Option<String>) {
         for view in self.views.values_mut() {
-            if let Some(to) = view.stamp.as_deref().and_then(moved) {
-                view.stamp = Some(to);
-            }
+            view.placeable = match view.placeable.take() {
+                Some(Placeable::Prop(prop)) => Some(Placeable::Prop(moved(&prop).unwrap_or(prop))),
+                Some(Placeable::Blueprint(blueprint)) => {
+                    Some(Placeable::Blueprint(moved(&blueprint).unwrap_or(blueprint)))
+                }
+                None => None,
+            };
         }
     }
 }
@@ -320,10 +401,13 @@ pub fn bottom(editor: &mut Editor, ui: &mut Ui, view_key: &str, tab: BottomTab) 
         ui.label(theme::muted("The folder does not load."));
         return;
     }
-    if tab == BottomTab::Blueprints
-        && let Some(snapshot) = AreaSnapshot::for_view(editor, view_key)
-    {
-        stamp::stamp_panel(editor, ui, view_key, &snapshot);
+    let Some(snapshot) = AreaSnapshot::for_view(editor, view_key) else {
+        return;
+    };
+    match tab {
+        BottomTab::Blueprints => stamp::stamp_panel(editor, ui, view_key, &snapshot),
+        BottomTab::Palette => palette::show(editor, ui, view_key, &snapshot),
+        _ => {}
     }
 }
 
@@ -350,7 +434,7 @@ fn show_canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
     let full = ui.available_rect_before_wrap();
     let rail = ERect::from_min_size(full.min, Vec2::new(rail_width, full.height()));
     let canvas_rect = ERect::from_min_max(Pos2::new(rail.max.x, full.min.y), full.max);
-    fit_once(editor, view_key, &snapshot, canvas_rect);
+    fit_once(editor, view_key, &snapshot);
     let mut canvas_ui = ui.new_child(egui::UiBuilder::new().max_rect(canvas_rect));
     canvas(editor, &mut canvas_ui, view_key, snapshot);
     banners(editor, ui, view_key, canvas_rect);
@@ -363,7 +447,7 @@ fn show_canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
     tools::rail(editor, &mut rail_ui, view_key);
 }
 
-fn fit_once(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, canvas: ERect) {
+fn fit_once(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot) {
     let Some(project) = &editor.project else {
         return;
     };
@@ -371,24 +455,13 @@ fn fit_once(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, canvas
         .settings
         .cameras
         .get(&camera_key(project, view_key))
-        .cloned();
+        .copied();
     let view = editor.views.area.view_mut(view_key);
     if view.fitted {
         return;
     }
-    let size = snapshot.size();
-    view.center = Pos::new(size.width / 2.0 - 0.5, size.height / 2.0 - 0.5);
-    let fit = navigation::fit_zoom(
-        canvas.size(),
-        Vec2::new(size.width, size.height),
-        PX_PER_METER,
-    ) * FIT_MARGIN;
-    view.zoom = fit.clamp(MIN_ZOOM, MAX_FIT_ZOOM);
+    view.camera = remembered.unwrap_or_else(|| OrbitCamera::framing(snapshot.size().bounds()));
     view.fitted = true;
-    if let Some(camera) = remembered {
-        view.center = Pos::new(camera.x, camera.y);
-        view.zoom = camera.zoom;
-    }
 }
 
 fn banners(editor: &mut Editor, ui: &mut Ui, view_key: &str, canvas_rect: ERect) {
@@ -486,30 +559,35 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
     painter.rect_filled(rect, 0.0, theme::CANVAS);
     let bundle = snapshot.bundle.clone();
     let generation = editor.project.as_ref().map_or(0, |p| p.generation);
-    let (center, zoom) = {
-        let view = editor.views.area.view(view_key);
-        (view.center, view.zoom)
-    };
-    let canvas = Viewport {
-        screen: rect,
-        center,
-        zoom,
-    };
-    let area = snapshot.picture.area.clone();
-    editor
-        .views
-        .area
-        .grounds
-        .of(
-            ui.ctx(),
-            &format!("{view_key}#{}", snapshot.made),
-            generation,
-            &snapshot.content,
-            &area,
-        )
-        .draw(&painter, canvas, Color32::WHITE);
+    let shown = editor.views.area.viewports.shown(view_key);
+    let camera = shown.map_or_else(
+        || editor.views.area.view(view_key).camera,
+        |shown| shown.camera,
+    );
+    if let Some(shown) = shown {
+        painter.image(shown.texture, rect, crate::thumbs::FULL_UV, Color32::WHITE);
+        let grade = snapshot.area().lighting.grade;
+        if grade.strength > 0.0 {
+            let [r, g, b] = grade.color.0;
+            painter.rect_filled(
+                rect,
+                0.0,
+                Color32::from_rgba_unmultiplied(r, g, b, (grade.strength * 255.0) as u8),
+            );
+        }
+    } else {
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "standing the scenery…",
+            egui::FontId::proportional(13.0),
+            theme::MUTED,
+        );
+        ui.ctx().request_repaint();
+    }
+    let canvas = AreaCanvas::new(rect, camera, snapshot.picture.area.clone());
     let hovered = response.hover_pos().filter(|_| response.hovered());
-    let pointer_tile = hovered.map(|p| canvas.to_tile(p));
+    let pointer_tile = hovered.and_then(|p| canvas.to_tile(p));
     if let Some(tile) = pointer_tile {
         editor.views.area.hover = Some(AreaHover {
             area: bundle.clone(),
@@ -525,28 +603,30 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
         response: &response,
         labels: AreaLabels::default(),
     };
-    overlay_grid(
-        &painter,
-        &frame,
-        &area,
-        editor.views.area.view(view_key).grid_lines,
-    );
+    overlay_bounds(&painter, &frame);
     tools::input(editor, ui, &painter, view_key, &frame);
     locked_tip(editor, view_key, &frame);
     if is_area {
         editor.views.area.active = Some(bundle.clone());
     }
-    overlay_props(&painter, &frame, &area);
-    overlay_populations(editor, &painter, view_key, &frame, &area);
     overlay_soundscape_reach(editor, &painter, &frame);
     let view = editor.views.area.view(view_key);
-    if view.overlay_surfaces {
-        overlay_surfaces(&painter, &frame, &area);
+    let (navmesh, footprints, contours, modules) = (
+        view.overlay_navmesh,
+        view.overlay_footprints,
+        view.overlay_contours,
+        view.overlay_modules,
+    );
+    if navmesh {
+        overlay_navmesh(&painter, &frame);
     }
-    if view.walk_overlay {
-        overlay_walk(&painter, &frame, &area);
+    if footprints {
+        overlay_footprints(&painter, &frame);
     }
-    if view.overlay_modules || !editor.selection.parts.is_empty() {
+    if contours {
+        overlay_contours(editor, &painter, view_key, &frame);
+    }
+    if modules || !editor.selection.parts.is_empty() {
         overlay_modules(editor, &painter, view_key, &frame);
     }
     if let Some(place) = frame.in_place.last() {
@@ -561,7 +641,122 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
     if response.hovered() && !ui.ctx().text_edit_focused() {
         tools::keys(editor, ui, view_key, &frame);
     }
+    request_viewport(editor, ui, view_key, &frame, rect, generation);
     remember_camera(editor, view_key);
+}
+
+/// Asks the viewport for the picture of the next frame: the scene as it stands, the terrain as a
+/// stroke shapes it, the ghost under the pointer and the cast standing where they live.
+fn request_viewport(
+    editor: &mut Editor,
+    ui: &Ui,
+    view_key: &str,
+    frame: &AreaFrame,
+    rect: ERect,
+    generation: u64,
+) {
+    let pixels_per_point = ui.ctx().pixels_per_point();
+    let size = [
+        (rect.width() * pixels_per_point).round().max(1.0) as u32,
+        (rect.height() * pixels_per_point).round().max(1.0) as u32,
+    ];
+    let cast = cast(editor, view_key, frame);
+    let ghost = place::ghost(editor, view_key, frame);
+    let view = editor.views.area.view(view_key);
+    let stroke = view.stroke.as_ref().map(|stroke| StrokeTerrain {
+        revision: stroke.revision,
+        heights: stroke.heights.clone(),
+        paint: stroke.paint.clone(),
+    });
+    let camera = view.camera;
+    let repaint = view.stroke.is_some() || ghost_moves(view);
+    editor.views.area.viewports.request(Request {
+        key: view_key.to_owned(),
+        size,
+        camera,
+        picture: frame.picture.clone(),
+        made: frame.made,
+        content: frame.content.clone(),
+        generation,
+        stroke,
+        ghost,
+        cast,
+    });
+    if repaint {
+        ui.ctx().request_repaint();
+    }
+}
+
+fn ghost_moves(view: &AreaViewState) -> bool {
+    view.tool == AreaTool::Place && view.prop().is_some()
+}
+
+/// The rigs standing in the view: each resident at its spot in its pose, and the previewed places
+/// of each population, every one in its model's idle.
+fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing> {
+    let content = &frame.content;
+    let area = frame.area();
+    let view = editor.views.area.view_mut(view_key);
+    let previews = view.population_previews.clone();
+    let models = content.built::<GltfInfos>();
+    let stand = |npc: engine::systems::npc::NpcId, at: Pos<Meters>, facing: Degrees, pose| {
+        let npc = frame.reader.path_of(npc)?;
+        let npc = content.by_path::<NpcDef>(npc)?;
+        let model = ActorModel::get(content, npc.get(content).model);
+        let path = model.model().path();
+        let clip = model
+            .pose(pose)
+            .map(|(clip, _)| clip.name.as_str())
+            .unwrap_or(model.clip(Action::Idle).name.as_str());
+        let clip = models
+            .0
+            .get(&path)
+            .and_then(|info| info.clip_names().iter().position(|name| *name == clip));
+        let ground = area.heights.height_at(at);
+        Some(Standing {
+            model: path,
+            clip,
+            transform: Transform {
+                translation: world_point(at, ground),
+                rotation: Quat::from_rotation_y(
+                    -(facing.radians().0 + std::f32::consts::FRAC_PI_2),
+                ),
+                ..Transform::default()
+            },
+        })
+    };
+    let mut cast = Vec::new();
+    for placed in &frame.picture.placed {
+        if let AreaModule::Resident(resident) = &placed.module {
+            cast.extend(stand(
+                resident.npc,
+                resident.at,
+                resident.facing,
+                resident.pose,
+            ));
+        }
+    }
+    for node in frame.modules.iter() {
+        let AreaModule::Population(population) = node.module() else {
+            continue;
+        };
+        if frame.flags.hidden(&node.pointer) {
+            continue;
+        }
+        let preview = previews.get(&node.pointer).copied().unwrap_or_default();
+        if preview.hidden {
+            continue;
+        }
+        for at in population::population_places(area, population, preview.seed) {
+            cast.extend(stand(
+                population.npc,
+                at,
+                Degrees(((at.x * 37.0 + at.y * 91.0) % 360.0).abs()),
+                engine::systems::actor::Pose::Idle,
+            ));
+        }
+    }
+    cast
 }
 
 /// Says what locks the module under the pointer, since a click passes through it.
@@ -569,7 +764,7 @@ fn locked_tip(editor: &Editor, view_key: &str, frame: &AreaFrame) {
     if editor.views.area.view(view_key).tool != AreaTool::Select {
         return;
     }
-    let Some(locked) = frame.pointer_tile.and_then(|tile| frame.locked_hit(tile)) else {
+    let Some(locked) = frame.locked_hit() else {
         return;
     };
     let by = std::iter::successors(Some(locked.clone()), |id| {
@@ -618,6 +813,8 @@ pub struct AreaSnapshot {
 struct MapTarget {
     pointer: String,
     bounds: Rect<Meters>,
+    /// How tall the module stands over its bounds, for a pick to catch it above the ground.
+    height: f32,
     shown: bool,
     locked: bool,
 }
@@ -647,7 +844,7 @@ struct SnapshotParts {
 
 pub struct AreaFrame<'a> {
     pub snapshot: AreaSnapshot,
-    pub canvas: Viewport<Meters>,
+    pub canvas: AreaCanvas,
     pub pointer: Option<Pos2>,
     pub pointer_tile: Option<Pos<Meters>>,
     pub response: &'a egui::Response,
@@ -804,21 +1001,41 @@ impl AreaSnapshot {
         !self.flags.hidden(pointer) && !self.flags.locked(pointer) && self.in_place.is_empty()
     }
 
+    /// The module under `tile`, the smallest when several cover it.
     pub fn hit(&self, tile: Pos<Meters>) -> Option<String> {
         if !self.in_place.is_empty() {
             return None;
         }
-        let mut best: Option<&MapTarget> = None;
-        for target in self.targets.iter() {
-            if target.shown
-                && !target.locked
-                && target.bounds.contains(tile)
-                && best.is_none_or(|best| target.bounds.area() < best.bounds.area())
-            {
-                best = Some(target);
-            }
+        self.targets
+            .iter()
+            .filter(|target| target.shown && !target.locked && target.bounds.contains(tile))
+            .min_by(|a, b| a.bounds.area().total_cmp(&b.bounds.area()))
+            .map(|target| target.pointer.clone())
+    }
+
+    /// The module the pointer at `screen` picks: the nearest one whose standing body the pointer's
+    /// ray passes through, else the smallest one covering the ground under it.
+    pub fn hit_at(
+        &self,
+        canvas: &AreaCanvas,
+        screen: Pos2,
+        tile: Option<Pos<Meters>>,
+    ) -> Option<String> {
+        if !self.in_place.is_empty() {
+            return None;
         }
-        best.map(|target| target.pointer.clone())
+        let standing = self
+            .targets
+            .iter()
+            .filter(|target| target.shown && !target.locked && target.height > 0.0)
+            .filter_map(|target| {
+                canvas
+                    .hits_box(screen, target.bounds, target.height)
+                    .map(|along| (along, target))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, target)| target.pointer.clone());
+        standing.or_else(|| self.hit(tile?))
     }
 
     /// The modules the selection `parts` takes on the map: those selected, and every visible,
@@ -884,7 +1101,7 @@ impl AreaSnapshot {
     }
 
     /// The locked module under `tile` a click passes through, for the tip that says what locks it.
-    pub fn locked_hit(&self, tile: Pos<Meters>) -> Option<String> {
+    pub fn locked_hit_at(&self, tile: Pos<Meters>) -> Option<String> {
         self.targets
             .iter()
             .filter(|target| target.shown && target.locked && target.bounds.contains(tile))
@@ -946,6 +1163,7 @@ fn snapshot_parts(
                     module.module(),
                     placement_bounds.get(&module.pointer).copied(),
                 )?,
+                height: standing_height(content, &reader, module.module()),
                 shown: !flags.hidden(&module.pointer),
                 locked: flags.locked(&module.pointer),
                 pointer: module.pointer.clone(),
@@ -980,6 +1198,41 @@ fn place_id_of(chain: &[placement::AreaPlacement]) -> String {
         .join("/in")
 }
 
+/// How tall a module stands over the ground, for picking it by its body: a prop by its model, a
+/// resident by its npc's hitbox, an object by the prop it looks like; nothing for the flat ones.
+fn standing_height(content: &Content, reader: &FolderReader, module: &AreaModule) -> f32 {
+    let model_height = |prop: &str| {
+        let prop = content.by_path::<PropDef>(prop)?;
+        let bounds = content
+            .built::<GltfInfos>()
+            .0
+            .get(&prop.get(content).model.path())?
+            .bounds;
+        Some(bounds.max.y - bounds.min.y)
+    };
+    match module {
+        AreaModule::Prop(prop) => reader
+            .path_of(prop.prop)
+            .and_then(model_height)
+            .map_or(0.0, |height| height * prop.scale),
+        AreaModule::Object(object) => object
+            .look
+            .and_then(|look| reader.path_of(look))
+            .and_then(model_height)
+            .unwrap_or(0.0),
+        AreaModule::Resident(resident) => reader
+            .path_of(resident.npc)
+            .and_then(|npc| content.by_path::<NpcDef>(npc))
+            .map_or(0.0, |npc| {
+                ActorModel::get(content, npc.get(content).model)
+                    .hitbox()
+                    .height
+                    .0
+            }),
+        _ => 0.0,
+    }
+}
+
 impl AreaFrame<'_> {
     /// Where the scene being edited stands on the map, and how it is turned: the placement edited
     /// in place, or the bundle's own origin.
@@ -990,16 +1243,26 @@ impl AreaFrame<'_> {
         }
     }
 
-    pub fn pointer_cell(&self) -> Option<CellPos> {
-        self.pointer_tile.map(cell_at)
-    }
-
+    /// The ground under the pointer, or under where a drag began when the pointer has left the
+    /// ground.
     pub fn drag_tile(&self) -> Option<Pos<Meters>> {
         self.pointer_tile.or_else(|| {
             self.response
                 .interact_pointer_pos()
-                .map(|p| self.canvas.to_tile(p))
+                .and_then(|p| self.canvas.to_tile(p))
         })
+    }
+
+    /// The module the pointer picks: by its standing body, else by the ground under it.
+    pub fn hit_pointer(&self) -> Option<String> {
+        let screen = self.pointer?;
+        self.snapshot
+            .hit_at(&self.canvas, screen, self.pointer_tile)
+    }
+
+    /// The locked module a click under the pointer passes through.
+    pub fn locked_hit(&self) -> Option<String> {
+        self.snapshot.locked_hit_at(self.pointer_tile?)
     }
 }
 
@@ -1028,16 +1291,12 @@ fn remember_camera(editor: &mut Editor, view_key: &str) {
     };
     let view = editor.views.area.view(view_key);
     let key = camera_key(project, view_key);
-    let camera = user::CameraSettings {
-        x: view.center.x,
-        y: view.center.y,
-        zoom: view.zoom,
-    };
-    let changed = editor.settings.cameras.get(&key).is_none_or(|known| {
-        (known.x - camera.x).abs() > 0.01
-            || (known.y - camera.y).abs() > 0.01
-            || (known.zoom - camera.zoom).abs() > 0.001
-    });
+    let camera = view.camera;
+    let changed = editor
+        .settings
+        .cameras
+        .get(&key)
+        .is_none_or(|known| !known.near(&camera));
     if changed {
         editor.settings.cameras.insert(key, camera);
         if editor.frame.is_multiple_of(120) {
@@ -1057,7 +1316,7 @@ pub fn open_area_at(
     });
     let view = editor.views.area.ensure_view(area);
     if let Some(at) = at {
-        view.center = at;
+        view.camera.target = at;
         view.fitted = true;
     }
     if let Some(part) = part {

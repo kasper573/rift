@@ -20,6 +20,7 @@ mod script_actions;
 mod spans;
 mod support;
 mod tabs;
+mod terrain_tools;
 mod thumbnails;
 mod unused;
 mod watch;

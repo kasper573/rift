@@ -12,7 +12,9 @@ use engine::core::assets::SyncedFiles;
 use engine::core::audio::playback::SfxPlugin;
 use engine::core::babble::BabblePlugin;
 use engine::core::math::Rng;
+use engine::core::render::world::WorldScenePlugin;
 use engine::core::text::StyledTextPlugin;
+use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::systems::launch;
 use strum::VariantNames;
 
@@ -84,6 +86,7 @@ fn main() {
                 .set(ImagePlugin::default_nearest()),
         )
         .add_plugins((SfxPlugin, StyledTextPlugin, BabblePlugin))
+        .add_plugins((WorldScenePlugin, VfxMaterialsPlugin))
         .add_plugins(EditorPlugin { launch })
         .run();
 }

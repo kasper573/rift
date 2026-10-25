@@ -1,3 +1,5 @@
+pub mod props;
+
 use std::collections::HashMap;
 use ui::egui;
 

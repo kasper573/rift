@@ -130,17 +130,18 @@ pub fn material(
 /// reduced the wind drops and time stands still, while treading bodies still part the blades.
 pub(super) fn blow(
     time: Res<Time>,
-    preferences: Res<CameraPreferences>,
+    preferences: Option<Res<CameraPreferences>>,
     climate: Option<Res<Climate>>,
     daylight: Option<Res<Daylight>>,
-    rig: Res<CameraRig>,
+    rig: Option<Res<CameraRig>>,
     treading: Query<(&GlobalTransform, &Treads)>,
     mut materials: ResMut<Assets<CoverMaterial>>,
 ) {
     if materials.is_empty() {
         return;
     }
-    let subject = rig.target();
+    let reduce_motion = preferences.is_some_and(|preferences| preferences.reduce_motion);
+    let subject = rig.map_or(Vec3::ZERO, |rig| rig.target());
     let mut treads: Vec<(f32, Vec4)> = treading
         .iter()
         .map(|(transform, treads)| {
@@ -163,11 +164,11 @@ pub(super) fn blow(
     }
     if let Some(climate) = climate {
         weather.overcast = climate.overcast;
-        if !preferences.reduce_motion {
+        if !reduce_motion {
             weather.wind = climate.wind;
         }
     }
-    if !preferences.reduce_motion {
+    if !reduce_motion {
         weather.time = time.elapsed_secs();
     }
     for (_, material) in materials.iter_mut() {

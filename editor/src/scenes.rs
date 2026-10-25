@@ -30,6 +30,17 @@ use crate::{rows, shell};
 pub enum SceneStep {
     Area(String),
     Blueprint(String),
+    /// Takes a tool in the open area view, with a prop or blueprint in hand when one is named.
+    Tool {
+        tool: area_view::AreaTool,
+        #[serde(default)]
+        prop: Option<String>,
+        #[serde(default)]
+        blueprint: Option<String>,
+        #[serde(default)]
+        material: Option<usize>,
+    },
+    Overlay(area_view::AreaOverlay),
     Resize(String),
     Row {
         table: String,
@@ -183,6 +194,22 @@ pub fn open(editor: &mut Editor, steps: &[SceneStep]) {
     }
 }
 
+/// The area or blueprint the scene opened last, whose tab may not be placed in the dock yet.
+fn last_opened_bundle(editor: &Editor) -> Option<String> {
+    editor
+        .open_tabs
+        .iter()
+        .rev()
+        .find_map(|(tab, _)| match tab {
+            EditorTab::Area { key } | EditorTab::Blueprint { key } => Some(key.clone()),
+            _ => None,
+        })
+        .or_else(|| match shell::active_tab(editor)? {
+            EditorTab::Area { key } | EditorTab::Blueprint { key } => Some(key),
+            _ => None,
+        })
+}
+
 fn open_one(editor: &mut Editor, step: &SceneStep) {
     match step {
         SceneStep::Area(key) => {
@@ -192,6 +219,32 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         SceneStep::Blueprint(key) => {
             editor.select(RowSelection::row(BlueprintDef::TABLE, key));
             editor.open_tab(EditorTab::Blueprint { key: key.clone() });
+        }
+        SceneStep::Tool {
+            tool,
+            prop,
+            blueprint,
+            material,
+        } => {
+            if let Some(bundle) = last_opened_bundle(editor) {
+                let view = editor.views.area.ensure_view(&bundle);
+                view.set_tool(*tool);
+                if let Some(slot) = material {
+                    view.paint_slot = *slot;
+                }
+                view.placeable = match (prop, blueprint) {
+                    (Some(prop), _) => Some(area_view::Placeable::Prop(prop.clone())),
+                    (_, Some(blueprint)) => {
+                        Some(area_view::Placeable::Blueprint(blueprint.clone()))
+                    }
+                    _ => None,
+                };
+            }
+        }
+        SceneStep::Overlay(overlay) => {
+            if let Some(bundle) = last_opened_bundle(editor) {
+                editor.views.area.ensure_view(&bundle).toggle(*overlay);
+            }
         }
         SceneStep::Part { table, key, nodes } => {
             editor.select(RowSelection {

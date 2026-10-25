@@ -170,6 +170,25 @@ impl Heightfield {
         (self.columns, self.rows)
     }
 
+    /// Sets sample `(column, row)` to `height`, kept within the range the file holds.
+    pub fn set_sample(&mut self, column: u32, row: u32, height: Meters) {
+        if column < self.columns
+            && row < self.rows
+            && let Some(sample) = self.heights.get_mut((row * self.columns + column) as usize)
+        {
+            *sample = Meters(height.0.clamp(LOWEST.0, HIGHEST.0));
+        }
+    }
+
+    /// Where sample `(column, row)` lies on the ground.
+    pub fn sample_pos(column: u32, row: u32) -> Pos<Meters> {
+        let step = 1.0 / SAMPLES_PER_METER as f32;
+        Pos::new(
+            GROUND_ORIGIN.x + column as f32 * step,
+            GROUND_ORIGIN.y + row as f32 * step,
+        )
+    }
+
     pub fn sample(&self, column: u32, row: u32) -> Meters {
         let column = column.min(self.columns.saturating_sub(1));
         let row = row.min(self.rows.saturating_sub(1));
@@ -291,6 +310,30 @@ impl Paint {
                 [255, 0, 0, 0]
             }
         })
+    }
+
+    /// Sets pixel `(column, row)` to `weights`.
+    pub fn set_weights(&mut self, column: u32, row: u32, weights: [u8; MATERIALS]) {
+        if column < self.columns
+            && row < self.rows
+            && let Some(pixel) = self.weights.get_mut((row * self.columns + column) as usize)
+        {
+            *pixel = weights;
+        }
+    }
+
+    /// Pixels across and down.
+    pub fn pixels(&self) -> (u32, u32) {
+        (self.columns, self.rows)
+    }
+
+    /// The middle of pixel `(column, row)` on the ground.
+    pub fn pixel_pos(column: u32, row: u32) -> Pos<Meters> {
+        let step = 1.0 / SAMPLES_PER_METER as f32;
+        Pos::new(
+            GROUND_ORIGIN.x + (column as f32 + 0.5) * step,
+            GROUND_ORIGIN.y + (row as f32 + 0.5) * step,
+        )
     }
 
     pub fn weights(&self, column: u32, row: u32) -> [u8; MATERIALS] {

@@ -144,23 +144,7 @@ pub struct StampSettings {
     pub values: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct CameraSettings {
-    pub x: f32,
-    pub y: f32,
-    pub zoom: f32,
-}
-
-impl Default for CameraSettings {
-    fn default() -> CameraSettings {
-        CameraSettings {
-            x: 0.0,
-            y: 0.0,
-            zoom: 2.0,
-        }
-    }
-}
+pub type CameraSettings = crate::views::area::camera::OrbitCamera;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]

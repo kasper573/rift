@@ -1,7 +1,7 @@
 use crate::tabs::file_title;
 use engine::core::content::ContentFile;
 use engine::core::math::Pos;
-use engine::core::units::{CellPos, Meters};
+use engine::core::units::Meters;
 use engine::systems::area::AreaModuleKind;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
@@ -30,7 +30,12 @@ pub fn named_table(kind: AreaModuleKind) -> Option<&'static str> {
 
 /// Asks which file a new module of `kind` names, then adds it at `at`, or area-wide without one, to
 /// `bundle`'s insertion folder.
-pub fn pick_then_add(editor: &mut Editor, bundle: &str, kind: AreaModuleKind, at: Option<CellPos>) {
+pub fn pick_then_add(
+    editor: &mut Editor,
+    bundle: &str,
+    kind: AreaModuleKind,
+    at: Option<Pos<Meters>>,
+) {
     let Some(table) = named_table(kind) else {
         return;
     };
@@ -54,7 +59,7 @@ pub fn add_picked(
     editor: &mut Editor,
     area: &str,
     kind: AreaModuleKind,
-    at: Option<CellPos>,
+    at: Option<Pos<Meters>>,
     picked: &str,
 ) {
     let Some(reader) = editor.reader() else {

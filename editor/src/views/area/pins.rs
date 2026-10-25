@@ -111,7 +111,7 @@ pub fn commit_pick(editor: &mut Editor, area_key: &str, at: Pos<Meters>) {
 }
 
 pub fn draw_arrivals(editor: &Editor, painter: &egui::Painter, frame: &AreaFrame) {
-    let canvas = frame.canvas;
+    let canvas = &frame.canvas;
     for arrival in arrivals(editor, &frame.bundle) {
         let at = canvas.to_screen(arrival.at);
         let color = if arrival.initial_spawn {

@@ -123,8 +123,8 @@ struct HoleMark {
 pub(super) fn read_module(
     mut json: Value,
     variables: &BTreeMap<String, Variable<RiftScripting>>,
-) -> Result<(AreaModule, Holes), (String, ContentProblem)> {
-    let misread = |error: ParseError| (error.pointer.clone(), shape_problem(&error));
+) -> Result<(AreaModule, Holes), Box<(String, ContentProblem)>> {
+    let misread = |error: ParseError| Box::new((error.pointer.clone(), shape_problem(&error)));
     let mut found = BTreeMap::new();
     find_holes(&json, &mut String::new(), &mut found);
     if found.is_empty() {
@@ -134,7 +134,7 @@ pub(super) fn read_module(
     let mut named = json.clone();
     for (pointer, name) in &found {
         let Some(variable) = variables.get(name) else {
-            return Err((
+            return Err(Box::new((
                 format!("{pointer}/var"),
                 ContentProblem::new(
                     "unknown variable",
@@ -142,17 +142,17 @@ pub(super) fn read_module(
                     "a variable the blueprint declares",
                 )
                 .near(nearest(variables.keys(), name).map(|near| format!("{near:?}"))),
-            ));
+            )));
         };
         let Some(stand_in) = stand_in(variable) else {
-            return Err((
+            return Err(Box::new((
                 pointer.clone(),
                 ContentProblem::new(
                     "missing file",
                     format!("a {} variable with no file to name", variable.ty.name()),
                     "a file of the variable's type in the game",
                 ),
-            ));
+            )));
         };
         let named_stand_in = match variable.default {
             Some(_) => stand_in.clone(),
@@ -404,7 +404,7 @@ pub enum FlattenAt {
     Blueprint(BlueprintId, &'static str, String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FlattenError {
     pub at: FlattenAt,
     pub problem: ContentProblem,

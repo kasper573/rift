@@ -100,7 +100,7 @@ pub fn stamp_panel(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = gap;
         for (key, count) in listed.iter().take(shown) {
-            let selected = editor.views.area.view(view_key).stamp.as_deref() == Some(key);
+            let selected = editor.views.area.view(view_key).stamp() == Some(key);
             let refused = editor
                 .project
                 .as_ref()
@@ -139,8 +139,8 @@ pub fn stamp_panel(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &
     });
     if let Some(key) = picked {
         let view = editor.views.area.view_mut(view_key);
-        view.set_tool(super::AreaTool::Stamp);
-        view.stamp = Some(key);
+        view.set_tool(super::AreaTool::Place);
+        view.placeable = Some(super::Placeable::Blueprint(key));
     }
 }
 
@@ -277,7 +277,7 @@ pub fn draw_blueprint_art(ui: &mut Ui, content: &Content, key: &str, into: ERect
 
 /// Turns the stamp a quarter turn, clockwise or counter.
 pub fn turn_stamp(editor: &mut Editor, view_key: &str, clockwise: bool) {
-    let Some(stamp) = editor.views.area.view(view_key).stamp.clone() else {
+    let Some(stamp) = editor.views.area.view(view_key).stamp().map(str::to_owned) else {
         return;
     };
     let settings = editor.settings.stamps.entry(stamp).or_default();
@@ -324,7 +324,7 @@ pub fn stamp_footprint(
 
 pub fn stamp_input(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame) {
     let response = frame.response;
-    let Some(stamp) = editor.views.area.view(view_key).stamp.clone() else {
+    let Some(stamp) = editor.views.area.view(view_key).stamp().map(str::to_owned) else {
         return;
     };
     let alt = ui.input(|i| EditorKey::Unsnapped.held(i));
@@ -428,15 +428,10 @@ pub fn object_names(placed: &[area::blueprint::Flattened]) -> HashSet<String> {
         .collect()
 }
 
-pub fn stamp_overlay(
-    editor: &mut Editor,
-    painter: &egui::Painter,
-    view_key: &str,
-    frame: &AreaFrame,
-) {
-    let canvas = frame.canvas;
+pub fn stamp_overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame: &AreaFrame) {
+    let canvas = &frame.canvas;
     let view = editor.views.area.view(view_key);
-    let Some(stamp) = view.stamp.clone() else {
+    let Some(stamp) = view.stamp().map(str::to_owned) else {
         return;
     };
     let alt = painter.ctx().input(|i| EditorKey::Unsnapped.held(i));
@@ -445,12 +440,10 @@ pub fn stamp_overlay(
     let color = Color32::from_rgb(90, 220, 220);
     let draw_ghost = |at: Pos<Meters>| {
         let rect = Rect::new(Pos::new(at.x - 0.5, at.y - 0.5), footprint);
-        painter.rect_stroke(
-            canvas.rect(rect),
-            0.0,
+        painter.add(egui::Shape::closed_line(
+            canvas.outline(rect),
             EStroke::new(1.5, color),
-            egui::StrokeKind::Inside,
-        );
+        ));
         painter.circle_filled(canvas.to_screen(at), 3.0, color);
     };
     if let Some(super::AreaDrag::Stamp { placed, .. }) = view.drag() {

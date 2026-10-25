@@ -6,9 +6,9 @@ use ui::words;
 
 use super::{AreaFrame, placement};
 use crate::app::Editor;
+use crate::forms;
 use crate::keymap::EditorKey;
 use crate::tabs::file_title;
-use crate::views::cell_at;
 
 pub(super) fn status_bar(
     editor: &mut Editor,
@@ -52,8 +52,11 @@ pub(super) fn status_bar(
         left.push(format!("{said} in {name}"));
     }
     if let Some(tile) = frame.pointer_tile {
-        let cell = cell_at(tile);
-        left.push(format!("{}, {} m", cell.x, cell.y));
+        left.push(format!(
+            "{}, {} m",
+            forms::metres(tile.x),
+            forms::metres(tile.y)
+        ));
         if frame.in_map(tile) {
             let area = frame.area();
             let mut what = if area.mesh.walkable(tile) {
@@ -61,7 +64,13 @@ pub(super) fn status_bar(
             } else {
                 "blocked".to_owned()
             };
-            let material = area.paint.dominant(cell);
+            let (column, row) = area.paint.pixel_at(tile);
+            let weights = area.paint.weights(column, row);
+            let material = weights
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, weight)| **weight)
+                .map_or(0, |(index, _)| index);
             let ground = area.terrain.materials[material].get(&frame.content);
             what.push_str(&format!(" · {}", ground.name));
             let height = area.heights.height_at(tile).0;
@@ -74,35 +83,30 @@ pub(super) fn status_bar(
             left.push(what);
         }
     }
+    let problems = super::problems::in_bundle(editor, &frame.bundle).len();
+    if problems > 0 {
+        left.push(format!(
+            "{problems} problem{} · Output lists them",
+            words::plural(problems)
+        ));
+    }
     if let Some(skipped) = &view.skipped {
         left.push(skipped.clone());
     }
-    let zoom = view.zoom;
-    editor
-        .status
-        .right
-        .push(format!("zoom {}%", (zoom * 100.0).round()));
+    let camera = view.camera;
+    editor.status.right.push(format!(
+        "{} m away · yaw {}° · pitch {}°",
+        camera.distance.0.round(),
+        camera.yaw.0.to_degrees().rem_euclid(360.0).round(),
+        camera.pitch.0.to_degrees().round()
+    ));
     if !left.is_empty() {
         editor.status.left.append(&mut left);
     }
-    let whole_map_visible = {
-        let visible = frame.canvas.visible();
-        let size = frame.size();
-        visible.min().x <= 0.0
-            && visible.min().y <= 0.0
-            && visible.max().x >= size.width
-            && visible.max().y >= size.height
-    };
     let quiet = view.in_place.is_empty() && view.show_only.is_none();
-    if whole_map_visible && quiet && matches!(frame.pictured, Pictured::Area(_)) {
+    if quiet && matches!(frame.pictured, Pictured::Area(_)) {
         let size = frame.size();
-        let text = format!(
-            "{} · {} × {} m · zoom {}%",
-            frame.bundle,
-            size.width,
-            size.height,
-            (zoom * 100.0).round()
-        );
+        let text = format!("{} · {} × {} m", frame.bundle, size.width, size.height);
         let galley = painter.layout_no_wrap(text, egui::FontId::monospace(12.0), theme::TEXT);
         let at = frame.canvas.screen.min + Vec2::new(16.0, 12.0);
         let back = ERect::from_min_size(at, galley.size() + Vec2::new(12.0, 6.0));

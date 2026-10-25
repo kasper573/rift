@@ -349,7 +349,10 @@ fn read_node(
                     module,
                     holes,
                 })),
-                Err((at, problem)) => read.problems.push((format!("{pointer}{at}"), problem)),
+                Err(misread) => {
+                    let (at, problem) = *misread;
+                    read.problems.push((format!("{pointer}{at}"), problem));
+                }
             }
         }
     }

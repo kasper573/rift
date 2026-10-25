@@ -25,7 +25,7 @@ pub const TURN_STEP: Degrees = Degrees(45.0);
 pub const TILT_STEP: Degrees = Degrees(10.0);
 pub const LOWEST_PITCH: Degrees = Degrees(5.0);
 pub const HIGHEST_PITCH: Degrees = Degrees(75.0);
-pub(super) const NEAR: f32 = 0.5;
+const NEAR: f32 = 0.5;
 /// How far a ray is followed through the world before it is given up as hitting nothing.
 const REACH: f32 = 200.0;
 const MARCH_STEP: f32 = 0.25;
@@ -35,6 +35,16 @@ const ZOOM_EASE: Seconds = Seconds(0.2);
 
 #[derive(Component)]
 pub struct WorldCamera;
+
+/// The perspective every camera on the world draws with, over a viewport `width` by `height`.
+pub fn projection(width: u32, height: u32) -> Projection {
+    Projection::Perspective(PerspectiveProjection {
+        fov: FOV.radians().0,
+        near: NEAR,
+        aspect_ratio: width as f32 / height.max(1) as f32,
+        ..default()
+    })
+}
 
 /// The three distances the camera is kept at, along its pitch line.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -334,7 +344,8 @@ pub fn ground_hit(heights: &Heightfield, bounds: Rect<Meters>, ray: Ray3d) -> Op
     if under(t) {
         return Some(ground_pos(origin + direction * t));
     }
-    while t < REACH {
+    let end = t + REACH;
+    while t < end {
         let next = t + MARCH_STEP;
         let point = origin + direction * next;
         if point.y < LOWEST.0 && direction.y < 0.0 {

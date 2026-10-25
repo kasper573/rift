@@ -8,7 +8,7 @@ use engine::core::audio::soundscape::SoundscapeShape;
 use engine::core::content::{FolderReader, Nearby};
 use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Rgb, Size};
-use engine::core::units::{Cell, CellPos, Meters};
+use engine::core::units::Meters;
 use engine::systems::actor::Pose;
 use engine::systems::area::blueprint::Placement;
 use engine::systems::area::lighting::PointLightDef;
@@ -21,6 +21,7 @@ use engine::systems::area::{
 use engine::systems::script::{Place, ScriptModule};
 use ui::egui::{Pos2, RichText, Ui, Vec2};
 
+use super::select::snap_to;
 use super::select::start_paste;
 use super::{AreaAction, AreaFrame, AreaTool, AreaViewState, nodes, pick, pins, placement, shapes};
 use crate::app::Editor;
@@ -28,7 +29,6 @@ use crate::keymap::EditorKey;
 use crate::play;
 use crate::shell::widgets;
 use crate::tabs::file_title;
-use crate::views::{cell_at, snap};
 
 #[derive(Clone, Copy)]
 pub struct AreaMenuAnchor {
@@ -41,7 +41,6 @@ pub(super) fn context_menu_at(editor: &mut Editor, view_key: &str, frame: &AreaF
         return;
     };
     let view = editor.views.area.view_mut(view_key);
-    view.cursor_cell = Some(cell_at(tile));
     view.take_drag();
     let selecting = view.tool == AreaTool::Select;
     if selecting
@@ -135,8 +134,8 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
     .open_memory(None)
     .show(|ui| {
         ui.set_min_width(220.0);
-        let cell = cell_at(tile);
-        ui.label(RichText::new(format!("{}, {}", cell.x, cell.y)).weak());
+        let spot = snap_to(tile, false);
+        ui.label(RichText::new(format!("{}, {} m", spot.x, spot.y)).weak());
         let character =
             play::current_character(editor).unwrap_or_else(|| "a test character".to_owned());
         let in_area = frame.area_id().is_some();
@@ -298,13 +297,13 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
             if let Some(area) = frame.area_id() {
                 let place = Place {
                     area,
-                    at: snap(tile),
+                    at: snap_to(tile, false),
                 };
                 play::start(editor, Some(place));
             }
         }
         MenuAction::PlayFromStart => play::start(editor, None),
-        MenuAction::SetSpawn => pins::set_spawn(editor, &frame.bundle, snap(tile)),
+        MenuAction::SetSpawn => pins::set_spawn(editor, &frame.bundle, snap_to(tile, false)),
         MenuAction::Listen => {
             editor.views.area.view_mut(view_key).listener = Some(tile);
             pick::listen(editor, frame, tile);
@@ -361,28 +360,24 @@ pub const ADD_MENU: &[(&str, &[(AreaModuleKind, &str)])] = &[
     ),
 ];
 
-/// What a module of `kind` first covers when it is placed at `cell`.
-pub fn template_bounds(kind: AreaModuleKind, cell: CellPos) -> Rect<Meters> {
+/// What a module of `kind` first covers when it is placed at `at`.
+pub fn template_bounds(kind: AreaModuleKind, at: Pos<Meters>) -> Rect<Meters> {
     match kind {
         AreaModuleKind::SafeZone
         | AreaModuleKind::Soundscape
         | AreaModuleKind::Population
-        | AreaModuleKind::Scatter => spot_rect(cell),
-        _ => cell.bounds(),
+        | AreaModuleKind::Scatter => spot_rect(at),
+        _ => shapes::cell_rect(at),
     }
 }
 
-/// A module of `kind` as it is first placed in `bundle` at `cell`, or area-wide when there is no
-/// cell, naming the file at `named` when its kind names one, and the media nearest `bundle` when it
-/// plays some. Refused, saying why, when its kind needs a cell, a file or media it hasn't.
 pub fn module_template(
     reader: &FolderReader,
     bundle: &str,
     kind: AreaModuleKind,
-    cell: Option<CellPos>,
+    at: Option<Pos<Meters>>,
     named: Option<&str>,
 ) -> Result<AreaModule, String> {
-    let at = cell.map(|cell| Pos::new(cell.x as f32, cell.y as f32));
     let placed = || format!("a {} is placed on the map", kind.tag().replace('_', " "));
     let named = named.unwrap_or_default();
     let unnamed = || format!("{named} can't be named by a {}", kind.tag());
@@ -396,10 +391,10 @@ pub fn module_template(
             scripts: Vec::new(),
         }),
         AreaModuleKind::SafeZone => AreaModule::SafeZone(SafeZone {
-            rect: spot_rect(cell.ok_or_else(placed)?),
+            rect: spot_rect(at.ok_or_else(placed)?),
         }),
         AreaModuleKind::Soundscape => AreaModule::Soundscape(SoundscapeDef {
-            shape: SoundscapeShape::Rect(spot_rect(cell.ok_or_else(placed)?)),
+            shape: SoundscapeShape::Rect(spot_rect(at.ok_or_else(placed)?)),
             emit: 4.0,
             channels: vec![SoundChannel {
                 channel: 1,
@@ -412,7 +407,7 @@ pub fn module_template(
         AreaModuleKind::Population => AreaModule::Population(Population {
             npc: reader.id_of(named).ok_or_else(unnamed)?,
             count: 1,
-            roams: cell.map(spot_rect),
+            roams: at.map(spot_rect),
         }),
         AreaModuleKind::Resident => AreaModule::Resident(Resident {
             npc: reader.id_of(named).ok_or_else(unnamed)?,
@@ -435,7 +430,7 @@ pub fn module_template(
         }),
         AreaModuleKind::Scatter => AreaModule::Scatter(Scatter {
             props: vec![reader.id_of(named).ok_or_else(unnamed)?],
-            region: spot_rect(cell.ok_or_else(placed)?),
+            region: spot_rect(at.ok_or_else(placed)?),
             per_square_meter: 0.25,
             seed: 1,
             scale: ScaleRange::default(),
@@ -472,19 +467,23 @@ pub fn add_module(
         ),
         _ => (frame.bundle.clone(), tile),
     };
-    let stamp = editor.views.area.view(view_key).stamp.clone();
-    match (kind, stamp) {
-        (AreaModuleKind::Blueprint, Some(stamp)) => {
-            pick::add_picked(editor, &bundle, kind, Some(cell_at(tile)), &stamp)
-        }
+    let at = snap_to(tile, false);
+    let view = editor.views.area.view(view_key);
+    let picked = match kind {
+        AreaModuleKind::Blueprint => view.stamp().map(str::to_owned),
+        AreaModuleKind::Prop | AreaModuleKind::Scatter => view.prop().map(str::to_owned),
+        _ => None,
+    };
+    match (kind, picked) {
+        (kind, Some(picked)) => pick::add_picked(editor, &bundle, kind, Some(at), &picked),
         (kind, _) if pick::named_table(kind).is_some() => {
-            pick::pick_then_add(editor, &bundle, kind, Some(cell_at(tile)))
+            pick::pick_then_add(editor, &bundle, kind, Some(at))
         }
         (kind, _) => {
             let Some(reader) = editor.reader() else {
                 return;
             };
-            match module_template(&reader, &bundle, kind, Some(cell_at(tile)), None) {
+            match module_template(&reader, &bundle, kind, Some(at), None) {
                 Ok(module) => {
                     let label = format!(
                         "Add {} to {}",
@@ -586,9 +585,6 @@ pub fn place_modules(
     PlaceOutcome::Partly { skipped, reason }
 }
 
-fn spot_rect(cell: CellPos) -> Rect<Meters> {
-    Rect::new(
-        Pos::new(cell.x as f32 - 0.5, cell.y as f32 - 0.5),
-        Size::splat(2.0),
-    )
+fn spot_rect(at: Pos<Meters>) -> Rect<Meters> {
+    Rect::new(Pos::new(at.x - 1.0, at.y - 1.0), Size::splat(2.0))
 }

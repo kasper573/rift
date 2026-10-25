@@ -545,7 +545,7 @@ pub fn overlay_in_place(
     frame: &AreaFrame,
     place: &AreaPlacement,
 ) {
-    let canvas = frame.canvas;
+    let canvas = &frame.canvas;
     let parts = parts_in_place(frame, place);
     let extent = parts
         .iter()
@@ -553,23 +553,13 @@ pub fn overlay_in_place(
         .reduce(|a, b| a.union(&b))
         .or_else(|| frame.module_bounds(&place.node));
     if let Some(bounds) = extent {
-        let shade = egui::Color32::from_rgba_unmultiplied(0, 0, 0, 150);
-        let lit = canvas.rect(bounds);
-        let full = canvas.screen;
-        for dark in [
-            egui::Rect::from_min_max(full.min, egui::pos2(full.max.x, lit.min.y)),
-            egui::Rect::from_min_max(egui::pos2(full.min.x, lit.max.y), full.max),
-            egui::Rect::from_min_max(
-                egui::pos2(full.min.x, lit.min.y),
-                egui::pos2(lit.min.x, lit.max.y),
+        painter.add(egui::Shape::closed_line(
+            canvas.outline(bounds.inflate(0.5, 0.5)),
+            EStroke::new(
+                2.0,
+                egui::Color32::from_rgba_unmultiplied(255, 255, 255, 180),
             ),
-            egui::Rect::from_min_max(
-                egui::pos2(lit.max.x, lit.min.y),
-                egui::pos2(full.max.x, lit.max.y),
-            ),
-        ] {
-            painter.rect_filled(dark, 0.0, shade);
-        }
+        ));
     }
     let selected = selected_in_place(editor, &place.blueprint);
     for part in parts {
@@ -579,12 +569,10 @@ pub fn overlay_in_place(
         let is_selected = selected.contains(&part.part);
         let color = super::overlays::module_color(Some(part.module.kind()));
         let width = if is_selected { 2.0 } else { 1.0 };
-        painter.rect_stroke(
-            canvas.rect(bounds),
-            0.0,
+        painter.add(egui::Shape::closed_line(
+            canvas.outline(bounds),
             EStroke::new(width, color),
-            egui::StrokeKind::Inside,
-        );
+        ));
         let text = match &part.nested {
             Some(nested) => format!("{nested} (double-click to open)"),
             None => shapes::label(&part.module, frame.reader.as_ref()),

@@ -7,7 +7,7 @@ pub struct RowCheck {
     errors: Vec<RowError>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RowError {
     pub pointer: String,
     pub problem: ContentProblem,

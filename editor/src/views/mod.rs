@@ -17,7 +17,7 @@ use ui::theme;
 use bevy::prelude::*;
 use engine::core::content::ContentFile;
 use engine::core::math::Pos;
-use engine::core::units::{Cell, CellPos, Meters};
+use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
 use engine::systems::script::Place;
 use ui::egui::Ui;
@@ -31,12 +31,9 @@ use crate::shell::{self};
 use crate::stage::Stages;
 use crate::tabs::EditorTab;
 
-pub(crate) fn cell_at(at: Pos<Meters>) -> CellPos {
-    CellPos::new(at.x.round() as i32, at.y.round() as i32)
-}
-
+/// Snaps a ground point to the half metre.
 pub(crate) fn snap(at: Pos<Meters>) -> Pos<Meters> {
-    cell_at(at).center()
+    area::select::snap_to(at, false)
 }
 
 #[derive(Component)]
@@ -88,12 +85,14 @@ pub fn read_shown<Row: ContentFile>(editor: &Editor, ui: &mut Ui, key: &str) -> 
 pub fn sync(editor: &mut Editor, world: &mut World) {
     sound::sync(editor, world);
     crate::stage::sync(editor, world);
+    area::viewport::sync(editor, world);
+    crate::thumbs::props::sync(editor, world);
 }
 
 pub fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
     let mut tabs: Vec<BottomTab> = match shell::active_tab(editor) {
         Some(EditorTab::Area { .. }) | Some(EditorTab::Blueprint { .. }) => {
-            let mut tabs = vec![BottomTab::Blueprints];
+            let mut tabs = vec![BottomTab::Palette, BottomTab::Blueprints];
             if editor.views.sound.listening.is_some() {
                 tabs.push(BottomTab::Listen);
             }
@@ -129,13 +128,13 @@ pub fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
 
 pub fn bottom_show(editor: &mut Editor, ui: &mut Ui, tab: BottomTab) {
     match (shell::active_tab(editor), tab) {
-        (Some(EditorTab::Area { key }), BottomTab::Blueprints) => {
+        (Some(EditorTab::Area { key }), BottomTab::Blueprints | BottomTab::Palette) => {
             area::bottom(editor, ui, &area::view_key(&key), tab)
         }
         (Some(EditorTab::Area { .. }) | Some(EditorTab::Blueprint { .. }), BottomTab::Listen) => {
             sound::panel(editor, ui)
         }
-        (Some(EditorTab::Blueprint { key }), BottomTab::Blueprints) => {
+        (Some(EditorTab::Blueprint { key }), BottomTab::Blueprints | BottomTab::Palette) => {
             area::bottom(editor, ui, &area::view_key(&key), tab)
         }
         (Some(EditorTab::Script(owner)), BottomTab::MayDo | BottomTab::UsedBy | BottomTab::Run) => {
