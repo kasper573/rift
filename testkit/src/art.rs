@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use engine::core::content::gltf::placeholder_rig;
+use engine::core::content::gltf::{placeholder_mesh, placeholder_rig};
 use engine::core::time::Seconds;
 
 /// A PNG of `width` × `height` transparent pixels: an image a row can name, the right size and no
@@ -21,6 +21,11 @@ pub fn png(width: u32, height: u32) -> Vec<u8> {
 /// A glTF binary of one triangle animated by `clips`, each named and as long as given.
 pub fn glb(clips: &[(&str, Seconds)]) -> Vec<u8> {
     placeholder_rig(clips)
+}
+
+/// A glTF binary of `triangles` triangles animated by `clips`: a model as heavy as a test wants.
+pub fn glb_of(triangles: usize, clips: &[(&str, Seconds)]) -> Vec<u8> {
+    placeholder_mesh(clips, triangles)
 }
 
 /// A WAV of a moment of silence.

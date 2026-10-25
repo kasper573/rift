@@ -169,6 +169,7 @@ pub fn inflict(world: &mut World, target: Entity, attacker: Option<Entity>, dama
         add_attacker(world, target, attacker);
         crate::systems::item::reserve(world, target, attacker, time);
         crate::systems::npc::attacked(world, target, attacker);
+        crate::systems::dialogue::interrupt(world, target, "you're under attack");
     }
     stat::apply_damage(world, target, damage);
 }

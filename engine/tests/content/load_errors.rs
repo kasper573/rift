@@ -2,10 +2,12 @@ use engine::core::content::{ErrorPlace, Fixture, LoadReport, SETTINGS_FILE};
 use engine::core::ground::{GroundSize, Paint};
 use engine::core::time::Seconds;
 use engine::core::vfx::Stage;
+use engine::systems::actor::model::MAX_CHARACTER_TRIANGLES;
 use engine::systems::area::AreaDef;
+use engine::systems::area::prop::MAX_PROP_TRIANGLES;
 use engine::systems::input::map::InputFixture;
 use serde_json::{Value, json};
-use testkit::{Game, Map, path, png};
+use testkit::{Game, Map, glb_of, path, png, rig_clips};
 
 use crate::support::game;
 
@@ -240,6 +242,14 @@ fn a_models_clips_are_held_to_its_rig() {
             rule: "apex out of place",
         },
         Case {
+            case: "an attack landing twice",
+            change: |model| {
+                model["clips"]["attack"]["cues"] =
+                    json!([{ "at": 0, "apex": true }, { "at": 50, "apex": true }])
+            },
+            rule: "apex out of place",
+        },
+        Case {
             case: "an apex on an idle",
             change: |model| model["clips"]["idle"]["cues"] = json!([{ "at": 0, "apex": true }]),
             rule: "apex out of place",
@@ -286,6 +296,38 @@ fn a_models_clips_are_held_to_its_rig() {
     assert_eq!(
         rules_in(&report, "hero.model/config.json"),
         [("clip length", "100 ms to 60000 ms")]
+    );
+}
+
+#[test]
+fn a_model_over_the_style_budget_is_refused_at_its_row() {
+    let hero = format!("{}/model.glb", path("model", "hero"));
+    let rock = format!("{}/model.glb", path("prop", "rock"));
+    let report = game()
+        .file(&hero, glb_of(MAX_CHARACTER_TRIANGLES + 1, &rig_clips()))
+        .prop("rock", json!({ "type": "none" }))
+        .file(&rock, glb_of(MAX_PROP_TRIANGLES + 1, &[]))
+        .try_load()
+        .err()
+        .expect("refused");
+    let mut refused: Vec<(&str, String)> = report
+        .errors
+        .iter()
+        .map(|error| (error.problem.rule, error.file.clone()))
+        .collect();
+    refused.sort();
+    assert_eq!(
+        refused,
+        [
+            (
+                "out of range",
+                format!("{}/config.json", path("model", "hero"))
+            ),
+            (
+                "out of range",
+                format!("{}/config.json", path("prop", "rock"))
+            ),
+        ]
     );
 }
 

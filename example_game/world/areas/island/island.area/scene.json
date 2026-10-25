@@ -324,10 +324,10 @@
         "label": "Shore",
         "shape": {
           "type": "ellipse",
-          "x": 14.0,
-          "y": 50.0,
-          "w": 30.0,
-          "h": 28.0
+          "x": 26.0,
+          "y": 49.0,
+          "w": 24.0,
+          "h": 30.0
         },
         "emit": 0.0,
         "channels": [
@@ -355,7 +355,7 @@
         "label": "Lapping water",
         "shape": {
           "type": "rect",
-          "x": 21.0,
+          "x": 22.0,
           "y": 60.5,
           "w": 7.0,
           "h": 7.0
@@ -796,6 +796,17 @@
           "y": 92.0,
           "w": 12.0,
           "h": 10.0
+        }
+      },
+      {
+        "type": "population",
+        "npc": "characters/npc/skeleton_rogue.npc.json",
+        "count": 5,
+        "roams": {
+          "x": 24.0,
+          "y": 80.0,
+          "w": 22.0,
+          "h": 20.0
         }
       },
       {

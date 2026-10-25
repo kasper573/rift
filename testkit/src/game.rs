@@ -53,6 +53,14 @@ pub const CLIP: Millis = Millis(300.0);
 /// When a declared model's attack lands.
 pub const APEX: Millis = Millis(100.0);
 
+/// The clips a declared model's rig animates: one per action, each `CLIP` long.
+pub fn rig_clips() -> Vec<(&'static str, Seconds)> {
+    Action::VARIANTS
+        .iter()
+        .map(|action| (action.as_ref(), CLIP.seconds()))
+        .collect()
+}
+
 /// An area's ground as text, one string per row: `.` walkable, `#` blocked.
 #[derive(Clone)]
 pub struct Map(pub Vec<String>);
@@ -409,10 +417,6 @@ impl Game {
                 )
             })
             .collect();
-        let rig: Vec<(&str, Seconds)> = Action::VARIANTS
-            .iter()
-            .map(|action| (action.as_ref(), CLIP.seconds()))
-            .collect();
         self.row(
             "model",
             name,
@@ -422,7 +426,12 @@ impl Game {
                 "modules": modules,
             }),
         )
-        .part("model", name, &MODEL_GLB.named("", "glb"), glb(&rig))
+        .part(
+            "model",
+            name,
+            &MODEL_GLB.named("", "glb"),
+            glb(&rig_clips()),
+        )
     }
 
     /// A prop of a model nobody would notice, taking up `footprint` of the ground.

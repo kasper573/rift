@@ -166,14 +166,25 @@ fn walking_out_of_reach_or_losing_the_speaker_ends_the_conversation() {
 }
 
 #[test]
-fn damage_keeps_a_conversation_but_death_ends_it() {
+fn damage_keeps_a_conversation_but_a_blow_or_death_ends_it() {
     let mut sim = inn();
     let player = sim.join(1);
+    let keeper = sim.npc("keeper");
     sim.talk(1, "keeper");
 
     stat::apply_damage(&mut sim.world, player, 1.0);
     sim.tick();
     assert!(sim.conversation(1).is_some());
+
+    let crier = sim.npc("crier");
+    combat::inflict(&mut sim.world, player, Some(crier), 1.0);
+    sim.tick();
+    assert!(sim.conversation(1).is_none(), "a blow ends the talk");
+    assert!(!commands_locked(&sim.world, player));
+    assert_eq!(action(&sim.world, player), Action::Idle);
+    assert_eq!(action(&sim.world, keeper), Action::Idle);
+
+    sim.talk(1, "keeper");
 
     sim.world.entity_mut(player).remove::<Immortal>();
     let health = stat::effective(&sim.world, player, StatKind::Health);

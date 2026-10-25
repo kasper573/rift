@@ -175,18 +175,24 @@ pub fn is_flat_shaded(triangles: &[Triangle]) -> bool {
 /// what stands in for a model until a real one is dropped in, drawing nothing anyone would notice
 /// and answering every question the loader asks of a rig.
 pub fn placeholder_rig(clips: &[(&str, Seconds)]) -> Vec<u8> {
+    placeholder_mesh(clips, 1)
+}
+
+/// A glTF binary of `triangles` triangles stacked within a centimetre of the origin, animated by
+/// `clips`: a model of any weight in triangles and nothing to look at.
+pub fn placeholder_mesh(clips: &[(&str, Seconds)], triangles: usize) -> Vec<u8> {
     let mut bin: Vec<u8> = Vec::new();
     let mut root = json::Root::default();
-    let positions: [[f32; 3]; 3] = [[-0.01, 0.0, -0.01], [0.01, 0.0, -0.01], [0.0, 0.0, 0.01]];
+    let corners: [[f32; 3]; 3] = [[-0.01, 0.0, -0.01], [0.01, 0.0, -0.01], [0.0, 0.0, 0.01]];
+    let positions: Vec<u8> = (0..triangles)
+        .flat_map(|_| corners.iter().flatten())
+        .flat_map(|value| value.to_le_bytes())
+        .collect();
     let position_accessor = push_accessor(
         &mut root,
         &mut bin,
-        &positions
-            .iter()
-            .flatten()
-            .flat_map(|value| value.to_le_bytes())
-            .collect::<Vec<u8>>(),
-        3,
+        &positions,
+        triangles * 3,
         json::accessor::Type::Vec3,
         Some((&[-0.01, 0.0, -0.01], &[0.01, 0.0, 0.01])),
     );

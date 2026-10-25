@@ -535,6 +535,16 @@ fn begin(world: &mut World, flow: FlowKey, subject: Entity) -> bool {
     true
 }
 
+/// Ends the conversation `player` is in, if any, telling them `reason`: a blow landing on them,
+/// which no talk survives.
+pub fn interrupt(world: &mut World, player: Entity, reason: &str) {
+    if world.get::<ConversationSession>(player).is_none() {
+        return;
+    }
+    leave(world, player);
+    tell_ended(world, player, reason);
+}
+
 pub fn close_for(world: &mut World, player: Entity) {
     if let Some(session) = world.entity_mut(player).take::<ConversationSession>() {
         world
