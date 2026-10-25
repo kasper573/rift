@@ -15,14 +15,14 @@ use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::Listener;
 use crate::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
 use crate::core::content::{Content, ContentScope, with_content};
-use crate::core::geometry::Capsule;
+use crate::core::geometry::{Capsule, Radians};
 use crate::core::gui::{self, GuiContext, WorldLayers};
 use crate::core::math::{Offset, Pos, Rect, Size, WindowPx};
 use crate::core::platform::ClientPlatform;
 use crate::core::render::tile_to_window;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::time::{self, Seconds};
-use crate::core::units::Meters;
+use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::model::ModelId;
 use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox};
@@ -56,6 +56,7 @@ pub trait ProbeChannel {
 pub fn install(app: &mut App, channel: impl ProbeChannel + 'static) {
     app.insert_non_send(Probe(Box::new(channel)))
         .init_resource::<ProbeInputSeen>()
+        .init_resource::<TerrainSent>()
         .init_resource::<DrawnUi>()
         .init_resource::<VfxSeen>()
         .add_observer(remember_vfx)
@@ -68,8 +69,8 @@ pub fn install(app: &mut App, channel: impl ProbeChannel + 'static) {
 }
 
 /// One frame of the client. Content ids (de)serialize by key, so a driver reads a snapshot within a
-/// content scope. World positions are tiles, which `view` places in the window; window positions
-/// are the window's logical pixels.
+/// content scope. World positions are metres on the ground, which `view` and `terrain` place in the
+/// window; window positions are the window's logical pixels.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ProbeSnapshot {
     pub frame: u32,
@@ -78,6 +79,9 @@ pub struct ProbeSnapshot {
     pub screen: Option<Size<WindowPx>>,
     pub view: Option<ProbeView>,
     pub area: Option<AreaId>,
+    /// The area's ground heights, sent with the first frame in a new area and left out after, so a
+    /// driver keeps the last it saw.
+    pub terrain: Option<ProbeTerrain>,
     pub me: Option<ProbeBody>,
     pub actors: Vec<ProbeBody>,
     pub objects: Vec<ProbeObject>,
@@ -129,16 +133,62 @@ pub struct ProbeInputSeen {
     pub key_presses: u32,
 }
 
-/// Where tile (0, 0) shows in the window, and how far one tile over and down takes it.
+impl ProbeSnapshot {
+    /// Where a point on the ground shows in the window, at the terrain's height there.
+    pub fn ground_point(&self, at: Pos<Meters>) -> Option<Pos<WindowPx>> {
+        let height = self
+            .terrain
+            .as_ref()
+            .map_or(Meters(0.0), |terrain| terrain.height_at(at));
+        Some(self.view?.window_point(at, height))
+    }
+}
+
+/// The camera: how a world point (x east, height up, y south) lands in the window, and where the
+/// camera looks from.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct ProbeView {
-    pub origin: Pos<WindowPx>,
-    pub tile: Offset<WindowPx>,
+    pub view_proj: Mat4,
+    pub viewport: Rect<WindowPx>,
+    pub yaw: Radians,
+    pub pitch: Radians,
+    pub zoom: u8,
 }
 
 impl ProbeView {
-    pub fn window_point(&self, at: Pos<Meters>) -> Pos<WindowPx> {
-        self.origin + Offset::new(at.x * self.tile.x, at.y * self.tile.y)
+    pub fn window_point(&self, at: Pos<Meters>, height: Meters) -> Pos<WindowPx> {
+        let clip = self.view_proj * Vec4::new(at.x, height.0, at.y, 1.0);
+        let ndc = clip.truncate() / clip.w;
+        self.viewport.origin
+            + Offset::new(
+                (ndc.x + 1.0) / 2.0 * self.viewport.size.width,
+                (1.0 - ndc.y) / 2.0 * self.viewport.size.height,
+            )
+    }
+}
+
+/// An area's ground heights at whole metres, from its corner on.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ProbeTerrain {
+    pub size: Size<Meters>,
+    pub heights: Vec<Meters>,
+}
+
+impl ProbeTerrain {
+    pub fn height_at(&self, at: Pos<Meters>) -> Meters {
+        let columns = self.size.width as usize + 1;
+        let rows = self.size.height as usize + 1;
+        let x = (at.x - GROUND_ORIGIN.x).clamp(0.0, columns as f32 - 1.0);
+        let y = (at.y - GROUND_ORIGIN.y).clamp(0.0, rows as f32 - 1.0);
+        let (column, row) = (x.floor() as usize, y.floor() as usize);
+        let (u, v) = (x - column as f32, y - row as f32);
+        let sample = |column: usize, row: usize| {
+            self.heights[row.min(rows - 1) * columns + column.min(columns - 1)].0
+        };
+        let top = sample(column, row) + (sample(column + 1, row) - sample(column, row)) * u;
+        let bottom =
+            sample(column, row + 1) + (sample(column + 1, row + 1) - sample(column, row + 1)) * u;
+        Meters(top + (bottom - top) * v)
     }
 }
 
@@ -155,10 +205,14 @@ pub struct ProbeBody {
     pub drawn: Pos<Meters>,
     /// Where a click takes it rather than whatever stands in front of it.
     pub aim: Pos<Meters>,
-    pub hitbox: Rect<Meters>,
+    pub capsule: Capsule,
+    pub facing: Radians,
     pub action: Action,
     /// Whether it stands still rather than walks.
     pub resting: bool,
+    /// Where its feet and the top of its head show in the window, as drawn.
+    pub feet: Option<Pos<WindowPx>>,
+    pub head: Option<Pos<WindowPx>>,
     pub health: f32,
     pub max_health: f32,
     pub npc: Option<NpcId>,
@@ -637,7 +691,8 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             .and_then(|me| world.get::<skill::BasicAttack>(me))
             .and_then(|slot| slot.0),
         skills: me.and_then(|me| skills(world, me)),
-        me: me.and_then(|me| body(world, me)),
+        me: me.and_then(|me| body(world, me, view.as_ref())),
+        terrain: terrain(world, area),
         actors: actors(world, me, area),
         objects: objects(world, area),
         items: items(world, area),
@@ -773,16 +828,61 @@ fn quests(world: &World, seen: Entity) -> Option<ProbeQuests> {
     })
 }
 
+/// The flat view: a metre of height shows as a metre up the window, as the 2D client draws hitboxes.
 fn view(world: &mut World) -> Option<ProbeView> {
     let origin = tile_to_window(world, Pos::new(0.0, 0.0))?;
     let unit = tile_to_window(world, Pos::new(1.0, 1.0))?;
+    let window = world
+        .query_filtered::<&Window, With<PrimaryWindow>>()
+        .single(world)
+        .ok()?;
+    let (width, height) = (window.resolution.width(), window.resolution.height());
+    let tile: Offset<WindowPx> = Offset::new(unit.x - origin.x, unit.y - origin.y);
+    let view_proj = Mat4::from_cols(
+        Vec4::new(2.0 * tile.x / width, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, 2.0 * tile.y / height, 0.0, 0.0),
+        Vec4::new(0.0, -2.0 * tile.y / height, 0.0, 0.0),
+        Vec4::new(
+            2.0 * origin.x / width - 1.0,
+            1.0 - 2.0 * origin.y / height,
+            0.0,
+            1.0,
+        ),
+    );
     Some(ProbeView {
-        origin: Pos::new(origin.x, origin.y),
-        tile: Offset::new(unit.x - origin.x, unit.y - origin.y),
+        view_proj,
+        viewport: Rect::from_size(Size::new(width, height)),
+        yaw: Radians(0.0),
+        pitch: Radians(std::f32::consts::FRAC_PI_2),
+        zoom: 0,
     })
 }
 
-fn body(world: &World, entity: Entity) -> Option<ProbeBody> {
+/// Which area's terrain the probe last sent, so it goes out once per arrival.
+#[derive(Resource, Default)]
+struct TerrainSent(Option<AreaId>);
+
+fn terrain(world: &mut World, area: Option<AreaId>) -> Option<ProbeTerrain> {
+    let mut sent = world.resource_mut::<TerrainSent>();
+    if sent.0 == area {
+        return None;
+    }
+    sent.0 = area;
+    let content = world.resource::<Content>();
+    let area = area::load(content, area?);
+    let size = area.size;
+    let (columns, rows) = (size.width as usize + 1, size.height as usize + 1);
+    let heights = (0..rows)
+        .flat_map(|row| (0..columns).map(move |column| (column, row)))
+        .map(|(column, row)| {
+            area.heights
+                .height_at(GROUND_ORIGIN + Offset::new(column as f32, row as f32))
+        })
+        .collect();
+    Some(ProbeTerrain { size, heights })
+}
+
+fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<ProbeBody> {
     let viewer = session::me(world);
     let marks = viewer
         .and_then(|viewer| world.get::<Attention>(viewer))
@@ -792,8 +892,16 @@ fn body(world: &World, entity: Entity) -> Option<ProbeBody> {
     let entity = world.get_entity(entity).ok()?;
     let npc = entity.get::<Npc>().map(|npc| npc.def);
     let at = entity.get::<Position>()?.pos;
-    let hitbox = footprint(at, entity.get::<Hitbox>()?.0);
+    let capsule = entity.get::<Hitbox>()?.0;
     let actor = entity.get::<Actor>()?;
+    let drawn = entity.get::<RenderPosition>().map_or(at, |drawn| drawn.0);
+    let ground = world
+        .get::<AreaTag>(entity.id())
+        .map_or(Meters(0.0), |tag| {
+            area::load(world.resource::<Content>(), tag.area)
+                .heights
+                .height_at(drawn)
+        });
     let model = actor.model;
     let flies = ActorModel::get(world.resource::<Content>(), model).airborne();
     let stat = |kind| entity.get::<Stats>().map_or(0.0, |stats| stats.get(kind));
@@ -806,11 +914,14 @@ fn body(world: &World, entity: Entity) -> Option<ProbeBody> {
         flies,
         player: entity.contains::<PlayedBy>(),
         at,
-        drawn: entity.get::<RenderPosition>().map_or(at, |drawn| drawn.0),
-        aim: hitbox.center(),
-        hitbox,
+        drawn,
+        aim: at,
+        capsule,
+        facing: actor.facing,
         action: actor.action,
         resting: !matches!(actor.action, Action::Walk | Action::Run),
+        feet: view.map(|view| view.window_point(drawn, ground)),
+        head: view.map(|view| view.window_point(drawn, ground + capsule.height)),
         health: stat(StatKind::Health),
         max_health: stat(StatKind::MaxHealth),
         npc,
@@ -834,14 +945,15 @@ fn actors(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Vec<Pr
         .filter(|(entity, tag)| Some(*entity) != me && area.is_none_or(|area| tag.area == area))
         .map(|(entity, _)| entity)
         .collect();
+    let view = view(world);
     let bodies: Vec<(Entity, ProbeBody)> = others
         .into_iter()
-        .filter_map(|entity| body(world, entity).map(|body| (entity, body)))
+        .filter_map(|entity| body(world, entity, view.as_ref()).map(|body| (entity, body)))
         .collect();
     bodies
         .into_iter()
         .map(|(entity, body)| ProbeBody {
-            aim: aim(world, entity, body.hitbox),
+            aim: aim(world, entity, footprint(body.at, body.capsule)),
             ..body
         })
         .collect()

@@ -78,6 +78,7 @@ bevy_replicon = { workspace = true, features = ["client", "server"] }
 bevy_state.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 bevy_input = { workspace = true, features = ["serialize"] }
+bevy_math = { workspace = true, features = ["serialize"] }
 bevy_kira_audio = { version = "0.27", default-features = false }
 # bevy_kira_audio fails to build without kira's symphonia feature, which otherwise only its own audio
 # loaders turn on.

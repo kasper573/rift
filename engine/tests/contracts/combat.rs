@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
+use engine::core::time::UnixMillis;
 use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest, Attitude};
@@ -8,7 +9,7 @@ use engine::systems::npc::{self, NpcDef, Pack};
 use engine::systems::stat::{self, StatKind};
 use engine::systems::{actor, script, skill};
 use serde_json::json;
-use testkit::{Game, Map, Sim};
+use testkit::{APEX, CLIP, Game, Map, Sim};
 
 #[test]
 fn an_attack_walks_into_range_and_strikes() {
@@ -27,6 +28,25 @@ fn an_attack_walks_into_range_and_strikes() {
 }
 
 // Right beside the player, so the fight stays where it starts.
+#[test]
+fn an_attacks_timing_comes_from_its_clip_at_the_attackers_speed() {
+    let (mut sim, player) = fight();
+    let speed = stat::effective(&sim.world, player, StatKind::AttackSpeed);
+
+    let playing = actor::playing::play(&mut sim.world, player, actor::Action::Attack, None)
+        .expect("an attack plays");
+
+    let since = |at: UnixMillis| (at.0 - playing.started.0) as f32;
+    assert!(
+        (since(playing.apex) - APEX.0 / speed).abs() <= 1.0,
+        "{playing:?}"
+    );
+    assert!(
+        (since(playing.ends) - CLIP.0 / speed).abs() <= 1.0,
+        "{playing:?}"
+    );
+}
+
 #[test]
 fn an_attacked_monster_is_fought_until_it_falls() {
     let (mut sim, player) = fight();

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub mod model;
 pub mod plate;
@@ -18,10 +18,10 @@ use crate::core::content::{ContentRegistry, LoadStep};
 use crate::core::geometry::{Capsule, Radians};
 use crate::core::math::{Pos, Rgba};
 use crate::core::time::PlaybackRate;
-use crate::core::units::Meters;
+use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::AreaObject;
 use crate::systems::dialogue;
-use crate::systems::movement::{Path, Position};
+use crate::systems::movement::{self, Path, Position};
 use crate::systems::stat::{self, Stats};
 
 pub fn register(app: &mut App) {
@@ -186,8 +186,21 @@ pub type Situations = QueryState<(
 )>;
 
 /// Picks every actor's action from its state: dead, playing, walking, in conversation, or idle.
+/// Two in conversation face each other.
 pub fn settle(world: &mut World, actors: &mut Situations, sessions: &mut dialogue::Sessions) {
     let talking: HashSet<Entity> = dialogue::parties(world, sessions).into_iter().collect();
+    let facing_partner: HashMap<Entity, Radians> = sessions
+        .iter(world)
+        .filter_map(|(player, _)| Some((player, dialogue::counterpart_of(world, player)?)))
+        .flat_map(|(player, partner)| [(player, partner), (partner, player)])
+        .filter_map(|(me, partner)| {
+            let (at, there) = (
+                movement::position(world, me)?,
+                movement::position(world, partner)?,
+            );
+            (at.distance(there) > Meters(1e-3)).then(|| (me, Radians::of(there - at)))
+        })
+        .collect();
     for (entity, mut actor, stats, playing, walking) in actors.iter_mut(world) {
         let action = if stats.is_some_and(stat::dead) {
             Action::Dead
@@ -203,7 +216,10 @@ pub fn settle(world: &mut World, actors: &mut Situations, sessions: &mut dialogu
         } else {
             Action::Idle
         };
-        set_action(&mut actor, action);
+        match facing_partner.get(&entity) {
+            Some(&facing) if action == Action::Talk => set_facing(&mut actor, facing, action),
+            _ => set_action(&mut actor, action),
+        }
     }
 }
 

@@ -122,7 +122,7 @@ fn beach() -> Sim {
             json!({ "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 1000 }] }),
         )
         .memory("chest_looted", "daily")
-        .asset("objects/look.png", testkit::png(1, 1))
+        .prop("look", json!({ "type": "none" }))
         .load();
     let mut sim = Sim::new(content);
     sim.serve("beach")
@@ -147,7 +147,7 @@ fn object(name: &str, x: f32, y: f32, script: &str) -> Value {
         "name": name,
         "title": name,
         "shape": { "type": "point", "x": x, "y": y },
-        "look": "objects/look.png",
+        "look": path("prop", "look"),
         "scripts": [{ "script": path("script", script) }],
     })
 }

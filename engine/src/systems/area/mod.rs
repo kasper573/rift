@@ -1012,6 +1012,121 @@ fn check_placed(
     }
 }
 
+/// Where a problem with an area's connectivity is reported.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IslandSite {
+    /// A node of an area's scene: the file and the JSON pointer.
+    Scene(String, String),
+    /// The game's initial spawn.
+    Spawn,
+}
+
+/// Every resident, population, warp and the spawn standing on ground that nothing reaches: no warp
+/// into its area and not the spawn connects to it. An area nothing enters is left alone.
+pub fn check_islands(content: &Content, spawn: script::Place) -> Vec<(IslandSite, ContentProblem)> {
+    let mut problems = Vec::new();
+    for id in content.ids::<AreaDef>() {
+        let Some(area) = content
+            .built::<Areas>()
+            .0
+            .get(id.index())
+            .and_then(Option::as_ref)
+        else {
+            continue;
+        };
+        let warps = warp_objects(content, id);
+        let mut entrances: Vec<(Option<u32>, Pos<Meters>)> = warps
+            .iter()
+            .flat_map(|(index, object)| {
+                area.mesh
+                    .ground_within(object.shape.bounds())
+                    .into_iter()
+                    .map(move |at| (Some(*index), at))
+            })
+            .collect();
+        if spawn.area == id {
+            entrances.push((None, spawn.at));
+        }
+        if entrances.is_empty() {
+            continue;
+        }
+        let several = entrances
+            .iter()
+            .map(|(index, _)| *index)
+            .collect::<BTreeSet<_>>()
+            .len()
+            > 1;
+        let reaches = |at: Pos<Meters>, except: Option<u32>| {
+            entrances.iter().any(|(index, entrance)| {
+                except.is_none_or(|except| *index != Some(except))
+                    && area.mesh.connects(*entrance, at)
+            })
+        };
+        let scene = scene_file(id.path(content));
+        let mut report = |site: IslandSite, what: String, at: Pos<Meters>| {
+            let nearest = area
+                .mesh
+                .nearest_where(at, movement::SPACING, |point| reaches(point, None))
+                .map(describe_point);
+            problems.push((
+                site,
+                ContentProblem::new(
+                    "unreachable",
+                    format!("{what} at {}", describe_point(at)),
+                    "ground a warp into the area or the spawn reaches",
+                )
+                .near(nearest),
+            ));
+        };
+        let modules = placed(content, id);
+        for (index, placed) in modules.iter().enumerate() {
+            let site =
+                |field: &str| IslandSite::Scene(scene.clone(), module_pointer(placed, field));
+            match &placed.module {
+                AreaModule::Resident(resident) => {
+                    if area.mesh.walkable(resident.at) && !reaches(resident.at, None) {
+                        report(
+                            site("/at"),
+                            resident.npc.path(content).to_owned(),
+                            resident.at,
+                        );
+                    }
+                }
+                AreaModule::Population(population) => {
+                    let region = population.roams.unwrap_or(area.size.bounds());
+                    let ground = area.mesh.ground_within(region);
+                    if let Some(first) = ground.first()
+                        && !ground.iter().any(|at| reaches(*at, None))
+                    {
+                        report(site(""), population.npc.path(content).to_owned(), *first);
+                    }
+                }
+                AreaModule::Object(object) if several => {
+                    let index = index as u32;
+                    let ground = area.mesh.ground_within(object.shape.bounds());
+                    if warps.iter().any(|(warp, _)| *warp == index)
+                        && let Some(first) = ground.first()
+                        && !ground.iter().any(|at| reaches(*at, Some(index)))
+                    {
+                        report(site(""), object.display_name(index), *first);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if spawn.area == id
+            && several
+            && area.mesh.walkable(spawn.at)
+            && !entrances
+                .iter()
+                .any(|(index, entrance)| index.is_some() && area.mesh.connects(*entrance, spawn.at))
+        {
+            report(IslandSite::Spawn, "the initial spawn".to_owned(), spawn.at);
+        }
+    }
+    problems
+}
+
 pub fn check_place(content: &Content, place: script::Place) -> Result<(), ContentProblem> {
     let Some(area) = content
         .built::<Areas>()

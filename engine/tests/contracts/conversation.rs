@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::Fixture;
-use engine::core::math::Offset;
+use engine::core::geometry::Radians;
+use engine::core::math::{Offset, Pos};
 use engine::core::script::Value as Recalled;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::{MeterPos, Meters};
@@ -48,6 +49,12 @@ fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
     assert!(commands_locked(&sim.world, player));
     assert_eq!(action(&sim.world, player), Action::Talk);
     assert_eq!(action(&sim.world, keeper), Action::Talk);
+    assert!(
+        faces(&sim.world, player, keeper_at) && faces(&sim.world, keeper, at),
+        "{:?} and {:?} talk without facing each other",
+        facing(&sim.world, player),
+        facing(&sim.world, keeper)
+    );
 
     let conn = sim.conn(1);
     sim.send(
@@ -71,6 +78,18 @@ fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
 
 fn action(world: &World, actor: Entity) -> Action {
     world.get::<Actor>(actor).expect("an actor").action
+}
+
+fn facing(world: &World, actor: Entity) -> Radians {
+    world.get::<Actor>(actor).expect("an actor").facing
+}
+
+/// Whether the actor faces `there` to within a hair.
+fn faces(world: &World, actor: Entity, there: Pos<Meters>) -> bool {
+    let at = position(world, actor).expect("position");
+    let wanted = Radians::of(there - at);
+    let turned = facing(world, actor);
+    (turned.0 - wanted.0).sin().abs() < 1e-3 && (turned.0 - wanted.0).cos() > 0.0
 }
 
 #[test]

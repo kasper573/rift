@@ -201,7 +201,7 @@ pub fn erred(snapshot: &ProbeSnapshot, saying: &str) -> bool {
 
 /// Where the tile shows in the window, if it does, clear of the interface over it.
 pub fn clickable_point(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> Option<Pos<WindowPx>> {
-    let point = snapshot.view?.window_point(tile);
+    let point = snapshot.ground_point(tile)?;
     let window = Rect::from_size(snapshot.screen?);
     (window.contains(point) && !snapshot.covered.iter().any(|cover| cover.contains(point)))
         .then_some(point)
@@ -217,7 +217,7 @@ pub fn taken(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
     snapshot
         .actors
         .iter()
-        .any(|actor| actor.hitbox.contains(tile))
+        .any(|actor| stands_over(actor, tile, Meters(0.0)))
         || snapshot
             .objects
             .iter()
@@ -236,7 +236,7 @@ pub fn passed_by(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
         .actors
         .iter()
         .filter(|actor| Some(actor.id) != me && matches!(actor.action, Action::Walk | Action::Run))
-        .any(|actor| actor.hitbox.inflate(PASSING.0, PASSING.0).contains(tile))
+        .any(|actor| stands_over(actor, tile, PASSING))
 }
 
 /// Anyone at all can be under the pointer by the time a click lands: who walks may walk onto the
@@ -247,10 +247,15 @@ pub fn beside_anyone(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
         .actors
         .iter()
         .filter(|actor| Some(actor.id) != me)
-        .any(|actor| actor.hitbox.inflate(PASSING.0, PASSING.0).contains(tile))
+        .any(|actor| stands_over(actor, tile, PASSING))
 }
 
 const PASSING: Meters = Meters(1.0);
+
+/// Whether the body, grown by `margin`, covers the ground at `tile`.
+fn stands_over(body: &ProbeBody, tile: Pos<Meters>, margin: Meters) -> bool {
+    body.at.distance(tile) <= body.capsule.radius + margin
+}
 
 /// Stepping into a warp takes it.
 pub fn in_warp(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {

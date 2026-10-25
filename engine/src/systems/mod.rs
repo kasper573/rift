@@ -637,6 +637,12 @@ fn check_settings(loading: &mut Loading) {
                 .near(problem.nearest),
         );
     }
+    for (site, problem) in area::check_islands(&content, settings.initial_spawn) {
+        match site {
+            area::IslandSite::Scene(file, pointer) => loading.json_error(&file, &pointer, problem),
+            area::IslandSite::Spawn => loading.json_error(SETTINGS_FILE, "/initial_spawn", problem),
+        }
+    }
 }
 
 pub(crate) fn drain_requests<M: Message>(world: &mut World) -> Vec<FromClient<M>> {

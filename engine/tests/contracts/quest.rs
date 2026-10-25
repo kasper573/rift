@@ -378,7 +378,7 @@ fn harbour() -> Sim {
                     "name": "stone",
                     "title": "Standing stone",
                     "shape": { "type": "point", "x": 12.0, "y": 12.0 },
-                    "look": "objects/stone.png",
+                    "look": path("prop", "stone"),
                     "scripts": [{ "script": "stone_look.script.json" }],
                 },
             ]),
@@ -395,7 +395,7 @@ fn harbour() -> Sim {
                 "look": dialogue("Moss covers the runes.", json!([{ "label": ["Step away."] }])),
             }),
         )
-        .asset("objects/stone.png", testkit::png(1, 1))
+        .prop("stone", json!({ "type": "none" }))
         .hero("harbour", 7.0, 7.0)
         .edit("class", "hero", |hero| {
             hero["levels"] = json!([

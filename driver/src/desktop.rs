@@ -9,8 +9,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use engine::core::math::{Pos, WindowPx};
+use engine::systems::area::AreaId;
 use engine::systems::launch::{self, AuthMode, CLIENT_ENV_PREFIX, ClientConfig};
-use engine::systems::probe::{ProbeInputSeen, ProbeSnapshot};
+use engine::systems::probe::{ProbeInputSeen, ProbeSnapshot, ProbeTerrain};
 
 use crate::content::{from_json, to_json};
 use crate::recording::{Footage, Recording};
@@ -33,6 +34,8 @@ pub struct Desktop {
     seen: ProbeInputSeen,
     cursor: Option<Pos<WindowPx>>,
     frame: u32,
+    /// The ground of the area the client is in, which it sends only on arriving there.
+    terrain: Option<(AreaId, ProbeTerrain)>,
     steps: File,
 }
 
@@ -112,6 +115,7 @@ impl Desktop {
             seen: ProbeInputSeen::default(),
             cursor: None,
             frame: 0,
+            terrain: None,
             steps: File::create(folder.join("steps.log")).expect("a steps log"),
         };
         // Nothing fits windows to the screen or hands out keyboard focus without a window manager.
@@ -147,7 +151,16 @@ impl Desktop {
             Ok(_) => {}
             Err(error) => panic!("the client stopped answering: {error}"),
         }
-        let snapshot: ProbeSnapshot = from_json(&line);
+        let mut snapshot: ProbeSnapshot = from_json(&line);
+        match (&snapshot.terrain, &self.terrain) {
+            (Some(terrain), _) => {
+                self.terrain = snapshot.area.map(|area| (area, terrain.clone()));
+            }
+            (None, Some((area, terrain))) if snapshot.area == Some(*area) => {
+                snapshot.terrain = Some(terrain.clone());
+            }
+            _ => {}
+        }
         self.seen = snapshot.input.seen;
         self.cursor = snapshot.input.cursor;
         self.frame = snapshot.frame;

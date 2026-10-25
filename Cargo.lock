@@ -3770,6 +3770,7 @@ dependencies = [
  "bevy_egui",
  "bevy_input",
  "bevy_kira_audio",
+ "bevy_math",
  "bevy_platform 0.20.0",
  "bevy_replicon",
  "bevy_replicon_renet2",

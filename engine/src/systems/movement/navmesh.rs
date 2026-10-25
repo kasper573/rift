@@ -106,10 +106,19 @@ impl NavMesh {
 
     /// Whether some of the mesh lies within `bounds`.
     pub fn covers(&self, bounds: Rect<Meters>) -> bool {
+        !self.ground_within(bounds).is_empty()
+    }
+
+    /// A point on each piece of the mesh within `bounds`, one per polygon the bounds cut.
+    pub fn ground_within(&self, bounds: Rect<Meters>) -> Vec<Pos<Meters>> {
         let clip = corners(bounds);
-        self.triangles
+        self.polygons
             .iter()
-            .any(|triangle| area(&clip_polygon(&triangle.corners, &clip)) > AREA_EPSILON)
+            .filter_map(|outline| {
+                let piece = clip_polygon(outline, &clip);
+                (area(&piece) > AREA_EPSILON).then(|| centroid(&piece))
+            })
+            .collect()
     }
 
     /// The corners of the shortest walk from `from` to `to`, `to` last, or none when no walk leads
@@ -347,6 +356,13 @@ fn area(outline: &[Pos<Meters>]) -> f32 {
         .sum::<f32>()
         .abs()
         / 2.0
+}
+
+fn centroid(outline: &[Pos<Meters>]) -> Pos<Meters> {
+    let sum = outline
+        .iter()
+        .fold(Offset::zero(), |sum, point| sum + point.to_vector());
+    Pos::origin() + sum / outline.len().max(1) as f32
 }
 
 fn closest_on_segment(a: Pos<Meters>, b: Pos<Meters>, at: Pos<Meters>) -> Pos<Meters> {
