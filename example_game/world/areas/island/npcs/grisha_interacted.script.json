@@ -64,6 +64,12 @@
         },
         {
           "label": [
+            "Remedies."
+          ],
+          "to": "remedies"
+        },
+        {
+          "label": [
             "Chat."
           ],
           "to": "chat"
@@ -118,7 +124,7 @@
                 "type": "not",
                 "of": {
                   "type": "on_quest",
-                  "quest": "story/quest/tusks_for_the_chief.quest.json"
+                  "quest": "world/areas/island/npcs/bones_for_the_warden.quest.json"
                 }
               }
             ]
@@ -144,7 +150,7 @@
                 "type": "not",
                 "of": {
                   "type": "on_quest",
-                  "quest": "story/quest/tusks_for_the_chief.quest.json"
+                  "quest": "world/areas/island/npcs/bones_for_the_warden.quest.json"
                 }
               }
             ]
@@ -157,7 +163,7 @@
           ],
           "requires": {
             "type": "on_quest",
-            "quest": "story/quest/tusks_for_the_chief.quest.json"
+            "quest": "world/areas/island/npcs/bones_for_the_warden.quest.json"
           },
           "to": "rumour_chief"
         },
@@ -268,6 +274,12 @@
         },
         {
           "label": [
+            "Remedies."
+          ],
+          "to": "remedies"
+        },
+        {
+          "label": [
             "Chat."
           ],
           "to": "chat"
@@ -303,26 +315,10 @@
         {
           "by": {
             "type": "npc",
-            "npc": "world/areas/island/npcs/grisha.npc.json",
-            "face": "neutral"
+            "npc": "world/areas/island/npcs/grisha.npc.json"
           },
           "text": [
-            "This rock? Fishers, a market, my ",
-            {
-              "text": "inn",
-              "ink": "place"
-            },
-            ", and ",
-            {
-              "text": "Bram",
-              "ink": "name"
-            },
-            "'s ferry to the ",
-            {
-              "text": "forest shore",
-              "ink": "place"
-            },
-            "."
+            "This rock? Fishers, a market, and the old woodsman's cottage, which I keep as an inn."
           ]
         },
         {
@@ -332,32 +328,7 @@
             "face": "thinking"
           },
           "text": [
-            "Past the town it's sand and ",
-            {
-              "text": "skeletons",
-              "ink": "danger"
-            },
-            ", and ",
-            {
-              "text": "orcs",
-              "ink": "danger"
-            },
-            " up the ",
-            {
-              "text": "north shore",
-              "ink": "place"
-            },
-            ". ",
-            {
-              "text": "Ilsa",
-              "ink": "name"
-            },
-            " minds the ",
-            {
-              "text": "forest road",
-              "ink": "place"
-            },
-            "."
+            "Past the town it's sand and skeletons. Bats in the rocks to the south-east, and Ilsa minding the north road."
           ]
         }
       ],
@@ -468,6 +439,12 @@
         },
         {
           "label": [
+            "Remedies."
+          ],
+          "to": "remedies"
+        },
+        {
+          "label": [
             "Chat."
           ],
           "to": "chat"
@@ -478,6 +455,21 @@
           ]
         }
       ]
+    },
+    "remedies": {
+      "type": "dialogue",
+      "lines": [
+        {
+          "by": {
+            "type": "npc",
+            "npc": "world/areas/island/npcs/grisha.npc.json"
+          },
+          "text": [
+            "Roots and bitter water. The woodsman swears by them."
+          ]
+        }
+      ],
+      "next": "shop"
     },
     "rested": {
       "type": "dialogue",
@@ -572,6 +564,12 @@
         },
         {
           "label": [
+            "Remedies."
+          ],
+          "to": "remedies"
+        },
+        {
+          "label": [
             "Chat."
           ],
           "to": "chat"
@@ -600,15 +598,10 @@
           "by": {
             "type": "npc",
             "npc": "world/areas/island/npcs/grisha.npc.json",
-            "face": "sad"
+            "face": "thinking"
           },
           "text": [
-            "Between you and me? ",
-            {
-              "text": "Bram",
-              "ink": "name"
-            },
-            "'s ferry hasn't left since the orcs came. He's waiting on a brave fool."
+            "Between you and me? Bram's cart hasn't rolled since the dead started walking. He's waiting on a brave fool."
           ]
         }
       ],
@@ -627,40 +620,20 @@
         {
           "by": {
             "type": "npc",
-            "npc": "world/areas/island/npcs/grisha.npc.json",
-            "face": "thinking"
+            "npc": "world/areas/island/npcs/grisha.npc.json"
           },
           "text": [
-            "The orc ",
-            {
-              "text": "chief",
-              "ink": "danger"
-            },
-            "? Camps on the ",
-            {
-              "text": "north shore",
-              "ink": "place"
-            },
-            " with his guard around him."
+            "The bone camp? A warrior of the old dead keeps it, down in the rocks to the south-west."
           ]
         },
         {
           "by": {
             "type": "npc",
             "npc": "world/areas/island/npcs/grisha.npc.json",
-            "face": "neutral"
+            "face": "thinking"
           },
           "text": [
-            "There's a shaman with that clan, out in the ",
-            {
-              "text": "Forest",
-              "ink": "place"
-            },
-            ". ",
-            {
-              "text": "They say she's not keen on the fighting.",
-              "voice": "whisper"
-            }
+            "There's a cairn up by the dead trees. They say the stones talk, if you've got the right thing in your pack."
           ]
         }
       ],
@@ -705,6 +678,10 @@
           "to": "chat"
         }
       ]
+    },
+    "shop": {
+      "type": "open_shop",
+      "shop": "world/areas/island/npcs/grishas_remedies.shop.json"
     },
     "wren_secret": {
       "type": "dialogue",

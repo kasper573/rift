@@ -24,16 +24,7 @@
             "face": "angry"
           },
           "text": [
-            {
-              "text": "Vampire bats",
-              "ink": "danger"
-            },
-            " have taken the old belfry, and one of the devils made off with my ",
-            {
-              "text": "key",
-              "ink": "item"
-            },
-            "."
+            "Vampire bats have taken the rocks to the south-east, and one of the devils made off with my key."
           ]
         },
         {
@@ -111,40 +102,16 @@
         }
       ]
     },
-    "cross": {
-      "type": "warp",
-      "to": {
-        "area": "world/areas/forest/forest.area",
-        "x": 22.0,
-        "y": 17.0
-      }
-    },
-    "fare": {
-      "type": "items",
-      "take": [
-        {
-          "item": "items-and-skills/item/gold.item.json",
-          "count": 20
-        }
-      ],
-      "done": "sail"
-    },
     "hello": {
       "type": "dialogue",
       "lines": [
         {
           "by": {
             "type": "npc",
-            "npc": "world/areas/island/npcs/bram.npc.json",
-            "face": "neutral"
+            "npc": "world/areas/island/npcs/bram.npc.json"
           },
           "text": [
-            "Captain Bram, of the ",
-            {
-              "text": "Gull",
-              "ink": "name"
-            },
-            "."
+            "Bram. I drive the cart, when there's a road worth driving."
           ]
         },
         {
@@ -154,98 +121,21 @@
             "face": "thinking"
           },
           "text": [
-            "She sails for the ",
-            {
-              "text": "forest shore",
-              "ink": "place"
-            },
-            " at the bell. Twenty ",
-            {
-              "text": "Gold",
-              "ink": "item"
-            },
-            ", or show me a pass."
+            "Nothing's rolled since the dead started walking. Ask me again when the road's clear."
           ]
         }
       ],
       "choices": [
         {
           "label": [
-            "Sail to the forest."
-          ],
-          "reveal": [
-            "costs"
-          ],
-          "to": "fare"
-        },
-        {
-          "label": [
-            "Ilsa gave me this pass."
-          ],
-          "requires": {
-            "type": "at_least",
-            "a": {
-              "type": "holding",
-              "item": "world/areas/island/items/road_pass.item.json"
-            },
-            "b": 1
-          },
-          "reveal": [
-            "needs"
-          ],
-          "to": "sail"
-        },
-        {
-          "label": [
             "A Letter for the Captain"
           ],
-          "requires": {
-            "type": "on_quest",
-            "quest": "world/areas/island/quests/letter_for_the_captain.quest.json"
-          },
           "to": "letter_turn_in"
         },
         {
           "label": [
             "Bats in the Belfry"
           ],
-          "requires": {
-            "type": "all",
-            "of": [
-              {
-                "type": "not",
-                "of": {
-                  "type": "quest_done",
-                  "quest": "world/areas/island/npcs/bats_in_the_belfry.quest.json"
-                }
-              },
-              {
-                "type": "any",
-                "of": [
-                  {
-                    "type": "on_quest",
-                    "quest": "world/areas/island/npcs/bats_in_the_belfry.quest.json"
-                  },
-                  {
-                    "type": "all",
-                    "of": [
-                      {
-                        "type": "at_least",
-                        "a": {
-                          "type": "level"
-                        },
-                        "b": 3
-                      },
-                      {
-                        "type": "quest_done",
-                        "quest": "world/areas/island/quests/letter_for_the_captain.quest.json"
-                      }
-                    ]
-                  }
-                ]
-              }
-            ]
-          },
           "to": "bats"
         },
         {
@@ -260,9 +150,6 @@
       "event": "interacted",
       "verb": "talk",
       "reach": 2.0,
-      "marks": [
-        "interface/attention/travel.attention.json"
-      ],
       "next": "hello"
     },
     "letter_thanks": {
@@ -275,12 +162,7 @@
             "face": "surprised"
           },
           "text": [
-            "A letter? From ",
-            {
-              "text": "Tobb",
-              "ink": "name"
-            },
-            "? He's never written a word in his life."
+            "A letter? From Tobb? He's never written a word in his life. And I haven't been a captain in years."
           ]
         }
       ],
@@ -296,11 +178,6 @@
       "type": "turn_in",
       "quest": "world/areas/island/quests/letter_for_the_captain.quest.json",
       "done": "letter_thanks"
-    },
-    "sail": {
-      "type": "notify",
-      "notification": "world/areas/island/npcs/gull_sails.notification.json",
-      "next": "cross"
     }
   }
 }

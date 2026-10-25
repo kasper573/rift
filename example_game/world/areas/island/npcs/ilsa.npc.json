@@ -1,6 +1,6 @@
 {
   "name": "Ilsa",
-  "model": "characters/models/woodsman.model",
+  "model": "characters/models/rogue.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,
@@ -13,7 +13,7 @@
   "modules": [
     {
       "type": "nameplate",
-      "role": "Road Warden"
+      "role": "Warden"
     },
     {
       "type": "voice",

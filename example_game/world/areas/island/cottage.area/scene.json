@@ -1,0 +1,446 @@
+[
+  {
+    "type": "folder",
+    "label": "Walls",
+    "children": [
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": 0.5,
+          "y": -0.4
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": 0.5,
+          "y": 7.4
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": 2.5,
+          "y": -0.4
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": 2.5,
+          "y": 7.4
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": 4.5,
+          "y": -0.4
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood-door.prop",
+        "at": {
+          "x": 4.5,
+          "y": 7.4
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": 6.5,
+          "y": -0.4
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": 6.5,
+          "y": 7.4
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": 8.5,
+          "y": -0.4
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": 8.5,
+          "y": 7.4
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": -0.4,
+          "y": 0.5
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": 9.4,
+          "y": 0.5
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood-window.prop",
+        "at": {
+          "x": -0.4,
+          "y": 2.5
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": 9.4,
+          "y": 2.5
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": -0.4,
+          "y": 4.5
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood-window.prop",
+        "at": {
+          "x": 9.4,
+          "y": 4.5
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": -0.4,
+          "y": 6.5
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/wall-wood.prop",
+        "at": {
+          "x": 9.4,
+          "y": 6.5
+        }
+      }
+    ]
+  },
+  {
+    "type": "folder",
+    "label": "Hearth",
+    "children": [
+      {
+        "type": "prop",
+        "prop": "world/props/hearth.prop",
+        "at": {
+          "x": 4.5,
+          "y": 0.0
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "light",
+        "at": {
+          "x": 4.5,
+          "y": 0.9
+        },
+        "color": [
+          255,
+          150,
+          70
+        ],
+        "intensity": 45.0,
+        "radius": 4.5,
+        "height": 1.0,
+        "flicker": 0.3
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/torch-mounted.prop",
+        "at": {
+          "x": -0.3,
+          "y": 3.5
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/torch-mounted.prop",
+        "at": {
+          "x": 9.3,
+          "y": 3.5
+        },
+        "yaw": 180.0
+      },
+      {
+        "type": "light",
+        "at": {
+          "x": 0.2,
+          "y": 3.5
+        },
+        "color": [
+          255,
+          170,
+          90
+        ],
+        "intensity": 25.0,
+        "radius": 3.0,
+        "height": 1.7,
+        "flicker": 0.2
+      },
+      {
+        "type": "light",
+        "at": {
+          "x": 8.8,
+          "y": 3.5
+        },
+        "color": [
+          255,
+          170,
+          90
+        ],
+        "intensity": 25.0,
+        "radius": 3.0,
+        "height": 1.7,
+        "flicker": 0.2
+      },
+      {
+        "type": "resident",
+        "npc": "world/areas/island/npcs/old_woodsman.npc.json",
+        "at": {
+          "x": 3.2,
+          "y": 1.4
+        },
+        "facing": 315.0
+      },
+      {
+        "type": "soundscape",
+        "label": "Hearth",
+        "shape": {
+          "type": "rect",
+          "x": 2.5,
+          "y": -0.5,
+          "w": 4.0,
+          "h": 3.0
+        },
+        "emit": 3.0,
+        "channels": [
+          {
+            "channel": 3,
+            "file": "assets/audio/ambient/campfire.flac",
+            "volume": 0.29
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "folder",
+    "label": "Furniture",
+    "children": [
+      {
+        "type": "prop",
+        "prop": "world/props/bed.prop",
+        "at": {
+          "x": 0.4,
+          "y": 1.3
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/shelf.prop",
+        "at": {
+          "x": 0.0,
+          "y": 4.3
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/chest.prop",
+        "at": {
+          "x": 0.3,
+          "y": 6.4
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rug.prop",
+        "at": {
+          "x": 2.8,
+          "y": 4.5
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/table.prop",
+        "at": {
+          "x": 5.0,
+          "y": 3.6
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/chair.prop",
+        "at": {
+          "x": 5.0,
+          "y": 2.9
+        },
+        "yaw": 90.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/chair.prop",
+        "at": {
+          "x": 5.0,
+          "y": 4.4
+        },
+        "yaw": 270.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/stool.prop",
+        "at": {
+          "x": 6.4,
+          "y": 3.6
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/barrel.prop",
+        "at": {
+          "x": 8.7,
+          "y": 1.0
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/barrel.prop",
+        "at": {
+          "x": 8.7,
+          "y": 2.5
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/keg.prop",
+        "at": {
+          "x": 8.6,
+          "y": 6.2
+        }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/crates.prop",
+        "at": {
+          "x": 7.6,
+          "y": 6.3
+        },
+        "yaw": 15.0
+      }
+    ]
+  },
+  {
+    "type": "folder",
+    "label": "Table",
+    "children": [
+      {
+        "type": "resident",
+        "npc": "world/areas/island/npcs/pell.npc.json",
+        "at": {
+          "x": 5.0,
+          "y": 4.4
+        },
+        "facing": 270.0,
+        "pose": "sit",
+        "shown": {
+          "type": "all",
+          "of": [
+            {
+              "type": "not",
+              "of": {
+                "type": "memory",
+                "memory": "world/areas/island/memories/pell_fighting.memory.json"
+              }
+            },
+            {
+              "type": "not",
+              "of": {
+                "type": "set_within",
+                "memory": "world/areas/island/memories/pell_dead.memory.json",
+                "seconds": 1800
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "type": "folder",
+    "label": "Doors",
+    "children": [
+      {
+        "type": "object",
+        "name": "front-door",
+        "shape": {
+          "type": "rect",
+          "x": 3.5,
+          "y": 6.0,
+          "w": 2.0,
+          "h": 1.0
+        },
+        "scripts": [
+          {
+            "script": "story/script/warp.script.json",
+            "values": {
+              "to": {
+                "area": "world/areas/island/island.area",
+                "x": 88.0,
+                "y": 42.5
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "script",
+    "script": "world/areas/island/scripts/cottage_discovered.script.json"
+  }
+]

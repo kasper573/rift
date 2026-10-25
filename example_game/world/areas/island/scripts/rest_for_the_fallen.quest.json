@@ -1,0 +1,47 @@
+{
+  "title": "Rest for the Fallen",
+  "category": "Bone Camp",
+  "blurb": "The skeletons in the camp were warriors once. Lay their bones at the cairn, and they sleep.",
+  "xp": 80,
+  "reveal": [
+    "costs"
+  ],
+  "modules": [
+    {
+      "type": "shown",
+      "condition": {
+        "type": "memory",
+        "memory": "world/areas/island/scripts/honoured_the_fallen.memory.json"
+      }
+    },
+    {
+      "type": "hold",
+      "item": "items-and-skills/item/bone.item.json",
+      "count": 8
+    },
+    {
+      "type": "hand_in",
+      "items": [
+        {
+          "item": "items-and-skills/item/bone.item.json",
+          "count": 8
+        }
+      ]
+    },
+    {
+      "type": "hand_over",
+      "text": [
+        "Here are their bones."
+      ]
+    },
+    {
+      "type": "reward",
+      "items": [
+        {
+          "item": "items-and-skills/item/greater_health_potion.item.json",
+          "count": 2
+        }
+      ]
+    }
+  ]
+}

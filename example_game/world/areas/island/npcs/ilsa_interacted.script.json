@@ -1,6 +1,124 @@
 {
   "runs_on": "npc",
   "nodes": {
+    "bones": {
+      "type": "if",
+      "test": {
+        "type": "on_quest",
+        "quest": "world/areas/island/npcs/bones_for_the_warden.quest.json"
+      },
+      "yes": "bones_turn_in",
+      "no": "bones_offer"
+    },
+    "bones_accept": {
+      "type": "accept_quest",
+      "quest": "world/areas/island/npcs/bones_for_the_warden.quest.json"
+    },
+    "bones_not_yet": {
+      "type": "dialogue",
+      "lines": [
+        {
+          "by": {
+            "type": "npc",
+            "npc": "world/areas/island/npcs/ilsa.npc.json"
+          },
+          "text": [
+            "Five bones and a fallen warrior. I don't pay for half a job."
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": [
+            "I'm on it."
+          ]
+        }
+      ]
+    },
+    "bones_offer": {
+      "type": "dialogue",
+      "lines": [
+        {
+          "by": {
+            "type": "npc",
+            "npc": "world/areas/island/npcs/ilsa.npc.json"
+          },
+          "text": [
+            "The dead keep climbing out of that camp to the south-west, and I'm the one who has to put them back."
+          ]
+        },
+        {
+          "by": {
+            "type": "npc",
+            "npc": "world/areas/island/npcs/ilsa.npc.json",
+            "face": "thinking"
+          },
+          "text": [
+            "Bring me five of their ",
+            {
+              "text": "Bones",
+              "ink": "item"
+            },
+            ". Put the ",
+            {
+              "text": "warrior",
+              "ink": "danger"
+            },
+            " that leads them in the ground, and I'll make it worth your while."
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": [
+            "Consider it done."
+          ],
+          "to": "bones_accept"
+        },
+        {
+          "label": [
+            "Not today."
+          ]
+        }
+      ]
+    },
+    "bones_thanks": {
+      "type": "dialogue",
+      "lines": [
+        {
+          "by": {
+            "type": "npc",
+            "npc": "world/areas/island/npcs/ilsa.npc.json",
+            "face": "happy"
+          },
+          "text": [
+            "The warrior too? You don't do things by halves."
+          ]
+        },
+        {
+          "by": {
+            "type": "npc",
+            "npc": "world/areas/island/npcs/ilsa.npc.json"
+          },
+          "text": [
+            "Here's your purse, and take your pick of the stores."
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": [
+            "Goodbye."
+          ]
+        }
+      ]
+    },
+    "bones_turn_in": {
+      "type": "turn_in",
+      "quest": "world/areas/island/npcs/bones_for_the_warden.quest.json",
+      "done": "bones_thanks",
+      "refused": "bones_not_yet"
+    },
     "bribed": {
       "type": "dialogue",
       "lines": [
@@ -47,14 +165,49 @@
       ],
       "done": "remember_bribe"
     },
-    "clan_pass": {
-      "type": "items",
-      "give": [
+    "cold": {
+      "type": "dialogue",
+      "lines": [
         {
-          "item": "world/areas/island/items/road_pass.item.json"
+          "by": {
+            "type": "npc",
+            "npc": "world/areas/island/npcs/ilsa.npc.json"
+          },
+          "text": [
+            "I heard where my bones went. ",
+            {
+              "text": "Into the ground.",
+              "ink": "danger"
+            }
+          ]
+        },
+        {
+          "by": {
+            "type": "npc",
+            "npc": "world/areas/island/npcs/ilsa.npc.json",
+            "face": "angry"
+          },
+          "text": [
+            "The road's still mine to keep. Pay like everyone else."
+          ]
         }
       ],
-      "done": "uneasy"
+      "choices": [
+        {
+          "label": [
+            "Here, for your trouble."
+          ],
+          "reveal": [
+            "costs"
+          ],
+          "to": "buy_pass"
+        },
+        {
+          "label": [
+            "Goodbye."
+          ]
+        }
+      ]
     },
     "earn_pass": {
       "type": "items",
@@ -128,7 +281,7 @@
             },
             " Nobody takes the ",
             {
-              "text": "forest road",
+              "text": "north road",
               "ink": "place"
             },
             " without a pass."
@@ -165,7 +318,7 @@
         },
         {
           "label": [
-            "I'm ready for the forest road."
+            "I'm ready for the north road."
           ],
           "requires": {
             "type": "at_least",
@@ -219,12 +372,12 @@
             "face": "angry"
           },
           "text": [
-            "The forest road is ",
+            "The north road is ",
             {
               "text": "closed",
               "ink": "danger"
             },
-            ". Orders from the harbour master."
+            ". The dead walk past it after dark."
           ]
         },
         {
@@ -241,7 +394,7 @@
       "choices": [
         {
           "label": [
-            "I'm ready for the forest road."
+            "I'm ready for the north road."
           ],
           "requires": {
             "type": "at_least",
@@ -258,13 +411,19 @@
         },
         {
           "label": [
-            "The Orc Chief won't trouble anyone now."
+            "The bone warrior won't trouble anyone now."
           ],
           "requires": {
             "type": "wearing",
             "item": "items-and-skills/item/tribal_helmet.item.json"
           },
           "to": "earn_pass"
+        },
+        {
+          "label": [
+            "Bones for the Warden"
+          ],
+          "to": "bones"
         },
         {
           "label": [
@@ -286,16 +445,6 @@
         },
         {
           "label": [
-            "Ugra's clan walks with me."
-          ],
-          "requires": {
-            "type": "memory",
-            "memory": "story/memory/sided_with_orcs.memory.json"
-          },
-          "to": "clan_pass"
-        },
-        {
-          "label": [
             "Never mind."
           ]
         }
@@ -306,7 +455,7 @@
       "event": "interacted",
       "verb": "talk",
       "reach": 2.0,
-      "next": "has_pass"
+      "next": "mood"
     },
     "lets_you_pass": {
       "type": "dialogue",
@@ -318,17 +467,7 @@
             "face": "neutral"
           },
           "text": [
-            "Fine. Keep that ",
-            {
-              "text": "pass",
-              "ink": "item"
-            },
-            " on you, and show it to ",
-            {
-              "text": "Bram",
-              "ink": "name"
-            },
-            " if you're bound for the shore."
+            "Fine. Keep that pass on you, and don't go past the dead trees alone."
           ]
         }
       ],
@@ -339,6 +478,15 @@
           ]
         }
       ]
+    },
+    "mood": {
+      "type": "if",
+      "test": {
+        "type": "memory",
+        "memory": "world/areas/island/scripts/honoured_the_fallen.memory.json"
+      },
+      "yes": "cold",
+      "no": "has_pass"
     },
     "no_pass": {
       "type": "if",
@@ -386,38 +534,6 @@
       "type": "remember",
       "memory": "world/areas/island/npcs/bribed_ilsa.memory.json",
       "next": "bribed"
-    },
-    "uneasy": {
-      "type": "dialogue",
-      "lines": [
-        {
-          "by": {
-            "type": "npc",
-            "npc": "world/areas/island/npcs/ilsa.npc.json",
-            "face": "thinking"
-          },
-          "text": [
-            "The ",
-            {
-              "text": "orcs",
-              "ink": "danger"
-            },
-            " let you walk through their camp? Then they won't touch you on the road. Take the ",
-            {
-              "text": "pass",
-              "ink": "item"
-            },
-            ", and go."
-          ]
-        }
-      ],
-      "choices": [
-        {
-          "label": [
-            "Thank you."
-          ]
-        }
-      ]
     },
     "watches_road": {
       "type": "on",

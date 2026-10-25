@@ -1,0 +1,80 @@
+{
+  "title": "Bones for the Warden",
+  "category": "Bone Camp",
+  "blurb": "The dead keep climbing out of that camp. Bring me five of their bones, and if you can, put the warrior that leads them back in the ground.",
+  "xp": 120,
+  "reveal": [
+    "locked",
+    "needs",
+    "costs",
+    "gains"
+  ],
+  "modules": [
+    {
+      "type": "shown",
+      "condition": {
+        "type": "not",
+        "of": {
+          "type": "memory",
+          "memory": "world/areas/island/scripts/honoured_the_fallen.memory.json"
+        }
+      }
+    },
+    {
+      "type": "requires",
+      "condition": {
+        "type": "at_least",
+        "a": {
+          "type": "level"
+        },
+        "b": 2
+      }
+    },
+    {
+      "type": "hold",
+      "item": "items-and-skills/item/bone.item.json",
+      "count": 5
+    },
+    {
+      "type": "defeat",
+      "npc": "characters/npc/skeleton_warrior.npc.json",
+      "count": 1
+    },
+    {
+      "type": "hand_in",
+      "items": [
+        {
+          "item": "items-and-skills/item/bone.item.json",
+          "count": 5
+        }
+      ]
+    },
+    {
+      "type": "reward",
+      "items": [
+        {
+          "item": "items-and-skills/item/gold.item.json",
+          "count": 35
+        },
+        {
+          "item": "items-and-skills/item/greater_health_potion.item.json",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "type": "pick_one",
+      "items": [
+        {
+          "item": "items-and-skills/item/rusty_sword.item.json"
+        },
+        {
+          "item": "items-and-skills/item/bone_shield.item.json"
+        },
+        {
+          "item": "items-and-skills/item/tribal_helmet.item.json"
+        }
+      ]
+    }
+  ]
+}

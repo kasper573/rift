@@ -1,0 +1,57 @@
+{
+  "name": "Skeleton Warrior",
+  "model": "characters/models/skeleton-warrior.model",
+  "stats": {
+    "health": 60.0,
+    "max_health": 60.0,
+    "damage": 6.0,
+    "attack_speed": 0.8,
+    "attack_delay": 600.0,
+    "movement_speed": 1.2,
+    "range": 1.2
+  },
+  "basic_attack": "items-and-skills/skill/strike.skill.json",
+  "modules": [
+    {
+      "type": "voice",
+      "babble": "sound-and-voice/babble/skeleton_warrior.babble.json"
+    },
+    {
+      "type": "respawn",
+      "after": 5.0
+    },
+    {
+      "type": "loot",
+      "xp": 40,
+      "items": [
+        {
+          "item": "items-and-skills/item/gold.item.json",
+          "amount": 12
+        },
+        {
+          "item": "items-and-skills/item/greater_health_potion.item.json",
+          "chance": 75.0
+        },
+        {
+          "item": "items-and-skills/item/bone.item.json",
+          "amount": 3
+        },
+        {
+          "item": "items-and-skills/item/tribal_helmet.item.json",
+          "chance": 10.0
+        }
+      ]
+    },
+    {
+      "type": "script",
+      "script": "story/script/combat_aggressive.script.json",
+      "values": {
+        "aggro": 10.0
+      }
+    },
+    {
+      "type": "script",
+      "script": "characters/npc/warrior_came_near.script.json"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "size": {
+    "width": 5,
+    "height": 4
+  },
+  "variables": {
+    "sign": {
+      "type": "text",
+      "default": "Market"
+    },
+    "trader": {
+      "type": "row",
+      "table": "npc"
+    }
+  }
+}

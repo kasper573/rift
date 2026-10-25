@@ -424,17 +424,7 @@
             "face": "thinking"
           },
           "text": [
-            "Do me a kindness? This letter needs to reach ",
-            {
-              "text": "Captain Bram",
-              "ink": "name"
-            },
-            " on the ",
-            {
-              "text": "Gull",
-              "ink": "name"
-            },
-            "."
+            "Do me a kindness? This letter needs to reach Bram, up by the well."
           ]
         },
         {
@@ -472,7 +462,7 @@
             "face": "neutral"
           },
           "text": [
-            "Bram's on his ship, at the end of the pier. Can't miss him. He's the one scowling."
+            "Bram's by his cart, up at the well. Can't miss him. He's the one scowling."
           ]
         }
       ],
@@ -652,16 +642,7 @@
             "face": "thinking"
           },
           "text": [
-            {
-              "text": "Orcs",
-              "ink": "danger"
-            },
-            " were seen on the ",
-            {
-              "text": "north shore",
-              "ink": "place"
-            },
-            " at dawn. Big ones, with a chief in a bone helmet."
+            "Skeletons were seen on the south shore at dawn. A big one with them, in a helmet of bone."
           ]
         }
       ],

@@ -1,6 +1,5 @@
 {
   "footprint": {
-    "type": "circle",
-    "radius": 0.2
+    "type": "none"
   }
 }

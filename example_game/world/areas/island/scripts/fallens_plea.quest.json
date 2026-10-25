@@ -1,0 +1,36 @@
+{
+  "title": "The Fallen's Plea",
+  "category": "Bone Camp",
+  "blurb": "The bones in your pack were warriors once. Lay them to rest, and the cairn will remember you.",
+  "xp": 80,
+  "modules": [
+    {
+      "type": "shown",
+      "condition": {
+        "type": "on_quest",
+        "quest": "world/areas/island/npcs/bones_for_the_warden.quest.json"
+      }
+    },
+    {
+      "type": "decide",
+      "label": "Answer the cairn",
+      "paths": [
+        {
+          "choice": "Lay the bones to rest",
+          "means": [
+            "Bones for the Warden fails",
+            "The cairn has work and a reward for you",
+            "Ilsa greets you coldly"
+          ]
+        },
+        {
+          "choice": "Keep them",
+          "means": [
+            "Bones for the Warden continues",
+            "The cairn stays silent for you"
+          ]
+        }
+      ]
+    }
+  ]
+}

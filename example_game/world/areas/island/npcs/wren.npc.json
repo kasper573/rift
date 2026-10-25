@@ -16,6 +16,15 @@
       "role": "Bone Collector"
     },
     {
+      "type": "tint",
+      "rgba": [
+        196,
+        210,
+        255,
+        255
+      ]
+    },
+    {
       "type": "voice",
       "babble": "sound-and-voice/babble/wren.babble.json"
     },

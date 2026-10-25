@@ -1,6 +1,6 @@
 {
   "name": "Bram",
-  "model": "characters/models/woodsman.model",
+  "model": "characters/models/barbarian.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,
@@ -13,7 +13,7 @@
   "modules": [
     {
       "type": "nameplate",
-      "role": "Harbour Captain"
+      "role": "Carter"
     },
     {
       "type": "voice",

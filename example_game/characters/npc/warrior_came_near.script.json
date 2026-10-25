@@ -1,0 +1,47 @@
+{
+  "runs_on": "npc",
+  "nodes": {
+    "came_near": {
+      "type": "on",
+      "event": "came_near",
+      "within": 8.0,
+      "by": "characters",
+      "next": "hunting_me"
+    },
+    "challenge": {
+      "type": "notify",
+      "notification": "characters/npc/warrior_challenge.notification.json",
+      "next": "threat"
+    },
+    "hunting_me": {
+      "type": "if",
+      "test": {
+        "type": "all",
+        "of": [
+          {
+            "type": "on_quest",
+            "quest": "world/areas/island/npcs/bones_for_the_warden.quest.json"
+          },
+          {
+            "type": "not",
+            "of": {
+              "type": "set_within",
+              "memory": "characters/npc/warrior_taunted_you.memory.json",
+              "seconds": 120
+            }
+          }
+        ]
+      },
+      "yes": "taunted"
+    },
+    "taunted": {
+      "type": "remember",
+      "memory": "characters/npc/warrior_taunted_you.memory.json",
+      "next": "challenge"
+    },
+    "threat": {
+      "type": "notify",
+      "notification": "characters/npc/warrior_threat.notification.json"
+    }
+  }
+}

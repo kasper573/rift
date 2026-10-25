@@ -1,0 +1,14 @@
+{
+  "kind": {
+    "type": "speech",
+    "speaker": "characters/npc/skeleton_warrior.npc.json"
+  },
+  "text": [
+    "Yours will lie ",
+    {
+      "text": "beside them",
+      "motion": "wave"
+    },
+    "."
+  ]
+}

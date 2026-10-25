@@ -61,13 +61,6 @@
         "type": "limited",
         "count": 1,
         "restock": 3600.0
-      },
-      "requires": {
-        "type": "not",
-        "of": {
-          "type": "memory",
-          "memory": "story/memory/sided_with_orcs.memory.json"
-        }
       }
     },
     {
@@ -148,25 +141,6 @@
       ],
       "stock": {
         "type": "unlimited"
-      }
-    },
-    {
-      "type": "buys",
-      "what": {
-        "type": "item",
-        "item": "items-and-skills/item/orc_tusk.item.json"
-      },
-      "pays": [
-        {
-          "item": "items-and-skills/item/gold.item.json"
-        }
-      ],
-      "requires": {
-        "type": "not",
-        "of": {
-          "type": "memory",
-          "memory": "story/memory/sided_with_orcs.memory.json"
-        }
       }
     },
     {

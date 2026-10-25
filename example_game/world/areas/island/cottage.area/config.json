@@ -1,0 +1,26 @@
+{
+  "name": "The woodsman's cottage",
+  "size": {
+    "width": 10,
+    "height": 8
+  },
+  "max_slope": 38.0,
+  "terrains": [
+    "world/terrain/floor.terrain.json"
+  ],
+  "lighting": {
+    "ambient": [
+      70,
+      80,
+      105
+    ],
+    "grade": {
+      "color": [
+        86,
+        128,
+        168
+      ],
+      "strength": 0.55
+    }
+  }
+}

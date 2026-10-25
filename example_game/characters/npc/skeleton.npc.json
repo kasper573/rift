@@ -46,9 +46,9 @@
     },
     {
       "type": "script",
-      "script": "story/script/combat_aggressive.script.json",
+      "script": "story/script/combat_defensive.script.json",
       "values": {
-        "aggro": 8.0
+        "aggro": 7.0
       }
     }
   ]

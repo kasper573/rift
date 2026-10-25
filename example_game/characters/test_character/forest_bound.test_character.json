@@ -19,7 +19,7 @@
   },
   "quests": [
     {
-      "quest": "story/quest/tusks_for_the_chief.quest.json",
+      "quest": "world/areas/island/npcs/bones_for_the_warden.quest.json",
       "state": "active"
     }
   ],

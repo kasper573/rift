@@ -16,6 +16,15 @@
       "role": "Fisherman"
     },
     {
+      "type": "tint",
+      "rgba": [
+        190,
+        220,
+        255,
+        255
+      ]
+    },
+    {
       "type": "voice",
       "babble": "sound-and-voice/babble/tobb.babble.json"
     },

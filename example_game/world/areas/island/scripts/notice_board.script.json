@@ -25,12 +25,12 @@
           },
           "text": [
             {
-              "text": "FERRY SUSPENDED",
+              "text": "NORTH ROAD CLOSED",
               "voice": "shout"
             },
-            " until the orc trouble passes. By order of ",
+            " after dark. Passes from ",
             {
-              "text": "Captain Bram",
+              "text": "Ilsa",
               "ink": "name"
             },
             "."
@@ -43,15 +43,15 @@
           "text": [
             "WANTED: strong arms for the ",
             {
-              "text": "north shore",
+              "text": "bone camp",
               "ink": "place"
             },
             ". Ask ",
             {
-              "text": "Mara",
+              "text": "Ilsa",
               "ink": "name"
             },
-            " at the market."
+            " at the north road."
           ]
         }
       ],

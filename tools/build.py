@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Builds the models no pack ships, to the style sheet: three trees with painted-cluster canopies
-and gnarled trunks, and the small bone-camp things.
+and gnarled trunks, the woodsman's cottage, and the small bone-camp things.
 
     build.py GAME
 
@@ -209,6 +209,55 @@ def bone_pile(model, rng):
     model.blob(np.array([-0.08, 0.1, 0.14]), 0.08, "eyes", squash=0.6)
 
 
+def box(model, low, high, swatch, glow=False):
+    """An axis-aligned block from corner `low` to corner `high`, faces wound outward."""
+    (x0, y0, z0), (x1, y1, z1) = low, high
+    c = lambda x, y, z: np.array([x, y, z], np.float64)
+    faces = [
+        [c(x0, y0, z1), c(x1, y0, z1), c(x1, y1, z1)], [c(x0, y0, z1), c(x1, y1, z1), c(x0, y1, z1)],
+        [c(x1, y0, z0), c(x0, y0, z0), c(x0, y1, z0)], [c(x1, y0, z0), c(x0, y1, z0), c(x1, y1, z0)],
+        [c(x1, y0, z1), c(x1, y0, z0), c(x1, y1, z0)], [c(x1, y0, z1), c(x1, y1, z0), c(x1, y1, z1)],
+        [c(x0, y0, z0), c(x0, y0, z1), c(x0, y1, z1)], [c(x0, y0, z0), c(x0, y1, z1), c(x0, y1, z0)],
+        [c(x0, y1, z1), c(x1, y1, z1), c(x1, y1, z0)], [c(x0, y1, z1), c(x1, y1, z0), c(x0, y1, z0)],
+        [c(x0, y0, z0), c(x1, y0, z0), c(x1, y0, z1)], [c(x0, y0, z0), c(x1, y0, z1), c(x0, y0, z1)],
+    ]
+    model.triangles(faces, swatch, glow)
+
+
+def cottage(model, rng):
+    """A log cottage, 6 by 4 m, its door on the +z side: plank walls under a dark gable roof with
+    an overhang, a stone chimney, a door and two lit windows."""
+    half_x, half_z, eaves, ridge = 3.0, 2.0, 2.6, 4.3
+    box(model, (-half_x, 0.0, -half_z), (half_x, eaves, half_z), "planks")
+    for sign in (-1, 1):
+        gable = [np.array([sign * half_x, eaves, -half_z]), np.array([sign * half_x, eaves, half_z]), np.array([sign * half_x, ridge, 0.0])]
+        if sign < 0:
+            gable = [gable[1], gable[0], gable[2]]
+        model.triangles([gable], "planks")
+    over, drop = 0.35, 0.15
+    for sign in (-1, 1):
+        low_a = np.array([-half_x - over, eaves - drop, sign * (half_z + over)])
+        low_b = np.array([half_x + over, eaves - drop, sign * (half_z + over)])
+        top_a = np.array([-half_x - over, ridge + 0.1, 0.0])
+        top_b = np.array([half_x + over, ridge + 0.1, 0.0])
+        quad = [low_a, low_b, top_b, top_a] if sign > 0 else [low_b, low_a, top_a, top_b]
+        model.triangles([[quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]]], "wood-dark")
+        under = [quad[2], quad[1], quad[0]], [quad[3], quad[2], quad[0]]
+        model.triangles(list(under), "bark-dark")
+    box(model, (1.6, eaves - 0.2, -0.9), (2.3, ridge + 0.5, -0.2), "stone-dark")
+    box(model, (1.5, ridge + 0.5, -1.0), (2.4, ridge + 0.7, -0.1), "stone")
+    box(model, (-0.6, 0.0, half_z - 0.02), (0.6, 1.9, half_z + 0.06), "wood-dark")
+    box(model, (-0.05, 0.9, half_z + 0.06), (0.05, 1.0, half_z + 0.12), "gold")
+    for x in (-2.0, 2.0):
+        box(model, (x - 0.45, 1.1, half_z - 0.02), (x + 0.45, 1.9, half_z + 0.05), "bark-dark")
+        box(model, (x - 0.35, 1.2, half_z + 0.05), (x + 0.35, 1.8, half_z + 0.08), "glow-fire", glow=True)
+    box(model, (-half_x - 0.04, 1.1, -0.5), (-half_x + 0.02, 1.9, 0.5), "bark-dark")
+    box(model, (-half_x - 0.07, 1.2, -0.4), (-half_x - 0.04, 1.8, 0.4), "glow-fire", glow=True)
+    for y in np.arange(0.35, eaves, 0.45):
+        for sign in (-1, 1):
+            box(model, (-half_x - 0.03, y, sign * half_z - 0.02 * sign), (half_x + 0.03, y + 0.05, sign * half_z + 0.02 * sign), "wood-dark")
+
+
 def bat_wing(model, rng):
     root = np.zeros(3)
     tips = [np.array([0.5, 0.15, 0.0]), np.array([0.42, -0.12, 0.0]), np.array([0.22, -0.26, 0.0])]
@@ -228,6 +277,7 @@ MODELS = {
     "oak": oak,
     "oak-tall": tall_oak,
     "pine": pine,
+    "cottage": cottage,
     "bone": lambda model, rng: bone(model, rng),
     "bone-pile": bone_pile,
     "bat-wing": bat_wing,

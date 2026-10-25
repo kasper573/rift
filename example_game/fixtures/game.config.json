@@ -3,8 +3,8 @@
   "content_version": "2089605c",
   "initial_spawn": {
     "area": "world/areas/island/island.area",
-    "x": 39.0,
-    "y": 29.0
+    "x": 64.0,
+    "y": 63.5
   },
   "player": "characters/player/adventurer.player.json",
   "daylight": {

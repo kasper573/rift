@@ -1,6 +1,6 @@
 {
   "name": "Grisha",
-  "model": "characters/models/rogue-hooded.model",
+  "model": "characters/models/barbarian.model",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,
@@ -14,6 +14,15 @@
     {
       "type": "nameplate",
       "role": "Innkeeper"
+    },
+    {
+      "type": "tint",
+      "rgba": [
+        255,
+        214,
+        170,
+        255
+      ]
     },
     {
       "type": "voice",

@@ -1,0 +1,43 @@
+{
+  "runs_on": "npc",
+  "nodes": {
+    "hello": {
+      "type": "dialogue",
+      "lines": [
+        {
+          "by": {
+            "type": "npc",
+            "npc": "world/areas/island/npcs/old_woodsman.npc.json"
+          },
+          "text": [
+            "Mind the hearth. Grisha keeps the beds, I keep the fire."
+          ]
+        },
+        {
+          "by": {
+            "type": "npc",
+            "npc": "world/areas/island/npcs/old_woodsman.npc.json",
+            "face": "thinking"
+          },
+          "text": [
+            "If the dead come up the hill, you'll hear them before you see them."
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": [
+            "I'll keep an ear out."
+          ]
+        }
+      ]
+    },
+    "interacted": {
+      "type": "on",
+      "event": "interacted",
+      "verb": "talk",
+      "reach": 2.0,
+      "next": "hello"
+    }
+  }
+}

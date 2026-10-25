@@ -1,0 +1,16 @@
+{
+  "name": "On Ilsa's Errand",
+  "class": "characters/class/fighter.class.json",
+  "xp": 40,
+  "basic_attack": "items-and-skills/skill/slash.skill.json",
+  "equipment": {
+    "weapon": "items-and-skills/item/iron_sword.item.json"
+  },
+  "quests": [
+    {
+      "quest": "world/areas/island/npcs/bones_for_the_warden.quest.json",
+      "state": "active"
+    }
+  ],
+  "start": "initial_spawn"
+}

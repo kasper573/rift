@@ -1,48 +1,6 @@
 {
   "runs_on": "npc",
   "nodes": {
-    "cold": {
-      "type": "dialogue",
-      "lines": [
-        {
-          "by": {
-            "type": "npc",
-            "npc": "world/areas/island/npcs/mara.npc.json",
-            "face": "angry"
-          },
-          "text": [
-            "I heard where my tusks went. ",
-            {
-              "text": "Back to the orcs.",
-              "slow": true
-            }
-          ]
-        },
-        {
-          "by": {
-            "type": "npc",
-            "npc": "world/areas/island/npcs/mara.npc.json",
-            "face": "neutral"
-          },
-          "text": [
-            "Your coin still spends. Don't expect more than that."
-          ]
-        }
-      ],
-      "choices": [
-        {
-          "label": [
-            "Show me your wares."
-          ],
-          "to": "wares"
-        },
-        {
-          "label": [
-            "Goodbye."
-          ]
-        }
-      ]
-    },
     "docks": {
       "type": "dialogue",
       "lines": [
@@ -53,16 +11,7 @@
             "face": "angry"
           },
           "text": [
-            {
-              "text": "Orcs",
-              "ink": "danger"
-            },
-            ". They come down from the ",
-            {
-              "text": "north shore",
-              "ink": "place"
-            },
-            " at night and take whatever isn't nailed down."
+            "Skeletons. They come up from the camp at night and take whatever isn't nailed down."
           ]
         },
         {
@@ -108,7 +57,7 @@
             "face": "mara_smug"
           },
           "text": [
-            "And if you've got a strong arm, I might have a job that pays."
+            "And if you've got a strong arm, Ilsa at the north road might have a job that pays."
           ]
         }
       ],
@@ -127,19 +76,6 @@
         },
         {
           "label": [
-            "Tusks for the Chief"
-          ],
-          "requires": {
-            "type": "not",
-            "of": {
-              "type": "quest_done",
-              "quest": "story/quest/tusks_for_the_chief.quest.json"
-            }
-          },
-          "to": "tusks"
-        },
-        {
-          "label": [
             "Goodbye."
           ]
         }
@@ -150,157 +86,11 @@
       "event": "interacted",
       "verb": "talk",
       "reach": 2.0,
-      "next": "mood"
-    },
-    "mood": {
-      "type": "if",
-      "test": {
-        "type": "memory",
-        "memory": "story/memory/sided_with_orcs.memory.json"
-      },
-      "yes": "cold",
-      "no": "hello"
+      "next": "hello"
     },
     "shop": {
       "type": "open_shop",
       "shop": "world/areas/island/npcs/mara_wares.shop.json"
-    },
-    "tusks": {
-      "type": "if",
-      "test": {
-        "type": "on_quest",
-        "quest": "story/quest/tusks_for_the_chief.quest.json"
-      },
-      "yes": "tusks_turn_in",
-      "no": "tusks_offer"
-    },
-    "tusks_accept": {
-      "type": "accept_quest",
-      "quest": "story/quest/tusks_for_the_chief.quest.json"
-    },
-    "tusks_not_yet": {
-      "type": "dialogue",
-      "lines": [
-        {
-          "by": {
-            "type": "npc",
-            "npc": "world/areas/island/npcs/mara.npc.json",
-            "face": "mara_smug"
-          },
-          "text": [
-            "Five tusks and a dead chief. I don't pay for half a job."
-          ]
-        }
-      ],
-      "choices": [
-        {
-          "label": [
-            "I'm on it."
-          ]
-        }
-      ]
-    },
-    "tusks_offer": {
-      "type": "dialogue",
-      "lines": [
-        {
-          "by": {
-            "type": "npc",
-            "npc": "world/areas/island/npcs/mara.npc.json",
-            "face": "angry"
-          },
-          "text": [
-            "Those ",
-            {
-              "text": "orcs",
-              "ink": "danger"
-            },
-            " have cost me three crates this week. I want it to cost them something."
-          ]
-        },
-        {
-          "by": {
-            "type": "npc",
-            "npc": "world/areas/island/npcs/mara.npc.json",
-            "face": "mara_counting"
-          },
-          "text": [
-            "Bring me five ",
-            {
-              "text": "Orc Tusks",
-              "ink": "item"
-            },
-            ". Put their ",
-            {
-              "text": "chief",
-              "ink": "danger"
-            },
-            " in the sand and I'll make it worth your while."
-          ]
-        }
-      ],
-      "choices": [
-        {
-          "label": [
-            "Consider it done."
-          ],
-          "requires": {
-            "type": "at_least",
-            "a": {
-              "type": "level"
-            },
-            "b": 2
-          },
-          "reveal": [
-            "locked",
-            "needs"
-          ],
-          "to": "tusks_accept"
-        },
-        {
-          "label": [
-            "Not today."
-          ]
-        }
-      ]
-    },
-    "tusks_thanks": {
-      "type": "dialogue",
-      "lines": [
-        {
-          "by": {
-            "type": "npc",
-            "npc": "world/areas/island/npcs/mara.npc.json",
-            "face": "surprised"
-          },
-          "text": [
-            "The chief too? You don't do things by halves."
-          ]
-        },
-        {
-          "by": {
-            "type": "npc",
-            "npc": "world/areas/island/npcs/mara.npc.json",
-            "face": "happy"
-          },
-          "text": [
-            "Here's your purse, and take your pick of the good stock."
-          ]
-        }
-      ],
-      "choices": [
-        {
-          "label": [
-            "Goodbye."
-          ]
-        }
-      ]
-    },
-    "tusks_turn_in": {
-      "type": "turn_in",
-      "quest": "story/quest/tusks_for_the_chief.quest.json",
-      "done": "tusks_thanks",
-      "refused": "tusks_not_yet"
     },
     "wares": {
       "type": "dialogue",

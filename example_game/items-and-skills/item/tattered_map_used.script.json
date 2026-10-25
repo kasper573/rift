@@ -18,9 +18,9 @@
               "text": "standing stone",
               "ink": "place"
             },
-            " in the ",
+            " on the ",
             {
-              "text": "Forest",
+              "text": "rise behind the cottage",
               "ink": "place"
             },
             "."
@@ -59,9 +59,9 @@
             "type": "narrator"
           },
           "text": [
-            "The cross sits beside a standing stone, somewhere in the ",
+            "The cross sits beside a standing stone, on the ",
             {
-              "text": "Forest",
+              "text": "rise behind the cottage",
               "ink": "place"
             },
             "."
