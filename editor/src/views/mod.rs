@@ -1,6 +1,7 @@
 pub mod area;
 pub mod character;
 pub mod class;
+pub mod item;
 pub mod model;
 pub mod navigation;
 pub mod prop;
@@ -52,9 +53,11 @@ pub struct EditorViews {
     pub sound: sound::SoundViews,
     pub character: character::CharacterView,
     pub class: class::ClassViews,
+    pub item: item::ItemViews,
     pub vfx: vfx::VfxViews,
     pub preview: RowPreviewState,
     pub stage: Stages,
+    pub areas: crate::thumbs::areas::AreaThumbnails,
 }
 
 impl EditorViews {
@@ -90,6 +93,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     crate::stage::sync(editor, world);
     area::viewport::sync(editor, world);
     crate::thumbs::props::sync(editor, world);
+    crate::thumbs::areas::sync(editor, world);
 }
 
 pub fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {

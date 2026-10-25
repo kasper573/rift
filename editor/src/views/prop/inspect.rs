@@ -52,7 +52,7 @@ fn model_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
         });
         ui.add_space(4.0);
         let side = Vec2::splat(thumbs::props::SIZE as f32);
-        match editor.prop_thumbnails.thumbnail(key) {
+        match editor.form.prop_thumbnails.thumbnail(key) {
             Some(texture) => {
                 ui.image(egui::load::SizedTexture::new(texture, side));
             }

@@ -658,6 +658,15 @@ pub fn load(content: &Content, area: AreaId) -> &Area {
     shared(content, area)
 }
 
+/// The area at `area` when it loaded, to keep beside the content it came from.
+pub fn loaded(content: &Content, area: AreaId) -> Option<&Arc<Area>> {
+    content
+        .built::<Areas>()
+        .0
+        .get(area.index())
+        .and_then(Option::as_ref)
+}
+
 /// The area as `load` gives it, to keep beside the content it came from.
 pub fn shared(content: &Content, area: AreaId) -> &Arc<Area> {
     content

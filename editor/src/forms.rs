@@ -191,6 +191,7 @@ pub struct FormState {
     pub set_to_default: HashSet<(Option<String>, String)>,
     pub status: Vec<String>,
     pub thumbnails: thumbs::Thumbnails,
+    pub prop_thumbnails: thumbs::props::PropThumbnails,
     pub audio: audio::WaveformCache,
 }
 

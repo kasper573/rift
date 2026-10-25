@@ -1,7 +1,11 @@
+pub mod areas;
 pub mod props;
 
 use std::collections::HashMap;
 use ui::egui;
+
+use bevy::prelude::*;
+use bevy::render::gpu_readback::ReadbackComplete;
 
 use engine::core::assets::ImageRef;
 use engine::core::gui::{GuiImage, ImageSource};
@@ -199,4 +203,21 @@ fn shrink(image: RgbaImage, longest: u32) -> RgbaImage {
     let sw = ((w as f64 * scale).round() as u32).max(1);
     let sh = ((h as f64 * scale).round() as u32).max(1);
     image::imageops::resize(&image, sw, sh, FilterType::Nearest)
+}
+
+/// What the renderer read back of a thumbnail, kept until the thumbnails that asked take it.
+#[derive(Resource, Default)]
+pub struct ReadThumbnails(Vec<(Entity, Vec<u8>)>);
+
+/// Takes what the renderer read back, for the thumbnails to pick up on their next frame.
+pub fn took(read: On<ReadbackComplete>, mut taken: ResMut<ReadThumbnails>, mut commands: Commands) {
+    taken.0.push((read.entity, read.data.clone()));
+    commands.entity(read.entity).despawn();
+}
+
+/// The pixels read back for `readback`, once they are.
+pub(crate) fn taken(world: &mut World, readback: Entity) -> Option<Vec<u8>> {
+    let mut read = world.resource_mut::<ReadThumbnails>();
+    let index = read.0.iter().position(|(entity, _)| *entity == readback)?;
+    Some(read.0.remove(index).1)
 }

@@ -17,7 +17,8 @@ use ui::menu;
 use ui::theme;
 
 use engine::core::assets::AssetKind;
-use engine::core::content::{ContentFile, ContentId};
+use engine::core::content::{ContentFile, ContentId, table_of};
+use engine::systems::area::prop::PropDef;
 use ui::egui::{Align, Color32, Layout, Rect, RichText, Sense, Stroke, Ui, Vec2};
 use ui::glyph::{self, Mark};
 
@@ -784,6 +785,15 @@ fn face(
     rect: Rect,
     budget: &mut u32,
 ) {
+    if table_of(&pick.key) == Some(PropDef::TABLE)
+        && let Some(texture) = cx.state.prop_thumbnails.thumbnail(&pick.key)
+    {
+        let side = rect.width().min(rect.height());
+        let square = Rect::from_center_size(rect.center(), Vec2::splat(side));
+        ui.painter()
+            .image(texture, square, crate::thumbs::FULL_UV, Color32::WHITE);
+        return;
+    }
     let picture = icons::picture(
         ui.ctx(),
         &mut cx.state.thumbnails,

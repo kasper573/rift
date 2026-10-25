@@ -40,13 +40,13 @@ use ui::controls;
 use ui::egui::{Align, Layout, Ui, Vec2};
 use ui::glyph::{self, Mark};
 
-use super::area::ground::GroundArts;
 use crate::app::{Editor, PlacePick};
 use crate::forms::{self, FormAction, FormChange, FormCx};
 use crate::project::ContentEdit;
 use crate::shell::browser::BrowserAction;
 use crate::shell::{row_form, widgets};
 use crate::tabs::{EditorTab, file_title, shown_path};
+use crate::thumbs::areas::{self, AreaThumbnails};
 use crate::{picker, play, stage};
 use ui::input::{InputField, NumberField};
 
@@ -268,9 +268,8 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                                         &mut cx,
                                         &sheet,
                                         character,
-                                        &mut views.area.grounds,
+                                        &mut views.areas,
                                         &mut pick,
-                                        project.generation,
                                     ),
                                     CharacterSection::AreasKnown => {
                                         areas_known(ui, &sheet, character)
@@ -727,9 +726,8 @@ fn start(
     cx: &mut FormCx,
     sheet: &Sheet,
     character: &mut CharacterSnapshot,
-    grounds: &mut GroundArts,
+    arts: &mut AreaThumbnails,
     pick: &mut Option<PlacePick>,
-    generation: u64,
 ) -> FormChange {
     let mut changed = FormChange::default();
     let spawn = cx.project.settings().ok().map(|settings| {
@@ -789,22 +787,19 @@ fn start(
                 kept_in_view(at.y, half.y, size.height),
             );
             ui.painter().rect_filled(rect, 4.0, theme::INPUT);
-            let art = grounds.of_area(
-                ui.ctx(),
-                &format!("character:{}", sheet.key),
-                generation,
-                &content,
-                area_id,
-            );
-            art.draw(
-                &ui.painter_at(rect),
-                crate::views::navigation::Viewport {
-                    screen: rect,
-                    center,
-                    zoom: px_per_tile / PX_PER_METER,
-                },
-                egui::Color32::WHITE,
-            );
+            let stamp = areas::stamp(&cx.project.files, &area_key);
+            match arts.art(&area_key, &stamp) {
+                Some(art) => art.draw(
+                    &ui.painter_at(rect),
+                    crate::views::navigation::Viewport {
+                        screen: rect,
+                        center,
+                        zoom: px_per_tile / PX_PER_METER,
+                    },
+                    egui::Color32::WHITE,
+                ),
+                None => ui.ctx().request_repaint(),
+            }
             let marker = rect.center()
                 + egui::vec2(
                     (at.x - center.x) * px_per_tile,

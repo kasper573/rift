@@ -11,7 +11,7 @@ use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::light::AmbientLight;
 use bevy::prelude::*;
-use bevy::render::gpu_readback::{ReadbackComplete, ReadbackOnce};
+use bevy::render::gpu_readback::ReadbackOnce;
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::content::media::GltfInfos;
@@ -55,12 +55,8 @@ struct Drawing {
     camera: Entity,
     target: Handle<Image>,
     frames: u32,
-    read: bool,
+    readback: Option<Entity>,
 }
-
-/// What the renderer read back of a thumbnail, kept until the thumbnails take it.
-#[derive(Resource, Default)]
-pub struct ReadThumbnails(Vec<(Entity, Vec<u8>)>);
 
 impl PropThumbnails {
     /// The thumbnail of the prop at `prop`, queued for drawing when it has none yet.
@@ -111,29 +107,34 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
         let def = content.by_path::<PropDef>(prop)?.get(&content);
         files.hash_of(&def.model.path()).map(str::to_owned)
     };
-    let freed = editor.prop_thumbnails.forget_stale(&model_hash);
+    let freed = editor.form.prop_thumbnails.forget_stale(&model_hash);
     for image in freed {
         world
             .resource_mut::<EguiUserTextures>()
             .remove_image(&image);
     }
-    let thumbnails = &mut editor.prop_thumbnails;
+    let thumbnails = &mut editor.form.prop_thumbnails;
     if let Some(drawing) = &mut thumbnails.drawing {
         drawing.frames += 1;
         let loaded = world
             .get::<Children>(drawing.root)
             .is_some_and(|children| !children.is_empty());
-        if loaded && !drawing.read && drawing.frames >= SETTLE_FRAMES {
-            world.spawn(ReadbackOnce::texture(drawing.target.clone()));
-            drawing.read = true;
+        if loaded && drawing.readback.is_none() && drawing.frames >= SETTLE_FRAMES {
+            drawing.readback = Some(
+                world
+                    .spawn(ReadbackOnce::texture(drawing.target.clone()))
+                    .id(),
+            );
         }
-        let read = world.resource_mut::<ReadThumbnails>().0.pop();
+        let read = drawing
+            .readback
+            .and_then(|readback| super::taken(world, readback));
         let blank = read
             .as_ref()
-            .is_some_and(|(_, pixels)| pixels.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 0));
+            .is_some_and(|pixels| pixels.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 0));
         if blank {
-            drawing.read = false;
-        } else if let Some((_, pixels)) = read {
+            drawing.readback = None;
+        } else if let Some(pixels) = read {
             let drawing = thumbnails.drawing.take().expect("a thumbnail being drawn");
             world.despawn(drawing.root);
             world.despawn(drawing.camera);
@@ -246,14 +247,8 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             camera,
             target,
             frames: 0,
-            read: false,
+            readback: None,
         });
         break;
     }
-}
-
-/// Takes what the renderer read back, for the thumbnails to pick up on their next frame.
-pub fn took(read: On<ReadbackComplete>, mut taken: ResMut<ReadThumbnails>, mut commands: Commands) {
-    taken.0.push((read.entity, read.data.clone()));
-    commands.entity(read.entity).despawn();
 }

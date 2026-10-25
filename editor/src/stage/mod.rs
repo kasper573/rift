@@ -1,6 +1,6 @@
 //! The one stage every preview in the editor plays on, so a preview shows what the game shows: the
 //! game's starting area behind, actors drawn with the game's own frames, anchor and row depths,
-//! items as they lie dropped, vfx through the game's presenters. A scene is either posed by the
+//! vfx through the game's presenters. A scene is either posed by the
 //! designer, or taken live from a server world running the game's own mechanics.
 
 mod images;
@@ -22,7 +22,6 @@ use engine::core::vfx::{VfxLayer, VfxParams};
 use engine::systems::GameSettings;
 use engine::systems::actor::plate::{self, PlateLabel};
 use engine::systems::actor::{Action, ModelId};
-use engine::systems::item::ItemId;
 use engine::systems::skill::SkillId;
 use engine::systems::status::StatusEffectId;
 use ui::egui::{Color32, Pos2, Ui, Vec2 as EVec2};
@@ -72,12 +71,11 @@ pub enum Scene {
     Live(Scenario),
 }
 
-/// A scene arranged by the designer: actors standing as told, items on the ground, one vfx played
+/// A scene arranged by the designer: actors standing as told, one vfx played
 /// on a site of it.
 #[derive(Clone, PartialEq, Default)]
 pub struct Posed {
     pub actors: Vec<PosedActor>,
-    pub items: Vec<ItemId>,
     pub vfx: Option<PosedVfx>,
 }
 
@@ -193,15 +191,7 @@ pub fn show(
     painter.rect_filled(rect, 4.0, theme::CANVAS);
     if ground {
         let area = spawn.area.path(&content).to_owned();
-        crate::views::area::ground::draw_area(
-            editor,
-            &painter,
-            &ground_key(key),
-            &area,
-            rect,
-            spawn.at,
-            px,
-        );
+        crate::thumbs::areas::draw_area(editor, &painter, &area, rect, spawn.at, px);
     }
     let shown = Shown {
         rect,
@@ -355,11 +345,6 @@ pub fn spread(footprint: &PlacedShape, count: u32) -> Vec<Pos<Meters>> {
     }
     picks.into_iter().map(|pick| inside[pick]).collect()
 }
-
-fn ground_key(key: &str) -> String {
-    format!("{key}/ground")
-}
-
 fn posed_frame<'a>(posed: &Posed, content: &'a Content) -> mirror::Frame<'a> {
     let spawn = content.built::<GameSettings>().initial_spawn;
     let actors = posed
@@ -372,9 +357,6 @@ fn posed_frame<'a>(posed: &Posed, content: &'a Content) -> mirror::Frame<'a> {
         })
         .collect();
     let mut not_yet = Vec::new();
-    if !posed.items.is_empty() {
-        not_yet.push("items");
-    }
     if posed.vfx.is_some() {
         not_yet.push("vfx");
     }

@@ -3,7 +3,6 @@ pub mod brush;
 pub mod camera;
 pub mod contours;
 pub mod flags;
-pub mod ground;
 pub mod inspect;
 pub mod modules;
 pub mod nodes;
@@ -90,7 +89,6 @@ fn camera_key(project: &Project, view_key: &str) -> String {
 
 #[derive(Default)]
 pub struct AreaViews {
-    pub grounds: ground::GroundArts,
     pub views: HashMap<String, AreaViewState>,
     pub viewports: Viewports,
     pub hover: Option<AreaHover>,

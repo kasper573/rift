@@ -12,7 +12,7 @@ use ui::sheet;
 use ui::theme;
 use ui::words;
 
-use super::{ground, pins, select};
+use super::{pins, select};
 use crate::app::{Clipboard, Editor};
 use crate::forms;
 use crate::keymap::EditorKey;
@@ -101,10 +101,9 @@ pub fn pick_preview(editor: &mut Editor, ui: &mut Ui) {
     let center = Pos::new(area.size.width / 2.0 - 0.5, area.size.height / 2.0 - 0.5);
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 4.0, theme::INPUT);
-    ground::draw_area(
+    crate::thumbs::areas::draw_area(
         editor,
         &painter,
-        &format!("pick:{area_key}"),
         &area_key,
         rect,
         center,

@@ -77,8 +77,8 @@ impl Plugin for EditorPlugin {
         }
         app.add_plugins((EguiPlugin::default(), FrameCountPlugin))
             .insert_resource(editor)
-            .init_resource::<crate::thumbs::props::ReadThumbnails>()
-            .add_observer(crate::thumbs::props::took)
+            .init_resource::<crate::thumbs::ReadThumbnails>()
+            .add_observer(crate::thumbs::took)
             .add_systems(Startup, setup_camera)
             .add_systems(
                 PreUpdate,
@@ -131,7 +131,6 @@ pub struct Editor {
     pub scene: Option<Vec<SceneStep>>,
     pub clipboard: Option<Clipboard>,
     pub views: EditorViews,
-    pub prop_thumbnails: crate::thumbs::props::PropThumbnails,
     pub play: play::PlayTest,
     pub pick: Option<PlacePick>,
     pub quit: bool,
@@ -425,7 +424,6 @@ impl Editor {
             scene: None,
             clipboard: None,
             views: EditorViews::default(),
-            prop_thumbnails: Default::default(),
             play: PlayTest::default(),
             pick: None,
             quit: false,

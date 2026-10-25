@@ -116,7 +116,7 @@ fn card(
         rect.min + Vec2::new(6.0, 6.0),
         Vec2::new(CARD.x - 12.0, CARD.x - 12.0),
     );
-    match editor.prop_thumbnails.thumbnail(key) {
+    match editor.form.prop_thumbnails.thumbnail(key) {
         Some(texture) => {
             painter.image(texture, art, crate::thumbs::FULL_UV, egui::Color32::WHITE);
         }

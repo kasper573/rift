@@ -112,6 +112,23 @@ impl SlotLook<'_> {
     };
 }
 
+/// `icon` in a slot as the bag draws one: how an item's icon looks to the player.
+pub fn shown_slot(
+    ui: &mut Ui,
+    images: &mut (impl ImageSource + ?Sized),
+    icon: &ImageRef,
+) -> Response {
+    slot(
+        ui,
+        images,
+        SlotLook {
+            icon: Some(icon),
+            ..SlotLook::EMPTY
+        },
+        Sense::hover(),
+    )
+}
+
 pub(crate) fn slot(
     ui: &mut Ui,
     images: &mut (impl ImageSource + ?Sized),

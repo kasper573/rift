@@ -24,6 +24,7 @@ use ui::theme;
 use engine::core::content::{ContentFile, LoadReport};
 use engine::core::vfx::{VfxDef, VfxShaderDef};
 use engine::systems::class::ClassDef;
+use engine::systems::item::ItemDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use ui::controls::{self, Pill};
 use ui::egui::text::{LayoutJob, TextFormat};
@@ -39,7 +40,7 @@ use crate::play;
 use crate::project::{self, EditRefusal};
 use crate::tabs::{DockRequest, EditorTab};
 use crate::views::script::{self, ScriptKeys};
-use crate::views::{self, area, character, class, model, prop, spreadsheet, vfx, world};
+use crate::views::{self, area, character, class, item, model, prop, spreadsheet, vfx, world};
 
 pub fn show(editor: &mut Editor, ctx: &Context) {
     editor.status.right.clear();
@@ -553,6 +554,9 @@ impl TabViewer for Viewer<'_> {
             EditorTab::Row { table, key } if table == ClassDef::TABLE => {
                 class::show(self.editor, ui, key)
             }
+            EditorTab::Row { table, key } if table == ItemDef::TABLE => {
+                item::show(self.editor, ui, key)
+            }
             EditorTab::Spreadsheet { table } => spreadsheet::show(self.editor, ui, table),
             EditorTab::Row { .. }
             | EditorTab::Rows { .. }
@@ -625,6 +629,7 @@ impl TabViewer for Viewer<'_> {
             | EditorTab::Model { .. }
             | EditorTab::Prop { .. }
             | EditorTab::Spreadsheet { .. } => [false, false],
+            EditorTab::Row { table, .. } if table == ItemDef::TABLE => [false, false],
             EditorTab::Row { table, key } if table == ClassDef::TABLE => [
                 false,
                 self.editor.views.class.page(key) == class::ClassPage::Levels,

@@ -1,15 +1,12 @@
 use engine::core::audio::playback::{SFX_CLIP, SfxDef};
 use engine::core::babble::{BABBLE_LETTERS, BabbleBankDef, BabbleDef, LETTERS};
 use engine::core::content::{Content, ContentFile, MODULES};
-use engine::core::gui::ImageSource;
 use engine::core::math::Rgba;
 use engine::core::time::Seconds;
 use engine::systems::GameSettings;
 use engine::systems::actor::Action;
 use engine::systems::actor::model::ModelDef;
 use engine::systems::actor::plate::PlateLabel;
-use engine::systems::item::card::CardLook;
-use engine::systems::item::{self, ItemDef};
 use engine::systems::npc::{NpcDef, NpcModule};
 use engine::systems::player::PlayerDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
@@ -76,7 +73,6 @@ pub fn preview_place(table: &str) -> Option<PreviewPlace> {
         NpcDef::TABLE
         | PlayerDef::TABLE
         | ModelDef::TABLE
-        | ItemDef::TABLE
         | QuestDef::TABLE
         | CharacterSnapshot::TABLE
         | StatusEffectDef::TABLE
@@ -294,40 +290,32 @@ fn draw_preview(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, pose: 
     let Some(content) = editor.loaded() else {
         return;
     };
-    if table == QuestDef::TABLE || table == ItemDef::TABLE {
+    if table == QuestDef::TABLE {
         let Editor { project, form, .. } = &mut *editor;
         let mut images = ProjectImages {
             ctx: &ctx,
             files: &project.as_ref().expect("a project").files,
             thumbnails: &mut form.thumbnails,
         };
-        if table == QuestDef::TABLE {
-            quest_card(ui, &mut images, &content, key);
-            return;
-        }
-        item_card(ui, &mut images, &content, key);
-        ui.add_space(12.0);
+        quest_card(ui, &mut images, &content, key);
+        return;
     }
     let center = stage::center(&content);
     let mut posed = Posed::default();
-    if table == ItemDef::TABLE {
-        posed.items.extend(content.by_path::<ItemDef>(key));
-    } else {
-        let Some(look) = actor_look(editor, &content, table, key) else {
-            return;
-        };
-        let Some(model) = content.by_path::<ModelDef>(&look.model) else {
-            ui.label(theme::muted("pick a model to see it"));
-            return;
-        };
-        posed.actors.push(PosedActor {
-            action: pose.action,
-            tint: look.tint,
-            plate: look.plate,
-            held: (!pose.playing).then_some(Seconds(0.0)),
-            ..PosedActor::standing(model, center)
-        });
-    }
+    let Some(look) = actor_look(editor, &content, table, key) else {
+        return;
+    };
+    let Some(model) = content.by_path::<ModelDef>(&look.model) else {
+        ui.label(theme::muted("pick a model to see it"));
+        return;
+    };
+    posed.actors.push(PosedActor {
+        action: pose.action,
+        tint: look.tint,
+        plate: look.plate,
+        held: (!pose.playing).then_some(Seconds(0.0)),
+        ..PosedActor::standing(model, center)
+    });
     stage::show(
         editor,
         ui,
@@ -405,24 +393,6 @@ fn quest_card(ui: &mut Ui, images: &mut ProjectImages, content: &Content, key: &
         quest::card::show(ui, images, content, quest, look, |ui, images| {
             quest::card::offer(ui, images, content, &parties, quest, None);
         });
-    });
-}
-
-fn item_card(ui: &mut Ui, images: &mut ProjectImages, content: &Content, key: &str) {
-    let Some(item) = content.by_path::<ItemDef>(key) else {
-        return;
-    };
-    let def = item.get(content);
-    let art = images.image(&def.icon).map(|image| image.texture);
-    let look = CardLook {
-        width: ui.available_width().min(card::WIDTH),
-        closable: false,
-        ..CardLook::PINNED
-    };
-    item::card::face_of(def, art, look).show(ui, |ui, plate| {
-        item::card::summary(ui, content, item, plate);
-        item::card::details(ui, content, item, |_| None);
-        item::card::grant_lines(ui, images, content, item);
     });
 }
 

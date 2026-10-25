@@ -5,6 +5,7 @@ mod content_tree;
 mod fit;
 mod fixtures;
 mod icons;
+mod item_view;
 mod journal;
 mod keymap;
 mod model_view;

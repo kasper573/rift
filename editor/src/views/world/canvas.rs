@@ -308,26 +308,24 @@ fn draw_card(editor: &mut Editor, painter: &Painter, drawing: &Drawing, card: &M
     let px_per_tile = card.art.width() / info.size.width.max(1.0);
     painter.rect_filled(card.art, 2.0, theme::INPUT);
     if let Some(project) = editor.project.as_ref()
-        && let Some(content) = project.content.clone()
-        && let Some(id) = content.by_path::<area::AreaDef>(key)
+        && project.content.is_some()
     {
-        let art = editor.views.area.grounds.of_area(
-            &painter.ctx().clone(),
-            &format!("world:{key}"),
-            atlas.generation,
-            &content,
-            id,
-        );
-        let canvas = Viewport {
-            screen: card.art,
-            center: Pos::new(info.size.width / 2.0 - 0.5, info.size.height / 2.0 - 0.5),
-            zoom: px_per_tile / PX_PER_METER,
-        };
-        art.draw(
-            &painter.with_clip_rect(card.art),
-            canvas,
-            if dimmed { DIM } else { Color32::WHITE },
-        );
+        let stamp = crate::thumbs::areas::stamp(&project.files, key);
+        match editor.views.areas.art(key, &stamp) {
+            Some(art) => {
+                let canvas = Viewport {
+                    screen: card.art,
+                    center: Pos::new(info.size.width / 2.0 - 0.5, info.size.height / 2.0 - 0.5),
+                    zoom: px_per_tile / PX_PER_METER,
+                };
+                art.draw(
+                    &painter.with_clip_rect(card.art),
+                    canvas,
+                    if dimmed { DIM } else { Color32::WHITE },
+                );
+            }
+            None => painter.ctx().request_repaint(),
+        }
     }
     if let Some(colors) = &overlays.colors
         && let Some(color) = &editor.views.world.color
