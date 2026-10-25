@@ -122,9 +122,9 @@ pub struct PlayerDef {
     pub model: ModelId,
     pub class: ClassId,
     pub stats: Stats,
-    #[schemars(extend("x-usage" = "worn at creation"))]
+    #[schemars(extend("x-usage" = "equipped at creation"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub wearing: Vec<ItemId>,
+    pub equipped: Vec<ItemId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<PlayerModule>,
 }
@@ -137,7 +137,7 @@ impl ContentFile for PlayerDef {
             model: near.file()?,
             class: near.file()?,
             stats: Stats::default(),
-            wearing: Vec::new(),
+            equipped: Vec::new(),
             modules: Vec::new(),
         })
     }

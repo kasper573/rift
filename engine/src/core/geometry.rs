@@ -10,7 +10,10 @@ use crate::core::units::{MeterPos, Meters};
 #[schemars(extend("x-unit" = "°"))]
 pub struct Degrees(pub f32);
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
+)]
+#[schemars(extend("x-unit" = "rad"))]
 pub struct Radians(pub f32);
 
 const OUTLINE_STEPS: usize = 40;

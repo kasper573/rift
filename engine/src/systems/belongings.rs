@@ -1,11 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy_ecs::prelude::*;
-use strum::VariantArray;
 
 use crate::core::content::{Content, Fixture};
 use crate::systems::class::{self, Class, SkillPoints};
-use crate::systems::equipment::{Equipment, EquipmentSlot};
+use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::{Inventory, ItemId};
@@ -17,7 +16,7 @@ use crate::systems::text::LineText;
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct Belongings {
     items: BTreeMap<ItemId, u32>,
-    worn: BTreeMap<EquipmentSlot, ItemId>,
+    worn: BTreeSet<ItemId>,
     xp: u32,
     level: u32,
     points: SkillPoints,
@@ -33,15 +32,12 @@ pub type ChangedBelongings = Or<(
 
 pub fn of(world: &World, player: Entity) -> Belongings {
     let mut items: BTreeMap<ItemId, u32> = BTreeMap::new();
-    let worn = world
-        .get::<Equipment>(player)
-        .map(|equipment| equipment.slots.clone())
-        .unwrap_or_default();
+    let worn: BTreeSet<ItemId> = equipment::worn(world, player).collect();
     let carried = world
         .get::<Inventory>(player)
         .into_iter()
         .flat_map(|inventory| inventory.slots.iter().map(|slot| (slot.item, slot.count)));
-    for (item, count) in carried.chain(worn.values().map(|&item| (item, 1))) {
+    for (item, count) in carried.chain(worn.iter().map(|&item| (item, 1))) {
         *items.entry(item).or_default() += count;
     }
     Belongings {
@@ -100,24 +96,19 @@ fn changes(content: &Content, before: &Belongings, now: &Belongings) -> Vec<Noti
                 .tally(RecordTally::Change(change(before.xp, now.xp))),
         );
     }
-    for slot in EquipmentSlot::VARIANTS {
-        match (before.worn.get(slot), now.worn.get(slot)) {
-            (_, Some(&on)) if before.worn.get(slot) != Some(&on) => {
-                told.push(worn_row(
-                    content,
-                    format!("Equipped {}", on.get(content).name),
-                    on,
-                ));
-            }
-            (Some(&off), None) => {
-                told.push(worn_row(
-                    content,
-                    format!("Took off {}", off.get(content).name),
-                    off,
-                ));
-            }
-            _ => {}
-        }
+    for &on in now.worn.difference(&before.worn) {
+        told.push(worn_row(
+            content,
+            format!("Equipped {}", on.get(content).name),
+            on,
+        ));
+    }
+    for &off in before.worn.difference(&now.worn) {
+        told.push(worn_row(
+            content,
+            format!("Took off {}", off.get(content).name),
+            off,
+        ));
     }
     if now.level > before.level {
         told.push(Notification::new(

@@ -1,24 +1,28 @@
-//! The model view: the rig on a stage, scrubbed through its clips with their cues, its hitbox
-//! sized by hand, its busts, and a new rig imported over it with its clips matched by name.
+//! The model view: the skin on a stage in any stance and clip its skeleton plays, how its joints
+//! fit that skeleton, the clips of its own that override the skeleton's with their cues, its
+//! hitbox sized by hand, its busts, and a new glb imported over it once it fits.
 
 pub mod busts;
-pub mod clips;
+pub mod fit;
 pub mod hitbox;
 pub mod import;
 pub mod inspect;
+pub mod overrides;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use engine::core::content::ContentFile;
 use engine::core::content::media::GltfInfos;
+use engine::core::content::{Content, ContentFile};
 use engine::core::geometry::Capsule;
 use engine::core::render::camera::world_point;
+use engine::core::render::world::mannequin::RigClip;
 use engine::core::time::{Millis, Seconds};
 use engine::core::units::Meters;
-use engine::systems::actor::ModelDef;
-use engine::systems::actor::model::{Clip, Cue};
+use engine::systems::actor::model::ActorModel;
+use engine::systems::actor::skeleton::{ClipName, Cue};
+use engine::systems::actor::{Action, ModelDef, Motion, Pose};
 use engine::systems::area::{Picture, Pictured};
 use engine::systems::npc::NpcDef;
 use engine::systems::player::PlayerDef;
@@ -26,7 +30,6 @@ use serde::Deserialize;
 use ui::egui::{self, Rect, Response, Sense, Ui, Vec2};
 use ui::{chip, form, theme};
 
-use self::clips::ClipSlot;
 use super::area::camera::{self, AreaCanvas, OrbitCamera};
 use super::area::viewport::Standing;
 use super::stage::{self, StagePicture};
@@ -46,17 +49,24 @@ pub struct ModelViews {
 #[serde(rename_all = "snake_case")]
 pub enum ModelPage {
     #[default]
-    Clips,
+    Fit,
+    Overrides,
     Hitbox,
     Busts,
 }
 
 impl ModelPage {
-    const ALL: [ModelPage; 3] = [ModelPage::Clips, ModelPage::Hitbox, ModelPage::Busts];
+    const ALL: [ModelPage; 4] = [
+        ModelPage::Fit,
+        ModelPage::Overrides,
+        ModelPage::Hitbox,
+        ModelPage::Busts,
+    ];
 
     fn label(self) -> &'static str {
         match self {
-            ModelPage::Clips => "clips",
+            ModelPage::Fit => "fit",
+            ModelPage::Overrides => "overrides",
             ModelPage::Hitbox => "hitbox",
             ModelPage::Busts => "busts",
         }
@@ -67,12 +77,15 @@ pub struct ModelView {
     pub page: ModelPage,
     pub face: Option<String>,
     pub removing: Option<FaceRemoval>,
-    pub slot: ClipSlot,
-    pub playhead: Millis,
-    pub playing: bool,
+    /// The stance the stage shows the model in, by its file's path.
+    pub stance: Option<String>,
+    pub motion: Motion,
+    pub pose: Pose,
+    /// The clip of its own the overrides page times.
+    pub own_clip: Option<ClipName>,
+    pub scrub: super::cues::Scrub,
     pub camera: OrbitCamera,
     pub spinning: bool,
-    pub cue_drag: Option<clips::CueDrag>,
     pub drag: Option<hitbox::Drag>,
     pub import: Option<import::ImportDraft>,
     picture: StagePicture,
@@ -130,7 +143,8 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
             page_bar(editor, ui, key, page);
             ui.add_space(4.0);
             match page {
-                ModelPage::Clips => clips::show(editor, ui, key, &row),
+                ModelPage::Fit => fit::show(editor, ui, key, &row),
+                ModelPage::Overrides => overrides::show(editor, ui, key, &row),
                 ModelPage::Hitbox => hitbox::show(editor, ui, key, &row),
                 ModelPage::Busts => {
                     egui::ScrollArea::both()
@@ -174,12 +188,13 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
             page: ModelPage::default(),
             face: None,
             removing: None,
-            slot: ClipSlot::default(),
-            playhead: Millis(0.0),
-            playing: false,
+            stance: None,
+            motion: Motion::Action(Action::Idle),
+            pose: Pose::Idle,
+            own_clip: None,
+            scrub: super::cues::Scrub::default(),
             camera: stage::framing(height.max(1.0) * 0.7),
             spinning: false,
-            cue_drag: None,
             drag: None,
             import: None,
             picture: StagePicture::default(),
@@ -195,77 +210,33 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
     }
 }
 
-/// Gives the clip in `slot` of the model at `key` the cues `cues`, in order of time.
-pub fn set_cues(editor: &mut Editor, key: &str, slot: ClipSlot, mut cues: Vec<Cue>) -> bool {
+/// Gives the clip `clip` the model at `key` carries of its own the cues `cues`, in order of time:
+/// none takes its entry away.
+pub fn set_override_cues(
+    editor: &mut Editor,
+    key: &str,
+    clip: &ClipName,
+    mut cues: Vec<Cue>,
+) -> bool {
     let Some(Ok(row)) = editor.read::<ModelDef>(key) else {
-        return false;
-    };
-    let Some(clip) = slot.clip(&row) else {
         return false;
     };
     cues.sort_by(|a, b| a.at.0.total_cmp(&b.at.0));
-    if clip.cues == cues {
+    if row
+        .overrides
+        .get(clip)
+        .map_or(cues.is_empty(), |held| *held == cues)
+    {
         return false;
     }
     let mut model = (*row).clone();
-    slot.set(
-        &mut model,
-        Clip {
-            name: clip.name.clone(),
-            cues,
-        },
-    );
-    editor.write_content(
-        &format!("Mark {}'s {} cues", shown_path(key), slot.label()),
-        key,
-        &model,
-    )
-}
-
-/// Plays the animation `name` of its glTF for `slot` of the model at `key`, keeping the cues
-/// that still fit in it.
-pub fn set_clip(editor: &mut Editor, key: &str, slot: ClipSlot, name: &str) -> bool {
-    let Some(Ok(row)) = editor.read::<ModelDef>(key) else {
-        return false;
-    };
-    if slot.clip(&row).is_some_and(|clip| clip.name == name) {
-        return false;
-    }
-    let length = clip_length(editor, &row, name);
-    let cues = slot
-        .clip(&row)
-        .map(|clip| import::fitting(&clip.cues, length, slot.takes_apex()))
-        .unwrap_or_default();
-    let mut model = (*row).clone();
-    slot.set(
-        &mut model,
-        Clip {
-            name: name.to_owned(),
-            cues,
-        },
-    );
-    editor.write_content(
-        &format!("Play {name} for {}'s {}", shown_path(key), slot.label()),
-        key,
-        &model,
-    )
-}
-
-/// Takes the clip in `slot` away from the model at `key`; a pose only, since every action needs
-/// one.
-pub fn remove_clip(editor: &mut Editor, key: &str, slot: ClipSlot) -> bool {
-    let ClipSlot::Pose(pose) = slot else {
-        return false;
-    };
-    let Some(Ok(row)) = editor.read::<ModelDef>(key) else {
-        return false;
-    };
-    let mut model = (*row).clone();
-    if model.poses.remove(&pose).is_none() {
-        return false;
+    if cues.is_empty() {
+        model.overrides.remove(clip);
+    } else {
+        model.overrides.insert(clip.clone(), cues);
     }
     editor.write_content(
-        &format!("Drop {}'s {}", shown_path(key), slot.label()),
+        &format!("Mark {}'s {clip} cues", shown_path(key)),
         key,
         &model,
     )
@@ -284,22 +255,15 @@ pub fn set_hitbox(editor: &mut Editor, key: &str, hitbox: Capsule) -> bool {
     editor.write_content(&format!("Size {}'s hitbox", shown_path(key)), key, &model)
 }
 
-/// How long the animation `name` of the model's glTF plays, as the loader measured it.
-pub fn clip_length(editor: &Editor, row: &ModelDef, name: &str) -> Option<Millis> {
-    let info = editor
-        .project
-        .as_ref()?
-        .content
-        .as_ref()?
-        .built::<GltfInfos>()
-        .0
-        .get(&row.model.path())?
-        .clone();
-    Some(info.clip(name)?.length.millis())
+/// The model at `key` as the game built it from the files as they last loaded, when it loaded.
+pub fn built<'c>(editor: &'c Editor, key: &str) -> Option<(&'c Content, &'c ActorModel)> {
+    let content = editor.project.as_ref()?.content.as_ref()?;
+    let id = content.by_path::<ModelDef>(key)?;
+    Some((content, ActorModel::loaded(content, id)?))
 }
 
-/// The names of the animations in the model's glTF.
-pub fn clip_names(editor: &Editor, row: &ModelDef) -> Vec<String> {
+/// The clips the model's own glTF carries, with how long each plays, as the loader measured them.
+pub fn own_clips(editor: &Editor, row: &ModelDef) -> Vec<(ClipName, Millis)> {
     editor
         .project
         .as_ref()
@@ -307,10 +271,10 @@ pub fn clip_names(editor: &Editor, row: &ModelDef) -> Vec<String> {
             let content = project.content.as_ref()?;
             let info = content.built::<GltfInfos>().0.get(&row.model.path())?;
             Some(
-                info.clip_names()
-                    .into_iter()
-                    .map(str::to_owned)
-                    .collect::<Vec<String>>(),
+                info.clips
+                    .iter()
+                    .map(|clip| (ClipName::new(clip.name.clone()), clip.length.millis()))
+                    .collect(),
             )
         })
         .unwrap_or_default()
@@ -389,14 +353,14 @@ pub(super) fn turntable(
 }
 
 impl Turntable {
-    /// Stands the model at `key` in the middle of the stage, in the clip `clip` of its glTF held
-    /// at `held`, and asks for the picture.
+    /// Stands the model in the middle of the stage, in `clip` held at `held`, and asks for the
+    /// picture.
     pub fn stand(
         self,
         editor: &mut Editor,
         ui: &Ui,
         row: &ModelDef,
-        clip: Option<usize>,
+        clip: Option<RigClip>,
         held: Option<Seconds>,
     ) {
         let cast = vec![Standing {

@@ -435,7 +435,7 @@ fn field() -> Sim {
         .area("field", &Map::open(25, 25), json!(residents))
         .hero("field", 12.0, 12.0)
         .sword()
-        .wearing(&["sword"])
+        .equipped(&["sword"])
         .npc("brute", 100_000.0, json!([]))
         .edit("npc", "brute", |brute| {
             brute["basic_attack"] = json!(path("skill", "strike"))

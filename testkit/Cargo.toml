@@ -7,6 +7,7 @@ description = "What the engine's tests stand on: a game of only the rows a test 
 [dependencies]
 engine = { path = "../engine" }
 bevy_ecs.workspace = true
+bevy_math.workspace = true
 bevy_replicon = { workspace = true, features = ["server"] }
 bevy_time = { workspace = true, features = ["std"] }
 hound = "3.5"

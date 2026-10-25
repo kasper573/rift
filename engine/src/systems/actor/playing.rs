@@ -2,6 +2,9 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::skeleton::{DeclaredMoves, MoveName};
+use super::stance::StanceId;
+use super::wearing::{self, ScriptedStance};
 use super::{Action, Actor, ActorModel};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::Content;
@@ -13,11 +16,35 @@ use crate::systems::script::{Condition, EffectCall, FlowKey, Reach, RiftInstance
 use crate::systems::stat::{self, StatKind};
 use crate::systems::{movement, notification};
 
-/// An action an actor was told to play, with the moments its model lands and ends it. Replicated,
-/// so every client animates the same stroke from the same start.
-#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+/// What an actor was told to perform: an engine action, or a move by name, which its stance turns
+/// into a clip on its body.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum Motion {
+    Action(Action),
+    Move(MoveName),
+}
+
+impl Motion {
+    /// The action the actor shows while the motion plays: a move is an attack.
+    pub fn action(&self) -> Action {
+        match self {
+            Motion::Action(action) => *action,
+            Motion::Move(_) => Action::Attack,
+        }
+    }
+
+    /// Whether the motion is a hit, which plays at the actor's attack speed and lands at its apex.
+    pub fn strikes(&self) -> bool {
+        self.action() == Action::Attack
+    }
+}
+
+/// A motion an actor was told to play, with the moments its clip lands and ends it. Replicated, so
+/// every client animates the same stroke from the same start.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Playing {
-    pub action: Action,
+    pub motion: Motion,
     pub started: UnixMillis,
     pub apex: UnixMillis,
     pub ends: UnixMillis,
@@ -44,14 +71,16 @@ pub enum Wait {
     End,
 }
 
-/// Plays a model action, waiting for its apex or end when asked.
+/// Plays an action, or a move the actor's stance turns into a clip, waiting for its apex or end
+/// when asked.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(extend("x-system" = "actor"))]
 pub struct Animate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
     pub who: Option<Condition>,
-    pub action: Action,
+    #[serde(flatten)]
+    pub motion: Motion,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sfx: Option<SfxId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -82,12 +111,22 @@ impl EffectDef<RiftScripting> for Animate {
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim(cx, &self.who)?;
-        let (action, sfx, wait) = (self.action, self.sfx, self.wait);
+        if let Motion::Move(name) = &self.motion
+            && !cx.content.built::<DeclaredMoves>().0.contains(name)
+        {
+            return Err(ScriptFault::new(
+                "undeclared move",
+                format!(
+                    "a move some skeleton's set declares; animate asks for move {name}, which no skeleton's set declares"
+                ),
+            ));
+        }
+        let (motion, sfx, wait) = (self.motion.clone(), self.sfx, self.wait);
         Ok(Box::new(move |world, flow, cx| {
             let Some(actor) = effects::aimed(world, cx, &who) else {
                 return EffectStep::Output(INTERRUPTED);
             };
-            if play(world, actor, action, None).is_none() {
+            if play(world, actor, motion.clone(), None).is_none() {
                 return EffectStep::Output(INTERRUPTED);
             }
             if let Some(sfx) = sfx {
@@ -109,32 +148,79 @@ impl EffectDef<RiftScripting> for Animate {
     }
 }
 
-/// Starts an action on an actor, facing `toward` when given, timed by its model at its attack
-/// speed. A new action replaces one still playing, which then never lands.
+/// Starts a motion on an actor, facing `toward` when given, timed by the clip its stance resolves
+/// it to on its body, at its attack speed. A new motion replaces one still playing, which then never
+/// lands.
 pub fn play(
     world: &mut World,
     actor: Entity,
-    action: Action,
+    motion: Motion,
     toward: Option<Radians>,
 ) -> Option<Playing> {
     let content = world.resource::<Content>().clone();
     let now = world.resource::<WallClock>().now;
     let speed = PlaybackRate(stat::effective(world, actor, StatKind::AttackSpeed));
+    let stance = wearing::stance_of(world, actor);
     let mut component = world.get_mut::<Actor>(actor)?;
     let facing = toward.unwrap_or(component.facing);
-    super::set_facing(&mut component, facing, action);
+    super::set_facing(&mut component, facing, motion.action());
     component.attack_rate = speed;
     let model = component.model;
-    let timing = ActorModel::get(&content, model).timing(action, speed);
+    let timing = ActorModel::get(&content, model).timing(stance, &motion, speed);
     let playing = Playing {
-        action,
+        motion,
         started: now,
         apex: now.after(timing.apex),
         ends: now.after(timing.duration),
     };
     interrupt(world, actor);
-    world.entity_mut(actor).insert(playing);
+    world.entity_mut(actor).insert(playing.clone());
     Some(playing)
+}
+
+/// Puts an actor in a stance with nothing in its hands, or out of the one a script put it in.
+#[derive(JsonSchema, Clone, Serialize, Deserialize)]
+#[schemars(extend("x-system" = "actor"))]
+pub struct SetStance {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = {"type": "subject"}))]
+    pub who: Option<Condition>,
+    /// None takes the actor out of the stance a script put it in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stance: Option<StanceId>,
+    #[serde(default, skip_serializing_if = "Arrow::is_none")]
+    pub next: Arrow,
+}
+
+impl EffectDef<RiftScripting> for SetStance {
+    fn needs_subject(&self) -> bool {
+        self.who.is_none()
+    }
+    crate::outputs!(NEXT => next);
+    fn compile<'c>(
+        &'c self,
+        cx: &mut Compiler<'c, RiftScripting>,
+    ) -> Result<EffectCall, ScriptFault> {
+        let who = effects::aim(cx, &self.who)?;
+        let stance = self.stance;
+        Ok(Box::new(move |world, _, cx| {
+            for actor in effects::aimed_all(world, cx, &who) {
+                let mut entity = world.entity_mut(actor);
+                match stance {
+                    Some(stance) => {
+                        entity.insert(ScriptedStance(stance));
+                    }
+                    None => {
+                        entity.remove::<ScriptedStance>();
+                    }
+                }
+            }
+            EffectStep::Done
+        }))
+    }
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+        vec![Reach::Animates]
+    }
 }
 
 pub fn playing(world: &World, actor: Entity) -> bool {
@@ -145,7 +231,7 @@ pub fn progress(world: &mut World, playing: &mut QueryState<Entity, With<Playing
     let now = world.resource::<WallClock>().now;
     let actors: Vec<Entity> = playing.iter(world).collect();
     for actor in actors {
-        let Some(played) = world.get::<Playing>(actor).copied() else {
+        let Some(played) = world.get::<Playing>(actor).cloned() else {
             continue;
         };
         if stat::is_dead(world, actor) || movement::moving(world, actor) {

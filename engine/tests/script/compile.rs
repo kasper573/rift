@@ -274,7 +274,7 @@ fn every_capability() -> Vec<Value> {
         json!({ "type": "items", "take": [{ "item": "gold.item.json" }] }),
         json!({ "type": "use_item", "item": "map.item.json" }),
         json!({ "type": "equip", "item": "pass.item.json" }),
-        json!({ "type": "unequip", "slot": "weapon" }),
+        json!({ "type": "unequip", "item": "pass.item.json" }),
         json!({ "type": "drop_items", "item": "gold.item.json", "count": 1 }),
         json!({ "type": "spawn_ground_items", "items": [{ "item": "gold.item.json" }], "for": "subject" }),
         json!({ "type": "clear_ground_items", "within": 10.0 }),

@@ -221,7 +221,7 @@ pub enum RiftQuery {
         #[schemars(extend("default" = {"type": "subject"}))]
         of: Option<Box<Condition>>,
     },
-    Wearing {
+    Equipped {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(extend("default" = {"type": "subject"}))]
         of: Option<Box<Condition>>,
@@ -370,7 +370,7 @@ impl RiftQueryKind {
             RiftQueryKind::AimedPoint => ValueType::Point,
             RiftQueryKind::IsClass
             | RiftQueryKind::HasStatus
-            | RiftQueryKind::Wearing
+            | RiftQueryKind::Equipped
             | RiftQueryKind::SetWithin
             | RiftQueryKind::OnQuest
             | RiftQueryKind::QuestDone
@@ -410,7 +410,7 @@ impl QueryDef<RiftScripting> for RiftQuery {
             | RiftQuery::StatusCount { of, .. }
             | RiftQuery::Holding { of, .. }
             | RiftQuery::FreeSlots { of }
-            | RiftQuery::Wearing { of, .. }
+            | RiftQuery::Equipped { of, .. }
             | RiftQuery::Memory { of, .. }
             | RiftQuery::SetWithin { of, .. }
             | RiftQuery::OnQuest { of, .. }
@@ -540,7 +540,7 @@ impl QueryDef<RiftScripting> for RiftQuery {
                     }))
                 })
             }
-            RiftQuery::Wearing { of, item } => {
+            RiftQuery::Equipped { of, item } => {
                 let item = *item;
                 let of = cx.actor(of.as_deref())?;
                 Box::new(move |world, cx| {

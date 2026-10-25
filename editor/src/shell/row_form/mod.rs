@@ -319,7 +319,7 @@ fn row_card(
         if table == ModelDef::TABLE {
             if let Ok(model) = cx.project.read::<ModelDef>(key) {
                 let mut model = (*model).clone();
-                if let Some(what) = model::inspect::row_body(ui, &mut model).0 {
+                if let Some(what) = model::inspect::row_body(ui, cx, &mut model).0 {
                     let (label, key) = (format!("Edit {} {what}", shown_path(key)), key.to_owned());
                     *typed = Some(Box::new(move |editor| {
                         editor.write_content(&label, &key, &model)

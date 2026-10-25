@@ -693,6 +693,7 @@ pub fn load(
         builder: ContentBuilder::default(),
         snapshot: None,
         errors,
+        warnings: Vec::new(),
         indexes: HashMap::new(),
         failed: HashSet::new(),
     };
@@ -713,18 +714,21 @@ pub fn load(
     if loading.errors.is_empty() {
         loading.run_hooks(registry, LoadStep::Compile);
     }
+    let warnings = std::mem::take(&mut loading.warnings);
     if loading.errors.is_empty() {
+        loading.built(LoadWarnings(warnings));
         Ok(loading.content())
     } else {
-        Err(LoadReport::new(
-            folder.name(),
-            build,
-            version.0,
-            outcome,
-            loading.errors,
-        ))
+        Err(
+            LoadReport::new(folder.name(), build, version.0, outcome, loading.errors)
+                .with_warnings(warnings),
+        )
     }
 }
+
+/// What a game that loaded costs or leaves unseen, by the file each is about: the loader's warnings,
+/// the designer's to accept.
+pub struct LoadWarnings(pub Vec<LoadError>);
 
 pub(super) fn check_files(
     registry: &ContentRegistry,
@@ -760,6 +764,7 @@ pub(super) fn check_files(
             .filter(|error| touches(&error.file))
             .cloned()
             .collect(),
+        warnings: Vec::new(),
         indexes: HashMap::new(),
         failed: HashSet::new(),
     };
@@ -824,6 +829,7 @@ pub struct Loading {
     builder: ContentBuilder,
     snapshot: Option<Content>,
     errors: Vec<LoadError>,
+    warnings: Vec<LoadError>,
     indexes: HashMap<String, Arc<JsonIndex>>,
     failed: HashSet<(&'static str, String)>,
 }
@@ -860,6 +866,29 @@ impl Loading {
         let file = file.into();
         let at = self.place(&file, pointer);
         self.file_error(file, at, problem);
+    }
+
+    /// Something the game loads with but should know it pays for, at `pointer` in `file`.
+    pub fn json_warning(
+        &mut self,
+        file: impl Into<String>,
+        pointer: &str,
+        problem: ContentProblem,
+    ) {
+        let file = file.into();
+        let at = self.place(&file, pointer);
+        self.warnings.push(LoadError { file, at, problem });
+    }
+
+    /// A warning at `pointer` in the file holding the fields of `id`.
+    pub fn row_warning<Row: ContentFile>(
+        &mut self,
+        id: ContentId<Row>,
+        pointer: &str,
+        problem: ContentProblem,
+    ) {
+        let file = self.row_file(id);
+        self.json_warning(file, pointer, problem);
     }
 
     /// A problem at `pointer` in the file holding the fields of `id`.

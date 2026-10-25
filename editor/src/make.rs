@@ -3,7 +3,9 @@ use engine::core::babble::{BABBLE_LETTERS, BabbleBankDef, LETTERS};
 use std::collections::BTreeMap;
 
 use engine::core::content::files::name_of;
-use engine::core::content::gltf::placeholder_rig;
+use engine::core::content::gltf::{
+    self, NodeTree, Rest, TreeNode, placeholder_body, placeholder_rig,
+};
 use engine::core::content::{ContentFile, FolderReader, Nearby};
 use engine::core::script::Arrow;
 use engine::core::time::Seconds;
@@ -11,6 +13,7 @@ use engine::core::vfx::VfxShaderDef;
 use engine::core::vfx::shader::SHADER_SOURCE;
 use engine::systems::actor::Action;
 use engine::systems::actor::model::{MODEL_GLB, ModelDef};
+use engine::systems::actor::skeleton::{CLIP_LIBRARIES, RIG_GLB, SkeletonDef};
 use engine::systems::area::prop::{PROP_GLB, PropDef};
 use engine::systems::item::{ItemDef, ItemKind, ItemModule};
 use engine::systems::script::{Node, RiftEvent, RunnerKind, ScriptDef, ScriptId, ScriptModule};
@@ -35,7 +38,7 @@ pub fn content_file(
 ) -> Result<(), String> {
     let reader = project.reader();
     let files = reader.fresh(table, path)?;
-    for (part, bytes) in blank_parts(table) {
+    for (part, bytes) in blank_parts(project, &reader, table, path)? {
         let file = format!("{path}/{part}");
         if !files.contains_key(&file) {
             edit.write(file, bytes);
@@ -108,22 +111,54 @@ pub fn usable_without_used(project: &Project, reader: &FolderReader, item: &Item
     matches!(item.kind, ItemKind::Usable) && !item.modules.iter().any(answers_used)
 }
 
-fn blank_parts(table: &str) -> Vec<(String, FileBytes)> {
+fn blank_parts(
+    project: &Project,
+    reader: &FolderReader,
+    table: &str,
+    path: &str,
+) -> Result<Vec<(String, FileBytes)>, String> {
     let silence = || default("silence.wav");
-    match table {
+    Ok(match table {
         SfxDef::TABLE => vec![(SFX_CLIP.named("", "wav"), silence())],
         BabbleBankDef::TABLE => LETTERS
             .chars()
             .map(|letter| (BABBLE_LETTERS.named(&letter.to_string(), "wav"), silence()))
             .collect(),
-        ModelDef::TABLE => {
+        SkeletonDef::TABLE => {
             let clips: Vec<(&str, Seconds)> = Action::VARIANTS
                 .iter()
                 .map(|action| (action.as_ref(), Seconds(1.0)))
                 .collect();
+            let root = NodeTree {
+                nodes: vec![TreeNode {
+                    name: "root".to_owned(),
+                    parent: None,
+                    rest: Rest::IDENTITY,
+                    mesh: false,
+                }],
+            };
+            vec![
+                (
+                    RIG_GLB.named("", "glb"),
+                    FileBytes::from(placeholder_body(&root, &[], 0)),
+                ),
+                (
+                    CLIP_LIBRARIES.named("moves", "glb"),
+                    FileBytes::from(placeholder_body(&root, &clips, 0)),
+                ),
+            ]
+        }
+        ModelDef::TABLE => {
+            let skeleton = Nearby::new(reader, path).file::<SkeletonDef>()?;
+            let rig = reader
+                .path_of(skeleton)
+                .map(|skeleton| format!("{skeleton}/{}", RIG_GLB.named("", "glb")))
+                .and_then(|rig| project.files.get(&rig))
+                .ok_or("its skeleton has no rig to fit")?;
+            let tree = gltf::inspect(rig)?.tree;
             vec![(
                 MODEL_GLB.named("", "glb"),
-                FileBytes::from(placeholder_rig(&clips)),
+                FileBytes::from(placeholder_body(&tree, &[], 1)),
             )]
         }
         PropDef::TABLE => vec![(
@@ -132,7 +167,7 @@ fn blank_parts(table: &str) -> Vec<(String, FileBytes)> {
         )],
         VfxShaderDef::TABLE => vec![(SHADER_SOURCE.named("", "wgsl"), default("shader.wgsl"))],
         _ => Vec::new(),
-    }
+    })
 }
 
 fn default(name: &str) -> FileBytes {

@@ -19,8 +19,7 @@ use engine::core::units::{MeterPos, Meters};
 use engine::field;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::class::{ClassDef, NodeKey, SkillTree};
-use engine::systems::equipment::EquipmentSlot;
-use engine::systems::item::{ItemDef, ItemKind, ItemStack};
+use engine::systems::item::{ItemDef, ItemStack};
 use engine::systems::memory::MemoryDef;
 use engine::systems::movement;
 use engine::systems::player::snapshot::{
@@ -489,54 +488,62 @@ fn equipment(
     character: &mut CharacterSnapshot,
 ) -> FormChange {
     let mut changed = FormChange::default();
-    let fits = |slot: EquipmentSlot| -> Vec<String> {
-        sheet
-            .reader
-            .paths_of::<ItemDef>()
-            .iter()
-            .filter(|item| {
-                cx.project.read::<ItemDef>(item).is_ok_and(|item| {
-                    matches!(item.kind, ItemKind::Equipment { slot: fits, .. } if fits == slot)
-                })
-            })
-            .cloned()
-            .collect()
-    };
-    let fitting: Vec<(EquipmentSlot, Vec<String>)> = EquipmentSlot::VARIANTS
+    let wearable: Vec<String> = sheet
+        .reader
+        .paths_of::<ItemDef>()
         .iter()
-        .map(|&slot| (slot, fits(slot)))
+        .filter(|item| {
+            cx.project
+                .read::<ItemDef>(item)
+                .is_ok_and(|item| item.wear().is_some())
+        })
+        .cloned()
         .collect();
+    let path = field!(CharacterSnapshot, equipped);
+    let mut remove = None;
     card(ui, "Equipment", |ui| {
-        for (slot, fitting) in &fitting {
-            let current = character
-                .equipment
-                .get(slot)
-                .map(|&item| sheet.path_of(item));
-            form::kv(ui, slot.label(), |ui| {
+        for (index, worn) in character.equipped.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                if controls::remove(ui, "Take off").clicked() {
+                    remove = Some(index);
+                }
+                let current = sheet.path_of(*worn);
                 let mut picked = current.clone();
-                controls::combo(("equipment", slot.label()))
+                controls::combo(("equipped", index))
                     .width(ui.available_width() - 8.0)
-                    .selected_text(match &current {
-                        Some(item) => theme::mono(shown_path(item)).size(13.0),
-                        None => theme::muted("empty").size(13.0),
-                    })
+                    .selected_text(theme::mono(shown_path(&current)).size(13.0))
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut picked, None, "empty");
-                        for item in fitting {
-                            ui.selectable_value(&mut picked, Some(item.clone()), shown_path(item));
+                        for item in &wearable {
+                            ui.selectable_value(&mut picked, item.clone(), shown_path(item));
                         }
                     });
-                if picked != current {
-                    match picked.and_then(|item| sheet.reader.id_of::<ItemDef>(&item)) {
-                        Some(item) => character.equipment.insert(*slot, item),
-                        None => character.equipment.remove(slot),
-                    };
-                    changed = FormChange::at(field!(CharacterSnapshot, equipment));
+                if picked != current
+                    && let Some(item) = sheet.reader.id_of::<ItemDef>(&picked)
+                {
+                    *worn = item;
+                    changed = FormChange::at(path);
                 }
             });
         }
-        ui.label(theme::faint("each slot offers only the items made for it").size(12.0));
+        if character.equipped.is_empty() {
+            ui.label(theme::muted("nothing worn").size(13.0));
+        }
+        if let Some(first) = wearable.first()
+            && ui.button("+ item").clicked()
+            && let Some(item) = sheet.reader.id_of::<ItemDef>(first)
+        {
+            character.equipped.push(item);
+            changed = FormChange::at(path);
+        }
+        ui.label(
+            theme::faint("put on in order, each where equipping puts it: held items by their stance's hand, the rest on the head")
+                .size(12.0),
+        );
     });
+    if let Some(index) = remove {
+        character.equipped.remove(index);
+        changed = FormChange::at(path);
+    }
     changed
 }
 

@@ -1,13 +1,15 @@
-//! What the loader learns of a glTF binary without a renderer: its bounds, how heavy it draws, and
-//! the clips it animates with, so a model is held to the style budget and its clips are known at
-//! load, on the server as on the client.
+//! What the loader learns of a glTF binary without a renderer: its bounds, how heavy it draws, its
+//! tree of named nodes at rest and the clips it animates with, so a model is held to the style
+//! budget, fitted to the rig it shares clips with, and its clips are known at load, on the server as
+//! on the client.
 
 use std::collections::BTreeMap;
 
-use bevy::math::{Mat4, Vec3};
+use bevy::math::{Mat4, Quat, Vec3};
 use gltf::json;
 use gltf::json::validation::{Checked, USize64};
 
+use crate::core::geometry::Degrees;
 use crate::core::math::Pos;
 use crate::core::time::Seconds;
 use crate::core::units::Meters;
@@ -17,9 +19,43 @@ pub struct GltfInfo {
     pub bounds: MeshBounds,
     pub triangles: usize,
     pub materials: usize,
-    /// The most joints any one skin has.
-    pub joints: usize,
+    /// Whether any mesh is skinned to joints.
+    pub skinned: bool,
+    pub tree: NodeTree,
     pub clips: Vec<GltfClip>,
+}
+
+/// Every node of a glTF binary by its index there, each with its name, its parent and its rest
+/// transform: the joints a clip finds by the path of names from the scene's root down, as the
+/// renderer finds them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NodeTree {
+    pub nodes: Vec<TreeNode>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TreeNode {
+    pub name: String,
+    pub parent: Option<usize>,
+    pub rest: Rest,
+    /// Whether the node draws a mesh: a mesh is skin, not a joint.
+    pub mesh: bool,
+}
+
+/// A node's transform relative to its parent, as it stands when nothing animates it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rest {
+    pub translation: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
+}
+
+impl Rest {
+    pub const IDENTITY: Rest = Rest {
+        translation: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+    };
 }
 
 /// The box every mesh fits in, in the scene's metres, with every node's transform applied.
@@ -33,6 +69,8 @@ pub struct MeshBounds {
 pub struct GltfClip {
     pub name: String,
     pub length: Seconds,
+    /// The nodes the clip moves, by their index in the tree.
+    pub targets: Vec<usize>,
 }
 
 impl GltfInfo {
@@ -42,6 +80,161 @@ impl GltfInfo {
 
     pub fn clip_names(&self) -> Vec<&str> {
         self.clips.iter().map(|clip| clip.name.as_str()).collect()
+    }
+
+    /// The joints of the tree: every node that draws no mesh.
+    pub fn joints(&self) -> usize {
+        self.tree.joints().count()
+    }
+}
+
+impl NodeTree {
+    /// The nodes that draw no mesh, by index: what clips move and hands hang from.
+    pub fn joints(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.nodes.len()).filter(|&index| !self.nodes[index].mesh)
+    }
+
+    /// The names from the root down to the node at `index`, its own last.
+    pub fn path(&self, index: usize) -> Vec<&str> {
+        let mut path = Vec::new();
+        let mut at = Some(index);
+        while let Some(node) = at {
+            path.push(self.nodes[node].name.as_str());
+            at = self.nodes[node].parent;
+        }
+        path.reverse();
+        path
+    }
+
+    /// The node at the path of names from the root.
+    pub fn at_path(&self, path: &[&str]) -> Option<usize> {
+        (0..self.nodes.len()).find(|&index| self.path(index) == path)
+    }
+
+    /// The first node named `name`.
+    pub fn named(&self, name: &str) -> Option<usize> {
+        self.nodes.iter().position(|node| node.name == name)
+    }
+
+    /// Whether the node at `descendant` lies under the node at `ancestor`, or is it.
+    pub fn descends(&self, descendant: usize, ancestor: usize) -> bool {
+        let mut at = Some(descendant);
+        while let Some(node) = at {
+            if node == ancestor {
+                return true;
+            }
+            at = self.nodes[node].parent;
+        }
+        false
+    }
+
+    pub fn parent_name(&self, index: usize) -> &str {
+        self.nodes[index]
+            .parent
+            .map_or("the root", |parent| self.nodes[parent].name.as_str())
+    }
+}
+
+/// How far a joint's rest may turn from the rig's and still play the rig's clips true.
+pub const REST_TURN: Degrees = Degrees(2.0);
+/// How far a joint's rest may stand from the rig's and still play the rig's clips true.
+pub const REST_SHIFT: Meters = Meters(0.002);
+
+/// How a candidate's tree fits a rig's: how many of the rig's joints it has at their path, resting
+/// as the rig rests them, and why each other one does not fit.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fit {
+    pub matched: usize,
+    pub joints: usize,
+    pub misfits: Vec<Misfit>,
+    /// The matched joint resting furthest from the rig's, and how far it turns, fitting or not.
+    pub worst_rest: Option<(String, Degrees)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Misfit {
+    Missing {
+        joint: String,
+    },
+    Misparented {
+        joint: String,
+        parent: String,
+        expected: String,
+    },
+    RestsOff {
+        joint: String,
+        turn: Degrees,
+        shift: Meters,
+    },
+}
+
+impl Fit {
+    pub fn fits(&self) -> bool {
+        self.misfits.is_empty()
+    }
+}
+
+impl Misfit {
+    pub fn joint(&self) -> &str {
+        match self {
+            Misfit::Missing { joint }
+            | Misfit::Misparented { joint, .. }
+            | Misfit::RestsOff { joint, .. } => joint,
+        }
+    }
+}
+
+/// How `candidate` fits `rig`: every joint of the rig must be in the candidate at the same path of
+/// names from the root, which is how a clip finds the joint it moves, resting within `REST_TURN` and
+/// `REST_SHIFT` of the rig's. The candidate may hold more; what is beneath a joint that does not fit
+/// is not reported again.
+pub fn fit(rig: &NodeTree, candidate: &NodeTree) -> Fit {
+    let mut misfits = Vec::new();
+    let mut matched = 0;
+    let mut worst: Option<(String, Degrees)> = None;
+    let mut unfit: Vec<usize> = Vec::new();
+    let joints: Vec<usize> = rig.joints().collect();
+    for &joint in &joints {
+        let node = &rig.nodes[joint];
+        if node.parent.is_some_and(|parent| unfit.contains(&parent)) {
+            unfit.push(joint);
+            continue;
+        }
+        let Some(found) = candidate.at_path(&rig.path(joint)) else {
+            unfit.push(joint);
+            misfits.push(match candidate.named(&node.name) {
+                Some(elsewhere) => Misfit::Misparented {
+                    joint: node.name.clone(),
+                    parent: candidate.parent_name(elsewhere).to_owned(),
+                    expected: rig.parent_name(joint).to_owned(),
+                },
+                None => Misfit::Missing {
+                    joint: node.name.clone(),
+                },
+            });
+            continue;
+        };
+        let rest = candidate.nodes[found].rest;
+        let turn = Degrees(node.rest.rotation.angle_between(rest.rotation).to_degrees());
+        let shift = Meters(node.rest.translation.distance(rest.translation));
+        if worst.as_ref().is_none_or(|(_, most)| turn > *most) {
+            worst = Some((node.name.clone(), turn));
+        }
+        if turn > REST_TURN || shift > REST_SHIFT {
+            misfits.push(Misfit::RestsOff {
+                joint: node.name.clone(),
+                turn,
+                shift,
+            });
+        } else {
+            matched += 1;
+        }
+    }
+    Fit {
+        matched,
+        joints: joints.len(),
+        misfits,
+        worst_rest: worst,
     }
 }
 
@@ -70,21 +263,25 @@ pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
             corners / 3
         })
         .sum();
-    let joints = document
-        .skins()
-        .map(|skin| skin.joints().count())
-        .max()
-        .unwrap_or(0);
     let clips = document
         .animations()
-        .map(|animation| GltfClip {
-            name: animation.name().unwrap_or_default().to_owned(),
-            length: Seconds(
-                animation
-                    .samplers()
-                    .filter_map(|sampler| last_value(sampler.input().max()))
-                    .fold(0.0, f32::max),
-            ),
+        .map(|animation| {
+            let mut targets: Vec<usize> = animation
+                .channels()
+                .map(|channel| channel.target().node().index())
+                .collect();
+            targets.sort_unstable();
+            targets.dedup();
+            GltfClip {
+                name: animation.name().unwrap_or_default().to_owned(),
+                length: Seconds(
+                    animation
+                        .samplers()
+                        .filter_map(|sampler| last_value(sampler.input().max()))
+                        .fold(0.0, f32::max),
+                ),
+                targets,
+            }
         })
         .collect();
     Ok(GltfInfo {
@@ -94,9 +291,35 @@ pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
         }),
         triangles,
         materials: document.materials().count(),
-        joints,
+        skinned: document.skins().next().is_some(),
+        tree: tree_of(&document),
         clips,
     })
+}
+
+fn tree_of(document: &gltf::Document) -> NodeTree {
+    let mut nodes: Vec<TreeNode> = document
+        .nodes()
+        .map(|node| {
+            let (translation, rotation, scale) = node.transform().decomposed();
+            TreeNode {
+                name: node.name().unwrap_or_default().to_owned(),
+                parent: None,
+                rest: Rest {
+                    translation: Vec3::from(translation),
+                    rotation: Quat::from_array(rotation),
+                    scale: Vec3::from(scale),
+                },
+                mesh: node.mesh().is_some(),
+            }
+        })
+        .collect();
+    for node in document.nodes() {
+        for child in node.children() {
+            nodes[child.index()].parent = Some(node.index());
+        }
+    }
+    NodeTree { nodes }
 }
 
 /// A triangle of a model as it stands in the scene, every node's transform applied: its corners,
@@ -172,8 +395,8 @@ pub fn is_flat_shaded(triangles: &[Triangle]) -> bool {
 }
 
 /// A glTF binary of one triangle, flat on the ground, animated by `clips` of the given lengths:
-/// what stands in for a model until a real one is dropped in, drawing nothing anyone would notice
-/// and answering every question the loader asks of a rig.
+/// what stands in for a prop until a real one is dropped in, drawing nothing anyone would notice
+/// and answering every question the loader asks of a glTF.
 pub fn placeholder_rig(clips: &[(&str, Seconds)]) -> Vec<u8> {
     placeholder_mesh(clips, 1)
 }
@@ -181,51 +404,64 @@ pub fn placeholder_rig(clips: &[(&str, Seconds)]) -> Vec<u8> {
 /// A glTF binary of `triangles` triangles stacked within a centimetre of the origin, animated by
 /// `clips`: a model of any weight in triangles and nothing to look at.
 pub fn placeholder_mesh(clips: &[(&str, Seconds)], triangles: usize) -> Vec<u8> {
+    placeholder_body(&NodeTree::default(), clips, triangles)
+}
+
+/// A glTF binary of the joints of `tree` at rest, `triangles` triangles stacked within a centimetre
+/// of the origin beside them, and `clips` moving the first joint (the mesh when there are none): a
+/// rig, a library of clips or a skin on it, of any weight and nothing to look at.
+pub fn placeholder_body(tree: &NodeTree, clips: &[(&str, Seconds)], triangles: usize) -> Vec<u8> {
     let mut bin: Vec<u8> = Vec::new();
     let mut root = json::Root::default();
-    let corners: [[f32; 3]; 3] = [[-0.01, 0.0, -0.01], [0.01, 0.0, -0.01], [0.0, 0.0, 0.01]];
-    let positions: Vec<u8> = (0..triangles)
-        .flat_map(|_| corners.iter().flatten())
-        .flat_map(|value| value.to_le_bytes())
+    let joints: Vec<json::Index<json::Node>> = tree
+        .nodes
+        .iter()
+        .map(|node| {
+            root.push(json::Node {
+                name: Some(node.name.clone()),
+                translation: Some(node.rest.translation.to_array()),
+                rotation: Some(json::scene::UnitQuaternion(node.rest.rotation.to_array())),
+                scale: Some(node.rest.scale.to_array()),
+                ..Default::default()
+            })
+        })
         .collect();
-    let position_accessor = push_accessor(
-        &mut root,
-        &mut bin,
-        &positions,
-        triangles * 3,
-        json::accessor::Type::Vec3,
-        Some((&[-0.01, 0.0, -0.01], &[0.01, 0.0, 0.01])),
-    );
-    let mesh = root.push(json::Mesh {
-        extensions: None,
-        extras: Default::default(),
-        name: None,
-        primitives: vec![json::mesh::Primitive {
-            attributes: BTreeMap::from([(
-                Checked::Valid(json::mesh::Semantic::Positions),
-                position_accessor,
-            )]),
-            extensions: None,
-            extras: Default::default(),
-            indices: None,
-            material: None,
-            mode: Checked::Valid(json::mesh::Mode::Triangles),
-            targets: None,
-        }],
-        weights: None,
-    });
-    let node = root.push(json::Node {
-        mesh: Some(mesh),
-        ..Default::default()
-    });
+    for (index, node) in tree.nodes.iter().enumerate() {
+        if let Some(parent) = node.parent {
+            root.nodes[parent]
+                .children
+                .get_or_insert_with(Vec::new)
+                .push(joints[index]);
+        }
+    }
+    let mut roots: Vec<json::Index<json::Node>> = tree
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.parent.is_none())
+        .map(|(index, _)| joints[index])
+        .collect();
+    let mut animated = joints.first().copied();
+    if triangles > 0 {
+        let mesh = push_mesh(&mut root, &mut bin, triangles);
+        let node = root.push(json::Node {
+            mesh: Some(mesh),
+            ..Default::default()
+        });
+        roots.push(node);
+        animated.get_or_insert(node);
+    }
     let scene = root.push(json::Scene {
         extensions: None,
         extras: Default::default(),
         name: None,
-        nodes: vec![node],
+        nodes: roots,
     });
     root.scene = Some(scene);
     for &(name, length) in clips {
+        let Some(node) = animated else {
+            break;
+        };
         let times = [0.0f32, length.0];
         let input = push_accessor(
             &mut root,
@@ -280,6 +516,44 @@ pub fn placeholder_mesh(clips: &[(&str, Seconds)], triangles: usize) -> Vec<u8> 
         uri: None,
     });
     glb(&root, bin)
+}
+
+fn push_mesh(
+    root: &mut json::Root,
+    bin: &mut Vec<u8>,
+    triangles: usize,
+) -> json::Index<json::Mesh> {
+    let corners: [[f32; 3]; 3] = [[-0.01, 0.0, -0.01], [0.01, 0.0, -0.01], [0.0, 0.0, 0.01]];
+    let positions: Vec<u8> = (0..triangles)
+        .flat_map(|_| corners.iter().flatten())
+        .flat_map(|value| value.to_le_bytes())
+        .collect();
+    let position_accessor = push_accessor(
+        root,
+        bin,
+        &positions,
+        triangles * 3,
+        json::accessor::Type::Vec3,
+        Some((&[-0.01, 0.0, -0.01], &[0.01, 0.0, 0.01])),
+    );
+    root.push(json::Mesh {
+        extensions: None,
+        extras: Default::default(),
+        name: None,
+        primitives: vec![json::mesh::Primitive {
+            attributes: BTreeMap::from([(
+                Checked::Valid(json::mesh::Semantic::Positions),
+                position_accessor,
+            )]),
+            extensions: None,
+            extras: Default::default(),
+            indices: None,
+            material: None,
+            mode: Checked::Valid(json::mesh::Mode::Triangles),
+            targets: None,
+        }],
+        weights: None,
+    })
 }
 
 fn gather_triangles(node: &gltf::Node, parent: Mat4, blob: Option<&[u8]>, out: &mut Vec<Triangle>) {

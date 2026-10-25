@@ -46,7 +46,9 @@ use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::render::{facing_rotation, world_point};
 use engine::core::units::{MeterSize, Meters};
-use engine::systems::actor::{Action, ActorModel};
+use engine::systems::actor::stance;
+use engine::systems::actor::wearing;
+use engine::systems::actor::{Action, ActorModel, Motion};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
@@ -696,20 +698,15 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing>
     let area = frame.area();
     let view = editor.views.area.view_mut(view_key);
     let previews = view.population_previews.clone();
-    let models = content.built::<GltfInfos>();
     let stand = |npc: engine::systems::npc::NpcId, at: Pos<Meters>, facing: Degrees, pose| {
         let npc = frame.reader.path_of(npc)?;
         let npc = content.by_path::<NpcDef>(npc)?;
-        let model = ActorModel::get(content, npc.get(content).model);
+        let def = npc.get(content);
+        let model = ActorModel::get(content, def.model);
         let path = model.model().path();
-        let clip = model
-            .pose(pose)
-            .map(|(clip, _)| clip.name.as_str())
-            .unwrap_or(model.clip(Action::Idle).name.as_str());
-        let clip = models
-            .0
-            .get(&path)
-            .and_then(|info| info.clip_names().iter().position(|name| *name == clip));
+        let hands = wearing::listed(content, model.hands().len(), &def.wearing);
+        let stance = stance::of_hands(content, &hands);
+        let clip = model.standing_clip(stance, &Motion::Action(Action::Idle), pose);
         let ground = area.heights.height_at(at);
         Some(Standing {
             model: path,

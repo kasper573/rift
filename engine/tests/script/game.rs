@@ -124,7 +124,7 @@ pub fn game() -> Game {
         .area("forest", &Map::open(8, 20), json!([]))
         .hero("field", 8.0, 8.0)
         .sword()
-        .wearing(&["sword"])
+        .equipped(&["sword"])
         .npc("fighter", 30.0, json!([]))
         .npc("hunter", 30.0, fighter("hunts"))
         .npc("guard", 30.0, fighter("defends"))
@@ -168,7 +168,8 @@ pub fn game() -> Game {
             }),
         )
         .item("gold", json!({ "name": "Gold", "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 1000 }] }))
-        .item("pass", json!({ "kind": { "type": "equipment", "slot": "offhand" } }))
+        .stance("shield", 1, "off")
+        .item("pass", json!({ "kind": { "type": "equipment", "slot": "hand", "stance": "shield.stance.json" } }))
         .item(
             "map",
             json!({

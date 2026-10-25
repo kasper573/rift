@@ -13,8 +13,9 @@ use ui::egui::{RichText, Ui};
 
 use super::busts::{BustFace, FaceLine};
 use crate::app::Editor;
-use crate::forms::FormChange;
+use crate::forms::{FormChange, FormCx};
 use crate::keymap::EditorKey;
+use crate::picker;
 use crate::project::RowSelection;
 use crate::shell::widgets;
 use crate::tabs::shown_path;
@@ -159,26 +160,28 @@ fn remove_dialog(editor: &mut Editor, key: &str, face: &BustFace, faces: &[BustF
     });
 }
 
-/// What the loader makes of the rig: its budget and its clips, and the faces it speaks with.
+/// What the loader makes of the skin: how it fits its skeleton, its budget, and who wears it.
 pub fn rig(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
     use engine::core::assets::FileSize;
     use engine::core::content::media::GltfInfos;
-    use engine::systems::actor::model::{MAX_CHARACTER_BYTES, MAX_CHARACTER_TRIANGLES, MAX_JOINTS};
+    use engine::systems::actor::model::{MAX_CHARACTER_BYTES, MAX_CHARACTER_TRIANGLES, fit_report};
     let path = row.model.path();
-    let info = editor.project.as_ref().and_then(|project| {
-        project
-            .content
-            .as_ref()?
-            .built::<GltfInfos>()
-            .0
-            .get(&path)
-            .cloned()
-    });
     let weight = editor
         .project
         .as_ref()
         .and_then(|project| project.files.get(&path))
         .map(|bytes| FileSize(bytes.len()));
+    let fitted = super::built(editor, key).and_then(|(content, model)| {
+        let info = content.built::<GltfInfos>().0.get(&path)?.clone();
+        let skeleton_path = model.skeleton_id().path(content).to_owned();
+        let report = fit_report(model.skeleton(), &skeleton_path, &info.tree);
+        let hands: Vec<String> = model
+            .hands()
+            .iter()
+            .map(|hand| hand.joint.0.clone())
+            .collect();
+        Some((info, skeleton_path, report, hands))
+    });
     let budget = |ui: &mut Ui, key: &str, count: usize, most: usize| {
         form::kv(ui, key, |ui| {
             let ink = if count > most {
@@ -191,11 +194,41 @@ pub fn rig(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
     };
     panel::card(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel::header(ui, "Rig", "", |_| {});
+        panel::header(ui, "Fit", "", |_| {});
         ui.add_space(4.0);
-        form::kv_code(ui, "file", path);
-        match info {
-            Some(info) => {
+        form::kv_code(ui, "file", &path);
+        match &fitted {
+            Some((info, skeleton, report, hands)) => {
+                form::kv_code(ui, "skeleton", shown_path(skeleton));
+                form::kv(ui, "joints", |ui| {
+                    let ink = if report.problems.is_empty() {
+                        theme::TEXT
+                    } else {
+                        theme::DANGER
+                    };
+                    ui.colored_label(
+                        ink,
+                        format!("{} of {}", report.fit.matched, report.fit.joints),
+                    );
+                });
+                form::kv_text(
+                    ui,
+                    "hands",
+                    if hands.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        hands.join(", ")
+                    },
+                );
+                if let Some((joint, turn)) = &report.fit.worst_rest {
+                    form::kv_text(ui, "rest worst", format!("{joint}, {:.1}°", turn.0));
+                }
+                for problem in &report.problems {
+                    ui.colored_label(
+                        theme::DANGER,
+                        format!("{}; {}", problem.found, problem.expected),
+                    );
+                }
                 let size = info.bounds.max - info.bounds.min;
                 form::kv_text(
                     ui,
@@ -203,7 +236,6 @@ pub fn rig(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
                     format!("{:.2} × {:.2} × {:.2} m", size.x, size.z, size.y),
                 );
                 budget(ui, "triangles", info.triangles, MAX_CHARACTER_TRIANGLES);
-                budget(ui, "joints", info.joints, MAX_JOINTS);
                 if let Some(weight) = weight {
                     form::kv(ui, "weight", |ui| {
                         let ink = if weight > MAX_CHARACTER_BYTES {
@@ -214,10 +246,12 @@ pub fn rig(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
                         ui.colored_label(ink, format!("{weight} of {MAX_CHARACTER_BYTES}"));
                     });
                 }
-                form::kv_text(ui, "clips", info.clip_names().join(", "));
             }
             None => {
-                ui.colored_label(theme::DANGER, "the model does not read as a glTF binary");
+                ui.colored_label(
+                    theme::DANGER,
+                    "the model did not load: its problems are in the output panel",
+                );
             }
         }
         form::kv_text(
@@ -232,7 +266,8 @@ pub fn rig(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
         ui.add_space(4.0);
         form::hint(
             ui,
-            "Drop a .glb on this tab to import a new rig over this one.",
+            "Drop a .glb on this tab to import a new skin over this one, fitted against the \
+             skeleton first.",
         );
     });
     ui.add_space(8.0);
@@ -308,8 +343,13 @@ pub fn remove_face_dialog(editor: &mut Editor, ctx: &egui::Context, key: &str) {
     }
 }
 
-pub fn row_body(ui: &mut Ui, model: &mut ModelDef) -> FormChange {
+pub fn row_body(ui: &mut Ui, cx: &mut FormCx, model: &mut ModelDef) -> FormChange {
     let mut changed = FormChange::default();
+    form::kv(ui, "skeleton", |ui| {
+        if picker::content(ui, cx, &mut model.skeleton, "/skeleton") {
+            changed = FormChange::at("/skeleton");
+        }
+    });
     form::kv(ui, "hitbox", |ui| {
         let hitbox = &mut model.hitbox;
         if NumberField::of([&mut hitbox.radius.0, &mut hitbox.height.0])
@@ -321,15 +361,11 @@ pub fn row_body(ui: &mut Ui, model: &mut ModelDef) -> FormChange {
         }
     });
     form::kv_text(ui, "model", shown_path(model.model.as_str()));
-    let cues: usize = model.clips.values().map(|clip| clip.cues.len()).sum();
+    let cues: usize = model.overrides.values().map(Vec::len).sum();
     form::kv_text(
         ui,
-        "clips",
-        format!(
-            "{} · {} poses · {cues} cues",
-            model.clips.len(),
-            model.poses.len()
-        ),
+        "overrides",
+        format!("{} timed · {cues} cues", model.overrides.len()),
     );
     changed
 }

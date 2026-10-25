@@ -8,6 +8,7 @@ mod reader;
 mod references;
 mod round_trip;
 mod shaders;
+mod skeleton;
 mod stages;
 mod store;
 mod support;

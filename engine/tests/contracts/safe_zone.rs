@@ -132,7 +132,7 @@ fn border(modules: Value) -> Sim {
         .area("border", &Map::open(20, 9), modules)
         .hero("border", 15.0, 4.0)
         .sword()
-        .wearing(&["sword"])
+        .equipped(&["sword"])
         .npc(
             "wanderer",
             25.0,
@@ -156,10 +156,13 @@ fn border(modules: Value) -> Sim {
         .edit("npc", "hunter", |hunter| {
             hunter["basic_attack"] = json!(path("skill", "strike"))
         })
+        .skeleton_of(
+            "wings",
+            &testkit::rig_clips(),
+            json!({ "modules": [{ "type": "airborne" }] }),
+        )
         .npc("bat", 8.0, json!([]))
-        .edit("model", "bat", |bat| {
-            bat["modules"] = json!([{ "type": "airborne" }])
-        })
+        .model_on("bat", "wings", 1.5, json!([]))
         .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")

@@ -808,7 +808,7 @@ impl NodeReads {
                 let item = path(reader.path_of(*item));
                 self.items.push(format!("holding {}", shown_path(&item)));
             }
-            RiftQuery::Wearing { item, .. } => {
+            RiftQuery::Equipped { item, .. } => {
                 let item = path(reader.path_of(*item));
                 self.items.push(format!("wearing {}", shown_path(&item)));
             }

@@ -5,6 +5,7 @@ use engine::core::math::Pos;
 use engine::core::script::Value;
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
 use engine::systems::actor::Name;
+use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::AreaDef;
 use engine::systems::area::transition::Discovered;
 use engine::systems::class::{Class, ClassDef};
@@ -77,7 +78,7 @@ fn a_character_joined_from_a_row_is_that_character() {
     assert_eq!(
         world.get::<Equipment>(player),
         Some(&Equipment {
-            slots: snapshot.equipment.clone()
+            slots: BTreeMap::from([(EquipmentSlot::Hand(HandIndex::OFF), id(&content, "shield"))])
         })
     );
     let known = world.get::<Discovered>(player).expect("known areas");
@@ -163,7 +164,8 @@ fn returning_to(area: &str) -> Sim {
             json!({ "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 50 }] }),
         )
         .item("bone", json!({ "kind": { "type": "resource" } }))
-        .item("shield", json!({ "kind": { "type": "equipment", "slot": "offhand" } }))
+        .stance("shield", 1, "off")
+        .item("shield", json!({ "kind": { "type": "equipment", "slot": "hand", "stance": "shield.stance.json" } }))
         .npc("chief", 60.0, json!([]))
         .row(
             "quest",
@@ -237,7 +239,7 @@ fn tess(content: &Content, start: Place) -> CharacterSnapshot {
             ItemStack::new(id(content, "tusk"), 5),
             ItemStack::new(id(content, "gold"), 20),
         ],
-        equipment: BTreeMap::from([(EquipmentSlot::Offhand, id(content, "shield"))]),
+        equipped: vec![id(content, "shield")],
         known_areas: vec![id(content, "village"), id(content, "forest")],
         quests: vec![
             SnapshotQuest {

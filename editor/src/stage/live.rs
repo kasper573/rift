@@ -433,6 +433,7 @@ fn spawn_sturdy(
         ])),
         basic_attack: None,
         skills: Vec::new(),
+        wearing: Vec::new(),
         modules: Vec::new(),
     };
     npc::spawn_actor(world, &def, at, area)
@@ -464,14 +465,13 @@ fn granted_by(content: &Content, skill: SkillId) -> Option<ItemId> {
         .find(|item| skill::grants_of(content, *item).contains(&skill))
 }
 
-/// Gives the character an item the way it is used: worn when it is gear, in the bag otherwise.
 /// The items a skill's requirements ask the caster to wear or hold.
 fn required_items(def: &SkillDef) -> Vec<ItemId> {
     let mut items = Vec::new();
     if let Some(requires) = &def.requires {
         requires.visit(&mut |expr| {
             if let Condition::Query(
-                RiftQuery::Wearing { item, .. } | RiftQuery::Holding { item, .. },
+                RiftQuery::Equipped { item, .. } | RiftQuery::Holding { item, .. },
             ) = expr
             {
                 items.push(*item);
@@ -481,11 +481,10 @@ fn required_items(def: &SkillDef) -> Vec<ItemId> {
     items
 }
 
+/// Gives the character an item the way it is used: worn when it is gear, in the bag otherwise.
 fn carry(snapshot: &mut CharacterSnapshot, content: &Content, item: ItemId) {
     match item.get(content).kind {
-        ItemKind::Equipment { slot, .. } => {
-            snapshot.equipment.insert(slot, item);
-        }
+        ItemKind::Equipment { .. } => snapshot.equipped.push(item),
         ItemKind::Usable | ItemKind::Resource => snapshot.bag.push(ItemStack::new(item, 1)),
     }
 }

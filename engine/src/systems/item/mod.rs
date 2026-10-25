@@ -27,6 +27,8 @@ use crate::core::content::{
 use crate::core::math::{Offset, Pos};
 use crate::core::time::Seconds;
 use crate::core::units::{MeterPos, Meters};
+use crate::systems::actor::skeleton::{LocalOffset, LocalTurn};
+use crate::systems::actor::stance::StanceId;
 use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
 use crate::systems::movement::{Position, position};
@@ -504,6 +506,14 @@ impl ItemDef {
         self.has(ItemModuleKind::Bound) || self.has(ItemModuleKind::QuestItem)
     }
 
+    /// Where the item is worn, when it is equipment.
+    pub fn wear(&self) -> Option<&Wear> {
+        match &self.kind {
+            ItemKind::Equipment { slot, .. } => Some(slot),
+            _ => None,
+        }
+    }
+
     pub fn category(&self) -> ItemCategory {
         if self.has(ItemModuleKind::Currency) {
             return ItemCategory::Currency;
@@ -520,7 +530,8 @@ impl ItemDef {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ItemKind {
     Equipment {
-        slot: equipment::EquipmentSlot,
+        #[serde(flatten)]
+        slot: Wear,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         requires: Option<Condition>,
         #[schemars(extend("x-usage" = "known while worn"))]
@@ -529,6 +540,45 @@ pub enum ItemKind {
     },
     Usable,
     Resource,
+}
+
+/// Where an item is worn: held in a hand, putting its wearer in a stance and hanging from the hand
+/// by its grip, or on the head, which counts for stats alone and is never drawn.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "slot", rename_all = "snake_case")]
+pub enum Wear {
+    Hand {
+        stance: StanceId,
+        #[serde(default, skip_serializing_if = "Grip::is_identity")]
+        grip: Grip,
+    },
+    Head,
+}
+
+/// How a prop sits in the hand it hangs from, in the hand's frame: none for a prop whose handle is
+/// at its origin with its length along +Y.
+#[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Grip {
+    #[serde(default, skip_serializing_if = "LocalOffset::is_zero")]
+    pub offset: LocalOffset,
+    #[serde(default, skip_serializing_if = "LocalTurn::is_zero")]
+    pub turn: LocalTurn,
+}
+
+impl Wear {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Wear::Hand { .. } => "held",
+            Wear::Head => "head",
+        }
+    }
+}
+
+impl Grip {
+    pub fn is_identity(&self) -> bool {
+        self.offset.is_zero() && self.turn.is_zero()
+    }
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]

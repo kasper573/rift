@@ -75,7 +75,7 @@ fn yard() -> Sim {
         .area("yard", &Map::open(13, 5), json!([]))
         .hero("yard", 2.0, 2.0)
         .sword()
-        .wearing(&["sword"])
+        .equipped(&["sword"])
         .npc("brute", 25.0, json!([]))
         .item(
             "bone",

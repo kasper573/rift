@@ -11,7 +11,7 @@ use crate::core::script::{
 use crate::core::time::Seconds;
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::{AreaId, AreaTag};
-use crate::systems::equipment::{self, EquipmentSlot};
+use crate::systems::equipment;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::PlayedBy;
 use crate::systems::script::{
@@ -67,14 +67,14 @@ pub struct Equip {
     pub refused: Arrow,
 }
 
-/// Takes an item or slot off.
+/// Takes an item off, from wherever it is worn.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(extend("x-system" = "item"))]
 pub struct Unequip {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
     pub who: Option<Condition>,
-    pub slot: EquipmentSlot,
+    pub item: ItemId,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
     #[schemars(extend("x-fails" = true))]
@@ -246,12 +246,12 @@ impl EffectDef<RiftScripting> for Unequip {
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim(cx, &self.who)?;
-        let (slot, refused) = (self.slot, self.refused.clone());
+        let (item, refused) = (self.item, self.refused.clone());
         Ok(Box::new(move |world, _, cx| {
             let Some(actor) = effects::aimed_character(world, cx, &who) else {
                 return effects::refuse(world, cx, &refused, "Nobody to unequip");
             };
-            let outcome = equipment::unequip_slot(world, actor, slot);
+            let outcome = equipment::unequip_item(world, actor, item);
             effects::settle(world, cx, &refused, outcome)
         }))
     }

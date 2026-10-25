@@ -9030,6 +9030,7 @@ name = "testkit"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
+ "bevy_math",
  "bevy_replicon",
  "bevy_time",
  "engine",

@@ -4,8 +4,8 @@
 use engine::core::geometry::Capsule;
 use engine::core::math::Offset;
 use engine::core::units::Meters;
-use engine::systems::actor::Action;
 use engine::systems::actor::model::ModelDef;
+use engine::systems::actor::{Action, Motion, Pose};
 use ui::egui::{self, Stroke, Ui, Vec2};
 use ui::{form, theme};
 
@@ -28,11 +28,9 @@ pub struct Drag {
 }
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
-    let names = super::clip_names(editor, row);
-    let idle = row
-        .clips
-        .get(&Action::Idle)
-        .and_then(|clip| names.iter().position(|name| *name == clip.name));
+    let idle = super::built(editor, key).and_then(|(_, model)| {
+        model.standing_clip(None, &Motion::Action(Action::Idle), Pose::Idle)
+    });
     let height = ui.available_height();
     let Some(turntable) = super::turntable(
         editor,

@@ -41,7 +41,7 @@ impl QueryGroup {
             | RiftQueryKind::SkillRank
             | RiftQueryKind::SkillStat
             | RiftQueryKind::SpentSkillPoints => QueryGroup::Character,
-            RiftQueryKind::Holding | RiftQueryKind::FreeSlots | RiftQueryKind::Wearing => {
+            RiftQueryKind::Holding | RiftQueryKind::FreeSlots | RiftQueryKind::Equipped => {
                 QueryGroup::Gear
             }
             RiftQueryKind::OnQuest

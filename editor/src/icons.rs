@@ -8,6 +8,8 @@ use engine::core::content::{ContentFile, SETTINGS_FILE, table_of};
 use engine::core::vfx::VfxDef;
 use engine::core::vfx::shader::VfxShaderDef;
 use engine::systems::actor::ModelDef;
+use engine::systems::actor::skeleton::SkeletonDef;
+use engine::systems::actor::stance::StanceDef;
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
@@ -159,8 +161,9 @@ impl KindFamily {
             | PlayerDef::TABLE
             | CharacterSnapshot::TABLE
             | ClassDef::TABLE
-            | ModelDef::TABLE => KindFamily::Characters,
-            ItemDef::TABLE | ShopDef::TABLE => KindFamily::Items,
+            | ModelDef::TABLE
+            | SkeletonDef::TABLE => KindFamily::Characters,
+            ItemDef::TABLE | ShopDef::TABLE | StanceDef::TABLE => KindFamily::Items,
             SkillDef::TABLE | StatusEffectDef::TABLE | VfxDef::TABLE | VfxShaderDef::TABLE => {
                 KindFamily::Abilities
             }
@@ -202,6 +205,8 @@ pub fn of_table(table: &str) -> KindIcon {
         CharacterSnapshot::TABLE => KindIcon::badged(phosphor::USER, phosphor::FLASK),
         ClassDef::TABLE => KindIcon::plain(phosphor::SHIELD_STAR),
         ModelDef::TABLE => KindIcon::plain(phosphor::PERSON_ARMS_SPREAD).unpictured(),
+        SkeletonDef::TABLE => KindIcon::plain(phosphor::BONE).unpictured(),
+        StanceDef::TABLE => KindIcon::plain(phosphor::HAND_FIST),
         ItemDef::TABLE => KindIcon::plain(phosphor::BACKPACK),
         SkillDef::TABLE => KindIcon::plain(phosphor::LIGHTNING),
         StatusEffectDef::TABLE => KindIcon::plain(phosphor::HEARTBEAT),

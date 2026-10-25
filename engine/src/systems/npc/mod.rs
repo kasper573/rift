@@ -13,19 +13,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::babble::{BabbleId, Babbler};
 use crate::core::content::{
-    Content, ContentFile, ContentId, Loading, ModuleRule, ModuleSet, NamedContent, Nearby,
-    RowCheck, serial,
+    Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, NamedContent,
+    Nearby, RowCheck, serial,
 };
 use crate::core::geometry::Radians;
 use crate::core::math::{Percent, Pos, Rect, Rgba, Rng};
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::actor::model::ModelId;
+use crate::systems::actor::wearing::{self, Wearing};
 use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox, Pose, Tint};
 use crate::systems::area::{self, AreaId, AreaModule, AreaTag, Wild};
 use crate::systems::combat::{Attitude, Dead, Died};
 use crate::systems::interact::Interactive;
-use crate::systems::item::{ItemId, Reservation};
+use crate::systems::item::{ItemId, Reservation, Wear};
 use crate::systems::movement::{self, NavMesh, Position, Spots, position};
 use crate::systems::script::condition::CompiledCondition;
 use crate::systems::script::query::TickRoster;
@@ -62,7 +63,68 @@ pub fn check_all(loading: &mut Loading) {
                 listed.rank,
             );
         }
+        check_wearing(&content, loading, id, def, &mut check);
         loading.row_errors(id, check);
+    }
+}
+
+/// A wear list holds what hands show, asking no more hands than the body has; one the body cannot
+/// show at all loads, and says so.
+fn check_wearing(
+    content: &Content,
+    loading: &mut Loading,
+    id: NpcId,
+    def: &NpcDef,
+    check: &mut RowCheck,
+) {
+    for (index, &item) in def.wearing.iter().enumerate() {
+        if !matches!(item.get(content).wear(), Some(Wear::Hand { .. })) {
+            check.error(
+                format!("/wearing/{index}"),
+                "not held",
+                format!("wearing lists {}, which no hand holds", item.name(content)),
+                "items a hand holds, each naming its stance",
+            );
+        }
+    }
+    let Some(model) = ActorModel::loaded(content, def.model) else {
+        return;
+    };
+    let hands = model.hands().len();
+    let skeleton = model.skeleton_id();
+    if hands == 0 {
+        for (index, &item) in def.wearing.iter().enumerate() {
+            loading.row_warning(
+                id,
+                &format!("/wearing/{index}"),
+                ContentProblem::new(
+                    "never shown",
+                    format!(
+                        "wearing lists {}, but {}.skeleton has no hands: listed, never shown",
+                        item.name(content),
+                        skeleton.name(content)
+                    ),
+                    "a body with hands, for the item to show",
+                ),
+            );
+        }
+        return;
+    }
+    let asked = wearing::asked(content, &def.wearing);
+    if asked > hands {
+        let names: Vec<&str> = def.wearing.iter().map(|item| item.name(content)).collect();
+        check.error(
+            "/wearing",
+            "too many hands",
+            format!(
+                "wearing asks {asked} hands ({}) of a body with {hands}",
+                names.join(", ")
+            ),
+            format!(
+                "at most {hands} hands, as {}.skeleton has",
+                skeleton.name(content)
+            ),
+        );
     }
 }
 
@@ -101,6 +163,10 @@ pub struct NpcDef {
     #[schemars(extend("x-usage" = "known at these ranks, for the scripts that will cast them"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<NpcSkill>,
+    /// What its hands show, in their order: looks alone, granting no skill, stat or drop.
+    #[schemars(extend("x-usage" = "shown in its hands"))]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wearing: Vec<ItemId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<NpcModule>,
 }
@@ -124,6 +190,7 @@ impl ContentFile for NpcDef {
             stats: Stats::default(),
             basic_attack: None,
             skills: Vec::new(),
+            wearing: Vec::new(),
             modules: Vec::new(),
         })
     }
@@ -512,6 +579,10 @@ pub fn approach(world: &mut World) {
 }
 
 fn actor_bundle(content: &Content, def: &NpcDef, at: Pos<Meters>, area: AreaId) -> impl Bundle {
+    let model = ActorModel::get(content, def.model);
+    let shown = Wearing {
+        hands: wearing::listed(content, model.hands().len(), &def.wearing),
+    };
     let character = Character::new(
         Position::at(at),
         Actor {
@@ -522,10 +593,10 @@ fn actor_bundle(content: &Content, def: &NpcDef, at: Pos<Meters>, area: AreaId) 
             model: def.model,
             attack_rate: PlaybackRate::default(),
         },
-        Hitbox(ActorModel::get(content, def.model).hitbox()),
+        Hitbox(model.hitbox()),
         AreaTag { area },
     );
-    (character, def.stats.clone())
+    (character, def.stats.clone(), shown)
 }
 
 fn start_scripts(world: &mut World, entity: Entity, def: NpcId) {

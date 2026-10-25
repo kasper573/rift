@@ -85,12 +85,14 @@ fn a_resident_shown_by_condition_follows_the_players_memory() {
 #[test]
 fn a_world_that_serves_no_area_judges_an_items_requirements() {
     let content = Game::new()
+        .stance("shield", 1, "off")
         .item(
             "shield",
             json!({
                 "kind": {
                     "type": "equipment",
-                    "slot": "offhand",
+                    "slot": "hand",
+                    "stance": "shield.stance.json",
                     "requires": { "type": "at_least", "a": { "type": "level" }, "b": 2 },
                 },
             }),
@@ -125,7 +127,7 @@ fn arena() -> Sim {
         )
         .hero("arena", 3.0, 3.0)
         .sword()
-        .wearing(&["sword"])
+        .equipped(&["sword"])
         .npc("brute", 25.0, json!([]))
         .npc("ghost", 25.0, json!([]))
         .npc(

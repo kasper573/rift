@@ -410,9 +410,11 @@ fn harbour() -> Sim {
         .resource("tusk", 50)
         .resource("steak", 50)
         .item("pebble", json!({ "kind": { "type": "resource" } }))
-        .item("shield", json!({ "kind": { "type": "equipment", "slot": "offhand" } }))
+        .stance("shield", 1, "off")
+        .stance("sword", 1, "main")
+        .item("shield", json!({ "kind": { "type": "equipment", "slot": "hand", "stance": "shield.stance.json" } }))
         .item("helm", json!({ "kind": { "type": "equipment", "slot": "head" } }))
-        .item("cutlass", json!({ "kind": { "type": "equipment", "slot": "weapon" } }))
+        .item("cutlass", json!({ "kind": { "type": "equipment", "slot": "hand", "stance": "sword.stance.json" } }))
         .item("letter", quest_item("resource"))
         .item("key", quest_item("resource"))
         .item("map", {

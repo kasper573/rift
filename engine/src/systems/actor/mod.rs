@@ -4,9 +4,15 @@ pub mod model;
 pub mod plate;
 pub mod playing;
 pub mod render;
+pub mod skeleton;
+pub mod stance;
+pub mod wearing;
 
 pub use model::{ActorModel, ModelDef, ModelId, Timing};
-pub use playing::{Animate, LastAction, Playing, Wait};
+pub use playing::{Animate, LastAction, Motion, Playing, Wait};
+pub use skeleton::{SkeletonDef, SkeletonId};
+pub use stance::{StanceDef, StanceId};
+pub use wearing::Wearing;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
@@ -30,12 +36,19 @@ pub fn register(app: &mut App) {
 
     app.replicate::<Actor>()
         .replicate::<Playing>()
+        .replicate::<Wearing>()
+        .replicate::<wearing::ScriptedStance>()
         .replicate_once::<Hitbox>()
         .replicate_once::<Name>();
 }
 
 pub fn content(registry: &mut ContentRegistry) {
     registry
+        .bundle::<SkeletonDef>()
+        .named::<SkeletonDef>()
+        .modules::<SkeletonDef>()
+        .file::<StanceDef>()
+        .named::<StanceDef>()
         .bundle::<ModelDef>()
         .modules::<ModelDef>()
         .hook(LoadStep::Files, model::build_all);
@@ -219,7 +232,7 @@ pub fn settle(world: &mut World, actors: &mut Situations, sessions: &mut dialogu
         let action = if stats.is_some_and(stat::dead) {
             Action::Dead
         } else if let Some(playing) = playing {
-            playing.action
+            playing.motion.action()
         } else if walking {
             match actor.action {
                 Action::Walk | Action::Run => actor.action,

@@ -1,6 +1,7 @@
 pub mod area;
 pub mod character;
 pub mod class;
+pub mod cues;
 pub mod item;
 pub mod model;
 pub mod navigation;

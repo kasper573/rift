@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
 use engine::core::units::Meters;
+use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::AreaDef;
 use engine::systems::class::{self, NodeKey, SkillPoints};
 use engine::systems::combat::{self, AttackRequest, Attitude};
@@ -86,7 +87,7 @@ fn a_slot_takes_only_what_you_have_and_keeps_it_when_it_goes() {
     request(
         &mut sim,
         UnequipRequest {
-            slot: EquipmentSlot::Weapon,
+            slot: EquipmentSlot::Hand(HandIndex::MAIN),
         },
     );
     assert_eq!(
@@ -152,15 +153,18 @@ fn a_weapon_put_in_the_basic_attack_slot_is_worn_and_lends_its_attack() {
     let strike = sim.id::<SkillDef>("strike");
     let sword = sim.id::<ItemDef>("sword");
     let weapon = |sim: &Sim| {
-        sim.world
-            .get::<Equipment>(player)
-            .and_then(|equipment| equipment.slots.get(&EquipmentSlot::Weapon).copied())
+        sim.world.get::<Equipment>(player).and_then(|equipment| {
+            equipment
+                .slots
+                .get(&EquipmentSlot::Hand(HandIndex::MAIN))
+                .copied()
+        })
     };
 
     request(
         &mut sim,
         UnequipRequest {
-            slot: EquipmentSlot::Weapon,
+            slot: EquipmentSlot::Hand(HandIndex::MAIN),
         },
     );
     assert_eq!(basic_attack(&sim, player), None);
@@ -382,7 +386,7 @@ fn yard() -> (Sim, Entity) {
         .area("yard", &Map::open(15, 9), json!([]))
         .hero("yard", 4.0, 4.0)
         .sword()
-        .wearing(&["sword"])
+        .equipped(&["sword"])
         .edit("class", "hero", |hero| {
             hero["levels"] = json!([
                 { "xp": 0, "skill_points": 1 },

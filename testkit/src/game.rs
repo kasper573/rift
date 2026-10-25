@@ -13,6 +13,7 @@ use engine::core::time::{Millis, Seconds};
 use engine::core::vfx::shader::{SHADER_SOURCE, Stage};
 use engine::systems::actor::Action;
 use engine::systems::actor::model::{MODEL_BUSTS, MODEL_GLB};
+use engine::systems::actor::skeleton::{CLIP_LIBRARIES, RIG_GLB};
 use engine::systems::area;
 use engine::systems::area::prop::PROP_GLB;
 use engine::systems::area::scene::SCENE;
@@ -20,7 +21,7 @@ use engine::systems::item;
 use serde_json::{Value, json};
 use strum::VariantArray;
 
-use crate::art::{glb, png, wav, wav_of};
+use crate::art::{glb, library_glb, png, rig, rig_glb, skin_glb, wav, wav_of};
 
 /// A game folder held in memory, of only the files a test declares, loaded by the engine's own
 /// loader against every type a game is made of. A file the test leaves out is simply absent, so a
@@ -53,7 +54,13 @@ pub const CLIP: Millis = Millis(300.0);
 /// When a declared model's attack lands.
 pub const APEX: Millis = Millis(100.0);
 
-/// The clips a declared model's rig animates: one per action, each `CLIP` long.
+/// The skeleton every declared model wears unless the test names another.
+pub const BODY: &str = "body";
+
+/// The library every declared skeleton keeps its clips in.
+pub const LIBRARY: &str = "moves";
+
+/// The clips a declared skeleton's library carries: one per action, each `CLIP` long.
 pub fn rig_clips() -> Vec<(&'static str, Seconds)> {
     Action::VARIANTS
         .iter()
@@ -185,8 +192,9 @@ impl Game {
             }))
     }
 
-    /// A sword that, worn, lets its wearer strike: a basic attack on one enemy, landing the wearer's
-    /// damage at the height of its swing.
+    /// A sword that, held, lets its wearer strike: a basic attack on one enemy, landing the wearer's
+    /// damage at the height of its swing; it puts its wearer in the sword stance and takes the main
+    /// hand.
     pub fn sword(self) -> Game {
         self.row(
             "skill",
@@ -214,14 +222,64 @@ impl Game {
             }),
         )
         .asset("icons/strike.png", png(1, 1))
+        .stance("sword", 1, "main")
         .item(
             "sword",
             json!({ "kind": {
                 "type": "equipment",
-                "slot": "weapon",
+                "slot": "hand",
+                "stance": path("stance", "sword"),
                 "grants": [path("skill", "strike")],
             } }),
         )
+    }
+
+    /// A stance of `hands` hands whose clips were made for `hand` (`main`, `off` or `either`),
+    /// pairing with nothing.
+    pub fn stance(self, name: &str, hands: u8, hand: &str) -> Game {
+        self.row(
+            "stance",
+            name,
+            json!({ "name": name, "hands": hands, "hand": hand }),
+        )
+    }
+
+    /// A skeleton of the test rig, with a right and a left hand, its library carrying a clip named
+    /// after every action, each [`CLIP`] long, which its base set plays; its attack lands at
+    /// [`APEX`].
+    pub fn skeleton(self, name: &str) -> Game {
+        self.skeleton_of(name, &rig_clips(), json!({}))
+    }
+
+    /// A skeleton of the test rig, its library carrying `clips`, of `fields` over the plain
+    /// skeleton's: a right and a left hand, a base set playing each action's clip of its name, the
+    /// attack landing at [`APEX`].
+    pub fn skeleton_of(self, name: &str, clips: &[(&str, Seconds)], fields: Value) -> Game {
+        let base: serde_json::Map<String, Value> = Action::VARIANTS
+            .iter()
+            .map(|action| (action.as_ref().to_owned(), json!(action.as_ref())))
+            .collect();
+        let mut row = json!({
+            "name": name,
+            "hands": [
+                { "name": "right", "joint": "hand.r" },
+                { "name": "left", "joint": "hand.l" },
+            ],
+            "base": { "clips": base },
+            "cues": { "attack": [{ "at": APEX.0, "apex": true }] },
+        });
+        for (field, value) in fields.as_object().expect("a skeleton's fields") {
+            row[field] = value.clone();
+        }
+        let tree = rig();
+        self.row("skeleton", name, row)
+            .part("skeleton", name, &RIG_GLB.named("", "glb"), rig_glb(&tree))
+            .part(
+                "skeleton",
+                name,
+                &CLIP_LIBRARIES.named(LIBRARY, "glb"),
+                library_glb(&tree, clips),
+            )
     }
 
     /// A memory of whether something happened, labelled with its name and forgotten as `resets`
@@ -265,10 +323,10 @@ impl Game {
             .asset(&card, png(item::CARD_SIZE.0, item::CARD_SIZE.1))
     }
 
-    /// Every new character starts wearing `items`, the items declared under those names.
-    pub fn wearing(self, items: &[&str]) -> Game {
+    /// Every new character starts with `items` equipped, the items declared under those names.
+    pub fn equipped(self, items: &[&str]) -> Game {
         let items: Vec<String> = items.iter().map(|item| path("item", item)).collect();
-        self.edit("player", "hero", |hero| hero["wearing"] = json!(items))
+        self.edit("player", "hero", |hero| hero["equipped"] = json!(items))
     }
 
     /// Changes the fields of a file declared before.
@@ -401,28 +459,26 @@ impl Game {
         .asset(&sheet, png(1, 1))
     }
 
-    /// A model of a rig nobody would notice, half a metre around and `height` tall, with a clip
-    /// named after every action, each [`CLIP`] long; its attack lands at [`APEX`].
+    /// A model nobody would notice on the plain skeleton [`BODY`], declared with it unless the test
+    /// declared it before, half a metre around and `height` tall.
     pub fn model(self, name: &str, height: f32, modules: Value) -> Game {
-        let clips: serde_json::Map<String, Value> = Action::VARIANTS
-            .iter()
-            .map(|action| {
-                let cues = match action {
-                    Action::Attack => json!([{ "at": APEX.0, "apex": true }]),
-                    _ => json!([]),
-                };
-                (
-                    action.as_ref().to_owned(),
-                    json!({ "name": action.as_ref(), "cues": cues }),
-                )
-            })
-            .collect();
+        let game = if self.files.contains_key(&fields_path("skeleton", BODY)) {
+            self
+        } else {
+            self.skeleton(BODY)
+        };
+        game.model_on(name, BODY, height, modules)
+    }
+
+    /// A model nobody would notice on the skeleton declared as `skeleton`, half a metre around and
+    /// `height` tall, carrying no clips of its own.
+    pub fn model_on(self, name: &str, skeleton: &str, height: f32, modules: Value) -> Game {
         self.row(
             "model",
             name,
             json!({
+                "skeleton": path("skeleton", skeleton),
                 "hitbox": { "radius": 0.5, "height": height },
-                "clips": clips,
                 "modules": modules,
             }),
         )
@@ -430,7 +486,7 @@ impl Game {
             "model",
             name,
             &MODEL_GLB.named("", "glb"),
-            glb(&rig_clips()),
+            skin_glb(&rig(), &[]),
         )
     }
 

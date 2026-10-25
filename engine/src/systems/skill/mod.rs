@@ -37,7 +37,7 @@ use crate::core::time::{Seconds, UnixMillis};
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::AreaTag;
 use crate::systems::class::{self, NodeKey, SkillPoints, SkillTree};
-use crate::systems::equipment::{self, Equipment};
+use crate::systems::equipment;
 use crate::systems::item::{ItemId, ItemKind, ItemStack};
 use crate::systems::movement;
 use crate::systems::npc::{Npc, NpcDef};
@@ -668,16 +668,9 @@ pub fn rank_of(world: &World, actor: Entity, skill: SkillId) -> Rank {
 /// The skills an actor's worn equipment grants, in slot order.
 pub fn granted(world: &World, actor: Entity) -> Vec<SkillId> {
     let content = world.resource::<Content>();
-    world
-        .get::<Equipment>(actor)
-        .map(|equipment| {
-            equipment
-                .slots
-                .values()
-                .flat_map(|item| grants_of(content, *item).iter().copied())
-                .collect()
-        })
-        .unwrap_or_default()
+    equipment::worn(world, actor)
+        .flat_map(|item| grants_of(content, item).iter().copied())
+        .collect()
 }
 
 pub fn grants_of(content: &Content, item: ItemId) -> &[SkillId] {

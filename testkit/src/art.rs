@@ -1,6 +1,9 @@
 use std::io::Cursor;
 
-use engine::core::content::gltf::{placeholder_mesh, placeholder_rig};
+use bevy_math::{Quat, Vec3};
+use engine::core::content::gltf::{
+    NodeTree, Rest, TreeNode, placeholder_body, placeholder_mesh, placeholder_rig,
+};
 use engine::core::time::Seconds;
 
 /// A PNG of `width` × `height` transparent pixels: an image a row can name, the right size and no
@@ -26,6 +29,44 @@ pub fn glb(clips: &[(&str, Seconds)]) -> Vec<u8> {
 /// A glTF binary of `triangles` triangles animated by `clips`: a model as heavy as a test wants.
 pub fn glb_of(triangles: usize, clips: &[(&str, Seconds)]) -> Vec<u8> {
     placeholder_mesh(clips, triangles)
+}
+
+/// The joints of every rig a test declares: a root, a body beneath it, and a right and a left hand
+/// on the body.
+pub fn rig() -> NodeTree {
+    let joint = |name: &str, parent: Option<usize>, at: [f32; 3]| TreeNode {
+        name: name.to_owned(),
+        parent,
+        rest: Rest {
+            translation: Vec3::from(at),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        },
+        mesh: false,
+    };
+    NodeTree {
+        nodes: vec![
+            joint("model", None, [0.0, 0.0, 0.0]),
+            joint("body", Some(0), [0.0, 1.0, 0.0]),
+            joint("hand.r", Some(1), [-0.3, 0.2, 0.0]),
+            joint("hand.l", Some(1), [0.3, 0.2, 0.0]),
+        ],
+    }
+}
+
+/// A rig's glTF: `tree`'s joints at rest and nothing to draw.
+pub fn rig_glb(tree: &NodeTree) -> Vec<u8> {
+    placeholder_body(tree, &[], 0)
+}
+
+/// A library of `clips` made on `tree`: its joints at rest, the clips moving them, nothing drawn.
+pub fn library_glb(tree: &NodeTree, clips: &[(&str, Seconds)]) -> Vec<u8> {
+    placeholder_body(tree, clips, 0)
+}
+
+/// A skin on `tree`: its joints at rest, a triangle nobody would notice, and `clips` of its own.
+pub fn skin_glb(tree: &NodeTree, clips: &[(&str, Seconds)]) -> Vec<u8> {
+    placeholder_body(tree, clips, 1)
 }
 
 /// A WAV of a moment of silence.

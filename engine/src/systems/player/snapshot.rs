@@ -1,23 +1,21 @@
-use std::collections::BTreeMap;
-
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::{
-    Content, ContentFile, ContentProblem, Loading, NamedContent, Nearby, RowCheck, id, key_of,
-    serial,
+    Content, ContentFile, ContentProblem, Loading, NamedContent, Nearby, RowCheck, id, serial,
 };
 use crate::core::script::{Value, ValueType};
 use crate::core::time::{Seconds, WallClock};
 use crate::systems::GameSettings;
+use crate::systems::actor::ActorModel;
 use crate::systems::actor::Name;
 use crate::systems::area::{self, AreaId, transition::Discovered};
 use crate::systems::class::{Class, ClassId, NodeKey};
 use crate::systems::dialogue::Heard;
-use crate::systems::equipment::{Equipment, EquipmentSlot};
+use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::{History, HistoryEntry};
-use crate::systems::item::{INVENTORY_MAX, Inventory, ItemId, ItemKind, ItemStack};
+use crate::systems::item::{INVENTORY_MAX, Inventory, ItemId, ItemStack};
 use crate::systems::memory::{Memory, MemoryId};
 use crate::systems::player::{CharacterState, PlayerDef, SpawnPoint, Xp, def};
 use crate::systems::quest::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestResult};
@@ -48,8 +46,9 @@ pub struct CharacterSnapshot {
     #[schemars(extend("x-usage" = "from the bag"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bag: Vec<ItemStack>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub equipment: BTreeMap<EquipmentSlot, ItemId>,
+    /// Put on in order, each where equipping puts it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub equipped: Vec<ItemId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub known_areas: Vec<AreaId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -85,7 +84,7 @@ impl ContentFile for CharacterSnapshot {
             basic_attack: None,
             stats: Stats::default(),
             bag: Vec::new(),
-            equipment: BTreeMap::new(),
+            equipped: Vec::new(),
             known_areas: Vec::new(),
             quests: Vec::new(),
             memories: Vec::new(),
@@ -100,15 +99,7 @@ impl ContentFile for CharacterSnapshot {
 impl CharacterSnapshot {
     /// A character as the player row makes it: its class, and its gear already on.
     pub fn of_player(content: &Content, name: &str, def: &PlayerDef) -> CharacterSnapshot {
-        let equipment: BTreeMap<EquipmentSlot, ItemId> = def
-            .wearing
-            .iter()
-            .filter_map(|&item| match item.get(content).kind {
-                ItemKind::Equipment { slot, .. } => Some((slot, item)),
-                _ => None,
-            })
-            .collect();
-        let basic_attack = skill::first_flagged_grant(content, equipment.values().copied());
+        let basic_attack = skill::first_flagged_grant(content, def.equipped.iter().copied());
         CharacterSnapshot {
             name: name.to_owned(),
             class: def.class,
@@ -118,7 +109,7 @@ impl CharacterSnapshot {
             basic_attack,
             stats: Stats::default(),
             bag: Vec::new(),
-            equipment,
+            equipped: def.equipped.clone(),
             known_areas: Vec::new(),
             quests: Vec::new(),
             memories: Vec::new(),
@@ -297,7 +288,7 @@ pub fn materialize(
             amount: snapshot.xp,
         },
         equipment: Equipment {
-            slots: snapshot.equipment.clone(),
+            slots: equipment::put_on(content, hand_slots(content), &snapshot.equipped).slots,
         },
         class: Class {
             def: snapshot.class,
@@ -455,21 +446,30 @@ fn check_bag(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowChe
 }
 
 fn check_equipment(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowCheck) {
-    for (&slot, &worn) in &snapshot.equipment {
-        let fits = matches!(
-            worn.get(content).kind,
-            ItemKind::Equipment { slot: made_for, .. } if made_for == slot
-        );
-        if !fits {
-            let slot = key_of(slot.label());
-            check.error(
-                format!("/equipment/{slot}"),
-                "not wearable",
-                format!("{} on {slot}", worn.path(content)),
-                format!("an item made for the {slot} slot"),
-            );
-        }
-    }
+    let player = content
+        .has_built::<GameSettings>()
+        .then(|| content.built::<GameSettings>().player);
+    let Some(model) = player
+        .and_then(|player| content.table::<PlayerDef>().get(player))
+        .and_then(|player| ActorModel::loaded(content, player.model))
+    else {
+        return;
+    };
+    equipment::check_put_on(
+        content,
+        model.hands().len().max(1),
+        &snapshot.equipped,
+        "/equipped",
+        check,
+    );
+}
+
+/// The hand slots every character's body gives it: the player's model's skeleton's.
+fn hand_slots(content: &Content) -> usize {
+    ActorModel::get(content, def(content).model)
+        .hands()
+        .len()
+        .max(1)
 }
 
 fn check_skills(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowCheck) {
@@ -552,12 +552,11 @@ fn check_hotbar(content: &Content, snapshot: &CharacterSnapshot, check: &mut Row
         content,
         Some(&class.tree),
         Some(&learned(snapshot)),
-        snapshot.equipment.values().copied(),
+        snapshot.equipped.iter().copied(),
         None,
     );
     let held = |item: ItemId| {
-        snapshot.bag.iter().any(|stack| stack.item == item)
-            || snapshot.equipment.values().any(|worn| *worn == item)
+        snapshot.bag.iter().any(|stack| stack.item == item) || snapshot.equipped.contains(&item)
     };
     for (index, slot) in snapshot.hotbar.iter().enumerate() {
         if slot.slot.0 >= HOTBAR_SLOTS {

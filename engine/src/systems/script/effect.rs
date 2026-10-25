@@ -8,7 +8,7 @@ use crate::core::audio::playback::SfxId;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, NEXT, REFUSED, ScriptFault, ValueType,
 };
-use crate::systems::actor::Animate;
+use crate::systems::actor::playing::{Animate, SetStance};
 use crate::systems::area::warp::Warp;
 use crate::systems::chat::Say;
 use crate::systems::class::GrantXp;
@@ -104,6 +104,7 @@ effects! {
     Stop(Stop),
     Face(FaceToward),
     Animate(Animate),
+    SetStance(SetStance),
     UseSkill(UseSkill),
     ResetSkills(ResetSkills),
     Vfx(PlayVfx),

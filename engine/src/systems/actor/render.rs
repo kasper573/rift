@@ -1,46 +1,55 @@
-//! Actors as the client draws them: each wears its model's rig as a scene, plays the clip of the
-//! action the server shows it in, turns the short way round to face where it faces, and sounds its
-//! clip's cues as they pass.
+//! Actors as the client draws them: each wears its model's skin as a scene, played through the one
+//! animation graph its skeleton shares with every body on it, resolving the clip of what it does in
+//! the stance its hands show as the server did; it turns the short way round to face where it
+//! faces, sounds its clip's cues as they pass, and hangs from each hand the prop of what the hand
+//! shows.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
-use std::time::Duration;
+use std::sync::Arc;
 
-use bevy::animation::RepeatAnimation;
 use bevy::animation::graph::AnimationNodeIndex;
-use bevy::animation::transition::AnimationTransitions;
+use bevy::animation::{AnimationTargetId, RepeatAnimation};
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 
-use super::{Action, Actor, ActorModel, ModelId, Playing, Pose};
+use super::model::{ClipSource, Models};
+use super::skeleton::{GroupName, Hand, LocalOffset, LocalTurn, SkeletonId};
+use super::stance::HandIndex;
+use super::wearing::{self, Wearing};
+use super::{Action, Actor, ActorModel, ModelId, Motion, Playing, Pose};
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::content::Content;
+use crate::core::content::gltf::NodeTree;
 use crate::core::content::media::GltfInfos;
 use crate::core::geometry::Radians;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin};
 use crate::core::render::transition::WorldViewSystems;
+use crate::core::render::world::mannequin::animate_rig;
 use crate::core::render::{Animator, Previous, facing_rotation, ground_height, world_point};
 use crate::core::time::{Seconds, UnixMillis};
 use crate::core::vfx::cover::Treads;
 use crate::core::vfx::render::SiteExtent;
 use crate::systems::area;
+use crate::systems::item::{ItemId, Wear};
 use crate::systems::movement::RenderPosition;
 use crate::systems::screen::ClientScreen;
 
 /// How long an actor takes to turn to a new facing.
 const TURN: Seconds = Seconds(0.12);
 /// How long one clip blends into the next.
-const CROSSFADE: Duration = Duration::from_millis(100);
+const CROSSFADE: Seconds = Seconds(0.1);
 
 pub struct ActorRenderPlugin;
 
 impl Plugin for ActorRenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(InterpolatePlugin::<RenderActor>::default())
+            .init_resource::<SkeletonGraphs>()
             .add_observer(adopt_player)
             .add_systems(
                 Update,
-                (dress, pose)
+                (dress, pose, hang)
                     .chain()
                     .in_set(WorldViewSystems)
                     .run_if(in_state(ClientScreen::Area)),
@@ -71,24 +80,68 @@ impl Interpolate for RenderActor {
     }
 }
 
-/// The rig an actor wears: its model's scene, the animation nodes of its clips by name, and where
-/// its playback stands.
+/// The graph every body of one skeleton plays through, built when the first of them dresses.
+#[derive(Resource, Default)]
+struct SkeletonGraphs(HashMap<SkeletonId, Arc<SkeletonGraph>>);
+
+/// One node per clip a body of the skeleton can play, whole, and kept to or kept off each group a
+/// set plays a clip on alone.
+pub struct SkeletonGraph {
+    graph: Handle<AnimationGraph>,
+    whole: HashMap<Source, AnimationNodeIndex>,
+    only: HashMap<(Source, GroupName), AnimationNodeIndex>,
+    outside: HashMap<(Source, GroupName), AnimationNodeIndex>,
+}
+
+/// A clip as a graph node finds it: in a library of the skeleton, or in a model's own glb.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Source {
+    Library { library: usize, index: usize },
+    Model { model: ModelId, index: usize },
+}
+
+impl Source {
+    fn of(model: ModelId, source: ClipSource) -> Source {
+        match source {
+            ClipSource::Library { library, index } => Source::Library { library, index },
+            ClipSource::Model { index } => Source::Model { model, index },
+        }
+    }
+}
+
+/// The rig an actor wears: its model's scene, the graph of its skeleton, the joints by name once the
+/// scene stands, what plays and how far each clip has faded in, and the props its hands hold.
 #[derive(Component)]
 pub struct Puppet {
     model: ModelId,
-    nodes: HashMap<String, AnimationNodeIndex>,
-    graph: Handle<AnimationGraph>,
+    graph: Arc<SkeletonGraph>,
     player: Option<Entity>,
+    joints: HashMap<String, Entity>,
     playing: Option<Play>,
+    tracks: Vec<Track>,
     turn: Turn,
+    held: BTreeMap<HandIndex, (ItemId, Entity)>,
 }
 
-/// What clip plays, from when: an attack struck again restarts the same clip.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// A prop hanging from a hand of an actor's rig.
+#[derive(Component)]
+pub struct HeldProp;
+
+/// What plays, from when: an attack struck again restarts the same clip.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Play {
-    action: Action,
+    motion: Motion,
     pose: Pose,
+    stance: Option<u32>,
     started: Option<UnixMillis>,
+}
+
+/// A node playing on the rig, fading toward its weight.
+#[derive(Clone, Copy, Debug)]
+struct Track {
+    node: AnimationNodeIndex,
+    weight: f32,
+    target: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -111,6 +164,20 @@ impl Turn {
     }
 }
 
+impl Puppet {
+    /// The joint of the rig named `name`, once the scene stands.
+    pub fn joint(&self, name: &str) -> Option<Entity> {
+        self.joints.get(name).copied()
+    }
+
+    /// The props the hands hold, by hand.
+    pub fn held(&self) -> impl Iterator<Item = (HandIndex, ItemId, Entity)> + '_ {
+        self.held
+            .iter()
+            .map(|(&hand, &(item, prop))| (hand, item, prop))
+    }
+}
+
 /// Puts a rig on every actor of the shown area that lacks one, or wears another model's.
 fn dress(world: &mut World) {
     let content = world.resource::<Content>().clone();
@@ -123,31 +190,19 @@ fn dress(world: &mut World) {
         .collect();
     for (entity, model, facing) in undressed {
         let actor_model = ActorModel::get(&content, model);
-        let path = actor_model.model().path();
+        let graph = skeleton_graph(world, &content, actor_model.skeleton_id());
         let hitbox = actor_model.hitbox();
-        let clips = content
-            .built::<GltfInfos>()
-            .0
-            .get(&path)
-            .map(|info| {
-                info.clip_names()
-                    .iter()
-                    .map(|name| (*name).to_owned())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
         let assets = world.resource::<AssetServer>().clone();
-        let mut graph = AnimationGraph::new();
-        let nodes = clips
-            .iter()
-            .enumerate()
-            .map(|(index, name)| {
-                let clip = assets.load(GltfAssetLabel::Animation(index).from_asset(path.clone()));
-                (name.clone(), graph.add_clip(clip, 1.0, graph.root))
-            })
-            .collect();
-        let graph = world.resource_mut::<Assets<AnimationGraph>>().add(graph);
-        let scene = assets.load(GltfAssetLabel::Scene(0).from_asset(path));
+        let scene = assets.load(GltfAssetLabel::Scene(0).from_asset(actor_model.model().path()));
+        let held: Vec<Entity> = world
+            .get::<Puppet>(entity)
+            .map(|puppet| puppet.held.values().map(|(_, prop)| *prop).collect())
+            .unwrap_or_default();
+        for prop in held {
+            if let Ok(prop) = world.get_entity_mut(prop) {
+                prop.despawn();
+            }
+        }
         world.entity_mut(entity).insert((
             WorldAssetRoot(scene),
             Transform::default(),
@@ -165,50 +220,170 @@ fn dress(world: &mut World) {
             },
             Puppet {
                 model,
-                nodes,
                 graph,
                 player: None,
+                joints: HashMap::new(),
                 playing: None,
+                tracks: Vec::new(),
                 turn: Turn {
                     from: facing,
                     to: facing,
                     started: now,
                 },
+                held: BTreeMap::new(),
             },
         ));
     }
 }
 
-/// A rig's scene, once spawned, hands its animation player the rig's graph.
+/// The graph of `skeleton`, built the first time a body on it dresses.
+fn skeleton_graph(
+    world: &mut World,
+    content: &Content,
+    skeleton: SkeletonId,
+) -> Arc<SkeletonGraph> {
+    if let Some(graph) = world.resource::<SkeletonGraphs>().0.get(&skeleton) {
+        return graph.clone();
+    }
+    let built = super::model::Skeletons::loaded(content, skeleton)
+        .cloned()
+        .unwrap_or_else(|| panic!("skeleton {} failed to load", skeleton.path(content)));
+    let assets = world.resource::<AssetServer>().clone();
+    let mut graph = AnimationGraph::new();
+    let groups: Vec<&GroupName> = built.def.groups.keys().collect();
+    let rest_bit = groups.len() as u32;
+    let all_bits = (1u64 << (rest_bit + 1)) - 1;
+    for (bit, target) in mask_groups(&built.rig, &built.def.groups) {
+        graph.add_target_to_mask_group(target, bit.unwrap_or(rest_bit));
+    }
+    let mut sources: Vec<(Source, Handle<AnimationClip>)> = built
+        .clips
+        .values()
+        .map(|clip| {
+            let file = built.def.libraries[clip.library].file.path();
+            (
+                Source::Library {
+                    library: clip.library,
+                    index: clip.index,
+                },
+                assets.load(GltfAssetLabel::Animation(clip.index).from_asset(file)),
+            )
+        })
+        .collect();
+    for (model, worn) in content.built::<Models>().0.iter().enumerate() {
+        let Some(worn) = worn.as_ref().filter(|worn| worn.skeleton_id() == skeleton) else {
+            continue;
+        };
+        let model = ModelId::new(model as u32);
+        for (_, index) in worn.own_clips() {
+            let file = worn.model().path();
+            sources.push((
+                Source::Model { model, index },
+                assets.load(GltfAssetLabel::Animation(index).from_asset(file)),
+            ));
+        }
+    }
+    let grouped: Vec<&GroupName> = built
+        .def
+        .sets()
+        .flat_map(|(_, set)| set.entries().filter_map(|(_, clip)| clip.only()))
+        .collect();
+    let mut whole = HashMap::new();
+    let mut only = HashMap::new();
+    let mut outside = HashMap::new();
+    for (source, clip) in sources {
+        whole.insert(source, graph.add_clip(clip.clone(), 1.0, graph.root));
+        for &group in &grouped {
+            let Some(bit) = groups.iter().position(|known| *known == group) else {
+                continue;
+            };
+            let bit = 1u64 << bit;
+            let key = (source, group.clone());
+            if only.contains_key(&key) {
+                continue;
+            }
+            only.insert(
+                key.clone(),
+                graph.add_clip_with_mask(clip.clone(), all_bits & !bit, 1.0, graph.root),
+            );
+            outside.insert(
+                key,
+                graph.add_clip_with_mask(clip.clone(), bit, 1.0, graph.root),
+            );
+        }
+    }
+    let graph = Arc::new(SkeletonGraph {
+        graph: world.resource_mut::<Assets<AnimationGraph>>().add(graph),
+        whole,
+        only,
+        outside,
+    });
+    world
+        .resource_mut::<SkeletonGraphs>()
+        .0
+        .insert(skeleton, graph.clone());
+    graph
+}
+
+/// Every joint of `rig` as a clip targets it, with the group whose root it lies under, if any.
+fn mask_groups(
+    rig: &NodeTree,
+    groups: &BTreeMap<GroupName, Vec<super::skeleton::JointName>>,
+) -> Vec<(Option<u32>, AnimationTargetId)> {
+    let roots: Vec<(u32, usize)> = groups
+        .values()
+        .enumerate()
+        .flat_map(|(bit, roots)| {
+            roots.iter().filter_map(move |root| {
+                let at = (0..rig.nodes.len()).find(|&at| rig.nodes[at].name == root.0)?;
+                Some((bit as u32, at))
+            })
+        })
+        .collect();
+    rig.joints()
+        .map(|joint| {
+            let group = roots
+                .iter()
+                .find(|(_, root)| rig.descends(joint, *root))
+                .map(|(bit, _)| *bit);
+            (group, AnimationTargetId::from_iter(rig.path(joint)))
+        })
+        .collect()
+}
+
+/// A rig's scene, once spawned, hands its animation player the skeleton's graph, and its joints are
+/// known by name.
 fn adopt_player(
     ready: On<WorldInstanceReady>,
     children: Query<&Children>,
-    players: Query<(), With<AnimationPlayer>>,
+    names: Query<&Name>,
     mut puppets: Query<&mut Puppet>,
     mut commands: Commands,
 ) {
     let Ok(mut puppet) = puppets.get_mut(ready.entity) else {
         return;
     };
-    let Some(player) = children
-        .iter_descendants(ready.entity)
-        .find(|entity| players.contains(*entity))
-    else {
+    let Some(player) = animate_rig(ready.entity, &children, &names, &mut commands) else {
         return;
     };
-    commands.entity(player).insert((
-        AnimationGraphHandle(puppet.graph.clone()),
-        AnimationTransitions::new(),
-    ));
+    commands
+        .entity(player)
+        .insert(AnimationGraphHandle(puppet.graph.graph.clone()));
+    puppet.joints = children
+        .iter_descendants(ready.entity)
+        .filter_map(|entity| Some((names.get(entity).ok()?.as_str().to_owned(), entity)))
+        .collect();
     puppet.player = Some(player);
     puppet.playing = None;
+    puppet.tracks.clear();
 }
 
-/// Places every rig where its actor shows, turned the way it faces, playing the clip of what it
-/// does, and sounds the cues its clip crosses.
+/// Places every rig where its actor shows, turned the way it faces, playing the clip its stance
+/// resolves for what it does, and sounds the cues its clip crosses.
 fn pose(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let delta = Seconds(world.resource::<Time>().delta_secs());
     let shown: Vec<(Entity, RenderActor, RenderPosition, Actor, Option<Playing>)> = world
         .query::<(
             Entity,
@@ -219,32 +394,37 @@ fn pose(world: &mut World) {
         )>()
         .iter(world)
         .map(|(entity, shown, at, actor, playing)| {
-            (entity, *shown, *at, actor.clone(), playing.copied())
+            (entity, *shown, *at, actor.clone(), playing.cloned())
         })
         .collect();
     let mut sounds = Vec::new();
     for (entity, shown, at, actor, playing) in shown {
         let model = ActorModel::get(&content, actor.model);
+        let stance = wearing::stance_of(world, entity);
         let ground = ground_height(world, at.0);
+        let motion = playing
+            .as_ref()
+            .filter(|playing| playing.motion.action() == shown.action)
+            .map_or(Motion::Action(shown.action), |playing| {
+                playing.motion.clone()
+            });
         let play = Play {
-            action: shown.action,
+            motion: motion.clone(),
             pose: actor.pose,
+            stance: stance.map(|stance| stance.raw()),
             started: playing
-                .filter(|playing| playing.action == shown.action)
+                .as_ref()
+                .filter(|playing| playing.motion.action() == shown.action)
                 .map(|playing| playing.started),
         };
-        let (clip, repeat) = match (shown.action, model.pose(actor.pose)) {
-            (Action::Idle, Some((clip, _))) => (clip, RepeatAnimation::Forever),
-            (Action::Attack | Action::Dead, _) => {
-                (model.clip(shown.action), RepeatAnimation::Never)
-            }
-            (action, _) => (model.clip(action), RepeatAnimation::Forever),
-        };
-        let rate = if shown.action == Action::Attack {
-            actor.attack_rate.at_least(0.01).0
+        let resolved = model.resolve(stance, &motion, actor.pose);
+        let once = matches!(shown.action, Action::Attack | Action::Dead);
+        let repeat = if once {
+            RepeatAnimation::Never
         } else {
-            1.0
+            RepeatAnimation::Forever
         };
+        let rate = super::model::rate(&motion, actor.attack_rate).0;
         let state = {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             play.hash(&mut hasher);
@@ -256,8 +436,13 @@ fn pose(world: &mut World) {
                 Previous::Continued(played) => Some(played),
                 Previous::Unseen | Previous::Restarted => None,
             };
-            let (sfx, stepped) =
-                model.cues(shown.action, prev, playhead.elapsed, actor.attack_rate);
+            let (sfx, stepped) = ActorModel::cues(
+                &resolved,
+                &motion,
+                prev,
+                playhead.elapsed,
+                actor.attack_rate,
+            );
             sounds.extend(sfx.into_iter().map(|id| PlaySfx {
                 id: *id,
                 place: SfxPlace::World(at.0),
@@ -271,6 +456,9 @@ fn pose(world: &mut World) {
                 });
             }
         }
+        let resting = resolved
+            .only
+            .map(|_| model.resolve(stance, &Motion::Action(Action::Idle), actor.pose));
         let Some(mut puppet) = world.get_mut::<Puppet>(entity) else {
             continue;
         };
@@ -282,8 +470,28 @@ fn pose(world: &mut World) {
             };
         }
         let facing = puppet.turn.shown(now);
-        let node = puppet.nodes.get(&clip.name).copied();
-        let restart = puppet.playing != Some(play);
+        let wanted: Vec<AnimationNodeIndex> = {
+            let graph = &puppet.graph;
+            let node = |source: Option<ClipSource>, kept: Option<(&GroupName, bool)>| {
+                let source = Source::of(actor.model, source?);
+                match kept {
+                    None => graph.whole.get(&source).copied(),
+                    Some((group, true)) => graph.only.get(&(source, group.clone())).copied(),
+                    Some((group, false)) => graph.outside.get(&(source, group.clone())).copied(),
+                }
+            };
+            match (resolved.only, resting) {
+                (Some(group), Some(resting)) => [
+                    node(resting.source, Some((group, false))),
+                    node(resolved.source, Some((group, true))),
+                ]
+                .into_iter()
+                .flatten()
+                .collect(),
+                _ => node(resolved.source, None).into_iter().collect(),
+            }
+        };
+        let restart = puppet.playing.as_ref() != Some(&play);
         if restart {
             puppet.playing = Some(play);
         }
@@ -294,24 +502,64 @@ fn pose(world: &mut World) {
             transform.rotation = facing_rotation(facing);
             transform.scale = Vec3::splat(scale);
         }
-        let (Some(player), Some(node)) = (player, node) else {
+        let Some(player) = player else {
             continue;
         };
-        let Ok(mut entity) = world.get_entity_mut(player) else {
-            continue;
-        };
-        let Ok((mut animation, mut transitions)) =
-            entity.get_components_mut::<(&mut AnimationPlayer, &mut AnimationTransitions)>()
+        let Some(mut tracks) = world
+            .get_mut::<Puppet>(entity)
+            .map(|mut puppet| std::mem::take(&mut puppet.tracks))
         else {
             continue;
         };
-        if restart {
-            transitions
-                .play(&mut animation, node, CROSSFADE)
-                .set_repeat(repeat)
-                .set_speed(rate);
-        } else if let Some(active) = animation.animation_mut(node) {
-            active.set_speed(rate);
+        if let Some(mut animation) = world.get_mut::<AnimationPlayer>(player) {
+            if restart {
+                for track in &mut tracks {
+                    track.target = 0.0;
+                }
+                for &node in &wanted {
+                    let fresh = !tracks.iter().any(|track| track.node == node);
+                    let active = animation.start(node);
+                    active.set_repeat(repeat).set_speed(rate);
+                    if fresh {
+                        active.set_weight(0.0);
+                        tracks.push(Track {
+                            node,
+                            weight: 0.0,
+                            target: 1.0,
+                        });
+                    }
+                }
+                for track in &mut tracks {
+                    if wanted.contains(&track.node) {
+                        track.target = 1.0;
+                    }
+                }
+            }
+            for track in &mut tracks {
+                let step = if CROSSFADE.0 > 0.0 {
+                    delta.0 / CROSSFADE.0
+                } else {
+                    1.0
+                };
+                track.weight = if track.target > track.weight {
+                    (track.weight + step).min(track.target)
+                } else {
+                    (track.weight - step).max(track.target)
+                };
+                if let Some(active) = animation.animation_mut(track.node) {
+                    active.set_weight(track.weight);
+                    if wanted.contains(&track.node) {
+                        active.set_speed(rate);
+                    }
+                }
+            }
+            for track in tracks.iter().filter(|track| track.weight <= 0.0) {
+                animation.stop(track.node);
+            }
+            tracks.retain(|track| track.weight > 0.0 || track.target > 0.0);
+        }
+        if let Some(mut puppet) = world.get_mut::<Puppet>(entity) {
+            puppet.tracks = tracks;
         }
     }
     for sound in sounds {
@@ -320,4 +568,118 @@ fn pose(world: &mut World) {
     world.resource_scope(|world, mut animator: Mut<Animator>| {
         animator.retain(|entity| world.get_entity(entity).is_ok());
     });
+}
+
+/// Hangs from each hand of a dressed rig the prop of the item it shows, moved by the hand's and the
+/// item's grip, and takes it down the frame the hand empties. A two-hander hangs from the first hand
+/// it takes.
+fn hang(world: &mut World) {
+    let content = world.resource::<Content>().clone();
+    let dressed: Vec<(Entity, ModelId, BTreeMap<HandIndex, ItemId>)> = world
+        .query::<(Entity, &Actor, &Puppet, Option<&Wearing>)>()
+        .iter(world)
+        .filter(|(_, _, puppet, _)| puppet.player.is_some())
+        .map(|(entity, actor, _, wearing)| {
+            (
+                entity,
+                actor.model,
+                wearing
+                    .map(|wearing| wearing.hands.clone())
+                    .unwrap_or_default(),
+            )
+        })
+        .collect();
+    for (entity, model, shown) in dressed {
+        let model = ActorModel::get(&content, model);
+        let hands = model.hands();
+        let wanted: BTreeMap<HandIndex, ItemId> = shown
+            .iter()
+            .filter(|(hand, item)| {
+                hand.index() < hands.len()
+                    && (hand.0 == 0 || shown.get(&HandIndex(hand.0 - 1)) != Some(item))
+            })
+            .map(|(&hand, &item)| (hand, item))
+            .collect();
+        let Some(puppet) = world.get::<Puppet>(entity) else {
+            continue;
+        };
+        let gone: Vec<(HandIndex, Entity)> = puppet
+            .held
+            .iter()
+            .filter(|(hand, (item, _))| wanted.get(hand) != Some(item))
+            .map(|(&hand, &(_, prop))| (hand, prop))
+            .collect();
+        let new: Vec<(HandIndex, ItemId, Entity)> = wanted
+            .iter()
+            .filter(|(hand, item)| puppet.held.get(hand).map(|(held, _)| held) != Some(item))
+            .filter_map(|(&hand, &item)| {
+                let joint = puppet.joint(&hands[hand.index()].joint.0)?;
+                Some((hand, item, joint))
+            })
+            .collect();
+        for (hand, prop) in gone {
+            if let Ok(prop) = world.get_entity_mut(prop) {
+                prop.despawn();
+            }
+            if let Some(mut puppet) = world.get_mut::<Puppet>(entity) {
+                puppet.held.remove(&hand);
+            }
+        }
+        for (hand, item, joint) in new {
+            let def = item.get(&content);
+            let Some(Wear::Hand { grip, .. }) = def.wear() else {
+                continue;
+            };
+            let look = def.look.get(&content);
+            let rest = rest_scale(&content, model, &hands[hand.index()]);
+            let placed = Transform::from_scale(Vec3::splat(1.0 / rest))
+                * hold(&hands[hand.index()].offset, &hands[hand.index()].turn)
+                * hold(&grip.offset, &grip.turn);
+            let scene = world
+                .resource::<AssetServer>()
+                .load(GltfAssetLabel::Scene(0).from_asset(look.model.path()));
+            let prop = world
+                .spawn((
+                    HeldProp,
+                    WorldAssetRoot(scene),
+                    placed,
+                    Visibility::default(),
+                    ChildOf(joint),
+                ))
+                .id();
+            if let Some(mut puppet) = world.get_mut::<Puppet>(entity) {
+                puppet.held.insert(hand, (item, prop));
+            }
+        }
+    }
+}
+
+/// A move and turn in a joint's frame: the turn's degrees about x, y and z in that order.
+fn hold(offset: &LocalOffset, turn: &LocalTurn) -> Transform {
+    let [x, y, z] = turn.array().map(f32::to_radians);
+    Transform::from_translation(Vec3::from(offset.array())).with_rotation(Quat::from_euler(
+        EulerRot::XYZ,
+        x,
+        y,
+        z,
+    ))
+}
+
+/// How much the model's glb scales the hand's joint at rest, which a prop held there undoes so it
+/// keeps the size it has lying on the ground.
+fn rest_scale(content: &Content, model: &ActorModel, hand: &Hand) -> f32 {
+    let Some(info) = content.built::<GltfInfos>().0.get(model.model().as_str()) else {
+        return 1.0;
+    };
+    let tree = &info.tree;
+    let Some(joint) = tree.named(&hand.joint.0) else {
+        return 1.0;
+    };
+    let mut scale = 1.0;
+    let mut at = Some(joint);
+    while let Some(node) = at {
+        scale *= tree.nodes[node].rest.scale.x;
+        at = tree.nodes[node].parent;
+    }
+    if scale > 0.0 { scale } else { 1.0 }
 }

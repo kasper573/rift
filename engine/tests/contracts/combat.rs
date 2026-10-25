@@ -33,8 +33,13 @@ fn an_attacks_timing_comes_from_its_clip_at_the_attackers_speed() {
     let (mut sim, player) = fight();
     let speed = stat::effective(&sim.world, player, StatKind::AttackSpeed);
 
-    let playing = actor::playing::play(&mut sim.world, player, actor::Action::Attack, None)
-        .expect("an attack plays");
+    let playing = actor::playing::play(
+        &mut sim.world,
+        player,
+        actor::Motion::Action(actor::Action::Attack),
+        None,
+    )
+    .expect("an attack plays");
 
     let since = |at: UnixMillis| (at.0 - playing.started.0) as f32;
     assert!(
@@ -98,7 +103,7 @@ fn fight() -> (Sim, Entity) {
         .area("field", &Map::open(11, 11), json!([]))
         .hero("field", 5.0, 5.0)
         .sword()
-        .wearing(&["sword"])
+        .equipped(&["sword"])
         .npc("brute", 25.0, json!([]))
         .vfx("damage_taken")
         .shader("damage_pop")

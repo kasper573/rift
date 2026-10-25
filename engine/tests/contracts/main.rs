@@ -22,6 +22,7 @@ mod shop;
 mod skills;
 mod snapshot;
 mod spacing;
+mod stance;
 mod summon;
 mod travel;
 mod typewriter;

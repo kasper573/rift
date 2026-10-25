@@ -1,37 +1,47 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 use rayon::prelude::*;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
 
+use super::playing::Motion;
+use super::skeleton::{
+    self, BuiltSkeleton, ClipName, ClipRef, Cue, DeclaredMoves, GroupName, Hand, LibraryClip,
+    SkeletonDef, SkeletonId,
+};
+use super::stance::StanceId;
 use super::{Action, Pose};
 use crate::core::assets::{FileSize, ImageRef, ModelRef};
 use crate::core::audio::playback::SfxId;
-use crate::core::content::gltf::GltfInfo;
+use crate::core::content::gltf::{self, GltfInfo, NodeTree};
 use crate::core::content::media::{GltfInfos, VisiblePixelColumns, visible_columns};
 use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, ContentProblem, ErrorPlace, FileWriter, Loading,
-    MISSING_FILE, ModuleRule, ModuleSet, Nearby, PartSpec, Parts, RowCheck, Shape, serial,
+    MISSING_FILE, ModuleRule, ModuleSet, Nearby, PartSpec, Parts, RowCheck, Shape,
 };
 use crate::core::geometry::Capsule;
+use crate::core::render::world::mannequin::RigClip;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
 use crate::core::units::Meters;
 
 pub type ModelId = ContentId<ModelDef>;
 
-/// A character's rig: a glTF binary with one clip for each action and a clip for each pose it can
-/// hold, cues at moments on those clips, the capsule it is hit in, and its busts.
+/// A skin on a skeleton: a glTF binary of the mesh bound to the skeleton's rig, with any clips of
+/// its own that play in place of the libraries' of the same name, the capsule it is hit in, and its
+/// busts.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelDef {
     #[serde(skip)]
     pub model: ModelRef,
+    pub skeleton: SkeletonId,
     pub hitbox: Capsule,
-    pub clips: BTreeMap<Action, Clip>,
+    /// The cues of the clips `model.glb` carries itself, which may be timed unlike the library's.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub poses: BTreeMap<Pose, Clip>,
+    pub overrides: BTreeMap<ClipName, Vec<Cue>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<ModelModule>,
 }
@@ -46,28 +56,6 @@ pub const MODEL_BUSTS: PartSpec = PartSpec::Keyed {
     exts: &["png"],
 };
 
-/// An animation of the model's glTF, named as it is there, with the moments on it that matter to
-/// the game.
-#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Clip {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub cues: Vec<Cue>,
-}
-
-#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Cue {
-    pub at: Millis,
-    #[serde(default, skip_serializing_if = "serial::is_false")]
-    pub step: bool,
-    #[serde(default, skip_serializing_if = "serial::is_false")]
-    pub apex: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sound: Option<SfxId>,
-}
-
 impl Bundle for ModelDef {
     const PARTS: &'static [PartSpec] = &[MODEL_GLB, MODEL_BUSTS];
 
@@ -76,7 +64,7 @@ impl Bundle for ModelDef {
             self.model = ModelRef::new(parts.path(glb));
             if let Some(info) = parts.gltf_info(glb) {
                 let mut cx = RowCheck::default();
-                check_rig(self, &info, parts.weight(glb), &mut cx);
+                check_skin(&info, parts.weight(glb), &mut cx);
                 parts.config_errors(cx);
             }
         }
@@ -145,36 +133,15 @@ impl ContentFile for ModelDef {
     const TABLE: &'static str = "model";
     const SHAPE: Shape = Shape::Bundle;
 
-    fn fresh(_: &Nearby) -> Result<ModelDef, String> {
+    fn fresh(near: &Nearby) -> Result<ModelDef, String> {
         Ok(ModelDef {
             model: ModelRef::default(),
+            skeleton: near.file()?,
             hitbox: Capsule {
                 radius: Meters(0.4),
                 height: Meters(1.8),
             },
-            clips: Action::VARIANTS
-                .iter()
-                .map(|&action| {
-                    let cues = if action.takes_apex() {
-                        vec![Cue {
-                            at: Millis(400.0),
-                            step: false,
-                            apex: true,
-                            sound: None,
-                        }]
-                    } else {
-                        Vec::new()
-                    };
-                    (
-                        action,
-                        Clip {
-                            name: action.as_ref().to_owned(),
-                            cues,
-                        },
-                    )
-                })
-                .collect(),
-            poses: BTreeMap::new(),
+            overrides: BTreeMap::new(),
             modules: Vec::new(),
         })
     }
@@ -182,33 +149,8 @@ impl ContentFile for ModelDef {
     fn check(&self, cx: &mut RowCheck) {
         cx.range("/hitbox/radius", self.hitbox.radius.0, 0.1, 4.0, "m");
         cx.range("/hitbox/height", self.hitbox.height.0, 0.2, 8.0, "m");
-        for &action in Action::VARIANTS {
-            match self.clips.get(&action) {
-                Some(clip) => check_clip(
-                    clip,
-                    &format!("/clips/{}", action.as_ref()),
-                    action.takes_apex(),
-                    cx,
-                ),
-                None => cx.error(
-                    "/clips",
-                    "missing clip",
-                    format!("no {} clip", action.as_ref()),
-                    format!("a clip for every action: {}", listed(Action::VARIANTS)),
-                ),
-            }
-        }
-        for (pose, clip) in &self.poses {
-            let pointer = format!("/poses/{}", pose.as_ref());
-            if *pose == Pose::Idle {
-                cx.error(
-                    &pointer,
-                    "pose is an action",
-                    "a clip for the idle pose",
-                    "the idle action's clip, which idling plays already",
-                );
-            }
-            check_clip(clip, &pointer, false, cx);
+        for (clip, cues) in &self.overrides {
+            skeleton::check_cues(&format!("/overrides/{}", clip.0), cues, cx);
         }
         for (index, module) in self.modules.iter().enumerate() {
             if let ModelModule::Scale { factor } = module {
@@ -244,11 +186,7 @@ impl ModuleSet for ModelDef {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ModelModule {
     Bust(Busts),
-    Scale {
-        factor: f32,
-    },
-    /// Walks ignore blocked cells; wild ones keep out of safe zones.
-    Airborne,
+    Scale { factor: f32 },
 }
 
 impl ModelDef {
@@ -267,25 +205,6 @@ impl ModelDef {
                 _ => None,
             })
             .unwrap_or(1.0)
-    }
-
-    pub fn airborne(&self) -> bool {
-        self.modules
-            .iter()
-            .any(|module| matches!(module, ModelModule::Airborne))
-    }
-
-    /// Every clip the model names, with where it stands in the config.
-    pub fn named_clips(&self) -> impl Iterator<Item = (String, &Clip)> {
-        let actions = self
-            .clips
-            .iter()
-            .map(|(action, clip)| (format!("/clips/{}", action.as_ref()), clip));
-        let poses = self
-            .poses
-            .iter()
-            .map(|(pose, clip)| (format!("/poses/{}", pose.as_ref()), clip));
-        actions.chain(poses)
     }
 }
 
@@ -429,26 +348,43 @@ impl GenericBusts {
 }
 
 // A character is downloaded by every client that sees it, and drawn many times a frame.
+/// The warning of a library carrying clips no set names, downloaded by every client for nothing.
+pub const UNNAMED_CLIPS: &str = "clips no set names";
+
 pub const MAX_CHARACTER_BYTES: FileSize = FileSize::kib(4 * 1024);
 pub const MAX_CHARACTER_TRIANGLES: usize = 4000;
-pub const MAX_JOINTS: usize = 64;
-pub const MIN_CLIP: Millis = Millis(100.0);
-pub const MAX_CLIP: Millis = Millis(60_000.0);
-pub const MAX_CUES: usize = 32;
 // The client loads every bust at startup, so each one, and the whole cast, must stay a quick download.
 pub const MAX_BUST_BYTES: FileSize = FileSize::kib(120);
 pub const MAX_CAST_BYTES: FileSize = FileSize::kib(3 * 1024);
 
 pub struct Models(pub Vec<Option<ActorModel>>);
 
+/// Every skeleton that loaded, by its id: its rig and where each clip of its libraries is.
+pub struct Skeletons(pub Vec<Option<Arc<BuiltSkeleton>>>);
+
+impl Skeletons {
+    /// The skeleton, when it loaded.
+    pub fn loaded(content: &Content, skeleton: SkeletonId) -> Option<&Arc<BuiltSkeleton>> {
+        content.has_built::<Skeletons>().then_some(())?;
+        content
+            .built::<Skeletons>()
+            .0
+            .get(skeleton.index())
+            .and_then(Option::as_ref)
+    }
+}
+
+/// Builds every skeleton and every model on one, holding each model to its skeleton's rig and each
+/// set to the clips its wearers can play.
 pub fn build_all(loading: &mut Loading) {
     let content = loading.content();
     let infos = content.built::<GltfInfos>();
+    let skeletons = build_skeletons(loading, &content, infos);
     let mut models: Vec<Option<ActorModel>> = content.ids::<ModelDef>().map(|_| None).collect();
     let rows = loading.rows::<ModelDef>(&content);
     let files = bust_files(loading, &rows);
     let mut cast = CastWeight::default();
-    for ((id, def), busts) in rows.into_iter().zip(files) {
+    for ((id, def), busts) in rows.iter().zip(files) {
         let mut check = RowCheck::default();
         for (bust, weight) in &busts.weights {
             if let Some(total) = cast.add(bust, *weight) {
@@ -460,68 +396,275 @@ pub fn build_all(loading: &mut Loading) {
                 );
             }
         }
-        // A model whose glb is missing or unreadable was refused at that file already.
+        // A model whose glb is missing or unreadable was refused at that file already, as was a
+        // skeleton that did not load.
         let info = infos.0.get(def.model.as_str());
-        match info {
-            Some(info) if check.is_empty() => {
-                models[id.index()] = Some(ActorModel::new(def, info, busts.figure));
-            }
-            _ => {
-                loading.row_errors(id, check);
-                loading.fail(id);
-            }
+        let skeleton = skeletons.get(def.skeleton.index()).cloned().flatten();
+        let (Some(info), Some(skeleton)) = (info, skeleton) else {
+            loading.row_errors(*id, check);
+            loading.fail(*id);
+            continue;
+        };
+        check_fit(
+            def,
+            info,
+            &skeleton,
+            def.skeleton.path(&content),
+            &mut check,
+        );
+        if check.is_empty() {
+            models[id.index()] = Some(ActorModel::new(def, info, skeleton, busts.figure));
+        } else {
+            loading.row_errors(*id, check);
+            loading.fail(*id);
         }
     }
+    check_sets(loading, &content, &skeletons, &models);
+    let declared = loading
+        .rows::<SkeletonDef>(&content)
+        .into_iter()
+        .flat_map(|(_, def)| def.moves().cloned())
+        .collect();
+    loading.built(DeclaredMoves(declared));
+    loading.built(Skeletons(skeletons));
     loading.built(Models(models));
 }
 
-/// What a clip must be on its own: a name, a few cues, and an apex only where a hit lands.
-fn check_clip(clip: &Clip, pointer: &str, takes_apex: bool, cx: &mut RowCheck) {
-    cx.text(format!("{pointer}/name"), &clip.name, 1, 64);
-    cx.count(
-        format!("{pointer}/cues"),
-        clip.cues.len(),
-        0,
-        MAX_CUES,
-        "cues",
-    );
-    let apexes: Vec<usize> = clip
-        .cues
-        .iter()
-        .enumerate()
-        .filter(|(_, cue)| cue.apex)
-        .map(|(index, _)| index)
-        .collect();
-    if takes_apex && apexes.len() != 1 {
-        cx.error(
-            format!("{pointer}/cues"),
-            "apex out of place",
-            format!("{} apex cues", apexes.len()),
-            "exactly one cue marked apex, where the hit lands",
-        );
-    } else if !takes_apex && !apexes.is_empty() {
-        cx.error(
-            format!("{pointer}/cues"),
-            "apex out of place",
-            format!("apex cues at {}", listed_indices(&apexes)),
-            "an apex in the attack clip only",
-        );
+fn build_skeletons(
+    loading: &mut Loading,
+    content: &Content,
+    infos: &GltfInfos,
+) -> Vec<Option<Arc<BuiltSkeleton>>> {
+    let mut built: Vec<Option<Arc<BuiltSkeleton>>> =
+        content.ids::<SkeletonDef>().map(|_| None).collect();
+    for (id, def) in loading.rows::<SkeletonDef>(content) {
+        let Some(rig) = infos.0.get(def.rig.as_str()) else {
+            loading.fail(id);
+            continue;
+        };
+        let libraries: Vec<Option<&GltfInfo>> = def
+            .libraries
+            .iter()
+            .map(|library| infos.0.get(library.file.as_str()))
+            .collect();
+        let skeleton = BuiltSkeleton::new(def, rig, &libraries);
+        built[id.index()] = Some(Arc::new(skeleton));
     }
-    for (index, cue) in clip.cues.iter().enumerate() {
-        if cue.at.0 < 0.0 {
-            cx.error(
-                format!("{pointer}/cues/{index}/at"),
-                "cue before the clip",
-                format!("{} ms", cue.at.0),
-                "a moment from 0 ms",
-            );
+    built
+}
+
+/// What a model's glb must be to its skeleton: every joint of the rig at its path and resting as the
+/// rig rests, and a clip for every override it times.
+fn check_fit(
+    def: &ModelDef,
+    info: &GltfInfo,
+    skeleton: &BuiltSkeleton,
+    skeleton_path: &str,
+    cx: &mut RowCheck,
+) {
+    for problem in fit_report(skeleton, skeleton_path, &info.tree).problems {
+        cx.problem("/skeleton", problem);
+    }
+    for (clip, cues) in &def.overrides {
+        let pointer = format!("/overrides/{}", clip.0);
+        match info.clip(&clip.0) {
+            Some(found) => skeleton::check_cue_times(&pointer, cues, found.length, cx),
+            None => cx.error(
+                pointer,
+                "unknown clip",
+                format!("model.glb carries no clip {clip}"),
+                format!(
+                    "one of the clips model.glb carries: {}",
+                    listed(&info.clip_names())
+                ),
+            ),
         }
     }
 }
 
-/// What a model's config must be to its glb: within the style budget, every clip an animation
-/// there, long enough to see and short enough to wait for, with every cue on it.
-fn check_rig(def: &ModelDef, info: &GltfInfo, weight: Option<FileSize>, cx: &mut RowCheck) {
+/// How a model's joints fit the skeleton at `skeleton_path`, with the loader's word on each joint
+/// that does not.
+pub struct FitReport {
+    pub fit: gltf::Fit,
+    pub problems: Vec<ContentProblem>,
+}
+
+pub fn fit_report(skeleton: &BuiltSkeleton, skeleton_path: &str, tree: &NodeTree) -> FitReport {
+    let fit = gltf::fit(&skeleton.rig, tree);
+    let skeleton_file = format!("{}.skeleton", crate::core::content::name_of(skeleton_path));
+    let problems = fit
+        .misfits
+        .iter()
+        .map(|misfit| {
+            let mut problem = skeleton::misfit_problem("model.glb", &skeleton_file, misfit);
+            if let gltf::Misfit::Missing { joint } = misfit
+                && let Some(hand) = skeleton
+                    .def
+                    .hands
+                    .iter()
+                    .find(|hand| hand.joint.0 == *joint)
+            {
+                problem.expected = format!("hand {:?} of {skeleton_file} needs it", hand.name);
+            }
+            problem
+        })
+        .collect();
+    FitReport { fit, problems }
+}
+
+/// Every clip a skeleton's sets name must play on every body wearing it, from a library or the
+/// model's own glb, and every clip that plays as a hit marks the one moment it lands. What is
+/// downloaded and never played is named.
+fn check_sets(
+    loading: &mut Loading,
+    content: &Content,
+    skeletons: &[Option<Arc<BuiltSkeleton>>],
+    models: &[Option<ActorModel>],
+) {
+    for (id, def) in loading.rows::<SkeletonDef>(content) {
+        let Some(skeleton) = skeletons.get(id.index()).cloned().flatten() else {
+            continue;
+        };
+        let wearers: Vec<(ModelId, &ActorModel)> = content
+            .ids::<ModelDef>()
+            .filter_map(|model| Some((model, models.get(model.index())?.as_ref()?)))
+            .filter(|(_, model)| model.def.skeleton == id)
+            .collect();
+        let mut check = RowCheck::default();
+        let mut named: HashSet<&ClipName> = HashSet::new();
+        for (pointer, set) in def.sets() {
+            let set_name = set_name(content, def, &pointer);
+            let attacks: HashSet<String> = set.attacks().map(|(entry, _)| entry).collect();
+            for (entry, clip) in set.entries() {
+                let clip = clip.clip();
+                named.insert(clip);
+                let at = format!("{pointer}{entry}");
+                let in_library = skeleton.clips.contains_key(clip);
+                let lacking = wearers
+                    .iter()
+                    .find(|(_, model)| !in_library && !model.own.contains_key(clip));
+                match lacking {
+                    Some(_)
+                        if !wearers
+                            .iter()
+                            .any(|(_, model)| model.own.contains_key(clip)) =>
+                    {
+                        check.error(
+                            at.clone(),
+                            "unknown clip",
+                            format!(
+                                "{set_name} set names {clip}: no such clip in clips/*.glb or any model that wears this skeleton"
+                            ),
+                            "a clip of a library, or of every model wearing the skeleton",
+                        );
+                    }
+                    Some((model, _)) => check.error(
+                        at.clone(),
+                        "unknown clip",
+                        format!(
+                            "{set_name} set names {clip}, which {} carries not, nor any library",
+                            model.path(content)
+                        ),
+                        "a clip of a library, or of every model wearing the skeleton",
+                    ),
+                    None if wearers.is_empty() && !in_library => check.error(
+                        at.clone(),
+                        "unknown clip",
+                        format!("{set_name} set names {clip}: no such clip in clips/*.glb"),
+                        "a clip of a library",
+                    ),
+                    None => {}
+                }
+                if !attacks.contains(&entry) {
+                    continue;
+                }
+                if in_library {
+                    let apexes = apexes(def.cues.get(clip));
+                    if apexes != 1 {
+                        check.error(
+                            at.clone(),
+                            "apex out of place",
+                            format!("{clip} plays as an attack but has {apexes} apex cues"),
+                            "exactly one, where the hit lands",
+                        );
+                    }
+                }
+                for (model, worn) in &wearers {
+                    if !worn.own.contains_key(clip) {
+                        continue;
+                    }
+                    let apexes = apexes(worn.def.overrides.get(clip));
+                    if apexes != 1 {
+                        loading.row_error(
+                            *model,
+                            &format!("/overrides/{}", clip.0),
+                            ContentProblem::new(
+                                "apex out of place",
+                                format!("{clip} plays as an attack but has {apexes} apex cues"),
+                                "exactly one, where the hit lands",
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        for (index, library) in def.libraries.iter().enumerate() {
+            let unnamed = skeleton
+                .clips
+                .iter()
+                .filter(|(name, clip)| clip.library == index && !named.contains(name))
+                .count();
+            if unnamed > 0 {
+                loading.row_warning(
+                    id,
+                    "",
+                    ContentProblem::new(
+                        UNNAMED_CLIPS,
+                        format!(
+                            "clips/{}.glb carries {} no set names",
+                            library.key,
+                            ui::words::counted(unnamed, "clip")
+                        ),
+                        "every clip downloaded played by some set",
+                    ),
+                );
+            }
+        }
+        for (model, worn) in &wearers {
+            for clip in worn.own.keys().filter(|clip| !named.contains(clip)) {
+                loading.row_warning(
+                    *model,
+                    "",
+                    ContentProblem::new(
+                        "clip no set names",
+                        format!("model.glb carries {clip}, which no set names"),
+                        "every clip downloaded played by some set",
+                    ),
+                );
+            }
+        }
+        loading.row_errors(id, check);
+    }
+}
+
+fn set_name(content: &Content, def: &SkeletonDef, pointer: &str) -> String {
+    def.stances
+        .iter()
+        .enumerate()
+        .find(|(index, _)| pointer == format!("/stances/{index}/set"))
+        .map_or_else(
+            || "base".to_owned(),
+            |(_, set)| set.stance.name(content).to_owned(),
+        )
+}
+
+fn apexes(cues: Option<&Vec<Cue>>) -> usize {
+    cues.map_or(0, |cues| cues.iter().filter(|cue| cue.apex).count())
+}
+
+/// What a model's glb must be on its own: within the style budget, its clips long enough to see and
+/// short enough to wait for.
+fn check_skin(info: &GltfInfo, weight: Option<FileSize>, cx: &mut RowCheck) {
     if let Some(weight) = weight
         && weight > MAX_CHARACTER_BYTES
     {
@@ -533,35 +676,16 @@ fn check_rig(def: &ModelDef, info: &GltfInfo, weight: Option<FileSize>, cx: &mut
         );
     }
     cx.range("", info.triangles, 0, MAX_CHARACTER_TRIANGLES, "triangles");
-    cx.range("", info.joints, 0, MAX_JOINTS, "joints");
-    for (pointer, clip) in def.named_clips() {
-        let Some(found) = info.clip(&clip.name) else {
+    cx.range("", info.joints(), 0, skeleton::MAX_JOINTS, "joints");
+    for clip in &info.clips {
+        let length = clip.length.millis();
+        if length < skeleton::MIN_CLIP || length > skeleton::MAX_CLIP {
             cx.error(
-                format!("{pointer}/name"),
-                "unknown clip",
-                format!("no animation {:?} in model.glb", clip.name),
-                format!("one of {}", listed(&info.clip_names())),
-            );
-            continue;
-        };
-        let length = found.length.millis();
-        if length < MIN_CLIP || length > MAX_CLIP {
-            cx.error(
-                format!("{pointer}/name"),
+                "",
                 "clip length",
                 format!("{:?} plays {} ms", clip.name, length.0),
-                format!("{} ms to {} ms", MIN_CLIP.0, MAX_CLIP.0),
+                format!("{} ms to {} ms", skeleton::MIN_CLIP.0, skeleton::MAX_CLIP.0),
             );
-        }
-        for (index, cue) in clip.cues.iter().enumerate() {
-            if cue.at > length {
-                cx.error(
-                    format!("{pointer}/cues/{index}/at"),
-                    "cue past the clip",
-                    format!("{} ms into a clip of {} ms", cue.at.0, length.0),
-                    "a moment within the clip",
-                );
-            }
         }
     }
 }
@@ -613,8 +737,9 @@ fn check_busts(busts: &[MeasuredBust], cx: &mut RowCheck) {
 
 pub struct ActorModel {
     def: ModelDef,
-    lengths: BTreeMap<Action, Seconds>,
-    pose_lengths: BTreeMap<Pose, Seconds>,
+    skeleton: Arc<BuiltSkeleton>,
+    /// The clips the model's own glb carries: their place there and how long each plays.
+    own: BTreeMap<ClipName, (usize, Seconds)>,
     figure: Option<BustFigure>,
 }
 
@@ -624,6 +749,25 @@ pub struct ActorModel {
 pub struct BustFigure {
     pub left: f32,
     pub right: f32,
+}
+
+/// What plays for a motion: the clip, the group it is kept to, where it comes from, how long it
+/// plays once, and its cues.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Resolved<'a> {
+    pub clip: &'a ClipName,
+    pub only: Option<&'a GroupName>,
+    pub source: Option<ClipSource>,
+    pub length: Seconds,
+    pub cues: &'a [Cue],
+}
+
+/// Where a clip is played from: the model's own glb, or a library of its skeleton, each by the
+/// clip's place among that file's animations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ClipSource {
+    Model { index: usize },
+    Library { library: usize, index: usize },
 }
 
 impl ActorModel {
@@ -636,23 +780,31 @@ impl ActorModel {
             .unwrap_or_else(|| panic!("model {} failed to load", model.path(content)))
     }
 
-    // Only a config that passed the load checks, with a clip in the glb for every action, gets here.
-    fn new(def: &ModelDef, info: &GltfInfo, figure: Option<BustFigure>) -> ActorModel {
-        let length = |clip: &Clip| {
-            info.clip(&clip.name)
-                .map_or(Seconds(0.0), |clip| clip.length)
-        };
+    /// The model, when it loaded: what checks across files ask, which run on a game that may hold
+    /// refused rows.
+    pub fn loaded(content: &Content, model: ModelId) -> Option<&ActorModel> {
+        content.has_built::<Models>().then_some(())?;
+        content
+            .built::<Models>()
+            .0
+            .get(model.index())
+            .and_then(Option::as_ref)
+    }
+
+    fn new(
+        def: &ModelDef,
+        info: &GltfInfo,
+        skeleton: Arc<BuiltSkeleton>,
+        figure: Option<BustFigure>,
+    ) -> ActorModel {
         ActorModel {
             def: def.clone(),
-            lengths: def
+            skeleton,
+            own: info
                 .clips
                 .iter()
-                .map(|(action, clip)| (*action, length(clip)))
-                .collect(),
-            pose_lengths: def
-                .poses
-                .iter()
-                .map(|(pose, clip)| (*pose, length(clip)))
+                .enumerate()
+                .map(|(index, clip)| (ClipName::new(clip.name.clone()), (index, clip.length)))
                 .collect(),
             figure,
         }
@@ -670,60 +822,146 @@ impl ActorModel {
         &self.def.model
     }
 
+    pub fn skeleton_id(&self) -> SkeletonId {
+        self.def.skeleton
+    }
+
+    pub fn skeleton(&self) -> &BuiltSkeleton {
+        &self.skeleton
+    }
+
+    pub fn hands(&self) -> &[Hand] {
+        &self.skeleton.def.hands
+    }
+
     pub fn airborne(&self) -> bool {
-        self.def.airborne()
+        self.skeleton.def.airborne()
     }
 
     pub fn scale(&self) -> f32 {
         self.def.scale()
     }
 
-    pub fn clip(&self, action: Action) -> &Clip {
-        &self.def.clips[&action]
+    /// The file and place among its animations of a clip `source` names for this model.
+    pub fn rig_clip(&self, source: ClipSource) -> RigClip {
+        match source {
+            ClipSource::Model { index } => RigClip {
+                file: self.def.model.path(),
+                index,
+            },
+            ClipSource::Library { library, index } => RigClip {
+                file: self.skeleton.def.libraries[library].file.path(),
+                index,
+            },
+        }
     }
 
-    /// How long the action's clip plays once, as authored.
-    pub fn length(&self, action: Action) -> Seconds {
-        self.lengths[&action]
+    /// The clip a turntable stands the model in for `motion` in `stance` and `pose`, when its
+    /// skeleton or the model carries it.
+    pub fn standing_clip(
+        &self,
+        stance: Option<StanceId>,
+        motion: &Motion,
+        pose: Pose,
+    ) -> Option<RigClip> {
+        self.resolve(stance, motion, pose)
+            .source
+            .map(|source| self.rig_clip(source))
     }
 
-    /// The clip held in a pose, with its length, when the model has one.
-    pub fn pose(&self, pose: Pose) -> Option<(&Clip, Seconds)> {
-        Some((self.def.poses.get(&pose)?, *self.pose_lengths.get(&pose)?))
+    /// The clips the model's own glb carries, which play in place of the libraries'.
+    pub fn own_clips(&self) -> impl Iterator<Item = (&ClipName, usize)> {
+        self.own.iter().map(|(name, (index, _))| (name, *index))
     }
 
-    /// How long an action plays and when it lands, at an attack speed: only an attack plays faster
-    /// or slower for it.
-    pub fn timing(&self, action: Action, attack_speed: PlaybackRate) -> Timing {
-        let rate = rate(action, attack_speed);
-        let apex = self
-            .clip(action)
+    /// What plays for `motion` in `stance`, holding `pose` while idle: the stance's set names it,
+    /// else the base set; a move neither names plays the stance's attack, else the base's. The clip
+    /// is the model's own when its glb carries one of the name, else the skeleton's libraries'.
+    pub fn resolve(&self, stance: Option<StanceId>, motion: &Motion, pose: Pose) -> Resolved<'_> {
+        let skeleton = &self.skeleton.def;
+        let base = &skeleton.base;
+        let set = stance.and_then(|stance| skeleton.set(stance));
+        let action = |action: Action| -> &ClipRef {
+            set.and_then(|set| set.clips.get(&action))
+                .unwrap_or(&base.clips[&action])
+        };
+        let clip = match motion {
+            Motion::Action(Action::Idle) => set
+                .and_then(|set| set.poses.get(&pose))
+                .or_else(|| base.poses.get(&pose))
+                .unwrap_or_else(|| action(Action::Idle)),
+            Motion::Action(acted) => action(*acted),
+            Motion::Move(name) => set
+                .and_then(|set| set.moves.get(name))
+                .or_else(|| base.moves.get(name))
+                .unwrap_or_else(|| action(Action::Attack)),
+        };
+        let name = clip.clip();
+        let (source, length, cues) = match self.own.get(name) {
+            Some(&(index, length)) => (
+                Some(ClipSource::Model { index }),
+                length,
+                self.def.overrides.get(name),
+            ),
+            None => match self.skeleton.clips.get(name) {
+                Some(&LibraryClip {
+                    library,
+                    index,
+                    length,
+                }) => (
+                    Some(ClipSource::Library { library, index }),
+                    length,
+                    skeleton.cues.get(name),
+                ),
+                None => (None, Seconds(0.0), None),
+            },
+        };
+        Resolved {
+            clip: name,
+            only: clip.only(),
+            source,
+            length,
+            cues: cues.map_or(&[], Vec::as_slice),
+        }
+    }
+
+    /// How long a motion plays and when it lands, in a stance, at an attack speed: only a hit plays
+    /// faster or slower for it, apex and all.
+    pub fn timing(
+        &self,
+        stance: Option<StanceId>,
+        motion: &Motion,
+        attack_speed: PlaybackRate,
+    ) -> Timing {
+        let resolved = self.resolve(stance, motion, Pose::Idle);
+        let rate = rate(motion, attack_speed);
+        let apex = resolved
             .cues
             .iter()
             .find(|cue| cue.apex)
             .map_or(Millis(0.0), |cue| cue.at);
         Timing {
-            duration: self.length(action) / rate,
+            duration: resolved.length / rate,
             apex: apex.seconds() / rate,
         }
     }
 
-    /// The cues crossed between the previous sample and `now` of an action's playback: the sounds
-    /// to play and whether a foot came down. `prev` is `None` when the action just started, in
-    /// which case every cue up to `now` fires.
-    pub fn cues(
-        &self,
-        action: Action,
+    /// The cues of `resolved`, playing `motion`, crossed between the previous sample and `now`: the
+    /// sounds to play and whether a foot came down. `prev` is `None` when the motion just started,
+    /// in which case every cue up to `now` fires.
+    pub fn cues<'a>(
+        resolved: &Resolved<'a>,
+        motion: &Motion,
         prev: Option<Seconds>,
         now: Seconds,
         attack_speed: PlaybackRate,
-    ) -> (Vec<&SfxId>, bool) {
-        let rate = rate(action, attack_speed);
+    ) -> (Vec<&'a SfxId>, bool) {
+        let rate = rate(motion, attack_speed);
         let authored = |t: Seconds| t.millis() * rate;
-        let total = self.length(action).millis();
-        let once = action == Action::Dead;
+        let total = resolved.length.millis();
+        let once = *motion == Motion::Action(Action::Dead);
         let (mut sfx, mut stepped) = (Vec::new(), false);
-        for cue in &self.clip(action).cues {
+        for cue in resolved.cues {
             if crossed(once, total, cue.at, prev.map(authored), authored(now)) {
                 sfx.extend(cue.sound.as_ref());
                 stepped |= cue.step;
@@ -739,8 +977,9 @@ pub struct Timing {
     pub apex: Seconds,
 }
 
-fn rate(action: Action, attack_speed: PlaybackRate) -> PlaybackRate {
-    if action == Action::Attack {
+/// How fast a motion plays at an attack speed: a hit at the speed, anything else as authored.
+pub fn rate(motion: &Motion, attack_speed: PlaybackRate) -> PlaybackRate {
+    if motion.strikes() {
         attack_speed.at_least(0.01)
     } else {
         PlaybackRate(1.0)
@@ -825,12 +1064,4 @@ fn bust_files(loading: &Loading, rows: &[(ModelId, &ModelDef)]) -> Vec<BustFiles
 
 fn listed<T: AsRef<str>>(all: &[T]) -> String {
     all.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(", ")
-}
-
-fn listed_indices(indices: &[usize]) -> String {
-    indices
-        .iter()
-        .map(|i| i.to_string())
-        .collect::<Vec<_>>()
-        .join(" and ")
 }

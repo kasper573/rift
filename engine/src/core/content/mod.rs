@@ -29,8 +29,8 @@ pub use id::{ContentId, ContentScope, rescoped, with_content};
 pub use key::key_of;
 pub use load::{
     CheckedFiles, ContentFolder, ContentRegistry, FileHashes, FileWriter, FilesystemFolder,
-    FolderEntry, JsonPart, LoadStep, Loading, MemoryFolder, Reference, Settings, load, pointer_of,
-    valid_key, write,
+    FolderEntry, JsonPart, LoadStep, LoadWarnings, Loading, MemoryFolder, Reference, Settings,
+    load, pointer_of, valid_key, write,
 };
 pub use reader::{FolderReader, Unreadable, WrittenFiles};
 pub use report::{ContentProblem, ErrorPlace, LoadError, LoadReport, MISSING_FILE};

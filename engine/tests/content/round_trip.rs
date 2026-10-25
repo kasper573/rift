@@ -47,7 +47,7 @@ fn writing_a_written_folder_back_changes_no_bytes() {
 fn rich_game() -> Game {
     game()
         .sword()
-        .wearing(&["sword"])
+        .equipped(&["sword"])
         .busts("hero")
         .babble("brute")
         .npc(

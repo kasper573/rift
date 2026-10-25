@@ -17,7 +17,7 @@ use engine::core::content::Content;
 use engine::core::ground::{Heightfield, Paint};
 use engine::core::render::camera;
 use engine::core::render::world::mannequin::Mannequin;
-use engine::core::render::world::mannequin::mannequin;
+use engine::core::render::world::mannequin::{RigClip, mannequin};
 use engine::core::render::world::sky::{self, Daylight};
 use engine::core::time::Seconds;
 use engine::systems::area::scenery::{self, Scenery};
@@ -65,7 +65,7 @@ pub struct Ghost {
 #[derive(Clone, PartialEq)]
 pub struct Standing {
     pub model: String,
-    pub clip: Option<usize>,
+    pub clip: Option<RigClip>,
     pub transform: Transform,
     pub held: Option<Seconds>,
 }
@@ -363,7 +363,7 @@ impl Viewport {
                     }
                     entity
                 }
-                None => match standing.clip {
+                None => match &standing.clip {
                     Some(clip) => {
                         let (scene, mut puppet) = mannequin(world, &standing.model, clip);
                         puppet.hold(standing.held);

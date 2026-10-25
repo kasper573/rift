@@ -4,8 +4,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use cargo_metadata::{Metadata, MetadataCommand};
-use engine::core::content::{FilesystemFolder, write};
-use engine::systems::{load_content, registry};
+use engine::core::content::{Content, FilesystemFolder, LoadWarnings, write};
+use engine::systems::actor::model::{ActorModel, ModelDef, UNNAMED_CLIPS};
+use engine::systems::actor::skeleton::{SkeletonDef, SkeletonId};
+use engine::systems::actor::stance;
+use engine::systems::item::ItemDef;
+use engine::systems::{GameSettings, load_content, registry};
 use syn::UseTree;
 use syn::visit::{self, Visit};
 use walkdir::{DirEntry, WalkDir};
@@ -173,6 +177,7 @@ fn check_shipped_game(name: &str, folder: &Path, scratch: &Path, out: &mut Vec<S
             return;
         }
     };
+    check_bodies(name, &content, out);
     if scratch.exists() {
         fs::remove_dir_all(scratch).expect("clear the lint's scratch folder");
     }
@@ -189,6 +194,47 @@ fn check_shipped_game(name: &str, folder: &Path, scratch: &Path, out: &mut Vec<S
             out.push(format!(
                 "[{name}] {file}: not as the editor writes it; see {}",
                 scratch.join(file).display()
+            ));
+        }
+    }
+}
+
+/// What a shipped game's bodies must be beyond what loads: every library clip named by a set, every
+/// skeleton worn by a model, and a set on the player's skeleton for every stance an item names, so
+/// no shipped weapon falls back to the base set. The loader's other warnings are printed, the
+/// designer's to accept.
+fn check_bodies(name: &str, content: &Content, out: &mut Vec<String>) {
+    for warning in &content.built::<LoadWarnings>().0 {
+        if warning.problem.rule == UNNAMED_CLIPS {
+            out.push(format!("[{name}] {warning}"));
+        } else {
+            println!("[{name}] warning: {warning}");
+        }
+    }
+    let worn: BTreeSet<SkeletonId> = content
+        .table::<ModelDef>()
+        .rows()
+        .map(|model| model.skeleton)
+        .collect();
+    for skeleton in content.table::<SkeletonDef>().ids() {
+        if !worn.contains(&skeleton) {
+            out.push(format!(
+                "[{name}] {}: no model wears this skeleton",
+                skeleton.path(content)
+            ));
+        }
+    }
+    let player = content.built::<GameSettings>().player.get(content);
+    let body = ActorModel::get(content, player.model).skeleton();
+    for item in content.table::<ItemDef>().ids() {
+        let Some(stance) = stance::of_item(content, item) else {
+            continue;
+        };
+        if body.def.set(stance).is_none() {
+            out.push(format!(
+                "[{name}] {}: its stance {} has no set on the player's skeleton",
+                item.path(content),
+                stance.path(content)
             ));
         }
     }

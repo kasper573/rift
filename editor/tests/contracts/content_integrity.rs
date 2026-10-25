@@ -213,13 +213,13 @@ fn a_sound_and_a_voice_take_their_clips_from_files_under_the_names_their_types_g
 fn a_cue_placed_past_the_end_of_its_clip_is_refused() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = support::open(camp(), &scratch);
-    let config = fields_file(&path("model", "orc"));
+    let config = fields_file(&path("skeleton", testkit::BODY));
     let mut edit = ContentEdit::new("land the attack after the clip ends");
-    edit.update_json(&files(&mut editor), &config, |model| {
-        model["clips"]["attack"]["cues"][0]["at"] = json!(testkit::CLIP.0 * 2.0);
+    edit.update_json(&files(&mut editor), &config, |skeleton| {
+        skeleton["cues"]["attack"][0]["at"] = json!(testkit::CLIP.0 * 2.0);
         Some(())
     })
-    .expect("the model is there");
+    .expect("the skeleton is there");
 
     let refused = editor.try_apply(edit).expect_err("refused");
     assert!(refused.contains("cue past the clip"), "{refused}");

@@ -141,9 +141,10 @@ fn goods() -> Game {
             json!({ "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 50 }] }),
         )
         .item("bone", json!({ "kind": { "type": "resource" } }))
+        .stance("sword", 1, "main")
         .item(
             "sword",
-            json!({ "kind": { "type": "equipment", "slot": "weapon" } }),
+            json!({ "kind": { "type": "equipment", "slot": "hand", "stance": "sword.stance.json" } }),
         )
 }
 

@@ -179,7 +179,7 @@ fn harbour() -> Sim {
         )
         .hero("harbour", 5.0, 4.0)
         .sword()
-        .wearing(&["sword"])
+        .equipped(&["sword"])
         .item(
             "gold",
             json!({ "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 100_000 }] }),

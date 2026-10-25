@@ -6,6 +6,7 @@ use engine::core::math::{Offset, Pos};
 use engine::core::time::Seconds;
 use engine::core::units::Meters;
 use engine::core::vfx::{VfxDef, VfxInstance, VfxSite};
+use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::AreaDef;
 use engine::systems::class::NodeKey;
 use engine::systems::combat::{self, Attitude};
@@ -133,7 +134,7 @@ fn worn_gear_boosts_only_while_it_is_worn() {
     sim.send(
         conn,
         UnequipRequest {
-            slot: EquipmentSlot::Weapon,
+            slot: EquipmentSlot::Hand(HandIndex::MAIN),
         },
     );
     sim.run(0.5);
@@ -328,10 +329,11 @@ fn clinic() -> (Sim, Entity) {
             }),
         )
         .script("wing_boost", "item", boosting("movement_speed", 0.5))
+        .stance("sword", 1, "main")
         .item(
             "blade",
             json!({
-                "kind": { "type": "equipment", "slot": "weapon" },
+                "kind": { "type": "equipment", "slot": "hand", "stance": "sword.stance.json" },
                 "modules": [{ "type": "script", "script": "blade_boost.script.json" }],
             }),
         )
