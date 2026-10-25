@@ -1,5 +1,5 @@
-//! Steering the camera: keys turn it a step and bring it home, the wheel zooms it, and dragging
-//! with the middle button turns it freely.
+//! Steering the camera: keys turn it a step, tilt it a step and bring it home, the wheel zooms
+//! it, and dragging with the middle button turns it freely.
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
@@ -8,7 +8,7 @@ use bevy_egui::input::egui_wants_any_keyboard_input;
 use super::map::{self, InputAction};
 use crate::core::geometry::Degrees;
 use crate::core::gui;
-use crate::core::render::{CameraRig, TURN_STEP};
+use crate::core::render::{CameraRig, TILT_STEP, TURN_STEP};
 use crate::systems::screen::ClientScreen;
 
 /// How far the camera turns for a pixel of middle-button drag.
@@ -35,6 +35,8 @@ struct Scrolled(f32);
 fn steer_by_keys(world: &mut World) {
     let left = map::just_pressed(world, InputAction::TurnLeft);
     let right = map::just_pressed(world, InputAction::TurnRight);
+    let up = map::just_pressed(world, InputAction::TiltUp);
+    let down = map::just_pressed(world, InputAction::TiltDown);
     let home = map::just_pressed(world, InputAction::CameraHome);
     let mut rig = world.resource_mut::<CameraRig>();
     if left {
@@ -42,6 +44,12 @@ fn steer_by_keys(world: &mut World) {
     }
     if right {
         rig.turn(Degrees(-TURN_STEP.0));
+    }
+    if up {
+        rig.tilt(Degrees(-TILT_STEP.0));
+    }
+    if down {
+        rig.tilt(TILT_STEP);
     }
     if home {
         rig.home();

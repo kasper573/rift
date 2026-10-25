@@ -1,6 +1,6 @@
-//! The world is drawn into a picture half the window's size and shown stretched over the window
-//! with no filtering, so its edges step in pairs of pixels; the area's grade, the screen's and the
-//! transitions are applied as it is shown, and the interface is drawn over it at full size.
+//! The world is drawn into a picture the window's size and shown over the window; the area's
+//! grade, the screen's and the transitions are applied as it is shown, and the interface is drawn
+//! over it.
 
 use bevy::asset::{AssetPath, embedded_path};
 use bevy::camera::RenderTarget;
@@ -20,7 +20,7 @@ use crate::core::platform::ClientPlatform;
 use crate::core::time::Seconds;
 
 /// Window pixels to a pixel of the world's picture.
-pub(crate) const SCALE: f32 = 2.0;
+pub(crate) const SCALE: f32 = 1.0;
 pub(crate) const PRESENT_LAYER: usize = 1;
 /// What shows where nothing is drawn.
 const VOID: Color = Color::srgb(0.06, 0.065, 0.08);
@@ -297,11 +297,11 @@ fn world_projection(width: u32, height: u32) -> Projection {
 
 fn world_target(width: u32, height: u32) -> Image {
     let mut target = Image::new_target_texture(width, height, TextureFormat::Rgba8UnormSrgb, None);
-    target.sampler = ImageSampler::nearest();
+    target.sampler = ImageSampler::linear();
     target
 }
 
-/// The world's picture is half the window on each side, rounded to whole even pixels.
+/// The world's picture over the window's size, rounded to whole even pixels.
 pub(crate) fn target_size(window: &Window) -> (u32, u32) {
     let scaled = |logical: f32| {
         let px = (logical / SCALE).round().max(2.0) as u32;

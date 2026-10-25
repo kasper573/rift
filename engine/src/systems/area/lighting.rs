@@ -10,14 +10,40 @@ use crate::core::units::Meters;
 pub const MAX_LIGHTS: usize = 8;
 
 /// The light an area stands in, fixed for the area: a sun, if it is outside, the ambient light
-/// everywhere, and the grade its picture is tinted by. There is no clock and no day-night cycle.
+/// everywhere, the sky behind everything, and the grade its picture is tinted by. There is no
+/// clock and no day-night cycle.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Lighting {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sun: Option<Sun>,
     pub ambient: Rgb,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sky: Option<Sky>,
     pub grade: Grade,
+}
+
+/// The sky behind the world, shaded from `horizon` at the ground's edge up to `zenith` overhead.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sky {
+    pub zenith: Rgb,
+    pub horizon: Rgb,
+}
+
+impl Sky {
+    pub const DAY: Sky = Sky {
+        zenith: Rgb([74, 140, 226]),
+        horizon: Rgb([198, 224, 238]),
+    };
+    pub const NIGHT: Sky = Sky {
+        zenith: Rgb([18, 26, 58]),
+        horizon: Rgb([76, 66, 98]),
+    };
+    pub const DARK: Sky = Sky {
+        zenith: Rgb([10, 10, 14]),
+        horizon: Rgb([22, 22, 30]),
+    };
 }
 
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -46,6 +72,7 @@ impl Lighting {
                 color: Rgb([255, 236, 190]),
             }),
             ambient: Rgb([98, 122, 160]),
+            sky: None,
             grade: Grade {
                 color: Rgb::WHITE,
                 strength: 0.0,
@@ -62,6 +89,7 @@ impl Lighting {
                 color: Rgb([210, 190, 200]),
             }),
             ambient: Rgb([60, 70, 110]),
+            sky: Some(Sky::NIGHT),
             grade: Grade::NIGHT,
         }
     }
@@ -72,8 +100,18 @@ impl Lighting {
         Lighting {
             sun: None,
             ambient: Rgb([70, 80, 105]),
+            sky: None,
             grade: Grade::NIGHT,
         }
+    }
+
+    /// The sky the area shows: its own, or a day sky under a sun and a dark one without.
+    pub fn sky(&self) -> Sky {
+        self.sky.unwrap_or(if self.sun.is_some() {
+            Sky::DAY
+        } else {
+            Sky::DARK
+        })
     }
 
     pub fn check(&self, pointer: &str, cx: &mut RowCheck) {

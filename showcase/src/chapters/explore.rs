@@ -14,7 +14,7 @@ pub const CHAPTER: Chapter = Chapter {
 const ROUTE: [((f32, f32), &str); 4] = [
     (
         (4.0, 1.0),
-        "Click the ground to walk there — the camera follows",
+        "Click the ground to walk there — the camera follows, and the grass parts underfoot",
     ),
     (
         (5.0, -2.0),
@@ -44,6 +44,11 @@ fn play(shoot: &mut Shoot) {
     me.caption("Zoom in close with the wheel, or out wide");
     me.zoom_camera(1);
     me.zoom_camera(-2);
-    me.caption("Home brings the camera back to looking north");
+    me.caption("Page Up tilts the camera toward the horizon, to see the land as a walker would");
+    me.zoom_camera(2);
+    for _ in 0..4 {
+        me.tilt_camera(InputAction::TiltUp);
+    }
+    me.caption("Home brings the camera back to looking north and down");
     me.camera_home();
 }

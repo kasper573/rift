@@ -1,0 +1,40 @@
+{
+  "name": "Ripples",
+  "stage": "cover",
+  "params": [
+    {
+      "name": "crest",
+      "kind": "color",
+      "default": [
+        225,
+        240,
+        250,
+        255
+      ]
+    },
+    {
+      "name": "deep",
+      "kind": "color",
+      "default": [
+        24,
+        58,
+        104,
+        255
+      ]
+    },
+    {
+      "name": "opacity",
+      "kind": "number",
+      "default": 0.9,
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "name": "foam",
+      "kind": "number",
+      "default": 0.35,
+      "min": 0.0,
+      "max": 1.0
+    }
+  ]
+}

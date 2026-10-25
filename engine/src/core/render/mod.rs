@@ -6,8 +6,8 @@ pub mod transition;
 pub mod world;
 
 pub use camera::{
-    CameraPreferences, CameraRig, GroundHeights, PITCH, TURN_STEP, View, WorldCamera, Zoom,
-    cursor_ground, cursor_ray, ground_height, ground_pos, view_of, window_point, world_point,
+    CameraPreferences, CameraRig, GroundHeights, PITCH, TILT_STEP, TURN_STEP, View, WorldCamera,
+    Zoom, cursor_ground, cursor_ray, ground_height, ground_pos, view_of, window_point, world_point,
 };
 pub use pick::{Pointed, capsule_hit, pointed, sphere_hit};
 

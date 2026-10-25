@@ -31,17 +31,21 @@ fn the_pointer_ray_lands_where_the_ground_shows() {
         (Pos::new(12.0, 19.0), "the slope"),
         (Pos::new(3.0, 3.0), "the flat"),
     ];
-    for turned in [0.0, 45.0, 135.0, 270.0] {
+    for (turned, tilted) in [(0.0, -25.0), (45.0, 0.0), (135.0, 15.0), (270.0, -10.0)] {
         let mut rig = CameraRig::default();
         rig.look_at(Pos::new(14.0, 14.0), Meters(1.0));
         rig.turn_now(Degrees(turned));
+        rig.tilt_now(Degrees(tilted));
         let view = rig.view(WINDOW);
         for (at, name) in spots {
             let shown = view
                 .project(world_point(at, heights.height_at(at)))
-                .unwrap_or_else(|| panic!("{name} is in view with the camera turned {turned}°"));
-            let landed = ground_hit(&heights, bounds, view.ray(shown))
-                .unwrap_or_else(|| panic!("the ray through {name} lands, turned {turned}°"));
+                .unwrap_or_else(|| {
+                    panic!("{name} is in view with the camera turned {turned}° tilted {tilted}°")
+                });
+            let landed = ground_hit(&heights, bounds, view.ray(shown)).unwrap_or_else(|| {
+                panic!("the ray through {name} lands, turned {turned}° tilted {tilted}°")
+            });
             assert!(
                 landed.distance(at) < Meters(0.05),
                 "pointing at {name} turned {turned}° landed {landed:?}, not {at:?}"

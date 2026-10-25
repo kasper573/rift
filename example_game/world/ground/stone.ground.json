@@ -7,5 +7,14 @@
     255
   ],
   "surface": "world/surface/rock.surface.json",
-  "walk": "walkable"
+  "walk": "walkable",
+  "cover": {
+    "shader": "world/ground/gravel.vfx_shader",
+    "geometry": {
+      "type": "strewn",
+      "prop": "world/props/rock-small.prop",
+      "per_square_meter": 1.5,
+      "scale": 0.25
+    }
+  }
 }

@@ -11,9 +11,10 @@ const FULL_LIT: f32 = 0.68;
 const SHADE: f32 = 0.5;
 const HALF: f32 = 0.78;
 
-// The colour of a pixel of a standard material lit in three flat bands: every face is lit as a flat
-// one, its light measured on white and stepped, and the material's own colour laid over that.
-fn toon_color(in: VertexOutput, is_front: bool) -> vec4<f32> {
+// The colour of a pixel of a standard material lit in three bands: the face is lit as a flat one
+// (or from its vertex normals when `flat` is 0), its light measured on white and stepped, and the
+// material's own colour laid over that.
+fn toon_color(in: VertexOutput, is_front: bool, flat: f32) -> vec4<f32> {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color = alpha_discard(
         pbr_input.material.flags,
@@ -24,10 +25,12 @@ fn toon_color(in: VertexOutput, is_front: bool) -> vec4<f32> {
     let emissive = pbr_input.material.emissive.rgb;
     var color = base.rgb;
     if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
-        let flat = normalize(cross(dpdy(in.world_position.xyz), dpdx(in.world_position.xyz)));
-        let facing = select(-flat, flat, dot(flat, pbr_input.N) >= 0.0);
-        pbr_input.N = facing;
-        pbr_input.world_normal = facing;
+        if flat > 0.5 {
+            let plane = normalize(cross(dpdy(in.world_position.xyz), dpdx(in.world_position.xyz)));
+            let facing = select(-plane, plane, dot(plane, pbr_input.N) >= 0.0);
+            pbr_input.N = facing;
+            pbr_input.world_normal = facing;
+        }
         pbr_input.material.base_color = vec4<f32>(1.0, 1.0, 1.0, base.a);
         pbr_input.material.emissive = vec4<f32>(0.0, 0.0, 0.0, 1.0);
         let lit = apply_pbr_lighting(pbr_input).rgb;

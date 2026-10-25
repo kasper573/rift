@@ -9,6 +9,7 @@ pub mod terrain;
 pub mod transition;
 pub mod walk;
 pub mod warp;
+pub mod weather;
 pub mod world_map;
 
 pub use blueprint::{BlueprintDef, Flattened, PlacedBlueprint, Placement};
@@ -18,6 +19,7 @@ pub use object::{AreaObject, ObjectDef, ObjectShape};
 pub use prop::{Footprint, PropDef, PropId, PropPlacement, Scatter};
 pub use scene::SceneNode;
 pub use terrain::Terrain;
+pub use weather::{DayCycle, Weather, Wind};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -79,6 +81,7 @@ pub fn content(registry: &mut ContentRegistry) {
         .json_part(scene::json_part(AreaDef::TABLE))
         .json_part(scene::json_part(BlueprintDef::TABLE))
         .hook(LoadStep::Files, prop::check_fitted)
+        .hook(LoadStep::Across, ground::check_all)
         .hook(LoadStep::Expand, flatten_all)
         .hook(LoadStep::Assemble, build_all)
         .hook(LoadStep::Across, world_map::check_all);
@@ -109,6 +112,8 @@ pub struct AreaDef {
     pub name: String,
     pub terrain: Terrain,
     pub lighting: Lighting,
+    #[serde(default, skip_serializing_if = "Weather::is_still")]
+    pub weather: Weather,
     #[serde(skip)]
     pub scene: Vec<SceneNode>,
     #[serde(skip)]
@@ -135,6 +140,7 @@ impl ContentFile for AreaDef {
                 max_slope: Degrees(38.0),
             },
             lighting: Lighting::day(),
+            weather: Weather::breezy(),
             scene: Vec::new(),
             heights: Heightfield::flat(size),
             paint: Paint::plain(size),
@@ -145,6 +151,7 @@ impl ContentFile for AreaDef {
         cx.text("/name", &self.name, 1, 60);
         self.terrain.check("/terrain", cx);
         self.lighting.check("/lighting", cx);
+        self.weather.check("/weather", cx);
     }
 }
 
@@ -542,6 +549,7 @@ pub struct Area {
     pub heights: Heightfield,
     pub paint: Paint,
     pub lighting: Lighting,
+    pub weather: Weather,
     pub mesh: NavMesh,
     pub wild_mesh: NavMesh,
     pub airspace: NavMesh,
@@ -649,6 +657,7 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
                 heights: def.heights.clone(),
                 paint: def.paint.clone(),
                 lighting: def.lighting.clone(),
+                weather: def.weather,
             };
             (
                 ground,
@@ -667,6 +676,7 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
                 heights: Heightfield::flat(def.size),
                 paint: Paint::plain(def.size),
                 lighting: Lighting::day(),
+                weather: Weather::breezy(),
             };
             (
                 ground,
@@ -748,6 +758,7 @@ fn build_all(loading: &mut Loading) {
             heights: def.heights.clone(),
             paint: def.paint.clone(),
             lighting: def.lighting.clone(),
+            weather: def.weather,
         };
         let mut check = RowCheck::default();
         check_bounds(&content, &ground.terrain, modules, &mut check);
@@ -769,6 +780,7 @@ struct Ground {
     heights: Heightfield,
     paint: Paint,
     lighting: Lighting,
+    weather: Weather,
 }
 
 /// The area a ground and its flattened modules make: where it walks, flies, is safe and sounds,
@@ -826,6 +838,7 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
         heights: ground.heights.clone(),
         paint: ground.paint.clone(),
         lighting: ground.lighting.clone(),
+        weather: ground.weather,
         mesh: walk.walk,
         wild_mesh: walk.wild,
         airspace: walk.airspace,

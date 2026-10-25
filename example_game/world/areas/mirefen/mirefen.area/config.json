@@ -36,5 +36,12 @@
       ],
       "strength": 0.0
     }
+  },
+  "weather": {
+    "wind": {
+      "direction": 240.0,
+      "strength": 0.35
+    },
+    "overcast": 0.7
   }
 }

@@ -3,9 +3,11 @@
 //! only knows how it is drawn.
 
 pub mod billboard;
+pub mod cover;
 pub mod decal;
 pub mod fade;
 pub mod lights;
+pub mod sky;
 pub mod terrain;
 pub mod toon;
 
@@ -29,7 +31,10 @@ impl Plugin for WorldScenePlugin {
         ))
         .init_resource::<toon::ToonCache>()
         .add_observer(toon::toon_scenes)
-        .add_systems(Update, (lights::flicker, fade::fade_occluders))
+        .add_systems(
+            Update,
+            (lights::flicker, fade::fade_occluders, cover::strew_loaded),
+        )
         .add_systems(
             PostUpdate,
             (decal::lay_decals, billboard::face_camera)

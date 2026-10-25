@@ -337,6 +337,12 @@ impl ServerClock {
     }
 }
 
+/// When the game's day cycle began, as the server reckons it, or nothing for a game without one.
+/// The server sets it as it starts and tells every client on joining, so all of them read the
+/// same hour off their reckoning of the server's clock.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct DayOrigin(pub Option<UnixMillis>);
+
 /// The server's wall clock as this client reckons it, once the server has told it the time.
 pub fn server_now(world: &World) -> Option<UnixMillis> {
     let uptime = Seconds(world.get_resource::<Time>()?.elapsed_secs());

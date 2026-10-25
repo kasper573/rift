@@ -55,12 +55,16 @@ impl Plugin for VfxRenderPlugin {
         app.add_plugins(Material2dPlugin::<VfxMaterial>::default())
             .add_plugins(MaterialPlugin::<VfxWorldMaterial>::default())
             .add_plugins(MaterialPlugin::<SurfaceMaterial>::default())
+            .add_plugins(MaterialPlugin::<super::cover::CoverMaterial>::default())
             .init_resource::<VfxShaders>()
             .init_resource::<VfxAssets>()
             .add_observer(unswap_removed)
             .add_systems(
                 Update,
-                load_shaders.run_if(resource_exists_and_changed::<Content>),
+                (
+                    load_shaders.run_if(resource_exists_and_changed::<Content>),
+                    super::cover::blow,
+                ),
             )
             .add_systems(
                 PostUpdate,
@@ -231,6 +235,12 @@ pub struct SiteUniform {
     extent: Vec2,
     metres: Vec2,
     points: [Vec4; MAX_PATH_POINTS / 2],
+}
+
+impl SiteUniform {
+    pub(super) fn set_time(&mut self, time: f32) {
+        self.time = time;
+    }
 }
 
 /// A shader's parameters laid out as its `Params` struct, built by `ParamsUniform::pack`.
@@ -548,12 +558,12 @@ impl SiteFrame {
         }
     }
 
-    /// How many metres the site spans on `stage`: a patch of ground covers its footprint, a board
-    /// stands as wide as the thing and as tall, the screen and text are their pixels over the pixel
-    /// scale.
+    /// How many metres the site spans on `stage`: a patch of ground or a cover covers its
+    /// footprint, a board stands as wide as the thing and as tall, the screen and text are their
+    /// pixels over the pixel scale.
     pub fn metres(&self, stage: Stage) -> Vec2 {
         match (stage, self.place) {
-            (Stage::Ground, SitePlace::World { footprint, .. }) => footprint,
+            (Stage::Ground | Stage::Cover, SitePlace::World { footprint, .. }) => footprint,
             (
                 Stage::Billboard | Stage::Surface,
                 SitePlace::World {
@@ -568,7 +578,7 @@ impl SiteFrame {
     /// they are, a quad in the world with its margin.
     pub fn overscan(&self, stage: Stage) -> Vec2 {
         match stage {
-            Stage::Screen | Stage::Text | Stage::Surface => Vec2::ONE,
+            Stage::Screen | Stage::Text | Stage::Surface | Stage::Cover => Vec2::ONE,
             Stage::Ground | Stage::Billboard => quad_overscan(self.metres(stage)),
         }
     }
@@ -690,14 +700,14 @@ impl Default for ParamsUniform {
 pub struct VfxShaderKey(Uuid);
 
 impl VfxShaderKey {
-    fn of(shader: &Handle<Shader>) -> VfxShaderKey {
+    pub(super) fn of(shader: &Handle<Shader>) -> VfxShaderKey {
         VfxShaderKey(match shader.id() {
             AssetId::Uuid { uuid } => uuid,
             AssetId::Index { .. } => Uuid::nil(),
         })
     }
 
-    fn handle(self) -> Handle<Shader> {
+    pub(super) fn handle(self) -> Handle<Shader> {
         Handle::Uuid(self.0, PhantomData)
     }
 }
@@ -1051,6 +1061,7 @@ fn piece_for(world: &mut World, stage: Stage, sheet: Option<Handle<Image>>) -> E
         .spawn((VfxPiece { stage }, Transform::default(), Visibility::Hidden))
         .id();
     match stage {
+        Stage::Cover => {}
         Stage::Screen | Stage::Text => {
             let material = world
                 .resource_mut::<Assets<VfxMaterial>>()

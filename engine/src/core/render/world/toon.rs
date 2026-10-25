@@ -21,12 +21,14 @@ pub struct Toon {
 }
 
 /// How a mesh is drawn beyond its colours: how much of it shows (1 all, 0 none, dithered between),
-/// and whether its edges are inked.
+/// whether its edges are inked, and whether each face is lit flat from its own plane (1) or from
+/// the normals its vertices carry (0), as grass is from the ground under it.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct ToonStyle {
     pub shown: f32,
     pub outlined: f32,
-    pub padding: Vec2,
+    pub flat: f32,
+    pub padding: f32,
 }
 
 impl Default for ToonStyle {
@@ -34,7 +36,8 @@ impl Default for ToonStyle {
         ToonStyle {
             shown: 1.0,
             outlined: 1.0,
-            padding: Vec2::ZERO,
+            flat: 1.0,
+            padding: 0.0,
         }
     }
 }

@@ -2,6 +2,7 @@ use engine::core::content::{Content, LoadReport, write};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::terrain::{self, Heightfield, Paint, TerrainSize};
 use engine::core::units::{GROUND_ORIGIN, Meters};
+use engine::core::vfx::shader::Stage;
 use engine::systems::area::{self, AreaDef, AreaId};
 use serde_json::{Value, json};
 use testkit::{Game, Map, path};
@@ -261,4 +262,76 @@ fn rules(report: &LoadReport) -> Vec<&str> {
         .iter()
         .map(|error| error.problem.rule)
         .collect()
+}
+
+#[test]
+fn a_grounds_cover_names_a_cover_stage_shader_and_fills_only_what_it_declares() {
+    let blades =
+        json!({ "type": "blades", "per_square_meter": 12.0, "height": 0.3, "width": 0.08 });
+    let cover = |shader: &str, params: Value, geometry: Value| json!({ "shader": path("vfx_shader", shader), "params": params, "geometry": geometry });
+    let game = || {
+        game()
+            .shader_on("blades", Stage::Cover)
+            .edit("vfx_shader", "blades", |row| {
+                row["params"] =
+                    json!([{ "name": "tip", "kind": "color", "default": [255, 255, 255, 255] }]);
+            })
+            .shader("flash")
+            .prop("pebble", json!({ "type": "none" }))
+            .area("meadow", &Map::open(8, 8), json!([]))
+    };
+    let cases = [
+        (
+            "a shader of another stage",
+            cover("flash", json!({}), blades.clone()),
+        ),
+        (
+            "unknown shader parameter",
+            cover("blades", json!({ "glow": 1.0 }), blades.clone()),
+        ),
+        (
+            "wrong parameter kind",
+            cover("blades", json!({ "tip": 1.0 }), blades.clone()),
+        ),
+        (
+            "out of range",
+            cover(
+                "blades",
+                json!({}),
+                json!({ "type": "blades", "per_square_meter": 500.0, "height": 0.3, "width": 0.08 }),
+            ),
+        ),
+        (
+            "out of range",
+            cover(
+                "blades",
+                json!({}),
+                json!({ "type": "strewn", "prop": path("prop", "pebble"), "per_square_meter": 50.0, "scale": 0.3 }),
+            ),
+        ),
+    ];
+    for (rule, grown) in cases {
+        let report = game()
+            .edit("ground", testkit::TURF, |row| row["cover"] = grown.clone())
+            .try_load()
+            .err()
+            .expect("refused");
+        assert!(rules(&report).contains(&rule), "{grown}: {report}");
+    }
+    for geometry in [
+        blades,
+        json!({ "type": "sheet" }),
+        json!({ "type": "sheet", "level": 0.0 }),
+        json!({ "type": "strewn", "prop": path("prop", "pebble"), "per_square_meter": 2.0, "scale": 0.3 }),
+    ] {
+        game()
+            .edit("ground", testkit::TURF, |row| {
+                row["cover"] = cover(
+                    "blades",
+                    json!({ "tip": [120, 200, 90, 255] }),
+                    geometry.clone(),
+                )
+            })
+            .load();
+    }
 }

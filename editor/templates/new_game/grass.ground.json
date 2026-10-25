@@ -7,5 +7,22 @@
     255
   ],
   "surface": "grass.surface.json",
-  "walk": "walkable"
+  "walk": "walkable",
+  "cover": {
+    "shader": "grass.vfx_shader",
+    "params": {
+      "tip": [
+        150,
+        205,
+        92,
+        255
+      ]
+    },
+    "geometry": {
+      "type": "blades",
+      "per_square_meter": 90.0,
+      "height": 0.45,
+      "width": 0.12
+    }
+  }
 }

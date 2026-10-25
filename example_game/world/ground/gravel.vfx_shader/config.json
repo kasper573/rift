@@ -1,0 +1,13 @@
+{
+  "name": "Gravel",
+  "stage": "cover",
+  "params": [
+    {
+      "name": "shade",
+      "kind": "number",
+      "default": 0.85,
+      "min": 0.2,
+      "max": 1.5
+    }
+  ]
+}

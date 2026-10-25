@@ -15,7 +15,7 @@ use snapshot::{CharacterSnapshot, JoinAs};
 use crate::core::content::{Content, ContentFile, ContentId, ModuleRule, ModuleSet, Nearby};
 use crate::core::geometry::Radians;
 use crate::core::math::{Pos, Rgba, Rng};
-use crate::core::time::{PlaybackRate, Seconds, UnixMillis, WallClock};
+use crate::core::time::{DayOrigin, PlaybackRate, Seconds, UnixMillis, WallClock};
 use crate::core::units::Meters;
 use crate::systems::account::Identity;
 use crate::systems::actor::model::ModelId;
@@ -112,6 +112,7 @@ pub struct RespawnRequest;
 pub struct Welcome {
     pub id: ClientId,
     pub now: UnixMillis,
+    pub day_origin: Option<UnixMillis>,
 }
 
 pub type PlayerDefId = ContentId<PlayerDef>;
@@ -259,7 +260,18 @@ pub fn greet(add: On<Add<ClientId>>, clients: Query<&ClientId>, mut commands: Co
     let conn = add.entity;
     commands.queue(move |world: &mut World| {
         let now = world.resource::<WallClock>().now;
-        visibility::send_to(world, conn, Welcome { id, now });
+        let day_origin = world
+            .get_resource::<DayOrigin>()
+            .and_then(|origin| origin.0);
+        visibility::send_to(
+            world,
+            conn,
+            Welcome {
+                id,
+                now,
+                day_origin,
+            },
+        );
     });
 }
 

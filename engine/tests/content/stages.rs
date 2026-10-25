@@ -86,6 +86,8 @@ fn a_vfx_layers_stage_fits_the_site_it_is_played_on() {
         (Stage::Text, place.clone(), Some(targets), true),
         (Stage::Screen, json!({ "type": "screen" }), None, false),
         (Stage::Ground, json!({ "type": "path" }), None, false),
+        (Stage::Cover, place.clone(), None, true),
+        (Stage::Cover, json!({ "type": "screen" }), None, true),
     ];
     for (stage, site, on, refused) in cases {
         let case = format!("a {} layer on {site} of {on:?}", stage.label());

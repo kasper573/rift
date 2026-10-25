@@ -1,5 +1,6 @@
-//! The camera: a perspective view pitched down on a point of the ground, turned to any yaw and set
-//! to one of three distances, and the ray it casts through the pointer. The view is a pure
+//! The camera: a perspective view pitched down on a point of the ground, turned to any yaw, tilted
+//! between looking down and looking out toward the horizon, set to one of three distances, and the
+//! ray it casts through the pointer. The view is a pure
 //! projection of the rig, so the probe, the plates and the picking all project the way the camera
 //! draws.
 
@@ -15,9 +16,15 @@ use crate::core::time::Seconds;
 use crate::core::units::Meters;
 
 pub const FOV: Degrees = Degrees(32.0);
+/// How far down the camera looks when brought home.
 pub const PITCH: Degrees = Degrees(55.0);
 /// How far one press of a turn key turns the camera.
 pub const TURN_STEP: Degrees = Degrees(45.0);
+/// How far one press of a tilt key tilts the camera, between looking out over the ground and
+/// nearly straight down.
+pub const TILT_STEP: Degrees = Degrees(10.0);
+pub const LOWEST_PITCH: Degrees = Degrees(5.0);
+pub const HIGHEST_PITCH: Degrees = Degrees(75.0);
 pub(super) const NEAR: f32 = 0.5;
 /// How far a ray is followed through the world before it is given up as hitting nothing.
 const REACH: f32 = 200.0;
@@ -81,6 +88,8 @@ pub struct CameraRig {
     target: Vec3,
     yaw: Radians,
     wanted_yaw: Radians,
+    pitch: Radians,
+    wanted_pitch: Radians,
     distance: Meters,
     zoom: Zoom,
 }
@@ -91,6 +100,8 @@ impl Default for CameraRig {
             target: Vec3::ZERO,
             yaw: Radians(0.0),
             wanted_yaw: Radians(0.0),
+            pitch: PITCH.radians(),
+            wanted_pitch: PITCH.radians(),
             distance: Zoom::default().distance(),
             zoom: Zoom::default(),
         }
@@ -135,8 +146,24 @@ impl CameraRig {
         self.yaw = self.wanted_yaw;
     }
 
+    /// Tilts the camera `by` degrees further down, or up toward the horizon when negative, within
+    /// its limits.
+    pub fn tilt(&mut self, by: Degrees) {
+        self.wanted_pitch = Radians(
+            (self.wanted_pitch.0 + by.radians().0)
+                .clamp(LOWEST_PITCH.radians().0, HIGHEST_PITCH.radians().0),
+        );
+    }
+
+    /// Tilts the camera straight away.
+    pub fn tilt_now(&mut self, by: Degrees) {
+        self.tilt(by);
+        self.pitch = self.wanted_pitch;
+    }
+
     pub fn home(&mut self) {
         self.wanted_yaw = Radians(0.0);
+        self.wanted_pitch = PITCH.radians();
         self.zoom = Zoom::default();
     }
 
@@ -152,17 +179,23 @@ impl CameraRig {
         self.yaw
     }
 
+    pub fn pitch(&self) -> Radians {
+        self.pitch
+    }
+
     pub fn zoom(&self) -> Zoom {
         self.zoom
     }
 
     /// Whether the camera has come to rest where it was last asked to go.
     pub fn settled(&self) -> bool {
-        self.yaw == self.wanted_yaw && self.distance == self.zoom.distance()
+        self.yaw == self.wanted_yaw
+            && self.pitch == self.wanted_pitch
+            && self.distance == self.zoom.distance()
     }
 
     pub fn eye(&self) -> Vec3 {
-        let (sin, cos) = PITCH.radians().0.sin_cos();
+        let (sin, cos) = self.pitch.0.sin_cos();
         let back = Vec3::new(0.0, self.distance.0 * sin, self.distance.0 * cos);
         self.target + Quat::from_rotation_y(self.yaw.0) * back
     }
@@ -179,16 +212,21 @@ impl CameraRig {
         let wanted = self.zoom.distance();
         if preferences.reduce_motion {
             self.yaw = self.wanted_yaw;
+            self.pitch = self.wanted_pitch;
             self.distance = wanted;
             return;
         }
         let turn = preferences.turn_speed.radians().0 * dt.0;
-        let apart = self.wanted_yaw.0 - self.yaw.0;
-        self.yaw = if apart.abs() <= turn {
-            self.wanted_yaw
-        } else {
-            Radians(self.yaw.0 + turn.copysign(apart))
+        let toward = |from: Radians, to: Radians| {
+            let apart = to.0 - from.0;
+            if apart.abs() <= turn {
+                to
+            } else {
+                Radians(from.0 + turn.copysign(apart))
+            }
         };
+        self.yaw = toward(self.yaw, self.wanted_yaw);
+        self.pitch = toward(self.pitch, self.wanted_pitch);
         let caught = (dt.0 / ZOOM_EASE.0).min(1.0);
         let left = wanted.0 - self.distance.0;
         self.distance = if left.abs() < 0.01 {

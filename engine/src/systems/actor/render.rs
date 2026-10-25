@@ -21,6 +21,7 @@ use crate::core::interpolate::{Interpolate, InterpolatePlugin};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::{Animator, Previous, ground_height, world_point};
 use crate::core::time::{Seconds, UnixMillis};
+use crate::core::vfx::cover::Treads;
 use crate::core::vfx::render::SiteExtent;
 use crate::systems::area;
 use crate::systems::movement::RenderPosition;
@@ -154,6 +155,13 @@ fn dress(world: &mut World) {
             SiteExtent {
                 footprint: Vec2::splat(hitbox.radius.0 * 2.0),
                 height: hitbox.height.0,
+            },
+            Treads {
+                radius: if actor_model.airborne() {
+                    0.0
+                } else {
+                    hitbox.radius.0 * 2.0
+                },
             },
             Puppet {
                 model,

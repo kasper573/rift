@@ -1,0 +1,23 @@
+{
+  "name": "Meadow grass",
+  "stage": "cover",
+  "params": [
+    {
+      "name": "tip",
+      "kind": "color",
+      "default": [
+        150,
+        205,
+        92,
+        255
+      ]
+    },
+    {
+      "name": "suppleness",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 2.0
+    }
+  ]
+}

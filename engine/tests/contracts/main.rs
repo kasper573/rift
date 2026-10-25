@@ -4,6 +4,8 @@ mod clock;
 mod combat;
 mod commands;
 mod conversation;
+mod cover;
+mod daylight;
 mod effects;
 mod equipment;
 mod exchange;

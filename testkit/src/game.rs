@@ -350,8 +350,16 @@ impl Game {
         self.shader_on(name, Stage::Billboard)
     }
 
-    /// A visual effect shader that draws nothing, of no parameters, on `stage`.
+    /// A visual effect shader that draws nothing, of no parameters, on `stage`; a cover that holds
+    /// still.
     pub fn shader_on(self, name: &str, stage: Stage) -> Game {
+        let mut source =
+            String::from("fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(0.0);\n}\n");
+        if stage == Stage::Cover {
+            source.push_str(
+                "fn sway(world: vec3<f32>, tip: f32) -> vec3<f32> {\n    return world;\n}\n",
+            );
+        }
         self.row(
             "vfx_shader",
             name,
@@ -361,7 +369,7 @@ impl Game {
             "vfx_shader",
             name,
             &SHADER_SOURCE.named("", "wgsl"),
-            b"fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(0.0);\n}\n".to_vec(),
+            source.into_bytes(),
         )
     }
 

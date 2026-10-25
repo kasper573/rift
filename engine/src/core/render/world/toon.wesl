@@ -13,7 +13,8 @@ import engine::core::render::world::toon_shade::toon_color;
 struct Toon {
     shown: f32,
     outlined: f32,
-    padding: vec2<f32>,
+    flat: f32,
+    padding: f32,
 }
 
 @group(3) @binding(100) var<uniform> toon: Toon;
@@ -27,7 +28,7 @@ const CREASE: f32 = 0.6;
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     dither_discard(in.position.xy, toon.shown);
-    var color = toon_color(in, is_front);
+    var color = toon_color(in, is_front, toon.flat);
     if toon.outlined > 0.5 && inked(in.position) {
         color = vec4<f32>(color.rgb * INK, color.a);
     }

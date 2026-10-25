@@ -176,6 +176,24 @@
         }
       ]
     },
+    "tilt_up": {
+      "label": "Tilt the camera up toward the horizon",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "PageUp"
+        }
+      ]
+    },
+    "tilt_down": {
+      "label": "Tilt the camera down",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "PageDown"
+        }
+      ]
+    },
     "camera_home": {
       "label": "Bring the camera home",
       "bindings": [

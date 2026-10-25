@@ -32,7 +32,8 @@ pub struct VfxShaderDef {
 }
 
 /// Where a shader runs: in the material of the thing it plays on, as a decal on the ground under
-/// it, on a quad facing the camera at it, over the whole screen, or in the text of a plate.
+/// it, on a quad facing the camera at it, over the whole screen, in the text of a plate, or as the
+/// cover a ground material grows or lies under.
 #[derive(
     JsonSchema,
     Clone,
@@ -53,6 +54,7 @@ pub enum Stage {
     Billboard,
     Screen,
     Text,
+    Cover,
 }
 
 impl Stage {
@@ -67,6 +69,7 @@ impl Stage {
             ),
             Stage::Screen => site == SiteKind::Screen,
             Stage::Text => site == SiteKind::Text,
+            Stage::Cover => false,
         }
     }
 
@@ -265,15 +268,14 @@ impl VfxShaderDef {
     /// Whether the composed shader is WESL, importing the engine's own shader libraries, rather
     /// than plain WGSL.
     pub fn composes_wesl(&self) -> bool {
-        self.stage == Stage::Surface
+        matches!(self.stage, Stage::Surface | Stage::Cover)
     }
 
     /// The source goes first so its lines keep their numbers in what the validator reports; a WESL
     /// header's imports alone go before it, as the module must open with them.
     fn composed(&self, header: &str, source: &str) -> String {
         let mut composed = String::with_capacity(source.len() + header.len() + PRELUDE.len() + 512);
-        let (imports, declarations): (Vec<&str>, Vec<&str>) =
-            header.lines().partition(|line| line.starts_with("import "));
+        let (imports, declarations) = split_imports(header);
         for import in imports {
             composed.push_str(import);
             composed.push('\n');
@@ -304,13 +306,15 @@ impl VfxShaderDef {
     }
 
     pub fn check_source(&self, source: &str) -> Result<String, ShaderError> {
-        if !source.contains("fn vfx(") {
-            return Err(ShaderError {
-                place: ErrorPlace::WholeFile,
-                message: "no vfx function".to_owned(),
-            });
+        for required in self.stage.required_functions() {
+            if !source.contains(&format!("fn {required}(")) {
+                return Err(ShaderError {
+                    place: ErrorPlace::WholeFile,
+                    message: format!("no {required} function"),
+                });
+            }
         }
-        let checked = self.composed(&quad_header(WORLD_GROUP), source);
+        let checked = self.composed(&self.stage.check_header(), source);
         let own_lines = source.lines().count();
         validate(&checked).map_err(|error| ShaderError {
             place: match error.place {
@@ -331,6 +335,16 @@ pub fn prelude_names() -> Vec<String> {
         "site".to_owned(),
         "params".to_owned(),
         "sample".to_owned(),
+        "sway".to_owned(),
+        "weather".to_owned(),
+        "weight".to_owned(),
+        "tip".to_owned(),
+        "depth".to_owned(),
+        "seed".to_owned(),
+        "mark".to_owned(),
+        "wind_lean".to_owned(),
+        "tread_push".to_owned(),
+        "lean".to_owned(),
     ];
     for line in PRELUDE.lines() {
         let declared = line
@@ -542,6 +556,9 @@ const PRELUDE: &str = include_str!("prelude.wgsl");
 const QUAD_HEADER: &str = include_str!("quad.wgsl");
 /// The header of a shader run in the material of the thing it plays on.
 const SURFACE_HEADER: &str = include_str!("surface.wesl");
+const COVER_HEADER: &str = include_str!("cover.wesl");
+const COVER_CHECK_HEADER: &str = include_str!("cover_check.wgsl");
+const WEATHER_HELPERS: &str = include_str!("weather.wgsl");
 
 fn quad_header(group: u32) -> String {
     QUAD_HEADER.replace("GROUP", &group.to_string())
@@ -551,8 +568,26 @@ impl Stage {
     fn header(self) -> String {
         match self {
             Stage::Surface => SURFACE_HEADER.to_owned(),
+            Stage::Cover => format!("{COVER_HEADER}\n{WEATHER_HELPERS}"),
             Stage::Ground | Stage::Billboard => quad_header(WORLD_GROUP),
             Stage::Screen | Stage::Text => quad_header(PRESENT_GROUP),
+        }
+    }
+
+    /// The header the validator composes a shader of the stage with: plain WGSL that declares
+    /// what the runtime header declares and calls what the shader must define.
+    fn check_header(self) -> String {
+        match self {
+            Stage::Cover => format!("{COVER_CHECK_HEADER}\n{WEATHER_HELPERS}"),
+            _ => quad_header(WORLD_GROUP),
+        }
+    }
+
+    /// The functions a shader of the stage must define.
+    fn required_functions(self) -> &'static [&'static str] {
+        match self {
+            Stage::Cover => &["vfx", "sway"],
+            _ => &["vfx"],
         }
     }
 }
@@ -629,4 +664,29 @@ fn chain(error: &dyn std::error::Error) -> String {
         source = cause.source();
     }
     message
+}
+
+/// A header's import lines, each with the `@if`/`@elif`/`@else` line that guards it, apart from
+/// its declarations, so the imports can lead the composed shader.
+fn split_imports(header: &str) -> (Vec<&str>, Vec<&str>) {
+    let mut imports = Vec::new();
+    let mut declarations = Vec::new();
+    let mut guard: Option<&str> = None;
+    for line in header.lines() {
+        if line.starts_with("@if(") || line.starts_with("@elif(") || line == "@else" {
+            if let Some(earlier) = guard.replace(line) {
+                declarations.push(earlier);
+            }
+            continue;
+        }
+        let into = if line.starts_with("import ") {
+            &mut imports
+        } else {
+            &mut declarations
+        };
+        into.extend(guard.take());
+        into.push(line);
+    }
+    declarations.extend(guard);
+    (imports, declarations)
 }

@@ -20,9 +20,7 @@ use crate::core::gui::{self, GuiContext, WorldLayers};
 use crate::core::math::{Offset, Pos, Rect, Size, WindowPx};
 use crate::core::platform::ClientPlatform;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
-use crate::core::render::{
-    self, CameraRig, GroundHeights, PITCH, Pointed, ground_height, world_point,
-};
+use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
 use crate::core::time::{self, Seconds};
 use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
@@ -838,7 +836,7 @@ fn view(world: &mut World) -> Option<ProbeView> {
         view_proj: view.view_proj(),
         viewport: Rect::from_size(Size::new(viewport.x, viewport.y)),
         yaw: rig.yaw(),
-        pitch: PITCH.radians(),
+        pitch: rig.pitch(),
         zoom: rig.zoom().step(),
     })
 }

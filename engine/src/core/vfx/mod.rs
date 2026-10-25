@@ -1,3 +1,4 @@
+pub mod cover;
 pub mod play;
 pub mod render;
 pub mod shader;

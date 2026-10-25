@@ -15,7 +15,7 @@ fn sample(at: vec2<f32>) -> vec4<f32> {
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
-    lit = toon_color(in, is_front);
+    lit = toon_color(in, is_front, 1.0);
     var uv = vec2<f32>(0.5);
     @if(VERTEX_UVS_A) {
         uv = in.uv;

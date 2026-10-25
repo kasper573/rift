@@ -20,14 +20,11 @@ const SHADOW_REACH: f32 = 70.0;
 
 /// A sun shining from `elevation` above the horizon at `azimuth` clockwise from north, with soft
 /// shadows.
-pub fn sun(color: Color, elevation: Degrees, azimuth: Degrees) -> impl Bundle {
-    let (sin_e, cos_e) = elevation.radians().0.sin_cos();
-    let (sin_a, cos_a) = azimuth.radians().0.sin_cos();
-    let toward_sun = Vec3::new(sin_a * cos_e, sin_e, -cos_a * cos_e);
+pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees) -> impl Bundle {
     (
         DirectionalLight {
             color,
-            illuminance: SUN_LUX,
+            illuminance,
             shadow_maps_enabled: true,
             ..default()
         },
@@ -37,8 +34,16 @@ pub fn sun(color: Color, elevation: Degrees, azimuth: Degrees) -> impl Bundle {
             ..default()
         }
         .build(),
-        Transform::from_translation(toward_sun * 50.0).looking_at(Vec3::ZERO, Vec3::Y),
+        sun_transform(elevation, azimuth),
     )
+}
+
+/// Where a sun `elevation` above the horizon at `azimuth` clockwise from north shines from.
+pub fn sun_transform(elevation: Degrees, azimuth: Degrees) -> Transform {
+    let (sin_e, cos_e) = elevation.radians().0.sin_cos();
+    let (sin_a, cos_a) = azimuth.radians().0.sin_cos();
+    let toward_sun = Vec3::new(sin_a * cos_e, sin_e, -cos_a * cos_e);
+    Transform::from_translation(toward_sun * 50.0).looking_at(Vec3::ZERO, Vec3::Y)
 }
 
 /// A point light `intensity` units bright reaching `radius` metres.

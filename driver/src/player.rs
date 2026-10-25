@@ -174,6 +174,16 @@ impl Player {
         });
     }
 
+    /// Tilts the camera a step by `action` and waits for it to come to rest.
+    pub fn tilt_camera(&mut self, action: InputAction) {
+        let before = self.snapshot().view.map(|view| view.pitch);
+        self.act(action);
+        self.wait_for("the camera to tilt", |seen| {
+            let view = seen.view?;
+            (Some(view.pitch) != before && seen.me.is_some()).then_some(())
+        });
+    }
+
     /// Zooms the camera `steps` in with the wheel, out when negative, and waits for the zoom.
     pub fn zoom_camera(&mut self, steps: i32) {
         let before = self.snapshot().view.map(|view| view.zoom);
@@ -183,13 +193,18 @@ impl Player {
         });
     }
 
-    /// Brings the camera back to looking north from the middle distance, and waits until it rests
-    /// there, so a chapter's clicks land where its probe says.
+    /// Brings the camera back to looking north and down from the middle distance, and waits until
+    /// it rests there, so a chapter's clicks land where its probe says.
     pub fn camera_home(&mut self) {
         self.act(InputAction::CameraHome);
+        let pitch = engine::core::render::PITCH.radians();
         self.wait_for("the camera home", |seen| {
             seen.view
-                .filter(|view| view.yaw.0.abs() < 1e-3 && view.zoom == 1)
+                .filter(|view| {
+                    view.yaw.0.abs() < 1e-3
+                        && (view.pitch.0 - pitch.0).abs() < 1e-3
+                        && view.zoom == 1
+                })
                 .map(|_| ())
         });
     }
@@ -1054,6 +1069,8 @@ fn keysym(key: KeyCode) -> String {
         KeyCode::Space => "space".to_owned(),
         KeyCode::Enter => "Return".to_owned(),
         KeyCode::Backspace => "BackSpace".to_owned(),
+        KeyCode::PageUp => "Prior".to_owned(),
+        KeyCode::PageDown => "Next".to_owned(),
         _ if name.starts_with("Key") => name["Key".len()..].to_lowercase(),
         _ if name.starts_with("Digit") => name["Digit".len()..].to_owned(),
         _ if name.starts_with("Arrow") => name["Arrow".len()..].to_owned(),

@@ -66,7 +66,7 @@ use crate::core::net::transport::SocketClientPlugin;
 use crate::core::platform::{ClientPlatform, Platform, SignIn, StartParams};
 use crate::core::render::WorldRenderPlugin;
 use crate::core::text::StyledTextPlugin;
-use crate::core::time::{Hertz, Seconds, WallClock};
+use crate::core::time::{DayOrigin, Hertz, Seconds, WallClock};
 use crate::core::vfx::render::VfxRenderPlugin;
 use crate::systems::area::AreaId;
 use crate::systems::player::PlayerDefId;
@@ -159,6 +159,9 @@ pub struct GameSettings {
     pub content_version: ContentVersion,
     pub initial_spawn: script::Place,
     pub player: PlayerDefId,
+    /// Without one the game has no clock: every area's light stands as authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daylight: Option<area::DayCycle>,
 }
 
 /// What every character in the world is made of, player and NPC alike, spawned whole so a character
@@ -212,9 +215,13 @@ pub fn server_app(
     use bevy_state::prelude::in_state;
 
     let mut app = App::new();
+    let settings = content.built::<GameSettings>();
     app.insert_resource(WorldArea(area));
-    app.insert_resource(content.built::<GameSettings>().clone());
+    app.insert_resource(settings.clone());
     app.insert_resource(clock);
+    app.insert_resource(DayOrigin(
+        settings.daylight.map(|cycle| cycle.origin(clock.now)),
+    ));
     app.insert_resource(input::map::InputMap::new(content));
     app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));
     // Every tick steps the same span of game time however long it took, so a seeded world plays out
@@ -630,6 +637,13 @@ impl Settings for GameSettings {
 fn check_settings(loading: &mut Loading) {
     let content = loading.content();
     let settings = content.built::<GameSettings>();
+    if let Some(cycle) = &settings.daylight {
+        let mut check = crate::core::content::RowCheck::default();
+        cycle.check("/daylight", &mut check);
+        for error in check.into_errors() {
+            loading.json_error(SETTINGS_FILE, &error.pointer, error.problem);
+        }
+    }
     if let Err(problem) = area::check_place(&content, settings.initial_spawn) {
         loading.json_error(
             SETTINGS_FILE,

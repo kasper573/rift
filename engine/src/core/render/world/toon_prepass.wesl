@@ -14,7 +14,8 @@ import engine::core::render::world::dither::dither_discard;
 struct Toon {
     shown: f32,
     outlined: f32,
-    padding: vec2<f32>,
+    flat: f32,
+    padding: f32,
 }
 
 @group(3) @binding(100) var<uniform> toon: Toon;
