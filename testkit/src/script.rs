@@ -19,7 +19,7 @@ pub fn said(text: &str, next: &str) -> Value {
 }
 
 /// An npc script row: hostile from the start, it fights the nearest character within `within`
-/// tiles, and looks again at least once a second while there is none.
+/// metres, and looks again at least once a second while there is none.
 pub fn hunting(within: f32) -> Value {
     json!({
         "runs_on": "npc",

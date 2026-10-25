@@ -141,7 +141,7 @@ fn point_off_stage(me: &mut Star) -> ProbeSnapshot {
     let off_stage = *open_ground_beside(&me.snapshot())
         .first()
         .expect("open ground in view beside the conversation");
-    me.point_at_tile(off_stage)
+    me.point_at_ground(off_stage)
 }
 
 fn spoken_list(names: &[String]) -> String {

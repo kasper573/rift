@@ -19,7 +19,7 @@ use crate::core::content::media::GltfInfos;
 use crate::core::geometry::Radians;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin};
 use crate::core::render::transition::WorldViewSystems;
-use crate::core::render::{Animator, Previous, ground_height, world_point};
+use crate::core::render::{Animator, Previous, facing_rotation, ground_height, world_point};
 use crate::core::time::{Seconds, UnixMillis};
 use crate::core::vfx::cover::Treads;
 use crate::core::vfx::render::SiteExtent;
@@ -291,7 +291,7 @@ fn pose(world: &mut World) {
         let scale = model.scale();
         if let Some(mut transform) = world.get_mut::<Transform>(entity) {
             transform.translation = world_point(at.0, ground);
-            transform.rotation = Quat::from_rotation_y(-(facing.0 + std::f32::consts::FRAC_PI_2));
+            transform.rotation = facing_rotation(facing);
             transform.scale = Vec3::splat(scale);
         }
         let (Some(player), Some(node)) = (player, node) else {

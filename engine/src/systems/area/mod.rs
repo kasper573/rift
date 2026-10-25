@@ -45,7 +45,7 @@ use crate::core::content::{
 use crate::core::geometry::Degrees;
 use crate::core::ground::{GroundSize, Heightfield, MAX_TERRAINS, MIN_SIDE, Paint};
 use crate::core::math::{Offset, Pos, Rect, Size};
-use crate::core::units::{GridDims, Meters, TileSize};
+use crate::core::units::{GridDims, MeterSize, Meters};
 use crate::systems::GameSettings;
 use crate::systems::actor::Pose;
 use crate::systems::movement;

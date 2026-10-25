@@ -20,11 +20,11 @@ pub fn input(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame
     let response = frame.response;
     let fine = ui.input(|i| EditorKey::Unsnapped.held(i));
     if response.drag_started_by(egui::PointerButton::Primary)
-        && let Some(tile) = frame.drag_tile()
+        && let Some(ground) = frame.drag_ground()
     {
         let view = editor.views.area.view_mut(view_key);
         view.set_drag(AreaDrag::Scatter {
-            from: place::snap(tile, fine),
+            from: place::snap(ground, fine),
         });
         return;
     }
@@ -33,7 +33,7 @@ pub fn input(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame
         let Some(AreaDrag::Scatter { from }) = view.take_drag() else {
             return;
         };
-        let Some(to) = frame.drag_tile().map(|tile| place::snap(tile, fine)) else {
+        let Some(to) = frame.drag_ground().map(|ground| place::snap(ground, fine)) else {
             return;
         };
         let region = Rect::from_points([from, to]);
@@ -89,7 +89,7 @@ pub fn overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame: 
     let color = super::overlays::module_color(Some(engine::systems::area::AreaModuleKind::Scatter));
     let fine = painter.ctx().input(|i| EditorKey::Unsnapped.held(i));
     if let Some(AreaDrag::Scatter { from }) = view.drag()
-        && let Some(to) = frame.drag_tile()
+        && let Some(to) = frame.drag_ground()
     {
         let region = Rect::from_points([*from, place::snap(to, fine)]);
         painter.add(egui::Shape::dashed_line(
@@ -115,9 +115,9 @@ pub fn overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame: 
         Some(prop) => format!("drag a rectangle to scatter {}", file_title(prop)),
         None => "pick a prop in the Palette, then drag a rectangle to scatter it".to_owned(),
     };
-    if let Some(tile) = frame.pointer_tile {
+    if let Some(ground) = frame.pointer_ground {
         frame.labels.chip(
-            frame.canvas.to_screen(tile) + Vec2::new(10.0, -6.0),
+            frame.canvas.to_screen(ground) + Vec2::new(10.0, -6.0),
             hint,
             color,
         );

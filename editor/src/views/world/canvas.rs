@@ -655,11 +655,11 @@ fn status(editor: &mut Editor, map: &OpenWorldMap, canvas: &MapCanvas, overlays:
             ),
         ],
         Some(MapDrag::Resize { area, size, .. }) => {
-            let tiles = atlas.id(area).map(|id| atlas.size(id)).unwrap_or_default();
+            let extent = atlas.id(area).map(|id| atlas.size(id)).unwrap_or_default();
             vec![
                 format!(
-                    "resizing {area} · {size}% · {} × {} tiles",
-                    tiles.width, tiles.height
+                    "resizing {area} · {size}% · {} × {} m",
+                    extent.width, extent.height
                 ),
                 format!(
                     "{} steps by 1% · {} cancels",
@@ -683,11 +683,11 @@ fn status(editor: &mut Editor, map: &OpenWorldMap, canvas: &MapCanvas, overlays:
                         hit.at.y.floor()
                     ),
                     tile_facts(map, &hit),
-                    "right-click a tile to play there".to_owned(),
+                    "right-click a spot to play there".to_owned(),
                 ],
                 None => vec![
                     format!("World · zoom {zoom:.0}%"),
-                    "right-click a tile to play there".to_owned(),
+                    "right-click a spot to play there".to_owned(),
                 ],
             }
         }
@@ -1110,12 +1110,12 @@ fn draw_drag(
             };
             let ghost = viewport.rect(navigation::rect_from_egui(map.art_rect(id, stored)));
             paint::dashed_rect(painter, ghost, Stroke::new(1.0, theme::MUTED), 4.0, 3.0);
-            let tiles = map.atlas.size(id);
+            let extent = map.atlas.size(id);
             chip::floating(
                 painter,
                 card.frame.left_bottom() + Vec2::new(0.0, 6.0),
                 Align2::LEFT_TOP,
-                &format!("{size}% · {} × {} tiles", tiles.width, tiles.height),
+                &format!("{size}% · {} × {} m", extent.width, extent.height),
                 theme::ACCENT_SOFT,
                 Color32::WHITE,
                 11.0,

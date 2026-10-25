@@ -2,7 +2,7 @@
 //! keys drive it, and what each draws over the picture while it works.
 
 use engine::core::math::{Offset, Rect};
-use engine::core::units::{Meters, TileSize};
+use engine::core::units::{MeterSize, Meters};
 use engine::systems::area::TerrainDef;
 use engine::systems::area::{AreaModule, AreaModuleKind};
 use strum::VariantArray;
@@ -180,15 +180,15 @@ pub fn input(
         AreaTool::Scatter => scatter::input(editor, ui, view_key, frame),
         AreaTool::Module => {
             if response.clicked()
-                && let Some(tile) = frame.pointer_tile
+                && let Some(ground) = frame.pointer_ground
             {
                 let view = editor.views.area.view_mut(view_key);
                 match view.placing.take() {
                     Some(kind) => {
                         view.set_tool(AreaTool::Select);
-                        super::modules::add_module(editor, view_key, frame, kind, tile);
+                        super::modules::add_module(editor, view_key, frame, kind, ground);
                     }
-                    None => open_add_menu(ui, editor, view_key, frame, tile),
+                    None => open_add_menu(ui, editor, view_key, frame, ground),
                 }
             }
         }
@@ -226,7 +226,7 @@ fn brush_input(
     let seconds = ui.input(|i| i.stable_dt).min(0.1);
     let view = editor.views.area.view_mut(view_key);
     if (response.drag_started_by(egui::PointerButton::Primary) || response.clicked())
-        && let Some(tile) = frame.drag_tile()
+        && let Some(ground) = frame.drag_ground()
     {
         let what = match tool {
             AreaTool::Paint => {
@@ -242,20 +242,20 @@ fn brush_input(
             }
             _ => StrokeKind::Sculpt(sculpt_mode(view.sculpt, modifiers)),
         };
-        let Some(mut stroke) = Stroke::begin(&area, tile, what) else {
+        let Some(mut stroke) = Stroke::begin(&area, ground, what) else {
             editor.toast(format!(
                 "{} already names every terrain a paint can; pick one it has",
                 frame.bundle
             ));
             return;
         };
-        stroke.apply(&view.brush, tile, seconds.max(1.0 / 60.0), view.level);
+        stroke.apply(&view.brush, ground, seconds.max(1.0 / 60.0), view.level);
         view.stroke = Some(stroke);
     } else if response.dragged_by(egui::PointerButton::Primary)
-        && let Some(tile) = frame.drag_tile()
+        && let Some(ground) = frame.drag_ground()
         && let Some(stroke) = &mut view.stroke
     {
-        stroke.apply(&view.brush, tile, seconds, view.level);
+        stroke.apply(&view.brush, ground, seconds, view.level);
     }
     if (response.drag_stopped_by(egui::PointerButton::Primary) || response.clicked())
         && let Some(stroke) = view.stroke.take()
@@ -292,10 +292,10 @@ fn pick_place(
     let Some(area_id) = frame.area_id() else {
         return;
     };
-    let Some(tile) = frame.pointer_tile else {
+    let Some(ground) = frame.pointer_ground else {
         return;
     };
-    let at = super::select::snap_to(tile, fine);
+    let at = super::select::snap_to(ground, fine);
     let place = engine::systems::script::Place { area: area_id, at };
     let verdict = engine::systems::area::check_place(&frame.content, place);
     let color = if verdict.is_ok() {
@@ -337,17 +337,17 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
     let accent = Color32::from_rgb(255, 230, 120);
     match view.drag() {
         Some(AreaDrag::Box { from }) => {
-            if let Some(tile) = frame.drag_tile() {
+            if let Some(ground) = frame.drag_ground() {
                 painter.add(egui::Shape::closed_line(
-                    canvas.outline(Rect::from_points([*from, tile])),
+                    canvas.outline(Rect::from_points([*from, ground])),
                     EStroke::new(1.0, accent),
                 ));
             }
         }
         Some(AreaDrag::Move { from, moved: true }) => {
-            if let Some(tile) = frame.drag_tile() {
+            if let Some(ground) = frame.drag_ground() {
                 let alt = painter.ctx().input(|i| EditorKey::Unsnapped.held(i));
-                let (dx, dy) = snapped_delta(*from, tile, alt);
+                let (dx, dy) = snapped_delta(*from, ground, alt);
                 for node in selected_nodes(editor, frame) {
                     if let Some(bounds) = frame.module_bounds(&node) {
                         let moved = bounds.translate(Offset::new(dx, dy));
@@ -373,9 +373,9 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
         );
     }
     if let Some(ghost) = &view.paste
-        && let Some(tile) = frame.pointer_tile
+        && let Some(ground) = frame.pointer_ground
     {
-        let at = paste_anchor(tile);
+        let at = paste_anchor(ground);
         let mut whole: Option<Rect<Meters>> = None;
         let ghosts = nodes::modules(&ghost.nodes);
         for module in &ghosts {
@@ -412,7 +412,7 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
             ));
         }
         frame.labels.chip(
-            canvas.to_screen(tile) + Vec2::new(16.0, 8.0),
+            canvas.to_screen(ground) + Vec2::new(16.0, 8.0),
             format!(
                 "{} module{} from {}",
                 ghosts.len(),
@@ -438,12 +438,13 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
     let view = editor.views.area.view(view_key);
     match view.tool {
         AreaTool::Module if view.placing.is_some() => {
-            let Some(tile) = frame.pointer_tile else {
+            let Some(ground) = frame.pointer_ground else {
                 return;
             };
             let kind = view.placing.expect("a kind being placed");
             let color = super::overlays::module_color(Some(kind));
-            let bounds = super::modules::template_bounds(kind, super::select::snap_to(tile, false));
+            let bounds =
+                super::modules::template_bounds(kind, super::select::snap_to(ground, false));
             painter.add(egui::Shape::dashed_line(
                 &canvas.outline(bounds),
                 EStroke::new(1.5, color),
@@ -457,9 +458,9 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
             );
         }
         AreaTool::Module => {
-            if let Some(tile) = frame.pointer_tile {
+            if let Some(ground) = frame.pointer_ground {
                 painter.add(egui::Shape::closed_line(
-                    canvas.circle(super::select::snap_to(tile, false), 0.5),
+                    canvas.circle(super::select::snap_to(ground, false), 0.5),
                     EStroke::new(1.0, accent),
                 ));
             }
@@ -475,7 +476,7 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
 /// starts to fall off.
 fn brush_overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame: &AreaFrame) {
     let view = editor.views.area.view(view_key);
-    let Some(tile) = frame.pointer_tile else {
+    let Some(ground) = frame.pointer_ground else {
         return;
     };
     let canvas = &frame.canvas;
@@ -501,20 +502,20 @@ fn brush_overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame
         }
     };
     painter.add(egui::Shape::closed_line(
-        canvas.circle(tile, view.brush.radius.0),
+        canvas.circle(ground, view.brush.radius.0),
         EStroke::new(2.0, color),
     ));
     if view.brush.falloff > 0.0 {
         painter.add(egui::Shape::closed_line(
             canvas.circle(
-                tile,
+                ground,
                 view.brush.radius.0 * (1.0 - view.brush.falloff).max(0.05),
             ),
             EStroke::new(1.0, ui::ink::wash(color, 0.5)),
         ));
     }
     frame.labels.chip(
-        canvas.to_screen(tile) + Vec2::new(12.0, -8.0),
+        canvas.to_screen(ground) + Vec2::new(12.0, -8.0),
         format!(
             "{what} · {} m · {}",
             crate::forms::metres(view.brush.radius.0),
@@ -673,11 +674,11 @@ pub fn keys(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame)
     }
     if pressed(EditorKey::ContextMenu) {
         let at = frame.pointer.unwrap_or(frame.canvas.screen.center());
-        let tile = frame
-            .pointer_tile
+        let ground = frame
+            .pointer_ground
             .unwrap_or(editor.views.area.view(view_key).camera.target);
         let view = editor.views.area.view_mut(view_key);
-        super::modules::open_menu(ui.ctx(), view, view_key, at, tile);
+        super::modules::open_menu(ui.ctx(), view, view_key, at, ground);
     }
 }
 

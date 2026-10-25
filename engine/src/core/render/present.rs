@@ -5,7 +5,6 @@
 use bevy::asset::{AssetPath, embedded_path};
 use bevy::camera::RenderTarget;
 use bevy::camera::visibility::RenderLayers;
-use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
@@ -159,9 +158,8 @@ pub(super) fn setup(
         },
         camera_target,
         camera::projection(target_w, target_h),
-        Msaa::Off,
-        DepthPrepass,
-        NormalPrepass,
+        camera::smoothing(),
+        camera::passes(),
         Tonemapping::None,
         DebandDither::Disabled,
         WorldCamera,

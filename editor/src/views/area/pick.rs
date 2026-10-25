@@ -85,10 +85,10 @@ pub fn add_picked(
     );
 }
 
-pub fn listen(editor: &mut Editor, frame: &AreaFrame, tile: Pos<Meters>) {
+pub fn listen(editor: &mut Editor, frame: &AreaFrame, ground: Pos<Meters>) {
     let Some(area) = frame.area_id() else {
         return;
     };
-    sound::listen(editor, &frame.content, area, tile);
+    sound::listen(editor, &frame.content, area, ground);
     editor.panels.bottom = BottomTab::Listen;
 }

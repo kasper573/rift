@@ -39,13 +39,13 @@ use ui::egui;
 use ui::theme;
 use ui::words;
 
-use bevy::prelude::{Quat, Transform};
+use bevy::prelude::Transform;
 use engine::core::content::media::GltfInfos;
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
 use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Size};
-use engine::core::render::world_point;
-use engine::core::units::{Meters, TileSize};
+use engine::core::render::{facing_rotation, world_point};
+use engine::core::units::{MeterSize, Meters};
 use engine::systems::actor::{Action, ActorModel};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
@@ -98,7 +98,7 @@ pub struct AreaViews {
 #[derive(Clone, Debug)]
 pub struct AreaHover {
     pub area: String,
-    pub tile: Pos<Meters>,
+    pub ground: Pos<Meters>,
 }
 
 #[derive(Clone, Debug)]
@@ -585,11 +585,11 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
     }
     let canvas = AreaCanvas::new(rect, camera, snapshot.picture.area.clone());
     let hovered = response.hover_pos().filter(|_| response.hovered());
-    let pointer_tile = hovered.and_then(|p| canvas.to_tile(p));
-    if let Some(tile) = pointer_tile {
+    let pointer_ground = hovered.and_then(|p| canvas.to_ground(p));
+    if let Some(ground) = pointer_ground {
         editor.views.area.hover = Some(AreaHover {
             area: bundle.clone(),
-            tile,
+            ground,
         });
     }
     let is_area = matches!(snapshot.pictured, Pictured::Area(_));
@@ -597,7 +597,7 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
         snapshot,
         canvas,
         pointer: hovered,
-        pointer_tile,
+        pointer_ground,
         response: &response,
         labels: AreaLabels::default(),
     };
@@ -716,9 +716,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing>
             clip,
             transform: Transform {
                 translation: world_point(at, ground),
-                rotation: Quat::from_rotation_y(
-                    -(facing.radians().0 + std::f32::consts::FRAC_PI_2),
-                ),
+                rotation: facing_rotation(facing.radians()),
                 ..Transform::default()
             },
             held: None,
@@ -845,7 +843,7 @@ pub struct AreaFrame<'a> {
     pub snapshot: AreaSnapshot,
     pub canvas: AreaCanvas,
     pub pointer: Option<Pos2>,
-    pub pointer_tile: Option<Pos<Meters>>,
+    pub pointer_ground: Option<Pos<Meters>>,
     pub response: &'a egui::Response,
     pub labels: AreaLabels,
 }
@@ -954,8 +952,8 @@ impl AreaSnapshot {
         self.area().size
     }
 
-    pub fn in_map(&self, tile: Pos<Meters>) -> bool {
-        self.size().bounds().contains(tile)
+    pub fn in_map(&self, ground: Pos<Meters>) -> bool {
+        self.size().bounds().contains(ground)
     }
 
     /// The bundle's own scene, as its files read now.
@@ -1000,14 +998,14 @@ impl AreaSnapshot {
         !self.flags.hidden(pointer) && !self.flags.locked(pointer) && self.in_place.is_empty()
     }
 
-    /// The module under `tile`, the smallest when several cover it.
-    pub fn hit(&self, tile: Pos<Meters>) -> Option<String> {
+    /// The module under `ground`, the smallest when several cover it.
+    pub fn hit(&self, ground: Pos<Meters>) -> Option<String> {
         if !self.in_place.is_empty() {
             return None;
         }
         self.targets
             .iter()
-            .filter(|target| target.shown && !target.locked && target.bounds.contains(tile))
+            .filter(|target| target.shown && !target.locked && target.bounds.contains(ground))
             .min_by(|a, b| a.bounds.area().total_cmp(&b.bounds.area()))
             .map(|target| target.pointer.clone())
     }
@@ -1018,7 +1016,7 @@ impl AreaSnapshot {
         &self,
         canvas: &AreaCanvas,
         screen: Pos2,
-        tile: Option<Pos<Meters>>,
+        ground: Option<Pos<Meters>>,
     ) -> Option<String> {
         if !self.in_place.is_empty() {
             return None;
@@ -1034,7 +1032,7 @@ impl AreaSnapshot {
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .map(|(_, target)| target.pointer.clone());
-        standing.or_else(|| self.hit(tile?))
+        standing.or_else(|| self.hit(ground?))
     }
 
     /// The modules the selection `parts` takes on the map: those selected, and every visible,
@@ -1099,11 +1097,11 @@ impl AreaSnapshot {
             .collect()
     }
 
-    /// The locked module under `tile` a click passes through, for the tip that says what locks it.
-    pub fn locked_hit_at(&self, tile: Pos<Meters>) -> Option<String> {
+    /// The locked module under `ground` a click passes through, for the tip that says what locks it.
+    pub fn locked_hit_at(&self, ground: Pos<Meters>) -> Option<String> {
         self.targets
             .iter()
-            .filter(|target| target.shown && target.locked && target.bounds.contains(tile))
+            .filter(|target| target.shown && target.locked && target.bounds.contains(ground))
             .min_by(|a, b| a.bounds.area().total_cmp(&b.bounds.area()))
             .map(|target| target.pointer.clone())
     }
@@ -1244,11 +1242,11 @@ impl AreaFrame<'_> {
 
     /// The ground under the pointer, or under where a drag began when the pointer has left the
     /// ground.
-    pub fn drag_tile(&self) -> Option<Pos<Meters>> {
-        self.pointer_tile.or_else(|| {
+    pub fn drag_ground(&self) -> Option<Pos<Meters>> {
+        self.pointer_ground.or_else(|| {
             self.response
                 .interact_pointer_pos()
-                .and_then(|p| self.canvas.to_tile(p))
+                .and_then(|p| self.canvas.to_ground(p))
         })
     }
 
@@ -1256,12 +1254,12 @@ impl AreaFrame<'_> {
     pub fn hit_pointer(&self) -> Option<String> {
         let screen = self.pointer?;
         self.snapshot
-            .hit_at(&self.canvas, screen, self.pointer_tile)
+            .hit_at(&self.canvas, screen, self.pointer_ground)
     }
 
     /// The locked module a click under the pointer passes through.
     pub fn locked_hit(&self) -> Option<String> {
-        self.snapshot.locked_hit_at(self.pointer_tile?)
+        self.snapshot.locked_hit_at(self.pointer_ground?)
     }
 }
 

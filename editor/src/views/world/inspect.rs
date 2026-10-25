@@ -632,7 +632,7 @@ fn inspect_cards(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, cards: &[
         ui.add_space(8.0);
         ui.label(
             theme::faint(format!(
-                "{} · {} × {} tiles · {}",
+                "{} · {} × {} m · {}",
                 info.name,
                 info.size.width,
                 info.size.height,

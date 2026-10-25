@@ -16,7 +16,7 @@ pub const CHAPTER: Chapter = Chapter {
 const MAP: &str = "tattered_map";
 
 fn play(shoot: &mut Shoot) {
-    let player = shoot.join_as("tusks_midway", None);
+    let player = shoot.join_as("bones_midway", None);
     let mut me = shoot.roll(player);
     me.caption("The tide chest hides more than gold");
     me.interact_with("tide-chest");
@@ -46,8 +46,7 @@ fn play(shoot: &mut Shoot) {
     });
     me.act(InputAction::ToggleInventory);
 
-    me.caption("The cross is in the forest");
-    me.cross("forest-road");
+    me.caption("The cross is on the rise behind the woodsman's cottage");
 
     me.caption("Finding the standing stone completes the objective");
     me.walk_into("standing-stone", Meters(4.0));
@@ -64,11 +63,11 @@ fn play(shoot: &mut Shoot) {
         finished(snapshot, "x_marks_the_spot") == Some(QuestResult::Completed)
     });
 
-    me.caption("Ugra, the clan's shaman, knows about Mara's errand");
-    me.walk_into("ugra", Meters(3.0));
-    me.talk_to("ugra");
+    me.caption("The warriors' cairn among the dead trees knows about Ilsa's errand");
+    me.walk_into("old-cairn", Meters(3.0));
+    me.interact_with("old-cairn");
     me.read_to_choices();
-    me.pick("The Shaman's Plea");
+    me.pick("The Fallen's Plea");
     me.on_stage("plea_offer");
     me.read_to_choices();
     me.pick("I'm listening.");
@@ -77,23 +76,23 @@ fn play(shoot: &mut Shoot) {
         "Both answers are permanent, so this one shows everything: what it needs, what it costs, and a warning",
     );
     me.read_to_choices();
-    me.hover_choice("Give her the tusks.");
+    me.hover_choice("Lay the bones to rest.");
     me.hold();
-    me.pick("Give her the tusks.");
+    me.pick("Lay the bones to rest.");
     me.on_stage("grateful");
-    me.wait_until("Mara's quest to fail", |snapshot| {
-        finished(snapshot, "tusks_for_the_chief") == Some(QuestResult::Failed)
+    me.wait_until("Ilsa's quest to fail", |snapshot| {
+        finished(snapshot, "bones_for_the_warden") == Some(QuestResult::Failed)
     });
     me.wait_until("the failed quest in the feed", |snapshot| {
-        noticed(snapshot, "Quest failed · Tusks for the Chief")
+        noticed(snapshot, "Quest failed · Bones for the Warden")
     });
-    me.caption("Mara's quest fails, in red over your head, and the choice is remembered");
+    me.caption("Ilsa's quest fails, in red over your head, and the choice is remembered");
     me.read_to_choices();
-    me.pick("Rest easy, Ugra.");
+    me.pick("Sleep well.");
     me.conversation_over();
 
-    me.caption("Now Ugra greets a friend of the clan, with work and remedies of her own");
-    me.talk_to("ugra");
+    me.caption("Now the cairn greets a friend, with work of its own");
+    me.interact_with("old-cairn");
     me.on_stage("friend");
     me.read_to_choices();
     me.hold();

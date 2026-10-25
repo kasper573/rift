@@ -51,27 +51,27 @@ pub(super) fn status_bar(
         };
         left.push(format!("{said} in {name}"));
     }
-    if let Some(tile) = frame.pointer_tile {
+    if let Some(ground) = frame.pointer_ground {
         left.push(format!(
             "{}, {} m",
-            forms::metres(tile.x),
-            forms::metres(tile.y)
+            forms::metres(ground.x),
+            forms::metres(ground.y)
         ));
-        if frame.in_map(tile) {
+        if frame.in_map(ground) {
             let area = frame.area();
-            let mut what = if area.mesh.walkable(tile) {
+            let mut what = if area.mesh.walkable(ground) {
                 "walkable".to_owned()
             } else {
                 "blocked".to_owned()
             };
-            let index = usize::from(area.paint.at(tile)).min(area.terrains.len() - 1);
+            let index = usize::from(area.paint.at(ground)).min(area.terrains.len() - 1);
             let terrain = area.terrains[index].get(&frame.content);
             what.push_str(&format!(" · {}", terrain.name));
-            let height = area.heights.height_at(tile).0;
+            let height = area.heights.height_at(ground).0;
             if height.abs() >= 0.05 {
                 what.push_str(&format!(" · {height:+.1} m"));
             }
-            if let Some(surface) = area.footstep_at(tile) {
+            if let Some(surface) = area.footstep_at(ground) {
                 what.push_str(&format!(" · {}", file_title(surface.path(&frame.content))));
             }
             left.push(what);

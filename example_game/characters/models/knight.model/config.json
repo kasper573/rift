@@ -60,10 +60,5 @@
     "sit": {
       "name": "sit"
     }
-  },
-  "modules": [
-    {
-      "type": "bust"
-    }
-  ]
+  }
 }

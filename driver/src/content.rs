@@ -132,7 +132,7 @@ pub fn pack_ground(area: &str, npc: &str) -> Pos<Meters> {
         .unwrap_or_else(|| panic!("no {npc:?} keeps to a ground in {area}"))
 }
 
-/// A place `by` tiles east of a spot and a tile down from its row, clear of whoever stands there.
+/// A place `by` metres east of a spot and a metre down from its row, clear of whoever stands there.
 pub fn east_of(area: &str, spot: Pos<Meters>, by: f32) -> Place {
     Place {
         area: id(area),
@@ -149,11 +149,11 @@ pub fn marker_at(area: &str, name: &str) -> Pos<Meters> {
 /// pointer.
 pub fn open_ground_beside(snapshot: &ProbeSnapshot) -> Vec<Pos<Meters>> {
     let me = snapshot.me.as_ref().expect("the player").at;
-    let room = |tile: &Pos<Meters>| {
+    let room = |ground: &Pos<Meters>| {
         snapshot
             .actors
             .iter()
-            .map(|actor| actor.at.distance_to(*tile))
+            .map(|actor| actor.at.distance_to(*ground))
             .fold(f32::INFINITY, f32::min)
     };
     let mut ground: Vec<Pos<Meters>> = ground_near(
@@ -162,7 +162,7 @@ pub fn open_ground_beside(snapshot: &ProbeSnapshot) -> Vec<Pos<Meters>> {
         Meters(2.0)..=Meters(4.0),
     )
     .into_iter()
-    .filter(|tile| clickable_point(snapshot, *tile).is_some())
+    .filter(|ground| clickable_point(snapshot, *ground).is_some())
     .collect();
     ground.sort_by(|a, b| room(b).total_cmp(&room(a)));
     ground
@@ -177,13 +177,13 @@ pub fn ground_near(
     let mesh = &area_named(area).mesh;
     let from = mesh.nearest(at).expect("walkable ground near");
     let mut ground: Vec<Pos<Meters>> = lattice(mesh)
-        .filter(|tile| mesh.connects(from, *tile) && within.contains(&tile.distance(at)))
+        .filter(|ground| mesh.connects(from, *ground) && within.contains(&ground.distance(at)))
         .collect();
     ground.sort_by(|a, b| a.distance_to(at).total_cmp(&b.distance_to(at)));
     ground
 }
 
-fn placed_object(area: &str, object: &str) -> Option<Pos<Meters>> {
+pub(crate) fn placed_object(area: &str, object: &str) -> Option<Pos<Meters>> {
     area::objects(area::placed(content(), id(area)))
         .find(|(_, def)| def.name.as_deref() == Some(object))
         .map(|(_, def)| def.shape.center())

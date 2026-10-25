@@ -6,7 +6,6 @@ use std::collections::{HashMap, VecDeque};
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget};
-use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::prelude::*;
 use bevy::render::gpu_readback::ReadbackOnce;
@@ -15,7 +14,7 @@ use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::math::{Pos, Rect as MRect};
 use engine::core::render::camera::{self as world_camera, FOV};
 use engine::core::render::world::sky::Daylight;
-use engine::core::units::{Meters, TileSize};
+use engine::core::units::{MeterSize, Meters};
 use engine::systems::area::scenery::{self, Scenery};
 use engine::systems::area::{self, AreaDef};
 use ui::egui::{self, Color32, TextureId};
@@ -271,9 +270,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                 },
                 RenderTarget::Image(target.clone().into()),
                 world_camera::projection(size[0], size[1]),
-                Msaa::Off,
-                DepthPrepass,
-                NormalPrepass,
+                world_camera::passes(),
                 Tonemapping::None,
                 DebandDither::Disabled,
                 RenderLayers::from_layers(&[LAYER]),

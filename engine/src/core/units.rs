@@ -104,12 +104,12 @@ impl MeterPos for Pos<Meters> {
     }
 }
 
-pub trait TileSize {
+pub trait MeterSize {
     fn bounds(self) -> Rect<Meters>;
     fn grid(self) -> GridSize;
 }
 
-impl TileSize for Size<Meters> {
+impl MeterSize for Size<Meters> {
     fn bounds(self) -> Rect<Meters> {
         Rect::new(GROUND_ORIGIN, self)
     }

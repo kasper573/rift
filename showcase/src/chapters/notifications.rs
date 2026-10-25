@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use driver::{
     Player, UiTarget, arrived_in, content, erred, holding, input_name, marker_at, nearest_npc,
-    noticed, npc_is, told_by, warp_named,
+    noticed, npc_is, told_by,
 };
 use engine::core::math::Offset;
 use engine::systems::history::HistoryTopic;
@@ -26,14 +26,14 @@ const CUTLASS: &str = "corsair_cutlass";
 fn play(shoot: &mut Shoot) {
     let player = shoot.join_as("forest_bound", None);
     let mut me = shoot.roll(player);
-    me.caption("Some places start a conversation on their own: Ilsa watches the forest road");
-    let road = warp_named(&me.snapshot(), "forest-road").clone();
-    me.walk_to(road.at);
+    me.caption("Some places start a conversation on their own: Ilsa watches the north road");
+    let road = marker_at("island", "forest-road");
+    me.travel_to(|_| Some(road), |snapshot| snapshot.stage.is_some());
     me.on_stage("halt");
     me.caption("Without a pass the road is just ground. Standing on it, she stops you and your commands lock");
     me.read_to_choices();
     me.caption("Ilsa shows only what she means to: the road opens at level 3");
-    me.hover_choice("I'm ready for the forest road.");
+    me.hover_choice("I'm ready for the north road.");
     me.hold();
     me.pick("I'll turn back.");
     me.conversation_over();
@@ -61,7 +61,7 @@ fn play(shoot: &mut Shoot) {
     );
     // With the pass in the bag the road would take the player now, so the way to the pier keeps clear
     // of it.
-    me.walk_near(road.at + Offset::new(0.0, 3.0));
+    me.walk_near(road + Offset::new(0.0, 3.0));
     // The gulls squabble once in a long while, and only briefly: the caption is caught as it comes
     // up, the walk onto the pier finishing under the pointer.
     let squabble = || UiTarget::containing("squabble");
@@ -122,55 +122,50 @@ fn play(shoot: &mut Shoot) {
     me.wait_until("the history to close", |snapshot| !snapshot.history.open);
     me.act(InputAction::ToggleInventory);
 
-    me.caption("Bram sails for twenty Gold, or for a pass he only needs to see");
-    me.talk_to("bram");
-    me.read_to_choices();
-    me.hover_choice("Ilsa gave me this pass.");
-    me.hold();
-    me.pick("Ilsa gave me this pass.");
-    // Narration and intros stay up only a while: each is waited for before a caption holds the
-    // chapter.
-    me.wait_until("the Gull to sail", |snapshot| {
-        arrived_in(snapshot, "forest") && told_by(snapshot, "The Gull")
-    });
-    me.caption("The crossing narrates itself while you walk on");
-    me.wait_until("the forest's intro", |snapshot| {
-        told_by(snapshot, "The forest")
+    me.caption("The woodsman's cottage is up the hill: its door is a warp");
+    me.cross("front-door");
+    // Intros stay up only a while: each is waited for before a caption holds the chapter.
+    me.wait_until("the cottage's intro", |snapshot| {
+        arrived_in(snapshot, "cottage") && told_by(snapshot, "The woodsman's cottage")
     });
     me.caption("A first visit opens on the area's own title, to its own drums");
-    me.walk_by(Offset::new(3.0, 1.0));
-    me.walk_by(Offset::new(-2.0, 2.0));
+    me.walk_by(Offset::new(-2.0, -1.0));
+    me.hold();
+    me.cross("front-door");
+
+    me.caption(
+        "The skeletons in the bone camp are worth experience, and one more brings a new level: a milestone, drawn over every other notice",
+    );
+    fight_until(&mut me, "skeleton", |snapshot| {
+        told_by(snapshot, "Level up")
+    });
     me.hold();
 
     me.caption(
-        "The orcs here are worth experience, and one more brings a new level: a milestone, drawn over every other notice",
+        "You're on Ilsa's errand, and the camp's warrior knows it: come near him and he has words for you",
     );
-    fight_until(&mut me, "orc", |snapshot| told_by(snapshot, "Level up"));
-    me.hold();
-
-    me.caption(
-        "You're on Mara's errand, and the forest's chiefs know it: come near one and he has words for you",
-    );
-    // A chief taunts once and then holds his tongue for a while, so one that wandered past earlier
-    // has already had his say; the bubble is captioned only while it is up.
+    // The warrior taunts once and then holds his tongue for a while, so one that wandered past
+    // earlier has already had his say; the bubble is captioned only while it is up.
     let taunted = |snapshot: &ProbeSnapshot| {
-        yelled(snapshot, "orc_chief")
+        yelled(snapshot, "skeleton_warrior")
             || snapshot
                 .history
                 .records
                 .iter()
-                .any(|record| record.by.as_deref() == Some("Orc Chief"))
+                .any(|record| record.by.as_deref() == Some("Skeleton Warrior"))
     };
-    seek(&mut me, "orc_chief", taunted);
-    if yelled(&me.snapshot(), "orc_chief") {
-        me.caption("Voices speak from where they stand: a bubble over the chief, in his own voice");
+    seek(&mut me, "skeleton_warrior", taunted);
+    if yelled(&me.snapshot(), "skeleton_warrior") {
+        me.caption(
+            "Voices speak from where they stand: a bubble over the warrior, in his own voice",
+        );
         me.hold();
     }
     me.caption("You keep fighting: no tether, no lock, and your foe's bubble stays up front");
     let until = Instant::now() + Duration::from_secs(9);
     me.fight(
-        |_, body| npc_is(body, "orc_chief"),
-        |snapshot| Instant::now() >= until || nearest_npc(snapshot, "orc_chief").is_none(),
+        |_, body| npc_is(body, "skeleton_warrior"),
+        |snapshot| Instant::now() >= until || nearest_npc(snapshot, "skeleton_warrior").is_none(),
     );
 }
 

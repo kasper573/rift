@@ -29,7 +29,7 @@ name = "client"
 harness = false
 
 [features]
-profiling = ["bevy/debug"]
+profiling = ["bevy/debug", "bevy/trace_chrome"]
 
 # One dependency set for every target keeps the source tree free of #[cfg] gates: the browser-only
 # crates (bevy's render stack, egui, web-sys, kira, …) also compile natively — wasm imports become
@@ -54,6 +54,8 @@ bevy = { workspace = true, features = [
     "bevy_animation",
     "bevy_pbr",
     "bevy_light",
+    "bevy_anti_alias",
+    "smaa_luts",
     "bevy_gltf",
     "bevy_scene",
     "gltf_animation",

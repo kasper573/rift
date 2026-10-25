@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget};
-use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
@@ -198,9 +197,8 @@ impl Viewport {
                 },
                 RenderTarget::Image(image.clone().into()),
                 camera::projection(size[0], size[1]),
-                Msaa::Off,
-                DepthPrepass,
-                NormalPrepass,
+                camera::smoothing(),
+                camera::passes(),
                 Tonemapping::None,
                 DebandDither::Disabled,
                 RenderLayers::from_layers(&[layer]),

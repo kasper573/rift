@@ -22,12 +22,12 @@ use crate::core::render::present::AreaGrade;
 use crate::core::render::world::cover;
 use crate::core::render::world::fade::Fades;
 use crate::core::render::world::lights::{self, AMBIENT_NITS, Flicker};
-use crate::core::render::world::sky::{self, Daylight, SkyColors};
+use crate::core::render::world::sky::{self, Daylight, SkyColors, SunLight};
 use crate::core::render::world::terrain;
 use crate::core::render::world::toon::{ToonMaterial, toon_of};
 use crate::core::render::world_point;
 use crate::core::time::Seconds;
-use crate::core::units::{Meters, TileSize};
+use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::ParamFill;
 use crate::core::vfx::cover::{self as cover_vfx, Climate, CoverMaterial};
 use crate::core::vfx::render::{self as vfx_render, ParamsUniform, Run, SiteFrame};
@@ -91,31 +91,19 @@ pub fn despawn(world: &mut World, scenery: Scenery) {
 
 /// Lights `area` for the hour under its weather: its sun turned and coloured, and the ambient light
 /// and sky put on `camera`.
+/// Lights the area for the hour: the sun and the ambient light, and the sky painted anew.
 pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scenery, camera: Entity) {
-    let overcast = area.weather.overcast;
-    let sun = area.lighting.sun.map(|sun| {
-        sky::sun_at(
-            daylight,
-            sun.elevation,
-            sun.azimuth,
-            sun.color.color(),
-            overcast,
-        )
-    });
+    shine(world, area, daylight, scenery, camera);
+    paint_sky(world, area, daylight, camera);
+}
+
+/// Turns the area's sun and ambient light to the hour, which is cheap enough to do every frame.
+pub fn shine(world: &mut World, area: &Area, daylight: Daylight, scenery: Scenery, camera: Entity) {
+    let sun = sun_at(area, daylight);
     let elevation = sun.map(|sun| sun.elevation);
-    let authored = area.lighting.sky();
-    let colors = sky::sky_at(
-        SkyColors {
-            zenith: authored.zenith.color(),
-            horizon: authored.horizon.color(),
-        },
-        daylight,
-        elevation,
-        overcast,
-    );
     let ambient = AmbientLight {
         color: area.lighting.ambient.color(),
-        brightness: AMBIENT_NITS * sky::ambient_at(daylight, elevation, overcast),
+        brightness: AMBIENT_NITS * sky::ambient_at(daylight, elevation, area.weather.overcast),
         ..default()
     };
     if let (Some(sun), Some(entity)) = (sun, scenery.sun) {
@@ -127,6 +115,25 @@ pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scener
             *transform = lights::sun_transform(sun.elevation, sun.azimuth);
         }
     }
+    if let Ok(mut camera) = world.get_entity_mut(camera) {
+        camera.insert(ambient);
+    }
+}
+
+/// Paints the sky as it looks at the hour, a cubemap the camera wears.
+pub fn paint_sky(world: &mut World, area: &Area, daylight: Daylight, camera: Entity) {
+    let overcast = area.weather.overcast;
+    let elevation = sun_at(area, daylight).map(|sun| sun.elevation);
+    let authored = area.lighting.sky();
+    let colors = sky::sky_at(
+        SkyColors {
+            zenith: authored.zenith.color(),
+            horizon: authored.horizon.color(),
+        },
+        daylight,
+        elevation,
+        overcast,
+    );
     let shown_sky = world
         .get::<Skybox>(camera)
         .and_then(|skybox| skybox.image.clone());
@@ -142,15 +149,24 @@ pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scener
         _ => images.add(cubemap),
     };
     if let Ok(mut camera) = world.get_entity_mut(camera) {
-        camera.insert((
-            ambient,
-            Skybox {
-                image: Some(image),
-                brightness: sky::SKY_NITS,
-                ..default()
-            },
-        ));
+        camera.insert(Skybox {
+            image: Some(image),
+            brightness: sky::SKY_NITS,
+            ..default()
+        });
     }
+}
+
+fn sun_at(area: &Area, daylight: Daylight) -> Option<SunLight> {
+    area.lighting.sun.map(|sun| {
+        sky::sun_at(
+            daylight,
+            sun.elevation,
+            sun.azimuth,
+            sun.color.color(),
+            area.weather.overcast,
+        )
+    })
 }
 
 /// The wind and cloud the area's covers move under.

@@ -208,7 +208,7 @@ pub fn variable_field(
     forms::value(ui, cx, &schema, value, path).is_some()
 }
 
-/// A value in a line: text as it is, a place by its area and tile, a condition as it reads.
+/// A value in a line: text as it is, a place by its area and ground, a condition as it reads.
 pub(super) fn short_value(value: &VarValue, project: &Project) -> String {
     let text = match value {
         VarValue::Str(text) => return text.clone(),
@@ -232,7 +232,7 @@ pub(super) fn short_value(value: &VarValue, project: &Project) -> String {
     }
 }
 
-/// Every place the object's scripts lead to, by the path of its area and its tile.
+/// Every place the object's scripts lead to, by the path of its area and its ground.
 pub fn warp_destinations(object: &ObjectDef, paths: &impl IdPaths) -> Vec<(String, Pos<Meters>)> {
     object
         .scripts

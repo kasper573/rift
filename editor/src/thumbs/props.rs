@@ -7,7 +7,6 @@ use std::collections::{HashMap, VecDeque};
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget};
-use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::light::AmbientLight;
 use bevy::prelude::*;
@@ -226,9 +225,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                 },
                 RenderTarget::Image(target.clone().into()),
                 world_camera::projection(SIZE, SIZE),
-                Msaa::Off,
-                DepthPrepass,
-                NormalPrepass,
+                world_camera::passes(),
                 Tonemapping::None,
                 DebandDither::Disabled,
                 AmbientLight {

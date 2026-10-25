@@ -5,11 +5,13 @@ import bevy_pbr::render::{
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
 };
 
-// Light levels at which a face steps up from shade to half light and from half light to full.
-const HALF_LIT: f32 = 0.32;
-const FULL_LIT: f32 = 0.68;
-const SHADE: f32 = 0.5;
-const HALF: f32 = 0.78;
+// Light levels at which a face steps up from shade to half light and from half light to full, and
+// how bright the shade and half-light bands are: level ground under a high sun is full, a face
+// turned from the sun or under a shadow drops well below it, so shapes read and shadows show.
+const HALF_LIT: f32 = 0.3;
+const FULL_LIT: f32 = 0.7;
+const SHADE: f32 = 0.4;
+const HALF: f32 = 0.66;
 
 // The colour of a pixel of a standard material lit in three bands: the face is lit as a flat one
 // (or from its vertex normals when `flat` is 0), its light measured on white and stepped, and the

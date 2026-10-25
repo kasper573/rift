@@ -1,6 +1,6 @@
-use driver::{Player, UiTarget, holding};
+use driver::{Player, UiTarget, id};
 use engine::core::math::Offset;
-use engine::systems::area::AreaId;
+use engine::systems::area::{AreaDef, AreaId};
 use engine::systems::input::map::InputAction;
 
 use crate::chapters::Chapter;
@@ -9,7 +9,7 @@ use crate::shoot::Shoot;
 pub const CHAPTER: Chapter = Chapter {
     name: "travel",
     title: "Travel",
-    summary: "Warps connect the areas of the world, some are locked, and each crossing plays a transition",
+    summary: "Warps connect the areas of the world, and each crossing plays a transition",
     play,
 };
 
@@ -41,43 +41,29 @@ fn play(shoot: &mut Shoot) {
     let player = shoot.join_as("traveler", None);
     let mut me = shoot.roll(player);
     me.caption("Warps lead to other areas — step onto one to cross");
-    let seen = me.snapshot();
-    let road = driver::warp_named(&seen, "forest-road").clone();
-    me.walk_to(road.at);
-    me.on_stage("halt");
-    me.caption("The forest road is locked without a pass: stand on it, and its warden stops you");
-    me.read_to_choices();
-    me.caption("Twenty Gold buys a pass");
-    me.hover_choice("Here, for your trouble.");
-    me.hold();
-    me.pick("Here, for your trouble.");
-    me.on_stage("bribed");
-    me.read_to_choices();
-    me.pick("Goodbye.");
-    me.conversation_over();
-    me.wait_until("the pass in the bag", |snapshot| {
-        holding(snapshot, "road_pass") == 1
-    });
-    me.caption("With the pass in your bag, the same warp takes you through: the island crumbles away, and the forest rises around you");
+    let home = id::<AreaDef>("island");
+    let cottage = id::<AreaDef>("cottage");
+    me.caption(
+        "The woodsman's cottage stands on the rise north-east of town: its front door is a warp",
+    );
     me.show_mixer();
-    me.cross("forest-road");
-    me.caption("Welcome to the forest: its own music and birdsong crossfade in over the harbour's");
-    me.caption("A camp's fire carries past its edge, louder the closer you walk");
-    me.walk_by(Offset::new(3.0, -2.0));
-    me.walk_by(Offset::new(2.0, -1.0));
+    me.cross("front-door");
+    me.caption("The island crumbles away, and the cottage rises around you: its own fire and ambience crossfade in over the town's");
+    me.walk_by(Offset::new(-2.0, -1.0));
+    me.walk_by(Offset::new(2.0, 0.0));
     me.hold();
     me.hide_mixer();
+    me.caption("The door takes you back out, and you arrive beside it");
+    cross_into(&mut me, home);
+    me.hold();
 
     me.caption("Settings choose how a crossing looks");
-    let home = seen.area.expect("the island");
-    // Each is picked in town on the island: forest monsters don't wait while settings are open.
-    cross_into(&mut me, home);
     let mut current = "Crumble";
     for (style, says) in TRANSITIONS {
         choose_transition(&mut me, current, style);
         current = style;
         me.caption(says);
-        cross_into(&mut me, road.to);
+        cross_into(&mut me, cottage);
         cross_into(&mut me, home);
     }
 }

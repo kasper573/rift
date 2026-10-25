@@ -74,9 +74,9 @@ fn play(shoot: &mut Shoot) {
     me.act(InputAction::ToggleInventory);
     me.drag_ui("Inventory", Offset::new(384.0, -260.0));
     me.caption(&format!("{} to sell…", input_name(InputAction::SellItem)));
-    me.act_on_ui(InputAction::SellItem, UiTarget::item("orc_tusk"));
-    me.wait_until("the tusks to sell", |snapshot| {
-        holding(snapshot, "orc_tusk") == 0
+    me.act_on_ui(InputAction::SellItem, UiTarget::item("bat_wing"));
+    me.wait_until("the wings to sell", |snapshot| {
+        holding(snapshot, "bat_wing") == 0
     });
     me.caption(&format!(
         "…or {} onto the shop. Equipment asks first",
@@ -123,7 +123,7 @@ fn play(shoot: &mut Shoot) {
     me.act(InputAction::Dismiss);
     me.wait_until("the exchange to close", |snapshot| snapshot.shop.is_none());
 
-    me.caption("Even a box on the pier can keep a shop, inside a conversation of its own");
+    me.caption("Even a box at the harbour can keep a shop, inside a conversation of its own");
     me.shop_at("honesty-box");
     me.click_ui("Fish Steak");
     me.click_ui("Buy");

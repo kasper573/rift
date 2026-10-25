@@ -1,9 +1,9 @@
 use bevy::prelude::*;
-use engine::core::geometry::Degrees;
+use engine::core::geometry::{Degrees, Radians};
 use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::render::camera::ground_hit;
-use engine::core::render::{CameraRig, capsule_hit, world_point};
+use engine::core::render::{CameraRig, capsule_hit, facing_rotation, world_point};
 use engine::core::units::{MeterPos, Meters};
 
 const SIZE: GroundSize = GroundSize {
@@ -83,6 +83,24 @@ fn pointing_at_a_body_where_it_shows_picks_it() {
         assert!(
             capsule_hit(view.ray(beside), foot, RADIUS, HEIGHT).is_none(),
             "pointing a metre beside the body at zoom {zoomed} misses it"
+        );
+    }
+}
+
+#[test]
+fn a_model_fronts_the_way_its_actor_faces() {
+    let front = Vec3::Z;
+    for (toward, heading) in [
+        ("east", Pos::new(1.0, 0.0)),
+        ("south", Pos::new(0.0, 1.0)),
+        ("north-west", Pos::new(-1.0, -1.0)),
+    ] {
+        let facing = Radians::of(heading - Pos::new(0.0, 0.0));
+        let turned = facing_rotation(facing) * front;
+        let wanted = world_point(heading, Meters(0.0)).normalize();
+        assert!(
+            turned.abs_diff_eq(wanted, 1e-5),
+            "facing {toward} turns the front to {turned}, not {wanted}"
         );
     }
 }

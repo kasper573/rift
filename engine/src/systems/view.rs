@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::core::audio::playback::Listener;
 use crate::core::interpolate::{Jumps, RenderValueSystems};
 use crate::core::math::Pos;
-use crate::core::render::CameraRig;
+use crate::core::render::{CameraRig, GroundHeights};
 use crate::core::time::Seconds;
 use crate::core::units::Meters;
 use crate::systems::area::{AreaId, AreaTag};
@@ -48,6 +48,7 @@ fn track_player(
     time: Res<Time>,
     viewpoint: Res<MyCharacter>,
     characters: Query<(&RenderPosition, &Position, &AreaTag)>,
+    ground: Option<Res<GroundHeights>>,
     mut rig: ResMut<CameraRig>,
     mut listener: ResMut<Listener>,
     mut follow: ResMut<FollowCenter>,
@@ -73,5 +74,6 @@ fn track_player(
         _ => at,
     };
     follow.0 = Some((followed, center));
-    rig.look_at(center, FOCUS_HEIGHT);
+    let underfoot = ground.map_or(Meters(0.0), |ground| ground.height_at(center));
+    rig.look_at(center, underfoot + FOCUS_HEIGHT);
 }

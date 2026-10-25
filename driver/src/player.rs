@@ -12,7 +12,7 @@ use engine::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifi
 use engine::systems::movement::{NavMesh, SPACING};
 use engine::systems::probe::{ProbeBody, ProbeShop, ProbeSnapshot, ProbeStage, ProbeUiElement};
 
-use crate::content::{content, hunting_ground, lattice, marker_at};
+use crate::content::{content, hunting_ground, lattice, marker_at, placed_object};
 use crate::desktop::{BUDGET, Button, Deadline, Desktop, WaitBudget};
 use crate::recording::Footage;
 use crate::seen::{
@@ -135,10 +135,10 @@ impl Player {
         self.desktop.sweep_pointer(through)
     }
 
-    pub fn point_at_tile(&mut self, tile: Pos<Meters>) -> ProbeSnapshot {
+    pub fn point_at_ground(&mut self, ground: Pos<Meters>) -> ProbeSnapshot {
         let seen = self.snapshot();
-        let Some(at) = clickable_point(&seen, tile) else {
-            self.desktop.fail(&format!("{tile:?} is out of view"));
+        let Some(at) = clickable_point(&seen, ground) else {
+            self.desktop.fail(&format!("{ground:?} is out of view"));
         };
         self.point_at(at)
     }
@@ -325,10 +325,10 @@ impl Player {
         self.desktop.type_text(text, delay, landed);
     }
 
-    /// Walks there and comes to rest, and returns where: anyone standing on the tile stops the
+    /// Walks there and comes to rest, and returns where: anyone standing on the ground stops the
     /// player short.
-    pub fn walk_to(&mut self, tile: Pos<Meters>) -> Pos<Meters> {
-        self.walk_toward(|_| Some(tile))
+    pub fn walk_to(&mut self, ground: Pos<Meters>) -> Pos<Meters> {
+        self.walk_toward(|_| Some(ground))
     }
 
     /// As `walk_to`, for a goal re-read every frame, as something that moves.
@@ -348,11 +348,11 @@ impl Player {
         let mesh = mesh_of(&seen);
         let me = seen.me.as_ref().expect("the player").at;
         let ground = mesh
-            .nearest_where(spot, SPACING, |tile| {
-                mesh.connects(me, tile)
-                    && !in_warp(&seen, tile)
-                    && !taken(&seen, tile)
-                    && !beside_anyone(&seen, tile)
+            .nearest_where(spot, SPACING, |ground| {
+                mesh.connects(me, ground)
+                    && !in_warp(&seen, ground)
+                    && !taken(&seen, ground)
+                    && !beside_anyone(&seen, ground)
             })
             .expect("ground the player can walk to");
         self.walk_to(ground)
@@ -383,8 +383,8 @@ impl Player {
         let gate = warp_named(&seen, warp).clone();
         if gate.rect.contains(seen.me.as_ref().expect("the player").at) {
             let off = mesh_of(&seen)
-                .nearest_where(gate.at, SPACING, |tile| {
-                    open(&seen, tile) && !in_warp(&seen, tile)
+                .nearest_where(gate.at, SPACING, |ground| {
+                    open(&seen, ground) && !in_warp(&seen, ground)
                 })
                 .expect("open ground beside the warp");
             self.walk_to(off);
@@ -432,14 +432,14 @@ impl Player {
                 .iter()
                 .rev()
                 .copied()
-                .find(|tile| {
-                    open(&seen, *tile)
-                        && if *tile == target {
-                            !passed_by(&seen, *tile)
+                .find(|ground| {
+                    open(&seen, *ground)
+                        && if *ground == target {
+                            !passed_by(&seen, *ground)
                         } else {
-                            !beside_anyone(&seen, *tile)
+                            !beside_anyone(&seen, *ground)
                         }
-                        && (!in_warp(&seen, *tile) || *tile == target)
+                        && (!in_warp(&seen, *ground) || *ground == target)
                 })
                 .or_else(|| detour(&seen, mesh, target, length(me.at, &path)));
             // Those standing in the way move on, or `arrived` says how close is close enough.
@@ -447,13 +447,12 @@ impl Player {
                 continue;
             };
             let onto_goal = hop == target;
+            let slack = CLICK_SLACK + pixel_span(&seen, hop);
             let wanted = |claim: &ClickClaim| match claim {
-                ClickClaim::Walk(tile) if onto_goal => tile.distance(target) < CLICK_SLACK,
-                ClickClaim::Walk(tile) => {
-                    tile.distance(hop) < CLICK_SLACK
-                        || path
-                            .iter()
-                            .any(|corner| corner.distance(*tile) < CLICK_SLACK)
+                ClickClaim::Walk(ground) if onto_goal => ground.distance(target) < slack,
+                ClickClaim::Walk(ground) => {
+                    ground.distance(hop) < slack
+                        || path.iter().any(|corner| corner.distance(*ground) < slack)
                 }
                 _ => false,
             };
@@ -515,12 +514,31 @@ impl Player {
     }
 
     // Walks up to the target, and clicks it until `done` shows what the click did.
+    /// The server tells a client only of what is near it, so a target across the area is walked
+    /// toward where the content puts it, until the client sees it.
+    pub fn approach(&mut self, marker: &str) {
+        let seen = self.in_world();
+        let area = area_name(&seen).expect("the player is in an area");
+        let shows: Box<dyn Fn(&ProbeSnapshot) -> bool> = if placed_object(area, marker).is_some() {
+            Box::new(move |snapshot| object_named(snapshot, marker).is_some())
+        } else {
+            Box::new(move |snapshot| townsperson(snapshot, marker).is_some())
+        };
+        if shows(&seen) {
+            return;
+        }
+        let at = marker_at(area, marker);
+        self.travel_to(|_| Some(at), |snapshot| shows(snapshot));
+    }
+
     fn engage<T>(
         &mut self,
         what: &str,
+        marker: &str,
         locate: impl Fn(&ProbeSnapshot) -> Option<(Entity, Pos<Meters>, Pos<Meters>)>,
         done: impl Fn(&ProbeSnapshot) -> Option<T>,
     ) -> T {
+        self.approach(marker);
         let found = self.reach(
             what,
             LONG,
@@ -534,6 +552,7 @@ impl Player {
     pub fn talk_to(&mut self, npc: &str) -> ProbeStage {
         self.engage(
             &format!("the conversation with {npc}"),
+            npc,
             |snapshot| townsperson(snapshot, npc).map(|body| (body.id, body.at, body.aim)),
             |snapshot| {
                 let with = townsperson(snapshot, npc)?.id;
@@ -545,6 +564,7 @@ impl Player {
     pub fn interact_with(&mut self, object: &str) -> ProbeStage {
         self.engage(
             &format!("using {object}"),
+            object,
             |snapshot| object_named(snapshot, object).map(|seen| (seen.id, seen.at, seen.aim)),
             |snapshot| {
                 let with = object_named(snapshot, object)?.id;
@@ -556,16 +576,17 @@ impl Player {
     pub fn shop_at(&mut self, object: &str) -> ProbeShop {
         self.engage(
             &format!("the shop at {object}"),
+            object,
             |snapshot| object_named(snapshot, object).map(|seen| (seen.id, seen.at, seen.aim)),
             |snapshot| snapshot.shop.clone(),
         )
     }
 
-    /// Arms the skill in the slot and points at the tile, ready to cast.
+    /// Arms the skill in the slot and points at the ground, ready to cast.
     pub fn aim_skill(&mut self, slot: InputAction, at: Pos<Meters>) {
         self.act(slot);
         self.wait_until("the skill armed", aiming);
-        self.point_at_tile(at);
+        self.point_at_ground(at);
     }
 
     /// Casts the aimed skill where the pointer rests, until `done` shows the cast landed.
@@ -948,6 +969,22 @@ const AIM_ATTEMPTS: u32 = 60;
 const NEAR: Meters = Meters(1.5);
 /// How far a click may land from the ground point it aimed at, through the window's pixels.
 const CLICK_SLACK: Meters = Meters(0.25);
+
+/// The ground a pixel spans where `at` is drawn. The pointer rests on whole pixels, so a click
+/// lands within that of the ground it was aimed at, farther the lower the camera looks.
+fn pixel_span(snapshot: &ProbeSnapshot, at: Pos<Meters>) -> Meters {
+    let step = Meters(0.5);
+    let Some(center) = snapshot.ground_point(at) else {
+        return Meters(0.0);
+    };
+    [Offset::new(step.0, 0.0), Offset::new(0.0, step.0)]
+        .into_iter()
+        .filter_map(|offset| snapshot.ground_point(at + offset))
+        .map(|point| step.0 / point.distance_to(center).max(f32::EPSILON))
+        .fold(Meters(0.0), |span, metres_per_pixel| {
+            Meters(span.0.max(metres_per_pixel))
+        })
+}
 const SCROLLS: u32 = 12;
 const FIRST_CHOICES: u32 = 3;
 const SET_OFF: WaitBudget = WaitBudget {
@@ -1007,13 +1044,15 @@ fn detour(
     left: Meters,
 ) -> Option<Pos<Meters>> {
     lattice(mesh)
-        .filter(|tile| {
-            open(snapshot, *tile) && !beside_anyone(snapshot, *tile) && !in_warp(snapshot, *tile)
+        .filter(|ground| {
+            open(snapshot, *ground)
+                && !beside_anyone(snapshot, *ground)
+                && !in_warp(snapshot, *ground)
         })
-        .filter_map(|tile| Some((tile, length(tile, &mesh.route(tile, target)?))))
+        .filter_map(|ground| Some((ground, length(ground, &mesh.route(ground, target)?))))
         .filter(|(_, way)| *way < left)
         .min_by(|a, b| a.1.0.total_cmp(&b.1.0))
-        .map(|(tile, _)| tile)
+        .map(|(ground, _)| ground)
 }
 
 // An enemy in front of the target takes the click, as it would take a player's: the way to the

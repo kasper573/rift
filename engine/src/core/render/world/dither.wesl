@@ -18,3 +18,15 @@ fn dither_discard(pixel: vec2<f32>, shown: f32) {
         discard;
     }
 }
+
+// The share of a pixel that shows on a thing standing in front of the camera's subject: a circle
+// of `radius` around `focus`, where the subject shows, is cleared, softening out to its rim, and
+// `shown` is how far that clearing has come (1 untouched, 0 the whole circle).
+fn fade_visibility(pixel: vec2<f32>, shown: f32, focus: vec2<f32>, radius: f32) -> f32 {
+    let spread = distance(pixel, focus) / max(radius, 1.0);
+    let rim = smoothstep(RIM, 1.0, spread);
+    return mix(rim, 1.0, shown);
+}
+
+// Where the clearing starts to soften, as a share of its radius.
+const RIM: f32 = 0.55;

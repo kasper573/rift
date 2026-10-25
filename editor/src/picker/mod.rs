@@ -541,7 +541,7 @@ fn popover(
                             };
                             let response = match layout {
                                 PickLayout::Grid => {
-                                    tile(ui, cx, source, candidate, cell, &mut budget)
+                                    ground(ui, cx, source, candidate, cell, &mut budget)
                                 }
                                 PickLayout::List => {
                                     line(ui, cx, source, candidate, cell, &mut budget)
@@ -731,7 +731,7 @@ fn line(
     }
 }
 
-fn tile(
+fn ground(
     ui: &mut Ui,
     cx: &mut FormCx,
     source: &dyn PickSource,

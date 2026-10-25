@@ -15,9 +15,9 @@ pub const CHAPTER: Chapter = Chapter {
 
 fn play(shoot: &mut Shoot) {
     let mut me = shoot.join_as("well_off", None);
-    let mut other = shoot.join_as("on_maras_errand", None);
-    stand_below(&mut other, "mara", 1.0);
-    stand_below(&mut me, "mara", -1.0);
+    let mut other = shoot.join_as("on_ilsas_errand", None);
+    stand_below(&mut other, "ilsa", 1.0);
+    stand_below(&mut me, "ilsa", -1.0);
     let name = other.snapshot().me.expect("the other player").name;
     let mut me = shoot.roll(me);
     me.inset(other, &format!("{name}'s screen"), |me, other| {
@@ -26,20 +26,20 @@ fn play(shoot: &mut Shoot) {
 }
 
 fn at_the_stall(me: &mut Star, other: &mut Player, name: &str) {
-    me.caption("Two players at Mara's stall. On your screen she has a quest for you: !");
-    me.wait_until("! over Mara", |snapshot| {
-        marked(snapshot, "mara", AttentionMark::QuestOffered)
+    me.caption("Two players at the north road. On your screen Ilsa has a quest for you: !");
+    me.wait_until("! over Ilsa", |snapshot| {
+        marked(snapshot, "ilsa", AttentionMark::QuestOffered)
     });
     me.caption(&format!(
         "On {name}'s, top left, she shows a ?: they're halfway through it"
     ));
-    other.wait_until("? over Mara", |snapshot| {
-        marked(snapshot, "mara", AttentionMark::QuestInProgress)
+    other.wait_until("? over Ilsa", |snapshot| {
+        marked(snapshot, "ilsa", AttentionMark::QuestInProgress)
     });
 
     me.caption("You both talk to her at once, each in a conversation of your own");
-    me.talk_to("mara");
-    other.talk_to("mara");
+    me.talk_to("ilsa");
+    other.talk_to("ilsa");
     me.read_to_choices();
     other.read_to_choices();
     me.caption("What she offers comes from each player's own quest log");
@@ -49,8 +49,10 @@ fn at_the_stall(me: &mut Star, other: &mut Player, name: &str) {
         player.conversation_over();
     }
 
-    me.caption("Pell runs a dice table");
-    stand_below(other, "pell", 2.0);
+    me.caption("Pell runs a dice table in the woodsman's cottage");
+    me.cross("front-door");
+    other.cross("front-door");
+    stand_below(other, "pell", 1.5);
     me.talk_to("pell");
     me.read_to_choices();
     lose_at_dice(me);
@@ -86,7 +88,7 @@ fn at_the_stall(me: &mut Star, other: &mut Player, name: &str) {
 // Clear of whoever stands there, so the click walks rather than talks.
 fn stand_below(player: &mut Player, npc: &str, across: f32) {
     player.walk_toward(|snapshot| {
-        townsperson(snapshot, npc).map(|body| body.at + Offset::new(across, 2.5))
+        townsperson(snapshot, npc).map(|body| body.at + Offset::new(across, 1.8))
     });
 }
 

@@ -33,18 +33,18 @@ use crate::tabs::file_title;
 #[derive(Clone, Copy)]
 pub struct AreaMenuAnchor {
     pub at: Pos2,
-    pub tile: Pos<Meters>,
+    pub ground: Pos<Meters>,
 }
 
 pub(super) fn context_menu_at(editor: &mut Editor, view_key: &str, frame: &AreaFrame) {
-    let Some(tile) = frame.pointer_tile else {
+    let Some(ground) = frame.pointer_ground else {
         return;
     };
     let view = editor.views.area.view_mut(view_key);
     view.take_drag();
     let selecting = view.tool == AreaTool::Select;
     if selecting
-        && let Some(hit) = frame.hit(tile)
+        && let Some(hit) = frame.hit(ground)
         && !super::selected_parts(editor, &frame.bundle).contains(&hit)
     {
         nodes::select(editor, &frame.bundle, vec![hit]);
@@ -55,7 +55,7 @@ pub(super) fn context_menu_at(editor: &mut Editor, view_key: &str, frame: &AreaF
         view,
         view_key,
         frame.pointer.unwrap_or(frame.canvas.screen.center()),
-        tile,
+        ground,
     );
 }
 
@@ -64,11 +64,11 @@ pub(super) fn open_add_menu(
     editor: &mut Editor,
     view_key: &str,
     frame: &AreaFrame,
-    tile: Pos<Meters>,
+    ground: Pos<Meters>,
 ) {
     if let Some(view) = editor.views.area.views.get_mut(view_key) {
         let at = frame.pointer.unwrap_or(frame.canvas.screen.center());
-        open_menu(ui.ctx(), view, view_key, at, tile);
+        open_menu(ui.ctx(), view, view_key, at, ground);
     }
 }
 
@@ -77,10 +77,10 @@ pub(super) fn open_menu(
     view: &mut AreaViewState,
     view_key: &str,
     at: Pos2,
-    tile: Pos<Meters>,
+    ground: Pos<Meters>,
 ) {
     egui::Popup::open_id(ctx, menu_id(view_key));
-    view.menu = Some(AreaMenuAnchor { at, tile });
+    view.menu = Some(AreaMenuAnchor { at, ground });
 }
 
 fn menu_id(view_key: &str) -> egui::Id {
@@ -114,7 +114,7 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
     if !egui::Popup::is_id_open(ui.ctx(), id) {
         return;
     }
-    let Some(AreaMenuAnchor { at, tile }) = editor
+    let Some(AreaMenuAnchor { at, ground }) = editor
         .views
         .area
         .views
@@ -134,7 +134,7 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
     .open_memory(None)
     .show(|ui| {
         ui.set_min_width(220.0);
-        let spot = snap_to(tile, false);
+        let spot = snap_to(ground, false);
         ui.label(RichText::new(format!("{}, {} m", spot.x, spot.y)).weak());
         let character =
             play::current_character(editor).unwrap_or_else(|| "a test character".to_owned());
@@ -297,18 +297,18 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
             if let Some(area) = frame.area_id() {
                 let place = Place {
                     area,
-                    at: snap_to(tile, false),
+                    at: snap_to(ground, false),
                 };
                 play::start(editor, Some(place));
             }
         }
         MenuAction::PlayFromStart => play::start(editor, None),
-        MenuAction::SetSpawn => pins::set_spawn(editor, &frame.bundle, snap_to(tile, false)),
+        MenuAction::SetSpawn => pins::set_spawn(editor, &frame.bundle, snap_to(ground, false)),
         MenuAction::Listen => {
-            editor.views.area.view_mut(view_key).listener = Some(tile);
-            pick::listen(editor, frame, tile);
+            editor.views.area.view_mut(view_key).listener = Some(ground);
+            pick::listen(editor, frame, ground);
         }
-        MenuAction::Add(kind) => add_module(editor, view_key, frame, kind, tile),
+        MenuAction::Add(kind) => add_module(editor, view_key, frame, kind, ground),
         MenuAction::Paste => start_paste(editor, view_key),
         MenuAction::EditInPlace(node) => placement::edit_in_place(editor, view_key, frame, &node),
         MenuAction::Area(action) => super::run_action(editor, frame, action),
@@ -450,24 +450,24 @@ pub fn module_template(
     })
 }
 
-/// Adds a module of `kind` where `tile` is: into the blueprint being edited in place when it is
-/// selected, at the tile's spot within it. Asks first which file it names, unless the view's stamp
+/// Adds a module of `kind` where `ground` is: into the blueprint being edited in place when it is
+/// selected, at its spot within it. Asks first which file it names, unless the view's stamp
 /// names the blueprint to place.
 pub fn add_module(
     editor: &mut Editor,
     view_key: &str,
     frame: &AreaFrame,
     kind: AreaModuleKind,
-    tile: Pos<Meters>,
+    ground: Pos<Meters>,
 ) {
-    let (bundle, tile) = match frame.in_place.last() {
+    let (bundle, ground) = match frame.in_place.last() {
         Some(place) if editor.selection.keys.first() == Some(&place.blueprint) => (
             place.blueprint.clone(),
-            Pos::new(0.0, 0.0) + Degrees(-place.yaw.0).rotate(tile - place.at),
+            Pos::new(0.0, 0.0) + Degrees(-place.yaw.0).rotate(ground - place.at),
         ),
-        _ => (frame.bundle.clone(), tile),
+        _ => (frame.bundle.clone(), ground),
     };
-    let at = snap_to(tile, false);
+    let at = snap_to(ground, false);
     let view = editor.views.area.view(view_key);
     let picked = match kind {
         AreaModuleKind::Blueprint => view.stamp().map(str::to_owned),

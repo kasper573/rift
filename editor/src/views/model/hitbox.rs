@@ -111,7 +111,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
         match drag.handle {
             Handle::Radius => {
                 if let Some(pointer) = response.interact_pointer_pos()
-                    && let Some(ground) = canvas.to_tile(pointer)
+                    && let Some(ground) = canvas.to_ground(pointer)
                 {
                     drag.hitbox.radius = Meters((ground - at).length().max(SMALLEST));
                 }

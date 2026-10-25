@@ -207,7 +207,7 @@ pub fn play_here(editor: &mut Editor) {
         editor,
         Some(Place {
             area,
-            at: snap(hover.tile),
+            at: snap(hover.ground),
         }),
     );
 }

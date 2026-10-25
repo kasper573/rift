@@ -42,8 +42,9 @@ pub fn area_name(snapshot: &ProbeSnapshot) -> Option<&'static str> {
     snapshot.area.map(|area| area.name(content()))
 }
 
+/// Standing still: idle, or talking, which an actor does standing.
 pub fn at_rest(body: &ProbeBody) -> bool {
-    body.action == Action::Idle && body.resting
+    matches!(body.action, Action::Idle | Action::Talk) && body.resting
 }
 
 pub fn me_at_rest(snapshot: &ProbeSnapshot) -> bool {
@@ -199,67 +200,67 @@ pub fn erred(snapshot: &ProbeSnapshot, saying: &str) -> bool {
         .any(|record| record.topic == HistoryTopic::Error && record.text.contains(saying))
 }
 
-/// Where the tile shows in the window, if it does, clear of the interface over it.
-pub fn clickable_point(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> Option<Pos<WindowPx>> {
-    let point = snapshot.ground_point(tile)?;
+/// Where the ground shows in the window, if it does, clear of the interface over it.
+pub fn clickable_point(snapshot: &ProbeSnapshot, ground: Pos<Meters>) -> Option<Pos<WindowPx>> {
+    let point = snapshot.ground_point(ground)?.round();
     let window = Rect::from_size(snapshot.screen?);
     (window.contains(point) && !snapshot.covered.iter().any(|cover| cover.contains(point)))
         .then_some(point)
 }
 
 /// Ground a click walks onto: in view, and clear of anyone or anything a click would use instead.
-pub fn open(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
-    clickable_point(snapshot, tile).is_some() && !taken(snapshot, tile)
+pub fn open(snapshot: &ProbeSnapshot, ground: Pos<Meters>) -> bool {
+    clickable_point(snapshot, ground).is_some() && !taken(snapshot, ground)
 }
 
 /// Someone or something stands there, or lies there.
-pub fn taken(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
+pub fn taken(snapshot: &ProbeSnapshot, ground: Pos<Meters>) -> bool {
     snapshot
         .actors
         .iter()
-        .any(|actor| stands_over(actor, tile, Meters(0.0)))
+        .any(|actor| stands_over(actor, ground, Meters(0.0)))
         || snapshot
             .objects
             .iter()
-            .any(|object| object.hitbox.contains(tile))
+            .any(|object| object.hitbox.contains(ground))
         || snapshot
             .items
             .iter()
-            .any(|item| item.at.distance(tile) <= Meters(0.5))
+            .any(|item| item.at.distance(ground) <= Meters(0.5))
 }
 
 /// Anyone walking can step under the pointer between the frame that shows ground clear and the
-/// click landing there, so ground within a tile of them is left alone while they pass.
-pub fn passed_by(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
+/// click landing there, so ground within a ground of them is left alone while they pass.
+pub fn passed_by(snapshot: &ProbeSnapshot, ground: Pos<Meters>) -> bool {
     let me = snapshot.me.as_ref().map(|me| me.id);
     snapshot
         .actors
         .iter()
         .filter(|actor| Some(actor.id) != me && matches!(actor.action, Action::Walk | Action::Run))
-        .any(|actor| stands_over(actor, tile, PASSING))
+        .any(|actor| stands_over(actor, ground, PASSING))
 }
 
 /// Anyone at all can be under the pointer by the time a click lands: who walks may walk onto the
-/// ground, and who stands may set off. Ground picked freely keeps a tile clear of everyone.
-pub fn beside_anyone(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
+/// ground, and who stands may set off. Ground picked freely keeps a ground clear of everyone.
+pub fn beside_anyone(snapshot: &ProbeSnapshot, ground: Pos<Meters>) -> bool {
     let me = snapshot.me.as_ref().map(|me| me.id);
     snapshot
         .actors
         .iter()
         .filter(|actor| Some(actor.id) != me)
-        .any(|actor| stands_over(actor, tile, PASSING))
+        .any(|actor| stands_over(actor, ground, PASSING))
 }
 
 const PASSING: Meters = Meters(1.0);
 
-/// Whether the body, grown by `margin`, covers the ground at `tile`.
-fn stands_over(body: &ProbeBody, tile: Pos<Meters>, margin: Meters) -> bool {
-    body.at.distance(tile) <= body.capsule.radius + margin
+/// Whether the body, grown by `margin`, covers the ground at `ground`.
+fn stands_over(body: &ProbeBody, ground: Pos<Meters>, margin: Meters) -> bool {
+    body.at.distance(ground) <= body.capsule.radius + margin
 }
 
 /// Stepping into a warp takes it.
-pub fn in_warp(snapshot: &ProbeSnapshot, tile: Pos<Meters>) -> bool {
-    snapshot.warps.iter().any(|warp| warp.rect.contains(tile))
+pub fn in_warp(snapshot: &ProbeSnapshot, ground: Pos<Meters>) -> bool {
+    snapshot.warps.iter().any(|warp| warp.rect.contains(ground))
 }
 
 /// A piece of the interface, picked out by what it says or shows, or by where it sits.
@@ -498,12 +499,12 @@ pub fn playing<'a>(snapshot: &'a ProbeSnapshot, vfx: &str) -> Vec<&'a ProbeVfx> 
         .collect()
 }
 
-/// The tile two east of the other player: where a friend walks to stand with them, in full view.
+/// The ground two east of the other player: where a friend walks to stand with them, in full view.
 pub fn beside_other_player(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
     other_player(snapshot).map(|star| star.at + Offset::new(2.0, 0.0))
 }
 
-/// The other player once they stand within `reach` tiles of me.
+/// The other player once they stand within `reach` metres of me.
 pub fn other_player_within(snapshot: &ProbeSnapshot, reach: f32) -> Option<ProbeBody> {
     let me = snapshot.me.as_ref()?.at;
     other_player(snapshot)

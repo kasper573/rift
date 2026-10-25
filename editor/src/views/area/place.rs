@@ -40,10 +40,10 @@ pub fn input(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame
         Some(Placeable::Prop(prop)) => {
             let fine = ui.input(|i| EditorKey::Unsnapped.held(i));
             if frame.response.clicked()
-                && let Some(tile) = frame.drag_tile()
+                && let Some(ground) = frame.drag_ground()
             {
                 let yaw = editor.views.area.view(view_key).place_yaw;
-                place_prop(editor, frame, &prop, snap(tile, fine), yaw);
+                place_prop(editor, frame, &prop, snap(ground, fine), yaw);
             }
         }
         None => {}
@@ -118,13 +118,13 @@ pub fn ghost(editor: &Editor, view_key: &str, frame: &AreaFrame) -> Option<Ghost
         return None;
     }
     let prop = view.prop()?;
-    let tile = frame.pointer_tile?;
+    let ground = frame.pointer_ground?;
     let fine = frame.response.ctx.input(|i| EditorKey::Unsnapped.held(i));
     let id = frame.reader.id_of::<PropDef>(prop)?;
     let def = frame.content.by_path::<PropDef>(prop)?.get(&frame.content);
     let placed = PropPlacement {
         prop: id,
-        at: snap(tile, fine),
+        at: snap(ground, fine),
         yaw: view.place_yaw,
         scale: 1.0,
     };
@@ -141,11 +141,11 @@ pub fn overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame: 
     match &view.placeable {
         Some(Placeable::Blueprint(_)) => stamp::stamp_overlay(editor, painter, view_key, frame),
         Some(Placeable::Prop(prop)) => {
-            let Some(tile) = frame.pointer_tile else {
+            let Some(ground) = frame.pointer_ground else {
                 return;
             };
             let fine = painter.ctx().input(|i| EditorKey::Unsnapped.held(i));
-            let at = snap(tile, fine);
+            let at = snap(ground, fine);
             let color =
                 super::overlays::module_color(Some(engine::systems::area::AreaModuleKind::Prop));
             if let Some(def) = frame

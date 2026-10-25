@@ -1,15 +1,22 @@
-//! What comes between the camera and whom it follows dithers out of the way over a fifth of a
-//! second, and back when the way is clear. A faded thing keeps its shadow.
+//! What comes between the camera and whom it follows clears a circle around them over a fifth of
+//! a second, dithered and soft at its rim, and closes it again when the way is clear. A faded
+//! thing keeps the rest of itself and its whole shadow: it still stands there, only seen through.
 
 use bevy::camera::primitives::Aabb;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 
 use super::camera::CameraRig;
-use super::toon::ToonMaterial;
+use super::toon::{ToonMaterial, ToonStyle};
 use crate::core::time::Seconds;
+use crate::core::units::Meters;
 
 /// How long a fade takes, out or back.
 pub const FADE: Seconds = Seconds(0.2);
+
+/// How far round the subject a fading thing is cleared, on the ground it stands on.
+pub const CLEARING: Meters = Meters(2.2);
 
 /// A thing that fades when it hides the camera's subject.
 #[derive(Component, Default)]
@@ -17,26 +24,53 @@ pub struct Fades {
     shown: f32,
 }
 
+/// The things that fade, with the meshes and materials they are drawn from.
+#[derive(SystemParam)]
+pub(super) struct Fading<'w, 's> {
+    children: Query<'w, 's, &'static Children>,
+    bounds: Query<'w, 's, (&'static Aabb, &'static GlobalTransform)>,
+    roots: Query<'w, 's, (Entity, &'static mut Fades)>,
+    materials_of: Query<'w, 's, &'static MeshMaterial3d<ToonMaterial>>,
+    materials: ResMut<'w, Assets<ToonMaterial>>,
+}
+
 pub(super) fn fade_occluders(
     time: Res<Time>,
     rig: Res<CameraRig>,
-    children: Query<&Children>,
-    bounds: Query<(&Aabb, &GlobalTransform)>,
-    mut fading: Query<(Entity, &mut Fades)>,
-    materials_of: Query<&MeshMaterial3d<ToonMaterial>>,
-    mut materials: ResMut<Assets<ToonMaterial>>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    mut fading: Fading,
 ) {
+    let Fading {
+        children,
+        bounds,
+        roots,
+        materials_of,
+        materials,
+    } = &mut fading;
+    let Ok(window) = window.single() else {
+        return;
+    };
     let eye = rig.eye();
     let target = rig.target();
+    let view = rig.view(Vec2::new(
+        window.resolution.width(),
+        window.resolution.height(),
+    ));
+    let Some((focus, focus_radius)) = view.project(target).and_then(|focus| {
+        let rim = view.project(target + rig.transform().right() * CLEARING.0)?;
+        Some((focus, focus.distance(rim)))
+    }) else {
+        return;
+    };
     let step = time.delta_secs() / FADE.0;
-    for (root, mut fades) in &mut fading {
+    for (root, mut fades) in roots.iter_mut() {
         let crossed = children
             .iter_descendants(root)
             .chain(std::iter::once(root))
             .filter_map(|entity| bounds.get(entity).ok())
             .any(|(aabb, transform)| segment_crosses(eye, target, aabb, transform));
         let wanted = if crossed { 0.0 } else { 1.0 };
-        if fades.shown == wanted {
+        if fades.shown == 1.0 && wanted == 1.0 {
             continue;
         }
         fades.shown = if (wanted - fades.shown).abs() <= step {
@@ -45,10 +79,22 @@ pub(super) fn fade_occluders(
             fades.shown + step.copysign(wanted - fades.shown)
         };
         for entity in children.iter_descendants(root) {
-            if let Ok(material) = materials_of.get(entity)
-                && let Some(mut material) = materials.get_mut(&material.0)
+            let Ok(handle) = materials_of.get(entity) else {
+                continue;
+            };
+            let Some(shown) = materials.get(&handle.0) else {
+                continue;
+            };
+            let style = ToonStyle {
+                shown: fades.shown,
+                focus,
+                focus_radius,
+                ..shown.extension.style
+            };
+            if shown.extension.style != style
+                && let Some(mut material) = materials.get_mut(&handle.0)
             {
-                material.extension.style.shown = fades.shown;
+                material.extension.style = style;
             }
         }
     }

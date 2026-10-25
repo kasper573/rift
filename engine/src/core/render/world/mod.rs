@@ -25,8 +25,10 @@ impl Plugin for WorldScenePlugin {
     fn build(&self, app: &mut App) {
         bevy::shader::load_shader_library!(app, "dither.wesl");
         bevy::shader::load_shader_library!(app, "toon_shade.wesl");
+        bevy::shader::load_shader_library!(app, "prepass_write.wesl");
         bevy::asset::embedded_asset!(app, "toon.wesl");
         bevy::asset::embedded_asset!(app, "toon_prepass.wesl");
+        bevy::asset::embedded_asset!(app, "plain_prepass.wesl");
         bevy::asset::embedded_asset!(app, "decal.wesl");
         app.add_plugins((
             MaterialPlugin::<toon::ToonMaterial>::default(),

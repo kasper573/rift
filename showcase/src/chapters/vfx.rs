@@ -20,20 +20,20 @@ pub const CHAPTER: Chapter = Chapter {
     play,
 };
 
-const AREA: &str = "gloomhollow";
-const PREY: &str = "ghoul";
+const AREA: &str = "island";
+const PREY: &str = "skeleton_rogue";
 
 fn play(shoot: &mut Shoot) {
     let ring = pack_ground(AREA, PREY);
     // Beside the pack rather than above or below it, so the pack stays in the wider half of the view.
     let ground: Vec<_> = ground_near(AREA, ring, Meters(4.0)..=Meters(6.5))
         .into_iter()
-        .filter(|tile| (tile.y - ring.y).abs() <= 1.5)
+        .filter(|ground| (ground.y - ring.y).abs() <= 1.5)
         .collect();
     let mine = *ground.first().expect("ground beside the pack");
     let theirs = *ground
         .iter()
-        .find(|tile| tile.distance(mine) >= Meters(1.0))
+        .find(|ground| ground.distance(mine) >= Meters(1.0))
         .expect("room for two beside the pack");
     let player = shoot.join_as("arcanist", Some(place(mine)));
     let mut friend = shoot.join_as("armsman", Some(place(theirs)));
@@ -88,8 +88,8 @@ fn play(shoot: &mut Shoot) {
     );
     friend.act(InputAction::Hotbar1);
     friend.wait_until("Cleave armed", aiming);
-    let foe = friend.wait_for("a myconid in the friend's view", foe_in_view);
-    friend.point_at_tile(foe);
+    let foe = friend.wait_for("a rogue in the friend's view", foe_in_view);
+    friend.point_at_ground(foe);
     friend.click();
     me.wait_until("the cleave", |snapshot| {
         !played(snapshot, "cleave_swoosh").is_empty()

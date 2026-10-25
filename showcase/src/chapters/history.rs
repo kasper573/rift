@@ -69,10 +69,10 @@ fn play(shoot: &mut Shoot) {
     me.act(InputAction::Dismiss);
     me.wait_until("the history to close", |snapshot| !snapshot.history.open);
 
-    me.caption("History stays with your character, across the strait too");
-    me.cross("forest-road");
-    me.wait_until("the forest's intro", |snapshot| {
-        told_by(snapshot, "The forest")
+    me.caption("History stays with your character, through a door too");
+    me.cross("front-door");
+    me.wait_until("the cottage's intro", |snapshot| {
+        told_by(snapshot, "The woodsman's cottage")
     });
     me.act(InputAction::ToggleHistory);
     me.wait_until("the crossing marked in the history", |snapshot| {

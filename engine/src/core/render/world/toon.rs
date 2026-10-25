@@ -20,24 +20,31 @@ pub struct Toon {
     pub style: ToonStyle,
 }
 
-/// How a mesh is drawn beyond its colours: how much of it shows (1 all, 0 none, dithered between),
-/// whether its edges are inked, and whether each face is lit flat from its own plane (1) or from
-/// the normals its vertices carry (0), as grass is from the ground under it.
+/// How a mesh is drawn beyond its colours: how far it has faded for standing in front of the
+/// camera's subject (`shown` 1 untouched, 0 fully: a circle of `focus_radius` picture pixels around
+/// `focus`, where the subject shows, is dithered away, softening out to its rim; the shadow it
+/// casts stays whole, as the thing itself does), whether its edges are inked, and whether each
+/// face is lit flat from its own plane (1) or from the normals its vertices carry (0), as grass is
+/// from the ground under it.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct ToonStyle {
+    pub focus: Vec2,
     pub shown: f32,
     pub outlined: f32,
     pub flat: f32,
-    pub padding: f32,
+    pub focus_radius: f32,
+    pub padding: Vec2,
 }
 
 impl Default for ToonStyle {
     fn default() -> ToonStyle {
         ToonStyle {
+            focus: Vec2::ZERO,
             shown: 1.0,
             outlined: 1.0,
             flat: 1.0,
-            padding: 0.0,
+            focus_radius: 0.0,
+            padding: Vec2::ZERO,
         }
     }
 }
@@ -54,6 +61,14 @@ impl MaterialExtension for Toon {
             AssetPath::from_path_buf(embedded_path!("toon_prepass.wesl")).with_source("embedded"),
         )
     }
+}
+
+/// The prepass of a mesh of the world drawn without the toon's style, as one under a surface
+/// effect is: it writes what the style reads of its neighbours all the same.
+pub fn plain_prepass_shader() -> ShaderRef {
+    ShaderRef::Path(
+        AssetPath::from_path_buf(embedded_path!("plain_prepass.wesl")).with_source("embedded"),
+    )
 }
 
 /// The toon material a mesh gets for the standard material it was loaded with.

@@ -21,8 +21,8 @@ pub const CHAPTER: Chapter = Chapter {
     play,
 };
 
-const AREA: &str = "glimmercap";
-const PREY: &str = "myconid";
+const AREA: &str = "island";
+const PREY: &str = "skeleton";
 
 fn play(shoot: &mut Shoot) {
     let ring = pack_ground(AREA, PREY);
@@ -46,7 +46,7 @@ fn play(shoot: &mut Shoot) {
     let ally = me.wait_for("the friend standing still", |snapshot| {
         other_player(snapshot).cloned().filter(still)
     });
-    me.point_at_tile(ally.aim);
+    me.point_at_ground(ally.aim);
     me.hold();
     me.click();
     me.wait_until("the friend mended", |snapshot| {
@@ -72,7 +72,7 @@ fn play(shoot: &mut Shoot) {
     me.caption(
         "Chain Lightning's circle picks out everything hostile inside it, and the bolt runs through each one",
     );
-    let crowd = me.wait_for("myconids close enough to chain", |snapshot| {
+    let crowd = me.wait_for("skeletons close enough to chain", |snapshot| {
         crowd(snapshot, chain_radius())
     });
     aim_then_cast(
@@ -96,8 +96,8 @@ fn play(shoot: &mut Shoot) {
     me.caption("And a cone: the armsman's Cleave sweeps the arc in front of him");
     friend.act(InputAction::Hotbar1);
     friend.wait_until("Cleave armed", aiming);
-    let foe = friend.wait_for("a myconid in the friend's view", foe_in_view);
-    friend.point_at_tile(foe);
+    let foe = friend.wait_for("a skeleton in the friend's view", foe_in_view);
+    friend.point_at_ground(foe);
     friend.click();
     me.wait_until("the cleave", |snapshot| {
         !played(snapshot, "cleave_swoosh").is_empty()
@@ -122,14 +122,16 @@ fn aim_then_cast(
     me.cast(done);
 }
 
-/// The prey with the most others inside a circle of `radius` around it, once that is at least one
-/// other: the pack fights back after the fireball and runs at the caster, so the circle goes where
-/// it is now rather than where it roams.
+/// The standing foe with the most other foes standing inside a circle of `radius` around it, once
+/// that makes three: the camp fights back after the fireball, runs at the caster and stands to
+/// swing, so the circle goes where the mob has come to a halt rather than where the pack roams.
 fn crowd(snapshot: &ProbeSnapshot, radius: Meters) -> Option<Pos<Meters>> {
     let prey: Vec<Pos<Meters>> = snapshot
         .actors
         .iter()
-        .filter(|actor| actor.health > 0.0 && npc_is(actor, PREY))
+        .filter(|actor| {
+            actor.health > 0.0 && actor.npc.is_some() && !actor.friendly && still(actor)
+        })
         .map(|actor| actor.at)
         .collect();
     let around = |at: Pos<Meters>| {
@@ -140,7 +142,7 @@ fn crowd(snapshot: &ProbeSnapshot, radius: Meters) -> Option<Pos<Meters>> {
     prey.iter()
         .copied()
         .max_by_key(|at| around(*at))
-        .filter(|at| around(*at) >= 2)
+        .filter(|at| around(*at) >= 3)
 }
 
 /// A friend aimed at stands where the click lands, rather than walking out from under it.

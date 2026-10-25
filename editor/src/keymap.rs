@@ -164,7 +164,7 @@ impl EditorKey {
         }
     }
 
-    /// The step an arrow key pressed this frame takes, one tile or cell along its axis.
+    /// The step an arrow key pressed this frame takes, one metre or cell along its axis.
     pub fn arrow(self, input: &InputState) -> Option<[i32; 2]> {
         match self.binding() {
             Binding::Arrows(modifiers) => arrow(input, modifiers),

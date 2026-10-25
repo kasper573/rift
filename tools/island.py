@@ -114,7 +114,7 @@ def segment_distance(x, y, a, b):
 
 def guaranteed(land, x, y, points):
     for px, py in points:
-        land |= np.hypot(x - px, y - py) < 6.0
+        land |= np.hypot(x - px, y - py) < 8.0
     for path in PATHS:
         for a, b in zip(path, path[1:]):
             land |= segment_distance(x, y, a, b) < 3.0

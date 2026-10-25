@@ -25,10 +25,7 @@ pub const CHAPTER: Chapter = Chapter {
 };
 
 fn play(shoot: &mut Shoot) {
-    let player = shoot.join_as(
-        "swordsman",
-        Some(resident_home("glimmercap", "gnome_alchemist")),
-    );
+    let player = shoot.join_as("swordsman", Some(resident_home("island", "bram")));
     let mut me = shoot.roll(player);
     me.caption("Town is a safe zone: monsters roam the wilds beyond it");
     // Read in town: out there, monsters don't wait for the viewer.
@@ -99,7 +96,7 @@ fn play(shoot: &mut Shoot) {
 const GREATER_POTION: &str = "greater_health_potion";
 
 // They fight whoever comes near, so a few at once close in, given a while to wander into sight.
-const PACK: &str = "glow_moth";
+const PACK: &str = "skeleton_rogue";
 const SURROUNDING: WaitBudget = WaitBudget {
     time: Duration::from_secs(40),
     frames: 2400,
@@ -112,7 +109,7 @@ const LOOTING: WaitBudget = WaitBudget {
 };
 // Loot lands the moment a monster falls, give or take a round trip.
 // They fight only once attacked, so they don't crowd the loot they always drop.
-const PREY: &str = "myconid";
+const PREY: &str = "skeleton";
 const DROPPING: WaitBudget = WaitBudget {
     time: Duration::from_secs(2),
     frames: 120,
@@ -231,7 +228,7 @@ fn safe_here(snapshot: &ProbeSnapshot) -> bool {
     snapshot.me.as_ref().is_some_and(|me| safe(snapshot, me.at))
 }
 
-// The ground in town nearest the player, a couple of tiles in from every edge.
+// The ground in town nearest the player, a couple of metres in from every edge.
 fn in_town(snapshot: &ProbeSnapshot) -> Pos<Meters> {
     let me = snapshot.me.as_ref().expect("the player").at;
     let area = area_named(area_name(snapshot).expect("an area"));

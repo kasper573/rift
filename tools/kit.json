@@ -537,11 +537,13 @@
     },
     "world/props/rug.prop/model.glb": {
       "from": "furniture:rugRound.glb",
-      "scale": 2
+      "scale": 2,
+      "sink": 0
     },
     "world/props/rug-square.prop/model.glb": {
       "from": "furniture:rugRectangle.glb",
-      "scale": 2
+      "scale": 2,
+      "sink": 0
     },
     "world/props/cabinet.prop/model.glb": {
       "from": "furniture:sideTable.glb",

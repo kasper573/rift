@@ -15,10 +15,7 @@ const BOG_WATER: &str = "bog_water";
 const ANTIDOTE: &str = "antidote";
 
 fn play(shoot: &mut Shoot) {
-    let player = shoot.join_as(
-        "arcanist",
-        Some(resident_home("glimmercap", "gnome_alchemist")),
-    );
+    let player = shoot.join_as("arcanist", Some(resident_home("island", "grisha")));
     let mut me = shoot.roll(player);
     me.caption(
         "Buffs and debuffs are status effects. Bog water is a bad idea: Poisoned bites every two seconds",
@@ -73,7 +70,7 @@ fn play(shoot: &mut Shoot) {
     me.act(InputAction::Hotbar5);
     me.wait_until("Sanctuary armed", aiming);
     let here = me.snapshot().me.expect("the player").at;
-    me.point_at_tile(here);
+    me.point_at_ground(here);
     me.click();
     me.wait_until("sanctified", |snapshot| {
         status_on_me(snapshot, "sanctified")

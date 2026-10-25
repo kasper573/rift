@@ -13,7 +13,7 @@ import bevy_pbr::prepass::io::{Vertex, VertexOutput, FragmentOutput, decompress_
 import bevy_pbr::render::forward_io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex};
 import bevy_pbr::render::{mesh_functions, view_transformations::position_world_to_clip};
 @if(PREPASS_PIPELINE)
-import bevy_pbr::render::{pbr_bindings, pbr_types, pbr_functions, mesh_bindings::mesh};
+import engine::core::render::world::prepass_write::prepass_output;
 @else
 import engine::core::render::world::toon_shade::toon_color;
 
@@ -107,17 +107,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
 @if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
-    var out: FragmentOutput;
-    @if(UNCLIPPED_DEPTH_ORTHO_EMULATION)
-    out.frag_depth = in.unclipped_depth;
-    @if(NORMAL_PREPASS) {
-        let flags = pbr_bindings::material.flags;
-        let double_sided = (flags & pbr_types::STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT) != 0u;
-        let is_logically_front = pbr_functions::winding_corrected_front_facing(mesh[in.instance_index].flags, is_front);
-        let normal = pbr_functions::prepare_world_normal(in.world_normal, double_sided, is_logically_front);
-        out.normal = vec4(normal * 0.5 + vec3(0.5), 1.0);
-    }
-    return out;
+    return prepass_output(in, is_front);
 }
 @elif(PREPASS_PIPELINE)
 @fragment

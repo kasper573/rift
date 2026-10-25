@@ -371,7 +371,7 @@ fn card_menu(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, hit: &MapTile
     }
     if ui
         .add(widgets::shortcut_button(
-            format!("Open {} at this tile", hit.area),
+            format!("Open {} here", hit.area),
             EditorKey::Confirm,
         ))
         .clicked()
@@ -425,7 +425,7 @@ fn canvas_menu(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, canvas: &Ma
     if ui.button("Add note here").clicked() {
         let at = ui
             .input(|i| i.pointer.latest_pos())
-            .map_or(canvas.viewport.center, |p| canvas.viewport.to_tile(p));
+            .map_or(canvas.viewport.center, |p| canvas.viewport.to_ground(p));
         super::add_note(editor, map, at);
         ui.close();
     }

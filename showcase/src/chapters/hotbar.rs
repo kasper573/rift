@@ -21,10 +21,7 @@ const POTION: &str = "health_potion";
 const SWORD: &str = "iron_sword";
 
 fn play(shoot: &mut Shoot) {
-    let player = shoot.join_as(
-        "armsman",
-        Some(resident_home("glimmercap", "gnome_alchemist")),
-    );
+    let player = shoot.join_as("armsman", Some(resident_home("island", "grisha")));
     let mut me = shoot.roll(player);
     me.caption(&format!(
         "The hotbar: nine slots on the keys {} to {}, holding skills and items alike",
@@ -66,7 +63,7 @@ fn play(shoot: &mut Shoot) {
     me.act(InputAction::Hotbar1);
     me.wait_until("Cleave armed", aiming);
     let at = me.snapshot().me.expect("the player").at + Offset::new(2.0, 0.0);
-    me.point_at_tile(at);
+    me.point_at_ground(at);
     me.hold();
     me.click();
     me.wait_until("Cleave cast", |snapshot| cooling(snapshot, 0));
@@ -78,7 +75,7 @@ fn play(shoot: &mut Shoot) {
     me.click_ui(UiTarget::text("Quick cast skills"));
     me.act(InputAction::ToggleSettings);
     me.wait_until("Cleave ready", |snapshot| !cooling(snapshot, 0));
-    me.point_at_tile(at);
+    me.point_at_ground(at);
     me.act(InputAction::Hotbar1);
     me.wait_until("Cleave cast at once", |snapshot| {
         cooling(snapshot, 0) && !aiming(snapshot)
@@ -89,7 +86,7 @@ fn play(shoot: &mut Shoot) {
     let bare = *open_ground_beside(&me.snapshot())
         .first()
         .expect("bare ground in view");
-    me.point_at_tile(bare);
+    me.point_at_ground(bare);
     me.act(InputAction::Hotbar3);
     me.wait_until("Sunder refused", |snapshot| {
         pressed(snapshot, 2) == Some(HotbarPress::Denied)

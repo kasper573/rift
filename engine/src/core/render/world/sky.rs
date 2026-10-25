@@ -36,8 +36,9 @@ impl Daylight {
         }
     }
 
-    /// The hour in steps of a minute and a half, so lighting is redone only as the light moves.
-    pub fn step(self) -> u32 {
+    /// The hour in steps of a minute and a half: the sky is painted again only as its colours
+    /// move, while the sun itself turns every frame.
+    pub fn sky_step(self) -> u32 {
         match self {
             Daylight::Fixed => 0,
             Daylight::Hour(hour) => (hour * 40.0) as u32,

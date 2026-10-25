@@ -23,9 +23,10 @@ const SWORD: &str = "rusty_sword";
 const BAIT: &str = "fishing_bait";
 
 fn play(shoot: &mut Shoot) {
-    let player = shoot.join_as("chief_fallen", None);
+    let player = shoot.join_as("warrior_fallen", None);
     let mut me = shoot.roll(player);
     me.caption("A ! over a townsperson means they have work for you");
+    me.approach("tobb");
     me.wait_until("! over Tobb", |snapshot| {
         marked(snapshot, "tobb", AttentionMark::QuestOffered)
     });
@@ -165,16 +166,16 @@ fn play(shoot: &mut Shoot) {
     me.act(InputAction::Dismiss);
     me.conversation_over();
 
-    me.caption("Mara pays for orc tusks — and their chief. You came prepared: the chief is down, the tusks in the bag");
-    me.wait_until("the tusk quest ready", |snapshot| {
-        on_quest(snapshot, "tusks_for_the_chief").is_some_and(|quest| quest.ready)
+    me.caption("Ilsa pays for bones — and the warrior that leads them. You came prepared: the warrior is down, the bones in the bag");
+    me.wait_until("the bone quest ready", |snapshot| {
+        on_quest(snapshot, "bones_for_the_warden").is_some_and(|quest| quest.ready)
     });
-    me.wait_until("? over Mara", |snapshot| {
-        marked(snapshot, "mara", AttentionMark::QuestReady)
+    me.wait_until("? over Ilsa", |snapshot| {
+        marked(snapshot, "ilsa", AttentionMark::QuestReady)
     });
-    me.talk_to("mara");
+    me.talk_to("ilsa");
     me.read_to_choices();
-    me.pick("Tusks for the Chief");
+    me.pick("Bones for the Warden");
     me.caption("Rewards can include a pick, chosen when you hand in");
     me.caption("Rest the pointer on a reward to see what it is");
     me.hover_ui(reward_on("I'll take the Bone Shield."));
@@ -196,7 +197,7 @@ fn play(shoot: &mut Shoot) {
     me.act(InputAction::Dismiss);
     me.wait_until("the card to close", |snapshot| snapshot.item_card.is_none());
     me.caption(
-        "With a full bag the pick is refused with an error — space is counted after the tusks are handed in",
+        "With a full bag the pick is refused with an error — space is counted after the bones are handed in",
     );
     me.pick("I'll take the Bone Shield.");
     me.wait_until("the full bag to refuse the pick", |snapshot| {
@@ -220,14 +221,14 @@ fn play(shoot: &mut Shoot) {
     }
     me.act(InputAction::ToggleInventory);
 
-    me.talk_to("mara");
+    me.talk_to("ilsa");
     me.read_to_choices();
-    me.pick("Tusks for the Chief");
+    me.pick("Bones for the Warden");
     me.caption("Now there's room for the pick");
     me.pick("I'll take the Bone Shield.");
-    me.on_stage("tusks_thanks");
-    me.wait_until("the tusks handed in", |snapshot| {
-        finished(snapshot, "tusks_for_the_chief") == Some(QuestResult::Completed)
+    me.on_stage("bones_thanks");
+    me.wait_until("the bones handed in", |snapshot| {
+        finished(snapshot, "bones_for_the_warden") == Some(QuestResult::Completed)
     });
 
     me.caption("Finished quests move to Completed in the log");

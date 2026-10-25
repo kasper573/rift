@@ -200,10 +200,10 @@
         "type": "resident",
         "npc": "world/areas/island/npcs/ilsa.npc.json",
         "at": {
-          "x": 64.0,
-          "y": 49.5
+          "x": 66.5,
+          "y": 48.0
         },
-        "facing": 90.0
+        "facing": 180.0
       },
       {
         "type": "soundscape",
@@ -387,6 +387,16 @@
           "x": 88.0,
           "y": 38.0
         }
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 80.0,
+          "y": 45.0
+        },
+        "yaw": 40.0,
+        "scale": 1.15
       },
       {
         "type": "object",
@@ -792,10 +802,10 @@
         "npc": "characters/npc/skeleton.npc.json",
         "count": 4,
         "roams": {
-          "x": 29.0,
-          "y": 92.0,
-          "w": 12.0,
-          "h": 10.0
+          "x": 35.0,
+          "y": 86.0,
+          "w": 8.0,
+          "h": 8.0
         }
       },
       {
@@ -803,9 +813,9 @@
         "npc": "characters/npc/skeleton_rogue.npc.json",
         "count": 5,
         "roams": {
-          "x": 24.0,
+          "x": 22.0,
           "y": 80.0,
-          "w": 22.0,
+          "w": 14.0,
           "h": 20.0
         }
       },
@@ -950,10 +960,10 @@
         "npc": "world/areas/island/npcs/vampire_bat.npc.json",
         "count": 4,
         "roams": {
-          "x": 82.0,
-          "y": 82.0,
-          "w": 20.0,
-          "h": 20.0
+          "x": 86.0,
+          "y": 86.0,
+          "w": 16.0,
+          "h": 16.0
         }
       },
       {
@@ -989,209 +999,229 @@
     "children": [
       {
         "type": "prop",
-        "prop": "world/props/pine.prop",
+        "prop": "world/props/tuft-large.prop",
         "at": {
-          "x": 63.5,
-          "y": 8.0
+          "x": 52.0,
+          "y": 7.5
         },
-        "yaw": 326.0,
-        "scale": 1.16
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak-tall.prop",
-        "at": {
-          "x": 53.0,
-          "y": 12.0
-        },
-        "yaw": 51.0,
-        "scale": 1.02
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 58.0,
-          "y": 14.0
-        },
-        "yaw": 194.0,
-        "scale": 1.19
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft.prop",
-        "at": {
-          "x": 64.5,
-          "y": 13.0
-        },
-        "yaw": 142.0,
-        "scale": 1.22
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft.prop",
-        "at": {
-          "x": 67.5,
-          "y": 13.5
-        },
-        "yaw": 167.0,
-        "scale": 0.93
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/rock-small-b.prop",
-        "at": {
-          "x": 49.5,
-          "y": 19.0
-        },
-        "yaw": 263.0,
-        "scale": 1.08
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak-tall.prop",
-        "at": {
-          "x": 52.5,
-          "y": 19.0
-        },
-        "yaw": 54.0,
-        "scale": 0.96
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 57.5,
-          "y": 16.5
-        },
-        "yaw": 86.0,
-        "scale": 1.11
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 68.0,
-          "y": 17.5
-        },
-        "yaw": 104.0,
-        "scale": 1.19
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/rock-small.prop",
-        "at": {
-          "x": 47.0,
-          "y": 22.5
-        },
-        "yaw": 323.0,
-        "scale": 1.01
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush.prop",
-        "at": {
-          "x": 52.5,
-          "y": 24.0
-        },
-        "yaw": 19.0,
-        "scale": 0.94
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 33.5,
-          "y": 29.5
-        },
-        "yaw": 108.0,
-        "scale": 1.18
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush.prop",
-        "at": {
-          "x": 38.0,
-          "y": 28.5
-        },
-        "yaw": 88.0,
-        "scale": 1.08
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 44.5,
-          "y": 27.0
-        },
-        "yaw": 292.0,
-        "scale": 0.9
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft.prop",
-        "at": {
-          "x": 49.0,
-          "y": 27.0
-        },
-        "yaw": 249.0,
+        "yaw": 309.0,
         "scale": 0.88
       },
       {
         "type": "prop",
         "prop": "world/props/bush.prop",
         "at": {
-          "x": 52.5,
-          "y": 29.5
+          "x": 59.0,
+          "y": 6.5
         },
-        "yaw": 58.0,
-        "scale": 1.19
+        "yaw": 191.0,
+        "scale": 0.99
       },
       {
         "type": "prop",
         "prop": "world/props/rock-small.prop",
         "at": {
-          "x": 24.5,
-          "y": 34.0
+          "x": 62.5,
+          "y": 8.5
         },
-        "yaw": 208.0,
-        "scale": 0.85
+        "yaw": 152.0,
+        "scale": 1.09
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-large.prop",
+        "at": {
+          "x": 68.5,
+          "y": 6.5
+        },
+        "yaw": 113.0,
+        "scale": 1.05
       },
       {
         "type": "prop",
         "prop": "world/props/tuft.prop",
         "at": {
-          "x": 27.0,
-          "y": 33.0
+          "x": 54.5,
+          "y": 13.0
         },
-        "yaw": 90.0,
-        "scale": 1.15
+        "yaw": 61.0,
+        "scale": 0.98
       },
       {
         "type": "prop",
-        "prop": "world/props/rock-tall.prop",
+        "prop": "world/props/pine.prop",
         "at": {
-          "x": 33.0,
-          "y": 33.5
+          "x": 58.5,
+          "y": 14.5
         },
-        "yaw": 359.0,
-        "scale": 1.11
+        "yaw": 305.0,
+        "scale": 0.99
       },
       {
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 38.5,
-          "y": 33.0
+          "x": 64.0,
+          "y": 13.0
         },
-        "yaw": 258.0,
-        "scale": 1.08
+        "yaw": 336.0,
+        "scale": 1.24
       },
       {
         "type": "prop",
         "prop": "world/props/oak-tall.prop",
         "at": {
-          "x": 44.5,
+          "x": 69.0,
+          "y": 14.0
+        },
+        "yaw": 111.0,
+        "scale": 0.94
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak-tall.prop",
+        "at": {
+          "x": 46.5,
+          "y": 17.5
+        },
+        "yaw": 120.0,
+        "scale": 1.09
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 53.0,
+          "y": 17.5
+        },
+        "yaw": 56.0,
+        "scale": 1.21
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush.prop",
+        "at": {
+          "x": 61.5,
+          "y": 17.5
+        },
+        "yaw": 254.0,
+        "scale": 1.06
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 44.0,
+          "y": 23.5
+        },
+        "yaw": 157.0,
+        "scale": 0.94
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/pine.prop",
+        "at": {
+          "x": 47.0,
+          "y": 24.0
+        },
+        "yaw": 126.0,
+        "scale": 1.25
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak-tall.prop",
+        "at": {
+          "x": 54.5,
+          "y": 24.0
+        },
+        "yaw": 332.0,
+        "scale": 1.06
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 28.5,
+          "y": 29.5
+        },
+        "yaw": 74.0,
+        "scale": 0.9
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft.prop",
+        "at": {
+          "x": 34.0,
+          "y": 27.0
+        },
+        "yaw": 176.0,
+        "scale": 0.88
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft-large.prop",
+        "at": {
+          "x": 36.5,
+          "y": 27.5
+        },
+        "yaw": 245.0,
+        "scale": 1.29
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush-small.prop",
+        "at": {
+          "x": 44.0,
+          "y": 26.5
+        },
+        "yaw": 124.0,
+        "scale": 1.18
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush-small.prop",
+        "at": {
+          "x": 48.5,
+          "y": 29.5
+        },
+        "yaw": 230.0,
+        "scale": 1.06
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/pine.prop",
+        "at": {
+          "x": 53.5,
+          "y": 27.0
+        },
+        "yaw": 41.0,
+        "scale": 1.1
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush.prop",
+        "at": {
+          "x": 91.5,
+          "y": 27.0
+        },
+        "yaw": 270.0,
+        "scale": 0.98
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-small-b.prop",
+        "at": {
+          "x": 18.5,
+          "y": 33.0
+        },
+        "yaw": 71.0,
+        "scale": 0.9
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak-tall.prop",
+        "at": {
+          "x": 24.5,
           "y": 33.0
         },
         "yaw": 261.0,
@@ -1201,7 +1231,7 @@
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 49.5,
+          "x": 29.5,
           "y": 33.0
         },
         "yaw": 239.0,
@@ -1211,7 +1241,7 @@
         "type": "prop",
         "prop": "world/props/tuft-leafy.prop",
         "at": {
-          "x": 51.5,
+          "x": 31.5,
           "y": 32.5
         },
         "yaw": 273.0,
@@ -1221,7 +1251,7 @@
         "type": "prop",
         "prop": "world/props/bush-small.prop",
         "at": {
-          "x": 57.0,
+          "x": 37.0,
           "y": 32.5
         },
         "yaw": 228.0,
@@ -1231,7 +1261,7 @@
         "type": "prop",
         "prop": "world/props/oak-tall.prop",
         "at": {
-          "x": 64.5,
+          "x": 44.5,
           "y": 33.0
         },
         "yaw": 72.0,
@@ -1239,457 +1269,499 @@
       },
       {
         "type": "prop",
-        "prop": "world/props/tuft-leafy.prop",
+        "prop": "world/props/oak.prop",
         "at": {
-          "x": 28.0,
-          "y": 39.5
+          "x": 47.0,
+          "y": 34.0
         },
         "yaw": 5.0,
-        "scale": 0.97
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft-leafy.prop",
-        "at": {
-          "x": 33.0,
-          "y": 37.5
-        },
-        "yaw": 356.0,
-        "scale": 1.23
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/pine.prop",
-        "at": {
-          "x": 38.0,
-          "y": 39.5
-        },
-        "yaw": 338.0,
-        "scale": 1.06
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/rock-large.prop",
-        "at": {
-          "x": 41.5,
-          "y": 36.5
-        },
-        "yaw": 348.0,
         "scale": 0.93
       },
       {
         "type": "prop",
-        "prop": "world/props/oak-tall.prop",
+        "prop": "world/props/rock-small.prop",
         "at": {
-          "x": 49.5,
-          "y": 40.0
+          "x": 51.5,
+          "y": 33.0
         },
-        "yaw": 321.0,
-        "scale": 1.1
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft.prop",
-        "at": {
-          "x": 53.5,
-          "y": 37.5
-        },
-        "yaw": 347.0,
-        "scale": 1.05
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 57.0,
-          "y": 38.0
-        },
-        "yaw": 99.0,
-        "scale": 0.91
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/rock-small-b.prop",
-        "at": {
-          "x": 68.5,
-          "y": 39.0
-        },
-        "yaw": 167.0,
-        "scale": 1.22
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft.prop",
-        "at": {
-          "x": 73.0,
-          "y": 38.0
-        },
-        "yaw": 225.0,
-        "scale": 1.3
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak-tall.prop",
-        "at": {
-          "x": 24.5,
-          "y": 44.5
-        },
-        "yaw": 76.0,
-        "scale": 0.98
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft.prop",
-        "at": {
-          "x": 26.5,
-          "y": 44.5
-        },
-        "yaw": 298.0,
-        "scale": 0.95
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush.prop",
-        "at": {
-          "x": 33.0,
-          "y": 41.5
-        },
-        "yaw": 258.0,
-        "scale": 0.91
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft-large.prop",
-        "at": {
-          "x": 38.0,
-          "y": 44.5
-        },
-        "yaw": 111.0,
-        "scale": 1.13
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 41.0,
-          "y": 42.0
-        },
-        "yaw": 183.0,
-        "scale": 1.2
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/rock-small-b.prop",
-        "at": {
-          "x": 49.0,
-          "y": 44.0
-        },
-        "yaw": 352.0,
-        "scale": 0.9
+        "yaw": 79.0,
+        "scale": 0.99
       },
       {
         "type": "prop",
         "prop": "world/props/pine.prop",
         "at": {
-          "x": 52.5,
-          "y": 43.0
+          "x": 59.5,
+          "y": 32.0
         },
-        "yaw": 347.0
+        "yaw": 54.0,
+        "scale": 1.03
       },
       {
         "type": "prop",
         "prop": "world/props/oak-tall.prop",
         "at": {
-          "x": 59.0,
-          "y": 44.5
+          "x": 77.0,
+          "y": 32.5
         },
-        "yaw": 302.0,
-        "scale": 1.23
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft.prop",
-        "at": {
-          "x": 69.0,
-          "y": 41.5
-        },
-        "yaw": 181.0,
-        "scale": 0.99
+        "yaw": 198.0,
+        "scale": 1.19
       },
       {
         "type": "prop",
         "prop": "world/props/pine.prop",
         "at": {
           "x": 23.5,
-          "y": 48.5
+          "y": 39.5
         },
-        "yaw": 288.0,
-        "scale": 1.12
+        "yaw": 89.0,
+        "scale": 1.25
       },
       {
         "type": "prop",
-        "prop": "world/props/tuft.prop",
+        "prop": "world/props/rock-large.prop",
         "at": {
-          "x": 28.0,
-          "y": 49.5
+          "x": 27.5,
+          "y": 38.5
         },
-        "yaw": 118.0,
-        "scale": 1.26
+        "yaw": 311.0,
+        "scale": 1.19
       },
       {
         "type": "prop",
-        "prop": "world/props/oak.prop",
+        "prop": "world/props/rock-small.prop",
         "at": {
-          "x": 34.5,
-          "y": 47.5
+          "x": 32.0,
+          "y": 37.0
         },
-        "yaw": 40.0,
-        "scale": 0.97
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 36.5,
-          "y": 47.5
-        },
-        "yaw": 267.0,
-        "scale": 1.2
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/pine.prop",
-        "at": {
-          "x": 41.5,
-          "y": 48.0
-        },
-        "yaw": 302.0,
-        "scale": 1.08
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft.prop",
-        "at": {
-          "x": 47.5,
-          "y": 46.5
-        },
-        "yaw": 161.0,
-        "scale": 1.23
+        "yaw": 110.0,
+        "scale": 1.03
       },
       {
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 52.0,
-          "y": 48.5
+          "x": 37.5,
+          "y": 36.5
         },
-        "yaw": 47.0,
-        "scale": 0.94
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 59.0,
-          "y": 48.5
-        },
-        "yaw": 318.0,
-        "scale": 0.97
+        "yaw": 174.0,
+        "scale": 1.11
       },
       {
         "type": "prop",
         "prop": "world/props/oak-tall.prop",
         "at": {
-          "x": 98.0,
-          "y": 49.0
+          "x": 44.0,
+          "y": 38.0
         },
-        "yaw": 46.0,
-        "scale": 0.92
+        "yaw": 206.0,
+        "scale": 1.19
       },
       {
         "type": "prop",
-        "prop": "world/props/oak.prop",
+        "prop": "world/props/tuft.prop",
         "at": {
-          "x": 22.5,
-          "y": 53.0
+          "x": 48.0,
+          "y": 38.0
         },
-        "yaw": 122.0,
-        "scale": 0.9
+        "yaw": 103.0,
+        "scale": 1.29
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft.prop",
+        "at": {
+          "x": 58.0,
+          "y": 36.5
+        },
+        "yaw": 358.0,
+        "scale": 0.82
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-small.prop",
+        "at": {
+          "x": 68.5,
+          "y": 39.0
+        },
+        "yaw": 359.0,
+        "scale": 1.11
       },
       {
         "type": "prop",
         "prop": "world/props/tuft-large.prop",
         "at": {
-          "x": 26.5,
-          "y": 52.0
+          "x": 72.5,
+          "y": 37.0
         },
-        "yaw": 127.0,
-        "scale": 0.81
+        "yaw": 59.0,
+        "scale": 1.13
       },
       {
         "type": "prop",
-        "prop": "world/props/oak.prop",
+        "prop": "world/props/rock-small.prop",
         "at": {
-          "x": 32.0,
-          "y": 54.0
+          "x": 18.5,
+          "y": 43.5
         },
-        "yaw": 183.0,
-        "scale": 0.97
+        "yaw": 253.0,
+        "scale": 0.77
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush-small.prop",
+        "at": {
+          "x": 24.5,
+          "y": 44.0
+        },
+        "yaw": 87.0,
+        "scale": 1.04
       },
       {
         "type": "prop",
         "prop": "world/props/oak-tall.prop",
         "at": {
-          "x": 39.5,
-          "y": 52.0
+          "x": 27.5,
+          "y": 42.0
         },
-        "yaw": 135.0,
-        "scale": 1.05
+        "yaw": 100.0,
+        "scale": 1.22
       },
       {
         "type": "prop",
-        "prop": "world/props/tuft-leafy.prop",
+        "prop": "world/props/bush-large.prop",
         "at": {
-          "x": 43.5,
-          "y": 53.5
+          "x": 34.0,
+          "y": 42.0
         },
-        "yaw": 29.0,
-        "scale": 1.08
+        "yaw": 87.0,
+        "scale": 0.92
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-tall.prop",
+        "at": {
+          "x": 38.0,
+          "y": 44.5
+        },
+        "yaw": 152.0,
+        "scale": 0.88
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft.prop",
+        "at": {
+          "x": 44.0,
+          "y": 43.0
+        },
+        "yaw": 285.0,
+        "scale": 1.22
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 47.5,
+          "y": 42.0
+        },
+        "yaw": 153.0,
+        "scale": 1.09
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 53.5,
+          "y": 43.5
+        },
+        "yaw": 151.0,
+        "scale": 1.22
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/pine.prop",
+        "at": {
+          "x": 56.5,
+          "y": 43.0
+        },
+        "yaw": 38.0,
+        "scale": 0.9
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/pine.prop",
+        "at": {
+          "x": 68.0,
+          "y": 44.5
+        },
+        "yaw": 135.0,
+        "scale": 1.01
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-flat.prop",
+        "at": {
+          "x": 73.5,
+          "y": 41.5
+        },
+        "yaw": 296.0,
+        "scale": 1.14
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft.prop",
+        "at": {
+          "x": 23.0,
+          "y": 46.5
+        },
+        "yaw": 88.0,
+        "scale": 1.13
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/pine.prop",
+        "at": {
+          "x": 27.0,
+          "y": 47.5
+        },
+        "yaw": 270.0,
+        "scale": 0.95
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak-tall.prop",
+        "at": {
+          "x": 32.0,
+          "y": 46.5
+        },
+        "yaw": 232.0,
+        "scale": 0.93
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 39.0,
+          "y": 48.0
+        },
+        "yaw": 242.0,
+        "scale": 0.9
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 43.0,
+          "y": 46.5
+        },
+        "yaw": 337.0,
+        "scale": 0.91
       },
       {
         "type": "prop",
         "prop": "world/props/tuft.prop",
         "at": {
           "x": 48.5,
-          "y": 53.5
+          "y": 48.0
         },
-        "yaw": 353.0,
-        "scale": 1.2
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush-large.prop",
-        "at": {
-          "x": 78.0,
-          "y": 54.0
-        },
-        "yaw": 126.0,
-        "scale": 0.96
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/pine.prop",
-        "at": {
-          "x": 87.0,
-          "y": 54.0
-        },
-        "yaw": 278.0,
-        "scale": 1.16
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft-large.prop",
-        "at": {
-          "x": 94.5,
-          "y": 52.0
-        },
-        "yaw": 245.0,
-        "scale": 1.11
+        "yaw": 28.0,
+        "scale": 0.83
       },
       {
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 97.5,
+          "x": 53.5,
+          "y": 48.0
+        },
+        "yaw": 187.0,
+        "scale": 1.03
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush-small.prop",
+        "at": {
+          "x": 59.5,
+          "y": 49.5
+        },
+        "yaw": 109.0,
+        "scale": 1.11
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-small.prop",
+        "at": {
+          "x": 104.5,
+          "y": 48.5
+        },
+        "yaw": 273.0,
+        "scale": 1.01
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 112.0,
+          "y": 49.5
+        },
+        "yaw": 36.0,
+        "scale": 1.05
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak-tall.prop",
+        "at": {
+          "x": 19.0,
+          "y": 51.5
+        },
+        "yaw": 206.0,
+        "scale": 1.24
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak-tall.prop",
+        "at": {
+          "x": 24.0,
+          "y": 54.5
+        },
+        "yaw": 236.0,
+        "scale": 0.96
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush-large.prop",
+        "at": {
+          "x": 28.0,
+          "y": 54.0
+        },
+        "yaw": 141.0,
+        "scale": 1.13
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/pine.prop",
+        "at": {
+          "x": 32.0,
           "y": 52.5
         },
-        "yaw": 55.0,
+        "yaw": 169.0,
+        "scale": 1.19
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush-large.prop",
+        "at": {
+          "x": 36.5,
+          "y": 54.0
+        },
+        "yaw": 101.0,
+        "scale": 0.96
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak-tall.prop",
+        "at": {
+          "x": 44.0,
+          "y": 53.5
+        },
+        "yaw": 218.0,
+        "scale": 1.04
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft-large.prop",
+        "at": {
+          "x": 46.5,
+          "y": 52.5
+        },
+        "yaw": 136.0,
+        "scale": 1.19
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 82.5,
+          "y": 54.0
+        },
+        "yaw": 3.0,
+        "scale": 1.09
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 89.5,
+          "y": 53.5
+        },
+        "yaw": 123.0,
+        "scale": 0.99
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/pine.prop",
+        "at": {
+          "x": 91.5,
+          "y": 53.5
+        },
+        "yaw": 160.0,
+        "scale": 1.2
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft-large.prop",
+        "at": {
+          "x": 98.0,
+          "y": 54.0
+        },
+        "yaw": 58.0,
+        "scale": 1.02
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 103.0,
+          "y": 52.5
+        },
+        "yaw": 73.0,
+        "scale": 0.9
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush-small.prop",
+        "at": {
+          "x": 109.0,
+          "y": 53.0
+        },
+        "yaw": 37.0,
+        "scale": 0.91
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 112.0,
+          "y": 51.0
+        },
+        "yaw": 317.0,
         "scale": 1.22
       },
       {
         "type": "prop",
         "prop": "world/props/rock-small-b.prop",
         "at": {
-          "x": 103.0,
-          "y": 54.0
+          "x": 116.0,
+          "y": 54.5
         },
-        "yaw": 39.0
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 109.5,
-          "y": 53.5
-        },
-        "yaw": 306.0,
-        "scale": 0.98
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft.prop",
-        "at": {
-          "x": 111.5,
-          "y": 53.0
-        },
-        "yaw": 237.0,
-        "scale": 0.94
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 38.0,
-          "y": 58.0
-        },
-        "yaw": 255.0,
-        "scale": 0.99
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush-small.prop",
-        "at": {
-          "x": 41.5,
-          "y": 56.0
-        },
-        "yaw": 331.0,
-        "scale": 1.08
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 46.5,
-          "y": 57.0
-        },
-        "yaw": 238.0,
-        "scale": 1.05
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft-leafy.prop",
-        "at": {
-          "x": 84.0,
-          "y": 59.0
-        },
-        "yaw": 240.0,
-        "scale": 1.03
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/rock-flat.prop",
-        "at": {
-          "x": 88.5,
-          "y": 59.0
-        },
-        "yaw": 77.0,
-        "scale": 0.84
+        "yaw": 101.0,
+        "scale": 1.06
       },
       {
         "type": "prop",
         "prop": "world/props/bush.prop",
         "at": {
-          "x": 94.0,
+          "x": 39.0,
           "y": 58.0
         },
         "yaw": 334.0,
@@ -1699,7 +1771,7 @@
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 99.5,
+          "x": 44.5,
           "y": 56.5
         },
         "yaw": 287.0,
@@ -1709,7 +1781,7 @@
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 102.0,
+          "x": 47.0,
           "y": 56.0
         },
         "yaw": 256.0,
@@ -1717,100 +1789,120 @@
       },
       {
         "type": "prop",
-        "prop": "world/props/rock-small-b.prop",
-        "at": {
-          "x": 109.0,
-          "y": 56.5
-        },
-        "yaw": 101.0,
-        "scale": 1.29
-      },
-      {
-        "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 78.0,
-          "y": 64.0
+          "x": 83.0,
+          "y": 57.0
         },
-        "yaw": 270.0,
-        "scale": 1.11
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak-tall.prop",
-        "at": {
-          "x": 82.0,
-          "y": 62.5
-        },
-        "yaw": 183.0,
-        "scale": 1.25
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush-small.prop",
-        "at": {
-          "x": 87.5,
-          "y": 61.5
-        },
-        "yaw": 206.0,
-        "scale": 1.03
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/pine.prop",
-        "at": {
-          "x": 91.5,
-          "y": 64.5
-        },
-        "yaw": 77.0,
+        "yaw": 101.0,
         "scale": 0.98
       },
       {
         "type": "prop",
-        "prop": "world/props/oak-tall.prop",
+        "prop": "world/props/rock-large.prop",
         "at": {
-          "x": 99.5,
-          "y": 64.5
+          "x": 89.5,
+          "y": 57.5
         },
-        "yaw": 327.0,
-        "scale": 1.18
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/rock-small-b.prop",
-        "at": {
-          "x": 102.0,
-          "y": 64.5
-        },
-        "yaw": 190.0,
-        "scale": 0.9
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft-leafy.prop",
-        "at": {
-          "x": 112.5,
-          "y": 61.5
-        },
-        "yaw": 305.0,
-        "scale": 1.17
+        "yaw": 69.0,
+        "scale": 1.12
       },
       {
         "type": "prop",
         "prop": "world/props/tuft-large.prop",
         "at": {
-          "x": 39.5,
-          "y": 68.5
+          "x": 93.5,
+          "y": 57.0
         },
-        "yaw": 247.0,
+        "yaw": 345.0,
+        "scale": 0.97
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft.prop",
+        "at": {
+          "x": 99.0,
+          "y": 59.0
+        },
+        "yaw": 196.0,
+        "scale": 1.02
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 103.5,
+          "y": 59.0
+        },
+        "yaw": 148.0,
+        "scale": 1.09
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush-small.prop",
+        "at": {
+          "x": 106.5,
+          "y": 59.5
+        },
+        "yaw": 198.0,
+        "scale": 0.97
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush.prop",
+        "at": {
+          "x": 111.5,
+          "y": 58.0
+        },
+        "yaw": 269.0,
+        "scale": 1.01
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush.prop",
+        "at": {
+          "x": 78.5,
+          "y": 64.5
+        },
+        "yaw": 200.0,
+        "scale": 0.92
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 83.0,
+          "y": 63.0
+        },
+        "yaw": 66.0,
+        "scale": 1.15
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft.prop",
+        "at": {
+          "x": 89.0,
+          "y": 64.5
+        },
+        "yaw": 157.0,
+        "scale": 1.09
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft-large.prop",
+        "at": {
+          "x": 94.5,
+          "y": 63.5
+        },
+        "yaw": 91.0,
         "scale": 1.26
       },
       {
         "type": "prop",
         "prop": "world/props/bush.prop",
         "at": {
-          "x": 43.5,
-          "y": 68.5
+          "x": 98.5,
+          "y": 63.5
         },
         "yaw": 261.0,
         "scale": 0.98
@@ -1819,8 +1911,8 @@
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 46.5,
-          "y": 66.5
+          "x": 101.5,
+          "y": 61.5
         },
         "yaw": 75.0,
         "scale": 1.15
@@ -1829,228 +1921,227 @@
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 79.0,
+          "x": 107.5,
+          "y": 62.5
+        },
+        "yaw": 144.0,
+        "scale": 1.17
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-small-b.prop",
+        "at": {
+          "x": 37.5,
           "y": 67.5
         },
-        "yaw": 118.0,
+        "yaw": 21.0,
+        "scale": 1.18
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-small-b.prop",
+        "at": {
+          "x": 44.0,
+          "y": 66.5
+        },
+        "yaw": 175.0,
+        "scale": 1.09
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-small.prop",
+        "at": {
+          "x": 47.0,
+          "y": 67.0
+        },
+        "yaw": 119.0,
         "scale": 1.16
       },
       {
         "type": "prop",
-        "prop": "world/props/oak-tall.prop",
+        "prop": "world/props/rock-tall.prop",
         "at": {
           "x": 84.5,
-          "y": 69.0
+          "y": 68.0
         },
-        "yaw": 124.0,
-        "scale": 1.08
+        "yaw": 58.0,
+        "scale": 0.99
       },
       {
         "type": "prop",
-        "prop": "world/props/rock-wide.prop",
+        "prop": "world/props/tuft-leafy.prop",
         "at": {
-          "x": 87.0,
+          "x": 88.5,
           "y": 67.5
         },
-        "yaw": 96.0,
-        "scale": 1.11
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak-tall.prop",
-        "at": {
-          "x": 92.5,
-          "y": 67.5
-        },
-        "yaw": 189.0,
-        "scale": 1.07
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 99.0,
-          "y": 69.0
-        },
-        "yaw": 252.0,
-        "scale": 1.02
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 103.5,
-          "y": 67.0
-        },
-        "yaw": 120.0,
-        "scale": 0.98
+        "yaw": 294.0,
+        "scale": 1.19
       },
       {
         "type": "prop",
         "prop": "world/props/pine.prop",
         "at": {
-          "x": 109.0,
-          "y": 66.5
-        },
-        "yaw": 176.0,
-        "scale": 0.96
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 111.5,
-          "y": 68.5
-        },
-        "yaw": 235.0,
-        "scale": 1.21
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/pine.prop",
-        "at": {
-          "x": 23.5,
-          "y": 74.5
+          "x": 93.5,
+          "y": 69.5
         },
         "yaw": 249.0,
         "scale": 0.95
       },
       {
         "type": "prop",
-        "prop": "world/props/oak-tall.prop",
+        "prop": "world/props/pine.prop",
         "at": {
-          "x": 31.5,
-          "y": 74.5
+          "x": 99.0,
+          "y": 66.5
         },
         "yaw": 233.0,
-        "scale": 1.1
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft-leafy.prop",
-        "at": {
-          "x": 36.0,
-          "y": 73.5
-        },
-        "yaw": 205.0,
-        "scale": 0.9
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft-leafy.prop",
-        "at": {
-          "x": 42.0,
-          "y": 71.5
-        },
-        "yaw": 20.0,
-        "scale": 1.28
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush-small.prop",
-        "at": {
-          "x": 47.5,
-          "y": 73.0
-        },
-        "yaw": 190.0,
-        "scale": 1.18
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/rock-small.prop",
-        "at": {
-          "x": 64.5,
-          "y": 74.5
-        },
-        "yaw": 250.0,
-        "scale": 1.05
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/pine.prop",
-        "at": {
-          "x": 69.5,
-          "y": 73.0
-        },
-        "yaw": 70.0,
-        "scale": 1.07
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush.prop",
-        "at": {
-          "x": 84.0,
-          "y": 72.0
-        },
-        "yaw": 214.0,
-        "scale": 1.01
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/pine.prop",
-        "at": {
-          "x": 89.0,
-          "y": 71.5
-        },
-        "yaw": 232.0,
         "scale": 0.98
       },
       {
         "type": "prop",
         "prop": "world/props/oak-tall.prop",
         "at": {
-          "x": 92.0,
-          "y": 74.5
+          "x": 103.5,
+          "y": 68.5
         },
-        "yaw": 200.0,
-        "scale": 1.09
+        "yaw": 262.0,
+        "scale": 1.22
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 106.5,
+          "y": 67.0
+        },
+        "yaw": 292.0,
+        "scale": 1.19
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 114.5,
+          "y": 69.5
+        },
+        "yaw": 151.0,
+        "scale": 1.08
       },
       {
         "type": "prop",
         "prop": "world/props/pine.prop",
         "at": {
-          "x": 98.5,
-          "y": 72.0
+          "x": 19.5,
+          "y": 73.0
         },
-        "yaw": 259.0,
-        "scale": 1.06
+        "yaw": 241.0,
+        "scale": 1.11
       },
       {
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 108.5,
-          "y": 73.5
+          "x": 23.0,
+          "y": 72.0
         },
-        "yaw": 301.0,
+        "yaw": 149.0,
+        "scale": 1.15
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 27.0,
+          "y": 74.0
+        },
+        "yaw": 330.0,
         "scale": 1.17
       },
       {
         "type": "prop",
+        "prop": "world/props/pine.prop",
+        "at": {
+          "x": 38.0,
+          "y": 72.0
+        },
+        "yaw": 310.0,
+        "scale": 1.08
+      },
+      {
+        "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 114.0,
+          "x": 43.0,
+          "y": 73.5
+        },
+        "yaw": 63.0,
+        "scale": 1.23
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 49.0,
+          "y": 73.0
+        },
+        "yaw": 256.0,
+        "scale": 1.14
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft.prop",
+        "at": {
+          "x": 57.5,
+          "y": 74.0
+        },
+        "yaw": 353.0,
+        "scale": 0.96
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-small.prop",
+        "at": {
+          "x": 61.5,
+          "y": 73.0
+        },
+        "yaw": 345.0
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-small.prop",
+        "at": {
+          "x": 67.0,
           "y": 72.5
         },
-        "yaw": 103.0,
-        "scale": 1.06
+        "yaw": 99.0,
+        "scale": 0.82
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 72.5,
+          "y": 73.5
+        },
+        "yaw": 246.0,
+        "scale": 1.23
       },
       {
         "type": "prop",
         "prop": "world/props/bush-large.prop",
         "at": {
-          "x": 29.0,
-          "y": 79.5
+          "x": 84.0,
+          "y": 74.5
         },
-        "yaw": 164.0,
+        "yaw": 174.0,
         "scale": 0.94
       },
       {
         "type": "prop",
         "prop": "world/props/bush.prop",
         "at": {
-          "x": 34.0,
-          "y": 79.5
+          "x": 89.0,
+          "y": 74.5
         },
         "yaw": 61.0,
         "scale": 0.92
@@ -2059,8 +2150,8 @@
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 36.5,
-          "y": 79.0
+          "x": 91.5,
+          "y": 74.0
         },
         "yaw": 266.0,
         "scale": 1.08
@@ -2069,468 +2160,671 @@
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 42.5,
-          "y": 78.5
+          "x": 97.5,
+          "y": 73.5
         },
         "yaw": 149.0,
         "scale": 1.23
       },
       {
         "type": "prop",
-        "prop": "world/props/rock-small-b.prop",
-        "at": {
-          "x": 51.5,
-          "y": 77.5
-        },
-        "yaw": 179.0
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush-large.prop",
-        "at": {
-          "x": 58.0,
-          "y": 79.5
-        },
-        "yaw": 14.0,
-        "scale": 1.03
-      },
-      {
-        "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 63.0,
-          "y": 78.0
+          "x": 101.0,
+          "y": 74.5
         },
-        "yaw": 30.0,
-        "scale": 1.06
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft.prop",
-        "at": {
-          "x": 69.5,
-          "y": 76.0
-        },
-        "yaw": 225.0,
-        "scale": 1.25
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/pine.prop",
-        "at": {
-          "x": 74.5,
-          "y": 78.5
-        },
-        "yaw": 219.0,
-        "scale": 0.9
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 77.5,
-          "y": 76.5
-        },
-        "yaw": 189.0,
+        "yaw": 179.0,
         "scale": 1.09
       },
       {
         "type": "prop",
+        "prop": "world/props/rock-wide.prop",
+        "at": {
+          "x": 108.0,
+          "y": 72.5
+        },
+        "yaw": 303.0,
+        "scale": 1.28
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-small-b.prop",
+        "at": {
+          "x": 111.5,
+          "y": 73.0
+        },
+        "yaw": 244.0,
+        "scale": 0.99
+      },
+      {
+        "type": "prop",
         "prop": "world/props/tuft.prop",
         "at": {
-          "x": 88.0,
+          "x": 117.0,
+          "y": 73.0
+        },
+        "yaw": 317.0,
+        "scale": 1.01
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-small-b.prop",
+        "at": {
+          "x": 21.0,
+          "y": 77.5
+        },
+        "yaw": 287.0,
+        "scale": 1.17
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft.prop",
+        "at": {
+          "x": 28.0,
           "y": 78.5
         },
-        "yaw": 130.0,
-        "scale": 0.94
+        "yaw": 128.0,
+        "scale": 0.89
       },
       {
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 92.0,
-          "y": 79.0
+          "x": 34.0,
+          "y": 76.5
         },
-        "yaw": 346.0,
+        "yaw": 103.0,
         "scale": 1.18
       },
       {
         "type": "prop",
         "prop": "world/props/oak-tall.prop",
         "at": {
-          "x": 97.0,
+          "x": 37.0,
           "y": 77.5
         },
-        "yaw": 62.0,
-        "scale": 1.16
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush-small.prop",
-        "at": {
-          "x": 104.0,
-          "y": 78.5
-        },
-        "yaw": 325.0,
-        "scale": 1.05
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush-small.prop",
-        "at": {
-          "x": 109.0,
-          "y": 77.5
-        },
-        "yaw": 14.0,
-        "scale": 0.96
+        "yaw": 340.0,
+        "scale": 1.15
       },
       {
         "type": "prop",
         "prop": "world/props/rock-small.prop",
         "at": {
-          "x": 112.5,
-          "y": 78.5
+          "x": 43.5,
+          "y": 79.0
         },
-        "yaw": 337.0,
-        "scale": 0.98
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush.prop",
-        "at": {
-          "x": 29.5,
-          "y": 84.0
-        },
-        "yaw": 94.0,
-        "scale": 0.95
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft.prop",
-        "at": {
-          "x": 34.5,
-          "y": 81.5
-        },
-        "yaw": 127.0,
-        "scale": 0.88
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak-tall.prop",
-        "at": {
-          "x": 38.5,
-          "y": 81.5
-        },
-        "yaw": 299.0,
-        "scale": 1.13
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush-large.prop",
-        "at": {
-          "x": 47.5,
-          "y": 82.5
-        },
-        "yaw": 199.0,
-        "scale": 0.95
+        "yaw": 262.0,
+        "scale": 1.06
       },
       {
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 54.5,
-          "y": 81.5
+          "x": 53.5,
+          "y": 79.0
         },
-        "yaw": 88.0,
+        "yaw": 49.0,
+        "scale": 0.95
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush.prop",
+        "at": {
+          "x": 56.5,
+          "y": 77.0
+        },
+        "yaw": 253.0,
+        "scale": 0.99
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush-small.prop",
+        "at": {
+          "x": 62.0,
+          "y": 77.0
+        },
+        "yaw": 297.0,
+        "scale": 1.19
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/pine.prop",
+        "at": {
+          "x": 67.0,
+          "y": 76.5
+        },
+        "yaw": 208.0,
+        "scale": 0.94
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft-large.prop",
+        "at": {
+          "x": 73.0,
+          "y": 79.5
+        },
+        "yaw": 203.0,
+        "scale": 0.88
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft.prop",
+        "at": {
+          "x": 84.5,
+          "y": 77.0
+        },
+        "yaw": 141.0,
+        "scale": 1.11
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-tall.prop",
+        "at": {
+          "x": 86.5,
+          "y": 77.0
+        },
+        "yaw": 40.0,
+        "scale": 0.87
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush-large.prop",
+        "at": {
+          "x": 92.5,
+          "y": 77.5
+        },
+        "yaw": 68.0,
+        "scale": 0.97
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 97.0,
+          "y": 79.5
+        },
+        "yaw": 26.0,
         "scale": 1.23
       },
       {
         "type": "prop",
         "prop": "world/props/tuft.prop",
         "at": {
-          "x": 57.0,
-          "y": 82.5
+          "x": 102.0,
+          "y": 77.5
         },
-        "yaw": 335.0,
-        "scale": 1.12
+        "yaw": 156.0,
+        "scale": 0.81
       },
       {
         "type": "prop",
-        "prop": "world/props/tuft.prop",
+        "prop": "world/props/rock-flat.prop",
         "at": {
-          "x": 63.5,
-          "y": 83.0
+          "x": 108.5,
+          "y": 78.5
         },
-        "yaw": 7.0,
+        "yaw": 105.0,
         "scale": 0.84
       },
       {
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 66.5,
-          "y": 83.0
+          "x": 111.5,
+          "y": 78.0
         },
-        "yaw": 277.0,
-        "scale": 1.14
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush-small.prop",
-        "at": {
-          "x": 74.5,
-          "y": 83.0
-        },
-        "yaw": 184.0,
-        "scale": 1.2
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 79.5,
-          "y": 83.5
-        },
-        "yaw": 5.0,
-        "scale": 0.95
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/tuft.prop",
-        "at": {
-          "x": 103.5,
-          "y": 84.0
-        },
-        "yaw": 193.0,
-        "scale": 1.02
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/rock-small.prop",
-        "at": {
-          "x": 24.5,
-          "y": 87.5
-        },
-        "yaw": 109.0,
-        "scale": 1.14
+        "yaw": 61.0,
+        "scale": 1.08
       },
       {
         "type": "prop",
         "prop": "world/props/bush.prop",
         "at": {
-          "x": 47.0,
-          "y": 88.5
+          "x": 21.5,
+          "y": 84.5
         },
-        "yaw": 145.0,
-        "scale": 0.99
+        "yaw": 71.0,
+        "scale": 1.02
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft-leafy.prop",
+        "at": {
+          "x": 27.0,
+          "y": 83.5
+        },
+        "yaw": 252.0,
+        "scale": 0.81
       },
       {
         "type": "prop",
         "prop": "world/props/oak-tall.prop",
         "at": {
-          "x": 53.5,
-          "y": 87.5
+          "x": 49.0,
+          "y": 83.0
         },
-        "yaw": 296.0,
-        "scale": 1.01
+        "yaw": 252.0,
+        "scale": 1.02
       },
       {
         "type": "prop",
-        "prop": "world/props/pine.prop",
+        "prop": "world/props/bush.prop",
         "at": {
-          "x": 58.5,
-          "y": 87.5
+          "x": 52.5,
+          "y": 82.5
         },
-        "yaw": 106.0,
-        "scale": 1.13
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 63.5,
-          "y": 89.0
-        },
-        "yaw": 160.0,
-        "scale": 1.05
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 69.0,
-          "y": 86.5
-        },
-        "yaw": 110.0,
+        "yaw": 27.0,
         "scale": 1.19
       },
       {
         "type": "prop",
-        "prop": "world/props/oak-tall.prop",
+        "prop": "world/props/tuft.prop",
         "at": {
-          "x": 73.5,
-          "y": 89.0
+          "x": 58.5,
+          "y": 84.5
         },
-        "yaw": 252.0,
-        "scale": 1.01
+        "yaw": 4.0,
+        "scale": 0.83
       },
       {
         "type": "prop",
         "prop": "world/props/tuft.prop",
         "at": {
-          "x": 78.5,
-          "y": 86.5
+          "x": 62.5,
+          "y": 83.5
         },
-        "yaw": 285.0,
-        "scale": 1.01
+        "yaw": 173.0,
+        "scale": 1.13
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft-large.prop",
+        "at": {
+          "x": 67.0,
+          "y": 83.0
+        },
+        "yaw": 232.0,
+        "scale": 0.93
       },
       {
         "type": "prop",
         "prop": "world/props/oak.prop",
         "at": {
-          "x": 22.0,
-          "y": 94.5
+          "x": 73.5,
+          "y": 84.0
         },
-        "yaw": 84.0,
+        "yaw": 198.0,
         "scale": 1.11
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush.prop",
+        "at": {
+          "x": 77.5,
+          "y": 82.0
+        },
+        "yaw": 15.0,
+        "scale": 1.11
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 103.0,
+          "y": 84.0
+        },
+        "yaw": 110.0,
+        "scale": 1.05
       },
       {
         "type": "prop",
         "prop": "world/props/tuft.prop",
         "at": {
-          "x": 48.0,
-          "y": 94.5
+          "x": 109.0,
+          "y": 83.5
         },
-        "yaw": 321.0,
-        "scale": 1.28
+        "yaw": 165.0,
+        "scale": 1.2
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-flat.prop",
+        "at": {
+          "x": 112.5,
+          "y": 83.5
+        },
+        "yaw": 238.0,
+        "scale": 0.81
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft.prop",
+        "at": {
+          "x": 26.5,
+          "y": 87.0
+        },
+        "yaw": 67.0,
+        "scale": 0.85
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 47.0,
+          "y": 89.5
+        },
+        "yaw": 216.0,
+        "scale": 1.21
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 53.5,
+          "y": 87.5
+        },
+        "yaw": 332.0,
+        "scale": 0.97
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/bush-small.prop",
+        "at": {
+          "x": 56.0,
+          "y": 86.5
+        },
+        "yaw": 44.0,
+        "scale": 1.18
       },
       {
         "type": "prop",
         "prop": "world/props/bush-large.prop",
         "at": {
-          "x": 53.5,
-          "y": 93.0
+          "x": 68.5,
+          "y": 88.0
         },
         "yaw": 175.0,
         "scale": 1.16
       },
       {
         "type": "prop",
-        "prop": "world/props/tuft.prop",
+        "prop": "world/props/pine.prop",
         "at": {
-          "x": 64.5,
-          "y": 93.5
+          "x": 72.0,
+          "y": 90.0
         },
         "yaw": 229.0,
-        "scale": 1.14
+        "scale": 1.1
       },
       {
         "type": "prop",
         "prop": "world/props/bush-small.prop",
         "at": {
-          "x": 68.5,
-          "y": 93.5
+          "x": 79.5,
+          "y": 87.0
         },
-        "yaw": 79.0,
-        "scale": 1.1
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 74.0,
-          "y": 92.0
-        },
-        "yaw": 287.0,
-        "scale": 1.13
+        "yaw": 9.0,
+        "scale": 1.09
       },
       {
         "type": "prop",
         "prop": "world/props/oak-tall.prop",
         "at": {
-          "x": 79.0,
-          "y": 94.5
+          "x": 104.0,
+          "y": 89.5
         },
-        "yaw": 133.0,
-        "scale": 1.01
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush.prop",
-        "at": {
-          "x": 24.0,
-          "y": 97.0
-        },
-        "yaw": 279.0
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/oak.prop",
-        "at": {
-          "x": 28.5,
-          "y": 99.0
-        },
-        "yaw": 300.0,
-        "scale": 1.03
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/rock-small-b.prop",
-        "at": {
-          "x": 47.5,
-          "y": 99.5
-        },
-        "yaw": 139.0,
-        "scale": 0.89
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/pine.prop",
-        "at": {
-          "x": 74.0,
-          "y": 97.0
-        },
-        "yaw": 136.0,
-        "scale": 1.15
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/bush-small.prop",
-        "at": {
-          "x": 78.0,
-          "y": 99.5
-        },
-        "yaw": 353.0,
-        "scale": 1.11
-      },
-      {
-        "type": "prop",
-        "prop": "world/props/rock-small-b.prop",
-        "at": {
-          "x": 27.0,
-          "y": 103.5
-        },
-        "yaw": 43.0,
-        "scale": 1.1
+        "yaw": 237.0,
+        "scale": 1.17
       },
       {
         "type": "prop",
         "prop": "world/props/rock-small.prop",
         "at": {
-          "x": 44.5,
-          "y": 102.0
+          "x": 17.0,
+          "y": 93.0
         },
-        "yaw": 234.0
+        "yaw": 30.0,
+        "scale": 0.88
       },
       {
         "type": "prop",
-        "prop": "world/props/bush.prop",
+        "prop": "world/props/rock-small-b.prop",
         "at": {
-          "x": 82.0,
+          "x": 22.5,
+          "y": 93.0
+        },
+        "yaw": 131.0,
+        "scale": 1.03
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 46.5,
+          "y": 91.5
+        },
+        "yaw": 342.0,
+        "scale": 0.91
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-small-b.prop",
+        "at": {
+          "x": 54.5,
+          "y": 92.0
+        },
+        "yaw": 150.0,
+        "scale": 0.95
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 59.5,
+          "y": 91.5
+        },
+        "yaw": 201.0,
+        "scale": 1.22
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 61.5,
+          "y": 91.5
+        },
+        "yaw": 259.0,
+        "scale": 0.92
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 68.0,
+          "y": 94.0
+        },
+        "yaw": 23.0,
+        "scale": 1.24
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft-leafy.prop",
+        "at": {
+          "x": 73.5,
+          "y": 93.0
+        },
+        "yaw": 325.0,
+        "scale": 1.14
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 78.5,
+          "y": 91.5
+        },
+        "yaw": 225.0,
+        "scale": 0.94
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-tall.prop",
+        "at": {
+          "x": 18.5,
+          "y": 96.5
+        },
+        "yaw": 74.0,
+        "scale": 1.29
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-small-b.prop",
+        "at": {
+          "x": 24.5,
+          "y": 99.5
+        },
+        "yaw": 292.0,
+        "scale": 1.25
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/pine.prop",
+        "at": {
+          "x": 27.0,
+          "y": 97.0
+        },
+        "yaw": 196.0,
+        "scale": 0.91
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft-leafy.prop",
+        "at": {
+          "x": 49.5,
+          "y": 98.0
+        },
+        "yaw": 20.0,
+        "scale": 1.23
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak-tall.prop",
+        "at": {
+          "x": 54.5,
+          "y": 97.0
+        },
+        "yaw": 304.0,
+        "scale": 0.9
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-large.prop",
+        "at": {
+          "x": 68.0,
+          "y": 97.0
+        },
+        "yaw": 156.0,
+        "scale": 1.2
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft.prop",
+        "at": {
+          "x": 73.5,
+          "y": 97.5
+        },
+        "yaw": 151.0,
+        "scale": 1.14
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak-tall.prop",
+        "at": {
+          "x": 79.5,
+          "y": 96.5
+        },
+        "yaw": 55.0,
+        "scale": 1.15
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/pine.prop",
+        "at": {
+          "x": 81.0,
+          "y": 99.5
+        },
+        "yaw": 208.0,
+        "scale": 1.04
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft.prop",
+        "at": {
+          "x": 22.5,
+          "y": 103.0
+        },
+        "yaw": 76.0,
+        "scale": 1.05
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/rock-small-b.prop",
+        "at": {
+          "x": 29.0,
+          "y": 102.0
+        },
+        "yaw": 16.0,
+        "scale": 1.25
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/tuft.prop",
+        "at": {
+          "x": 32.0,
+          "y": 103.0
+        },
+        "yaw": 108.0,
+        "scale": 0.81
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 38.5,
+          "y": 103.5
+        },
+        "yaw": 193.0,
+        "scale": 0.92
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak-tall.prop",
+        "at": {
+          "x": 44.0,
           "y": 101.5
         },
-        "yaw": 314.0,
-        "scale": 1.09
+        "yaw": 136.0,
+        "scale": 1.05
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 48.5,
+          "y": 102.5
+        },
+        "yaw": 43.0,
+        "scale": 1.06
+      },
+      {
+        "type": "prop",
+        "prop": "world/props/oak.prop",
+        "at": {
+          "x": 81.5,
+          "y": 101.5
+        },
+        "yaw": 231.0,
+        "scale": 1.23
       }
     ]
   }

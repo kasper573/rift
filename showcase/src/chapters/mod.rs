@@ -1,3 +1,4 @@
+mod camera;
 mod casting;
 mod chat;
 mod combat;
@@ -35,6 +36,7 @@ pub struct Chapter {
 pub const CHAPTERS: &[Chapter] = &[
     sign_in::CHAPTER,
     explore::CHAPTER,
+    camera::CHAPTER,
     soundscape::CHAPTER,
     combat::CHAPTER,
     skills::CHAPTER,

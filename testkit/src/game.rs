@@ -649,8 +649,8 @@ impl Map {
     }
 }
 
-/// A fighter's stats at full `health`: six damage a hit at 1.2 hits a second from a tile and a half
-/// away, walking four tiles a second.
+/// A fighter's stats at full `health`: six damage a hit at 1.2 hits a second from a metre and a half
+/// away, walking four metres a second.
 pub fn stats(health: f32) -> Value {
     json!({
         "health": health,

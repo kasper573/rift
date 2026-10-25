@@ -186,7 +186,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Ve
     if response.dragged_by(egui::PointerButton::Primary)
         && let Some(drag) = &mut view.drag
         && let Some(pointer) = response.interact_pointer_pos()
-        && let Some(ground) = canvas.to_tile(pointer)
+        && let Some(ground) = canvas.to_ground(pointer)
     {
         move_handle(&mut drag.footprint, drag.handle, ground - at);
         ui.ctx().request_repaint();

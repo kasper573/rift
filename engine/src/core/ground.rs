@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::content::{ContentProblem, RowCheck};
 use crate::core::geometry::Degrees;
 use crate::core::math::{Pos, Rect, Size};
-use crate::core::units::{CellPos, GROUND_ORIGIN, GridSize, Meters, TileSize};
+use crate::core::units::{CellPos, GROUND_ORIGIN, GridSize, MeterSize, Meters};
 
 pub const MAX_SIDE: u32 = 256;
 pub const MIN_SIDE: u32 = 8;

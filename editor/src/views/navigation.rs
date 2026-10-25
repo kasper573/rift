@@ -1,4 +1,4 @@
-use engine::core::math::{Offset, Pos, Rect as TileRect};
+use engine::core::math::{Offset, Pos, Rect as GroundRect};
 use ui::egui;
 use ui::egui::{Pos2, Rect, Response, Ui, Vec2};
 
@@ -25,16 +25,19 @@ impl<U> Viewport<U> {
         Pos2::new(c.x + d.x, c.y + d.y)
     }
 
-    pub fn to_tile(&self, p: Pos2) -> Pos<U> {
+    pub fn to_ground(&self, p: Pos2) -> Pos<U> {
         self.center + offset(p - self.screen.center()) / self.scale()
     }
 
-    pub fn rect(&self, r: TileRect<U>) -> Rect {
+    pub fn rect(&self, r: GroundRect<U>) -> Rect {
         Rect::from_min_max(self.to_screen(r.min()), self.to_screen(r.max()))
     }
 
-    pub fn visible(&self) -> TileRect<U> {
-        TileRect::from_points([self.to_tile(self.screen.min), self.to_tile(self.screen.max)])
+    pub fn visible(&self) -> GroundRect<U> {
+        GroundRect::from_points([
+            self.to_ground(self.screen.min),
+            self.to_ground(self.screen.max),
+        ])
     }
 }
 
@@ -55,7 +58,7 @@ pub fn zoom_and_pan<U>(
         let before = viewport.zoom;
         let under = response
             .hover_pos()
-            .map(|pointer| viewport.to_tile(pointer));
+            .map(|pointer| viewport.to_ground(pointer));
         viewport.zoom = (before * factor).clamp(zoom_range.0, zoom_range.1);
         if let Some(under) = under {
             viewport.center = under + (viewport.center - under) * (before / viewport.zoom);
@@ -86,11 +89,11 @@ pub fn pos_from_egui<U>(p: Pos2) -> Pos<U> {
     Pos::new(p.x, p.y)
 }
 
-pub fn rect_from_egui<U>(r: Rect) -> TileRect<U> {
-    TileRect::from_points([pos_from_egui(r.min), pos_from_egui(r.max)])
+pub fn rect_from_egui<U>(r: Rect) -> GroundRect<U> {
+    GroundRect::from_points([pos_from_egui(r.min), pos_from_egui(r.max)])
 }
 
-pub fn rect_to_egui<U>(r: TileRect<U>) -> Rect {
+pub fn rect_to_egui<U>(r: GroundRect<U>) -> Rect {
     Rect::from_min_max(
         Pos2::new(r.min_x(), r.min_y()),
         Pos2::new(r.max_x(), r.max_y()),

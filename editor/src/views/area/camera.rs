@@ -8,7 +8,7 @@ use bevy::prelude::{Ray3d, Transform, Vec2, Vec3};
 use engine::core::geometry::{Degrees, Radians};
 use engine::core::math::{Pos, Rect};
 use engine::core::render::camera::{FOV, PITCH, View, ground_hit, world_point};
-use engine::core::units::{MeterPos, Meters, TileSize};
+use engine::core::units::{MeterPos, MeterSize, Meters};
 use engine::systems::area::Area;
 use serde::{Deserialize, Serialize};
 use ui::egui::{PointerButton, Pos2, Rect as ERect, Response, Ui};
@@ -200,7 +200,7 @@ impl AreaCanvas {
     }
 
     /// The ground under a screen point, when it points at the area.
-    pub fn to_tile(&self, screen: Pos2) -> Option<Pos<Meters>> {
+    pub fn to_ground(&self, screen: Pos2) -> Option<Pos<Meters>> {
         ground_hit(
             &self.area.heights,
             self.area.size.bounds().inflate(0.5, 0.5),

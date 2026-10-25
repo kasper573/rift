@@ -30,8 +30,8 @@ fn play(shoot: &mut Shoot) {
     me.act(InputAction::ToggleTerminal);
     submit(&mut me, "hello! anyone around?");
     friend.act(InputAction::ToggleTerminal);
-    submit(&mut friend, "hi! let's go hunt some orcs");
-    me.find_ui(UiTarget::containing("let's go hunt some orcs"));
+    submit(&mut friend, "hi! let's go hunt some skeletons");
+    me.find_ui(UiTarget::containing("let's go hunt some skeletons"));
     me.caption("It also takes commands — /commands lists them");
     submit(&mut me, "/commands");
     me.caption(&format!(

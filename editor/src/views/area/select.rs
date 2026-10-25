@@ -40,7 +40,7 @@ pub(super) fn select_input(
         None => SelectScope::Area,
     };
     let response = frame.response;
-    let Some(tile) = scope.tile(frame) else {
+    let Some(ground) = scope.ground(frame) else {
         if response.drag_stopped() {
             finish_select_drag(editor, view_key, &scope, frame, modifiers);
         }
@@ -48,24 +48,24 @@ pub(super) fn select_input(
     };
     if scope.is_area() {
         if EditorKey::Listen.held_among(modifiers) && response.clicked() {
-            editor.views.area.view_mut(view_key).listener = Some(tile);
-            pick::listen(editor, frame, tile);
+            editor.views.area.view_mut(view_key).listener = Some(ground);
+            pick::listen(editor, frame, ground);
             return;
         }
         if let Some(ghost) = editor.views.area.view(view_key).paste.clone() {
             if response.clicked() || ui.input(|i| EditorKey::Confirm.pressed(i)) {
-                finish_paste(editor, view_key, frame, ghost, tile);
+                finish_paste(editor, view_key, frame, ghost, ground);
             }
             return;
         }
     }
-    let hit = scope.hit(frame, tile);
+    let hit = scope.hit(frame, ground);
     if response.drag_started_by(egui::PointerButton::Primary) {
-        start_select_drag(editor, view_key, frame, &scope, tile, hit);
+        start_select_drag(editor, view_key, frame, &scope, ground, hit);
         return;
     }
     if response.dragged_by(egui::PointerButton::Primary) {
-        track_move(editor.views.area.view_mut(view_key), tile);
+        track_move(editor.views.area.view_mut(view_key), ground);
         return;
     }
     if response.drag_stopped() {
@@ -116,10 +116,10 @@ impl SelectScope<'_> {
         matches!(self, SelectScope::Area)
     }
 
-    fn tile(&self, frame: &AreaFrame) -> Option<Pos<Meters>> {
+    fn ground(&self, frame: &AreaFrame) -> Option<Pos<Meters>> {
         match self {
-            SelectScope::Area => frame.pointer_tile,
-            SelectScope::Blueprint { .. } => frame.drag_tile(),
+            SelectScope::Area => frame.pointer_ground,
+            SelectScope::Blueprint { .. } => frame.drag_ground(),
         }
     }
 
@@ -143,12 +143,12 @@ impl SelectScope<'_> {
         }
     }
 
-    fn hit(&self, frame: &AreaFrame, tile: Pos<Meters>) -> Option<String> {
+    fn hit(&self, frame: &AreaFrame, ground: Pos<Meters>) -> Option<String> {
         match self {
-            SelectScope::Area => frame.hit_pointer().or_else(|| frame.hit(tile)),
+            SelectScope::Area => frame.hit_pointer().or_else(|| frame.hit(ground)),
             SelectScope::Blueprint { parts, .. } => parts
                 .iter()
-                .filter(|part| !part.locked && part.bounds.is_some_and(|b| b.contains(tile)))
+                .filter(|part| !part.locked && part.bounds.is_some_and(|b| b.contains(ground)))
                 .min_by(|a, b| {
                     a.bounds
                         .map_or(0.0, |b| b.area())
@@ -248,7 +248,7 @@ fn start_select_drag(
     view_key: &str,
     frame: &AreaFrame,
     scope: &SelectScope,
-    tile: Pos<Meters>,
+    ground: Pos<Meters>,
     hit: Option<String>,
 ) {
     if scope.is_area() {
@@ -285,14 +285,14 @@ fn start_select_drag(
     let in_folder_box = scope.is_area()
         && frame
             .folder_box(&super::selected_parts(editor, &frame.bundle))
-            .is_some_and(|(bounds, _)| bounds.contains(tile));
+            .is_some_and(|(bounds, _)| bounds.contains(ground));
     let hit = match hit {
         None if in_folder_box => {
             set_drag(
                 editor,
                 view_key,
                 AreaDrag::Move {
-                    from: tile,
+                    from: ground,
                     moved: false,
                 },
             );
@@ -310,12 +310,12 @@ fn start_select_drag(
                 editor,
                 view_key,
                 AreaDrag::Move {
-                    from: tile,
+                    from: ground,
                     moved: false,
                 },
             );
         }
-        None => set_drag(editor, view_key, AreaDrag::Box { from: tile }),
+        None => set_drag(editor, view_key, AreaDrag::Box { from: ground }),
     }
 }
 
@@ -323,9 +323,9 @@ fn set_drag(editor: &mut Editor, view_key: &str, drag: AreaDrag) {
     editor.views.area.view_mut(view_key).set_drag(drag);
 }
 
-pub(super) fn track_move(view: &mut AreaViewState, tile: Pos<Meters>) {
+pub(super) fn track_move(view: &mut AreaViewState, ground: Pos<Meters>) {
     if let Some(AreaDrag::Move { from, moved }) = view.drag_mut()
-        && (tile.x - from.x).abs() + (tile.y - from.y).abs() > 0.25
+        && (ground.x - from.x).abs() + (ground.y - from.y).abs() > 0.25
     {
         *moved = true;
     }
@@ -413,12 +413,12 @@ fn finish_select_drag(
     let Some(drag) = editor.views.area.view_mut(view_key).take_drag() else {
         return;
     };
-    let Some(tile) = frame.drag_tile() else {
+    let Some(ground) = frame.drag_ground() else {
         return;
     };
     match drag {
         AreaDrag::Box { from } => {
-            let rect = Rect::from_points([from, tile]);
+            let rect = Rect::from_points([from, ground]);
             let (hits, skipped) = scope.contained(frame, rect);
             let count = hits.len();
             let parts = boxed(
@@ -436,7 +436,7 @@ fn finish_select_drag(
             if !moved {
                 return;
             }
-            let (dx, dy) = snapped_delta(from, tile, EditorKey::Unsnapped.held_among(modifiers));
+            let (dx, dy) = snapped_delta(from, ground, EditorKey::Unsnapped.held_among(modifiers));
             if dx == 0.0 && dy == 0.0 {
                 return;
             }
@@ -449,7 +449,7 @@ fn finish_select_drag(
         } => {
             let (min, max) = (start.min(), start.max());
             let edge = snap_to(
-                tile + Offset::new(0.5, 0.5),
+                ground + Offset::new(0.5, 0.5),
                 EditorKey::Unsnapped.held_among(modifiers),
             ) - Offset::new(0.5, 0.5);
             let (new_min, new_max) = match corner {
@@ -469,11 +469,11 @@ fn finish_select_drag(
             });
         }
         AreaDrag::Pin { file, pointer } => {
-            let at = snap_to(tile, EditorKey::Unsnapped.held_among(modifiers));
+            let at = snap_to(ground, EditorKey::Unsnapped.held_among(modifiers));
             pins::move_pin(editor, frame, &file, &pointer, at);
         }
         AreaDrag::InitialSpawn => {
-            let at = snap_to(tile, EditorKey::Unsnapped.held_among(modifiers));
+            let at = snap_to(ground, EditorKey::Unsnapped.held_among(modifiers));
             pins::set_spawn(editor, &frame.bundle, at);
         }
         AreaDrag::Stamp { .. } => {}
@@ -570,14 +570,14 @@ pub(super) fn finish_paste(
     view_key: &str,
     frame: &AreaFrame,
     ghost: PasteGhost,
-    tile: Pos<Meters>,
+    ground: Pos<Meters>,
 ) {
     editor.views.area.view_mut(view_key).paste = None;
-    paste_at(editor, frame, &ghost.clip, paste_anchor(tile));
+    paste_at(editor, frame, &ghost.clip, paste_anchor(ground));
 }
 
-pub(super) fn paste_anchor(tile: Pos<Meters>) -> Pos<Meters> {
-    Pos::new(tile.x.round() - 0.5, tile.y.round() - 0.5)
+pub(super) fn paste_anchor(ground: Pos<Meters>) -> Pos<Meters> {
+    Pos::new(ground.x.round() - 0.5, ground.y.round() - 0.5)
 }
 
 pub(super) fn paste_at(editor: &mut Editor, frame: &AreaFrame, clip: &SceneClip, at: Pos<Meters>) {

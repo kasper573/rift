@@ -76,6 +76,7 @@ impl Shoot {
             film,
             out: self.out.clone(),
         };
+        star.camera_home();
         star.hold();
         star
     }

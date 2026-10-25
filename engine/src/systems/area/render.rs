@@ -11,7 +11,7 @@ use crate::core::math::{Pos, Rect};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
-use crate::core::units::{Meters, TileSize};
+use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::render::SiteExtent;
 use crate::systems::player::session::MyCharacter;
 use crate::systems::screen::ClientScreen;
@@ -38,14 +38,16 @@ impl Plugin for AreaRenderPlugin {
     }
 }
 
-/// The area the view is set up for, its scenery, and the step of the day it was last lit for.
+/// The area the view is set up for, its scenery, the hour its sun was last turned to and the step
+/// of the day its sky was last painted for.
 #[derive(Resource, Default)]
 struct ShownArea(Option<Standing>);
 
 struct Standing {
     area: AreaId,
     scenery: Scenery,
-    lit: Option<u32>,
+    shone: Option<Daylight>,
+    sky: Option<u32>,
 }
 
 /// The area whose scenery stands in the view.
@@ -82,23 +84,28 @@ fn show_area(world: &mut World) {
     world.resource_mut::<ShownArea>().0 = Some(Standing {
         area: area_id,
         scenery: stood,
-        lit: None,
+        shone: None,
+        sky: None,
     });
     light_area(world, &area);
 }
 
-/// Lights the shown area for the hour, whenever the day has moved on a step.
+/// Turns the shown area's sun with the hour as it moves, and paints its sky again whenever the
+/// day has moved on a step.
 fn follow_daylight(world: &mut World) {
     let Some(area_id) = shown(world) else {
         return;
     };
-    let step = world.resource::<Daylight>().step();
-    let lit = world
+    let daylight = *world.resource::<Daylight>();
+    let Some((shone, sky)) = world
         .resource::<ShownArea>()
         .0
         .as_ref()
-        .and_then(|standing| standing.lit);
-    if lit == Some(step) {
+        .map(|standing| (standing.shone, standing.sky))
+    else {
+        return;
+    };
+    if shone == Some(daylight) && sky == Some(daylight.sky_step()) {
         return;
     }
     let content = world.resource::<Content>().clone();
@@ -108,11 +115,11 @@ fn follow_daylight(world: &mut World) {
 
 fn light_area(world: &mut World, area: &super::Area) {
     let daylight = *world.resource::<Daylight>();
-    let Some(stood) = world
+    let Some((stood, sky)) = world
         .resource::<ShownArea>()
         .0
         .as_ref()
-        .map(|standing| standing.scenery)
+        .map(|standing| (standing.scenery, standing.sky))
     else {
         return;
     };
@@ -122,9 +129,13 @@ fn light_area(world: &mut World, area: &super::Area) {
     else {
         return;
     };
-    scenery::light(world, area, daylight, stood, camera);
+    scenery::shine(world, area, daylight, stood, camera);
+    if sky != Some(daylight.sky_step()) {
+        scenery::paint_sky(world, area, daylight, camera);
+    }
     if let Some(standing) = world.resource_mut::<ShownArea>().0.as_mut() {
-        standing.lit = Some(daylight.step());
+        standing.shone = Some(daylight);
+        standing.sky = Some(daylight.sky_step());
     }
 }
 

@@ -10,7 +10,7 @@ use ui::theme;
 
 use engine::core::audio::soundscape::EDGE_FALLOFF;
 use engine::core::math::Rect;
-use engine::core::units::{Meters, TileSize};
+use engine::core::units::{MeterSize, Meters};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
 use engine::systems::area::{AreaModule, AreaModuleKind, Pictured};

@@ -328,10 +328,10 @@ pub fn stamp_input(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &Are
         return;
     };
     let alt = ui.input(|i| EditorKey::Unsnapped.held(i));
-    let Some(tile) = frame.drag_tile() else {
+    let Some(ground) = frame.drag_ground() else {
         return;
     };
-    let at = select::snap_to(tile, alt);
+    let at = select::snap_to(ground, alt);
     let values = stamp_values(editor, Some(&stamp));
     let footprint = stamp_footprint(editor, &frame.content, &frame.reader, &stamp, &values);
     let spacing = editor
@@ -451,8 +451,8 @@ pub fn stamp_overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, f
             draw_ghost(*at);
         }
     }
-    if let Some(tile) = frame.pointer_tile {
-        let at = select::snap_to(tile, alt);
+    if let Some(ground) = frame.pointer_ground {
+        let at = select::snap_to(ground, alt);
         draw_ghost(at);
         painter.text(
             canvas.to_screen(at) + Vec2::new(8.0, 8.0),

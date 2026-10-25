@@ -631,7 +631,7 @@ fn lit_row(editor: &Editor, snapshot: &AreaSnapshot) -> Option<String> {
     if hover.area != snapshot.bundle {
         return None;
     }
-    snapshot.locked_hit_at(hover.tile)
+    snapshot.locked_hit_at(hover.ground)
 }
 
 /// Follows a selection made in the tree: the map and inspector take it, and selecting a row

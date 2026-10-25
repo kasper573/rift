@@ -43,7 +43,7 @@ use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::billboard::Billboard;
 use crate::core::render::world::decal::LIFT;
 use crate::core::render::world::terrain;
-use crate::core::render::world::toon::ToonMaterial;
+use crate::core::render::world::toon::{ToonMaterial, plain_prepass_shader};
 use crate::core::render::{CameraRig, GroundHeights, ground_height, world_point};
 use crate::core::time::{Seconds, server_now};
 use crate::core::units::Meters;
@@ -817,6 +817,10 @@ impl Material for VfxWorldMaterial {
 impl MaterialExtension for SurfaceVfx {
     fn fragment_shader() -> ShaderRef {
         ShaderRef::Default
+    }
+
+    fn prepass_fragment_shader() -> ShaderRef {
+        plain_prepass_shader()
     }
 
     fn specialize(

@@ -60,16 +60,21 @@ fn main() {
             scene
         },
         {
-            step_into(&mut me, "forest-road");
+            step_into(&mut me, "front-door");
             let scene = watch(&mut me, "crossing", Duration::from_millis(2500));
-            me.wait_until("the forest", |snapshot| arrived_in(snapshot, "forest"));
+            me.wait_until("the cottage", |snapshot| arrived_in(snapshot, "cottage"));
             scene
         },
-        watch(&mut me, "forest", Duration::from_secs(4)),
+        watch(&mut me, "cottage", Duration::from_secs(4)),
+        {
+            step_into(&mut me, "front-door");
+            me.wait_until("the island", |snapshot| arrived_in(snapshot, "island"));
+            watch(&mut me, "rise", Duration::from_secs(2))
+        },
         {
             me.look_for(
                 "a foe in sight",
-                hunting_ground("forest", "orc"),
+                hunting_ground("island", "skeleton"),
                 |snapshot| {
                     snapshot.actors.iter().any(|actor| {
                         foe(snapshot, actor) && clickable_point(snapshot, actor.aim).is_some()
@@ -143,9 +148,9 @@ fn set_off(me: &mut Player) {
     let far = ground_near(area, at, Meters(5.0)..=Meters(8.0))
         .into_iter()
         .rev()
-        .find(|tile| open(&seen, *tile))
-        .expect("open ground a few tiles off");
-    me.point_at_tile(far);
+        .find(|ground| open(&seen, *ground))
+        .expect("open ground a few metres off");
+    me.point_at_ground(far);
     me.click();
 }
 
@@ -178,7 +183,7 @@ fn cast_on_nearest_foe(me: &mut Player, slot: InputAction) {
         .cloned();
     match target {
         Some(target) => {
-            me.point_at_tile(target.at);
+            me.point_at_ground(target.at);
             me.click();
         }
         None => {

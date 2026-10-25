@@ -1606,7 +1606,7 @@ pub fn preview_extras(editor: &mut Editor, ui: &mut Ui, key: &str) {
     });
 }
 
-/// Where along an area `extent` tiles long a view reaching `half` tiles each way centres on `at`
+/// Where along an area `extent` metres long a view reaching `half` metres each way centres on `at`
 /// without showing past the area's edges, or the area's middle when the view is the longer.
 fn kept_in_view(at: f32, half: f32, extent: f32) -> f32 {
     if extent <= 2.0 * half {

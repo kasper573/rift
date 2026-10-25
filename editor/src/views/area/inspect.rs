@@ -13,7 +13,7 @@ use engine::core::geometry::Degrees;
 use engine::core::ground::GroundSize;
 use engine::core::math::{Pos, Rng};
 use engine::core::script::VariableType;
-use engine::core::units::{Meters, TileSize};
+use engine::core::units::{MeterSize, Meters};
 use engine::systems::area::TerrainDef;
 use engine::systems::area::prop::PropDef;
 use strum::VariantArray;

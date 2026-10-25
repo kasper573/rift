@@ -19,10 +19,7 @@ pub const CHAPTER: Chapter = Chapter {
 const DRAUGHT: &str = "shamans_draught";
 
 fn play(shoot: &mut Shoot) {
-    let player = shoot.join_as(
-        "unspent",
-        Some(resident_home("glimmercap", "gnome_alchemist")),
-    );
+    let player = shoot.join_as("unspent", Some(resident_home("island", "grisha")));
     let mut me = shoot.roll(player);
     me.caption(&format!(
         "Your class grants skill points as you level: {} opens your skills",

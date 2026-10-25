@@ -1,5 +1,5 @@
 use driver::Player;
-use engine::core::math::{Pos, Rect};
+use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::probe::{ProbeSoundZone, ProbeVoice};
 
@@ -26,7 +26,7 @@ fn play(shoot: &mut Shoot) {
             .unwrap_or_else(|| panic!("no zone plays {track}"))
             .clone()
     };
-    let (town, grove, jetty) = (
+    let (town, shore, jetty) = (
         zone("harbour.flac"),
         zone("lagoon.flac"),
         zone("timbers.flac"),
@@ -39,8 +39,8 @@ fn play(shoot: &mut Shoot) {
     me.caption("Where two zones overlap they mix: both themes share channel 1, and the surf both play pools");
     listen_from(&mut me, Pos::new(town.bounds.origin.x + 1.0, home.y));
 
-    me.caption("In the palm grove the lagoon theme has channel 1 to itself, and the jungle chorus joins on channel 3");
-    listen_from(&mut me, grove.bounds.center());
+    me.caption("Down at the shore the lagoon theme has channel 1 to itself, and the jungle chorus joins on channel 3");
+    listen_from(&mut me, shore.bounds.center());
 
     me.caption("Back in town, the harbour theme resumes where it would be had it never stopped");
     listen_from(&mut me, home);
@@ -49,7 +49,7 @@ fn play(shoot: &mut Shoot) {
     listen_from(
         &mut me,
         Pos::new(
-            jetty.bounds.origin.x - jetty.reach.0 / 2.0,
+            jetty.bounds.origin.x + jetty.bounds.size.width + jetty.reach.0 / 2.0,
             jetty.bounds.center().y,
         ),
     );
@@ -57,8 +57,8 @@ fn play(shoot: &mut Shoot) {
     me.caption("On the jetty nothing claims channel 1, so the music fades out");
     listen_from(&mut me, jetty.bounds.center());
 
-    me.caption("Out beyond every zone's reach, each channel fades to silence");
-    listen_from(&mut me, Pos::new(beyond(&jetty).x, jetty.bounds.center().y));
+    me.caption("Out on the beach beyond every zone's reach, each channel fades to silence");
+    listen_from(&mut me, beyond(&jetty));
 
     me.caption("And walking back, the harbour fades in again");
     listen_from(&mut me, home);
@@ -69,8 +69,6 @@ fn listen_from(me: &mut Player, spot: Pos<Meters>) {
     mixed(me);
 }
 
-// Every voice eases toward what the listener should hear where they stand; the mix is there once a
-// frame changes nothing.
 fn mixed(me: &mut Player) {
     let mut last: Vec<(u32, String, f32)> = Vec::new();
     me.wait_until("the soundscape to settle", |snapshot| {
@@ -93,7 +91,10 @@ fn mixed(me: &mut Player) {
     });
 }
 
+// The sand west of the jetty, past where its sounds reach.
 fn beyond(zone: &ProbeSoundZone) -> Pos<Meters> {
-    let Rect { origin, size } = zone.bounds;
-    Pos::new(origin.x + size.width + zone.reach.0 + 1.0, origin.y)
+    Pos::new(
+        zone.bounds.origin.x - zone.reach.0 - 1.0,
+        zone.bounds.center().y,
+    )
 }

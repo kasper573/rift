@@ -2,8 +2,8 @@
   "name": "Skeleton Rogue",
   "model": "characters/models/skeleton-rogue.model",
   "stats": {
-    "health": 14.0,
-    "max_health": 14.0,
+    "health": 32.0,
+    "max_health": 32.0,
     "damage": 2.0,
     "attack_speed": 1.3,
     "attack_delay": 300.0,

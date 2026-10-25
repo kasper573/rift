@@ -127,8 +127,8 @@ pub fn pick_preview(editor: &mut Editor, ui: &mut Ui) {
     );
     let alt = ui.input(|i| EditorKey::Unsnapped.held(i));
     if let Some(pointer) = response.hover_pos() {
-        let tile = canvas.to_tile(pointer);
-        let at = select::snap_to(tile, alt);
+        let ground = canvas.to_ground(pointer);
+        let at = select::snap_to(ground, alt);
         let place = Place { area: area_id, at };
         let verdict = area::check_place(&content, place);
         let (ok, why) = match &verdict {

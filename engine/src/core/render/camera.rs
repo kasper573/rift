@@ -4,6 +4,8 @@
 //! projection of the rig, so the probe, the plates and the picking all project the way the camera
 //! draws.
 
+use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
+use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass, NormalPrepass};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use serde::{Deserialize, Serialize};
@@ -35,6 +37,20 @@ const ZOOM_EASE: Seconds = Seconds(0.2);
 
 #[derive(Component)]
 pub struct WorldCamera;
+
+/// How every camera on the world smooths its edges: morphological anti-aliasing over the finished
+/// picture, which takes the inked edges and the dithered clearings along with the geometry's.
+pub fn smoothing() -> Smaa {
+    Smaa {
+        preset: SmaaPreset::Ultra,
+    }
+}
+
+/// How every camera that draws the world draws it: the prepasses the toon material inks its
+/// edges from, with SMAA standing in for MSAA.
+pub fn passes() -> impl Bundle {
+    (Msaa::Off, DepthPrepass, NormalPrepass, MotionVectorPrepass)
+}
 
 /// The perspective every camera on the world draws with, over a viewport `width` by `height`.
 pub fn projection(width: u32, height: u32) -> Projection {
@@ -375,6 +391,12 @@ pub fn world_point(at: Pos<Meters>, height: Meters) -> Vec3 {
 
 pub fn ground_pos(point: Vec3) -> Pos<Meters> {
     Pos::new(point.x, point.z)
+}
+
+/// The turn that points a model's front, +Z as its glTF is authored, the way a `facing` on the
+/// ground heads.
+pub fn facing_rotation(facing: Radians) -> Quat {
+    Quat::from_rotation_y(std::f32::consts::FRAC_PI_2 - facing.0)
 }
 
 pub fn ground_height(world: &World, at: Pos<Meters>) -> Meters {

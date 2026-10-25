@@ -23,11 +23,11 @@ const REJOINING: WaitBudget = WaitBudget {
 };
 
 fn play(shoot: &mut Shoot) {
-    let player = shoot.join_as("talker", Some(resident_home("bloomvale", "farmer_girl")));
+    let player = shoot.join_as("talker", Some(resident_home("island", "tobb")));
     let mut me = shoot.roll(player);
-    me.caption("An evening in Bloomvale, on the content the server started with");
-    let before = me.wait_for("the player in Bloomvale", |snapshot| {
-        arrived_in(snapshot, "bloomvale")
+    me.caption("A morning at the harbour, on the content the server started with");
+    let before = me.wait_for("the player at the harbour", |snapshot| {
+        arrived_in(snapshot, "island")
             .then(|| snapshot.me.clone())
             .flatten()
     });
