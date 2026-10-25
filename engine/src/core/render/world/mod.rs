@@ -7,6 +7,7 @@ pub mod clouds;
 pub mod cover;
 pub mod decal;
 pub mod fade;
+pub mod layers;
 pub mod lights;
 pub mod mannequin;
 pub mod material;
@@ -57,6 +58,12 @@ impl Plugin for WorldScenePlugin {
                 fade::fade_occluders.run_if(resource_exists::<CameraRig>),
                 cover::strew_loaded,
             ),
+        )
+        .add_systems(
+            PostUpdate,
+            layers::run
+                .after(bevy::app::AnimationSystems)
+                .before(bevy::transform::TransformSystems::Propagate),
         )
         .add_systems(
             PostUpdate,

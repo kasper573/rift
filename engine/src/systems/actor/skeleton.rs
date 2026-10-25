@@ -18,6 +18,7 @@ use crate::core::content::{
     NamedContent, Nearby, PartSpec, Parts, RowCheck, Shape, serial,
 };
 use crate::core::geometry::{Degrees, Radians};
+use crate::core::render::world::layers::Gait;
 use crate::core::time::{Hertz, Millis, Seconds};
 use crate::core::units::Meters;
 
@@ -260,34 +261,6 @@ pub enum Layer {
 pub struct Leg {
     pub name: String,
     pub joints: Vec<JointName>,
-}
-
-/// Which feet step together.
-#[derive(
-    JsonSchema,
-    Serialize,
-    Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    strum::VariantArray,
-    strum::AsRefStr,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum Gait {
-    /// One side's legs together, then the other's: a walk.
-    Lateral,
-    /// Opposite corners together: a trot.
-    Diagonal,
-    /// Three legs of six at a time.
-    Tripod,
-    /// Four legs of eight at a time.
-    Tetrapod,
-    /// One leg after the next, down the body.
-    Wave,
 }
 
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -13,6 +13,7 @@ use bevy::animation::{AnimationTargetId, RepeatAnimation};
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 
+use super::layering::{self, Layering};
 use super::model::{ClipSource, Models};
 use super::skeleton::{GroupName, Hand, LocalOffset, LocalTurn, SkeletonId};
 use super::stance::HandIndex;
@@ -25,6 +26,7 @@ use crate::core::content::media::GltfInfos;
 use crate::core::geometry::Radians;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin};
 use crate::core::render::transition::WorldViewSystems;
+use crate::core::render::world::layers::Layered;
 use crate::core::render::world::mannequin::animate_rig;
 use crate::core::render::{Animator, Previous, facing_rotation, ground_height, world_point};
 use crate::core::time::{Seconds, UnixMillis};
@@ -45,7 +47,6 @@ pub struct ActorRenderPlugin;
 impl Plugin for ActorRenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(InterpolatePlugin::<RenderActor>::default())
-            .init_resource::<SkeletonGraphs>()
             .add_observer(adopt_player)
             .add_systems(
                 Update,
@@ -178,8 +179,9 @@ impl Puppet {
     }
 }
 
-/// Puts a rig on every actor of the shown area that lacks one, or wears another model's.
-fn dress(world: &mut World) {
+/// Puts a rig on every actor of the shown area that lacks one, or wears another model's: its
+/// model's skin, played through its skeleton's graph.
+pub fn dress(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let undressed: Vec<(Entity, ModelId, Radians)> = world
@@ -242,7 +244,11 @@ fn skeleton_graph(
     content: &Content,
     skeleton: SkeletonId,
 ) -> Arc<SkeletonGraph> {
-    if let Some(graph) = world.resource::<SkeletonGraphs>().0.get(&skeleton) {
+    if let Some(graph) = world
+        .get_resource_or_init::<SkeletonGraphs>()
+        .0
+        .get(&skeleton)
+    {
         return graph.clone();
     }
     let built = super::model::Skeletons::loaded(content, skeleton)
@@ -351,10 +357,11 @@ fn mask_groups(
         .collect()
 }
 
-/// A rig's scene, once spawned, hands its animation player the skeleton's graph, and its joints are
-/// known by name.
-fn adopt_player(
+/// A rig's scene, once spawned, hands its animation player the skeleton's graph, its joints are
+/// known by name, and the skeleton's layers take them.
+pub fn adopt_player(
     ready: On<WorldInstanceReady>,
+    content: Res<Content>,
     children: Query<&Children>,
     names: Query<&Name>,
     mut puppets: Query<&mut Puppet>,
@@ -376,6 +383,13 @@ fn adopt_player(
     puppet.player = Some(player);
     puppet.playing = None;
     puppet.tracks.clear();
+    let model = ActorModel::get(&content, puppet.model);
+    match layering::layered(model, &puppet.joints) {
+        Some(layers) => commands.entity(ready.entity).insert(layers),
+        None => commands
+            .entity(ready.entity)
+            .remove::<(Layered, Layering)>(),
+    };
 }
 
 /// Places every rig where its actor shows, turned the way it faces, playing the clip its stance
@@ -431,7 +445,7 @@ fn pose(world: &mut World) {
             hasher.finish()
         };
         let playhead = world.resource_mut::<Animator>().advance(entity, state, now);
-        {
+        let stepped = {
             let prev = match playhead.previous {
                 Previous::Continued(played) => Some(played),
                 Previous::Unseen | Previous::Restarted => None,
@@ -455,6 +469,13 @@ fn pose(world: &mut World) {
                     place: SfxPlace::World(at.0),
                 });
             }
+            stepped
+        };
+        if let Ok((mut layered, layering)) = world
+            .query::<(&mut Layered, &Layering)>()
+            .get_mut(world, entity)
+        {
+            layering::drive(&mut layered, layering, shown.action, stepped);
         }
         let resting = resolved
             .only
@@ -573,7 +594,7 @@ fn pose(world: &mut World) {
 /// Hangs from each hand of a dressed rig the prop of the item it shows, moved by the hand's and the
 /// item's grip, and takes it down the frame the hand empties. A two-hander hangs from the first hand
 /// it takes.
-fn hang(world: &mut World) {
+pub fn hang(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let dressed: Vec<(Entity, ModelId, BTreeMap<HandIndex, ItemId>)> = world
         .query::<(Entity, &Actor, &Puppet, Option<&Wearing>)>()

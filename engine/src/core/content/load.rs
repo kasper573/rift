@@ -714,15 +714,19 @@ pub fn load(
     if loading.errors.is_empty() {
         loading.run_hooks(registry, LoadStep::Compile);
     }
-    let warnings = std::mem::take(&mut loading.warnings);
     if loading.errors.is_empty() {
+        let mut warnings = std::mem::take(&mut loading.warnings);
+        warnings.sort_by(|a, b| (&a.file, &a.problem.found).cmp(&(&b.file, &b.problem.found)));
         loading.built(LoadWarnings(warnings));
         Ok(loading.content())
     } else {
-        Err(
-            LoadReport::new(folder.name(), build, version.0, outcome, loading.errors)
-                .with_warnings(warnings),
-        )
+        Err(LoadReport::new(
+            folder.name(),
+            build,
+            version.0,
+            outcome,
+            loading.errors,
+        ))
     }
 }
 

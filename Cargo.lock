@@ -2059,6 +2059,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_skeleton_modifiers"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "faad950fa92d32a43dd99aa124e2e94baf43fdb2beb238e884a63b4bd921883e"
+dependencies = [
+ "glam 0.32.1",
+]
+
+[[package]]
 name = "bevy_sprite"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3826,6 +3835,7 @@ dependencies = [
  "bevy_platform 0.20.0",
  "bevy_replicon",
  "bevy_replicon_renet2",
+ "bevy_skeleton_modifiers",
  "bevy_state",
  "bevy_terminal",
  "bevy_time",

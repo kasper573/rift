@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+pub mod layering;
 pub mod model;
 pub mod plate;
 pub mod playing;

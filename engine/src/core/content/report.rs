@@ -51,8 +51,6 @@ pub struct LoadReport {
     pub version: String,
     pub outcome: String,
     pub errors: Vec<LoadError>,
-    /// What would have loaded with a cost named, had nothing been refused.
-    pub warnings: Vec<LoadError>,
 }
 
 impl LoadReport {
@@ -70,14 +68,7 @@ impl LoadReport {
             version: version.into(),
             outcome: outcome.into(),
             errors,
-            warnings: Vec::new(),
         }
-    }
-
-    pub fn with_warnings(mut self, mut warnings: Vec<LoadError>) -> LoadReport {
-        warnings.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
-        self.warnings = warnings;
-        self
     }
 
     pub fn files(&self) -> usize {
@@ -251,13 +242,6 @@ impl Display for LoadReport {
                 writeln!(f, "  same in   {} more: {}", same.len(), same.join(", "))?;
             }
             index = next;
-        }
-        if !self.warnings.is_empty() {
-            writeln!(f)?;
-            writeln!(f, "## Warnings")?;
-            for warning in &self.warnings {
-                writeln!(f, "{}", warning)?;
-            }
         }
         writeln!(f)?;
         write!(f, "## End · {}", words::counted(self.errors.len(), "error"))

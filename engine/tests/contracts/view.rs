@@ -1,10 +1,25 @@
+use std::collections::BTreeMap;
+
+use bevy::animation::AnimationClip;
+use bevy::animation::graph::AnimationGraph;
+use bevy::asset::AssetPlugin;
 use bevy::prelude::*;
+use bevy::world_serialization::{WorldAsset, WorldSerializationPlugin};
 use engine::core::geometry::{Degrees, Radians};
 use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
+use engine::core::math::Rgba;
 use engine::core::render::camera::ground_hit;
 use engine::core::render::{CameraRig, capsule_hit, facing_rotation, world_point};
+use engine::core::time::PlaybackRate;
 use engine::core::units::{MeterPos, Meters};
+use engine::systems::actor::render::{self, HeldProp};
+use engine::systems::actor::stance::HandIndex;
+use engine::systems::actor::wearing::Wearing;
+use engine::systems::actor::{Action, Actor, ModelDef, Pose};
+use engine::systems::item::ItemDef;
+use serde_json::json;
+use testkit::{Game, Map};
 
 const SIZE: GroundSize = GroundSize {
     width: 32,
@@ -103,4 +118,122 @@ fn a_model_fronts_the_way_its_actor_faces() {
             "facing {toward} turns the front to {turned}, not {wanted}"
         );
     }
+}
+
+#[test]
+fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
+    let content = Game::new()
+        .area("field", &Map::open(5, 5), json!([]))
+        .hero("field", 2.0, 2.0)
+        .sword()
+        .load();
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        AssetPlugin::default(),
+        WorldSerializationPlugin,
+    ))
+    .init_asset::<AnimationGraph>()
+    .init_asset::<AnimationClip>()
+    .register_type::<Name>()
+    .register_type::<Transform>()
+    .register_type::<ChildOf>()
+    .add_observer(render::adopt_player)
+    .insert_resource(content.clone());
+    let sword = testkit::Declared::declared::<ItemDef>(&content, "sword").expect("a sword");
+    let hero = testkit::Declared::declared::<ModelDef>(&content, "hero").expect("a hero");
+    let body = app
+        .world_mut()
+        .spawn((
+            Actor {
+                color: Rgba(0xffffffff),
+                facing: engine::core::geometry::Radians(0.0),
+                action: Action::Idle,
+                pose: Pose::Idle,
+                model: hero,
+                attack_rate: PlaybackRate(1.0),
+            },
+            Wearing {
+                hands: BTreeMap::from([(HandIndex::MAIN, sword)]),
+            },
+        ))
+        .id();
+
+    app.world_mut()
+        .run_system_cached(render::dress)
+        .expect("dressed");
+    let rig = app
+        .world_mut()
+        .resource_mut::<Assets<WorldAsset>>()
+        .add(WorldAsset::new(rig_scene()));
+    app.world_mut().entity_mut(body).insert(WorldAssetRoot(rig));
+    for _ in 0..3 {
+        app.update();
+    }
+    app.world_mut()
+        .run_system_cached(render::hang)
+        .expect("hung");
+
+    let hand = joint(&mut app, "hand.r").expect("the rig stands");
+    assert_eq!(
+        props(&mut app),
+        vec![(hand, sword)],
+        "the sword hangs from the right hand"
+    );
+
+    app.world_mut().entity_mut(body).insert(Wearing::default());
+    app.world_mut()
+        .run_system_cached(render::hang)
+        .expect("hung");
+    assert_eq!(props(&mut app), Vec::new(), "the empty hand holds nothing");
+}
+
+/// The test rig's joints as its glTF scene would stand them: a root, a body and two hands.
+fn rig_scene() -> World {
+    let mut world = World::new();
+    let root = world.spawn((Name::new("model"), Transform::default())).id();
+    let body = world
+        .spawn((Name::new("body"), Transform::default(), ChildOf(root)))
+        .id();
+    for hand in ["hand.r", "hand.l"] {
+        world.spawn((Name::new(hand), Transform::default(), ChildOf(body)));
+    }
+    world
+}
+
+fn joint(app: &mut App, name: &str) -> Option<Entity> {
+    app.world_mut()
+        .query::<(Entity, &Name)>()
+        .iter(app.world())
+        .find(|(_, named)| named.as_str() == name)
+        .map(|(entity, _)| entity)
+}
+
+/// Every prop hanging from a hand, by the joint it hangs from and the item it shows.
+fn props(app: &mut App) -> Vec<(Entity, engine::systems::item::ItemId)> {
+    let world = app.world_mut();
+    let mut held = Vec::new();
+    for (prop, parent) in world
+        .query_filtered::<(Entity, &ChildOf), With<HeldProp>>()
+        .iter(world)
+    {
+        held.push((prop, parent.parent()));
+    }
+    held.into_iter()
+        .map(|(prop, joint)| {
+            let item = world
+                .query::<&render::Puppet>()
+                .iter(world)
+                .flat_map(|puppet| {
+                    puppet
+                        .held()
+                        .map(|(_, item, at)| (item, at))
+                        .collect::<Vec<_>>()
+                })
+                .find(|(_, at)| *at == prop)
+                .map(|(item, _)| item)
+                .expect("a prop of a held item");
+            (joint, item)
+        })
+        .collect()
 }

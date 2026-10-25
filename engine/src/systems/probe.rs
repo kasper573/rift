@@ -20,12 +20,17 @@ use crate::core::gui::{self, GuiContext, WorldLayers};
 use crate::core::math::{Offset, Pos, Rect, Size, WindowPx};
 use crate::core::platform::ClientPlatform;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
+use crate::core::render::world::layers::Layered;
 use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
 use crate::core::time::{self, Seconds};
 use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::model::ModelId;
-use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox};
+use crate::systems::actor::render::Puppet;
+use crate::systems::actor::skeleton::{ClipName, SkeletonId};
+use crate::systems::actor::stance::{HandIndex, StanceId};
+use crate::systems::actor::wearing::{self, Wearing};
+use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox, Motion, Playing};
 use crate::systems::area::{self, AreaId, AreaObject, AreaTag};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
@@ -221,6 +226,27 @@ pub struct ProbeBody {
     pub locked: bool,
     pub marks: Vec<AttentionId>,
     pub badges: Vec<AttentionId>,
+    pub skeleton: SkeletonId,
+    /// The stance its hands or a script put it in.
+    pub stance: Option<StanceId>,
+    /// The clip it plays for what it does, as its stance resolves it, and the move it was told to
+    /// play, if any.
+    pub clip: Option<ClipName>,
+    pub motion: Option<Motion>,
+    /// What each hand of its body shows, as the server says.
+    pub wearing: Vec<(HandIndex, ItemId)>,
+    /// The props its rig holds as drawn, each where it shows in the window.
+    pub held: Vec<ProbeHeld>,
+    /// Whether any layer moves its joints this frame.
+    pub layered: bool,
+}
+
+/// A prop hanging from a hand of a drawn body.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ProbeHeld {
+    pub hand: HandIndex,
+    pub item: ItemId,
+    pub at: Option<Pos<WindowPx>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -886,8 +912,33 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
                 .height_at(drawn)
         });
     let model = actor.model;
-    let flies = ActorModel::get(world.resource::<Content>(), model).airborne();
+    let built = ActorModel::get(world.resource::<Content>(), model);
+    let flies = built.airborne();
     let stat = |kind| entity.get::<Stats>().map_or(0.0, |stats| stats.get(kind));
+    let stance = wearing::stance_of(world, entity.id());
+    let motion = entity
+        .get::<Playing>()
+        .filter(|playing| playing.motion.action() == actor.action)
+        .map(|playing| playing.motion.clone());
+    let shown = motion.clone().unwrap_or(Motion::Action(actor.action));
+    let resolved = built.resolve(stance, &shown, actor.pose);
+    let clip = resolved.source.is_some().then(|| resolved.clip.clone());
+    let held = entity
+        .get::<Puppet>()
+        .map(|puppet| {
+            puppet
+                .held()
+                .map(|(hand, item, prop)| ProbeHeld {
+                    hand,
+                    item,
+                    at: world.get::<GlobalTransform>(prop).and_then(|placed| {
+                        let at = placed.translation();
+                        view.map(|view| view.window_point(Pos::new(at.x, at.z), Meters(at.y)))
+                    }),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     Some(ProbeBody {
         id: entity.id(),
         name: entity
@@ -918,6 +969,22 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
             .get::<StatusBadges>()
             .map(|badges| badges.0.clone())
             .unwrap_or_default(),
+        skeleton: built.skeleton_id(),
+        stance,
+        clip,
+        motion,
+        wearing: entity
+            .get::<Wearing>()
+            .map(|wearing| {
+                wearing
+                    .hands
+                    .iter()
+                    .map(|(&hand, &item)| (hand, item))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        held,
+        layered: entity.get::<Layered>().is_some_and(Layered::moving),
     })
 }
 
