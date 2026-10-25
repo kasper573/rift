@@ -5,7 +5,7 @@
 // on the one it hit rather than beside them. Drawn on the pixel grid in two tones.
 //   color    the stroke; its alpha scales the whole slash
 //   angle    degrees the stroke is turned from level, positive turning it clockwise
-//   length   how long the stroke is, in tiles
+//   length   how long the stroke is, in metres
 //   streaks  how many strokes cut side by side
 const SWEEP: f32 = 0.45;
 const SPACING: f32 = 0.26;
@@ -15,7 +15,7 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
     let suv = site_uv(pixel_uv(uv));
     let image = sample(suv);
     let p = site_local(suv);
-    let pixel = site.tiles.x / max(site.size.x, 1.0);
+    let pixel = site.metres.x / max(site.size.x, 1.0);
     let t = site.progress;
     let on_sprite = site.kind == SITE_ACTOR || site.kind == SITE_OBJECT;
     let a = radians(params.angle);

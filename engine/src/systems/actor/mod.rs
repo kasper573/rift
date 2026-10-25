@@ -17,11 +17,12 @@ use strum::{AsRefStr, EnumString, VariantArray};
 use crate::core::content::{ContentRegistry, LoadStep};
 use crate::core::geometry::{Capsule, Radians};
 use crate::core::math::{Pos, Rgba};
+use crate::core::render::{Pointed, capsule_hit, ground_height, world_point};
 use crate::core::time::PlaybackRate;
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::AreaObject;
 use crate::systems::dialogue;
-use crate::systems::movement::{self, Path, Position};
+use crate::systems::movement::{self, Path, Position, RenderPosition};
 use crate::systems::stat::{self, Stats};
 
 pub fn register(app: &mut App) {
@@ -124,27 +125,40 @@ pub struct Actor {
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Hitbox(pub Capsule);
 
-/// Whom a point on the ground picks: the nearest actor standing over it or object lying under it
-/// that `accept` takes, the dead and `except` passed over.
+/// Whom the pointer picks: the nearest actor its ray runs through or thing lying under the ground
+/// it points at that `accept` takes, the dead and `except` passed over.
 pub fn target_at(
     world: &mut World,
-    point: Pos<Meters>,
+    pointed: &Pointed,
     except: Option<Entity>,
     accept: impl Fn(&World, Entity) -> bool,
 ) -> Option<Entity> {
-    let mut hits: Vec<(Entity, f32)> = world
-        .query::<(Entity, &Position, &Hitbox)>()
+    let bodies: Vec<(Entity, Pos<Meters>, Capsule)> = world
+        .query::<(Entity, &Position, Option<&RenderPosition>, &Hitbox)>()
         .iter(world)
-        .filter(|(entity, at, hitbox)| Some(*entity) != except && hitbox.0.covers(at.pos, point))
-        .map(|(entity, at, _)| (entity, (point - at.pos).length()))
+        .filter(|(entity, ..)| Some(*entity) != except)
+        .map(|(entity, at, drawn, hitbox)| {
+            (entity, drawn.map_or(at.pos, |drawn| drawn.0), hitbox.0)
+        })
         .collect();
-    hits.extend(
-        world
-            .query::<(Entity, &AreaObject)>()
-            .iter(world)
-            .filter(|(entity, object)| Some(*entity) != except && object.shape.covers(point))
-            .map(|(entity, object)| (entity, (point - object.shape.center()).length())),
-    );
+    let mut hits: Vec<(Entity, f32)> = bodies
+        .into_iter()
+        .filter_map(|(entity, at, capsule)| {
+            let foot = world_point(at, ground_height(world, at));
+            capsule_hit(pointed.ray, foot, capsule.radius.0, capsule.height.0)
+                .map(|along| (entity, along))
+        })
+        .collect();
+    if let Some(ground) = pointed.ground {
+        let along = world_point(ground, ground_height(world, ground)).distance(pointed.ray.origin);
+        hits.extend(
+            world
+                .query::<(Entity, &AreaObject)>()
+                .iter(world)
+                .filter(|(entity, object)| Some(*entity) != except && object.shape.covers(ground))
+                .map(|(entity, _)| (entity, along)),
+        );
+    }
     hits.sort_by(|(_, a), (_, b)| a.total_cmp(b));
     hits.into_iter()
         .map(|(entity, _)| entity)

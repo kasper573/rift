@@ -75,7 +75,6 @@ pub fn show_vfx(editor: &mut Editor, ui: &mut Ui, key: &str) {
                 layers,
                 inside,
                 &specs,
-                &[],
             );
         });
     });
@@ -143,7 +142,6 @@ pub fn show_shader(editor: &mut Editor, ui: &mut Ui, key: &str) {
                 delay: Seconds(0.0),
             };
             let specs: Vec<ParamSpec> = def.params.iter().map(ParamSpec::from).collect();
-            let drafts = [(key.to_owned(), current.clone())];
             preview(
                 editor,
                 ui,
@@ -151,7 +149,6 @@ pub fn show_shader(editor: &mut Editor, ui: &mut Ui, key: &str) {
                 vec![layer],
                 None,
                 &specs,
-                &drafts,
             );
         });
     });

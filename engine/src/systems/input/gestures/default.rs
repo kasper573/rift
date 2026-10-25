@@ -1,14 +1,13 @@
 use bevy::prelude::*;
 
-use crate::core::math::Pos;
-use crate::core::units::Meters;
+use crate::core::render::Pointed;
 use crate::systems::input::gestures::{ClickClaim, Cursor, Gesture};
 use crate::systems::interface::CursorShape;
 
 pub struct DefaultGesture;
 
 impl Gesture for DefaultGesture {
-    fn claim(&self, _world: &mut World, _tile: Option<Pos<Meters>>) -> Option<ClickClaim> {
+    fn claim(&self, _world: &mut World, _pointed: Option<&Pointed>) -> Option<ClickClaim> {
         Some(ClickClaim::Nothing)
     }
 

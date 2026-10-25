@@ -1,10 +1,11 @@
 use super::ground::{GroundDef, Walk};
 use super::prop::PropPlacement;
-use super::terrain::{Heightfield, Paint, Terrain};
+use super::terrain::Terrain;
 use crate::core::audio::playback::SfxId;
 use crate::core::content::Content;
 use crate::core::geometry::corners;
 use crate::core::math::{Pos, Rect};
+use crate::core::terrain::{Heightfield, Paint};
 use crate::core::units::{Cell, CellPos, GridDims, GridSize, Meters};
 use crate::systems::movement::{AGENT_RADIUS, NavMesh};
 

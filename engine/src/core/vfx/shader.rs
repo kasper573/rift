@@ -203,6 +203,11 @@ pub struct ParamSlot {
 /// text the load validated.
 pub struct CompiledVfxShaders(pub HashMap<VfxShaderId, String>);
 
+/// The bind group a material's own bindings sit in, for a quad drawn in the world or over the
+/// presented frame.
+const WORLD_GROUP: u32 = 3;
+const PRESENT_GROUP: u32 = 2;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShaderError {
     pub place: ErrorPlace,
@@ -250,13 +255,35 @@ impl VfxShaderDef {
         layout(&self.params)
     }
 
-    /// The shader's text as the pipeline compiles it: the row's file first, so its lines keep their
-    /// numbers, then the prelude, the site's constants and the struct its parameters are read
-    /// through.
+    /// The shader's text as the pipeline compiles it for its stage: the row's file first, so its
+    /// lines keep their numbers, then the header of the stage it runs on, the prelude, the site's
+    /// constants and the struct its parameters are read through.
     pub fn compose(&self, source: &str) -> String {
-        let mut composed = String::with_capacity(source.len() + PRELUDE.len() + 512);
+        self.composed(&self.stage.header(), source)
+    }
+
+    /// Whether the composed shader is WESL, importing the engine's own shader libraries, rather
+    /// than plain WGSL.
+    pub fn composes_wesl(&self) -> bool {
+        self.stage == Stage::Surface
+    }
+
+    /// The source goes first so its lines keep their numbers in what the validator reports; a WESL
+    /// header's imports alone go before it, as the module must open with them.
+    fn composed(&self, header: &str, source: &str) -> String {
+        let mut composed = String::with_capacity(source.len() + header.len() + PRELUDE.len() + 512);
+        let (imports, declarations): (Vec<&str>, Vec<&str>) =
+            header.lines().partition(|line| line.starts_with("import "));
+        for import in imports {
+            composed.push_str(import);
+            composed.push('\n');
+        }
         composed.push_str(source);
         if !source.ends_with('\n') {
+            composed.push('\n');
+        }
+        for line in declarations {
+            composed.push_str(line);
             composed.push('\n');
         }
         composed.push_str(PRELUDE);
@@ -283,23 +310,28 @@ impl VfxShaderDef {
                 message: "no vfx function".to_owned(),
             });
         }
-        let composed = self.compose(source);
+        let checked = self.composed(&quad_header(WORLD_GROUP), source);
         let own_lines = source.lines().count();
-        validate(&composed).map_err(|error| ShaderError {
+        validate(&checked).map_err(|error| ShaderError {
             place: match error.place {
                 ErrorPlace::Text { line, .. } if line > own_lines => ErrorPlace::WholeFile,
                 place => place,
             },
             ..error
         })?;
-        Ok(composed)
+        Ok(self.compose(source))
     }
 }
 
 /// Every name the prelude and the composed constants give a shader to read: what an editor
 /// highlights as the vfx vocabulary.
 pub fn prelude_names() -> Vec<String> {
-    let mut names = vec!["vfx".to_owned(), "site".to_owned(), "params".to_owned()];
+    let mut names = vec![
+        "vfx".to_owned(),
+        "site".to_owned(),
+        "params".to_owned(),
+        "sample".to_owned(),
+    ];
     for line in PRELUDE.lines() {
         let declared = line
             .strip_prefix("fn ")
@@ -503,9 +535,27 @@ impl Display for ShaderError {
     }
 }
 
-/// The prelude every shader is composed with: the vertex output, the site bindings and the helpers
-/// a shader reads the site through. It defines the fragment entry, which calls the shader's `vfx`.
+/// The prelude every shader is composed with: the site and the helpers a shader reads it through.
 const PRELUDE: &str = include_str!("prelude.wgsl");
+/// The header of a shader drawn on a quad: its vertex output, its bindings in the group `GROUP`
+/// stands for, `sample` and the fragment entry, which calls the shader's `vfx`.
+const QUAD_HEADER: &str = include_str!("quad.wgsl");
+/// The header of a shader run in the material of the thing it plays on.
+const SURFACE_HEADER: &str = include_str!("surface.wesl");
+
+fn quad_header(group: u32) -> String {
+    QUAD_HEADER.replace("GROUP", &group.to_string())
+}
+
+impl Stage {
+    fn header(self) -> String {
+        match self {
+            Stage::Surface => SURFACE_HEADER.to_owned(),
+            Stage::Ground | Stage::Billboard => quad_header(WORLD_GROUP),
+            Stage::Screen | Stage::Text => quad_header(PRESENT_GROUP),
+        }
+    }
+}
 
 fn layout(params: &[ShaderParam]) -> Vec<ParamSlot> {
     let mut cursor: usize = 0;

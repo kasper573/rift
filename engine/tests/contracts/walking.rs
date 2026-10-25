@@ -152,6 +152,20 @@ fn a_walk_goes_round_what_blocks_and_through_a_notch_a_body_fits() {
         );
     }
 
+    let edge = Offset::new(5.0 - 1.0 - AGENT_RADIUS.0 + 0.03, 0.0);
+    let hair_off = Walk::among(
+        json!({ "type": "circle", "radius": 1.0 }),
+        json!([{ "type": "prop", "prop": path("prop", "block"), "at": { "x": 7.0, "y": 7.0 } }]),
+        Pos::new(2.0, 7.0),
+    )
+    .toward(edge)
+    .trail();
+    let last = hair_off.last().expect("a trail");
+    assert!(
+        (*last - edge).length() < 0.05,
+        "asked for a hair past the boulder's edge, ended at {last:?}"
+    );
+
     let wall = |gap: f32| {
         let width = 6.0 - gap / 2.0;
         let footprint = json!({ "type": "box", "width": width, "depth": 0.5 });

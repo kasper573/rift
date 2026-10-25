@@ -92,7 +92,7 @@ fn play(shoot: &mut Shoot) {
     me.wait_within("the pack around me", SURROUNDING, |snapshot| {
         surrounded_by(snapshot, PACK, 3).then_some(())
     });
-    me.caption("They surround you, each on a tile of its own");
+    me.caption("They surround you, each on a spot of its own");
     me.hold();
 }
 

@@ -3,14 +3,12 @@ use bevy::render::render_resource::ShaderType;
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
 
-use super::TILE;
-use super::camera::WorldCamera;
-use super::present::{self, SCALE};
-use super::screen::ToScreen;
+use super::camera::{self, View};
+use super::present;
 use crate::core::geometry::Radians;
 use crate::core::math::Pos;
 use crate::core::time::Seconds;
-use crate::core::units::{GROUND_ORIGIN, Meters};
+use crate::core::units::Meters;
 
 #[derive(
     Serialize,
@@ -78,7 +76,10 @@ pub fn covering(transition: Res<ActiveTransition>) -> bool {
 }
 
 pub fn freeze(world: &mut World, viewed_at: Pos<Meters>, heading: Radians) {
-    let Some(from) = world_camera_marks(world, viewed_at) else {
+    let scale = world.resource::<present::PresentScale>().0.max(0.01);
+    let Some(from) =
+        camera::view_of(world).and_then(|view| target_marks(world, &view, scale, viewed_at))
+    else {
         return;
     };
     let style = world.resource::<ScreenTransitionPreference>().0;
@@ -123,7 +124,9 @@ impl ActiveTransition {
     pub(super) fn advance(
         &mut self,
         frame: Seconds,
-        camera: Option<(&Camera, &GlobalTransform)>,
+        world: &World,
+        view: Option<View>,
+        scale: f32,
     ) -> CutUniform {
         let Some(cut) = &mut self.0 else {
             return CutUniform::IDLE;
@@ -134,30 +137,26 @@ impl ActiveTransition {
             self.0 = None;
             return CutUniform::IDLE;
         }
-        let size = camera
-            .and_then(|(camera, _)| camera.logical_viewport_size())
-            .unwrap_or(Vec2::ONE);
+        let size = view.map_or(Vec2::ONE, |view| view.viewport() / scale);
         let to = cut
             .arrival
             .as_ref()
-            .zip(camera)
-            .and_then(|(arrival, (camera, transform))| {
-                target_marks(camera, transform, arrival.viewed_at)
-            })
+            .zip(view.as_ref())
+            .and_then(|(arrival, view)| target_marks(world, view, scale, arrival.viewed_at))
             .unwrap_or(cut.from);
         CutUniform {
             style: cut.style as u32,
             out_progress: progress.cover,
             in_progress: progress.uncover,
             time: cut.played.0,
-            tile: tile_texels(),
-            pixel: SCALE,
+            tile: GRID_TEXELS,
+            pixel: 1.0,
             from_radius: radius(cut.from, size),
             to_radius: radius(to, size),
             from_anchor: cut.from.viewed,
             to_anchor: to.viewed,
-            from_grid: cut.from.tile_origin,
-            to_grid: to.tile_origin,
+            from_grid: cut.from.viewed,
+            to_grid: to.viewed,
             sweep: -cut.heading,
             from_reach: reach(cut.from, size),
             to_reach: reach(to, size),
@@ -222,11 +221,14 @@ struct Arrival {
     viewed_at: Pos<Meters>,
 }
 
+/// Where the viewed point shows in the world's picture, in its pixels.
 #[derive(Clone, Copy)]
 struct TargetMarks {
     viewed: Vec2,
-    tile_origin: Vec2,
 }
+
+/// The cells a transition works in, in pixels of the world's picture.
+const GRID_TEXELS: f32 = 24.0;
 
 struct Progress {
     cover: f32,
@@ -264,32 +266,15 @@ fn fraction(elapsed: Seconds, span: Seconds) -> f32 {
     (elapsed.0 / span.0).clamp(0.0, 1.0)
 }
 
-fn tile_texels() -> f32 {
-    TILE.0 * SCALE
-}
-
-fn world_camera_marks(world: &mut World, viewed_at: Pos<Meters>) -> Option<TargetMarks> {
-    let (camera, transform) = world
-        .query_filtered::<(&Camera, &GlobalTransform), With<WorldCamera>>()
-        .single(world)
-        .ok()?;
-    target_marks(camera, transform, viewed_at)
-}
-
 fn target_marks(
-    camera: &Camera,
-    transform: &GlobalTransform,
+    world: &World,
+    view: &View,
+    scale: f32,
     viewed_at: Pos<Meters>,
 ) -> Option<TargetMarks> {
-    let project = |at: Pos<Meters>| {
-        camera
-            .world_to_viewport(transform, at.to_screen().extend(0.0))
-            .ok()
-    };
-    Some(TargetMarks {
-        viewed: project(viewed_at)?,
-        tile_origin: project(GROUND_ORIGIN)?,
-    })
+    let ground = camera::ground_height(world, viewed_at);
+    let viewed = view.project(camera::world_point(viewed_at, ground))? / scale;
+    Some(TargetMarks { viewed })
 }
 
 fn corners(size: Vec2) -> [Vec2; 4] {
@@ -306,11 +291,11 @@ fn radius(marks: TargetMarks, size: Vec2) -> f32 {
         .into_iter()
         .map(|corner| corner.distance(marks.viewed))
         .fold(0.0, f32::max)
-        + SCALE
+        + 1.0
 }
 
 fn reach(marks: TargetMarks, size: Vec2) -> f32 {
-    let cell = |at: Vec2| ((at - marks.tile_origin) / tile_texels()).floor();
+    let cell = |at: Vec2| ((at - marks.viewed) / GRID_TEXELS).floor();
     let center = cell(marks.viewed);
     corners(size - Vec2::ONE)
         .into_iter()

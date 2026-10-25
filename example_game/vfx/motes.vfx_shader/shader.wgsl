@@ -5,8 +5,8 @@
 // as long as the layer plays. Drawn over the site's own image when it has one.
 //   color   the motes' color; its alpha scales them all
 //   count   how many motes are in the air at once
-//   speed   how fast they rise, in site heights per second over a sprite, tiles per second on the ground
-//   size    a mote's radius, as a fraction of the site's width over a sprite, of a tile on the ground
+//   speed   how fast they rise, in site heights per second over a sprite, metres per second on the ground
+//   size    a mote's radius, as a fraction of the site's width over a sprite, of a metre on the ground
 //   spread  how wide the swarm is, as a fraction of the site's width
 fn vfx(uv: vec2<f32>) -> vec4<f32> {
     let suv = site_uv(pixel_uv(uv));
@@ -14,7 +14,7 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
     let count = u32(clamp(params.count, 1.0, 64.0));
     let on_ground = site.kind == SITE_AREA || site.kind == SITE_PATH;
     let pixel = 1.0 / max(site.size, vec2<f32>(1.0));
-    let across = select(site.size.x, site.size.x / max(site.tiles.x, 0.01), on_ground);
+    let across = select(site.size.x, site.size.x / max(site.metres.x, 0.01), on_ground);
     let radius = max(round(max(params.size, 0.005) * across), 1.0);
     let tick = floor(site.time * 12.0) / 12.0;
     var light = 0.0;
@@ -28,7 +28,7 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
         if on_ground {
             let birth = vec2<f32>(hash(seed + 5.3), hash(seed + 13.7));
             born = site_cover(birth);
-            at = birth + vec2<f32>(sway, -life * 1.5 / max(site.tiles.y, 0.01));
+            at = birth + vec2<f32>(sway, -life * 1.5 / max(site.metres.y, 0.01));
         } else {
             let lane = (hash(seed + 5.3) - 0.5) * params.spread;
             let birth = vec2<f32>(0.5 + lane, 0.25 + 0.7 * hash(seed + 13.7));

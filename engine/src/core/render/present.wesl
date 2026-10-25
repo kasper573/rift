@@ -28,6 +28,12 @@ struct Grade {
 @group(2) @binding(2) var<uniform> grade: Grade;
 @group(2) @binding(3) var snapshot_texture: texture_2d<f32>;
 @group(2) @binding(4) var<uniform> cut: Cut;
+struct AreaGrade {
+    color: vec3<f32>,
+    strength: f32,
+}
+
+@group(2) @binding(5) var<uniform> area: AreaGrade;
 
 const CRUMBLE: u32 = 0u;
 const TILE_WAVE: u32 = 1u;
@@ -39,33 +45,33 @@ const DITHER: u32 = 5u;
 const VOID: vec3<f32> = vec3<f32>(0.0030, 0.0034, 0.0052);
 
 var<private> size: vec2<f32>;
-var<private> per_pixel: vec2<f32>;
 
 @fragment
 fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     size = vec2<f32>(textureDimensions(world_texture));
     let texel = mesh.uv * size;
-    per_pixel = fwidth(texel);
-    var color = textureSampleLevel(world_texture, world_sampler, crisp(texel), 0.0);
+    var color = textureSampleLevel(world_texture, world_sampler, texel / size, 0.0);
     if cut.in_progress < 1.0 {
         color = vec4<f32>(transition(texel), 1.0);
     }
-    return vec4<f32>(min(color.rgb * grade.scale + grade.offset, vec3<f32>(1.0)), color.a);
+    let graded = graded_by_area(color.rgb);
+    return vec4<f32>(min(graded * grade.scale + grade.offset, vec3<f32>(1.0)), color.a);
 }
 
-fn crisp(texel: vec2<f32>) -> vec2<f32> {
-    let from_center = fract(texel) - 0.5;
-    let ramp = vec2<f32>(0.5) - 0.5 * per_pixel;
-    let f = (from_center - clamp(from_center, -ramp, ramp)) / per_pixel + 0.5;
-    return (floor(texel) + f) / size;
+// The area's grade: the picture goes `strength` of the way to its own brightness in the grade's
+// colour, so a night tints everything blue and keeps its light and shade.
+fn graded_by_area(color: vec3<f32>) -> vec3<f32> {
+    let brightness = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let tinted = area.color * brightness * 1.6;
+    return mix(color, tinted, area.strength);
 }
 
 fn live(texel: vec2<f32>) -> vec3<f32> {
-    return textureSampleLevel(world_texture, world_sampler, crisp(texel), 0.0).rgb;
+    return textureSampleLevel(world_texture, world_sampler, texel / size, 0.0).rgb;
 }
 
 fn held(texel: vec2<f32>) -> vec3<f32> {
-    return textureSampleLevel(snapshot_texture, world_sampler, crisp(texel), 0.0).rgb;
+    return textureSampleLevel(snapshot_texture, world_sampler, texel / size, 0.0).rgb;
 }
 
 fn transition(p: vec2<f32>) -> vec3<f32> {

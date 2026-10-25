@@ -43,8 +43,8 @@ impl NavMesh {
         triangulation.prebuild();
         let mut mesh = triangulation.as_navmesh();
         mesh.merge_polygons();
-        mesh.search_delta = LOCATE_FUZZ;
-        mesh.search_steps = 1;
+        mesh.search_delta = LOCATE_FUZZ / (LOCATE_RINGS - 1) as f32;
+        mesh.search_steps = LOCATE_RINGS;
         mesh.bake();
         let layer = &mesh.layers[0];
         let polygons: Vec<Vec<Pos<Meters>>> = layer
@@ -251,13 +251,18 @@ impl NavMesh {
         )
     }
 
+    /// The polygon holding `at`, or the nearest within the fuzz: a point on a polygon's edge, as a
+    /// route's corners are, lands a pixel or two off it through the window.
     fn locate(&self, at: Pos<Meters>) -> Option<usize> {
         if !self.bounds.contains(at) {
             return None;
         }
+        let at = vec2(at);
         self.mesh
-            .get_point_layer(vec2(at))
+            .get_point_layer(at)
             .first()
+            .copied()
+            .or_else(|| self.mesh.get_closest_point(at))
             .map(|coords| (coords.polygon() & POLYGON_BITS) as usize)
     }
 
@@ -281,7 +286,10 @@ struct Triangle {
 
 /// How far off a point may lie and still be found on the mesh, so a walk ending on a polygon's edge
 /// stands on it.
-const LOCATE_FUZZ: f32 = 1e-3;
+/// How far off the mesh a point may lie and still count as on it, and be routed from or to, searched
+/// along rings out to there.
+const LOCATE_FUZZ: f32 = 0.05;
+const LOCATE_RINGS: u32 = 3;
 const POLYGON_BITS: u32 = 0x00FF_FFFF;
 const AREA_EPSILON: f32 = 1e-6;
 const DRAWS: usize = 32;

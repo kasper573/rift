@@ -13,7 +13,7 @@ use crate::core::babble::{BabbleId, BabbleRank, Babbler, Babbling};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::math::Pos;
-use crate::core::render::tile_to_window;
+use crate::core::render::window_point;
 use crate::core::text::{self, StyledLine, Typewriter};
 use crate::core::time::Seconds;
 use crate::core::units::{MeterPos, Meters};
@@ -732,7 +732,7 @@ fn spot(world: &mut World, speaking: &Speaking, window: Vec2) -> Spot {
     };
     let (Some(crown), Some(feet)) = (
         plate::crown(world, body),
-        tile_to_window(world, Pos::new(at.x, at.y + 0.5)),
+        window_point(world, at, Meters(0.0)),
     ) else {
         return Spot::Nowhere;
     };

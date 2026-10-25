@@ -5,9 +5,9 @@ use engine::core::content::{
     ContentFile, ContentProblem, FolderReader, Unreadable, name_of, numbered, table_of,
     with_content,
 };
+use engine::core::terrain::TerrainSize;
 use engine::systems::area::blueprint::{BlueprintDef, Placement};
 use engine::systems::area::scene::{self, ModuleNode, SceneFolder, SceneNode};
-use engine::systems::area::terrain::TerrainSize;
 use engine::systems::area::{AreaDef, AreaModule};
 use engine::systems::script::Variable;
 

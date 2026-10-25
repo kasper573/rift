@@ -1,5 +1,4 @@
 use engine::core::math::{Offset, Pos, Rect as TileRect};
-use engine::core::render::TILE;
 use ui::egui;
 use ui::egui::{Pos2, Rect, Response, Ui, Vec2};
 
@@ -12,9 +11,12 @@ pub struct Viewport<U> {
     pub zoom: f32,
 }
 
+/// How many canvas pixels a metre of the world takes at a zoom of one.
+pub const PX_PER_METER: f32 = 16.0;
+
 impl<U> Viewport<U> {
     pub fn scale(&self) -> f32 {
-        self.zoom * TILE.0
+        self.zoom * PX_PER_METER
     }
 
     pub fn to_screen(&self, p: Pos<U>) -> Pos2 {

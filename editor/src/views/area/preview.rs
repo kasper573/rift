@@ -1,9 +1,10 @@
 use engine::core::math::Pos;
-use engine::core::render::TILE;
 use engine::systems::area;
 use engine::systems::script::Place;
 use ui::controls;
 use ui::egui;
+
+use crate::views::navigation::PX_PER_METER;
 use ui::egui::{Sense, Ui, Vec2};
 use ui::form;
 use ui::panel;
@@ -95,7 +96,7 @@ pub fn pick_preview(editor: &mut Editor, ui: &mut Ui) {
     let zoom = navigation::fit_zoom(
         rect.size(),
         Vec2::new(area.size.width, area.size.height),
-        TILE.0,
+        PX_PER_METER,
     );
     let center = Pos::new(area.size.width / 2.0 - 0.5, area.size.height / 2.0 - 0.5);
     let painter = ui.painter_at(rect);
@@ -107,7 +108,7 @@ pub fn pick_preview(editor: &mut Editor, ui: &mut Ui) {
         &area_key,
         rect,
         center,
-        zoom * TILE.0,
+        zoom * PX_PER_METER,
     );
     let canvas = navigation::Viewport {
         screen: rect,

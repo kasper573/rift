@@ -16,7 +16,6 @@ use bevy_egui::{
 use engine::core::content::{Content, ContentFile, FolderReader, Unreadable, fields_file, version};
 use engine::core::math::Pos;
 use engine::core::units::{CellPos, Meters};
-use engine::core::vfx::render::{VfxAssets, VfxMaterial};
 use engine::systems;
 use engine::systems::area::AreaModuleKind;
 use engine::systems::frame_rate::{self, FrameCountPlugin, FrameRates};
@@ -76,24 +75,15 @@ impl Plugin for EditorPlugin {
         if let Some(folder) = &self.launch.folder {
             editor.open_folder(folder);
         }
-        app.add_plugins((
-            EguiPlugin::default(),
-            FrameCountPlugin,
-            bevy::sprite_render::Material2dPlugin::<VfxMaterial>::default(),
-        ))
-        .insert_resource(editor)
-        .init_resource::<VfxAssets>()
-        .add_systems(Startup, setup_camera)
-        .add_systems(
-            PreUpdate,
-            theme_context.after(EguiPreUpdateSet::InitContexts),
-        )
-        .add_systems(EguiPrimaryContextPass, editor_ui)
-        .add_systems(Update, background)
-        .add_systems(
-            PostUpdate,
-            engine::core::render::order_rows.before(bevy::transform::TransformSystems::Propagate),
-        );
+        app.add_plugins((EguiPlugin::default(), FrameCountPlugin))
+            .insert_resource(editor)
+            .add_systems(Startup, setup_camera)
+            .add_systems(
+                PreUpdate,
+                theme_context.after(EguiPreUpdateSet::InitContexts),
+            )
+            .add_systems(EguiPrimaryContextPass, editor_ui)
+            .add_systems(Update, background);
     }
 }
 

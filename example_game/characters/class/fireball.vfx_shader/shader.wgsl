@@ -18,7 +18,7 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
     let t = site.progress;
     let tick = floor(site.time * 12.0) / 12.0;
     let front = smoothstep(0.0, 0.25, t) * 1.08;
-    let q = suv * site.tiles;
+    let q = suv * site.metres;
     let rising = fbm(q * 1.7 + vec2<f32>(0.0, tick * 2.6));
     let flicker = fbm(q * 3.4 + vec2<f32>(tick * 0.5, tick * 5.0));
     let lick = (rising - 0.5) * 0.4;
@@ -62,7 +62,7 @@ fn burnished(rgb: vec3<f32>, light: f32) -> vec3<f32> {
 fn burning(suv: vec2<f32>) -> f32 {
     var body = 0.0;
     for (var k = 0u; k < 4u; k++) {
-        let below = suv + vec2<f32>(0.0, f32(k) * 0.2 / max(site.tiles.y, 0.01));
+        let below = suv + vec2<f32>(0.0, f32(k) * 0.2 / max(site.metres.y, 0.01));
         body = max(body, sample(below).a * (1.0 - f32(k) * 0.2));
     }
     return body;
@@ -76,7 +76,7 @@ fn embers(suv: vec2<f32>, t: f32, tick: f32) -> f32 {
         let seed = f32(i) * 7.31;
         let birth = vec2<f32>(hash(seed + 5.3), hash(seed + 13.7));
         let life = fract(tick * (0.35 + 0.3 * hash(seed + 1.7)) + hash(seed + 3.1));
-        let lift = vec2<f32>((hash(seed + 9.2) - 0.5) * 0.6, -life * 1.8) / max(site.tiles, vec2<f32>(0.01));
+        let lift = vec2<f32>((hash(seed + 9.2) - 0.5) * 0.6, -life * 1.8) / max(site.metres, vec2<f32>(0.01));
         let at = birth + lift;
         let d = abs(suv - at) / pixel;
         let square = step(max(d.x, d.y), 1.0);
@@ -91,7 +91,7 @@ fn embers(suv: vec2<f32>, t: f32, tick: f32) -> f32 {
 fn smoke(suv: vec2<f32>, p: vec2<f32>, t: f32, tick: f32) -> f32 {
     let risen = smoothstep(0.3, 1.0, t) * 1.4;
     let wander = (fbm(suv * 3.0 + tick * 0.2) - 0.5) * 0.3;
-    let source = suv + vec2<f32>(wander, risen) / max(site.tiles, vec2<f32>(0.01));
+    let source = suv + vec2<f32>(wander, risen) / max(site.metres, vec2<f32>(0.01));
     let puffs = fbm(p * 1.6 + vec2<f32>(0.3, -tick * 1.1 + risen));
     let thick = smoothstep(0.35, 0.75, t) * (1.0 - smoothstep(0.75, 1.0, t));
     let body = smoothstep(0.55, 0.7, puffs) * burnt(source) * thick;

@@ -1,6 +1,8 @@
+pub mod camera;
 mod escape;
 pub mod gestures;
 pub mod map;
+pub mod marks;
 
 use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
@@ -8,14 +10,8 @@ use bevy::prelude::*;
 use bevy::window::{CursorMoved, PrimaryWindow};
 use bevy_egui::input::egui_wants_any_keyboard_input;
 
-use crate::core::content::Content;
-use crate::core::math::Pos;
-use crate::core::render::TILE;
-use crate::core::render::screen::ToScreen;
-use crate::core::units::Meters;
-use crate::systems::area::{self, AreaTag};
 use crate::systems::player::RespawnRequest;
-use crate::systems::player::session::{self, MyCharacter};
+use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 
 pub struct PlayerInputPlugin;
@@ -24,67 +20,16 @@ impl Plugin for PlayerInputPlugin {
     fn build(&self, app: &mut App) {
         map::plugin(app);
         gestures::plugin(app);
+        marks::plugin(app);
+        camera::plugin(app);
         escape::plugin(app);
-        app.add_systems(Startup, setup_highlight)
-            .add_systems(Update, touch_as_mouse)
-            .add_systems(
-                Update,
-                (
-                    respawn_when_dead.run_if(not(egui_wants_any_keyboard_input)),
-                    update_tile_highlight,
-                )
-                    .run_if(in_state(ClientScreen::Area)),
-            );
+        app.add_systems(Update, touch_as_mouse).add_systems(
+            Update,
+            respawn_when_dead
+                .run_if(not(egui_wants_any_keyboard_input))
+                .run_if(in_state(ClientScreen::Area)),
+        );
     }
-}
-
-#[derive(Resource)]
-pub struct ActiveTileHighlight {
-    pub pos: Pos<Meters>,
-    pub image: Handle<Image>,
-}
-
-#[derive(Component)]
-struct TileHighlight;
-
-fn setup_highlight(mut commands: Commands) {
-    commands.spawn((
-        TileHighlight,
-        Sprite {
-            custom_size: Some(Vec2::splat(TILE.0)),
-            ..default()
-        },
-        Transform::default(),
-        Visibility::Hidden,
-    ));
-}
-
-fn update_tile_highlight(
-    highlight: Option<Res<ActiveTileHighlight>>,
-    viewpoint: Res<MyCharacter>,
-    content: Res<Content>,
-    areas: Query<&AreaTag>,
-    mut sprite: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<TileHighlight>>,
-) {
-    let Ok((mut sprite, mut transform, mut visibility)) = sprite.single_mut() else {
-        return;
-    };
-    let Some(highlight) = highlight else {
-        *visibility = Visibility::Hidden;
-        return;
-    };
-    let Some(z) = highlight_z(&content, &viewpoint, &areas) else {
-        *visibility = Visibility::Hidden;
-        return;
-    };
-    *visibility = Visibility::Visible;
-    sprite.image = highlight.image.clone();
-    transform.translation = highlight.pos.to_screen().extend(z);
-}
-
-fn highlight_z(content: &Content, viewpoint: &MyCharacter, areas: &Query<&AreaTag>) -> Option<f32> {
-    let tag = areas.get(viewpoint.0?).ok()?;
-    Some(area::load(content, tag.area).sort_base())
 }
 
 fn touch_as_mouse(

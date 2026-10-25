@@ -11,8 +11,8 @@ use ui::ink::{Ground, Prose};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band, GuiImage};
 use crate::core::math::Pos;
-use crate::core::render::tile_to_window;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
+use crate::core::render::window_point;
 use crate::core::text::{self, TextShadow};
 use crate::core::units::Meters;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
@@ -60,7 +60,7 @@ pub fn crown(world: &mut World, actor: Entity) -> Option<Vec2> {
                 .get::<RenderPosition>(actor)
                 .map(|rendered| rendered.0)
                 .or_else(|| world.get::<Position>(actor).map(|position| position.pos))?;
-            tile_to_window(world, head(at, world.get::<Hitbox>(actor)?.0.height))
+            window_point(world, at, world.get::<Hitbox>(actor)?.0.height)
         }
     }
 }
@@ -104,11 +104,6 @@ pub fn label_of(world: &World, content: &Content, actor: Entity) -> Option<Plate
         world.get::<Attitude>(actor),
         world.get::<AreaObject>(actor).is_some(),
     )
-}
-
-/// Where a plate hangs from: the top of the hitbox of an actor standing at `at`.
-pub fn head(at: Pos<Meters>, height: Meters) -> Pos<Meters> {
-    Pos::new(at.x, at.y + 0.5 - height.0)
 }
 
 /// Draws a plate without marks, hanging over `top` as the game hangs them over an actor's head.
@@ -175,7 +170,7 @@ pub fn draw_plates(world: &mut World) {
     let plates: Vec<Plate> = labelled
         .into_iter()
         .filter_map(|(actor, label, at, hitbox)| {
-            let top = tile_to_window(world, head(at, hitbox.0.height))?;
+            let top = window_point(world, at, hitbox.0.height)?;
             let icons: Vec<Option<GuiImage>> = attention::plate_marks(world, viewer, actor)
                 .into_iter()
                 .map(|mark| gui::image(world, &mark.get(&content).icon))

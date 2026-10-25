@@ -1,19 +1,20 @@
 use bevy::prelude::*;
 
-use crate::core::math::Pos;
-use crate::core::units::Meters;
+use crate::core::render::Pointed;
+use crate::core::render::world::decal::GroundDecal;
 use crate::systems::input::gestures::{ClickClaim, Cursor, Gesture};
+use crate::systems::input::marks;
 use crate::systems::interact::{self, InteractRequest};
 use crate::systems::player::session;
 
 pub struct InteractGesture;
 
 impl Gesture for InteractGesture {
-    fn claim(&self, world: &mut World, tile: Option<Pos<Meters>>) -> Option<ClickClaim> {
+    fn claim(&self, world: &mut World, pointed: Option<&Pointed>) -> Option<ClickClaim> {
         if !session::is_alive(world) {
             return None;
         }
-        interact::interactable_at(world, tile?).map(ClickClaim::Interact)
+        interact::interactable_at(world, pointed?).map(ClickClaim::Interact)
     }
 
     fn drive(&self, world: &mut World, claim: Option<ClickClaim>, start: bool) {
@@ -30,5 +31,12 @@ impl Gesture for InteractGesture {
         };
         let verb = interact::interaction_of(world, target)?.verb;
         Some(Cursor::Shaped(verb.cursor()))
+    }
+
+    fn mark(&self, world: &mut World, claim: ClickClaim) -> Option<GroundDecal> {
+        let ClickClaim::Interact(target) = claim else {
+            return None;
+        };
+        marks::under(world, target, marks::FRIENDLY)
     }
 }

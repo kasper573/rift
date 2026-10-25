@@ -1,12 +1,13 @@
 use bevy::prelude::*;
 
-use crate::core::content::{Content, Fixture};
 use crate::core::math::Pos;
-use crate::core::render;
+use crate::core::render::world::decal::GroundDecal;
+use crate::core::render::{self, Pointed};
 use crate::core::units::Meters;
-use crate::systems::input::gestures::{ActiveTileHighlight, ClickClaim, Cursor, Gesture};
+use crate::systems::input::gestures::{ClickClaim, Cursor, Gesture};
 use crate::systems::input::map::{self, InputAction};
-use crate::systems::interface::{CursorShape, InterfaceIcon};
+use crate::systems::input::marks;
+use crate::systems::interface::CursorShape;
 use crate::systems::player::session;
 use crate::systems::{area, combat, movement};
 
@@ -20,11 +21,11 @@ struct WalkState {
 }
 
 impl Gesture for WalkGesture {
-    fn claim(&self, world: &mut World, point: Option<Pos<Meters>>) -> Option<ClickClaim> {
+    fn claim(&self, world: &mut World, pointed: Option<&Pointed>) -> Option<ClickClaim> {
         if !session::is_alive(world) {
             return None;
         }
-        let point = point?;
+        let point = pointed?.ground?;
         area::walkable(world, point).then_some(ClickClaim::Walk(point))
     }
 
@@ -35,15 +36,18 @@ impl Gesture for WalkGesture {
         }
         if let Some(ClickClaim::Walk(point)) = claim {
             movement::request_walk(world, point);
+            marks::walk_to(world, point);
             stamp(world, point);
         }
     }
 
     fn cursor(&self, world: &mut World, claim: ClickClaim) -> Option<Cursor> {
-        let ClickClaim::Walk(_) = claim else {
+        let ClickClaim::Walk(point) = claim else {
             return None;
         };
-        let shape = if map::pressed(world, InputAction::Interact) {
+        let shape = if area::warp_at(world, point).is_some() {
+            CursorShape::Enter
+        } else if map::pressed(world, InputAction::Interact) {
             CursorShape::WalkHeld
         } else {
             CursorShape::Walk
@@ -51,23 +55,22 @@ impl Gesture for WalkGesture {
         Some(Cursor::Shaped(shape))
     }
 
-    fn tile_highlight(&self, world: &mut World, claim: ClickClaim) -> Option<ActiveTileHighlight> {
-        let ClickClaim::Walk(pos) = claim else {
+    fn mark(&self, _world: &mut World, claim: ClickClaim) -> Option<GroundDecal> {
+        let ClickClaim::Walk(point) = claim else {
             return None;
         };
-        let target = &InterfaceIcon::WalkTarget
-            .get(world.resource::<Content>())
-            .image;
-        let image = world.resource::<AssetServer>().load(target.path());
-        Some(ActiveTileHighlight { pos, image })
+        Some(marks::hover_ring(point))
     }
 }
 
 fn repeat(world: &mut World) {
-    let Some(point) = render::cursor_tile(world) else {
+    let Some(pointed) = render::pointed(world) else {
         return;
     };
-    if combat::enemy_at(world, point).is_some() {
+    let Some(point) = pointed.ground else {
+        return;
+    };
+    if combat::enemy_at(world, &pointed).is_some() {
         return;
     }
     let last = world

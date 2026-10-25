@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use ui::chip;
 use ui::egui;
+
+use crate::views::navigation::PX_PER_METER;
 use ui::form;
 use ui::input;
 use ui::menu;
@@ -11,7 +13,6 @@ use ui::theme;
 
 use engine::core::content::{Content, ContentFile, ContentId, FolderReader, fields_file};
 use engine::core::math::Pos;
-use engine::core::render::TILE;
 use engine::core::script::ValueType;
 use engine::core::time::Seconds;
 use engine::core::units::{MeterPos, Meters};
@@ -800,7 +801,7 @@ fn start(
                 crate::views::navigation::Viewport {
                     screen: rect,
                     center,
-                    zoom: px_per_tile / TILE.0,
+                    zoom: px_per_tile / PX_PER_METER,
                 },
                 egui::Color32::WHITE,
             );

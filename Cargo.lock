@@ -742,6 +742,7 @@ dependencies = [
  "bevy_derive",
  "bevy_ecs",
  "bevy_math",
+ "bevy_mesh",
  "bevy_platform 0.20.0",
  "bevy_reflect 0.20.0",
  "bevy_time",
@@ -1287,6 +1288,7 @@ dependencies = [
  "bevy_material",
  "bevy_math",
  "bevy_mesh",
+ "bevy_pbr",
  "bevy_reflect 0.20.0",
  "bevy_render",
  "bevy_shader",
@@ -1296,6 +1298,43 @@ dependencies = [
  "bevy_utils 0.20.0",
  "bytemuck",
  "tracing",
+]
+
+[[package]]
+name = "bevy_gltf"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b5c4e1779a522f706853f75fc11107a032d4e4f92d26fbef4c36e825d00afdf"
+dependencies = [
+ "async-lock",
+ "base64 0.23.1",
+ "bevy_animation",
+ "bevy_app",
+ "bevy_asset",
+ "bevy_camera",
+ "bevy_color",
+ "bevy_curve",
+ "bevy_ecs",
+ "bevy_image",
+ "bevy_light",
+ "bevy_material",
+ "bevy_math",
+ "bevy_mesh",
+ "bevy_platform 0.20.0",
+ "bevy_reflect 0.20.0",
+ "bevy_tasks",
+ "bevy_transform",
+ "bevy_world_serialization",
+ "fixedbitset",
+ "gltf",
+ "itertools 0.14.0",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror 2.0.21",
+ "tracing",
+ "wgpu-types 30.0.1",
 ]
 
 [[package]]
@@ -1386,6 +1425,7 @@ dependencies = [
  "bevy_feathers",
  "bevy_gizmos",
  "bevy_gizmos_render",
+ "bevy_gltf",
  "bevy_image",
  "bevy_input",
  "bevy_input_focus",
@@ -1401,6 +1441,7 @@ dependencies = [
  "bevy_ptr 0.20.0",
  "bevy_reflect 0.20.0",
  "bevy_render",
+ "bevy_scene",
  "bevy_shader",
  "bevy_shape",
  "bevy_sprite",
@@ -1413,6 +1454,7 @@ dependencies = [
  "bevy_utils 0.20.0",
  "bevy_window",
  "bevy_winit",
+ "bevy_world_serialization",
 ]
 
 [[package]]
@@ -1583,6 +1625,7 @@ dependencies = [
  "glam 0.33.12",
  "half",
  "hexasphere",
+ "serde",
  "thiserror 2.0.21",
  "tracing",
  "wgpu-types 30.0.1",
@@ -1610,6 +1653,7 @@ dependencies = [
  "bevy_diagnostic",
  "bevy_ecs",
  "bevy_extract",
+ "bevy_gltf",
  "bevy_image",
  "bevy_light",
  "bevy_log",
@@ -4617,6 +4661,7 @@ dependencies = [
  "cfg-if",
  "crunchy",
  "num-traits",
+ "serde",
  "zerocopy",
 ]
 

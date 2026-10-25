@@ -4,8 +4,8 @@ use ui::egui::{Color32, ColorImage, TextureHandle, TextureOptions};
 
 use engine::core::content::Content;
 use engine::core::math::{Pos, Rect};
+use engine::core::terrain::SAMPLES_PER_METER;
 use engine::core::units::{GROUND_ORIGIN, Meters, TileSize};
-use engine::systems::area::terrain::SAMPLES_PER_METER;
 use engine::systems::area::{self, AreaDef, AreaId};
 
 use crate::views::navigation::Viewport;
@@ -166,7 +166,7 @@ pub fn draw_area(
     let canvas = Viewport {
         screen: rect,
         center,
-        zoom: px_per_meter / engine::core::render::TILE.0,
+        zoom: px_per_meter / crate::views::navigation::PX_PER_METER,
     };
     art.draw(&painter.with_clip_rect(rect), canvas, Color32::WHITE);
     true

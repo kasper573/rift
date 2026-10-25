@@ -16,7 +16,6 @@ use bevy::prelude::*;
 use engine::core::content::Content;
 use engine::core::geometry::{PlacedShape, Radians};
 use engine::core::math::{Pos, Rgba};
-use engine::core::render::ToScreen;
 use engine::core::time::Seconds;
 use engine::core::units::Meters;
 use engine::core::vfx::{VfxLayer, VfxParams};
@@ -28,16 +27,15 @@ use engine::systems::skill::SkillId;
 use engine::systems::status::StatusEffectId;
 use ui::egui::{Color32, Pos2, Ui, Vec2 as EVec2};
 
-use self::images::Images;
 use self::live::LiveWorld;
-use self::mirror::{ActorPose, Site, Source, Stage, VfxPose};
+use self::mirror::{ActorPose, Stage};
 use crate::app::Editor;
-use crate::project::ProjectFiles;
 use crate::thumbs;
 
 pub const SIZE: [u32; 2] = [384, 288];
 pub const ZOOM: f32 = 2.0;
 pub const NARROWEST: f32 = 240.0;
+pub use crate::views::navigation::PX_PER_METER;
 const SPREAD_CANDIDATES: usize = 4096;
 const SPREAD_ROUNDS: usize = 12;
 
@@ -46,7 +44,6 @@ pub struct Stages {
     requests: Vec<Request>,
     stages: HashMap<String, Stage>,
     live: HashMap<String, LiveWorld>,
-    images: Images,
     indices: Vec<usize>,
 }
 
@@ -62,9 +59,8 @@ impl Stages {
 
     fn render(&mut self, world: &mut World, key: &str, frame: &mirror::Frame) {
         self.stage(world, key);
-        let Stages { stages, images, .. } = self;
-        if let Some(stage) = stages.get_mut(key) {
-            stage.render(world, images, frame);
+        if let Some(stage) = self.stages.get_mut(key) {
+            stage.render(world, frame);
         }
     }
 }
@@ -106,8 +102,6 @@ pub struct PosedVfx {
     pub inside: Option<Vec<VfxLayer>>,
     pub params: VfxParams,
     pub elapsed: Seconds,
-    /// Shader text as it is being typed, by shader key, played in place of the file's.
-    pub drafts: Vec<(String, String)>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -142,7 +136,7 @@ pub struct Shown {
 
 impl Shown {
     pub fn screen(&self, world: Vec2) -> Pos2 {
-        let offset = world - self.center.to_screen();
+        let offset = world - to_screen(self.center);
         self.rect.center() + EVec2::new(offset.x * self.px, -offset.y * self.px)
     }
 }
@@ -242,13 +236,9 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     let requests = std::mem::take(&mut editor.views.stage.requests);
     let Editor { views, project, .. } = editor;
     let stages = &mut views.stage;
-    let loaded = project.as_ref().and_then(|project| {
-        Some((
-            &project.files,
-            project.content.as_ref()?,
-            project.generation,
-        ))
-    });
+    let loaded = project
+        .as_ref()
+        .and_then(|project| Some((project.content.as_ref()?, project.generation)));
     let wanted: HashSet<&str> = requests
         .iter()
         .map(|request| request.key.as_str())
@@ -266,13 +256,13 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
         }
         stages.live.remove(&key);
     }
-    let Some((files, content, generation)) = loaded else {
+    let Some((content, generation)) = loaded else {
         return;
     };
     let real = world.resource::<Time<Real>>().delta();
     for request in requests {
         let frame = match &request.scene {
-            Scene::Posed(posed) => posed_frame(posed, content, files),
+            Scene::Posed(posed) => posed_frame(posed, content),
             Scene::Live(scenario) => {
                 let live = match stages.live.get_mut(&request.key) {
                     Some(live) if live.generation == generation && !live.stale => live,
@@ -290,11 +280,16 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                 };
                 live.reconcile(scenario);
                 live.step(real);
-                live_frame(live, content, files)
+                live_frame(live, content)
             }
         };
         stages.render(world, &request.key, &frame);
     }
+}
+
+/// A ground point as the stage's flat camera sees it, in its pixels with y up.
+pub fn to_screen(at: Pos<Meters>) -> Vec2 {
+    Vec2::new(at.x * PX_PER_METER, -at.y * PX_PER_METER)
 }
 
 /// `count` points spread evenly over the footprint, the same every time: a sunflower spiral over
@@ -365,11 +360,7 @@ fn ground_key(key: &str) -> String {
     format!("{key}/ground")
 }
 
-fn posed_frame<'a>(
-    posed: &Posed,
-    content: &'a Content,
-    files: &'a ProjectFiles,
-) -> mirror::Frame<'a> {
+fn posed_frame<'a>(posed: &Posed, content: &'a Content) -> mirror::Frame<'a> {
     let spawn = content.built::<GameSettings>().initial_spawn;
     let actors = posed
         .actors
@@ -380,61 +371,23 @@ fn posed_frame<'a>(
             plate: actor.plate.clone(),
         })
         .collect();
-    let mut vfx = Vec::new();
-    if let Some(posed_vfx) = &posed.vfx {
-        vfx.push(VfxPose {
-            owner: Source::Posed(0),
-            layers: posed_vfx.layers.clone(),
-            site: match &posed_vfx.on {
-                PosedSite::Actor(index) => Site::Actor(Source::Posed(*index)),
-                PosedSite::Area(footprint) => {
-                    Site::World(engine::core::vfx::VfxSite::Area(*footprint))
-                }
-                PosedSite::Screen => Site::Screen,
-            },
-            heading: Radians::default(),
-            elapsed: posed_vfx.elapsed,
-            params: posed_vfx.params.clone(),
-        });
-        if let (PosedSite::Area(footprint), Some(inside)) = (&posed_vfx.on, &posed_vfx.inside) {
-            for (index, actor) in posed.actors.iter().enumerate() {
-                if footprint.contains(actor.at) {
-                    vfx.push(VfxPose {
-                        owner: Source::Posed(1 + index),
-                        layers: inside.clone(),
-                        site: Site::Actor(Source::Posed(index)),
-                        heading: footprint.facing,
-                        elapsed: posed_vfx.elapsed,
-                        params: posed_vfx.params.clone(),
-                    });
-                }
-            }
-        }
+    let mut not_yet = Vec::new();
+    if !posed.items.is_empty() {
+        not_yet.push("items");
+    }
+    if posed.vfx.is_some() {
+        not_yet.push("vfx");
     }
     mirror::Frame {
         content,
-        files,
-        area: spawn.area,
         center: spawn.at,
         actors,
-        items: posed.items.clone(),
-        vfx,
-        drafts: posed
-            .vfx
-            .iter()
-            .flat_map(|vfx| vfx.drafts.iter().cloned())
-            .collect(),
-        behind: None,
+        not_yet,
     }
 }
 
-fn live_frame<'a>(
-    live: &mut LiveWorld,
-    content: &'a Content,
-    files: &'a ProjectFiles,
-) -> mirror::Frame<'a> {
+fn live_frame<'a>(live: &mut LiveWorld, content: &'a Content) -> mirror::Frame<'a> {
     let spawn = content.built::<GameSettings>().initial_spawn;
-    let now = live.now();
     let actors = live
         .actors()
         .into_iter()
@@ -444,27 +397,15 @@ fn live_frame<'a>(
             plate: shown.plate,
         })
         .collect();
-    let vfx = live
-        .vfx()
-        .into_iter()
-        .map(|(entity, instance)| VfxPose {
-            owner: Source::Live(entity),
-            layers: instance.vfx.get(content).layers.clone(),
-            site: Site::World(instance.site.clone()),
-            heading: instance.heading,
-            elapsed: now.since(instance.started),
-            params: instance.params.clone(),
-        })
-        .collect();
+    let not_yet = if live.vfx().is_empty() {
+        Vec::new()
+    } else {
+        vec!["vfx"]
+    };
     mirror::Frame {
         content,
-        files,
-        area: spawn.area,
         center: spawn.at,
         actors,
-        items: Vec::new(),
-        vfx,
-        drafts: HashMap::new(),
-        behind: None,
+        not_yet,
     }
 }

@@ -9,7 +9,6 @@ use ui::theme;
 
 use engine::core::geometry::{Degrees, PlacedShape, Shape};
 use engine::core::math::Pos;
-use engine::core::render::ToScreen;
 use engine::core::time::Seconds;
 use engine::core::units::Meters;
 use engine::core::vfx::{ParamValue, VfxLayer, VfxParams};
@@ -84,7 +83,6 @@ pub fn preview(
     layers: Vec<VfxLayer>,
     inside: Option<Vec<VfxLayer>>,
     specs: &[ParamSpec],
-    drafts: &[(String, String)],
 ) {
     let Some(content) = editor.loaded() else {
         ui.label(theme::muted("the preview plays once the content loads"));
@@ -223,7 +221,6 @@ pub fn preview(
         inside,
         params,
         elapsed: Seconds(elapsed),
-        drafts: drafts.to_vec(),
     });
     let Some(shown) = stage::show(
         editor,
@@ -238,7 +235,7 @@ pub fn preview(
         let outline: Vec<Pos2> = footprint
             .outline()
             .into_iter()
-            .map(|point| shown.screen(point.to_screen()))
+            .map(|point| shown.screen(stage::to_screen(point)))
             .collect();
         if let (Some(first), true) = (outline.first().copied(), outline.len() > 1) {
             let mut closed = outline.clone();

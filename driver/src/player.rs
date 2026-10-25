@@ -164,6 +164,36 @@ impl Player {
         done
     }
 
+    /// Turns the camera a step with the action's key, and waits until it has come round.
+    pub fn turn_camera(&mut self, action: InputAction) {
+        let before = self.snapshot().view.map(|view| view.yaw);
+        self.act(action);
+        self.wait_for("the camera to come round", |seen| {
+            let view = seen.view?;
+            (Some(view.yaw) != before && seen.me.is_some()).then_some(())
+        });
+    }
+
+    /// Zooms the camera `steps` in with the wheel, out when negative, and waits for the zoom.
+    pub fn zoom_camera(&mut self, steps: i32) {
+        let before = self.snapshot().view.map(|view| view.zoom);
+        self.desktop.wheel(-steps);
+        self.wait_for("the camera to zoom", |seen| {
+            (seen.view.map(|view| view.zoom) != before).then_some(())
+        });
+    }
+
+    /// Brings the camera back to looking north from the middle distance, and waits until it rests
+    /// there, so a chapter's clicks land where its probe says.
+    pub fn camera_home(&mut self) {
+        self.act(InputAction::CameraHome);
+        self.wait_for("the camera home", |seen| {
+            seen.view
+                .filter(|view| view.yaw.0.abs() < 1e-3 && view.zoom == 1)
+                .map(|_| ())
+        });
+    }
+
     pub fn click(&mut self) -> ProbeSnapshot {
         self.act_here(InputAction::Interact)
     }

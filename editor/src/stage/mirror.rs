@@ -1,42 +1,22 @@
-//! The stage's picture: an offscreen camera over the items as they lie dropped and the vfx pieces
-//! presented by the game's own presenters, mirroring whatever scene is requested of it. Actors hang
-//! their plates over where they stand; their rigs are drawn once the stage renders the world in 3D.
+//! The stage's picture: an offscreen camera over the scene requested of it. Actors hang their
+//! plates over where they stand; their rigs, the items and the vfx are drawn once the stage renders
+//! the world in 3D.
 
-use std::collections::{HashMap, HashSet};
 use ui::egui;
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget};
 use bevy::prelude::*;
-use bevy::shader::Shader;
 use bevy_egui::EguiUserTextures;
-use engine::core::content::{Content, fields_file};
-use engine::core::geometry::Radians;
+use engine::core::content::Content;
 use engine::core::math::Pos;
-use engine::core::render::{GroundDepth, RowDepth, RowDepths, ToScreen, place_sprite};
-use engine::core::time::Seconds;
 use engine::core::units::Meters;
-use engine::core::vfx::render::{self as vfx_render, Presentation, SiteFrame, SiteTexture};
-use engine::core::vfx::{ShaderError, VfxLayer, VfxParams, VfxShaderDef, VfxSite, shader_file};
 use engine::systems::actor::ModelId;
-use engine::systems::actor::plate::{self, PlateLabel};
-use engine::systems::area::{self, AreaId};
-use engine::systems::item::ItemId;
-use engine::systems::item::render::drop_sprite;
+use engine::systems::actor::plate::PlateLabel;
 
-use super::images::{self, Images};
-use super::{SIZE, ZOOM};
-use crate::project::{ProjectFiles, hash};
+use super::{SIZE, ZOOM, images, to_screen};
 
 const FIRST_LAYER: usize = 500;
-const SPRITE_DEPTH_ABOVE_GROUND: f32 = 0.001;
-
-/// Whom a staged actor stands for: one the scene posed, or an entity of a live world.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Source {
-    Posed(usize),
-    Live(Entity),
-}
 
 /// An actor as the stage places it this frame: where it stands and the plate over its head.
 pub struct ActorPose {
@@ -45,49 +25,22 @@ pub struct ActorPose {
     pub plate: Option<PlateLabel>,
 }
 
-/// A vfx as the stage presents it this frame: its layers on a site, at a time, with its params.
-pub struct VfxPose {
-    pub owner: Source,
-    pub layers: Vec<VfxLayer>,
-    pub site: Site,
-    pub heading: Radians,
-    pub elapsed: Seconds,
-    pub params: VfxParams,
-}
-
-/// Where a staged vfx plays, in the stage's own terms.
-#[derive(Clone)]
-pub enum Site {
-    Actor(Source),
-    World(VfxSite),
-    Screen,
-}
-
 pub struct Frame<'a> {
     pub content: &'a Content,
-    pub files: &'a ProjectFiles,
-    pub area: AreaId,
     pub center: Pos<Meters>,
     pub actors: Vec<ActorPose>,
-    pub items: Vec<ItemId>,
-    pub vfx: Vec<VfxPose>,
-    pub drafts: HashMap<String, String>,
-    pub behind: Option<SiteTexture>,
+    /// What the scene asks for that the stage cannot draw yet.
+    pub not_yet: Vec<&'static str>,
 }
 
 pub struct Stage {
     pub texture: egui::TextureId,
-    /// Plates to hang over the actors, by the world point each hangs from.
+    /// Plates to hang over the actors, by the window point each hangs from.
     pub plates: Vec<(Vec2, PlateLabel)>,
     pub problems: Vec<String>,
     pub index: usize,
     camera: Entity,
     image: Handle<Image>,
-    layer: RenderLayers,
-    items: Vec<Entity>,
-    pieces: HashMap<Source, (String, Vec<Entity>)>,
-    /// The last shader compiled for each shader key, by the hash of the text it was composed from.
-    shaders: HashMap<String, (String, Result<Handle<Shader>, ShaderError>)>,
 }
 
 impl Stage {
@@ -108,7 +61,7 @@ impl Stage {
                     ..OrthographicProjection::default_2d()
                 }),
                 Transform::default(),
-                layer.clone(),
+                layer,
             ))
             .id();
         Stage {
@@ -118,249 +71,39 @@ impl Stage {
             index,
             camera,
             image,
-            layer,
-            items: Vec::new(),
-            pieces: HashMap::new(),
-            shaders: HashMap::new(),
         }
     }
 
-    /// Brings the picture up to the frame: items and vfx presented as the game presents them, and
-    /// names kept for the window to letter over where each actor stands.
-    pub fn render(&mut self, world: &mut World, images: &mut Images, frame: &Frame) {
-        let area = area::load(frame.content, frame.area);
-        world.insert_resource(GroundDepth(area.sort_base()));
-        world.insert_resource(RowDepths {
-            height: area.size.height,
-            base: area.sort_base(),
-        });
-        let eye = frame.center.to_screen();
+    /// Brings the picture up to the frame: names kept for the window to letter over where each
+    /// actor stands, and a word on what the stage cannot draw yet.
+    pub fn render(&mut self, world: &mut World, frame: &Frame) {
+        let eye = to_screen(frame.center);
         if let Some(mut transform) = world.get_mut::<Transform>(self.camera) {
             transform.translation.x = eye.x;
             transform.translation.y = eye.y;
         }
         self.problems.clear();
+        if !frame.not_yet.is_empty() {
+            self.problems.push(format!(
+                "{} play on the stage once it draws the world in 3D",
+                frame.not_yet.join(" and ")
+            ));
+        }
         self.plates = frame
             .actors
             .iter()
             .filter_map(|pose| {
                 let height = pose.model.get(frame.content).hitbox.height;
-                let top = plate::head(pose.at, height).to_screen();
+                let top = to_screen(pose.at) + Vec2::new(0.0, height.0 * super::PX_PER_METER);
                 pose.plate.clone().map(|label| (top, label))
             })
             .collect();
-        self.sync_items(world, images, frame);
-        self.sync_vfx(world, images, frame);
     }
 
-    pub fn despawn(mut self, world: &mut World) {
-        self.clear(world);
+    pub fn despawn(self, world: &mut World) {
         world.despawn(self.camera);
         world
             .resource_mut::<EguiUserTextures>()
             .remove_image(&self.image);
     }
-
-    fn clear(&mut self, world: &mut World) {
-        for item in self.items.drain(..) {
-            world.despawn(item);
-        }
-        for piece in self.pieces.drain().flat_map(|(_, (_, pieces))| pieces) {
-            world.despawn(piece);
-        }
-    }
-
-    fn sync_items(&mut self, world: &mut World, images: &mut Images, frame: &Frame) {
-        if self.items.len() != frame.items.len() {
-            for item in self.items.drain(..) {
-                world.despawn(item);
-            }
-            for _ in &frame.items {
-                let entity = world
-                    .spawn((
-                        Transform::default(),
-                        RowDepth::default(),
-                        self.layer.clone(),
-                    ))
-                    .id();
-                self.items.push(entity);
-            }
-        }
-        let count = frame.items.len() as f32;
-        for (index, (item, entity)) in frame.items.iter().zip(&self.items).enumerate() {
-            let icon = item.get(frame.content).icon.as_str();
-            let image = images.handle(frame.files, icon, world);
-            let at = Pos::<Meters>::new(
-                frame.center.x + (index as f32 - (count - 1.0) / 2.0) * 1.5,
-                frame.center.y,
-            );
-            let depth = world.resource::<GroundDepth>().0 + SPRITE_DEPTH_ABOVE_GROUND;
-            let mut staged = world.entity_mut(*entity);
-            staged.insert(drop_sprite(image));
-            if let Some(mut transform) = staged.get_mut::<Transform>() {
-                place_sprite(&mut transform, at);
-            }
-            staged.insert(RowDepth(depth));
-        }
-    }
-
-    fn sync_vfx(&mut self, world: &mut World, images: &mut Images, frame: &Frame) {
-        let wanted: HashMap<Source, String> = frame
-            .vfx
-            .iter()
-            .map(|pose| (pose.owner, layers_signature(&pose.layers)))
-            .collect();
-        let outdated: Vec<Source> = self
-            .pieces
-            .iter()
-            .filter(|(owner, (known, _))| wanted.get(*owner) != Some(known))
-            .map(|(owner, _)| *owner)
-            .collect();
-        for owner in outdated {
-            for piece in self
-                .pieces
-                .remove(&owner)
-                .into_iter()
-                .flat_map(|(_, pieces)| pieces)
-            {
-                world.despawn(piece);
-            }
-        }
-        let mut overdrawn = HashSet::new();
-        for pose in &frame.vfx {
-            if !self.pieces.contains_key(&pose.owner) {
-                let files = frame.files;
-                let pieces = vfx_render::pieces_for(world, &pose.layers, &mut |world, sheet| {
-                    images.handle(files, sheet.as_str(), world)
-                });
-                for piece in &pieces {
-                    world.entity_mut(*piece).insert(self.layer.clone());
-                }
-                self.pieces
-                    .insert(pose.owner, (wanted[&pose.owner].clone(), pieces));
-            }
-            let pieces = self.pieces[&pose.owner].1.clone();
-            let site = self.frame_of(world, &pose.site, pose.heading, frame);
-            let mut compiled: HashMap<String, Handle<Shader>> = HashMap::new();
-            for layer in &pose.layers {
-                if let VfxLayer::Shader { shader, .. } = layer {
-                    let key = shader.path(frame.content).to_owned();
-                    match self.compile(world, &key, frame.files, &frame.drafts) {
-                        Ok(handle) => {
-                            compiled.insert(key, handle);
-                        }
-                        Err(problem) => self.problems.push(problem),
-                    }
-                }
-            }
-            let content = frame.content;
-            vfx_render::present_layers(
-                world,
-                &Presentation {
-                    layers: &pose.layers,
-                    pieces: &pieces,
-                    frame: site.as_ref(),
-                    elapsed: pose.elapsed,
-                    params: &pose.params,
-                    content,
-                    screen_layer: &self.layer,
-                },
-                &|shader| compiled.get(shader.path(content)).cloned(),
-                &mut overdrawn,
-            );
-        }
-        vfx_render::settle_overdrawn(world, &overdrawn);
-    }
-
-    /// The site frame of a staged actor: none until the stage draws rigs, so a vfx on an actor
-    /// waits for that.
-    pub fn actor_frame(&self, _world: &World, _source: Source) -> Option<SiteFrame> {
-        None
-    }
-
-    fn frame_of(
-        &self,
-        world: &World,
-        site: &Site,
-        heading: Radians,
-        frame: &Frame,
-    ) -> Option<SiteFrame> {
-        match site {
-            Site::Actor(source) => self
-                .actor_frame(world, *source)
-                .map(|actor| actor.headed(heading)),
-            Site::World(VfxSite::Actor(entity)) => self
-                .actor_frame(world, Source::Live(*entity))
-                .map(|actor| actor.headed(heading)),
-            Site::World(VfxSite::Area(footprint)) => Some(SiteFrame {
-                depth: Some(world.resource::<GroundDepth>().0),
-                ..SiteFrame::area(footprint)
-            }),
-            Site::World(VfxSite::Path(points)) => {
-                let south = points.iter().map(|point| point.y).fold(f32::MIN, f32::max);
-                Some(SiteFrame {
-                    depth: Some(world.resource::<RowDepths>().at(Meters(south))),
-                    ..SiteFrame::path(points)
-                })
-            }
-            Site::World(VfxSite::Object(_) | VfxSite::Screen | VfxSite::Widget(_)) => None,
-            Site::Screen => {
-                let size = Vec2::new(SIZE[0] as f32, SIZE[1] as f32) / ZOOM;
-                let mut screen = SiteFrame::screen(size, frame.behind.clone(), 1.0);
-                screen.center = frame.center.to_screen();
-                Some(screen)
-            }
-        }
-    }
-
-    /// The shader row as it stands in the files, compiled from its draft or its file, kept until
-    /// either changes.
-    fn compile(
-        &mut self,
-        world: &mut World,
-        key: &str,
-        files: &ProjectFiles,
-        drafts: &HashMap<String, String>,
-    ) -> Result<Handle<Shader>, String> {
-        let row = files
-            .json(&fields_file(key))
-            .ok_or_else(|| format!("no shader row {key}"))?;
-        let def: VfxShaderDef =
-            serde_json::from_value((*row).clone()).map_err(|_| format!("{key} does not parse"))?;
-        let source = drafts
-            .get(key)
-            .cloned()
-            .or_else(|| files.text(&shader_file(key)))
-            .unwrap_or_default();
-        let composed = def.compose(&source);
-        let fingerprint = hash(composed.as_bytes());
-        let fresh = self
-            .shaders
-            .get(key)
-            .is_none_or(|(known, _)| *known != fingerprint);
-        if fresh {
-            let verdict = def.check_source(&source).map(|composed| {
-                let path = format!("stage/{key}-{fingerprint}.wgsl");
-                world
-                    .resource_mut::<Assets<Shader>>()
-                    .add(Shader::from_wgsl(composed, path))
-            });
-            self.shaders.insert(key.to_owned(), (fingerprint, verdict));
-        }
-        match &self.shaders[key].1 {
-            Ok(handle) => Ok(handle.clone()),
-            Err(error) => Err(format!("{key}: {}", error.message)),
-        }
-    }
-}
-
-fn layers_signature(layers: &[VfxLayer]) -> String {
-    layers
-        .iter()
-        .map(|layer| match layer {
-            VfxLayer::Sprite { sheet, .. } => format!("sprite:{}", sheet.as_str()),
-            VfxLayer::Shader { shader, .. } => format!("shader:{}", shader.index()),
-        })
-        .collect::<Vec<_>>()
-        .join(",")
 }

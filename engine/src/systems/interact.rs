@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use strum::IntoStaticStr;
 
 use crate::core::content::{Content, Fixture};
-use crate::core::math::Pos;
+use crate::core::render::Pointed;
 use crate::core::units::Meters;
 use crate::systems::attention::{AttentionId, AttentionMark};
 use crate::systems::combat::Attitude;
@@ -81,9 +81,9 @@ pub fn interaction_of(world: &World, target: Entity) -> Option<Interactive> {
     (world.get::<Attitude>(target) != Some(&Attitude::Hostile)).then_some(interactive)
 }
 
-pub fn interactable_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
+pub fn interactable_at(world: &mut World, pointed: &Pointed) -> Option<Entity> {
     let me = session::my_character(world).map(|entity| entity.id());
-    actor::target_at(world, point, me, |world, entity| {
+    actor::target_at(world, pointed, me, |world, entity| {
         interaction_of(world, entity).is_some()
     })
 }

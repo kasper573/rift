@@ -6,7 +6,7 @@
 fn vfx(uv: vec2<f32>) -> vec4<f32> {
     let suv = site_uv(pixel_uv(uv));
     let distance = site_distance(suv);
-    let pixel = site.tiles.x / max(site.size.x, 1.0);
+    let pixel = site.metres.x / max(site.size.x, 1.0);
     let inside = step(distance, 0.0);
     let tick = floor(site.time * 12.0) / 12.0;
     let color = mix(params.color, params.hostile_color, clamp(params.hostile, 0.0, 1.0));

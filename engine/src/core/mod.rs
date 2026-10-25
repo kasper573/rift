@@ -10,6 +10,7 @@ pub mod net;
 pub mod platform;
 pub mod render;
 pub mod script;
+pub mod terrain;
 pub mod text;
 pub mod time;
 pub mod units;

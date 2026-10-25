@@ -1,4 +1,5 @@
 mod card;
+mod compass;
 mod panel;
 
 pub(crate) use card::{
@@ -237,6 +238,7 @@ pub(crate) fn window_limit(world: &World, window: &dyn HudWindow) -> Option<Vec2
 
 static WIDGETS: &[(&str, &dyn HudWidget)] = &[
     ("character", &player::widget::CharacterWidget),
+    ("compass", &compass::CompassWidget),
     ("quests", &quest::tracker::QuestTrackerWidget),
     (skill::bar::HOTBAR, &skill::bar::HotbarWidget),
 ];

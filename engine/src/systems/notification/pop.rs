@@ -10,14 +10,13 @@ use ui::raster::raster;
 
 use super::{Notification, NotificationKind, NotificationSent};
 use crate::core::content::{Content, Fixture};
-use crate::core::math::{Pos, Rng};
-use crate::core::render::camera::tile_to_window;
+use crate::core::math::Rng;
 use crate::core::render::transition::WorldViewSystems;
+use crate::core::render::window_point;
 use crate::core::time::Seconds;
 use crate::core::units::Meters;
 use crate::core::vfx::render::{
-    ParamsUniform, Run, SiteFrame, SiteTexture, compiled_shader, hide, place_in_depth,
-    present_shader, screen_layer, shader_piece,
+    ParamsUniform, Run, SiteFrame, SiteTexture, compiled_shader, hide, present_shader, screen_piece,
 };
 use crate::core::vfx::{VfxParams, VfxShaderId};
 use crate::systems::actor::Hitbox;
@@ -38,7 +37,6 @@ const SCATTER: f32 = 10.0;
 const PUNCH: f32 = 0.6;
 const PUNCH_SECS: f32 = 0.16;
 const BODY_SHARE: f32 = 0.35;
-const Z: f32 = 3.0;
 const TEXTS_KEPT: usize = 256;
 
 /// Bursts `text` out of `actor` for everyone who sees it, drawn by `shader` with `params`, or by
@@ -95,7 +93,7 @@ pub fn show(world: &mut World, sent: NotificationSent) {
     let shader = shader.unwrap_or_else(|| VfxShaderFixture::Pop.id(world.resource::<Content>()));
     let text = sent.notification.text.plain_words();
     let texture = text_texture(world, &text);
-    let piece = shader_piece(world);
+    let piece = screen_piece(world);
     let born = uptime(world);
     let mut pops = world.resource_mut::<Pops>();
     let turn = (pops.rng.rand_float() * 2.0 - 1.0) * SPREAD;
@@ -172,7 +170,6 @@ fn burst(world: &mut World) {
     let now = uptime(world);
     let live = std::mem::take(&mut world.resource_mut::<Pops>().live);
     let window = window_size(world);
-    let layer = screen_layer();
     let mut kept = Vec::with_capacity(live.len());
     for pop in live {
         let age = Seconds(now.0 - pop.born.0);
@@ -214,7 +211,6 @@ fn burst(world: &mut World) {
             time: age,
         };
         present_shader(world, pop.piece, &frame, compiled, packed, run);
-        place_in_depth(world, pop.piece, &frame, Z, &layer);
         kept.push(pop);
     }
     world.resource_mut::<Pops>().live = kept;
@@ -230,9 +226,8 @@ fn forget(world: &mut World) {
 /// Where a pop bursts from, in window pixels: low on the actor's body, toward its feet.
 fn origin(world: &mut World, actor: Entity) -> Option<Vec2> {
     let at = world.get::<RenderPosition>(actor)?.0;
-    let height = world.get::<Hitbox>(actor)?.0.height.0;
-    let low = Pos::<Meters>::new(at.x, at.y + 0.5 - height * BODY_SHARE);
-    tile_to_window(world, low)
+    let height = world.get::<Hitbox>(actor)?.0.height;
+    window_point(world, at, Meters(height.0 * BODY_SHARE))
 }
 
 fn text_texture(world: &mut World, text: &str) -> TextTexture {

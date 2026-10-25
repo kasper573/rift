@@ -1,6 +1,12 @@
+//! The world is drawn into a picture half the window's size and shown stretched over the window
+//! with no filtering, so its edges step in pairs of pixels; the area's grade, the screen's and the
+//! transitions are applied as it is shown, and the interface is drawn over it at full size.
+
 use bevy::asset::{AssetPath, embedded_path};
+use bevy::camera::RenderTarget;
 use bevy::camera::visibility::RenderLayers;
-use bevy::camera::{RenderTarget, ScalingMode};
+use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
+use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType, TextureFormat};
@@ -8,15 +14,16 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::Material2d;
 use bevy::window::PrimaryWindow;
 
-use super::TILE;
-use super::camera::WorldCamera;
+use super::camera::{self, FOV, WorldCamera};
 use super::transition::{ActiveTransition, CutUniform};
 use crate::core::platform::ClientPlatform;
 use crate::core::time::Seconds;
 
-const TILE_SCREEN: f32 = 96.0;
-pub(crate) const SCALE: f32 = TILE_SCREEN / TILE.0;
+/// Window pixels to a pixel of the world's picture.
+pub(crate) const SCALE: f32 = 2.0;
 pub(crate) const PRESENT_LAYER: usize = 1;
+/// What shows where nothing is drawn.
+const VOID: Color = Color::srgb(0.06, 0.065, 0.08);
 
 #[derive(Component)]
 pub(super) struct Screen;
@@ -84,6 +91,22 @@ impl Default for ScreenGrade {
     }
 }
 
+/// The tint the shown area lays over its picture: a colour and how far toward it the picture goes.
+#[derive(Resource, ShaderType, Clone, Copy, PartialEq, Debug)]
+pub struct AreaGrade {
+    pub color: Vec3,
+    pub strength: f32,
+}
+
+impl Default for AreaGrade {
+    fn default() -> AreaGrade {
+        AreaGrade {
+            color: Vec3::ONE,
+            strength: 0.0,
+        }
+    }
+}
+
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub(super) struct Present {
     #[texture(0)]
@@ -95,6 +118,8 @@ pub(super) struct Present {
     snapshot: Handle<Image>,
     #[uniform(4)]
     cut: CutUniform,
+    #[uniform(5)]
+    area: AreaGrade,
 }
 
 impl Material2d for Present {
@@ -119,20 +144,26 @@ pub(super) fn setup(
         grade: ScreenGrade::NONE,
         snapshot: Handle::default(),
         cut: CutUniform::IDLE,
+        area: AreaGrade::default(),
     });
     let mut camera_target = RenderTarget::default();
     targets.bind(&mut camera_target, &screen, &mut materials);
     commands.insert_resource(targets);
 
     commands.spawn((
-        Camera2d,
+        Camera3d::default(),
         Camera {
             order: 0,
+            clear_color: ClearColorConfig::Custom(VOID),
             ..default()
         },
         camera_target,
         world_projection(target_w, target_h),
         Msaa::Off,
+        DepthPrepass,
+        NormalPrepass,
+        Tonemapping::None,
+        DebandDither::Disabled,
         WorldCamera,
     ));
 
@@ -203,27 +234,34 @@ pub(super) fn fit(
     }
 }
 
-pub(super) fn apply_present(
-    time: Res<Time>,
-    grade: Res<ScreenGrade>,
-    mut transition: ResMut<ActiveTransition>,
-    camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
-    screen: Query<&MeshMaterial2d<Present>, With<Screen>>,
-    mut materials: ResMut<Assets<Present>>,
-) {
-    let cut = transition.advance(Seconds(time.delta_secs()), camera.single().ok());
-    let Ok(handle) = screen.single().map(|material| material.0.clone()) else {
+pub(super) fn apply_present(world: &mut World) {
+    let frame = Seconds(world.resource::<Time>().delta_secs());
+    let view = camera::view_of(world);
+    let scale = world.resource::<PresentScale>().0.max(0.01);
+    let cut = world.resource_scope(|world, mut transition: Mut<ActiveTransition>| {
+        transition.advance(frame, world, view, scale)
+    });
+    let grade = *world.resource::<ScreenGrade>();
+    let area = *world.resource::<AreaGrade>();
+    let Some(handle) = world
+        .query_filtered::<&MeshMaterial2d<Present>, With<Screen>>()
+        .single(world)
+        .ok()
+        .map(|material| material.0.clone())
+    else {
         return;
     };
-    let unchanged = materials
-        .get(&handle)
-        .is_some_and(|material| material.grade == *grade && material.cut == cut);
+    let mut materials = world.resource_mut::<Assets<Present>>();
+    let unchanged = materials.get(&handle).is_some_and(|material| {
+        material.grade == grade && material.cut == cut && material.area == area
+    });
     if unchanged {
         return;
     }
     if let Some(mut material) = materials.get_mut(&handle) {
-        material.grade = *grade;
+        material.grade = grade;
         material.cut = cut;
+        material.area = area;
     }
 }
 
@@ -249,24 +287,24 @@ pub(super) fn hold_frame(world: &mut World) {
 }
 
 fn world_projection(width: u32, height: u32) -> Projection {
-    Projection::Orthographic(OrthographicProjection {
-        scaling_mode: ScalingMode::Fixed {
-            width: width as f32 / SCALE,
-            height: height as f32 / SCALE,
-        },
-        ..OrthographicProjection::default_2d()
+    Projection::Perspective(PerspectiveProjection {
+        fov: FOV.radians().0,
+        near: camera::NEAR,
+        aspect_ratio: width as f32 / height as f32,
+        ..default()
     })
 }
 
 fn world_target(width: u32, height: u32) -> Image {
     let mut target = Image::new_target_texture(width, height, TextureFormat::Rgba8UnormSrgb, None);
-    target.sampler = ImageSampler::linear();
+    target.sampler = ImageSampler::nearest();
     target
 }
 
+/// The world's picture is half the window on each side, rounded to whole even pixels.
 pub(crate) fn target_size(window: &Window) -> (u32, u32) {
     let scaled = |logical: f32| {
-        let px = logical.round().max(2.0) as u32;
+        let px = (logical / SCALE).round().max(2.0) as u32;
         px + (px & 1)
     };
     let res = &window.resolution;

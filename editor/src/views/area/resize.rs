@@ -1,7 +1,7 @@
 use engine::core::content::{ContentFile, table_of};
+use engine::core::terrain::{self, TerrainSize};
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
-use engine::systems::area::terrain::{self, TerrainSize};
 use ui::controls;
 use ui::dialog;
 use ui::egui;

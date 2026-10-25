@@ -19,8 +19,10 @@ use crate::core::geometry::{Capsule, Radians};
 use crate::core::gui::{self, GuiContext, WorldLayers};
 use crate::core::math::{Offset, Pos, Rect, Size, WindowPx};
 use crate::core::platform::ClientPlatform;
-use crate::core::render::tile_to_window;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
+use crate::core::render::{
+    self, CameraRig, GroundHeights, PITCH, Pointed, ground_height, world_point,
+};
 use crate::core::time::{self, Seconds};
 use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
@@ -828,33 +830,16 @@ fn quests(world: &World, seen: Entity) -> Option<ProbeQuests> {
     })
 }
 
-/// The flat view: a metre of height shows as a metre up the window, as the 2D client draws hitboxes.
 fn view(world: &mut World) -> Option<ProbeView> {
-    let origin = tile_to_window(world, Pos::new(0.0, 0.0))?;
-    let unit = tile_to_window(world, Pos::new(1.0, 1.0))?;
-    let window = world
-        .query_filtered::<&Window, With<PrimaryWindow>>()
-        .single(world)
-        .ok()?;
-    let (width, height) = (window.resolution.width(), window.resolution.height());
-    let tile: Offset<WindowPx> = Offset::new(unit.x - origin.x, unit.y - origin.y);
-    let view_proj = Mat4::from_cols(
-        Vec4::new(2.0 * tile.x / width, 0.0, 0.0, 0.0),
-        Vec4::new(0.0, 2.0 * tile.y / height, 0.0, 0.0),
-        Vec4::new(0.0, -2.0 * tile.y / height, 0.0, 0.0),
-        Vec4::new(
-            2.0 * origin.x / width - 1.0,
-            1.0 - 2.0 * origin.y / height,
-            0.0,
-            1.0,
-        ),
-    );
+    let view = render::view_of(world)?;
+    let rig = world.resource::<CameraRig>();
+    let viewport = view.viewport();
     Some(ProbeView {
-        view_proj,
-        viewport: Rect::from_size(Size::new(width, height)),
-        yaw: Radians(0.0),
-        pitch: Radians(std::f32::consts::FRAC_PI_2),
-        zoom: 0,
+        view_proj: view.view_proj(),
+        viewport: Rect::from_size(Size::new(viewport.x, viewport.y)),
+        yaw: rig.yaw(),
+        pitch: PITCH.radians(),
+        zoom: rig.zoom().step(),
     })
 }
 
@@ -953,7 +938,7 @@ fn actors(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Vec<Pr
     bodies
         .into_iter()
         .map(|(entity, body)| ProbeBody {
-            aim: aim(world, entity, footprint(body.at, body.capsule)),
+            aim: aim(world, entity, body.at, body.capsule),
             ..body
         })
         .collect()
@@ -989,22 +974,38 @@ fn objects(world: &mut World, area: Option<AreaId>) -> Vec<ProbeObject> {
     objects
         .into_iter()
         .map(|(entity, seen)| ProbeObject {
-            aim: aim(world, entity, seen.hitbox),
+            aim: object_aim(world, entity, seen.hitbox),
             ..seen
         })
         .collect()
 }
 
-/// The ground a capsule standing at `at` covers, as the square around it.
-fn footprint(at: Pos<Meters>, capsule: Capsule) -> Rect<Meters> {
-    let radius = capsule.radius.0;
-    Rect::new(
-        at - Offset::new(radius, radius),
-        Size::new(radius * 2.0, radius * 2.0),
-    )
+/// The ground point to point at to take the body: where the ray from the eye through the middle of
+/// its capsule lands, when pointing there claims the body, else where it stands.
+fn aim(world: &mut World, entity: Entity, at: Pos<Meters>, capsule: Capsule) -> Pos<Meters> {
+    let Some(view) = render::view_of(world) else {
+        return at;
+    };
+    let middle = world_point(
+        at,
+        ground_height(world, at) + Meters(capsule.height.0 / 2.0),
+    );
+    let eye = view.eye();
+    let Ok(direction) = Dir3::new(middle - eye) else {
+        return at;
+    };
+    let ray = Ray3d::new(eye, direction);
+    let ground = world.resource::<GroundHeights>().hit(ray);
+    let pointed = Pointed { ray, ground };
+    match (clicked(world, &pointed), ground) {
+        (Some(clicked), Some(ground)) if clicked == entity => ground,
+        _ => at,
+    }
 }
 
-fn aim(world: &mut World, entity: Entity, hitbox: Rect<Meters>) -> Pos<Meters> {
+/// The ground point to point at to take the object: the middle of its shape, or the nearest point
+/// of it that pointing at claims the object, else the middle.
+fn object_aim(world: &mut World, entity: Entity, hitbox: Rect<Meters>) -> Pos<Meters> {
     const STEPS: u8 = 5;
     let center = hitbox.center();
     let mut spots: Vec<Pos<Meters>> = (0..STEPS)
@@ -1020,13 +1021,28 @@ fn aim(world: &mut World, entity: Entity, hitbox: Rect<Meters>) -> Pos<Meters> {
     spots.sort_by(|a, b| a.distance_to(center).total_cmp(&b.distance_to(center)));
     std::iter::once(center)
         .chain(spots)
-        .find(|&spot| clicked(world, spot) == Some(entity))
+        .find(|&spot| {
+            pointed_at(world, spot).is_some_and(|pointed| clicked(world, &pointed) == Some(entity))
+        })
         .unwrap_or(center)
 }
 
-fn clicked(world: &mut World, spot: Pos<Meters>) -> Option<Entity> {
-    match gestures::claim_at(world, Some(spot)) {
-        ClickClaim::Attack(entity) | ClickClaim::Interact(entity) => Some(entity),
+/// The pointer as it would point at the ground at `spot` from the camera.
+fn pointed_at(world: &mut World, spot: Pos<Meters>) -> Option<Pointed> {
+    let view = render::view_of(world)?;
+    let eye = view.eye();
+    let direction = Dir3::new(world_point(spot, ground_height(world, spot)) - eye).ok()?;
+    Some(Pointed {
+        ray: Ray3d::new(eye, direction),
+        ground: Some(spot),
+    })
+}
+
+fn clicked(world: &mut World, pointed: &Pointed) -> Option<Entity> {
+    match gestures::claim_at(world, Some(pointed)) {
+        ClickClaim::Attack(entity) | ClickClaim::Interact(entity) | ClickClaim::Aim(entity) => {
+            Some(entity)
+        }
         _ => None,
     }
 }

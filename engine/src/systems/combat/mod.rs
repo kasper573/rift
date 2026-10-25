@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
 use crate::core::math::Pos;
+use crate::core::render::Pointed;
 use crate::core::time::Seconds;
 use crate::core::units::Meters;
 use crate::core::vfx::VfxSite;
@@ -92,9 +93,9 @@ pub struct AttackRequest {
     pub target: Entity,
 }
 
-pub fn enemy_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
+pub fn enemy_at(world: &mut World, pointed: &Pointed) -> Option<Entity> {
     let me = session::my_character(world).map(|entity| entity.id())?;
-    actor::target_at(world, point, Some(me), |world, entity| {
+    actor::target_at(world, pointed, Some(me), |world, entity| {
         world.get::<Actor>(entity).is_some() && relation(world, me, entity) == Relation::Enemy
     })
 }

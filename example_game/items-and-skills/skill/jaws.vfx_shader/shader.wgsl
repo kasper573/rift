@@ -7,7 +7,7 @@
 //   color  the teeth
 //   gums   the jaws the teeth grow from
 //   teeth  how many teeth in each row
-//   size   how wide the bite is, in tiles
+//   size   how wide the bite is, in metres
 const SNAP: f32 = 0.3;
 const SHIVER: f32 = 0.12;
 const LET_GO: f32 = 0.62;
@@ -16,7 +16,7 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
     let suv = site_uv(pixel_uv(uv));
     let image = sample(suv);
     let p = site_local(suv);
-    let pixel = site.tiles.x / max(site.size.x, 1.0);
+    let pixel = site.metres.x / max(site.size.x, 1.0);
     let t = site.progress;
     let on_sprite = site.kind == SITE_ACTOR || site.kind == SITE_OBJECT;
     let width = max(params.size, 0.2);
@@ -49,11 +49,11 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
     return over(vec4<f32>(rgb, a), bruised);
 }
 
-// One jaw, `y` tiles inward from its gum line (teeth grow toward positive y) and `f` the phase
+// One jaw, `y` metres inward from its gum line (teeth grow toward positive y) and `f` the phase
 // along the row: whether the point is on a tooth, on a tooth's white tip, on the gum, or on the
 // gum's dark outer rim.
 fn jaw(y: f32, f: f32, gum: f32, tooth: f32, within: f32) -> vec4<f32> {
-    let pixel = site.tiles.x / max(site.size.x, 1.0);
+    let pixel = site.metres.x / max(site.size.x, 1.0);
     let point = 1.0 - 2.0 * abs(f - 0.5);
     let height = tooth * point;
     let on_tooth = step(0.0, y) * step(y, height) * within * step(0.2, point);

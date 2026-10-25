@@ -158,6 +158,33 @@
         }
       ]
     },
+    "turn_left": {
+      "label": "Turn the camera left",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "ArrowLeft"
+        }
+      ]
+    },
+    "turn_right": {
+      "label": "Turn the camera right",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "ArrowRight"
+        }
+      ]
+    },
+    "camera_home": {
+      "label": "Bring the camera home",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "Home"
+        }
+      ]
+    },
     "choose_previous": {
       "label": "Move to the previous choice",
       "bindings": [

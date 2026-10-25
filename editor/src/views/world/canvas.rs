@@ -1,3 +1,4 @@
+use crate::views::navigation::PX_PER_METER;
 use std::collections::{BTreeMap, HashSet};
 use ui::chip;
 use ui::paint;
@@ -6,7 +7,6 @@ use ui::words;
 
 use engine::core::content::name_of;
 use engine::core::math::Pos;
-use engine::core::render::TILE;
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::world_map::WorldMapDef;
 use engine::systems::area::{self, AreaId};
@@ -321,7 +321,7 @@ fn draw_card(editor: &mut Editor, painter: &Painter, drawing: &Drawing, card: &M
         let canvas = Viewport {
             screen: card.art,
             center: Pos::new(info.size.width / 2.0 - 0.5, info.size.height / 2.0 - 0.5),
-            zoom: px_per_tile / TILE.0,
+            zoom: px_per_tile / PX_PER_METER,
         };
         art.draw(
             &painter.with_clip_rect(card.art),
@@ -755,7 +755,7 @@ fn fit(editor: &mut Editor, map: &OpenWorldMap, rect: Rect) {
             view.zoom = navigation::fit_zoom(
                 rect.size() - Vec2::splat(80.0),
                 Vec2::new(bounds.width(), bounds.height()),
-                TILE.0,
+                PX_PER_METER,
             )
             .clamp(MIN_ZOOM, MAX_ZOOM);
         }

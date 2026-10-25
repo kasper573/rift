@@ -1,3 +1,4 @@
+use crate::views::navigation::PX_PER_METER;
 pub mod arrange;
 pub mod atlas;
 mod canvas;
@@ -18,7 +19,6 @@ use ui::theme;
 use atlas::WorldAtlas;
 use engine::core::content::{Content, ContentFile, ContentScope, Fixture, rescoped};
 use engine::core::math::{Pos, Size};
-use engine::core::render::TILE;
 use engine::core::units::Meters;
 use engine::systems::area::world_map::{
     AreaCard, Note, Region, RegionColor, WorldMap, WorldMapDef,
@@ -342,7 +342,7 @@ fn laid_out(atlas: &WorldAtlas, stored: &WorldMapDef) -> WorldMapDef {
 }
 
 fn shows_areas(zoom: f32) -> bool {
-    zoom * TILE.0 > AREA_PX_PER_TILE
+    zoom * PX_PER_METER > AREA_PX_PER_TILE
 }
 
 /// Gives every area among `copies`, each the path copied from and the path of its copy, a world

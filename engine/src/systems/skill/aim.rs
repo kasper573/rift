@@ -6,7 +6,7 @@ use ui::ink;
 use super::{CastAim, Rank, SkillId, Targeting, UseSkillRequest, casting};
 use crate::core::content::{Content, Fixture};
 use crate::core::geometry::{PlacedShape, Shape};
-use crate::core::math::Pos;
+use crate::core::render::Pointed;
 use crate::core::time::Seconds;
 use crate::core::units::Meters;
 use crate::core::vfx::render::ShaderOverlay;
@@ -43,7 +43,7 @@ pub fn arm(world: &mut World, skill: SkillId, rank: Rank) {
 pub fn cast_at_pointer(world: &mut World, skill: SkillId) -> bool {
     let content = world.resource::<Content>().clone();
     let def = skill.get(&content);
-    let aim = render::cursor_tile(world).and_then(|tile| aim_at(world, tile, def.target));
+    let aim = render::pointed(world).and_then(|pointed| aim_at(world, &pointed, def.target));
     match aim {
         Some(aim) => {
             world.write_message(UseSkillRequest { skill, aim });
@@ -126,20 +126,20 @@ pub fn surface(world: &mut World) {
 pub struct AimGesture;
 
 impl Gesture for AimGesture {
-    fn claim(&self, world: &mut World, tile: Option<Pos<Meters>>) -> Option<ClickClaim> {
+    fn claim(&self, world: &mut World, pointed: Option<&Pointed>) -> Option<ClickClaim> {
         let aimed = aiming(world)?;
         if !session::is_alive(world) {
             return None;
         }
-        let tile = tile?;
+        let pointed = pointed?;
         let targeting = aimed.skill.get(world.resource::<Content>()).target;
         if targeting == Targeting::Caster {
             return None;
         }
-        Some(match aim_at(world, tile, targeting) {
+        Some(match aim_at(world, pointed, targeting) {
             Some(CastAim::Actor(target)) => ClickClaim::Aim(target),
             Some(CastAim::Point(point)) => ClickClaim::AimAt(point),
-            Some(CastAim::None) | None => ClickClaim::AimAt(tile),
+            Some(CastAim::None) | None => ClickClaim::AimAt(pointed.ground?),
         })
     }
 
@@ -193,7 +193,9 @@ pub fn draw_aim(world: &mut World) {
     let Some(ring) = reach
         .outline()
         .iter()
-        .map(|point| render::tile_to_window(world, *point).map(|at| egui::Pos2::new(at.x, at.y)))
+        .map(|point| {
+            render::window_point(world, *point, Meters(0.0)).map(|at| egui::Pos2::new(at.x, at.y))
+        })
         .collect::<Option<Vec<_>>>()
     else {
         return;
@@ -208,18 +210,18 @@ pub fn draw_aim(world: &mut World) {
     });
 }
 
-/// What a skill of the targeting cast at a tile lands on: the fitting actor there, the point
-/// itself for an area, or nothing fitting.
-fn aim_at(world: &mut World, tile: Pos<Meters>, targeting: Targeting) -> Option<CastAim> {
+/// What a skill of the targeting cast where the pointer points lands on: the fitting actor there,
+/// the ground point for an area, or nothing fitting.
+fn aim_at(world: &mut World, pointed: &Pointed, targeting: Targeting) -> Option<CastAim> {
     match targeting {
         Targeting::SingleAlly | Targeting::SingleEnemy => {
             let me = session::me(world)?;
-            actor::target_at(world, tile, None, |world, entity| {
+            actor::target_at(world, pointed, None, |world, entity| {
                 world.get::<Actor>(entity).is_some() && casting::fits(world, me, entity, targeting)
             })
             .map(CastAim::Actor)
         }
-        Targeting::AreaAlly | Targeting::AreaEnemy => Some(CastAim::Point(tile)),
+        Targeting::AreaAlly | Targeting::AreaEnemy => Some(CastAim::Point(pointed.ground?)),
         Targeting::Caster => None,
     }
 }
@@ -239,6 +241,6 @@ fn aimed_area(world: &mut World, aimed: Aimed) -> Option<(PlacedShape, bool)> {
     let def = aimed.skill.get(&content);
     let shape = def.area_at(aimed.rank)?;
     let from = movement::position(world, me)?;
-    let point = render::cursor_tile(world)?;
+    let point = render::cursor_ground(world)?;
     Some((PlacedShape::cast(shape, from, point), def.target.hostile()))
 }

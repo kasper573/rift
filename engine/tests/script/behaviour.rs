@@ -10,6 +10,9 @@ use testkit::Sim;
 use crate::game::{field, health, spawn};
 
 const FAR: Pos<Meters> = Pos::new(28.0, 28.0);
+/// Long enough for a blow to land on a monster that wanders off as fast as the player follows: the
+/// chase ends where the field does, or where the wander turns back.
+const CHASE: f32 = 20.0;
 const STROLLER_HOME: Pos<Meters> = Pos::new(26.0, 4.0);
 
 #[test]
@@ -32,7 +35,7 @@ fn a_defensive_monster_only_fights_whoever_attacks_it() {
     assert!(!targets(&mut sim, guard, player, 3.0));
 
     attack(&mut sim, guard);
-    assert!(targets(&mut sim, guard, player, 5.0));
+    assert!(targets(&mut sim, guard, player, CHASE));
 }
 
 #[test]
@@ -59,7 +62,7 @@ fn a_pacifist_monster_never_fights_back() {
 
     attack(&mut sim, bat);
     assert!(
-        sim.run_until(5.0, |world| stat::effective(world, bat, StatKind::Health)
+        sim.run_until(CHASE, |world| stat::effective(world, bat, StatKind::Health)
             < full)
     );
 

@@ -5,13 +5,13 @@
 // glow washes out over the margin. On a sprite the bolt strikes down through it.
 //   color   the glow around the bolts
 //   core    the color of the bolts themselves
-//   jitter  how far the bolts stray from the course, in tiles
+//   jitter  how far the bolts stray from the course, in metres
 //   bolts   how many bolts run the course; the first is the brightest
 fn vfx(uv: vec2<f32>) -> vec4<f32> {
     let suv = site_uv(pixel_uv(uv));
     let image = sample(suv);
     let p = site_local(suv);
-    let pixel = site.tiles.x / max(site.size.x, 1.0);
+    let pixel = site.metres.x / max(site.size.x, 1.0);
     let frame = floor(site.time * 24.0);
     let flicker = 0.75 + 0.25 * step(0.5, hash(frame * 0.37 + 1.3));
     let count = u32(clamp(params.bolts, 1.0, 4.0));
@@ -50,7 +50,7 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
     return over(vec4<f32>(rgb, max(bolt * params.core.a, halo * params.color.a)), image);
 }
 
-// The points the bolt runs through, in local tiles: a path's own, else the two ends of the body:
+// The points the bolt runs through, in local metres: a path's own, else the two ends of the body:
 // across a sprite from its head to its feet, along anything else.
 fn course_count() -> u32 {
     return select(2u, site.point_count, site.point_count >= 2u);

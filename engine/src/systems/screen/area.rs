@@ -17,7 +17,6 @@ use crate::core::math::Pos;
 use crate::core::render::transition::{
     self, ActiveTransition, ScreenTransitionPhase, WorldViewSystems,
 };
-use crate::core::render::{GroundDepth, RowDepths};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time::Seconds;
 use crate::core::units::Meters;
@@ -32,15 +31,14 @@ pub struct AreaScreenPlugin;
 
 impl Plugin for AreaScreenPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ShownArea>()
-            .init_resource::<Crossing>()
+        app.init_resource::<Crossing>()
             .add_systems(
                 Update,
                 (
                     carry_view_across
                         .after(RenderValueSystems)
                         .before(WorldViewSystems),
-                    (show_area, play_area_soundscape).in_set(WorldViewSystems),
+                    play_area_soundscape.in_set(WorldViewSystems),
                 )
                     .run_if(in_state(ClientScreen::Area)),
             )
@@ -54,10 +52,6 @@ impl Plugin for AreaScreenPlugin {
             .add_systems(OnExit(ClientScreen::Area), (silence_soundscape, leave_area));
     }
 }
-
-/// The area the view is set up for: its ground depths are in place and its soundscape plays.
-#[derive(Resource, Default)]
-struct ShownArea(Option<AreaId>);
 
 #[derive(Resource, Default, Clone, Copy)]
 struct Crossing {
@@ -103,7 +97,7 @@ pub fn carry_view_across(world: &mut World) {
             }
             (Some(pose), None, _) => (Some(pose), Some(Held::new(now, pose))),
             (Some(pose), Some(held), _) => {
-                let drawable = world.resource::<ShownArea>().0 == Some(pose.area);
+                let drawable = area::render::shown(world) == Some(pose.area);
                 if now - held.since > ARRIVAL_PATIENCE || (drawable && held.rendered) {
                     reveal(world, pose);
                     (Some(pose), None)
@@ -186,34 +180,6 @@ fn leave_area(world: &mut World) {
         last_seen: None,
         held,
     };
-    world.resource_mut::<ShownArea>().0 = None;
-}
-
-/// Sets the view up for the area the character stands in, once per area entered.
-fn show_area(
-    viewpoint: Res<MyCharacter>,
-    areas: Query<&AreaTag>,
-    content: Res<Content>,
-    mut shown: ResMut<ShownArea>,
-    mut commands: Commands,
-) {
-    let Some(area_id) = viewpoint
-        .0
-        .and_then(|seen| areas.get(seen).ok())
-        .map(|tag| tag.area)
-    else {
-        return;
-    };
-    if shown.0 == Some(area_id) {
-        return;
-    }
-    let area = area::load(&content, area_id);
-    commands.insert_resource(GroundDepth(area.sort_base()));
-    commands.insert_resource(RowDepths {
-        height: area.size.height,
-        base: area.sort_base(),
-    });
-    shown.0 = Some(area_id);
 }
 
 fn play_area_soundscape(

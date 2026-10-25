@@ -3,6 +3,7 @@ pub mod ground;
 pub mod lighting;
 pub mod object;
 pub mod prop;
+pub mod render;
 pub mod scene;
 pub mod terrain;
 pub mod transition;
@@ -16,7 +17,7 @@ pub use lighting::{Lighting, PointLightDef};
 pub use object::{AreaObject, ObjectDef, ObjectShape};
 pub use prop::{Footprint, PropDef, PropId, PropPlacement, Scatter};
 pub use scene::SceneNode;
-pub use terrain::{Heightfield, Paint, Terrain, TerrainSize};
+pub use terrain::Terrain;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -42,6 +43,7 @@ use crate::core::content::{
 };
 use crate::core::geometry::Degrees;
 use crate::core::math::{Offset, Pos, Rect, Size};
+use crate::core::terrain::{Heightfield, MATERIALS, Paint, TerrainSize};
 use crate::core::units::{GridDims, Meters, TileSize};
 use crate::systems::actor::Pose;
 use crate::systems::movement;
@@ -129,7 +131,7 @@ impl ContentFile for AreaDef {
             name: near.name(),
             terrain: Terrain {
                 size,
-                materials: [ground; terrain::MATERIALS],
+                materials: [ground; MATERIALS],
                 max_slope: Degrees(38.0),
             },
             lighting: Lighting::day(),
@@ -516,6 +518,15 @@ pub fn warp_objects(content: &Content, area: AreaId) -> Vec<(u32, &ObjectDef)> {
         .collect()
 }
 
+/// The warp whose doorway `at` lies in, among the objects of the shown world.
+pub fn warp_at(world: &mut World, at: Pos<Meters>) -> Option<Entity> {
+    world
+        .query::<(Entity, &AreaObject)>()
+        .iter(world)
+        .find(|(_, object)| object.warp.is_some() && object.shape.covers(at))
+        .map(|(entity, _)| entity)
+}
+
 pub fn walkable(world: &World, at: Pos<Meters>) -> bool {
     crate::systems::player::session::my_character(world)
         .map(|me| me.id())
@@ -650,7 +661,7 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
             let ground = Ground {
                 terrain: Terrain {
                     size: def.size,
-                    materials: [first; terrain::MATERIALS],
+                    materials: [first; MATERIALS],
                     max_slope: Degrees(terrain::MAX_SLOPE.0),
                 },
                 heights: Heightfield::flat(def.size),

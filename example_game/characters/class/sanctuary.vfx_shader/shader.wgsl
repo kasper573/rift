@@ -11,7 +11,7 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
     let pixel = 1.0 / max(site.size, vec2<f32>(1.0));
     let distance = site_distance(suv);
     let inside = select(step(distance, 0.0), site_cover(suv), on_sprite);
-    let q = suv * site.tiles;
+    let q = suv * site.metres;
     let t = site.progress;
     let tick = floor(site.time * 12.0) / 12.0;
     let rising = smoothstep(0.0, 0.2, t);
@@ -20,21 +20,21 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
     let lane = fract(suv.x * rays_across + 0.5 + 0.1 * sin(tick * 0.9 + suv.x * 7.0));
     let shaft = step(0.6, lane) * step(lane, 0.85);
     var standing = inside * 0.45;
-    let rise = select(0.5, site.tiles.y * 0.12, on_sprite);
+    let rise = select(0.5, site.metres.y * 0.12, on_sprite);
     for (var k = 0u; k < 3u; k++) {
-        let below = suv + vec2<f32>(0.0, (f32(k) + 1.0) * rise / max(site.tiles.y, 0.01));
+        let below = suv + vec2<f32>(0.0, (f32(k) + 1.0) * rise / max(site.metres.y, 0.01));
         let foot = select(step(site_distance(below), 0.0), site_cover(below), on_sprite);
         standing = max(standing, foot * (0.45 - 0.13 * f32(k)) * (1.0 - inside));
     }
     let beams = shaft * standing;
     let floor_glow = inside * (0.1 + 0.05 * step(0.5, fract((q.x + q.y) * 2.0 - tick * 0.4)));
-    let seam = step(abs(distance), pixel.x * site.tiles.x) * f32(!on_sprite) * 0.8;
+    let seam = step(abs(distance), pixel.x * site.metres.x) * f32(!on_sprite) * 0.8;
     var motes = 0.0;
     for (var i = 0u; i < 14u; i++) {
         let seed = f32(i) * 5.17;
         let life = fract(tick * (0.25 + 0.2 * hash(seed + 1.0)) + hash(seed + 2.0));
         let birth = vec2<f32>(hash(seed + 3.0), hash(seed + 4.0));
-        let at = birth - vec2<f32>(0.0, life * 1.5 / max(site.tiles.y, 0.01));
+        let at = birth - vec2<f32>(0.0, life * 1.5 / max(site.metres.y, 0.01));
         let d = abs(suv - at) / pixel;
         let born = select(step(site_distance(birth), 0.0), site_cover(birth), on_sprite);
         motes = max(motes, step(max(d.x, d.y), 1.0) * born * step(life, 0.8) * step(0.3, hash(seed + floor(tick * 12.0))));

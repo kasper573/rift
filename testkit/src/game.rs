@@ -8,13 +8,14 @@ use engine::core::content::{
     CONFIG_FILE, Content, ContentFile, ContentId, ContentRegistry, LoadReport, MemoryFolder,
     SETTINGS_FILE, Shape, content_path, name_of, table_of, version,
 };
+use engine::core::terrain::{MIN_SIDE, Paint, SAMPLES_PER_METER, TerrainSize};
 use engine::core::time::{Millis, Seconds};
 use engine::core::vfx::shader::{SHADER_SOURCE, Stage};
 use engine::systems::actor::Action;
 use engine::systems::actor::model::{MODEL_BUSTS, MODEL_GLB};
 use engine::systems::area::prop::PROP_GLB;
 use engine::systems::area::scene::SCENE;
-use engine::systems::area::terrain::{self, Paint, TerrainSize};
+use engine::systems::area::terrain;
 use engine::systems::item;
 use serde_json::{Value, json};
 use strum::VariantArray;
@@ -465,8 +466,8 @@ impl Game {
     pub fn area(self, name: &str, map: &Map, modules: Value) -> Game {
         let (width, height) = map.size();
         let size = TerrainSize {
-            width: (width as u32).max(terrain::MIN_SIDE),
-            height: (height as u32).max(terrain::MIN_SIDE),
+            width: (width as u32).max(MIN_SIDE),
+            height: (height as u32).max(MIN_SIDE),
         };
         let blocked = |x: usize, y: usize| {
             map.0
@@ -501,8 +502,8 @@ impl Game {
         }
         let paint = Paint::from_fn(size, |column, row| {
             let (x, y) = (
-                (column / terrain::SAMPLES_PER_METER) as usize,
-                (row / terrain::SAMPLES_PER_METER) as usize,
+                (column / SAMPLES_PER_METER) as usize,
+                (row / SAMPLES_PER_METER) as usize,
             );
             if blocked(x, y) {
                 [0, 0, 0, 255]

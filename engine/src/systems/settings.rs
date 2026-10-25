@@ -9,8 +9,10 @@ use ui::egui::Ui;
 use ui::{controls, face, sheet};
 
 use crate::core::audio::mix::{AudioCategory, AudioFader, AudioMix, AudioVolume};
+use crate::core::geometry::Degrees;
 use crate::core::math::{Pos, Size, WindowPx};
 use crate::core::platform::{ClientPlatform, Platform};
+use crate::core::render::CameraPreferences;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
 use crate::core::text::LettersPerSecond;
 use crate::systems::hud::HudWindow;
@@ -41,6 +43,8 @@ pub(crate) struct UserSettings {
     screen: ScreenSettings,
     #[serde(default)]
     skills: SkillSettings,
+    #[serde(default)]
+    camera: CameraSettings,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -122,6 +126,32 @@ fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
         ui.end_row();
         let label = ui.label("Area transition");
         transition_picker(ui, settings, label.id);
+        ui.end_row();
+    });
+    ui.add_space(8.0);
+    sheet::section(ui, "Camera");
+    let mut reduce_motion = settings.camera.reduce_motion;
+    if ui
+        .checkbox(&mut reduce_motion, "Reduce motion")
+        .on_hover_text("The camera turns and zooms in one step instead of gliding")
+        .changed()
+    {
+        settings.camera.reduce_motion = reduce_motion;
+    }
+    form(ui, "camera", |ui| {
+        let label = ui.label("Turn speed");
+        let mut turn_speed = settings.camera.turn_speed.0;
+        if ui
+            .add(
+                egui::Slider::new(&mut turn_speed, TURN_SPEEDS.0..=TURN_SPEEDS.1)
+                    .suffix("°/s")
+                    .integer(),
+            )
+            .labelled_by(label.id)
+            .changed()
+        {
+            settings.camera.turn_speed = Degrees(turn_speed);
+        }
         ui.end_row();
     });
     ui.add_space(8.0);
@@ -364,6 +394,30 @@ struct SkillSettings {
     quick_cast: bool,
 }
 
+/// How slow or fast the camera may turn, in degrees a second.
+const TURN_SPEEDS: (f32, f32) = (45.0, 720.0);
+
+#[derive(Serialize, Deserialize)]
+struct CameraSettings {
+    #[serde(default = "default_turn_speed")]
+    turn_speed: Degrees,
+    #[serde(default)]
+    reduce_motion: bool,
+}
+
+impl Default for CameraSettings {
+    fn default() -> CameraSettings {
+        CameraSettings {
+            turn_speed: default_turn_speed(),
+            reduce_motion: false,
+        }
+    }
+}
+
+fn default_turn_speed() -> Degrees {
+    CameraPreferences::default().turn_speed
+}
+
 #[derive(Serialize, Deserialize, Default)]
 struct ScreenSettings {
     #[serde(default)]
@@ -385,6 +439,7 @@ fn apply(
     mut speed: ResMut<LettersPerSecond>,
     mut audio_mix: ResMut<AudioMix>,
     mut transition: ResMut<ScreenTransitionPreference>,
+    mut camera: ResMut<CameraPreferences>,
 ) {
     if !settings.is_changed() {
         return;
@@ -392,4 +447,12 @@ fn apply(
     *speed = settings.text.letters_per_second;
     *audio_mix = settings.sound;
     transition.0 = settings.screen.transition;
+    camera.turn_speed = Degrees(
+        settings
+            .camera
+            .turn_speed
+            .0
+            .clamp(TURN_SPEEDS.0, TURN_SPEEDS.1),
+    );
+    camera.reduce_motion = settings.camera.reduce_motion;
 }

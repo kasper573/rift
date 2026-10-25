@@ -28,13 +28,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use ui::controls;
 use ui::egui;
+
+use crate::views::navigation::PX_PER_METER;
 use ui::theme;
 use ui::words;
 
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
 use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Size};
-use engine::core::render::TILE;
 use engine::core::units::{CellPos, Meters, TileSize};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
@@ -377,8 +378,11 @@ fn fit_once(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, canvas
     }
     let size = snapshot.size();
     view.center = Pos::new(size.width / 2.0 - 0.5, size.height / 2.0 - 0.5);
-    let fit = navigation::fit_zoom(canvas.size(), Vec2::new(size.width, size.height), TILE.0)
-        * FIT_MARGIN;
+    let fit = navigation::fit_zoom(
+        canvas.size(),
+        Vec2::new(size.width, size.height),
+        PX_PER_METER,
+    ) * FIT_MARGIN;
     view.zoom = fit.clamp(MIN_ZOOM, MAX_FIT_ZOOM);
     view.fitted = true;
     if let Some(camera) = remembered {

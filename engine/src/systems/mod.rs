@@ -416,6 +416,7 @@ pub fn client_app(
         ))
         .add_plugins((
             screen::ClientScreenPlugin { credentials },
+            area::render::AreaRenderPlugin,
             actor::render::ActorRenderPlugin,
             actor::plate::PlatePlugin,
             movement::MovementRenderPlugin,

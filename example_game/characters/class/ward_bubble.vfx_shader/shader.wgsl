@@ -32,7 +32,7 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
         let rgb = mix(params.color.rgb, vec3<f32>(1.0), glint * outline * 0.6);
         return over(vec4<f32>(rgb, glow), image);
     }
-    let pixel = site.tiles.x / max(site.size.x, 1.0);
+    let pixel = site.metres.x / max(site.size.x, 1.0);
     let p = site_local(suv);
     let d = site_distance(suv);
     let rim = step(abs(d), pixel);

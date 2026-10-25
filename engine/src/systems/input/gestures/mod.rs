@@ -16,13 +16,14 @@ use strum::VariantArray;
 use ui::egui;
 use ui::float;
 
-use super::ActiveTileHighlight;
 use super::map::{self, InputAction};
+use super::marks::HoverMark;
 use crate::core::content::{Content, Fixture};
 use crate::core::gui::{self, Band};
 use crate::core::math::Pos;
-use crate::core::render;
 use crate::core::render::transition::WorldViewSystems;
+use crate::core::render::world::decal::GroundDecal;
+use crate::core::render::{self, Pointed};
 use crate::core::units::Meters;
 use crate::systems::interface::CursorShape;
 use crate::systems::player::session;
@@ -43,14 +44,14 @@ pub enum ClickClaim {
 }
 
 pub fn claim(world: &mut World) -> ClickClaim {
-    let tile = render::cursor_tile(world);
-    claim_at(world, tile)
+    let pointed = render::pointed(world);
+    claim_at(world, pointed.as_ref())
 }
 
-pub fn claim_at(world: &mut World, tile: Option<Pos<Meters>>) -> ClickClaim {
+pub fn claim_at(world: &mut World, pointed: Option<&Pointed>) -> ClickClaim {
     GESTURES
         .iter()
-        .find_map(|gesture| gesture.claim(world, tile))
+        .find_map(|gesture| gesture.claim(world, pointed))
         .unwrap_or(ClickClaim::Nothing)
 }
 
@@ -61,17 +62,14 @@ pub enum Cursor {
     System(SystemCursorIcon),
 }
 
-/// A gesture takes a click by claiming it from the tile under the pointer, which is `None` while the
-/// pointer is off the world or over the interface.
+/// A gesture takes a click by claiming it from where the pointer points into the world, which is
+/// `None` while the pointer is off the world or over the interface.
 pub trait Gesture: Send + Sync {
-    fn claim(&self, world: &mut World, tile: Option<Pos<Meters>>) -> Option<ClickClaim>;
+    fn claim(&self, world: &mut World, pointed: Option<&Pointed>) -> Option<ClickClaim>;
     fn drive(&self, world: &mut World, claim: Option<ClickClaim>, start: bool);
     fn cursor(&self, world: &mut World, claim: ClickClaim) -> Option<Cursor>;
-    fn tile_highlight(
-        &self,
-        _world: &mut World,
-        _claim: ClickClaim,
-    ) -> Option<ActiveTileHighlight> {
+    /// The mark laid on the ground under what the gesture would take.
+    fn mark(&self, _world: &mut World, _claim: ClickClaim) -> Option<GroundDecal> {
         None
     }
 }
@@ -147,10 +145,10 @@ fn load_cursors(content: Res<Content>, assets: Res<AssetServer>, mut commands: C
 fn update(world: &mut World) {
     forget_clicks_across_lock(world);
 
-    let tile = render::cursor_tile(world);
+    let pointed = render::pointed(world);
     let claims: Vec<Option<ClickClaim>> = GESTURES
         .iter()
-        .map(|gesture| gesture.claim(world, tile))
+        .map(|gesture| gesture.claim(world, pointed.as_ref()))
         .collect();
     let mut active = world.resource::<Latched>().0;
     let pressed = map::pressed(world, InputAction::Interact);
@@ -167,14 +165,14 @@ fn update(world: &mut World) {
     world.resource_mut::<Latched>().0 = active.filter(|_| pressed);
 
     let mut cursor = None;
-    let mut highlight = None;
+    let mut mark = None;
     let mut first_claimant = true;
     for (gesture, claim) in GESTURES.iter().zip(&claims) {
         let Some(claim) = *claim else {
             continue;
         };
         if first_claimant {
-            highlight = gesture.tile_highlight(world, claim);
+            mark = gesture.mark(world, claim);
             first_claimant = false;
         }
         cursor = gesture.cursor(world, claim);
@@ -182,13 +180,7 @@ fn update(world: &mut World) {
             break;
         }
     }
-
-    match highlight {
-        Some(highlight) => world.insert_resource(highlight),
-        None => {
-            world.remove_resource::<ActiveTileHighlight>();
-        }
-    }
+    world.resource_mut::<HoverMark>().0 = mark;
     world.resource_mut::<ChosenCursor>().0 = cursor;
 }
 

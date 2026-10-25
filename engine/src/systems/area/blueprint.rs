@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::scene::{self, Holes, ModuleNode, SCENE, SCENE_FILE, SceneNode, scene_file};
-use super::terrain::TerrainSize;
 use super::{AreaId, AreaModule, ObjectShape};
 use crate::core::audio::soundscape::SoundscapeShape;
 use crate::core::content::id::{Leaf, in_scope, nearest, nearest_path, read_aside};
@@ -19,6 +18,7 @@ use crate::core::content::{
 use crate::core::geometry::Degrees;
 use crate::core::math::{Pos, Rect};
 use crate::core::script::{VarValue, Variable, VariableType, Vocabulary};
+use crate::core::terrain::TerrainSize;
 use crate::core::units::Meters;
 use crate::systems::script::{Place, RiftScripting, ScriptModule};
 

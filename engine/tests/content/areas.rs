@@ -1,7 +1,7 @@
 use engine::core::content::{Content, LoadReport, write};
 use engine::core::math::{Pos, Rect, Size};
+use engine::core::terrain::{self, Heightfield, Paint, TerrainSize};
 use engine::core::units::{GROUND_ORIGIN, Meters};
-use engine::systems::area::terrain::{self, Heightfield, Paint, TerrainSize};
 use engine::systems::area::{self, AreaDef, AreaId};
 use serde_json::{Value, json};
 use testkit::{Game, Map, path};

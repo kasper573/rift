@@ -41,6 +41,7 @@ pub enum CursorShape {
     Resize,
     Walk,
     WalkHeld,
+    Enter,
     Attack,
     PickUp,
     Talk,
@@ -80,7 +81,6 @@ pub enum InterfaceIcon {
     Stats,
     QuestLog,
     History,
-    WalkTarget,
     Terminal,
     Skills,
 }

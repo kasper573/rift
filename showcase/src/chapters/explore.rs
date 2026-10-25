@@ -1,4 +1,5 @@
 use engine::core::math::Offset;
+use engine::systems::input::map::InputAction;
 
 use crate::chapters::Chapter;
 use crate::shoot::Shoot;
@@ -37,4 +38,12 @@ fn play(shoot: &mut Shoot) {
         me.caption(says);
         me.walk_near(spawn + Offset::new(x, y));
     }
+    me.caption("Turn the camera a step at a time with the arrow keys");
+    me.turn_camera(InputAction::TurnRight);
+    me.turn_camera(InputAction::TurnRight);
+    me.caption("Zoom in close with the wheel, or out wide");
+    me.zoom_camera(1);
+    me.zoom_camera(-2);
+    me.caption("Home brings the camera back to looking north");
+    me.camera_home();
 }
