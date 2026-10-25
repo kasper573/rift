@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Builds the models no pack ships, to the style sheet: three trees with painted-cluster canopies
-and gnarled trunks, the woodsman's cottage, and the small bone-camp things.
+"""Builds the models no pack ships, to the style sheet: three trees with rounded canopies of
+lumps shaded smooth on gnarled trunks, the woodsman's cottage, and the small bone-camp things.
 
     build.py GAME
 
@@ -37,6 +37,26 @@ ICOSAHEDRON = (
 )
 
 
+def subdivide(vertices, faces):
+    """Each face split into four at its edges' midpoints, pushed out onto the unit sphere."""
+    vertices = [np.array(v, np.float64) for v in vertices]
+    midpoints = {}
+    new_faces = []
+
+    def midpoint(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in midpoints:
+            point = (vertices[a] + vertices[b]) / 2
+            vertices.append(point / np.linalg.norm(point))
+            midpoints[key] = len(vertices) - 1
+        return midpoints[key]
+
+    for a, b, c in faces:
+        ab, bc, ca = midpoint(a, b), midpoint(b, c), midpoint(c, a)
+        new_faces += [[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]
+    return np.array(vertices), new_faces
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
@@ -54,29 +74,50 @@ class Model:
         self.palette = palette
         self.mesh = restyle.Mesh()
 
-    def triangles(self, corners, swatch, glow=False):
-        """Faces as an (n, 3, 3) array of corners, counter-clockwise seen from outside."""
+    def triangles(self, corners, swatch, glow=False, smooth=False):
+        """Faces as an (n, 3, 3) array of corners, counter-clockwise seen from outside, in one
+        swatch, one per face, or one per corner."""
         corners = np.asarray(corners, np.float64).reshape(-1, 3)
         count = len(corners)
+        if isinstance(swatch, str):
+            colors = np.tile(self.palette[swatch], (count, 1))
+        elif len(swatch) == count:
+            colors = np.array([self.palette[name] for name in swatch])
+        else:
+            colors = np.repeat(np.array([self.palette[name] for name in swatch]), 3, axis=0)
         self.mesh.add(
-            corners,
-            np.tile(self.palette[swatch], (count, 1)),
-            np.full(count, 0.0 if glow else 1.0),
-            np.zeros((count, 4), np.uint8),
-            np.zeros((count, 4), np.float32),
+            colors=colors,
+            positions=corners,
+            alphas=np.full(count, 0.0 if glow else 1.0),
+            joints=np.zeros((count, 4), np.uint8),
+            weights=np.zeros((count, 4), np.float32),
+            smooth=smooth,
         )
 
-    def blob(self, center, radius, swatch, squash=0.75, rng=None):
-        """A flattened icosahedron: one painted leaf cluster, its edges nudged so no two read alike."""
+    def blob(self, center, radius, swatch, squash=0.75, rng=None, smooth=False, rounds=0, shade=None):
+        """A flattened sphere of `rounds` subdivisions of an icosahedron, its vertices nudged so no
+        two read alike. With `shade`, a (low, high, swatches) triple, each corner takes the swatch
+        its height between low and high falls in, from the first at the bottom up, so the colours
+        run into one another over a smooth blob and step from face to face over a flat one."""
         vertices, faces = ICOSAHEDRON
+        for _ in range(rounds):
+            vertices, faces = subdivide(vertices, faces)
         points = vertices * np.array([1.0, squash, 1.0]) * radius
         if rng is not None:
-            points = points * rng.uniform(0.85, 1.15, (len(points), 1))
+            points = points * rng.uniform(0.8, 1.2, (len(points), 1))
         points = points + center
-        self.triangles(points[np.array(faces)], swatch)
+        corners = points[np.array(faces)]
+        if shade is None:
+            self.triangles(corners, swatch, smooth=smooth)
+            return
+        low, high, swatches = shade
+        heights = corners[:, :, 1] if smooth else np.repeat(corners[:, :, 1].mean(axis=1, keepdims=True), 3, axis=1)
+        band = np.clip(((heights - low) / max(high - low, 1e-6) * len(swatches)).astype(int), 0, len(swatches) - 1)
+        self.triangles(corners, [swatches[b] for b in band.reshape(-1)], smooth=smooth)
 
-    def tube(self, path, radii, swatch, sides=6, cap=True):
-        """A tapered, bending tube through `path` points with a radius at each, polygonal."""
+    def tube(self, path, radii, swatch, sides=6, cap=True, smooth=False):
+        """A tapered, bending tube through `path` points with a radius at each, polygonal, or
+        shaded round when `smooth`."""
         rings = []
         for index, (point, radius) in enumerate(zip(path, radii)):
             axis = path[min(index + 1, len(path) - 1)] - path[max(index - 1, 0)]
@@ -96,7 +137,7 @@ class Model:
             top = rings[-1]
             for i in range(1, sides - 1):
                 faces.append([top[0], top[i], top[i + 1]])
-        self.triangles(faces, swatch)
+        self.triangles(faces, swatch, smooth=smooth)
 
     def cone(self, base, height, radius, swatch, sides=8, lift=0.0):
         """A cone whose base is lifted by `lift` of its radius toward the middle, so a pine's tiers
@@ -143,47 +184,47 @@ def trunk(model, rng, height, radius, bend=0.35, roots=4):
         path.append(np.array([lean[0], height * step / steps, lean[1]]))
     path = np.array(path)
     radii = [radius * 1.25] + [radius * (1.1 - 0.7 * step / steps) for step in range(1, steps + 1)]
-    model.tube(path, radii, "bark", sides=7)
+    model.tube(path, radii, "bark", sides=7, smooth=True)
     for root in range(roots):
         angle = root * 2 * np.pi / roots + rng.uniform(-0.3, 0.3)
         direction = np.array([np.cos(angle), 0.0, np.sin(angle)])
         foot = direction * radius * 2.2 + [0.0, -0.1, 0.0]
         knee = direction * radius * 1.1 + [0.0, radius * 0.6, 0.0]
-        model.tube(np.array([foot, knee, [0.0, radius * 1.4, 0.0]]), [radius * 0.35, radius * 0.45, radius * 0.6], "bark-dark", sides=5, cap=False)
+        model.tube(np.array([foot, knee, [0.0, radius * 1.4, 0.0]]), [radius * 0.35, radius * 0.45, radius * 0.6], "bark-dark", sides=5, cap=False, smooth=True)
     return path[-1]
 
 
-def oak(model, rng, height=5.5, spread=2.6, clusters=11):
-    top = trunk(model, rng, height * 0.58, 0.4)
-    for arm in range(3):
-        angle = arm * 2 * np.pi / 3 + rng.uniform(-0.4, 0.4)
-        reach = np.array([np.cos(angle), 0.9, np.sin(angle)]) * spread * 0.45
-        model.tube(np.array([top, top + reach * 0.5, top + reach]), [0.22, 0.16, 0.1], "bark", sides=5)
-    crown = top + [0.0, height * 0.22, 0.0]
-    for index in range(clusters):
-        angle = index * 2 * np.pi / clusters * 2.3
-        ring = (index % 3) / 3.0
-        offset = np.array([np.cos(angle), 0.0, np.sin(angle)]) * spread * (0.35 + 0.45 * ring)
-        lift = (1.0 - ring) * spread * 0.45 + rng.uniform(-0.2, 0.2)
-        radius = spread * rng.uniform(0.42, 0.58)
-        swatch = "leaf-light" if ring < 0.2 else ("leaf" if ring < 0.5 else "leaf-dark")
-        model.blob(crown + offset + [0.0, lift, 0.0], radius, swatch, rng=rng)
-    model.blob(crown + [0.0, spread * 0.6, 0.0], spread * 0.5, "leaf-light", rng=rng)
+def canopy(model, rng, center, radius, lumps, squash=0.8):
+    """A rounded cloud of overlapping lumps shaded smooth, lit yellow-green over its top, a body of
+    leaf green, and a dark green only at the very bottom, where the light does not reach anyway."""
+    low = center[1] - radius * squash
+    high = center[1] + radius * squash * 0.9
+    for _ in range(lumps):
+        offset = rng.uniform(-1.0, 1.0, 3) * [radius * 0.55, radius * 0.35, radius * 0.55]
+        size = radius * rng.uniform(0.38, 0.58)
+        model.blob(center + offset, size, None, squash, rng, smooth=True, rounds=1, shade=(low, high, ["leaf-dark", "leaf", "leaf", "leaf-light", "leaf-light"]))
+
+
+def oak(model, rng, height=5.5, spread=2.6, lumps=15):
+    """An oak: a bent trunk with roots under a wide rounded canopy."""
+    trunk_height = height - spread * 0.8
+    trunk(model, rng, trunk_height, 0.32)
+    canopy(model, rng, np.array([0.0, trunk_height + spread * 0.55, 0.0]), spread, lumps)
 
 
 def tall_oak(model, rng):
-    oak(model, rng, height=7.5, spread=2.3, clusters=9)
+    oak(model, rng, height=7.0, spread=2.8, lumps=17)
 
 
 def pine(model, rng, height=7.0):
-    top = trunk(model, rng, height * 0.45, 0.26, bend=0.12, roots=3)
+    """A pine: a straight trunk under tiers of rounded lumps narrowing to the top."""
+    trunk(model, rng, height * 0.3, 0.26, bend=0.1, roots=3)
     tiers = 4
     for tier in range(tiers):
-        base = np.array([0.0, top[1] * 0.75 + (height * 0.55) * tier / tiers, 0.0])
-        radius = (1.0 - tier / (tiers + 0.6)) * height * 0.26
-        swatch = "leaf-light" if tier == tiers - 1 else ("leaf" if tier % 2 else "leaf-dark")
-        model.cone(base, height * 0.28, radius, swatch, sides=8, lift=-radius * 0.15)
-    model.cone(np.array([0.0, top[1] * 0.75 + height * 0.55, 0.0]), height * 0.18, height * 0.07, "leaf-light", sides=6)
+        share = tier / (tiers - 1)
+        center = np.array([0.0, height * (0.32 + 0.6 * share), 0.0])
+        radius = 2.0 * (1.0 - 0.6 * share)
+        canopy(model, rng, center, radius, 5, squash=0.55)
 
 
 def bone(model, rng, at=np.zeros(3), yaw=0.0, pitch=0.0, length=0.45, swatch="bone"):

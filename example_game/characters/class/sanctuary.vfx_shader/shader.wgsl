@@ -32,18 +32,15 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
     var motes = 0.0;
     for (var i = 0u; i < 14u; i++) {
         let seed = f32(i) * 5.17;
-        let life = fract(tick * (0.25 + 0.2 * hash(seed + 1.0)) + hash(seed + 2.0));
-        let birth = vec2<f32>(hash(seed + 3.0), hash(seed + 4.0));
+        let life = fract(tick * (0.25 + 0.2 * hash1(seed + 1.0)) + hash1(seed + 2.0));
+        let birth = vec2<f32>(hash1(seed + 3.0), hash1(seed + 4.0));
         let at = birth - vec2<f32>(0.0, life * 1.5 / max(site.metres.y, 0.01));
         let d = abs(suv - at) / pixel;
         let born = select(step(site_distance(birth), 0.0), site_cover(birth), on_sprite);
-        motes = max(motes, step(max(d.x, d.y), 1.0) * born * step(life, 0.8) * step(0.3, hash(seed + floor(tick * 12.0))));
+        motes = max(motes, step(max(d.x, d.y), 1.0) * born * step(life, 0.8) * step(0.3, hash1(seed + floor(tick * 12.0))));
     }
     let glow = clamp(max(max(floor_glow, beams), max(seam, motes)), 0.0, 1.0) * rising * settling;
     let rgb = mix(params.color.rgb, vec3<f32>(1.0, 1.0, 0.95), step(0.5, max(motes, seam)));
     return over(vec4<f32>(rgb, glow * params.color.a), image);
 }
 
-fn hash(x: f32) -> f32 {
-    return fract(sin(x * 12.9898) * 43758.5453);
-}

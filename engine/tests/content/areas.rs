@@ -87,6 +87,33 @@ fn a_props_footprint_blocks_the_ground_under_it_and_a_scatter_strews_the_same_pr
 }
 
 #[test]
+fn a_walk_leads_to_every_point_the_ground_holds() {
+    let rocks: Vec<Value> = [(2.0, 2.0), (5.5, 3.0), (3.0, 6.0), (6.5, 6.5), (1.0, 4.5), (4.2, 4.6)]
+        .iter()
+        .map(|(x, y)| json!({ "type": "prop", "prop": path("prop", "boulder"), "at": { "x": x, "y": y } }))
+        .collect();
+    let content = game()
+        .prop("boulder", json!({ "type": "circle", "radius": 0.4 }))
+        .area("field", &Map::open(9, 9), json!(rocks))
+        .load();
+    let mesh = &area::load(&content, area_id(&content, "field")).mesh;
+    let from = Pos::new(0.5, 0.5);
+    assert!(mesh.walkable(from));
+    let step = 0.02;
+    let held: Vec<Pos<Meters>> = (0..(9.0 / step) as i32)
+        .flat_map(|column| (0..(9.0 / step) as i32).map(move |row| (column, row)))
+        .map(|(column, row)| Pos::new(column as f32 * step - 0.5, row as f32 * step - 0.5))
+        .filter(|&point| mesh.walkable(point) && mesh.connects(from, point))
+        .collect();
+    assert!(held.len() > 100_000);
+    let unreachable: Vec<Pos<Meters>> = held
+        .into_iter()
+        .filter(|&point| mesh.route(from, point).is_none())
+        .collect();
+    assert!(unreachable.is_empty(), "{unreachable:?}");
+}
+
+#[test]
 fn an_area_is_held_to_its_budgets_of_lights_and_props() {
     let light = |x: f32| json!({ "type": "light", "at": { "x": x, "y": 2.0 }, "color": [255, 200, 120], "intensity": 4.0, "radius": 3.0, "height": 2.0 });
     let lights: Vec<Value> = (0..9).map(|i| light(i as f32 + 1.0)).collect();

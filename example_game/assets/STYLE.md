@@ -1,73 +1,71 @@
 # Style sheet
 
-Every model, every ground colour and every render pass is held to this sheet. It is measured from the target frames the game reproduces: flat-shaded low-poly shapes, a one-pixel outline, a half-resolution pixel grain, one warm sun by day and one teal-blue grade by night. `tools/restyle.py` maps a pack's colours onto the palette below and `just lint` holds every model to the budget.
+Every model, every ground colour and every render pass is held to this sheet. It is drawn from the concept board the game reproduces: chunky low-poly models in bright, saturated colours under soft light, blob trees and lush grass, clear bright water, seen from above. `tools/restyle.py` maps a pack's colours onto the palette below and `just lint` holds every model to the budget.
 
 ## What a frame looks like
 
 | | |
 |---|---|
-| Shading | Every face is one flat value. An object reads as two or three values: lit, side, shaded. No gradients across a face, no specular, no rim light. |
-| Outline | A one-pixel dark line on silhouettes and creases, one pixel of the half-resolution image, so two pixels on screen. |
-| Resolution | The world is rendered at half the window size and upscaled with nearest filtering: edges step in two-pixel stairs at 1280 wide. The interface is drawn afterwards at full size. |
-| Ground | One flat colour per ground material, no texture, no noise. Paint blends colours, never textures. Grass tufts are small three-blade props scattered sparsely, with no footprint. |
-| Rocks | Stacked faceted slabs, 100 to 400 triangles, grey by day and blue at night from the grade. A few painted crack lines as darker vertex colour. |
-| Trees | Canopies of painted leaf clusters in two greens with a highlight, gnarled trunks with roots, three to four characters tall. |
-| Shadows | One warm sun, soft shadows (2048 px, two cascades), softened further by the half-resolution upscale. Soft dark pools under trees and rocks. |
-| Night | The same assets under one teal-blue grade: rocks turn blue, greens turn teal. Warm point lights pool on the ground; glowing things keep their own colour with a halo. |
-| Polygons | Props in the low hundreds of triangles, a tree a few hundred, a character under four thousand. One material per model. |
+| Shading | Smooth, soft light: a face takes the sun, the sky's light and the lamps near it, with no specular, and creases and feet darken where things stand close (ambient occlusion). Faceted things (rocks, walls, crates) keep flat faces; rounded things (canopies, bushes, bodies, barrels) are shaded smooth across their faces. No outline. |
+| Light | One warm sun with soft-edged shadows that blur as they fall further from what casts them, the sky itself as the ambient light, so shadows go blue rather than black, and the shadows of clouds drifting over the ground on the wind. Shafts of sunlight show in the air where it breaks through a canopy. What glows (lamps, gems, embers) blooms softly over its rim and pools light on the ground. |
+| Air | A real sky: the sun's light scattered through an atmosphere, blue overhead and pale at the horizon, reddening as the sun sets, and the far distance sinking into that blue haze. |
+| Ground | A smooth coloured surface, painted terrains blending into one another, under a carpet of grass blades and flowers. |
+| Rocks | Faceted low-poly slabs in cool grey-mauve, lit faces paler, 100 to 400 triangles. |
+| Trees | Rounded canopies of lumpy leaf clusters shaded smooth, a lit yellow-green on top deepening to a dark green beneath, on bent trunks with roots; three to four characters tall. Bushes the same, smaller. |
+| Water | Bright cyan, clear in the shallows and deep blue further out, its surface a drifting net of light cells, with bands and dashes of white foam along the shore and rings spreading now and then. |
+| Camera | Perspective, field of view 32°, pitched 55°, three zoom steps, free yaw. |
+| Polygons | Props in the low hundreds of triangles, a tree under two thousand, a character under four thousand. One material per model. |
 | Animation | Few keys, snappy, held poses. A walk is a bob and a stride. Clips play as authored, no blending between actions, at most a 100 ms crossfade. |
-| Camera | Perspective, field of view 32°, pitched 55°, three zoom steps, free yaw. No horizon in frame. |
-| Effects | Soft halos on glowing things, pools of light on the ground, pops when a pickup appears. Nothing glossy, no bloom: glow is an emissive colour. |
 | Sizes | At 1280 wide a character is about 50 px tall, a tree three to four times that, a large rock about a tree. |
 
 ## Measurements
 
-Day: sun elevation 52°, warm white, ambient a cool pale green. Night: no sun, dim cool ambient, grade colour `#5680A8` at strength 0.55, warm point lights, ice-blue gem glow.
+Day: sun elevation 52°, warm white, ambient a sky blue. Night: no sun, dim blue ambient, grade colour `#5680A8` at strength 0.55, warm point lights, ice-blue gem glow.
 
 ## Palette
 
-Every vertex colour in a shipped model is one of these. The greens, stone, bark, grass and glow swatches are measured from the frames; the rest sit beside them at the same saturation and value so a character stands in the same light as the trees.
+Every vertex colour in a shipped model is one of these. The greens, earth, stone, wood and water swatches are taken from the board; the rest sit beside them at the same saturation and value so a character stands in the same light as the trees.
 
 | swatch | hex | use |
 |---|---|---|
-| grass | #A9D16E | the clearing's ground |
-| grass-light | #BADC7B | sunlit patches of ground, tufts |
-| tuft | #C9EB7D | the tips of grass tufts |
-| dirt | #B8A26A | paths, bare earth |
-| stone-ground | #9A9A98 | paved and rocky ground |
-| planks | #A67B50 | floors, tables, fences, carts |
-| wood-dark | #7A5436 | beams, barrels, the undersides of planks |
-| pond | #4F8FA8 | still water |
-| leaf-light | #8DC25A | the top of a canopy, highlights |
-| leaf | #6AA43E | a canopy's body |
-| leaf-dark | #44702A | the underside of a canopy, bushes in shade |
-| bark | #6E5C3A | trunks and roots |
-| bark-dark | #52453A | the shaded side of a trunk, old stumps |
-| stone-light | #AFAEAE | the top of a rock |
-| stone | #888989 | a rock's sides |
-| stone-dark | #53555C | the shaded side of a rock, walls |
-| stone-deep | #45444C | cracks, the base of a rock, iron |
-| bone | #E8DFC4 | skeletons, teeth, tusks |
-| bone-dark | #B9AE90 | the shaded side of bone, old rope |
-| cloth-red | #B04A3C | tunics, banners, tents |
-| cloth-blue | #4A6FA5 | tunics, hoods, blankets |
-| cloth-green | #5E8C4A | capes, cloaks |
-| cloth-purple | #6F4E8A | robes, hats |
-| cloth-white | #E6E3D8 | shirts, sails, canvas |
-| cloth-black | #2B2A30 | hoods, boots, shadows under hats |
-| leather | #7C5A3A | belts, straps, boots, books |
-| steel | #9EA6AE | blades, helmets, buckets |
-| steel-dark | #5C6670 | chain mail, the shaded side of steel |
-| gold | #D9A441 | coins, trim, keys |
-| skin | #E0B48C | faces and hands |
-| skin-dark | #B07D55 | weathered faces and hands |
-| hair | #3B2E25 | dark hair and beards |
-| hair-brown | #7A4A32 | auburn hair |
-| hair-blond | #C9A25C | fair hair |
-| eyes | #141418 | eyes, mouths, the inside of a well |
-| glow-ice | #8FD8FF | gems, wisps, magic |
-| glow-fire | #FFA43A | flames, lanterns, embers |
-| glow-gem | #4DA8FF | the body of a glowing gem |
+| grass | #7CBB47 | the clearing's ground |
+| grass-light | #A3D455 | sunlit patches of ground, tufts |
+| tuft | #CDE86C | the tips of grass tufts |
+| dirt | #C8955E | paths, bare earth |
+| stone-ground | #A89EA9 | paved and rocky ground |
+| planks | #D9915A | floors, tables, fences, carts |
+| wood-dark | #A05A47 | beams, barrels, the undersides of planks |
+| pond | #22A6D2 | still water |
+| leaf-light | #C4E64F | the top of a canopy, highlights |
+| leaf | #6DBB3F | a canopy's body |
+| leaf-dark | #3A7D33 | the underside of a canopy, bushes in shade |
+| bark | #7A5236 | trunks and roots |
+| bark-dark | #553A2B | the shaded side of a trunk, old stumps |
+| stone-light | #CFC6D2 | the top of a rock |
+| stone | #9E95A6 | a rock's sides |
+| stone-dark | #6A6478 | the shaded side of a rock, walls |
+| stone-deep | #4A4556 | cracks, the base of a rock, iron |
+| bone | #EADFC6 | skeletons, teeth, tusks |
+| bone-dark | #BDAF92 | the shaded side of bone, old rope |
+| cloth-red | #D45A4A | tunics, banners, tents |
+| cloth-blue | #3F7FD6 | tunics, hoods, blankets |
+| cloth-green | #5FA04E | capes, cloaks |
+| cloth-purple | #8A5FB8 | robes, hats |
+| cloth-white | #F0ECE4 | shirts, sails, canvas |
+| cloth-black | #343040 | hoods, boots, shadows under hats |
+| leather | #8C5C3C | belts, straps, boots, books |
+| steel | #B4BCC8 | blades, helmets, buckets |
+| steel-dark | #6A7384 | chain mail, the shaded side of steel |
+| gold | #F2B544 | coins, trim, keys |
+| skin | #F0C09A | faces and hands |
+| skin-dark | #C58D62 | weathered faces and hands |
+| hair | #3E2E28 | dark hair and beards |
+| hair-brown | #8A4E34 | auburn hair |
+| hair-blond | #D9B25F | fair hair |
+| eyes | #1A1A22 | eyes, mouths, the inside of a well |
+| glow-ice | #8FE8FF | gems, wisps, magic |
+| glow-fire | #FFB347 | flames, lanterns, embers |
+| glow-gem | #4DB8FF | the body of a glowing gem |
 
 A vertex colour's alpha says how the surface is lit: 1 is lit by the sun and the lights, 0 glows with its own colour, unlit. Flames, gems and eyes that shine are the only use.
 
@@ -76,7 +74,7 @@ A vertex colour's alpha says how the surface is lit: 1 is lit by the sun and the
 - One unit is one metre. A character stands about 1.7 m tall; a door is 2 m; a tree 5 to 7 m.
 - A prop's origin is the middle of its base, the base 2 cm below the origin so it never fights the terrain. A character's origin is between its feet on the ground.
 - A model faces +Z at yaw 0. The engine turns it by its placement's yaw or the actor's facing.
-- Flat normals: every triangle has its own, no vertex is shared between faces that aren't coplanar. Vertex colours carry every colour; a model has no texture, no tangents and no texture coordinates.
+- Normals: an edge between two faces that turn less than 48° from each other shades smooth across it, so a rounded surface (a body, a barrel, a trunk) reads round, and an edge that turns more stays a crisp corner (a crate, a plank, a rock's facets); the kit may set a model's own angle (`smooth_angle`) or mark it `smooth` to round every edge. Vertex colours carry every colour; a model has no texture, no tangents and no texture coordinates.
 - A character's rig has at most 64 joints and one skinned mesh; hats, hoods and capes are skinned to the joint they ride on. Clips are named by the action they play: `idle`, `walk`, `run`, `attack`, `death`, `talk`, and the pose `sit`.
 
 ## Budget

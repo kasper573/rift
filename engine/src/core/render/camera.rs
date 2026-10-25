@@ -5,8 +5,18 @@
 //! draws.
 
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
-use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass, NormalPrepass};
+use bevy::anti_alias::taa::TemporalAntiAliasing;
+use bevy::camera::Hdr;
+use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
+use bevy::light::{AtmosphereEnvironmentMapLight, ShadowFilteringMethod, VolumetricFog};
+use bevy::pbr::{
+    AtmosphereSettings, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel,
+};
+use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy::render::renderer::RenderAdapterInfo;
+use bevy::render::settings::Backends;
+use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
 use bevy::window::PrimaryWindow;
 use serde::{Deserialize, Serialize};
 
@@ -38,18 +48,122 @@ const ZOOM_EASE: Seconds = Seconds(0.2);
 #[derive(Component)]
 pub struct WorldCamera;
 
-/// How every camera on the world smooths its edges: morphological anti-aliasing over the finished
-/// picture, which takes the inked edges and the dithered clearings along with the geometry's.
-pub fn smoothing() -> Smaa {
-    Smaa {
-        preset: SmaaPreset::Ultra,
+/// A camera that draws the world the way the player sees it, finished by `picture`.
+#[derive(Component)]
+pub struct WorldPicture;
+
+/// Whether the GPU draws the full picture: the sky scattering the sun's light and lighting the
+/// world, the sun's shafts in the air, and the picture settling over the frames by temporal
+/// anti-aliasing and the temporal shadow filter, which the clearings' frame-stepped dither relies
+/// on to read as a translucency. GL has no compute shaders for the sky, cannot read the depth
+/// the shafts are marched against, and binds a texture with one sampler where the temporal pass
+/// samples its history two ways, so there the picture is drawn plain: the authored ambient alone
+/// lights what the sun does not, the shadows take a gaussian filter and the dither stands still.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FullPicture(pub bool);
+
+impl FullPicture {
+    pub fn on(adapter: Option<&RenderAdapterInfo>) -> FullPicture {
+        FullPicture(adapter.is_none_or(|adapter| Backends::from(adapter.backend) != Backends::GL))
     }
 }
 
-/// How every camera that draws the world draws it: the prepasses the toon material inks its
-/// edges from, with SMAA standing in for MSAA.
-pub fn passes() -> impl Bundle {
-    (Msaa::Off, DepthPrepass, NormalPrepass, MotionVectorPrepass)
+/// How much of the light over the screen's range blooms over its rim.
+const BLOOM: f32 = 0.12;
+/// How much the colours are saturated again after the tone mapping, which thins the strong greens
+/// and blues the board is painted in.
+const SATURATION: f32 = 1.05;
+/// How much the contrast is raised in every range of light, so the light side and the shaded side
+/// of a thing read apart under the soft light.
+const CONTRAST: f32 = 1.08;
+/// How far into the air the haze is worked out, in metres of the world.
+const HAZE_REACH: f32 = 600.0;
+/// How much the sky lights everything from above, of the atmosphere's own brightness.
+const SKY_LIGHT: f32 = 1.0;
+/// How many pixels across each face of the map of the sky's light is: the sky is a smooth
+/// gradient, and the light it sheds on a matte face smoother still.
+const SKY_MAP: u32 = 32;
+/// How many steps the air is marched in along each pixel's ray for the sun's shafts.
+const AIR_STEPS: u32 = 32;
+/// How much the air itself glows, of the sky's light, where no sun shaft crosses it.
+const AIR_GLOW: f32 = 0.04;
+const AIR_COLOR: Color = Color::srgb(0.55, 0.72, 1.0);
+
+/// How every camera that draws the world finishes its picture: in a high range of light, the air
+/// lit by the sun's shafts, creases shaded by what stands around them, soft shadows, and where
+/// the GPU draws the full picture (`finish_pictures`) under the sky's own scattering and lighting
+/// and all of it settled over the frames by temporal anti-aliasing; then what glows blooms a
+/// little over its rim, the light is mapped softly to the screen's range, saturated and
+/// contrasted back up, dithered against banding, and smoothed once more by morphological
+/// anti-aliasing over the finished picture, which takes the clearings along with the geometry's
+/// edges.
+pub fn picture() -> impl Bundle {
+    let section = ColorGradingSection {
+        contrast: CONTRAST,
+        ..default()
+    };
+    (
+        WorldPicture,
+        Hdr,
+        Msaa::Off,
+        ScreenSpaceAmbientOcclusion {
+            quality_level: ScreenSpaceAmbientOcclusionQualityLevel::High,
+            ..default()
+        },
+        Bloom {
+            intensity: BLOOM,
+            ..Bloom::NATURAL
+        },
+        Tonemapping::TonyMcMapface,
+        ColorGrading {
+            global: ColorGradingGlobal {
+                post_saturation: SATURATION,
+                ..default()
+            },
+            shadows: section,
+            midtones: section,
+            highlights: section,
+        },
+        DebandDither::Enabled,
+        Smaa {
+            preset: SmaaPreset::Ultra,
+        },
+    )
+}
+
+/// Every new picture gets the sky, the shafts and what settles it over the frames, where the GPU
+/// draws the full picture, and a gaussian shadow filter where it does not.
+pub(super) fn finish_pictures(
+    full: Res<FullPicture>,
+    pictures: Query<Entity, Added<WorldPicture>>,
+    mut commands: Commands,
+) {
+    for picture in &pictures {
+        let mut picture = commands.entity(picture);
+        if full.0 {
+            picture.insert((
+                AtmosphereSettings {
+                    aerial_view_lut_max_distance: HAZE_REACH,
+                    ..default()
+                },
+                AtmosphereEnvironmentMapLight {
+                    intensity: SKY_LIGHT,
+                    size: UVec2::splat(SKY_MAP),
+                    ..default()
+                },
+                VolumetricFog {
+                    ambient_color: AIR_COLOR,
+                    ambient_intensity: AIR_GLOW,
+                    jitter: 0.5,
+                    step_count: AIR_STEPS,
+                },
+                TemporalAntiAliasing::default(),
+                ShadowFilteringMethod::Temporal,
+            ));
+        } else {
+            picture.insert(ShadowFilteringMethod::Gaussian);
+        }
+    }
 }
 
 /// The perspective every camera on the world draws with, over a viewport `width` by `height`.
@@ -324,11 +438,13 @@ impl View {
 }
 
 /// The ground on view: the shown area's heights and how far it reaches, for everything that stands
-/// on the ground or points at it.
+/// on the ground or points at it, and the heights as a picture for what settles on the ground in
+/// its shader.
 #[derive(Resource, Clone, Default)]
 pub struct GroundHeights {
     pub heights: Heightfield,
     pub bounds: Rect<Meters>,
+    pub image: Handle<Image>,
 }
 
 impl GroundHeights {

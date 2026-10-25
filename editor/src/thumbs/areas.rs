@@ -6,7 +6,6 @@ use std::collections::{HashMap, VecDeque};
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget};
-use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::prelude::*;
 use bevy::render::gpu_readback::ReadbackOnce;
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
@@ -270,9 +269,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                 },
                 RenderTarget::Image(target.clone().into()),
                 world_camera::projection(size[0], size[1]),
-                world_camera::passes(),
-                Tonemapping::None,
-                DebandDither::Disabled,
+                world_camera::picture(),
                 RenderLayers::from_layers(&[LAYER]),
                 Transform::from_translation(center + Vec3::Y * distance)
                     .looking_at(center, -Vec3::Z),

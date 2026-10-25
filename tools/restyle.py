@@ -7,9 +7,9 @@ KIT is a kit file (see kit.json beside this script): where each model comes from
 cut, scaled and recoloured. PACKS is the folder the packs are extracted in, GAME the game folder.
 With NAMEs only the models whose output path contains one of them are built.
 
-A restyled model is flat-shaded, textureless, coloured per vertex from the palette of the sheet
-the kit names, cut to the nodes it keeps, carries only the clips it maps, and is checked against
-the sheet's budget. Decimation is not implemented: a model over its triangle budget is reported
+A restyled model is textureless, coloured per vertex from the palette of the sheet the kit names,
+shaded flat or, when the kit marks it `smooth`, across its faces, cut to the nodes it keeps,
+carries only the clips it maps, and is checked against the sheet's budget. Decimation is not implemented: a model over its triangle budget is reported
 and the run fails.
 """
 
@@ -87,17 +87,18 @@ def restyle(entry, folders, folders_materials, packs, out, palette):
     if not kept:
         raise ValueError(f"{entry['from']}: nothing kept")
     skinned = any("skin" in source.json["nodes"][index] for index in kept) and not entry.get("static", False)
+    smooth = bool(entry.get("smooth", False))
     mesh = Mesh()
     materials = dict(folders_materials.get(entry["from"].split(":", 1)[0], {}))
     materials.update(colors)
     for index in kept:
-        source.gather(index, mesh, materials, glow, skinned)
+        source.gather(index, mesh, materials, glow, skinned, smooth=smooth)
     for part in entry.get("parts", []):
         extra = Source(resolve(part["from"], folders, packs), palette)
         extra.skin = 0
         for index, node in enumerate(extra.json["nodes"]):
             if "mesh" in node and matches(node.get("name", ""), part["keep"]):
-                extra.gather(index, mesh, materials, glow, skinned, joints_of=source)
+                extra.gather(index, mesh, materials, glow, skinned, joints_of=source, smooth=smooth)
         source.materials_met.update(extra.materials_met)
     mesh.weld()
     mesh.quantize_colors(palette, glow)
@@ -106,7 +107,7 @@ def restyle(entry, folders, folders_materials, packs, out, palette):
     before = len(mesh.faces)
     if before > target:
         mesh.decimate(target)
-    mesh.flatten()
+    mesh.flatten(float(entry.get("smooth_angle", SMOOTH_ANGLE)))
     if skinned:
         document, writer = source.rig(mesh, entry)
     else:
@@ -127,16 +128,47 @@ def matches(name, patterns):
     return any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
 
 
+# Over this angle between two faces, in degrees, their shared edge is a corner that shades crisp;
+# under it, the faces shade smooth across the edge.
+SMOOTH_ANGLE = 48.0
+
+
+def corner_normals(faces, face_normals, weighted, face_smooth, smooth_angle):
+    """The normal at each corner of each face: the area-weighted mean of the faces meeting at
+    that corner's vertex that turn no more than `smooth_angle` from the face, or of every smooth
+    face there when both are marked smooth."""
+    count = len(faces)
+    corner_faces = np.repeat(np.arange(count), 3)
+    corner_vertices = faces.reshape(-1)
+    order = np.argsort(corner_vertices, kind="stable")
+    sorted_vertices = corner_vertices[order]
+    sorted_faces = corner_faces[order]
+    starts = np.searchsorted(sorted_vertices, corner_vertices, "left")
+    ends = np.searchsorted(sorted_vertices, corner_vertices, "right")
+    counts = ends - starts
+    pair_corner = np.repeat(np.arange(count * 3), counts)
+    within = np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)
+    pair_other = sorted_faces[np.repeat(starts, counts) + within]
+    pair_face = corner_faces[pair_corner]
+    facing = (face_normals[pair_face] * face_normals[pair_other]).sum(axis=1)
+    shares = (facing >= np.cos(np.radians(smooth_angle))) | (face_smooth[pair_face] & face_smooth[pair_other])
+    summed = np.zeros((count * 3, 3))
+    np.add.at(summed, pair_corner[shares], weighted[pair_other[shares]])
+    return summed / np.maximum(np.linalg.norm(summed, axis=1, keepdims=True), 1e-12)
+
+
 class Mesh:
     """Triangles gathered from every kept primitive, in the model's space. Faces share their
-    corners by position and skinning, and each face carries one colour: a flat-shaded,
-    palette-coloured surface has no colour between its faces."""
+    corners by position and skinning, and each face carries one colour: a palette-coloured
+    surface has no colour between its faces. A face shaded `smooth` shares its corners' normals
+    with the smooth faces around it and may colour each corner on its own, so a colour runs
+    across a rounded surface; any other has a normal and a colour of its own."""
 
     def __init__(self):
         self.gathered = []
 
-    def add(self, positions, colors, alphas, joints, weights):
-        self.gathered.append((positions, colors, alphas, joints, weights))
+    def add(self, positions, colors, alphas, joints, weights, smooth=False):
+        self.gathered.append((positions, colors, alphas, joints, weights, np.full(len(positions) // 3, smooth)))
 
     def weld(self):
         """Corners that agree in position and skinning are one vertex, so faces know their
@@ -146,6 +178,7 @@ class Mesh:
         alphas = np.concatenate([g[2] for g in self.gathered]).astype(np.float32)
         joints = np.concatenate([g[3] for g in self.gathered]).astype(np.uint8)
         weights = np.concatenate([g[4] for g in self.gathered]).astype(np.float32)
+        self.face_smooth = np.concatenate([g[5] for g in self.gathered])
         rows = np.concatenate([np.round(positions, 5), joints.astype(np.float32), np.round(weights, 4)], axis=1)
         _, first, inverse = np.unique(rows, axis=0, return_index=True, return_inverse=True)
         self.faces = inverse.reshape(-1, 3)
@@ -155,6 +188,7 @@ class Mesh:
         corners = colors.reshape(-1, 3, 3)
         second_agrees = np.all(np.isclose(corners[:, 1], corners[:, 2]), axis=1)
         self.face_colors = np.where(second_agrees[:, None], corners[:, 1], corners[:, 0])
+        self.corner_colors = corners
         self.face_alphas = alphas.reshape(-1, 3)[:, 0]
         self.drop_degenerate()
 
@@ -166,7 +200,9 @@ class Mesh:
         kept = distinct & (area > 1e-12)
         self.faces = faces[kept]
         self.face_colors = self.face_colors[kept]
+        self.corner_colors = self.corner_colors[kept]
         self.face_alphas = self.face_alphas[kept]
+        self.face_smooth = self.face_smooth[kept]
 
     def decimate(self, target):
         """Collapses the cheapest edges, by quadric error, onto one of their ends until no more
@@ -280,20 +316,30 @@ class Mesh:
         kept_faces = [index for index in range(len(faces)) if alive_face[index]]
         self.faces = np.array([faces[index] for index in kept_faces], dtype=np.int64).reshape(-1, 3)
         self.face_colors = self.face_colors[kept_faces]
+        self.corner_colors = self.corner_colors[kept_faces]
         self.face_alphas = self.face_alphas[kept_faces]
+        self.face_smooth = self.face_smooth[kept_faces]
         self.drop_degenerate()
 
-    def flatten(self):
-        """Every face gets its own three vertices, its face normal and its colour; vertices that
-        then agree in everything are shared again."""
+    def flatten(self, smooth_angle=SMOOTH_ANGLE):
+        """Every face gets its own three vertices, its normal and its colour; vertices that then
+        agree in everything are shared again. A corner's normal is the area-weighted mean of the
+        faces meeting there that turn no more than `smooth_angle` degrees from its own, so a
+        rounded surface shades smooth across its facets while a real corner stays crisp; a face
+        marked smooth shares with every smooth face at the corner whatever the angle. A flat face
+        carries its colour on all its corners; a smooth face carries each corner's own, so a colour
+        may run across a rounded surface."""
         faces = self.faces
         corners = self.positions[faces]
-        normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
-        normals /= np.linalg.norm(normals, axis=1, keepdims=True)
+        weighted = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+        face_normals = weighted / np.linalg.norm(weighted, axis=1, keepdims=True)
+        normals = corner_normals(faces, face_normals, weighted, self.face_smooth, smooth_angle)
+        smooth_corners = np.repeat(self.face_smooth, 3)
         flat = faces.reshape(-1)
         positions = self.positions[flat].astype(np.float32)
-        normals = np.repeat(normals, 3, axis=0).astype(np.float32)
+        normals = normals.astype(np.float32)
         colors = np.repeat(self.face_colors, 3, axis=0)
+        colors[smooth_corners] = self.corner_colors.reshape(-1, 3)[smooth_corners]
         alphas = np.repeat(self.face_alphas, 3)
         joints = self.joints[flat]
         weights = self.weights[flat]
@@ -321,6 +367,7 @@ class Mesh:
         exact = {tuple(np.round(color, 5)): name for name, color in palette.items()}
         chosen = [exact.get(tuple(np.round(color, 5)), names[i]) for color, i in zip(self.face_colors, nearest)]
         self.face_colors = np.array([palette[name] for name in chosen], np.float32).reshape(-1, 3)
+        self.corner_colors = np.repeat(self.face_colors[:, None, :], 3, axis=1)
         self.face_alphas = np.where([name in glow for name in chosen], 0.0, self.face_alphas).astype(np.float32)
         self.swatches = sorted(set(chosen))
 
@@ -451,7 +498,7 @@ class Source:
             return glb.srgb_to_linear(glb.hex_color(value))
         return self.palette[value]
 
-    def gather(self, index, mesh, colors, glow, skinned, joints_of=None):
+    def gather(self, index, mesh, colors, glow, skinned, joints_of=None, smooth=False):
         node = self.json["nodes"][index]
         posed = None
         if skinned:
@@ -501,7 +548,9 @@ class Source:
                 order = self.gltf.accessor(primitive["indices"]).reshape(-1)
             else:
                 order = np.arange(len(positions))
-            mesh.add(positions[order], rgb[order], alpha[order], joints[order], weights[order])
+            if bake is not None and np.linalg.det(bake[0][:3, :3]) < 0:
+                order = order.reshape(-1, 3)[:, ::-1].reshape(-1)
+            mesh.add(positions[order], rgb[order], alpha[order], joints[order], weights[order], smooth)
 
     def rigid_binding(self, index, joints_of=None):
         """A mesh that rides on a joint unskinned is bound to that joint: its vertices moved into
@@ -562,7 +611,10 @@ class Source:
 
     def rig(self, mesh, entry):
         """The skin's joints and their ancestors, the one skinned mesh, and the mapped clips,
-        under a root that scales and turns the whole rig."""
+        under a root that scales and turns the whole rig. A scale on a node above the joints (an
+        armature exported in centimetres) is baked away: the nodes under it move that much
+        further apart, the vertices grow by it and the bind matrices follow, so every rig's
+        joints stand in the model's metres and skin alike."""
         skin = self.json["skins"][self.skin]
         kept_nodes = set(skin["joints"])
         for joint in skin["joints"]:
@@ -577,6 +629,24 @@ class Source:
             if children:
                 node["children"] = children
             nodes.append(node)
+        grown = {old: 1.0 for old in order}
+        for old in order:
+            node = nodes[renumber[old]]
+            factor = node.get("scale")
+            if old in skin["joints"] or factor is None or abs(factor[0] - 1.0) < 1e-6:
+                continue
+            if max(abs(factor[0] - factor[1]), abs(factor[0] - factor[2])) > 1e-6:
+                raise ValueError(f"{node.get('name')}: a rig's armature may only be scaled alike on every axis")
+            node["scale"] = [1.0, 1.0, 1.0]
+            for below in order:
+                if old in self.ancestors(below):
+                    grown[below] *= factor[0]
+                    if "translation" in nodes[renumber[below]]:
+                        nodes[renumber[below]]["translation"] = [float(v * factor[0]) for v in nodes[renumber[below]]["translation"]]
+        growth = {grown[joint] for joint in skin["joints"]}
+        if len(growth) != 1:
+            raise ValueError("a rig's joints must all stand under the same scale")
+        growth = growth.pop()
         roots = [renumber[old] for old in order if old not in self.parent or self.parent[old] not in renumber]
         mesh_node = len(nodes)
         nodes.append({"name": "skin", "mesh": 0, "skin": 0})
@@ -588,8 +658,10 @@ class Source:
         nodes[0]["translation"] = [float(v) for v in entry.get("offset", [0, 0, 0])]
         writer = glb.Writer()
         inverse_bind = self.inverse_bind()
+        grown_bind = inverse_bind.copy()
+        grown_bind[:, :3, 3] *= growth
         joints = [renumber[joint] for joint in skin["joints"]]
-        skins = [{"name": "skin", "joints": joints, "inverseBindMatrices": writer.accessor(inverse_bind.transpose(0, 2, 1).reshape(-1, 16), FLOAT, "MAT4")}]
+        skins = [{"name": "skin", "joints": joints, "inverseBindMatrices": writer.accessor(grown_bind.transpose(0, 2, 1).reshape(-1, 16), FLOAT, "MAT4")}]
         animations = []
         self.clip_lengths = {}
         for action, clip_name in entry.get("clips", {}).items():
@@ -606,6 +678,10 @@ class Source:
                 sampler = source["samplers"][channel["sampler"]]
                 times = self.gltf.accessor(sampler["input"]).astype(np.float32)
                 values = self.gltf.accessor(sampler["output"]).astype(np.float32)
+                if target["path"] == "translation":
+                    values = values * np.float32(grown[target["node"]])
+                elif target["path"] == "scale" and nodes[renumber[target["node"]]].get("scale") == [1.0, 1.0, 1.0] and target["node"] not in skin["joints"]:
+                    values = values / np.float32(self.json["nodes"][target["node"]].get("scale", [1.0])[0])
                 length = max(length, float(times.max()))
                 samplers.append(
                     {
@@ -620,6 +696,7 @@ class Source:
             self.clip_lengths[action] = length
             animations.append({"name": action, "samplers": samplers, "channels": channels})
         self.bind_bounds = self.rest_bounds(mesh, inverse_bind, scale)
+        mesh.transform(np.diag([growth, growth, growth, 1.0]))
         document = {
             "scene": 0,
             "scenes": [{"nodes": [0]}],

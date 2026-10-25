@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget};
-use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
@@ -19,7 +18,7 @@ use engine::core::ground::{Heightfield, Paint};
 use engine::core::render::camera;
 use engine::core::render::world::mannequin::Mannequin;
 use engine::core::render::world::mannequin::mannequin;
-use engine::core::render::world::sky::Daylight;
+use engine::core::render::world::sky::{self, Daylight};
 use engine::core::time::Seconds;
 use engine::systems::area::scenery::{self, Scenery};
 use engine::systems::area::{Area, Picture};
@@ -197,10 +196,7 @@ impl Viewport {
                 },
                 RenderTarget::Image(image.clone().into()),
                 camera::projection(size[0], size[1]),
-                camera::smoothing(),
-                camera::passes(),
-                Tonemapping::None,
-                DebandDither::Disabled,
+                camera::picture(),
                 RenderLayers::from_layers(&[layer]),
                 Transform::default(),
             ))
@@ -251,7 +247,8 @@ impl Viewport {
                 RenderLayers::from_layers(&[self.layer]),
             );
             world.entity_mut(stood.root).insert(ChildOf(self.root));
-            scenery::light(world, &area, Daylight::Fixed, stood, self.camera);
+            let sun = scenery::light(world, &area, Daylight::Fixed, stood, self.camera);
+            world.entity_mut(self.camera).insert(sky::haze(sun));
             self.stood = Some(Stood {
                 scenery: stood,
                 made: request.made,

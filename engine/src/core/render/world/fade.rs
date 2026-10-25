@@ -1,6 +1,7 @@
 //! What comes between the camera and whom it follows clears a circle around them over a fifth of
-//! a second, dithered and soft at its rim, and closes it again when the way is clear. A faded
-//! thing keeps the rest of itself and its whole shadow: it still stands there, only seen through.
+//! a second, dithered and soft at its rim, and closes it again when the way is clear; what the camera stands
+//! inside of clears away whole, since it would otherwise fill the picture. A faded thing keeps the
+//! rest of itself and its whole shadow: it still stands there, only seen through.
 
 use bevy::camera::primitives::Aabb;
 use bevy::ecs::system::SystemParam;
@@ -8,7 +9,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use super::camera::CameraRig;
-use super::toon::{ToonMaterial, ToonStyle};
+use super::material::{FadeStyle, WorldMaterial};
 use crate::core::time::Seconds;
 use crate::core::units::Meters;
 
@@ -30,8 +31,8 @@ pub(super) struct Fading<'w, 's> {
     children: Query<'w, 's, &'static Children>,
     bounds: Query<'w, 's, (&'static Aabb, &'static GlobalTransform)>,
     roots: Query<'w, 's, (Entity, &'static mut Fades)>,
-    materials_of: Query<'w, 's, &'static MeshMaterial3d<ToonMaterial>>,
-    materials: ResMut<'w, Assets<ToonMaterial>>,
+    materials_of: Query<'w, 's, &'static MeshMaterial3d<WorldMaterial>>,
+    materials: ResMut<'w, Assets<WorldMaterial>>,
 }
 
 pub(super) fn fade_occluders(
@@ -64,11 +65,15 @@ pub(super) fn fade_occluders(
     };
     let step = time.delta_secs() / FADE.0;
     for (root, mut fades) in roots.iter_mut() {
-        let crossed = children
+        let (mut crossed, mut around_eye) = (false, false);
+        for (aabb, transform) in children
             .iter_descendants(root)
             .chain(std::iter::once(root))
             .filter_map(|entity| bounds.get(entity).ok())
-            .any(|(aabb, transform)| segment_crosses(eye, target, aabb, transform));
+        {
+            crossed |= segment_crosses(eye, target, aabb, transform);
+            around_eye |= contains(eye, aabb, transform);
+        }
         let wanted = if crossed { 0.0 } else { 1.0 };
         if fades.shown == 1.0 && wanted == 1.0 {
             continue;
@@ -85,11 +90,10 @@ pub(super) fn fade_occluders(
             let Some(shown) = materials.get(&handle.0) else {
                 continue;
             };
-            let style = ToonStyle {
+            let style = FadeStyle {
                 shown: fades.shown,
                 focus,
-                focus_radius,
-                ..shown.extension.style
+                focus_radius: if around_eye { f32::MAX } else { focus_radius },
             };
             if shown.extension.style != style
                 && let Some(mut material) = materials.get_mut(&handle.0)
@@ -98,6 +102,13 @@ pub(super) fn fade_occluders(
             }
         }
     }
+}
+
+/// Whether `point` lies in the box, tested in the box's own frame.
+fn contains(point: Vec3, aabb: &Aabb, transform: &GlobalTransform) -> bool {
+    let local = transform.affine().inverse().transform_point3(point);
+    let (min, max) = (Vec3::from(aabb.min()), Vec3::from(aabb.max()));
+    local.cmpge(min).all() && local.cmple(max).all()
 }
 
 /// Whether the segment from `from` to `to` passes through the box, which is tested in the box's

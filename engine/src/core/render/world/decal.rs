@@ -1,5 +1,7 @@
 //! Marks painted on the ground: rings and discs that follow the terrain under them, for whom the
-//! player is, hovers over or fights, where a walk ends and what an item lies on.
+//! player is, hovers over or fights, where a walk ends and what an item lies on. A mark is one
+//! quad, cut into a grid and settled on the ground by its shader from the ground's heights, so it
+//! follows what it marks at the cost of a transform.
 
 use bevy::asset::{AssetPath, embedded_path};
 use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey};
@@ -8,13 +10,15 @@ use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 
 use super::camera::GroundHeights;
-use super::terrain;
+use super::terrain::GroundUniform;
 use crate::core::geometry::Radians;
 use crate::core::math::Pos;
 use crate::core::units::Meters;
 
 /// How far above the ground a decal is laid, so it draws over the terrain without fighting it.
 pub const LIFT: f32 = 0.03;
+/// How many quads across a mark's quad is cut into, so it settles on the ground's every sample.
+const GRID: u32 = 8;
 
 /// A mark on the ground at `at`, `size` metres across, drawn as its `look`.
 #[derive(Component, Clone, Debug, PartialEq)]
@@ -41,6 +45,10 @@ pub enum DecalLook {
 pub struct DecalMaterial {
     #[uniform(0)]
     pub paint: DecalPaint,
+    #[uniform(1)]
+    pub ground: GroundUniform,
+    #[texture(2, sample_type = "float", filterable = false)]
+    pub heights: Handle<Image>,
 }
 
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
@@ -50,14 +58,15 @@ pub struct DecalPaint {
     pub look: u32,
     pub width: f32,
     pub dashes: f32,
-    pub time: f32,
 }
 
 impl Material for DecalMaterial {
+    fn vertex_shader() -> ShaderRef {
+        shader()
+    }
+
     fn fragment_shader() -> ShaderRef {
-        ShaderRef::Path(
-            AssetPath::from_path_buf(embedded_path!("decal.wesl")).with_source("embedded"),
-        )
+        shader()
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -86,7 +95,7 @@ impl Material for DecalMaterial {
 }
 
 impl DecalLook {
-    fn paint(self, time: f32) -> DecalPaint {
+    fn paint(self) -> DecalPaint {
         match self {
             DecalLook::Ring {
                 color,
@@ -97,78 +106,90 @@ impl DecalLook {
                 look: 0,
                 width,
                 dashes: dashes as f32,
-                time,
             },
             DecalLook::Glow { color } => DecalPaint {
                 color: color.to_linear().to_vec4(),
                 look: 1,
                 width: 0.0,
                 dashes: 0.0,
-                time,
             },
         }
     }
 }
 
-/// Where a decal's mesh was last laid, so it is laid again only when it moves.
-#[derive(Component, Clone, Debug, PartialEq)]
-pub(super) struct Laid {
-    at: Pos<Meters>,
-    size: Meters,
-    yaw: Radians,
+impl GroundDecal {
+    /// Where the mark's quad stands: over `at`, turned by its yaw and as wide as its size, its
+    /// height left to the shader.
+    fn placing(&self) -> Transform {
+        Transform {
+            translation: Vec3::new(self.at.x, 0.0, self.at.y),
+            rotation: Quat::from_rotation_y(-self.yaw.0),
+            scale: Vec3::new(self.size.0, 1.0, self.size.0),
+        }
+    }
 }
 
-/// A decal as it is laid: its mark, where it was last laid and the material it is painted with.
+/// The quad every mark is drawn on: a metre across, cut into a grid.
+#[derive(Resource)]
+pub(super) struct DecalMesh(Handle<Mesh>);
+
+impl FromWorld for DecalMesh {
+    fn from_world(world: &mut World) -> DecalMesh {
+        DecalMesh(
+            world
+                .resource_mut::<Assets<Mesh>>()
+                .add(Plane3d::default().mesh().subdivisions(GRID)),
+        )
+    }
+}
+
+/// A decal as it is laid: its mark, and where it stands and what it is painted with once laid.
 type Decal<'a> = (
     Entity,
     &'a GroundDecal,
-    Option<&'a Laid>,
+    Option<&'a mut Transform>,
     Option<&'a MeshMaterial3d<DecalMaterial>>,
 );
 
 pub(super) fn lay_decals(
-    time: Res<Time>,
     ground: Res<GroundHeights>,
-    decals: Query<Decal>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    quad: Res<DecalMesh>,
+    mut decals: Query<Decal>,
     mut materials: ResMut<Assets<DecalMaterial>>,
     mut commands: Commands,
 ) {
-    let now = time.elapsed_secs();
-    for (entity, decal, laid, material) in &decals {
-        let paint = decal.look.paint(now);
-        match material {
-            Some(material) => {
-                if let Some(mut material) = materials.get_mut(&material.0) {
-                    material.paint = paint;
+    for (entity, decal, transform, material) in &mut decals {
+        let placing = decal.placing();
+        let paint = decal.look.paint();
+        match (transform, material) {
+            (Some(mut transform), Some(material)) => {
+                if *transform != placing {
+                    *transform = placing;
+                }
+                let stale = materials.get(&material.0).is_some_and(|painted| {
+                    painted.paint != paint || painted.heights != ground.image
+                });
+                if stale && let Some(mut painted) = materials.get_mut(&material.0) {
+                    painted.paint = paint;
+                    painted.heights = ground.image.clone();
                 }
             }
-            None => {
-                commands
-                    .entity(entity)
-                    .try_insert(MeshMaterial3d(materials.add(DecalMaterial { paint })));
+            _ => {
+                commands.entity(entity).try_insert((
+                    Mesh3d(quad.0.clone()),
+                    MeshMaterial3d(materials.add(DecalMaterial {
+                        paint,
+                        ground: GroundUniform::lifted(LIFT),
+                        heights: ground.image.clone(),
+                    })),
+                    placing,
+                    Visibility::default(),
+                ));
             }
         }
-        let place = Laid {
-            at: decal.at,
-            size: decal.size,
-            yaw: decal.yaw,
-        };
-        if laid == Some(&place) && !ground.is_changed() {
-            continue;
-        }
-        let built = terrain::patch(
-            &ground.heights,
-            Vec2::new(decal.at.x, decal.at.y),
-            Vec2::splat(decal.size.0),
-            decal.yaw.0,
-            LIFT,
-        );
-        commands.entity(entity).try_insert((
-            Mesh3d(meshes.add(built)),
-            Transform::default(),
-            Visibility::default(),
-            place,
-        ));
     }
+}
+
+fn shader() -> ShaderRef {
+    ShaderRef::Path(AssetPath::from_path_buf(embedded_path!("decal.wesl")).with_source("embedded"))
 }

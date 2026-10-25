@@ -5,7 +5,6 @@
 use bevy::asset::{AssetPath, embedded_path};
 use bevy::camera::RenderTarget;
 use bevy::camera::visibility::RenderLayers;
-use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType, TextureFormat};
@@ -158,10 +157,7 @@ pub(super) fn setup(
         },
         camera_target,
         camera::projection(target_w, target_h),
-        camera::smoothing(),
-        camera::passes(),
-        Tonemapping::None,
-        DebandDither::Disabled,
+        camera::picture(),
         WorldCamera,
     ));
 

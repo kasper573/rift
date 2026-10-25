@@ -1,22 +1,38 @@
-//! The sky behind the world and the daylight it stands in: a cubemap shaded from the horizon's
-//! colour up to the zenith's, built for the area on view, and how an area's authored sun, sky and
-//! ambient light turn with the hour of a day cycle and dim under cloud.
+//! The sky over the world and the daylight it stands in: an atmosphere scattering the sun's light,
+//! which paints the sky, blues the distance and lights everything from above, the air the sun's
+//! shafts show in, and how an area's authored sun and ambient light turn with the hour of a day
+//! cycle and dim under cloud.
 
 use std::f32::consts::PI;
 
-use bevy::asset::RenderAssetUsages;
 use bevy::color::Mix;
+use bevy::light::atmosphere::ScatteringMedium;
+use bevy::light::{Atmosphere, FogVolume};
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
-use bevy::render::render_resource::{
-    Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
-};
 
 use super::lights::SUN_LUX;
 use crate::core::geometry::Degrees;
+use crate::core::math::Rect;
+use crate::core::units::Meters;
 
-const FACE: u32 = 32;
-/// How bright the sky is drawn, so its colours show as authored under the camera's exposure.
-pub const SKY_NITS: f32 = 1000.0;
+/// How many metres of air a metre of the world stands for: enough that the sky's horizon shows
+/// its haze band from the heights the camera stands at, and no more, so what stands near keeps
+/// its own colour. The world is a diorama a few hundred metres across, and the haze that blues its
+/// far side is laid on separately, clear up close.
+const AIR_PER_METRE: f32 = 10.0;
+/// How far from the camera the air stays clear, and how far until the haze hides everything in
+/// the sky's colour.
+const HAZE_CLEAR: f32 = 50.0;
+const HAZE_THICK: f32 = 170.0;
+const DAY_HAZE: Color = Color::srgb(0.72, 0.83, 0.96);
+const DUSK_HAZE: Color = Color::srgb(0.95, 0.66, 0.42);
+const NIGHT_HAZE: Color = Color::srgb(0.16, 0.18, 0.30);
+/// How high the air the sun's shafts show in reaches over an area.
+const AIR_HEIGHT: f32 = 40.0;
+/// How thick that air is: thin, so it only shows where the light breaks through a canopy or a
+/// window, never as a fog over the ground.
+const AIR_DENSITY: f32 = 0.025;
 
 /// Where the game stands in its day: at a fixed hour that never moves, so an area's light stands
 /// as authored, or at an hour of a cycle that turns through day and night.
@@ -35,15 +51,6 @@ impl Daylight {
             Daylight::Hour(hour) => hour / 24.0,
         }
     }
-
-    /// The hour in steps of a minute and a half: the sky is painted again only as its colours
-    /// move, while the sun itself turns every frame.
-    pub fn sky_step(self) -> u32 {
-        match self {
-            Daylight::Fixed => 0,
-            Daylight::Hour(hour) => (hour * 40.0) as u32,
-        }
-    }
 }
 
 /// A sun as it shines at some hour: where it stands and how.
@@ -55,30 +62,70 @@ pub struct SunLight {
     pub illuminance: f32,
 }
 
-/// The colours of a sky, overhead and at the horizon.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SkyColors {
-    pub zenith: Color,
-    pub horizon: Color,
-}
-
-const NIGHT: SkyColors = SkyColors {
-    zenith: Color::srgb(0.07, 0.10, 0.23),
-    horizon: Color::srgb(0.30, 0.26, 0.38),
-};
-const DUSK: SkyColors = SkyColors {
-    zenith: Color::srgb(0.24, 0.27, 0.47),
-    horizon: Color::srgb(0.95, 0.60, 0.36),
-};
-const OVERCAST: SkyColors = SkyColors {
-    zenith: Color::srgb(0.58, 0.62, 0.66),
-    horizon: Color::srgb(0.78, 0.80, 0.82),
-};
 const SETTING_SUN: Color = Color::srgb(1.0, 0.6, 0.32);
 /// The sun's elevation below which its light is gone and above which it is full.
 const SUNRISE: (f32, f32) = (-6.0, 12.0);
 /// How much of the sun cloud takes.
 const CLOUD_SHADE: f32 = 0.75;
+
+/// The sky over the world: an Earth's atmosphere, scaled down so the world's few hundred metres
+/// stretch over enough air to haze, over a ground the colour of the haze, so that past the
+/// world's edge the eye meets the same haze the far distance sinks into.
+pub fn atmosphere(media: &mut Assets<ScatteringMedium>) -> impl Bundle {
+    let mut atmosphere = Atmosphere::earth(media.add(ScatteringMedium::default()));
+    atmosphere.ground_albedo = DAY_HAZE.to_linear().to_vec3();
+    let scale = 1.0 / AIR_PER_METRE;
+    (
+        Transform {
+            translation: -Vec3::Y * atmosphere.inner_radius * scale,
+            scale: Vec3::splat(scale),
+            ..default()
+        },
+        atmosphere,
+    )
+}
+
+/// The air standing over `ground`, which the sun's light shafts show in.
+pub fn air(ground: Rect<Meters>) -> impl Bundle {
+    let center = ground.center();
+    (
+        FogVolume {
+            density_factor: AIR_DENSITY,
+            absorption: 0.1,
+            scattering: 0.3,
+            scattering_asymmetry: 0.7,
+            ..default()
+        },
+        Transform::from_xyz(center.x, AIR_HEIGHT / 2.0, center.y).with_scale(Vec3::new(
+            ground.size.width,
+            AIR_HEIGHT,
+            ground.size.height,
+        )),
+    )
+}
+
+/// The haze the camera sees the world through under a `sun`: clear up close, thickening with the
+/// distance into the colour of the sky at the horizon, pale blue by day, glowing at dusk and dark
+/// by night, so what stands far off sinks into the sky.
+pub fn haze(sun: Option<SunLight>) -> DistanceFog {
+    let color = match sun {
+        None => NIGHT_HAZE,
+        Some(sun) => {
+            let lit = smoothstep(SUNRISE.0, SUNRISE.1, sun.elevation.0);
+            let glow = (1.0 - sun.elevation.0.abs() / 15.0).clamp(0.0, 1.0);
+            mix(mix(NIGHT_HAZE, DAY_HAZE, lit), DUSK_HAZE, glow)
+        }
+    };
+    DistanceFog {
+        color,
+        directional_light_color: Color::NONE,
+        directional_light_exponent: 8.0,
+        falloff: FogFalloff::Linear {
+            start: HAZE_CLEAR,
+            end: HAZE_THICK,
+        },
+    }
+}
 
 /// An area's authored sun as it shines at `daylight` under `overcast` skies: fixed, as written;
 /// at an hour, climbing from the east over the morning to its authored noon height and bearing
@@ -118,34 +165,6 @@ pub fn ambient_at(daylight: Daylight, elevation: Option<Degrees>, overcast: f32)
     daytime(daylight, elevation).map_or(1.0, |lit| 0.3 + 0.7 * lit) * (1.0 - 0.2 * overcast)
 }
 
-/// An area's authored sky `day` as it shows with its sun at `elevation` (none for an area without
-/// one) under `overcast` skies: by night the night's colours, glowing at the horizon around dawn
-/// and dusk, and greyed by cloud.
-pub fn sky_at(
-    day: SkyColors,
-    daylight: Daylight,
-    elevation: Option<Degrees>,
-    overcast: f32,
-) -> SkyColors {
-    let (zenith, horizon, lit) = match daytime(daylight, elevation) {
-        None => (day.zenith, day.horizon, 1.0),
-        Some(lit) => {
-            let glow = (1.0 - elevation.map_or(90.0, |elevation| elevation.0.abs()) / 15.0)
-                .clamp(0.0, 1.0);
-            (
-                mix(mix(NIGHT.zenith, day.zenith, lit), DUSK.zenith, glow * 0.4),
-                mix(mix(NIGHT.horizon, day.horizon, lit), DUSK.horizon, glow),
-                lit,
-            )
-        }
-    };
-    let dim = 0.3 + 0.7 * lit;
-    SkyColors {
-        zenith: mix(zenith, dimmed(OVERCAST.zenith, dim), overcast),
-        horizon: mix(horizon, dimmed(OVERCAST.horizon, dim), overcast),
-    }
-}
-
 /// How far into the day a sun at `elevation` is, 0 by night and 1 by day, or nothing when the
 /// light stands fixed or there is no sun to move.
 fn daytime(daylight: Daylight, elevation: Option<Degrees>) -> Option<f32> {
@@ -159,59 +178,7 @@ fn mix(from: Color, to: Color, by: f32) -> Color {
     Color::LinearRgba(from.to_linear().mix(&to.to_linear(), by))
 }
 
-fn dimmed(color: Color, by: f32) -> Color {
-    Color::LinearRgba(color.to_linear() * by)
-}
-
 fn smoothstep(from: f32, to: f32, at: f32) -> f32 {
     let t = ((at - from) / (to - from)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
-}
-
-/// A cubemap that is the sky's horizon colour at and below the horizon and shades up to its
-/// zenith overhead.
-pub fn cubemap(sky: SkyColors) -> Image {
-    let (zenith, horizon) = (sky.zenith.to_srgba(), sky.horizon.to_srgba());
-    let mut data = Vec::with_capacity((FACE * FACE * 6 * 4) as usize);
-    for face in 0..6 {
-        for row in 0..FACE {
-            for column in 0..FACE {
-                let u = (column as f32 + 0.5) / FACE as f32 * 2.0 - 1.0;
-                let v = (row as f32 + 0.5) / FACE as f32 * 2.0 - 1.0;
-                let direction = match face {
-                    0 => Vec3::new(1.0, -v, -u),
-                    1 => Vec3::new(-1.0, -v, u),
-                    2 => Vec3::new(u, 1.0, v),
-                    3 => Vec3::new(u, -1.0, -v),
-                    4 => Vec3::new(u, -v, 1.0),
-                    _ => Vec3::new(-u, -v, -1.0),
-                }
-                .normalize();
-                let up = direction.y.clamp(0.0, 1.0).powf(0.55);
-                let channel = |low: f32, high: f32| ((low + (high - low) * up) * 255.0) as u8;
-                data.extend([
-                    channel(horizon.red, zenith.red),
-                    channel(horizon.green, zenith.green),
-                    channel(horizon.blue, zenith.blue),
-                    255,
-                ]);
-            }
-        }
-    }
-    let mut image = Image::new(
-        Extent3d {
-            width: FACE,
-            height: FACE,
-            depth_or_array_layers: 6,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    image.texture_view_descriptor = Some(TextureViewDescriptor {
-        dimension: Some(TextureViewDimension::Cube),
-        ..default()
-    });
-    image
 }

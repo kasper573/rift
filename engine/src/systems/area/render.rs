@@ -9,7 +9,8 @@ use super::{AreaId, AreaObject, AreaTag};
 use crate::core::content::Content;
 use crate::core::math::{Pos, Rect};
 use crate::core::render::transition::WorldViewSystems;
-use crate::core::render::world::sky::Daylight;
+use crate::core::render::world::sky::{self, Daylight};
+use crate::core::render::world::terrain;
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
 use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::render::SiteExtent;
@@ -38,8 +39,7 @@ impl Plugin for AreaRenderPlugin {
     }
 }
 
-/// The area the view is set up for, its scenery, the hour its sun was last turned to and the step
-/// of the day its sky was last painted for.
+/// The area the view is set up for, its scenery and the hour its sun was last turned to.
 #[derive(Resource, Default)]
 struct ShownArea(Option<Standing>);
 
@@ -47,7 +47,6 @@ struct Standing {
     area: AreaId,
     scenery: Scenery,
     shone: Option<Daylight>,
-    sky: Option<u32>,
 }
 
 /// The area whose scenery stands in the view.
@@ -74,9 +73,13 @@ fn show_area(world: &mut World) {
     tear_down(world);
     let content = world.resource::<Content>().clone();
     let area = super::shared(&content, area_id).clone();
+    let image = world
+        .resource_mut::<Assets<Image>>()
+        .add(terrain::height_image(&area.heights));
     world.insert_resource(GroundHeights {
         heights: area.heights.clone(),
         bounds: area.size.bounds(),
+        image,
     });
     world.insert_resource(scenery::grade(&area.lighting));
     world.insert_resource(scenery::climate(&area));
@@ -85,29 +88,15 @@ fn show_area(world: &mut World) {
         area: area_id,
         scenery: stood,
         shone: None,
-        sky: None,
     });
     light_area(world, &area);
 }
 
-/// Turns the shown area's sun with the hour as it moves, and paints its sky again whenever the
-/// day has moved on a step.
+/// Turns the shown area's sun with the hour as it moves, and its clouds with the wind.
 fn follow_daylight(world: &mut World) {
     let Some(area_id) = shown(world) else {
         return;
     };
-    let daylight = *world.resource::<Daylight>();
-    let Some((shone, sky)) = world
-        .resource::<ShownArea>()
-        .0
-        .as_ref()
-        .map(|standing| (standing.shone, standing.sky))
-    else {
-        return;
-    };
-    if shone == Some(daylight) && sky == Some(daylight.sky_step()) {
-        return;
-    }
     let content = world.resource::<Content>().clone();
     let area = super::shared(&content, area_id).clone();
     light_area(world, &area);
@@ -115,11 +104,11 @@ fn follow_daylight(world: &mut World) {
 
 fn light_area(world: &mut World, area: &super::Area) {
     let daylight = *world.resource::<Daylight>();
-    let Some((stood, sky)) = world
+    let Some(stood) = world
         .resource::<ShownArea>()
         .0
         .as_ref()
-        .map(|standing| (standing.scenery, standing.sky))
+        .map(|standing| standing.scenery)
     else {
         return;
     };
@@ -129,13 +118,10 @@ fn light_area(world: &mut World, area: &super::Area) {
     else {
         return;
     };
-    scenery::shine(world, area, daylight, stood, camera);
-    if sky != Some(daylight.sky_step()) {
-        scenery::paint_sky(world, area, daylight, camera);
-    }
+    let sun = scenery::light(world, area, daylight, stood, camera);
+    world.entity_mut(camera).insert(sky::haze(sun));
     if let Some(standing) = world.resource_mut::<ShownArea>().0.as_mut() {
         standing.shone = Some(daylight);
-        standing.sky = Some(daylight.sky_step());
     }
 }
 

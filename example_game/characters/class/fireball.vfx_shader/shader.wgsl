@@ -74,13 +74,13 @@ fn embers(suv: vec2<f32>, t: f32, tick: f32) -> f32 {
     var light = 0.0;
     for (var i = 0u; i < 18u; i++) {
         let seed = f32(i) * 7.31;
-        let birth = vec2<f32>(hash(seed + 5.3), hash(seed + 13.7));
-        let life = fract(tick * (0.35 + 0.3 * hash(seed + 1.7)) + hash(seed + 3.1));
-        let lift = vec2<f32>((hash(seed + 9.2) - 0.5) * 0.6, -life * 1.8) / max(site.metres, vec2<f32>(0.01));
+        let birth = vec2<f32>(hash1(seed + 5.3), hash1(seed + 13.7));
+        let life = fract(tick * (0.35 + 0.3 * hash1(seed + 1.7)) + hash1(seed + 3.1));
+        let lift = vec2<f32>((hash1(seed + 9.2) - 0.5) * 0.6, -life * 1.8) / max(site.metres, vec2<f32>(0.01));
         let at = birth + lift;
         let d = abs(suv - at) / pixel;
         let square = step(max(d.x, d.y), 1.0);
-        let glowing = step(0.0, 0.3 - life) + step(life, 0.75) * step(0.5, hash(seed + floor(tick * 12.0)));
+        let glowing = step(0.0, 0.3 - life) + step(life, 0.75) * step(0.5, hash1(seed + floor(tick * 12.0)));
         light = max(light, square * site_cover(birth) * glowing * step(0.2, t));
     }
     return light;
@@ -125,14 +125,6 @@ fn ramp(heat: f32) -> vec3<f32> {
         return red;
     }
     return ember;
-}
-
-fn hash(x: f32) -> f32 {
-    return fract(sin(x * 12.9898) * 43758.5453);
-}
-
-fn hash2(p: vec2<f32>) -> f32 {
-    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
 }
 
 fn noise(p: vec2<f32>) -> f32 {

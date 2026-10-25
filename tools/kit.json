@@ -154,15 +154,18 @@
     },
     "world/props/bush.prop/model.glb": {
       "from": "nature:plant_bush.glb",
-      "scale": 3
+      "scale": 3,
+      "smooth": true
     },
     "world/props/bush-large.prop/model.glb": {
       "from": "nature:plant_bushLarge.glb",
-      "scale": 3
+      "scale": 3,
+      "smooth": true
     },
     "world/props/bush-small.prop/model.glb": {
       "from": "nature:plant_bushSmall.glb",
-      "scale": 3
+      "scale": 3,
+      "smooth": true
     },
     "world/props/crop-pumpkin.prop/model.glb": {
       "from": "nature:crop_pumpkin.glb",
@@ -1007,6 +1010,13 @@
         "Bat",
         "Eyes"
       ],
+      "colors": {
+        "Main": "stone-dark",
+        "Belly": "stone",
+        "Black": "stone-deep",
+        "Nose": "cloth-red",
+        "Eyes": "eyes"
+      },
       "scale": 0.2,
       "clips": {
         "idle": "BatArmature|Bat_Flying",

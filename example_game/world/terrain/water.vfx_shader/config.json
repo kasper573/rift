@@ -1,14 +1,24 @@
 {
-  "name": "Ripples",
+  "name": "Water",
   "stage": "cover",
   "params": [
     {
       "name": "crest",
       "kind": "color",
       "default": [
-        225,
-        240,
-        250,
+        236,
+        251,
+        252,
+        255
+      ]
+    },
+    {
+      "name": "shallow",
+      "kind": "color",
+      "default": [
+        67,
+        211,
+        226,
         255
       ]
     },
@@ -16,16 +26,16 @@
       "name": "deep",
       "kind": "color",
       "default": [
-        24,
-        58,
-        104,
+        46,
+        172,
+        222,
         255
       ]
     },
     {
       "name": "opacity",
       "kind": "number",
-      "default": 0.9,
+      "default": 0.96,
       "min": 0.0,
       "max": 1.0
     },

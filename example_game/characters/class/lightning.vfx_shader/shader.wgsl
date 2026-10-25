@@ -13,7 +13,7 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
     let p = site_local(suv);
     let pixel = site.metres.x / max(site.size.x, 1.0);
     let frame = floor(site.time * 24.0);
-    let flicker = 0.75 + 0.25 * step(0.5, hash(frame * 0.37 + 1.3));
+    let flicker = 0.75 + 0.25 * step(0.5, hash1(frame * 0.37 + 1.3));
     let count = u32(clamp(params.bolts, 1.0, 4.0));
     let jitter = max(params.jitter, 0.0);
     var light = 0.0;
@@ -67,13 +67,9 @@ fn course_point(index: u32) -> vec2<f32> {
     return vec2<f32>(select(span.y, span.x, index == 0u), 0.0);
 }
 
-fn hash(x: f32) -> f32 {
-    return fract(sin(x * 12.9898) * 43758.5453);
-}
-
 fn noise(x: f32) -> f32 {
     let i = floor(x);
     let f = fract(x);
     let u = f * f * (3.0 - 2.0 * f);
-    return mix(hash(i), hash(i + 1.0), u);
+    return mix(hash1(i), hash1(i + 1.0), u);
 }

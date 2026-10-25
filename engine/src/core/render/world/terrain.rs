@@ -1,12 +1,53 @@
 //! The ground as one mesh: a vertex at every height sample, coloured by the materials painted
-//! there, shaded flat by the toon material.
+//! there, shaded smooth by the world material; and its heights as a picture, for what a shader
+//! settles on the ground.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, ShaderType, TextureDimension, TextureFormat};
 
 use crate::core::ground::{Heightfield, SAMPLES_PER_METER};
 use crate::core::units::GROUND_ORIGIN;
+
+/// Where the ground's samples lie, as a shader settling a mesh on the ground reads them: the
+/// metres the first stands at, how many stand to the metre, and how far above the ground to draw.
+#[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
+pub struct GroundUniform {
+    pub origin: Vec2,
+    pub samples_per_metre: f32,
+    pub lift: f32,
+}
+
+impl GroundUniform {
+    pub fn lifted(lift: f32) -> GroundUniform {
+        GroundUniform {
+            origin: Vec2::new(GROUND_ORIGIN.x, GROUND_ORIGIN.y),
+            samples_per_metre: SAMPLES_PER_METER as f32,
+            lift,
+        }
+    }
+}
+
+/// The ground's heights as a picture a texel per sample, in metres.
+pub fn height_image(heights: &Heightfield) -> Image {
+    let (columns, rows) = heights.samples();
+    let data = (0..rows)
+        .flat_map(|row| (0..columns).map(move |column| heights.sample(column, row).0))
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    Image::new(
+        Extent3d {
+            width: columns.max(1),
+            height: rows.max(1),
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::R32Float,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+}
 
 /// The terrain's mesh, in the world's metres from the ground's corner, each sample coloured by
 /// `color(column, row)` in linear RGBA.

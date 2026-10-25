@@ -45,10 +45,6 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
     return over(vec4<f32>(rgb, clamp(glow, 0.0, 1.0)), image);
 }
 
-fn hash2(p: vec2<f32>) -> f32 {
-    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
-}
-
 fn noise(p: vec2<f32>) -> f32 {
     let i = floor(p);
     let f = fract(p);

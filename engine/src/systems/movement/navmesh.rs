@@ -1,5 +1,5 @@
 use glam::Vec2;
-use polyanya::{Mesh, Triangulation};
+use polyanya::{Coords, Mesh, Triangulation};
 
 use crate::core::geometry::corners;
 use crate::core::math::{Offset, Pos, Rect, Rng};
@@ -124,7 +124,7 @@ impl NavMesh {
     /// The corners of the shortest walk from `from` to `to`, `to` last, or none when no walk leads
     /// there. Each corner is a point to walk straight to from the one before.
     pub fn route(&self, from: Pos<Meters>, to: Pos<Meters>) -> Option<Vec<Pos<Meters>>> {
-        let path = self.mesh.path(vec2(from), vec2(to))?;
+        let path = self.mesh.path(self.place(from)?, self.place(to)?)?;
         let mut corners: Vec<Pos<Meters>> = path.path.into_iter().map(pos).collect();
         if corners.last() != Some(&to) {
             corners.push(to);
@@ -254,6 +254,14 @@ impl NavMesh {
     /// The polygon holding `at`, or the nearest within the fuzz: a point on a polygon's edge, as a
     /// route's corners are, lands a pixel or two off it through the window.
     fn locate(&self, at: Pos<Meters>) -> Option<usize> {
+        self.place(at)
+            .map(|coords| (coords.polygon() & POLYGON_BITS) as usize)
+    }
+
+    /// `at` placed on the mesh with the polygon that holds it, which a route is given outright: left
+    /// to find the polygon itself, the search misses a point lying on a polygon's corner, and a
+    /// walk to a corner the mesh holds would never be found.
+    fn place(&self, at: Pos<Meters>) -> Option<Coords> {
         if !self.bounds.contains(at) {
             return None;
         }
@@ -263,7 +271,6 @@ impl NavMesh {
             .first()
             .copied()
             .or_else(|| self.mesh.get_closest_point(at))
-            .map(|coords| (coords.polygon() & POLYGON_BITS) as usize)
     }
 
     /// The triangles of the polygons `kept`, cut down to the convex `clip`.

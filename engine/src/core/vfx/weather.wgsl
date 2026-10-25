@@ -4,6 +4,8 @@
 // overcast), and the bodies treading through the cover, each a ground point (x east, y south) and
 // the radius it flattens. `wind_lean` and `tread_push` turn those into the metres a blade's tip
 // shifts, and `lean` bends a vertex of a blade that far, by how high up the blade it stands.
+// The engine paints the weather into a picture a texel per value, and `read_weather` reads it
+// out as each entry of the header starts.
 
 const TREADS: u32 = 24u;
 
@@ -16,7 +18,22 @@ struct Weather {
     tread: array<vec4<f32>, TREADS>,
 }
 
-@group(3) @binding(102) var<uniform> weather: Weather;
+@group(3) @binding(102) var weather_picture: texture_2d<f32>;
+
+var<private> weather: Weather;
+
+fn read_weather() {
+    let blowing = textureLoad(weather_picture, vec2<i32>(0, 0), 0);
+    let sky = textureLoad(weather_picture, vec2<i32>(1, 0), 0);
+    weather.wind = blowing.xy;
+    weather.time = blowing.z;
+    weather.treads = min(u32(blowing.w), TREADS);
+    weather.daylight = sky.x;
+    weather.overcast = sky.y;
+    for (var i = 0u; i < weather.treads; i++) {
+        weather.tread[i] = textureLoad(weather_picture, vec2<i32>(i32(i) + 2, 0), 0);
+    }
+}
 
 // How far a blade's tip leans in a gale, in metres.
 const GALE_LEAN: f32 = 0.45;

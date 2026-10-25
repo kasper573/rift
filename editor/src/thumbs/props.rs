@@ -7,8 +7,8 @@ use std::collections::{HashMap, VecDeque};
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget};
-use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::light::AmbientLight;
+use bevy::light::atmosphere::ScatteringMedium;
 use bevy::prelude::*;
 use bevy::render::gpu_readback::ReadbackOnce;
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
@@ -17,6 +17,7 @@ use engine::core::content::media::GltfInfos;
 use engine::core::geometry::Degrees;
 use engine::core::render::camera::{self as world_camera, FOV};
 use engine::core::render::world::lights::{self, AMBIENT_NITS, SUN_LUX};
+use engine::core::render::world::sky;
 use engine::systems::area::prop::PropDef;
 use ui::egui;
 
@@ -211,6 +212,8 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             layers.clone(),
             ChildOf(root),
         ));
+        let atmosphere = sky::atmosphere(&mut world.resource_mut::<Assets<ScatteringMedium>>());
+        world.spawn((atmosphere, layers.clone(), ChildOf(root)));
         let distance = radius / (FOV.radians().0 / 2.0).sin() * 1.1;
         let (sin_p, cos_p) = PITCH.radians().0.sin_cos();
         let back = Vec3::new(0.0, distance * sin_p, distance * cos_p);
@@ -225,9 +228,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                 },
                 RenderTarget::Image(target.clone().into()),
                 world_camera::projection(SIZE, SIZE),
-                world_camera::passes(),
-                Tonemapping::None,
-                DebandDither::Disabled,
+                world_camera::picture(),
                 AmbientLight {
                     color: Color::WHITE,
                     brightness: AMBIENT_NITS,

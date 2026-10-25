@@ -1,11 +1,13 @@
 //! What stands in a world for an area: its ground as one coloured mesh, the covers its terrains
-//! grow, its props as scenes on the ground, its point lights and its sun, every one a child of one
-//! root. The client stands the area the player is in; the editor stands the area it edits, on
-//! render layers of its own, and both light it alike for the hour.
+//! grow, its props as scenes on the ground, its point lights, its sun, the sky its sun lights and
+//! the air over it, every one a child of one root. The client stands the area the player is in;
+//! the editor stands the area it edits, on render layers of its own, and both light it alike for
+//! the hour.
 
 use bevy::app::Propagate;
 use bevy::camera::visibility::RenderLayers;
-use bevy::light::{AmbientLight, NotShadowCaster, Skybox};
+use bevy::light::NotShadowCaster;
+use bevy::light::atmosphere::ScatteringMedium;
 use bevy::prelude::*;
 
 use super::prop::PropId;
@@ -19,13 +21,14 @@ use crate::core::ground::{Heightfield, Paint};
 use crate::core::math::Pos;
 use crate::core::math::Rng;
 use crate::core::render::present::AreaGrade;
+use crate::core::render::world::clouds::{self, CloudSheet};
 use crate::core::render::world::cover;
 use crate::core::render::world::fade::Fades;
 use crate::core::render::world::lights::{self, AMBIENT_NITS, Flicker};
-use crate::core::render::world::sky::{self, Daylight, SkyColors, SunLight};
+use crate::core::render::world::material::{WorldMaterial, world_material};
+use crate::core::render::world::sky::{self, Daylight, SunLight};
 use crate::core::render::world::terrain;
-use crate::core::render::world::toon::{ToonMaterial, toon_of};
-use crate::core::render::world_point;
+use crate::core::render::{FullPicture, world_point};
 use crate::core::time::Seconds;
 use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::ParamFill;
@@ -42,7 +45,8 @@ pub struct Scenery {
     pub sun: Option<Entity>,
 }
 
-/// Stands `area` in the world on `layers`, with its terrain, covers, props, lights and sun.
+/// Stands `area` in the world on `layers`, with its terrain, covers, props, lights, sun, sky and
+/// air.
 pub fn spawn(world: &mut World, content: &Content, area: &Area, layers: RenderLayers) -> Scenery {
     let root = world
         .spawn((
@@ -52,13 +56,18 @@ pub fn spawn(world: &mut World, content: &Content, area: &Area, layers: RenderLa
         ))
         .id();
     let sun = area.lighting.sun.map(|sun| {
+        let clouds = world.resource::<CloudSheet>().over_sun();
         world
             .spawn((
                 lights::sun(sun.color.color(), 0.0, sun.elevation, sun.azimuth),
+                clouds,
                 ChildOf(root),
             ))
             .id()
     });
+    let atmosphere = sky::atmosphere(&mut world.resource_mut::<Assets<ScatteringMedium>>());
+    world.spawn((atmosphere, ChildOf(root)));
+    world.spawn((sky::air(area.size.bounds()), ChildOf(root)));
     let terrain = spawn_terrain(world, content, area, root);
     spawn_covers(world, content, area, root);
     for placed in &area.props {
@@ -89,16 +98,16 @@ pub fn despawn(world: &mut World, scenery: Scenery) {
     }
 }
 
-/// Lights `area` for the hour under its weather: its sun turned and coloured, and the ambient light
-/// and sky put on `camera`.
-/// Lights the area for the hour: the sun and the ambient light, and the sky painted anew.
-pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scenery, camera: Entity) {
-    shine(world, area, daylight, scenery, camera);
-    paint_sky(world, area, daylight, camera);
-}
-
-/// Turns the area's sun and ambient light to the hour, which is cheap enough to do every frame.
-pub fn shine(world: &mut World, area: &Area, daylight: Daylight, scenery: Scenery, camera: Entity) {
+/// Lights `area` for the hour under its weather: its sun turned and coloured, its clouds carried
+/// on by the wind, and the ambient light put on `camera`; cheap enough to do every frame. Gives
+/// the sun as it shines, for a camera that looks through the air to take the haze of.
+pub fn light(
+    world: &mut World,
+    area: &Area,
+    daylight: Daylight,
+    scenery: Scenery,
+    camera: Entity,
+) -> Option<SunLight> {
     let sun = sun_at(area, daylight);
     let elevation = sun.map(|sun| sun.elevation);
     let ambient = AmbientLight {
@@ -111,50 +120,15 @@ pub fn shine(world: &mut World, area: &Area, daylight: Daylight, scenery: Scener
             light.color = sun.color;
             light.illuminance = sun.illuminance;
         }
+        let drifted = clouds::drift(climate(area).wind, world.resource::<Time>().elapsed_secs());
         if let Some(mut transform) = world.get_mut::<Transform>(entity) {
-            *transform = lights::sun_transform(sun.elevation, sun.azimuth);
+            *transform = lights::sun_transform(sun.elevation, sun.azimuth, drifted);
         }
     }
     if let Ok(mut camera) = world.get_entity_mut(camera) {
         camera.insert(ambient);
     }
-}
-
-/// Paints the sky as it looks at the hour, a cubemap the camera wears.
-pub fn paint_sky(world: &mut World, area: &Area, daylight: Daylight, camera: Entity) {
-    let overcast = area.weather.overcast;
-    let elevation = sun_at(area, daylight).map(|sun| sun.elevation);
-    let authored = area.lighting.sky();
-    let colors = sky::sky_at(
-        SkyColors {
-            zenith: authored.zenith.color(),
-            horizon: authored.horizon.color(),
-        },
-        daylight,
-        elevation,
-        overcast,
-    );
-    let shown_sky = world
-        .get::<Skybox>(camera)
-        .and_then(|skybox| skybox.image.clone());
-    let cubemap = sky::cubemap(colors);
-    let mut images = world.resource_mut::<Assets<Image>>();
-    let image = match shown_sky {
-        Some(handle) if images.contains(handle.id()) => {
-            if let Some(mut shown) = images.get_mut(handle.id()) {
-                *shown = cubemap;
-            }
-            handle
-        }
-        _ => images.add(cubemap),
-    };
-    if let Ok(mut camera) = world.get_entity_mut(camera) {
-        camera.insert(Skybox {
-            image: Some(image),
-            brightness: sky::SKY_NITS,
-            ..default()
-        });
-    }
+    sun
 }
 
 fn sun_at(area: &Area, daylight: Daylight) -> Option<SunLight> {
@@ -213,9 +187,10 @@ pub fn terrain_mesh(content: &Content, area: &Area, heights: &Heightfield, paint
 fn spawn_terrain(world: &mut World, content: &Content, area: &Area, root: Entity) -> Entity {
     let mesh = terrain_mesh(content, area, &area.heights, &area.paint);
     let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
-    let mut toon = toon_of(StandardMaterial::default());
-    toon.extension.style.flat = 0.0;
-    let material = world.resource_mut::<Assets<ToonMaterial>>().add(toon);
+    let full = *world.resource::<FullPicture>();
+    let material = world
+        .resource_mut::<Assets<WorldMaterial>>()
+        .add(world_material(StandardMaterial::default(), full));
     world
         .spawn((
             Mesh3d(mesh),
@@ -269,12 +244,14 @@ fn spawn_covers(world: &mut World, content: &Content, area: &Area, root: Entity)
             }
         });
         let material = |world: &mut World, alpha| {
+            let weather = world.resource::<cover_vfx::WeatherImage>().0.clone();
             world
                 .resource_mut::<Assets<CoverMaterial>>()
                 .add(cover_vfx::material(
                     frame.uniform(run, Stage::Cover),
                     params,
                     shader.clone(),
+                    weather,
                     alpha,
                 ))
         };

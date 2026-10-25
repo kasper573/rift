@@ -6,15 +6,17 @@ pub mod transition;
 pub mod world;
 
 pub use camera::{
-    CameraPreferences, CameraRig, GroundHeights, PITCH, TILT_STEP, TURN_STEP, View, WorldCamera,
-    Zoom, cursor_ground, cursor_ray, facing_rotation, ground_height, ground_pos, view_of,
-    window_point, world_point,
+    CameraPreferences, CameraRig, FullPicture, GroundHeights, PITCH, TILT_STEP, TURN_STEP, View,
+    WorldCamera, Zoom, cursor_ground, cursor_ray, facing_rotation, ground_height, ground_pos,
+    view_of, window_point, world_point,
 };
 pub use pick::{Pointed, capsule_hit, pointed, sphere_hit};
 
 use std::collections::HashMap;
 
 use bevy::prelude::*;
+use bevy::render::batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport};
+use bevy::render::{RenderApp, RenderStartup, init_gpu_resource};
 use bevy::sprite_render::Material2dPlugin;
 
 use crate::core::interpolate::RenderValueSystems;
@@ -25,6 +27,12 @@ pub struct WorldRenderPlugin;
 impl Plugin for WorldRenderPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "present.wesl");
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(
+                RenderStartup,
+                draw_directly.after(init_gpu_resource::<GpuPreprocessingSupport>),
+            );
+        }
         app.add_plugins((
             Material2dPlugin::<present::Present>::default(),
             world::WorldScenePlugin,
@@ -118,4 +126,12 @@ impl Animator {
     pub fn retain(&mut self, mut alive: impl FnMut(Entity) -> bool) {
         self.anchors.retain(|entity, _| alive(*entity));
     }
+}
+
+/// Every view draws directly, with no GPU culling: bevy's GPU-driven indirect drawing costs more
+/// CPU a frame than it saves on a scene of a few hundred meshes (half the frame rate on the client
+/// bench). Capped for the whole renderer rather than per camera, so the sun's shadow maps draw the
+/// same way as the cameras.
+fn draw_directly(mut support: ResMut<GpuPreprocessingSupport>) {
+    support.max_supported_mode = support.min(GpuPreprocessingMode::PreprocessingOnly);
 }

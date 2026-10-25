@@ -20,23 +20,23 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
     var light = 0.0;
     for (var i = 0u; i < count; i++) {
         let seed = f32(i) * 7.31;
-        let pace = 0.6 + 0.8 * hash(seed + 1.7);
-        let life = fract(tick * params.speed * pace * 0.5 + hash(seed + 3.1));
-        let sway = sin(tick * (1.5 + hash(seed + 9.2) * 2.0) + seed) * 0.06;
+        let pace = 0.6 + 0.8 * hash1(seed + 1.7);
+        let life = fract(tick * params.speed * pace * 0.5 + hash1(seed + 3.1));
+        let sway = sin(tick * (1.5 + hash1(seed + 9.2) * 2.0) + seed) * 0.06;
         var at = vec2<f32>(0.0);
         var born = 1.0;
         if on_ground {
-            let birth = vec2<f32>(hash(seed + 5.3), hash(seed + 13.7));
+            let birth = vec2<f32>(hash1(seed + 5.3), hash1(seed + 13.7));
             born = site_cover(birth);
             at = birth + vec2<f32>(sway, -life * 1.5 / max(site.metres.y, 0.01));
         } else {
-            let lane = (hash(seed + 5.3) - 0.5) * params.spread;
-            let birth = vec2<f32>(0.5 + lane, 0.25 + 0.7 * hash(seed + 13.7));
+            let lane = (hash1(seed + 5.3) - 0.5) * params.spread;
+            let birth = vec2<f32>(0.5 + lane, 0.25 + 0.7 * hash1(seed + 13.7));
             born = max(site_cover(birth), 0.35);
             at = birth + vec2<f32>(sway, -life * 0.6);
         }
         let d = abs(suv - at) / pixel;
-        let twinkle = step(0.35, hash(seed + floor(tick * 12.0) * 0.37));
+        let twinkle = step(0.35, hash1(seed + floor(tick * 12.0) * 0.37));
         let square = step(max(d.x, d.y), radius - 0.5 + twinkle * 0.5);
         light = max(light, square * born * step(life, 0.85) * bands(sin(life * 3.1415926), 2.0));
     }
@@ -45,6 +45,3 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
     return over(vec4<f32>(params.color.rgb, glow), image);
 }
 
-fn hash(x: f32) -> f32 {
-    return fract(sin(x * 12.9898) * 43758.5453);
-}

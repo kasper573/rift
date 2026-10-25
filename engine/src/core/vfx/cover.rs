@@ -2,13 +2,16 @@
 //! engine from the paint, moved and painted by a content shader the ground names, which reads the
 //! weather the engine publishes: the wind, and the bodies treading through.
 
+use bevy::asset::RenderAssetUsages;
+use bevy::ecs::system::SystemParam;
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{
     ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
 };
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+    AsBindGroup, Extent3d, RenderPipelineDescriptor, SpecializedMeshPipelineError,
+    TextureDimension, TextureFormat,
 };
 use bevy::shader::Shader;
 
@@ -28,27 +31,43 @@ pub struct CoverVfx {
     pub site: SiteUniform,
     #[uniform(101)]
     pub params: ParamsUniform,
-    #[uniform(102)]
-    pub weather: WeatherUniform,
+    #[texture(102, sample_type = "float", filterable = false)]
+    pub weather: Handle<Image>,
     pub shader: Handle<Shader>,
+}
+
+/// The weather as every cover reads it: a picture a texel per value, painted over in place each
+/// frame. The covers' materials stand unchanged while the wind blows and bodies tread through
+/// them, so none of their meshes is drawn up again for it.
+#[derive(Resource)]
+pub struct WeatherImage(pub Handle<Image>);
+
+impl FromWorld for WeatherImage {
+    fn from_world(world: &mut World) -> WeatherImage {
+        WeatherImage(
+            world
+                .resource_mut::<Assets<Image>>()
+                .add(Weather::default().image()),
+        )
+    }
 }
 
 /// The weather as the cover header's `weather` reads it: the wind as a direction scaled by its
 /// strength, the moment, how far through its day the game is and how clouded the sky, and the
 /// bodies treading through, each a ground point and the radius it flattens.
-#[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
-pub struct WeatherUniform {
-    pub wind: Vec2,
-    pub time: f32,
-    pub treads: u32,
-    pub daylight: f32,
-    pub overcast: f32,
-    pub tread: [Vec4; TREADS],
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Weather {
+    wind: Vec2,
+    time: f32,
+    treads: u32,
+    daylight: f32,
+    overcast: f32,
+    tread: [Vec4; TREADS],
 }
 
-impl Default for WeatherUniform {
-    fn default() -> WeatherUniform {
-        WeatherUniform {
+impl Default for Weather {
+    fn default() -> Weather {
+        Weather {
             wind: Vec2::ZERO,
             time: 0.0,
             treads: 0,
@@ -56,6 +75,38 @@ impl Default for WeatherUniform {
             overcast: 0.0,
             tread: [Vec4::ZERO; TREADS],
         }
+    }
+}
+
+impl Weather {
+    fn image(&self) -> Image {
+        Image::new(
+            Extent3d {
+                width: (2 + TREADS) as u32,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            self.texels(),
+            TextureFormat::Rgba32Float,
+            RenderAssetUsages::default(),
+        )
+    }
+
+    /// The weather laid out as the header's `read_weather` reads it: the wind, the moment and
+    /// the count of treads in the first texel, the daylight and the cloud in the second, then a
+    /// texel a tread.
+    fn texels(&self) -> Vec<u8> {
+        let mut texels = vec![
+            Vec4::new(self.wind.x, self.wind.y, self.time, self.treads as f32),
+            Vec4::new(self.daylight, self.overcast, 0.0, 0.0),
+        ];
+        texels.extend(self.tread);
+        texels
+            .iter()
+            .flat_map(Vec4::to_array)
+            .flat_map(f32::to_le_bytes)
+            .collect()
     }
 }
 
@@ -104,6 +155,7 @@ pub fn material(
     site: SiteUniform,
     params: ParamsUniform,
     shader: Handle<Shader>,
+    weather: Handle<Image>,
     alpha_mode: AlphaMode,
 ) -> CoverMaterial {
     ExtendedMaterial {
@@ -120,26 +172,40 @@ pub fn material(
         extension: CoverVfx {
             site,
             params,
-            weather: WeatherUniform::default(),
+            weather,
             shader,
         },
     }
 }
 
+/// What the weather is made of: the moment, the player's wishes about motion, the shown area's
+/// climate and daylight, where the camera looks and who treads the ground.
+#[derive(SystemParam)]
+pub(super) struct Sky<'w, 's> {
+    time: Res<'w, Time>,
+    preferences: Option<Res<'w, CameraPreferences>>,
+    climate: Option<Res<'w, Climate>>,
+    daylight: Option<Res<'w, Daylight>>,
+    rig: Option<Res<'w, CameraRig>>,
+    treading: Query<'w, 's, (&'static GlobalTransform, &'static Treads)>,
+}
+
 /// Every frame the covers learn the wind, the moment and who treads through them. With motion
 /// reduced the wind drops and time stands still, while treading bodies still part the blades.
 pub(super) fn blow(
-    time: Res<Time>,
-    preferences: Option<Res<CameraPreferences>>,
-    climate: Option<Res<Climate>>,
-    daylight: Option<Res<Daylight>>,
-    rig: Option<Res<CameraRig>>,
-    treading: Query<(&GlobalTransform, &Treads)>,
-    mut materials: ResMut<Assets<CoverMaterial>>,
+    sky: Sky,
+    picture: Res<WeatherImage>,
+    mut images: ResMut<Assets<Image>>,
+    mut last: Local<Weather>,
 ) {
-    if materials.is_empty() {
-        return;
-    }
+    let Sky {
+        time,
+        preferences,
+        climate,
+        daylight,
+        rig,
+        treading,
+    } = sky;
     let reduce_motion = preferences.is_some_and(|preferences| preferences.reduce_motion);
     let subject = rig.map_or(Vec3::ZERO, |rig| rig.target());
     let mut treads: Vec<(f32, Vec4)> = treading
@@ -154,7 +220,7 @@ pub(super) fn blow(
         .collect();
     treads.sort_by(|a, b| a.0.total_cmp(&b.0));
     treads.truncate(TREADS);
-    let mut weather = WeatherUniform::default();
+    let mut weather = Weather::default();
     for (slot, (_, tread)) in treads.iter().enumerate() {
         weather.tread[slot] = *tread;
     }
@@ -171,10 +237,11 @@ pub(super) fn blow(
     if !reduce_motion {
         weather.time = time.elapsed_secs();
     }
-    for (_, material) in materials.iter_mut() {
-        if material.extension.weather != weather {
-            material.extension.weather = weather;
-            material.extension.site.set_time(weather.time);
-        }
+    if *last == weather {
+        return;
+    }
+    *last = weather;
+    if let Some(mut image) = images.get_mut(&picture.0) {
+        image.data = Some(weather.texels());
     }
 }

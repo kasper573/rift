@@ -12,6 +12,7 @@ struct VertexOutput {
 @group(3) @binding(101) var<uniform> params: Params;
 
 var<private> lit: vec4<f32>;
+var<private> shine: vec3<f32>;
 var<private> painted: f32;
 var<private> up: f32;
 var<private> salt: f32;
@@ -19,6 +20,10 @@ var<private> part: u32;
 
 fn sample(at: vec2<f32>) -> vec4<f32> {
     return lit;
+}
+
+fn light() -> vec3<f32> {
+    return shine;
 }
 
 fn weight() -> f32 {
@@ -57,6 +62,7 @@ fn vertex(
 ) -> VertexOutput {
     var out: VertexOutput;
     mark(uv_b);
+    read_weather();
     out.world_position = vec4<f32>(sway(position, up), 1.0);
     out.position = out.world_position;
     out.world_normal = vec3<f32>(0.0, 1.0, 0.0);
@@ -68,5 +74,6 @@ fn vertex(
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     mark(in.uv_b);
+    read_weather();
     return vfx(in.uv);
 }

@@ -2,7 +2,8 @@
 // a sheet over the painted cells, blades or strewn copies of a prop, laid out by the engine from
 // the paint. The shader says how a vertex moves (`sway`, from the weather the engine tells it of)
 // and what colour a pixel is (`vfx`), where `sample` is the cover lit in the ground's colour,
-// `weight` how heavily the material is painted there, `tip` how far up a blade or a strewn prop
+// `light` the light falling there (what a white face would be lit to, for a shader that paints
+// in colours of its own), `weight` how heavily the material is painted there, `tip` how far up a blade or a strewn prop
 // the point stands, 0 at its root and 1 at its top, `depth` how many metres of ground lie under a
 // sheet laid at a level, `piece` which of the cover's pieces the point belongs to (0 on a sheet)
 // and `seed` a number of the blade's or the copy's own, 0 on a sheet. The cover's colours come
@@ -15,12 +16,13 @@ import bevy_pbr::render::{mesh_functions, view_transformations::position_world_t
 @if(PREPASS_PIPELINE)
 import engine::core::render::world::prepass_write::prepass_output;
 @else
-import engine::core::render::world::toon_shade::toon_color;
+import engine::core::render::world::shade::lit_color;
 
 @group(3) @binding(100) var<uniform> site: Site;
 @group(3) @binding(101) var<uniform> params: Params;
 
 var<private> lit: vec4<f32>;
+var<private> shine: vec3<f32>;
 var<private> painted: f32;
 var<private> up: f32;
 var<private> salt: f32;
@@ -28,6 +30,10 @@ var<private> part: u32;
 
 fn sample(at: vec2<f32>) -> vec4<f32> {
     return lit;
+}
+
+fn light() -> vec3<f32> {
+    return shine;
 }
 
 fn weight() -> f32 {
@@ -75,6 +81,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
         mark(vertex.uv_b);
         out.uv_b = vertex.uv_b;
     }
+    read_weather();
     let world = vec4<f32>(sway(placed.xyz, up), 1.0);
     out.world_position = world;
     out.position = position_world_to_clip(world.xyz);
@@ -115,7 +122,11 @@ fn fragment(in: VertexOutput) {}
 @else
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
-    lit = toon_color(in, true, 0.0);
+    lit = lit_color(in, is_front);
+    shine = lit.rgb;
+    @if(VERTEX_COLORS) {
+        shine = lit.rgb / max(in.color.rgb, vec3<f32>(0.001));
+    }
     painted = 1.0;
     up = 0.0;
     salt = 0.0;
@@ -127,6 +138,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     @if(VERTEX_UVS_B) {
         mark(in.uv_b);
     }
+    read_weather();
     var out: FragmentOutput;
     out.color = vfx(uv);
     return out;

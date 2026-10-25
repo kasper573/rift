@@ -108,8 +108,16 @@ fn tile_distance(cell: vec2<f32>, anchor: vec2<f32>, grid: vec2<f32>) -> f32 {
     return apart.x + apart.y;
 }
 
+// A number in 0..1 drawn from a cell, the same on every device: hashed on the cell's bits, where a
+// hash built on sin() breaks into blocks wherever a device computes sin() loosely.
 fn hash(cell: vec2<f32>) -> f32 {
-    return fract(sin(dot(cell, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+    return f32(hash_bits(bitcast<u32>(cell.x) ^ hash_bits(bitcast<u32>(cell.y)))) / 4294967295.0;
+}
+
+fn hash_bits(bits: u32) -> u32 {
+    var state = bits * 747796405u + 2891336453u;
+    state = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (state >> 22u) ^ state;
 }
 
 fn on_screen(p: vec2<f32>) -> bool {

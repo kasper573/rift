@@ -42,8 +42,8 @@ use crate::core::render::present::{self, PRESENT_LAYER, PresentScale};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::billboard::Billboard;
 use crate::core::render::world::decal::LIFT;
+use crate::core::render::world::material::WorldMaterial;
 use crate::core::render::world::terrain;
-use crate::core::render::world::toon::{ToonMaterial, plain_prepass_shader};
 use crate::core::render::{CameraRig, GroundHeights, ground_height, world_point};
 use crate::core::time::{Seconds, server_now};
 use crate::core::units::Meters;
@@ -61,6 +61,7 @@ impl Plugin for VfxMaterialsPlugin {
             .add_plugins(MaterialPlugin::<super::cover::CoverMaterial>::default())
             .init_resource::<VfxShaders>()
             .init_resource::<VfxAssets>()
+            .init_resource::<super::cover::WeatherImage>()
             .add_systems(
                 Update,
                 (
@@ -215,7 +216,7 @@ pub struct VfxWorldMaterial {
     pub depth_bias: f32,
 }
 
-/// A shader run in the material of the thing it plays on, over the thing's own toon shading.
+/// A shader run in the material of the thing it plays on, over the thing's own lit surface.
 pub type SurfaceMaterial = ExtendedMaterial<StandardMaterial, SurfaceVfx>;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug, Default)]
@@ -249,11 +250,7 @@ pub struct SiteUniform {
     points: [Vec4; MAX_PATH_POINTS / 2],
 }
 
-impl SiteUniform {
-    pub(super) fn set_time(&mut self, time: f32) {
-        self.time = time;
-    }
-}
+impl SiteUniform {}
 
 /// A shader's parameters laid out as its `Params` struct, built by `ParamsUniform::pack`.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
@@ -819,10 +816,6 @@ impl MaterialExtension for SurfaceVfx {
         ShaderRef::Default
     }
 
-    fn prepass_fragment_shader() -> ShaderRef {
-        plain_prepass_shader()
-    }
-
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
@@ -889,7 +882,7 @@ struct Patched(Option<(Vec3, Vec2)>);
 #[derive(Component, Clone, Default)]
 struct Swapped {
     body: Option<Entity>,
-    meshes: Vec<(Entity, Handle<ToonMaterial>)>,
+    meshes: Vec<(Entity, Handle<WorldMaterial>)>,
     material: Option<Handle<SurfaceMaterial>>,
 }
 
@@ -1258,7 +1251,7 @@ fn place(world: &mut World, piece: Entity, transform: Transform) {
 }
 
 /// Runs the piece's surface shader in the materials of `body`'s meshes, taking over any still
-/// wearing their toon material, and paints the shader's material.
+/// wearing the world material, and paints the shader's material.
 fn swap(world: &mut World, piece: Entity, body: Entity, paint: impl FnOnce(&mut SurfaceVfx)) {
     let Some(mut swapped) = world.get::<Swapped>(piece).cloned() else {
         return;
@@ -1267,20 +1260,20 @@ fn swap(world: &mut World, piece: Entity, body: Entity, paint: impl FnOnce(&mut 
         restore(world, &mut swapped);
         swapped.body = Some(body);
     }
-    let wearing: Vec<(Entity, Handle<ToonMaterial>)> = world
+    let wearing: Vec<(Entity, Handle<WorldMaterial>)> = world
         .get::<Children>(body)
         .into_iter()
         .flat_map(|children| descendants(world, children))
         .chain(std::iter::once(body))
         .filter_map(|mesh| {
-            let toon = world.get::<MeshMaterial3d<ToonMaterial>>(mesh)?;
-            Some((mesh, toon.0.clone()))
+            let worn = world.get::<MeshMaterial3d<WorldMaterial>>(mesh)?;
+            Some((mesh, worn.0.clone()))
         })
         .collect();
     let base = wearing
         .first()
-        .and_then(|(_, toon)| world.resource::<Assets<ToonMaterial>>().get(toon))
-        .map(|toon| toon.base.clone());
+        .and_then(|(_, worn)| world.resource::<Assets<WorldMaterial>>().get(worn))
+        .map(|worn| worn.base.clone());
     let material = match (&swapped.material, base) {
         (Some(material), _) => material.clone(),
         (None, Some(base)) => {
@@ -1298,12 +1291,12 @@ fn swap(world: &mut World, piece: Entity, body: Entity, paint: impl FnOnce(&mut 
             return;
         }
     };
-    for (mesh, toon) in wearing {
+    for (mesh, worn) in wearing {
         world
             .entity_mut(mesh)
-            .remove::<MeshMaterial3d<ToonMaterial>>()
+            .remove::<MeshMaterial3d<WorldMaterial>>()
             .insert(MeshMaterial3d(material.clone()));
-        swapped.meshes.push((mesh, toon));
+        swapped.meshes.push((mesh, worn));
     }
     if let Some(mut surface) = world
         .resource_mut::<Assets<SurfaceMaterial>>()
@@ -1334,12 +1327,12 @@ fn unswap(world: &mut World, piece: Entity) {
     world.entity_mut(piece).insert(swapped);
 }
 
-/// Gives every mesh a surface piece took over its toon material back.
+/// Gives every mesh a surface piece took over its world material back.
 fn restore(world: &mut World, swapped: &mut Swapped) {
-    for (mesh, toon) in swapped.meshes.drain(..) {
+    for (mesh, worn) in swapped.meshes.drain(..) {
         if let Ok(mut mesh) = world.get_entity_mut(mesh) {
             mesh.remove::<MeshMaterial3d<SurfaceMaterial>>()
-                .insert(MeshMaterial3d(toon));
+                .insert(MeshMaterial3d(worn));
         }
     }
     swapped.body = None;
@@ -1350,11 +1343,11 @@ fn unswap_removed(gone: On<Remove<Swapped>>, swapped: Query<&Swapped>, mut comma
     let Ok(swapped) = swapped.get(gone.entity) else {
         return;
     };
-    for (mesh, toon) in &swapped.meshes {
+    for (mesh, worn) in &swapped.meshes {
         commands
             .entity(*mesh)
             .remove::<MeshMaterial3d<SurfaceMaterial>>()
-            .insert(MeshMaterial3d(toon.clone()));
+            .insert(MeshMaterial3d(worn.clone()));
     }
 }
 

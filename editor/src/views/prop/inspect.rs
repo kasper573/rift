@@ -93,10 +93,10 @@ fn model_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
                 }
                 form::kv(ui, "shading", |ui| match flat_shaded {
                     Some(true) => {
-                        ui.colored_label(theme::OK, "flat");
+                        ui.label("flat");
                     }
                     Some(false) => {
-                        ui.colored_label(theme::WARN, "smooth · the style wants flat faces");
+                        ui.label("smooth");
                     }
                     None => {
                         ui.label(theme::muted("unread"));
