@@ -4,7 +4,9 @@
 // and what colour a pixel is (`vfx`), where `sample` is the cover lit in the ground's colour,
 // `weight` how heavily the material is painted there, `tip` how far up a blade or a strewn prop
 // the point stands, 0 at its root and 1 at its top, `depth` how many metres of ground lie under a
-// sheet laid at a level, and `seed` a number of the blade's or the copy's own, 0 on a sheet.
+// sheet laid at a level, `piece` which of the cover's pieces the point belongs to (0 on a sheet)
+// and `seed` a number of the blade's or the copy's own, 0 on a sheet. The cover's colours come
+// from its vertices: a blade's own, a copy's tint over its prop's, a sheet's ground colour.
 @if(PREPASS_PIPELINE)
 import bevy_pbr::prepass::io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex};
 @else
@@ -22,6 +24,7 @@ var<private> lit: vec4<f32>;
 var<private> painted: f32;
 var<private> up: f32;
 var<private> salt: f32;
+var<private> part: u32;
 
 fn sample(at: vec2<f32>) -> vec4<f32> {
     return lit;
@@ -43,10 +46,16 @@ fn seed() -> f32 {
     return salt;
 }
 
+fn piece() -> u32 {
+    return part;
+}
+
 fn mark(uv_b: vec2<f32>) {
     up = uv_b.x;
     painted = fract(uv_b.y);
-    salt = floor(uv_b.y) / 1023.0;
+    let steps = floor(uv_b.y);
+    part = u32(steps / 256.0);
+    salt = (steps - f32(part) * 256.0) / 255.0;
 }
 
 @vertex
@@ -58,6 +67,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     painted = 1.0;
     up = 0.0;
     salt = 0.0;
+    part = 0u;
     @if(VERTEX_UVS_A) {
         out.uv = vertex.uv;
     }
@@ -119,6 +129,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     painted = 1.0;
     up = 0.0;
     salt = 0.0;
+    part = 0u;
     var uv = vec2<f32>(0.5);
     @if(VERTEX_UVS_A) {
         uv = in.uv;

@@ -10,11 +10,33 @@
   "walk": "walkable",
   "cover": {
     "shader": "world/ground/gravel.vfx_shader",
-    "geometry": {
-      "type": "strewn",
-      "prop": "world/props/rock-small.prop",
-      "per_square_meter": 1.5,
-      "scale": 0.25
-    }
+    "seed": 5,
+    "pieces": [
+      {
+        "shape": {
+          "type": "prop",
+          "prop": "world/props/rock-small.prop"
+        },
+        "ratio": 0.2,
+        "size": {
+          "min": 0.15,
+          "max": 0.35
+        },
+        "color": {
+          "from": [
+            150,
+            150,
+            150,
+            255
+          ],
+          "to": [
+            230,
+            230,
+            225,
+            255
+          ]
+        }
+      }
+    ]
   }
 }

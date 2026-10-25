@@ -3,7 +3,8 @@ to be water become the area's third material, the ground sinks below the water l
 is painted and rises inland into gentle hills, the paint blends across the shoreline, and the area's
 second material is laid as a band of shore along the water.
 Run as `python3 -I tools/terrain.py example_game`; every area under the sun with a paint part is
-rewritten, and interiors keep their flat floors."""
+rewritten, and interiors keep their flat floors. Name an area folder after the game to rewrite
+that one alone. Relief is drawn from hard paint and does not repeat on its own output."""
 import glob
 import json
 import os
@@ -153,7 +154,8 @@ def relief(area):
 
 def main():
     game = sys.argv[1]
-    for area in sorted(glob.glob(os.path.join(game, "**", "*.area"), recursive=True)):
+    areas = sys.argv[2:] or sorted(glob.glob(os.path.join(game, "**", "*.area"), recursive=True))
+    for area in areas:
         if relief(area):
             print("relief", area)
 

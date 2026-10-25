@@ -15,6 +15,7 @@ var<private> lit: vec4<f32>;
 var<private> painted: f32;
 var<private> up: f32;
 var<private> salt: f32;
+var<private> part: u32;
 
 fn sample(at: vec2<f32>) -> vec4<f32> {
     return lit;
@@ -36,10 +37,16 @@ fn seed() -> f32 {
     return salt;
 }
 
+fn piece() -> u32 {
+    return part;
+}
+
 fn mark(uv_b: vec2<f32>) {
     up = uv_b.x;
     painted = fract(uv_b.y);
-    salt = floor(uv_b.y) / 1023.0;
+    let steps = floor(uv_b.y);
+    part = u32(steps / 256.0);
+    salt = (steps - f32(part) * 256.0) / 255.0;
 }
 
 @vertex

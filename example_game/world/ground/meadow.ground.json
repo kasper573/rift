@@ -1,0 +1,92 @@
+{
+  "name": "Meadow",
+  "color": [
+    88,
+    152,
+    68,
+    255
+  ],
+  "surface": "world/surface/grass.surface.json",
+  "walk": "walkable",
+  "cover": {
+    "shader": "world/ground/foliage.vfx_shader",
+    "seed": 3,
+    "pieces": [
+      {
+        "shape": {
+          "type": "prop",
+          "prop": "world/props/flower-purple.prop"
+        },
+        "ratio": 0.08,
+        "size": {
+          "min": 0.7,
+          "max": 1.2
+        },
+        "color": {
+          "from": [
+            255,
+            255,
+            255,
+            255
+          ],
+          "to": [
+            255,
+            255,
+            255,
+            255
+          ]
+        }
+      },
+      {
+        "shape": {
+          "type": "prop",
+          "prop": "world/props/flower-red.prop"
+        },
+        "ratio": 0.06,
+        "size": {
+          "min": 0.7,
+          "max": 1.2
+        },
+        "color": {
+          "from": [
+            255,
+            255,
+            255,
+            255
+          ],
+          "to": [
+            255,
+            255,
+            255,
+            255
+          ]
+        }
+      },
+      {
+        "shape": {
+          "type": "prop",
+          "prop": "world/props/flower-yellow.prop"
+        },
+        "ratio": 0.06,
+        "size": {
+          "min": 0.7,
+          "max": 1.2
+        },
+        "color": {
+          "from": [
+            255,
+            255,
+            255,
+            255
+          ],
+          "to": [
+            255,
+            255,
+            255,
+            255
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -98,10 +98,9 @@ impl MaterialExtension for CoverVfx {
 
 /// The material a ground's cover is drawn with: the ground's own colour under the shader, seen
 /// from both sides, blended so a sheet can fade at its edge.
-/// A cover's material in the ground's `color`: blended, for a sheet or blades that write no depth
-/// and take no ink, or masked, for strewn props that stand solid like any other.
+/// A cover's material, coloured by its vertices: blended, for a sheet or blades that write no
+/// depth and take no ink, or masked, for strewn props that stand solid like any other.
 pub fn material(
-    color: Color,
     site: SiteUniform,
     params: ParamsUniform,
     shader: Handle<Shader>,
@@ -109,7 +108,7 @@ pub fn material(
 ) -> CoverMaterial {
     ExtendedMaterial {
         base: StandardMaterial {
-            base_color: color,
+            base_color: Color::WHITE,
             perceptual_roughness: 1.0,
             metallic: 0.0,
             reflectance: 0.0,

@@ -10,8 +10,7 @@
   "walk": "blocks",
   "cover": {
     "shader": "world/ground/ripples.vfx_shader",
-    "geometry": {
-      "type": "sheet",
+    "sheet": {
       "level": 0.0
     }
   }

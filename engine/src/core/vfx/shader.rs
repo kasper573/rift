@@ -341,6 +341,7 @@ pub fn prelude_names() -> Vec<String> {
         "tip".to_owned(),
         "depth".to_owned(),
         "seed".to_owned(),
+        "piece".to_owned(),
         "mark".to_owned(),
         "wind_lean".to_owned(),
         "tread_push".to_owned(),

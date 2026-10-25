@@ -265,10 +265,18 @@ fn rules(report: &LoadReport) -> Vec<&str> {
 }
 
 #[test]
-fn a_grounds_cover_names_a_cover_stage_shader_and_fills_only_what_it_declares() {
-    let blades =
-        json!({ "type": "blades", "per_square_meter": 12.0, "height": 0.3, "width": 0.08 });
-    let cover = |shader: &str, params: Value, geometry: Value| json!({ "shader": path("vfx_shader", shader), "params": params, "geometry": geometry });
+fn a_grounds_cover_names_a_cover_stage_shader_fills_only_what_it_declares_and_grows_no_thicker_than_drawn()
+ {
+    let green = json!({ "from": [60, 120, 50, 255], "to": [90, 160, 70, 255] });
+    let blade = |width: f32, ratio: f32| json!({ "shape": { "type": "blade", "width": width, "height": 0.3 }, "ratio": ratio, "color": green });
+    let pebble = |ratio: f32| json!({ "shape": { "type": "prop", "prop": path("prop", "pebble") }, "ratio": ratio, "size": { "min": 0.2, "max": 0.4 }, "color": green });
+    let cover = |shader: &str, params: Value, body: Value| {
+        let mut cover = json!({ "shader": path("vfx_shader", shader), "params": params });
+        for (key, value) in body.as_object().expect("a cover body") {
+            cover[key] = value.clone();
+        }
+        cover
+    };
     let game = || {
         game()
             .shader_on("blades", Stage::Cover)
@@ -280,34 +288,35 @@ fn a_grounds_cover_names_a_cover_stage_shader_and_fills_only_what_it_declares() 
             .prop("pebble", json!({ "type": "none" }))
             .area("meadow", &Map::open(8, 8), json!([]))
     };
+    let pieces = |pieces: Vec<Value>| json!({ "pieces": pieces });
     let cases = [
         (
             "a shader of another stage",
-            cover("flash", json!({}), blades.clone()),
+            cover("flash", json!({}), pieces(vec![blade(0.1, 0.5)])),
         ),
         (
             "unknown shader parameter",
-            cover("blades", json!({ "glow": 1.0 }), blades.clone()),
+            cover("blades", json!({ "glow": 1.0 }), pieces(vec![])),
         ),
         (
             "wrong parameter kind",
-            cover("blades", json!({ "tip": 1.0 }), blades.clone()),
+            cover("blades", json!({ "tip": 1.0 }), pieces(vec![])),
         ),
         (
             "out of range",
-            cover(
-                "blades",
-                json!({}),
-                json!({ "type": "blades", "per_square_meter": 500.0, "height": 0.3, "width": 0.08 }),
-            ),
+            cover("blades", json!({}), pieces(vec![blade(0.1, 1.5)])),
         ),
         (
-            "out of range",
-            cover(
-                "blades",
-                json!({}),
-                json!({ "type": "strewn", "prop": path("prop", "pebble"), "per_square_meter": 50.0, "scale": 0.3 }),
-            ),
+            "too thick",
+            cover("blades", json!({}), pieces(vec![blade(0.02, 1.0)])),
+        ),
+        (
+            "too thick",
+            cover("blades", json!({}), pieces(vec![pebble(1.0)])),
+        ),
+        (
+            "too many pieces",
+            cover("blades", json!({}), pieces(vec![blade(0.1, 0.1); 9])),
         ),
     ];
     for (rule, grown) in cases {
@@ -318,18 +327,17 @@ fn a_grounds_cover_names_a_cover_stage_shader_and_fills_only_what_it_declares() 
             .expect("refused");
         assert!(rules(&report).contains(&rule), "{grown}: {report}");
     }
-    for geometry in [
-        blades,
-        json!({ "type": "sheet" }),
-        json!({ "type": "sheet", "level": 0.0 }),
-        json!({ "type": "strewn", "prop": path("prop", "pebble"), "per_square_meter": 2.0, "scale": 0.3 }),
+    for body in [
+        json!({ "sheet": {} }),
+        json!({ "sheet": { "level": 0.0 } }),
+        json!({ "seed": 42, "pieces": [blade(0.1, 0.8), pebble(0.001)] }),
     ] {
         game()
             .edit("ground", testkit::TURF, |row| {
                 row["cover"] = cover(
                     "blades",
                     json!({ "tip": [120, 200, 90, 255] }),
-                    geometry.clone(),
+                    body.clone(),
                 )
             })
             .load();

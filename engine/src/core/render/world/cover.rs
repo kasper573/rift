@@ -4,6 +4,7 @@
 //! heavily the material is painted there, for the shader that moves and paints it.
 
 use bevy::asset::RenderAssetUsages;
+use bevy::color::Mix;
 use bevy::gltf::{Gltf, GltfMesh, GltfNode};
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::platform::collections::HashSet;
@@ -28,19 +29,21 @@ pub struct Patch<'a> {
     pub share: &'a dyn Fn(u32, u32) -> f32,
 }
 
-/// Blades: how many a square metre grows at full weight and how tall they stand.
+/// How a piece is spread over the ground: which piece of its cover it is, how many copies a
+/// square metre holds at full weight, and the scales and colours each copy is drawn between.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Blades {
+pub struct Spread {
+    pub piece: u32,
     pub per_square_meter: f32,
-    pub height: f32,
-    pub width: f32,
+    pub size: (f32, f32),
+    pub color: (LinearRgba, LinearRgba),
 }
 
-/// Copies of a prop: how many a square metre holds at full weight and how large they stand.
+/// A blade's shape at size 1: how wide it stands at its root and how tall.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Strew {
-    pub per_square_meter: f32,
-    pub scale: f32,
+pub struct BladeShape {
+    pub width: f32,
+    pub height: f32,
 }
 
 /// A piece of a prop's model as it is copied: its mesh, placed by its node's transform.
@@ -49,11 +52,14 @@ pub struct Piece {
     pub transform: Transform,
 }
 
-/// Where a strewn copy of a prop stands, how heavily its cell is painted and the seed it carries.
+/// Where a strewn copy of a prop stands, the colour it is tinted, how heavily its cell is painted
+/// and the piece and seed it carries.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Place {
     pub transform: Transform,
+    pub tint: LinearRgba,
     pub weight: f32,
+    pub piece: u32,
     pub seed: f32,
 }
 
@@ -64,44 +70,54 @@ pub struct Strewing {
     pub places: Vec<Place>,
 }
 
-/// What a cover's vertex tells its shader beside its place: `measure`, how far up its blade or
-/// copy it stands (0 at the root, 1 at the top) or, on a sheet at a level, how many metres of
-/// ground lie under it; `weight`, how heavily its cell is painted; and `seed`, a number of its own
-/// in 0..1, alike over a blade or a copy and 0 on a sheet, so a shader can vary one from the next.
-/// Carried in the mesh's second uv: the measure in x, and in y the weight in the fraction with the
-/// seed in whole steps, which stays exact because no triangle mixes two seeds.
+/// What a cover's vertex tells its shader beside its place and colour: `measure`, how far up its
+/// blade or copy it stands (0 at the root, 1 at the top) or, on a sheet at a level, how many
+/// metres of ground lie under it; `weight`, how heavily its cell is painted; `piece`, which of
+/// the cover's pieces it belongs to (0 for a sheet); and `seed`, a number of its own in 0..1,
+/// alike over a blade or a copy and 0 on a sheet, so a shader can vary one from the next. Carried
+/// in the mesh's second uv: the measure in x, and in y the weight in the fraction with the seed
+/// and the piece in whole steps, which stays exact because no triangle mixes two of them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Mark {
     pub measure: f32,
     pub weight: f32,
+    pub piece: u32,
     pub seed: f32,
 }
 
-const SEEDS: f32 = 1023.0;
+const SEEDS: f32 = 255.0;
+const PIECE_STEP: f32 = 256.0;
 
 impl Mark {
     pub fn of(uv: [f32; 2]) -> Mark {
+        let steps = uv[1].floor();
         Mark {
             measure: uv[0],
             weight: uv[1].fract(),
-            seed: uv[1].floor() / SEEDS,
+            piece: (steps / PIECE_STEP) as u32,
+            seed: (steps % PIECE_STEP) / SEEDS,
         }
     }
 
     fn pack(self) -> [f32; 2] {
         let weight = self.weight.clamp(0.0, 1.0 - 1.0 / (SEEDS + 1.0));
-        [
-            self.measure,
-            weight + (self.seed.clamp(0.0, 1.0) * SEEDS).floor(),
-        ]
+        let steps = (self.seed.clamp(0.0, 1.0) * SEEDS).floor() + self.piece as f32 * PIECE_STEP;
+        [self.measure, weight + steps]
     }
+}
+
+/// A copy's own draw from its spread: its scale and colour.
+fn draw(spread: &Spread, rng: &mut Rng) -> (f32, LinearRgba) {
+    let size = spread.size.0 + (spread.size.1 - spread.size.0) * rng.rand_float();
+    let color = spread.color.0.mix(&spread.color.1, rng.rand_float());
+    (size, color)
 }
 
 /// A sheet over the patch's painted cells: a quad per cell, each vertex weighted by how heavily
 /// the cells around it are painted, lying a hair over the ground or, at a `level`, flat at that
 /// height with the depth of ground beneath each vertex. Its uv runs over the whole area, so a
 /// shader's pattern crosses from chunk to chunk unbroken. None when nothing is painted.
-pub fn sheet(patch: &Patch, level: Option<f32>) -> Option<Mesh> {
+pub fn sheet(patch: &Patch, level: Option<f32>, color: LinearRgba) -> Option<Mesh> {
     let (columns, rows) = (patch.columns, patch.rows);
     let (area_columns, area_rows) = patch.heights.samples();
     let step = 1.0 / SAMPLES_PER_METER as f32;
@@ -155,6 +171,7 @@ pub fn sheet(patch: &Patch, level: Option<f32>) -> Option<Mesh> {
                 Mark {
                     measure: level.map_or(0.0, |level| (level - ground).max(0.0)),
                     weight,
+                    piece: 0,
                     seed: 0.0,
                 }
                 .pack(),
@@ -173,22 +190,33 @@ pub fn sheet(patch: &Patch, level: Option<f32>) -> Option<Mesh> {
             indices.extend([corner, south, east, east, south, far]);
         }
     }
-    Some(assemble(positions, normals, uvs, tips, None, indices))
+    let colors = vec![color.to_f32_array(); positions.len()];
+    Some(assemble(
+        positions,
+        normals,
+        uvs,
+        tips,
+        Some(colors),
+        indices,
+    ))
 }
 
-/// The patch's blades: each cell grows its share of the density, a triangle per blade whose uv
-/// runs across and up, scattered the same way for the same `seed`. None when nothing grows.
-pub fn blades(patch: &Patch, blades: &Blades, seed: u64) -> Option<Mesh> {
+/// The patch's blades: each cell grows its share of the spread, a triangle per blade of the
+/// `shape` at its own size and colour, its uv running across and up, scattered the same way for
+/// the same `seed`. None when nothing grows.
+pub fn blades(patch: &Patch, shape: &BladeShape, spread: &Spread, seed: u64) -> Option<Mesh> {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
     let mut tips = Vec::new();
+    let mut colors = Vec::new();
     let mut rng = Rng::new(seed);
-    for (at, weight) in places(patch, blades.per_square_meter, &mut rng) {
+    for (at, weight) in places(patch, spread.per_square_meter, &mut rng) {
         let ground = patch.heights.height_at(at).0;
         let yaw = rng.rand_float() * std::f32::consts::TAU;
-        let height = blades.height * (0.7 + 0.6 * rng.rand_float());
-        let half = blades.width / 2.0 * (0.8 + 0.4 * rng.rand_float());
+        let (size, color) = draw(spread, &mut rng);
+        let height = shape.height * size;
+        let half = shape.width / 2.0 * size;
         let (sin, cos) = yaw.sin_cos();
         let across = Vec3::new(cos * half, 0.0, sin * half);
         let root = Vec3::new(at.x, ground, at.y);
@@ -197,11 +225,13 @@ pub fn blades(patch: &Patch, blades: &Blades, seed: u64) -> Option<Mesh> {
         positions.push((root + Vec3::Y * height).to_array());
         normals.extend([ground_normal(patch.heights, at); 3]);
         uvs.extend([[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]]);
+        colors.extend([color.to_f32_array(); 3]);
         let seed = rng.rand_float();
         let mark = |measure| {
             Mark {
                 measure,
                 weight,
+                piece: spread.piece,
                 seed,
             }
             .pack()
@@ -212,27 +242,36 @@ pub fn blades(patch: &Patch, blades: &Blades, seed: u64) -> Option<Mesh> {
         return None;
     }
     let indices = (0..positions.len() as u32).collect();
-    Some(assemble(positions, normals, uvs, tips, None, indices))
+    Some(assemble(
+        positions,
+        normals,
+        uvs,
+        tips,
+        Some(colors),
+        indices,
+    ))
 }
 
-/// Where the patch's strewn copies stand, each cell holding its share of the density, turned any
-/// way and about `scale` large, scattered the same way for the same `seed`, each with how heavily
-/// its cell is painted and a seed of its own. Empty when nothing is strewn.
-pub fn strew_places(patch: &Patch, strew: &Strew, seed: u64) -> Vec<Place> {
+/// Where the patch's strewn copies stand, each cell holding its share of the spread, turned any
+/// way, each at its own size and tint, scattered the same way for the same `seed`, with how
+/// heavily its cell is painted and a seed of its own. Empty when nothing is strewn.
+pub fn strew_places(patch: &Patch, spread: &Spread, seed: u64) -> Vec<Place> {
     let mut rng = Rng::new(seed);
-    places(patch, strew.per_square_meter, &mut rng)
+    places(patch, spread.per_square_meter, &mut rng)
         .into_iter()
         .map(|(at, weight)| {
             let ground = patch.heights.height_at(at).0;
             let yaw = rng.rand_float() * std::f32::consts::TAU;
-            let scale = strew.scale * (0.8 + 0.4 * rng.rand_float());
+            let (size, tint) = draw(spread, &mut rng);
             Place {
                 transform: Transform {
                     translation: Vec3::new(at.x, ground, at.y),
                     rotation: Quat::from_rotation_y(yaw),
-                    scale: Vec3::splat(scale),
+                    scale: Vec3::splat(size),
                 },
+                tint,
                 weight,
+                piece: spread.piece,
                 seed: rng.rand_float(),
             }
         })
@@ -240,9 +279,9 @@ pub fn strew_places(patch: &Patch, strew: &Strew, seed: u64) -> Vec<Place> {
 }
 
 /// The `pieces` of a prop copied to every place: positions and normals carried through the
-/// piece's and the copy's transforms, the piece's uv kept, its colours kept when every piece has
-/// them, and every vertex marked how far up the prop it stands. None when there is nothing to
-/// copy.
+/// piece's and the copy's transforms, the piece's uv kept, its colours (white where it has none)
+/// tinted by the place's, and every vertex marked how far up the prop it stands. None when there
+/// is nothing to copy.
 pub fn strewn(pieces: &[Piece], places: &[Place]) -> Option<Mesh> {
     let placed: Vec<PieceVertices> = pieces.iter().filter_map(piece_vertices).collect();
     if placed.is_empty() || places.is_empty() {
@@ -253,7 +292,6 @@ pub fn strewn(pieces: &[Piece], places: &[Place]) -> Option<Mesh> {
         .flat_map(|piece| piece.positions.iter().map(|position| position.y))
         .fold(0.0f32, f32::max)
         .max(1e-3);
-    let colored = placed.iter().all(|piece| piece.colors.is_some());
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
@@ -274,14 +312,21 @@ pub fn strewn(pieces: &[Piece], places: &[Place]) -> Option<Mesh> {
                     Mark {
                         measure: (position.y / height).clamp(0.0, 1.0),
                         weight: place.weight,
+                        piece: place.piece,
                         seed: place.seed,
                     }
                     .pack(),
                 );
             }
             uvs.extend(piece.uvs.iter().copied());
-            if colored && let Some(piece_colors) = &piece.colors {
-                colors.extend(piece_colors.iter().copied());
+            let tint = place.tint.to_f32_array();
+            match &piece.colors {
+                Some(piece_colors) => colors.extend(
+                    piece_colors
+                        .iter()
+                        .map(|color| std::array::from_fn(|channel| color[channel] * tint[channel])),
+                ),
+                None => colors.extend(std::iter::repeat_n(tint, piece.positions.len())),
             }
             indices.extend(piece.indices.iter().map(|index| base + index));
         }
@@ -291,7 +336,7 @@ pub fn strewn(pieces: &[Piece], places: &[Place]) -> Option<Mesh> {
         normals,
         uvs,
         tips,
-        colored.then_some(colors),
+        Some(colors),
         indices,
     ))
 }

@@ -8,7 +8,7 @@
     "materials": [
       "world/ground/grass.ground.json",
       "world/ground/sand.ground.json",
-      "world/ground/stone.ground.json",
+      "world/ground/meadow.ground.json",
       "world/ground/water.ground.json"
     ],
     "max_slope": 38.0

@@ -138,6 +138,10 @@ pub fn is_one_f32(value: &f32) -> bool {
     *value == 1.0
 }
 
+pub fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
 pub fn is_zero_f32(value: &f32) -> bool {
     *value == 0.0
 }

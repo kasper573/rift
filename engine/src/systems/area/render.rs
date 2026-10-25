@@ -5,9 +5,11 @@
 use bevy::light::{AmbientLight, NotShadowCaster, Skybox};
 use bevy::prelude::*;
 
-use super::ground::CoverGeometry;
+use super::ground::{CoverPiece, PieceShape};
+use super::prop::PropId;
 use super::{AreaId, AreaObject, AreaTag, Lighting, PointLightDef, PropPlacement};
 use crate::core::content::Content;
+use crate::core::content::media::GltfInfos;
 use crate::core::geometry::Radians;
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::math::Rng;
@@ -282,9 +284,10 @@ fn spawn_terrain(world: &mut World, content: &Content, area: &super::Area) {
     ));
 }
 
-/// Each ground material with a cover gets it laid over the whole area, a mesh per chunk so the
-/// camera culls what it does not see, scattered alike on every client, drawn through the ground's
-/// cover shader with the area as its site. A strewn prop's chunks wait for the prop to load.
+/// Each ground material with a cover gets it laid over the whole area, a mesh per chunk and piece
+/// so the camera culls what it does not see, scattered alike on every client from the cover's
+/// seed, drawn through the ground's cover shader with the area as its site. A prop piece's
+/// chunks wait for the prop to load.
 fn spawn_covers(world: &mut World, content: &Content, area: &super::Area) {
     let (columns, rows) = area.terrain.size.paint_pixels();
     let bounds = area.terrain.size.bounds();
@@ -299,6 +302,11 @@ fn spawn_covers(world: &mut World, content: &Content, area: &super::Area) {
             height: Meters(bounds.size.height),
         },
     });
+    let models = content.built::<GltfInfos>();
+    let prop_bounds = |prop: PropId| {
+        let bounds = models.0.get(&prop.get(content).model.path())?.bounds;
+        Some((bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z))
+    };
     for (slot, ground) in area.terrain.materials.iter().enumerate() {
         let ground = ground.get(content);
         let Some(cover_def) = &ground.cover else {
@@ -320,19 +328,18 @@ fn spawn_covers(world: &mut World, content: &Content, area: &super::Area) {
                 ParamFill::Param { .. } => None,
             }
         });
-        let alpha = match cover_def.geometry {
-            CoverGeometry::Strewn { .. } => AlphaMode::Mask(0.5),
-            CoverGeometry::Sheet { .. } | CoverGeometry::Blades { .. } => AlphaMode::Blend,
+        let material = |world: &mut World, alpha| {
+            world
+                .resource_mut::<Assets<CoverMaterial>>()
+                .add(cover_vfx::material(
+                    frame.uniform(run, Stage::Cover),
+                    params,
+                    shader.clone(),
+                    alpha,
+                ))
         };
-        let material = world
-            .resource_mut::<Assets<CoverMaterial>>()
-            .add(cover_vfx::material(
-                ground.color.color(),
-                frame.uniform(run, Stage::Cover),
-                params,
-                shader,
-                alpha,
-            ));
+        let blended = material(world, AlphaMode::Blend);
+        let masked = material(world, AlphaMode::Mask(0.5));
         let share = |column: u32, row: u32| {
             let weights = area.paint.weights(column, row);
             let total: f32 = weights.iter().map(|weight| f32::from(*weight)).sum();
@@ -342,6 +349,32 @@ fn spawn_covers(world: &mut World, content: &Content, area: &super::Area) {
                 f32::from(weights[slot]) / total
             }
         };
+        let ground_color = ground.color.color().to_linear();
+        let layouts: Vec<(Option<&CoverPiece>, cover::Spread)> = std::iter::once((
+            None,
+            cover::Spread {
+                piece: 0,
+                per_square_meter: 0.0,
+                size: (1.0, 1.0),
+                color: (ground_color, ground_color),
+            },
+        ))
+        .filter(|_| cover_def.sheet.is_some())
+        .chain(cover_def.pieces.iter().enumerate().map(|(index, piece)| {
+            (
+                Some(piece),
+                cover::Spread {
+                    piece: index as u32,
+                    per_square_meter: piece.per_square_meter(piece.shape.base_area(prop_bounds)),
+                    size: (piece.size.min, piece.size.max),
+                    color: (
+                        piece.color.from.color().to_linear(),
+                        piece.color.to.color().to_linear(),
+                    ),
+                },
+            )
+        }))
+        .collect();
         for chunk_row in 0..rows.div_ceil(cover::CHUNK_CELLS) {
             for chunk_column in 0..columns.div_ceil(cover::CHUNK_CELLS) {
                 let first = (
@@ -355,57 +388,66 @@ fn spawn_covers(world: &mut World, content: &Content, area: &super::Area) {
                     rows: cover::CHUNK_CELLS.min(rows - first.1),
                     share: &share,
                 };
-                let seed = u64::from(chunk_row) << 24 | u64::from(chunk_column) << 4 | slot as u64;
-                let laid = match &cover_def.geometry {
-                    CoverGeometry::Sheet { level } => {
-                        cover::sheet(&patch, level.map(|level| level.0))
-                            .map(|mesh| lay(world, mesh))
-                    }
-                    CoverGeometry::Blades {
-                        per_square_meter,
-                        height,
-                        width,
-                    } => {
-                        let blades = cover::Blades {
-                            per_square_meter: *per_square_meter,
-                            height: height.0,
-                            width: width.0,
-                        };
-                        cover::blades(&patch, &blades, seed).map(|mesh| lay(world, mesh))
-                    }
-                    CoverGeometry::Strewn {
-                        prop,
-                        per_square_meter,
-                        scale,
-                    } => {
-                        let strew = cover::Strew {
-                            per_square_meter: *per_square_meter,
-                            scale: *scale,
-                        };
-                        let places = cover::strew_places(&patch, &strew, seed);
-                        (!places.is_empty()).then(|| Laid::Strewn {
-                            model: prop.get(content).model.path(),
-                            places,
-                        })
-                    }
-                };
-                let Some(laid) = laid else {
-                    continue;
-                };
-                let mut chunk = world.spawn((
-                    MeshMaterial3d(material.clone()),
-                    Transform::default(),
-                    Visibility::default(),
-                    NotShadowCaster,
-                    Scenery,
-                ));
-                match laid {
-                    Laid::Mesh(mesh) => {
-                        chunk.insert(Mesh3d(mesh));
-                    }
-                    Laid::Strewn { model, places } => {
-                        let gltf = chunk.world().resource::<AssetServer>().load(model);
-                        chunk.insert(cover::Strewing { gltf, places });
+                for (piece, spread) in &layouts {
+                    let seed = chunk_seed(
+                        cover_def.seed,
+                        [
+                            slot as u64,
+                            u64::from(spread.piece),
+                            u64::from(chunk_row),
+                            u64::from(chunk_column),
+                        ],
+                    );
+                    let laid = match piece.map(|piece| &piece.shape) {
+                        None => cover::sheet(
+                            &patch,
+                            cover_def
+                                .sheet
+                                .and_then(|sheet| sheet.level)
+                                .map(|level| level.0),
+                            ground_color,
+                        )
+                        .map(|mesh| lay(world, mesh)),
+                        Some(PieceShape::Blade { width, height }) => cover::blades(
+                            &patch,
+                            &cover::BladeShape {
+                                width: width.0,
+                                height: height.0,
+                            },
+                            spread,
+                            seed,
+                        )
+                        .map(|mesh| lay(world, mesh)),
+                        Some(PieceShape::Prop { prop }) => {
+                            let places = cover::strew_places(&patch, spread, seed);
+                            (!places.is_empty()).then(|| Laid::Strewn {
+                                model: prop.get(content).model.path(),
+                                places,
+                            })
+                        }
+                    };
+                    let Some(laid) = laid else {
+                        continue;
+                    };
+                    let material = match laid {
+                        Laid::Mesh(_) => blended.clone(),
+                        Laid::Strewn { .. } => masked.clone(),
+                    };
+                    let mut chunk = world.spawn((
+                        MeshMaterial3d(material),
+                        Transform::default(),
+                        Visibility::default(),
+                        NotShadowCaster,
+                        Scenery,
+                    ));
+                    match laid {
+                        Laid::Mesh(mesh) => {
+                            chunk.insert(Mesh3d(mesh));
+                        }
+                        Laid::Strewn { model, places } => {
+                            let gltf = chunk.world().resource::<AssetServer>().load(model);
+                            chunk.insert(cover::Strewing { gltf, places });
+                        }
                     }
                 }
             }
@@ -425,6 +467,19 @@ enum Laid {
 
 fn lay(world: &mut World, mesh: Mesh) -> Laid {
     Laid::Mesh(world.resource_mut::<Assets<Mesh>>().add(mesh))
+}
+
+/// A seed of its own for every chunk of every piece, mixed from the cover's seed and where the
+/// chunk lies, so changing the cover's seed rescatters everything and nothing else repeats.
+fn chunk_seed(seed: u64, parts: [u64; 4]) -> u64 {
+    let mut mixed = seed ^ 0x9E37_79B9_7F4A_7C15;
+    for part in parts {
+        mixed ^= part.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        mixed ^= mixed >> 31;
+    }
+    mixed
 }
 
 fn spawn_prop(world: &mut World, content: &Content, placed: &PropPlacement) {

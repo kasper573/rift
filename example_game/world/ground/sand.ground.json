@@ -7,5 +7,36 @@
     255
   ],
   "surface": "world/surface/sand.surface.json",
-  "walk": "walkable"
+  "walk": "walkable",
+  "cover": {
+    "shader": "world/ground/foliage.vfx_shader",
+    "seed": 11,
+    "pieces": [
+      {
+        "shape": {
+          "type": "prop",
+          "prop": "world/props/flower-purple.prop"
+        },
+        "ratio": 0.015,
+        "size": {
+          "min": 0.5,
+          "max": 0.9
+        },
+        "color": {
+          "from": [
+            255,
+            255,
+            255,
+            255
+          ],
+          "to": [
+            255,
+            255,
+            255,
+            255
+          ]
+        }
+      }
+    ]
+  }
 }

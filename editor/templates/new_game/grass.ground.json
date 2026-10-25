@@ -1,9 +1,9 @@
 {
   "name": "Grass",
   "color": [
-    92,
-    140,
-    60,
+    88,
+    152,
+    68,
     255
   ],
   "surface": "grass.surface.json",
@@ -12,17 +12,40 @@
     "shader": "grass.vfx_shader",
     "params": {
       "tip": [
-        150,
-        205,
-        92,
+        176,
+        226,
+        116,
         255
       ]
     },
-    "geometry": {
-      "type": "blades",
-      "per_square_meter": 90.0,
-      "height": 0.45,
-      "width": 0.12
-    }
+    "seed": 7,
+    "pieces": [
+      {
+        "shape": {
+          "type": "blade",
+          "width": 0.12,
+          "height": 0.45
+        },
+        "ratio": 0.75,
+        "size": {
+          "min": 0.8,
+          "max": 1.25
+        },
+        "color": {
+          "from": [
+            64,
+            134,
+            54,
+            255
+          ],
+          "to": [
+            98,
+            172,
+            74,
+            255
+          ]
+        }
+      }
+    ]
   }
 }
