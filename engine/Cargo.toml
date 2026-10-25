@@ -138,7 +138,7 @@ web-sys = { version = "0.3", features = [
     "Location",
     "Node",
 ] }
-gltf = { version = "1.4", default-features = false, features = ["names"] }
+gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
 polyanya = "0.17"
 glam = "0.32"
 

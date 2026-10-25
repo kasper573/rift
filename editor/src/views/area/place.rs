@@ -6,7 +6,7 @@ use engine::core::geometry::Degrees;
 use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::area::AreaModule;
-use engine::systems::area::prop::{PropDef, PropPlacement};
+use engine::systems::area::prop::{Footprint, PropDef, PropPlacement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::scenery::prop_transform;
 use engine::systems::movement::AGENT_RADIUS;
@@ -14,6 +14,7 @@ use ui::egui;
 use ui::egui::{Stroke as EStroke, Ui, Vec2};
 use ui::theme;
 
+use super::camera::AreaCanvas;
 use super::viewport::Ghost;
 use super::{AreaFrame, AreaSnapshot, AreaTool, Placeable, modules, select, stamp};
 use crate::app::Editor;
@@ -154,8 +155,8 @@ pub fn overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame: 
             {
                 draw_footprint(
                     painter,
-                    frame,
-                    def,
+                    &frame.canvas,
+                    &def.footprint,
                     at,
                     view.place_yaw,
                     1.0,
@@ -187,15 +188,14 @@ pub fn overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame: 
 /// of; a stake where the prop takes no ground.
 pub fn draw_footprint(
     painter: &egui::Painter,
-    frame: &AreaFrame,
-    def: &PropDef,
+    canvas: &AreaCanvas,
+    footprint: &Footprint,
     at: Pos<Meters>,
     yaw: Degrees,
     scale: f32,
     stroke: EStroke,
 ) {
-    let canvas = &frame.canvas;
-    let outline = def.footprint.outline(at, yaw, scale);
+    let outline = footprint.outline(at, yaw, scale);
     if outline.len() >= 3 {
         painter.add(egui::Shape::closed_line(canvas.closed(&outline), stroke));
         let grown = grown(&outline, AGENT_RADIUS.0);

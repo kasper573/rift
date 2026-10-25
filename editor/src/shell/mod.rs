@@ -39,7 +39,7 @@ use crate::play;
 use crate::project::{self, EditRefusal};
 use crate::tabs::{DockRequest, EditorTab};
 use crate::views::script::{self, ScriptKeys};
-use crate::views::{self, area, character, class, model, spreadsheet, vfx, world};
+use crate::views::{self, area, character, class, model, prop, spreadsheet, vfx, world};
 
 pub fn show(editor: &mut Editor, ctx: &Context) {
     editor.status.right.clear();
@@ -549,6 +549,7 @@ impl TabViewer for Viewer<'_> {
             EditorTab::Blueprint { key } => area::show_blueprint(self.editor, ui, key),
             EditorTab::Script(owner) => script::show(self.editor, ui, owner),
             EditorTab::Model { key } => model::show(self.editor, ui, key),
+            EditorTab::Prop { key } => prop::show(self.editor, ui, key),
             EditorTab::Row { table, key } if table == ClassDef::TABLE => {
                 class::show(self.editor, ui, key)
             }
@@ -622,6 +623,7 @@ impl TabViewer for Viewer<'_> {
             | EditorTab::World
             | EditorTab::Script(_)
             | EditorTab::Model { .. }
+            | EditorTab::Prop { .. }
             | EditorTab::Spreadsheet { .. } => [false, false],
             EditorTab::Row { table, key } if table == ClassDef::TABLE => [
                 false,
@@ -643,8 +645,8 @@ fn toast(editor: &mut Editor, ctx: &Context) {
     float::toast(ctx, text, since);
 }
 
-/// Files dropped onto the window go to the model tab in front, which takes busts and rigs; anywhere
-/// else they have no place to land.
+/// Files dropped onto the window go to the tab in front when it takes them: a model's busts and
+/// rig, a prop's model; anywhere else they have no place to land.
 fn dropped_files(editor: &mut Editor, ctx: &Context) {
     let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
         i.raw
@@ -656,9 +658,9 @@ fn dropped_files(editor: &mut Editor, ctx: &Context) {
     if dropped.is_empty() {
         return;
     }
-    if matches!(active_tab(editor), Some(EditorTab::Model { .. })) {
-        editor.views.model.drops = dropped;
-    } else {
-        editor.toast("Drop files onto a model's tab to add them to it");
+    match active_tab(editor) {
+        Some(EditorTab::Model { .. }) => editor.views.model.drops = dropped,
+        Some(EditorTab::Prop { .. }) => editor.views.prop.drops = dropped,
+        _ => editor.toast("Drop files onto a model's or a prop's tab to add them to it"),
     }
 }

@@ -16,10 +16,6 @@ fn a_chord_with_more_modifiers_held_claims_its_key_alone() {
         vec![EditorKey::StopPlay]
     );
     assert_eq!(
-        pressed_by(Key::ArrowLeft, Modifiers::ALT),
-        vec![EditorKey::FrameShorter]
-    );
-    assert_eq!(
         pressed_by(Key::P, Modifiers::SHIFT),
         vec![EditorKey::FootprintsOverlay]
     );

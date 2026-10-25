@@ -8,7 +8,9 @@ use bevy::math::{Mat4, Vec3};
 use gltf::json;
 use gltf::json::validation::{Checked, USize64};
 
+use crate::core::math::Pos;
 use crate::core::time::Seconds;
+use crate::core::units::Meters;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct GltfInfo {
@@ -94,6 +96,78 @@ pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
         materials: document.materials().count(),
         joints,
         clips,
+    })
+}
+
+/// A triangle of a model as it stands in the scene, every node's transform applied: its corners,
+/// and the normals its file gives them when it gives any.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Triangle {
+    pub corners: [Vec3; 3],
+    pub normals: Option<[Vec3; 3]>,
+}
+
+/// Every triangle of `bytes`, read from its buffers.
+pub fn triangles(bytes: &[u8]) -> Result<Vec<Triangle>, String> {
+    let gltf = gltf::Gltf::from_slice(bytes).map_err(|error| error.to_string())?;
+    let blob = gltf.blob.as_deref();
+    let mut out = Vec::new();
+    for scene in gltf.document.scenes() {
+        for node in scene.nodes() {
+            gather_triangles(&node, Mat4::IDENTITY, blob, &mut out);
+        }
+    }
+    Ok(out)
+}
+
+/// The ground a model stands on: the convex hull, on the ground plane, of every corner within
+/// `knee` of the model's lowest point, going round counter-clockwise. Empty for a model with no
+/// triangles.
+pub fn footing(triangles: &[Triangle], knee: Meters) -> Vec<Pos<Meters>> {
+    let lowest = triangles
+        .iter()
+        .flat_map(|triangle| triangle.corners)
+        .map(|corner| corner.y)
+        .fold(f32::INFINITY, f32::min);
+    let mut points: Vec<Pos<Meters>> = triangles
+        .iter()
+        .flat_map(|triangle| triangle.corners)
+        .filter(|corner| corner.y <= lowest + knee.0)
+        .map(|corner| Pos::new(corner.x, corner.z))
+        .collect();
+    points.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    points.dedup();
+    if points.len() < 3 {
+        return points;
+    }
+    let cross = |o: Pos<Meters>, a: Pos<Meters>, b: Pos<Meters>| {
+        (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+    };
+    let mut hull: Vec<Pos<Meters>> = Vec::with_capacity(points.len() * 2);
+    for &point in &points {
+        while hull.len() >= 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], point) <= 0.0 {
+            hull.pop();
+        }
+        hull.push(point);
+    }
+    let lower = hull.len() + 1;
+    for &point in points.iter().rev().skip(1) {
+        while hull.len() >= lower && cross(hull[hull.len() - 2], hull[hull.len() - 1], point) <= 0.0
+        {
+            hull.pop();
+        }
+        hull.push(point);
+    }
+    hull.pop();
+    hull
+}
+
+/// Whether every triangle is lit as one face: its three normals alike, or none given, which the
+/// renderer takes as flat.
+pub fn is_flat_shaded(triangles: &[Triangle]) -> bool {
+    triangles.iter().all(|triangle| match triangle.normals {
+        None => true,
+        Some([a, b, c]) => a.abs_diff_eq(b, 1.0e-3) && a.abs_diff_eq(c, 1.0e-3),
     })
 }
 
@@ -200,6 +274,60 @@ pub fn placeholder_rig(clips: &[(&str, Seconds)]) -> Vec<u8> {
         uri: None,
     });
     glb(&root, bin)
+}
+
+fn gather_triangles(node: &gltf::Node, parent: Mat4, blob: Option<&[u8]>, out: &mut Vec<Triangle>) {
+    let world = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
+    if let Some(mesh) = node.mesh() {
+        for primitive in mesh.primitives() {
+            if primitive.mode() != gltf::mesh::Mode::Triangles {
+                continue;
+            }
+            let reader = primitive.reader(|buffer| match buffer.source() {
+                gltf::buffer::Source::Bin => blob,
+                gltf::buffer::Source::Uri(_) => None,
+            });
+            let Some(positions) = reader.read_positions() else {
+                continue;
+            };
+            let positions: Vec<Vec3> = positions
+                .map(|position| world.transform_point3(Vec3::from(position)))
+                .collect();
+            let normals: Option<Vec<Vec3>> = reader.read_normals().map(|normals| {
+                normals
+                    .map(|normal| {
+                        world
+                            .transform_vector3(Vec3::from(normal))
+                            .normalize_or_zero()
+                    })
+                    .collect()
+            });
+            let indices: Vec<usize> = match reader.read_indices() {
+                Some(indices) => indices.into_u32().map(|index| index as usize).collect(),
+                None => (0..positions.len()).collect(),
+            };
+            for face in indices.as_chunks::<3>().0 {
+                let corner = |i: usize| positions.get(face[i]).copied();
+                let (Some(a), Some(b), Some(c)) = (corner(0), corner(1), corner(2)) else {
+                    continue;
+                };
+                let normals = normals.as_ref().and_then(|normals| {
+                    Some([
+                        *normals.get(face[0])?,
+                        *normals.get(face[1])?,
+                        *normals.get(face[2])?,
+                    ])
+                });
+                out.push(Triangle {
+                    corners: [a, b, c],
+                    normals,
+                });
+            }
+        }
+    }
+    for child in node.children() {
+        gather_triangles(&child, world, blob, out);
+    }
 }
 
 fn gather_bounds(node: &gltf::Node, parent: Mat4, bounds: &mut Option<MeshBounds>) {

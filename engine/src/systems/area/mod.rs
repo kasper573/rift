@@ -46,6 +46,7 @@ use crate::core::geometry::Degrees;
 use crate::core::ground::{GroundSize, Heightfield, MAX_TERRAINS, MIN_SIDE, Paint};
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::units::{GridDims, Meters, TileSize};
+use crate::systems::GameSettings;
 use crate::systems::actor::Pose;
 use crate::systems::movement;
 use crate::systems::movement::NavMesh;
@@ -667,12 +668,21 @@ pub fn shared(content: &Content, area: AreaId) -> &Arc<Area> {
         .unwrap_or_else(|| panic!("area {} failed to load", area.path(content)))
 }
 
-/// A bundle the editor pictures: an area, or a blueprint on its own canvas.
+/// A bundle the editor pictures: an area, a blueprint on its own canvas, a prop standing in the
+/// middle of a stage, or the bare stage for a rig the editor stands on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Pictured {
     Area(AreaId),
     Blueprint(blueprint::BlueprintId),
+    Prop(prop::PropId),
+    Stage,
 }
+
+/// The flat ground a prop or a rig is pictured on, of the game's home terrain.
+pub const PROP_STAGE: GroundSize = GroundSize {
+    width: 8,
+    height: 8,
+};
 
 /// What a bundle's scene makes, as the editor shows it.
 pub struct Picture {
@@ -717,11 +727,10 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
         }
         Pictured::Blueprint(id) => {
             let def = content.table::<BlueprintDef>().get(id)?;
-            let first = content.ids::<TerrainDef>().next()?;
             let ground = Ground {
                 size: def.size,
                 max_slope: MAX_SLOPE,
-                terrains: vec![first],
+                terrains: vec![home_terrain(content)?],
                 heights: Heightfield::flat(def.size),
                 paint: Paint::plain(def.size),
                 lighting: Lighting::day(),
@@ -732,6 +741,32 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
                 blueprint::flatten_blueprint(content, id, keep, &mut errors),
             )
         }
+        Pictured::Prop(_) | Pictured::Stage => {
+            let ground = Ground {
+                size: PROP_STAGE,
+                max_slope: MAX_SLOPE,
+                terrains: vec![home_terrain(content)?],
+                heights: Heightfield::flat(PROP_STAGE),
+                paint: Paint::plain(PROP_STAGE),
+                lighting: Lighting::day(),
+                weather: Weather::breezy(),
+            };
+            let standing: Vec<scene::SceneNode> = match pictured {
+                Pictured::Prop(id) => vec![scene::SceneNode::Module(scene::ModuleNode::new(
+                    AreaModule::Prop(prop::PropPlacement {
+                        prop: id,
+                        at: PROP_STAGE.bounds().center(),
+                        yaw: Degrees(0.0),
+                        scale: 1.0,
+                    }),
+                ))],
+                _ => Vec::new(),
+            };
+            (
+                ground,
+                blueprint::flatten_kept(content, &standing, keep, &mut errors),
+            )
+        }
     };
     let (area, _) = build_area(content, &ground, &flattening.modules);
     Some(Picture {
@@ -739,6 +774,23 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
         placed: flattening.modules,
         placements: flattening.placements,
     })
+}
+
+/// The terrain the game begins on: what the initial spawn stands on, so a stage or a blueprint's
+/// canvas looks like the game's own ground; any terrain when the spawn's area did not load.
+pub fn home_terrain(content: &Content) -> Option<TerrainId> {
+    let spawn = content.built::<GameSettings>().initial_spawn;
+    let home = content
+        .built::<Areas>()
+        .0
+        .get(spawn.area.index())
+        .and_then(Option::as_ref)
+        .and_then(|area| {
+            area.terrains
+                .get(usize::from(area.paint.at(spawn.at)))
+                .copied()
+        });
+    home.or_else(|| content.ids::<TerrainDef>().next())
 }
 
 pub fn of(world: &World, entity: Entity) -> Option<&Area> {

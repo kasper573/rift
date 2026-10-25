@@ -159,6 +159,86 @@ fn remove_dialog(editor: &mut Editor, key: &str, face: &BustFace, faces: &[BustF
     });
 }
 
+/// What the loader makes of the rig: its budget and its clips, and the faces it speaks with.
+pub fn rig(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
+    use engine::core::assets::FileSize;
+    use engine::core::content::media::GltfInfos;
+    use engine::systems::actor::model::{MAX_CHARACTER_BYTES, MAX_CHARACTER_TRIANGLES, MAX_JOINTS};
+    let path = row.model.path();
+    let info = editor.project.as_ref().and_then(|project| {
+        project
+            .content
+            .as_ref()?
+            .built::<GltfInfos>()
+            .0
+            .get(&path)
+            .cloned()
+    });
+    let weight = editor
+        .project
+        .as_ref()
+        .and_then(|project| project.files.get(&path))
+        .map(|bytes| FileSize(bytes.len()));
+    let budget = |ui: &mut Ui, key: &str, count: usize, most: usize| {
+        form::kv(ui, key, |ui| {
+            let ink = if count > most {
+                theme::DANGER
+            } else {
+                theme::TEXT
+            };
+            ui.colored_label(ink, format!("{count} of {most}"));
+        });
+    };
+    panel::card(false).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        panel::header(ui, "Rig", "", |_| {});
+        ui.add_space(4.0);
+        form::kv_code(ui, "file", path);
+        match info {
+            Some(info) => {
+                let size = info.bounds.max - info.bounds.min;
+                form::kv_text(
+                    ui,
+                    "size",
+                    format!("{:.2} × {:.2} × {:.2} m", size.x, size.z, size.y),
+                );
+                budget(ui, "triangles", info.triangles, MAX_CHARACTER_TRIANGLES);
+                budget(ui, "joints", info.joints, MAX_JOINTS);
+                if let Some(weight) = weight {
+                    form::kv(ui, "weight", |ui| {
+                        let ink = if weight > MAX_CHARACTER_BYTES {
+                            theme::DANGER
+                        } else {
+                            theme::TEXT
+                        };
+                        ui.colored_label(ink, format!("{weight} of {MAX_CHARACTER_BYTES}"));
+                    });
+                }
+                form::kv_text(ui, "clips", info.clip_names().join(", "));
+            }
+            None => {
+                ui.colored_label(theme::DANGER, "the model does not read as a glTF binary");
+            }
+        }
+        form::kv_text(
+            ui,
+            "hitbox",
+            format!(
+                "{:.2} m across · {:.2} m tall",
+                row.hitbox.radius.0 * 2.0,
+                row.hitbox.height.0
+            ),
+        );
+        ui.add_space(4.0);
+        form::hint(
+            ui,
+            "Drop a .glb on this tab to import a new rig over this one.",
+        );
+    });
+    ui.add_space(8.0);
+    crate::shell::row_form::usages::show_usages_grouped(editor, ui, key, true);
+}
+
 pub fn remove_face_dialog(editor: &mut Editor, ctx: &egui::Context, key: &str) {
     let Some(removing) = editor
         .views

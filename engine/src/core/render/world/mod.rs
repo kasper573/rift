@@ -41,6 +41,7 @@ impl Plugin for WorldScenePlugin {
             Update,
             (
                 lights::flicker,
+                mannequin::hold,
                 fade::fade_occluders.run_if(resource_exists::<CameraRig>),
                 cover::strew_loaded,
             ),

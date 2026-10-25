@@ -723,6 +723,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing>
                 ),
                 ..Transform::default()
             },
+            held: None,
         })
     };
     let mut cast = Vec::new();
@@ -947,7 +948,7 @@ impl AreaSnapshot {
     pub fn area_id(&self) -> Option<AreaId> {
         match self.pictured {
             Pictured::Area(id) => Some(id),
-            Pictured::Blueprint(_) => None,
+            Pictured::Blueprint(_) | Pictured::Prop(_) | Pictured::Stage => None,
         }
     }
 

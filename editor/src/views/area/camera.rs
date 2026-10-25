@@ -11,7 +11,9 @@ use engine::core::render::camera::{FOV, PITCH, View, ground_hit, world_point};
 use engine::core::units::{MeterPos, Meters, TileSize};
 use engine::systems::area::Area;
 use serde::{Deserialize, Serialize};
-use ui::egui::{Pos2, Rect as ERect};
+use ui::egui::{PointerButton, Pos2, Rect as ERect, Response, Ui};
+
+use crate::keymap::EditorKey;
 
 /// How close the camera may come to its target, and how far it may draw back.
 pub const NEAREST: Meters = Meters(3.0);
@@ -118,6 +120,36 @@ impl OrbitCamera {
             && (self.pitch.0 - other.pitch.0).abs() < 0.001
             && (self.distance.0 - other.distance.0).abs() < 0.01
     }
+}
+
+/// Moves `camera` as the pointer asks of `response`: the right button orbits, the middle button or
+/// Space with the left drags the ground along, the wheel draws back and in. Answers whether the
+/// pointer is busy with the camera.
+pub fn navigate(ui: &Ui, response: &Response, camera: &mut OrbitCamera, height: f32) -> bool {
+    if response.dragged_by(PointerButton::Secondary) {
+        let delta = response.drag_delta();
+        camera.orbit(Vec2::new(delta.x, delta.y));
+        return true;
+    }
+    let space = ui.input(|i| EditorKey::Pan.held(i));
+    let panning = response.dragged_by(PointerButton::Middle)
+        || (space && response.dragged_by(PointerButton::Primary));
+    if panning {
+        let delta = response.drag_delta();
+        let per_pixel = camera.metres_per_pixel(height);
+        camera.pan(Vec2::new(-delta.x, delta.y) * per_pixel);
+        return true;
+    }
+    if response.hovered() {
+        let scroll = ui.input(|i| i.smooth_scroll_delta);
+        let pinch = ui.input(|i| i.zoom_delta());
+        if pinch != 1.0 {
+            camera.zoom(1.0 / pinch);
+        } else if scroll.y != 0.0 {
+            camera.zoom((-scroll.y / 240.0).exp2());
+        }
+    }
+    false
 }
 
 /// The viewport an area is drawn in: the camera's projection over the screen rectangle it fills,

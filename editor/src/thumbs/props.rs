@@ -31,7 +31,7 @@ const SUN_ELEVATION: Degrees = Degrees(50.0);
 const SUN_AZIMUTH: Degrees = Degrees(300.0);
 /// How many frames a model gets to load and settle before it is read back.
 const SETTLE_FRAMES: u32 = 3;
-/// How many frames a model that never loads is waited on.
+/// How many frames a model that never loads, or never draws, is waited on.
 const GIVE_UP_FRAMES: u32 = 600;
 
 /// The thumbnails rendered so far, by prop path, and the queue of those still to draw.
@@ -128,7 +128,12 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             drawing.read = true;
         }
         let read = world.resource_mut::<ReadThumbnails>().0.pop();
-        if let Some((_, pixels)) = read {
+        let blank = read
+            .as_ref()
+            .is_some_and(|(_, pixels)| pixels.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 0));
+        if blank {
+            drawing.read = false;
+        } else if let Some((_, pixels)) = read {
             let drawing = thumbnails.drawing.take().expect("a thumbnail being drawn");
             world.despawn(drawing.root);
             world.despawn(drawing.camera);

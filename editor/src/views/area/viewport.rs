@@ -18,8 +18,10 @@ use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::content::Content;
 use engine::core::ground::{Heightfield, Paint};
 use engine::core::render::camera;
+use engine::core::render::world::mannequin::Mannequin;
 use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::sky::Daylight;
+use engine::core::time::Seconds;
 use engine::systems::area::scenery::{self, Scenery};
 use engine::systems::area::{Area, Picture};
 use ui::egui;
@@ -60,12 +62,21 @@ pub struct Ghost {
     pub transform: Transform,
 }
 
-/// A rig standing in the area as the view shows it: a resident or one of a population's preview.
+/// A rig standing in the area as the view shows it: a resident or one of a population's preview,
+/// looping its clip, or a model held at one moment of a clip on a turntable.
 #[derive(Clone, PartialEq)]
 pub struct Standing {
     pub model: String,
     pub clip: Option<usize>,
     pub transform: Transform,
+    pub held: Option<Seconds>,
+}
+
+impl Standing {
+    /// Whether the same rig in the same clip stands here, however it is placed or held.
+    fn same_rig(&self, other: &Standing) -> bool {
+        self.model == other.model && self.clip == other.clip
+    }
 }
 
 /// The picture a viewport last drew, for the view to show and draw over.
@@ -329,6 +340,8 @@ impl Viewport {
     }
 
     /// Stands the cast where the view puts them, anew when it changes.
+    /// Stands the cast: a rig already standing in its clip is moved and held where it is asked
+    /// to, the rest are spawned anew.
     fn people(&mut self, world: &mut World, cast: Vec<Standing>) {
         if self
             .cast
@@ -337,35 +350,52 @@ impl Viewport {
         {
             return;
         }
-        if let Some((_, entities)) = self.cast.take() {
-            for entity in entities {
-                world.despawn(entity);
-            }
+        let (stood, entities) = self.cast.take().unwrap_or_default();
+        let mut spare: Vec<(Standing, Entity)> = stood.into_iter().zip(entities).collect();
+        let mut kept: Vec<Entity> = Vec::with_capacity(cast.len());
+        for standing in &cast {
+            let reused = spare
+                .iter()
+                .position(|(old, _)| old.same_rig(standing))
+                .map(|index| spare.remove(index).1);
+            let entity = match reused {
+                Some(entity) => {
+                    if let Some(mut transform) = world.get_mut::<Transform>(entity) {
+                        *transform = standing.transform;
+                    }
+                    if let Some(mut mannequin) = world.get_mut::<Mannequin>(entity) {
+                        mannequin.hold(standing.held);
+                    }
+                    entity
+                }
+                None => match standing.clip {
+                    Some(clip) => {
+                        let (scene, mut puppet) = mannequin(world, &standing.model, clip);
+                        puppet.hold(standing.held);
+                        world
+                            .spawn((scene, puppet, standing.transform, ChildOf(self.root)))
+                            .id()
+                    }
+                    None => {
+                        let scene = world
+                            .resource::<AssetServer>()
+                            .load(GltfAssetLabel::Scene(0).from_asset(standing.model.clone()));
+                        world
+                            .spawn((
+                                WorldAssetRoot(scene),
+                                standing.transform,
+                                ChildOf(self.root),
+                            ))
+                            .id()
+                    }
+                },
+            };
+            kept.push(entity);
         }
-        let entities = cast
-            .iter()
-            .map(|standing| match standing.clip {
-                Some(clip) => {
-                    let puppet = mannequin(world, &standing.model, clip);
-                    world
-                        .spawn((puppet, standing.transform, ChildOf(self.root)))
-                        .id()
-                }
-                None => {
-                    let scene = world
-                        .resource::<AssetServer>()
-                        .load(GltfAssetLabel::Scene(0).from_asset(standing.model.clone()));
-                    world
-                        .spawn((
-                            WorldAssetRoot(scene),
-                            standing.transform,
-                            ChildOf(self.root),
-                        ))
-                        .id()
-                }
-            })
-            .collect();
-        self.cast = Some((cast, entities));
+        for (_, entity) in spare {
+            world.despawn(entity);
+        }
+        self.cast = Some((cast, kept));
     }
 
     fn despawn(self, world: &mut World) {

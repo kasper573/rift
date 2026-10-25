@@ -111,8 +111,8 @@ pub(super) fn overlay_footprints(painter: &egui::Painter, frame: &AreaFrame) {
         let def = prop.prop.get(&frame.content);
         place::draw_footprint(
             painter,
-            frame,
-            def,
+            &frame.canvas,
+            &def.footprint,
             prop.at,
             prop.yaw,
             prop.scale,
@@ -231,8 +231,8 @@ pub(super) fn overlay_modules(
                 match def {
                     Some(def) => place::draw_footprint(
                         painter,
-                        frame,
-                        def,
+                        &frame.canvas,
+                        &def.footprint,
                         prop.at,
                         prop.yaw,
                         prop.scale,

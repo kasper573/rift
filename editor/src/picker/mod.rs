@@ -290,8 +290,6 @@ pub fn field(
 }
 
 /// The narrowest a pick's folder is shown, cut short; any narrower and only its name shows.
-const MIN_PREFIX: f32 = 24.0;
-
 fn chip(ui: &mut Ui, cx: &mut FormCx, source: &dyn PickSource, pick: &Pick) -> egui::Response {
     let empty = pick.is_empty();
     input::frame()
@@ -308,25 +306,32 @@ fn chip(ui: &mut Ui, cx: &mut FormCx, source: &dyn PickSource, pick: &Pick) -> e
                     let mut unlimited = u32::MAX;
                     face(ui, cx, source, pick, rect, &mut unlimited);
                     let (prefix, text) = source.shown(pick);
-                    let name =
-                        egui::WidgetText::from(theme::mono(text).size(13.0).color(theme::CODE))
-                            .into_galley(
-                                ui,
-                                Some(egui::TextWrapMode::Truncate),
-                                ui.available_width(),
-                                egui::TextStyle::Monospace,
-                            );
+                    let name = egui::WidgetText::from(
+                        theme::mono(text.clone()).size(13.0).color(theme::CODE),
+                    )
+                    .into_galley(
+                        ui,
+                        Some(egui::TextWrapMode::Truncate),
+                        ui.available_width(),
+                        egui::TextStyle::Monospace,
+                    );
                     let room = ui.available_width() - name.size().x - ui.spacing().item_spacing.x;
-                    if !prefix.is_empty() && room > MIN_PREFIX {
-                        ui.scope(|ui| {
-                            ui.set_max_width(room);
-                            ui.add(
-                                egui::Label::new(theme::muted(prefix).monospace().size(13.0))
-                                    .truncate(),
-                            );
-                        });
+                    if !prefix.is_empty() {
+                        let folder = egui::WidgetText::from(
+                            theme::muted(prefix.clone()).monospace().size(13.0),
+                        )
+                        .into_galley(
+                            ui,
+                            Some(egui::TextWrapMode::Truncate),
+                            room.max(0.0),
+                            egui::TextStyle::Monospace,
+                        );
+                        if !folder.elided {
+                            ui.add(egui::Label::new(folder));
+                        }
                     }
-                    ui.add(egui::Label::new(name));
+                    ui.add(egui::Label::new(name))
+                        .on_hover_text(format!("{prefix}{text}"));
                 });
             });
         })

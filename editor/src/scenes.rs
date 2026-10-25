@@ -4,6 +4,7 @@ use engine::core::content::ContentFile;
 use engine::systems::actor::model::ModelDef;
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
+use engine::systems::area::prop::PropDef;
 use engine::systems::area::world_map::{Note, Region};
 use engine::systems::class::ClassDef;
 use engine::systems::script::ScriptDef;
@@ -30,6 +31,7 @@ use crate::{rows, shell};
 pub enum SceneStep {
     Area(String),
     Blueprint(String),
+    Prop(String),
     /// Takes a tool in the open area view, with a prop or blueprint in hand when one is named.
     Tool {
         tool: area_view::AreaTool,
@@ -112,6 +114,7 @@ pub enum DialogName {
 #[serde(rename_all = "snake_case")]
 pub enum ModelStep {
     Open(String),
+    Page(ModelPage),
     Busts(Option<String>),
     Bottom(BottomTab),
     Drop(PathBuf),
@@ -219,6 +222,10 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         SceneStep::Blueprint(key) => {
             editor.select(RowSelection::row(BlueprintDef::TABLE, key));
             editor.open_tab(EditorTab::Blueprint { key: key.clone() });
+        }
+        SceneStep::Prop(key) => {
+            editor.select(RowSelection::row(PropDef::TABLE, key));
+            editor.open_tab(EditorTab::Prop { key: key.clone() });
         }
         SceneStep::Tool {
             tool,
@@ -465,6 +472,7 @@ fn model_step(editor: &mut Editor, step: &ModelStep) {
     model::ensure_view(editor, &key);
     match step {
         ModelStep::Open(_) => {}
+        ModelStep::Page(page) => editor.views.model.view_mut(&key).page = *page,
         ModelStep::Busts(face) => {
             let view = editor.views.model.view_mut(&key);
             view.page = ModelPage::Busts;

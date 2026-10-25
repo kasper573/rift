@@ -13,7 +13,7 @@ use ui::theme;
 use ui::words;
 
 use super::brush::{SculptMode, Stroke, StrokeKind};
-use super::camera::OrbitCamera;
+use super::camera::{self, OrbitCamera};
 use super::modules::{context_menu_at, open_add_menu, show_add_menu};
 use super::select::{
     copy_selection, delete_selection, duplicate_selection, move_selection, paste_anchor,
@@ -196,38 +196,14 @@ pub fn input(
     show_add_menu(ui, editor, view_key, frame);
 }
 
-/// Moves the camera as the pointer asks: the right button orbits, the middle button or Space with
-/// the left drags the ground along, the wheel draws back and in. Answers whether the pointer is
-/// busy with the camera.
 fn navigate(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame) -> bool {
-    let response = frame.response;
     let view = editor.views.area.view_mut(view_key);
-    let height = frame.canvas.screen.height();
-    if response.dragged_by(egui::PointerButton::Secondary) {
-        let delta = response.drag_delta();
-        view.camera.orbit(bevy::math::Vec2::new(delta.x, delta.y));
-        return true;
-    }
-    let space = ui.input(|i| EditorKey::Pan.held(i));
-    let panning = response.dragged_by(egui::PointerButton::Middle)
-        || (space && response.dragged_by(egui::PointerButton::Primary));
-    if panning {
-        let delta = response.drag_delta();
-        let per_pixel = view.camera.metres_per_pixel(height);
-        view.camera
-            .pan(bevy::prelude::Vec2::new(-delta.x, delta.y) * per_pixel);
-        return true;
-    }
-    if response.hovered() {
-        let scroll = ui.input(|i| i.smooth_scroll_delta);
-        let pinch = ui.input(|i| i.zoom_delta());
-        if pinch != 1.0 {
-            view.camera.zoom(1.0 / pinch);
-        } else if scroll.y != 0.0 {
-            view.camera.zoom((-scroll.y / 240.0).exp2());
-        }
-    }
-    false
+    camera::navigate(
+        ui,
+        frame.response,
+        &mut view.camera,
+        frame.canvas.screen.height(),
+    )
 }
 
 /// A sculpt or paint stroke: begun where the button goes down on the ground, applied every frame

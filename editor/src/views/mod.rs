@@ -3,10 +3,12 @@ pub mod character;
 pub mod class;
 pub mod model;
 pub mod navigation;
+pub mod prop;
 pub mod script;
 pub mod skill;
 pub mod sound;
 pub mod spreadsheet;
+pub mod stage;
 pub mod vfx;
 pub mod world;
 
@@ -45,6 +47,7 @@ pub struct EditorViews {
     pub world: world::WorldView,
     pub script: script::ScriptViews,
     pub model: model::ModelViews,
+    pub prop: prop::PropViews,
     pub spreadsheet: spreadsheet::SpreadsheetViews,
     pub sound: sound::SoundViews,
     pub character: character::CharacterView,
