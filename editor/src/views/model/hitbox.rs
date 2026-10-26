@@ -101,7 +101,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
             handle,
             hitbox: working,
         });
-        view.spinning = false;
+        view.stage.spinning = false;
     }
     if response.dragged_by(egui::PointerButton::Primary)
         && let Some(drag) = &mut view.drag
@@ -141,7 +141,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
         egui::FontId::monospace(11.0),
         theme::TEXT,
     );
-    turntable.stand(editor, ui, row, idle, None);
+    super::stand(turntable, editor, ui, row, idle, None);
     if let Some(hitbox) = landed {
         super::set_hitbox(editor, key, hitbox);
     }

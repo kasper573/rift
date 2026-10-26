@@ -9,8 +9,8 @@ use strum::{AsRefStr, EnumString, VariantArray};
 
 use super::playing::Motion;
 use super::skeleton::{
-    self, BuiltSkeleton, ClipName, ClipRef, Cue, DeclaredMoves, GroupName, Hand, LibraryClip,
-    SkeletonDef, SkeletonId,
+    self, BuiltSkeleton, ClipName, Cue, DeclaredMoves, GroupName, Hand, LibraryClip, SkeletonDef,
+    SkeletonId,
 };
 use super::stance::StanceId;
 use super::{Action, Pose};
@@ -879,23 +879,7 @@ impl ActorModel {
     /// is the model's own when its glb carries one of the name, else the skeleton's libraries'.
     pub fn resolve(&self, stance: Option<StanceId>, motion: &Motion, pose: Pose) -> Resolved<'_> {
         let skeleton = &self.skeleton.def;
-        let base = &skeleton.base;
-        let set = stance.and_then(|stance| skeleton.set(stance));
-        let action = |action: Action| -> &ClipRef {
-            set.and_then(|set| set.clips.get(&action))
-                .unwrap_or(&base.clips[&action])
-        };
-        let clip = match motion {
-            Motion::Action(Action::Idle) => set
-                .and_then(|set| set.poses.get(&pose))
-                .or_else(|| base.poses.get(&pose))
-                .unwrap_or_else(|| action(Action::Idle)),
-            Motion::Action(acted) => action(*acted),
-            Motion::Move(name) => set
-                .and_then(|set| set.moves.get(name))
-                .or_else(|| base.moves.get(name))
-                .unwrap_or_else(|| action(Action::Attack)),
-        };
+        let (clip, _) = skeleton.named(stance, motion, pose);
         let name = clip.clip();
         let (source, length, cues) = match self.own.get(name) {
             Some(&(index, length)) => (

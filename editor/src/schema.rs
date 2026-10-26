@@ -371,6 +371,16 @@ pub fn kind<'a>(root: &'a Value, schema: &'a Value) -> SchemaKind<'a> {
         .or_else(|| schema.get("anyOf"))
         .and_then(Value::as_array);
     if let Some(alternatives) = alternatives {
+        let constants: Option<Vec<String>> = alternatives
+            .iter()
+            .map(|alternative| {
+                let alternative = resolve(root, alternative);
+                Some(alternative.get("const")?.as_str()?.to_owned())
+            })
+            .collect();
+        if let Some(values) = constants {
+            return SchemaKind::Enum(values);
+        }
         let mut variants = Vec::new();
         let mut plain = Vec::new();
         for alternative in alternatives {

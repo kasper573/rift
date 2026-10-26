@@ -24,6 +24,7 @@ use serde_json::{Map, Value};
 use ui::egui::Ui;
 use ui::glyph::{self, Mark};
 
+use crate::body_names::{self, NameKind};
 use crate::keymap::EditorKey;
 use crate::project::{Project, ProjectFiles};
 use crate::schema::{self, KeptValues, SchemaKind, SchemaShapes, SchemaVariant};
@@ -523,6 +524,11 @@ fn plain(
             "x-place" => return place(ui, cx, schema, value, path),
             "x-color" => return color(ui, value, path),
             "x-face" => return face(ui, cx, value, path),
+            "x-move" | "x-joint" | "x-clip" | "x-group" => {
+                if let Some(kind) = NameKind::of_marker(marker) {
+                    return named(ui, cx, kind, value, path);
+                }
+            }
             "x-span" => {
                 return as_type(ui, cx, value, path, |ui, cx, span| {
                     spans::edit(ui, cx, span, path)
@@ -1934,6 +1940,69 @@ fn face(ui: &mut Ui, cx: &mut FormCx, value: &mut Value, path: &str) -> FormChan
         .and_then(|speaker| busts::model_of_npc(cx.project, speaker));
     let faces = busts::face_names(model.as_deref());
     enum_combo(ui, cx, &faces, value, path)
+}
+
+/// A name a body knows, picked from those there are: a move some skeleton declares, or a joint, a
+/// clip or a group of the skeleton the form edits. A name that is none of them is shown as refused.
+fn named(
+    ui: &mut Ui,
+    cx: &mut FormCx,
+    kind: NameKind,
+    value: &mut Value,
+    path: &str,
+) -> FormChange {
+    let row = cx.row_table.as_deref().zip(cx.row_key.as_deref());
+    let Some(choices) = cx
+        .content
+        .as_ref()
+        .and_then(|content| body_names::choices(content, kind, row))
+    else {
+        return text(ui, cx, value, path);
+    };
+    let current = value.as_str().unwrap_or_default().to_owned();
+    let chosen = choices.iter().find(|choice| choice.name == current);
+    let mut picked = current.clone();
+    let shown = if current.is_empty() {
+        theme::muted("pick one")
+    } else if chosen.is_some() {
+        egui::RichText::new(&current)
+    } else {
+        egui::RichText::new(&current).color(theme::DANGER)
+    };
+    let combo = controls::combo(ui.id().with(path).with("named"))
+        .selected_text(shown)
+        .show_ui(ui, |ui| {
+            for choice in &choices {
+                ui.selectable_value(&mut picked, choice.name.clone(), &choice.name)
+                    .on_hover_text(&choice.note);
+            }
+        });
+    if std::mem::take(&mut cx.autofocus) {
+        combo.response.request_focus();
+    }
+    match chosen {
+        Some(choice) if kind == NameKind::Move => {
+            ui.label(theme::faint(format!(
+                "declared by {}; other bodies play their stance's attack",
+                choice.note
+            )));
+        }
+        None if !current.is_empty() => {
+            let why = match kind {
+                NameKind::Move => "no skeleton's set declares it: the script is refused",
+                NameKind::Joint => "not a joint of the rig",
+                NameKind::Clip => "no library of the skeleton carries it",
+                NameKind::Group => "not a group of the skeleton",
+            };
+            ui.colored_label(theme::DANGER, why);
+        }
+        _ => {}
+    }
+    if picked != current {
+        *value = Value::String(picked);
+        return FormChange::at(path);
+    }
+    FormChange::default()
 }
 
 fn place(

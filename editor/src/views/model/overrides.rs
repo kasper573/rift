@@ -65,7 +65,14 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
             file: row.model.path(),
             index: own.index,
         };
-        turntable.stand(editor, ui, row, Some(clip), Some(playhead.seconds()));
+        super::stand(
+            turntable,
+            editor,
+            ui,
+            row,
+            Some(clip),
+            Some(playhead.seconds()),
+        );
     }
     ui.add_space(6.0);
     let mut pick = None;

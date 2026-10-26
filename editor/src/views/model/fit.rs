@@ -63,7 +63,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
     ) {
         let playhead = editor.views.model.view(key).scrub.playhead;
         let clip = scene.playing.as_ref().map(|playing| playing.clip.clone());
-        turntable.stand(editor, ui, row, clip, Some(playhead.seconds()));
+        super::stand(turntable, editor, ui, row, clip, Some(playhead.seconds()));
     }
     ui.add_space(6.0);
     if let Some(playing) = &scene.playing {

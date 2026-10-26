@@ -2,11 +2,13 @@ use std::path::PathBuf;
 
 use engine::core::content::ContentFile;
 use engine::systems::actor::model::ModelDef;
+use engine::systems::actor::skeleton::{ClipName, SkeletonDef};
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
 use engine::systems::area::world_map::{Note, Region};
 use engine::systems::class::ClassDef;
+use engine::systems::item::ItemDef;
 use engine::systems::script::ScriptDef;
 use serde::Deserialize;
 use strum::VariantNames;
@@ -18,8 +20,10 @@ use crate::views::area::resize::ResizeDialog;
 use crate::views::area::{self as area_view, blueprint};
 use crate::views::character::CharacterSection;
 use crate::views::class;
+use crate::views::item::{self, ItemPage};
 use crate::views::model::{self, ModelPage, busts};
 use crate::views::script::{PendingScriptAction, ScriptRow};
+use crate::views::skeleton::{self, SkeletonPage};
 use crate::views::world::{
     self, ColorBy, ColorField, MapLens, MapLook, MapPart, MapRoute, OpenWorldMap, arrange,
 };
@@ -90,6 +94,12 @@ pub enum SceneStep {
     },
     Bottom(BottomTab),
     Model(ModelStep),
+    Skeleton(SkeletonStep),
+    /// Opens the item at `key` on `page`.
+    Item {
+        key: String,
+        page: ItemPage,
+    },
     Sheet(SheetStep),
     World(WorldStep),
     Section(CharacterSection),
@@ -117,6 +127,33 @@ pub enum ModelStep {
     Page(ModelPage),
     Busts(Option<String>),
     Bottom(BottomTab),
+    Drop(PathBuf),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkeletonStep {
+    Open(String),
+    Page(SkeletonPage),
+    /// Lights the joint of this name on the joints page.
+    Joint(String),
+    /// Plays the library clip of this name on the stage, none standing the rig at rest.
+    Clip(Option<String>),
+    /// Shows the rig as the model at this path.
+    Wearer(String),
+    /// Hangs the item at this path from the stage's model.
+    Trying(String),
+    /// Chooses the hand at this place in the list on the hands page.
+    Hand(usize),
+    /// Chooses the layer at this place in the list on the layers page.
+    Layer(usize),
+    /// Opens the picker of the sets page's cell for this row in the stance at this path, base when
+    /// none.
+    Cell {
+        row: skeleton::sets::SetRow,
+        #[serde(default)]
+        stance: Option<String>,
+    },
     Drop(PathBuf),
 }
 
@@ -338,6 +375,12 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         ),
         SceneStep::Bottom(tab) => editor.panels.bottom = *tab,
         SceneStep::Model(step) => model_step(editor, step),
+        SceneStep::Skeleton(step) => skeleton_step(editor, step),
+        SceneStep::Item { key, page } => {
+            editor.open_row(ItemDef::TABLE, key);
+            item::ensure_view(editor, key);
+            editor.views.item.view_mut(key).page = *page;
+        }
         SceneStep::Sheet(step) => sheet_step(editor, step),
         SceneStep::World(step) => {
             editor.open_tab(EditorTab::World);
@@ -493,6 +536,38 @@ fn model_step(editor: &mut Editor, step: &ModelStep) {
         }
         ModelStep::Bottom(tab) => editor.panels.bottom = *tab,
         ModelStep::Drop(path) => editor.views.model.drops.push(path.clone()),
+    }
+}
+
+fn skeleton_step(editor: &mut Editor, step: &SkeletonStep) {
+    if let SkeletonStep::Open(key) = step {
+        editor.open_row(SkeletonDef::TABLE, key);
+        skeleton::ensure_view(editor, key);
+        return;
+    }
+    let key = match shell::active_tab(editor) {
+        Some(EditorTab::Row { table, key }) if table == SkeletonDef::TABLE => key,
+        _ if editor.selection.table == SkeletonDef::TABLE && !editor.selection.keys.is_empty() => {
+            editor.selection.keys[0].clone()
+        }
+        _ => return,
+    };
+    skeleton::ensure_view(editor, &key);
+    let view = editor.views.skeleton.view_mut(&key);
+    match step {
+        SkeletonStep::Open(_) => {}
+        SkeletonStep::Page(page) => view.page = *page,
+        SkeletonStep::Joint(joint) => view.joint = Some(joint.clone()),
+        SkeletonStep::Clip(clip) => view.clip = clip.as_deref().map(ClipName::new),
+        SkeletonStep::Wearer(model) => view.wearer = Some(model.clone()),
+        SkeletonStep::Trying(item) => view.trying = Some(item.clone()),
+        SkeletonStep::Hand(hand) => view.hand = *hand,
+        SkeletonStep::Layer(layer) => view.layers.layer = *layer,
+        SkeletonStep::Cell { row, stance } => {
+            view.page = SkeletonPage::Sets;
+            view.sets.open = Some((row.clone(), stance.clone()));
+        }
+        SkeletonStep::Drop(path) => editor.views.skeleton.drops.push(path.clone()),
     }
 }
 

@@ -11,28 +11,22 @@ pub mod overrides;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use engine::core::content::media::GltfInfos;
 use engine::core::content::{Content, ContentFile};
 use engine::core::geometry::Capsule;
-use engine::core::render::camera::world_point;
 use engine::core::render::world::mannequin::RigClip;
 use engine::core::time::{Millis, Seconds};
-use engine::core::units::Meters;
 use engine::systems::actor::model::ActorModel;
 use engine::systems::actor::skeleton::{ClipName, Cue};
 use engine::systems::actor::{Action, ModelDef, Motion, Pose};
-use engine::systems::area::{Picture, Pictured};
 use engine::systems::npc::NpcDef;
 use engine::systems::player::PlayerDef;
 use serde::Deserialize;
-use ui::egui::{self, Rect, Response, Sense, Ui, Vec2};
+use ui::egui::{self, Ui, Vec2};
 use ui::{chip, form, theme};
 
-use super::area::camera::{self, AreaCanvas, OrbitCamera};
-use super::area::viewport::Standing;
-use super::stage::{self, StagePicture};
+use super::stage;
 use crate::app::Editor;
 use crate::project::RowSelection;
 use crate::project::files::content_of;
@@ -84,11 +78,9 @@ pub struct ModelView {
     /// The clip of its own the overrides page times.
     pub own_clip: Option<ClipName>,
     pub scrub: super::cues::Scrub,
-    pub camera: OrbitCamera,
-    pub spinning: bool,
+    pub stage: stage::StageState,
     pub drag: Option<hitbox::Drag>,
     pub import: Option<import::ImportDraft>,
-    picture: StagePicture,
 }
 
 impl ModelViews {
@@ -167,9 +159,9 @@ fn page_bar(editor: &mut Editor, ui: &mut Ui, key: &str, page: ModelPage) {
         }
         if page != ModelPage::Busts {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let view = editor.views.model.view_mut(key);
-                if chip::toggle(ui, "turning", view.spinning).clicked() {
-                    view.spinning = !view.spinning;
+                let stage = &mut editor.views.model.view_mut(key).stage;
+                if chip::toggle(ui, "turning", stage.spinning).clicked() {
+                    stage.spinning = !stage.spinning;
                 }
             });
         }
@@ -193,11 +185,9 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
             pose: Pose::Idle,
             own_clip: None,
             scrub: super::cues::Scrub::default(),
-            camera: stage::framing(height.max(1.0) * 0.7),
-            spinning: false,
+            stage: stage::StageState::framing(height.max(1.0) * 0.7, false),
             drag: None,
             import: None,
-            picture: StagePicture::default(),
         },
     );
     if let Some(model) = model
@@ -298,103 +288,31 @@ pub fn users(editor: &Editor, key: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The stage with the camera moved as the pointer asks, for a page to draw over and then stand
-/// its rig on.
-pub(super) struct Turntable {
-    pub rect: Rect,
-    pub response: Response,
-    pub canvas: AreaCanvas,
-    view_key: String,
-    picture: (u64, Arc<Picture>),
-}
-
+/// The model's stage, drawn over `size` with its camera moved as the pointer asks.
 pub(super) fn turntable(
     editor: &mut Editor,
     ui: &mut Ui,
     key: &str,
     size: Vec2,
-) -> Option<Turntable> {
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 4.0, theme::CANVAS);
-    let Some(picture) = picture(editor, key) else {
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "no terrain to stand the rig on",
-            egui::FontId::proportional(13.0),
-            theme::MUTED,
-        );
-        return None;
-    };
-    let view_key = format!("model:{key}");
-    stage::show_picture(editor, ui, &painter, rect, &view_key);
-    let dt = ui.input(|i| i.stable_dt).min(0.1);
-    let view = editor.views.model.view_mut(key);
-    let busy = camera::navigate(ui, &response, &mut view.camera, rect.height());
-    if busy && response.dragged_by(egui::PointerButton::Secondary) {
-        view.spinning = false;
-    }
-    if response.double_clicked() {
-        view.camera.target = stage::center();
-    }
-    if view.spinning {
-        stage::spin(&mut view.camera, dt);
-        ui.ctx().request_repaint();
-    }
-    let canvas = AreaCanvas::new(rect, view.camera, picture.1.area.clone());
-    Some(Turntable {
-        rect,
-        response,
-        canvas,
-        view_key,
-        picture,
-    })
-}
-
-impl Turntable {
-    /// Stands the model in the middle of the stage, in `clip` held at `held`, and asks for the
-    /// picture.
-    pub fn stand(
-        self,
-        editor: &mut Editor,
-        ui: &Ui,
-        row: &ModelDef,
-        clip: Option<RigClip>,
-        held: Option<Seconds>,
-    ) {
-        let cast = vec![Standing {
-            model: row.model.path(),
-            clip,
-            transform: bevy::prelude::Transform::from_translation(world_point(
-                stage::center(),
-                Meters(0.0),
-            )),
-            held,
-        }];
-        stage::request(
-            editor,
-            ui,
-            &self.view_key,
-            self.rect,
-            self.canvas.camera,
-            self.picture,
-            cast,
-        );
-    }
-}
-
-fn picture(editor: &mut Editor, key: &str) -> Option<(u64, Arc<Picture>)> {
-    let project = editor.project.as_ref()?;
-    let content = project.content.clone()?;
-    let generation = project.generation;
+) -> Option<stage::Turntable> {
     ensure_view(editor, key);
-    editor
-        .views
-        .model
-        .view_mut(key)
-        .picture
-        .of(&content, generation, Pictured::Stage)
+    let mut state = std::mem::take(&mut editor.views.model.view_mut(key).stage);
+    let turntable = stage::turntable(editor, ui, &format!("model:{key}"), size, &mut state);
+    editor.views.model.view_mut(key).stage = state;
+    turntable
+}
+
+/// Stands the model at `key` in the middle of `turntable`, in `clip` held at `held`.
+pub(super) fn stand(
+    turntable: stage::Turntable,
+    editor: &mut Editor,
+    ui: &Ui,
+    row: &ModelDef,
+    clip: Option<RigClip>,
+    held: Option<Seconds>,
+) {
+    let cast = vec![stage::standing(row.model.path(), clip, held, Vec::new())];
+    turntable.stand(editor, ui, cast);
 }
 
 /// Takes the files dropped on the view: a glTF binary is offered as a new rig to import, pictures

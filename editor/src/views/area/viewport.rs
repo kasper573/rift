@@ -15,11 +15,15 @@ use bevy::render::render_resource::TextureFormat;
 use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::content::Content;
 use engine::core::ground::{Heightfield, Paint};
-use engine::core::render::camera;
+use engine::core::render::camera::{self, CameraPreferences};
+use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::Mannequin;
 use engine::core::render::world::mannequin::{RigClip, mannequin};
 use engine::core::render::world::sky::{self, Daylight};
 use engine::core::time::Seconds;
+use engine::systems::actor::Action;
+use engine::systems::actor::layering::{self, Layering};
+use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::area::scenery::{self, Scenery};
 use engine::systems::area::{Area, Picture};
 use ui::egui;
@@ -68,6 +72,42 @@ pub struct Standing {
     pub clip: Option<RigClip>,
     pub transform: Transform,
     pub held: Option<Seconds>,
+    pub props: Vec<StandingProp>,
+    /// The layers of its skeleton the rig runs over its clip, when a stage asks for them.
+    pub layers: Option<StageLayers>,
+}
+
+/// What a stood rig's layers are told each frame, as the game tells a puppet's: the model whose
+/// skeleton lists them, the action shown, whether a foot came down, and whether Reduce motion is on.
+#[derive(Clone, Copy, PartialEq)]
+pub struct StageLayers {
+    pub model: ModelId,
+    pub action: Action,
+    pub stepped: bool,
+    pub reduce_motion: bool,
+}
+
+/// The layers a stood rig was asked to run, and whether they have been put on its joints.
+#[derive(Component)]
+struct StageLayering {
+    asked: StageLayers,
+    put: bool,
+}
+
+/// A prop a standing rig holds: the scene of `model` under the rig's joint `joint`, placed there by
+/// `transform`.
+#[derive(Clone, PartialEq)]
+pub struct StandingProp {
+    pub joint: String,
+    pub model: String,
+    pub transform: Transform,
+}
+
+/// The props a stood rig holds, and those hung so far.
+#[derive(Component)]
+struct StageProps {
+    props: Vec<StandingProp>,
+    hung: Vec<Entity>,
 }
 
 impl Standing {
@@ -174,6 +214,8 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             });
         viewport.draw(world, request);
     }
+    hang_props(world);
+    run_layers(world);
 }
 
 impl Viewport {
@@ -361,15 +403,28 @@ impl Viewport {
                     if let Some(mut mannequin) = world.get_mut::<Mannequin>(entity) {
                         mannequin.hold(standing.held);
                     }
+                    rehang(world, entity, &standing.props);
+                    ask_layers(world, entity, standing.layers);
                     entity
                 }
                 None => match &standing.clip {
                     Some(clip) => {
                         let (scene, mut puppet) = mannequin(world, &standing.model, clip);
                         puppet.hold(standing.held);
-                        world
-                            .spawn((scene, puppet, standing.transform, ChildOf(self.root)))
-                            .id()
+                        let rig = world
+                            .spawn((
+                                scene,
+                                puppet,
+                                standing.transform,
+                                StageProps {
+                                    props: standing.props.clone(),
+                                    hung: Vec::new(),
+                                },
+                                ChildOf(self.root),
+                            ))
+                            .id();
+                        ask_layers(world, rig, standing.layers);
+                        rig
                     }
                     None => {
                         let scene = world
@@ -403,6 +458,191 @@ impl Viewport {
             .resource_mut::<EguiUserTextures>()
             .remove_image(&self.image);
     }
+}
+
+/// Gives the stood rig `rig` the props `props`: moved in place where the same props are held
+/// already, else taken down to be hung anew.
+fn rehang(world: &mut World, rig: Entity, props: &[StandingProp]) {
+    let Some(mut held) = world.get_mut::<StageProps>(rig) else {
+        return;
+    };
+    let same = held.props.len() == props.len()
+        && held
+            .props
+            .iter()
+            .zip(props)
+            .all(|(old, new)| old.joint == new.joint && old.model == new.model);
+    if same {
+        held.props = props.to_vec();
+        let moved: Vec<(Entity, Transform)> = held
+            .hung
+            .iter()
+            .zip(props)
+            .map(|(&prop, standing)| (prop, standing.transform))
+            .collect();
+        for (prop, transform) in moved {
+            if let Some(mut at) = world.get_mut::<Transform>(prop) {
+                *at = transform;
+            }
+        }
+        return;
+    }
+    let gone = std::mem::take(&mut held.hung);
+    held.props = props.to_vec();
+    for prop in gone {
+        if let Ok(prop) = world.get_entity_mut(prop) {
+            prop.despawn();
+        }
+    }
+}
+
+/// Hangs each stood rig's props under their joints once its scene has spawned them.
+fn hang_props(world: &mut World) {
+    let waiting: Vec<(Entity, Vec<StandingProp>)> = world
+        .query::<(Entity, &StageProps)>()
+        .iter(world)
+        .filter(|(_, held)| held.hung.is_empty() && !held.props.is_empty())
+        .map(|(rig, held)| (rig, held.props.clone()))
+        .collect();
+    for (rig, props) in waiting {
+        let joints: Vec<Option<Entity>> = props
+            .iter()
+            .map(|prop| named_under(world, rig, &prop.joint))
+            .collect();
+        if joints.iter().any(Option::is_none) {
+            continue;
+        }
+        let hung: Vec<Entity> = props
+            .iter()
+            .zip(joints.into_iter().flatten())
+            .map(|(prop, joint)| {
+                let scene = world
+                    .resource::<AssetServer>()
+                    .load(GltfAssetLabel::Scene(0).from_asset(prop.model.clone()));
+                world
+                    .spawn((
+                        WorldAssetRoot(scene),
+                        prop.transform,
+                        Visibility::default(),
+                        ChildOf(joint),
+                    ))
+                    .id()
+            })
+            .collect();
+        if let Some(mut held) = world.get_mut::<StageProps>(rig) {
+            held.hung = hung;
+        }
+    }
+}
+
+/// Tells the stood rig `rig` what its layers run during this frame, or takes them away.
+fn ask_layers(world: &mut World, rig: Entity, asked: Option<StageLayers>) {
+    let Ok(mut entity) = world.get_entity_mut(rig) else {
+        return;
+    };
+    match asked {
+        Some(asked) => match entity.get_mut::<StageLayering>() {
+            Some(mut layering) if layering.asked.model == asked.model => layering.asked = asked,
+            _ => {
+                entity
+                    .insert(StageLayering { asked, put: false })
+                    .remove::<(Layered, Layering)>();
+            }
+        },
+        None => {
+            entity.remove::<(StageLayering, Layered, Layering)>();
+        }
+    }
+}
+
+/// Puts each stood rig's layers on its joints once its scene has spawned them, and drives them as
+/// the game drives a puppet's.
+fn run_layers(world: &mut World) {
+    let Some(content) = world.get_resource::<Content>().cloned() else {
+        return;
+    };
+    let waiting: Vec<(Entity, ModelId)> = world
+        .query::<(Entity, &StageLayering)>()
+        .iter(world)
+        .filter(|(_, layering)| !layering.put)
+        .map(|(rig, layering)| (rig, layering.asked.model))
+        .collect();
+    for (rig, model) in waiting {
+        let Some(model) = ActorModel::loaded(&content, model) else {
+            continue;
+        };
+        let joints = nodes_under(world, rig);
+        let rigged = model
+            .skeleton()
+            .rig
+            .joints()
+            .all(|joint| joints.contains_key(&model.skeleton().rig.nodes[joint].name));
+        if !rigged {
+            continue;
+        }
+        let mut entity = world.entity_mut(rig);
+        if let Some((layered, layering)) = layering::layered(model, &joints) {
+            entity.insert((layered, layering));
+        }
+        if let Some(mut layering) = entity.get_mut::<StageLayering>() {
+            layering.put = true;
+        }
+    }
+    let mut calm = None;
+    for (mut layered, layering, stage) in world
+        .query::<(&mut Layered, &Layering, &StageLayering)>()
+        .iter_mut(world)
+    {
+        layering::drive(
+            &mut layered,
+            layering,
+            stage.asked.action,
+            stage.asked.stepped,
+        );
+        calm = Some(calm.unwrap_or(false) || stage.asked.reduce_motion);
+    }
+    if let Some(calm) = calm
+        && world
+            .get_resource::<CameraPreferences>()
+            .is_none_or(|preferences| preferences.reduce_motion != calm)
+    {
+        world.insert_resource(CameraPreferences {
+            reduce_motion: calm,
+            ..CameraPreferences::default()
+        });
+    }
+}
+
+/// Every named node among the descendants of `root`, by its name.
+fn nodes_under(world: &World, root: Entity) -> HashMap<String, Entity> {
+    let mut named = HashMap::new();
+    let mut open = vec![root];
+    while let Some(at) = open.pop() {
+        if let Some(name) = world.get::<Name>(at) {
+            named.insert(name.as_str().to_owned(), at);
+        }
+        if let Some(children) = world.get::<Children>(at) {
+            open.extend(children.iter());
+        }
+    }
+    named
+}
+
+/// The node named `name` among the descendants of `root`.
+fn named_under(world: &World, root: Entity, name: &str) -> Option<Entity> {
+    let mut open = vec![root];
+    while let Some(at) = open.pop() {
+        if world
+            .get::<Name>(at)
+            .is_some_and(|named| named.as_str() == name)
+        {
+            return Some(at);
+        }
+        if let Some(children) = world.get::<Children>(at) {
+            open.extend(children.iter());
+        }
+    }
+    None
 }
 
 /// An offscreen picture of `size` pixels a camera renders to, and the egui texture that shows it.

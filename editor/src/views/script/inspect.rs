@@ -823,6 +823,13 @@ fn node_extras(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, shown: Shown) 
     };
     match (node, memory) {
         (Node::Repeat { .. }, _) => bounds_card(ui, doc, name, node),
+        (
+            Node::Effect(RiftEffect::Animate(engine::systems::actor::playing::Animate {
+                motion: engine::systems::actor::Motion::Move(asked),
+                ..
+            })),
+            _,
+        ) => move_card(editor, ui, asked),
         (_, Some(memory)) => {
             if let Some(memory) = memory.and_then(|memory| doc.reader.path_of(memory)) {
                 memory_row_card(editor, ui, doc, memory);
@@ -844,6 +851,47 @@ fn node_extras(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, shown: Shown) 
             });
         }
     }
+}
+
+/// How many skeletons declare the move an animate node asks for, and what each plays for it in
+/// base and each stance.
+fn move_card(editor: &Editor, ui: &mut Ui, asked: &engine::systems::actor::skeleton::MoveName) {
+    let Some(content) = editor.loaded() else {
+        return;
+    };
+    let coverage = crate::body_names::coverage(&content, asked);
+    let declaring = coverage
+        .iter()
+        .filter(|skeleton| skeleton.cells.iter().any(|(_, _, own)| *own))
+        .count();
+    sheet::section(ui, "Move");
+    if declaring == 0 {
+        ui.colored_label(
+            theme::DANGER,
+            format!("no skeleton's set declares {asked}: the script is refused until one does"),
+        );
+    } else {
+        ui.label(format!(
+            "{asked} is declared by {declaring} of {} skeletons; the others play their stance's \
+             attack",
+            coverage.len()
+        ));
+    }
+    egui::CollapsingHeader::new("what each body plays")
+        .id_salt(("move-coverage", asked.as_str()))
+        .show(ui, |ui| {
+            for skeleton in &coverage {
+                ui.label(egui::RichText::new(&skeleton.skeleton).strong());
+                for (set, clip, own) in &skeleton.cells {
+                    let text = egui::RichText::new(format!("{set} → {clip}")).size(12.5);
+                    ui.label(if *own {
+                        text
+                    } else {
+                        text.italics().color(theme::FAINT)
+                    });
+                }
+            }
+        });
 }
 
 fn memory_row_card(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, memory: &str) {

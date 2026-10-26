@@ -33,7 +33,7 @@ use crate::core::time::{Seconds, UnixMillis};
 use crate::core::vfx::cover::Treads;
 use crate::core::vfx::render::SiteExtent;
 use crate::systems::area;
-use crate::systems::item::{ItemId, Wear};
+use crate::systems::item::{Grip, ItemId, Wear};
 use crate::systems::movement::RenderPosition;
 use crate::systems::screen::ClientScreen;
 
@@ -613,13 +613,7 @@ pub fn hang(world: &mut World) {
     for (entity, model, shown) in dressed {
         let model = ActorModel::get(&content, model);
         let hands = model.hands();
-        let wanted: BTreeMap<HandIndex, ItemId> = shown
-            .iter()
-            .filter(|&(&hand, &item)| {
-                hand.index() < hands.len() && hangs_from(&content, &shown, hand, item)
-            })
-            .map(|(&hand, &item)| (hand, item))
-            .collect();
+        let wanted = hung(&content, model, &shown);
         let Some(puppet) = world.get::<Puppet>(entity) else {
             continue;
         };
@@ -651,10 +645,7 @@ pub fn hang(world: &mut World) {
                 continue;
             };
             let look = def.look.get(&content);
-            let rest = rest_scale(&content, model, &hands[hand.index()]);
-            let placed = Transform::from_scale(Vec3::splat(1.0 / rest))
-                * hold(&hands[hand.index()].offset, &hands[hand.index()].turn)
-                * hold(&grip.offset, &grip.turn);
+            let placed = held_at(&content, model, &hands[hand.index()], grip);
             let scene = world
                 .resource::<AssetServer>()
                 .load(GltfAssetLabel::Scene(0).from_asset(look.model.path()));
@@ -674,6 +665,22 @@ pub fn hang(world: &mut World) {
     }
 }
 
+/// The hand each item `shown` hangs its prop from on `model`: once per item, from the first or the
+/// last hand it takes as its stance holds it, and only from hands the body has.
+pub fn hung(
+    content: &Content,
+    model: &ActorModel,
+    shown: &BTreeMap<HandIndex, ItemId>,
+) -> BTreeMap<HandIndex, ItemId> {
+    shown
+        .iter()
+        .filter(|&(&hand, &item)| {
+            hand.index() < model.hands().len() && hangs_from(content, shown, hand, item)
+        })
+        .map(|(&hand, &item)| (hand, item))
+        .collect()
+}
+
 /// Whether `item`'s prop hangs from `hand` among the hands that show it: the first of them, or the
 /// last when its stance holds it there.
 fn hangs_from(
@@ -690,6 +697,15 @@ fn hangs_from(
         hand.0.checked_sub(1)
     };
     beside.and_then(|beside| shown.get(&HandIndex(beside))) != Some(&item)
+}
+
+/// Where a prop held by `grip` sits under the joint of `hand` on `model`: moved and turned as the
+/// hand and the grip say, and as big as it lies on the ground.
+pub fn held_at(content: &Content, model: &ActorModel, hand: &Hand, grip: &Grip) -> Transform {
+    let rest = rest_scale(content, model, hand);
+    Transform::from_scale(Vec3::splat(1.0 / rest))
+        * hold(&hand.offset, &hand.turn)
+        * hold(&grip.offset, &grip.turn)
 }
 
 /// A move and turn in a joint's frame: the turn's degrees about x, y and z in that order.

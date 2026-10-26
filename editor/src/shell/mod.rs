@@ -23,6 +23,8 @@ use ui::theme;
 
 use engine::core::content::{ContentFile, LoadReport};
 use engine::core::vfx::{VfxDef, VfxShaderDef};
+use engine::systems::actor::skeleton::SkeletonDef;
+use engine::systems::actor::stance::StanceDef;
 use engine::systems::class::ClassDef;
 use engine::systems::item::ItemDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
@@ -40,7 +42,9 @@ use crate::play;
 use crate::project::{self, EditRefusal};
 use crate::tabs::{DockRequest, EditorTab};
 use crate::views::script::{self, ScriptKeys};
-use crate::views::{self, area, character, class, item, model, prop, spreadsheet, vfx, world};
+use crate::views::{
+    self, area, character, class, item, model, prop, skeleton, spreadsheet, stance, vfx, world,
+};
 
 pub fn show(editor: &mut Editor, ctx: &Context) {
     editor.status.right.clear();
@@ -557,6 +561,12 @@ impl TabViewer for Viewer<'_> {
             EditorTab::Row { table, key } if table == ItemDef::TABLE => {
                 item::show(self.editor, ui, key)
             }
+            EditorTab::Row { table, key } if table == SkeletonDef::TABLE => {
+                skeleton::show(self.editor, ui, key)
+            }
+            EditorTab::Row { table, key } if table == StanceDef::TABLE => {
+                stance::show(self.editor, ui, key)
+            }
             EditorTab::Spreadsheet { table } => spreadsheet::show(self.editor, ui, table),
             EditorTab::Row { .. }
             | EditorTab::Rows { .. }
@@ -629,7 +639,13 @@ impl TabViewer for Viewer<'_> {
             | EditorTab::Model { .. }
             | EditorTab::Prop { .. }
             | EditorTab::Spreadsheet { .. } => [false, false],
-            EditorTab::Row { table, .. } if table == ItemDef::TABLE => [false, false],
+            EditorTab::Row { table, .. }
+                if table == ItemDef::TABLE
+                    || table == SkeletonDef::TABLE
+                    || table == StanceDef::TABLE =>
+            {
+                [false, false]
+            }
             EditorTab::Row { table, key } if table == ClassDef::TABLE => [
                 false,
                 self.editor.views.class.page(key) == class::ClassPage::Levels,
@@ -651,7 +667,7 @@ fn toast(editor: &mut Editor, ctx: &Context) {
 }
 
 /// Files dropped onto the window go to the tab in front when it takes them: a model's busts and
-/// rig, a prop's model; anywhere else they have no place to land.
+/// rig, a prop's model, a skeleton's libraries and rig; anywhere else they have no place to land.
 fn dropped_files(editor: &mut Editor, ctx: &Context) {
     let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
         i.raw
@@ -666,6 +682,10 @@ fn dropped_files(editor: &mut Editor, ctx: &Context) {
     match active_tab(editor) {
         Some(EditorTab::Model { .. }) => editor.views.model.drops = dropped,
         Some(EditorTab::Prop { .. }) => editor.views.prop.drops = dropped,
-        _ => editor.toast("Drop files onto a model's or a prop's tab to add them to it"),
+        Some(EditorTab::Row { table, .. }) if table == SkeletonDef::TABLE => {
+            editor.views.skeleton.drops = dropped
+        }
+        _ => editor
+            .toast("Drop files onto a model's, a prop's or a skeleton's tab to add them to it"),
     }
 }

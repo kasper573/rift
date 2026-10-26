@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::stance::StanceId;
-use super::{Action, Pose};
+use super::{Action, Motion, Pose};
 use crate::core::assets::{FileSize, ModelRef};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::gltf::{Fit, GltfInfo, Misfit, NodeTree};
@@ -25,13 +25,14 @@ use crate::core::units::Meters;
 pub type SkeletonId = ContentId<SkeletonDef>;
 
 macro_rules! name_type {
-    ($(#[$doc:meta])* $name:ident) => {
+    ($(#[$doc:meta])* $name:ident, $marker:literal) => {
         $(#[$doc])*
         #[derive(
             JsonSchema, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord,
             Hash,
         )]
         #[serde(transparent)]
+        #[schemars(extend($marker = true))]
         pub struct $name(pub String);
 
         impl $name {
@@ -54,25 +55,29 @@ macro_rules! name_type {
 
 name_type!(
     /// An animation of a skeleton's libraries or a model's own glTF, named as it is there.
-    ClipName
+    ClipName,
+    "x-clip"
 );
 name_type!(
     /// A swing a skill asks for by name, which a skeleton's sets turn into a clip per stance.
-    MoveName
+    MoveName,
+    "x-move"
 );
 name_type!(
     /// A named part of a body a clip may be kept to: the joints under the group's roots.
-    GroupName
+    GroupName,
+    "x-group"
 );
 name_type!(
     /// A node of a rig, by its name in the rig's glTF.
-    JointName
+    JointName,
+    "x-joint"
 );
 
 /// A rig and everything shared by the models that wear it: where an item is held, how the body is
 /// grouped, what plays for each action, pose and move in each stance, the cues on those clips and
 /// the layers that move it beyond its clips.
-#[derive(JsonSchema, Clone, Serialize, Deserialize)]
+#[derive(JsonSchema, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkeletonDef {
     pub name: String,
@@ -874,7 +879,53 @@ impl ClipSet {
     }
 }
 
+/// Which rung of the ladder named a clip: the stance's set, the base set, or a fallback to the
+/// attack for a move neither names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rung {
+    Stance,
+    Base,
+    Fallback,
+}
+
 impl SkeletonDef {
+    /// The clip the sets name for `motion` in `stance`, holding `pose` while idle, and where it was
+    /// named: the stance's set names it, else the base set; a move neither names plays the stance's
+    /// attack, else the base's. The base set names every action, as the loader holds it to.
+    pub fn named(&self, stance: Option<StanceId>, motion: &Motion, pose: Pose) -> (&ClipRef, Rung) {
+        let base = &self.base;
+        let set = stance.and_then(|stance| self.set(stance));
+        let action = |action: Action| -> (&ClipRef, Rung) {
+            match set.and_then(|set| set.clips.get(&action)) {
+                Some(clip) => (clip, Rung::Stance),
+                None => (&base.clips[&action], Rung::Base),
+            }
+        };
+        match motion {
+            Motion::Action(Action::Idle) => {
+                match (
+                    set.and_then(|set| set.poses.get(&pose)),
+                    base.poses.get(&pose),
+                ) {
+                    (Some(clip), _) => (clip, Rung::Stance),
+                    (None, Some(clip)) => (clip, Rung::Base),
+                    (None, None) => action(Action::Idle),
+                }
+            }
+            Motion::Action(acted) => action(*acted),
+            Motion::Move(name) => {
+                match (
+                    set.and_then(|set| set.moves.get(name)),
+                    base.moves.get(name),
+                ) {
+                    (Some(clip), _) => (clip, Rung::Stance),
+                    (None, Some(clip)) => (clip, Rung::Base),
+                    (None, None) => (action(Action::Attack).0, Rung::Fallback),
+                }
+            }
+        }
+    }
+
     /// The base set and every stance's set, each with where it stands in the config.
     pub fn sets(&self) -> impl Iterator<Item = (String, &ClipSet)> {
         std::iter::once(("/base".to_owned(), &self.base)).chain(

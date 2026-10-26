@@ -20,6 +20,7 @@ mod scene_graph;
 mod scene_nodes;
 mod scenes;
 mod script_actions;
+mod skeleton_view;
 mod spans;
 mod support;
 mod tabs;

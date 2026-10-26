@@ -126,6 +126,23 @@ pub fn rest<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     body(ui, rect, add)
 }
 
+/// The room left in a panel parted in two side by side, the first `width` wide, with the hairline
+/// between them drawn: each to fill with `body`.
+pub fn split(ui: &Ui, width: f32) -> [Rect; 2] {
+    let rect = ui.available_rect_before_wrap();
+    let width = width.min(rect.width());
+    let left = Rect::from_min_size(rect.min, Vec2::new(width, rect.height()));
+    let right = Rect::from_min_max(egui::pos2(left.right() + SPLIT_GAP, rect.top()), rect.max);
+    divide(
+        ui,
+        left.expand2(Vec2::new(SPLIT_GAP / 2.0, 0.0)),
+        Edge::Right,
+    );
+    [left, right]
+}
+
+const SPLIT_GAP: f32 = 12.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Edge {
     Top,

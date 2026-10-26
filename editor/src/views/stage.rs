@@ -13,8 +13,17 @@ use engine::systems::area::{self, Kept, PROP_STAGE, Picture, Pictured};
 use ui::egui::{self, Color32, Pos2, Rect, Stroke, Ui};
 use ui::theme;
 
-use super::area::camera::OrbitCamera;
-use super::area::viewport::{Request, Standing};
+use std::collections::BTreeMap;
+
+use engine::systems::actor::model::ActorModel;
+use engine::systems::actor::render;
+use engine::systems::actor::stance::HandIndex;
+use engine::systems::item::{Grip, ItemId, Wear};
+
+use ui::egui::{Response, Sense, Vec2};
+
+use super::area::camera::{self, AreaCanvas, OrbitCamera};
+use super::area::viewport::{Request, Standing, StandingProp};
 use crate::app::Editor;
 
 /// How fast a stage turns on its own.
@@ -43,6 +52,121 @@ impl StagePicture {
         let picture = Arc::new(area::picture(content, pictured, Kept::All)?);
         self.made = Some((generation, picture.clone()));
         Some((generation, picture))
+    }
+}
+
+/// What a view's stage keeps from frame to frame: where its camera looks from, whether it turns on
+/// its own, and the picture it stands things on.
+#[derive(Default)]
+pub struct StageState {
+    pub camera: OrbitCamera,
+    pub spinning: bool,
+    picture: StagePicture,
+}
+
+impl StageState {
+    /// A stage framing a thing `radius` metres big, turning on its own when `spinning`.
+    pub fn framing(radius: f32, spinning: bool) -> StageState {
+        StageState {
+            camera: framing(radius),
+            spinning,
+            picture: StagePicture::default(),
+        }
+    }
+}
+
+/// The stage drawn this frame with the camera moved as the pointer asks, for a view to draw over
+/// and then stand its cast on.
+pub struct Turntable {
+    pub rect: Rect,
+    pub response: Response,
+    pub canvas: AreaCanvas,
+    view_key: String,
+    picture: (u64, Arc<Picture>),
+}
+
+/// Draws the stage `view_key` keeps in `state` over `size`, or says why there is nothing to stand
+/// on.
+pub fn turntable(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    view_key: &str,
+    size: Vec2,
+    state: &mut StageState,
+) -> Option<Turntable> {
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, theme::CANVAS);
+    let picture = editor.project.as_ref().and_then(|project| {
+        let content = project.content.clone()?;
+        state
+            .picture
+            .of(&content, project.generation, Pictured::Stage)
+    });
+    let Some(picture) = picture else {
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "no terrain to stand the rig on",
+            egui::FontId::proportional(13.0),
+            theme::MUTED,
+        );
+        return None;
+    };
+    show_picture(editor, ui, &painter, rect, view_key);
+    let dt = ui.input(|i| i.stable_dt).min(0.1);
+    let busy = camera::navigate(ui, &response, &mut state.camera, rect.height());
+    if busy && response.dragged_by(egui::PointerButton::Secondary) {
+        state.spinning = false;
+    }
+    if response.double_clicked() {
+        state.camera.target = center();
+    }
+    if state.spinning {
+        spin(&mut state.camera, dt);
+        ui.ctx().request_repaint();
+    }
+    let canvas = AreaCanvas::new(rect, state.camera, picture.1.area.clone());
+    Some(Turntable {
+        rect,
+        response,
+        canvas,
+        view_key: view_key.to_owned(),
+        picture,
+    })
+}
+
+impl Turntable {
+    /// Asks for the picture with `cast` standing on it.
+    pub fn stand(self, editor: &mut Editor, ui: &Ui, cast: Vec<Standing>) {
+        request(
+            editor,
+            ui,
+            &self.view_key,
+            self.rect,
+            self.canvas.camera,
+            self.picture,
+            cast,
+        );
+    }
+}
+
+/// A rig standing in the middle of the stage, in `clip` held at `held`, holding `props`.
+pub fn standing(
+    model: String,
+    clip: Option<engine::core::render::world::mannequin::RigClip>,
+    held: Option<engine::core::time::Seconds>,
+    props: Vec<StandingProp>,
+) -> Standing {
+    Standing {
+        model,
+        clip,
+        transform: bevy::prelude::Transform::from_translation(
+            engine::core::render::camera::world_point(center(), Meters(0.0)),
+        ),
+        held,
+        props,
+        layers: None,
     }
 }
 
@@ -127,4 +251,37 @@ pub fn request(
 pub fn handle(painter: &egui::Painter, at: Pos2, hot: bool, color: Color32) {
     painter.circle_filled(at, 5.0, if hot { color } else { theme::RAISED });
     painter.circle_stroke(at, 5.0, Stroke::new(1.5, color));
+}
+
+/// The props `model` holds showing `shown` in its hands, hung as the game hangs them.
+pub fn props(
+    content: &Content,
+    model: &ActorModel,
+    shown: &BTreeMap<HandIndex, ItemId>,
+) -> Vec<StandingProp> {
+    render::hung(content, model, shown)
+        .into_iter()
+        .filter_map(|(hand, item)| {
+            let Some(Wear::Hand { grip, .. }) = item.get(content).wear() else {
+                return None;
+            };
+            prop_in_hand(content, model, hand, item, grip)
+        })
+        .collect()
+}
+
+/// The prop of `item` hanging from `hand` of `model` by `grip`, which may be a grip being edited.
+pub fn prop_in_hand(
+    content: &Content,
+    model: &ActorModel,
+    hand: HandIndex,
+    item: ItemId,
+    grip: &Grip,
+) -> Option<StandingProp> {
+    let hand = model.hands().get(hand.index())?;
+    Some(StandingProp {
+        joint: hand.joint.0.clone(),
+        model: item.get(content).look.get(content).model.path(),
+        transform: render::held_at(content, model, hand, grip),
+    })
 }

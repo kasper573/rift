@@ -82,6 +82,8 @@ pub enum EditorKey {
     StepOn,
     ApexCue,
     StepCue,
+    MakeHand,
+    GroupRoot,
     RunScript,
     Palette,
     Outline,
@@ -109,7 +111,7 @@ impl KeyScope {
             KeyScope::Area => "Area view",
             KeyScope::SceneGraph => "Scene graph",
             KeyScope::WorldMap => "World map",
-            KeyScope::Model => "Model",
+            KeyScope::Model => "Model and skeleton",
             KeyScope::Script => "Script",
             KeyScope::Spreadsheet => "Spreadsheet",
         }
@@ -239,7 +241,9 @@ impl EditorKey {
             FilterScene | OpenBlueprint | Group | Ungroup | NewFolder | Reorder | Cut | Hide
             | Lock | ShowOnly | ShowEverything | UnlockEverything => KeyScope::SceneGraph,
             Shrink | Grow | Pin | Route => KeyScope::WorldMap,
-            PlayPause | StepBack | StepOn | ApexCue | StepCue => KeyScope::Model,
+            PlayPause | StepBack | StepOn | ApexCue | StepCue | MakeHand | GroupRoot => {
+                KeyScope::Model
+            }
             RunScript | Palette | Outline | AddChoice | Link => KeyScope::Script,
             NextCell | FillDown => KeyScope::Spreadsheet,
         }
@@ -324,6 +328,8 @@ impl EditorKey {
             StepOn => "the playhead 10 ms on",
             ApexCue => "the attack's apex here",
             StepCue => "a step here · again to take it away",
+            MakeHand => "make the chosen joint a hand",
+            GroupRoot => "start a group at the chosen joint",
             RunScript => "run the script",
             Palette => "the palette: a node after the selection",
             Outline => "canvas · outline",
@@ -418,6 +424,8 @@ impl EditorKey {
             StepOn => press(plain, Key::Period),
             ApexCue => press(plain, Key::A),
             StepCue => press(plain, Key::S),
+            MakeHand => press(plain, Key::H),
+            GroupRoot => press(plain, Key::G),
             RunScript => press(plain, Key::F8),
             Palette | NextCell => press(plain, Key::Tab),
             Outline => press(plain, Key::O),

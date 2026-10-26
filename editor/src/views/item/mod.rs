@@ -1,5 +1,8 @@
 //! The item view: the item as the player sees it, in a slot and on its card, its look lying on
-//! the stage as a drop, and whether its pictures are the sizes the game draws.
+//! the stage as a drop, how a held item is wielded, and whether its pictures are the sizes the game
+//! draws.
+
+pub mod wield;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -9,7 +12,7 @@ use engine::core::content::media::GltfInfos;
 use engine::core::gui::ImageSource;
 use engine::systems::area::{Picture, Pictured};
 use engine::systems::item::card::{self as item_card, CardLook};
-use engine::systems::item::{self, CARD_SIZE, ICON_SIZE, ItemDef, widget};
+use engine::systems::item::{self, CARD_SIZE, ICON_SIZE, ItemDef, Wear, widget};
 use ui::egui::{self, Sense, Ui, Vec2};
 use ui::{card, chip, form, panel, sheet, theme};
 
@@ -27,9 +30,30 @@ pub struct ItemViews {
 }
 
 pub struct ItemView {
+    pub page: ItemPage,
     pub camera: camera::OrbitCamera,
     pub spinning: bool,
     picture: StagePicture,
+    pub wield: wield::WieldView,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemPage {
+    #[default]
+    Card,
+    Look,
+    Wield,
+}
+
+impl ItemPage {
+    fn label(self) -> &'static str {
+        match self {
+            ItemPage::Card => "card",
+            ItemPage::Look => "look",
+            ItemPage::Wield => "wield",
+        }
+    }
 }
 
 /// A picture the item names, with the size the game draws it at and the size it has.
@@ -58,6 +82,15 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     sidebar::inspector(editor, ui, "item", |editor, ui| {
         inspect(editor, ui, key, &row);
     });
+    let held = matches!(row.wear(), Some(Wear::Hand { .. }));
+    let pages: &[ItemPage] = if held {
+        &[ItemPage::Card, ItemPage::Look, ItemPage::Wield]
+    } else {
+        &[ItemPage::Card, ItemPage::Look]
+    };
+    let page = Some(editor.views.item.view_mut(key).page)
+        .filter(|page| pages.contains(page))
+        .unwrap_or_default();
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(12, 8))
         .show(ui, |ui| {
@@ -65,31 +98,44 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
             ui.horizontal(|ui| {
                 ui.label(theme::mono(shown_path(key)).color(theme::CODE));
                 ui.add_space(8.0);
-                chip::mode(ui, item_card::kind(&row).word(), true);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let view = editor.views.item.view_mut(key);
-                    if chip::toggle(ui, "turning", view.spinning).clicked() {
-                        view.spinning = !view.spinning;
+                for other in pages {
+                    if chip::mode(ui, other.label(), page == *other).clicked() {
+                        editor.views.item.view_mut(key).page = *other;
                     }
-                });
+                }
+                ui.add_space(8.0);
+                ui.label(theme::faint(item_card::kind(&row).word()));
+                if page != ItemPage::Card {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let view = editor.views.item.view_mut(key);
+                        let spinning = match page {
+                            ItemPage::Wield => &mut view.wield.stage.spinning,
+                            _ => &mut view.spinning,
+                        };
+                        if chip::toggle(ui, "turning", *spinning).clicked() {
+                            *spinning = !*spinning;
+                        }
+                    });
+                }
             });
             ui.add_space(4.0);
-            egui::ScrollArea::vertical()
-                .id_salt(("item", key))
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    sheet::section(ui, "as the player sees it");
-                    shown(editor, ui, key, &row);
-                    ui.add_space(8.0);
+            match page {
+                ItemPage::Card => {
+                    egui::ScrollArea::vertical()
+                        .id_salt(("item", key))
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            sheet::section(ui, "as the player sees it");
+                            shown(editor, ui, key, &row);
+                        });
+                }
+                ItemPage::Look => {
                     sheet::section(ui, "dropped on the ground");
-                    drop_strip(
-                        editor,
-                        ui,
-                        key,
-                        &row,
-                        Vec2::new(ui.available_width(), 260.0),
-                    );
-                });
+                    let size = Vec2::new(ui.available_width(), ui.available_height().max(200.0));
+                    drop_strip(editor, ui, key, &row, size);
+                }
+                ItemPage::Wield => wield::show(editor, ui, key, &row),
+            }
         });
     editor.status.left.push(format!(
         "{} · {} · looks like {}",
@@ -169,6 +215,12 @@ fn drop_strip(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef, size: 
 
 fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
     let ctx = ui.ctx().clone();
+    if editor.views.item.view_mut(key).page == ItemPage::Wield
+        && matches!(row.wear(), Some(Wear::Hand { .. }))
+    {
+        wield::inspect(editor, ui, key);
+        ui.add_space(8.0);
+    }
     let checks = pictures(editor, key);
     panel::card(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
@@ -264,7 +316,7 @@ pub fn pictures(editor: &mut Editor, key: &str) -> Vec<PictureCheck> {
     .collect()
 }
 
-fn ensure_view(editor: &mut Editor, key: &str) {
+pub fn ensure_view(editor: &mut Editor, key: &str) {
     if editor.views.item.views.contains_key(key) {
         return;
     }
@@ -284,15 +336,17 @@ fn ensure_view(editor: &mut Editor, key: &str) {
     editor.views.item.views.insert(
         key.to_owned(),
         ItemView {
+            page: ItemPage::default(),
             camera: stage::framing(radius.max(0.4)),
             spinning: true,
             picture: StagePicture::default(),
+            wield: wield::WieldView::default(),
         },
     );
 }
 
 impl ItemViews {
-    fn view_mut(&mut self, key: &str) -> &mut ItemView {
+    pub fn view_mut(&mut self, key: &str) -> &mut ItemView {
         self.views
             .get_mut(key)
             .expect("ensure_view ran before the item view was changed")
