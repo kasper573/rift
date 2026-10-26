@@ -9,8 +9,17 @@ With NAMEs only the models whose output path contains one of them are built.
 
 A restyled model is textureless, coloured per vertex from the palette of the sheet the kit names,
 shaded flat or, when the kit marks it `smooth`, across its faces, cut to the nodes it keeps,
-carries only the clips it maps, and is checked against the sheet's budget. Decimation is not implemented: a model over its triangle budget is reported
-and the run fails.
+carries only the clips it maps, and is checked against the sheet's budget. Decimation is not
+implemented: a model over its triangle budget is reported and the run fails.
+
+A skeleton (the kit's `skeletons`) is cut from a rigged model into its bundle: `rig.glb`, the joints
+at rest and nothing drawn, and one `clips/<library>.glb` per library, the same joints carrying the
+clips the library maps, renamed. A clip is named as the source has it, or as `name:file#clip` to
+borrow it from another file made on the same rig. A `rename` maps source node names onto the rig's.
+A character model that names its `skeleton` is written as a skin, its joints checked against that
+rig by path, as the game's loader holds it.
+
+Packs that come as FBX are converted to glTF first by convert.py, which runs inside Blender.
 """
 
 import fnmatch
@@ -42,11 +51,20 @@ def main():
     kit = json.load(open(kit_path))
     palette = read_palette(os.path.join(game, kit["style"]))
     failures = []
+    for out, entry in kit.get("skeletons", {}).items():
+        if only and not any(name in out for name in only):
+            continue
+        try:
+            report = skeleton(entry, kit["packs"], packs, os.path.join(game, out), palette)
+            print(f"{out}: {report}")
+        except Budget as over:
+            failures.append(f"{out}: {over}")
+            print(f"{out}: REFUSED: {over}")
     for out, entry in kit["models"].items():
         if only and not any(name in out for name in only):
             continue
         try:
-            report = restyle(entry, kit["packs"], kit.get("materials", {}), packs, os.path.join(game, out), palette)
+            report = restyle(entry, kit["packs"], kit.get("materials", {}), packs, game, out, palette)
             print(f"{out}: {report}")
         except Budget as over:
             failures.append(f"{out}: {over}")
@@ -57,6 +75,46 @@ def main():
 
 class Budget(Exception):
     pass
+
+
+def skeleton(entry, folders, packs, out, palette):
+    """The skeleton's rig and its libraries, written into its bundle at `out`."""
+    source = Source(resolve(entry["from"], folders, packs), palette)
+    source.folders, source.packs = folders, packs
+    source.skin = 0
+    nodes, writer = source.bones(entry, {})
+    os.makedirs(os.path.join(out, "clips"), exist_ok=True)
+    reports = [f"rig {writer.write(os.path.join(out, 'rig.glb'), nodes)} bytes"]
+    named = set()
+    for library, clips in entry["libraries"].items():
+        twice = named & set(clips)
+        if twice:
+            raise Budget(f"clips {sorted(twice)} are in two libraries; one library per name")
+        named |= set(clips)
+        document, writer = source.bones(entry, clips)
+        size = writer.write(os.path.join(out, "clips", f"{library}.glb"), document)
+        problems = [
+            f"clip {name} lasts {length:.2f} s, not {CLIP_SECONDS[0]} to {CLIP_SECONDS[1]}"
+            for name, length in source.clip_lengths.items()
+            if not CLIP_SECONDS[0] <= length <= CLIP_SECONDS[1]
+        ]
+        if problems:
+            raise Budget("; ".join(problems))
+        reports.append(f"{library} {len(clips)} clips {size} bytes")
+    return ", ".join(reports)
+
+
+def joint_paths(document):
+    """Every node of a rig that draws nothing, by its path of names from the root."""
+    nodes = document["nodes"]
+    parent = {child: index for index, node in enumerate(nodes) for child in node.get("children", [])}
+    def path(index):
+        names = []
+        while index is not None:
+            names.append(nodes[index].get("name", ""))
+            index = parent.get(index)
+        return "/".join(reversed(names))
+    return {path(index) for index, node in enumerate(nodes) if "mesh" not in node}
 
 
 def read_palette(path):
@@ -71,7 +129,8 @@ def read_palette(path):
     return palette
 
 
-def restyle(entry, folders, folders_materials, packs, out, palette):
+def restyle(entry, folders, folders_materials, packs, game, out, palette):
+    out = os.path.join(game, out)
     source = Source(resolve(entry["from"], folders, packs), palette)
     keep = entry.get("keep")
     drop = entry.get("drop", [])
@@ -112,6 +171,11 @@ def restyle(entry, folders, folders_materials, packs, out, palette):
         document, writer = source.rig(mesh, entry)
     else:
         document, writer = source.prop(mesh, entry)
+    if "skeleton" in entry:
+        rig = glb.Gltf(os.path.join(game, entry["skeleton"], "rig.glb")).json
+        missing = sorted(joint_paths(rig) - joint_paths(document))
+        if missing:
+            raise Budget(f"does not fit {entry['skeleton']}: no joint at {', '.join(missing)}")
     size = writer.write(out, document)
     report = check(source, mesh, document, size, "character" if skinned else "prop")
     if before > target:
@@ -429,6 +493,9 @@ class Source:
         self.images = {}
         self.skin = None
         self.materials_met = {}
+        self.borrowed = {}
+        self.folders = {}
+        self.packs = ""
 
     def local(self, index):
         node = self.json["nodes"][index]
@@ -505,7 +572,7 @@ class Source:
             if "skin" in node:
                 if self.skin is None:
                     self.skin = node["skin"]
-                elif self.skin != node["skin"]:
+                elif self.skin != node["skin"] and not self.same_skin(self.skin, node["skin"]):
                     raise ValueError("kept meshes ride on different skins")
                 bake = None
             else:
@@ -551,6 +618,15 @@ class Source:
             if bake is not None and np.linalg.det(bake[0][:3, :3]) < 0:
                 order = order.reshape(-1, 3)[:, ::-1].reshape(-1)
             mesh.add(positions[order], rgb[order], alpha[order], joints[order], weights[order], smooth)
+
+    def same_skin(self, one, other):
+        """Whether two skins bind the same joints the same way, as exporters write one skin per
+        mesh of a single rig."""
+        skins = self.json["skins"]
+        if skins[one]["joints"] != skins[other]["joints"]:
+            return False
+        binds = [self.gltf.accessor(skins[index]["inverseBindMatrices"]) for index in (one, other) if "inverseBindMatrices" in skins[index]]
+        return len(binds) != 1 and (not binds or np.allclose(binds[0], binds[1], atol=1e-5))
 
     def rigid_binding(self, index, joints_of=None):
         """A mesh that rides on a joint unskinned is bound to that joint: its vertices moved into
@@ -609,12 +685,12 @@ class Source:
         }
         return document, writer
 
-    def rig(self, mesh, entry):
-        """The skin's joints and their ancestors, the one skinned mesh, and the mapped clips,
-        under a root that scales and turns the whole rig. A scale on a node above the joints (an
-        armature exported in centimetres) is baked away: the nodes under it move that much
-        further apart, the vertices grow by it and the bind matrices follow, so every rig's
-        joints stand in the model's metres and skin alike."""
+    def joint_nodes(self, entry):
+        """The skin's joints and their ancestors under a root that scales and turns the whole rig,
+        with each source node's place among them and how much a scale above it grew it. A scale
+        on a node above the joints (an armature exported in centimetres) is baked away: the nodes
+        under it move that much further apart, the vertices grow by it and the bind matrices
+        follow, so every rig's joints stand in the model's metres and skin alike."""
         skin = self.json["skins"][self.skin]
         kept_nodes = set(skin["joints"])
         for joint in skin["joints"]:
@@ -625,6 +701,7 @@ class Source:
         for old in order:
             source = self.json["nodes"][old]
             node = {key: source[key] for key in ("name", "translation", "rotation", "scale", "matrix") if key in source}
+            node["name"] = entry.get("rename", {}).get(node.get("name"), node.get("name"))
             children = [renumber[child] for child in source.get("children", []) if child in renumber]
             if children:
                 node["children"] = children
@@ -646,38 +723,38 @@ class Source:
         growth = {grown[joint] for joint in skin["joints"]}
         if len(growth) != 1:
             raise ValueError("a rig's joints must all stand under the same scale")
-        growth = growth.pop()
         roots = [renumber[old] for old in order if old not in self.parent or self.parent[old] not in renumber]
-        mesh_node = len(nodes)
-        nodes.append({"name": "skin", "mesh": 0, "skin": 0})
-        nodes[0]["children"] = roots + [mesh_node]
         scale = float(entry.get("scale", 1.0))
         yaw = float(entry.get("yaw", 0.0))
+        nodes[0]["children"] = roots
         nodes[0]["scale"] = [scale, scale, scale]
         nodes[0]["rotation"] = [0, float(np.sin(np.radians(yaw) / 2)), 0, float(np.cos(np.radians(yaw) / 2))]
         nodes[0]["translation"] = [float(v) for v in entry.get("offset", [0, 0, 0])]
-        writer = glb.Writer()
-        inverse_bind = self.inverse_bind()
-        grown_bind = inverse_bind.copy()
-        grown_bind[:, :3, 3] *= growth
-        joints = [renumber[joint] for joint in skin["joints"]]
-        skins = [{"name": "skin", "joints": joints, "inverseBindMatrices": writer.accessor(grown_bind.transpose(0, 2, 1).reshape(-1, 16), FLOAT, "MAT4")}]
+        return nodes, renumber, grown, growth.pop()
+
+    def animations(self, writer, clips, renumber, grown, nodes):
+        """The clips `clips` maps, each under its new name, moving the kept nodes. A clip is named
+        as the source has it, or as `alias:file#clip` when it comes from another file made on the
+        same rig, whose nodes are matched to the source's by name."""
+        skin = self.json["skins"][self.skin]
         animations = []
         self.clip_lengths = {}
-        for action, clip_name in entry.get("clips", {}).items():
-            source = next((a for a in self.json.get("animations", []) if a.get("name") == clip_name), None)
+        for name, clip_spec in clips.items():
+            origin, clip_name = self.clip_origin(clip_spec)
+            source = next((a for a in origin.json.get("animations", []) if a.get("name") == clip_name), None)
             if source is None:
-                raise ValueError(f"no clip named {clip_name!r} for {action}; the model has {[a.get('name') for a in self.json.get('animations', [])]}")
+                raise ValueError(f"no clip named {clip_name!r} for {name}; {origin.gltf.path} has {[a.get('name') for a in origin.json.get('animations', [])]}")
+            own = self.same_nodes(origin)
             samplers = []
             channels = []
             length = 0.0
             for channel in source["channels"]:
-                target = channel["target"]
+                target = dict(channel["target"], node=own.get(channel["target"].get("node")))
                 if target.get("node") not in renumber:
                     continue
                 sampler = source["samplers"][channel["sampler"]]
-                times = self.gltf.accessor(sampler["input"]).astype(np.float32)
-                values = self.gltf.accessor(sampler["output"]).astype(np.float32)
+                times = origin.gltf.accessor(sampler["input"]).astype(np.float32)
+                values = origin.gltf.accessor(sampler["output"]).astype(np.float32)
                 if target["path"] == "translation":
                     values = values * np.float32(grown[target["node"]])
                 elif target["path"] == "scale" and nodes[renumber[target["node"]]].get("scale") == [1.0, 1.0, 1.0] and target["node"] not in skin["joints"]:
@@ -693,8 +770,53 @@ class Source:
                 channels.append({"sampler": len(samplers) - 1, "target": {"node": renumber[target["node"]], "path": target["path"]}})
             if not channels:
                 raise ValueError(f"clip {clip_name!r} animates nothing kept")
-            self.clip_lengths[action] = length
-            animations.append({"name": action, "samplers": samplers, "channels": channels})
+            self.clip_lengths[name] = length
+            animations.append({"name": name, "samplers": samplers, "channels": channels})
+        return animations
+
+    def clip_origin(self, spec):
+        """The file a clip spec names, and the clip's name there."""
+        if "#" not in spec:
+            return self, spec
+        path, clip_name = spec.rsplit("#", 1)
+        if path not in self.borrowed:
+            self.borrowed[path] = Source(resolve(path, self.folders, self.packs), self.palette)
+        return self.borrowed[path], clip_name
+
+    def same_nodes(self, origin):
+        """Each of `origin`'s nodes as the source's node of the same name."""
+        if origin is self:
+            return {index: index for index in range(len(self.json["nodes"]))}
+        mine = {node.get("name"): index for index, node in enumerate(self.json["nodes"])}
+        return {index: mine[node.get("name")] for index, node in enumerate(origin.json["nodes"]) if node.get("name") in mine}
+
+    def bones(self, entry, clips):
+        """The rig's joints at rest, drawing nothing, carrying `clips`: a skeleton's rig or one of
+        its libraries."""
+        nodes, renumber, grown, _ = self.joint_nodes(entry)
+        writer = glb.Writer()
+        document = {"scene": 0, "scenes": [{"nodes": [0]}], "nodes": nodes}
+        animations = self.animations(writer, clips, renumber, grown, nodes)
+        if animations:
+            document["animations"] = animations
+        return document, writer
+
+    def rig(self, mesh, entry):
+        """The skin's joints and their ancestors, the one skinned mesh, and the mapped clips,
+        under a root that scales and turns the whole rig."""
+        nodes, renumber, grown, growth = self.joint_nodes(entry)
+        mesh_node = len(nodes)
+        nodes.append({"name": "skin", "mesh": 0, "skin": 0})
+        nodes[0]["children"] = nodes[0]["children"] + [mesh_node]
+        scale = float(entry.get("scale", 1.0))
+        writer = glb.Writer()
+        inverse_bind = self.inverse_bind()
+        grown_bind = inverse_bind.copy()
+        grown_bind[:, :3, 3] *= growth
+        skin = self.json["skins"][self.skin]
+        joints = [renumber[joint] for joint in skin["joints"]]
+        skins = [{"name": "skin", "joints": joints, "inverseBindMatrices": writer.accessor(grown_bind.transpose(0, 2, 1).reshape(-1, 16), FLOAT, "MAT4")}]
+        animations = self.animations(writer, entry.get("clips", {}), renumber, grown, nodes)
         self.bind_bounds = self.rest_bounds(mesh, inverse_bind, scale)
         mesh.transform(np.diag([growth, growth, growth, 1.0]))
         document = {

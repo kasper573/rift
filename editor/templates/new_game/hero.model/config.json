@@ -1,32 +1,7 @@
 {
+  "skeleton": "hero.skeleton",
   "hitbox": {
     "radius": 0.4,
     "height": 1.8
-  },
-  "clips": {
-    "idle": {
-      "name": "idle"
-    },
-    "walk": {
-      "name": "walk"
-    },
-    "run": {
-      "name": "run"
-    },
-    "attack": {
-      "name": "attack",
-      "cues": [
-        {
-          "at": 400.0,
-          "apex": true
-        }
-      ]
-    },
-    "death": {
-      "name": "death"
-    },
-    "talk": {
-      "name": "talk"
-    }
   }
 }

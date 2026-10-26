@@ -9,7 +9,445 @@
     "adventurers": "KayKit-Character-Pack-Adventures-1.0/KayKit-Character-Pack-Adventures-1.0-main/addons/kaykit_character_pack_adventures/Characters/gltf",
     "skeletons": "KayKit-Character-Pack-Skeletons-1.0/KayKit-Character-Pack-Skeletons-1.0-main/addons/kaykit_character_pack_skeletons/Characters/gltf",
     "quaternius": "quaternius/cute-monsters",
-    "gear": "KayKit-Character-Pack-Adventures-1.0/KayKit-Character-Pack-Adventures-1.0-main/addons/kaykit_character_pack_adventures/Assets/gltf"
+    "gear": "KayKit-Character-Pack-Adventures-1.0/KayKit-Character-Pack-Adventures-1.0-main/addons/kaykit_character_pack_adventures/Assets/gltf",
+    "psionic": "psionic-spider",
+    "kaykit-animations": "KayKit-Character-Animations-1.1/KayKit_Character_Animations_1.1/Animations/gltf/Rig_Medium",
+    "poly-pizza": "quaternius/poly-pizza",
+    "converted": "converted"
+  },
+  "convert": {
+    "converted/psionic-spider.glb": {
+      "skin": "psionic:spider.fbx",
+      "textures": {
+        "*": "psionic:spider1_color.jpg"
+      },
+      "clips": {
+        "Walk": [
+          0,
+          45
+        ],
+        "Attack1": [
+          46,
+          65
+        ],
+        "Attack2": [
+          66,
+          85
+        ],
+        "Eat": [
+          86,
+          99
+        ],
+        "Defend": [
+          100,
+          120
+        ],
+        "Hit1": [
+          121,
+          134
+        ],
+        "Hit2": [
+          135,
+          149
+        ],
+        "Crouch": [
+          150,
+          155
+        ],
+        "StandTall": [
+          157,
+          162
+        ],
+        "Idle1": [
+          164,
+          213
+        ],
+        "Idle2": [
+          214,
+          249
+        ],
+        "Jump": [
+          250,
+          269
+        ],
+        "SideStep": [
+          270,
+          279
+        ],
+        "Die1": [
+          280,
+          299
+        ],
+        "Die2": [
+          300,
+          329
+        ]
+      }
+    },
+    "converted/turret.glb": {
+      "parts": "poly-pizza:TurretGun.glb",
+      "bones": [
+        {
+          "name": "base",
+          "part": "Turret_Gun_Base"
+        },
+        {
+          "name": "head",
+          "parent": "base",
+          "part": "Turret_Gun_Top"
+        },
+        {
+          "name": "muzzle",
+          "parent": "head"
+        }
+      ],
+      "keys": {
+        "scan": {
+          "length": 4.0,
+          "head": [
+            [
+              0,
+              [
+                0,
+                0,
+                0
+              ]
+            ],
+            [
+              1,
+              [
+                0,
+                35,
+                0
+              ]
+            ],
+            [
+              3,
+              [
+                0,
+                -35,
+                0
+              ]
+            ],
+            [
+              4,
+              [
+                0,
+                0,
+                0
+              ]
+            ]
+          ]
+        },
+        "track": {
+          "length": 2.0,
+          "head": [
+            [
+              0,
+              [
+                0,
+                0,
+                0
+              ]
+            ],
+            [
+              0.5,
+              [
+                0,
+                20,
+                0
+              ]
+            ],
+            [
+              1.5,
+              [
+                0,
+                -20,
+                0
+              ]
+            ],
+            [
+              2,
+              [
+                0,
+                0,
+                0
+              ]
+            ]
+          ]
+        },
+        "shoot": {
+          "length": 0.6,
+          "head": [
+            [
+              0,
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                0,
+                0,
+                0
+              ]
+            ],
+            [
+              0.1,
+              [
+                -8,
+                0,
+                0
+              ],
+              [
+                0,
+                0,
+                0.06
+              ]
+            ],
+            [
+              0.6,
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                0,
+                0,
+                0
+              ]
+            ]
+          ]
+        },
+        "death": {
+          "length": 1.5,
+          "head": [
+            [
+              0,
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                0,
+                0,
+                0
+              ]
+            ],
+            [
+              0.6,
+              [
+                30,
+                0,
+                12
+              ],
+              [
+                0,
+                -0.1,
+                0
+              ]
+            ],
+            [
+              1.5,
+              [
+                35,
+                0,
+                15
+              ],
+              [
+                0,
+                -0.15,
+                0
+              ]
+            ]
+          ]
+        },
+        "talk": {
+          "length": 1.2,
+          "head": [
+            [
+              0,
+              [
+                0,
+                0,
+                0
+              ]
+            ],
+            [
+              0.3,
+              [
+                0,
+                12,
+                0
+              ]
+            ],
+            [
+              0.6,
+              [
+                0,
+                -12,
+                0
+              ]
+            ],
+            [
+              0.9,
+              [
+                0,
+                8,
+                0
+              ]
+            ],
+            [
+              1.2,
+              [
+                0,
+                0,
+                0
+              ]
+            ]
+          ]
+        }
+      }
+    }
+  },
+  "skeletons": {
+    "characters/skeletons/biped.skeleton": {
+      "from": "kaykit-animations:Rig_Medium_General.glb",
+      "rename": {
+        "Rig_Medium": "Rig"
+      },
+      "scale": 0.75,
+      "libraries": {
+        "kaykit": {
+          "idle": "Idle_A",
+          "death": "Death_A",
+          "talk": "Interact",
+          "throw": "Throw",
+          "walk": "kaykit-animations:Rig_Medium_MovementBasic.glb#Walking_A",
+          "run": "kaykit-animations:Rig_Medium_MovementBasic.glb#Running_A",
+          "punch": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Unarmed_Attack_Punch_A",
+          "1h_slash": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_1H_Attack_Slice_Horizontal",
+          "1h_chop": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_1H_Attack_Chop",
+          "1h_stab": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_1H_Attack_Stab",
+          "1h_slice": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_1H_Attack_Slice_Diagonal",
+          "2h_idle": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_2H_Idle",
+          "2h_chop": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_2H_Attack_Chop",
+          "2h_slice": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_2H_Attack_Slice",
+          "2h_spin": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_2H_Attack_Spin",
+          "2h_stab": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_2H_Attack_Stab",
+          "dual_slash": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Dualwield_Attack_Slice",
+          "dual_chop": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Dualwield_Attack_Chop",
+          "dual_stab": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Dualwield_Attack_Stab",
+          "bow_idle": "kaykit-animations:Rig_Medium_CombatRanged.glb#Ranged_Bow_Idle",
+          "bow_shoot": "kaykit-animations:Rig_Medium_CombatRanged.glb#Ranged_Bow_Release",
+          "spell_shoot": "kaykit-animations:Rig_Medium_CombatRanged.glb#Ranged_Magic_Shoot",
+          "shield_idle": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Blocking",
+          "shield_bash": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Block_Attack",
+          "shield_block": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Block"
+        },
+        "town": {
+          "sit": "kaykit-animations:Rig_Medium_Simulation.glb#Sit_Chair_Idle"
+        }
+      }
+    },
+    "characters/skeletons/bat.skeleton": {
+      "from": "quaternius:Bat.glb",
+      "scale": 0.2,
+      "libraries": {
+        "bat": {
+          "hover": "BatArmature|Bat_Flying",
+          "fly": "BatArmature|Bat_Flying",
+          "bite": "BatArmature|Bat_Attack",
+          "death": "BatArmature|Bat_Death"
+        }
+      }
+    },
+    "characters/skeletons/wolf.skeleton": {
+      "from": "poly-pizza:Wolf.glb",
+      "scale": 0.3,
+      "libraries": {
+        "wolf": {
+          "idle": "Idle",
+          "walk": "Walk",
+          "gallop": "Gallop",
+          "bite": "Attack",
+          "death": "Death",
+          "growl": "Idle_2"
+        }
+      }
+    },
+    "characters/skeletons/fish.skeleton": {
+      "from": "poly-pizza:Piranha.glb",
+      "scale": 0.15,
+      "libraries": {
+        "fish": {
+          "swim": "Fish_Armature|Swimming_Normal",
+          "dart": "Fish_Armature|Swimming_Fast",
+          "bite": "Fish_Armature|Attack",
+          "death": "Fish_Armature|Death",
+          "flick": "Fish_Armature|Swimming_Impulse"
+        }
+      },
+      "offset": [
+        0,
+        0.6,
+        0
+      ]
+    },
+    "characters/skeletons/spider.skeleton": {
+      "from": "poly-pizza:Spider.glb",
+      "scale": 0.17,
+      "libraries": {
+        "spider": {
+          "idle": "SpiderArmature|Spider_Idle",
+          "walk": "SpiderArmature|Spider_Walk",
+          "bite": "SpiderArmature|Spider_Attack",
+          "death": "SpiderArmature|Spider_Death",
+          "rear": "SpiderArmature|Spider_Jump"
+        }
+      }
+    },
+    "characters/skeletons/giant-spider.skeleton": {
+      "from": "converted:psionic-spider.glb",
+      "scale": 1.3,
+      "libraries": {
+        "giant_spider": {
+          "idle": "Idle1",
+          "walk": "Walk",
+          "bite": "Attack1",
+          "death": "Die1",
+          "rear": "StandTall"
+        }
+      }
+    },
+    "characters/skeletons/slime.skeleton": {
+      "from": "poly-pizza:GreenBlob.glb",
+      "scale": 0.35,
+      "libraries": {
+        "slime": {
+          "idle": "CharacterArmature|Idle",
+          "hop": "CharacterArmature|Walk",
+          "bite": "CharacterArmature|Bite_Front",
+          "death": "CharacterArmature|Death",
+          "nod": "CharacterArmature|Yes"
+        }
+      }
+    },
+    "characters/skeletons/turret.skeleton": {
+      "from": "converted:turret.glb",
+      "scale": 1.6,
+      "libraries": {
+        "turret": {
+          "scan": "scan",
+          "track": "track",
+          "shoot": "shoot",
+          "death": "death",
+          "twitch": "talk"
+        }
+      }
+    }
   },
   "models": {
     "world/props/rock-large.prop/model.glb": {
@@ -823,102 +1261,54 @@
     },
     "characters/models/knight.model/model.glb": {
       "from": "adventurers:Knight.glb",
+      "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
         "Knight_*"
       ],
-      "scale": 0.75,
-      "clips": {
-        "idle": "Idle",
-        "walk": "Walking_A",
-        "run": "Running_A",
-        "attack": "1H_Melee_Attack_Slice_Horizontal",
-        "death": "Death_A",
-        "talk": "Interact",
-        "sit": "Sit_Chair_Idle"
-      }
+      "scale": 0.75
     },
     "characters/models/woodsman.model/model.glb": {
       "from": "adventurers:Knight.glb",
+      "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
         "Knight_*"
       ],
       "scale": 0.75,
-      "clips": {
-        "idle": "Idle",
-        "walk": "Walking_A",
-        "run": "Running_A",
-        "attack": "1H_Melee_Attack_Slice_Horizontal",
-        "death": "Death_A",
-        "talk": "Interact",
-        "sit": "Sit_Chair_Idle"
-      },
       "drop": [
         "Knight_Helmet"
       ]
     },
     "characters/models/barbarian.model/model.glb": {
       "from": "adventurers:Barbarian.glb",
+      "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
         "Barbarian_*"
       ],
-      "scale": 0.75,
-      "clips": {
-        "idle": "Idle",
-        "walk": "Walking_A",
-        "run": "Running_A",
-        "attack": "2H_Melee_Attack_Chop",
-        "death": "Death_A",
-        "talk": "Interact",
-        "sit": "Sit_Chair_Idle"
-      }
+      "scale": 0.75
     },
     "characters/models/mage.model/model.glb": {
       "from": "adventurers:Mage.glb",
+      "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
         "Mage_*"
       ],
-      "scale": 0.75,
-      "clips": {
-        "idle": "Idle",
-        "walk": "Walking_A",
-        "run": "Running_A",
-        "attack": "Spellcast_Shoot",
-        "death": "Death_A",
-        "talk": "Interact",
-        "sit": "Sit_Chair_Idle"
-      }
+      "scale": 0.75
     },
     "characters/models/rogue.model/model.glb": {
       "from": "adventurers:Rogue.glb",
+      "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
         "Rogue_*"
       ],
-      "scale": 0.75,
-      "clips": {
-        "idle": "Idle",
-        "walk": "Walking_A",
-        "run": "Running_A",
-        "attack": "Dualwield_Melee_Attack_Slice",
-        "death": "Death_A",
-        "talk": "Interact",
-        "sit": "Sit_Chair_Idle"
-      }
+      "scale": 0.75
     },
     "characters/models/rogue-hooded.model/model.glb": {
       "from": "adventurers:Rogue.glb",
+      "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
         "Rogue_*"
       ],
       "scale": 0.75,
-      "clips": {
-        "idle": "Idle",
-        "walk": "Walking_A",
-        "run": "Running_A",
-        "attack": "Dualwield_Melee_Attack_Slice",
-        "death": "Death_A",
-        "talk": "Interact",
-        "sit": "Sit_Chair_Idle"
-      },
       "parts": [
         {
           "from": "skeletons:Skeleton_Rogue.glb",
@@ -930,82 +1320,51 @@
     },
     "characters/models/skeleton.model/model.glb": {
       "from": "skeletons:Skeleton_Minion.glb",
+      "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
         "Skeleton_Minion_*"
       ],
       "scale": 0.75,
-      "clips": {
-        "idle": "Idle",
-        "walk": "Walking_A",
-        "run": "Running_A",
-        "attack": "1H_Melee_Attack_Chop",
-        "death": "Death_A",
-        "talk": "Interact",
-        "sit": "Sit_Chair_Idle"
-      },
       "glow": [
         "Skeleton_Minion_Eyes"
       ]
     },
     "characters/models/skeleton-warrior.model/model.glb": {
       "from": "skeletons:Skeleton_Warrior.glb",
+      "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
         "Skeleton_Warrior_*"
       ],
       "scale": 0.75,
-      "clips": {
-        "idle": "Idle",
-        "walk": "Walking_A",
-        "run": "Running_A",
-        "attack": "1H_Melee_Attack_Chop",
-        "death": "Death_A",
-        "talk": "Interact",
-        "sit": "Sit_Chair_Idle"
-      },
       "glow": [
         "Skeleton_Warrior_Eyes"
       ]
     },
     "characters/models/skeleton-mage.model/model.glb": {
       "from": "skeletons:Skeleton_Mage.glb",
+      "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
         "Skeleton_Mage_*"
       ],
       "scale": 0.75,
-      "clips": {
-        "idle": "Idle",
-        "walk": "Walking_A",
-        "run": "Running_A",
-        "attack": "Spellcast_Shoot",
-        "death": "Death_A",
-        "talk": "Interact",
-        "sit": "Sit_Chair_Idle"
-      },
       "glow": [
         "Skeleton_Mage_Eyes"
       ]
     },
     "characters/models/skeleton-rogue.model/model.glb": {
       "from": "skeletons:Skeleton_Rogue.glb",
+      "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
         "Skeleton_Rogue_*"
       ],
       "scale": 0.75,
-      "clips": {
-        "idle": "Idle",
-        "walk": "Walking_A",
-        "run": "Running_A",
-        "attack": "1H_Melee_Attack_Chop",
-        "death": "Death_A",
-        "talk": "Interact",
-        "sit": "Sit_Chair_Idle"
-      },
       "glow": [
         "Skeleton_Rogue_Eyes"
       ]
     },
     "characters/models/bat.model/model.glb": {
       "from": "quaternius:Bat.glb",
+      "skeleton": "characters/skeletons/bat.skeleton",
       "keep": [
         "Bat",
         "Eyes"
@@ -1017,15 +1376,42 @@
         "Nose": "cloth-red",
         "Eyes": "eyes"
       },
-      "scale": 0.2,
-      "clips": {
-        "idle": "BatArmature|Bat_Flying",
-        "walk": "BatArmature|Bat_Flying",
-        "run": "BatArmature|Bat_Flying",
-        "attack": "BatArmature|Bat_Attack",
-        "death": "BatArmature|Bat_Death",
-        "talk": "BatArmature|Bat_Flying"
-      }
+      "scale": 0.2
+    },
+    "characters/models/wolf.model/model.glb": {
+      "from": "poly-pizza:Wolf.glb",
+      "skeleton": "characters/skeletons/wolf.skeleton",
+      "scale": 0.3
+    },
+    "characters/models/piranha.model/model.glb": {
+      "from": "poly-pizza:Piranha.glb",
+      "skeleton": "characters/skeletons/fish.skeleton",
+      "scale": 0.15,
+      "offset": [
+        0,
+        0.6,
+        0
+      ]
+    },
+    "characters/models/spider.model/model.glb": {
+      "from": "poly-pizza:Spider.glb",
+      "skeleton": "characters/skeletons/spider.skeleton",
+      "scale": 0.17
+    },
+    "characters/models/giant-spider.model/model.glb": {
+      "from": "converted:psionic-spider.glb",
+      "skeleton": "characters/skeletons/giant-spider.skeleton",
+      "scale": 1.3
+    },
+    "characters/models/slime.model/model.glb": {
+      "from": "poly-pizza:GreenBlob.glb",
+      "skeleton": "characters/skeletons/slime.skeleton",
+      "scale": 0.35
+    },
+    "characters/models/turret.model/model.glb": {
+      "from": "converted:turret.glb",
+      "skeleton": "characters/skeletons/turret.skeleton",
+      "scale": 1.6
     }
   },
   "materials": {

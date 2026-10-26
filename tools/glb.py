@@ -125,20 +125,22 @@ class Writer:
     def write(self, path, document):
         document = dict(document)
         document["asset"] = {"version": "2.0", "generator": "rift restyle"}
-        document["bufferViews"] = self.views
-        document["accessors"] = self.accessors
-        document["buffers"] = [{"byteLength": self.length}]
+        if self.length:
+            document["bufferViews"] = self.views
+            document["accessors"] = self.accessors
+            document["buffers"] = [{"byteLength": self.length}]
         text = json.dumps(document, separators=(",", ":")).encode()
         text += b" " * ((-len(text)) % 4)
         binary = b"".join(self.chunks)
-        total = 12 + 8 + len(text) + 8 + len(binary)
+        total = 12 + 8 + len(text) + (8 + len(binary) if binary else 0)
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "wb") as out:
             out.write(struct.pack("<4sII", b"glTF", 2, total))
             out.write(struct.pack("<I4s", len(text), b"JSON"))
             out.write(text)
-            out.write(struct.pack("<I4s", len(binary), b"BIN\0"))
-            out.write(binary)
+            if binary:
+                out.write(struct.pack("<I4s", len(binary), b"BIN\0"))
+                out.write(binary)
         return total
 
 
