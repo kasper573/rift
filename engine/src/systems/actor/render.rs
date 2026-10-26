@@ -16,7 +16,7 @@ use bevy::world_serialization::WorldInstanceReady;
 use super::layering::{self, Layering};
 use super::model::{ClipSource, Models};
 use super::skeleton::{GroupName, Hand, LocalOffset, LocalTurn, SkeletonId};
-use super::stance::HandIndex;
+use super::stance::{self, HandIndex, PropHand};
 use super::wearing::{self, Wearing};
 use super::{Action, Actor, ActorModel, ModelId, Motion, Playing, Pose};
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
@@ -592,8 +592,8 @@ fn pose(world: &mut World) {
 }
 
 /// Hangs from each hand of a dressed rig the prop of the item it shows, moved by the hand's and the
-/// item's grip, and takes it down the frame the hand empties. A two-hander hangs from the first hand
-/// it takes.
+/// item's grip, and takes it down the frame the hand empties. A two-hander hangs from the first or
+/// the last hand it takes, as its stance holds it.
 pub fn hang(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let dressed: Vec<(Entity, ModelId, BTreeMap<HandIndex, ItemId>)> = world
@@ -615,9 +615,8 @@ pub fn hang(world: &mut World) {
         let hands = model.hands();
         let wanted: BTreeMap<HandIndex, ItemId> = shown
             .iter()
-            .filter(|(hand, item)| {
-                hand.index() < hands.len()
-                    && (hand.0 == 0 || shown.get(&HandIndex(hand.0 - 1)) != Some(item))
+            .filter(|&(&hand, &item)| {
+                hand.index() < hands.len() && hangs_from(&content, &shown, hand, item)
             })
             .map(|(&hand, &item)| (hand, item))
             .collect();
@@ -673,6 +672,24 @@ pub fn hang(world: &mut World) {
             }
         }
     }
+}
+
+/// Whether `item`'s prop hangs from `hand` among the hands that show it: the first of them, or the
+/// last when its stance holds it there.
+fn hangs_from(
+    content: &Content,
+    shown: &BTreeMap<HandIndex, ItemId>,
+    hand: HandIndex,
+    item: ItemId,
+) -> bool {
+    let last = stance::of_item(content, item)
+        .is_some_and(|stance| stance.get(content).prop == PropHand::Last);
+    let beside = if last {
+        hand.0.checked_add(1)
+    } else {
+        hand.0.checked_sub(1)
+    };
+    beside.and_then(|beside| shown.get(&HandIndex(beside))) != Some(&item)
 }
 
 /// A move and turn in a joint's frame: the turn's degrees about x, y and z in that order.

@@ -13,8 +13,8 @@ use super::node::{
 use super::run::{FlowCx, FlowKey};
 use super::value::{Value, ValueType};
 use super::{
-    Arrow, EffectDef, EventDef, Fill, LineDef, QueryDef, RunnerKindDef, ScriptError, ScriptFault,
-    ScriptId, ScriptModule, TextDef, VarValue, Variable, VariableType, Vocabulary,
+    Arrow, EffectDef, EventDef, Fill, LineDef, QueryDef, RunnerKindDef, ScriptDef, ScriptError,
+    ScriptFault, ScriptId, ScriptModule, TextDef, VarValue, Variable, VariableType, Vocabulary,
 };
 use crate::core::content::id::nearest;
 use crate::core::content::{Content, ContentFile, ContentId};
@@ -249,6 +249,10 @@ fn compile_modules<'c, V: Vocabulary>(
     let mut errors = Vec::new();
     let mut answered: HashMap<<V::Event as EventDef<V>>::Kind, Vec<String>> = HashMap::new();
     for (index, module) in modules.iter().enumerate() {
+        // A script that did not load reports why at its own file; its owners add nothing to that.
+        if content.table::<ScriptDef<V>>().get(module.script).is_none() {
+            continue;
+        }
         let procedure = match compile_binding(
             content,
             &Binding {
@@ -377,7 +381,12 @@ fn compile_source<'c, V: Vocabulary>(
     };
     let (source, values, declared) = {
         {
-            let def = script.get(content);
+            let Some(def) = content.table::<ScriptDef<V>>().get(script) else {
+                return Err(at_call(
+                    "calls a script that did not load",
+                    format!("{} to load", script.path(content)),
+                ));
+            };
             let called = !stack.is_empty();
             if called {
                 if def.runs_on != V::RunnerKind::ANY && def.runs_on != binding.owner {

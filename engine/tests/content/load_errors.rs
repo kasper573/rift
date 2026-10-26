@@ -525,25 +525,49 @@ fn a_file_of_its_own_of_a_type_of_fixtures_alone_is_refused() {
 }
 
 #[test]
-fn a_class_tree_naming_a_skill_that_did_not_load_reports_only_the_skill() {
-    let report = game()
-        .row("skill", "broken", json!({ "name": "Broken", "icon": 3 }))
-        .edit("class", "hero", |hero| {
-            hero["tree"] = json!({
-                "broken": { "skill": path("skill", "broken"), "at": { "x": 0.0, "y": 0.0 } },
-            });
-        })
-        .try_load()
-        .err()
-        .expect("refused");
+fn a_row_naming_a_file_that_did_not_load_reports_only_that_file() {
+    let cases: [(&str, Game, &str); 2] = [
+        (
+            "a class tree naming a skill",
+            game()
+                .row("skill", "broken", json!({ "name": "Broken", "icon": 3 }))
+                .edit("class", "hero", |hero| {
+                    hero["tree"] = json!({
+                        "broken": { "skill": path("skill", "broken"), "at": { "x": 0.0, "y": 0.0 } },
+                    });
+                }),
+            "hero.class.json",
+        ),
+        (
+            "an npc naming a script",
+            game()
+                .row(
+                    "script",
+                    "broken",
+                    json!({ "runs_on": "npc", "nodes": { "on": { "type": "no_such_node" } } }),
+                )
+                .npc(
+                    "guard",
+                    10.0,
+                    json!([{ "type": "script", "script": path("script", "broken") }]),
+                ),
+            "guard.npc.json",
+        ),
+    ];
+    for (case, game, naming) in cases {
+        let report = game.try_load().err().expect("refused");
 
-    let files: Vec<&str> = report
-        .errors
-        .iter()
-        .map(|error| error.file.as_str())
-        .collect();
-    assert!(files.contains(&"broken.skill.json"), "{report}");
-    assert!(!files.contains(&"hero.class.json"), "{report}");
+        let files: Vec<&str> = report
+            .errors
+            .iter()
+            .map(|error| error.file.as_str())
+            .collect();
+        assert!(
+            files.iter().any(|file| file.starts_with("broken.")),
+            "{case}: {report}"
+        );
+        assert!(!files.contains(&naming), "{case}: {report}");
+    }
 }
 
 #[test]

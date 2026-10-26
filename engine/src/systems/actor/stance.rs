@@ -13,13 +13,16 @@ use crate::systems::item::{ItemId, Wear};
 pub type StanceId = ContentId<StanceDef>;
 
 /// How a wearer holds what puts it in the stance: how many hands it takes, which hand its clips
-/// were made for, and what the stance becomes beside another in the next hand.
+/// were made for, which of those hands the item hangs from, and what the stance becomes beside
+/// another in the next hand.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StanceDef {
     pub name: String,
     pub hands: HandCount,
     pub hand: HandRole,
+    #[serde(default, skip_serializing_if = "PropHand::is_first")]
+    pub prop: PropHand,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paired: Vec<Pairing>,
 }
@@ -40,6 +43,22 @@ pub enum HandRole {
     Off,
     /// The first hand free.
     Either,
+}
+
+/// Which of the hands an item of the stance takes its prop hangs from, as the stance's clips hold
+/// it: a bow in the hand that grips it, not the one that draws.
+#[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PropHand {
+    #[default]
+    First,
+    Last,
+}
+
+impl PropHand {
+    pub fn is_first(&self) -> bool {
+        *self == PropHand::First
+    }
 }
 
 /// What the stance becomes when the next hand shows an item of the stance `with`.
@@ -85,6 +104,7 @@ impl ContentFile for StanceDef {
             name: near.name(),
             hands: HandCount(1),
             hand: HandRole::Main,
+            prop: PropHand::First,
             paired: Vec::new(),
         })
     }

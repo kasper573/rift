@@ -19,7 +19,7 @@ use engine::systems::actor::wearing::Wearing;
 use engine::systems::actor::{Action, Actor, ModelDef, Pose};
 use engine::systems::item::ItemDef;
 use serde_json::json;
-use testkit::{Game, Map};
+use testkit::{Game, Map, path};
 
 const SIZE: GroundSize = GroundSize {
     width: 32,
@@ -126,6 +126,15 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
         .area("field", &Map::open(5, 5), json!([]))
         .hero("field", 2.0, 2.0)
         .sword()
+        .row(
+            "stance",
+            "bow",
+            json!({ "name": "bow", "hands": 2, "hand": "main", "prop": "last" }),
+        )
+        .item(
+            "bow",
+            json!({ "kind": { "type": "equipment", "slot": "hand", "stance": path("stance", "bow") } }),
+        )
         .load();
     let mut app = App::new();
     app.add_plugins((
@@ -141,6 +150,7 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
     .add_observer(render::adopt_player)
     .insert_resource(content.clone());
     let sword = testkit::Declared::declared::<ItemDef>(&content, "sword").expect("a sword");
+    let bow = testkit::Declared::declared::<ItemDef>(&content, "bow").expect("a bow");
     let hero = testkit::Declared::declared::<ModelDef>(&content, "hero").expect("a hero");
     let body = app
         .world_mut()
@@ -179,6 +189,19 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
         props(&mut app),
         vec![(hand, sword)],
         "the sword hangs from the right hand"
+    );
+
+    app.world_mut().entity_mut(body).insert(Wearing {
+        hands: BTreeMap::from([(HandIndex::MAIN, bow), (HandIndex::OFF, bow)]),
+    });
+    app.world_mut()
+        .run_system_cached(render::hang)
+        .expect("hung");
+    let left = joint(&mut app, "hand.l").expect("the rig stands");
+    assert_eq!(
+        props(&mut app),
+        vec![(left, bow)],
+        "a two-hander held in the last of its hands hangs from it alone"
     );
 
     app.world_mut().entity_mut(body).insert(Wearing::default());

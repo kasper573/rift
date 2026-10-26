@@ -15,7 +15,7 @@ use crate::systems::class::{Class, ClassId, NodeKey};
 use crate::systems::dialogue::Heard;
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::{History, HistoryEntry};
-use crate::systems::item::{INVENTORY_MAX, Inventory, ItemId, ItemStack};
+use crate::systems::item::{INVENTORY_MAX, Inventory, ItemDef, ItemId, ItemStack};
 use crate::systems::memory::{Memory, MemoryId};
 use crate::systems::player::{CharacterState, PlayerDef, SpawnPoint, Xp, def};
 use crate::systems::quest::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestResult};
@@ -426,7 +426,10 @@ fn check_bag(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowChe
         );
     }
     for (index, stack) in snapshot.bag.iter().enumerate() {
-        let max = stack.item.get(content).stack_max();
+        let Some(item) = content.table::<ItemDef>().get(stack.item) else {
+            continue;
+        };
+        let max = item.stack_max();
         if stack.count == 0 {
             check.error(
                 format!("/bag/{index}/count"),
