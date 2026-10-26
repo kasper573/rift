@@ -1,0 +1,110 @@
+{
+  "name": "Wolf",
+  "base": {
+    "clips": {
+      "idle": "idle",
+      "walk": "walk",
+      "run": "gallop",
+      "attack": "bite",
+      "death": "death",
+      "talk": "growl"
+    }
+  },
+  "cues": {
+    "bite": [
+      {
+        "at": 400.0,
+        "apex": true,
+        "sound": "sound-and-voice/sfx/bite01.sfx"
+      }
+    ],
+    "death": [
+      {
+        "at": 0.0,
+        "sound": "sound-and-voice/sfx/death01.sfx"
+      }
+    ],
+    "gallop": [
+      {
+        "at": 135.0,
+        "step": true
+      },
+      {
+        "at": 406.0,
+        "step": true
+      }
+    ],
+    "walk": [
+      {
+        "at": 260.0,
+        "step": true
+      },
+      {
+        "at": 781.0,
+        "step": true
+      }
+    ]
+  },
+  "layers": [
+    {
+      "type": "feet",
+      "legs": [
+        {
+          "name": "front left",
+          "joints": [
+            "FrontShoulder.L",
+            "FrontUpperLeg.L",
+            "FrontLowerLeg.L"
+          ]
+        },
+        {
+          "name": "front right",
+          "joints": [
+            "FrontShoulder.R",
+            "FrontUpperLeg.R",
+            "FrontLowerLeg.R"
+          ]
+        },
+        {
+          "name": "back left",
+          "joints": [
+            "BackShoulder.L",
+            "BackLeg.L",
+            "BackUpperLeg.L",
+            "BackLowerLeg.L"
+          ]
+        },
+        {
+          "name": "back right",
+          "joints": [
+            "BackShoulder.R",
+            "BackLeg.R",
+            "BackUpperLeg.R",
+            "BackLowerLeg.R"
+          ]
+        }
+      ],
+      "gait": "diagonal",
+      "stride": 0.45,
+      "lift": 0.12,
+      "during": [
+        "idle",
+        "walk",
+        "run",
+        "talk"
+      ]
+    },
+    {
+      "type": "chain",
+      "from": "Tail1",
+      "stiffness": 0.5,
+      "drag": 0.4,
+      "during": [
+        "idle",
+        "walk",
+        "run",
+        "talk"
+      ]
+    }
+  ]
+}

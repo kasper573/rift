@@ -11,6 +11,9 @@
     "range": 1.0
   },
   "basic_attack": "items-and-skills/skill/strike.skill.json",
+  "wearing": [
+    "items-and-skills/item/spear.item.json"
+  ],
   "modules": [
     {
       "type": "nameplate",

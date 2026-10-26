@@ -10,7 +10,7 @@
     "movement_speed": 4.0,
     "range": 1.5
   },
-  "wearing": [
+  "equipped": [
     "items-and-skills/item/iron_sword.item.json"
   ],
   "modules": [

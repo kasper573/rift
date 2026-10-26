@@ -1,0 +1,11 @@
+{
+  "name": "Sword",
+  "hands": 1,
+  "hand": "main",
+  "paired": [
+    {
+      "with": "items-and-skills/stances/shield.stance.json",
+      "becomes": "items-and-skills/stances/sword_and_shield.stance.json"
+    }
+  ]
+}

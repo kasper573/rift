@@ -40,8 +40,8 @@
       "item": "world/areas/island/npcs/oak_staff.item.json"
     }
   ],
-  "equipment": {
-    "weapon": "items-and-skills/item/bow.item.json"
-  },
+  "equipped": [
+    "items-and-skills/item/bow.item.json"
+  ],
   "start": "initial_spawn"
 }

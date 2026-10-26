@@ -10,7 +10,7 @@
   },
   "cooldown": 10.0,
   "requires": {
-    "type": "wearing",
+    "type": "equipped",
     "item": "items-and-skills/item/bow.item.json"
   },
   "cost": [

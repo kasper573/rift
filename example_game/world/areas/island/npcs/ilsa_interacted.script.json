@@ -414,7 +414,7 @@
             "The bone warrior won't trouble anyone now."
           ],
           "requires": {
-            "type": "wearing",
+            "type": "equipped",
             "item": "items-and-skills/item/tribal_helmet.item.json"
           },
           "to": "earn_pass"

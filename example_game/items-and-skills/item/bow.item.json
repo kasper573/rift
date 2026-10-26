@@ -1,6 +1,6 @@
 {
   "name": "Bow",
-  "look": "world/props/crossbow.prop",
+  "look": "world/props/bow.prop",
   "icon": "assets/icons/weapon_and_tool/bow.png",
   "card": "assets/cards/bow.png",
   "sfx": {
@@ -10,7 +10,15 @@
   },
   "kind": {
     "type": "equipment",
-    "slot": "weapon",
+    "slot": "hand",
+    "stance": "items-and-skills/stances/bow.stance.json",
+    "grip": {
+      "offset": [
+        0.07,
+        -0.523,
+        0.0
+      ]
+    },
     "grants": [
       "items-and-skills/item/shoot.skill.json"
     ]

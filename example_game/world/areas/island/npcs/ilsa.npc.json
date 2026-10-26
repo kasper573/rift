@@ -10,6 +10,9 @@
     "movement_speed": 0.6,
     "range": 1.0
   },
+  "wearing": [
+    "items-and-skills/item/bow.item.json"
+  ],
   "modules": [
     {
       "type": "nameplate",

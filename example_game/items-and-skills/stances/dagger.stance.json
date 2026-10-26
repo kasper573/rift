@@ -1,0 +1,11 @@
+{
+  "name": "Dagger",
+  "hands": 1,
+  "hand": "either",
+  "paired": [
+    {
+      "with": "items-and-skills/stances/dagger.stance.json",
+      "becomes": "items-and-skills/stances/dual_daggers.stance.json"
+    }
+  ]
+}

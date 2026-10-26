@@ -1,0 +1,7 @@
+{
+  "skeleton": "characters/skeletons/slime.skeleton",
+  "hitbox": {
+    "radius": 0.4,
+    "height": 0.7
+  }
+}

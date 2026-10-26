@@ -1,0 +1,38 @@
+{
+  "name": "Turret",
+  "model": "characters/models/turret.model",
+  "stats": {
+    "health": 40.0,
+    "max_health": 40.0,
+    "damage": 4.0,
+    "attack_speed": 0.8,
+    "attack_delay": 200.0,
+    "movement_speed": 0.0,
+    "range": 6.0
+  },
+  "basic_attack": "items-and-skills/skill/strike.skill.json",
+  "modules": [
+    {
+      "type": "respawn",
+      "after": 10.0
+    },
+    {
+      "type": "loot",
+      "xp": 16,
+      "items": [
+        {
+          "item": "items-and-skills/item/gold.item.json",
+          "amount": 3,
+          "chance": 80.0
+        }
+      ]
+    },
+    {
+      "type": "script",
+      "script": "story/script/combat_aggressive.script.json",
+      "values": {
+        "aggro": 7.0
+      }
+    }
+  ]
+}

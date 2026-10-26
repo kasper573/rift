@@ -1,0 +1,37 @@
+{
+  "name": "Wolf",
+  "model": "characters/models/wolf.model",
+  "stats": {
+    "health": 24.0,
+    "max_health": 24.0,
+    "damage": 3.0,
+    "attack_speed": 1.2,
+    "attack_delay": 300.0,
+    "movement_speed": 2.2,
+    "range": 1.2
+  },
+  "basic_attack": "items-and-skills/skill/strike.skill.json",
+  "modules": [
+    {
+      "type": "respawn",
+      "after": 10.0
+    },
+    {
+      "type": "loot",
+      "xp": 8,
+      "items": [
+        {
+          "item": "items-and-skills/item/gold.item.json",
+          "chance": 40.0
+        }
+      ]
+    },
+    {
+      "type": "script",
+      "script": "story/script/combat_aggressive.script.json",
+      "values": {
+        "aggro": 8.0
+      }
+    }
+  ]
+}

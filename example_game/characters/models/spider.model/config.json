@@ -1,0 +1,7 @@
+{
+  "skeleton": "characters/skeletons/spider.skeleton",
+  "hitbox": {
+    "radius": 0.5,
+    "height": 0.5
+  }
+}

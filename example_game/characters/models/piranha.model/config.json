@@ -1,0 +1,7 @@
+{
+  "skeleton": "characters/skeletons/fish.skeleton",
+  "hitbox": {
+    "radius": 0.3,
+    "height": 1.0
+  }
+}

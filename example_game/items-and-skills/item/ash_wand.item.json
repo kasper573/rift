@@ -10,7 +10,15 @@
   },
   "kind": {
     "type": "equipment",
-    "slot": "weapon",
+    "slot": "hand",
+    "stance": "items-and-skills/stances/wand.stance.json",
+    "grip": {
+      "offset": [
+        0.0,
+        -0.179,
+        0.0
+      ]
+    },
     "requires": {
       "type": "is_class",
       "class": "characters/class/mage.class.json"

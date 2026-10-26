@@ -2,7 +2,7 @@
 
 ## Models
 
-Every model in the game folder is a restyled pack model or a tree built to the style sheet (`STYLE.md`); `tools/kit.json` says which pack file each one comes from and `tools/restyle.py` builds them. All packs are CC0 (Creative Commons Zero).
+Every model in the game folder is a restyled pack model or a tree built to the style sheet (`STYLE.md`); `tools/kit.json` says which pack file each one comes from and `tools/restyle.py` builds them (packs that come as FBX are converted first by `tools/convert.py`). The packs are CC0 (Creative Commons Zero) unless noted otherwise below.
 
 - KayKit Character Pack: Adventurers, by Kay Lousberg — https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0 — CC0
 - KayKit Character Pack: Skeletons, by Kay Lousberg — https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Skeletons-1.0 — CC0
@@ -11,13 +11,17 @@ Every model in the game folder is a restyled pack model or a tree built to the s
 - Kenney Fantasy Town Kit — https://kenney.nl/assets/fantasy-town-kit — CC0
 - Kenney Furniture Kit — https://kenney.nl/assets/furniture-kit — CC0
 - Kenney Survival Kit — https://kenney.nl/assets/survival-kit — CC0
+- KayKit Character Animations 1.1 (the biped's clips), by Kay Lousberg — https://kaylousberg.itch.io/kaykit-character-animations — CC0
 - Cute Monsters (the bat), by Quaternius — https://quaternius.com/packs/cutemonsters.html — CC0
+- Wolf (Animated Animal Pack), Piranha (Animated Fish Bundle), Spider (Animated Enemies), Green Blob (Ultimate Monsters), Turret Gun (Cyberpunk Game Kit), Spear and Wooden Bow, by Quaternius, via Poly Pizza — https://poly.pizza/u/Quaternius — CC0
+- Spider - Low Poly - Animated (the giant spider), by Psionic Games — https://www.psionicgames.com — CC-BY 4.0, restyled to the style sheet
 - The trees are built by `tools/trees.py` to the style sheet.
 
 ## Pictures
 
 - https://sscary.itch.io/the-adventurer-male
 - https://cainos.itch.io/pixel-art-icon-pack-rpg
+- assets/icons/weapon_and_tool/spear.png — spear by 7Soul1, from "CC0 Polearm Icons" (https://opengameart.org/content/cc0-polearm-icons), CC0, mirrored
 - https://kenney-assets.itch.io/crosshair-pack
 - https://pixelius-vita.itch.io/free-asset-pack-01
 - https://sutemo.itch.io/male-character-sprite-for-visual-novel

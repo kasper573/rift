@@ -1,0 +1,118 @@
+{
+  "name": "Spider",
+  "base": {
+    "clips": {
+      "idle": "idle",
+      "walk": "walk",
+      "run": "walk",
+      "attack": "bite",
+      "death": "death",
+      "talk": "rear"
+    }
+  },
+  "cues": {
+    "bite": [
+      {
+        "at": 420.0,
+        "apex": true,
+        "sound": "sound-and-voice/sfx/bite01.sfx"
+      }
+    ],
+    "death": [
+      {
+        "at": 0.0,
+        "sound": "sound-and-voice/sfx/death01.sfx"
+      }
+    ],
+    "walk": [
+      {
+        "at": 208.0,
+        "step": true
+      },
+      {
+        "at": 625.0,
+        "step": true
+      }
+    ]
+  },
+  "layers": [
+    {
+      "type": "feet",
+      "legs": [
+        {
+          "name": "front left",
+          "joints": [
+            "FrontLeg.L",
+            "FrontLeg2.L",
+            "FrontLeg3.L"
+          ]
+        },
+        {
+          "name": "middle front left",
+          "joints": [
+            "MidFrontLeg.L",
+            "MidFrontLeg2.L",
+            "MidFrontLeg3.L"
+          ]
+        },
+        {
+          "name": "middle back left",
+          "joints": [
+            "MidBackLeg.L",
+            "MidBackLeg2.L",
+            "MidBackLeg3.L"
+          ]
+        },
+        {
+          "name": "back left",
+          "joints": [
+            "BackLeg.L",
+            "BackLeg2.L",
+            "BackLeg3.L"
+          ]
+        },
+        {
+          "name": "front right",
+          "joints": [
+            "FrontLeg.R",
+            "FrontLeg2.R",
+            "FrontLeg3.R"
+          ]
+        },
+        {
+          "name": "middle front right",
+          "joints": [
+            "MidFrontLeg.R",
+            "MidFrontLeg2.R",
+            "MidFrontLeg3.R"
+          ]
+        },
+        {
+          "name": "middle back right",
+          "joints": [
+            "MidBackLeg.R",
+            "MidBackLeg2.R",
+            "MidBackLeg3.R"
+          ]
+        },
+        {
+          "name": "back right",
+          "joints": [
+            "BackLeg.R",
+            "BackLeg2.R",
+            "BackLeg3.R"
+          ]
+        }
+      ],
+      "gait": "tetrapod",
+      "stride": 0.25,
+      "lift": 0.08,
+      "during": [
+        "idle",
+        "walk",
+        "run",
+        "talk"
+      ]
+    }
+  ]
+}

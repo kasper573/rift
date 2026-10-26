@@ -995,6 +995,76 @@
   },
   {
     "type": "folder",
+    "label": "Wilds",
+    "children": [
+      {
+        "type": "population",
+        "npc": "characters/npc/wolf.npc.json",
+        "count": 3,
+        "roams": {
+          "x": 90.0,
+          "y": 50.0,
+          "w": 16.0,
+          "h": 16.0
+        }
+      },
+      {
+        "type": "population",
+        "npc": "characters/npc/piranha.npc.json",
+        "count": 3,
+        "roams": {
+          "x": 54.0,
+          "y": 104.0,
+          "w": 14.0,
+          "h": 6.0
+        }
+      },
+      {
+        "type": "population",
+        "npc": "characters/npc/spider.npc.json",
+        "count": 4,
+        "roams": {
+          "x": 20.0,
+          "y": 28.0,
+          "w": 12.0,
+          "h": 14.0
+        }
+      },
+      {
+        "type": "population",
+        "npc": "characters/npc/giant_spider.npc.json",
+        "count": 1,
+        "roams": {
+          "x": 34.0,
+          "y": 28.0,
+          "w": 8.0,
+          "h": 8.0
+        }
+      },
+      {
+        "type": "population",
+        "npc": "characters/npc/slime.npc.json",
+        "count": 3,
+        "roams": {
+          "x": 36.0,
+          "y": 66.0,
+          "w": 8.0,
+          "h": 8.0
+        }
+      },
+      {
+        "type": "resident",
+        "npc": "characters/npc/turret.npc.json",
+        "at": {
+          "x": 92.0,
+          "y": 25.0
+        },
+        "facing": 180.0
+      }
+    ]
+  },
+  {
+    "type": "folder",
     "label": "Landscape",
     "children": [
       {

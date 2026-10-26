@@ -1412,6 +1412,25 @@
       "from": "converted:turret.glb",
       "skeleton": "characters/skeletons/turret.skeleton",
       "scale": 1.6
+    },
+    "world/props/spear.prop/model.glb": {
+      "from": "poly-pizza:Spear.glb",
+      "scale": 0.2,
+      "colors": {
+        "DarkWood": "wood-dark",
+        "LightWood": "planks",
+        "Steel": "steel-dark",
+        "LightSteel": "steel"
+      }
+    },
+    "world/props/bow.prop/model.glb": {
+      "from": "poly-pizza:WoodenBow.glb",
+      "scale": 0.55,
+      "colors": {
+        "DarkWood": "wood-dark",
+        "LightWood": "planks",
+        "White": "cloth-white"
+      }
     }
   },
   "materials": {

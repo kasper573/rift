@@ -75,9 +75,9 @@
       "item": "items-and-skills/item/rusty_sword.item.json"
     }
   ],
-  "equipment": {
-    "weapon": "items-and-skills/item/rusty_sword.item.json"
-  },
+  "equipped": [
+    "items-and-skills/item/rusty_sword.item.json"
+  ],
   "quests": [
     {
       "quest": "world/areas/island/npcs/bones_for_the_warden.quest.json",

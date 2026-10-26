@@ -11,6 +11,10 @@
     "range": 1.2
   },
   "basic_attack": "items-and-skills/skill/strike.skill.json",
+  "wearing": [
+    "items-and-skills/item/iron_sword.item.json",
+    "items-and-skills/item/bone_shield.item.json"
+  ],
   "modules": [
     {
       "type": "voice",

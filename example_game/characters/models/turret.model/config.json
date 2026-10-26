@@ -1,0 +1,7 @@
+{
+  "skeleton": "characters/skeletons/turret.skeleton",
+  "hitbox": {
+    "radius": 0.45,
+    "height": 1.0
+  }
+}

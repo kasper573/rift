@@ -1,0 +1,32 @@
+{
+  "name": "Spear",
+  "look": "world/props/spear.prop",
+  "icon": "assets/icons/weapon_and_tool/spear.png",
+  "card": "assets/cards/spear.png",
+  "sfx": {
+    "pickup": "sound-and-voice/sfx/pickup_blade.sfx",
+    "trade": "sound-and-voice/sfx/trade_blade.sfx",
+    "drop": "sound-and-voice/sfx/block01.sfx"
+  },
+  "kind": {
+    "type": "equipment",
+    "slot": "hand",
+    "stance": "items-and-skills/stances/spear.stance.json",
+    "grip": {
+      "offset": [
+        0.009,
+        -0.411,
+        0.0
+      ]
+    },
+    "grants": [
+      "items-and-skills/skill/strike.skill.json"
+    ]
+  },
+  "modules": [
+    {
+      "type": "flavor",
+      "text": "An ash shaft and an iron head. Keeps trouble at arm's length, and then some."
+    }
+  ]
+}

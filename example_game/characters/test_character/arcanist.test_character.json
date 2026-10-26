@@ -78,8 +78,8 @@
       "item": "items-and-skills/item/antidote.item.json"
     }
   ],
-  "equipment": {
-    "weapon": "items-and-skills/item/ash_wand.item.json"
-  },
+  "equipped": [
+    "items-and-skills/item/ash_wand.item.json"
+  ],
   "start": "initial_spawn"
 }

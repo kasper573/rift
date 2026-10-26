@@ -14,7 +14,7 @@
     },
     "cast": {
       "type": "animate",
-      "action": "attack",
+      "move": "cast",
       "wait": "apex",
       "next": "arc"
     },

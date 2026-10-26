@@ -10,8 +10,8 @@
       "item": "items-and-skills/item/greater_health_potion.item.json"
     }
   ],
-  "equipment": {
-    "weapon": "items-and-skills/item/rusty_sword.item.json"
-  },
+  "equipped": [
+    "items-and-skills/item/rusty_sword.item.json"
+  ],
   "start": "initial_spawn"
 }

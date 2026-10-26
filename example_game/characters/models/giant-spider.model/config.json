@@ -1,0 +1,7 @@
+{
+  "skeleton": "characters/skeletons/giant-spider.skeleton",
+  "hitbox": {
+    "radius": 0.6,
+    "height": 0.8
+  }
+}

@@ -10,7 +10,15 @@
   },
   "kind": {
     "type": "equipment",
-    "slot": "weapon",
+    "slot": "hand",
+    "stance": "items-and-skills/stances/sword.stance.json",
+    "grip": {
+      "offset": [
+        0.0,
+        -0.254,
+        0.0
+      ]
+    },
     "requires": {
       "type": "at_least",
       "a": {

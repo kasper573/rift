@@ -1,0 +1,28 @@
+{
+  "name": "Turret",
+  "base": {
+    "clips": {
+      "idle": "scan",
+      "walk": "track",
+      "run": "track",
+      "attack": "shoot",
+      "death": "death",
+      "talk": "twitch"
+    }
+  },
+  "cues": {
+    "death": [
+      {
+        "at": 0.0,
+        "sound": "sound-and-voice/sfx/death01.sfx"
+      }
+    ],
+    "shoot": [
+      {
+        "at": 100.0,
+        "apex": true,
+        "sound": "sound-and-voice/sfx/block01.sfx"
+      }
+    ]
+  }
+}

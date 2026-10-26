@@ -10,7 +10,15 @@
   },
   "kind": {
     "type": "equipment",
-    "slot": "weapon",
+    "slot": "hand",
+    "stance": "items-and-skills/stances/staff.stance.json",
+    "grip": {
+      "offset": [
+        0.032,
+        -0.655,
+        0.0
+      ]
+    },
     "requires": {
       "type": "is_class",
       "class": "characters/class/hunter.class.json"

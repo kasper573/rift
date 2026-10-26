@@ -29,7 +29,7 @@
     },
     "swing": {
       "type": "animate",
-      "action": "attack",
+      "move": "chop",
       "wait": "apex",
       "next": "show"
     },

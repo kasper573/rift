@@ -1,0 +1,32 @@
+{
+  "name": "Dagger",
+  "look": "world/props/dagger.prop",
+  "icon": "assets/icons/weapon_and_tool/knife.png",
+  "card": "assets/cards/dagger.png",
+  "sfx": {
+    "pickup": "sound-and-voice/sfx/pickup_blade.sfx",
+    "trade": "sound-and-voice/sfx/trade_blade.sfx",
+    "drop": "sound-and-voice/sfx/block01.sfx"
+  },
+  "kind": {
+    "type": "equipment",
+    "slot": "hand",
+    "stance": "items-and-skills/stances/dagger.stance.json",
+    "grip": {
+      "offset": [
+        0.007,
+        -0.149,
+        0.0
+      ]
+    },
+    "grants": [
+      "items-and-skills/skill/slash.skill.json"
+    ]
+  },
+  "modules": [
+    {
+      "type": "flavor",
+      "text": "Short and quick. Better with a twin in the other hand."
+    }
+  ]
+}

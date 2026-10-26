@@ -53,8 +53,8 @@
       "count": 10
     }
   ],
-  "equipment": {
-    "weapon": "items-and-skills/item/iron_sword.item.json"
-  },
+  "equipped": [
+    "items-and-skills/item/iron_sword.item.json"
+  ],
   "start": "initial_spawn"
 }

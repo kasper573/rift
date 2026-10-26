@@ -37,7 +37,7 @@
     },
     "swing": {
       "type": "animate",
-      "action": "attack",
+      "move": "cleave",
       "wait": "apex",
       "next": "sweep"
     },

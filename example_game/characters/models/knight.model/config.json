@@ -1,64 +1,7 @@
 {
+  "skeleton": "characters/skeletons/biped.skeleton",
   "hitbox": {
     "radius": 0.4,
     "height": 2.3
-  },
-  "clips": {
-    "idle": {
-      "name": "idle"
-    },
-    "walk": {
-      "name": "walk",
-      "cues": [
-        {
-          "at": 267.0,
-          "step": true
-        },
-        {
-          "at": 800.0,
-          "step": true
-        }
-      ]
-    },
-    "run": {
-      "name": "run",
-      "cues": [
-        {
-          "at": 200.0,
-          "step": true
-        },
-        {
-          "at": 600.0,
-          "step": true
-        }
-      ]
-    },
-    "attack": {
-      "name": "attack",
-      "cues": [
-        {
-          "at": 480.0,
-          "apex": true,
-          "sound": "sound-and-voice/sfx/slash03.sfx"
-        }
-      ]
-    },
-    "death": {
-      "name": "death",
-      "cues": [
-        {
-          "at": 0.0,
-          "sound": "sound-and-voice/sfx/death01.sfx"
-        }
-      ]
-    },
-    "talk": {
-      "name": "talk"
-    }
-  },
-  "poses": {
-    "sit": {
-      "name": "sit"
-    }
   }
 }

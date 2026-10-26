@@ -52,8 +52,8 @@
       "item": "world/areas/island/items/road_pass.item.json"
     }
   ],
-  "equipment": {
-    "weapon": "items-and-skills/item/rusty_sword.item.json"
-  },
+  "equipped": [
+    "items-and-skills/item/rusty_sword.item.json"
+  ],
   "start": "initial_spawn"
 }

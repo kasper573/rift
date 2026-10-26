@@ -78,6 +78,45 @@
     },
     {
       "type": "sells",
+      "item": "items-and-skills/item/dagger.item.json",
+      "price": [
+        {
+          "item": "items-and-skills/item/gold.item.json",
+          "count": 18
+        }
+      ],
+      "stock": {
+        "type": "unlimited"
+      }
+    },
+    {
+      "type": "sells",
+      "item": "items-and-skills/item/spear.item.json",
+      "price": [
+        {
+          "item": "items-and-skills/item/gold.item.json",
+          "count": 32
+        }
+      ],
+      "stock": {
+        "type": "unlimited"
+      }
+    },
+    {
+      "type": "sells",
+      "item": "items-and-skills/item/greatsword.item.json",
+      "price": [
+        {
+          "item": "items-and-skills/item/gold.item.json",
+          "count": 45
+        }
+      ],
+      "stock": {
+        "type": "unlimited"
+      }
+    },
+    {
+      "type": "sells",
       "item": "items-and-skills/item/bow.item.json",
       "price": [
         {
