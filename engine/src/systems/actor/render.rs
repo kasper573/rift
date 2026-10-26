@@ -394,7 +394,7 @@ pub fn adopt_player(
 
 /// Places every rig where its actor shows, turned the way it faces, playing the clip its stance
 /// resolves for what it does, and sounds the cues its clip crosses.
-fn pose(world: &mut World) {
+pub fn pose(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let delta = Seconds(world.resource::<Time>().delta_secs());

@@ -208,6 +208,7 @@ pub struct AreaViewState {
     pub scene: panel::ScenePanel,
     pub contours: contours::ContourCache,
     cache: Option<SnapshotCache>,
+    preview_places: HashMap<String, PreviewPlaces>,
     fitted: bool,
 }
 
@@ -276,6 +277,15 @@ impl AreaViewState {
 pub struct PopulationPreview {
     pub hidden: bool,
     pub seed: u64,
+}
+
+/// Where a population's preview stands its bodies, kept until the files or the preview's seed
+/// change: placing them draws from the whole wild mesh, too slow to repeat every frame.
+struct PreviewPlaces {
+    generation: u64,
+    revision: u64,
+    seed: u64,
+    places: Vec<Pos<Meters>>,
 }
 
 #[derive(Clone, Debug)]
@@ -696,6 +706,9 @@ fn ghost_moves(view: &AreaViewState) -> bool {
 fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing> {
     let content = &frame.content;
     let area = frame.area();
+    let (generation, revision) = editor.project.as_ref().map_or((0, 0), |project| {
+        (project.generation, project.files.revision())
+    });
     let view = editor.views.area.view_mut(view_key);
     let previews = view.population_previews.clone();
     let stand = |npc: engine::systems::npc::NpcId, at: Pos<Meters>, facing: Degrees, pose| {
@@ -743,7 +756,26 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing>
         if preview.hidden {
             continue;
         }
-        for at in population::population_places(area, population, preview.seed) {
+        let kept = view.preview_places.get(&node.pointer).filter(|kept| {
+            (kept.generation, kept.revision, kept.seed) == (generation, revision, preview.seed)
+        });
+        let places = match kept {
+            Some(kept) => kept.places.clone(),
+            None => {
+                let places = population::population_places(area, population, preview.seed);
+                view.preview_places.insert(
+                    node.pointer.clone(),
+                    PreviewPlaces {
+                        generation,
+                        revision,
+                        seed: preview.seed,
+                        places: places.clone(),
+                    },
+                );
+                places
+            }
+        };
+        for at in places {
             cast.extend(stand(
                 population.npc,
                 at,

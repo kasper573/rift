@@ -1,23 +1,27 @@
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
-use bevy::animation::AnimationClip;
 use bevy::animation::graph::AnimationGraph;
+use bevy::animation::{AnimationClip, AnimationPlugin};
 use bevy::asset::AssetPlugin;
+use bevy::gltf::GltfPlugin;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldSerializationPlugin};
+use engine::core::content::gltf::PLACEHOLDER_LIFT;
 use engine::core::geometry::{Degrees, Radians};
 use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::math::Rgba;
 use engine::core::render::camera::ground_hit;
-use engine::core::render::{CameraRig, capsule_hit, facing_rotation, world_point};
+use engine::core::render::{Animator, CameraRig, capsule_hit, facing_rotation, world_point};
 use engine::core::time::PlaybackRate;
 use engine::core::units::{MeterPos, Meters};
-use engine::systems::actor::render::{self, HeldProp};
+use engine::systems::actor::render::{self, HeldProp, RenderActor};
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::wearing::Wearing;
 use engine::systems::actor::{Action, Actor, ModelDef, Pose};
 use engine::systems::item::ItemDef;
+use engine::systems::movement::RenderPosition;
 use serde_json::json;
 use testkit::{Game, Map, path};
 
@@ -223,10 +227,89 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
     assert_eq!(props(&mut app), Vec::new(), "the empty hand holds nothing");
 }
 
-/// The test rig's joints as its glTF scene would stand them: a root, a body and two hands.
+#[test]
+fn a_body_moves_by_the_clip_its_skeleton_plays_for_what_it_does() {
+    let game = Game::new()
+        .area("field", &Map::open(5, 5), json!([]))
+        .hero("field", 2.0, 2.0);
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    game.write_to(folder.path());
+    let content = game.load();
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        AssetPlugin {
+            file_path: folder.path().display().to_string(),
+            ..Default::default()
+        },
+        WorldSerializationPlugin,
+        AnimationPlugin,
+        GltfPlugin::default(),
+    ))
+    .init_asset::<Mesh>()
+    .init_asset::<StandardMaterial>()
+    .init_asset::<Image>()
+    .init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
+    .init_resource::<Animator>()
+    .add_observer(render::adopt_player)
+    .insert_resource(content.clone());
+    app.finish();
+    app.cleanup();
+    let hero = testkit::Declared::declared::<ModelDef>(&content, "hero").expect("a hero");
+    app.world_mut().spawn((
+        Actor {
+            color: Rgba(0xffffffff),
+            facing: Radians(0.0),
+            action: Action::Idle,
+            pose: Pose::Idle,
+            model: hero,
+            attack_rate: PlaybackRate(1.0),
+        },
+        RenderActor {
+            facing: Radians(0.0),
+            action: Action::Idle,
+        },
+        RenderPosition(Pos::new(2.0, 2.0)),
+    ));
+    app.world_mut()
+        .run_system_cached(render::dress)
+        .expect("dressed");
+
+    let held = testkit::rig().nodes[1].rest.translation.y + PLACEHOLDER_LIFT.0;
+    let mut shown = None;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        app.update();
+        app.world_mut()
+            .run_system_cached(render::pose)
+            .expect("posed");
+        shown = joint(&mut app, "body").and_then(|body| {
+            app.world()
+                .get::<Transform>(body)
+                .map(|at| at.translation.y)
+        });
+        if shown.is_some_and(|y| (y - held).abs() < 1e-3) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        shown.map(|y| (y * 1000.0).round() / 1000.0),
+        Some(held),
+        "the body stands where its idle clip, cut from the skeleton's library, holds it"
+    );
+}
+
+/// The test rig's joints as the glTF loader stands them: under the entity standing for the scene, a
+/// root, a body and two hands.
 fn rig_scene() -> World {
     let mut world = World::new();
-    let root = world.spawn((Name::new("model"), Transform::default())).id();
+    let scene = world
+        .spawn((Name::new("Scene0"), Transform::default()))
+        .id();
+    let root = world
+        .spawn((Name::new("model"), Transform::default(), ChildOf(scene)))
+        .id();
     let body = world
         .spawn((Name::new("body"), Transform::default(), ChildOf(root)))
         .id();

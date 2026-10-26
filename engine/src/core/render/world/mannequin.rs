@@ -55,37 +55,44 @@ pub fn mannequin(world: &mut World, path: &str, clip: &RigClip) -> (WorldAssetRo
     )
 }
 
-/// Makes the top node of a spawned glTF scene that holds the most nodes an animation root, with
-/// a player of its own and every node under it named the way a clip made on the same rig names
-/// it, and gives that player back. The glTF loader does so only for the nodes its own file's
-/// animations move, so a skin carrying no clips would otherwise play none made for its rig.
+/// Gives a spawned glTF scene a player and names every node under it the way a clip made on the
+/// same rig names its targets, then gives that player back. The loader names a clip's targets by
+/// the path from its file's top node down, below the entity it spawns for the scene itself, and
+/// names nodes only for the clips its own file holds, so a skin carrying none would otherwise play
+/// none made for its rig.
 pub fn animate_rig(
-    scene: Entity,
+    instance: Entity,
     children: &Query<&Children>,
     names: &Query<&Name>,
     commands: &mut Commands,
 ) -> Option<Entity> {
     let size = |node: Entity| children.iter_descendants(node).count();
-    let root = children
-        .get(scene)
+    let scene = children
+        .get(instance)
         .ok()?
         .iter()
         .max_by_key(|&node| size(node))?;
-    let mut stack: Vec<(Entity, Vec<Name>)> = vec![(root, Vec::new())];
+    let mut stack: Vec<(Entity, Vec<Name>)> = children
+        .get(scene)
+        .ok()?
+        .iter()
+        .map(|top| (top, Vec::new()))
+        .collect();
     while let Some((node, mut path)) = stack.pop() {
         let Ok(name) = names.get(node) else {
             continue;
         };
         path.push(name.clone());
-        commands
-            .entity(node)
-            .insert((AnimationTargetId::from_names(path.iter()), AnimatedBy(root)));
+        commands.entity(node).insert((
+            AnimationTargetId::from_names(path.iter()),
+            AnimatedBy(scene),
+        ));
         if let Ok(below) = children.get(node) {
             stack.extend(below.iter().map(|child| (child, path.clone())));
         }
     }
-    commands.entity(root).insert(AnimationPlayer::default());
-    Some(root)
+    commands.entity(scene).insert(AnimationPlayer::default());
+    Some(scene)
 }
 
 /// A mannequin's scene, once spawned, starts its clip on the rig's player.

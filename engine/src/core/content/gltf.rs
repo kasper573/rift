@@ -407,9 +407,13 @@ pub fn placeholder_mesh(clips: &[(&str, Seconds)], triangles: usize) -> Vec<u8> 
     placeholder_body(&NodeTree::default(), clips, triangles)
 }
 
+/// How far a placeholder clip holds the joint it moves above where it rests.
+pub const PLACEHOLDER_LIFT: Meters = Meters(0.25);
+
 /// A glTF binary of the joints of `tree` at rest, `triangles` triangles stacked within a centimetre
-/// of the origin beside them, and `clips` moving the first joint (the mesh when there are none): a
-/// rig, a library of clips or a skin on it, of any weight and nothing to look at.
+/// of the origin beside them, and `clips` holding the first joint below the top one (the top one
+/// when there is none below it, the mesh when there are no joints) [`PLACEHOLDER_LIFT`] above its
+/// rest: a rig, a library of clips or a skin on it, of any weight and nothing to look at.
 pub fn placeholder_body(tree: &NodeTree, clips: &[(&str, Seconds)], triangles: usize) -> Vec<u8> {
     let mut bin: Vec<u8> = Vec::new();
     let mut root = json::Root::default();
@@ -441,7 +445,14 @@ pub fn placeholder_body(tree: &NodeTree, clips: &[(&str, Seconds)], triangles: u
         .filter(|(_, node)| node.parent.is_none())
         .map(|(index, _)| joints[index])
         .collect();
-    let mut animated = joints.first().copied();
+    let lifted = tree
+        .nodes
+        .iter()
+        .position(|node| node.parent.is_some())
+        .or((!tree.nodes.is_empty()).then_some(0));
+    let mut animated = lifted.map(|index| joints[index]);
+    let held = lifted.map_or(Vec3::ZERO, |index| tree.nodes[index].rest.translation)
+        + Vec3::Y * PLACEHOLDER_LIFT.0;
     if triangles > 0 {
         let mesh = push_mesh(&mut root, &mut bin, triangles);
         let node = root.push(json::Node {
@@ -477,7 +488,11 @@ pub fn placeholder_body(tree: &NodeTree, clips: &[(&str, Seconds)], triangles: u
         let output = push_accessor(
             &mut root,
             &mut bin,
-            &[0u8; 24],
+            &[held, held]
+                .iter()
+                .flat_map(|at| at.to_array())
+                .flat_map(|value| value.to_le_bytes())
+                .collect::<Vec<u8>>(),
             2,
             json::accessor::Type::Vec3,
             None,
