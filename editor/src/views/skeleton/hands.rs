@@ -40,7 +40,8 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, buil
             });
     });
     panel::body(ui, right, |ui| {
-        super::stage_pickers(editor, ui, key, content, built, true);
+        super::played_clip(editor, key, built);
+        super::stage_pickers(editor, ui, key, content, built, false);
         super::item_picker(editor, ui, key, content, "try with");
         let size = Vec2::new(ui.available_width(), ui.available_height() - 24.0);
         let props = super::tried_in_hand(editor, key, content, chosen);

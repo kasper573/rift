@@ -6,7 +6,9 @@ use bevy::animation::{AnimationClip, AnimationPlugin};
 use bevy::asset::AssetPlugin;
 use bevy::gltf::GltfPlugin;
 use bevy::prelude::*;
+use bevy::time::TimeUpdateStrategy;
 use bevy::world_serialization::{WorldAsset, WorldSerializationPlugin};
+use engine::core::audio::playback::{PlaySfx, SfxDef, SfxId, SfxPlace};
 use engine::core::content::gltf::PLACEHOLDER_LIFT;
 use engine::core::geometry::{Degrees, Radians};
 use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
@@ -20,10 +22,11 @@ use engine::systems::actor::render::{self, HeldProp, RenderActor};
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::wearing::Wearing;
 use engine::systems::actor::{Action, Actor, ModelDef, Pose};
+use engine::systems::area::{self, AreaDef, AreaTag};
 use engine::systems::item::ItemDef;
 use engine::systems::movement::RenderPosition;
 use serde_json::json;
-use testkit::{Game, Map, path};
+use testkit::{APEX, BODY, Game, Map, path};
 
 const SIZE: GroundSize = GroundSize {
     width: 32,
@@ -297,6 +300,95 @@ fn a_body_moves_by_the_clip_its_skeleton_plays_for_what_it_does() {
         shown.map(|y| (y * 1000.0).round() / 1000.0),
         Some(held),
         "the body stands where its idle clip, cut from the skeleton's library, holds it"
+    );
+}
+
+#[test]
+fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
+    let game = Game::new()
+        .area("field", &Map::open(5, 5), json!([]))
+        .sfx("whoosh")
+        .skeleton_of(
+            BODY,
+            &testkit::rig_clips(),
+            json!({ "cues": {
+                "walk": [{ "at": 100.0, "step": true }],
+                "attack": [{ "at": APEX.0, "apex": true, "sound": path("sfx", "whoosh") }],
+            } }),
+        )
+        .hero("field", 2.0, 2.0);
+    let content = game.load();
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            50,
+        )))
+        .init_resource::<Animator>()
+        .add_message::<PlaySfx>()
+        .insert_resource(content.clone());
+    let hero = testkit::Declared::declared::<ModelDef>(&content, "hero").expect("a hero");
+    let field = testkit::Declared::declared::<AreaDef>(&content, "field").expect("a field");
+    let walker = Pos::new(1.5, 1.5);
+    let striker = Pos::new(3.5, 3.5);
+    for (at, action) in [(walker, Action::Walk), (striker, Action::Attack)] {
+        app.world_mut().spawn((
+            Actor {
+                color: Rgba(0xffffffff),
+                facing: Radians(0.0),
+                action,
+                pose: Pose::Idle,
+                model: hero,
+                attack_rate: PlaybackRate(1.0),
+            },
+            RenderActor {
+                facing: Radians(0.0),
+                action,
+            },
+            RenderPosition(at),
+            AreaTag { area: field },
+        ));
+    }
+
+    let mut heard: Vec<(Pos<Meters>, SfxId)> = Vec::new();
+    for _ in 0..12 {
+        app.update();
+        app.world_mut()
+            .run_system_cached(render::pose)
+            .expect("posed");
+        heard.extend(
+            app.world_mut()
+                .resource_mut::<Messages<PlaySfx>>()
+                .drain()
+                .map(|sound| match sound.place {
+                    SfxPlace::World(at) => (at, sound.id),
+                    SfxPlace::Interface => panic!("a body sounds where it stands"),
+                }),
+        );
+    }
+    let sfx = |name: &str| {
+        content
+            .by_path::<SfxDef>(&path("sfx", name))
+            .unwrap_or_else(|| panic!("the {name} sound"))
+    };
+    let footstep = area::load(&content, field)
+        .footstep_at(walker)
+        .copied()
+        .expect("the field's ground has a footstep");
+    let of = |at: Pos<Meters>| -> Vec<SfxId> {
+        heard
+            .iter()
+            .filter(|(from, _)| *from == at)
+            .map(|(_, id)| *id)
+            .collect()
+    };
+    assert!(
+        of(walker).len() >= 2 && of(walker).iter().all(|id| *id == footstep),
+        "a walker's feet come down once a loop, each sounding the ground under it: {heard:?}"
+    );
+    assert_eq!(
+        of(striker),
+        vec![sfx("whoosh")],
+        "a strike sounds its apex once, and puts no foot down"
     );
 }
 

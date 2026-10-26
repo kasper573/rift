@@ -302,7 +302,8 @@ pub(super) fn turntable(
     turntable
 }
 
-/// Stands the model at `key` in the middle of `turntable`, in `clip` held at `held`.
+/// Stands the model at `key` in the middle of `turntable`, in `clip` held at `held`, sounding the
+/// cues it `crossed`.
 pub(super) fn stand(
     turntable: stage::Turntable,
     editor: &mut Editor,
@@ -310,8 +311,15 @@ pub(super) fn stand(
     row: &ModelDef,
     clip: Option<RigClip>,
     held: Option<Seconds>,
+    crossed: Vec<Cue>,
 ) {
-    let cast = vec![stage::standing(row.model.path(), clip, held, Vec::new())];
+    let cast = vec![stage::standing(
+        row.model.path(),
+        clip,
+        held,
+        crossed,
+        Vec::new(),
+    )];
     turntable.stand(editor, ui, cast);
 }
 

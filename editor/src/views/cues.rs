@@ -3,6 +3,7 @@
 //! their cues on it.
 
 use engine::core::time::Millis;
+use engine::systems::actor::model::crossed_cues;
 use engine::systems::actor::skeleton::Cue;
 use ui::egui::{self, Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use ui::glyph::Mark;
@@ -18,17 +19,42 @@ pub const STRIP_HEIGHT: f32 = 18.0;
 const TIMELINE_HEIGHT: f32 = 64.0;
 
 /// Where a clip is being looked at: the playhead, whether it plays on, and a cue being dragged.
-#[derive(Default)]
+/// A clip plays from the moment it is shown, as a body plays it, until the designer stops it.
 pub struct Scrub {
     pub playhead: Millis,
     pub playing: bool,
     pub drag: Option<CueDrag>,
+    /// Where the playhead went from and to this frame as it played or stepped on, counted on past
+    /// the clip's end when it looped.
+    passed: Option<(Millis, Millis)>,
+}
+
+impl Default for Scrub {
+    fn default() -> Scrub {
+        Scrub {
+            playhead: Millis(0.0),
+            playing: true,
+            drag: None,
+            passed: None,
+        }
+    }
 }
 
 impl Scrub {
-    /// Back to the start of a clip, still.
+    /// Back to the start of a clip, playing.
     pub fn restart(&mut self) {
         *self = Scrub::default();
+    }
+
+    /// The `cues` of a clip `length` long the playhead crossed this frame, as the game crosses a
+    /// body's.
+    pub fn crossed(&self, cues: &[Cue], length: Millis) -> Vec<Cue> {
+        self.passed.map_or_else(Vec::new, |(from, to)| {
+            crossed_cues(cues, length, false, Some(from), to)
+                .into_iter()
+                .cloned()
+                .collect()
+        })
     }
 }
 
@@ -39,7 +65,7 @@ pub struct CueDrag {
 }
 
 /// Keys every timeline answers, and what the status bar says of them.
-pub const KEYS: &str = "Space plays · , . step 10 ms · A apex here · S step here · drag a cue · right-click removes it";
+pub const KEYS: &str = "Space pauses or plays · , . step 10 ms · A apex here · S step here · drag a cue · right-click removes it";
 
 /// Moves the playhead on while the clip plays, and as the keys ask.
 pub fn advance(ui: &mut Ui, scrub: &mut Scrub, length: Option<Millis>) {
@@ -56,8 +82,8 @@ pub fn advance(ui: &mut Ui, scrub: &mut Scrub, length: Option<Millis>) {
             )
         })
     };
+    scrub.passed = None;
     let Some(length) = length else {
-        scrub.playing = false;
         return;
     };
     if play {
@@ -69,10 +95,15 @@ pub fn advance(ui: &mut Ui, scrub: &mut Scrub, length: Option<Millis>) {
     }
     if on {
         scrub.playing = false;
-        scrub.playhead = Millis((scrub.playhead.0 + STEP.0).min(length.0));
+        let from = scrub.playhead;
+        scrub.playhead = Millis((from.0 + STEP.0).min(length.0));
+        scrub.passed = Some((from, scrub.playhead));
     }
     if scrub.playing {
-        scrub.playhead = Millis((scrub.playhead.0 + dt * 1000.0) % length.0.max(1.0));
+        let from = scrub.playhead;
+        let to = Millis(from.0 + dt * 1000.0);
+        scrub.passed = Some((from, to));
+        scrub.playhead = Millis(to.0 % length.0.max(1.0));
         ui.ctx().request_repaint();
     }
     scrub.playhead = Millis(scrub.playhead.0.min(length.0));

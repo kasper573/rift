@@ -12,7 +12,7 @@ use engine::core::geometry::Radians;
 use engine::core::math::Pos;
 use engine::core::render::camera::world_point;
 use engine::core::render::world::layers::Gait;
-use engine::core::time::{Hertz, Millis, Seconds};
+use engine::core::time::{Hertz, Seconds};
 use engine::core::units::Meters;
 use engine::systems::actor::skeleton::{BuiltSkeleton, GroupName, JointName, Layer, Leg};
 use engine::systems::actor::{Action, ModelDef, Motion, Pose};
@@ -32,13 +32,12 @@ const CALM: [Action; 4] = [Action::Idle, Action::Walk, Action::Run, Action::Talk
 const LOOP: f32 = 1.2;
 
 /// What the layers page keeps: the chosen layer, the joint new entries start from, the action the
-/// stage shows, how far into its clip the last frame was, and the stage framing the whole loop.
+/// stage shows, and the stage framing the whole loop.
 pub struct LayersState {
     pub layer: usize,
     pub joint: Option<String>,
     pub action: Option<Action>,
     pub new_group: String,
-    pub last: Option<Millis>,
     pub stage: stage::StageState,
 }
 
@@ -49,7 +48,6 @@ impl Default for LayersState {
             joint: None,
             action: None,
             new_group: String::new(),
-            last: None,
             stage: stage::StageState::framing(LOOP * 3.0, false),
         }
     }
@@ -567,7 +565,6 @@ fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, built: &
     view.reduce_motion = calm;
     if picked != action {
         view.layers.action = Some(picked);
-        view.layers.last = None;
         view.scrub.restart();
     }
     let Some((model_path, model)) = super::wearer(editor, key, content, id) else {
@@ -583,19 +580,12 @@ fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, built: &
         return;
     };
     let length = resolved.length.millis();
-    let steps: Vec<Millis> = resolved
-        .cues
-        .iter()
-        .filter(|cue| cue.step)
-        .map(|cue| cue.at)
-        .collect();
     let scrub = &mut editor.views.skeleton.view_mut(key).scrub;
     scrub.playing = true;
     crate::views::cues::advance(ui, scrub, Some(length));
     let playhead = scrub.playhead;
-    let last = editor.views.skeleton.view(key).layers.last;
-    let stepped = last.is_some_and(|last| crossed(&steps, last, playhead));
-    editor.views.skeleton.view_mut(key).layers.last = Some(playhead);
+    let crossed = scrub.crossed(resolved.cues, length);
+    let stepped = crossed.iter().any(|cue| cue.step);
     let time = ui.input(|i| i.time) as f32;
     let speed = match picked {
         Action::Walk => 1.3,
@@ -622,6 +612,7 @@ fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, built: &
         model,
         model.rig_clip(source),
         playhead,
+        crossed,
         placed,
         layered,
     );
@@ -634,18 +625,6 @@ fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, built: &
             "The body walks a loop on flat ground with its layers running as the client runs them.",
         );
     }
-}
-
-/// Whether a step at one of `steps` passed between the playhead at `from` and at `to`, the clip
-/// having looped if `to` is earlier.
-fn crossed(steps: &[Millis], from: Millis, to: Millis) -> bool {
-    steps.iter().any(|step| {
-        if to.0 >= from.0 {
-            step.0 > from.0 && step.0 <= to.0
-        } else {
-            step.0 > from.0 || step.0 <= to.0
-        }
-    })
 }
 
 /// Where a body stands `turned` radians round the loop, facing along it when it walks.

@@ -38,6 +38,12 @@ impl Motion {
     pub fn strikes(&self) -> bool {
         self.action() == Action::Attack
     }
+
+    /// Whether the motion's clip plays through once and holds its last moment, rather than looping:
+    /// a hit lands once, a body falls once.
+    pub fn once(&self) -> bool {
+        matches!(self.action(), Action::Attack | Action::Dead)
+    }
 }
 
 /// A motion an actor was told to play, with the moments its clip lands and ends it. Replicated, so

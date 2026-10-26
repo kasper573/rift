@@ -60,7 +60,9 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
         key,
         Vec2::new(ui.available_width(), (height * 0.42).max(120.0)),
     ) {
-        let playhead = editor.views.model.view(key).scrub.playhead;
+        let scrub = &editor.views.model.view(key).scrub;
+        let playhead = scrub.playhead;
+        let crossed = scrub.crossed(&own.cues, own.length);
         let clip = RigClip {
             file: row.model.path(),
             index: own.index,
@@ -72,6 +74,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
             row,
             Some(clip),
             Some(playhead.seconds()),
+            crossed,
         );
     }
     ui.add_space(6.0);

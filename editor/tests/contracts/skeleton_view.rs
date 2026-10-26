@@ -308,6 +308,32 @@ fn the_skeleton_view_marks_its_rig_and_edits_its_sets_from_the_pointer_and_keys(
     }
 }
 
+#[test]
+fn a_clip_on_the_skeleton_view_plays_without_being_asked() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut editor = support::open(game(), &scratch);
+    let key = path("skeleton", BODY);
+    let mut frames = Frames::new(egui::vec2(1600.0, 1000.0));
+    let mut draw =
+        |editor: &mut Editor| frames.run(Vec::new(), |ui| skeleton::show(editor, ui, &key));
+    draw(&mut editor);
+    editor.views.skeleton.view_mut(&key).page = SkeletonPage::Clips;
+    let shown: Vec<String> = (0..4)
+        .map(|_| {
+            let drawn = draw(&mut editor);
+            drawn
+                .0
+                .iter()
+                .find_map(|(text, _)| text.split_once(" ms · ").map(|(ms, _)| ms.to_owned()))
+                .unwrap_or_else(|| panic!("the timeline tells its playhead: {drawn:?}"))
+        })
+        .collect();
+    assert!(
+        shown.windows(2).all(|pair| pair[0] != pair[1]),
+        "the playhead moves on frame after frame: {shown:?}"
+    );
+}
+
 fn whole(clip: &str) -> ClipRef {
     ClipRef::Whole(ClipName::new(clip))
 }

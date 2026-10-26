@@ -13,6 +13,7 @@ use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use bevy_egui::{EguiTextureHandle, EguiUserTextures};
+use engine::core::audio::playback::{self, PlaySfx, SfxPlace};
 use engine::core::content::Content;
 use engine::core::ground::{Heightfield, Paint};
 use engine::core::render::camera::{self, CameraPreferences};
@@ -24,6 +25,8 @@ use engine::core::time::Seconds;
 use engine::systems::actor::Action;
 use engine::systems::actor::layering::{self, Layering};
 use engine::systems::actor::model::{ActorModel, ModelId};
+use engine::systems::actor::render;
+use engine::systems::actor::skeleton::Cue;
 use engine::systems::area::scenery::{self, Scenery};
 use engine::systems::area::{Area, Picture};
 use ui::egui;
@@ -72,6 +75,9 @@ pub struct Standing {
     pub clip: Option<RigClip>,
     pub transform: Transform,
     pub held: Option<Seconds>,
+    /// The cues of its clip it crossed since the last frame, which it sounds where it stands as a
+    /// body in the game does.
+    pub crossed: Vec<Cue>,
     pub props: Vec<StandingProp>,
     /// The layers of its skeleton the rig runs over its clip, when a stage asks for them.
     pub layers: Option<StageLayers>,
@@ -307,6 +313,7 @@ impl Viewport {
         self.rendered = request.camera;
         self.shape(world, &request);
         self.haunt(world, request.ghost);
+        sound(world, &area, &request.cast);
         self.people(world, request.cast);
     }
 
@@ -457,6 +464,26 @@ impl Viewport {
         world
             .resource_mut::<EguiUserTextures>()
             .remove_image(&self.image);
+    }
+}
+
+/// Sounds the cues each of `cast` crossed, on the ground of `area` under it, as the game sounds a
+/// body's. A view's stage is the one thing heard, so its sounds play centred rather than from where
+/// the rig stands.
+fn sound(world: &mut World, area: &Area, cast: &[Standing]) {
+    for standing in cast {
+        let crossed: Vec<&Cue> = standing.crossed.iter().collect();
+        let at = camera::ground_pos(standing.transform.translation);
+        let (sounds, _) = render::cue_sounds(&crossed, Some(area), at);
+        for sound in sounds {
+            playback::play(
+                world,
+                PlaySfx {
+                    place: SfxPlace::Interface,
+                    ..sound
+                },
+            );
+        }
     }
 }
 

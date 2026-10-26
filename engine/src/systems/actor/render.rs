@@ -15,7 +15,7 @@ use bevy::world_serialization::WorldInstanceReady;
 
 use super::layering::{self, Layering};
 use super::model::{ClipSource, Models};
-use super::skeleton::{GroupName, Hand, LocalOffset, LocalTurn, SkeletonId};
+use super::skeleton::{Cue, GroupName, Hand, LocalOffset, LocalTurn, SkeletonId};
 use super::stance::{self, HandIndex, PropHand};
 use super::wearing::{self, Wearing};
 use super::{Action, Actor, ActorModel, ModelId, Motion, Playing, Pose};
@@ -25,14 +25,16 @@ use crate::core::content::gltf::NodeTree;
 use crate::core::content::media::GltfInfos;
 use crate::core::geometry::Radians;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin};
+use crate::core::math::Pos;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::layers::Layered;
 use crate::core::render::world::mannequin::animate_rig;
 use crate::core::render::{Animator, Previous, facing_rotation, ground_height, world_point};
 use crate::core::time::{Seconds, UnixMillis};
+use crate::core::units::Meters;
 use crate::core::vfx::cover::Treads;
 use crate::core::vfx::render::SiteExtent;
-use crate::systems::area;
+use crate::systems::area::{self, Area};
 use crate::systems::item::{Grip, ItemId, Wear};
 use crate::systems::movement::RenderPosition;
 use crate::systems::screen::ClientScreen;
@@ -432,8 +434,7 @@ pub fn pose(world: &mut World) {
                 .map(|playing| playing.started),
         };
         let resolved = model.resolve(stance, &motion, actor.pose);
-        let once = matches!(shown.action, Action::Attack | Action::Dead);
-        let repeat = if once {
+        let repeat = if motion.once() {
             RepeatAnimation::Never
         } else {
             RepeatAnimation::Forever
@@ -450,25 +451,15 @@ pub fn pose(world: &mut World) {
                 Previous::Continued(played) => Some(played),
                 Previous::Unseen | Previous::Restarted => None,
             };
-            let (sfx, stepped) = ActorModel::cues(
+            let crossed = ActorModel::cues(
                 &resolved,
                 &motion,
                 prev,
                 playhead.elapsed,
                 actor.attack_rate,
             );
-            sounds.extend(sfx.into_iter().map(|id| PlaySfx {
-                id: *id,
-                place: SfxPlace::World(at.0),
-            }));
-            if stepped
-                && let Some(step) = area::of(world, entity).and_then(|area| area.footstep_at(at.0))
-            {
-                sounds.push(PlaySfx {
-                    id: *step,
-                    place: SfxPlace::World(at.0),
-                });
-            }
+            let (sfx, stepped) = cue_sounds(&crossed, area::of(world, entity), at.0);
+            sounds.extend(sfx);
             stepped
         };
         if let Ok((mut layered, layering)) = world
@@ -574,7 +565,10 @@ pub fn pose(world: &mut World) {
                     }
                 }
             }
-            for track in tracks.iter().filter(|track| track.weight <= 0.0) {
+            for track in tracks
+                .iter()
+                .filter(|track| track.weight <= 0.0 && track.target <= 0.0)
+            {
                 animation.stop(track.node);
             }
             tracks.retain(|track| track.weight > 0.0 || track.target > 0.0);
@@ -589,6 +583,30 @@ pub fn pose(world: &mut World) {
     world.resource_scope(|world, mut animator: Mut<Animator>| {
         animator.retain(|entity| world.get_entity(entity).is_ok());
     });
+}
+
+/// What a body standing at `at` on `ground` sounds for the cues of its clip it just `crossed`: each
+/// cue's own sound, and the footstep of the ground under it when one puts a foot down, which it
+/// also says.
+pub fn cue_sounds(
+    crossed: &[&Cue],
+    ground: Option<&Area>,
+    at: Pos<Meters>,
+) -> (Vec<PlaySfx>, bool) {
+    let stepped = crossed.iter().any(|cue| cue.step);
+    let footstep = ground
+        .filter(|_| stepped)
+        .and_then(|ground| ground.footstep_at(at));
+    let sounds = crossed
+        .iter()
+        .filter_map(|cue| cue.sound.as_ref())
+        .chain(footstep)
+        .map(|id| PlaySfx {
+            id: *id,
+            place: SfxPlace::World(at),
+        })
+        .collect();
+    (sounds, stepped)
 }
 
 /// Hangs from each hand of a dressed rig the prop of the item it shows, moved by the hand's and the

@@ -27,7 +27,7 @@ use engine::systems::actor::skeleton::{
     SkeletonDef, SkeletonId,
 };
 use engine::systems::actor::stance::HandIndex;
-use engine::systems::actor::{ModelDef, wearing};
+use engine::systems::actor::{Action, ModelDef, Motion, Pose, wearing};
 use engine::systems::item::{Grip, ItemDef, Wear};
 use serde::Deserialize;
 use ui::egui::{self, Rect, Ui, Vec2};
@@ -339,6 +339,28 @@ fn stage_pickers(
     }
 }
 
+/// The clip a page that always plays stands the rig in: the one picked, else what the skeleton
+/// plays at idle, else its first.
+fn played_clip(editor: &mut Editor, key: &str, built: &BuiltSkeleton) -> Option<ClipName> {
+    let idle = built
+        .def
+        .named(None, &Motion::Action(Action::Idle), Pose::Idle)
+        .0
+        .clip();
+    let view = editor.views.skeleton.view_mut(key);
+    let clip = view
+        .clip
+        .clone()
+        .filter(|clip| built.clips.contains_key(clip))
+        .or_else(|| built.clips.contains_key(idle).then(|| idle.clone()))
+        .or_else(|| built.clips.keys().next().cloned());
+    if view.clip != clip {
+        view.clip = clip.clone();
+        view.scrub.restart();
+    }
+    clip
+}
+
 /// The item the stage hangs from the model's hands.
 fn item_picker(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, label: &str) {
     let items = hand_items(content);
@@ -376,11 +398,8 @@ fn stage_rig(
 ) -> Option<(Rect, AreaCanvas)> {
     let id = content.by_path::<SkeletonDef>(key)?;
     let (_, model) = wearer(editor, key, content, id)?;
-    let clip = editor
-        .views
-        .skeleton
-        .view(key)
-        .clip
+    let chosen = editor.views.skeleton.view(key).clip.clone();
+    let clip = chosen
         .as_ref()
         .and_then(|clip| Some((rig_clip(built, clip)?, built.clips[clip].length.millis())));
     super::cues::advance(
@@ -388,7 +407,15 @@ fn stage_rig(
         &mut editor.views.skeleton.view_mut(key).scrub,
         clip.as_ref().map(|(_, length)| *length),
     );
-    let playhead = editor.views.skeleton.view(key).scrub.playhead;
+    let scrub = &editor.views.skeleton.view(key).scrub;
+    let playhead = scrub.playhead;
+    let crossed = match (&chosen, &clip) {
+        (Some(chosen), Some((_, length))) => scrub.crossed(
+            built.def.cues.get(chosen).map_or(&[], Vec::as_slice),
+            *length,
+        ),
+        _ => Vec::new(),
+    };
     let turntable = turntable(editor, ui, key, size)?;
     let drawn = (turntable.rect, turntable.canvas.clone());
     let held = clip.as_ref().map(|_| playhead.seconds());
@@ -396,14 +423,15 @@ fn stage_rig(
         model.model().path(),
         clip.map(|(clip, _)| clip),
         held,
+        crossed,
         props,
     );
     turntable.stand(editor, ui, vec![standing]);
     Some(drawn)
 }
 
-/// The view's stage over `size` with `model` placed by `placed`, playing `clip` at `playhead` with
-/// its skeleton's layers running as `layered` tells them.
+/// The view's stage over `size` with `model` placed by `placed`, playing `clip` at `playhead` and
+/// sounding the cues it `crossed`, with its skeleton's layers running as `layered` tells them.
 #[allow(clippy::too_many_arguments)]
 fn stage_walking(
     editor: &mut Editor,
@@ -413,6 +441,7 @@ fn stage_walking(
     model: &ActorModel,
     clip: RigClip,
     playhead: Millis,
+    crossed: Vec<Cue>,
     placed: Transform,
     layered: StageLayers,
 ) {
@@ -432,6 +461,7 @@ fn stage_walking(
         model.model().path(),
         Some(clip),
         Some(playhead.seconds()),
+        crossed,
         Vec::new(),
     );
     standing.transform = placed;

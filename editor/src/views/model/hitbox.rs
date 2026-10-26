@@ -141,7 +141,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
         egui::FontId::monospace(11.0),
         theme::TEXT,
     );
-    super::stand(turntable, editor, ui, row, idle, None);
+    super::stand(turntable, editor, ui, row, idle, None, Vec::new());
     if let Some(hitbox) = landed {
         super::set_hitbox(editor, key, hitbox);
     }

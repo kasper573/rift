@@ -61,9 +61,21 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
         key,
         Vec2::new(ui.available_width(), stage_height),
     ) {
-        let playhead = editor.views.model.view(key).scrub.playhead;
+        let scrub = &editor.views.model.view(key).scrub;
+        let playhead = scrub.playhead;
+        let crossed = scene.playing.as_ref().map_or_else(Vec::new, |playing| {
+            scrub.crossed(&playing.cues, playing.length)
+        });
         let clip = scene.playing.as_ref().map(|playing| playing.clip.clone());
-        super::stand(turntable, editor, ui, row, clip, Some(playhead.seconds()));
+        super::stand(
+            turntable,
+            editor,
+            ui,
+            row,
+            clip,
+            Some(playhead.seconds()),
+            crossed,
+        );
     }
     ui.add_space(6.0);
     if let Some(playing) = &scene.playing {

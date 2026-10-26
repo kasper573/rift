@@ -730,6 +730,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing>
                 ..Transform::default()
             },
             held: None,
+            crossed: Vec::new(),
             props: super::stage::props(content, model, &hands),
             layers: None,
         })

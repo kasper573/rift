@@ -281,7 +281,9 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
         &mut editor.views.item.view_mut(key).wield.scrub,
         clip.as_ref().map(|(_, length)| *length),
     );
-    let playhead = editor.views.item.view_mut(key).wield.scrub.playhead;
+    let scrub = &editor.views.item.view_mut(key).wield.scrub;
+    let playhead = scrub.playhead;
+    let crossed = scrub.crossed(resolved.cues, resolved.length.millis());
     let props = content
         .by_path::<ItemDef>(key)
         .map(|item| {
@@ -302,6 +304,7 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
             model.model().path(),
             clip.map(|(clip, _)| clip),
             held,
+            crossed,
             props,
         );
         turntable.stand(editor, ui, vec![standing]);

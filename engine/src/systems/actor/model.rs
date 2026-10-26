@@ -7,15 +7,14 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
 
+use super::Pose;
 use super::playing::Motion;
 use super::skeleton::{
     self, BuiltSkeleton, ClipName, Cue, DeclaredMoves, GroupName, Hand, LibraryClip, SkeletonDef,
     SkeletonId,
 };
 use super::stance::StanceId;
-use super::{Action, Pose};
 use crate::core::assets::{FileSize, ImageRef, ModelRef};
-use crate::core::audio::playback::SfxId;
 use crate::core::content::gltf::{self, GltfInfo, NodeTree};
 use crate::core::content::media::{GltfInfos, VisiblePixelColumns, visible_columns};
 use crate::core::content::{
@@ -930,28 +929,24 @@ impl ActorModel {
         }
     }
 
-    /// The cues of `resolved`, playing `motion`, crossed between the previous sample and `now`: the
-    /// sounds to play and whether a foot came down. `prev` is `None` when the motion just started,
-    /// in which case every cue up to `now` fires.
+    /// The cues of `resolved`, playing `motion`, crossed between the previous sample and `now`.
+    /// `prev` is `None` when the motion just started, in which case every cue up to `now` is.
     pub fn cues<'a>(
         resolved: &Resolved<'a>,
         motion: &Motion,
         prev: Option<Seconds>,
         now: Seconds,
         attack_speed: PlaybackRate,
-    ) -> (Vec<&'a SfxId>, bool) {
+    ) -> Vec<&'a Cue> {
         let rate = rate(motion, attack_speed);
         let authored = |t: Seconds| t.millis() * rate;
-        let total = resolved.length.millis();
-        let once = *motion == Motion::Action(Action::Dead);
-        let (mut sfx, mut stepped) = (Vec::new(), false);
-        for cue in resolved.cues {
-            if crossed(once, total, cue.at, prev.map(authored), authored(now)) {
-                sfx.extend(cue.sound.as_ref());
-                stepped |= cue.step;
-            }
-        }
-        (sfx, stepped)
+        crossed_cues(
+            resolved.cues,
+            resolved.length.millis(),
+            motion.once(),
+            prev.map(authored),
+            authored(now),
+        )
     }
 }
 
@@ -968,6 +963,22 @@ pub fn rate(motion: &Motion, attack_speed: PlaybackRate) -> PlaybackRate {
     } else {
         PlaybackRate(1.0)
     }
+}
+
+/// The `cues` of a clip `length` long that its playhead crossed going from `prev` to `now`, both
+/// counted from when it began to play, so a looping clip crosses each cue once a loop and one that
+/// plays `once` only the first time. `prev` is `None` when the clip just began: every cue up to
+/// `now` is crossed.
+pub fn crossed_cues(
+    cues: &[Cue],
+    length: Millis,
+    once: bool,
+    prev: Option<Millis>,
+    now: Millis,
+) -> Vec<&Cue> {
+    cues.iter()
+        .filter(|cue| crossed(once, length, cue.at, prev, now))
+        .collect()
 }
 
 fn crossed(once: bool, total: Millis, at: Millis, prev: Option<Millis>, now: Millis) -> bool {

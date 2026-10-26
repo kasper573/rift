@@ -29,26 +29,7 @@ pub fn show(
         );
         return;
     }
-    let chosen = editor
-        .views
-        .skeleton
-        .view(key)
-        .clip
-        .clone()
-        .filter(|clip| built.clips.contains_key(clip))
-        .unwrap_or_else(|| {
-            built
-                .clips
-                .keys()
-                .next()
-                .cloned()
-                .expect("a library carries a clip")
-        });
-    if editor.views.skeleton.view(key).clip.as_ref() != Some(&chosen) {
-        let view = editor.views.skeleton.view_mut(key);
-        view.clip = Some(chosen.clone());
-        view.scrub.restart();
-    }
+    let chosen = super::played_clip(editor, key, built).expect("a library carries a clip");
     let width = ui.available_width();
     let list_width = (width * 0.34).clamp(220.0, 360.0);
     let mut pick: Option<ClipName> = None;

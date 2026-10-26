@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 
 use engine::systems::actor::model::ActorModel;
 use engine::systems::actor::render;
+use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::item::{Grip, ItemId, Wear};
 
@@ -151,11 +152,13 @@ impl Turntable {
     }
 }
 
-/// A rig standing in the middle of the stage, in `clip` held at `held`, holding `props`.
+/// A rig standing in the middle of the stage, in `clip` held at `held`, sounding the cues it
+/// `crossed` this frame, holding `props`.
 pub fn standing(
     model: String,
     clip: Option<engine::core::render::world::mannequin::RigClip>,
     held: Option<engine::core::time::Seconds>,
+    crossed: Vec<Cue>,
     props: Vec<StandingProp>,
 ) -> Standing {
     Standing {
@@ -165,6 +168,7 @@ pub fn standing(
             engine::core::render::camera::world_point(center(), Meters(0.0)),
         ),
         held,
+        crossed,
         props,
         layers: None,
     }
