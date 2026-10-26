@@ -230,6 +230,15 @@ fn a_players_body_shows_its_equipped_hands_and_never_its_head() {
         equipment::in_slot(&sim.world, player, EquipmentSlot::Head),
         Some(sim.id::<ItemDef>("helm"))
     );
+
+    let (sim, player) = armed(armoury().edit("player", "hero", |hero| {
+        hero["equipped"] = json!([path("item", "sword"), path("item", "helm")]);
+    }));
+    assert_eq!(
+        shown(&sim, player),
+        BTreeMap::from([(HandIndex::MAIN, sim.id::<ItemDef>("sword"))]),
+        "a player who joins equipped shows it from the start"
+    );
 }
 
 /// A field with a hero on a body of the test rig whose library carries a slash, a thrust and a

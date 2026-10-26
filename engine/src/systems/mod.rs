@@ -140,6 +140,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     MessageRegistry::register_message::<rewards::KillCredited>(world);
     world.add_observer(player::greet);
     world.add_observer(player::client_left);
+    world.add_observer(equipment::reflect);
 }
 
 /// The content and the scripts and parties built from it, as every world playing it reads them.

@@ -129,10 +129,7 @@ pub fn equip(world: &mut World, player: Entity, inv_slot: usize) -> Result<(), S
         .ok_or_else(|| "Has no bag".to_owned())?
         .exchange(&content, &[ItemStack::new(item, 1)], &returned)
         .map_err(|refusal| refusal.describe(&content))?;
-    if let Some(mut equipment) = world.get_mut::<Equipment>(player) {
-        equipment.slots = slots;
-    }
-    reflect(world, player);
+    world.entity_mut(player).insert(Equipment { slots });
     Ok(())
 }
 
@@ -219,12 +216,13 @@ pub fn unequip_slot(world: &mut World, player: Entity, slot: EquipmentSlot) -> R
     inventory
         .exchange(&content, &[], &[ItemStack::new(item, 1)])
         .map_err(|refusal| refusal.describe(&content))?;
-    if let Some(mut equipment) = world.get_mut::<Equipment>(player) {
-        equipment.slots.retain(|worn, there| {
+    if let Some(equipment) = world.get::<Equipment>(player) {
+        let mut slots = equipment.slots.clone();
+        slots.retain(|worn, there| {
             *worn != slot && !(matches!(worn, EquipmentSlot::Hand(_)) && *there == item)
         });
+        world.entity_mut(player).insert(Equipment { slots });
     }
-    reflect(world, player);
     Ok(())
 }
 
@@ -243,16 +241,21 @@ pub fn unequip_item(world: &mut World, player: Entity, item: ItemId) -> Result<(
     unequip_slot(world, player, slot)
 }
 
-/// Keeps what a player's body shows equal to its equipped hands.
-pub fn reflect(world: &mut World, player: Entity) {
-    let Some(equipment) = world.get::<Equipment>(player) else {
+/// Keeps what a player's body shows equal to its equipped hands, from the moment it is spawned
+/// equipped to every change of what it wears, each of which puts its equipment anew.
+pub fn reflect(
+    insert: On<Insert<Equipment>>,
+    players: Query<(&Equipment, Option<&Wearing>)>,
+    mut commands: Commands,
+) {
+    let Ok((equipment, wearing)) = players.get(insert.entity) else {
         return;
     };
     let shown = Wearing {
         hands: hands(equipment),
     };
-    if world.get::<Wearing>(player) != Some(&shown) {
-        world.entity_mut(player).insert(shown);
+    if wearing != Some(&shown) {
+        commands.entity(insert.entity).insert(shown);
     }
 }
 
