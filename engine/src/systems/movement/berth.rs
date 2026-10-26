@@ -3,9 +3,9 @@ use std::cmp::Ordering;
 use bevy_ecs::prelude::*;
 
 use super::spots::{SPACING, Spots, crowding, overlaps, spot_of};
-use super::{MoveTarget, NavMesh, goto, mesh_in, moving, position, relocate};
+use super::{MoveTarget, NavMesh, goto, halt, mesh_in, moving, position, relocate, speed_of};
 use crate::core::math::{Offset, Pos};
-use crate::core::units::{MeterPos, Meters};
+use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::area::{AreaId, AreaTag};
 
 /// What an approach ends beside.
@@ -70,11 +70,16 @@ impl Aim {
 /// A berth is the spot in reach whose body would overlap the fewest others, the nearest of those,
 /// then the southernmost and westernmost, never one overlapping the actor aimed at while another is
 /// in reach; while that actor walks, nearness counts before emptiness. A berth is kept while it stays
-/// in reach, so an approach never wavers.
+/// in reach, so an approach never wavers. An actor that can't take a step, held fast or never moving
+/// at all, waits where it stands for what it aims at to come in reach.
 pub fn approach(world: &mut World, entity: Entity, aim: Aim, reach: Meters) -> Approach {
     let (Some(at), Some(sight)) = (position(world, entity), aim.sight(world)) else {
         return Approach::Unreachable;
     };
+    let rooted = speed_of(world, entity) <= MetersPerSec(Meters(0.0));
+    if rooted && moving(world, entity) {
+        halt(world, entity);
+    }
     if !moving(world, entity) && sight.reaches(at, reach) {
         let met = sight
             .footing
@@ -84,6 +89,9 @@ pub fn approach(world: &mut World, entity: Entity, aim: Aim, reach: Meters) -> A
         } else {
             Approach::Approaching
         };
+    }
+    if rooted {
+        return Approach::Approaching;
     }
     let kept = world
         .get::<MoveTarget>(entity)

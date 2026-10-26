@@ -681,7 +681,9 @@ pub fn hung(
         .collect()
 }
 
-/// Whether `item`'s prop hangs from `hand` among the hands that show it: the first of them, or the
+/// Whether `item`'s prop hangs from `hand` among the hands that show it: an item spans as many
+/// hands in a row as its stance takes, so the same item in hands beside each other is one item
+/// held in both, or two of it held one apiece; it hangs from the first hand of its span, or the
 /// last when its stance holds it there.
 fn hangs_from(
     content: &Content,
@@ -689,14 +691,20 @@ fn hangs_from(
     hand: HandIndex,
     item: ItemId,
 ) -> bool {
-    let last = stance::of_item(content, item)
-        .is_some_and(|stance| stance.get(content).prop == PropHand::Last);
-    let beside = if last {
-        hand.0.checked_add(1)
-    } else {
-        hand.0.checked_sub(1)
+    let Some(stance) = stance::of_item(content, item) else {
+        return true;
     };
-    beside.and_then(|beside| shown.get(&HandIndex(beside))) != Some(&item)
+    let stance = stance.get(content);
+    let span = stance.hands.0.max(1);
+    let mut before = 0;
+    while hand.0 > before && shown.get(&HandIndex(hand.0 - before - 1)) == Some(&item) {
+        before += 1;
+    }
+    let at = before % span;
+    match stance.prop {
+        PropHand::First => at == 0,
+        PropHand::Last => at == span - 1,
+    }
 }
 
 /// Where a prop held by `grip` sits under the joint of `hand` on `model`: moved and turned as the

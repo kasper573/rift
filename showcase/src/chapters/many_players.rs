@@ -1,5 +1,6 @@
 use driver::{Player, holding, marked, nearest_npc, npc_is, told_by, townsperson};
 use engine::core::math::Offset;
+use engine::systems::actor::Action;
 use engine::systems::attention::AttentionMark;
 use engine::systems::input::map::InputAction;
 
@@ -54,6 +55,12 @@ fn at_the_stall(me: &mut Star, other: &mut Player, name: &str) {
     other.cross("front-door");
     stand_below(other, "pell", 1.5);
     me.talk_to("pell");
+    me.caption(
+        "He talks from his seat: his talk keeps to his upper body, over the pose he sits in",
+    );
+    me.wait_until("Pell talking seated", |snapshot| {
+        townsperson(snapshot, "pell").is_some_and(|pell| pell.action == Action::Talk)
+    });
     me.read_to_choices();
     lose_at_dice(me);
     me.caption("Losing again? Call him out — he won't take it quietly");

@@ -204,8 +204,11 @@ pub fn erred(snapshot: &ProbeSnapshot, saying: &str) -> bool {
 pub fn clickable_point(snapshot: &ProbeSnapshot, ground: Pos<Meters>) -> Option<Pos<WindowPx>> {
     let point = snapshot.ground_point(ground)?.round();
     let window = Rect::from_size(snapshot.screen?);
-    (window.contains(point) && !snapshot.covered.iter().any(|cover| cover.contains(point)))
-        .then_some(point)
+    let under_interface = snapshot
+        .covered
+        .iter()
+        .any(|cover| cover.to_box2d().contains_inclusive(point));
+    (window.contains(point) && !under_interface).then_some(point)
 }
 
 /// Ground a click walks onto: in view, and clear of anyone or anything a click would use instead.
@@ -510,6 +513,14 @@ pub fn other_player_within(snapshot: &ProbeSnapshot, reach: f32) -> Option<Probe
     other_player(snapshot)
         .filter(|star| star.at.distance_to(me) <= reach)
         .cloned()
+}
+
+/// The player in view whose character is called `name`, for a scene with more than one other.
+pub fn player_named<'a>(snapshot: &'a ProbeSnapshot, name: &str) -> Option<&'a ProbeBody> {
+    snapshot
+        .actors
+        .iter()
+        .find(|actor| actor.player && actor.name == name)
 }
 
 /// Another player in view: the first one that is not me.

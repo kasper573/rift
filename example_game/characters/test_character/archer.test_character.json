@@ -10,6 +10,10 @@
     {
       "node": "quickstep",
       "rank": 1
+    },
+    {
+      "node": "volley",
+      "rank": 1
     }
   ],
   "hotbar": [
@@ -23,6 +27,12 @@
       "slot": 1,
       "entry": {
         "skill": "characters/class/quickstep.skill.json"
+      }
+    },
+    {
+      "slot": 2,
+      "entry": {
+        "skill": "characters/class/volley.skill.json"
       }
     }
   ],

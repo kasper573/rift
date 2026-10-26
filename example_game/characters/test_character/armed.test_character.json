@@ -7,6 +7,12 @@
     },
     {
       "item": "items-and-skills/item/rusty_sword.item.json"
+    },
+    {
+      "item": "items-and-skills/item/dagger.item.json"
+    },
+    {
+      "item": "items-and-skills/item/greatsword.item.json"
     }
   ],
   "start": "initial_spawn"

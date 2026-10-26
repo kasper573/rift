@@ -95,6 +95,7 @@ pub struct ProbeSnapshot {
     /// What the interface shows: text, icons, fields and sliders, less what is scrolled or clipped
     /// out of sight.
     pub ui: Vec<ProbeUiElement>,
+    /// Where the interface takes the pointer: each rect edges included, as egui hit-tests.
     pub covered: Vec<Rect<WindowPx>>,
     pub stage: Option<ProbeStage>,
     pub notifications: ProbeNotifications,

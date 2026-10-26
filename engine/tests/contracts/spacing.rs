@@ -9,6 +9,7 @@ use engine::systems::movement::{self, MoveRequest, MoveSeq, SPACING, moving, pos
 use engine::systems::npc::body::{self, Act, Priority};
 use engine::systems::npc::{self, Npc, NpcDef, Pack};
 use engine::systems::script::{self, Place};
+use engine::systems::stat::StatKind;
 use engine::systems::{actor, skill, stat};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
@@ -316,6 +317,25 @@ fn a_berth_whose_holder_is_gone_or_fallen_is_free_again() {
     }
 }
 
+#[test]
+fn a_fighter_rooted_in_place_strikes_whoever_steps_into_its_reach() {
+    let mut arena = Arena::new();
+    let player = arena.player();
+    let post = arena.post(arena.at(4.0, 0.0));
+    arena.attack(post, player);
+    arena.run(1.0);
+    let full = stat::effective(arena.world(), player, StatKind::Health);
+
+    arena.send(MoveRequest {
+        pos: arena.at(3.0, 0.0),
+        seq: MoveSeq(1),
+    });
+
+    assert!(arena.watch_until(5.0, |world| {
+        stat::effective(world, player, StatKind::Health) < full
+    }));
+}
+
 struct Arena {
     sim: Sim,
     area: AreaId,
@@ -363,6 +383,15 @@ impl Arena {
         let brute = npc::spawn(self.world(), def, at, area, pack);
         self.world().entity_mut(brute).insert(Attitude::Hostile);
         brute
+    }
+
+    /// A fighter that never takes a step.
+    fn post(&mut self, at: Pos<Meters>) -> Entity {
+        let area = self.area;
+        let def = self.sim.id::<NpcDef>("post");
+        let post = npc::spawn(self.world(), def, at, area, FIGHTERS);
+        self.world().entity_mut(post).insert(Attitude::Hostile);
+        post
     }
 
     fn attack(&mut self, attacker: Entity, target: Entity) {
@@ -439,6 +468,11 @@ fn field() -> Sim {
         .npc("brute", 100_000.0, json!([]))
         .edit("npc", "brute", |brute| {
             brute["basic_attack"] = json!(path("skill", "strike"))
+        })
+        .npc("post", 100_000.0, json!([]))
+        .edit("npc", "post", |post| {
+            post["basic_attack"] = json!(path("skill", "strike"));
+            post["stats"]["movement_speed"] = json!(0.0);
         })
         .script(
             "wanderer_roam",

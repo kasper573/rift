@@ -123,8 +123,9 @@ impl Star {
     ) {
         let from = SystemTime::now();
         during(self, &mut other);
+        let until = SystemTime::now();
         if let Some(footage) = other.stop() {
-            self.film.borrow_mut().inset(footage, label, from);
+            self.film.borrow_mut().inset(footage, label, from..until);
         }
     }
 }

@@ -77,7 +77,7 @@ fn play(shoot: &mut Shoot) {
     me.hold();
     me.act(InputAction::ToggleInventory);
 
-    me.caption("Pick a fight, then run for town");
+    me.caption("Pick a fight, then run for town: the sword in hand swings the sword's slash");
     let chaser = provoke(&mut me);
     run_to_town(&mut me);
     me.caption("It gives up the chase at the edge: monsters never set foot in a safe zone");
@@ -89,7 +89,13 @@ fn play(shoot: &mut Shoot) {
     me.wait_within("the pack around me", SURROUNDING, |snapshot| {
         surrounded_by(snapshot, PACK, 3).then_some(())
     });
-    me.caption("They surround you, each on a spot of its own");
+    me.caption("They surround you, each on a spot of its own, a dagger in either hand");
+    me.wait_until("a rogue showing both daggers", |snapshot| {
+        snapshot
+            .actors
+            .iter()
+            .any(|actor| npc_is(actor, PACK) && actor.held.len() == 2)
+    });
     me.hold();
 }
 
@@ -154,6 +160,15 @@ fn provoke(me: &mut Player) -> ProbeBody {
                 .is_some_and(|me| me.action == Action::Attack)
         },
     );
+    me.wait_until("the swing of a sword in hand", |snapshot| {
+        snapshot.me.as_ref().is_some_and(|me| {
+            !me.held.is_empty()
+                && me
+                    .clip
+                    .as_ref()
+                    .is_some_and(|clip| clip.as_str() == "1h_slash")
+        })
+    });
     me.wait_for("the monster that gives chase", |snapshot| {
         nearest_prey(snapshot).cloned()
     })

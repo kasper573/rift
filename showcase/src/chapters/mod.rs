@@ -1,3 +1,4 @@
+mod bodies;
 mod camera;
 mod casting;
 mod chat;
@@ -48,6 +49,7 @@ pub const CHAPTERS: &[Chapter] = &[
     chat::CHAPTER,
     travel::CHAPTER,
     townsfolk::CHAPTER,
+    bodies::CHAPTER,
     conversation::CHAPTER,
     shops::CHAPTER,
     quests::CHAPTER,

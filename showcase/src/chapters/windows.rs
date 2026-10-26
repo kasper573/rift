@@ -79,6 +79,7 @@ fn play(shoot: &mut Shoot) {
     me.wait_until("the sword to be taken off", |snapshot| {
         holding(snapshot, "rusty_sword") == 1
     });
+    hands(&mut me);
     me.caption(&format!(
         "{} brings the card in front, and {} flicks away what's in front",
         input_name(InputAction::InspectItem),
@@ -159,6 +160,56 @@ fn play(shoot: &mut Shoot) {
     me.act(InputAction::Dismiss);
     me.caption("…and with voice turned down, the same greeting is silent");
     hear_out_greeting(&mut me);
+}
+
+/// Gear in hand: what the equipment window's hands show as a sword, a dagger beside it, and a
+/// greatsword that takes both are worn in turn.
+fn hands(me: &mut Star) {
+    me.caption("The equipment window shows your hands: a sword takes the main hand");
+    me.act_on_ui(InputAction::UseItem, outside_card(SWORD));
+    me.wait_until("the sword in hand", |snapshot| wears(snapshot, SWORD));
+    me.caption("A dagger goes to the other hand, and you still fight as a swordsman");
+    me.act_on_ui(InputAction::UseItem, outside_card(DAGGER));
+    me.wait_until(
+        "the dagger beside the sword, in the sword's stance",
+        |snapshot| {
+            wears(snapshot, SWORD) && wears(snapshot, DAGGER) && in_stance(snapshot, "sword")
+        },
+    );
+    me.hold();
+    me.caption(
+        "A greatsword spans both hands: the sword and the dagger come back to the bag together",
+    );
+    me.act_on_ui(InputAction::UseItem, outside_card(GREATSWORD));
+    me.wait_until("the greatsword in both hands", |snapshot| {
+        wears(snapshot, GREATSWORD)
+            && holding(snapshot, SWORD) == 1
+            && holding(snapshot, DAGGER) == 1
+    });
+    me.hold();
+    me.act_on_ui(InputAction::UseItem, outside_card(GREATSWORD));
+    me.wait_until("the greatsword back in the bag", |snapshot| {
+        holding(snapshot, GREATSWORD) == 1
+    });
+}
+
+const DAGGER: &str = "dagger";
+const GREATSWORD: &str = "greatsword";
+
+fn wears(snapshot: &ProbeSnapshot, item: &str) -> bool {
+    snapshot.me.as_ref().is_some_and(|me| {
+        me.wearing
+            .iter()
+            .any(|(_, worn)| worn.name(content()) == item)
+    })
+}
+
+fn in_stance(snapshot: &ProbeSnapshot, stance: &str) -> bool {
+    snapshot
+        .me
+        .as_ref()
+        .and_then(|me| me.stance)
+        .is_some_and(|worn| worn.name(content()) == stance)
 }
 
 fn fling_and_resize(me: &mut Star) {

@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -82,12 +83,12 @@ impl Film {
         });
     }
 
-    pub fn inset(&mut self, footage: Footage, label: &str, from: SystemTime) {
+    pub fn inset(&mut self, footage: Footage, label: &str, during: Range<SystemTime>) {
         self.insets.push(Inset {
             footage,
             label: label.to_owned(),
-            from,
-            until: SystemTime::now(),
+            from: during.start,
+            until: during.end,
         });
     }
 

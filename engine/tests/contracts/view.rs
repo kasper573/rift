@@ -204,6 +204,18 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
         "a two-hander held in the last of its hands hangs from it alone"
     );
 
+    app.world_mut().entity_mut(body).insert(Wearing {
+        hands: BTreeMap::from([(HandIndex::MAIN, sword), (HandIndex::OFF, sword)]),
+    });
+    app.world_mut()
+        .run_system_cached(render::hang)
+        .expect("hung");
+    let mut both = props(&mut app);
+    both.sort();
+    let mut wanted = vec![(hand, sword), (left, sword)];
+    wanted.sort();
+    assert_eq!(both, wanted, "a one-hander in each hand hangs from each");
+
     app.world_mut().entity_mut(body).insert(Wearing::default());
     app.world_mut()
         .run_system_cached(render::hang)
