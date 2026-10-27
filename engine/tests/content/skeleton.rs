@@ -85,6 +85,27 @@ fn a_skeleton_is_held_to_the_clips_its_libraries_carry() {
             },
             found: "upper",
         },
+        Case {
+            case: "a hand clasping as a clip no library carries",
+            change: |skeleton| {
+                skeleton["hands"][0]["clasp"] = json!({ "clip": "fist", "fingers": ["finger.r"] })
+            },
+            found: "hand \"right\" clasps as fist: no such clip in clips/*.glb",
+        },
+        Case {
+            case: "a clasp naming a finger the rig lacks",
+            change: |skeleton| {
+                skeleton["hands"][0]["clasp"] = json!({ "clip": "idle", "fingers": ["thumb.r"] })
+            },
+            found: "thumb.r is not in rig.glb",
+        },
+        Case {
+            case: "a clasp whose clip turns none of its fingers",
+            change: |skeleton| {
+                skeleton["hands"][0]["clasp"] = json!({ "clip": "idle", "fingers": ["finger.r"] })
+            },
+            found: "idle turns none of hand \"right\"'s fingers",
+        },
     ];
     for case in cases {
         let report = game()

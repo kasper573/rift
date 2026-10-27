@@ -453,6 +453,34 @@ fn check_sets(loading: &mut Loading, content: &Content, skeletons: &[Option<Arc<
                 }
             }
         }
+        for (index, hand) in def.hands.iter().enumerate() {
+            let Some(clasp) = &hand.clasp else {
+                continue;
+            };
+            named.insert(&clasp.clip);
+            let at = format!("/hands/{index}/clasp/clip");
+            if !skeleton.clips.contains_key(&clasp.clip) {
+                check.error(
+                    at,
+                    "unknown clip",
+                    format!(
+                        "hand {:?} clasps as {}: no such clip in clips/*.glb",
+                        hand.name, clasp.clip
+                    ),
+                    "a clip of a library",
+                );
+            } else if skeleton.clasps[index].is_empty() {
+                check.error(
+                    at,
+                    "clasp turns no fingers",
+                    format!(
+                        "{} turns none of hand {:?}'s fingers",
+                        clasp.clip, hand.name
+                    ),
+                    "a clip turning the joints of the clasp's fingers",
+                );
+            }
+        }
         for (index, library) in def.libraries.iter().enumerate() {
             let unnamed = skeleton
                 .clips

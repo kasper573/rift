@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use bevy::math::Quat;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -202,6 +203,18 @@ pub struct Hand {
     pub offset: LocalOffset,
     #[serde(default, skip_serializing_if = "LocalTurn::is_zero")]
     pub turn: LocalTurn,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clasp: Option<Clasp>,
+}
+
+/// How a hand's fingers close on an item it holds: each joint from the root of each finger down,
+/// as `clip` turns it at its first moment, over whatever else the body plays.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Clasp {
+    pub clip: ClipName,
+    /// The joint at the root of each finger.
+    pub fingers: Vec<JointName>,
 }
 
 /// A displacement in a joint's own frame: metres along its x, y and z.
@@ -692,6 +705,17 @@ fn check_rig(def: &SkeletonDef, rig: &GltfInfo, cx: &mut RowCheck) {
                 ),
                 "a joint of rig.glb",
             );
+        }
+        let fingers = hand.clasp.iter().flat_map(|clasp| &clasp.fingers);
+        for (at, finger) in fingers.enumerate() {
+            if joint(finger).is_none() {
+                cx.error(
+                    format!("/hands/{index}/clasp/fingers/{at}"),
+                    "unknown joint",
+                    format!("{finger} is not in rig.glb"),
+                    "a joint of rig.glb",
+                );
+            }
         }
     }
     let mut grouped: BTreeMap<usize, &GroupName> = BTreeMap::new();
@@ -1371,6 +1395,10 @@ pub struct BuiltSkeleton {
     pub rig: NodeTree,
     /// Every clip of the libraries by name: which library carries it and how long it plays.
     pub clips: BTreeMap<ClipName, LibraryClip>,
+    /// What each hand's clasp turns, by the hand's place among the hands: each joint of its fingers
+    /// the clasp's clip turns, by the joint's index in the rig, with the turn it opens on. Empty for
+    /// a hand without a clasp, or whose clasp turns none of its fingers.
+    pub clasps: Vec<Vec<(usize, Quat)>>,
     gaits: BTreeMap<Option<StanceId>, Vec<Paced>>,
 }
 
@@ -1413,10 +1441,20 @@ impl BuiltSkeleton {
             .chain(def.stances.iter().map(|set| Some(set.stance)))
             .map(|stance| (stance, def.gaits(stance)))
             .collect();
+        let clasps = def
+            .hands
+            .iter()
+            .map(|hand| {
+                hand.clasp
+                    .as_ref()
+                    .map_or_else(Vec::new, |clasp| clasped(&rig.tree, libraries, clasp))
+            })
+            .collect();
         BuiltSkeleton {
             def: def.clone(),
             rig: rig.tree.clone(),
             clips,
+            clasps,
             gaits,
         }
     }
@@ -1428,4 +1466,41 @@ impl BuiltSkeleton {
             .or_else(|| self.gaits.get(&None))
             .map_or(&[], Vec::as_slice)
     }
+}
+
+/// Each joint of `rig` from the root of each of the clasp's fingers down that the clasp's clip
+/// turns, with the turn the clip opens on, found in whichever library carries the clip.
+fn clasped(rig: &NodeTree, libraries: &[Option<&GltfInfo>], clasp: &Clasp) -> Vec<(usize, Quat)> {
+    let Some((library, clip)) = libraries.iter().flatten().find_map(|library| {
+        Some((
+            *library,
+            library
+                .clips
+                .iter()
+                .find(|clip| clip.name == clasp.clip.0)?,
+        ))
+    }) else {
+        return Vec::new();
+    };
+    let roots: Vec<usize> = clasp
+        .fingers
+        .iter()
+        .filter_map(|finger| rig.named(&finger.0))
+        .collect();
+    rig.joints()
+        .filter(|&joint| roots.iter().any(|&root| rig.descends(joint, root)))
+        .filter_map(|joint| {
+            let name = &rig.nodes[joint].name;
+            clip.opening
+                .iter()
+                .find(|(node, _)| {
+                    library
+                        .tree
+                        .nodes
+                        .get(*node)
+                        .is_some_and(|node| node.name == *name)
+                })
+                .map(|(_, turn)| (joint, *turn))
+        })
+        .collect()
 }

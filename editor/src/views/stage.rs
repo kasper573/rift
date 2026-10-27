@@ -15,7 +15,8 @@ use ui::theme;
 
 use std::collections::BTreeMap;
 
-use engine::systems::actor::model::ActorModel;
+use engine::systems::actor::Action;
+use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::render;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::HandIndex;
@@ -24,7 +25,7 @@ use engine::systems::item::{Grip, ItemId, Wear};
 use ui::egui::{Response, Sense, Vec2};
 
 use super::area::camera::{self, AreaCanvas, OrbitCamera};
-use super::area::viewport::{Request, Standing, StandingProp};
+use super::area::viewport::{Request, StageLayers, Standing, StandingProp};
 use crate::app::Editor;
 
 /// How fast a stage turns on its own.
@@ -174,6 +175,17 @@ pub fn standing(
     }
 }
 
+/// What the layers of a rig standing still and holding props are told: idling, so the clasps of
+/// the hands that hold a prop close as they do in the game.
+pub fn holding(model: ModelId) -> StageLayers {
+    StageLayers {
+        model,
+        action: Action::Idle,
+        stepped: false,
+        reduce_motion: false,
+    }
+}
+
 /// The middle of the stage, where what it shows stands.
 pub fn center() -> Pos<Meters> {
     PROP_STAGE.bounds().center()
@@ -282,8 +294,10 @@ pub fn prop_in_hand(
     item: ItemId,
     grip: &Grip,
 ) -> Option<StandingProp> {
+    let held_by = hand;
     let hand = model.hands().get(hand.index())?;
     Some(StandingProp {
+        hand: held_by,
         joint: hand.joint.0.clone(),
         model: item.get(content).look.get(content).model.path(),
         transform: render::held_at(model, hand, grip),

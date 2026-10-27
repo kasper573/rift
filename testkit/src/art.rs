@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use bevy_math::{Quat, Vec3};
 use engine::core::content::gltf::{
-    NodeTree, Rest, TreeNode, placeholder_body, placeholder_mesh, placeholder_rig,
+    NodeTree, Rest, TreeNode, placeholder_body, placeholder_mesh, placeholder_rig, posed_body,
 };
 use engine::core::time::Seconds;
 
@@ -21,6 +21,12 @@ pub fn png(width: u32, height: u32) -> Vec<u8> {
     bytes
 }
 
+/// A library of one clip, `name`, made on `tree`: its joints at rest, and the clip holding each
+/// joint `turns` names at its turn.
+pub fn pose_glb(tree: &NodeTree, name: &str, turns: &[(&str, Quat)]) -> Vec<u8> {
+    posed_body(tree, name, Seconds(0.5), turns)
+}
+
 /// A glTF binary of one triangle animated by `clips`, each named and as long as given.
 pub fn glb(clips: &[(&str, Seconds)]) -> Vec<u8> {
     placeholder_rig(clips)
@@ -31,8 +37,8 @@ pub fn glb_of(triangles: usize, clips: &[(&str, Seconds)]) -> Vec<u8> {
     placeholder_mesh(clips, triangles)
 }
 
-/// The joints of every rig a test declares: a root, a body beneath it, and a right and a left hand
-/// on the body.
+/// The joints of every rig a test declares: a root, a body beneath it, a right and a left hand on
+/// the body, and a finger on the right hand.
 pub fn rig() -> NodeTree {
     let joint = |name: &str, parent: Option<usize>, at: [f32; 3]| TreeNode {
         name: name.to_owned(),
@@ -50,6 +56,7 @@ pub fn rig() -> NodeTree {
             joint("body", Some(0), [0.0, 1.0, 0.0]),
             joint("hand.r", Some(1), [-0.3, 0.2, 0.0]),
             joint("hand.l", Some(1), [0.3, 0.2, 0.0]),
+            joint("finger.r", Some(2), [-0.05, 0.0, 0.0]),
         ],
     }
 }

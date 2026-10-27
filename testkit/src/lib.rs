@@ -11,7 +11,7 @@ mod script;
 mod sim;
 mod talk;
 
-pub use art::{glb, glb_of, library_glb, png, rig, rig_glb, skin_glb, wav, wav_of};
+pub use art::{glb, glb_of, library_glb, png, pose_glb, rig, rig_glb, skin_glb, wav, wav_of};
 pub use game::{
     APEX, BODY, CLIP, Declared, Game, LIBRARY, Map, ROCK, RUN_PACE, SPRINT_PACE, TURF, WALK_PACE,
     path, rig_clips, stats,

@@ -28,6 +28,7 @@ use engine::systems::actor::layering::{self, Layering};
 use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::render;
 use engine::systems::actor::skeleton::Cue;
+use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::scenery::{self, Scenery};
 use engine::systems::area::{Area, Picture};
 use ui::egui;
@@ -101,10 +102,11 @@ struct StageLayering {
     put: bool,
 }
 
-/// A prop a standing rig holds: the scene of `model` under the rig's joint `joint`, placed there by
-/// `transform`.
+/// A prop a standing rig holds in `hand`: the scene of `model` under the rig's joint `joint`, placed
+/// there by `transform`.
 #[derive(Clone, PartialEq)]
 pub struct StandingProp {
+    pub hand: HandIndex,
     pub joint: String,
     pub model: String,
     pub transform: Transform,
@@ -612,14 +614,20 @@ fn run_layers(world: &mut World) {
         }
     }
     let mut calm = None;
-    for (mut layered, layering, stage) in world
-        .query::<(&mut Layered, &Layering, &StageLayering)>()
+    for (mut layered, layering, stage, props) in world
+        .query::<(&mut Layered, &Layering, &StageLayering, Option<&StageProps>)>()
         .iter_mut(world)
     {
+        let holding: Vec<HandIndex> = props
+            .map_or(&[][..], |props| props.props.as_slice())
+            .iter()
+            .map(|prop| prop.hand)
+            .collect();
         layering::drive(
             &mut layered,
             layering,
             stage.asked.action,
+            &holding,
             stage.asked.stepped,
         );
         calm = Some(calm.unwrap_or(false) || stage.asked.reduce_motion);

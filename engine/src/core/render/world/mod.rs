@@ -44,6 +44,7 @@ impl Plugin for WorldScenePlugin {
             MaterialPlugin::<decal::DecalMaterial>::default(),
             HierarchyPropagatePlugin::<RenderLayers>::new(PostUpdate),
             body::BodyPlugin,
+            layers::JointLayersPlugin,
         ))
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
         .init_resource::<material::MaterialCache>()
@@ -61,12 +62,6 @@ impl Plugin for WorldScenePlugin {
                 fade::fade_occluders.run_if(resource_exists::<CameraRig>),
                 cover::strew_loaded,
             ),
-        )
-        .add_systems(
-            PostUpdate,
-            layers::run
-                .after(bevy::app::AnimationSystems)
-                .before(bevy::transform::TransformSystems::Propagate),
         )
         .add_systems(
             PostUpdate,

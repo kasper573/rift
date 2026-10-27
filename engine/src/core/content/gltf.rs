@@ -73,6 +73,8 @@ pub struct GltfClip {
     pub length: Seconds,
     /// The nodes the clip moves, by their index in the tree.
     pub targets: Vec<usize>,
+    /// How the clip turns each node it turns at its first moment, by the node's index in the tree.
+    pub opening: Vec<(usize, Quat)>,
 }
 
 impl GltfInfo {
@@ -260,11 +262,12 @@ fn fit_joints(rig: &NodeTree, candidate: &NodeTree, joints: Vec<usize>) -> Fit {
     }
 }
 
-/// Reads `bytes` as a glTF binary, validated as the renderer would, without touching its buffers.
+/// Reads `bytes` as a glTF binary, validated as the renderer would, reading of its buffers only the
+/// turn each clip opens on.
 pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
-    let document = gltf::Gltf::from_slice(bytes)
-        .map_err(|error| error.to_string())?
-        .document;
+    let gltf = gltf::Gltf::from_slice(bytes).map_err(|error| error.to_string())?;
+    let blob = gltf.blob.as_deref();
+    let document = gltf.document;
     let mut bounds: Option<MeshBounds> = None;
     for scene in document.scenes() {
         for node in scene.nodes() {
@@ -294,6 +297,22 @@ pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
                 .collect();
             targets.sort_unstable();
             targets.dedup();
+            let opening = animation
+                .channels()
+                .filter_map(|channel| {
+                    let reader = channel.reader(|buffer| match buffer.source() {
+                        gltf::buffer::Source::Bin => blob,
+                        gltf::buffer::Source::Uri(_) => None,
+                    });
+                    match reader.read_outputs()? {
+                        gltf::animation::util::ReadOutputs::Rotations(turns) => Some((
+                            channel.target().node().index(),
+                            Quat::from_array(turns.into_f32().next()?),
+                        )),
+                        _ => None,
+                    }
+                })
+                .collect();
             GltfClip {
                 name: animation.name().unwrap_or_default().to_owned(),
                 length: Seconds(
@@ -303,6 +322,7 @@ pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
                         .fold(0.0, f32::max),
                 ),
                 targets,
+                opening,
             }
         })
         .collect();
@@ -558,6 +578,112 @@ pub fn placeholder_body(tree: &NodeTree, clips: &[(&str, Seconds)], triangles: u
             samplers: vec![sampler],
         });
     }
+    root.push(json::Buffer {
+        byte_length: USize64::from(bin.len()),
+        extensions: None,
+        extras: Default::default(),
+        name: None,
+        uri: None,
+    });
+    glb(&root, bin)
+}
+
+/// A glTF binary of the joints of `tree` at rest and one clip, `name`, `length` long, holding each
+/// joint `turns` names at its turn throughout: a held pose, such as fingers closed on a handle,
+/// made without an artist.
+pub fn posed_body(tree: &NodeTree, name: &str, length: Seconds, turns: &[(&str, Quat)]) -> Vec<u8> {
+    let mut bin: Vec<u8> = Vec::new();
+    let mut root = json::Root::default();
+    let joints: Vec<json::Index<json::Node>> = tree
+        .nodes
+        .iter()
+        .map(|node| {
+            root.push(json::Node {
+                name: Some(node.name.clone()),
+                translation: Some(node.rest.translation.to_array()),
+                rotation: Some(json::scene::UnitQuaternion(node.rest.rotation.to_array())),
+                scale: Some(node.rest.scale.to_array()),
+                ..Default::default()
+            })
+        })
+        .collect();
+    for (index, node) in tree.nodes.iter().enumerate() {
+        if let Some(parent) = node.parent {
+            root.nodes[parent]
+                .children
+                .get_or_insert_with(Vec::new)
+                .push(joints[index]);
+        }
+    }
+    let roots = tree
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.parent.is_none())
+        .map(|(index, _)| joints[index])
+        .collect();
+    let scene = root.push(json::Scene {
+        extensions: None,
+        extras: Default::default(),
+        name: None,
+        nodes: roots,
+    });
+    root.scene = Some(scene);
+    let input = push_accessor(
+        &mut root,
+        &mut bin,
+        &[0.0f32, length.0]
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect::<Vec<u8>>(),
+        2,
+        json::accessor::Type::Scalar,
+        Some((&[0.0], &[length.0])),
+    );
+    let mut samplers = Vec::new();
+    let mut channels = Vec::new();
+    for (joint, turn) in turns {
+        let Some(node) = tree.named(joint) else {
+            continue;
+        };
+        let output = push_accessor(
+            &mut root,
+            &mut bin,
+            &[*turn, *turn]
+                .iter()
+                .flat_map(|turn| turn.to_array())
+                .flat_map(|value| value.to_le_bytes())
+                .collect::<Vec<u8>>(),
+            2,
+            json::accessor::Type::Vec4,
+            None,
+        );
+        channels.push(json::animation::Channel {
+            extensions: None,
+            extras: Default::default(),
+            sampler: json::Index::new(samplers.len() as u32),
+            target: json::animation::Target {
+                extensions: None,
+                extras: Default::default(),
+                node: joints[node],
+                path: Checked::Valid(json::animation::Property::Rotation),
+            },
+        });
+        samplers.push(json::animation::Sampler {
+            extensions: None,
+            extras: Default::default(),
+            input,
+            interpolation: Checked::Valid(json::animation::Interpolation::Linear),
+            output,
+        });
+    }
+    root.push(json::Animation {
+        extensions: None,
+        extras: Default::default(),
+        channels,
+        name: Some(name.to_owned()),
+        samplers,
+    });
     root.push(json::Buffer {
         byte_length: USize64::from(bin.len()),
         extensions: None,

@@ -14,6 +14,7 @@ use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::render::camera::ground_hit;
 use engine::core::render::world::body::{Body, BodyPlugin};
+use engine::core::render::world::layers::JointLayersPlugin;
 use engine::core::render::world::material::WorldMaterial;
 use engine::core::render::{Animator, CameraRig, capsule_hit, facing_rotation, world_point};
 use engine::core::text::Typewriter;
@@ -240,8 +241,78 @@ fn a_body_moves_by_the_clip_its_skeleton_plays_for_what_it_does() {
     );
 }
 
+#[test]
+fn a_hand_closes_its_fingers_as_its_clasp_poses_them_while_it_holds_an_item() {
+    let closed = Quat::from_rotation_z(1.0);
+    let game = Game::new()
+        .area("field", &Map::open(5, 5), json!([]))
+        .hero("field", 2.0, 2.0)
+        .sword()
+        .edit("skeleton", BODY, |skeleton| {
+            skeleton["hands"][0]["clasp"] = json!({ "clip": "clasp", "fingers": ["finger.r"] })
+        })
+        .part(
+            "skeleton",
+            BODY,
+            "clips/hands.glb",
+            testkit::pose_glb(&testkit::rig(), "clasp", &[("finger.r", closed)]),
+        );
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let (mut app, content) = viewer(game, folder.path());
+    let sword = testkit::Declared::declared::<ItemDef>(&content, "sword").expect("a sword");
+    let body = spawn_hero(&mut app, &content, Action::Idle);
+    app.world_mut()
+        .run_system_cached(render::dress)
+        .expect("dressed");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while joint(&mut app, "finger.r").is_none() && Instant::now() < deadline {
+        app.update();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let finger = joint(&mut app, "finger.r").expect("the rig stands");
+    let turned_to = |app: &mut App, held: Held, wanted: Quat| {
+        app.world_mut().entity_mut(body).insert(held);
+        app.world_mut()
+            .run_system_cached(render::hang)
+            .expect("hung");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            app.world_mut()
+                .run_system_cached(render::pose)
+                .expect("posed");
+            app.update();
+            let shown = app
+                .world()
+                .get::<Transform>(finger)
+                .map(|at| at.rotation)
+                .expect("a finger");
+            if shown.angle_between(wanted) < 0.01 || Instant::now() > deadline {
+                return shown;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+
+    let holding = turned_to(
+        &mut app,
+        Held {
+            hands: BTreeMap::from([(HandIndex::MAIN, sword)]),
+        },
+        closed,
+    );
+    assert!(
+        holding.angle_between(closed) < 0.01,
+        "holding a sword, the finger closes as the clasp poses it: {holding:?}"
+    );
+    let empty = turned_to(&mut app, Held::default(), Quat::IDENTITY);
+    assert!(
+        empty.angle_between(Quat::IDENTITY) < 0.01,
+        "the empty hand opens again: {empty:?}"
+    );
+}
+
 /// A client's world drawing `game`, written to `folder`: its bodies stand their rigs and skins,
-/// and play their skeletons' clips.
+/// and play their skeletons' clips and layers.
 fn viewer(game: Game, folder: &std::path::Path) -> (App, engine::core::content::Content) {
     game.write_to(folder);
     let content = game.load();
@@ -256,6 +327,7 @@ fn viewer(game: Game, folder: &std::path::Path) -> (App, engine::core::content::
         AnimationPlugin,
         GltfPlugin::default(),
         BodyPlugin,
+        JointLayersPlugin,
     ))
     .init_asset::<Mesh>()
     .init_asset::<StandardMaterial>()

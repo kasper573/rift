@@ -5,7 +5,9 @@
 use engine::core::content::Content;
 use engine::core::geometry::Degrees;
 use engine::core::units::Meters;
-use engine::systems::actor::skeleton::{BuiltSkeleton, Hand, JointName, LocalOffset, LocalTurn};
+use engine::systems::actor::skeleton::{
+    BuiltSkeleton, Clasp, ClipName, Hand, JointName, LocalOffset, LocalTurn,
+};
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::{controls, form, panel, theme};
 
@@ -124,6 +126,7 @@ fn list(
             joint: JointName::new(joint),
             offset: LocalOffset::default(),
             turn: LocalTurn::default(),
+            clasp: None,
         });
         if super::set_hands(editor, key, more) {
             pick = Some(hands.len());
@@ -207,11 +210,13 @@ fn fields(
                 }
             });
             ui.end_row();
+            clasp_fields(ui, key, built, &hand.joint, &mut edited.clasp);
         });
     form::hint(
         ui,
         "Offset and turn normalise the joint so +Y runs along the palm. Items then need no \
-         correction of their own beyond their grip.",
+         correction of their own beyond their grip. A clasp closes the fingers as a clip's first \
+         moment poses them, while the hand holds an item.",
     );
     if edited != *hand {
         let mut changed = hands.to_vec();
@@ -226,4 +231,60 @@ fn fields(
             },
         );
     }
+}
+
+/// The clip a hand's fingers close as, and the joints at the root of each finger, picked among the
+/// joints just under the hand's.
+fn clasp_fields(
+    ui: &mut Ui,
+    key: &str,
+    built: &BuiltSkeleton,
+    hand: &JointName,
+    clasp: &mut Option<Clasp>,
+) {
+    let mut clip: Option<ClipName> = clasp.as_ref().map(|clasp| clasp.clip.clone());
+    ui.label(theme::muted("clasp"));
+    controls::combo(("hand-clasp", key))
+        .selected_text(clip.as_ref().map_or("none", ClipName::as_str))
+        .width(160.0)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut clip, None, "none");
+            for name in built.clips.keys() {
+                ui.selectable_value(&mut clip, Some(name.clone()), name.as_str());
+            }
+        });
+    ui.end_row();
+    let rig = &built.rig;
+    let under: Vec<JointName> = rig
+        .named(hand.as_str())
+        .map(|hand| {
+            rig.joints()
+                .filter(|&joint| rig.nodes[joint].parent == Some(hand))
+                .map(|joint| JointName::new(rig.nodes[joint].name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut fingers: Vec<JointName> = clasp
+        .as_ref()
+        .map_or_else(|| under.clone(), |clasp| clasp.fingers.clone());
+    if clip.is_some() {
+        ui.label(theme::muted("fingers"));
+        ui.horizontal_wrapped(|ui| {
+            for joint in &under {
+                let mut on = fingers.contains(joint);
+                if ui.toggle_value(&mut on, joint.as_str()).changed() {
+                    if on {
+                        fingers.push(joint.clone());
+                    } else {
+                        fingers.retain(|finger| finger != joint);
+                    }
+                }
+            }
+            if under.is_empty() {
+                ui.label(theme::faint("no joints under the hand"));
+            }
+        });
+        ui.end_row();
+    }
+    *clasp = clip.map(|clip| Clasp { clip, fingers });
 }

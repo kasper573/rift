@@ -1,16 +1,18 @@
 //! Motion drawn over a body's clips where keyframes are not enough: feet planted where they touched
 //! the ground, chains springing or trailing behind, a wave down a spine, a joint squashed by speed
-//! and landings. Layers run after the animation graph and before transforms propagate, and write
+//! and landings, joints held in a pose of their own. Layers run after the animation graph and before transforms propagate, and write
 //! joint transforms only. Nothing the game reasons about comes from them (a body's place, its
 //! reach, the moment a hit lands), so they need not agree between clients and keep no seed.
 
 mod chain;
 mod feet;
+mod held_pose;
 mod squash;
 mod wave;
 
 pub use chain::Chain;
 pub use feet::{Feet, Gait};
+pub use held_pose::HeldPose;
 pub use squash::Squash;
 pub use wave::Wave;
 
@@ -24,8 +26,8 @@ use super::super::camera::{CameraPreferences, GroundHeights, WorldCamera, ground
 /// frame; beyond it the body plays its clips alone.
 const NEAR: f32 = 15.0;
 const FAR: f32 = 30.0;
-/// How much of a spring, a sway or a squash Reduce motion keeps. Planted feet keep planting: a
-/// planted foot moves less than a clip's, not more.
+/// How much of a spring, a sway or a squash Reduce motion keeps. Planted feet keep planting and a
+/// held pose is held: they move less than a clip's, not more.
 const CALM: f32 = 0.5;
 /// How far around its place a body is looked for in the camera's view.
 const BODY_RADIUS: f32 = 2.0;
@@ -55,17 +57,31 @@ impl Rig {
     }
 }
 
+/// Runs every body's layers after its clips play and before transforms propagate.
+pub struct JointLayersPlugin;
+
+impl Plugin for JointLayersPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            PostUpdate,
+            run.after(bevy::app::AnimationSystems)
+                .before(bevy::transform::TransformSystems::Propagate),
+        );
+    }
+}
+
 /// One layer over a body's clips.
 pub enum JointLayer {
     Feet(Feet),
     Chain(Chain),
     Wave(Wave),
     Squash(Squash),
+    HeldPose(HeldPose),
 }
 
 impl JointLayer {
     fn calms(&self) -> bool {
-        !matches!(self, JointLayer::Feet(_))
+        !matches!(self, JointLayer::Feet(_) | JointLayer::HeldPose(_))
     }
 
     fn run(&mut self, frame: &mut Frame) {
@@ -74,6 +90,7 @@ impl JointLayer {
             JointLayer::Chain(chain) => chain.run(frame),
             JointLayer::Wave(wave) => wave.run(frame),
             JointLayer::Squash(squash) => squash.run(frame),
+            JointLayer::HeldPose(held) => held.run(frame),
         }
     }
 
@@ -83,6 +100,7 @@ impl JointLayer {
             JointLayer::Chain(chain) => chain.reset(),
             JointLayer::Wave(_) => {}
             JointLayer::Squash(squash) => squash.reset(),
+            JointLayer::HeldPose(held) => held.reset(),
         }
     }
 }
@@ -134,7 +152,7 @@ pub(super) struct Frame<'a> {
 
 /// Runs every body's layers over the pose its clips gave it this frame.
 #[allow(clippy::type_complexity)]
-pub(super) fn run(
+fn run(
     time: Res<Time>,
     ground: Option<Res<GroundHeights>>,
     preferences: Option<Res<CameraPreferences>>,

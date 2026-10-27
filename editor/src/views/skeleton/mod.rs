@@ -442,7 +442,12 @@ fn stage_rig(
     let turntable = turntable(editor, ui, key, size)?;
     let drawn = (turntable.rect, turntable.canvas.clone());
     let held = clip.as_ref().map(|_| playhead.seconds());
-    let standing = stage::standing(body, clip.map(|(clip, _)| clip), held, crossed, props);
+    let holds = !props.is_empty();
+    let mut standing = stage::standing(body, clip.map(|(clip, _)| clip), held, crossed, props);
+    standing.layers = content
+        .by_path::<ModelDef>(&path)
+        .filter(|_| holds)
+        .map(stage::holding);
     turntable.stand(editor, ui, vec![standing]);
     Some(drawn)
 }
@@ -653,6 +658,7 @@ pub fn make_hand(editor: &mut Editor, key: &str, joint: &str, name: &str) -> boo
             joint: JointName::new(joint),
             offset: LocalOffset::default(),
             turn: LocalTurn::default(),
+            clasp: None,
         });
         Ok(())
     })

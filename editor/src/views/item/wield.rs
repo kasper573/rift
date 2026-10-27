@@ -19,6 +19,7 @@ use ui::{controls, form, panel, theme};
 use crate::app::Editor;
 use crate::project::ContentEdit;
 use crate::tabs::shown_path;
+use crate::views::area::viewport::StandingProp;
 use crate::views::cues::{self, Scrub};
 use crate::views::model::look::Shown;
 use crate::views::stage::{self, StageState};
@@ -284,7 +285,7 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
     let scrub = &editor.views.item.view_mut(key).wield.scrub;
     let playhead = scrub.playhead;
     let crossed = scrub.crossed(resolved.cues, resolved.length.millis());
-    let props = content
+    let props: Vec<StandingProp> = content
         .by_path::<ItemDef>(key)
         .map(|item| {
             let shown = held::listed(&content, model.hands().len(), &[item]);
@@ -300,13 +301,19 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
     editor.views.item.view_mut(key).wield.stage = state;
     if let Some(turntable) = turntable {
         let held = clip.as_ref().map(|_| playhead.seconds());
-        let standing = stage::standing(
+        let holds = !props.is_empty();
+        let mut standing = stage::standing(
             model.body(),
             clip.map(|(clip, _)| clip),
             held,
             crossed,
             props,
         );
+        standing.layers = model_path
+            .as_deref()
+            .and_then(|path| content.by_path::<ModelDef>(path))
+            .filter(|_| holds)
+            .map(stage::holding);
         turntable.stand(editor, ui, vec![standing]);
     }
     form::hint(ui, cues::KEYS);

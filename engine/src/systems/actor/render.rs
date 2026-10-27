@@ -548,11 +548,14 @@ pub fn pose(world: &mut World) {
             sounds.extend(sfx);
             stepped
         };
+        let holding: Vec<HandIndex> = world.get::<Puppet>(entity).map_or_else(Vec::new, |puppet| {
+            puppet.held().map(|(hand, ..)| hand).collect()
+        });
         if let Ok((mut layered, layering)) = world
             .query::<(&mut Layered, &Layering)>()
             .get_mut(world, entity)
         {
-            layering::drive(&mut layered, layering, shown.action, stepped);
+            layering::drive(&mut layered, layering, shown.action, &holding, stepped);
         }
         let resting = resolved
             .only
