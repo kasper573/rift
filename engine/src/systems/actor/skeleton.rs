@@ -71,6 +71,12 @@ name_type!(
     "x-move"
 );
 name_type!(
+    /// A gesture a body makes by name: a line said with an expression of the same name, or an emote
+    /// a script plays, such as a wave.
+    GestureName,
+    "x-gesture"
+);
+name_type!(
     /// A named part of a body a clip may be kept to: the joints under the group's roots.
     GroupName,
     "x-group"
@@ -245,6 +251,10 @@ pub struct ClipSet {
     pub ends: BTreeMap<Pose, ClipCell>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub moves: BTreeMap<MoveName, ClipCell>,
+    /// What plays once for a gesture: a line said with the expression it is named after, or an
+    /// emote.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub gestures: BTreeMap<GestureName, ClipCell>,
 }
 
 /// What a set plays for one action, pose or move: a clip, or several taking turns, a looping one
@@ -1135,7 +1145,16 @@ impl ClipSet {
             .moves
             .iter()
             .map(|(name, cell)| (format!("/moves/{}", name.0), cell));
-        clips.chain(poses).chain(begins).chain(ends).chain(moves)
+        let gestures = self
+            .gestures
+            .iter()
+            .map(|(name, cell)| (format!("/gestures/{}", name.0), cell));
+        clips
+            .chain(poses)
+            .chain(begins)
+            .chain(ends)
+            .chain(moves)
+            .chain(gestures)
     }
 
     /// Every clip the set names, each variant of a cell apart, with where in the set it names it.
@@ -1159,8 +1178,8 @@ impl ClipSet {
     }
 }
 
-/// Which rung of the ladder named a clip: the stance's set, the base set, or a fallback to the
-/// attack for a move neither names.
+/// Which rung of the ladder named a clip: the stance's set, the base set, or a fallback for what
+/// neither names: the attack for a move, idling for a gesture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rung {
     Stance,
@@ -1222,6 +1241,14 @@ impl SkeletonDef {
                 (None, Some(clip)) => (clip, Rung::Base),
                 (None, None) => self.named(stance, &Motion::Action(Action::Idle), *posed),
             },
+            Motion::Gesture(name) => match (
+                set.and_then(|set| set.gestures.get(name)),
+                self.base.gestures.get(name),
+            ) {
+                (Some(clip), _) => (clip, Rung::Stance),
+                (None, Some(clip)) => (clip, Rung::Base),
+                (None, None) => (action(Action::Idle).0, Rung::Fallback),
+            },
             Motion::End(posed) => match (
                 set.and_then(|set| set.ends.get(posed)),
                 self.base.ends.get(posed),
@@ -1256,12 +1283,14 @@ impl SkeletonDef {
             .collect()
     }
 
-    /// Whether a set names the clip of a motion that takes or leaves a pose: a body takes or leaves
-    /// a pose without one at once. Any other motion always has a clip.
-    pub fn shifts(&self, stance: Option<StanceId>, motion: &Motion) -> bool {
+    /// Whether a set names the clip of a motion that plays only where one is named: taking or
+    /// leaving a pose, which a body without one does at once, and a gesture, which it never makes.
+    /// Any other motion always has a clip.
+    pub fn plays(&self, stance: Option<StanceId>, motion: &Motion) -> bool {
         let names = |set: &ClipSet| match motion {
             Motion::Begin(pose) => set.begins.contains_key(pose),
             Motion::End(pose) => set.ends.contains_key(pose),
+            Motion::Gesture(name) => set.gestures.contains_key(name),
             Motion::Action(_) | Motion::Move(_) => true,
         };
         stance
@@ -1306,6 +1335,10 @@ impl SkeletonDef {
         self.sets().flat_map(|(_, set)| set.moves.keys())
     }
 
+    pub fn gestures(&self) -> impl Iterator<Item = &GestureName> {
+        self.sets().flat_map(|(_, set)| set.gestures.keys())
+    }
+
     fn group_names(&self) -> String {
         if self.groups.is_empty() {
             return "none".to_owned();
@@ -1326,8 +1359,11 @@ pub fn fit_problems(fit: &Fit, file: &str, skeleton: &str) -> Vec<ContentProblem
         .collect()
 }
 
-/// Every move some skeleton's set declares: the only moves a script may ask for.
-pub struct DeclaredMoves(pub BTreeSet<MoveName>);
+/// Every move and gesture some skeleton's set declares: the only ones a script may ask for.
+pub struct Declared {
+    pub moves: BTreeSet<MoveName>,
+    pub gestures: BTreeSet<GestureName>,
+}
 
 /// The rig a skeleton's bodies are fitted against, and where each clip of its libraries is.
 pub struct BuiltSkeleton {

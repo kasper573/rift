@@ -62,6 +62,7 @@ impl QueryGroup {
             | RiftQueryKind::Walking
             | RiftQueryKind::Hostile
             | RiftQueryKind::Subject
+            | RiftQueryKind::Owner
             | RiftQueryKind::Target => QueryGroup::Actors,
             RiftQueryKind::GroundItems => QueryGroup::Ground,
             RiftQueryKind::SkillTargets | RiftQueryKind::SkillArea | RiftQueryKind::AimedPoint => {

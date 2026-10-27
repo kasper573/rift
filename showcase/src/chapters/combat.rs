@@ -9,7 +9,7 @@ use driver::{
 };
 use engine::core::math::{Offset, Pos};
 use engine::core::units::{MeterPos, Meters};
-use engine::systems::actor::Action;
+use engine::systems::actor::{Action, Motion};
 use engine::systems::input::map::InputAction;
 use engine::systems::movement::SPACING;
 use engine::systems::probe::{ProbeBody, ProbeGroundItem, ProbeSnapshot};
@@ -103,7 +103,10 @@ fn play(shoot: &mut Shoot) {
     me.hold();
     me.caption("Stand and take it, and each blow that lands makes you flinch");
     me.wait_until("a blow to flinch at", |snapshot| {
-        snapshot.me.as_ref().is_some_and(|me| me.flinching)
+        snapshot
+            .me
+            .as_ref()
+            .is_some_and(|me| me.shown == Motion::Action(Action::Hurt))
     });
     me.hold();
 }

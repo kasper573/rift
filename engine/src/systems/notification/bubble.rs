@@ -17,6 +17,7 @@ use crate::core::render::window_point;
 use crate::core::text::{self, StyledLine, Typewriter};
 use crate::core::time::Seconds;
 use crate::core::units::{MeterPos, Meters};
+use crate::systems::actor::render::Said;
 use crate::systems::actor::{Action, Actor, plate};
 use crate::systems::combat::Attitude;
 use crate::systems::dialogue::stage;
@@ -682,12 +683,18 @@ fn framed(body: egui::Vec2, tail: Option<Tail>) -> Vec2 {
 fn start_typing(world: &mut World, speaking: &mut Speaking) {
     let typed = typed_lines(world, speaking);
     let shown = speaking.shown_lines(&typed);
+    let since = Seconds(world.resource::<Time>().elapsed_secs());
     for line in &mut speaking.lines[..shown] {
         if line.typing.is_none() {
-            let typing = world
-                .spawn((line.notification.text.styled(), Typewriter::default()))
-                .id();
-            line.typing = Some(typing);
+            let mut typing = world.spawn((line.notification.text.styled(), Typewriter::default()));
+            if let Some(by) = speaking.body {
+                typing.insert(Said {
+                    by,
+                    gesture: None,
+                    since,
+                });
+            }
+            line.typing = Some(typing.id());
         }
     }
 }

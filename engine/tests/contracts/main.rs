@@ -9,6 +9,7 @@ mod daylight;
 mod effects;
 mod equipment;
 mod exchange;
+mod gestures;
 mod interaction;
 mod kill_credit;
 mod launch;

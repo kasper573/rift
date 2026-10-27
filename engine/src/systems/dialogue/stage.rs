@@ -28,12 +28,17 @@ use crate::core::babble::{BabbleRank, Babbler, Babbling};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band, Tier};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece, Typewriter};
+use crate::core::time::Seconds;
+use crate::core::units::MeterPos;
 use crate::systems::actor::Name;
+use crate::systems::actor::render::Said;
+use crate::systems::actor::skeleton::GestureName;
 use crate::systems::class;
 use crate::systems::hud;
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::{ItemId, card};
+use crate::systems::movement::Position;
 use crate::systems::npc::Npc;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
@@ -397,6 +402,22 @@ fn show_line(world: &mut World) {
     };
     let styled = line.text.styled();
     let typing = world.spawn((styled, Typewriter::default())).id();
+    let with = world
+        .resource::<Stage>()
+        .shown
+        .as_ref()
+        .and_then(|shown| shown.with);
+    if let Some(by) = body_of(world, line.by, with) {
+        let since = Seconds(world.resource::<Time>().elapsed_secs());
+        world.entity_mut(typing).insert(Said {
+            by,
+            gesture: line
+                .face
+                .clone()
+                .map(|face| GestureName::new(String::from(face))),
+            since,
+        });
+    }
     let mut stage = world.resource_mut::<Stage>();
     let Some(shown) = stage.shown.as_mut() else {
         return;
@@ -576,6 +597,33 @@ fn babble_along(world: &mut World, by: Speaker, line: Entity) {
             rank: BabbleRank::Foremost,
         });
     }
+}
+
+/// The body that says a line by `by`: the player's own, or the npc's, the one talked with before
+/// the nearest.
+fn body_of(world: &mut World, by: Speaker, with: Option<Entity>) -> Option<Entity> {
+    let npc = match by {
+        Speaker::Player => return session::me(world),
+        Speaker::Npc(npc) => npc,
+        Speaker::Object | Speaker::Narrator => return None,
+    };
+    let is_npc =
+        |world: &World, body: Entity| world.get::<Npc>(body).is_some_and(|seen| seen.def == npc);
+    if let Some(with) = with.filter(|&with| is_npc(world, with)) {
+        return Some(with);
+    }
+    let me = session::me(world)
+        .and_then(|me| world.get::<Position>(me))
+        .map(|position| position.pos);
+    world
+        .query::<(Entity, &Npc, &Position)>()
+        .iter(world)
+        .filter(|(_, seen, _)| seen.def == npc)
+        .min_by(|(.., a), (.., b)| match me {
+            Some(me) => a.pos.distance(me).0.total_cmp(&b.pos.distance(me).0),
+            None => std::cmp::Ordering::Equal,
+        })
+        .map(|(body, ..)| body)
 }
 
 fn typing_line(world: &World) -> Option<Entity> {

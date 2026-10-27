@@ -3,7 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::held::{self, ScriptedStance};
-use super::skeleton::{DeclaredMoves, MoveName};
+use super::skeleton::{Declared, GestureName, MoveName};
 use super::stance::StanceId;
 use super::{Action, Actor, ActorModel, Appearance, Pose};
 use crate::core::audio::playback::SfxId;
@@ -31,16 +31,27 @@ pub enum Motion {
     Begin(Pose),
     /// Leaving a pose for idling: standing up.
     End(Pose),
+    /// A gesture by name, such as a wave: made only by a body whose sets name it.
+    Gesture(GestureName),
 }
 
 impl Motion {
     /// The action the actor shows while the motion plays: a move is an attack, taking or leaving
-    /// a pose is idling.
+    /// a pose or gesturing is idling.
     pub fn action(&self) -> Action {
         match self {
             Motion::Action(action) => *action,
             Motion::Move(_) => Action::Attack,
-            Motion::Begin(_) | Motion::End(_) => Action::Idle,
+            Motion::Begin(_) | Motion::End(_) | Motion::Gesture(_) => Action::Idle,
+        }
+    }
+
+    /// Whether the motion shows while the actor does `action`: a gesture is made standing, idle or
+    /// talking, and any other motion while the actor does what it shows.
+    pub fn shows_over(&self, action: Action) -> bool {
+        match self {
+            Motion::Gesture(_) => matches!(action, Action::Idle | Action::Talk),
+            _ => self.action() == action,
         }
     }
 
@@ -50,9 +61,9 @@ impl Motion {
     }
 
     /// Whether the motion's clip plays through once and holds its last moment, rather than looping:
-    /// a hit lands once, a body falls once, sits down once.
+    /// a hit lands once, a body falls once, sits down once, waves once.
     pub fn once(&self) -> bool {
-        matches!(self, Motion::Begin(_) | Motion::End(_))
+        matches!(self, Motion::Begin(_) | Motion::End(_) | Motion::Gesture(_))
             || matches!(self.action(), Action::Attack | Action::Dead | Action::Hurt)
     }
 }
@@ -137,13 +148,21 @@ impl EffectDef<RiftScripting> for Animate {
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim(cx, &self.who)?;
-        if let Motion::Move(name) = &self.motion
-            && !cx.content.built::<DeclaredMoves>().0.contains(name)
-        {
+        let declared = cx.content.built::<Declared>();
+        let undeclared = match &self.motion {
+            Motion::Move(name) if !declared.moves.contains(name) => {
+                Some(("undeclared move", "move", name.as_str()))
+            }
+            Motion::Gesture(name) if !declared.gestures.contains(name) => {
+                Some(("undeclared gesture", "gesture", name.as_str()))
+            }
+            _ => None,
+        };
+        if let Some((rule, kind, name)) = undeclared {
             return Err(ScriptFault::new(
-                "undeclared move",
+                rule,
                 format!(
-                    "a move some skeleton's set declares; animate asks for move {name}, which no skeleton's set declares"
+                    "a {kind} some skeleton's set declares; animate asks for {kind} {name}, which no skeleton's set declares"
                 ),
             ));
         }
@@ -152,6 +171,9 @@ impl EffectDef<RiftScripting> for Animate {
             let Some(actor) = effects::aimed(world, cx, &who) else {
                 return EffectStep::Output(INTERRUPTED);
             };
+            if !plays(world, actor, &motion) {
+                return EffectStep::Done;
+            }
             if play(world, actor, motion.clone(), None).is_none() {
                 return EffectStep::Output(INTERRUPTED);
             }
@@ -328,8 +350,19 @@ pub fn pose_to(world: &mut World, actor: Entity, pose: Pose) -> Option<Playing> 
     let skeleton = &model.skeleton().def;
     let shift = [Motion::Begin(pose), Motion::End(from)]
         .into_iter()
-        .find(|motion| skeleton.shifts(stance, motion))?;
+        .find(|motion| skeleton.plays(stance, motion))?;
     play(world, actor, shift, None)
+}
+
+/// Whether an actor's body has a clip for `motion` in its stance: one with none never gestures.
+pub fn plays(world: &World, actor: Entity, motion: &Motion) -> bool {
+    let content = world.resource::<Content>();
+    world.get::<Appearance>(actor).is_some_and(|appearance| {
+        ActorModel::get(content, appearance.model)
+            .skeleton()
+            .def
+            .plays(held::stance_of(world, actor), motion)
+    })
 }
 
 pub fn playing(world: &World, actor: Entity) -> bool {

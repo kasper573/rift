@@ -66,6 +66,11 @@
     "moves": {
       "cast": "spell_shoot",
       "throw": "throw"
+    },
+    "gestures": {
+      "angry": "taunt",
+      "happy": "cheer",
+      "wave": "wave"
     }
   },
   "stances": [

@@ -1,11 +1,11 @@
-//! The names a body's fields may hold: the moves any skeleton's sets declare, and the joints, clips,
-//! groups, builds, regions, slots and tints of the skeleton a form edits.
+//! The names a body's fields may hold: the moves and gestures any skeleton's sets declare, and the
+//! joints, clips, groups, builds, regions, slots and tints of the skeleton a form edits.
 
 use std::collections::BTreeMap;
 
 use engine::core::content::{Content, ContentFile, ContentNames, NamedContent};
 use engine::systems::actor::model::Skeletons;
-use engine::systems::actor::skeleton::{MoveName, Rung, SkeletonDef, SkeletonId};
+use engine::systems::actor::skeleton::{ClipSet, MoveName, Rung, SkeletonDef, SkeletonId};
 use engine::systems::actor::{MaterialDef, ModelDef, ModelId, ModelPartDef};
 use engine::systems::actor::{Motion, Pose};
 use engine::systems::class::ClassDef;
@@ -17,6 +17,7 @@ use engine::systems::player::snapshot::CharacterSnapshot;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NameKind {
     Move,
+    Gesture,
     Joint,
     Clip,
     Group,
@@ -46,6 +47,7 @@ impl NameKind {
     pub fn of_marker(marker: &str) -> Option<NameKind> {
         match marker {
             "x-move" => Some(NameKind::Move),
+            "x-gesture" => Some(NameKind::Gesture),
             "x-joint" => Some(NameKind::Joint),
             "x-clip" => Some(NameKind::Clip),
             "x-group" => Some(NameKind::Group),
@@ -65,16 +67,20 @@ pub struct NameChoice {
     pub note: String,
 }
 
-/// Where a move is declared: by each skeleton, the sets that name it, base or a stance.
-pub fn declarations(content: &Content) -> BTreeMap<MoveName, Vec<(String, Vec<String>)>> {
-    let mut declared: BTreeMap<MoveName, Vec<(String, Vec<String>)>> = BTreeMap::new();
+/// Where each name a set declares, as `named` reads a set's names, is declared: by each skeleton,
+/// the sets that name it, base or a stance.
+pub fn declarations<N: Ord>(
+    content: &Content,
+    named: impl Fn(&ClipSet) -> Vec<N>,
+) -> BTreeMap<N, Vec<(String, Vec<String>)>> {
+    let mut declared: BTreeMap<N, Vec<(String, Vec<String>)>> = BTreeMap::new();
     for (_, skeleton) in content.table::<SkeletonDef>().iter() {
-        let mut sets: BTreeMap<&MoveName, Vec<String>> = BTreeMap::new();
-        for name in skeleton.base.moves.keys() {
+        let mut sets: BTreeMap<N, Vec<String>> = BTreeMap::new();
+        for name in named(&skeleton.base) {
             sets.entry(name).or_default().push("base".to_owned());
         }
         for set in &skeleton.stances {
-            for name in set.set.moves.keys() {
+            for name in named(&set.set) {
                 sets.entry(name)
                     .or_default()
                     .push(content.name_of(set.stance));
@@ -82,12 +88,17 @@ pub fn declarations(content: &Content) -> BTreeMap<MoveName, Vec<(String, Vec<St
         }
         for (name, sets) in sets {
             declared
-                .entry(name.clone())
+                .entry(name)
                 .or_default()
                 .push((skeleton.shown_name().to_owned(), sets));
         }
     }
     declared
+}
+
+/// Where each move is declared.
+pub fn move_declarations(content: &Content) -> BTreeMap<MoveName, Vec<(String, Vec<String>)>> {
+    declarations(content, |set| set.moves.keys().cloned().collect())
 }
 
 /// What a skeleton plays for a move: in its base set and in each stance it has a set for, the clip
@@ -139,12 +150,21 @@ pub fn choices(
     row: Option<(&str, &str)>,
     path: &str,
 ) -> Option<Vec<NameChoice>> {
-    if kind == NameKind::Move {
+    let declared = match kind {
+        NameKind::Move => Some(declarations(content, |set| {
+            set.moves.keys().map(|name| name.0.clone()).collect()
+        })),
+        NameKind::Gesture => Some(declarations(content, |set| {
+            set.gestures.keys().map(|name| name.0.clone()).collect()
+        })),
+        _ => None,
+    };
+    if let Some(declared) = declared {
         return Some(
-            declarations(content)
+            declared
                 .into_iter()
                 .map(|(name, by)| NameChoice {
-                    name: name.0,
+                    name,
                     note: by
                         .iter()
                         .map(|(skeleton, sets)| format!("{skeleton} ({})", sets.join(", ")))
@@ -245,7 +265,7 @@ pub fn choices(
                 note: "a build of the skeleton".to_owned(),
             })
             .collect(),
-        NameKind::Move => unreachable!("moves are answered above"),
+        NameKind::Move | NameKind::Gesture => unreachable!("answered above from every skeleton"),
         NameKind::Region | NameKind::Slot | NameKind::Tint => {
             unreachable!("named from the skeleton's file above")
         }

@@ -1,5 +1,5 @@
 //! The look page: the model on the stage in a chosen stance, playing what its skeleton gives a
-//! chosen action, pose or move.
+//! chosen action, pose, move or gesture.
 
 use engine::core::render::world::mannequin::RigClip;
 use engine::core::time::Millis;
@@ -14,7 +14,7 @@ use crate::app::Editor;
 use crate::tabs::shown_path;
 use crate::views::cues;
 
-/// What the stage plays: an engine action, a pose or a move, as a stance resolves it.
+/// What the stage plays: an engine action, a pose, a move or a gesture, as a stance resolves it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Shown {
     pub motion: Motion,
@@ -31,6 +31,7 @@ impl Shown {
             (Motion::Move(name), _) => format!("{name} · move"),
             (Motion::Begin(pose), _) => format!("{} · taking it", pose.as_ref()),
             (Motion::End(pose), _) => format!("{} · leaving it", pose.as_ref()),
+            (Motion::Gesture(name), _) => format!("{name} · gesture"),
         }
     }
 }
@@ -155,7 +156,7 @@ impl Scene {
                         Motion::End(*pose),
                     ]
                     .into_iter()
-                    .filter(|motion| skeleton.def.shifts(stance_id, motion))
+                    .filter(|motion| skeleton.def.plays(stance_id, motion))
                     .map(|motion| Shown {
                         pose: match motion {
                             Motion::Action(_) => *pose,
@@ -170,6 +171,13 @@ impl Scene {
         moves.dedup();
         choices.extend(moves.into_iter().map(|name| Shown {
             motion: Motion::Move(name),
+            pose: Pose::Idle,
+        }));
+        let mut gestures: Vec<_> = skeleton.def.gestures().cloned().collect();
+        gestures.sort();
+        gestures.dedup();
+        choices.extend(gestures.into_iter().map(|name| Shown {
+            motion: Motion::Gesture(name),
             pose: Pose::Idle,
         }));
         let shown = Shown {

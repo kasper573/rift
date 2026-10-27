@@ -16,10 +16,12 @@ use engine::core::render::camera::ground_hit;
 use engine::core::render::world::body::{Body, BodyPlugin};
 use engine::core::render::world::material::WorldMaterial;
 use engine::core::render::{Animator, CameraRig, capsule_hit, facing_rotation, world_point};
+use engine::core::text::Typewriter;
 use engine::core::time::PlaybackRate;
 use engine::core::units::{MeterPos, Meters, MetersPerSec};
 use engine::systems::actor::held::Held;
 use engine::systems::actor::render::{self, HeldProp, RenderActor};
+use engine::systems::actor::skeleton::GestureName;
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::{Action, Actor, Appearance, Hurt, ModelDef, Pose};
 use engine::systems::area::{self, AreaDef, AreaTag};
@@ -567,6 +569,113 @@ fn a_standing_body_flinches_once_at_each_new_blow() {
     let at_struck = SfxPlace::World(Pos::new(1.5, 1.5));
     assert_eq!(after_one, vec![at_struck], "a blow, a flinch, played once");
     assert_eq!(after_two, vec![at_struck], "the next blow, the next flinch");
+}
+
+#[test]
+fn a_body_talks_only_while_its_line_types_and_makes_the_gesture_it_is_said_with() {
+    let clips: Vec<(&str, engine::core::time::Seconds)> = testkit::rig_clips()
+        .into_iter()
+        .chain([("cheer", CLIP.seconds())])
+        .collect();
+    let base: serde_json::Map<String, serde_json::Value> =
+        <Action as strum::VariantArray>::VARIANTS
+            .iter()
+            .map(|action| (action.as_ref().to_owned(), json!(action.as_ref())))
+            .collect();
+    let game = Game::new()
+        .area("field", &Map::open(5, 5), json!([]))
+        .sfx("chatter")
+        .sfx("yay")
+        .skeleton_of(
+            BODY,
+            &clips,
+            json!({
+                "base": { "clips": base, "gestures": { "happy": "cheer" } },
+                "cues": {
+                    "attack": [{ "at": APEX.0, "apex": true }],
+                    "talk": [{ "at": 50.0, "sound": path("sfx", "chatter") }],
+                    "cheer": [{ "at": 50.0, "sound": path("sfx", "yay") }],
+                },
+            }),
+        )
+        .hero("field", 2.0, 2.0);
+    let content = game.load();
+    let chatter = testkit::Declared::declared::<SfxDef>(&content, "chatter").expect("chatter");
+    let yay = testkit::Declared::declared::<SfxDef>(&content, "yay").expect("yay");
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            50,
+        )))
+        .init_resource::<Animator>()
+        .add_message::<PlaySfx>()
+        .insert_resource(content.clone());
+    let hero = spawn_hero(&mut app, &content, Action::Talk);
+    let heard = |app: &mut App, frames: usize| {
+        let mut heard = Vec::new();
+        for _ in 0..frames {
+            app.update();
+            app.world_mut()
+                .run_system_cached(render::pose)
+                .expect("posed");
+            heard.extend(
+                app.world_mut()
+                    .resource_mut::<Messages<PlaySfx>>()
+                    .drain()
+                    .map(|sound| sound.id),
+            );
+        }
+        heard
+    };
+    let say = |app: &mut App, gesture: Option<&str>| {
+        let since = engine::core::time::Seconds(app.world().resource::<Time>().elapsed_secs());
+        app.world_mut()
+            .spawn((
+                Typewriter::default(),
+                render::Said {
+                    by: hero,
+                    gesture: gesture.map(GestureName::new),
+                    since,
+                },
+            ))
+            .id()
+    };
+
+    assert_eq!(
+        heard(&mut app, 12),
+        Vec::new(),
+        "talking with nothing said, it stands idle"
+    );
+    let line = say(&mut app, None);
+    let typing = heard(&mut app, 12);
+    assert!(
+        !typing.is_empty() && typing.iter().all(|id| *id == chatter),
+        "it talks while its line types: {typing:?}"
+    );
+    finish(&mut app, line);
+    assert_eq!(heard(&mut app, 12), Vec::new(), "said, it rests");
+    let happy = say(&mut app, Some("happy"));
+    let said_happily = heard(&mut app, 4);
+    assert_eq!(said_happily, vec![yay], "a happy line cheers, once");
+    let talked = heard(&mut app, 12);
+    assert!(
+        !talked.is_empty() && talked.iter().all(|id| *id == chatter),
+        "then it talks while the line types on: {talked:?}"
+    );
+    finish(&mut app, happy);
+    let sad = say(&mut app, Some("sad"));
+    let said_sadly = heard(&mut app, 12);
+    assert!(
+        !said_sadly.is_empty() && said_sadly.iter().all(|id| *id == chatter),
+        "a line said with a gesture its body names none for is only talked: {said_sadly:?}"
+    );
+    finish(&mut app, sad);
+}
+
+fn finish(app: &mut App, line: Entity) {
+    if let Some(mut typewriter) = app.world_mut().get_mut::<Typewriter>(line) {
+        typewriter.finish();
+    }
 }
 
 /// The joint of the standing body's rig named `name`, once the rig stands.

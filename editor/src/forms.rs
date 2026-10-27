@@ -2115,9 +2115,17 @@ fn named(
                 choice.note
             )));
         }
+        Some(choice) if kind == NameKind::Gesture => {
+            ui.label(theme::faint(format!(
+                "declared by {}; other bodies make none",
+                choice.note
+            )));
+        }
         None if !current.is_empty() => {
             let why = match kind {
-                NameKind::Move => "no skeleton's set declares it: the script is refused",
+                NameKind::Move | NameKind::Gesture => {
+                    "no skeleton's set declares it: the script is refused"
+                }
                 NameKind::Joint => "not a joint of the rig",
                 NameKind::Clip => "no library of the skeleton carries it",
                 NameKind::Group => "not a group of the skeleton",

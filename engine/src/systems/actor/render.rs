@@ -16,8 +16,8 @@ use super::appearance::look;
 use super::held::{self, Held};
 use super::layering::{self, Layering};
 use super::model::ClipSource;
-use super::skeleton::EquipmentSlot;
 use super::skeleton::{Cue, GroupName, Hand, LocalOffset, LocalTurn, SkeletonId};
+use super::skeleton::{EquipmentSlot, GestureName};
 use super::stance::{self, HandIndex, PropHand};
 use super::{Action, Actor, ActorModel, Appearance, Hurt, ModelId, Motion, Playing, Pose};
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
@@ -30,6 +30,7 @@ use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::body::{self, Body, RigReady};
 use crate::core::render::world::layers::Layered;
 use crate::core::render::{Animator, Previous, Turns, facing_rotation, ground_height, world_point};
+use crate::core::text::Typewriter;
 use crate::core::time::{Seconds, UnixMillis};
 use crate::core::units::Meters;
 use crate::core::vfx::cover::Treads;
@@ -128,16 +129,25 @@ struct Play {
     stance: Option<u32>,
     started: Option<UnixMillis>,
     struck: Option<u32>,
+    said: Option<Entity>,
     variant: usize,
 }
 
-/// The blows a body has seen land, when it began to flinch at the newest, and whether it shows the
-/// flinch now. A blow that landed before the body came into view is never flinched at.
+/// The blows a body has seen land, and when it began to flinch at the newest. A blow that landed
+/// before the body came into view is never flinched at.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Flinch {
+struct Flinch {
     blows: u32,
     since: Option<Seconds>,
-    pub shown: bool,
+}
+
+/// A line a body says, on the line being typed: the body talks while the line types, and makes the
+/// gesture the line is said with from when it began, when its sets name one.
+#[derive(Component, Clone, Debug)]
+pub struct Said {
+    pub by: Entity,
+    pub gesture: Option<GestureName>,
+    pub since: Seconds,
 }
 
 /// A node playing on the rig, fading toward its weight.
@@ -175,6 +185,11 @@ impl Puppet {
             .as_ref()
             .filter(|play| play.motion == *motion)
             .map_or(0, |play| play.variant)
+    }
+
+    /// What the body shows playing.
+    pub fn shown(&self) -> Option<&Motion> {
+        self.playing.as_ref().map(|play| &play.motion)
     }
 
     /// The props the hands hold, by hand.
@@ -439,6 +454,7 @@ pub fn pose(world: &mut World) {
             )
         })
         .collect();
+    let saying = saying(world);
     let mut sounds = Vec::new();
     for (entity, shown, at, actor, model, playing) in shown {
         let model = ActorModel::get(&content, model);
@@ -446,7 +462,7 @@ pub fn pose(world: &mut World) {
         let ground = ground_height(world, at.0);
         let given = playing
             .as_ref()
-            .filter(|playing| playing.motion.action() == shown.action);
+            .filter(|playing| playing.motion.shows_over(shown.action));
         let blows = world.get::<Hurt>(entity).map_or(0, |hurt| hurt.0);
         let flinched = flinched(world, entity, blows, now);
         let flinch = Motion::Action(Action::Hurt);
@@ -461,15 +477,26 @@ pub fn pose(world: &mut World) {
                         .resolve(stance, &flinch, actor.pose, flinch_variant)
                         .length
             });
-        if let Some(mut shown_flinch) = world.get_mut::<Flinch>(entity)
-            && shown_flinch.shown != flinching
-        {
-            shown_flinch.shown = flinching;
-        }
-        let motion = match given {
+        let speech = saying.get(&entity);
+        let gesture = speech
+            .and_then(|speech| speech.gesture.as_ref())
+            .filter(|_| given.is_none() && !flinching)
+            .filter(|_| matches!(shown.action, Action::Idle | Action::Talk))
+            .and_then(|(line, gesture, since)| {
+                let gesture = Motion::Gesture(gesture.clone());
+                let variant = line.index_u32() as usize
+                    % model.cell(stance, &gesture, actor.pose).variants().len();
+                let length = model.resolve(stance, &gesture, actor.pose, variant).length;
+                (model.skeleton().def.plays(stance, &gesture) && now - *since < length)
+                    .then_some((*line, gesture, variant))
+            });
+        let talks = speech.is_some_and(|speech| speech.talking);
+        let motion = match (given, &gesture) {
             _ if flinching => flinch,
-            Some(playing) => playing.motion.clone(),
-            None => Motion::Action(shown.action),
+            (Some(playing), _) => playing.motion.clone(),
+            (None, Some((_, gesture, _))) => gesture.clone(),
+            (None, None) if shown.action == Action::Talk && !talks => Motion::Action(Action::Idle),
+            (None, None) => Motion::Action(shown.action),
         };
         let mut play = Play {
             motion: motion.clone(),
@@ -477,6 +504,7 @@ pub fn pose(world: &mut World) {
             stance: stance.map(|stance| stance.raw()),
             started: given.map(|playing| playing.started),
             struck: flinching.then_some(blows),
+            said: gesture.as_ref().map(|(line, ..)| *line),
             variant: 0,
         };
         let repeat = if motion.once() {
@@ -502,10 +530,11 @@ pub fn pose(world: &mut World) {
         let playhead = world
             .resource_mut::<Animator>()
             .advance(entity, state, now, turns);
-        play.variant = match given {
+        play.variant = match (given, &gesture) {
             _ if flinching => flinch_variant,
-            Some(playing) => playing.variant,
-            None => playhead.turn,
+            (Some(playing), _) => playing.variant,
+            (None, Some((_, _, variant))) => *variant,
+            (None, None) => playhead.turn,
         };
         let resolved = model.resolve(stance, &motion, actor.pose, play.variant);
         let rate = model.rate(&motion, &resolved, actor.attack_rate, actor.speed);
@@ -642,21 +671,43 @@ pub fn pose(world: &mut World) {
     });
 }
 
+/// What each body says: whether a line it says still types, and the newest line it said with a
+/// gesture, by the line, and when it began.
+struct Saying {
+    talking: bool,
+    gesture: Option<(Entity, GestureName, Seconds)>,
+}
+
+fn saying(world: &mut World) -> HashMap<Entity, Saying> {
+    let mut saying: HashMap<Entity, Saying> = HashMap::new();
+    for (line, said, typewriter) in world.query::<(Entity, &Said, &Typewriter)>().iter(world) {
+        let body = saying.entry(said.by).or_insert(Saying {
+            talking: false,
+            gesture: None,
+        });
+        body.talking |= !typewriter.is_finished();
+        if let Some(gesture) = &said.gesture
+            && body
+                .gesture
+                .as_ref()
+                .is_none_or(|(_, _, since)| *since < said.since)
+        {
+            body.gesture = Some((line, gesture.clone(), said.since));
+        }
+    }
+    saying
+}
+
 /// When the body began to flinch at the newest blow it has seen land, keeping count of the blows.
 fn flinched(world: &mut World, entity: Entity, blows: u32, now: Seconds) -> Option<Seconds> {
     let seen = world.get::<Flinch>(entity).copied();
     let flinch = match seen {
         Some(seen) if seen.blows == blows => return seen.since,
-        Some(seen) => Flinch {
+        Some(_) => Flinch {
             blows,
             since: Some(now),
-            shown: seen.shown,
         },
-        None => Flinch {
-            blows,
-            since: None,
-            shown: false,
-        },
+        None => Flinch { blows, since: None },
     };
     world.entity_mut(entity).insert(flinch);
     flinch.since

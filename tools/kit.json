@@ -356,7 +356,10 @@
           "get_up": "kaykit-animations:Rig_Medium_Simulation.glb#Lie_StandUp",
           "idle_b": "Idle_B",
           "hit_a": "Hit_A",
-          "hit_b": "Hit_B"
+          "hit_b": "Hit_B",
+          "cheer": "kaykit-animations:Rig_Medium_Simulation.glb#Cheering",
+          "wave": "kaykit-animations:Rig_Medium_Simulation.glb#Waving",
+          "taunt": "kaykit-animations:Rig_Medium_Special.glb#Skeletons_Taunt"
         }
       }
     },

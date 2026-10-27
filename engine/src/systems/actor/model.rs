@@ -12,8 +12,8 @@ use super::material;
 use super::part::{ModelPartDef, ModelPartId};
 use super::playing::Motion;
 use super::skeleton::{
-    self, BuildName, BuiltSkeleton, ClipCell, ClipName, Colours, Cue, DeclaredMoves, GroupName,
-    Hand, LibraryClip, SkeletonDef, SkeletonId,
+    self, BuildName, BuiltSkeleton, ClipCell, ClipName, Colours, Cue, Declared, GroupName, Hand,
+    LibraryClip, SkeletonDef, SkeletonId,
 };
 use super::stance::StanceId;
 use super::{Action, Pose};
@@ -206,12 +206,17 @@ pub fn build_all(loading: &mut Loading) {
         }
     }
     check_sets(loading, &content, &skeletons);
-    let declared = loading
-        .rows::<SkeletonDef>(&content)
-        .into_iter()
-        .flat_map(|(_, def)| def.moves().cloned())
-        .collect();
-    loading.built(DeclaredMoves(declared));
+    let skeleton_defs = loading.rows::<SkeletonDef>(&content);
+    loading.built(Declared {
+        moves: skeleton_defs
+            .iter()
+            .flat_map(|(_, def)| def.moves().cloned())
+            .collect(),
+        gestures: skeleton_defs
+            .iter()
+            .flat_map(|(_, def)| def.gestures().cloned())
+            .collect(),
+    });
     loading.built(Skeletons(skeletons));
     loading.built(Models(models));
 }

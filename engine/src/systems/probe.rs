@@ -27,7 +27,7 @@ use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::model::ModelId;
-use crate::systems::actor::render::{Flinch, Puppet};
+use crate::systems::actor::render::Puppet;
 use crate::systems::actor::skeleton::{ClipName, SkeletonId};
 use crate::systems::actor::stance::{HandIndex, StanceId};
 use crate::systems::actor::{self, Action, Actor, ActorModel, Appearance, Hitbox, Motion, Playing};
@@ -216,8 +216,9 @@ pub struct ProbeBody {
     pub action: Action,
     /// Whether it stands still rather than walks.
     pub resting: bool,
-    /// Whether it flinches at a blow that just landed on it.
-    pub flinching: bool,
+    /// The motion its body shows: what it does, or a move, a gesture, a flinch at a blow that
+    /// just landed on it.
+    pub shown: Motion,
     /// Where its feet and the top of its head show in the window, as drawn.
     pub feet: Option<Pos<WindowPx>>,
     pub head: Option<Pos<WindowPx>>,
@@ -232,8 +233,8 @@ pub struct ProbeBody {
     pub skeleton: SkeletonId,
     /// The stance its hands or a script put it in.
     pub stance: Option<StanceId>,
-    /// The clip it plays for what it does, as its stance resolves it, and the move it was told to
-    /// play, if any.
+    /// The clip it plays for the motion it shows, as its stance resolves it, and the motion it was
+    /// told to play, if any.
     pub clip: Option<ClipName>,
     pub motion: Option<Motion>,
     /// How fast that clip plays: a hit at its attack speed, a gait as fast as covers its speed.
@@ -923,9 +924,14 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
     let stance = held::stance_of(world, entity.id());
     let motion = entity
         .get::<Playing>()
-        .filter(|playing| playing.motion.action() == actor.action)
+        .filter(|playing| playing.motion.shows_over(actor.action))
         .map(|playing| playing.motion.clone());
-    let shown = motion.clone().unwrap_or(Motion::Action(actor.action));
+    let shown = entity
+        .get::<Puppet>()
+        .and_then(Puppet::shown)
+        .cloned()
+        .or_else(|| motion.clone())
+        .unwrap_or(Motion::Action(actor.action));
     let variant = entity
         .get::<Puppet>()
         .map_or(0, |puppet| puppet.variant_of(&shown));
@@ -963,7 +969,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         facing: actor.facing,
         action: actor.action,
         resting: !actor.action.moves(),
-        flinching: entity.get::<Flinch>().is_some_and(|flinch| flinch.shown),
+        shown: shown.clone(),
         feet: view.map(|view| view.window_point(drawn, ground)),
         head: view.map(|view| view.window_point(drawn, ground + capsule.height)),
         health: stat(StatKind::Health),

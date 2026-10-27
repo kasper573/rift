@@ -1,7 +1,10 @@
 use driver::{
-    UiTarget, erred, id, input_name, input_names, noticed, open_ground_beside, townsperson,
+    UiTarget, erred, id, input_name, input_names, nearest_npc, noticed, open_ground_beside,
+    townsperson,
 };
-use engine::systems::actor::ModelDef;
+use engine::core::math::Offset;
+use engine::systems::actor::skeleton::GestureName;
+use engine::systems::actor::{Action, ModelDef, Motion};
 use engine::systems::input::gestures::ClickClaim;
 use engine::systems::input::map::InputAction;
 use engine::systems::item::ItemDef;
@@ -24,11 +27,37 @@ fn play(shoot: &mut Shoot) {
         "{} a townsperson to talk — you walk into reach and the conversation opens",
         input_name(InputAction::Interact)
     ));
+    me.approach("tobb");
+    me.walk_toward(|snapshot| {
+        townsperson(snapshot, "tobb").map(|tobb| tobb.at + Offset::new(1.3, 1.3))
+    });
+    me.zoom_camera(2);
+    me.tilt_camera(InputAction::TiltUp);
     me.talk_to("tobb");
+    point_off_stage(&mut me);
+    me.caption("A line said with a smile comes with a gesture to match: Tobb cheers");
+    me.wait_until("Tobb cheering", |snapshot| {
+        shows(
+            snapshot,
+            "tobb",
+            &Motion::Gesture(GestureName::new("happy")),
+        )
+    });
     me.caption(&format!(
         "Busts show who is speaking. {} reads on",
         spoken_list(&input_names(InputAction::Advance))
     ));
+    me.caption("He talks only while his words type, and rests once they are said");
+    me.wait_until("Tobb resting once his line is said", |snapshot| {
+        snapshot.stage.as_ref().is_some_and(|stage| !stage.typing)
+            && shows(snapshot, "tobb", &Motion::Action(Action::Idle))
+    });
+    me.hold();
+    me.act(InputAction::Advance);
+    me.wait_until("Tobb talking as his next line types", |snapshot| {
+        snapshot.stage.as_ref().is_some_and(|stage| stage.typing)
+            && shows(snapshot, "tobb", &Motion::Action(Action::Talk))
+    });
     let stage = me.read_to_choices();
     me.caption(&format!(
         "No buttons on the frame: {} leaves, and the choices say the rest",
@@ -55,12 +84,17 @@ fn play(shoot: &mut Shoot) {
     me.on_stage("catch");
     me.read_to_choices();
     me.caption("…or pick it with the pointer");
+    me.hold();
     me.pick("Good luck out there.");
+    me.caption("Tobb held his news while you talked — once you're free, he waves you over");
+    me.wait_until("Tobb waving", |snapshot| {
+        shows(snapshot, "tobb", &Motion::Gesture(GestureName::new("wave")))
+    });
     me.on_stage("news");
-    me.caption("Tobb held his news while you talked — once you're free, he calls you over");
     me.read_to_choices();
     me.act(InputAction::Choice1);
     me.conversation_over();
+    me.camera_home();
 
     me.caption("While you talk, the map ignores the mouse: a plain pointer, and clicks do nothing");
     me.talk_to("grisha");
@@ -165,6 +199,10 @@ fn point_off_stage(me: &mut Star) -> ProbeSnapshot {
         .first()
         .expect("open ground in view beside the conversation");
     me.point_at_ground(off_stage)
+}
+
+fn shows(snapshot: &ProbeSnapshot, npc: &str, motion: &Motion) -> bool {
+    nearest_npc(snapshot, npc).is_some_and(|body| body.shown == *motion)
 }
 
 fn spoken_list(names: &[String]) -> String {

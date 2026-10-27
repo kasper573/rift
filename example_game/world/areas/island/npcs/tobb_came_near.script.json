@@ -756,7 +756,7 @@
     "remember_news": {
       "type": "remember",
       "memory": "world/areas/island/npcs/tobb_news_today.memory.json",
-      "next": "news"
+      "next": "wave"
     },
     "store_visit": {
       "type": "remember",
@@ -766,6 +766,14 @@
         "local": "visits"
       },
       "next": "lure_due"
+    },
+    "wave": {
+      "type": "animate",
+      "who": {
+        "type": "owner"
+      },
+      "gesture": "wave",
+      "next": "news"
     }
   }
 }

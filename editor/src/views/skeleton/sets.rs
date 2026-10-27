@@ -1,15 +1,17 @@
-//! The sets page: what anyone can ask of the skeleton (its engine actions, poses and every move a
-//! set names) against base and each stance it has a set for, each cell the clips the ladder finds.
+//! The sets page: what anyone can ask of the skeleton (its engine actions, poses, every move a set
+//! names, and the gestures of a line's expressions and every other one a set names) against base
+//! and each stance it has a set for, each cell the clips the ladder finds.
 //! A cell a set names is plain, one found further down the ladder italic; picking a cell lists every
 //! library clip with its length and apex, to play alone or as one more variant of the cell.
 
 use engine::core::content::{Content, NamedContent};
 use engine::systems::actor::skeleton::{
-    BuiltSkeleton, ClipCell, ClipName, ClipRef, GroupName, MoveName, Rung, SkeletonDef, StanceSet,
-    VariantOrder,
+    BuiltSkeleton, ClipCell, ClipName, ClipRef, GestureName, GroupName, MoveName, Rung,
+    SkeletonDef, StanceSet, VariantOrder,
 };
 use engine::systems::actor::stance::{StanceDef, StanceId};
 use engine::systems::actor::{Action, Motion, Pose};
+use engine::systems::dialogue::bust::GenericExpression;
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::{controls, form, theme};
@@ -25,6 +27,7 @@ pub enum SetRow {
     Begin(Pose),
     End(Pose),
     Move(MoveName),
+    Gesture(GestureName),
 }
 
 impl SetRow {
@@ -35,6 +38,7 @@ impl SetRow {
             SetRow::Begin(pose) => format!("{} · taking it", pose.as_ref()),
             SetRow::End(pose) => format!("{} · leaving it", pose.as_ref()),
             SetRow::Move(name) => name.0.clone(),
+            SetRow::Gesture(name) => format!("{name} · gesture"),
         }
     }
 
@@ -50,6 +54,7 @@ impl SetRow {
             SetRow::Begin(pose) => (Motion::Begin(*pose), Pose::Idle),
             SetRow::End(pose) => (Motion::End(*pose), Pose::Idle),
             SetRow::Move(name) => (Motion::Move(name.clone()), Pose::Idle),
+            SetRow::Gesture(name) => (Motion::Gesture(name.clone()), Pose::Idle),
         }
     }
 }
@@ -58,9 +63,10 @@ impl SetRow {
 pub struct SetsState {
     /// The cell whose picker is open: its row, and its column's stance by path (none for base).
     pub open: Option<(SetRow, Option<String>)>,
-    /// Move rows added that no set names yet.
-    pub added: Vec<MoveName>,
+    /// Move and gesture rows added that no set names yet.
+    pub added: Vec<SetRow>,
     pub new_move: String,
+    pub new_gesture: String,
     pub filter: String,
     /// Whether a clip picked joins the open cell's variants rather than taking its place.
     pub adding: bool,
@@ -151,6 +157,14 @@ pub fn set_cell(
                 set.moves.remove(name);
                 Ok(())
             }
+            (SetRow::Gesture(name), Some(clip)) => {
+                set.gestures.insert(name.clone(), clip);
+                Ok(())
+            }
+            (SetRow::Gesture(name), None) => {
+                set.gestures.remove(name);
+                Ok(())
+            }
         }
     })
 }
@@ -181,8 +195,9 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, buil
     let rows = rows(editor, key, def);
     form::hint(
         ui,
-        "Rows are what anyone can ask of this skeleton: the engine actions, its poses, and every \
-         move a set here names. Columns are base and each stance it has a set for. Italic cells are \
+        "Rows are what anyone can ask of this skeleton: the engine actions, its poses, every move \
+         a set here names, and its gestures: one for each expression a line is said with, and every \
+         other a set here names. Columns are base and each stance it has a set for. Italic cells are \
          found further down the ladder.",
     );
     toolbar(editor, ui, key, content, def);
@@ -244,8 +259,8 @@ fn toolbar(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, def: 
         .map(|(id, stance)| (id.path(content).to_owned(), stance.shown_name().to_owned()))
         .collect();
     let mut column: Option<String> = None;
-    let mut added: Option<MoveName> = None;
-    ui.horizontal(|ui| {
+    let mut added: Option<SetRow> = None;
+    ui.horizontal_wrapped(|ui| {
         ui.add_enabled_ui(!missing.is_empty(), |ui| {
             ui.menu_button("+ Add stance column", |ui| {
                 for (path, name) in &missing {
@@ -268,28 +283,58 @@ fn toolbar(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, def: 
             .add_enabled(!name.is_empty(), egui::Button::new("+ Add move row"))
             .clicked()
         {
-            added = Some(MoveName::new(name));
+            added = Some(SetRow::Move(MoveName::new(name)));
             sets.new_move.clear();
+        }
+        ui.add_space(12.0);
+        ui.add(
+            egui::TextEdit::singleline(&mut sets.new_gesture)
+                .hint_text("gesture name")
+                .desired_width(140.0),
+        );
+        let name = sets.new_gesture.trim().to_owned();
+        if ui
+            .add_enabled(!name.is_empty(), egui::Button::new("+ Add gesture row"))
+            .clicked()
+        {
+            added = Some(SetRow::Gesture(GestureName::new(name)));
+            sets.new_gesture.clear();
         }
     });
     if let Some(stance) = column {
         add_stance_column(editor, key, &stance);
     }
-    if let Some(name) = added {
+    if let Some(row) = added {
         let sets = &mut editor.views.skeleton.view_mut(key).sets;
-        if !def.moves().any(|declared| *declared == name) && !sets.added.contains(&name) {
-            sets.added.push(name);
+        if !sets.added.contains(&row) {
+            sets.added.push(row);
         }
     }
 }
 
-/// The table's rows: the engine actions, the poses other than idling, and every move a set names
-/// or the designer added.
+/// The table's rows: the engine actions, the poses other than idling, every move a set names or
+/// the designer added, and the gestures of the generic expressions, every other a set names and
+/// those the designer added.
 fn rows(editor: &Editor, key: &str, def: &SkeletonDef) -> Vec<SetRow> {
+    let added = &editor.views.skeleton.view(key).sets.added;
     let mut moves: Vec<MoveName> = def.moves().cloned().collect();
-    moves.extend(editor.views.skeleton.view(key).sets.added.iter().cloned());
+    let mut gestures: Vec<GestureName> = def.gestures().cloned().collect();
+    for row in added {
+        match row {
+            SetRow::Move(name) => moves.push(name.clone()),
+            SetRow::Gesture(name) => gestures.push(name.clone()),
+            _ => {}
+        }
+    }
     moves.sort();
     moves.dedup();
+    let generic: Vec<GestureName> = GenericExpression::VARIANTS
+        .iter()
+        .map(|expression| GestureName::new(expression.as_ref()))
+        .collect();
+    gestures.retain(|name| !generic.contains(name));
+    gestures.sort();
+    gestures.dedup();
     Action::VARIANTS
         .iter()
         .map(|action| SetRow::Action(*action))
@@ -306,6 +351,7 @@ fn rows(editor: &Editor, key: &str, def: &SkeletonDef) -> Vec<SetRow> {
                 }),
         )
         .chain(moves.into_iter().map(SetRow::Move))
+        .chain(generic.into_iter().chain(gestures).map(SetRow::Gesture))
         .collect()
 }
 
@@ -337,7 +383,10 @@ fn cell(
     let response = ui.add(egui::Button::selectable(lit, text));
     match (rung, unknown) {
         (_, true) => response.on_hover_text("no library carries this clip; a model must"),
-        (Rung::Fallback, _) => response.on_hover_text("no set names this move: the attack plays"),
+        (Rung::Fallback, _) => response.on_hover_text(match row {
+            SetRow::Gesture(_) => "no set names this gesture: the body makes none",
+            _ => "no set names this move: the attack plays",
+        }),
         _ => response,
     }
 }
@@ -349,6 +398,7 @@ fn named_in(set: &engine::systems::actor::skeleton::ClipSet, row: &SetRow) -> bo
         SetRow::Begin(pose) => set.begins.contains_key(pose),
         SetRow::End(pose) => set.ends.contains_key(pose),
         SetRow::Move(name) => set.moves.contains_key(name),
+        SetRow::Gesture(name) => set.gestures.contains_key(name),
     }
 }
 
@@ -375,6 +425,7 @@ fn picker(
         SetRow::Begin(pose) => set.begins.get(pose),
         SetRow::End(pose) => set.ends.get(pose),
         SetRow::Move(name) => set.moves.get(name),
+        SetRow::Gesture(name) => set.gestures.get(name),
     });
     let mut chosen: Option<Option<ClipCell>> = None;
     ui.horizontal(|ui| {
@@ -547,6 +598,9 @@ fn forget(set: &mut engine::systems::actor::skeleton::ClipSet, row: &SetRow) {
         }
         SetRow::Move(name) => {
             set.moves.remove(name);
+        }
+        SetRow::Gesture(name) => {
+            set.gestures.remove(name);
         }
     }
 }

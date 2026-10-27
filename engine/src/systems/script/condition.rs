@@ -184,6 +184,7 @@ fn describe_query(content: &impl ContentNames, query: &RiftQuery) -> String {
         RiftQuery::Health { .. } => "health".to_owned(),
         RiftQuery::IsNpc { .. } => "an npc".to_owned(),
         RiftQuery::Subject => "you".to_owned(),
+        RiftQuery::Owner => "itself".to_owned(),
         RiftQuery::Target => "target".to_owned(),
         RiftQuery::Walking { .. } => "walking".to_owned(),
         RiftQuery::Hostile { .. } => "hostile".to_owned(),

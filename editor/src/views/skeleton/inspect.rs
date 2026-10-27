@@ -9,7 +9,7 @@ use engine::core::content::Content;
 use engine::core::script::node::Node;
 use engine::systems::actor::playing::Animate;
 use engine::systems::actor::skeleton::{
-    BuiltSkeleton, MAX_JOINTS, MAX_LIBRARIES_BYTES, MoveName, SkeletonDef,
+    BuiltSkeleton, GestureName, MAX_JOINTS, MAX_LIBRARIES_BYTES, MoveName, SkeletonDef,
 };
 use engine::systems::actor::{Action, MaterialDef, ModelPartDef, Motion};
 use engine::systems::script::{RiftEffect, ScriptDef};
@@ -193,6 +193,8 @@ fn sets(editor: &Editor, ui: &mut Ui, content: &Content, row: &SkeletonDef, buil
     let moves: BTreeSet<&MoveName> = def.moves().collect();
     form::kv_text(ui, "stances", def.stances.len().to_string());
     form::kv_text(ui, "moves", moves.len().to_string());
+    let gestures: BTreeSet<&GestureName> = def.gestures().collect();
+    form::kv_text(ui, "gestures", gestures.len().to_string());
     form::kv_text(
         ui,
         "engine actions",
@@ -226,7 +228,7 @@ fn sets(editor: &Editor, ui: &mut Ui, content: &Content, row: &SkeletonDef, buil
             format!("no apex on {}: a hit must land", lacking.join(", ")),
         );
     }
-    let declared = crate::body_names::declarations(content);
+    let declared = crate::body_names::move_declarations(content);
     for (script, name) in asked_moves(editor, content) {
         if declared.contains_key(&name) {
             continue;

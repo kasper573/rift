@@ -321,6 +321,8 @@ pub enum RiftQuery {
         actor: Box<Condition>,
     },
     Subject,
+    /// The npc or object whose script this is.
+    Owner,
     Target,
     Walking {
         #[schemars(extend("default" = {"type": "subject"}))]
@@ -362,9 +364,10 @@ impl RiftQueryKind {
             | RiftQueryKind::Distance
             | RiftQueryKind::Health => ValueType::Number,
             RiftQueryKind::QuestResetsIn => ValueType::Text,
-            RiftQueryKind::Nearest | RiftQueryKind::Target | RiftQueryKind::Subject => {
-                ValueType::Actor
-            }
+            RiftQueryKind::Nearest
+            | RiftQueryKind::Target
+            | RiftQueryKind::Subject
+            | RiftQueryKind::Owner => ValueType::Actor,
             RiftQueryKind::SkillTargets => ValueType::Actors,
             RiftQueryKind::SkillArea => ValueType::Area,
             RiftQueryKind::AimedPoint => ValueType::Point,
@@ -735,6 +738,7 @@ impl QueryDef<RiftScripting> for RiftQuery {
                 })
             }
             RiftQuery::Subject => Box::new(|_, cx| Value::Actor(cx.subject)),
+            RiftQuery::Owner => Box::new(|_, cx| Value::Actor(cx.owner)),
             RiftQuery::Target => Box::new(|world, cx| {
                 Value::Actor(cx.owner.and_then(|owner| body::target(world, owner)))
             }),
