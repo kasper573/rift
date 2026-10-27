@@ -10,8 +10,8 @@ use engine::core::units::{Meters, MetersPerSec};
 use engine::systems::actor::model::Skeletons;
 use engine::systems::actor::part::ModelPartDef;
 use engine::systems::actor::skeleton::{
-    BodyRegion, BuildName, CLIP_LIBRARIES, ClipName, ClipRef, Cue, GroupName, JointName, Layer,
-    Leg, MoveName, SkeletonDef,
+    BodyRegion, BuildName, CLIP_LIBRARIES, ClipCell, ClipName, ClipRef, Cue, GroupName, JointName,
+    Layer, Leg, MoveName, SkeletonDef, VariantOrder,
 };
 use engine::systems::actor::stance::StanceDef;
 use engine::systems::actor::{Action, Pose};
@@ -77,6 +77,24 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
     let set = &row.stances[0];
     assert_eq!(stance_path(&editor, set.stance), sword);
     assert_eq!(set.set.moves[&MoveName::new("slash")], whole("slash"));
+    let combo = ClipCell::Variants {
+        variants: ["slash", "attack"]
+            .map(|clip| ClipRef::Whole(ClipName::new(clip)))
+            .to_vec(),
+        order: VariantOrder::InTurn,
+    };
+    assert!(sets::set_cell(
+        &mut editor,
+        &key,
+        Some(&sword),
+        &slash,
+        Some(combo.clone())
+    ));
+    assert_eq!(
+        skeleton_of(&mut editor, &key).stances[0].set.moves[&MoveName::new("slash")],
+        combo,
+        "a cell's variants land in order, with the order they take turns in"
+    );
     assert!(
         !sets::set_cell(
             &mut editor,
@@ -433,8 +451,8 @@ fn a_clip_on_the_skeleton_view_plays_without_being_asked() {
     );
 }
 
-fn whole(clip: &str) -> ClipRef {
-    ClipRef::Whole(ClipName::new(clip))
+fn whole(clip: &str) -> ClipCell {
+    ClipCell::One(ClipRef::Whole(ClipName::new(clip)))
 }
 
 fn cue(at: f32, apex: bool) -> Cue {

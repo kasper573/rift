@@ -18,7 +18,7 @@ use crate::core::content::{
     NamedContent, Nearby, PartSpec, Parts, RowCheck, Shape, serial,
 };
 use crate::core::geometry::{Degrees, Radians};
-use crate::core::math::Rgb;
+use crate::core::math::{Rgb, Rng};
 use crate::core::render::world::layers::Gait;
 use crate::core::time::{Hertz, Millis, Seconds};
 use crate::core::units::{Meters, MetersPerSec};
@@ -234,11 +234,33 @@ impl LocalTurn {
 #[serde(deny_unknown_fields)]
 pub struct ClipSet {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub clips: BTreeMap<Action, ClipRef>,
+    pub clips: BTreeMap<Action, ClipCell>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub poses: BTreeMap<Pose, ClipRef>,
+    pub poses: BTreeMap<Pose, ClipCell>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub moves: BTreeMap<MoveName, ClipRef>,
+    pub moves: BTreeMap<MoveName, ClipCell>,
+}
+
+/// What a set plays for one action, pose or move: a clip, or several taking turns, a looping one
+/// moving on each time it plays through and one that plays once each time it is played.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ClipCell {
+    One(ClipRef),
+    Variants {
+        variants: Vec<ClipRef>,
+        #[serde(default, skip_serializing_if = "VariantOrder::is_random")]
+        order: VariantOrder,
+    },
+}
+
+/// How a cell's variants take turns: any but the one just played, or each in the order listed.
+#[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VariantOrder {
+    #[default]
+    Random,
+    InTurn,
 }
 
 /// The set a stance plays, over the base set.
@@ -256,6 +278,61 @@ pub struct StanceSet {
 pub enum ClipRef {
     Whole(ClipName),
     Grouped { clip: ClipName, only: GroupName },
+}
+
+impl ClipCell {
+    pub fn variants(&self) -> &[ClipRef] {
+        match self {
+            ClipCell::One(clip) => std::slice::from_ref(clip),
+            ClipCell::Variants { variants, .. } => variants,
+        }
+    }
+
+    pub fn order(&self) -> VariantOrder {
+        match self {
+            ClipCell::One(_) => VariantOrder::Random,
+            ClipCell::Variants { order, .. } => *order,
+        }
+    }
+
+    /// The variant `at`, or the first when there is none there.
+    pub fn variant(&self, at: usize) -> &ClipRef {
+        let variants = self.variants();
+        variants.get(at).unwrap_or(&variants[0])
+    }
+
+    /// The variant to play after `last`, the one played before it, if any.
+    pub fn after(&self, last: Option<usize>, rng: &mut Rng) -> usize {
+        let count = self.variants().len() as u32;
+        match (self.order(), last) {
+            _ if count <= 1 => 0,
+            (VariantOrder::InTurn, None) => 0,
+            (VariantOrder::InTurn, Some(last)) => (last + 1) % count as usize,
+            (VariantOrder::Random, None) => rng.rand_range(0..count) as usize,
+            (VariantOrder::Random, Some(last)) => {
+                let other = rng.rand_range(0..count - 1) as usize;
+                if other >= last { other + 1 } else { other }
+            }
+        }
+    }
+
+    /// Each clip the cell names, with where in the cell it names it, below `pointer`.
+    fn entries(&self, pointer: String) -> Vec<(String, &ClipRef)> {
+        match self {
+            ClipCell::One(clip) => vec![(pointer, clip)],
+            ClipCell::Variants { variants, .. } => variants
+                .iter()
+                .enumerate()
+                .map(|(index, clip)| (format!("{pointer}/variants/{index}"), clip))
+                .collect(),
+        }
+    }
+}
+
+impl VariantOrder {
+    fn is_random(&self) -> bool {
+        *self == VariantOrder::Random
+    }
 }
 
 impl ClipRef {
@@ -715,7 +792,12 @@ impl ContentFile for SkeletonDef {
                 clips: <Action as strum::VariantArray>::VARIANTS
                     .iter()
                     .filter(|action| action.required())
-                    .map(|&action| (action, ClipRef::Whole(ClipName::new(action.as_ref()))))
+                    .map(|&action| {
+                        (
+                            action,
+                            ClipCell::One(ClipRef::Whole(ClipName::new(action.as_ref()))),
+                        )
+                    })
                     .collect(),
                 ..ClipSet::default()
             },
@@ -811,6 +893,16 @@ impl ContentFile for SkeletonDef {
                     "the idle action's clip, which idling plays already",
                 );
             }
+            for (entry, cell) in set.cells() {
+                if cell.variants().is_empty() {
+                    cx.error(
+                        format!("{pointer}{entry}/variants"),
+                        "no variants",
+                        "an empty list",
+                        "at least one clip to play",
+                    );
+                }
+            }
             for (entry, clip) in set.entries() {
                 cx.text(format!("{pointer}{entry}"), clip.clip().as_str(), 1, 64);
                 if let Some(group) = clip.only()
@@ -830,16 +922,18 @@ impl ContentFile for SkeletonDef {
         }
         for (pointer, set) in self.sets() {
             for gait in Action::GAITS {
-                let Some(clip) = set.clips.get(&gait) else {
+                let Some(cell) = set.clips.get(&gait) else {
                     continue;
                 };
-                if !self.paces.contains_key(clip.clip()) {
-                    cx.error(
-                        format!("{pointer}/clips/{}", gait.as_ref()),
-                        "no pace",
-                        format!("{} has no pace", clip.clip()),
-                        "a pace for every clip played to walk, run or sprint",
-                    );
+                for (entry, clip) in cell.entries(format!("{pointer}/clips/{}", gait.as_ref())) {
+                    if !self.paces.contains_key(clip.clip()) {
+                        cx.error(
+                            entry,
+                            "no pace",
+                            format!("{} has no pace", clip.clip()),
+                            "a pace for every clip played to walk, run or sprint",
+                        );
+                    }
                 }
             }
         }
@@ -1007,34 +1101,41 @@ impl ModuleSet for SkeletonDef {
 }
 
 impl ClipSet {
-    /// Every clip the set names, with where in the set it names it.
-    pub fn entries(&self) -> impl Iterator<Item = (String, &ClipRef)> {
+    /// Every cell of the set, with where in the set it is.
+    pub fn cells(&self) -> impl Iterator<Item = (String, &ClipCell)> {
         let clips = self
             .clips
             .iter()
-            .map(|(action, clip)| (format!("/clips/{}", action.as_ref()), clip));
+            .map(|(action, cell)| (format!("/clips/{}", action.as_ref()), cell));
         let poses = self
             .poses
             .iter()
-            .map(|(pose, clip)| (format!("/poses/{}", pose.as_ref()), clip));
+            .map(|(pose, cell)| (format!("/poses/{}", pose.as_ref()), cell));
         let moves = self
             .moves
             .iter()
-            .map(|(name, clip)| (format!("/moves/{}", name.0), clip));
+            .map(|(name, cell)| (format!("/moves/{}", name.0), cell));
         clips.chain(poses).chain(moves)
     }
 
-    /// The clips that play as a hit: the attack and every move.
+    /// Every clip the set names, each variant of a cell apart, with where in the set it names it.
+    pub fn entries(&self) -> impl Iterator<Item = (String, &ClipRef)> {
+        self.cells()
+            .flat_map(|(pointer, cell)| cell.entries(pointer))
+    }
+
+    /// The clips that play as a hit, each variant apart: the attack and every move.
     pub fn attacks(&self) -> impl Iterator<Item = (String, &ClipRef)> {
         let attack = self
             .clips
             .get(&Action::Attack)
-            .map(|clip| ("/clips/attack".to_owned(), clip));
+            .into_iter()
+            .flat_map(|cell| cell.entries("/clips/attack".to_owned()));
         let moves = self
             .moves
             .iter()
-            .map(|(name, clip)| (format!("/moves/{}", name.0), clip));
-        attack.into_iter().chain(moves)
+            .flat_map(|(name, cell)| cell.entries(format!("/moves/{}", name.0)));
+        attack.chain(moves)
     }
 }
 
@@ -1062,10 +1163,15 @@ impl SkeletonDef {
     /// named: the stance's set names it, else the base set; a move neither names plays the stance's
     /// attack, else the base's; a sprint neither names plays the run. The base set names every other
     /// action, as the loader holds it to.
-    pub fn named(&self, stance: Option<StanceId>, motion: &Motion, pose: Pose) -> (&ClipRef, Rung) {
+    pub fn named(
+        &self,
+        stance: Option<StanceId>,
+        motion: &Motion,
+        pose: Pose,
+    ) -> (&ClipCell, Rung) {
         let base = &self.base;
         let set = stance.and_then(|stance| self.set(stance));
-        let action = |action: Action| -> (&ClipRef, Rung) {
+        let action = |action: Action| -> (&ClipCell, Rung) {
             let action = if action.required() || self.names(stance, action) {
                 action
             } else {
@@ -1107,8 +1213,8 @@ impl SkeletonDef {
             .into_iter()
             .filter(|&gait| gait.required() || self.names(stance, gait))
             .filter_map(|gait| {
-                let (clip, _) = self.named(stance, &Motion::Action(gait), Pose::Idle);
-                let pace = *self.paces.get(clip.clip())?;
+                let (cell, _) = self.named(stance, &Motion::Action(gait), Pose::Idle);
+                let pace = *self.paces.get(cell.variant(0).clip())?;
                 Some(Paced { gait, pace })
             })
             .collect()

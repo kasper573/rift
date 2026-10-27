@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -37,6 +37,8 @@ fn play(shoot: &mut Shoot) {
     ));
     me.caption("A monster on the move is run down and struck where it walks");
     strike_on_the_move(&mut me);
+    me.caption("Swing after swing, the sword takes its strokes in turn");
+    strokes_in_turn(&mut me);
     me.caption("Every hit bursts its damage out of whoever takes it");
     let loot = slay(&mut me);
     me.wait_until("the kill's XP in the feed", |snapshot| {
@@ -79,7 +81,7 @@ fn play(shoot: &mut Shoot) {
     me.hold();
     me.act(InputAction::ToggleInventory);
 
-    me.caption("Pick a fight, then run for town: the sword in hand swings the sword's slash");
+    me.caption("Pick a fight, then run for town: the sword in hand swings as a sword does");
     let chaser = provoke(&mut me);
     run_to_town(&mut me);
     me.caption("It gives up the chase at the edge: monsters never set foot in a safe zone");
@@ -152,6 +154,25 @@ fn strike_on_the_move(me: &mut Player) {
     );
 }
 
+// Fights on until two different strokes have swung.
+fn strokes_in_turn(me: &mut Player) {
+    let swung = RefCell::new(HashSet::new());
+    me.fight(
+        |_, actor| is_prey(actor),
+        |snapshot| {
+            if let Some(clip) = snapshot
+                .me
+                .as_ref()
+                .filter(|me| me.action == Action::Attack)
+                .and_then(|me| me.clip.clone())
+            {
+                swung.borrow_mut().insert(clip);
+            }
+            swung.borrow().len() >= 2
+        },
+    );
+}
+
 // Fights until a monster falls, and returns what it dropped.
 fn slay(me: &mut Player) -> Vec<ProbeGroundItem> {
     let fallen = fallen(&me.snapshot());
@@ -193,11 +214,7 @@ fn provoke(me: &mut Player) -> ProbeBody {
     );
     me.wait_until("the swing of a sword in hand", |snapshot| {
         snapshot.me.as_ref().is_some_and(|me| {
-            !me.held.is_empty()
-                && me
-                    .clip
-                    .as_ref()
-                    .is_some_and(|clip| clip.as_str() == "1h_slash")
+            !me.held.is_empty() && me.stance.is_some() && me.action == Action::Attack
         })
     });
     me.wait_for("the monster that gives chase", |snapshot| {

@@ -580,7 +580,7 @@ fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, built: &
         );
         return;
     };
-    let resolved = model.resolve(None, &Motion::Action(picked), Pose::Idle);
+    let resolved = model.resolve(None, &Motion::Action(picked), Pose::Idle, 0);
     let Some(source) = resolved.source else {
         form::hint(ui, "Nothing plays this action on the model.");
         return;

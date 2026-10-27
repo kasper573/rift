@@ -357,6 +357,7 @@ fn played_clip(editor: &mut Editor, key: &str, built: &BuiltSkeleton) -> Option<
         .def
         .named(None, &Motion::Action(Action::Idle), Pose::Idle)
         .0
+        .variant(0)
         .clip();
     let view = editor.views.skeleton.view_mut(key);
     let clip = view

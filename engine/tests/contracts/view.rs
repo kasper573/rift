@@ -26,7 +26,7 @@ use engine::systems::area::{self, AreaDef, AreaTag};
 use engine::systems::item::ItemDef;
 use engine::systems::movement::RenderPosition;
 use serde_json::json;
-use testkit::{APEX, BODY, Game, Map, WALK_PACE, path};
+use testkit::{APEX, BODY, CLIP, Game, Map, WALK_PACE, path};
 
 const SIZE: GroundSize = GroundSize {
     width: 32,
@@ -386,6 +386,92 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
         of(striker),
         vec![sfx("whoosh")],
         "a strike sounds its apex once, and puts no foot down"
+    );
+}
+
+#[test]
+fn a_looping_clips_variants_take_turns_each_as_the_one_before_plays_through() {
+    let clips: Vec<(&str, engine::core::time::Seconds)> = testkit::rig_clips()
+        .into_iter()
+        .chain([("hum", CLIP.seconds()), ("tap", CLIP.seconds())])
+        .collect();
+    let mut base: serde_json::Map<String, serde_json::Value> =
+        <Action as strum::VariantArray>::VARIANTS
+            .iter()
+            .map(|action| (action.as_ref().to_owned(), json!(action.as_ref())))
+            .collect();
+    base.insert(
+        "idle".to_owned(),
+        json!({ "variants": ["hum", "tap"], "order": "in_turn" }),
+    );
+    let cue = |sound: &str| json!([{ "at": 100.0, "sound": path("sfx", sound) }]);
+    let game = Game::new()
+        .area("field", &Map::open(5, 5), json!([]))
+        .sfx("hum")
+        .sfx("tap")
+        .skeleton_of(
+            BODY,
+            &clips,
+            json!({
+                "base": { "clips": base },
+                "cues": { "attack": [{ "at": APEX.0, "apex": true }], "hum": cue("hum"), "tap": cue("tap") },
+            }),
+        )
+        .hero("field", 2.0, 2.0);
+    let content = game.load();
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            50,
+        )))
+        .init_resource::<Animator>()
+        .add_message::<PlaySfx>()
+        .insert_resource(content.clone());
+    let hero = testkit::Declared::declared::<ModelDef>(&content, "hero").expect("a hero");
+    let field = testkit::Declared::declared::<AreaDef>(&content, "field").expect("a field");
+    app.world_mut().spawn((
+        Actor {
+            facing: Radians(0.0),
+            action: Action::Idle,
+            pose: Pose::Idle,
+            attack_rate: PlaybackRate(1.0),
+            speed: MetersPerSec::default(),
+        },
+        Appearance::of(hero),
+        RenderActor {
+            facing: Radians(0.0),
+            action: Action::Idle,
+        },
+        RenderPosition(Pos::new(2.0, 2.0)),
+        AreaTag { area: field },
+    ));
+
+    let mut heard = Vec::new();
+    for _ in 0..30 {
+        app.update();
+        app.world_mut()
+            .run_system_cached(render::pose)
+            .expect("posed");
+        heard.extend(
+            app.world_mut()
+                .resource_mut::<Messages<PlaySfx>>()
+                .drain()
+                .map(|sound| sound.id),
+        );
+    }
+    let sfx = |name: &str| {
+        content
+            .by_path::<SfxDef>(&path("sfx", name))
+            .unwrap_or_else(|| panic!("the {name} sound"))
+    };
+    let (hum, tap) = (sfx("hum"), sfx("tap"));
+    assert!(heard.len() >= 4, "a turn a loop: {heard:?}");
+    assert!(
+        heard
+            .iter()
+            .enumerate()
+            .all(|(turn, id)| *id == if turn % 2 == 0 { hum } else { tap }),
+        "the idle hums, then taps, then hums again: {heard:?}"
     );
 }
 

@@ -20,6 +20,7 @@ use bevy::render::{RenderApp, RenderStartup, init_gpu_resource};
 use bevy::sprite_render::Material2dPlugin;
 
 use crate::core::interpolate::RenderValueSystems;
+use crate::core::math::Rng;
 use crate::core::time::Seconds;
 
 pub struct WorldRenderPlugin;
@@ -76,19 +77,32 @@ impl Plugin for WorldRenderPlugin {
     }
 }
 
-#[derive(Resource, Default)]
+/// Where each entity's animation stands: the state it is in, and the turn of the state's clips it
+/// is on, each turn picked at random by its own hand, since which clip shows is for the eye alone.
+#[derive(Resource)]
 pub struct Animator {
     anchors: HashMap<Entity, Anchor>,
+    rng: Rng,
+}
+
+impl Default for Animator {
+    fn default() -> Animator {
+        Animator {
+            anchors: HashMap::new(),
+            rng: Rng::from_entropy(),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
 struct Anchor {
     state: u64,
-    start: Seconds,
+    turn: usize,
+    since: Seconds,
     played: Seconds,
 }
 
-/// Where an entity's animation stood at the frame before, in the state it is in now.
+/// Where an entity's animation stood at the frame before, in the state and turn it is in now.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Previous {
     Unseen,
@@ -96,31 +110,67 @@ pub enum Previous {
     Continued(Seconds),
 }
 
+/// How far into its turn an entity's animation is, and which turn it is on.
 pub struct Playhead {
     pub elapsed: Seconds,
     pub previous: Previous,
+    pub turn: usize,
+}
+
+/// How a state's clips take turns as it plays on: how long each turn plays, and the turn that
+/// follows another, or the first for none.
+pub struct Turns<'a> {
+    pub length: &'a dyn Fn(usize) -> Seconds,
+    pub next: &'a mut dyn FnMut(Option<usize>, &mut Rng) -> usize,
 }
 
 impl Animator {
-    pub fn advance(&mut self, entity: Entity, state: u64, time: Seconds) -> Playhead {
-        let anchor = self.anchors.get(&entity).copied();
-        let (previous, start) = match anchor {
-            Some(anchor) if anchor.state == state => {
-                (Previous::Continued(anchor.played), anchor.start)
-            }
-            Some(_) => (Previous::Restarted, time),
-            None => (Previous::Unseen, time),
+    /// Moves the entity's animation on to `time` in `state`, taking `turns` when its clips take
+    /// them, and keeping to one clip when they don't.
+    pub fn advance(
+        &mut self,
+        entity: Entity,
+        state: u64,
+        time: Seconds,
+        turns: Option<Turns>,
+    ) -> Playhead {
+        let (mut previous, mut anchor) = match self.anchors.get(&entity).copied() {
+            Some(anchor) if anchor.state == state => (Previous::Continued(anchor.played), anchor),
+            seen => (
+                match seen {
+                    Some(_) => Previous::Restarted,
+                    None => Previous::Unseen,
+                },
+                Anchor {
+                    state,
+                    turn: 0,
+                    since: time,
+                    played: Seconds(0.0),
+                },
+            ),
         };
-        let elapsed = time - start;
-        self.anchors.insert(
-            entity,
-            Anchor {
-                state,
-                start,
-                played: elapsed,
-            },
-        );
-        Playhead { elapsed, previous }
+        if let Some(Turns { length, next }) = turns {
+            if previous != Previous::Continued(anchor.played) {
+                anchor.turn = next(None, &mut self.rng);
+            }
+            loop {
+                let played_once = length(anchor.turn);
+                if played_once.0 <= 0.0 || time - anchor.since < played_once {
+                    break;
+                }
+                anchor.since += played_once;
+                anchor.turn = next(Some(anchor.turn), &mut self.rng);
+                previous = Previous::Restarted;
+            }
+        }
+        let elapsed = time - anchor.since;
+        anchor.played = elapsed;
+        self.anchors.insert(entity, anchor);
+        Playhead {
+            elapsed,
+            previous,
+            turn: anchor.turn,
+        }
     }
 
     pub fn retain(&mut self, mut alive: impl FnMut(Entity) -> bool) {

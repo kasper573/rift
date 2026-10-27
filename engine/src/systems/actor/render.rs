@@ -25,11 +25,11 @@ use crate::core::content::Content;
 use crate::core::content::gltf::NodeTree;
 use crate::core::geometry::Radians;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin};
-use crate::core::math::Pos;
+use crate::core::math::{Pos, Rng};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::body::{self, Body, RigReady};
 use crate::core::render::world::layers::Layered;
-use crate::core::render::{Animator, Previous, facing_rotation, ground_height, world_point};
+use crate::core::render::{Animator, Previous, Turns, facing_rotation, ground_height, world_point};
 use crate::core::time::{Seconds, UnixMillis};
 use crate::core::units::Meters;
 use crate::core::vfx::cover::Treads;
@@ -127,6 +127,7 @@ struct Play {
     pose: Pose,
     stance: Option<u32>,
     started: Option<UnixMillis>,
+    variant: usize,
 }
 
 /// A node playing on the rig, fading toward its weight.
@@ -158,6 +159,14 @@ impl Turn {
 }
 
 impl Puppet {
+    /// The variant of `motion`'s cell the body shows, while it shows that motion.
+    pub fn variant_of(&self, motion: &Motion) -> usize {
+        self.playing
+            .as_ref()
+            .filter(|play| play.motion == *motion)
+            .map_or(0, |play| play.variant)
+    }
+
     /// The props the hands hold, by hand.
     pub fn held(&self) -> impl Iterator<Item = (HandIndex, ItemId, Entity)> + '_ {
         self.held
@@ -425,34 +434,45 @@ pub fn pose(world: &mut World) {
         let model = ActorModel::get(&content, model);
         let stance = held::stance_of(world, entity);
         let ground = ground_height(world, at.0);
-        let motion = playing
+        let given = playing
             .as_ref()
-            .filter(|playing| playing.motion.action() == shown.action)
-            .map_or(Motion::Action(shown.action), |playing| {
-                playing.motion.clone()
-            });
-        let play = Play {
+            .filter(|playing| playing.motion.action() == shown.action);
+        let motion = given.map_or(Motion::Action(shown.action), |playing| {
+            playing.motion.clone()
+        });
+        let mut play = Play {
             motion: motion.clone(),
             pose: actor.pose,
             stance: stance.map(|stance| stance.raw()),
-            started: playing
-                .as_ref()
-                .filter(|playing| playing.motion.action() == shown.action)
-                .map(|playing| playing.started),
+            started: given.map(|playing| playing.started),
+            variant: 0,
         };
-        let resolved = model.resolve(stance, &motion, actor.pose);
         let repeat = if motion.once() {
             RepeatAnimation::Never
         } else {
             RepeatAnimation::Forever
         };
-        let rate = model.rate(&motion, &resolved, actor.attack_rate, actor.speed);
         let state = {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             play.hash(&mut hasher);
             hasher.finish()
         };
-        let playhead = world.resource_mut::<Animator>().advance(entity, state, now);
+        let cell = model.cell(stance, &motion, actor.pose);
+        let played_once = |variant| {
+            let resolved = model.resolve(stance, &motion, actor.pose, variant);
+            resolved.length / model.rate(&motion, &resolved, actor.attack_rate, actor.speed)
+        };
+        let mut next = |last, rng: &mut Rng| cell.after(last, rng);
+        let turns = (given.is_none() && cell.variants().len() > 1).then_some(Turns {
+            length: &played_once,
+            next: &mut next,
+        });
+        let playhead = world
+            .resource_mut::<Animator>()
+            .advance(entity, state, now, turns);
+        play.variant = given.map_or(playhead.turn, |playing| playing.variant);
+        let resolved = model.resolve(stance, &motion, actor.pose, play.variant);
+        let rate = model.rate(&motion, &resolved, actor.attack_rate, actor.speed);
         let stepped = {
             let prev = match playhead.previous {
                 Previous::Continued(played) => Some(played),
@@ -471,7 +491,7 @@ pub fn pose(world: &mut World) {
         }
         let resting = resolved
             .only
-            .map(|_| model.resolve(stance, &Motion::Action(Action::Idle), actor.pose));
+            .map(|_| model.resolve(stance, &Motion::Action(Action::Idle), actor.pose, 0));
         let Some(mut puppet) = world.get_mut::<Puppet>(entity) else {
             continue;
         };

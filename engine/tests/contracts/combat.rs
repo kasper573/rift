@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
-use engine::core::time::UnixMillis;
+use engine::core::time::{Millis, Seconds, UnixMillis};
 use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest, Attitude};
@@ -9,7 +9,8 @@ use engine::systems::npc::{self, NpcDef, Pack};
 use engine::systems::stat::{self, StatKind};
 use engine::systems::{actor, script, skill};
 use serde_json::json;
-use testkit::{APEX, CLIP, Game, Map, Sim};
+use strum::VariantArray;
+use testkit::{APEX, BODY, CLIP, Game, Map, Sim, rig_clips};
 
 #[test]
 fn an_attack_walks_into_range_and_strikes() {
@@ -50,6 +51,79 @@ fn an_attacks_timing_comes_from_its_clip_at_the_attackers_speed() {
         (since(playing.ends) - CLIP.0 / speed).abs() <= 1.0,
         "{playing:?}"
     );
+}
+
+#[test]
+fn an_attacks_variants_take_turns_each_timed_by_its_own_clip() {
+    let long = Millis(CLIP.0 * 2.0);
+    for (order, plays) in [("in_turn", vec![0, 1, 2, 0, 1]), ("random", Vec::new())] {
+        let clips: Vec<(&str, Seconds)> = rig_clips()
+            .into_iter()
+            .chain([("thrust", CLIP.seconds()), ("lunge", long.seconds())])
+            .collect();
+        let mut base: serde_json::Map<String, serde_json::Value> = actor::Action::VARIANTS
+            .iter()
+            .map(|action| (action.as_ref().to_owned(), json!(action.as_ref())))
+            .collect();
+        base.insert(
+            "attack".to_owned(),
+            json!({ "variants": ["attack", "thrust", "lunge"], "order": order }),
+        );
+        let apex = json!([{ "at": APEX.0, "apex": true }]);
+        let content = Game::new()
+            .area("field", &Map::open(7, 7), json!([]))
+            .skeleton_of(
+                BODY,
+                &clips,
+                json!({
+                    "base": { "clips": base },
+                    "cues": { "attack": apex, "thrust": apex, "lunge": apex },
+                }),
+            )
+            .hero("field", 3.0, 3.0)
+            .load();
+        let mut sim = Sim::new(content);
+        sim.serve("field").add(actor::playing::progress);
+        let player = sim.join(1);
+        let played: Vec<(usize, f32)> = (0..30)
+            .map(|_| {
+                let playing = actor::playing::play(
+                    &mut sim.world,
+                    player,
+                    actor::Motion::Action(actor::Action::Attack),
+                    None,
+                )
+                .expect("an attack plays");
+                assert!(
+                    sim.run_until(1.0, |world| world
+                        .get::<actor::playing::Playing>(player)
+                        .is_none()),
+                    "the swing plays through"
+                );
+                (playing.variant, (playing.ends.0 - playing.started.0) as f32)
+            })
+            .collect();
+        let speed = stat::effective(&sim.world, player, StatKind::AttackSpeed);
+        for (variant, lasts) in &played {
+            let clip = if *variant == 2 { long } else { CLIP };
+            assert!(
+                (lasts - clip.0 / speed).abs() <= 1.0,
+                "{order}: variant {variant} lasts as its clip does: {played:?}"
+            );
+        }
+        let variants: Vec<usize> = played.iter().map(|(variant, _)| *variant).collect();
+        if !plays.is_empty() {
+            assert_eq!(variants[..plays.len()], plays[..], "{order}");
+        }
+        assert!(
+            variants.windows(2).all(|pair| pair[0] != pair[1]),
+            "{order}: no variant plays twice running: {variants:?}"
+        );
+        assert!(
+            (0..3).all(|variant| variants.contains(&variant)),
+            "{order}: every variant takes its turn: {variants:?}"
+        );
+    }
 }
 
 #[test]

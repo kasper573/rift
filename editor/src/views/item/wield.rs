@@ -272,7 +272,7 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
     let stance_id = stance
         .as_deref()
         .and_then(|path| content.by_path::<StanceDef>(path));
-    let resolved = model.resolve(stance_id, &shown.motion, shown.pose);
+    let resolved = model.resolve(stance_id, &shown.motion, shown.pose, 0);
     let clip = resolved
         .source
         .map(|source| (model.rig_clip(source), resolved.length.millis()));

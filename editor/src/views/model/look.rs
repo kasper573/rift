@@ -162,7 +162,7 @@ impl Scene {
             motion: view.motion.clone(),
             pose: view.pose,
         };
-        let resolved = model.resolve(stance_id, &shown.motion, shown.pose);
+        let resolved = model.resolve(stance_id, &shown.motion, shown.pose, 0);
         let playing = resolved.source.map(|source| Playing {
             clip: model.rig_clip(source),
             name: resolved.clip.clone(),

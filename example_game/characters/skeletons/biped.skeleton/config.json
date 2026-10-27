@@ -52,12 +52,26 @@
       "stance": "items-and-skills/stances/sword.stance.json",
       "set": {
         "clips": {
-          "attack": "1h_slash"
+          "attack": {
+            "variants": [
+              "1h_slash",
+              "1h_slice",
+              "1h_chop"
+            ],
+            "order": "in_turn"
+          }
         },
         "moves": {
           "chop": "1h_chop",
           "cleave": "1h_slice",
-          "slash": "1h_slash",
+          "slash": {
+            "variants": [
+              "1h_slash",
+              "1h_slice",
+              "1h_chop"
+            ],
+            "order": "in_turn"
+          },
           "thrust": "1h_stab"
         }
       }
@@ -67,12 +81,26 @@
       "set": {
         "clips": {
           "idle": "2h_idle",
-          "attack": "2h_slice"
+          "attack": {
+            "variants": [
+              "2h_slice",
+              "2h_chop",
+              "2h_stab"
+            ],
+            "order": "in_turn"
+          }
         },
         "moves": {
           "chop": "2h_chop",
           "cleave": "2h_spin",
-          "slash": "2h_slice",
+          "slash": {
+            "variants": [
+              "2h_slice",
+              "2h_chop",
+              "2h_stab"
+            ],
+            "order": "in_turn"
+          },
           "thrust": "2h_stab"
         }
       }
@@ -108,12 +136,26 @@
       "stance": "items-and-skills/stances/dual_daggers.stance.json",
       "set": {
         "clips": {
-          "attack": "dual_slash"
+          "attack": {
+            "variants": [
+              "dual_slash",
+              "dual_chop",
+              "dual_stab"
+            ],
+            "order": "in_turn"
+          }
         },
         "moves": {
           "chop": "dual_chop",
           "cleave": "dual_slash",
-          "slash": "dual_slash",
+          "slash": {
+            "variants": [
+              "dual_slash",
+              "dual_chop",
+              "dual_stab"
+            ],
+            "order": "in_turn"
+          },
           "thrust": "dual_stab"
         }
       }
@@ -171,14 +213,28 @@
       "set": {
         "clips": {
           "idle": "shield_idle",
-          "attack": "1h_slash"
+          "attack": {
+            "variants": [
+              "1h_slash",
+              "1h_slice",
+              "1h_chop"
+            ],
+            "order": "in_turn"
+          }
         },
         "moves": {
           "bash": "shield_bash",
           "block": "shield_block",
           "chop": "1h_chop",
           "cleave": "1h_slice",
-          "slash": "1h_slash",
+          "slash": {
+            "variants": [
+              "1h_slash",
+              "1h_slice",
+              "1h_chop"
+            ],
+            "order": "in_turn"
+          },
           "thrust": "1h_stab"
         }
       }

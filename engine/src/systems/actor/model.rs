@@ -12,8 +12,8 @@ use super::material;
 use super::part::{ModelPartDef, ModelPartId};
 use super::playing::Motion;
 use super::skeleton::{
-    self, BuildName, BuiltSkeleton, ClipName, Colours, Cue, DeclaredMoves, GroupName, Hand,
-    LibraryClip, SkeletonDef, SkeletonId,
+    self, BuildName, BuiltSkeleton, ClipCell, ClipName, Colours, Cue, DeclaredMoves, GroupName,
+    Hand, LibraryClip, SkeletonDef, SkeletonId,
 };
 use super::stance::StanceId;
 use super::{Action, Pose};
@@ -606,16 +606,28 @@ impl ActorModel {
         motion: &Motion,
         pose: Pose,
     ) -> Option<RigClip> {
-        self.resolve(stance, motion, pose)
+        self.resolve(stance, motion, pose, 0)
             .source
             .map(|source| self.rig_clip(source))
     }
 
-    /// What plays for `motion` in `stance`, holding `pose` while idle: the stance's set names it,
-    /// else the base set; a move neither names plays the stance's attack, else the base's.
-    pub fn resolve(&self, stance: Option<StanceId>, motion: &Motion, pose: Pose) -> Resolved<'_> {
+    /// The cell that plays `motion` in `stance`, holding `pose` while idle.
+    pub fn cell(&self, stance: Option<StanceId>, motion: &Motion, pose: Pose) -> &ClipCell {
+        self.skeleton.def.named(stance, motion, pose).0
+    }
+
+    /// What plays as the `variant`th variant of `motion` in `stance`, holding `pose` while idle:
+    /// the stance's set names it, else the base set; a move neither names plays the stance's
+    /// attack, else the base's.
+    pub fn resolve(
+        &self,
+        stance: Option<StanceId>,
+        motion: &Motion,
+        pose: Pose,
+        variant: usize,
+    ) -> Resolved<'_> {
         let skeleton = &self.skeleton.def;
-        let (clip, _) = skeleton.named(stance, motion, pose);
+        let clip = self.cell(stance, motion, pose).variant(variant);
         let name = clip.clip();
         let (source, length) = match self.skeleton.clips.get(name) {
             Some(&LibraryClip {
@@ -666,15 +678,16 @@ impl ActorModel {
         }
     }
 
-    /// How long a motion plays and when it lands, in a stance, at an attack speed: only a hit plays
-    /// faster or slower for it, apex and all.
+    /// How long a variant of a motion plays and when it lands, in a stance, at an attack speed:
+    /// only a hit plays faster or slower for it, apex and all.
     pub fn timing(
         &self,
         stance: Option<StanceId>,
         motion: &Motion,
+        variant: usize,
         attack_speed: PlaybackRate,
     ) -> Timing {
-        let resolved = self.resolve(stance, motion, Pose::Idle);
+        let resolved = self.resolve(stance, motion, Pose::Idle, variant);
         let rate = self.rate(motion, &resolved, attack_speed, MetersPerSec::default());
         let apex = resolved
             .cues

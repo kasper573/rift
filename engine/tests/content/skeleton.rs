@@ -34,6 +34,18 @@ fn a_skeleton_is_held_to_the_clips_its_libraries_carry() {
             found: "talk has no pace",
         },
         Case {
+            case: "a cell of no variants",
+            change: |skeleton| skeleton["base"]["clips"]["talk"] = json!({ "variants": [] }),
+            found: "an empty list",
+        },
+        Case {
+            case: "a gait taking turns with a clip that covers no stated ground",
+            change: |skeleton| {
+                skeleton["base"]["clips"]["run"] = json!({ "variants": ["run", "talk"] })
+            },
+            found: "talk has no pace",
+        },
+        Case {
             case: "a pace covering no ground",
             change: |skeleton| skeleton["paces"]["walk"] = json!(0.0),
             found: "0 m/s",

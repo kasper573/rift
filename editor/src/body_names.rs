@@ -118,7 +118,12 @@ pub fn coverage(content: &Content, name: &MoveName) -> Vec<MoveCoverage> {
                             Some(_) => rung == Rung::Stance,
                             None => rung == Rung::Base,
                         };
-                        (set, clip.clip().0.clone(), own)
+                        let names: Vec<&str> = clip
+                            .variants()
+                            .iter()
+                            .map(|variant| variant.clip().as_str())
+                            .collect();
+                        (set, names.join(" / "), own)
                     })
                     .collect(),
             }

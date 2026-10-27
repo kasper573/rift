@@ -924,7 +924,10 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         .filter(|playing| playing.motion.action() == actor.action)
         .map(|playing| playing.motion.clone());
     let shown = motion.clone().unwrap_or(Motion::Action(actor.action));
-    let resolved = built.resolve(stance, &shown, actor.pose);
+    let variant = entity
+        .get::<Puppet>()
+        .map_or(0, |puppet| puppet.variant_of(&shown));
+    let resolved = built.resolve(stance, &shown, actor.pose, variant);
     let clip = resolved.source.is_some().then(|| resolved.clip.clone());
     let rate = built.rate(&shown, &resolved, actor.attack_rate, actor.speed);
     let held = entity

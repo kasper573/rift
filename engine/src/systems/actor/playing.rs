@@ -5,10 +5,11 @@ use serde::{Deserialize, Serialize};
 use super::held::{self, ScriptedStance};
 use super::skeleton::{DeclaredMoves, MoveName};
 use super::stance::StanceId;
-use super::{Action, Actor, ActorModel, Appearance};
+use super::{Action, Actor, ActorModel, Appearance, Pose};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::Content;
 use crate::core::geometry::Radians;
+use crate::core::math::Rng;
 use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::core::time::{Millis, PlaybackRate, UnixMillis, WallClock};
 use crate::systems::script::effect::{self as effects, Audience};
@@ -46,14 +47,23 @@ impl Motion {
     }
 }
 
-/// A motion an actor was told to play, with the moments its clip lands and ends it. Replicated, so
-/// every client animates the same stroke from the same start.
+/// A motion an actor was told to play, the variant of its cell that plays, and the moments its
+/// clip lands and ends it. Replicated, so every client animates the same stroke from the same start.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Playing {
     pub motion: Motion,
+    pub variant: usize,
     pub started: UnixMillis,
     pub apex: UnixMillis,
     pub ends: UnixMillis,
+}
+
+/// The motion an actor last played and the variant of its cell that played, which the next play
+/// of the same motion takes its turn after.
+#[derive(Component, Clone, Debug, PartialEq)]
+pub struct LastPlayed {
+    pub motion: Motion,
+    pub variant: usize,
 }
 
 /// When the actor's last played action ended, or began when nothing was played: the moment the
@@ -167,20 +177,34 @@ pub fn play(
     let now = world.resource::<WallClock>().now;
     let speed = PlaybackRate(stat::effective(world, actor, StatKind::AttackSpeed));
     let stance = held::stance_of(world, actor);
-    let model = world.get::<Appearance>(actor)?.model;
+    let model = ActorModel::get(&content, world.get::<Appearance>(actor)?.model);
+    let last = world
+        .get::<LastPlayed>(actor)
+        .filter(|last| last.motion == motion)
+        .map(|last| last.variant);
+    let variant = model
+        .cell(stance, &motion, Pose::Idle)
+        .after(last, &mut world.resource_mut::<Rng>());
     let mut component = world.get_mut::<Actor>(actor)?;
     let facing = toward.unwrap_or(component.facing);
     super::set_facing(&mut component, facing, motion.action());
     component.attack_rate = speed;
-    let timing = ActorModel::get(&content, model).timing(stance, &motion, speed);
+    let timing = model.timing(stance, &motion, variant, speed);
     let playing = Playing {
         motion,
+        variant,
         started: now,
         apex: now.after(timing.apex),
         ends: now.after(timing.duration),
     };
     interrupt(world, actor);
-    world.entity_mut(actor).insert(playing.clone());
+    world.entity_mut(actor).insert((
+        playing.clone(),
+        LastPlayed {
+            motion: playing.motion.clone(),
+            variant,
+        },
+    ));
     Some(playing)
 }
 
