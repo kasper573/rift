@@ -8,12 +8,16 @@ use bevy_ecs::prelude::*;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
+use super::held::{self, Held};
 use super::material;
 use super::part::ModelPartId;
 use super::skeleton::{Colours, EquipmentSlot};
-use super::{ActorModel, ModelId};
+use super::{ActorModel, Hitbox, ModelId};
 use crate::core::content::{Content, RowCheck};
+use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::systems::item::{ItemId, Wear, WornLook};
+use crate::systems::script::event::NPC;
+use crate::systems::script::{EffectCall, Reach, RiftScripting, RunnerKind};
 
 /// An actor's own look without its gear: a model, parts of the model's skeleton laid over the
 /// model's, and colours painted over the model's.
@@ -219,6 +223,68 @@ pub fn check(content: &Content, appearance: &Appearance, pointer: &str, cx: &mut
             );
         }
     }
+}
+
+/// Dresses the npc whose script this is in a new appearance; one its model cannot wear is refused
+/// as the game loads.
+#[derive(JsonSchema, Clone, Serialize, Deserialize)]
+#[schemars(extend("x-system" = "npc body"))]
+pub struct SetAppearance {
+    pub appearance: Appearance,
+    #[serde(default, skip_serializing_if = "Arrow::is_none")]
+    pub next: Arrow,
+}
+
+impl EffectDef<RiftScripting> for SetAppearance {
+    fn owners(&self) -> &'static [RunnerKind] {
+        NPC
+    }
+    fn needs_subject(&self) -> bool {
+        false
+    }
+    crate::outputs!(NEXT => next);
+    fn compile<'c>(
+        &'c self,
+        cx: &mut Compiler<'c, RiftScripting>,
+    ) -> Result<EffectCall, ScriptFault> {
+        let mut fits = RowCheck::default();
+        check(cx.content, &self.appearance, "/appearance", &mut fits);
+        if let Some(error) = fits.into_errors().into_iter().next() {
+            return Err(ScriptFault::new(error.problem.rule, error.problem.expected));
+        }
+        let appearance = self.appearance.clone();
+        Ok(Box::new(move |world, _, cx| {
+            if let Some(npc) = cx.owner {
+                change(world, npc, appearance.clone());
+            }
+            EffectStep::Done
+        }))
+    }
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+        Vec::new()
+    }
+}
+
+/// Gives `actor` a new appearance: it is hit as the new model is, and its hands show what they held
+/// as far as the new body has hands.
+pub fn change(world: &mut World, actor: Entity, appearance: Appearance) {
+    let content = world.resource::<Content>().clone();
+    let model = ActorModel::get(&content, appearance.model);
+    if let Some(shown) = world.get::<Held>(actor) {
+        let mut items: Vec<ItemId> = Vec::new();
+        for &item in shown.hands.values() {
+            if !items.contains(&item) {
+                items.push(item);
+            }
+        }
+        let shown = Held {
+            hands: held::listed(&content, model.hands().len(), &items),
+        };
+        world.entity_mut(actor).insert(shown);
+    }
+    world
+        .entity_mut(actor)
+        .insert((Hitbox(model.hitbox()), appearance));
 }
 
 /// The model an actor wears, when it has an appearance.

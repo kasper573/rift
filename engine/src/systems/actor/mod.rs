@@ -48,7 +48,7 @@ pub fn register(app: &mut App) {
         .replicate::<Playing>()
         .replicate::<Held>()
         .replicate::<held::ScriptedStance>()
-        .replicate_once::<Hitbox>()
+        .replicate::<Hitbox>()
         .replicate_once::<Name>();
 }
 

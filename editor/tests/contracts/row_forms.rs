@@ -14,7 +14,7 @@ use engine::core::units::{MeterPos, Meters};
 use engine::core::vfx::{ParamFill, ParamValue, VfxDef, VfxLayer};
 use engine::systems::area::world_map::{WorldMap, WorldMapDef};
 use engine::systems::class::{AccessRequirement, ClassDef, NodeKey};
-use engine::systems::item::{ItemDef, ItemKind, ItemModule};
+use engine::systems::item::{ItemDef, ItemKind, ItemModule, Wear};
 use engine::systems::memory::{MemoryDef, Resets};
 use engine::systems::movement;
 use engine::systems::notification::{NotificationDef, NotificationDefKind};
@@ -730,6 +730,46 @@ fn an_item_made_usable_answers_used_with_a_script_made_for_it_in_the_same_step()
         matches!(item.kind, ItemKind::Resource),
         "one undo takes both back"
     );
+}
+
+#[test]
+fn an_item_held_in_hand_is_made_worn_in_a_slot_by_its_wear_and_forgets_its_stance() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let game = support::game()
+        .stance("sword", 1, "main")
+        .slots(testkit::BODY, &["chest"])
+        .item(
+            "cuirass",
+            json!({ "kind": { "type": "equipment", "wear": "held", "stance": path("stance", "sword") } }),
+        );
+    let mut editor = support::open(game, &scratch);
+    let cuirass = path("item", "cuirass");
+    let mut form = RowFrames::new("item", &cuirass);
+    form.run(&mut editor, Vec::new());
+    let wear = form.run(&mut editor, Vec::new()).at("held");
+    for events in click(wear) {
+        form.run(&mut editor, events);
+    }
+    let worn = form.run(&mut editor, Vec::new()).at("worn");
+
+    for events in click(worn) {
+        form.run(&mut editor, events);
+    }
+    form.run(&mut editor, Vec::new());
+    support::files(&mut editor);
+
+    let item = editor
+        .read::<ItemDef>(&cuirass)
+        .expect("a project")
+        .expect("the item reads");
+    assert!(
+        matches!(item.wear(), Some(Wear::Worn { looks, .. }) if looks.is_empty()),
+        "{:?}",
+        item.wear()
+    );
+    let drawn = form.run(&mut editor, Vec::new());
+    assert!(drawn.any(|text| text == "slot"), "the slot is asked for");
+    assert!(!drawn.any(|text| text == "stance"), "the stance is gone");
 }
 
 #[test]

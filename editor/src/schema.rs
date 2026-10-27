@@ -451,6 +451,50 @@ fn collect_variants<'a>(
     }
 }
 
+/// The variants of a union flattened into an object of `schema`, which share its value: each
+/// alternative fixes the same field, the tag, to a word of its own.
+pub fn flattened_variants<'a>(root: &'a Value, schema: &'a Value) -> Vec<SchemaVariant<'a>> {
+    schema.get("properties").map_or(Vec::new(), |_| {
+        let Some(alternatives) = schema.get("oneOf").and_then(Value::as_array) else {
+            return Vec::new();
+        };
+        let alternatives: Vec<&Value> = alternatives
+            .iter()
+            .map(|alternative| resolve(root, alternative))
+            .collect();
+        let tag_in = |alternative: &Value, field: &str| {
+            Some(
+                alternative
+                    .get("properties")?
+                    .get(field)?
+                    .get("const")?
+                    .as_str()?
+                    .to_owned(),
+            )
+        };
+        let Some(field) = alternatives.first().and_then(|first| {
+            properties(first).into_iter().find_map(|(field, _)| {
+                alternatives
+                    .iter()
+                    .all(|alternative| tag_in(alternative, field).is_some())
+                    .then(|| field.clone())
+            })
+        }) else {
+            return Vec::new();
+        };
+        alternatives
+            .into_iter()
+            .filter_map(|schema| {
+                Some(SchemaVariant {
+                    tag: tag_in(schema, &field)?,
+                    field: field.clone(),
+                    schema,
+                })
+            })
+            .collect()
+    })
+}
+
 /// The tagged variants among the alternatives `schema` is, within `root`.
 pub fn tagged_variants<'a>(root: &'a Value, schema: &'a Value) -> Vec<SchemaVariant<'a>> {
     match kind(root, schema) {
@@ -615,6 +659,11 @@ pub fn table_of(schema: &Value) -> Option<&str> {
 /// The table whose files a map's keys name, when they name files.
 pub fn key_table(map: &Value) -> Option<&str> {
     map.get("propertyNames").and_then(table_of)
+}
+
+/// The kind of name a map's keys are, when they are names a skeleton lists.
+pub fn key_names(map: &Value) -> Option<crate::body_names::NameKind> {
+    crate::body_names::NameKind::of_schema(map.get("propertyNames")?)
 }
 
 pub fn minimum(schema: &Value) -> Option<f64> {

@@ -395,6 +395,7 @@ fn the_skeleton_view_marks_its_rig_and_edits_its_sets_from_the_pointer_and_keys(
     for page in [
         SkeletonPage::Clips,
         SkeletonPage::Hands,
+        SkeletonPage::Body,
         SkeletonPage::Layers,
     ] {
         editor.views.skeleton.view_mut(&key).page = page;

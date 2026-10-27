@@ -1,6 +1,10 @@
-use driver::{UiTarget, erred, input_name, input_names, noticed, open_ground_beside};
+use driver::{
+    UiTarget, erred, id, input_name, input_names, noticed, open_ground_beside, townsperson,
+};
+use engine::systems::actor::ModelDef;
 use engine::systems::input::gestures::ClickClaim;
 use engine::systems::input::map::InputAction;
+use engine::systems::item::ItemDef;
 use engine::systems::probe::ProbeSnapshot;
 
 use crate::chapters::Chapter;
@@ -9,7 +13,7 @@ use crate::shoot::{Shoot, Star};
 pub const CHAPTER: Chapter = Chapter {
     name: "conversation",
     title: "Conversation",
-    summary: "Talk to the townsfolk: busts, choices, prices, refusals, history",
+    summary: "Talk to the townsfolk: busts, choices, prices, refusals, history, and what a talk changes",
     play,
 };
 
@@ -133,6 +137,25 @@ fn play(shoot: &mut Shoot) {
     me.read_to_choices();
     me.pick("Close the lid.");
     me.conversation_over();
+
+    me.caption("What is said can change who says it: ask Bram the carter about his past");
+    point_off_stage(&mut me);
+    me.zoom_camera(1);
+    me.talk_to("bram");
+    me.read_to_choices();
+    me.pick("Were you ever a soldier?");
+    let (plate, sword) = (id::<ModelDef>("knight"), id::<ItemDef>("iron_sword"));
+    me.wait_until("Bram in his old plate, a sword in hand", |snapshot| {
+        townsperson(snapshot, "bram").is_some_and(|bram| {
+            bram.model == plate && bram.held.iter().any(|held| held.item == sword)
+        })
+    });
+    me.caption("His script dressed him in another body and put a sword in his hand");
+    me.hold();
+    me.read_to_choices();
+    me.pick("Good to know.");
+    me.conversation_over();
+    me.camera_home();
 }
 
 /// Points at open ground beside the conversation, found as the screen stands now: what covers the

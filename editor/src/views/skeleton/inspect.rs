@@ -1,6 +1,6 @@
 //! The skeleton's inspector: its budgets, libraries and who wears it, then what the page in front
 //! is about: the lit joint, the table's health and the moves no skeleton declares, the chosen clip,
-//! hand or layer.
+//! hand or layer, the parts and materials made on it.
 
 use std::collections::BTreeSet;
 
@@ -11,7 +11,7 @@ use engine::systems::actor::playing::Animate;
 use engine::systems::actor::skeleton::{
     BuiltSkeleton, MAX_JOINTS, MAX_LIBRARIES_BYTES, MoveName, SkeletonDef,
 };
-use engine::systems::actor::{Action, Motion};
+use engine::systems::actor::{Action, MaterialDef, ModelPartDef, Motion};
 use engine::systems::script::{RiftEffect, ScriptDef};
 use strum::VariantArray;
 use ui::egui::Ui;
@@ -46,6 +46,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &SkeletonDef, page
             SkeletonPage::Sets => sets(editor, ui, &content, row, &built),
             SkeletonPage::Clips => clip(editor, ui, key, &built),
             SkeletonPage::Hands => hand(editor, ui, key, &content, id, &built),
+            SkeletonPage::Body => body(ui, &content, id),
             SkeletonPage::Layers => layer(editor, ui, key, &built),
         }
     });
@@ -110,6 +111,40 @@ fn rig(
     );
     for path in unfit {
         ui.colored_label(theme::DANGER, format!("{path} does not fit"));
+    }
+}
+
+/// What the skeleton's bodies are made of: its parts, and the materials made on it with the tints
+/// each paints.
+fn body(ui: &mut Ui, content: &Content, id: engine::systems::actor::skeleton::SkeletonId) {
+    panel::header(ui, "Body", "", |_| {});
+    let parts = content
+        .table::<ModelPartDef>()
+        .iter()
+        .filter(|(_, part)| part.skeleton == id)
+        .count();
+    form::kv_text(ui, "parts", parts.to_string());
+    let materials: Vec<_> = content
+        .table::<MaterialDef>()
+        .iter()
+        .filter(|(_, material)| material.skeleton == id)
+        .collect();
+    if materials.is_empty() {
+        form::kv_text(
+            ui,
+            "materials",
+            "none: every part is drawn in its own texture",
+        );
+    }
+    let tints = id.get(content).tints.len();
+    for (material, def) in materials {
+        let painted: usize = def
+            .masks
+            .values()
+            .map(|channels| channels.painting().count())
+            .sum();
+        form::kv_code(ui, "material", shown_path(material.path(content)));
+        form::kv_text(ui, "paints", format!("{painted} of {tints} tints"));
     }
 }
 

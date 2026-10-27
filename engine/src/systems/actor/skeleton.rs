@@ -115,6 +115,7 @@ pub struct SkeletonTint {
 /// Colours by the tint each paints.
 #[derive(JsonSchema, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+#[schemars(extend("propertyNames" = { "type": "string", "x-tint": true }))]
 pub struct Colours(pub BTreeMap<TintName, Rgb>);
 
 impl Colours {

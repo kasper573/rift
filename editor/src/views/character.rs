@@ -17,6 +17,7 @@ use engine::core::script::ValueType;
 use engine::core::time::Seconds;
 use engine::core::units::{MeterPos, Meters};
 use engine::field;
+use engine::systems::actor::Appearance;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::class::{ClassDef, NodeKey, SkillTree};
 use engine::systems::item::{ItemDef, ItemStack};
@@ -68,6 +69,7 @@ pub struct CharacterView {
 pub enum CharacterSection {
     #[default]
     Identity,
+    Appearance,
     Stats,
     Bag,
     Equipment,
@@ -90,11 +92,16 @@ impl CharacterSection {
     fn page(self) -> (&'static [CharacterSection], &'static [CharacterSection]) {
         match self {
             CharacterSection::Identity
+            | CharacterSection::Appearance
             | CharacterSection::Bag
             | CharacterSection::Equipment
             | CharacterSection::Start => (
                 &[CharacterSection::Bag, CharacterSection::Equipment],
-                &[CharacterSection::Identity, CharacterSection::Start],
+                &[
+                    CharacterSection::Identity,
+                    CharacterSection::Appearance,
+                    CharacterSection::Start,
+                ],
             ),
             CharacterSection::Stats | CharacterSection::AreasKnown => {
                 (&[CharacterSection::Stats], &[CharacterSection::AreasKnown])
@@ -246,6 +253,9 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                                 let result = match card {
                                     CharacterSection::Identity => {
                                         identity(ui, &mut cx, &sheet, character)
+                                    }
+                                    CharacterSection::Appearance => {
+                                        appearance(ui, &mut cx, &sheet, character)
                                     }
                                     CharacterSection::Stats => section_of(
                                         ui,
@@ -409,6 +419,34 @@ fn identity(
     changed
 }
 
+/// What the character looks like without its gear, and a way back to how its class starts one.
+fn appearance(
+    ui: &mut Ui,
+    cx: &mut FormCx,
+    sheet: &Sheet,
+    character: &mut CharacterSnapshot,
+) -> FormChange {
+    let path = field!(CharacterSnapshot, appearance);
+    let mut changed = FormChange::default();
+    let class_look = sheet
+        .read(cx, character.class)
+        .map(|class| Appearance::of(class.model));
+    card(ui, "Appearance", |ui| {
+        changed = forms::of_type(ui, cx, &mut character.appearance, path);
+        if let Some(class_look) = class_look
+            && class_look != character.appearance
+            && ui
+                .button("copy from class")
+                .on_hover_text("Look as a new character of the class starts")
+                .clicked()
+        {
+            character.appearance = class_look;
+            changed = FormChange::at(path);
+        }
+    });
+    changed
+}
+
 /// A card of the form of one part of the character, drawn from its type.
 fn section_of<T>(ui: &mut Ui, cx: &mut FormCx, title: &str, part: &mut T, path: &str) -> FormChange
 where
@@ -536,7 +574,7 @@ fn equipment(
             changed = FormChange::at(path);
         }
         ui.label(
-            theme::faint("put on in order, each where equipping puts it: held items by their stance's hand, the rest on the head")
+            theme::faint("put on in order, each where equipping puts it: held items by their stance's hand, worn items in their slot")
                 .size(12.0),
         );
     });

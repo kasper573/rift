@@ -41,6 +41,22 @@ pub fn toggle(ui: &mut Ui, text: &str, on: bool) -> Response {
 }
 
 /// One of a few chips of which one is the mode in use.
+/// A colour shown as a small square before its name.
+pub fn swatch(ui: &mut Ui, text: impl Into<RichText>, colour: Color32) -> Response {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+        ui.painter().rect(
+            rect,
+            RADIUS,
+            colour,
+            Stroke::new(1.0, theme::BORDER),
+            egui::StrokeKind::Inside,
+        );
+        ui.label(text.into())
+    })
+    .inner
+}
+
 pub fn mode(ui: &mut Ui, text: impl Into<RichText>, on: bool) -> Response {
     let (fill, ink) = if on {
         (ink::LIGHT, ink::RUBRIC)

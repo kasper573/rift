@@ -5,13 +5,17 @@
 use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ActorModel;
 use super::skeleton::Hand;
 use super::stance::{self, HandIndex, HandRole, StanceId};
 use crate::core::content::Content;
+use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::systems::item::ItemId;
+use crate::systems::script::event::NPC;
+use crate::systems::script::{EffectCall, Reach, RiftScripting, RunnerKind};
 
 /// The item each hand of a body shows; a two-hander sits under both hands it takes.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -23,6 +27,46 @@ pub struct Held {
 /// to the stance of anything the body's hands show.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct ScriptedStance(pub StanceId);
+
+/// Fills the hands of the npc whose script this is with items to show, in order, each taking as
+/// many hands as its stance says; what does not fit is left out.
+#[derive(JsonSchema, Clone, Serialize, Deserialize)]
+#[schemars(extend("x-system" = "npc body"))]
+pub struct SetHeld {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<ItemId>,
+    #[serde(default, skip_serializing_if = "Arrow::is_none")]
+    pub next: Arrow,
+}
+
+impl EffectDef<RiftScripting> for SetHeld {
+    fn owners(&self) -> &'static [RunnerKind] {
+        NPC
+    }
+    fn needs_subject(&self) -> bool {
+        false
+    }
+    crate::outputs!(NEXT => next);
+    fn compile<'c>(
+        &'c self,
+        _cx: &mut Compiler<'c, RiftScripting>,
+    ) -> Result<EffectCall, ScriptFault> {
+        let items = self.items.clone();
+        Ok(Box::new(move |world, _, cx| {
+            if let Some(npc) = cx.owner {
+                let content = world.resource::<Content>().clone();
+                let shown = Held {
+                    hands: listed(&content, hands_of(world, npc).len(), &items),
+                };
+                world.entity_mut(npc).insert(shown);
+            }
+            EffectStep::Done
+        }))
+    }
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+        Vec::new()
+    }
+}
 
 /// The stance the actor stands in: the one its hands show, else the one a script put it in.
 pub fn stance_of(world: &World, actor: Entity) -> Option<StanceId> {

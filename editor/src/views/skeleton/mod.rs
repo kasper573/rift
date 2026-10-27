@@ -1,9 +1,11 @@
 //! The skeleton view: the rig with its hands and groups marked, what plays for each action, pose
 //! and move in each stance, the clips of its libraries with their cues, the hands items hang from,
-//! and the layers that move a body beyond its clips. The stage shows the rig as any model wearing
-//! it, playing any clip, holding any item. A glb dropped on the view is offered as a new library,
-//! or as the rig in place of the one it has.
+//! what a body is put together and painted from, and the layers that move a body beyond its clips.
+//! The stage shows the rig as any model wearing it, playing any clip, holding any item, dressed in
+//! any worn items. A glb dropped on the view is offered as a new library, or as the rig in place of
+//! the one it has; a folder of part meshes, as the skeleton's parts.
 
+pub mod body;
 pub mod clips;
 pub mod hands;
 pub mod import;
@@ -25,11 +27,11 @@ use engine::core::time::Millis;
 use engine::core::units::MetersPerSec;
 use engine::systems::actor::model::{ActorModel, Skeletons};
 use engine::systems::actor::skeleton::{
-    BuiltSkeleton, ClipName, Cue, GroupName, Hand, JointName, Layer, LocalOffset, LocalTurn,
-    SkeletonDef, SkeletonId,
+    BuiltSkeleton, ClipName, Cue, EquipmentSlot, GroupName, Hand, JointName, Layer, LocalOffset,
+    LocalTurn, SkeletonDef, SkeletonId,
 };
 use engine::systems::actor::stance::HandIndex;
-use engine::systems::actor::{Action, ModelDef, Motion, Pose, held};
+use engine::systems::actor::{Action, Appearance, ModelDef, Motion, Pose, appearance, held};
 use engine::systems::item::{Grip, ItemDef, Wear};
 use serde::Deserialize;
 use ui::egui::{self, Rect, Ui, Vec2};
@@ -57,15 +59,17 @@ pub enum SkeletonPage {
     Sets,
     Clips,
     Hands,
+    Body,
     Layers,
 }
 
 impl SkeletonPage {
-    const ALL: [SkeletonPage; 5] = [
+    const ALL: [SkeletonPage; 6] = [
         SkeletonPage::Joints,
         SkeletonPage::Sets,
         SkeletonPage::Clips,
         SkeletonPage::Hands,
+        SkeletonPage::Body,
         SkeletonPage::Layers,
     ];
 
@@ -75,6 +79,7 @@ impl SkeletonPage {
             SkeletonPage::Sets => "sets",
             SkeletonPage::Clips => "clips",
             SkeletonPage::Hands => "hands",
+            SkeletonPage::Body => "body",
             SkeletonPage::Layers => "layers",
         }
     }
@@ -93,6 +98,8 @@ pub struct SkeletonView {
     pub hand: usize,
     /// The item the stage hangs from the model's hands, by its file's path.
     pub trying: Option<String>,
+    /// The items the stage's model wears, by the slot each is worn in and its file's path.
+    pub wearing: BTreeMap<EquipmentSlot, String>,
     pub sets: sets::SetsState,
     pub layers: layers::LayersState,
     pub unused_only: bool,
@@ -147,6 +154,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                 SkeletonPage::Sets => sets::show(editor, ui, key, &content, &built),
                 SkeletonPage::Clips => clips::show(editor, ui, key, &content, id, &built),
                 SkeletonPage::Hands => hands::show(editor, ui, key, &content, &built),
+                SkeletonPage::Body => body::show(editor, ui, key, &content, &built),
                 SkeletonPage::Layers => layers::show(editor, ui, key, &content, &built),
             }
         });
@@ -188,6 +196,7 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
             joint: None,
             hand: 0,
             trying: None,
+            wearing: BTreeMap::new(),
             sets: sets::SetsState::default(),
             layers: layers::LayersState::default(),
             unused_only: false,
@@ -386,8 +395,8 @@ fn item_picker(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, l
     editor.views.skeleton.view_mut(key).trying = trying;
 }
 
-/// The view's stage over `size`: the rig worn by the picked model in the picked clip at the
-/// playhead, holding `props`; gives back where it was drawn, to draw over.
+/// The view's stage over `size`: the rig worn by the picked model, dressed in the items picked on
+/// the body page, in the picked clip at the playhead, holding `props`; gives back where it was drawn, to draw over.
 #[allow(clippy::too_many_arguments)]
 fn stage_rig(
     editor: &mut Editor,
@@ -399,7 +408,18 @@ fn stage_rig(
     props: Vec<StandingProp>,
 ) -> Option<(Rect, AreaCanvas)> {
     let id = content.by_path::<SkeletonDef>(key)?;
-    let (_, model) = wearer(editor, key, content, id)?;
+    let (path, model) = wearer(editor, key, content, id)?;
+    let body = match content.by_path::<ModelDef>(&path) {
+        Some(dressed) => model.dressed(
+            content,
+            &appearance::look(
+                content,
+                &Appearance::of(dressed),
+                &body::wearing(editor, key, content),
+            ),
+        ),
+        None => model.body(),
+    };
     let chosen = editor.views.skeleton.view(key).clip.clone();
     let clip = chosen
         .as_ref()
@@ -421,13 +441,7 @@ fn stage_rig(
     let turntable = turntable(editor, ui, key, size)?;
     let drawn = (turntable.rect, turntable.canvas.clone());
     let held = clip.as_ref().map(|_| playhead.seconds());
-    let standing = stage::standing(
-        model.body(),
-        clip.map(|(clip, _)| clip),
-        held,
-        crossed,
-        props,
-    );
+    let standing = stage::standing(body, clip.map(|(clip, _)| clip), held, crossed, props);
     turntable.stand(editor, ui, vec![standing]);
     Some(drawn)
 }

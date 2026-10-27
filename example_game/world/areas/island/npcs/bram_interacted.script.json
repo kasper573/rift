@@ -140,6 +140,12 @@
         },
         {
           "label": [
+            "Were you ever a soldier?"
+          ],
+          "to": "plate_on"
+        },
+        {
+          "label": [
             "Goodbye."
           ]
         }
@@ -178,6 +184,51 @@
       "type": "turn_in",
       "quest": "world/areas/island/quests/letter_for_the_captain.quest.json",
       "done": "letter_thanks"
+    },
+    "old_captain": {
+      "type": "dialogue",
+      "lines": [
+        {
+          "by": {
+            "type": "npc",
+            "npc": "world/areas/island/npcs/bram.npc.json"
+          },
+          "text": [
+            "Captain of the harbour watch, once. Let's see if the old plate still fits."
+          ]
+        },
+        {
+          "by": {
+            "type": "npc",
+            "npc": "world/areas/island/npcs/bram.npc.json",
+            "face": "happy"
+          },
+          "text": [
+            "Snug, but it'll do. If the dead come down the road, they'll find me waiting."
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": [
+            "Good to know."
+          ]
+        }
+      ]
+    },
+    "plate_on": {
+      "type": "set_appearance",
+      "appearance": {
+        "model": "characters/models/knight.model.json"
+      },
+      "next": "sword_up"
+    },
+    "sword_up": {
+      "type": "set_held",
+      "items": [
+        "items-and-skills/item/iron_sword.item.json"
+      ],
+      "next": "old_captain"
     }
   }
 }

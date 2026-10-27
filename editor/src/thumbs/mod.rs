@@ -1,14 +1,16 @@
 pub mod areas;
 pub mod props;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use ui::egui;
 
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::gpu_readback::ReadbackComplete;
 
 use engine::core::assets::ImageRef;
 use engine::core::gui::{GuiImage, ImageSource};
+use engine::core::render::world::paint::{Paint, bake};
 use image::RgbaImage;
 use image::imageops::FilterType;
 use ui::egui::{ColorImage, TextureHandle, TextureOptions};
@@ -96,6 +98,67 @@ impl Thumbnails {
     ) -> Option<Thumbnail> {
         let file = path.to_owned();
         self.load(ctx, files, file.clone(), file, budget, Some)
+    }
+
+    /// The texture `paint` makes, baked from the project's pictures as the game bakes it.
+    pub fn painted(
+        &mut self,
+        ctx: &egui::Context,
+        files: &ProjectFiles,
+        paint: &Paint,
+    ) -> Option<Thumbnail> {
+        let key = format!("paint:{paint:?}");
+        let paths: BTreeSet<&str> = std::iter::once(paint.base.as_str())
+            .chain(paint.layers.iter().map(|layer| layer.mask.as_str()))
+            .collect();
+        let hash = paths
+            .iter()
+            .map(|path| files.hash_of(path))
+            .collect::<Option<Vec<&str>>>()?
+            .join(" ");
+        match self.entries.get(&key) {
+            Some(Entry::Decoded(thumb)) if thumb.hash == hash => return Some(thumb.clone()),
+            Some(Entry::Undecodable { hash: known }) if *known == hash => return None,
+            _ => {}
+        }
+        let images: HashMap<&str, Image> = paths
+            .iter()
+            .filter_map(|path| {
+                let decoded = image::load_from_memory(files.get(path)?).ok()?;
+                Some((
+                    *path,
+                    Image::from_dynamic(decoded, true, RenderAssetUsages::default()),
+                ))
+            })
+            .collect();
+        let baked = images.get(paint.base.as_str()).and_then(|base| {
+            let layers = paint
+                .layers
+                .iter()
+                .map(|layer| Some((images.get(layer.mask.as_str())?, layer)))
+                .collect::<Option<Vec<_>>>()?;
+            bake(base, &layers)?.try_into_dynamic().ok()
+        });
+        let max_side = ctx.input(|i| i.max_texture_side) as u32;
+        let thumb = baked.map(|image| {
+            let image = image.into_rgba8();
+            let size = [image.width() as usize, image.height() as usize];
+            Thumbnail {
+                texture: ctx.load_texture(
+                    key.clone(),
+                    to_color_image(shrink(image, max_side)),
+                    TextureOptions::LINEAR,
+                ),
+                size,
+                hash: hash.clone(),
+            }
+        });
+        let entry = match &thumb {
+            Some(thumb) => Entry::Decoded(thumb.clone()),
+            None => Entry::Undecodable { hash },
+        };
+        self.entries.insert(key, entry);
+        thumb
     }
 
     /// The `frame`th cell, each `size` pixels, of the sheet at `path`, cut down to the pixels it

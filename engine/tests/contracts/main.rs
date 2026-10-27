@@ -12,6 +12,7 @@ mod exchange;
 mod interaction;
 mod kill_credit;
 mod launch;
+mod looks;
 mod memory;
 mod notification;
 mod presence;

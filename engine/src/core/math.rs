@@ -131,6 +131,13 @@ impl Rgb {
     }
 }
 
+impl From<Rgb> for egui::Color32 {
+    fn from(rgb: Rgb) -> egui::Color32 {
+        let [r, g, b] = rgb.0;
+        egui::Color32::from_rgb(r, g, b)
+    }
+}
+
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FrameSize {

@@ -3,6 +3,7 @@
 //! draws.
 
 pub mod wield;
+pub mod worn;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -35,6 +36,7 @@ pub struct ItemView {
     pub spinning: bool,
     picture: StagePicture,
     pub wield: wield::WieldView,
+    pub worn: worn::WornView,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug, serde::Deserialize)]
@@ -44,6 +46,7 @@ pub enum ItemPage {
     Card,
     Look,
     Wield,
+    Worn,
 }
 
 impl ItemPage {
@@ -52,6 +55,7 @@ impl ItemPage {
             ItemPage::Card => "card",
             ItemPage::Look => "look",
             ItemPage::Wield => "wield",
+            ItemPage::Worn => "worn",
         }
     }
 }
@@ -82,11 +86,10 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     sidebar::inspector(editor, ui, "item", |editor, ui| {
         inspect(editor, ui, key, &row);
     });
-    let held = matches!(row.wear(), Some(Wear::Held { .. }));
-    let pages: &[ItemPage] = if held {
-        &[ItemPage::Card, ItemPage::Look, ItemPage::Wield]
-    } else {
-        &[ItemPage::Card, ItemPage::Look]
+    let pages: &[ItemPage] = match row.wear() {
+        Some(Wear::Held { .. }) => &[ItemPage::Card, ItemPage::Look, ItemPage::Wield],
+        Some(Wear::Worn { .. }) => &[ItemPage::Card, ItemPage::Look, ItemPage::Worn],
+        None => &[ItemPage::Card, ItemPage::Look],
     };
     let page = Some(editor.views.item.view_mut(key).page)
         .filter(|page| pages.contains(page))
@@ -95,29 +98,42 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         .inner_margin(egui::Margin::symmetric(12, 8))
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
-            ui.horizontal(|ui| {
-                ui.label(theme::mono(shown_path(key)).color(theme::CODE));
-                ui.add_space(8.0);
-                for other in pages {
-                    if chip::mode(ui, other.label(), page == *other).clicked() {
-                        editor.views.item.view_mut(key).page = *other;
-                    }
-                }
-                ui.add_space(8.0);
-                ui.label(theme::faint(item_card::kind(&row).word()));
-                if page != ItemPage::Card {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let view = editor.views.item.view_mut(key);
-                        let spinning = match page {
-                            ItemPage::Wield => &mut view.wield.stage.spinning,
-                            _ => &mut view.spinning,
-                        };
-                        if chip::toggle(ui, "turning", *spinning).clicked() {
+            let view = editor.views.item.view_mut(key);
+            let spinning = match page {
+                ItemPage::Card => None,
+                ItemPage::Wield => Some(&mut view.wield.stage.spinning),
+                ItemPage::Worn => view.worn.stage.as_mut().map(|stage| &mut stage.spinning),
+                ItemPage::Look => Some(&mut view.spinning),
+            };
+            let (picked, ()) = egui::containers::Sides::new()
+                .shrink_left()
+                .truncate()
+                .show(
+                    ui,
+                    |ui| {
+                        ui.label(theme::mono(shown_path(key)).color(theme::CODE));
+                        ui.add_space(8.0);
+                        let mut picked = None;
+                        for other in pages {
+                            if chip::mode(ui, other.label(), page == *other).clicked() {
+                                picked = Some(*other);
+                            }
+                        }
+                        ui.add_space(8.0);
+                        ui.label(theme::faint(item_card::kind(&row).word()));
+                        picked
+                    },
+                    |ui| {
+                        if let Some(spinning) = spinning
+                            && chip::toggle(ui, "turning", *spinning).clicked()
+                        {
                             *spinning = !*spinning;
                         }
-                    });
-                }
-            });
+                    },
+                );
+            if let Some(picked) = picked {
+                editor.views.item.view_mut(key).page = picked;
+            }
             ui.add_space(4.0);
             match page {
                 ItemPage::Card => {
@@ -135,6 +151,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                     drop_strip(editor, ui, key, &row, size);
                 }
                 ItemPage::Wield => wield::show(editor, ui, key, &row),
+                ItemPage::Worn => worn::show(editor, ui, key),
             }
         });
     editor.status.left.push(format!(
@@ -341,6 +358,7 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
             spinning: true,
             picture: StagePicture::default(),
             wield: wield::WieldView::default(),
+            worn: worn::WornView::default(),
         },
     );
 }

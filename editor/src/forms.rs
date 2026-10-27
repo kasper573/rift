@@ -24,7 +24,7 @@ use serde_json::{Map, Value};
 use ui::egui::Ui;
 use ui::glyph::{self, Mark};
 
-use crate::body_names::{self, NameKind};
+use crate::body_names::{self, NameChoice, NameKind};
 use crate::keymap::EditorKey;
 use crate::project::{Project, ProjectFiles};
 use crate::schema::{self, KeptValues, SchemaKind, SchemaShapes, SchemaVariant};
@@ -521,9 +521,10 @@ fn plain(
             }
             "x-asset" => return asset(ui, cx, schema, value, path),
             "x-place" => return place(ui, cx, schema, value, path),
-            "x-color" => return color(ui, value, path),
+            "x-color" => return color(ui, schema, value, path),
             "x-face" => return face(ui, cx, value, path),
-            "x-move" | "x-joint" | "x-clip" | "x-group" | "x-build" => {
+            "x-move" | "x-joint" | "x-clip" | "x-group" | "x-build" | "x-region" | "x-slot"
+            | "x-tint" => {
                 if let Some(kind) = NameKind::of_marker(marker) {
                     return named(ui, cx, kind, value, path);
                 }
@@ -559,7 +560,14 @@ fn plain(
         SchemaKind::Choice(alternatives) => choice(ui, cx, &alternatives, value, path),
         SchemaKind::Object => object(ui, cx, schema, value, path),
         SchemaKind::Array(items) => array(ui, cx, items, value, path),
-        SchemaKind::Map(values) => map(ui, cx, values, schema::key_table(schema), value, path),
+        SchemaKind::Map(values) => {
+            let keys = match (schema::key_table(schema), schema::key_names(schema)) {
+                (Some(table), _) => MapKeys::Files(table),
+                (None, Some(kind)) => MapKeys::Names(kind),
+                (None, None) => MapKeys::Free,
+            };
+            map(ui, cx, values, keys, value, path)
+        }
         SchemaKind::Text => text(ui, cx, value, path),
         SchemaKind::Integer => number(ui, cx, schema, value, path, true),
         SchemaKind::Number => number(ui, cx, schema, value, path, false),
@@ -738,6 +746,7 @@ pub fn object_without(
             }
         });
     }
+    changed |= flattened(ui, cx, schema, value, path);
     changed
 }
 
@@ -877,6 +886,54 @@ fn union(
     }
     changed |= variant_picker(ui, cx, variants, value, path);
     changed |= variant_body(ui, cx, variants, value, path);
+    changed
+}
+
+/// The union flattened into an object of `schema`: a picker of its tag that swaps the fields of
+/// the variant picked for those of the one before, and the fields of the picked variant.
+fn flattened(
+    ui: &mut Ui,
+    cx: &mut FormCx,
+    schema: &Value,
+    value: &mut Value,
+    path: &str,
+) -> FormChange {
+    let variants = schema::flattened_variants(cx.root, schema);
+    let Some(field) = variants.first().map(|variant| variant.field.clone()) else {
+        return FormChange::default();
+    };
+    let current = schema::variant_of(&variants, value).map(|variant| variant.tag.clone());
+    let mut picked = current.clone();
+    ui.horizontal(|ui| {
+        label_column(ui).label(theme::muted(&field).monospace().size(13.0));
+        controls::combo(ui.id().with(path).with("flattened"))
+            .selected_text(current.as_deref().unwrap_or("pick…"))
+            .show_ui(ui, |ui| {
+                for variant in &variants {
+                    ui.selectable_value(&mut picked, Some(variant.tag.clone()), &variant.tag);
+                }
+            });
+    });
+    let mut changed = FormChange::default();
+    if picked != current
+        && let Some(variant) = variants
+            .iter()
+            .find(|variant| Some(&variant.tag) == picked.as_ref())
+    {
+        let fields = value.as_object_mut().expect("object");
+        if let Some(old) = schema::variant_of(&variants, &Value::Object(fields.clone())) {
+            for (name, _) in schema::properties(old.schema) {
+                fields.remove(name);
+            }
+        }
+        if let Value::Object(fresh) = schema::variant_template(cx.root, variant, cx.nearby()) {
+            fields.extend(fresh);
+        }
+        changed = FormChange::at(path);
+    }
+    if let Some(variant) = schema::variant_of(&variants, value) {
+        changed |= object_without(ui, cx, variant.schema, value, path, &[field.as_str()]);
+    }
     changed
 }
 
@@ -1376,17 +1433,34 @@ fn name_newcomer(item: &mut Value, siblings: &[Value], singular: &str) {
 
 /// A map's entries, each under its key: typed, or the file it names when `keys` names the table
 /// of the files its keys name, which a picker adds and no typing renames.
+/// What a map's keys are: anything typed, the paths of files of a table, or names a skeleton lists.
+#[derive(Clone, Copy)]
+enum MapKeys<'a> {
+    Free,
+    Files(&'a str),
+    Names(NameKind),
+}
+
 fn map(
     ui: &mut Ui,
     cx: &mut FormCx,
     values: &Value,
-    keys: Option<&str>,
+    keys: MapKeys,
     value: &mut Value,
     path: &str,
 ) -> FormChange {
     if !value.is_object() {
         *value = Value::Object(Map::new());
     }
+    let names = match keys {
+        MapKeys::Names(kind) => {
+            let row = cx.row_table.as_deref().zip(cx.row_key.as_deref());
+            cx.content
+                .as_ref()
+                .and_then(|content| body_names::choices(content, kind, row, path))
+        }
+        MapKeys::Free | MapKeys::Files(_) => None,
+    };
     let mut changed = FormChange::default();
     ui.vertical(|ui| {
         let entries = value.as_object_mut().expect("object");
@@ -1398,15 +1472,30 @@ fn map(
                 if controls::remove(ui, "Remove").clicked() {
                     remove = Some(key.clone());
                 }
-                match keys {
-                    Some(_) => {
+                match (keys, &names) {
+                    (MapKeys::Files(_), _) => {
                         ui.add_sized(
                             egui::vec2(110.0, 18.0),
                             egui::Label::new(theme::mono(shown_path(key)).size(13.0)).truncate(),
                         )
                         .on_hover_text(key.as_str());
                     }
-                    None => {
+                    (MapKeys::Names(_), Some(names)) => {
+                        let known = names.iter().find(|name| name.name == *key);
+                        let text = theme::mono(key.as_str()).size(13.0);
+                        let text = if known.is_some() {
+                            text
+                        } else {
+                            text.color(theme::DANGER)
+                        };
+                        ui.add_sized(egui::vec2(110.0, 18.0), egui::Label::new(text).truncate())
+                            .on_hover_text(
+                                known.map_or("not one the skeleton lists", |name| {
+                                    name.note.as_str()
+                                }),
+                            );
+                    }
+                    _ => {
                         let id = ui.id().with(&item_path).with("key");
                         let typed = drafted(ui, id, key, |ui, draft| {
                             InputField::new(draft).width(110.0).show(ui)
@@ -1440,12 +1529,40 @@ fn map(
                 changed = FormChange::at(path);
             }
         }
-        if let Some(table) = keys {
+        if let MapKeys::Files(table) = keys {
             let mut picked = String::new();
             if crate::picker::row(ui, cx, table, &mut picked, path)
                 && !picked.is_empty()
                 && !entries.contains_key(&picked)
             {
+                entries.insert(picked, schema::template(cx.root, values, cx.nearby()));
+                changed = FormChange::at(path);
+            }
+            return;
+        }
+        if let Some(names) = &names {
+            let left: Vec<&NameChoice> = names
+                .iter()
+                .filter(|name| !entries.contains_key(&name.name))
+                .collect();
+            if left.is_empty() {
+                return;
+            }
+            let mut picked: Option<String> = None;
+            controls::combo(ui.id().with(path).with("new-name"))
+                .selected_text(theme::muted("+ add"))
+                .show_ui(ui, |ui| {
+                    for name in left {
+                        if ui
+                            .selectable_label(false, &name.name)
+                            .on_hover_text(&name.note)
+                            .clicked()
+                        {
+                            picked = Some(name.name.clone());
+                        }
+                    }
+                });
+            if let Some(picked) = picked {
                 entries.insert(picked, schema::template(cx.root, values, cx.nearby()));
                 changed = FormChange::at(path);
             }
@@ -1860,13 +1977,25 @@ fn enum_combo(
     FormChange::default()
 }
 
-pub fn color(ui: &mut Ui, value: &mut Value, path: &str) -> FormChange {
-    let mut rgba = value::rgba(value);
-    if ui.color_edit_button_srgba_unmultiplied(&mut rgba).changed() {
-        *value = Value::Array(rgba.iter().map(|byte| Value::from(*byte)).collect());
-        return FormChange::at(path);
-    }
-    FormChange::default()
+/// A colour picker for `value`, with an alpha channel unless `schema` holds three channels only.
+pub fn color(ui: &mut Ui, schema: &Value, value: &mut Value, path: &str) -> FormChange {
+    let opaque = schema.get("maxItems").and_then(Value::as_u64) == Some(3);
+    let edited = if opaque {
+        let mut rgb = value::rgb(value);
+        ui.color_edit_button_srgb(&mut rgb)
+            .changed()
+            .then(|| rgb.to_vec())
+    } else {
+        let mut rgba = value::rgba(value);
+        ui.color_edit_button_srgba_unmultiplied(&mut rgba)
+            .changed()
+            .then(|| rgba.to_vec())
+    };
+    let Some(channels) = edited else {
+        return FormChange::default();
+    };
+    *value = Value::Array(channels.into_iter().map(Value::from).collect());
+    FormChange::at(path)
 }
 
 pub fn raw_json(ui: &mut Ui, cx: &mut FormCx, value: &mut Value, path: &str) -> FormChange {
@@ -1954,7 +2083,7 @@ fn named(
     let Some(choices) = cx
         .content
         .as_ref()
-        .and_then(|content| body_names::choices(content, kind, row))
+        .and_then(|content| body_names::choices(content, kind, row, path))
     else {
         return text(ui, cx, value, path);
     };
@@ -1993,6 +2122,9 @@ fn named(
                 NameKind::Clip => "no library of the skeleton carries it",
                 NameKind::Group => "not a group of the skeleton",
                 NameKind::Build => "not a build of the skeleton",
+                NameKind::Region => "not a region of the skeleton",
+                NameKind::Slot => "not a slot of the skeleton",
+                NameKind::Tint => "not a tint of the skeleton",
             };
             ui.colored_label(theme::DANGER, why);
         }

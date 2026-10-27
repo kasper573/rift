@@ -1,11 +1,19 @@
 use engine::core::audio::playback::{SFX_CLIP, SfxDef};
 use engine::core::babble::{BABBLE_LETTERS, BabbleBankDef, BabbleDef, LETTERS};
-use engine::core::content::{Content, ContentFile, MODULES};
+use engine::core::content::{Content, ContentFile, MODULES, NamedContent};
 use engine::core::time::Seconds;
 use engine::systems::GameSettings;
-use engine::systems::actor::Action;
-use engine::systems::actor::model::ModelDef;
-use engine::systems::actor::plate::PlateLabel;
+use std::collections::{BTreeMap, HashMap};
+
+use engine::systems::actor::MaterialDef;
+use engine::systems::actor::model::{ActorModel, ModelDef};
+use engine::systems::actor::plate::{self, PlateLabel};
+use engine::systems::actor::skeleton::{Colours, EquipmentSlot, TintName};
+use engine::systems::actor::stance::{self, HandIndex};
+use engine::systems::actor::{Action, Appearance, Motion, Pose as BodyPose, appearance, held};
+use engine::systems::class::ClassDef;
+use engine::systems::equipment::{self, Equipment};
+use engine::systems::item::ItemId;
 use engine::systems::npc::{NpcDef, NpcModule};
 use engine::systems::player::PlayerDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
@@ -16,21 +24,22 @@ use engine::systems::skill::SkillDef;
 use engine::systems::status::StatusEffectDef;
 use strum::VariantArray;
 use ui::card::{self};
-use ui::controls;
-use ui::egui::Ui;
+use ui::egui::{self, Ui, Vec2};
 use ui::glyph::{self, Mark};
 use ui::theme;
 use ui::words;
+use ui::{chip, controls};
 
 use super::quests::quest_parties_sections;
 use crate::app::Editor;
 use crate::rows;
-use crate::stage::{self, Posed, PosedActor, Scenario, Scene};
+use crate::stage::{self, Scenario, Scene};
 use crate::tabs::shown_path;
-use crate::thumbs::ProjectImages;
+use crate::thumbs::{FULL_UV, ProjectImages};
 use crate::views::character;
 use crate::views::script::panel;
 use crate::views::sound::BabbleRequest;
+use crate::views::stage::{self as view_stage, StageState};
 use ui::input::InputField;
 
 pub struct RowPreviewState {
@@ -40,6 +49,8 @@ pub struct RowPreviewState {
     /// The model a status effect is shown on; the player's until one is picked.
     pub status_model: Option<String>,
     pub status_applied: bool,
+    /// The turntable of each actor row shown, by the row.
+    pub stages: HashMap<String, StageState>,
 }
 
 impl Default for RowPreviewState {
@@ -50,6 +61,7 @@ impl Default for RowPreviewState {
             started: 0.0,
             status_model: None,
             status_applied: false,
+            stages: HashMap::new(),
         }
     }
 }
@@ -71,11 +83,13 @@ pub fn preview_place(table: &str) -> Option<PreviewPlace> {
     match table {
         NpcDef::TABLE
         | PlayerDef::TABLE
+        | ClassDef::TABLE
         | ModelDef::TABLE
         | QuestDef::TABLE
         | CharacterSnapshot::TABLE
         | StatusEffectDef::TABLE
-        | SkillDef::TABLE => Some(PreviewPlace::Beside),
+        | SkillDef::TABLE
+        | MaterialDef::TABLE => Some(PreviewPlace::Beside),
         SfxDef::TABLE | BabbleDef::TABLE | BabbleBankDef::TABLE => Some(PreviewPlace::Below),
         _ => None,
     }
@@ -90,6 +104,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str) {
         SfxDef::TABLE => return show_sfx(editor, ui, key),
         BabbleBankDef::TABLE => return show_babble_bank(editor, ui, key),
         BabbleDef::TABLE => return show_babble(editor, ui, key),
+        MaterialDef::TABLE => return show_material(editor, ui, key),
         _ => {}
     }
     let now = ui.input(|i| i.time);
@@ -105,7 +120,10 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str) {
     if table == CharacterSnapshot::TABLE {
         character::preview_extras(editor, ui, key);
     }
-    if matches!(table, NpcDef::TABLE | PlayerDef::TABLE | ModelDef::TABLE) {
+    if matches!(
+        table,
+        NpcDef::TABLE | PlayerDef::TABLE | ClassDef::TABLE | ModelDef::TABLE
+    ) {
         ui.horizontal(|ui| {
             let state = &mut editor.views.preview;
             controls::combo("preview-action")
@@ -270,6 +288,73 @@ fn show_babble_bank(editor: &mut Editor, ui: &mut Ui, key: &str) {
     }
 }
 
+/// A material as the game paints it in its skeleton's colours, and the tint each channel of its
+/// masks paints.
+fn show_material(editor: &mut Editor, ui: &mut Ui, key: &str) {
+    let Some(content) = editor.loaded() else {
+        ui.label(theme::muted("the preview paints once the content loads"));
+        return;
+    };
+    let Some(material) = content.by_path::<MaterialDef>(key) else {
+        ui.label(theme::muted("the preview paints once the row loads"));
+        return;
+    };
+    let material = material.get(&content);
+    let skeleton = material.skeleton.get(&content);
+    let ctx = ui.ctx().clone();
+    let Editor { project, form, .. } = &mut *editor;
+    let files = &project.as_ref().expect("a project").files;
+    let width = ui.available_width();
+    let paint = material.paint(skeleton, &Colours::default());
+    match form.thumbnails.painted(&ctx, files, &paint) {
+        Some(painted) => {
+            let size = painted.texture.size_vec2();
+            ui.image((painted.texture.id(), size * (width / size.x)));
+            ui.label(
+                theme::faint(format!(
+                    "painted in the colours of {}",
+                    skeleton.shown_name()
+                ))
+                .size(12.0),
+            );
+        }
+        None => {
+            ui.label(theme::muted("the base or a mask does not read"));
+        }
+    }
+    let colour_of = |tint: &TintName| {
+        skeleton
+            .tints
+            .iter()
+            .find(|known| known.name == *tint)
+            .map_or(theme::DANGER, |known| known.colour.into())
+    };
+    for (mask, channels) in &material.masks {
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let thumb = material
+                .mask_files
+                .get(mask)
+                .and_then(|file| form.thumbnails.image(&ctx, files, file.as_str()));
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(56.0), egui::Sense::hover());
+            if let Some(thumb) = thumb {
+                ui.painter()
+                    .image(thumb.texture.id(), rect, FULL_UV, egui::Color32::WHITE);
+            }
+            ui.vertical(|ui| {
+                ui.label(theme::mono(mask.as_str()).size(13.0));
+                for (channel, tint) in channels.painting() {
+                    chip::swatch(
+                        ui,
+                        theme::mono(format!("{} {tint}", ["r", "g", "b", "a"][channel])).size(12.0),
+                        colour_of(tint),
+                    );
+                }
+            });
+        });
+    }
+}
+
 /// A babble speaking a line of the designer's choosing, through the game's own typewriter.
 fn show_babble(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let sound = &mut editor.views.sound;
@@ -301,67 +386,101 @@ fn draw_preview(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, pose: 
         quest_card(ui, &mut images, &content, key);
         return;
     }
-    let center = stage::center(&content);
-    let mut posed = Posed::default();
-    let Some(look) = actor_look(editor, &content, table, key) else {
+    let Some(dressed) = dressed(&content, table, key) else {
+        ui.label(theme::muted("the preview stands once the row loads"));
         return;
     };
-    let Some(model) = content.by_path::<ModelDef>(&look.model) else {
-        ui.label(theme::muted("pick a model to see it"));
+    let Some(model) = ActorModel::loaded(&content, dressed.appearance.model) else {
+        ui.label(theme::muted("the preview stands once its model loads"));
         return;
     };
-    posed.actors.push(PosedActor {
-        action: pose.action,
-        plate: look.plate,
-        held: (!pose.playing).then_some(Seconds(0.0)),
-        ..PosedActor::standing(model, center)
-    });
-    stage::show(
+    let stance = stance::of_hands(&content, &dressed.hands);
+    let clip = model.standing_clip(stance, &Motion::Action(pose.action), BodyPose::Idle);
+    let body = model.dressed(
+        &content,
+        &appearance::look(&content, &dressed.appearance, &dressed.worn),
+    );
+    let props = view_stage::props(&content, model, &dressed.hands);
+    let view_key = format!("preview:{table}/{key}");
+    let mut state = editor
+        .views
+        .preview
+        .stages
+        .remove(&view_key)
+        .unwrap_or_else(|| StageState::framing(model.hitbox().height.0 * 1.1, true));
+    let width = ui.available_width();
+    let turntable = view_stage::turntable(
         editor,
         ui,
-        &format!("{table}/{key}"),
-        Scene::Posed(posed),
-        true,
+        &view_key,
+        Vec2::new(width, width * 1.1),
+        &mut state,
     );
+    editor.views.preview.stages.insert(view_key, state);
+    let Some(turntable) = turntable else {
+        return;
+    };
+    if let Some(plate) = &dressed.plate {
+        plate::draw_label(
+            ui,
+            turntable.rect.center_top() + Vec2::new(0.0, 28.0),
+            plate,
+        );
+    }
+    let held = (!pose.playing).then_some(Seconds(0.0));
+    let standing = view_stage::standing(body, clip, held, Vec::new(), props);
+    turntable.stand(editor, ui, vec![standing]);
 }
 
-/// How the row's actor stands on the stage: the model it wears, and the plate it wears
-/// in game, an npc's name and role once it has a nameplate, a test character's name as a player.
-struct ActorLook {
-    model: String,
+/// How the row's actor stands on the stage: its appearance, what it wears in each slot and shows
+/// in each hand, and the plate it wears in game, an npc's name and role once it has a nameplate,
+/// a test character's name as a player.
+struct Dressed {
+    appearance: Appearance,
+    worn: BTreeMap<EquipmentSlot, ItemId>,
+    hands: BTreeMap<HandIndex, ItemId>,
     plate: Option<PlateLabel>,
 }
 
-fn actor_look(editor: &Editor, content: &Content, table: &str, key: &str) -> Option<ActorLook> {
-    let project = editor.project.as_ref()?;
-    let reader = project.reader();
+fn dressed(content: &Content, table: &str, key: &str) -> Option<Dressed> {
+    let bare = |model| Dressed {
+        appearance: Appearance::of(model),
+        worn: BTreeMap::new(),
+        hands: BTreeMap::new(),
+        plate: None,
+    };
     match table {
-        ModelDef::TABLE => Some(ActorLook {
-            model: key.to_owned(),
-            plate: None,
-        }),
+        ModelDef::TABLE => Some(bare(content.by_path::<ModelDef>(key)?)),
+        ClassDef::TABLE => Some(bare(content.by_path::<ClassDef>(key)?.get(content).model)),
+        PlayerDef::TABLE => {
+            let player = content.by_path::<PlayerDef>(key)?.get(content);
+            Some(bare(player.class.get(content).model))
+        }
         NpcDef::TABLE => {
-            let npc = project.read::<NpcDef>(key).ok()?;
-            let hostile = attitude(content, key, &npc) == Some(true);
-            Some(ActorLook {
-                model: reader.path_of(npc.appearance.model)?.to_owned(),
+            let npc = content.by_path::<NpcDef>(key)?.get(content);
+            let model = ActorModel::loaded(content, npc.appearance.model)?;
+            let hostile = attitude(content, key, npc) == Some(true);
+            Some(Dressed {
+                appearance: npc.appearance.clone(),
+                worn: BTreeMap::new(),
+                hands: held::listed(content, model.hands().len(), &npc.held),
                 plate: npc
                     .nameplate()
                     .map(|role| PlateLabel::npc(&npc.name, role, hostile)),
             })
         }
-        PlayerDef::TABLE => {
-            let player = project.read::<PlayerDef>(key).ok()?;
-            let class = project.read_id(player.class)?;
-            Some(ActorLook {
-                model: reader.path_of(class.model)?.to_owned(),
-                plate: None,
-            })
-        }
         CharacterSnapshot::TABLE => {
-            let snapshot = project.read::<CharacterSnapshot>(key).ok()?;
-            Some(ActorLook {
-                model: reader.path_of(snapshot.appearance.model)?.to_owned(),
+            let snapshot = content.by_path::<CharacterSnapshot>(key)?.get(content);
+            let model = ActorModel::loaded(content, snapshot.appearance.model)?;
+            let equipment = Equipment {
+                slots: equipment::put_on(content, model, &snapshot.equipped).slots,
+            };
+            Some(Dressed {
+                appearance: snapshot.appearance.clone(),
+                worn: equipment::worn_slots(&equipment)
+                    .map(|(slot, item)| (slot.clone(), *item))
+                    .collect(),
+                hands: equipment::hands(&equipment),
                 plate: Some(PlateLabel::player(&snapshot.name)),
             })
         }
