@@ -140,6 +140,37 @@ fn berths_hold_while_the_target_steps_within_reach() {
 }
 
 #[test]
+fn a_fighter_chasing_a_target_walking_away_strikes_it_again_and_again_before_the_walk_ends() {
+    for direction in [(-1.0, 0.0), (0.0, 1.0), (-1.0, -1.0)] {
+        let mut arena = Arena::new();
+        let player = arena.player();
+        let fighter = arena.fighter(arena.at(-direction.0 * 2.0, -direction.1 * 2.0));
+        let away = arena.at(direction.0 * 10.0, direction.1 * 10.0);
+
+        arena.attack(fighter, player);
+        arena.send(MoveRequest {
+            pos: away,
+            seq: MoveSeq(1),
+        });
+        let mut health = stat::effective(arena.world(), player, StatKind::Health);
+        let mut strikes = 0;
+        arena.watch_until(5.0, |world| {
+            let now = stat::effective(world, player, StatKind::Health);
+            if now < health && moving(world, player) {
+                strikes += 1;
+            }
+            health = now;
+            position(world, player) == Some(away)
+        });
+
+        assert!(
+            strikes >= 3,
+            "{direction:?}: struck {strikes} times on the way"
+        );
+    }
+}
+
+#[test]
 fn a_ground_click_onto_an_occupied_spot_is_honoured() {
     let mut arena = Arena::new();
     let player = arena.player();

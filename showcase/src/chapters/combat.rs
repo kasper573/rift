@@ -35,6 +35,8 @@ fn play(shoot: &mut Shoot) {
         "Hover a monster to target it; {} uses the basic attack in the slot by your hotbar",
         input_name(InputAction::Interact)
     ));
+    me.caption("A monster on the move is run down and struck where it walks");
+    strike_on_the_move(&mut me);
     me.caption("Every hit bursts its damage out of whoever takes it");
     let loot = slay(&mut me);
     me.wait_until("the kill's XP in the feed", |snapshot| {
@@ -120,6 +122,35 @@ const DROPPING: WaitBudget = WaitBudget {
     time: Duration::from_secs(2),
     frames: 120,
 };
+
+// Attacks a monster while it walks, failing unless the first hit lands before it stops.
+fn strike_on_the_move(me: &mut Player) {
+    let walker = me.wait_for("a monster on the move", |snapshot| {
+        prey(snapshot)
+            .into_iter()
+            .find(|actor| !actor.resting)
+            .cloned()
+    });
+    let walking = Cell::new(true);
+    me.fight(
+        |_, actor| actor.id == walker.id,
+        |snapshot| {
+            let Some(it) = snapshot.actors.iter().find(|actor| actor.id == walker.id) else {
+                return false;
+            };
+            let struck = it.health < walker.health;
+            if !struck {
+                walking.set(!it.resting);
+            }
+            struck
+        },
+    );
+    assert!(
+        walking.get(),
+        "{} stopped walking before it was struck",
+        walker.name
+    );
+}
 
 // Fights until a monster falls, and returns what it dropped.
 fn slay(me: &mut Player) -> Vec<ProbeGroundItem> {

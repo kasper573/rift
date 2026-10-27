@@ -149,7 +149,8 @@ pub fn fits(world: &World, caster: Entity, target: Entity, targeting: Targeting)
 }
 
 /// Walks every caster toward what it aims at and performs the skill on arrival, once ready: the
-/// cost is taken, the cooldown starts and `used` is raised on the skill's script. Between casts it
+/// cost is taken, the cooldown starts and `used` is raised on the skill's script. A caster stands
+/// through what it plays, since a step would cut its swing short of the hit, and between casts it
 /// settles, spreading out from others that crowd its tile.
 pub fn casts(world: &mut World, intents: &mut reach::Intents) {
     for (caster, intent) in reach::casting(world, intents) {
@@ -159,6 +160,9 @@ pub fn casts(world: &mut World, intents: &mut reach::Intents) {
         let rank = super::rank_of(world, caster, skill);
         if stat::is_dead(world, caster) || rank == Rank::NONE {
             reach::forget(world, caster);
+            continue;
+        }
+        if playing::playing(world, caster) {
             continue;
         }
         let range = super::range_of(world, caster, skill, rank);

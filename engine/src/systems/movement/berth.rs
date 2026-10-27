@@ -40,7 +40,7 @@ impl Aim {
                 origin: point,
                 footing: None,
                 avoid: Vec::new(),
-                nearest_first: false,
+                walking: false,
             },
             Aim::Actor(actor) => {
                 let footing = position(world, actor)?;
@@ -48,7 +48,7 @@ impl Aim {
                     origin: footing,
                     footing: Some(footing),
                     avoid: vec![footing],
-                    nearest_first: moving(world, actor),
+                    walking: moving(world, actor),
                 }
             }
             Aim::Meeting(actor) => {
@@ -58,7 +58,7 @@ impl Aim {
                     origin,
                     footing: Some(footing),
                     avoid: vec![origin, footing],
-                    nearest_first: false,
+                    walking: false,
                 }
             }
         })
@@ -70,14 +70,17 @@ impl Aim {
 /// A berth is the spot in reach whose body would overlap the fewest others, the nearest of those,
 /// then the southernmost and westernmost, never one overlapping the actor aimed at while another is
 /// in reach; while that actor walks, nearness counts before emptiness. A berth is kept while it stays
-/// in reach, so an approach never wavers. An actor that can't take a step, held fast or never moving
-/// at all, waits where it stands for what it aims at to come in reach.
+/// in reach, so an approach never wavers. An actor walking away is closed on to a body's width inside
+/// the reach, and met wherever the approacher gets that near, so it is still in reach once the
+/// approacher has stopped. An actor that can't take a step, held fast or never moving at all, waits
+/// where it stands for what it aims at to come in reach.
 pub fn approach(world: &mut World, entity: Entity, aim: Aim, reach: Meters) -> Approach {
     let (Some(at), Some(sight)) = (position(world, entity), aim.sight(world)) else {
         return Approach::Unreachable;
     };
     let rooted = speed_of(world, entity) <= MetersPerSec(Meters(0.0));
-    if rooted && moving(world, entity) {
+    let caught = sight.walking && sight.reaches(at, closing(reach));
+    if moving(world, entity) && (rooted || caught) {
         halt(world, entity);
     }
     if !moving(world, entity) && sight.reaches(at, reach) {
@@ -93,13 +96,14 @@ pub fn approach(world: &mut World, entity: Entity, aim: Aim, reach: Meters) -> A
     if rooted {
         return Approach::Approaching;
     }
+    let reach = if sight.walking { closing(reach) } else { reach };
     let kept = world
         .get::<MoveTarget>(entity)
         .is_some_and(|goal| sight.berths(goal.pos, reach));
     if kept {
         return Approach::Approaching;
     }
-    match berth(world, entity, at, &sight, reach, sight.nearest_first) {
+    match berth(world, entity, at, &sight, reach, sight.walking) {
         Some(spot) => {
             goto(world, entity, spot);
             Approach::Approaching
@@ -176,11 +180,17 @@ pub fn reachable(world: &World, entity: Entity, point: Pos<Meters>) -> bool {
     mesh.connects(at, point)
 }
 
+/// How near an approacher closes on an actor walking away: a body's width inside its reach, but
+/// never onto the actor's body, so stopping takes the approacher no further than the reach.
+fn closing(reach: Meters) -> Meters {
+    Meters((reach.0 - SPACING.0).max(SPACING.0).min(reach.0))
+}
+
 struct Sight {
     origin: Pos<Meters>,
     footing: Option<Pos<Meters>>,
     avoid: Vec<Pos<Meters>>,
-    nearest_first: bool,
+    walking: bool,
 }
 
 impl Sight {
