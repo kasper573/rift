@@ -7,9 +7,9 @@ use engine::core::babble::{BabbleBankDef, BabbleDef};
 use engine::core::content::{ContentFile, SETTINGS_FILE, table_of};
 use engine::core::vfx::VfxDef;
 use engine::core::vfx::shader::VfxShaderDef;
-use engine::systems::actor::ModelDef;
 use engine::systems::actor::skeleton::SkeletonDef;
 use engine::systems::actor::stance::StanceDef;
+use engine::systems::actor::{ModelDef, ModelPartDef};
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
@@ -17,6 +17,7 @@ use engine::systems::area::terrain::{SurfaceDef, TerrainDef};
 use engine::systems::area::world_map::WorldMapDef;
 use engine::systems::attention::AttentionDef;
 use engine::systems::class::ClassDef;
+use engine::systems::dialogue::bust::BustDef;
 use engine::systems::input::map::InputDef;
 use engine::systems::interface::{CursorDef, InterfaceIconDef};
 use engine::systems::item::ItemDef;
@@ -162,6 +163,8 @@ impl KindFamily {
             | CharacterSnapshot::TABLE
             | ClassDef::TABLE
             | ModelDef::TABLE
+            | ModelPartDef::TABLE
+            | BustDef::TABLE
             | SkeletonDef::TABLE => KindFamily::Characters,
             ItemDef::TABLE | ShopDef::TABLE | StanceDef::TABLE => KindFamily::Items,
             SkillDef::TABLE | StatusEffectDef::TABLE | VfxDef::TABLE | VfxShaderDef::TABLE => {
@@ -205,6 +208,8 @@ pub fn of_table(table: &str) -> KindIcon {
         CharacterSnapshot::TABLE => KindIcon::badged(phosphor::USER, phosphor::FLASK),
         ClassDef::TABLE => KindIcon::plain(phosphor::SHIELD_STAR),
         ModelDef::TABLE => KindIcon::plain(phosphor::PERSON_ARMS_SPREAD).unpictured(),
+        ModelPartDef::TABLE => KindIcon::plain(phosphor::PUZZLE_PIECE).unpictured(),
+        BustDef::TABLE => KindIcon::plain(phosphor::USER_SQUARE).unpictured(),
         SkeletonDef::TABLE => KindIcon::plain(phosphor::BONE).unpictured(),
         StanceDef::TABLE => KindIcon::plain(phosphor::HAND_FIST),
         ItemDef::TABLE => KindIcon::plain(phosphor::BACKPACK),

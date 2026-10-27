@@ -25,6 +25,7 @@ use crate::systems::actor::wearing::{self, Wearing};
 use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox, Pose, Tint};
 use crate::systems::area::{self, AreaId, AreaModule, AreaTag, Wild};
 use crate::systems::combat::{Attitude, Dead, Died};
+use crate::systems::dialogue::bust::BustId;
 use crate::systems::interact::Interactive;
 use crate::systems::item::{ItemId, Reservation, Wear};
 use crate::systems::movement::{self, NavMesh, Position, Spots, position};
@@ -156,6 +157,9 @@ pub struct Near(Vec<Entity>);
 pub struct NpcDef {
     pub name: String,
     pub model: ModelId,
+    /// The portrait a conversation shows beside its lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bust: Option<BustId>,
     pub stats: Stats,
     #[schemars(extend("x-usage" = "the skill a click on a target uses"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -187,6 +191,7 @@ impl ContentFile for NpcDef {
         Ok(NpcDef {
             name: near.name(),
             model: near.file()?,
+            bust: None,
             stats: Stats::default(),
             basic_attack: None,
             skills: Vec::new(),

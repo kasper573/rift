@@ -4,9 +4,10 @@ use std::sync::Arc;
 use engine::core::audio::playback::SfxDef;
 use engine::core::content::{FolderReader, write};
 use engine::systems::GameSettings;
-use engine::systems::actor::model::{GenericExpression, ModelDef, ModelModule};
+use engine::systems::actor::{ModelDef, ModelPartDef};
 use engine::systems::area::AreaDef;
 use engine::systems::area::SurfaceDef;
+use engine::systems::dialogue::bust::{BustDef, GenericExpression};
 use serde_json::json;
 use testkit::{Game, path};
 
@@ -18,22 +19,19 @@ fn reader(game: &Game) -> FolderReader {
 
 #[test]
 fn a_bundle_reads_with_its_parts() {
-    let game = game().model("hero", 1.0, json!([])).busts("hero");
-    let model: ModelDef = reader(&game).read(&path("model", "hero")).expect("reads");
+    let game = game().model("hero", 1.0, json!([])).bust("hero");
+    let reader = reader(&game);
+    let part: ModelPartDef = reader.read(&path("model_part", "hero")).expect("reads");
+    let bust: BustDef = reader.read(&path("bust", "hero")).expect("reads");
 
-    let hero = path("model", "hero");
-    assert_eq!(model.model.as_str(), format!("{hero}/model.glb"));
-    let busts = model
-        .modules
-        .iter()
-        .find_map(|module| match module {
-            ModelModule::Bust(busts) => Some(busts),
-            _ => None,
-        })
-        .expect("a bust module");
+    let hero = path("model_part", "hero");
     assert_eq!(
-        busts.generic.of(GenericExpression::Angry).as_str(),
-        format!("{hero}/busts/angry.png")
+        part.mesh.expect("a mesh for every build").as_str(),
+        format!("{hero}/mesh.glb")
+    );
+    assert_eq!(
+        bust.generic.of(GenericExpression::Angry).as_str(),
+        format!("{}/faces/angry.png", path("bust", "hero"))
     );
 }
 
@@ -100,12 +98,7 @@ fn a_file_of_another_type_does_not_read() {
 
 #[test]
 fn a_file_writes_back_exactly_as_writing_the_whole_game_does() {
-    let game = || {
-        game()
-            .sfx("hit")
-            .model("hero", 1.0, json!([]))
-            .busts("hero")
-    };
+    let game = || game().sfx("hit").model("hero", 1.0, json!([])).bust("hero");
     let whole = tempfile::tempdir().expect("a folder");
     write(game().registry(), game().load(), whole.path()).expect("written");
     let game = game();
@@ -126,6 +119,9 @@ fn a_file_writes_back_exactly_as_writing_the_whole_game_does() {
     let hero = path("model", "hero");
     let model: ModelDef = reader.read(&hero).expect("reads");
     same_as_whole(reader.write(&hero, &model).expect("writes").files);
+    let hero = path("bust", "hero");
+    let bust: BustDef = reader.read(&hero).expect("reads");
+    same_as_whole(reader.write(&hero, &bust).expect("writes").files);
     let settings: GameSettings = reader.settings().expect("reads");
     same_as_whole(reader.write_settings(&settings).expect("writes"));
 }

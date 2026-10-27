@@ -12,9 +12,10 @@ use engine::core::time::Seconds;
 use engine::core::vfx::VfxShaderDef;
 use engine::core::vfx::shader::SHADER_SOURCE;
 use engine::systems::actor::Action;
-use engine::systems::actor::model::{MODEL_GLB, ModelDef};
+use engine::systems::actor::part::{ModelPartDef, PART_MESH};
 use engine::systems::actor::skeleton::{CLIP_LIBRARIES, RIG_GLB, SkeletonDef};
 use engine::systems::area::prop::{PROP_GLB, PropDef};
+use engine::systems::dialogue::bust::{BUST_FACES, BustDef, GenericExpression};
 use engine::systems::item::{ItemDef, ItemKind, ItemModule};
 use engine::systems::script::{Node, RiftEvent, RunnerKind, ScriptDef, ScriptId, ScriptModule};
 use engine::systems::skill::{SkillDef, SkillModule};
@@ -148,7 +149,7 @@ fn blank_parts(
                 ),
             ]
         }
-        ModelDef::TABLE => {
+        ModelPartDef::TABLE => {
             let skeleton = Nearby::new(reader, path).file::<SkeletonDef>()?;
             let rig = reader
                 .path_of(skeleton)
@@ -157,10 +158,19 @@ fn blank_parts(
                 .ok_or("its skeleton has no rig to fit")?;
             let tree = gltf::inspect(rig)?.tree;
             vec![(
-                MODEL_GLB.named("", "glb"),
+                PART_MESH.named("", "glb"),
                 FileBytes::from(placeholder_body(&tree, &[], 1)),
             )]
         }
+        BustDef::TABLE => GenericExpression::VARIANTS
+            .iter()
+            .map(|expression| {
+                (
+                    BUST_FACES.named(expression.as_ref(), "png"),
+                    default("blank.png"),
+                )
+            })
+            .collect(),
         PropDef::TABLE => vec![(
             PROP_GLB.named("", "glb"),
             FileBytes::from(placeholder_rig(&[])),

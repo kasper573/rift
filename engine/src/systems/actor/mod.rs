@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 pub mod layering;
 pub mod model;
+pub mod part;
 pub mod plate;
 pub mod playing;
 pub mod render;
@@ -10,6 +11,7 @@ pub mod stance;
 pub mod wearing;
 
 pub use model::{ActorModel, ModelDef, ModelId, Timing};
+pub use part::{ModelPartDef, ModelPartId};
 pub use playing::{Animate, LastAction, Motion, Playing, Wait};
 pub use skeleton::{SkeletonDef, SkeletonId};
 pub use stance::{StanceDef, StanceId};
@@ -50,7 +52,8 @@ pub fn content(registry: &mut ContentRegistry) {
         .modules::<SkeletonDef>()
         .file::<StanceDef>()
         .named::<StanceDef>()
-        .bundle::<ModelDef>()
+        .bundle::<ModelPartDef>()
+        .file::<ModelDef>()
         .modules::<ModelDef>()
         .hook(LoadStep::Files, model::build_all);
 }

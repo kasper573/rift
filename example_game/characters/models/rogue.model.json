@@ -1,0 +1,10 @@
+{
+  "skeleton": "characters/skeletons/biped.skeleton",
+  "hitbox": {
+    "radius": 0.4,
+    "height": 2.3
+  },
+  "parts": [
+    "characters/parts/rogue.model_part"
+  ]
+}

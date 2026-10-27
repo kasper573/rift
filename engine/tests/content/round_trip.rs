@@ -48,7 +48,7 @@ fn rich_game() -> Game {
     game()
         .sword()
         .equipped(&["sword"])
-        .busts("hero")
+        .bust("hero")
         .babble("brute")
         .npc(
             "brute",

@@ -1,6 +1,7 @@
 {
   "name": "Skeleton Warrior",
-  "model": "characters/models/skeleton-warrior.model",
+  "model": "characters/models/skeleton-warrior.model.json",
+  "bust": "characters/busts/skeleton-warrior.bust",
   "stats": {
     "health": 60.0,
     "max_health": 60.0,

@@ -1,6 +1,7 @@
 {
   "name": "Skeleton Mage",
-  "model": "characters/models/skeleton-mage.model",
+  "model": "characters/models/skeleton-mage.model.json",
+  "bust": "characters/busts/skeleton-mage.bust",
   "stats": {
     "health": 22.0,
     "max_health": 22.0,

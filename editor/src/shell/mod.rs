@@ -43,7 +43,8 @@ use crate::project::{self, EditRefusal};
 use crate::tabs::{DockRequest, EditorTab};
 use crate::views::script::{self, ScriptKeys};
 use crate::views::{
-    self, area, character, class, item, model, prop, skeleton, spreadsheet, stance, vfx, world,
+    self, area, bust, character, class, item, model, model_part, prop, skeleton, spreadsheet,
+    stance, vfx, world,
 };
 
 pub fn show(editor: &mut Editor, ctx: &Context) {
@@ -554,6 +555,8 @@ impl TabViewer for Viewer<'_> {
             EditorTab::Blueprint { key } => area::show_blueprint(self.editor, ui, key),
             EditorTab::Script(owner) => script::show(self.editor, ui, owner),
             EditorTab::Model { key } => model::show(self.editor, ui, key),
+            EditorTab::ModelPart { key } => model_part::show(self.editor, ui, key),
+            EditorTab::Bust { key } => bust::show(self.editor, ui, key),
             EditorTab::Prop { key } => prop::show(self.editor, ui, key),
             EditorTab::Row { table, key } if table == ClassDef::TABLE => {
                 class::show(self.editor, ui, key)
@@ -637,6 +640,8 @@ impl TabViewer for Viewer<'_> {
             | EditorTab::World
             | EditorTab::Script(_)
             | EditorTab::Model { .. }
+            | EditorTab::ModelPart { .. }
+            | EditorTab::Bust { .. }
             | EditorTab::Prop { .. }
             | EditorTab::Spreadsheet { .. } => [false, false],
             EditorTab::Row { table, .. }
@@ -666,8 +671,9 @@ fn toast(editor: &mut Editor, ctx: &Context) {
     float::toast(ctx, text, since);
 }
 
-/// Files dropped onto the window go to the tab in front when it takes them: a model's busts and
-/// rig, a prop's model, a skeleton's libraries and rig; anywhere else they have no place to land.
+/// Files dropped onto the window go to the tab in front when it takes them: a bust's faces, a model
+/// part's meshes, a prop's model, a skeleton's libraries and rig; anywhere else they have no place
+/// to land.
 fn dropped_files(editor: &mut Editor, ctx: &Context) {
     let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
         i.raw
@@ -680,12 +686,14 @@ fn dropped_files(editor: &mut Editor, ctx: &Context) {
         return;
     }
     match active_tab(editor) {
-        Some(EditorTab::Model { .. }) => editor.views.model.drops = dropped,
+        Some(EditorTab::Bust { .. }) => editor.views.bust.drops = dropped,
+        Some(EditorTab::ModelPart { .. }) => editor.views.model_part.drops = dropped,
         Some(EditorTab::Prop { .. }) => editor.views.prop.drops = dropped,
         Some(EditorTab::Row { table, .. }) if table == SkeletonDef::TABLE => {
             editor.views.skeleton.drops = dropped
         }
-        _ => editor
-            .toast("Drop files onto a model's, a prop's or a skeleton's tab to add them to it"),
+        _ => editor.toast(
+            "Drop files onto a bust's, a model part's, a prop's or a skeleton's tab to add them to it",
+        ),
     }
 }

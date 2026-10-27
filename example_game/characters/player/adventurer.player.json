@@ -1,5 +1,5 @@
 {
-  "model": "characters/models/knight.model",
+  "model": "characters/models/knight.model.json",
   "class": "characters/class/fighter.class.json",
   "stats": {
     "health": 30.0,

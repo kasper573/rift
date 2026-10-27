@@ -1,13 +1,12 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use bevy::animation::graph::AnimationGraph;
-use bevy::animation::{AnimationClip, AnimationPlugin};
+use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetPlugin;
 use bevy::gltf::GltfPlugin;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
-use bevy::world_serialization::{WorldAsset, WorldSerializationPlugin};
+use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::audio::playback::{PlaySfx, SfxDef, SfxId, SfxPlace};
 use engine::core::content::gltf::PLACEHOLDER_LIFT;
 use engine::core::geometry::{Degrees, Radians};
@@ -15,6 +14,7 @@ use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::math::Rgba;
 use engine::core::render::camera::ground_hit;
+use engine::core::render::world::body::{Body, BodyPlugin};
 use engine::core::render::{Animator, CameraRig, capsule_hit, facing_rotation, world_point};
 use engine::core::time::PlaybackRate;
 use engine::core::units::{MeterPos, Meters, MetersPerSec};
@@ -129,7 +129,7 @@ fn a_model_fronts_the_way_its_actor_faces() {
 
 #[test]
 fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
-    let content = Game::new()
+    let game = Game::new()
         .area("field", &Map::open(5, 5), json!([]))
         .hero("field", 2.0, 2.0)
         .sword()
@@ -141,52 +141,22 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
         .item(
             "bow",
             json!({ "kind": { "type": "equipment", "slot": "hand", "stance": path("stance", "bow") } }),
-        )
-        .load();
-    let mut app = App::new();
-    app.add_plugins((
-        MinimalPlugins,
-        AssetPlugin::default(),
-        WorldSerializationPlugin,
-    ))
-    .init_asset::<AnimationGraph>()
-    .init_asset::<AnimationClip>()
-    .register_type::<Name>()
-    .register_type::<Transform>()
-    .register_type::<ChildOf>()
-    .add_observer(render::adopt_player)
-    .insert_resource(content.clone());
+        );
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let (mut app, content) = viewer(game, folder.path());
     let sword = testkit::Declared::declared::<ItemDef>(&content, "sword").expect("a sword");
     let bow = testkit::Declared::declared::<ItemDef>(&content, "bow").expect("a bow");
-    let hero = testkit::Declared::declared::<ModelDef>(&content, "hero").expect("a hero");
-    let body = app
-        .world_mut()
-        .spawn((
-            Actor {
-                color: Rgba(0xffffffff),
-                facing: engine::core::geometry::Radians(0.0),
-                action: Action::Idle,
-                pose: Pose::Idle,
-                model: hero,
-                attack_rate: PlaybackRate(1.0),
-                speed: MetersPerSec::default(),
-            },
-            Wearing {
-                hands: BTreeMap::from([(HandIndex::MAIN, sword)]),
-            },
-        ))
-        .id();
-
+    let body = spawn_hero(&mut app, &content, Action::Idle);
+    app.world_mut().entity_mut(body).insert(Wearing {
+        hands: BTreeMap::from([(HandIndex::MAIN, sword)]),
+    });
     app.world_mut()
         .run_system_cached(render::dress)
         .expect("dressed");
-    let rig = app
-        .world_mut()
-        .resource_mut::<Assets<WorldAsset>>()
-        .add(WorldAsset::new(rig_scene()));
-    app.world_mut().entity_mut(body).insert(WorldAssetRoot(rig));
-    for _ in 0..3 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while joint(&mut app, "hand.r").is_none() && Instant::now() < deadline {
         app.update();
+        std::thread::sleep(Duration::from_millis(5));
     }
     app.world_mut()
         .run_system_cached(render::hang)
@@ -237,45 +207,8 @@ fn a_body_moves_by_the_clip_its_skeleton_plays_for_what_it_does() {
         .area("field", &Map::open(5, 5), json!([]))
         .hero("field", 2.0, 2.0);
     let folder = tempfile::tempdir().expect("a scratch folder");
-    game.write_to(folder.path());
-    let content = game.load();
-    let mut app = App::new();
-    app.add_plugins((
-        MinimalPlugins,
-        AssetPlugin {
-            file_path: folder.path().display().to_string(),
-            ..Default::default()
-        },
-        WorldSerializationPlugin,
-        AnimationPlugin,
-        GltfPlugin::default(),
-    ))
-    .init_asset::<Mesh>()
-    .init_asset::<StandardMaterial>()
-    .init_asset::<Image>()
-    .init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
-    .init_resource::<Animator>()
-    .add_observer(render::adopt_player)
-    .insert_resource(content.clone());
-    app.finish();
-    app.cleanup();
-    let hero = testkit::Declared::declared::<ModelDef>(&content, "hero").expect("a hero");
-    app.world_mut().spawn((
-        Actor {
-            color: Rgba(0xffffffff),
-            facing: Radians(0.0),
-            action: Action::Idle,
-            pose: Pose::Idle,
-            model: hero,
-            attack_rate: PlaybackRate(1.0),
-            speed: MetersPerSec::default(),
-        },
-        RenderActor {
-            facing: Radians(0.0),
-            action: Action::Idle,
-        },
-        RenderPosition(Pos::new(2.0, 2.0)),
-    ));
+    let (mut app, content) = viewer(game, folder.path());
+    spawn_hero(&mut app, &content, Action::Idle);
     app.world_mut()
         .run_system_cached(render::dress)
         .expect("dressed");
@@ -303,6 +236,58 @@ fn a_body_moves_by_the_clip_its_skeleton_plays_for_what_it_does() {
         Some(held),
         "the body stands where its idle clip, cut from the skeleton's library, holds it"
     );
+}
+
+/// A client's world drawing `game`, written to `folder`: its bodies stand their rigs and skins,
+/// and play their skeletons' clips.
+fn viewer(game: Game, folder: &std::path::Path) -> (App, engine::core::content::Content) {
+    game.write_to(folder);
+    let content = game.load();
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        AssetPlugin {
+            file_path: folder.display().to_string(),
+            ..Default::default()
+        },
+        WorldSerializationPlugin,
+        AnimationPlugin,
+        GltfPlugin::default(),
+        BodyPlugin,
+    ))
+    .init_asset::<Mesh>()
+    .init_asset::<StandardMaterial>()
+    .init_asset::<Image>()
+    .init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
+    .init_resource::<Animator>()
+    .add_observer(render::adopt_player)
+    .insert_resource(content.clone());
+    app.finish();
+    app.cleanup();
+    (app, content)
+}
+
+/// The declared hero, standing at the middle of the field doing `action`.
+fn spawn_hero(app: &mut App, content: &engine::core::content::Content, action: Action) -> Entity {
+    let hero = testkit::Declared::declared::<ModelDef>(content, "hero").expect("a hero");
+    app.world_mut()
+        .spawn((
+            Actor {
+                color: Rgba(0xffffffff),
+                facing: Radians(0.0),
+                action,
+                pose: Pose::Idle,
+                model: hero,
+                attack_rate: PlaybackRate(1.0),
+                speed: MetersPerSec::default(),
+            },
+            RenderActor {
+                facing: Radians(0.0),
+                action,
+            },
+            RenderPosition(Pos::new(2.0, 2.0)),
+        ))
+        .id()
 }
 
 #[test]
@@ -405,31 +390,12 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
     );
 }
 
-/// The test rig's joints as the glTF loader stands them: under the entity standing for the scene, a
-/// root, a body and two hands.
-fn rig_scene() -> World {
-    let mut world = World::new();
-    let scene = world
-        .spawn((Name::new("Scene0"), Transform::default()))
-        .id();
-    let root = world
-        .spawn((Name::new("model"), Transform::default(), ChildOf(scene)))
-        .id();
-    let body = world
-        .spawn((Name::new("body"), Transform::default(), ChildOf(root)))
-        .id();
-    for hand in ["hand.r", "hand.l"] {
-        world.spawn((Name::new(hand), Transform::default(), ChildOf(body)));
-    }
-    world
-}
-
+/// The joint of the standing body's rig named `name`, once the rig stands.
 fn joint(app: &mut App, name: &str) -> Option<Entity> {
     app.world_mut()
-        .query::<(Entity, &Name)>()
+        .query::<&Body>()
         .iter(app.world())
-        .find(|(_, named)| named.as_str() == name)
-        .map(|(entity, _)| entity)
+        .find_map(|body| body.joint(name))
 }
 
 /// Every prop hanging from a hand, by the joint it hangs from and the item it shows.

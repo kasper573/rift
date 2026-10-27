@@ -1,4 +1,3 @@
-use engine::core::time::Seconds;
 use serde_json::json;
 use testkit::{Game, glb, path, png, wav};
 
@@ -38,8 +37,8 @@ fn an_image_damaged_past_its_header_or_cut_short_is_refused() {
 
 #[test]
 fn a_model_that_does_not_read_as_a_gltf_binary_is_refused() {
-    let rig = format!("{}/model.glb", path("model", "orc"));
-    let mut cut = glb(&[("idle", Seconds(1.0))]);
+    let rig = format!("{}/mesh.glb", path("model_part", "orc"));
+    let mut cut = glb(&[]);
     cut.truncate(cut.len() - 20);
     let game = Game::new().model("orc", 1.0, json!([])).file(&rig, cut);
     assert_eq!(refusals(game), [("unreadable model", rig)]);

@@ -1,6 +1,7 @@
 {
   "name": "Skeleton Rogue",
-  "model": "characters/models/skeleton-rogue.model",
+  "model": "characters/models/skeleton-rogue.model.json",
+  "bust": "characters/busts/skeleton-rogue.bust",
   "stats": {
     "health": 32.0,
     "max_health": 32.0,

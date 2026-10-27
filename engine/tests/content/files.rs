@@ -87,8 +87,8 @@ fn a_dotted_name_must_take_the_shape_its_type_does() {
             "unknown type",
         ),
         (
-            game().file("lamp.model.json", "{}"),
-            "lamp.model.json",
+            game().file("lamp.model_part.json", "{}"),
+            "lamp.model_part.json",
             "bundle kept as one file",
         ),
         (
@@ -201,7 +201,7 @@ fn checking_any_files_of_a_game_that_loads_finds_nothing() {
     let orcs = || {
         game()
             .npc("orc", 10.0, json!([]))
-            .busts("orc")
+            .bust_of("orc")
             .sfx("hit")
             .file("icons/cap.png", png(8, 8))
             .file("notes/orcs.md", "Orcs live here.")

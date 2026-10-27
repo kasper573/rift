@@ -7,7 +7,6 @@ use engine::core::content::Content;
 use engine::core::content::NamedContent;
 use engine::core::units::{Meters, MetersPerSec};
 use engine::systems::actor::Action;
-use engine::systems::actor::model::ActorModel;
 use engine::systems::actor::skeleton::{BuiltSkeleton, ClipName, SkeletonId};
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::{chip, form, panel, theme};
@@ -52,7 +51,7 @@ pub fn show(
         let props = super::holding(editor, key, content, id);
         super::stage_rig(editor, ui, key, content, built, size, props);
         ui.add_space(6.0);
-        clip(editor, ui, key, content, id, built, &chosen);
+        clip(editor, ui, key, content, built, &chosen);
     });
     if let Some(name) = pick {
         let view = editor.views.skeleton.view_mut(key);
@@ -129,13 +128,12 @@ fn list(
     pick
 }
 
-/// The chosen clip laid out large to time, where it plays and who overrides it.
+/// The chosen clip laid out large to time, and where it plays.
 fn clip(
     editor: &mut Editor,
     ui: &mut Ui,
     key: &str,
     content: &Content,
-    id: SkeletonId,
     built: &BuiltSkeleton,
     chosen: &ClipName,
 ) {
@@ -171,22 +169,6 @@ fn clip(
         format!("used in {}", cells.join(" · "))
     };
     ui.label(theme::muted(named));
-    let overriding: Vec<String> = super::wearers(content, id)
-        .into_iter()
-        .filter_map(|(path, model)| {
-            let model: &ActorModel = model?;
-            model
-                .own_clips()
-                .any(|(own, _)| own == chosen)
-                .then(|| shown_path(&path).to_owned())
-        })
-        .collect();
-    if !overriding.is_empty() {
-        ui.label(theme::muted(format!(
-            "overridden by {} (its own {chosen})",
-            overriding.join(", ")
-        )));
-    }
 }
 
 /// The ground the clip covers, for a clip some set plays to walk, run or sprint or that has a pace.

@@ -5,8 +5,6 @@ use ui::theme;
 
 use engine::core::content::ContentFile;
 use engine::field;
-use engine::systems::actor::ModelDef;
-use engine::systems::actor::model::ModelModule;
 use engine::systems::npc::NpcDef;
 use engine::systems::script::{
     Condition, RiftScripts, RunnerKind, ScriptDef, ScriptId, ScriptModule, VarValue,
@@ -17,7 +15,6 @@ use ui::glyph::Mark;
 
 use crate::forms::{self, FormAction, FormChange, FormCx};
 use crate::project::Project;
-use crate::views::model::busts;
 use crate::views::script::nodes::{NodeText, var_value_text};
 use crate::views::script::panel;
 use crate::{condition, schema};
@@ -259,15 +256,6 @@ pub(super) fn speaker_of(table: &str, key: &str) -> Option<String> {
 
 pub fn summary_of(cx: &FormCx, module: &Value) -> String {
     let reader = cx.project.reader();
-    if cx.row_table.as_deref() == Some(ModelDef::TABLE)
-        && let Ok(ModelModule::Bust(_)) = reader.from_json::<ModelModule>(module)
-    {
-        let model = cx
-            .row_key
-            .as_deref()
-            .and_then(|key| cx.project.read::<ModelDef>(key).ok());
-        return format!("{} expressions", busts::face_names(model.as_deref()).len());
-    }
     schema::summary_of(cx.root, module_shape(cx.root, module), module, |field| {
         reader
             .from_json::<Condition>(field)

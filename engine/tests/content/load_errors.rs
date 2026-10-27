@@ -6,7 +6,7 @@ use engine::systems::area::AreaDef;
 use engine::systems::area::prop::MAX_PROP_TRIANGLES;
 use engine::systems::input::map::InputFixture;
 use serde_json::{Value, json};
-use testkit::{Game, Map, glb_of, path, png, rig_clips};
+use testkit::{Game, Map, glb_of, path, png};
 
 use crate::support::game;
 
@@ -198,29 +198,29 @@ fn grey16(width: u32, height: u32) -> Vec<u8> {
 }
 
 #[test]
-fn a_model_missing_a_generic_bust_is_refused_naming_it() {
+fn a_bust_missing_a_generic_face_is_refused_naming_it() {
     let report = game()
-        .busts("hero")
-        .remove("hero.model/busts/happy.png")
+        .bust("hero")
+        .remove("hero.bust/faces/happy.png")
         .try_load()
         .err()
         .expect("refused");
 
     assert_eq!(
-        rules_in(&report, "hero.model"),
+        rules_in(&report, "hero.bust"),
         vec![(
             "missing file",
-            "a bust for every generic expression in busts/"
+            "a face for every generic expression in faces/"
         )]
     );
 }
 
 #[test]
 fn a_model_over_the_style_budget_is_refused_at_its_row() {
-    let hero = format!("{}/model.glb", path("model", "hero"));
+    let hero = format!("{}/mesh.glb", path("model_part", "hero"));
     let rock = format!("{}/model.glb", path("prop", "rock"));
     let report = game()
-        .file(&hero, glb_of(MAX_CHARACTER_TRIANGLES + 1, &rig_clips()))
+        .file(&hero, glb_of(MAX_CHARACTER_TRIANGLES + 1, &[]))
         .prop("rock", json!({ "type": "none" }))
         .file(&rock, glb_of(MAX_PROP_TRIANGLES + 1, &[]))
         .try_load()
@@ -235,10 +235,7 @@ fn a_model_over_the_style_budget_is_refused_at_its_row() {
     assert_eq!(
         refused,
         [
-            (
-                "out of range",
-                format!("{}/config.json", path("model", "hero"))
-            ),
+            ("out of range", path("model", "hero")),
             (
                 "out of range",
                 format!("{}/config.json", path("prop", "rock"))
@@ -250,12 +247,12 @@ fn a_model_over_the_style_budget_is_refused_at_its_row() {
 #[test]
 fn a_part_a_bundle_type_never_declares_is_refused() {
     let report = game()
-        .part("model", "hero", "notes.txt", "a stray file")
+        .part("model_part", "hero", "notes.txt", "a stray file")
         .try_load()
         .err()
         .expect("refused");
 
-    let rules = rules_in(&report, "hero.model/notes.txt");
+    let rules = rules_in(&report, "hero.model_part/notes.txt");
     assert_eq!(rules.len(), 1, "{report}");
     assert_eq!(rules[0].0, "unknown part");
 }

@@ -1,86 +1,61 @@
-//! The model view: the skin on a stage in any stance and clip its skeleton plays, how its joints
-//! fit that skeleton, the clips of its own that override the skeleton's with their cues, its
-//! hitbox sized by hand, its busts, and a new glb imported over it once it fits.
+//! The model view: the body its parts make on a stage, in any stance and clip its skeleton plays,
+//! and its hitbox sized by hand.
 
-pub mod busts;
-pub mod fit;
 pub mod hitbox;
-pub mod import;
 pub mod inspect;
-pub mod overrides;
+pub mod look;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
-use engine::core::content::media::GltfInfos;
 use engine::core::content::{Content, ContentFile};
 use engine::core::geometry::Capsule;
 use engine::core::render::world::mannequin::RigClip;
-use engine::core::time::{Millis, Seconds};
+use engine::core::time::Seconds;
 use engine::systems::actor::model::ActorModel;
-use engine::systems::actor::skeleton::{ClipName, Cue};
+use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::{Action, ModelDef, Motion, Pose};
-use engine::systems::npc::NpcDef;
-use engine::systems::player::PlayerDef;
 use serde::Deserialize;
 use ui::egui::{self, Ui, Vec2};
 use ui::{chip, form, theme};
 
 use super::stage;
 use crate::app::Editor;
-use crate::project::RowSelection;
-use crate::project::files::content_of;
 use crate::shell::{row_form, sidebar};
 use crate::tabs::shown_path;
 
 #[derive(Default)]
 pub struct ModelViews {
     pub views: HashMap<String, ModelView>,
-    pub drops: Vec<PathBuf>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelPage {
     #[default]
-    Fit,
-    Overrides,
+    Look,
     Hitbox,
-    Busts,
 }
 
 impl ModelPage {
-    const ALL: [ModelPage; 4] = [
-        ModelPage::Fit,
-        ModelPage::Overrides,
-        ModelPage::Hitbox,
-        ModelPage::Busts,
-    ];
+    const ALL: [ModelPage; 2] = [ModelPage::Look, ModelPage::Hitbox];
 
     fn label(self) -> &'static str {
         match self {
-            ModelPage::Fit => "fit",
-            ModelPage::Overrides => "overrides",
+            ModelPage::Look => "look",
             ModelPage::Hitbox => "hitbox",
-            ModelPage::Busts => "busts",
         }
     }
 }
 
 pub struct ModelView {
     pub page: ModelPage,
-    pub face: Option<String>,
-    pub removing: Option<FaceRemoval>,
     /// The stance the stage shows the model in, by its file's path.
     pub stance: Option<String>,
     pub motion: Motion,
     pub pose: Pose,
-    /// The clip of its own the overrides page times.
-    pub own_clip: Option<ClipName>,
     pub scrub: super::cues::Scrub,
     pub stage: stage::StageState,
     pub drag: Option<hitbox::Drag>,
-    pub import: Option<import::ImportDraft>,
 }
 
 impl ModelViews {
@@ -97,36 +72,17 @@ impl ModelViews {
     }
 }
 
-#[derive(Clone)]
-pub struct FaceRemoval {
-    pub face: busts::BustFace,
-    pub replacement: String,
-    pub uses: usize,
-}
-
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let Some(row) = super::read_shown::<ModelDef>(editor, ui, key) else {
         return;
     };
     ensure_view(editor, key);
-    take_drops(editor, key);
-    let ctx = ui.ctx().clone();
-    inspect::remove_face_dialog(editor, &ctx, key);
-    import::dialog(editor, &ctx, key);
     let page = editor.views.model.view(key).page;
     sidebar::row(ui, "model", |ui| {
         row_form::show_row(editor, ui, ModelDef::TABLE, key)
     });
-    let selection = editor.selection.clone();
     sidebar::inspector(editor, ui, "model", |editor, ui| {
-        if selection.table == ModelDef::TABLE
-            && selection.keys.first().is_some_and(|k| k == key)
-            && !selection.parts.is_empty()
-        {
-            inspect::show(editor, ui, &selection);
-        } else {
-            inspect::rig(editor, ui, key, &row);
-        }
+        inspect::show(editor, ui, key, &row);
     });
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(12, 8))
@@ -135,15 +91,8 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
             page_bar(editor, ui, key, page);
             ui.add_space(4.0);
             match page {
-                ModelPage::Fit => fit::show(editor, ui, key, &row),
-                ModelPage::Overrides => overrides::show(editor, ui, key, &row),
+                ModelPage::Look => look::show(editor, ui, key),
                 ModelPage::Hitbox => hitbox::show(editor, ui, key, &row),
-                ModelPage::Busts => {
-                    egui::ScrollArea::both()
-                        .id_salt(("model-page", key))
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| busts::show(editor, ui, key, &row));
-                }
             }
         });
 }
@@ -157,14 +106,12 @@ fn page_bar(editor: &mut Editor, ui: &mut Ui, key: &str, page: ModelPage) {
                 editor.views.model.view_mut(key).page = other;
             }
         }
-        if page != ModelPage::Busts {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let stage = &mut editor.views.model.view_mut(key).stage;
-                if chip::toggle(ui, "turning", stage.spinning).clicked() {
-                    stage.spinning = !stage.spinning;
-                }
-            });
-        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let stage = &mut editor.views.model.view_mut(key).stage;
+            if chip::toggle(ui, "turning", stage.spinning).clicked() {
+                stage.spinning = !stage.spinning;
+            }
+        });
     });
 }
 
@@ -178,58 +125,14 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
         key.to_owned(),
         ModelView {
             page: ModelPage::default(),
-            face: None,
-            removing: None,
             stance: None,
             motion: Motion::Action(Action::Idle),
             pose: Pose::Idle,
-            own_clip: None,
             scrub: super::cues::Scrub::default(),
             stage: stage::StageState::framing(height.max(1.0) * 0.7, false),
             drag: None,
-            import: None,
         },
     );
-    if let Some(model) = model
-        && let Some(index) = busts::module_index(&model)
-    {
-        let path = format!("{}/modules/{index}", ModelDef::TABLE);
-        if !editor.form.unfolded.contains(&path) {
-            editor.form.folded.insert(path);
-        }
-    }
-}
-
-/// Gives the clip `clip` the model at `key` carries of its own the cues `cues`, in order of time:
-/// none takes its entry away.
-pub fn set_override_cues(
-    editor: &mut Editor,
-    key: &str,
-    clip: &ClipName,
-    mut cues: Vec<Cue>,
-) -> bool {
-    let Some(Ok(row)) = editor.read::<ModelDef>(key) else {
-        return false;
-    };
-    cues.sort_by(|a, b| a.at.0.total_cmp(&b.at.0));
-    if row
-        .overrides
-        .get(clip)
-        .map_or(cues.is_empty(), |held| *held == cues)
-    {
-        return false;
-    }
-    let mut model = (*row).clone();
-    if cues.is_empty() {
-        model.overrides.remove(clip);
-    } else {
-        model.overrides.insert(clip.clone(), cues);
-    }
-    editor.write_content(
-        &format!("Mark {}'s {clip} cues", shown_path(key)),
-        key,
-        &model,
-    )
 }
 
 /// Sizes the hitbox of the model at `key`.
@@ -252,42 +155,6 @@ pub fn built<'c>(editor: &'c Editor, key: &str) -> Option<(&'c Content, &'c Acto
     Some((content, ActorModel::loaded(content, id)?))
 }
 
-/// The clips the model's own glTF carries, with how long each plays, as the loader measured them.
-pub fn own_clips(editor: &Editor, row: &ModelDef) -> Vec<(ClipName, Millis)> {
-    editor
-        .project
-        .as_ref()
-        .and_then(|project| {
-            let content = project.content.as_ref()?;
-            let info = content.built::<GltfInfos>().0.get(&row.model.path())?;
-            Some(
-                info.clips
-                    .iter()
-                    .map(|clip| (ClipName::new(clip.name.clone()), clip.length.millis()))
-                    .collect(),
-            )
-        })
-        .unwrap_or_default()
-}
-
-pub fn select_face(editor: &mut Editor, key: &str, face: &busts::BustFace) {
-    editor.select(RowSelection::parts(ModelDef::TABLE, key, vec![face.part()]));
-}
-
-pub fn users(editor: &Editor, key: &str) -> Vec<(String, String)> {
-    let Some(project) = editor.project.as_ref() else {
-        return Vec::new();
-    };
-    project
-        .usages
-        .of_content(key)
-        .iter()
-        .filter_map(|usage| content_of(&usage.file))
-        .filter(|(table, _)| matches!(*table, NpcDef::TABLE | PlayerDef::TABLE))
-        .map(|(table, key)| (table.to_owned(), key.to_owned()))
-        .collect()
-}
-
 /// The model's stage, drawn over `size` with its camera moved as the pointer asks.
 pub(super) fn turntable(
     editor: &mut Editor,
@@ -302,53 +169,28 @@ pub(super) fn turntable(
     turntable
 }
 
-/// Stands the model at `key` in the middle of `turntable`, in `clip` held at `held`, sounding the
-/// cues it `crossed`.
+/// Stands the model at `key` in the middle of `turntable`, as the game built it, in `clip` held at
+/// `held`, sounding the cues it `crossed`.
 pub(super) fn stand(
     turntable: stage::Turntable,
     editor: &mut Editor,
     ui: &Ui,
-    row: &ModelDef,
+    key: &str,
     clip: Option<RigClip>,
     held: Option<Seconds>,
     crossed: Vec<Cue>,
 ) {
-    let cast = vec![stage::standing(
-        row.model.path(),
-        clip,
-        held,
-        crossed,
-        Vec::new(),
-    )];
+    let cast = built(editor, key)
+        .map(|(_, model)| stage::standing(model.body(), clip, held, crossed, Vec::new()))
+        .into_iter()
+        .collect();
     turntable.stand(editor, ui, cast);
-}
-
-/// Takes the files dropped on the view: a glTF binary is offered as a new rig to import, pictures
-/// go to the busts page.
-fn take_drops(editor: &mut Editor, key: &str) {
-    let drops = std::mem::take(&mut editor.views.model.drops);
-    let (rigs, pictures): (Vec<PathBuf>, Vec<PathBuf>) = drops.into_iter().partition(|path| {
-        path.extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("glb"))
-    });
-    if let Some(path) = rigs.last() {
-        match std::fs::read(path) {
-            Ok(bytes) => match import::draft(editor, key, bytes, path.display().to_string()) {
-                Ok(draft) => editor.views.model.view_mut(key).import = Some(draft),
-                Err(error) => editor.toast(error),
-            },
-            Err(error) => editor.toast(format!("{}: {error}", path.display())),
-        }
-    }
-    if !pictures.is_empty() {
-        editor.views.model.view_mut(key).page = ModelPage::Busts;
-        editor.views.model.drops = pictures;
-    }
 }
 
 pub(super) fn nothing_to_stand(ui: &mut Ui) {
     form::hint(
         ui,
-        "The model's glTF does not read, so nothing stands on the stage.",
+        "The model did not load, so nothing stands on the stage: its problems are in the output \
+         panel.",
     );
 }

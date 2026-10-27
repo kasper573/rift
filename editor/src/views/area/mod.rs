@@ -716,13 +716,12 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing>
         let npc = content.by_path::<NpcDef>(npc)?;
         let def = npc.get(content);
         let model = ActorModel::get(content, def.model);
-        let path = model.model().path();
         let hands = wearing::listed(content, model.hands().len(), &def.wearing);
         let stance = stance::of_hands(content, &hands);
         let clip = model.standing_clip(stance, &Motion::Action(Action::Idle), pose);
         let ground = area.heights.height_at(at);
         Some(Standing {
-            model: path,
+            body: model.body(),
             clip,
             transform: Transform {
                 translation: world_point(at, ground),

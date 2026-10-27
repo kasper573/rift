@@ -1,6 +1,6 @@
 {
   "name": "Harbour Guard",
-  "model": "characters/models/knight.model",
+  "model": "characters/models/knight.model.json",
   "stats": {
     "health": 30.0,
     "max_health": 30.0,

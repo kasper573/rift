@@ -1,6 +1,6 @@
 {
   "name": "Slime",
-  "model": "characters/models/slime.model",
+  "model": "characters/models/slime.model.json",
   "stats": {
     "health": 10.0,
     "max_health": 10.0,

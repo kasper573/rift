@@ -9,7 +9,7 @@ use engine::core::script::{
 };
 use engine::core::time::Seconds;
 use engine::core::units::Meters;
-use engine::systems::actor::model::Expression;
+use engine::systems::dialogue::bust::Expression;
 use engine::systems::interact::Verb;
 use engine::systems::item::ItemStack;
 use engine::systems::script::{
@@ -133,11 +133,10 @@ pub fn bust_file(project: &Project, by: Speaker, face: Option<&Expression>) -> O
     let Speaker::Npc(npc) = by else {
         return None;
     };
-    let model = project.read_id(project.read_id(npc)?.model)?;
-    let busts = model.busts()?;
+    let bust = project.read_id(project.read_id(npc)?.bust?)?;
     let file = match face {
-        Some(face) => busts.face(face)?,
-        None => &busts.generic.neutral,
+        Some(face) => bust.face(face)?,
+        None => &bust.generic.neutral,
     };
     Some(file.as_str().to_owned())
 }

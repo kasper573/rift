@@ -27,9 +27,14 @@ const STAB: (Millis, Millis) = (Millis(400.0), Millis(150.0));
 
 #[test]
 fn a_held_item_plays_its_stances_clip_where_the_body_has_its_set() {
-    let plain = armoury().skeleton("plain").edit("model", "hero", |hero| {
-        hero["skeleton"] = json!(path("skeleton", "plain"))
-    });
+    let plain = armoury()
+        .skeleton("plain")
+        .edit("model", "hero", |hero| {
+            hero["skeleton"] = json!(path("skeleton", "plain"))
+        })
+        .edit("model_part", "hero", |hero| {
+            hero["skeleton"] = json!(path("skeleton", "plain"))
+        });
     let cases = [
         ("a body with a sword set", armoury(), SLASH),
         ("a body without one", plain, (CLIP, APEX)),

@@ -1,6 +1,6 @@
 {
   "name": "Turret",
-  "model": "characters/models/turret.model",
+  "model": "characters/models/turret.model.json",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

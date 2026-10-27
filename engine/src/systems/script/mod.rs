@@ -27,10 +27,10 @@ use crate::core::script::{
 };
 use crate::core::units::Meters;
 use crate::systems::WorldArea;
-use crate::systems::actor::model::Expression;
 use crate::systems::area::scene::scene_file;
 use crate::systems::area::{self, AreaDef, AreaId, AreaModule, AreaObject};
 use crate::systems::class::{ClassDef, ClassId};
+use crate::systems::dialogue::bust::Expression;
 use crate::systems::dialogue::{self, ChoiceReveal};
 use crate::systems::item::{ItemDef, ItemId, ItemKind};
 use crate::systems::memory::{MemoryDef, MemoryId};

@@ -1,0 +1,10 @@
+{
+  "skeleton": "characters/skeletons/wolf.skeleton",
+  "hitbox": {
+    "radius": 0.5,
+    "height": 0.9
+  },
+  "parts": [
+    "characters/parts/wolf.model_part"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "skeleton": "characters/skeletons/bat.skeleton",
+  "hitbox": {
+    "radius": 0.4,
+    "height": 1.0
+  },
+  "parts": [
+    "characters/parts/bat.model_part"
+  ]
+}

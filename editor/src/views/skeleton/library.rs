@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use engine::core::assets::FileSize;
 use engine::core::content::files::valid_name;
 use engine::core::content::gltf::{self, GltfInfo};
+use engine::systems::actor::part::ModelPartDef;
 use engine::systems::actor::skeleton::{
     BuiltSkeleton, CLIP_LIBRARIES, MAX_CLIP, MAX_LIBRARIES_BYTES, MAX_LIBRARY_BYTES, MIN_CLIP,
     RIG_GLB, misfit_problem,
@@ -149,19 +150,23 @@ pub fn draft(
         })
         .collect();
     let mut refit = Vec::new();
-    for (path, model) in super::wearers(&content, built_id(&content, key)?) {
-        let Some(model) = model else {
-            continue;
-        };
+    let skeleton = built_id(&content, key)?;
+    let meshes = content
+        .table::<ModelPartDef>()
+        .iter()
+        .filter(|(_, part)| part.skeleton == skeleton)
+        .flat_map(|(_, part)| part.meshes().map(|(_, mesh)| mesh.path()))
+        .collect::<Vec<String>>();
+    for mesh in meshes {
         let Some(skin) = content
             .built::<engine::core::content::media::GltfInfos>()
             .0
-            .get(&model.model().path())
+            .get(&mesh)
         else {
             continue;
         };
-        for misfit in &gltf::fit(&info.tree, &skin.tree).misfits {
-            let problem = misfit_problem(shown_path(&path), "the new rig", misfit);
+        for misfit in &gltf::fit_skin(&info.tree, skin).misfits {
+            let problem = misfit_problem(shown_path(&mesh), "the new rig", misfit);
             refit.push(format!("{}; {}", problem.found, problem.expected));
         }
     }
@@ -391,7 +396,7 @@ fn library_body(ui: &mut egui::Ui, draft: &mut LibraryDraft) {
 }
 
 fn rig_body(ui: &mut egui::Ui, draft: &LibraryDraft) {
-    ui.label(RichText::new("every model and library refitted").strong());
+    ui.label(RichText::new("every part and library refitted").strong());
     if draft.refit.is_empty() {
         ui.label("every model wearing the skeleton and every library fits it");
     }

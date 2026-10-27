@@ -1,7 +1,0 @@
-{
-  "skeleton": "hero.skeleton",
-  "hitbox": {
-    "radius": 0.4,
-    "height": 1.8
-  }
-}

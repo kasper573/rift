@@ -266,6 +266,7 @@ fn a_spreadsheet_cell_is_edited_from_the_keyboard_alone() {
         typed("bear"),
         enter(),
         tab(),
+        tab(),
         key(egui::Key::A, egui::Modifiers::COMMAND),
         vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)],
         typed("12"),

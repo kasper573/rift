@@ -155,14 +155,14 @@ impl Turntable {
 /// A rig standing in the middle of the stage, in `clip` held at `held`, sounding the cues it
 /// `crossed` this frame, holding `props`.
 pub fn standing(
-    model: String,
+    body: engine::core::render::world::body::BodyFiles,
     clip: Option<engine::core::render::world::mannequin::RigClip>,
     held: Option<engine::core::time::Seconds>,
     crossed: Vec<Cue>,
     props: Vec<StandingProp>,
 ) -> Standing {
     Standing {
-        model,
+        body,
         clip,
         transform: bevy::prelude::Transform::from_translation(
             engine::core::render::camera::world_point(center(), Meters(0.0)),
@@ -286,6 +286,6 @@ pub fn prop_in_hand(
     Some(StandingProp {
         joint: hand.joint.0.clone(),
         model: item.get(content).look.get(content).model.path(),
-        transform: render::held_at(content, model, hand, grip),
+        transform: render::held_at(model, hand, grip),
     })
 }

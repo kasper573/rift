@@ -1,12 +1,12 @@
-//! The names a body's fields may hold: the moves any skeleton's sets declare, and the joints, clips
-//! and groups of the skeleton a form edits.
+//! The names a body's fields may hold: the moves any skeleton's sets declare, and the joints, clips,
+//! groups and builds of the skeleton a form edits.
 
 use std::collections::BTreeMap;
 
 use engine::core::content::{Content, ContentFile, ContentNames, NamedContent};
-use engine::systems::actor::ModelDef;
 use engine::systems::actor::model::Skeletons;
 use engine::systems::actor::skeleton::{MoveName, Rung, SkeletonDef, SkeletonId};
+use engine::systems::actor::{ModelDef, ModelPartDef};
 use engine::systems::actor::{Motion, Pose};
 
 /// What kind of name a field holds, by the marker its schema carries.
@@ -16,6 +16,7 @@ pub enum NameKind {
     Joint,
     Clip,
     Group,
+    Build,
 }
 
 impl NameKind {
@@ -25,6 +26,7 @@ impl NameKind {
             "x-joint" => Some(NameKind::Joint),
             "x-clip" => Some(NameKind::Clip),
             "x-group" => Some(NameKind::Group),
+            "x-build" => Some(NameKind::Build),
             _ => None,
         }
     }
@@ -155,15 +157,26 @@ pub fn choices(
                     .join(", "),
             })
             .collect(),
+        NameKind::Build => built
+            .def
+            .builds
+            .iter()
+            .map(|build| NameChoice {
+                name: build.0.clone(),
+                note: "a build of the skeleton".to_owned(),
+            })
+            .collect(),
         NameKind::Move => unreachable!("moves are answered above"),
     })
 }
 
-/// The skeleton a row's names belong to: the row itself, or the skeleton a model wears.
+/// The skeleton a row's names belong to: the row itself, or the skeleton a model or part is made
+/// on.
 fn skeleton_of(content: &Content, (table, key): (&str, &str)) -> Option<SkeletonId> {
     match table {
         SkeletonDef::TABLE => content.by_path::<SkeletonDef>(key),
         ModelDef::TABLE => Some(content.by_path::<ModelDef>(key)?.get(content).skeleton),
+        ModelPartDef::TABLE => Some(content.by_path::<ModelPartDef>(key)?.get(content).skeleton),
         _ => None,
     }
 }

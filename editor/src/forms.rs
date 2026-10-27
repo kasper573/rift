@@ -31,7 +31,7 @@ use crate::schema::{self, KeptValues, SchemaKind, SchemaShapes, SchemaVariant};
 use crate::shell::browser;
 use crate::tabs::{file_title, shown_path};
 use crate::usages::ContentUsages;
-use crate::views::model::busts;
+use crate::views::bust::faces;
 use crate::views::script::nodes::NodeCatalogue;
 use crate::views::vfx;
 use crate::{audio, condition, picker, spans, thumbs, value};
@@ -215,7 +215,6 @@ pub enum FormAction {
     Reveal {
         path: String,
     },
-    GiveBust,
     NewScriptModule,
     /// A script made for the object at the scene node `node` of the area being edited, and named in
     /// its scripts.
@@ -524,7 +523,7 @@ fn plain(
             "x-place" => return place(ui, cx, schema, value, path),
             "x-color" => return color(ui, value, path),
             "x-face" => return face(ui, cx, value, path),
-            "x-move" | "x-joint" | "x-clip" | "x-group" => {
+            "x-move" | "x-joint" | "x-clip" | "x-group" | "x-build" => {
                 if let Some(kind) = NameKind::of_marker(marker) {
                     return named(ui, cx, kind, value, path);
                 }
@@ -1934,11 +1933,11 @@ fn asset(
 }
 
 fn face(ui: &mut Ui, cx: &mut FormCx, value: &mut Value, path: &str) -> FormChange {
-    let model = cx
+    let bust = cx
         .speaker
         .as_deref()
-        .and_then(|speaker| busts::model_of_npc(cx.project, speaker));
-    let faces = busts::face_names(model.as_deref());
+        .and_then(|speaker| faces::bust_of_npc(cx.project, speaker));
+    let faces = faces::face_names(bust.as_deref());
     enum_combo(ui, cx, &faces, value, path)
 }
 
@@ -1993,6 +1992,7 @@ fn named(
                 NameKind::Joint => "not a joint of the rig",
                 NameKind::Clip => "no library of the skeleton carries it",
                 NameKind::Group => "not a group of the skeleton",
+                NameKind::Build => "not a build of the skeleton",
             };
             ui.colored_label(theme::DANGER, why);
         }

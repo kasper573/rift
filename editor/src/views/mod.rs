@@ -1,9 +1,11 @@
 pub mod area;
+pub mod bust;
 pub mod character;
 pub mod class;
 pub mod cues;
 pub mod item;
 pub mod model;
+pub mod model_part;
 pub mod navigation;
 pub mod prop;
 pub mod script;
@@ -51,6 +53,8 @@ pub struct EditorViews {
     pub world: world::WorldView,
     pub script: script::ScriptViews,
     pub model: model::ModelViews,
+    pub model_part: model_part::ModelPartViews,
+    pub bust: bust::BustViews,
     pub skeleton: skeleton::SkeletonViews,
     pub prop: prop::PropViews,
     pub spreadsheet: spreadsheet::SpreadsheetViews,

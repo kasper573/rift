@@ -1259,7 +1259,7 @@
       ],
       "static": true
     },
-    "characters/models/knight.model/model.glb": {
+    "characters/parts/knight.model_part/mesh.glb": {
       "from": "adventurers:Knight.glb",
       "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
@@ -1267,7 +1267,7 @@
       ],
       "scale": 0.75
     },
-    "characters/models/woodsman.model/model.glb": {
+    "characters/parts/woodsman.model_part/mesh.glb": {
       "from": "adventurers:Knight.glb",
       "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
@@ -1278,7 +1278,7 @@
         "Knight_Helmet"
       ]
     },
-    "characters/models/barbarian.model/model.glb": {
+    "characters/parts/barbarian.model_part/mesh.glb": {
       "from": "adventurers:Barbarian.glb",
       "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
@@ -1286,7 +1286,7 @@
       ],
       "scale": 0.75
     },
-    "characters/models/mage.model/model.glb": {
+    "characters/parts/mage.model_part/mesh.glb": {
       "from": "adventurers:Mage.glb",
       "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
@@ -1294,7 +1294,7 @@
       ],
       "scale": 0.75
     },
-    "characters/models/rogue.model/model.glb": {
+    "characters/parts/rogue.model_part/mesh.glb": {
       "from": "adventurers:Rogue.glb",
       "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
@@ -1302,7 +1302,7 @@
       ],
       "scale": 0.75
     },
-    "characters/models/rogue-hooded.model/model.glb": {
+    "characters/parts/rogue-hooded.model_part/mesh.glb": {
       "from": "adventurers:Rogue.glb",
       "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
@@ -1318,7 +1318,7 @@
         }
       ]
     },
-    "characters/models/skeleton.model/model.glb": {
+    "characters/parts/skeleton.model_part/mesh.glb": {
       "from": "skeletons:Skeleton_Minion.glb",
       "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
@@ -1329,7 +1329,7 @@
         "Skeleton_Minion_Eyes"
       ]
     },
-    "characters/models/skeleton-warrior.model/model.glb": {
+    "characters/parts/skeleton-warrior.model_part/mesh.glb": {
       "from": "skeletons:Skeleton_Warrior.glb",
       "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
@@ -1340,7 +1340,7 @@
         "Skeleton_Warrior_Eyes"
       ]
     },
-    "characters/models/skeleton-mage.model/model.glb": {
+    "characters/parts/skeleton-mage.model_part/mesh.glb": {
       "from": "skeletons:Skeleton_Mage.glb",
       "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
@@ -1351,7 +1351,7 @@
         "Skeleton_Mage_Eyes"
       ]
     },
-    "characters/models/skeleton-rogue.model/model.glb": {
+    "characters/parts/skeleton-rogue.model_part/mesh.glb": {
       "from": "skeletons:Skeleton_Rogue.glb",
       "skeleton": "characters/skeletons/biped.skeleton",
       "keep": [
@@ -1362,7 +1362,7 @@
         "Skeleton_Rogue_Eyes"
       ]
     },
-    "characters/models/bat.model/model.glb": {
+    "characters/parts/bat.model_part/mesh.glb": {
       "from": "quaternius:Bat.glb",
       "skeleton": "characters/skeletons/bat.skeleton",
       "keep": [
@@ -1378,12 +1378,12 @@
       },
       "scale": 0.2
     },
-    "characters/models/wolf.model/model.glb": {
+    "characters/parts/wolf.model_part/mesh.glb": {
       "from": "poly-pizza:Wolf.glb",
       "skeleton": "characters/skeletons/wolf.skeleton",
       "scale": 0.3
     },
-    "characters/models/piranha.model/model.glb": {
+    "characters/parts/piranha.model_part/mesh.glb": {
       "from": "poly-pizza:Piranha.glb",
       "skeleton": "characters/skeletons/fish.skeleton",
       "scale": 0.15,
@@ -1393,22 +1393,22 @@
         0
       ]
     },
-    "characters/models/spider.model/model.glb": {
+    "characters/parts/spider.model_part/mesh.glb": {
       "from": "poly-pizza:Spider.glb",
       "skeleton": "characters/skeletons/spider.skeleton",
       "scale": 0.17
     },
-    "characters/models/giant-spider.model/model.glb": {
+    "characters/parts/giant-spider.model_part/mesh.glb": {
       "from": "converted:psionic-spider.glb",
       "skeleton": "characters/skeletons/giant-spider.skeleton",
       "scale": 1.3
     },
-    "characters/models/slime.model/model.glb": {
+    "characters/parts/slime.model_part/mesh.glb": {
       "from": "poly-pizza:GreenBlob.glb",
       "skeleton": "characters/skeletons/slime.skeleton",
       "scale": 0.35
     },
-    "characters/models/turret.model/model.glb": {
+    "characters/parts/turret.model_part/mesh.glb": {
       "from": "converted:turret.glb",
       "skeleton": "characters/skeletons/turret.skeleton",
       "scale": 1.6

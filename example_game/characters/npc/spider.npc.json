@@ -1,6 +1,6 @@
 {
   "name": "Spider",
-  "model": "characters/models/spider.model",
+  "model": "characters/models/spider.model.json",
   "stats": {
     "health": 12.0,
     "max_health": 12.0,

@@ -3,6 +3,7 @@ mod blueprints;
 mod files;
 mod load_errors;
 mod media;
+mod model;
 mod pictures;
 mod reader;
 mod references;

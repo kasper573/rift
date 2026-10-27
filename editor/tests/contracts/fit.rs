@@ -16,7 +16,7 @@ fn open(scratch: &tempfile::TempDir) -> Editor {
     let line = |face: &str, text: &str| json!({ "by": { "type": "npc", "npc": path("npc", GUARD), "face": face }, "text": [text] });
     let game = support::game()
         .npc(GUARD, 10.0, json!([]))
-        .busts(GUARD)
+        .bust_of(GUARD)
         .script(
             "greeting",
             "npc",

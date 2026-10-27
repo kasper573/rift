@@ -17,6 +17,7 @@ use ui::motion::SheetPose;
 use ui::sheet::{self, Sheet};
 use ui::{ink, slip};
 
+use super::bust::{BustFigure, BustFigures, BustId, Expression, GenericExpression};
 use super::{
     ChoiceChip, ChoiceView, Conversation, ConversationRequest, ConversationStep, RefusedPick,
     Speaker, SpokenLine,
@@ -27,14 +28,14 @@ use crate::core::babble::{BabbleRank, Babbler, Babbling};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band, Tier};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece, Typewriter};
-use crate::systems::actor::model::{BustFigure, Busts, Expression, GenericExpression, ModelId};
-use crate::systems::actor::{ActorModel, Name};
+use crate::systems::actor::Name;
+use crate::systems::class;
 use crate::systems::hud;
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::{ItemId, card};
 use crate::systems::npc::Npc;
-use crate::systems::player::{self, session};
+use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 
 const CHOICE_SHORTCUTS: [InputAction; 9] = [
@@ -257,8 +258,8 @@ enum Depth {
 struct CastMember {
     who: Speaker,
     since: Duration,
-    bust: ImageRef,
-    model: ModelId,
+    face: ImageRef,
+    bust: BustId,
     side: Side,
     depth: Depth,
     lit: bool,
@@ -1109,15 +1110,10 @@ fn busts(ui: &mut Ui, world: &mut World, dialogue: Rect, screen: Rect) {
     let gui = ui.ctx().clone();
     for depth in [Depth::Back, Depth::Front] {
         for member in cast.iter().filter(|member| member.depth == depth) {
-            let Some(image) = gui::image(world, &member.bust) else {
+            let Some(image) = gui::image(world, &member.face) else {
                 continue;
             };
-            let figure = ActorModel::get(&content, member.model)
-                .bust_figure()
-                .unwrap_or(BustFigure {
-                    left: 0.0,
-                    right: 1.0,
-                });
+            let figure = BustFigures::of(&content, member.bust);
             let (share, lift) = match member.depth {
                 Depth::Front => (FRONT_HEIGHT, 0.0),
                 Depth::Back => (BACK_HEIGHT, BACK_LIFT),
@@ -1189,7 +1185,7 @@ fn cast_members(world: &World, now: Duration, before: &[CastMember]) -> Vec<Cast
     let mut seen = HashSet::new();
     speakers.retain(|who| seen.insert(*who));
     let content = world.resource::<Content>();
-    speakers.retain(|&who| model_of(content, who).is_some());
+    speakers.retain(|&who| bust_of(world, who).is_some());
     let fronts: Vec<Speaker> = [Side::Left, Side::Right]
         .into_iter()
         .filter_map(|side| {
@@ -1204,24 +1200,21 @@ fn cast_members(world: &World, now: Duration, before: &[CastMember]) -> Vec<Cast
     speakers
         .into_iter()
         .filter_map(|who| {
-            let model = model_of(content, who)?;
-            let busts = busts_of(content, model)?;
+            let bust = bust_of(world, who)?;
             let face = shown
                 .faces
                 .get(&who)
                 .cloned()
                 .unwrap_or(Expression::Generic(GenericExpression::Neutral));
-            let bust = busts
-                .face(&face)
-                .unwrap_or_else(|| busts.generic.of(GenericExpression::Neutral));
+            let face = bust.get(content).face_or_neutral(&face);
             Some(CastMember {
                 who,
                 since: before
                     .iter()
                     .find(|member| member.who == who)
                     .map_or(now, |member| member.since),
-                bust: bust.clone(),
-                model,
+                face: face.clone(),
+                bust,
                 side: side_of(who),
                 depth: if fronts.contains(&who) {
                     Depth::Front
@@ -1234,17 +1227,14 @@ fn cast_members(world: &World, now: Duration, before: &[CastMember]) -> Vec<Cast
         .collect()
 }
 
-fn model_of(content: &Content, who: Speaker) -> Option<ModelId> {
-    let model = match who {
-        Speaker::Npc(npc) => npc.get(content).model,
-        Speaker::Player => player::def(content).model,
-        Speaker::Object | Speaker::Narrator => return None,
-    };
-    busts_of(content, model).map(|_| model)
-}
-
-fn busts_of(content: &Content, model: ModelId) -> Option<&Busts> {
-    model.get(content).busts()
+/// The bust a speaker is shown in: an npc's own, the player's class's.
+fn bust_of(world: &World, who: Speaker) -> Option<BustId> {
+    let content = world.resource::<Content>();
+    match who {
+        Speaker::Npc(npc) => npc.get(content).bust,
+        Speaker::Player => class::of(world, session::me(world)?)?.get(content).bust,
+        Speaker::Object | Speaker::Narrator => None,
+    }
 }
 
 fn speaker_name(world: &World, who: Speaker) -> Option<String> {

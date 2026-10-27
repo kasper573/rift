@@ -45,6 +45,12 @@ macro_rules! name_type {
             }
         }
 
+        impl AsRef<str> for $name {
+            fn as_ref(&self) -> &str {
+                &self.0
+            }
+        }
+
         impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 f.write_str(&self.0)
@@ -73,6 +79,12 @@ name_type!(
     JointName,
     "x-joint"
 );
+name_type!(
+    /// A body type a skeleton's models are cut for, such as male or female: a part may carry a
+    /// mesh for each.
+    BuildName,
+    "x-build"
+);
 
 /// A rig and everything shared by the models that wear it: where an item is held, how the body is
 /// grouped, what plays for each action, pose and move in each stance, the cues on those clips and
@@ -90,6 +102,8 @@ pub struct SkeletonDef {
     pub hands: Vec<Hand>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub groups: BTreeMap<GroupName, Vec<JointName>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub builds: Vec<BuildName>,
     pub base: ClipSet,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stances: Vec<StanceSet>,
@@ -461,7 +475,7 @@ impl Bundle for SkeletonDef {
                     pointer,
                     "unknown clip",
                     format!("cues for {clip}, which no library carries"),
-                    "a clip of clips/*.glb; a model keeps the cues of its own clips in its overrides",
+                    "a clip of clips/*.glb",
                 ),
             }
         }
@@ -635,6 +649,7 @@ impl ContentFile for SkeletonDef {
             libraries: Vec::new(),
             hands: Vec::new(),
             groups: BTreeMap::new(),
+            builds: Vec::new(),
             base: ClipSet {
                 clips: <Action as strum::VariantArray>::VARIANTS
                     .iter()
@@ -687,6 +702,18 @@ impl ContentFile for SkeletonDef {
                     "hand twice",
                     format!("{:?}", hand.name),
                     "every hand named once",
+                );
+            }
+        }
+        let mut builds = BTreeSet::new();
+        for (index, build) in self.builds.iter().enumerate() {
+            cx.text(format!("/builds/{index}"), build.as_str(), 1, 32);
+            if !builds.insert(build) {
+                cx.error(
+                    format!("/builds/{index}"),
+                    "build twice",
+                    build.as_str(),
+                    "every build named once",
                 );
             }
         }

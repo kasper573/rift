@@ -1,3 +1,4 @@
+pub mod bust;
 pub mod stage;
 
 use std::collections::HashSet;
@@ -16,7 +17,6 @@ use crate::core::script::{
 };
 use crate::core::units::Meters;
 use crate::systems::actor::Name;
-use crate::systems::actor::model::Expression;
 use crate::systems::attention::{AttentionId, AttentionMark};
 use crate::systems::combat::Attitude;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic};
@@ -32,6 +32,7 @@ use crate::systems::script::{
 };
 use crate::systems::stat;
 use crate::systems::text::LineText;
+use bust::Expression;
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;

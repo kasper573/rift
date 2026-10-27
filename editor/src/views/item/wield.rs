@@ -20,7 +20,7 @@ use crate::app::Editor;
 use crate::project::ContentEdit;
 use crate::tabs::shown_path;
 use crate::views::cues::{self, Scrub};
-use crate::views::model::fit::Shown;
+use crate::views::model::look::Shown;
 use crate::views::stage::{self, StageState};
 
 /// What the wield page's stage shows: a model, by its path, in a stance playing an action, pose or
@@ -301,7 +301,7 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
     if let Some(turntable) = turntable {
         let held = clip.as_ref().map(|_| playhead.seconds());
         let standing = stage::standing(
-            model.model().path(),
+            model.body(),
             clip.map(|(clip, _)| clip),
             held,
             crossed,

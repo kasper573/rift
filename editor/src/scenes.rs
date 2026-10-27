@@ -8,6 +8,7 @@ use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
 use engine::systems::area::world_map::{Note, Region};
 use engine::systems::class::ClassDef;
+use engine::systems::dialogue::bust::BustDef;
 use engine::systems::item::ItemDef;
 use engine::systems::script::ScriptDef;
 use serde::Deserialize;
@@ -18,10 +19,11 @@ use crate::project::{ContentEdit, RowSelection};
 use crate::tabs::EditorTab;
 use crate::views::area::resize::ResizeDialog;
 use crate::views::area::{self as area_view, blueprint};
+use crate::views::bust;
 use crate::views::character::CharacterSection;
 use crate::views::class;
 use crate::views::item::{self, ItemPage};
-use crate::views::model::{self, ModelPage, busts};
+use crate::views::model::{self, ModelPage};
 use crate::views::script::{PendingScriptAction, ScriptRow};
 use crate::views::skeleton::{self, SkeletonPage};
 use crate::views::world::{
@@ -94,6 +96,7 @@ pub enum SceneStep {
     },
     Bottom(BottomTab),
     Model(ModelStep),
+    Bust(BustStep),
     Skeleton(SkeletonStep),
     /// Opens the item at `key` on `page`.
     Item {
@@ -125,8 +128,15 @@ pub enum DialogName {
 pub enum ModelStep {
     Open(String),
     Page(ModelPage),
-    Busts(Option<String>),
     Bottom(BottomTab),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BustStep {
+    Open(String),
+    /// Picks the face of this name, none picking no face.
+    Face(Option<String>),
     Drop(PathBuf),
 }
 
@@ -375,6 +385,7 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         ),
         SceneStep::Bottom(tab) => editor.panels.bottom = *tab,
         SceneStep::Model(step) => model_step(editor, step),
+        SceneStep::Bust(step) => bust_step(editor, step),
         SceneStep::Skeleton(step) => skeleton_step(editor, step),
         SceneStep::Item { key, page } => {
             editor.open_row(ItemDef::TABLE, key);
@@ -516,26 +527,40 @@ fn model_step(editor: &mut Editor, step: &ModelStep) {
     match step {
         ModelStep::Open(_) => {}
         ModelStep::Page(page) => editor.views.model.view_mut(&key).page = *page,
-        ModelStep::Busts(face) => {
-            let view = editor.views.model.view_mut(&key);
-            view.page = ModelPage::Busts;
-            if let Some(face) = face {
-                view.face = Some(face.clone());
-                if let Some(Ok(model)) = editor.read::<ModelDef>(&key)
-                    && let Some(found) = busts::faces(&model)
+        ModelStep::Bottom(tab) => editor.panels.bottom = *tab,
+    }
+}
+
+fn bust_step(editor: &mut Editor, step: &BustStep) {
+    if let BustStep::Open(key) = step {
+        editor.select(RowSelection::row(BustDef::TABLE, key));
+        editor.open_tab(EditorTab::Bust { key: key.clone() });
+        return;
+    }
+    let Some(EditorTab::Bust { key }) = shell::active_tab(editor) else {
+        return;
+    };
+    bust::ensure_view(editor, &key);
+    match step {
+        BustStep::Open(_) => {}
+        BustStep::Face(None) => {
+            editor.views.bust.view_mut(&key).face = None;
+            editor.select(RowSelection::row(BustDef::TABLE, &key));
+        }
+        BustStep::Face(Some(face)) => {
+            let found = editor
+                .read::<BustDef>(&key)
+                .and_then(Result::ok)
+                .and_then(|row| {
+                    bust::faces::faces(&row)
                         .into_iter()
                         .find(|found| found.name == *face)
-                {
-                    editor.select(RowSelection {
-                        table: ModelDef::TABLE.to_owned(),
-                        keys: vec![key.clone()],
-                        parts: vec![found.part()],
-                    });
-                }
+                });
+            if let Some(found) = found {
+                bust::select_face(editor, &key, &found);
             }
         }
-        ModelStep::Bottom(tab) => editor.panels.bottom = *tab,
-        ModelStep::Drop(path) => editor.views.model.drops.push(path.clone()),
+        BustStep::Drop(path) => editor.views.bust.drops.push(path.clone()),
     }
 }
 

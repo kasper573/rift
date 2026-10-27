@@ -17,6 +17,7 @@ use engine::core::audio::playback::{self, PlaySfx, SfxPlace};
 use engine::core::content::Content;
 use engine::core::ground::{Heightfield, Paint};
 use engine::core::render::camera::{self, CameraPreferences};
+use engine::core::render::world::body::{self, Body, BodyFiles};
 use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::Mannequin;
 use engine::core::render::world::mannequin::{RigClip, mannequin};
@@ -71,7 +72,7 @@ pub struct Ghost {
 /// looping its clip, or a model held at one moment of a clip on a turntable.
 #[derive(Clone, PartialEq)]
 pub struct Standing {
-    pub model: String,
+    pub body: BodyFiles,
     pub clip: Option<RigClip>,
     pub transform: Transform,
     pub held: Option<Seconds>,
@@ -119,7 +120,7 @@ struct StageProps {
 impl Standing {
     /// Whether the same rig in the same clip stands here, however it is placed or held.
     fn same_rig(&self, other: &Standing) -> bool {
-        self.model == other.model && self.clip == other.clip
+        self.body == other.body && self.clip == other.clip
     }
 }
 
@@ -414,38 +415,27 @@ impl Viewport {
                     ask_layers(world, entity, standing.layers);
                     entity
                 }
-                None => match &standing.clip {
-                    Some(clip) => {
-                        let (scene, mut puppet) = mannequin(world, &standing.model, clip);
-                        puppet.hold(standing.held);
-                        let rig = world
-                            .spawn((
-                                scene,
-                                puppet,
-                                standing.transform,
-                                StageProps {
-                                    props: standing.props.clone(),
-                                    hung: Vec::new(),
-                                },
-                                ChildOf(self.root),
-                            ))
-                            .id();
-                        ask_layers(world, rig, standing.layers);
-                        rig
+                None => {
+                    let rig = world
+                        .spawn((
+                            standing.transform,
+                            Visibility::default(),
+                            StageProps {
+                                props: standing.props.clone(),
+                                hung: Vec::new(),
+                            },
+                            ChildOf(self.root),
+                        ))
+                        .id();
+                    if let Some(clip) = &standing.clip {
+                        let mut mannequin = mannequin(world, clip);
+                        mannequin.hold(standing.held);
+                        world.entity_mut(rig).insert(mannequin);
                     }
-                    None => {
-                        let scene = world
-                            .resource::<AssetServer>()
-                            .load(GltfAssetLabel::Scene(0).from_asset(standing.model.clone()));
-                        world
-                            .spawn((
-                                WorldAssetRoot(scene),
-                                standing.transform,
-                                ChildOf(self.root),
-                            ))
-                            .id()
-                    }
-                },
+                    body::dress(world, rig, &standing.body);
+                    ask_layers(world, rig, standing.layers);
+                    rig
+                }
             };
             kept.push(entity);
         }
@@ -534,7 +524,11 @@ fn hang_props(world: &mut World) {
     for (rig, props) in waiting {
         let joints: Vec<Option<Entity>> = props
             .iter()
-            .map(|prop| named_under(world, rig, &prop.joint))
+            .map(|prop| {
+                world
+                    .get::<Body>(rig)
+                    .and_then(|body| body.joint(&prop.joint))
+            })
             .collect();
         if joints.iter().any(Option::is_none) {
             continue;
@@ -598,7 +592,9 @@ fn run_layers(world: &mut World) {
         let Some(model) = ActorModel::loaded(&content, model) else {
             continue;
         };
-        let joints = nodes_under(world, rig);
+        let Some(joints) = world.get::<Body>(rig).map(|body| body.joints().clone()) else {
+            continue;
+        };
         let rigged = model
             .skeleton()
             .rig
@@ -638,38 +634,6 @@ fn run_layers(world: &mut World) {
             ..CameraPreferences::default()
         });
     }
-}
-
-/// Every named node among the descendants of `root`, by its name.
-fn nodes_under(world: &World, root: Entity) -> HashMap<String, Entity> {
-    let mut named = HashMap::new();
-    let mut open = vec![root];
-    while let Some(at) = open.pop() {
-        if let Some(name) = world.get::<Name>(at) {
-            named.insert(name.as_str().to_owned(), at);
-        }
-        if let Some(children) = world.get::<Children>(at) {
-            open.extend(children.iter());
-        }
-    }
-    named
-}
-
-/// The node named `name` among the descendants of `root`.
-fn named_under(world: &World, root: Entity, name: &str) -> Option<Entity> {
-    let mut open = vec![root];
-    while let Some(at) = open.pop() {
-        if world
-            .get::<Name>(at)
-            .is_some_and(|named| named.as_str() == name)
-        {
-            return Some(at);
-        }
-        if let Some(children) = world.get::<Children>(at) {
-            open.extend(children.iter());
-        }
-    }
-    None
 }
 
 /// An offscreen picture of `size` pixels a camera renders to, and the egui texture that shows it.

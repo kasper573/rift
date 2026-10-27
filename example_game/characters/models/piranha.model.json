@@ -1,0 +1,10 @@
+{
+  "skeleton": "characters/skeletons/fish.skeleton",
+  "hitbox": {
+    "radius": 0.3,
+    "height": 1.0
+  },
+  "parts": [
+    "characters/parts/piranha.model_part"
+  ]
+}

@@ -1,9 +1,10 @@
-use editor::views::model::{self, import};
+use editor::views::model;
+use editor::views::model_part::{self, import};
 use engine::core::geometry::Capsule;
-use engine::core::time::{Millis, Seconds};
+use engine::core::time::Seconds;
 use engine::core::units::Meters;
-use engine::systems::actor::model::{MODEL_GLB, ModelDef};
-use engine::systems::actor::skeleton::{ClipName, Cue};
+use engine::systems::actor::ModelDef;
+use engine::systems::actor::part::PART_MESH;
 use serde_json::json;
 use testkit::{BODY, path};
 
@@ -12,74 +13,69 @@ use crate::support;
 const HERO: &str = "hero";
 
 #[test]
-fn an_imported_skin_must_fit_the_skeleton_and_keeps_the_override_cues_that_still_fit() {
+fn an_imported_mesh_must_fit_the_skeleton_and_carry_no_clips() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let game = support::game()
-        .model(HERO, 1.8, json!([]))
-        .part(
-            "model",
-            HERO,
-            &MODEL_GLB.named("", "glb"),
-            testkit::skin_glb(&testkit::rig(), &[("attack", Seconds(0.4))]),
-        )
-        .edit("model", HERO, |hero| {
-            hero["overrides"] = json!({ "attack": [cue(100.0, true), cue(300.0, false)] })
-        });
+    let game = support::game().model(HERO, 1.8, json!([]));
     let mut editor = support::open(game, &scratch);
-    let key = path("model", HERO);
-    let glb = format!("{key}/{}", MODEL_GLB.named("", "glb"));
+    let key = path("model_part", HERO);
+    let row = editor
+        .read::<engine::systems::actor::ModelPartDef>(&key)
+        .expect("a project")
+        .expect("the part reads");
+    model_part::ensure_view(&mut editor, &key, &row);
+    let glb = format!("{key}/{}", PART_MESH.named("", "glb"));
     let before = support::settled(&mut editor).files.get(&glb).cloned();
 
-    let mut handless = testkit::rig();
-    handless.nodes.retain(|node| node.name != "hand.l");
+    let mut crossed = testkit::rig();
+    crossed.nodes[3].parent = Some(2);
+    let refusals = |bytes: Vec<u8>| {
+        import::draft(&editor, &key, bytes, "dropped.glb".to_owned())
+            .expect("a glTF binary")
+            .refusals()
+            .join("\n")
+    };
+    let misfit = refusals(testkit::skin_glb(&crossed, &[]));
+    assert!(
+        misfit.contains("joint hand.l has parent hand.r"),
+        "{misfit}"
+    );
+    assert!(
+        misfit.contains(&format!("{BODY}.skeleton expects body")),
+        "{misfit}"
+    );
+    let clipped = refusals(testkit::skin_glb(
+        &testkit::rig(),
+        &[("dance", Seconds(1.0))],
+    ));
+    assert!(clipped.contains("carries clips (dance)"), "{clipped}");
+
     let refused = import::draft(
         &editor,
         &key,
-        testkit::skin_glb(&handless, &[]),
-        "handless.glb".to_owned(),
+        testkit::skin_glb(&crossed, &[]),
+        "crossed.glb".to_owned(),
     )
     .expect("a glTF binary");
-    let refusals = refused.refusals().join("\n");
-    assert!(refusals.contains("no joint hand.l"), "{refusals}");
-    assert!(
-        refusals.contains(&format!("hand \"left\" of {BODY}.skeleton needs it")),
-        "{refusals}"
-    );
     assert!(!import::apply(&mut editor, &key, &refused));
     assert_eq!(
         support::settled(&mut editor).files.get(&glb).cloned(),
         before
     );
 
+    let mut fewer = testkit::rig();
+    fewer.nodes.pop();
     let fitting = import::draft(
         &editor,
         &key,
-        testkit::skin_glb(
-            &testkit::rig(),
-            &[("attack", Seconds(0.2)), ("dance", Seconds(1.0))],
-        ),
+        testkit::skin_glb(&fewer, &[]),
         "fitting.glb".to_owned(),
     )
     .expect("a glTF binary");
     assert!(fitting.refusals().is_empty(), "{:?}", fitting.refusals());
-    assert_eq!(
-        fitting.carried,
-        vec![
-            (
-                "attack".to_owned(),
-                format!("would override clips/{}.glb's attack", testkit::LIBRARY)
-            ),
-            (
-                "dance".to_owned(),
-                "no set names it · never plays".to_owned()
-            ),
-        ]
-    );
     assert!(import::apply(&mut editor, &key, &fitting));
     assert_eq!(
-        overrides(&mut editor, &key),
-        vec![(ClipName::new("attack"), vec![cue(100.0, true)])],
-        "the step past the shorter attack is gone"
+        support::settled(&mut editor).files.get(&glb).cloned(),
+        Some(fitting.bytes.clone().into())
     );
 
     editor.undo();
@@ -90,36 +86,10 @@ fn an_imported_skin_must_fit_the_skeleton_and_keeps_the_override_cues_that_still
 }
 
 #[test]
-fn override_cues_and_the_hitbox_land_in_the_model() {
+fn the_hitbox_lands_in_the_model() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let game = support::game().model(HERO, 1.8, json!([])).part(
-        "model",
-        HERO,
-        &MODEL_GLB.named("", "glb"),
-        testkit::skin_glb(&testkit::rig(), &[("walk", Seconds(0.4))]),
-    );
-    let mut editor = support::open(game, &scratch);
+    let mut editor = support::open(support::game().model(HERO, 1.8, json!([])), &scratch);
     let key = path("model", HERO);
-    let walk = ClipName::new("walk");
-
-    assert!(model::set_override_cues(
-        &mut editor,
-        &key,
-        &walk,
-        vec![cue(200.0, false), cue(120.0, false)],
-    ));
-    assert_eq!(
-        overrides(&mut editor, &key),
-        vec![(walk.clone(), vec![cue(120.0, false), cue(200.0, false)])],
-        "cues are kept in order of time"
-    );
-    assert!(model::set_override_cues(
-        &mut editor,
-        &key,
-        &walk,
-        Vec::new()
-    ));
-    assert_eq!(overrides(&mut editor, &key), Vec::new());
 
     let hitbox = Capsule {
         radius: Meters(0.4),
@@ -127,28 +97,9 @@ fn override_cues_and_the_hitbox_land_in_the_model() {
     };
     assert!(model::set_hitbox(&mut editor, &key, hitbox));
     support::settled(&mut editor);
-    assert_eq!(model_of(&editor, &key).hitbox, hitbox);
-}
-
-fn cue(at: f32, apex: bool) -> Cue {
-    Cue {
-        at: Millis(at),
-        step: !apex,
-        apex,
-        sound: None,
-    }
-}
-
-fn overrides(editor: &mut editor::app::Editor, key: &str) -> Vec<(ClipName, Vec<Cue>)> {
-    support::settled(editor);
-    model_of(editor, key).overrides.into_iter().collect()
-}
-
-fn model_of(editor: &editor::app::Editor, key: &str) -> ModelDef {
-    editor
-        .read::<ModelDef>(key)
+    let model = editor
+        .read::<ModelDef>(&key)
         .expect("the model is in the project")
-        .expect("the model reads")
-        .as_ref()
-        .clone()
+        .expect("the model reads");
+    assert_eq!(model.hitbox, hitbox);
 }

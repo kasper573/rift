@@ -3,6 +3,7 @@
 //! only knows how it is drawn.
 
 pub mod billboard;
+pub mod body;
 pub mod clouds;
 pub mod cover;
 pub mod decal;
@@ -41,6 +42,7 @@ impl Plugin for WorldScenePlugin {
             MaterialPlugin::<material::WorldMaterial>::default(),
             MaterialPlugin::<decal::DecalMaterial>::default(),
             HierarchyPropagatePlugin::<RenderLayers>::new(PostUpdate),
+            body::BodyPlugin,
         ))
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
         .init_resource::<material::MaterialCache>()

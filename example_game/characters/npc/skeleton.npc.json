@@ -1,6 +1,7 @@
 {
   "name": "Skeleton",
-  "model": "characters/models/skeleton.model",
+  "model": "characters/models/skeleton.model.json",
+  "bust": "characters/busts/skeleton.bust",
   "stats": {
     "health": 18.0,
     "max_health": 18.0,

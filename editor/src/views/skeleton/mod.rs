@@ -421,7 +421,7 @@ fn stage_rig(
     let drawn = (turntable.rect, turntable.canvas.clone());
     let held = clip.as_ref().map(|_| playhead.seconds());
     let standing = stage::standing(
-        model.model().path(),
+        model.body(),
         clip.map(|(clip, _)| clip),
         held,
         crossed,
@@ -459,7 +459,7 @@ fn stage_walking(
         return;
     };
     let mut standing = stage::standing(
-        model.model().path(),
+        model.body(),
         Some(clip),
         Some(playhead.seconds()),
         crossed,

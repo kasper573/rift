@@ -51,6 +51,10 @@ fn what_nothing_in_use_reaches_is_unused_at_any_depth() {
                 path("model", "hermit").as_str(),
                 &UnusedRow::NamedByUnused(vec![path("npc", "hermit")])
             ),
+            (
+                path("model_part", "hermit").as_str(),
+                &UnusedRow::NamedByUnused(vec![path("model", "hermit")])
+            ),
             (path("npc", "hermit").as_str(), &UnusedRow::Unnamed),
             (
                 path("sfx", "item").as_str(),
@@ -72,7 +76,7 @@ fn deleting_unused_content_takes_the_files_and_their_parts_in_one_undo_step() {
     let project = support::settled(&mut editor);
     let rows: Vec<String> = project.unused.rows().map(|(row, _)| row.clone()).collect();
     let assets: Vec<String> = project.unused.assets().map(str::to_owned).collect();
-    let sprites = format!("{}/model.glb", path("model", "hermit"));
+    let sprites = format!("{}/mesh.glb", path("model_part", "hermit"));
 
     let deletion = unused::delete(project, &rows, &assets).expect("deletes");
     editor.try_apply(deletion.edit).expect("applies");

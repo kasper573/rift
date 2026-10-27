@@ -21,6 +21,8 @@ pub struct GltfInfo {
     pub materials: usize,
     /// Whether any mesh is skinned to joints.
     pub skinned: bool,
+    /// The nodes the skins bind their meshes to, by index in the tree.
+    pub skin_joints: Vec<usize>,
     pub tree: NodeTree,
     pub clips: Vec<GltfClip>,
 }
@@ -189,11 +191,31 @@ impl Misfit {
 /// `REST_SHIFT` of the rig's. The candidate may hold more; what is beneath a joint that does not fit
 /// is not reported again.
 pub fn fit(rig: &NodeTree, candidate: &NodeTree) -> Fit {
+    fit_joints(rig, candidate, rig.joints().collect())
+}
+
+/// How the skins of `skin` fit `rig`, on the joints of the rig they bind their meshes to: each at
+/// the rig's path and resting as the rig rests it, so the skin drawn over the rig's joints stands as
+/// it was made. A skin carries only the joints it needs, and may bind helpers the rig has no use
+/// for, which stay at rest.
+pub fn fit_skin(rig: &NodeTree, skin: &GltfInfo) -> Fit {
+    let bound: Vec<&str> = skin
+        .skin_joints
+        .iter()
+        .map(|&joint| skin.tree.nodes[joint].name.as_str())
+        .collect();
+    let joints = rig
+        .joints()
+        .filter(|&joint| bound.contains(&rig.nodes[joint].name.as_str()))
+        .collect();
+    fit_joints(rig, &skin.tree, joints)
+}
+
+fn fit_joints(rig: &NodeTree, candidate: &NodeTree, joints: Vec<usize>) -> Fit {
     let mut misfits = Vec::new();
     let mut matched = 0;
     let mut worst: Option<(String, Degrees)> = None;
     let mut unfit: Vec<usize> = Vec::new();
-    let joints: Vec<usize> = rig.joints().collect();
     for &joint in &joints {
         let node = &rig.nodes[joint];
         if node.parent.is_some_and(|parent| unfit.contains(&parent)) {
@@ -292,6 +314,15 @@ pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
         triangles,
         materials: document.materials().count(),
         skinned: document.skins().next().is_some(),
+        skin_joints: {
+            let mut joints: Vec<usize> = document
+                .skins()
+                .flat_map(|skin| skin.joints().map(|joint| joint.index()))
+                .collect();
+            joints.sort_unstable();
+            joints.dedup();
+            joints
+        },
         tree: tree_of(&document),
         clips,
     })
@@ -411,9 +442,10 @@ pub fn placeholder_mesh(clips: &[(&str, Seconds)], triangles: usize) -> Vec<u8> 
 pub const PLACEHOLDER_LIFT: Meters = Meters(0.25);
 
 /// A glTF binary of the joints of `tree` at rest, `triangles` triangles stacked within a centimetre
-/// of the origin beside them, and `clips` holding the first joint below the top one (the top one
-/// when there is none below it, the mesh when there are no joints) [`PLACEHOLDER_LIFT`] above its
-/// rest: a rig, a library of clips or a skin on it, of any weight and nothing to look at.
+/// of the origin beside them, skinned to the joints when there are any, and `clips` holding the
+/// first joint below the top one (the top one when there is none below it, the mesh when there are
+/// no joints) [`PLACEHOLDER_LIFT`] above its rest: a rig, a library of clips or a skin on it, of any
+/// weight and nothing to look at.
 pub fn placeholder_body(tree: &NodeTree, clips: &[(&str, Seconds)], triangles: usize) -> Vec<u8> {
     let mut bin: Vec<u8> = Vec::new();
     let mut root = json::Root::default();
@@ -454,9 +486,12 @@ pub fn placeholder_body(tree: &NodeTree, clips: &[(&str, Seconds)], triangles: u
     let held = lifted.map_or(Vec3::ZERO, |index| tree.nodes[index].rest.translation)
         + Vec3::Y * PLACEHOLDER_LIFT.0;
     if triangles > 0 {
-        let mesh = push_mesh(&mut root, &mut bin, triangles);
+        let skinned = !joints.is_empty();
+        let mesh = push_mesh(&mut root, &mut bin, triangles, skinned);
+        let skin = skinned.then(|| push_skin(&mut root, &mut bin, tree, &joints));
         let node = root.push(json::Node {
             mesh: Some(mesh),
+            skin,
             ..Default::default()
         });
         roots.push(node);
@@ -656,10 +691,51 @@ pub fn cut(bytes: &[u8], keep: &[&str]) -> Result<Vec<u8>, String> {
     Ok(glb(&root, bin))
 }
 
+/// A skin binding `joints`, the nodes of `tree` in order, at their rest.
+fn push_skin(
+    root: &mut json::Root,
+    bin: &mut Vec<u8>,
+    tree: &NodeTree,
+    joints: &[json::Index<json::Node>],
+) -> json::Index<json::Skin> {
+    let mut placed: Vec<Mat4> = Vec::with_capacity(tree.nodes.len());
+    for node in &tree.nodes {
+        let local = Mat4::from_scale_rotation_translation(
+            node.rest.scale,
+            node.rest.rotation,
+            node.rest.translation,
+        );
+        let parent = node.parent.map_or(Mat4::IDENTITY, |parent| placed[parent]);
+        placed.push(parent * local);
+    }
+    let inverse: Vec<u8> = placed
+        .iter()
+        .flat_map(|at| at.inverse().to_cols_array())
+        .flat_map(|value| value.to_le_bytes())
+        .collect();
+    let inverse_bind_matrices = push_accessor(
+        root,
+        bin,
+        &inverse,
+        joints.len(),
+        json::accessor::Type::Mat4,
+        None,
+    );
+    root.push(json::Skin {
+        extensions: None,
+        extras: Default::default(),
+        inverse_bind_matrices: Some(inverse_bind_matrices),
+        joints: joints.to_vec(),
+        name: None,
+        skeleton: None,
+    })
+}
+
 fn push_mesh(
     root: &mut json::Root,
     bin: &mut Vec<u8>,
     triangles: usize,
+    skinned: bool,
 ) -> json::Index<json::Mesh> {
     let corners: [[f32; 3]; 3] = [[-0.01, 0.0, -0.01], [0.01, 0.0, -0.01], [0.0, 0.0, 0.01]];
     let positions: Vec<u8> = (0..triangles)
@@ -674,15 +750,44 @@ fn push_mesh(
         json::accessor::Type::Vec3,
         Some((&[-0.01, 0.0, -0.01], &[0.01, 0.0, 0.01])),
     );
+    let mut attributes = BTreeMap::from([(
+        Checked::Valid(json::mesh::Semantic::Positions),
+        position_accessor,
+    )]);
+    if skinned {
+        let corners = triangles * 3;
+        let joints = push_accessor(
+            root,
+            bin,
+            &vec![0u8; corners * 4 * 2],
+            corners,
+            json::accessor::Type::Vec4,
+            None,
+        );
+        root.accessors[joints.value()].component_type = Checked::Valid(
+            json::accessor::GenericComponentType(json::accessor::ComponentType::U16),
+        );
+        let weights: Vec<u8> = (0..corners)
+            .flat_map(|_| [1.0f32, 0.0, 0.0, 0.0])
+            .flat_map(|value| value.to_le_bytes())
+            .collect();
+        let weights = push_accessor(
+            root,
+            bin,
+            &weights,
+            corners,
+            json::accessor::Type::Vec4,
+            None,
+        );
+        attributes.insert(Checked::Valid(json::mesh::Semantic::Joints(0)), joints);
+        attributes.insert(Checked::Valid(json::mesh::Semantic::Weights(0)), weights);
+    }
     root.push(json::Mesh {
         extensions: None,
         extras: Default::default(),
         name: None,
         primitives: vec![json::mesh::Primitive {
-            attributes: BTreeMap::from([(
-                Checked::Valid(json::mesh::Semantic::Positions),
-                position_accessor,
-            )]),
+            attributes,
             extensions: None,
             extras: Default::default(),
             indices: None,

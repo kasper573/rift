@@ -5,7 +5,7 @@ use ui::theme;
 use ui::words;
 
 use engine::core::script::{Exit, NodeKind};
-use engine::systems::actor::model::Expression;
+use engine::systems::dialogue::bust::Expression;
 use engine::systems::script::{Line, Node, Speaker};
 use engine::systems::text::{Span, plain};
 use serde::{Deserialize, Serialize};

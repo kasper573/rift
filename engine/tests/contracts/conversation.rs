@@ -295,7 +295,7 @@ fn inn() -> Sim {
             json!([{ "type": "script", "script": "keeper_talk.script.json" }]),
         )
         .script("keeper_talk", "npc", keeping())
-        .busts("keeper")
+        .bust_of("keeper")
         .npc(
             "crier",
             40.0,

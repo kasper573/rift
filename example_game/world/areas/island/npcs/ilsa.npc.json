@@ -1,6 +1,7 @@
 {
   "name": "Ilsa",
-  "model": "characters/models/rogue.model",
+  "model": "characters/models/rogue.model.json",
+  "bust": "characters/busts/rogue.bust",
   "stats": {
     "health": 40.0,
     "max_health": 40.0,

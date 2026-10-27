@@ -1,75 +1,9 @@
-use bevy_math::Quat;
 use engine::core::content::LoadReport;
-use engine::core::time::{PlaybackRate, Seconds};
-use engine::systems::actor::{Action, ActorModel, ModelDef, Motion};
+use engine::core::time::Seconds;
 use serde_json::{Value, json};
-use testkit::{APEX, BODY, CLIP, Declared, Game, LIBRARY, library_glb, rig, rig_clips, skin_glb};
+use testkit::{BODY, CLIP, Game, LIBRARY, library_glb, rig, rig_clips};
 
 use crate::support::game;
-
-#[test]
-fn a_model_that_does_not_fit_its_skeleton_is_refused_naming_the_joint() {
-    struct Case {
-        case: &'static str,
-        change: fn(&mut engine::core::content::gltf::NodeTree),
-        found: &'static str,
-        expected: &'static str,
-    }
-    let cases = [
-        Case {
-            case: "a hand's joint missing",
-            change: |tree| {
-                tree.nodes.pop();
-            },
-            found: "model.glb: no joint hand.l",
-            expected: "hand \"left\" of body.skeleton needs it",
-        },
-        Case {
-            case: "a joint under another parent",
-            change: |tree| tree.nodes[3].parent = Some(2),
-            found: "model.glb: joint hand.l has parent hand.r",
-            expected: "body.skeleton expects body",
-        },
-        Case {
-            case: "a joint resting turned",
-            change: |tree| tree.nodes[3].rest.rotation = Quat::from_rotation_z(10f32.to_radians()),
-            found: "model.glb: joint hand.l rests 10.0° and 0.0 mm from body.skeleton",
-            expected: "at most 2° and 2 mm, so library clips play true",
-        },
-        Case {
-            case: "a joint resting moved",
-            change: |tree| tree.nodes[2].rest.translation.x += 0.01,
-            found: "model.glb: joint hand.r rests 0.0° and 10.0 mm from body.skeleton",
-            expected: "at most 2° and 2 mm, so library clips play true",
-        },
-    ];
-    for case in cases {
-        let mut tree = rig();
-        (case.change)(&mut tree);
-        let report = game()
-            .part("model", "hero", "model.glb", skin_glb(&tree, &[]))
-            .try_load()
-            .err()
-            .unwrap_or_else(|| panic!("{}: refused", case.case));
-        assert_eq!(
-            problems_in(&report, "hero.model/config.json"),
-            [(case.found.to_owned(), case.expected.to_owned())],
-            "{}",
-            case.case
-        );
-    }
-
-    let mut extra = rig();
-    extra.nodes.push(engine::core::content::gltf::TreeNode {
-        name: "tail".to_owned(),
-        parent: Some(1),
-        ..rig().nodes[2].clone()
-    });
-    game()
-        .part("model", "hero", "model.glb", skin_glb(&extra, &[]))
-        .try_load()
-        .unwrap_or_else(|report| panic!("a model with a joint the rig lacks loads: {report}"));
-}
 
 #[test]
 fn a_skeleton_is_held_to_the_clips_its_libraries_carry() {
@@ -92,7 +26,7 @@ fn a_skeleton_is_held_to_the_clips_its_libraries_carry() {
         Case {
             case: "a set naming a clip no library carries",
             change: |skeleton| skeleton["base"]["clips"]["talk"] = json!("stroll"),
-            found: "base set names stroll: no such clip in clips/*.glb or any model that wears this skeleton",
+            found: "base set names stroll: no such clip in clips/*.glb",
         },
         Case {
             case: "a gait whose clip covers no stated ground",
@@ -191,56 +125,6 @@ fn a_clip_name_carried_by_two_libraries_is_refused() {
         [(
             "clip walk is in clips/extra.glb and clips/moves.glb".to_owned(),
             "one library per name".to_owned()
-        )]
-    );
-}
-
-#[test]
-fn a_models_own_clip_plays_in_place_of_the_librarys_cues_and_all() {
-    let content = game()
-        .part(
-            "model",
-            "hero",
-            "model.glb",
-            skin_glb(&rig(), &[("attack", Seconds(0.6))]),
-        )
-        .edit("model", "hero", |hero| {
-            hero["overrides"] = json!({ "attack": [{ "at": 500.0, "apex": true }] })
-        })
-        .model("brute", 2.0, json!([]))
-        .load();
-    let timing = |name: &str| {
-        let model = content.declared::<ModelDef>(name).expect("declared");
-        ActorModel::get(&content, model).timing(
-            None,
-            &Motion::Action(Action::Attack),
-            PlaybackRate(1.0),
-        )
-    };
-
-    let own = timing("hero");
-    assert_eq!((own.duration, own.apex), (Seconds(0.6), Seconds(0.5)));
-    let library = timing("brute");
-    assert_eq!(
-        (library.duration, library.apex),
-        (CLIP.seconds(), APEX.seconds())
-    );
-
-    let report = game()
-        .part(
-            "model",
-            "hero",
-            "model.glb",
-            skin_glb(&rig(), &[("attack", Seconds(0.6))]),
-        )
-        .try_load()
-        .err()
-        .expect("an own attack without its apex is refused");
-    assert_eq!(
-        problems_in(&report, "hero.model/config.json"),
-        [(
-            "attack plays as an attack but has 0 apex cues".to_owned(),
-            "exactly one, where the hit lands".to_owned()
         )]
     );
 }

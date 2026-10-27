@@ -79,7 +79,10 @@ fn a_new_file_of_any_type_names_the_content_nearest_it_and_holds_as_it_is() {
     let game = orc
         .files
         .iter()
-        .filter(|(file, _)| file.starts_with(&format!("{}/", path("model", "orc"))))
+        .filter(|(file, _)| {
+            **file == path("model", "orc")
+                || file.starts_with(&format!("{}/", path("model_part", "orc")))
+        })
         .fold(camp(), |game, (file, bytes)| {
             game.file(
                 &format!("wilds/{}", file.replace("orc", "wolf")),

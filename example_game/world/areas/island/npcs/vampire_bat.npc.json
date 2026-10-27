@@ -1,6 +1,7 @@
 {
   "name": "Vampire Bat",
-  "model": "characters/models/bat.model",
+  "model": "characters/models/bat.model.json",
+  "bust": "characters/busts/bat.bust",
   "stats": {
     "health": 12.0,
     "max_health": 12.0,

@@ -612,6 +612,7 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Files, crate::core::content::media::check_media);
     crate::core::babble::content(&mut registry);
     actor::content(&mut registry);
+    dialogue::bust::content(&mut registry);
     area::content(&mut registry);
     crate::core::vfx::content(&mut registry);
     registry

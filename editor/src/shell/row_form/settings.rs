@@ -61,7 +61,6 @@ pub fn show_game(editor: &mut Editor, ui: &mut Ui) {
             | FormAction::NewRow { .. }
             | FormAction::RowAction(_)
             | FormAction::Reveal { .. }
-            | FormAction::GiveBust
             | FormAction::NewScriptModule
             | FormAction::NewObjectScript { .. } => {}
         }

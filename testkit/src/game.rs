@@ -13,11 +13,12 @@ use engine::core::time::{Millis, Seconds};
 use engine::core::units::{Meters, MetersPerSec};
 use engine::core::vfx::shader::{SHADER_SOURCE, Stage};
 use engine::systems::actor::Action;
-use engine::systems::actor::model::{MODEL_BUSTS, MODEL_GLB};
+use engine::systems::actor::part::PART_MESH;
 use engine::systems::actor::skeleton::{CLIP_LIBRARIES, RIG_GLB};
 use engine::systems::area;
 use engine::systems::area::prop::PROP_GLB;
 use engine::systems::area::scene::SCENE;
+use engine::systems::dialogue::bust::BUST_FACES;
 use engine::systems::item;
 use serde_json::{Value, json};
 use strum::VariantArray;
@@ -365,25 +366,27 @@ impl Game {
         )
     }
 
-    /// Gives the model named `name` a bust for every generic expression, so its lines can show a
-    /// face.
-    pub fn busts(self, name: &str) -> Game {
+    /// A bust of a face for every generic expression.
+    pub fn bust(self, name: &str) -> Game {
         const EXPRESSIONS: [&str; 6] =
             ["neutral", "happy", "sad", "angry", "surprised", "thinking"];
-        let game = EXPRESSIONS.iter().fold(self, |game, expression| {
-            game.part(
-                "model",
-                name,
-                &MODEL_BUSTS.named(expression, "png"),
-                png(4, 4),
-            )
-        });
-        game.edit("model", name, |model| {
-            model["modules"]
-                .as_array_mut()
-                .expect("a model's modules")
-                .push(json!({ "type": "bust" }))
-        })
+        EXPRESSIONS
+            .iter()
+            .fold(self.row("bust", name, json!({})), |game, expression| {
+                game.part(
+                    "bust",
+                    name,
+                    &BUST_FACES.named(expression, "png"),
+                    png(4, 4),
+                )
+            })
+    }
+
+    /// Shows the npc declared as `npc` in a bust of its own name, declared with it, so its lines
+    /// show a face.
+    pub fn bust_of(self, npc: &str) -> Game {
+        self.bust(npc)
+            .edit("npc", npc, |row| row["bust"] = json!(path("bust", npc)))
     }
 
     /// A sound of a moment's silence.
@@ -479,21 +482,31 @@ impl Game {
     }
 
     /// A model nobody would notice on the skeleton declared as `skeleton`, half a metre around and
-    /// `height` tall, carrying no clips of its own.
+    /// `height` tall, of one part of its own name.
     pub fn model_on(self, name: &str, skeleton: &str, height: f32, modules: Value) -> Game {
-        self.row(
+        self.model_part(name, skeleton).row(
             "model",
             name,
             json!({
                 "skeleton": path("skeleton", skeleton),
                 "hitbox": { "radius": 0.5, "height": height },
+                "parts": [path("model_part", name)],
                 "modules": modules,
             }),
         )
-        .part(
-            "model",
+    }
+
+    /// A part nobody would notice on the skeleton declared as `skeleton`, one mesh for every build.
+    pub fn model_part(self, name: &str, skeleton: &str) -> Game {
+        self.row(
+            "model_part",
             name,
-            &MODEL_GLB.named("", "glb"),
+            json!({ "skeleton": path("skeleton", skeleton) }),
+        )
+        .part(
+            "model_part",
+            name,
+            &PART_MESH.named("", "glb"),
             skin_glb(&rig(), &[]),
         )
     }

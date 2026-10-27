@@ -11,8 +11,6 @@ use engine::core::audio::playback::SfxDef;
 use engine::core::content::serial::TypeTag;
 use engine::core::content::{ContentFile, MODULES, ModuleRule, fields_file, name_of};
 use engine::core::vfx::VfxShaderDef;
-use engine::systems::actor::ModelDef;
-use engine::systems::actor::model::ModelModule;
 use engine::systems::class::ClassDef;
 use engine::systems::item::ItemDef;
 use engine::systems::quest::{ObjectiveKind, QuestDef};
@@ -46,7 +44,7 @@ use crate::project::{ContentEdit, Project, RowSelection};
 use crate::rows::new_file_into;
 use crate::shell::browser::{self, RowMenu};
 use crate::tabs::{file_title, shown_path};
-use crate::views::{class, model, skill, vfx};
+use crate::views::{class, skill, vfx};
 use crate::{make, schema, stage};
 use ui::input::{clear_draft, draft_of, set_draft};
 
@@ -262,14 +260,6 @@ fn row_form(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, wide: bool
             }
         }
         edit.write_json(&file, &value);
-        if table == ModelDef::TABLE
-            && let Ok(model) = reader.from_json::<ModelDef>(&value)
-            && let Some(project) = editor.project.as_ref()
-        {
-            for face in model::busts::faces_left(&project.files, key, &model) {
-                edit.remove(face);
-            }
-        }
         editor.apply(edit);
     }
     for action in actions {
@@ -316,18 +306,6 @@ fn row_card(
         }
         ui.add_space(4.0);
         forms::error_line(ui, cx, "");
-        if table == ModelDef::TABLE {
-            if let Ok(model) = cx.project.read::<ModelDef>(key) {
-                let mut model = (*model).clone();
-                if let Some(what) = model::inspect::row_body(ui, cx, &mut model).0 {
-                    let (label, key) = (format!("Edit {} {what}", shown_path(key)), key.to_owned());
-                    *typed = Some(Box::new(move |editor| {
-                        editor.write_content(&label, &key, &model)
-                    }));
-                }
-            }
-            return;
-        }
         let hidden: &[&str] = match table {
             ClassDef::TABLE => &["modules", "levels", "tree", "backdrop"],
             SkillDef::TABLE => &["modules", "levels"],
@@ -393,11 +371,6 @@ fn modules_column(
             .width(330.0);
         popup.show(|ui| {
             if let Some(picked) = add_module_popup(ui, cx, table, &variants, modules, status) {
-                if gives_bust(cx, table, &picked.template) {
-                    cx.actions.push(FormAction::GiveBust);
-                    ui.close();
-                    return;
-                }
                 let Some(template) = fitting_module(cx, table, picked) else {
                     cx.actions.push(FormAction::NewScriptModule);
                     ui.close();
@@ -630,17 +603,6 @@ pub(crate) fn runnable_script(cx: &FormCx, kind: RunnerKind) -> Option<ScriptId>
     cx.project.reader().id_of(nearest)
 }
 
-/// Whether `template` is a model's bust, which can't be written without its faces, so is given
-/// with them as one step.
-fn gives_bust(cx: &FormCx, table: &str, template: &Value) -> bool {
-    table == ModelDef::TABLE
-        && cx
-            .project
-            .reader()
-            .from_json::<ModelModule>(template)
-            .is_ok_and(|module| matches!(module, ModelModule::Bust(_)))
-}
-
 /// A module type picked to add, as its template.
 pub(super) struct PickedModule {
     pub template: Value,
@@ -825,12 +787,6 @@ pub fn act(editor: &mut Editor, action: FormAction, table: &str, key: &str) {
         FormAction::NewObjectScript { node } => {
             if let Err(error) = crate::views::area::inspect::new_object_script(editor, key, &node) {
                 editor.toast(error);
-            }
-        }
-        FormAction::GiveBust => {
-            let faces = model::busts::browse_faces(key);
-            if !faces.is_empty() {
-                model::busts::give(editor, key, &faces);
             }
         }
     }
