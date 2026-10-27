@@ -9,11 +9,21 @@ use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 
+use super::material::WorldMaterial;
+use super::paint::{Paint, Painter, Paints};
+
 /// The glTF files a body is drawn from: the rig its joints stand in, and the skins bound to them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct BodyFiles {
     pub rig: String,
-    pub skins: Vec<String>,
+    pub skins: Vec<Skin>,
+}
+
+/// A glTF file of skinned meshes, drawn in its own material or painted.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Skin {
+    pub mesh: String,
+    pub paint: Option<Paint>,
 }
 
 /// A body standing under its entity: the scenes of its rig and skins, and once the rig stands, its
@@ -35,11 +45,12 @@ pub struct RigReady {
 #[derive(Component)]
 struct RigOf(Entity);
 
-/// A skin's scene, hidden until its meshes are bound to the rig: at rest until then, it would
-/// stand apart from a rig already moving.
+/// A skin's scene, hidden until its meshes are bound to the rig and painted: at rest until then,
+/// it would stand apart from a rig already moving.
 #[derive(Component)]
 struct SkinOf {
     body: Entity,
+    paint: Option<Paint>,
     spawned: bool,
 }
 
@@ -103,7 +114,7 @@ pub fn dress(world: &mut World, entity: Entity, files: &BodyFiles) {
 
 /// Swaps the skins of the body standing under `entity` for `skins`, keeping its rig and what plays
 /// on it: a skin it already wears stays as it is.
-pub fn reskin(world: &mut World, entity: Entity, skins: &[String]) {
+pub fn reskin(world: &mut World, entity: Entity, skins: &[Skin]) {
     let Some(body) = world.get::<Body>(entity) else {
         return;
     };
@@ -111,7 +122,7 @@ pub fn reskin(world: &mut World, entity: Entity, skins: &[String]) {
         .scenes
         .split_first()
         .map_or((None, &[][..]), |(rig, worn)| (Some(*rig), worn));
-    let kept: Vec<(String, Entity)> = body
+    let kept: Vec<(Skin, Entity)> = body
         .files
         .skins
         .iter()
@@ -138,10 +149,10 @@ pub fn reskin(world: &mut World, entity: Entity, skins: &[String]) {
     }
 }
 
-fn spawn_skin(world: &mut World, body: Entity, file: &str) -> Entity {
+fn spawn_skin(world: &mut World, body: Entity, skin: &Skin) -> Entity {
     let scene = world
         .resource::<AssetServer>()
-        .load(GltfAssetLabel::Scene(0).from_asset(file.to_owned()));
+        .load(GltfAssetLabel::Scene(0).from_asset(skin.mesh.clone()));
     world
         .spawn((
             WorldAssetRoot(scene),
@@ -149,6 +160,7 @@ fn spawn_skin(world: &mut World, body: Entity, file: &str) -> Entity {
             Visibility::Hidden,
             SkinOf {
                 body,
+                paint: skin.paint.clone(),
                 spawned: false,
             },
             ChildOf(body),
@@ -160,7 +172,9 @@ pub struct BodyPlugin;
 
 impl Plugin for BodyPlugin {
     fn build(&self, app: &mut App) {
-        app.add_observer(stand).add_systems(Update, bind);
+        app.init_resource::<Paints>()
+            .add_observer(stand)
+            .add_systems(Update, bind);
     }
 }
 
@@ -196,14 +210,15 @@ fn stand(
     commands.trigger(RigReady { entity });
 }
 
-/// Binds the skinned meshes of every spawned skin to its body's rig once the rig stands, and shows
-/// the skin.
+/// Binds the skinned meshes of every spawned skin to its body's rig once the rig stands, paints
+/// them once their paint is baked, and shows the skin.
 fn bind(
     mut skins: Query<(Entity, &SkinOf, &mut Visibility)>,
     bodies: Query<&Body>,
     children: Query<&Children>,
     names: Query<&Name>,
-    mut meshes: Query<&mut SkinnedMesh>,
+    mut meshes: Query<(&mut SkinnedMesh, Option<&mut MeshMaterial3d<WorldMaterial>>)>,
+    mut painter: Painter,
     mut commands: Commands,
 ) {
     for (scene, skin, mut visibility) in &mut skins {
@@ -213,8 +228,16 @@ fn bind(
         if !skin.spawned || body.joints.is_empty() {
             continue;
         }
+        let texture = match &skin.paint {
+            Some(paint) => match painter.texture(paint) {
+                Some(texture) => Some(texture),
+                None if painter.failed(paint) => None,
+                None => continue,
+            },
+            None => None,
+        };
         for node in children.iter_descendants(scene) {
-            let Ok(mut mesh) = meshes.get_mut(node) else {
+            let Ok((mut mesh, material)) = meshes.get_mut(node) else {
                 continue;
             };
             let bound: Vec<Entity> = mesh
@@ -229,6 +252,11 @@ fn bind(
                 })
                 .collect();
             mesh.joints = bound;
+            if let (Some(texture), Some(mut material)) = (&texture, material)
+                && let Some(painted) = painter.painted(&material.0, texture)
+            {
+                material.0 = painted;
+            }
         }
         *visibility = Visibility::Inherited;
         commands.entity(scene).remove::<SkinOf>();

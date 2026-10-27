@@ -12,6 +12,7 @@ use engine::core::time::Seconds;
 use engine::core::vfx::VfxShaderDef;
 use engine::core::vfx::shader::SHADER_SOURCE;
 use engine::systems::actor::Action;
+use engine::systems::actor::material::{MATERIAL_BASE, MaterialDef};
 use engine::systems::actor::part::{ModelPartDef, PART_MESH};
 use engine::systems::actor::skeleton::{CLIP_LIBRARIES, RIG_GLB, SkeletonDef};
 use engine::systems::area::prop::{PROP_GLB, PropDef};
@@ -162,6 +163,7 @@ fn blank_parts(
                 FileBytes::from(placeholder_body(&tree, &[], 1)),
             )]
         }
+        MaterialDef::TABLE => vec![(MATERIAL_BASE.named("", "png"), default("blank.png"))],
         BustDef::TABLE => GenericExpression::VARIANTS
             .iter()
             .map(|expression| {

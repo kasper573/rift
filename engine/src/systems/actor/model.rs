@@ -7,12 +7,13 @@ use std::sync::Arc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::appearance::{self, BodyLook};
+use super::appearance::{self, BodyLook, LaidPart};
+use super::material;
 use super::part::{ModelPartDef, ModelPartId};
 use super::playing::Motion;
 use super::skeleton::{
-    self, BuildName, BuiltSkeleton, ClipName, Cue, DeclaredMoves, GroupName, Hand, LibraryClip,
-    SkeletonDef, SkeletonId,
+    self, BuildName, BuiltSkeleton, ClipName, Colours, Cue, DeclaredMoves, GroupName, Hand,
+    LibraryClip, SkeletonDef, SkeletonId,
 };
 use super::stance::StanceId;
 use super::{Action, Pose};
@@ -24,14 +25,15 @@ use crate::core::content::{
     Nearby, RowCheck,
 };
 use crate::core::geometry::Capsule;
-use crate::core::render::world::body::BodyFiles;
+use crate::core::render::world::body::{BodyFiles, Skin};
 use crate::core::render::world::mannequin::RigClip;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
 use crate::core::units::{Meters, MetersPerSec};
 
 pub type ModelId = ContentId<ModelDef>;
 
-/// A body of `parts` on `skeleton`, each drawn as cut for `build`, hit in `hitbox`.
+/// A body of `parts` on `skeleton`, each drawn as cut for `build` and painted in `colours` over the
+/// skeleton's, hit in `hitbox`.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelDef {
@@ -41,6 +43,8 @@ pub struct ModelDef {
     pub build: Option<BuildName>,
     pub hitbox: Capsule,
     pub parts: Vec<ModelPartId>,
+    #[serde(default, skip_serializing_if = "Colours::is_empty")]
+    pub colours: Colours,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<ModelModule>,
 }
@@ -68,6 +72,7 @@ impl ContentFile for ModelDef {
                 height: Meters(1.8),
             },
             parts: vec![near.file()?],
+            colours: Colours::default(),
             modules: Vec::new(),
         })
     }
@@ -117,6 +122,14 @@ impl ModuleSet for ModelDef {
 }
 
 impl ModelDef {
+    /// Its own parts, each painted in its colours.
+    pub fn laid_parts(&self) -> impl Iterator<Item = LaidPart> + '_ {
+        self.parts.iter().map(|&part| LaidPart {
+            part,
+            colours: self.colours.clone(),
+        })
+    }
+
     pub fn scale(&self) -> f32 {
         self.modules
             .iter()
@@ -158,7 +171,7 @@ pub fn build_all(loading: &mut Loading) {
         };
         let problems = part_problems(part, &skeleton, part.skeleton.path(&content), infos);
         let mut check = RowCheck::default();
-        check_regions(&content, part, &skeleton.def, &mut check);
+        check_part(&content, part, &skeleton.def, &mut check);
         if !problems.is_empty() || !check.is_empty() {
             for (file, problem) in problems {
                 loading.file_error(file, ErrorPlace::WholeFile, problem);
@@ -261,13 +274,24 @@ fn part_problems(
     problems
 }
 
-/// Every region a part covers or hides is one of its skeleton's.
-fn check_regions(
-    content: &Content,
-    part: &ModelPartDef,
-    skeleton: &SkeletonDef,
-    cx: &mut RowCheck,
-) {
+/// Every region a part covers or hides is one of its skeleton's, and its material is made on its
+/// skeleton.
+fn check_part(content: &Content, part: &ModelPartDef, skeleton: &SkeletonDef, cx: &mut RowCheck) {
+    if let Some(material) = part.material {
+        let made_on = material.get(content).skeleton;
+        if made_on != part.skeleton {
+            cx.error(
+                "/material",
+                "material of another skeleton",
+                format!(
+                    "{} is made on {}",
+                    material.path(content),
+                    made_on.path(content)
+                ),
+                format!("a material made on {}", part.skeleton.path(content)),
+            );
+        }
+    }
     for (field, regions) in [("covers", &part.covers), ("hides", &part.hides)] {
         for (index, region) in regions.iter().enumerate() {
             if !skeleton.regions.contains(region) {
@@ -308,6 +332,7 @@ fn check_model(
         ),
         _ => {}
     }
+    material::check_colours(content, def.skeleton, &def.colours, "/colours", cx);
     for (index, &part) in def.parts.iter().enumerate() {
         let part_def = part.get(content);
         if part_def.skeleton != def.skeleton {
@@ -323,10 +348,10 @@ fn check_model(
             );
         }
     }
-    let triangles = appearance::laid(content, def.parts.iter().copied())
+    let triangles = appearance::laid(content, def.laid_parts())
         .parts
         .iter()
-        .filter_map(|part| part.get(content).mesh_for(def.build.as_ref()))
+        .filter_map(|laid| laid.part.get(content).mesh_for(def.build.as_ref()))
         .filter_map(|mesh| infos.0.get(mesh.as_str()))
         .map(|info| info.triangles)
         .sum();
@@ -463,9 +488,9 @@ fn set_name(content: &Content, def: &SkeletonDef, pointer: &str) -> String {
 pub struct ActorModel {
     def: ModelDef,
     skeleton: Arc<BuiltSkeleton>,
-    /// The meshes the model draws bare: those of the parts left showing once its own are laid, each
+    /// The skins the model draws bare: those of the parts left showing once its own are laid, each
     /// as cut for its build.
-    skins: Vec<ModelRef>,
+    skins: Vec<Skin>,
 }
 
 /// What plays for a motion: the clip, the group it is kept to, where it is in the skeleton's
@@ -511,11 +536,8 @@ impl ActorModel {
     }
 
     fn new(content: &Content, def: &ModelDef, skeleton: Arc<BuiltSkeleton>) -> ActorModel {
-        let skins = appearance::laid(content, def.parts.iter().copied())
-            .parts
-            .iter()
-            .filter_map(|part| part.get(content).mesh_for(def.build.as_ref()).cloned())
-            .collect();
+        let look = appearance::laid(content, def.laid_parts());
+        let skins = skins(content, def, &skeleton.def, &look);
         ActorModel {
             def: def.clone(),
             skeleton,
@@ -531,25 +553,20 @@ impl ActorModel {
         self.def.hitbox
     }
 
-    /// The files the model is drawn from bare: its skeleton's rig and the meshes of its own parts.
+    /// The files the model is drawn from bare: its skeleton's rig and the skins of its own parts.
     pub fn body(&self) -> BodyFiles {
         BodyFiles {
             rig: self.skeleton.def.rig.path(),
-            skins: self.skins.iter().map(ModelRef::path).collect(),
+            skins: self.skins.clone(),
         }
     }
 
     /// The files a body of the model looking as `look` is drawn from: its skeleton's rig and the
-    /// meshes of the look's parts, as cut for the model's build.
+    /// meshes of the look's parts as cut for the model's build, each painted in its colours.
     pub fn dressed(&self, content: &Content, look: &BodyLook) -> BodyFiles {
         BodyFiles {
             rig: self.skeleton.def.rig.path(),
-            skins: look
-                .parts
-                .iter()
-                .filter_map(|part| part.get(content).mesh_for(self.def.build.as_ref()))
-                .map(ModelRef::path)
-                .collect(),
+            skins: skins(content, &self.def, &self.skeleton.def, look),
         }
     }
 
@@ -723,6 +740,23 @@ fn crossed(once: bool, total: Millis, at: Millis, prev: Option<Millis>, now: Mil
         }
     };
     count(now) > prev.map_or(0, count)
+}
+
+/// The skin of each part of `look` that draws on the model's build, painted in the part's colours
+/// over the skeleton's when the part has a material.
+fn skins(content: &Content, def: &ModelDef, skeleton: &SkeletonDef, look: &BodyLook) -> Vec<Skin> {
+    look.parts
+        .iter()
+        .filter_map(|laid| {
+            let part = laid.part.get(content);
+            Some(Skin {
+                mesh: part.mesh_for(def.build.as_ref())?.path(),
+                paint: part
+                    .material
+                    .map(|material| material.get(content).paint(skeleton, &laid.colours)),
+            })
+        })
+        .collect()
 }
 
 fn listed<T: AsRef<str>>(all: &[T]) -> String {

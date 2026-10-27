@@ -17,10 +17,11 @@ type DrawnPart = (String, Option<(String, usize)>);
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
     let drawn: Option<Vec<DrawnPart>> = super::built(editor, key).map(|(content, _)| {
         let infos = content.built::<GltfInfos>();
-        appearance::laid(content, row.parts.iter().copied())
+        appearance::laid(content, row.laid_parts())
             .parts
             .into_iter()
-            .map(|part| {
+            .map(|laid| {
+                let part = laid.part;
                 let mesh = part.get(content).mesh_for(row.build.as_ref()).map(|mesh| {
                     let triangles = infos.0.get(mesh.as_str()).map_or(0, |info| info.triangles);
                     (mesh_label(mesh), triangles)

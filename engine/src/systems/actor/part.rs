@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::material::MaterialId;
 use super::skeleton::{self, BodyRegion, BuildName, SkeletonId};
 use crate::core::assets::{FileSize, ModelRef};
 use crate::core::content::gltf::GltfInfo;
@@ -30,6 +31,10 @@ pub struct ModelPartDef {
     /// The regions it leaves bare of every other part, as a hood leaves the hair.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hides: Vec<BodyRegion>,
+    /// What its meshes are painted with, made on its skeleton; without one they draw in their own
+    /// material, untinted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<MaterialId>,
     #[serde(skip)]
     pub mesh: Option<ModelRef>,
     #[serde(skip)]
@@ -120,6 +125,7 @@ impl ContentFile for ModelPartDef {
             skeleton: near.file()?,
             covers: Vec::new(),
             hides: Vec::new(),
+            material: None,
             mesh: None,
             builds: BTreeMap::new(),
         })

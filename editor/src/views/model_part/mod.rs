@@ -11,7 +11,7 @@ use std::sync::Arc;
 use engine::core::assets::FileSize;
 use engine::core::content::media::GltfInfos;
 use engine::core::content::{Content, ContentFile};
-use engine::core::render::world::body::BodyFiles;
+use engine::core::render::world::body::{BodyFiles, Skin};
 use engine::core::render::world::mannequin::RigClip;
 use engine::systems::actor::model::{Skeletons, mesh_label};
 use engine::systems::actor::part::{MAX_PART_BYTES, ModelPartDef};
@@ -135,15 +135,14 @@ fn mesh_bar(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
     });
 }
 
-/// Stands the mesh at `mesh` on the rig of `skeleton` in the middle of a stage over `size`, in its
-/// idle clip.
+/// Stands `skin` on the rig of `skeleton` in the middle of a stage over `size`, in its idle clip.
 pub(super) fn stand(
     editor: &mut Editor,
     ui: &mut Ui,
     key: &str,
     size: Vec2,
     skeleton: &BuiltSkeleton,
-    mesh: String,
+    skin: Skin,
 ) {
     let mut state = std::mem::take(&mut editor.views.model_part.view_mut(key).stage);
     let turntable = stage::turntable(editor, ui, &format!("model_part:{key}"), size, &mut state);
@@ -153,7 +152,7 @@ pub(super) fn stand(
     };
     let body = BodyFiles {
         rig: skeleton.def.rig.path(),
-        skins: vec![mesh],
+        skins: vec![skin],
     };
     let standing = stage::standing(body, idle_clip(skeleton), None, Vec::new(), Vec::new());
     turntable.stand(editor, ui, vec![standing]);

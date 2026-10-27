@@ -2,8 +2,10 @@
 //! mesh is skinned to it.
 
 use engine::core::content::media::GltfInfos;
+use engine::core::render::world::body::Skin;
 use engine::systems::actor::model::{fit_report, mesh_label};
 use engine::systems::actor::part::ModelPartDef;
+use engine::systems::actor::skeleton::Colours;
 use ui::egui::{self, Ui, Vec2};
 use ui::{form, theme};
 
@@ -45,6 +47,14 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
     };
     let skeleton = skeleton.clone();
     let skeleton_path = row.skeleton.path(content).to_owned();
+    let skin = Skin {
+        mesh: mesh.path(),
+        paint: row.material.map(|material| {
+            material
+                .get(content)
+                .paint(&skeleton.def, &Colours::default())
+        }),
+    };
     let rows = content
         .built::<GltfInfos>()
         .0
@@ -100,7 +110,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
         key,
         Vec2::new(ui.available_width(), stage_height),
         &skeleton,
-        mesh.path(),
+        skin,
     );
     ui.add_space(8.0);
     match rows {

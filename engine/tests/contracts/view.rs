@@ -14,6 +14,7 @@ use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::render::camera::ground_hit;
 use engine::core::render::world::body::{Body, BodyPlugin};
+use engine::core::render::world::material::WorldMaterial;
 use engine::core::render::{Animator, CameraRig, capsule_hit, facing_rotation, world_point};
 use engine::core::time::PlaybackRate;
 use engine::core::units::{MeterPos, Meters, MetersPerSec};
@@ -256,6 +257,7 @@ fn viewer(game: Game, folder: &std::path::Path) -> (App, engine::core::content::
     ))
     .init_asset::<Mesh>()
     .init_asset::<StandardMaterial>()
+    .init_asset::<WorldMaterial>()
     .init_asset::<Image>()
     .init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
     .init_resource::<Animator>()

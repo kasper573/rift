@@ -18,6 +18,7 @@ use crate::core::content::{
     NamedContent, Nearby, PartSpec, Parts, RowCheck, Shape, serial,
 };
 use crate::core::geometry::{Degrees, Radians};
+use crate::core::math::Rgb;
 use crate::core::render::world::layers::Gait;
 use crate::core::time::{Hertz, Millis, Seconds};
 use crate::core::units::{Meters, MetersPerSec};
@@ -95,6 +96,42 @@ name_type!(
     EquipmentSlot,
     "x-slot"
 );
+name_type!(
+    /// A colour a body is painted in wherever a material's mask marks it, such as its skin, its hair
+    /// or its metal.
+    TintName,
+    "x-tint"
+);
+
+/// A tint of a skeleton, and the colour a body is painted in unless its model, its appearance or
+/// what it wears says otherwise.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkeletonTint {
+    pub name: TintName,
+    pub colour: Rgb,
+}
+
+/// Colours by the tint each paints.
+#[derive(JsonSchema, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Colours(pub BTreeMap<TintName, Rgb>);
+
+impl Colours {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// These colours laid over `beneath`: a tint these name takes their colour, any other keeps
+    /// the one beneath.
+    pub fn over(&self, beneath: &Colours) -> Colours {
+        let mut colours = beneath.clone();
+        colours
+            .0
+            .extend(self.0.iter().map(|(tint, colour)| (tint.clone(), *colour)));
+        colours
+    }
+}
 
 /// A rig and everything shared by the models that wear it: where an item is held, how the body is
 /// grouped, what plays for each action, pose and move in each stance, the cues on those clips and
@@ -120,6 +157,10 @@ pub struct SkeletonDef {
     /// body.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slots: Vec<EquipmentSlot>,
+    /// The colours a body's parts are painted in, in the order they are painted where their masks
+    /// overlap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tints: Vec<SkeletonTint>,
     pub base: ClipSet,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stances: Vec<StanceSet>,
@@ -668,6 +709,7 @@ impl ContentFile for SkeletonDef {
             builds: Vec::new(),
             regions: Vec::new(),
             slots: Vec::new(),
+            tints: Vec::new(),
             base: ClipSet {
                 clips: <Action as strum::VariantArray>::VARIANTS
                     .iter()
@@ -726,6 +768,18 @@ impl ContentFile for SkeletonDef {
         check_names(cx, "builds", "build twice", &self.builds);
         check_names(cx, "regions", "region twice", &self.regions);
         check_names(cx, "slots", "slot twice", &self.slots);
+        let mut tints = BTreeSet::new();
+        for (index, tint) in self.tints.iter().enumerate() {
+            cx.text(format!("/tints/{index}/name"), tint.name.as_str(), 1, 32);
+            if !tints.insert(&tint.name) {
+                cx.error(
+                    format!("/tints/{index}/name"),
+                    "tint twice",
+                    tint.name.as_str(),
+                    "every name listed once",
+                );
+            }
+        }
         for &action in <Action as strum::VariantArray>::VARIANTS {
             if action.required() && !self.base.clips.contains_key(&action) {
                 cx.error(
@@ -993,6 +1047,16 @@ pub enum Rung {
 }
 
 impl SkeletonDef {
+    /// The colour of each of its tints, where nothing laid over a body says otherwise.
+    pub fn tint_colours(&self) -> Colours {
+        Colours(
+            self.tints
+                .iter()
+                .map(|tint| (tint.name.clone(), tint.colour))
+                .collect(),
+        )
+    }
+
     /// The clip the sets name for `motion` in `stance`, holding `pose` while idle, and where it was
     /// named: the stance's set names it, else the base set; a move neither names plays the stance's
     /// attack, else the base's; a sprint neither names plays the run. The base set names every other

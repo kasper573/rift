@@ -71,6 +71,7 @@ pub fn import(editor: &mut Editor, key: &str, folder: &Path) -> Result<ImportedP
                 skeleton: skeleton_id,
                 covers: Vec::new(),
                 hides: Vec::new(),
+                material: None,
                 mesh: None,
                 builds: BTreeMap::new(),
             },

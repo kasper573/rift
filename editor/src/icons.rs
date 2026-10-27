@@ -9,7 +9,7 @@ use engine::core::vfx::VfxDef;
 use engine::core::vfx::shader::VfxShaderDef;
 use engine::systems::actor::skeleton::SkeletonDef;
 use engine::systems::actor::stance::StanceDef;
-use engine::systems::actor::{ModelDef, ModelPartDef};
+use engine::systems::actor::{MaterialDef, ModelDef, ModelPartDef};
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
@@ -164,6 +164,7 @@ impl KindFamily {
             | ClassDef::TABLE
             | ModelDef::TABLE
             | ModelPartDef::TABLE
+            | MaterialDef::TABLE
             | BustDef::TABLE
             | SkeletonDef::TABLE => KindFamily::Characters,
             ItemDef::TABLE | ShopDef::TABLE | StanceDef::TABLE => KindFamily::Items,
@@ -209,6 +210,7 @@ pub fn of_table(table: &str) -> KindIcon {
         ClassDef::TABLE => KindIcon::plain(phosphor::SHIELD_STAR),
         ModelDef::TABLE => KindIcon::plain(phosphor::PERSON_ARMS_SPREAD).unpictured(),
         ModelPartDef::TABLE => KindIcon::plain(phosphor::PUZZLE_PIECE).unpictured(),
+        MaterialDef::TABLE => KindIcon::plain(phosphor::PALETTE).unpictured(),
         BustDef::TABLE => KindIcon::plain(phosphor::USER_SQUARE).unpictured(),
         SkeletonDef::TABLE => KindIcon::plain(phosphor::BONE).unpictured(),
         StanceDef::TABLE => KindIcon::plain(phosphor::HAND_FIST),

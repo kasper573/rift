@@ -28,7 +28,7 @@ use crate::core::math::{Offset, Pos};
 use crate::core::time::Seconds;
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::actor::part::ModelPartId;
-use crate::systems::actor::skeleton::{EquipmentSlot, LocalOffset, LocalTurn, SkeletonId};
+use crate::systems::actor::skeleton::{Colours, EquipmentSlot, LocalOffset, LocalTurn, SkeletonId};
 use crate::systems::actor::stance::StanceId;
 use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
@@ -401,7 +401,7 @@ pub fn check_pictures(loading: &mut Loading) {
 }
 
 /// Every look of a worn item is on a skeleton that has the item's slot, one look a skeleton, and
-/// lays parts made on that skeleton.
+/// lays parts made on that skeleton in colours of its tints.
 pub fn check_looks(loading: &mut Loading) {
     let content = loading.content();
     for (id, item) in loading.rows::<ItemDef>(&content) {
@@ -445,6 +445,13 @@ pub fn check_looks(loading: &mut Loading) {
                     );
                 }
             }
+            crate::systems::actor::material::check_colours(
+                &content,
+                look.skeleton,
+                &look.colours,
+                &format!("{at}/colours"),
+                &mut check,
+            );
         }
         loading.row_errors(id, check);
     }
@@ -612,12 +619,15 @@ pub enum Wear {
     },
 }
 
-/// The parts a worn item lays over a body of `skeleton`.
+/// The parts a worn item lays over a body of `skeleton`, and the colours they are painted in over
+/// the wearer's.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WornLook {
     pub skeleton: SkeletonId,
     pub parts: Vec<ModelPartId>,
+    #[serde(default, skip_serializing_if = "Colours::is_empty")]
+    pub colours: Colours,
 }
 
 /// How a prop sits in the hand it hangs from, in the hand's frame: none for a prop whose handle is

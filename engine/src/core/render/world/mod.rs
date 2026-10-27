@@ -12,6 +12,7 @@ pub mod layers;
 pub mod lights;
 pub mod mannequin;
 pub mod material;
+pub mod paint;
 pub mod sky;
 pub mod terrain;
 
