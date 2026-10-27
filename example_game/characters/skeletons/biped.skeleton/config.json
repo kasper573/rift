@@ -37,8 +37,20 @@
       },
       "walk": "walk",
       "run": "run",
-      "attack": "punch",
-      "death": "death",
+      "sprint": "sprint",
+      "attack": {
+        "variants": [
+          "punch",
+          "kick"
+        ],
+        "order": "in_turn"
+      },
+      "death": {
+        "variants": [
+          "death",
+          "death_b"
+        ]
+      },
       "talk": {
         "clip": "talk",
         "only": "upper"
@@ -191,6 +203,7 @@
       "set": {
         "clips": {
           "idle": "bow_idle",
+          "sprint": "bow_sprint",
           "attack": "bow_shoot"
         },
         "moves": {
@@ -226,7 +239,8 @@
       "set": {
         "clips": {
           "idle": "shield_idle",
-          "attack": "shield_bash"
+          "attack": "shield_bash",
+          "hurt": "shield_hit"
         },
         "moves": {
           "bash": "shield_bash",
@@ -246,7 +260,8 @@
               "1h_chop"
             ],
             "order": "in_turn"
-          }
+          },
+          "hurt": "shield_hit"
         },
         "moves": {
           "bash": "shield_bash",
@@ -329,7 +344,23 @@
         "apex": true
       }
     ],
+    "bow_sprint": [
+      {
+        "at": 250.0,
+        "step": true
+      },
+      {
+        "at": 650.0,
+        "step": true
+      }
+    ],
     "death": [
+      {
+        "at": 0.0,
+        "sound": "sound-and-voice/sfx/death01.sfx"
+      }
+    ],
+    "death_b": [
       {
         "at": 0.0,
         "sound": "sound-and-voice/sfx/death01.sfx"
@@ -354,6 +385,13 @@
         "at": 367.0,
         "apex": true,
         "sound": "sound-and-voice/sfx/slash01.sfx"
+      }
+    ],
+    "kick": [
+      {
+        "at": 383.0,
+        "apex": true,
+        "sound": "sound-and-voice/sfx/block01.sfx"
       }
     ],
     "punch": [
@@ -393,6 +431,16 @@
         "apex": true
       }
     ],
+    "sprint": [
+      {
+        "at": 250.0,
+        "step": true
+      },
+      {
+        "at": 650.0,
+        "step": true
+      }
+    ],
     "throw": [
       {
         "at": 600.0,
@@ -411,7 +459,9 @@
     ]
   },
   "paces": {
+    "bow_sprint": 3.3,
     "run": 2.19,
+    "sprint": 3.3,
     "walk": 0.6
   }
 }

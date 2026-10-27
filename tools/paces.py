@@ -35,7 +35,7 @@ def main():
         tracks, length = channels(library, animation)
         times = np.arange(0.0, length, 1.0 / SAMPLES_PER_SECOND)
         speeds = []
-        for foot in feet:
+        for foot in feet if len(times) > 1 else []:
             path_of = np.array([placed(nodes, parents, tracks, named[foot], t) for t in times])
             speeds.extend(planted_speeds(path_of))
         pace = float(np.mean(speeds)) if speeds else 0.0

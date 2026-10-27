@@ -345,7 +345,12 @@
           "spell_shoot": "kaykit-animations:Rig_Medium_CombatRanged.glb#Ranged_Magic_Shoot",
           "shield_idle": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Blocking",
           "shield_bash": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Block_Attack",
-          "shield_block": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Block"
+          "shield_block": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Block",
+          "sprint": "kaykit-animations:Rig_Medium_MovementBasic.glb#Running_B",
+          "bow_sprint": "kaykit-animations:Rig_Medium_MovementAdvanced.glb#Running_HoldingBow",
+          "kick": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Unarmed_Attack_Kick",
+          "death_b": "Death_B",
+          "shield_hit": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Block_Hit"
         },
         "town": {
           "sit": "kaykit-animations:Rig_Medium_Simulation.glb#Sit_Chair_Idle",
