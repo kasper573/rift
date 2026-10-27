@@ -27,7 +27,7 @@ use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::model::ModelId;
-use crate::systems::actor::render::Puppet;
+use crate::systems::actor::render::{Flinch, Puppet};
 use crate::systems::actor::skeleton::{ClipName, SkeletonId};
 use crate::systems::actor::stance::{HandIndex, StanceId};
 use crate::systems::actor::{self, Action, Actor, ActorModel, Appearance, Hitbox, Motion, Playing};
@@ -216,6 +216,8 @@ pub struct ProbeBody {
     pub action: Action,
     /// Whether it stands still rather than walks.
     pub resting: bool,
+    /// Whether it flinches at a blow that just landed on it.
+    pub flinching: bool,
     /// Where its feet and the top of its head show in the window, as drawn.
     pub feet: Option<Pos<WindowPx>>,
     pub head: Option<Pos<WindowPx>>,
@@ -961,6 +963,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         facing: actor.facing,
         action: actor.action,
         resting: !actor.action.moves(),
+        flinching: entity.get::<Flinch>().is_some_and(|flinch| flinch.shown),
         feet: view.map(|view| view.window_point(drawn, ground)),
         head: view.map(|view| view.window_point(drawn, ground + capsule.height)),
         health: stat(StatKind::Health),

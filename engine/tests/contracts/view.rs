@@ -21,7 +21,7 @@ use engine::core::units::{MeterPos, Meters, MetersPerSec};
 use engine::systems::actor::held::Held;
 use engine::systems::actor::render::{self, HeldProp, RenderActor};
 use engine::systems::actor::stance::HandIndex;
-use engine::systems::actor::{Action, Actor, Appearance, ModelDef, Pose};
+use engine::systems::actor::{Action, Actor, Appearance, Hurt, ModelDef, Pose};
 use engine::systems::area::{self, AreaDef, AreaTag};
 use engine::systems::item::ItemDef;
 use engine::systems::movement::RenderPosition;
@@ -473,6 +473,100 @@ fn a_looping_clips_variants_take_turns_each_as_the_one_before_plays_through() {
             .all(|(turn, id)| *id == if turn % 2 == 0 { hum } else { tap }),
         "the idle hums, then taps, then hums again: {heard:?}"
     );
+}
+
+#[test]
+fn a_standing_body_flinches_once_at_each_new_blow() {
+    let clips: Vec<(&str, engine::core::time::Seconds)> = testkit::rig_clips()
+        .into_iter()
+        .chain([("flinch", CLIP.seconds())])
+        .collect();
+    let mut base: serde_json::Map<String, serde_json::Value> =
+        <Action as strum::VariantArray>::VARIANTS
+            .iter()
+            .filter(|action| **action != Action::Hurt)
+            .map(|action| (action.as_ref().to_owned(), json!(action.as_ref())))
+            .collect();
+    base.insert("hurt".to_owned(), json!("flinch"));
+    let game = Game::new()
+        .area("field", &Map::open(5, 5), json!([]))
+        .sfx("ow")
+        .skeleton_of(
+            BODY,
+            &clips,
+            json!({
+                "base": { "clips": base },
+                "cues": {
+                    "attack": [{ "at": APEX.0, "apex": true }],
+                    "flinch": [{ "at": 50.0, "sound": path("sfx", "ow") }],
+                },
+            }),
+        )
+        .hero("field", 2.0, 2.0);
+    let content = game.load();
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            50,
+        )))
+        .init_resource::<Animator>()
+        .add_message::<PlaySfx>()
+        .insert_resource(content.clone());
+    let hero = testkit::Declared::declared::<ModelDef>(&content, "hero").expect("a hero");
+    let field = testkit::Declared::declared::<AreaDef>(&content, "field").expect("a field");
+    let mut body = |at: Pos<Meters>, blows: u32| {
+        app.world_mut()
+            .spawn((
+                Actor {
+                    facing: Radians(0.0),
+                    action: Action::Idle,
+                    pose: Pose::Idle,
+                    attack_rate: PlaybackRate(1.0),
+                    speed: MetersPerSec::default(),
+                },
+                Appearance::of(hero),
+                RenderActor {
+                    facing: Radians(0.0),
+                    action: Action::Idle,
+                },
+                RenderPosition(at),
+                AreaTag { area: field },
+                Hurt(blows),
+            ))
+            .id()
+    };
+    let struck = body(Pos::new(1.5, 1.5), 0);
+    let arrived = body(Pos::new(3.5, 3.5), 3);
+    let heard = |app: &mut App, frames: usize| {
+        let mut heard = Vec::new();
+        for _ in 0..frames {
+            app.update();
+            app.world_mut()
+                .run_system_cached(render::pose)
+                .expect("posed");
+            heard.extend(
+                app.world_mut()
+                    .resource_mut::<Messages<PlaySfx>>()
+                    .drain()
+                    .map(|sound| sound.place),
+            );
+        }
+        heard
+    };
+
+    assert_eq!(
+        heard(&mut app, 4),
+        Vec::new(),
+        "no blow, no flinch: not even at blows landed before it was seen"
+    );
+    app.world_mut().entity_mut(struck).insert(Hurt(1));
+    let after_one = heard(&mut app, 12);
+    app.world_mut().entity_mut(struck).insert(Hurt(2));
+    app.world_mut().entity_mut(arrived).insert(Hurt(3));
+    let after_two = heard(&mut app, 12);
+    let at_struck = SfxPlace::World(Pos::new(1.5, 1.5));
+    assert_eq!(after_one, vec![at_struck], "a blow, a flinch, played once");
+    assert_eq!(after_two, vec![at_struck], "the next blow, the next flinch");
 }
 
 /// The joint of the standing body's rig named `name`, once the rig stands.

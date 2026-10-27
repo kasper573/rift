@@ -26,6 +26,11 @@ fn an_attack_walks_into_range_and_strikes() {
         brute,
         StatKind::Health
     ) < full));
+    assert_eq!(
+        sim.world.get::<actor::Hurt>(brute),
+        Some(&actor::Hurt(1)),
+        "the blow counts, for its body to flinch at"
+    );
 }
 
 // Right beside the player, so the fight stays where it starts.

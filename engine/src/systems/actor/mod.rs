@@ -49,6 +49,7 @@ pub fn register(app: &mut App) {
         .replicate::<Held>()
         .replicate::<held::ScriptedStance>()
         .replicate::<Hitbox>()
+        .replicate::<Hurt>()
         .replicate_once::<Name>();
 }
 
@@ -97,6 +98,8 @@ pub enum Action {
     #[strum(serialize = "death")]
     Dead,
     Talk,
+    /// A flinch at a blow landing, shown by a standing body whose skeleton has a clip for it.
+    Hurt,
 }
 
 impl Action {
@@ -114,11 +117,16 @@ impl Action {
     }
 
     /// Whether every skeleton's base set must name a clip for the action: all but the sprint, which
-    /// a skeleton without one never breaks into.
+    /// a skeleton without one never breaks into, and the flinch, which a body without one never
+    /// shows.
     pub fn required(self) -> bool {
-        self != Action::Sprint
+        !matches!(self, Action::Sprint | Action::Hurt)
     }
 }
+
+/// How many blows have landed on an actor: its body flinches at each new one.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Hurt(pub u32);
 
 /// How an actor holds itself while idle: standing, or sitting when its model has a clip for it.
 #[derive(

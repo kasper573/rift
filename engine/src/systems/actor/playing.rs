@@ -53,7 +53,7 @@ impl Motion {
     /// a hit lands once, a body falls once, sits down once.
     pub fn once(&self) -> bool {
         matches!(self, Motion::Begin(_) | Motion::End(_))
-            || matches!(self.action(), Action::Attack | Action::Dead)
+            || matches!(self.action(), Action::Attack | Action::Dead | Action::Hurt)
     }
 }
 

@@ -42,6 +42,13 @@
       "talk": {
         "clip": "talk",
         "only": "upper"
+      },
+      "hurt": {
+        "variants": [
+          "hit_a",
+          "hit_b"
+        ],
+        "order": "in_turn"
       }
     },
     "poses": {

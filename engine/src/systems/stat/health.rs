@@ -2,6 +2,7 @@ use bevy_ecs::prelude::*;
 
 use super::{StatKind, Stats, base, effective};
 use crate::core::vfx::VfxSite;
+use crate::systems::actor::Hurt;
 use crate::systems::notification;
 use crate::systems::vfx::{VfxFixture, VfxShaderFixture, fixture};
 
@@ -52,6 +53,8 @@ pub fn apply_damage(world: &mut World, entity: Entity, amount: f32) {
     };
     set_health(world, entity, |health, _| (health - amount).max(floor));
     if amount > 0.0 {
+        let blows = world.get::<Hurt>(entity).map_or(0, |hurt| hurt.0);
+        world.entity_mut(entity).insert(Hurt(blows + 1));
         fixture::play(world, VfxFixture::DamageTaken, VfxSite::Actor(entity));
         let shown = whole(amount).to_string();
         notification::pop_as(world, entity, shown, VfxShaderFixture::DamagePop);

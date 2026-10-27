@@ -101,6 +101,11 @@ fn play(shoot: &mut Shoot) {
             .any(|actor| npc_is(actor, PACK) && actor.held.len() == 2)
     });
     me.hold();
+    me.caption("Stand and take it, and each blow that lands makes you flinch");
+    me.wait_until("a blow to flinch at", |snapshot| {
+        snapshot.me.as_ref().is_some_and(|me| me.flinching)
+    });
+    me.hold();
 }
 
 const GREATER_POTION: &str = "greater_health_potion";

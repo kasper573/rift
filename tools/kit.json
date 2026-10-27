@@ -354,7 +354,9 @@
           "sleep": "kaykit-animations:Rig_Medium_Simulation.glb#Lie_Idle",
           "lie_down": "kaykit-animations:Rig_Medium_Simulation.glb#Lie_Down",
           "get_up": "kaykit-animations:Rig_Medium_Simulation.glb#Lie_StandUp",
-          "idle_b": "Idle_B"
+          "idle_b": "Idle_B",
+          "hit_a": "Hit_A",
+          "hit_b": "Hit_B"
         }
       }
     },

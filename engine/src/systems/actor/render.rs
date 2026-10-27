@@ -19,7 +19,7 @@ use super::model::ClipSource;
 use super::skeleton::EquipmentSlot;
 use super::skeleton::{Cue, GroupName, Hand, LocalOffset, LocalTurn, SkeletonId};
 use super::stance::{self, HandIndex, PropHand};
-use super::{Action, Actor, ActorModel, Appearance, ModelId, Motion, Playing, Pose};
+use super::{Action, Actor, ActorModel, Appearance, Hurt, ModelId, Motion, Playing, Pose};
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::content::Content;
 use crate::core::content::gltf::NodeTree;
@@ -127,7 +127,17 @@ struct Play {
     pose: Pose,
     stance: Option<u32>,
     started: Option<UnixMillis>,
+    struck: Option<u32>,
     variant: usize,
+}
+
+/// The blows a body has seen land, when it began to flinch at the newest, and whether it shows the
+/// flinch now. A blow that landed before the body came into view is never flinched at.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Flinch {
+    blows: u32,
+    since: Option<Seconds>,
+    pub shown: bool,
 }
 
 /// A node playing on the rig, fading toward its weight.
@@ -437,14 +447,36 @@ pub fn pose(world: &mut World) {
         let given = playing
             .as_ref()
             .filter(|playing| playing.motion.action() == shown.action);
-        let motion = given.map_or(Motion::Action(shown.action), |playing| {
-            playing.motion.clone()
-        });
+        let blows = world.get::<Hurt>(entity).map_or(0, |hurt| hurt.0);
+        let flinched = flinched(world, entity, blows, now);
+        let flinch = Motion::Action(Action::Hurt);
+        let flinch_variant =
+            blows as usize % model.cell(stance, &flinch, actor.pose).variants().len();
+        let flinching = given.is_none()
+            && matches!(shown.action, Action::Idle | Action::Talk)
+            && model.skeleton().def.names(stance, Action::Hurt)
+            && flinched.is_some_and(|since| {
+                now - since
+                    < model
+                        .resolve(stance, &flinch, actor.pose, flinch_variant)
+                        .length
+            });
+        if let Some(mut shown_flinch) = world.get_mut::<Flinch>(entity)
+            && shown_flinch.shown != flinching
+        {
+            shown_flinch.shown = flinching;
+        }
+        let motion = match given {
+            _ if flinching => flinch,
+            Some(playing) => playing.motion.clone(),
+            None => Motion::Action(shown.action),
+        };
         let mut play = Play {
             motion: motion.clone(),
             pose: actor.pose,
             stance: stance.map(|stance| stance.raw()),
             started: given.map(|playing| playing.started),
+            struck: flinching.then_some(blows),
             variant: 0,
         };
         let repeat = if motion.once() {
@@ -463,14 +495,18 @@ pub fn pose(world: &mut World) {
             resolved.length / model.rate(&motion, &resolved, actor.attack_rate, actor.speed)
         };
         let mut next = |last, rng: &mut Rng| cell.after(last, rng);
-        let turns = (given.is_none() && cell.variants().len() > 1).then_some(Turns {
+        let turns = (!motion.once() && cell.variants().len() > 1).then_some(Turns {
             length: &played_once,
             next: &mut next,
         });
         let playhead = world
             .resource_mut::<Animator>()
             .advance(entity, state, now, turns);
-        play.variant = given.map_or(playhead.turn, |playing| playing.variant);
+        play.variant = match given {
+            _ if flinching => flinch_variant,
+            Some(playing) => playing.variant,
+            None => playhead.turn,
+        };
         let resolved = model.resolve(stance, &motion, actor.pose, play.variant);
         let rate = model.rate(&motion, &resolved, actor.attack_rate, actor.speed);
         let stepped = {
@@ -604,6 +640,26 @@ pub fn pose(world: &mut World) {
     world.resource_scope(|world, mut animator: Mut<Animator>| {
         animator.retain(|entity| world.get_entity(entity).is_ok());
     });
+}
+
+/// When the body began to flinch at the newest blow it has seen land, keeping count of the blows.
+fn flinched(world: &mut World, entity: Entity, blows: u32, now: Seconds) -> Option<Seconds> {
+    let seen = world.get::<Flinch>(entity).copied();
+    let flinch = match seen {
+        Some(seen) if seen.blows == blows => return seen.since,
+        Some(seen) => Flinch {
+            blows,
+            since: Some(now),
+            shown: seen.shown,
+        },
+        None => Flinch {
+            blows,
+            since: None,
+            shown: false,
+        },
+    };
+    world.entity_mut(entity).insert(flinch);
+    flinch.since
 }
 
 /// What a body standing at `at` on `ground` sounds for the cues of its clip it just `crossed`: each
