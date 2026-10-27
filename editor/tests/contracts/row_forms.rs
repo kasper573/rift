@@ -38,7 +38,12 @@ fn a_test_character_shows_where_it_starts_in_an_area_of_any_size() {
             .row(
                 "test_character",
                 "tester",
-                json!({ "name": "Tester", "class": path("class", "hero"), "start": "initial_spawn" }),
+                json!({
+                    "name": "Tester",
+                    "class": path("class", "hero"),
+                    "appearance": { "model": path("model", "hero") },
+                    "start": "initial_spawn",
+                }),
             )
             .engine_rows()
             .whole();
@@ -75,10 +80,26 @@ fn a_test_character_set_up_for_a_quest_moment_starts_beside_whom_it_is_with() {
                 json!([resident("giver", giver), resident("taker", taker)]),
             )
             .hero(support::AREA, 1.0, 1.0)
-            .script("giver_talk", "npc", talks(json!({ "type": "offer_quest", "quest": letter })))
-            .script("taker_talk", "npc", talks(json!({ "type": "turn_in", "quest": letter })))
-            .npc("giver", 40.0, json!([{ "type": "script", "script": path("script", "giver_talk") }]))
-            .npc("taker", 40.0, json!([{ "type": "script", "script": path("script", "taker_talk") }]))
+            .script(
+                "giver_talk",
+                "npc",
+                talks(json!({ "type": "offer_quest", "quest": letter })),
+            )
+            .script(
+                "taker_talk",
+                "npc",
+                talks(json!({ "type": "turn_in", "quest": letter })),
+            )
+            .npc(
+                "giver",
+                40.0,
+                json!([{ "type": "script", "script": path("script", "giver_talk") }]),
+            )
+            .npc(
+                "taker",
+                40.0,
+                json!([{ "type": "script", "script": path("script", "taker_talk") }]),
+            )
             .row(
                 "quest",
                 "letter",
@@ -96,7 +117,12 @@ fn a_test_character_set_up_for_a_quest_moment_starts_beside_whom_it_is_with() {
             .row(
                 "test_character",
                 "tester",
-                json!({ "name": "Tester", "class": path("class", "hero"), "start": "initial_spawn" }),
+                json!({
+                    "name": "Tester",
+                    "class": path("class", "hero"),
+                    "appearance": { "model": path("model", "hero") },
+                    "start": "initial_spawn",
+                }),
             )
             .engine_rows()
             .whole();
@@ -164,7 +190,7 @@ fn an_edit_to_a_field_the_rows_hold_apart_sets_it_in_every_row_unless_it_holds_m
         .npc("bear", 10.0, json!([]))
         .item(
             "cap",
-            json!({ "kind": { "type": "equipment", "slot": "head" } }),
+            json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" } }),
         )
         .item("ore", json!({ "kind": { "type": "resource" } }));
     let mut editor = support::open(game, &scratch);
@@ -283,7 +309,7 @@ fn a_spreadsheet_cell_is_edited_from_the_keyboard_alone() {
     let reader = editor.reader().expect("a project");
     assert_eq!(npc.name, "Grey wolf");
     assert_eq!(
-        reader.path_of(npc.model),
+        reader.path_of(npc.appearance.model),
         Some(path("model", "bear").as_str())
     );
     assert_eq!(npc.stats.get(StatKind::AttackDelay), 12.0);
@@ -394,7 +420,8 @@ fn a_cells_picker_makes_a_new_file_beside_the_row_and_names_it_in_the_cell() {
         frames.run(events, |ui| spreadsheet::show(editor, ui, "npc"))
     };
     sheet(&mut editor, Vec::new());
-    editor.views.spreadsheet.state_mut("npc").selected = Some((orc.clone(), "model".to_owned()));
+    editor.views.spreadsheet.state_mut("npc").selected =
+        Some((orc.clone(), "appearance.model".to_owned()));
     sheet(&mut editor, key(egui::Key::Enter, egui::Modifiers::NONE));
     sheet(&mut editor, Vec::new());
     let drawn = sheet(&mut editor, Vec::new());
@@ -409,7 +436,7 @@ fn a_cells_picker_makes_a_new_file_beside_the_row_and_names_it_in_the_cell() {
         .expect("the npc reads");
     let reader = editor.reader().expect("a project");
     assert_eq!(
-        reader.path_of(npc.model),
+        reader.path_of(npc.appearance.model),
         Some(path("model", "model").as_str())
     );
 }
@@ -1082,6 +1109,7 @@ fn a_skill_requirement_added_to_a_tree_node_starts_at_a_node_it_may_require() {
             json!({
                 "name": "Hero",
                 "icon": "icons/hero.png",
+                "model": path("model", "hero"),
                 "levels": [{ "xp": 0, "skill_points": 1 }],
                 "tree": {
                     "guard": { "skill": path("skill", "guard"), "at": { "x": 0.0, "y": 0.0 } },

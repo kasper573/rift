@@ -1,22 +1,24 @@
 use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
+use engine::core::content::Content;
 use engine::core::math::Offset;
 use engine::core::time::{Millis, Seconds, UnixMillis};
 use engine::core::units::Meters;
-use engine::systems::actor::skeleton::MoveName;
+use engine::systems::actor::held::{self, Held};
+use engine::systems::actor::skeleton::{EquipmentSlot, MoveName};
 use engine::systems::actor::stance::{HandIndex, StanceDef};
-use engine::systems::actor::wearing::{self, Wearing};
 use engine::systems::actor::{self, Action, Motion, Playing};
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest, Attitude};
-use engine::systems::equipment::{self, Equipment, EquipmentSlot};
+use engine::systems::equipment::{self, Equipment, EquipmentPlace};
 use engine::systems::item::{DroppedItem, Inventory, ItemDef, ItemId};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef, Pack};
+use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs};
 use engine::systems::skill::{self, SkillDef};
 use engine::systems::stat::{self, StatKind};
-use engine::systems::{rewards, script, status};
+use engine::systems::{GameSettings, rewards, script, status};
 use serde_json::{Value, json};
 use testkit::{APEX, BODY, CLIP, Game, Map, Sim, path, rig_clips};
 
@@ -93,7 +95,7 @@ fn the_hands_put_their_wearer_in_one_stance() {
             "{case}"
         );
         assert_eq!(
-            wearing::stance_of(&sim.world, player),
+            held::stance_of(&sim.world, player),
             Some(sim.id::<StanceDef>(stance)),
             "{case}"
         );
@@ -114,7 +116,7 @@ fn a_two_hander_takes_both_hands_returning_what_they_held_or_is_refused_whole() 
         let before = (hands(&sim, player), bag(&sim, player));
         let greatsword = sim.id::<ItemDef>("greatsword");
 
-        let equipped = equipment::equip_held(&mut sim.world, player, greatsword);
+        let equipped = equipment::equip_from_bag(&mut sim.world, player, greatsword);
 
         if full {
             assert!(equipped.is_err(), "a full bag has no room for both");
@@ -173,7 +175,7 @@ fn a_move_the_stance_lacks_plays_its_attack_and_still_lands_at_the_apex() {
 }
 
 #[test]
-fn an_npcs_wear_list_puts_it_in_a_stance_and_grants_nothing() {
+fn an_npcs_held_list_puts_it_in_a_stance_and_grants_nothing() {
     let game = armoury()
         .resource("bone", 10)
         .npc(
@@ -182,23 +184,21 @@ fn an_npcs_wear_list_puts_it_in_a_stance_and_grants_nothing() {
             json!([{ "type": "loot", "xp": 0, "items": [{ "item": path("item", "bone") }] }]),
         )
         .edit("npc", "guard", |guard| {
-            guard["wearing"] = json!([path("item", "sword")])
+            guard["held"] = json!([path("item", "sword")])
         });
     let (mut sim, player) = armed(game);
     let guard = foe(&mut sim, player, "guard");
     sim.tick();
 
     assert_eq!(
-        sim.world
-            .get::<Wearing>(guard)
-            .map(|wearing| wearing.hands.clone()),
+        sim.world.get::<Held>(guard).map(|held| held.hands.clone()),
         Some(BTreeMap::from([(
             HandIndex::MAIN,
             sim.id::<ItemDef>("sword")
         )]))
     );
     assert_eq!(
-        wearing::stance_of(&sim.world, guard),
+        held::stance_of(&sim.world, guard),
         Some(sim.id::<StanceDef>("sword"))
     );
     assert!(skill::known(&sim.world, guard).is_empty());
@@ -228,20 +228,37 @@ fn a_players_body_shows_its_equipped_hands_and_never_its_head() {
         BTreeMap::from([(HandIndex::MAIN, sword)])
     );
 
-    equipment::unequip_slot(&mut sim.world, player, EquipmentSlot::Hand(HandIndex::MAIN))
-        .expect("the sword comes off");
+    equipment::unequip_slot(
+        &mut sim.world,
+        player,
+        EquipmentPlace::Hand(HandIndex::MAIN),
+    )
+    .expect("the sword comes off");
     assert_eq!(shown(&sim, player), BTreeMap::new());
     assert_eq!(
-        equipment::in_slot(&sim.world, player, EquipmentSlot::Head),
+        equipment::in_slot(
+            &sim.world,
+            player,
+            &EquipmentPlace::Slot(EquipmentSlot::new("head"))
+        ),
         Some(sim.id::<ItemDef>("helm"))
     );
 
-    let (sim, player) = armed(armoury().edit("player", "hero", |hero| {
-        hero["equipped"] = json!([path("item", "sword"), path("item", "helm")]);
-    }));
+    let content = sim.world.resource::<Content>().clone();
+    let settings = content.built::<GameSettings>();
+    let mut snapshot =
+        CharacterSnapshot::of_player(&content, "Hero", settings.player.get(&content));
+    snapshot.equipped = vec![sword, sim.id::<ItemDef>("helm")];
+    let joined = sim.join_as(
+        2,
+        JoinAs {
+            snapshot,
+            start: settings.initial_spawn,
+        },
+    );
     assert_eq!(
-        shown(&sim, player),
-        BTreeMap::from([(HandIndex::MAIN, sim.id::<ItemDef>("sword"))]),
+        shown(&sim, joined),
+        BTreeMap::from([(HandIndex::MAIN, sword)]),
         "a player who joins equipped shows it from the start"
     );
 }
@@ -304,7 +321,8 @@ fn armoury() -> Game {
         .stance("dual_daggers", 1, "either")
         .stance("greatsword", 2, "main")
         .stance("shield", 1, "off")
-        .item("helm", json!({ "kind": { "type": "equipment", "slot": "head" } }));
+        .item("helm", json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" } }))
+        .slots(BODY, &["head"]);
     let game = skill(game, "strike", json!({ "action": "attack" }));
     let game = skill(game, "lunge", json!({ "move": "thrust" }));
     [
@@ -325,7 +343,7 @@ fn armoury() -> Game {
             json!({
                 "kind": {
                     "type": "equipment",
-                    "slot": "hand",
+                    "wear": "held",
                     "stance": path("stance", stance),
                     "grants": grants,
                 },
@@ -410,7 +428,7 @@ fn foe(sim: &mut Sim, near: Entity, name: &str) -> Entity {
 fn wear(sim: &mut Sim, player: Entity, item: &str) {
     sim.give(player, item, 1);
     let item = sim.id::<ItemDef>(item);
-    equipment::equip_held(&mut sim.world, player, item).expect("worn");
+    equipment::equip_from_bag(&mut sim.world, player, item).expect("worn");
 }
 
 fn hands(sim: &Sim, player: Entity) -> BTreeMap<HandIndex, ItemId> {
@@ -419,7 +437,7 @@ fn hands(sim: &Sim, player: Entity) -> BTreeMap<HandIndex, ItemId> {
 
 fn shown(sim: &Sim, player: Entity) -> BTreeMap<HandIndex, ItemId> {
     sim.world
-        .get::<Wearing>(player)
+        .get::<Held>(player)
         .map(|wearing| wearing.hands.clone())
         .unwrap_or_default()
 }

@@ -1,6 +1,9 @@
 {
   "name": "Forest Bound",
   "class": "characters/class/fighter.class.json",
+  "appearance": {
+    "model": "characters/models/knight.model.json"
+  },
   "xp": 80,
   "basic_attack": "items-and-skills/skill/slash.skill.json",
   "bag": [

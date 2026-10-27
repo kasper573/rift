@@ -6,6 +6,7 @@
 
 pub mod clips;
 pub mod hands;
+pub mod import;
 pub mod inspect;
 pub mod joints;
 pub mod layers;
@@ -28,11 +29,11 @@ use engine::systems::actor::skeleton::{
     SkeletonDef, SkeletonId,
 };
 use engine::systems::actor::stance::HandIndex;
-use engine::systems::actor::{Action, ModelDef, Motion, Pose, wearing};
+use engine::systems::actor::{Action, ModelDef, Motion, Pose, held};
 use engine::systems::item::{Grip, ItemDef, Wear};
 use serde::Deserialize;
 use ui::egui::{self, Rect, Ui, Vec2};
-use ui::{chip, controls, theme};
+use ui::{chip, controls, theme, words};
 
 use super::area::camera::AreaCanvas;
 use super::area::viewport::{StageLayers, StandingProp};
@@ -225,7 +226,7 @@ pub fn hand_items(content: &Content) -> Vec<(String, String)> {
     content
         .table::<ItemDef>()
         .iter()
-        .filter(|(_, item)| matches!(item.wear(), Some(Wear::Hand { .. })))
+        .filter(|(_, item)| matches!(item.wear(), Some(Wear::Held { .. })))
         .map(|(id, item)| (id.path(content).to_owned(), item.shown_name().to_owned()))
         .collect()
 }
@@ -486,7 +487,7 @@ fn holding(editor: &Editor, key: &str, content: &Content, id: SkeletonId) -> Vec
     let Some(item) = trying(editor, key, content) else {
         return Vec::new();
     };
-    let hands = wearing::listed(content, model.hands().len(), &[item]);
+    let hands = held::listed(content, model.hands().len(), &[item]);
     stage::props(content, model, &hands)
 }
 
@@ -502,7 +503,7 @@ fn tried_in_hand(editor: &Editor, key: &str, content: &Content, hand: usize) -> 
         return Vec::new();
     };
     let grip = match item.get(content).wear() {
-        Some(Wear::Hand { grip, .. }) => *grip,
+        Some(Wear::Held { grip, .. }) => *grip,
         _ => Grip::default(),
     };
     stage::prop_in_hand(content, model, HandIndex(hand as u8), item, &grip)
@@ -515,15 +516,38 @@ fn trying(editor: &Editor, key: &str, content: &Content) -> Option<engine::syste
     content.by_path::<ItemDef>(trying)
 }
 
-/// Takes the files dropped on the view: a glTF binary is offered as a library or the rig.
+/// Takes the files dropped on the view: a folder's meshes become the skeleton's parts, a glTF
+/// binary is offered as a library or the rig.
 fn take_drops(editor: &mut Editor, key: &str) {
     let drops = std::mem::take(&mut editor.views.skeleton.drops);
+    if let Some(folder) = drops.iter().find(|path| path.is_dir()) {
+        match import::import(editor, key, folder) {
+            Ok(imported) => {
+                if !imported.unpaired.is_empty() {
+                    editor.say(format!(
+                        "Unpaired, cut for some builds only: {}",
+                        imported.unpaired.join(", ")
+                    ));
+                }
+                editor.toast(format!(
+                    "Imported {}, {}",
+                    words::counted(imported.parts.len(), "part"),
+                    words::counted(imported.unpaired.len(), "unpaired file")
+                ));
+            }
+            Err(error) => editor.toast(error),
+        }
+        return;
+    }
     let Some(path) = drops.iter().rev().find(|path| {
         path.extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("glb"))
     }) else {
         if !drops.is_empty() {
-            editor.toast("Drop a .glb on a skeleton to add a library or replace its rig");
+            editor.toast(
+                "Drop a .glb on a skeleton to add a library or replace its rig, or a folder of \
+                 part meshes to add its parts",
+            );
         }
         return;
     };

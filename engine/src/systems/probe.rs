@@ -25,12 +25,12 @@ use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height
 use crate::core::time::{self, PlaybackRate, Seconds};
 use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
+use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::model::ModelId;
 use crate::systems::actor::render::Puppet;
 use crate::systems::actor::skeleton::{ClipName, SkeletonId};
 use crate::systems::actor::stance::{HandIndex, StanceId};
-use crate::systems::actor::wearing::{self, Wearing};
-use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox, Motion, Playing};
+use crate::systems::actor::{self, Action, Actor, ActorModel, Appearance, Hitbox, Motion, Playing};
 use crate::systems::area::{self, AreaId, AreaObject, AreaTag};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
@@ -914,11 +914,11 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
                 .heights
                 .height_at(drawn)
         });
-    let model = actor.model;
+    let model = entity.get::<Appearance>()?.model;
     let built = ActorModel::get(world.resource::<Content>(), model);
     let flies = built.airborne();
     let stat = |kind| entity.get::<Stats>().map_or(0.0, |stats| stats.get(kind));
-    let stance = wearing::stance_of(world, entity.id());
+    let stance = held::stance_of(world, entity.id());
     let motion = entity
         .get::<Playing>()
         .filter(|playing| playing.motion.action() == actor.action)
@@ -979,7 +979,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         motion,
         rate,
         wearing: entity
-            .get::<Wearing>()
+            .get::<Held>()
             .map(|wearing| {
                 wearing
                     .hands

@@ -1,6 +1,8 @@
 {
   "name": "Pell",
-  "model": "characters/models/rogue-hooded.model.json",
+  "appearance": {
+    "model": "characters/models/rogue-hooded.model.json"
+  },
   "bust": "characters/busts/rogue-hooded.bust",
   "stats": {
     "health": 40.0,

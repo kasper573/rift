@@ -169,7 +169,7 @@ impl Game {
         self
     }
 
-    /// A playable character (its model, class and player file) and settings that start every new
+    /// A playable character (its class, the model it starts as, and the player file) and settings that start every new
     /// character at `x`, `y` in `area`.
     pub fn hero(self, area: &str, x: f32, y: f32) -> Game {
         self.model("hero", 2.0, json!([]))
@@ -179,6 +179,7 @@ impl Game {
                 json!({
                     "name": "Hero",
                     "icon": "icons/hero.png",
+                    "model": path("model", "hero"),
                     "levels": [{ "xp": 0, "skill_points": 1 }],
                 }),
             )
@@ -187,7 +188,6 @@ impl Game {
                 "player",
                 "hero",
                 json!({
-                    "model": path("model", "hero"),
                     "class": path("class", "hero"),
                     "stats": stats(30.0),
                 }),
@@ -234,7 +234,7 @@ impl Game {
             "sword",
             json!({ "kind": {
                 "type": "equipment",
-                "slot": "hand",
+                "wear": "held",
                 "stance": path("stance", "sword"),
                 "grants": [path("skill", "strike")],
             } }),
@@ -291,6 +291,11 @@ impl Game {
             )
     }
 
+    /// Gives the skeleton declared as `skeleton` the equipment slots `slots`, in their draw order.
+    pub fn slots(self, skeleton: &str, slots: &[&str]) -> Game {
+        self.edit("skeleton", skeleton, |row| row["slots"] = json!(slots))
+    }
+
     /// A memory of whether something happened, labelled with its name and forgotten as `resets`
     /// says (`never`, `daily` or `leaving_area`).
     pub fn memory(self, name: &str, resets: &str) -> Game {
@@ -332,12 +337,6 @@ impl Game {
             .asset(&card, png(item::CARD_SIZE.0, item::CARD_SIZE.1))
     }
 
-    /// Every new character starts with `items` equipped, the items declared under those names.
-    pub fn equipped(self, items: &[&str]) -> Game {
-        let items: Vec<String> = items.iter().map(|item| path("item", item)).collect();
-        self.edit("player", "hero", |hero| hero["equipped"] = json!(items))
-    }
-
     /// Changes the fields of a file declared before.
     pub fn edit(mut self, table: &str, name: &str, change: impl FnOnce(&mut Value)) -> Game {
         let file = fields_path(table, name);
@@ -359,7 +358,7 @@ impl Game {
             name,
             json!({
                 "name": name,
-                "model": path("model", name),
+                "appearance": { "model": path("model", name) },
                 "stats": stats(health),
                 "modules": modules,
             }),

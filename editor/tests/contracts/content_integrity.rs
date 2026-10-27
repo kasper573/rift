@@ -26,7 +26,10 @@ fn orc_model(editor: &mut Editor) -> String {
         .expect("a project")
         .expect("the orc reads");
     let reader = editor.reader().expect("a reader");
-    reader.path_of(npc.model).expect("a model").to_owned()
+    reader
+        .path_of(npc.appearance.model)
+        .expect("a model")
+        .to_owned()
 }
 
 fn camp() -> Game {
@@ -119,7 +122,7 @@ fn a_new_file_of_any_type_names_the_content_nearest_it_and_holds_as_it_is() {
         .expect("a new npc");
     let reader = editor.reader().expect("a reader");
     assert_eq!(
-        reader.path_of(made.model),
+        reader.path_of(made.appearance.model),
         Some(format!("wilds/{}", path("model", "wolf")).as_str())
     );
 }
@@ -233,7 +236,7 @@ fn orc_wearing_elf(editor: &mut Editor) {
     let before = editor.project.as_ref().expect("a project").files.clone();
     let mut edit = ContentEdit::new("dress the orc as an elf");
     edit.update_json(&before, &fields_file(&path("npc", "orc")), |npc| {
-        npc["model"] = json!(path("model", "elf"));
+        npc["appearance"]["model"] = json!(path("model", "elf"));
         Some(())
     })
     .expect("the npc is there");

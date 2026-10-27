@@ -1,6 +1,8 @@
 {
   "name": "Giant Spider",
-  "model": "characters/models/giant-spider.model.json",
+  "appearance": {
+    "model": "characters/models/giant-spider.model.json"
+  },
   "stats": {
     "health": 60.0,
     "max_health": 60.0,

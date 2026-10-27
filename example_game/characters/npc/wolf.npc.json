@@ -1,6 +1,8 @@
 {
   "name": "Wolf",
-  "model": "characters/models/wolf.model.json",
+  "appearance": {
+    "model": "characters/models/wolf.model.json"
+  },
   "stats": {
     "health": 24.0,
     "max_health": 24.0,

@@ -1,7 +1,12 @@
+use std::collections::BTreeMap;
+
 use bevy_math::Quat;
-use engine::core::content::LoadReport;
-use engine::systems::actor::{ActorModel, ModelDef};
-use serde_json::json;
+use engine::core::content::{LoadReport, fields_file};
+use engine::systems::actor::appearance::look;
+use engine::systems::actor::skeleton::EquipmentSlot;
+use engine::systems::actor::{ActorModel, Appearance, ModelDef};
+use engine::systems::item::ItemDef;
+use serde_json::{Value, json};
 use testkit::{Declared, Game, path, rig, rig_clips, skin_glb};
 
 use crate::support::game;
@@ -96,6 +101,98 @@ fn a_model_draws_each_part_as_cut_for_its_build() {
 }
 
 #[test]
+fn a_body_looks_as_its_model_its_own_parts_and_what_it_wears_laid_over_each_other() {
+    struct Case {
+        case: &'static str,
+        own: &'static [&'static str],
+        worn: &'static [(&'static str, &'static str)],
+        drawn: &'static [&'static str],
+    }
+    let cases = [
+        Case {
+            case: "the model's own parts",
+            own: &[],
+            worn: &[],
+            drawn: &["torso", "cape", "beard"],
+        },
+        Case {
+            case: "an own part replaces the model's part over the same region",
+            own: &["hair", "tunic"],
+            worn: &[],
+            drawn: &["cape", "beard", "hair", "tunic"],
+        },
+        Case {
+            case: "a worn item's part replaces an own part over the same region",
+            own: &["tunic"],
+            worn: &[("chest", "mail")],
+            drawn: &["cape", "beard", "mail"],
+        },
+        Case {
+            case: "a part takes off whatever covers a region it hides",
+            own: &["hair"],
+            worn: &[("head", "helm")],
+            drawn: &["torso", "cape", "beard", "helm"],
+        },
+        Case {
+            case: "a slot the skeleton lists later lays its parts over an earlier slot's",
+            own: &[],
+            worn: &[("back", "cloak"), ("chest", "mail")],
+            drawn: &["beard", "cloak"],
+        },
+        Case {
+            case: "an item with no look on the skeleton changes nothing",
+            own: &[],
+            worn: &[("chest", "ring")],
+            drawn: &["torso", "cape", "beard"],
+        },
+    ];
+    let content = dressed(built(game())).load();
+    let man = content.declared::<ModelDef>("man").expect("declared");
+    for case in cases {
+        let appearance = Appearance {
+            model: man,
+            parts: case
+                .own
+                .iter()
+                .map(|part| content.declared(part).expect("declared"))
+                .collect(),
+        };
+        let worn: BTreeMap<EquipmentSlot, _> = case
+            .worn
+            .iter()
+            .map(|(slot, item)| {
+                let item = content.declared::<ItemDef>(item).expect("declared");
+                (EquipmentSlot::new(*slot), item)
+            })
+            .collect();
+        let drawn: Vec<&str> = look(&content, &appearance, &worn)
+            .parts
+            .iter()
+            .map(|part| part.name(&content))
+            .collect();
+        assert_eq!(drawn, case.drawn, "{}", case.case);
+    }
+}
+
+#[test]
+fn an_appearance_reaches_the_client_as_the_world_holds_it() {
+    let content = dressed(built(game())).load();
+    let man = content.declared::<ModelDef>("man").expect("declared");
+    for parts in [vec![], vec!["hair", "tunic"]] {
+        let sent = Appearance {
+            model: man,
+            parts: parts
+                .iter()
+                .map(|part| content.declared(part).expect("declared"))
+                .collect(),
+        };
+        let wire = postcard::to_allocvec(&sent).expect("an appearance serializes");
+        let received: Appearance = postcard::from_bytes(&wire).expect("it deserializes");
+        assert_eq!(received, sent, "{parts:?}");
+    }
+}
+
+#[test]
 fn a_model_is_held_to_its_skeletons_parts_and_builds() {
     struct Case {
         case: &'static str,
@@ -144,9 +241,45 @@ fn a_model_is_held_to_its_skeletons_parts_and_builds() {
             file: format!("{}/builds/giant.glb", path("model_part", "cape")),
             rule: "unknown build",
         },
+        Case {
+            case: "a part over a region its skeleton lacks",
+            change: |game| {
+                game.edit("model_part", "cape", |cape| {
+                    cape["covers"] = json!(["wings"])
+                })
+            },
+            file: fields_file(&path("model_part", "cape")),
+            rule: "unknown region",
+        },
+        Case {
+            case: "an npc's own part made on another skeleton",
+            change: |game| {
+                game.npc("hermit", 10.0, json!([]))
+                    .edit("npc", "hermit", |hermit| {
+                        hermit["appearance"] = json!({
+                            "model": path("model", "man"),
+                            "parts": [path("model_part", "hero")],
+                        })
+                    })
+            },
+            file: path("npc", "hermit"),
+            rule: "part of another skeleton",
+        },
+        Case {
+            case: "an item worn in a slot its look's skeleton lacks",
+            change: |game| worn(game, "crown", "feet", json!([])),
+            file: path("item", "crown"),
+            rule: "no such slot",
+        },
+        Case {
+            case: "an item's look of a part made on another skeleton",
+            change: |game| worn(game, "crown", "chest", json!([path("model_part", "hero")])),
+            file: path("item", "crown"),
+            rule: "part of another skeleton",
+        },
     ];
     for case in cases {
-        let report = (case.change)(built(game()))
+        let report = (case.change)(dressed(built(game())))
             .try_load()
             .err()
             .unwrap_or_else(|| panic!("{}: refused", case.case));
@@ -192,6 +325,62 @@ fn built(game: Game) -> Game {
     let game = part(game, "beard").part("model_part", "beard", "builds/male.glb", mesh());
     game.row("model", "man", model("male"))
         .row("model", "woman", model("female"))
+}
+
+/// Over [`built`]'s skeleton of regions and slots, parts to wear over the man's torso, cape and
+/// beard, and items worn in each slot: a mail over the chest, a helm over the head hiding the
+/// hair, a cloak over the back and the torso, and a ring with no look on the skeleton.
+fn dressed(game: Game) -> Game {
+    let parts = [
+        ("torso", json!(["torso"]), json!([])),
+        ("cape", json!(["back"]), json!([])),
+        ("beard", json!(["face"]), json!([])),
+        ("hair", json!(["hair"]), json!([])),
+        ("tunic", json!(["torso"]), json!([])),
+        ("mail", json!(["torso"]), json!([])),
+        ("helm", json!(["head"]), json!(["hair"])),
+        ("cloak", json!(["back", "torso"]), json!([])),
+    ];
+    let game = game.edit("skeleton", "frame", |frame| {
+        frame["regions"] = json!(["torso", "back", "face", "hair", "head"]);
+        frame["slots"] = json!(["chest", "head", "back"]);
+    });
+    let game = parts.into_iter().fold(game, |game, (name, covers, hides)| {
+        let game = if ["torso", "cape", "beard"].contains(&name) {
+            game
+        } else {
+            game.row(
+                "model_part",
+                name,
+                json!({ "skeleton": path("skeleton", "frame") }),
+            )
+            .part("model_part", name, "mesh.glb", skin_glb(&rig(), &[]))
+        };
+        game.edit("model_part", name, |part| {
+            part["covers"] = covers;
+            part["hides"] = hides;
+        })
+    });
+    let game = worn(game, "mail", "chest", json!([path("model_part", "mail")]));
+    let game = worn(game, "helm", "head", json!([path("model_part", "helm")]));
+    let game = worn(game, "cloak", "back", json!([path("model_part", "cloak")]));
+    game.item(
+        "ring",
+        json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "chest" } }),
+    )
+}
+
+/// An item worn in `slot`, laying `parts` over a body of [`built`]'s skeleton.
+fn worn(game: Game, name: &str, slot: &str, parts: Value) -> Game {
+    game.item(
+        name,
+        json!({ "kind": {
+            "type": "equipment",
+            "wear": "worn",
+            "slot": slot,
+            "looks": [{ "skeleton": path("skeleton", "frame"), "parts": parts }],
+        } }),
+    )
 }
 
 fn problems_in(report: &LoadReport, file: &str) -> Vec<(String, String)> {

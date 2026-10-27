@@ -103,7 +103,6 @@ fn fight() -> (Sim, Entity) {
         .area("field", &Map::open(11, 11), json!([]))
         .hero("field", 5.0, 5.0)
         .sword()
-        .equipped(&["sword"])
         .npc("brute", 25.0, json!([]))
         .vfx("damage_taken")
         .shader("damage_pop")
@@ -130,6 +129,7 @@ fn fight() -> (Sim, Entity) {
         ));
     script::spawn_stateless(&mut sim.world);
     let player = sim.join(1);
+    sim.equip(player, "sword");
     sim.tick();
     (sim, player)
 }

@@ -1,6 +1,8 @@
 {
   "name": "Wren",
-  "model": "characters/models/rogue.model.json",
+  "appearance": {
+    "model": "characters/models/rogue.model.json"
+  },
   "bust": "characters/busts/rogue.bust",
   "stats": {
     "health": 40.0,
@@ -15,15 +17,6 @@
     {
       "type": "nameplate",
       "role": "Bone Collector"
-    },
-    {
-      "type": "tint",
-      "rgba": [
-        196,
-        210,
-        255,
-        255
-      ]
     },
     {
       "type": "voice",

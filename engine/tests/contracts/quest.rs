@@ -11,7 +11,7 @@ use engine::systems::quest::{self, QuestDef, QuestLog, QuestRequest, QuestResult
 use engine::systems::shop::{self, ShopRequest};
 use engine::systems::{area, combat, movement, npc, rewards, script, stat};
 use serde_json::{Value, json};
-use testkit::{Game, Map, Sim, dialogue, labels, locked, path, said};
+use testkit::{BODY, Game, Map, Sim, dialogue, labels, locked, path, said};
 
 #[test]
 fn accepting_a_quest_logs_it_tracks_it_and_hands_over_its_items() {
@@ -397,6 +397,7 @@ fn harbour() -> Sim {
         )
         .prop("stone", json!({ "type": "none" }))
         .hero("harbour", 7.0, 7.0)
+        .slots(BODY, &["head"])
         .edit("class", "hero", |hero| {
             hero["levels"] = json!([
                 { "xp": 0, "skill_points": 1 },
@@ -412,9 +413,9 @@ fn harbour() -> Sim {
         .item("pebble", json!({ "kind": { "type": "resource" } }))
         .stance("shield", 1, "off")
         .stance("sword", 1, "main")
-        .item("shield", json!({ "kind": { "type": "equipment", "slot": "hand", "stance": "shield.stance.json" } }))
-        .item("helm", json!({ "kind": { "type": "equipment", "slot": "head" } }))
-        .item("cutlass", json!({ "kind": { "type": "equipment", "slot": "hand", "stance": "sword.stance.json" } }))
+        .item("shield", json!({ "kind": { "type": "equipment", "wear": "held", "stance": "shield.stance.json" } }))
+        .item("helm", json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" } }))
+        .item("cutlass", json!({ "kind": { "type": "equipment", "wear": "held", "stance": "sword.stance.json" } }))
         .item("letter", quest_item("resource"))
         .item("key", quest_item("resource"))
         .item("map", {

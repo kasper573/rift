@@ -73,7 +73,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                         .table::<ItemDef>()
                         .iter()
                         .filter(|(_, item)| {
-                            matches!(item.wear(), Some(Wear::Hand { stance, .. }) if *stance == id)
+                            matches!(item.wear(), Some(Wear::Held { stance, .. }) if *stance == id)
                         })
                         .map(|(item, row)| {
                             (item.path(&content).to_owned(), row.shown_name().to_owned())

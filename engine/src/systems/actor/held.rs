@@ -7,15 +7,15 @@ use std::collections::BTreeMap;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use super::ActorModel;
 use super::skeleton::Hand;
 use super::stance::{self, HandIndex, HandRole, StanceId};
-use super::{Actor, ActorModel};
 use crate::core::content::Content;
 use crate::systems::item::ItemId;
 
 /// The item each hand of a body shows; a two-hander sits under both hands it takes.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
-pub struct Wearing {
+pub struct Held {
     pub hands: BTreeMap<HandIndex, ItemId>,
 }
 
@@ -28,7 +28,7 @@ pub struct ScriptedStance(pub StanceId);
 pub fn stance_of(world: &World, actor: Entity) -> Option<StanceId> {
     let content = world.resource::<Content>();
     world
-        .get::<Wearing>(actor)
+        .get::<Held>(actor)
         .and_then(|wearing| stance::of_hands(content, &wearing.hands))
         .or_else(|| {
             world
@@ -39,10 +39,7 @@ pub fn stance_of(world: &World, actor: Entity) -> Option<StanceId> {
 
 /// The hands the actor's body has: its model's skeleton's, in order.
 pub fn hands_of(world: &World, actor: Entity) -> &[Hand] {
-    let content = world.resource::<Content>();
-    world
-        .get::<Actor>(actor)
-        .map_or(&[], |actor| ActorModel::get(content, actor.model).hands())
+    super::appearance::model_of(world, actor).map_or(&[], ActorModel::hands)
 }
 
 /// Where an item lands among `slots` hands already showing `held`, and what it puts back.

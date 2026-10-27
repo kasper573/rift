@@ -1,6 +1,7 @@
 {
   "name": "Hero",
   "icon": "blank.png",
+  "model": "hero.model.json",
   "levels": [
     {
       "xp": 0,

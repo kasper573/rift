@@ -23,7 +23,7 @@ fn a_reference_is_placed_where_it_is_read_not_where_its_key_is_first_written() {
         .filter(|reference| reference.kind == LeafKind::Row("model"))
         .map(|reference| reference.pointer.as_str())
         .collect();
-    assert_eq!(models, ["/model"]);
+    assert_eq!(models, ["/appearance/model"]);
 }
 
 #[test]

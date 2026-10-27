@@ -113,11 +113,11 @@ pub(crate) struct Confirm {
 pub(crate) type Answer = Box<dyn FnOnce(&mut World, bool) + Send + Sync>;
 
 /// What the player drags across the interface, drawn under the pointer until it is dropped.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Carried {
     Skill(SkillId),
     BagSlot(u32),
-    Worn(equipment::EquipmentSlot),
+    Worn(equipment::EquipmentPlace),
     HotbarEntry {
         from: HotbarSlot,
         entry: HotbarEntry,
@@ -520,7 +520,7 @@ fn draw_carried(world: &mut World) {
             stack.item.get(&content).icon.clone()
         }
         Carried::Worn(slot) => {
-            let Some(item) = session::me(world).and_then(|me| equipment::in_slot(world, me, slot))
+            let Some(item) = session::me(world).and_then(|me| equipment::in_slot(world, me, &slot))
             else {
                 return;
             };

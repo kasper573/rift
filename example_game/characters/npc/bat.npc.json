@@ -1,6 +1,8 @@
 {
   "name": "Bat",
-  "model": "characters/models/bat.model.json",
+  "appearance": {
+    "model": "characters/models/bat.model.json"
+  },
   "bust": "characters/busts/bat.bust",
   "stats": {
     "health": 8.0,

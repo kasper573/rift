@@ -1,6 +1,9 @@
 {
   "name": "Bones Midway",
   "class": "characters/class/fighter.class.json",
+  "appearance": {
+    "model": "characters/models/knight.model.json"
+  },
   "xp": 40,
   "bag": [
     {

@@ -17,6 +17,7 @@ use testkit::{Declared, Game, Map, Sim};
 fn a_pickup_walks_into_reach_and_then_collects() {
     let mut sim = yard();
     let player = sim.join(1);
+    sim.equip(player, "sword");
     let start = position(&sim.world, player).expect("position");
     let bone = drop_bone(&mut sim, start + Offset::new(4.0, 0.0));
 
@@ -31,6 +32,7 @@ fn a_pickup_walks_into_reach_and_then_collects() {
 fn walking_away_cancels_the_intent() {
     let mut sim = yard();
     let player = sim.join(1);
+    sim.equip(player, "sword");
     let start = position(&sim.world, player).expect("position");
     let bone = drop_bone(&mut sim, start + Offset::new(5.0, 0.0));
 
@@ -53,6 +55,7 @@ fn walking_away_cancels_the_intent() {
 fn a_new_order_replaces_the_one_in_progress() {
     let mut sim = yard();
     let player = sim.join(1);
+    sim.equip(player, "sword");
     let at = position(&sim.world, player).expect("position");
     let brute = brute(&mut sim, at + Offset::new(6.0, 0.0));
     let full = stat::effective(&sim.world, brute, StatKind::Health);
@@ -75,7 +78,6 @@ fn yard() -> Sim {
         .area("yard", &Map::open(13, 5), json!([]))
         .hero("yard", 2.0, 2.0)
         .sword()
-        .equipped(&["sword"])
         .npc("brute", 25.0, json!([]))
         .item(
             "bone",

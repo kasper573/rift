@@ -20,7 +20,7 @@ use crate::core::content::{Content, Fixture};
 use crate::core::gui;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time::{self, Seconds};
-use crate::systems::equipment::{self, EquipmentSlot};
+use crate::systems::equipment::{self, EquipmentPlace};
 use crate::systems::hud::{self, Carried, Confirm, HudWidget};
 use crate::systems::input::map::{
     self, InputAction, InputBinding, InputFixture, InputMap, KeyGesture, KeyModifiers, input,
@@ -381,7 +381,7 @@ fn bag_item(world: &World, slot: u32) -> Option<ItemId> {
         .map(|stack| stack.item)
 }
 
-fn worn_item(world: &World, slot: EquipmentSlot) -> Option<ItemId> {
+fn worn_item(world: &World, slot: &EquipmentPlace) -> Option<ItemId> {
     equipment::in_slot(world, session::me(world)?, slot)
 }
 
@@ -622,7 +622,7 @@ fn carried_pick(world: &World, carried: Carried) -> Option<BasicAttackPick> {
     match carried {
         Carried::Skill(skill) => Some(BasicAttackPick::Skill(skill)),
         Carried::BagSlot(slot) => bag_item(world, slot).map(BasicAttackPick::Weapon),
-        Carried::Worn(slot) => worn_item(world, slot).map(BasicAttackPick::Weapon),
+        Carried::Worn(slot) => worn_item(world, &slot).map(BasicAttackPick::Weapon),
         Carried::HotbarEntry { entry, .. } => match entry {
             HotbarEntry::Skill(skill) => Some(BasicAttackPick::Skill(skill)),
             HotbarEntry::Item(item) => Some(BasicAttackPick::Weapon(item)),
@@ -667,7 +667,7 @@ fn take_drop(world: &mut World, response: &egui::Response, index: HotbarSlot, he
             });
         }
         Carried::Worn(slot) => {
-            let Some(item) = worn_item(world, slot) else {
+            let Some(item) = worn_item(world, &slot) else {
                 return;
             };
             world.write_message(AssignHotbarRequest {

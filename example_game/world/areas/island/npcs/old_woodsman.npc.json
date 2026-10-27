@@ -1,6 +1,8 @@
 {
   "name": "Old Woodsman",
-  "model": "characters/models/woodsman.model.json",
+  "appearance": {
+    "model": "characters/models/woodsman.model.json"
+  },
   "bust": "characters/busts/woodsman.bust",
   "stats": {
     "health": 40.0,

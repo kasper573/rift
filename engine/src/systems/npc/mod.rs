@@ -7,6 +7,7 @@ use bevy_app::App;
 use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
+use bevy_replicon::prelude::Replicated;
 use bevy_time::Time;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -17,18 +18,19 @@ use crate::core::content::{
     Nearby, RowCheck, serial,
 };
 use crate::core::geometry::Radians;
-use crate::core::math::{Percent, Pos, Rect, Rgba, Rng};
+use crate::core::math::{Percent, Pos, Rect, Rng};
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
-use crate::systems::actor::model::ModelId;
-use crate::systems::actor::wearing::{self, Wearing};
-use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox, Pose, Tint};
+use crate::systems::actor::held::{self, Held};
+use crate::systems::actor::{
+    self, Action, Actor, ActorModel, Appearance, Hitbox, Pose, appearance,
+};
 use crate::systems::area::{self, AreaId, AreaModule, AreaTag, Wild};
 use crate::systems::combat::{Attitude, Dead, Died};
 use crate::systems::dialogue::bust::BustId;
 use crate::systems::interact::Interactive;
 use crate::systems::item::{ItemId, Reservation, Wear};
-use crate::systems::movement::{self, NavMesh, Position, Spots, position};
+use crate::systems::movement::{self, NavMesh, Position, Spot, Spots, position};
 use crate::systems::script::condition::CompiledCondition;
 use crate::systems::script::query::TickRoster;
 use crate::systems::script::{
@@ -39,7 +41,7 @@ use crate::systems::skill::{self, Rank, SkillId};
 use crate::systems::stat::Stats;
 use crate::systems::status::Statuses;
 use crate::systems::visibility::{self, Presence};
-use crate::systems::{Character, WorldArea, dialogue};
+use crate::systems::{WorldArea, dialogue};
 
 pub type NpcId = ContentId<NpcDef>;
 
@@ -64,44 +66,47 @@ pub fn check_all(loading: &mut Loading) {
                 listed.rank,
             );
         }
-        check_wearing(&content, loading, id, def, &mut check);
+        if ActorModel::loaded(&content, def.appearance.model).is_some() {
+            appearance::check(&content, &def.appearance, "/appearance", &mut check);
+        }
+        check_held(&content, loading, id, def, &mut check);
         loading.row_errors(id, check);
     }
 }
 
-/// A wear list holds what hands show, asking no more hands than the body has; one the body cannot
-/// show at all loads, and says so.
-fn check_wearing(
+/// What an npc holds is what hands show, asking no more hands than the body has; a list the body
+/// cannot show at all loads, and says so.
+fn check_held(
     content: &Content,
     loading: &mut Loading,
     id: NpcId,
     def: &NpcDef,
     check: &mut RowCheck,
 ) {
-    for (index, &item) in def.wearing.iter().enumerate() {
-        if !matches!(item.get(content).wear(), Some(Wear::Hand { .. })) {
+    for (index, &item) in def.held.iter().enumerate() {
+        if !matches!(item.get(content).wear(), Some(Wear::Held { .. })) {
             check.error(
-                format!("/wearing/{index}"),
+                format!("/held/{index}"),
                 "not held",
-                format!("wearing lists {}, which no hand holds", item.name(content)),
+                format!("held lists {}, which no hand holds", item.name(content)),
                 "items a hand holds, each naming its stance",
             );
         }
     }
-    let Some(model) = ActorModel::loaded(content, def.model) else {
+    let Some(model) = ActorModel::loaded(content, def.appearance.model) else {
         return;
     };
     let hands = model.hands().len();
     let skeleton = model.skeleton_id();
     if hands == 0 {
-        for (index, &item) in def.wearing.iter().enumerate() {
+        for (index, &item) in def.held.iter().enumerate() {
             loading.row_warning(
                 id,
-                &format!("/wearing/{index}"),
+                &format!("/held/{index}"),
                 ContentProblem::new(
                     "never shown",
                     format!(
-                        "wearing lists {}, but {}.skeleton has no hands: listed, never shown",
+                        "held lists {}, but {}.skeleton has no hands: listed, never shown",
                         item.name(content),
                         skeleton.name(content)
                     ),
@@ -111,14 +116,14 @@ fn check_wearing(
         }
         return;
     }
-    let asked = wearing::asked(content, &def.wearing);
+    let asked = held::asked(content, &def.held);
     if asked > hands {
-        let names: Vec<&str> = def.wearing.iter().map(|item| item.name(content)).collect();
+        let names: Vec<&str> = def.held.iter().map(|item| item.name(content)).collect();
         check.error(
-            "/wearing",
+            "/held",
             "too many hands",
             format!(
-                "wearing asks {asked} hands ({}) of a body with {hands}",
+                "held asks {asked} hands ({}) of a body with {hands}",
                 names.join(", ")
             ),
             format!(
@@ -156,7 +161,7 @@ pub struct Near(Vec<Entity>);
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct NpcDef {
     pub name: String,
-    pub model: ModelId,
+    pub appearance: Appearance,
     /// The portrait a conversation shows beside its lines.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bust: Option<BustId>,
@@ -170,7 +175,7 @@ pub struct NpcDef {
     /// What its hands show, in their order: looks alone, granting no skill, stat or drop.
     #[schemars(extend("x-usage" = "shown in its hands"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub wearing: Vec<ItemId>,
+    pub held: Vec<ItemId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<NpcModule>,
 }
@@ -190,12 +195,12 @@ impl ContentFile for NpcDef {
     fn fresh(near: &Nearby) -> Result<NpcDef, String> {
         Ok(NpcDef {
             name: near.name(),
-            model: near.file()?,
+            appearance: Appearance::of(near.file()?),
             bust: None,
             stats: Stats::default(),
             basic_attack: None,
             skills: Vec::new(),
-            wearing: Vec::new(),
+            held: Vec::new(),
             modules: Vec::new(),
         })
     }
@@ -263,7 +268,6 @@ impl ScriptedRow for NpcDef {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum NpcModule {
     Nameplate(Nameplate),
-    Tint(Tint),
     Voice(Voice),
     Respawn(Respawn),
     Loot(Loot),
@@ -310,16 +314,6 @@ impl NpcDef {
             NpcModule::Nameplate(nameplate) => Some(nameplate.role.as_str()),
             _ => None,
         })
-    }
-
-    pub fn tint(&self) -> Rgba {
-        self.modules
-            .iter()
-            .find_map(|module| match module {
-                NpcModule::Tint(tint) => Some(tint.rgba),
-                _ => None,
-            })
-            .unwrap_or(Rgba::WHITE)
     }
 
     pub fn voice(&self) -> Option<BabbleId> {
@@ -584,25 +578,27 @@ pub fn approach(world: &mut World) {
 }
 
 fn actor_bundle(content: &Content, def: &NpcDef, at: Pos<Meters>, area: AreaId) -> impl Bundle {
-    let model = ActorModel::get(content, def.model);
-    let shown = Wearing {
-        hands: wearing::listed(content, model.hands().len(), &def.wearing),
+    let model = ActorModel::get(content, def.appearance.model);
+    let shown = Held {
+        hands: held::listed(content, model.hands().len(), &def.held),
     };
-    let character = Character::new(
+    (
+        Replicated,
         Position::at(at),
+        Spot { area, at },
+        AreaTag { area },
         Actor {
-            color: def.tint(),
             facing: Radians::SOUTH,
             action: Action::Idle,
             pose: Pose::Idle,
-            model: def.model,
             attack_rate: PlaybackRate::default(),
             speed: MetersPerSec::default(),
         },
         Hitbox(model.hitbox()),
-        AreaTag { area },
-    );
-    (character, def.stats.clone(), shown)
+        def.appearance.clone(),
+        def.stats.clone(),
+        shown,
+    )
 }
 
 fn start_scripts(world: &mut World, entity: Entity, def: NpcId) {

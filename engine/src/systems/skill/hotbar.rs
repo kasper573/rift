@@ -97,7 +97,7 @@ pub fn assign_basic_attack(
             let skill = super::first_flagged_grant(&content, std::iter::once(item))
                 .ok_or_else(|| format!("{} has no basic attack", item.get(&content).name))?;
             if !equipment::wears(world, player, item) {
-                equipment::equip_held(world, player, item)?;
+                equipment::equip_from_bag(world, player, item)?;
             }
             Some(skill)
         }

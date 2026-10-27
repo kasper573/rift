@@ -50,7 +50,7 @@ fn a_held_items_stance_and_grip_land_in_its_file_and_its_pairs_in_the_stances() 
         .stance(dual, 2, "main")
         .item(
             "blade",
-            json!({ "kind": { "type": "equipment", "slot": "hand", "stance": path("stance", sword) } }),
+            json!({ "kind": { "type": "equipment", "wear": "held", "stance": path("stance", sword) } }),
         );
     let mut editor = support::open(game, &scratch);
     let key = path("item", "blade");
@@ -71,7 +71,7 @@ fn a_held_items_stance_and_grip_land_in_its_file_and_its_pairs_in_the_stances() 
         .expect("the item is in the project")
         .expect("the item reads");
     let reader = editor.reader().expect("a project");
-    let Some(Wear::Hand {
+    let Some(Wear::Held {
         stance: held,
         grip: kept,
     }) = row.wear()

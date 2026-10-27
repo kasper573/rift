@@ -14,7 +14,7 @@ use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
 use engine::core::units::{MeterPos, Meters};
 use engine::core::vfx::VfxInstance;
 use engine::systems::actor::plate::{self, PlateLabel};
-use engine::systems::actor::{Action, Actor, ModelId};
+use engine::systems::actor::{Action, Actor, Appearance, ModelId};
 use engine::systems::area::{self, AreaId, AreaModule};
 use engine::systems::class::ClassDef;
 use engine::systems::item::{ItemDef, ItemId, ItemKind, ItemStack};
@@ -77,7 +77,7 @@ enum Phase {
 /// An actor of the live world as the stage draws it.
 pub struct LiveActor {
     pub entity: Entity,
-    pub actor: Actor,
+    pub model: ModelId,
     pub at: Pos<Meters>,
     pub plate: Option<PlateLabel>,
 }
@@ -157,7 +157,7 @@ impl LiveWorld {
             .filter_map(|entity| {
                 Some(LiveActor {
                     entity,
-                    actor: self.world.get::<Actor>(entity)?.clone(),
+                    model: self.world.get::<Appearance>(entity)?.model,
                     at: self.world.get::<Position>(entity)?.pos,
                     plate: plate::label_of(&self.world, content, entity),
                 })
@@ -426,7 +426,7 @@ fn spawn_sturdy(
 ) -> Entity {
     let def = NpcDef {
         name: model.name(content).to_owned(),
-        model,
+        appearance: Appearance::of(model),
         bust: None,
         stats: Stats(BTreeMap::from([
             (StatKind::MaxHealth, STURDY),
@@ -434,7 +434,7 @@ fn spawn_sturdy(
         ])),
         basic_attack: None,
         skills: Vec::new(),
-        wearing: Vec::new(),
+        held: Vec::new(),
         modules: Vec::new(),
     };
     npc::spawn_actor(world, &def, at, area)
@@ -495,7 +495,9 @@ fn carry(snapshot: &mut CharacterSnapshot, content: &Content, item: ItemId) {
 fn enemy_model(content: &Content, zone: AreaId) -> ModelId {
     area::modules(content, zone)
         .find_map(|module| match module {
-            AreaModule::Population(population) => Some(population.npc.get(content).model),
+            AreaModule::Population(population) => {
+                Some(population.npc.get(content).appearance.model)
+            }
             _ => None,
         })
         .or_else(|| {
@@ -503,7 +505,10 @@ fn enemy_model(content: &Content, zone: AreaId) -> ModelId {
                 .table::<NpcDef>()
                 .ids()
                 .next()
-                .map(|npc| npc.get(content).model)
+                .map(|npc| npc.get(content).appearance.model)
         })
-        .unwrap_or_else(|| content.built::<GameSettings>().player.get(content).model)
+        .unwrap_or_else(|| {
+            let player = content.built::<GameSettings>().player.get(content);
+            player.class.get(content).model
+        })
 }

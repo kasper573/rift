@@ -49,6 +49,7 @@ fn wild_monsters_never_set_foot_in_a_safe_zone() {
 fn a_wild_monster_gives_up_a_player_who_reaches_a_safe_zone() {
     let mut sim = border(json!([]));
     let player = sim.join(1);
+    sim.equip(player, "sword");
     movement::relocate(&mut sim.world, player, DOORSTEP);
     let hunter = spawn(&mut sim, "hunter", LAIR);
     sim.world.entity_mut(hunter).insert(Wild);
@@ -77,6 +78,7 @@ fn a_wild_monster_gives_up_a_player_who_reaches_a_safe_zone() {
 fn a_summoned_monster_follows_its_target_into_a_safe_zone() {
     let mut sim = border(json!([]));
     let player = sim.join(1);
+    sim.equip(player, "sword");
     movement::relocate(&mut sim.world, player, DOORSTEP);
     let hunter = sim.id::<NpcDef>("hunter");
     let guard = npc::summon(&mut sim.world, hunter, 1, player, None, Some(player))
@@ -132,7 +134,6 @@ fn border(modules: Value) -> Sim {
         .area("border", &Map::open(20, 9), modules)
         .hero("border", 15.0, 4.0)
         .sword()
-        .equipped(&["sword"])
         .npc(
             "wanderer",
             25.0,

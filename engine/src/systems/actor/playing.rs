@@ -2,10 +2,10 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::held::{self, ScriptedStance};
 use super::skeleton::{DeclaredMoves, MoveName};
 use super::stance::StanceId;
-use super::wearing::{self, ScriptedStance};
-use super::{Action, Actor, ActorModel};
+use super::{Action, Actor, ActorModel, Appearance};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::Content;
 use crate::core::geometry::Radians;
@@ -166,12 +166,12 @@ pub fn play(
     let content = world.resource::<Content>().clone();
     let now = world.resource::<WallClock>().now;
     let speed = PlaybackRate(stat::effective(world, actor, StatKind::AttackSpeed));
-    let stance = wearing::stance_of(world, actor);
+    let stance = held::stance_of(world, actor);
+    let model = world.get::<Appearance>(actor)?.model;
     let mut component = world.get_mut::<Actor>(actor)?;
     let facing = toward.unwrap_or(component.facing);
     super::set_facing(&mut component, facing, motion.action());
     component.attack_rate = speed;
-    let model = component.model;
     let timing = ActorModel::get(&content, model).timing(stance, &motion, speed);
     let playing = Playing {
         motion,

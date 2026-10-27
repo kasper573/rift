@@ -2,6 +2,7 @@
   "name": "Mage",
   "icon": "assets/icons/weapon_and_tool/magic_wand.png",
   "flavour": "Fire in one hand, frost in the other, and the storm on call.",
+  "model": "characters/models/mage.model.json",
   "levels": [
     {
       "xp": 0,

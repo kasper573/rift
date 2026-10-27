@@ -15,6 +15,7 @@ use testkit::{Game, Map, Sim, dialogue, hunting, lines, path};
 fn a_gamblers_dice_take_ten_gold_a_roll_and_pay_twenty_on_a_win() {
     let mut sim = harbour();
     let player = sim.join(1);
+    sim.equip(player, "sword");
     sim.give(player, "gold", 400);
 
     let mut roll = "Roll the dice.";
@@ -42,6 +43,7 @@ fn a_gamblers_dice_take_ten_gold_a_roll_and_pay_twenty_on_a_win() {
 fn calling_the_gambler_a_cheat_sends_guards_after_you_alone() {
     let mut sim = harbour();
     let player = sim.join(1);
+    sim.equip(player, "sword");
     let bystander = sim.join(2);
     sim.give(player, "gold", 400);
 
@@ -78,6 +80,7 @@ fn calling_the_gambler_a_cheat_sends_guards_after_you_alone() {
 fn fighting_the_gambler_leaves_him_dead_in_your_world_only() {
     let mut sim = harbour();
     let player = sim.join(1);
+    sim.equip(player, "sword");
     let bystander = sim.join(2);
     let grudge = sim.id::<MemoryDef>("grudge");
     memory::set(
@@ -118,6 +121,7 @@ fn fighting_the_gambler_leaves_him_dead_in_your_world_only() {
 fn summons_leave_with_their_owner() {
     let mut sim = harbour();
     let player = sim.join(1);
+    sim.equip(player, "sword");
     let guard = sim.id::<NpcDef>("guard");
     summon(
         &mut sim.world,
@@ -138,6 +142,7 @@ fn summons_leave_with_their_owner() {
 fn a_townsperson_turned_hostile_can_be_fought_until_they_return_friendly() {
     let mut sim = harbour();
     let player = sim.join(1);
+    sim.equip(player, "sword");
     let baker = sim.npc("baker");
     assert!(!combat::attackable(&sim.world, player, baker));
 
@@ -179,7 +184,6 @@ fn harbour() -> Sim {
         )
         .hero("harbour", 5.0, 4.0)
         .sword()
-        .equipped(&["sword"])
         .item(
             "gold",
             json!({ "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 100_000 }] }),

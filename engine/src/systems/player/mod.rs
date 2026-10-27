@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::ClientId as Sender;
+use bevy_replicon::prelude::{ClientId as Sender, Replicated};
 use bevy_time::Time;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -14,12 +14,11 @@ use snapshot::{CharacterSnapshot, JoinAs};
 
 use crate::core::content::{Content, ContentFile, ContentId, ModuleRule, ModuleSet, Nearby};
 use crate::core::geometry::Radians;
-use crate::core::math::{Pos, Rgba, Rng};
+use crate::core::math::{Pos, Rng};
 use crate::core::time::{DayOrigin, PlaybackRate, Seconds, UnixMillis, WallClock};
 use crate::core::units::{Meters, MetersPerSec};
 use crate::systems::account::Identity;
-use crate::systems::actor::model::ModelId;
-use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Pose, Tint};
+use crate::systems::actor::{Action, Actor, ActorModel, Appearance, Hitbox, Name, Pose};
 use crate::systems::area::transition::{self, Discovered};
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::class::{Class, ClassId};
@@ -27,18 +26,16 @@ use crate::systems::combat::{self, HealthRegen};
 use crate::systems::dialogue::Heard;
 use crate::systems::equipment::Equipment;
 use crate::systems::history::History;
-use crate::systems::item::{Inventory, ItemId};
+use crate::systems::item::Inventory;
 use crate::systems::memory::Memory;
-use crate::systems::movement::{self, HeardMove, Position};
+use crate::systems::movement::{self, HeardMove, Position, Spot};
 use crate::systems::quest::QuestLog;
 use crate::systems::script::{EventKind, Place};
 use crate::systems::shop::{self, ShopLedger};
 use crate::systems::skill::{BasicAttack, Hotbar, Learned};
 use crate::systems::stat::{self, Immortal, Stats};
 use crate::systems::visibility::{self, OwnedBy};
-use crate::systems::{
-    Character, GameSettings, WorldArea, belongings, drain_requests, notification,
-};
+use crate::systems::{GameSettings, WorldArea, belongings, drain_requests, notification};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
@@ -119,12 +116,8 @@ pub type PlayerDefId = ContentId<PlayerDef>;
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct PlayerDef {
-    pub model: ModelId,
     pub class: ClassId,
     pub stats: Stats,
-    #[schemars(extend("x-usage" = "equipped at creation"))]
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub equipped: Vec<ItemId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<PlayerModule>,
 }
@@ -134,10 +127,8 @@ impl ContentFile for PlayerDef {
 
     fn fresh(near: &Nearby) -> Result<PlayerDef, String> {
         Ok(PlayerDef {
-            model: near.file()?,
             class: near.file()?,
             stats: Stats::default(),
-            equipped: Vec::new(),
             modules: Vec::new(),
         })
     }
@@ -162,26 +153,17 @@ impl ModuleSet for PlayerDef {
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PlayerModule {
-    Tint(Tint),
     Regen(HealthRegen),
 }
 
 impl PlayerDef {
-    pub fn tint(&self) -> Rgba {
+    pub fn regen(&self) -> Option<HealthRegen> {
         self.modules
             .iter()
-            .find_map(|module| match module {
-                PlayerModule::Tint(tint) => Some(tint.rgba),
-                _ => None,
+            .map(|module| match module {
+                PlayerModule::Regen(regen) => *regen,
             })
-            .unwrap_or(Rgba::WHITE)
-    }
-
-    pub fn regen(&self) -> Option<HealthRegen> {
-        self.modules.iter().find_map(|module| match module {
-            PlayerModule::Regen(regen) => Some(*regen),
-            _ => None,
-        })
+            .next()
     }
 }
 
@@ -197,14 +179,14 @@ pub(crate) fn sender_player(world: &World, sender: Sender) -> Option<Entity> {
 }
 
 pub fn commands_locked(world: &World, player: Entity) -> bool {
-    world.get::<CommandLock>(player).is_some() || held(world, player)
+    world.get::<CommandLock>(player).is_some() || arriving(world, player)
 }
 
 pub fn may_command(world: &World, player: Entity) -> bool {
     !stat::is_dead(world, player) && !commands_locked(world, player)
 }
 
-pub fn held(world: &World, entity: Entity) -> bool {
+pub fn arriving(world: &World, entity: Entity) -> bool {
     world.get::<ArrivalHold>(entity).is_some()
 }
 
@@ -386,6 +368,7 @@ pub struct SpawnPoint(pub Pos<Meters>);
 #[derive(Bundle)]
 pub struct CharacterState {
     pub name: Name,
+    pub appearance: Appearance,
     pub spawn: SpawnPoint,
     pub discovered: Discovered,
     pub stats: Stats,
@@ -407,6 +390,7 @@ impl CharacterState {
     pub fn of(world: &World, entity: Entity, spawn: Pos<Meters>) -> Option<CharacterState> {
         Some(CharacterState {
             name: world.get::<Name>(entity)?.clone(),
+            appearance: world.get::<Appearance>(entity)?.clone(),
             spawn: SpawnPoint(spawn),
             discovered: world.get::<Discovered>(entity)?.clone(),
             stats: stat::snapshot(world, entity),
@@ -437,25 +421,22 @@ pub(crate) fn place(
     state: CharacterState,
 ) -> Entity {
     let content = world.resource::<Content>().clone();
-    let def = def(&content);
-    let model = def.model;
+    let hitbox = Hitbox(ActorModel::get(&content, state.appearance.model).hitbox());
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let entity = world
         .spawn((
-            Character::new(
-                Position::at(at),
-                Actor {
-                    color: def.tint(),
-                    facing: Radians::SOUTH,
-                    action: Action::Idle,
-                    pose: Pose::Idle,
-                    model,
-                    attack_rate: PlaybackRate::default(),
-                    speed: MetersPerSec::default(),
-                },
-                Hitbox(ActorModel::get(&content, model).hitbox()),
-                AreaTag { area: zone },
-            ),
+            Replicated,
+            Position::at(at),
+            Spot { area: zone, at },
+            AreaTag { area: zone },
+            Actor {
+                facing: Radians::SOUTH,
+                action: Action::Idle,
+                pose: Pose::Idle,
+                attack_rate: PlaybackRate::default(),
+                speed: MetersPerSec::default(),
+            },
+            hitbox,
             OwnedBy(client),
             PlayedBy { client },
             HeardMove::default(),

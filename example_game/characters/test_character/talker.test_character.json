@@ -1,6 +1,9 @@
 {
   "name": "Talker",
   "class": "characters/class/fighter.class.json",
+  "appearance": {
+    "model": "characters/models/knight.model.json"
+  },
   "bag": [
     {
       "item": "items-and-skills/item/gold.item.json",

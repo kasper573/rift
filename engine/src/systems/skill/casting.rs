@@ -135,7 +135,7 @@ pub fn ready(world: &World, caster: Entity, skill: SkillId) -> Result<(), String
 /// The one rule for whom a skill of a kind may land on: an actor the caster could reach, not held
 /// in an arrival, standing to the caster as the kind wants.
 pub fn fits(world: &World, caster: Entity, target: Entity, targeting: Targeting) -> bool {
-    if !reach::pursuable(world, caster, target) || player::held(world, target) {
+    if !reach::pursuable(world, caster, target) || player::arriving(world, target) {
         return false;
     }
     let relation = combat::relation(world, caster, target);

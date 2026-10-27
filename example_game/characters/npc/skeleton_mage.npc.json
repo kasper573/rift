@@ -1,6 +1,8 @@
 {
   "name": "Skeleton Mage",
-  "model": "characters/models/skeleton-mage.model.json",
+  "appearance": {
+    "model": "characters/models/skeleton-mage.model.json"
+  },
   "bust": "characters/busts/skeleton-mage.bust",
   "stats": {
     "health": 22.0,
@@ -12,7 +14,7 @@
     "range": 1.2
   },
   "basic_attack": "items-and-skills/skill/strike.skill.json",
-  "wearing": [
+  "held": [
     "items-and-skills/item/ash_wand.item.json"
   ],
   "modules": [

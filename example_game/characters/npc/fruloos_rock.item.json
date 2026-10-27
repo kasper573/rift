@@ -10,6 +10,7 @@
   },
   "kind": {
     "type": "equipment",
+    "wear": "worn",
     "slot": "head"
   },
   "modules": [

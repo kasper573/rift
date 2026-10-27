@@ -91,20 +91,7 @@ pub fn dress(world: &mut World, entity: Entity, files: &BodyFiles) {
             .id(),
     ];
     for skin in &files.skins {
-        scenes.push(
-            world
-                .spawn((
-                    load(skin),
-                    Transform::default(),
-                    Visibility::Hidden,
-                    SkinOf {
-                        body: entity,
-                        spawned: false,
-                    },
-                    ChildOf(entity),
-                ))
-                .id(),
-        );
+        scenes.push(spawn_skin(world, entity, skin));
     }
     world.entity_mut(entity).insert(Body {
         files: files.clone(),
@@ -112,6 +99,61 @@ pub fn dress(world: &mut World, entity: Entity, files: &BodyFiles) {
         joints: HashMap::new(),
         player: None,
     });
+}
+
+/// Swaps the skins of the body standing under `entity` for `skins`, keeping its rig and what plays
+/// on it: a skin it already wears stays as it is.
+pub fn reskin(world: &mut World, entity: Entity, skins: &[String]) {
+    let Some(body) = world.get::<Body>(entity) else {
+        return;
+    };
+    let (rig, worn) = body
+        .scenes
+        .split_first()
+        .map_or((None, &[][..]), |(rig, worn)| (Some(*rig), worn));
+    let kept: Vec<(String, Entity)> = body
+        .files
+        .skins
+        .iter()
+        .cloned()
+        .zip(worn.iter().copied())
+        .collect();
+    let mut scenes: Vec<Entity> = rig.into_iter().collect();
+    for (file, scene) in &kept {
+        if !skins.contains(file)
+            && let Ok(scene) = world.get_entity_mut(*scene)
+        {
+            scene.despawn();
+        }
+    }
+    for skin in skins {
+        match kept.iter().find(|(file, _)| file == skin) {
+            Some((_, scene)) => scenes.push(*scene),
+            None => scenes.push(spawn_skin(world, entity, skin)),
+        }
+    }
+    if let Some(mut body) = world.get_mut::<Body>(entity) {
+        body.files.skins = skins.to_vec();
+        body.scenes = scenes;
+    }
+}
+
+fn spawn_skin(world: &mut World, body: Entity, file: &str) -> Entity {
+    let scene = world
+        .resource::<AssetServer>()
+        .load(GltfAssetLabel::Scene(0).from_asset(file.to_owned()));
+    world
+        .spawn((
+            WorldAssetRoot(scene),
+            Transform::default(),
+            Visibility::Hidden,
+            SkinOf {
+                body,
+                spawned: false,
+            },
+            ChildOf(body),
+        ))
+        .id()
 }
 
 pub struct BodyPlugin;

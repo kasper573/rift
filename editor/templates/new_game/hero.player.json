@@ -1,5 +1,4 @@
 {
-  "model": "hero.model.json",
   "class": "hero.class.json",
   "stats": {
     "health": 30.0,

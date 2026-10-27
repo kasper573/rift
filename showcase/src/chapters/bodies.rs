@@ -50,7 +50,7 @@ const BODIES: [Body; 6] = [
         "vampire_bat",
         "A bat keeps aloft on trailing wings. It is listed with a sword, but has no hands: the sword is never shown, and it bites",
         |bat| {
-            let listed = id::<NpcDef>("vampire_bat").get(content()).wearing.len();
+            let listed = id::<NpcDef>("vampire_bat").get(content()).held.len();
             bat.flies && listed > 0 && bat.held.is_empty() && bat.action == Action::Attack
         },
     ),

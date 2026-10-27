@@ -1,6 +1,8 @@
 {
   "name": "Mara",
-  "model": "characters/models/mage.model.json",
+  "appearance": {
+    "model": "characters/models/mage.model.json"
+  },
   "bust": "characters/busts/mage.bust",
   "stats": {
     "health": 40.0,

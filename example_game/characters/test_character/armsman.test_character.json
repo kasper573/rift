@@ -1,6 +1,9 @@
 {
   "name": "Armsman",
   "class": "characters/class/fighter.class.json",
+  "appearance": {
+    "model": "characters/models/knight.model.json"
+  },
   "xp": 200,
   "skills": [
     {

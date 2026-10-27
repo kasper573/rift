@@ -1,6 +1,8 @@
 {
   "name": "Ilsa",
-  "model": "characters/models/rogue.model.json",
+  "appearance": {
+    "model": "characters/models/rogue.model.json"
+  },
   "bust": "characters/busts/rogue.bust",
   "stats": {
     "health": 40.0,
@@ -11,7 +13,7 @@
     "movement_speed": 0.6,
     "range": 1.0
   },
-  "wearing": [
+  "held": [
     "items-and-skills/item/bow.item.json"
   ],
   "modules": [

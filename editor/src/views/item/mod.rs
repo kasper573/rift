@@ -82,7 +82,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     sidebar::inspector(editor, ui, "item", |editor, ui| {
         inspect(editor, ui, key, &row);
     });
-    let held = matches!(row.wear(), Some(Wear::Hand { .. }));
+    let held = matches!(row.wear(), Some(Wear::Held { .. }));
     let pages: &[ItemPage] = if held {
         &[ItemPage::Card, ItemPage::Look, ItemPage::Wield]
     } else {
@@ -216,7 +216,7 @@ fn drop_strip(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef, size: 
 fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
     let ctx = ui.ctx().clone();
     if editor.views.item.view_mut(key).page == ItemPage::Wield
-        && matches!(row.wear(), Some(Wear::Hand { .. }))
+        && matches!(row.wear(), Some(Wear::Held { .. }))
     {
         wield::inspect(editor, ui, key);
         ui.add_space(8.0);

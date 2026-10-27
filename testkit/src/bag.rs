@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::Content;
+use engine::systems::equipment;
 use engine::systems::item::{Inventory, ItemDef, ItemStack};
 
 use crate::Sim;
@@ -14,6 +15,16 @@ impl Sim {
             .expect("a bag")
             .exchange(&content, &[], &[ItemStack::new(item, count)])
             .expect("room in the bag");
+    }
+
+    /// Puts the item under `key` in `who`'s bag and wears it from there, the way a player equips it,
+    /// and lets a tick pass for what wearing it brings to settle.
+    pub fn equip(&mut self, who: Entity, key: &str) {
+        self.give(who, key, 1);
+        let item = self.id::<ItemDef>(key);
+        equipment::equip_from_bag(&mut self.world, who, item)
+            .unwrap_or_else(|refused| panic!("{key} is worn: {refused}"));
+        self.tick();
     }
 
     /// How many of the item under `key` lie in `who`'s bag.

@@ -32,6 +32,7 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
             json!({
                 "name": "Lost",
                 "class": path("class", "hero"),
+                "appearance": { "model": path("model", "hero") },
                 "known_areas": [path("area", "cove")],
                 "start": { "area": path("area", "start"), "x": 40.0, "y": 40.0 },
             }),
@@ -92,13 +93,13 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
             ),
             (
                 "lost.test_character.json",
-                json(4, 18, "/known_areas"),
+                json(7, 18, "/known_areas"),
                 "start not known",
                 None,
             ),
             (
                 "lost.test_character.json",
-                json(7, 12, "/start"),
+                json(10, 12, "/start"),
                 "not walkable",
                 Some("9.15, 7.15"),
             ),

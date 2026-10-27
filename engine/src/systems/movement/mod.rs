@@ -22,7 +22,7 @@ use crate::core::interpolate::{Interpolate, InterpolatePlugin, Jumps, RenderValu
 use crate::core::math::{Offset, Pos};
 use crate::core::time::Seconds;
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
-use crate::systems::actor::{Action, Actor, ActorModel, set_facing, wearing};
+use crate::systems::actor::{Action, Actor, ActorModel, appearance, held, set_facing};
 use crate::systems::player::{may_command, sender_player};
 use crate::systems::stat::{self, StatKind};
 use crate::systems::{area, drain_requests, reach};
@@ -286,11 +286,9 @@ fn mesh_in(world: &World, entity: Entity) -> Option<&NavMesh> {
 
 /// The gait the actor's model covers ground at `speed` in, in the stance it stands in.
 pub(super) fn gait_of(world: &World, entity: Entity, speed: MetersPerSec) -> Action {
-    let Some(actor) = world.get::<Actor>(entity) else {
-        return Action::Walk;
-    };
-    let content = world.resource::<Content>();
-    ActorModel::get(content, actor.model).gait(wearing::stance_of(world, entity), speed)
+    appearance::model_of(world, entity).map_or(Action::Walk, |model| {
+        model.gait(held::stance_of(world, entity), speed)
+    })
 }
 
 /// Walks `at` along `path` for `distance`, dropping each corner it reaches. Returns the heading of
@@ -354,8 +352,5 @@ fn distance_to_segment(a: Pos<Meters>, b: Pos<Meters>, point: Pos<Meters>) -> Me
 }
 
 fn airborne(world: &World, entity: Entity) -> bool {
-    let content = world.resource::<Content>();
-    world
-        .get::<Actor>(entity)
-        .is_some_and(|actor| ActorModel::get(content, actor.model).airborne())
+    appearance::model_of(world, entity).is_some_and(ActorModel::airborne)
 }

@@ -1,7 +1,6 @@
 use engine::core::audio::playback::{SFX_CLIP, SfxDef};
 use engine::core::babble::{BABBLE_LETTERS, BabbleBankDef, BabbleDef, LETTERS};
 use engine::core::content::{Content, ContentFile, MODULES};
-use engine::core::math::Rgba;
 use engine::core::time::Seconds;
 use engine::systems::GameSettings;
 use engine::systems::actor::Action;
@@ -150,6 +149,8 @@ fn show_status(editor: &mut Editor, ui: &mut Ui, key: &str) {
         content
             .built::<GameSettings>()
             .player
+            .get(&content)
+            .class
             .get(&content)
             .model
             .path(&content)
@@ -311,7 +312,6 @@ fn draw_preview(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, pose: 
     };
     posed.actors.push(PosedActor {
         action: pose.action,
-        tint: look.tint,
         plate: look.plate,
         held: (!pose.playing).then_some(Seconds(0.0)),
         ..PosedActor::standing(model, center)
@@ -325,11 +325,10 @@ fn draw_preview(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, pose: 
     );
 }
 
-/// How the row's actor stands on the stage: the model it wears, its tint, and the plate it wears
+/// How the row's actor stands on the stage: the model it wears, and the plate it wears
 /// in game, an npc's name and role once it has a nameplate, a test character's name as a player.
 struct ActorLook {
     model: String,
-    tint: Rgba,
     plate: Option<PlateLabel>,
 }
 
@@ -339,15 +338,13 @@ fn actor_look(editor: &Editor, content: &Content, table: &str, key: &str) -> Opt
     match table {
         ModelDef::TABLE => Some(ActorLook {
             model: key.to_owned(),
-            tint: Rgba::WHITE,
             plate: None,
         }),
         NpcDef::TABLE => {
             let npc = project.read::<NpcDef>(key).ok()?;
             let hostile = attitude(content, key, &npc) == Some(true);
             Some(ActorLook {
-                model: reader.path_of(npc.model)?.to_owned(),
-                tint: npc.tint(),
+                model: reader.path_of(npc.appearance.model)?.to_owned(),
                 plate: npc
                     .nameplate()
                     .map(|role| PlateLabel::npc(&npc.name, role, hostile)),
@@ -355,18 +352,16 @@ fn actor_look(editor: &Editor, content: &Content, table: &str, key: &str) -> Opt
         }
         PlayerDef::TABLE => {
             let player = project.read::<PlayerDef>(key).ok()?;
+            let class = project.read_id(player.class)?;
             Some(ActorLook {
-                model: reader.path_of(player.model)?.to_owned(),
-                tint: player.tint(),
+                model: reader.path_of(class.model)?.to_owned(),
                 plate: None,
             })
         }
         CharacterSnapshot::TABLE => {
             let snapshot = project.read::<CharacterSnapshot>(key).ok()?;
-            let player = project.read_id(project.settings().ok()?.player)?;
             Some(ActorLook {
-                model: reader.path_of(player.model)?.to_owned(),
-                tint: player.tint(),
+                model: reader.path_of(snapshot.appearance.model)?.to_owned(),
                 plate: Some(PlateLabel::player(&snapshot.name)),
             })
         }

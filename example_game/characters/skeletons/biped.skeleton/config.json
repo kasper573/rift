@@ -24,6 +24,9 @@
       "spine"
     ]
   },
+  "slots": [
+    "head"
+  ],
   "base": {
     "clips": {
       "idle": "idle",

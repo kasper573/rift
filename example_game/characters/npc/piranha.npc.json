@@ -1,6 +1,8 @@
 {
   "name": "Piranha",
-  "model": "characters/models/piranha.model.json",
+  "appearance": {
+    "model": "characters/models/piranha.model.json"
+  },
   "stats": {
     "health": 8.0,
     "max_health": 8.0,

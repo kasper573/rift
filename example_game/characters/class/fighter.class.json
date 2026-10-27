@@ -2,6 +2,7 @@
   "name": "Fighter",
   "icon": "assets/icons/weapon_and_tool/iron_sword.png",
   "flavour": "Steel in hand and nothing between you and the fight.",
+  "model": "characters/models/knight.model.json",
   "levels": [
     {
       "xp": 0,

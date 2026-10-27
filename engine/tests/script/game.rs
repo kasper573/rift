@@ -80,6 +80,7 @@ pub fn field() -> (Sim, Entity) {
     script::spawn_stateless(&mut sim.world);
     npc::spawn_all(&mut sim.world);
     let player = sim.join(1);
+    sim.equip(player, "sword");
     sim.run(0.5);
     (sim, player)
 }
@@ -124,7 +125,6 @@ pub fn game() -> Game {
         .area("forest", &Map::open(8, 20), json!([]))
         .hero("field", 8.0, 8.0)
         .sword()
-        .equipped(&["sword"])
         .npc("fighter", 30.0, json!([]))
         .npc("hunter", 30.0, fighter("hunts"))
         .npc("guard", 30.0, fighter("defends"))
@@ -169,7 +169,7 @@ pub fn game() -> Game {
         )
         .item("gold", json!({ "name": "Gold", "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 1000 }] }))
         .stance("shield", 1, "off")
-        .item("pass", json!({ "kind": { "type": "equipment", "slot": "hand", "stance": "shield.stance.json" } }))
+        .item("pass", json!({ "kind": { "type": "equipment", "wear": "held", "stance": "shield.stance.json" } }))
         .item(
             "map",
             json!({

@@ -10,7 +10,7 @@
   },
   "kind": {
     "type": "equipment",
-    "slot": "hand",
+    "wear": "held",
     "stance": "items-and-skills/stances/bow.stance.json",
     "grip": {
       "offset": [

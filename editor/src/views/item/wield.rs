@@ -10,7 +10,7 @@ use engine::systems::actor::model::{ActorModel, Skeletons};
 use engine::systems::actor::render;
 use engine::systems::actor::skeleton::SkeletonDef;
 use engine::systems::actor::stance::{HandRole, PropHand, StanceDef};
-use engine::systems::actor::{Action, ModelDef, Motion, Pose, wearing};
+use engine::systems::actor::{Action, ModelDef, Motion, Pose, held};
 use engine::systems::item::{Grip, ItemDef, ItemKind, Wear};
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
@@ -60,7 +60,7 @@ pub fn set_wield(editor: &mut Editor, key: &str, stance: &str, grip: Grip) -> bo
 }
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
-    let Some(Wear::Hand { stance, grip }) = row.wear().cloned() else {
+    let Some(Wear::Held { stance, grip }) = row.wear().cloned() else {
         return;
     };
     let Some(reader) = editor.reader() else {
@@ -287,7 +287,7 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
     let props = content
         .by_path::<ItemDef>(key)
         .map(|item| {
-            let shown = wearing::listed(&content, model.hands().len(), &[item]);
+            let shown = held::listed(&content, model.hands().len(), &[item]);
             render::hung(&content, model, &shown)
                 .into_keys()
                 .filter_map(|hand| stage::prop_in_hand(&content, model, hand, item, &grip))
@@ -320,7 +320,7 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let Some(item) = content.by_path::<ItemDef>(key) else {
         return;
     };
-    let Some(Wear::Hand { stance, .. }) = item.get(&content).wear() else {
+    let Some(Wear::Held { stance, .. }) = item.get(&content).wear() else {
         return;
     };
     let def = stance.get(&content);
@@ -391,13 +391,13 @@ fn set_wield_as(
         return false;
     };
     let mut item = (*row).clone();
-    let ItemKind::Equipment { slot, .. } = &mut item.kind else {
+    let ItemKind::Equipment { wear, .. } = &mut item.kind else {
         return false;
     };
-    let wear = Wear::Hand { stance, grip };
-    if *slot == wear {
+    let held = Wear::Held { stance, grip };
+    if *wear == held {
         return false;
     }
-    *slot = wear;
+    *wear = held;
     editor.write_content_as(edit, key, &item)
 }

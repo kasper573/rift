@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+pub mod appearance;
+pub mod held;
 pub mod layering;
 pub mod model;
 pub mod part;
@@ -8,14 +10,14 @@ pub mod playing;
 pub mod render;
 pub mod skeleton;
 pub mod stance;
-pub mod wearing;
 
+pub use appearance::Appearance;
+pub use held::Held;
 pub use model::{ActorModel, ModelDef, ModelId, Timing};
 pub use part::{ModelPartDef, ModelPartId};
 pub use playing::{Animate, LastAction, Motion, Playing, Wait};
 pub use skeleton::{SkeletonDef, SkeletonId};
 pub use stance::{StanceDef, StanceId};
-pub use wearing::Wearing;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
@@ -25,22 +27,25 @@ use strum::{AsRefStr, EnumString, VariantArray};
 
 use crate::core::content::{ContentRegistry, LoadStep};
 use crate::core::geometry::{Capsule, Radians};
-use crate::core::math::{Pos, Rgba};
+use crate::core::math::Pos;
 use crate::core::render::{Pointed, capsule_hit, ground_height, world_point};
 use crate::core::time::PlaybackRate;
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::area::AreaObject;
 use crate::systems::dialogue;
 use crate::systems::movement::{self, Path, Position, RenderPosition};
+use crate::systems::skill::Cooldowns;
 use crate::systems::stat::{self, Stats};
+use crate::systems::status::{ActiveAspects, Boosts, Statuses};
 
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
 
     app.replicate::<Actor>()
+        .replicate::<Appearance>()
         .replicate::<Playing>()
-        .replicate::<Wearing>()
-        .replicate::<wearing::ScriptedStance>()
+        .replicate::<Held>()
+        .replicate::<held::ScriptedStance>()
         .replicate_once::<Hitbox>()
         .replicate_once::<Name>();
 }
@@ -137,19 +142,14 @@ pub enum Pose {
     Sit,
 }
 
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Tint {
-    pub rgba: Rgba,
-}
-
+/// One live player or npc: where it faces, what it does, how it stands and how fast it moves. Its
+/// statuses, boosts, aspects and cooldowns start empty with it.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[require(Statuses, Boosts, ActiveAspects, Cooldowns)]
 pub struct Actor {
-    pub color: Rgba,
     pub facing: Radians,
     pub action: Action,
     pub pose: Pose,
-    pub model: ModelId,
     pub attack_rate: PlaybackRate,
     /// How fast the actor last walked, which its gait's clip plays to cover.
     pub speed: MetersPerSec,

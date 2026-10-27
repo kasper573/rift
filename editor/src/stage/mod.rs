@@ -15,7 +15,7 @@ use ui::theme;
 use bevy::prelude::*;
 use engine::core::content::Content;
 use engine::core::geometry::{PlacedShape, Radians};
-use engine::core::math::{Pos, Rgba};
+use engine::core::math::Pos;
 use engine::core::time::Seconds;
 use engine::core::units::Meters;
 use engine::core::vfx::{VfxLayer, VfxParams};
@@ -84,7 +84,6 @@ pub struct PosedActor {
     pub model: ModelId,
     pub action: Action,
     pub facing: Radians,
-    pub tint: Rgba,
     pub at: Pos<Meters>,
     pub plate: Option<PlateLabel>,
     /// Held at this moment of the action, or animated.
@@ -150,7 +149,6 @@ impl PosedActor {
             model,
             action: Action::Idle,
             facing: Radians::SOUTH,
-            tint: Rgba::WHITE,
             at,
             plate: None,
             held: None,
@@ -374,7 +372,7 @@ fn live_frame<'a>(live: &mut LiveWorld, content: &'a Content) -> mirror::Frame<'
         .actors()
         .into_iter()
         .map(|shown| ActorPose {
-            model: shown.actor.model,
+            model: shown.model,
             at: shown.at,
             plate: shown.plate,
         })

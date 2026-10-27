@@ -12,16 +12,15 @@ use engine::core::content::gltf::PLACEHOLDER_LIFT;
 use engine::core::geometry::{Degrees, Radians};
 use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
-use engine::core::math::Rgba;
 use engine::core::render::camera::ground_hit;
 use engine::core::render::world::body::{Body, BodyPlugin};
 use engine::core::render::{Animator, CameraRig, capsule_hit, facing_rotation, world_point};
 use engine::core::time::PlaybackRate;
 use engine::core::units::{MeterPos, Meters, MetersPerSec};
+use engine::systems::actor::held::Held;
 use engine::systems::actor::render::{self, HeldProp, RenderActor};
 use engine::systems::actor::stance::HandIndex;
-use engine::systems::actor::wearing::Wearing;
-use engine::systems::actor::{Action, Actor, ModelDef, Pose};
+use engine::systems::actor::{Action, Actor, Appearance, ModelDef, Pose};
 use engine::systems::area::{self, AreaDef, AreaTag};
 use engine::systems::item::ItemDef;
 use engine::systems::movement::RenderPosition;
@@ -140,14 +139,14 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
         )
         .item(
             "bow",
-            json!({ "kind": { "type": "equipment", "slot": "hand", "stance": path("stance", "bow") } }),
+            json!({ "kind": { "type": "equipment", "wear": "held", "stance": path("stance", "bow") } }),
         );
     let folder = tempfile::tempdir().expect("a scratch folder");
     let (mut app, content) = viewer(game, folder.path());
     let sword = testkit::Declared::declared::<ItemDef>(&content, "sword").expect("a sword");
     let bow = testkit::Declared::declared::<ItemDef>(&content, "bow").expect("a bow");
     let body = spawn_hero(&mut app, &content, Action::Idle);
-    app.world_mut().entity_mut(body).insert(Wearing {
+    app.world_mut().entity_mut(body).insert(Held {
         hands: BTreeMap::from([(HandIndex::MAIN, sword)]),
     });
     app.world_mut()
@@ -169,7 +168,7 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
         "the sword hangs from the right hand"
     );
 
-    app.world_mut().entity_mut(body).insert(Wearing {
+    app.world_mut().entity_mut(body).insert(Held {
         hands: BTreeMap::from([(HandIndex::MAIN, bow), (HandIndex::OFF, bow)]),
     });
     app.world_mut()
@@ -182,7 +181,7 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
         "a two-hander held in the last of its hands hangs from it alone"
     );
 
-    app.world_mut().entity_mut(body).insert(Wearing {
+    app.world_mut().entity_mut(body).insert(Held {
         hands: BTreeMap::from([(HandIndex::MAIN, sword), (HandIndex::OFF, sword)]),
     });
     app.world_mut()
@@ -194,7 +193,7 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
     wanted.sort();
     assert_eq!(both, wanted, "a one-hander in each hand hangs from each");
 
-    app.world_mut().entity_mut(body).insert(Wearing::default());
+    app.world_mut().entity_mut(body).insert(Held::default());
     app.world_mut()
         .run_system_cached(render::hang)
         .expect("hung");
@@ -273,14 +272,13 @@ fn spawn_hero(app: &mut App, content: &engine::core::content::Content, action: A
     app.world_mut()
         .spawn((
             Actor {
-                color: Rgba(0xffffffff),
                 facing: Radians(0.0),
                 action,
                 pose: Pose::Idle,
-                model: hero,
                 attack_rate: PlaybackRate(1.0),
                 speed: MetersPerSec::default(),
             },
+            Appearance::of(hero),
             RenderActor {
                 facing: Radians(0.0),
                 action,
@@ -325,14 +323,13 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
     ] {
         app.world_mut().spawn((
             Actor {
-                color: Rgba(0xffffffff),
                 facing: Radians(0.0),
                 action,
                 pose: Pose::Idle,
-                model: hero,
                 attack_rate: PlaybackRate(1.0),
                 speed,
             },
+            Appearance::of(hero),
             RenderActor {
                 facing: Radians(0.0),
                 action,

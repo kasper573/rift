@@ -132,7 +132,7 @@ fn media_is_named_by_its_path_from_the_game_folder() {
 fn npc_fields(name: &str, model: &str) -> Vec<u8> {
     serde_json::to_vec_pretty(&json!({
         "name": name,
-        "model": model,
+        "appearance": { "model": model },
         "stats": testkit::stats(10.0),
     }))
     .expect("json")

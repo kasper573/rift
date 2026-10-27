@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::skeleton::{self, BuildName, SkeletonId};
+use super::skeleton::{self, BodyRegion, BuildName, SkeletonId};
 use crate::core::assets::{FileSize, ModelRef};
 use crate::core::content::gltf::GltfInfo;
 use crate::core::content::{
@@ -23,6 +23,13 @@ pub type ModelPartId = ContentId<ModelPartDef>;
 #[serde(deny_unknown_fields)]
 pub struct ModelPartDef {
     pub skeleton: SkeletonId,
+    /// The regions of its skeleton it takes: a part laid over it that covers any of them replaces
+    /// it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covers: Vec<BodyRegion>,
+    /// The regions it leaves bare of every other part, as a hood leaves the hair.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hides: Vec<BodyRegion>,
     #[serde(skip)]
     pub mesh: Option<ModelRef>,
     #[serde(skip)]
@@ -111,6 +118,8 @@ impl ContentFile for ModelPartDef {
     fn fresh(near: &Nearby) -> Result<ModelPartDef, String> {
         Ok(ModelPartDef {
             skeleton: near.file()?,
+            covers: Vec::new(),
+            hides: Vec::new(),
             mesh: None,
             builds: BTreeMap::new(),
         })

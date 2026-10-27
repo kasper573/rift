@@ -225,7 +225,7 @@ fn check_bodies(name: &str, content: &Content, out: &mut Vec<String>) {
         }
     }
     let player = content.built::<GameSettings>().player.get(content);
-    let body = ActorModel::get(content, player.model).skeleton();
+    let body = ActorModel::get(content, player.class.get(content).model).skeleton();
     for item in content.table::<ItemDef>().ids() {
         let Some(stance) = stance::of_item(content, item) else {
             continue;

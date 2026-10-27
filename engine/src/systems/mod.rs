@@ -38,16 +38,11 @@ pub mod vfx;
 pub mod view;
 pub mod visibility;
 
-use actor::{Actor, Hitbox};
-use area::AreaTag;
 use bevy_app::App;
 use bevy_ecs::message::{Message, Messages};
-use bevy_ecs::prelude::{Bundle, Entity, Res, ResMut, Resource, World};
-use bevy_replicon::prelude::{FromClient, Replicated};
-use movement::{Position, Spot};
+use bevy_ecs::prelude::{Entity, Res, ResMut, Resource, World};
+use bevy_replicon::prelude::FromClient;
 use schemars::JsonSchema;
-use skill::Cooldowns;
-use status::{ActiveAspects, Boosts, Statuses};
 
 use crate::core::assets::SyncedFiles;
 use crate::core::audio::playback::{SfxDef, SfxPlugin};
@@ -163,43 +158,6 @@ pub struct GameSettings {
     /// Without one the game has no clock: every area's light stands as authored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daylight: Option<area::DayCycle>,
-}
-
-/// What every character in the world is made of, player and NPC alike, spawned whole so a character
-/// takes one archetype: its standing in the world, and the statuses, boosts, aspects and cooldowns it
-/// starts without.
-#[derive(Bundle)]
-pub struct Character {
-    pub replicated: Replicated,
-    pub position: Position,
-    pub spot: Spot,
-    pub actor: Actor,
-    pub hitbox: Hitbox,
-    pub area: AreaTag,
-    pub statuses: Statuses,
-    pub boosts: Boosts,
-    pub aspects: ActiveAspects,
-    pub cooldowns: Cooldowns,
-}
-
-impl Character {
-    pub fn new(position: Position, actor: Actor, hitbox: Hitbox, area: AreaTag) -> Character {
-        Character {
-            replicated: Replicated,
-            spot: Spot {
-                area: area.area,
-                at: position.pos,
-            },
-            position,
-            actor,
-            hitbox,
-            area,
-            statuses: Statuses::default(),
-            boosts: Boosts::default(),
-            aspects: ActiveAspects::default(),
-            cooldowns: Cooldowns::default(),
-        }
-    }
 }
 
 pub fn server_app(
@@ -625,6 +583,7 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Across, npc::check_all)
         .hook(LoadStep::Across, skill::check_all)
         .hook(LoadStep::Across, item::check_pictures)
+        .hook(LoadStep::Across, item::check_looks)
         .hook(LoadStep::Across, vfx::check_sites)
         .hook(LoadStep::Across, player::snapshot::check_all);
     registry

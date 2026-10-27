@@ -153,8 +153,8 @@ impl StanceDef {
 /// The stance of an item a hand can show, when it is one.
 pub fn of_item(content: &Content, item: ItemId) -> Option<StanceId> {
     match item.get(content).wear()? {
-        Wear::Hand { stance, .. } => Some(*stance),
-        Wear::Head => None,
+        Wear::Held { stance, .. } => Some(*stance),
+        Wear::Worn { .. } => None,
     }
 }
 

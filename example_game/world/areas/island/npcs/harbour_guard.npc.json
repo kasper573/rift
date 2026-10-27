@@ -1,6 +1,8 @@
 {
   "name": "Harbour Guard",
-  "model": "characters/models/knight.model.json",
+  "appearance": {
+    "model": "characters/models/knight.model.json"
+  },
   "stats": {
     "health": 30.0,
     "max_health": 30.0,
@@ -11,7 +13,7 @@
     "range": 1.0
   },
   "basic_attack": "items-and-skills/skill/strike.skill.json",
-  "wearing": [
+  "held": [
     "items-and-skills/item/spear.item.json"
   ],
   "modules": [

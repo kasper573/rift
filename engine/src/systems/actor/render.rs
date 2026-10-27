@@ -12,12 +12,14 @@ use bevy::animation::graph::AnimationNodeIndex;
 use bevy::animation::{AnimationTargetId, RepeatAnimation};
 use bevy::prelude::*;
 
+use super::appearance::look;
+use super::held::{self, Held};
 use super::layering::{self, Layering};
 use super::model::ClipSource;
+use super::skeleton::EquipmentSlot;
 use super::skeleton::{Cue, GroupName, Hand, LocalOffset, LocalTurn, SkeletonId};
 use super::stance::{self, HandIndex, PropHand};
-use super::wearing::{self, Wearing};
-use super::{Action, Actor, ActorModel, ModelId, Motion, Playing, Pose};
+use super::{Action, Actor, ActorModel, Appearance, ModelId, Motion, Playing, Pose};
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::content::Content;
 use crate::core::content::gltf::NodeTree;
@@ -33,6 +35,7 @@ use crate::core::units::Meters;
 use crate::core::vfx::cover::Treads;
 use crate::core::vfx::render::SiteExtent;
 use crate::systems::area::{self, Area};
+use crate::systems::equipment::{self, Equipment};
 use crate::systems::item::{Grip, ItemId, Wear};
 use crate::systems::movement::RenderPosition;
 use crate::systems::screen::ClientScreen;
@@ -94,16 +97,23 @@ pub struct SkeletonGraph {
     outside: HashMap<(ClipSource, GroupName), AnimationNodeIndex>,
 }
 
-/// The body an actor wears: its model, the graph of its skeleton, what plays and how far each clip
-/// has faded in, and the props its hands hold.
+/// The body an actor wears: the appearance and worn items it was dressed in, the graph of its
+/// skeleton, what plays and how far each clip has faded in, and the props its hands hold.
 #[derive(Component)]
 pub struct Puppet {
-    model: ModelId,
+    dressed: Dressed,
     graph: Arc<SkeletonGraph>,
     playing: Option<Play>,
     tracks: Vec<Track>,
     turn: Turn,
     held: BTreeMap<HandIndex, (ItemId, Entity)>,
+}
+
+/// What a body was last dressed as: its appearance, and the items worn in its slots.
+#[derive(Clone, PartialEq)]
+struct Dressed {
+    appearance: Appearance,
+    worn: BTreeMap<EquipmentSlot, ItemId>,
 }
 
 /// A prop hanging from a hand of an actor's rig.
@@ -157,21 +167,51 @@ impl Puppet {
 }
 
 /// Stands a body on every actor of the shown area that lacks one, or wears another model's: its
-/// model's parts over its skeleton's rig, played through its skeleton's graph.
+/// look over its skeleton's rig, played through its skeleton's graph. A body whose appearance or
+/// worn items change keeps its rig and swaps its skins for those of its new look.
 pub fn dress(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let now = Seconds(world.resource::<Time>().elapsed_secs());
-    let undressed: Vec<(Entity, ModelId, Radians)> = world
-        .query::<(Entity, &Actor, Option<&Puppet>)>()
+    let changed: Vec<(Entity, Dressed, Radians, bool)> = world
+        .query::<(
+            Entity,
+            &Actor,
+            &Appearance,
+            Option<&Equipment>,
+            Option<&Puppet>,
+        )>()
         .iter(world)
-        .filter(|(_, actor, puppet)| puppet.is_none_or(|puppet| puppet.model != actor.model))
-        .map(|(entity, actor, _)| (entity, actor.model, actor.facing))
+        .filter_map(|(entity, actor, appearance, equipment, puppet)| {
+            let worn = || equipment.into_iter().flat_map(equipment::worn_slots);
+            let same_model =
+                puppet.is_some_and(|puppet| puppet.dressed.appearance.model == appearance.model);
+            let same_look = puppet.is_some_and(|puppet| {
+                puppet.dressed.appearance == *appearance && puppet.dressed.worn.iter().eq(worn())
+            });
+            (!same_look).then(|| {
+                let dressed = Dressed {
+                    appearance: appearance.clone(),
+                    worn: worn().map(|(slot, item)| (slot.clone(), *item)).collect(),
+                };
+                (entity, dressed, actor.facing, !same_model)
+            })
+        })
         .collect();
-    for (entity, model, facing) in undressed {
-        let actor_model = ActorModel::get(&content, model);
+    for (entity, dressed, facing, fresh) in changed {
+        let actor_model = ActorModel::get(&content, dressed.appearance.model);
+        let files = actor_model.dressed(
+            &content,
+            &look(&content, &dressed.appearance, &dressed.worn),
+        );
+        if !fresh {
+            body::reskin(world, entity, &files.skins);
+            if let Some(mut puppet) = world.get_mut::<Puppet>(entity) {
+                puppet.dressed = dressed;
+            }
+            continue;
+        }
         let graph = skeleton_graph(world, &content, actor_model.skeleton_id());
         let hitbox = actor_model.hitbox();
-        let files = actor_model.body();
         let held: Vec<Entity> = world
             .get::<Puppet>(entity)
             .map(|puppet| puppet.held.values().map(|(_, prop)| *prop).collect())
@@ -197,7 +237,7 @@ pub fn dress(world: &mut World) {
                 },
             },
             Puppet {
-                model,
+                dressed,
                 graph,
                 playing: None,
                 tracks: Vec::new(),
@@ -337,7 +377,7 @@ pub fn adopt_player(
         .insert(AnimationGraphHandle(puppet.graph.graph.clone()));
     puppet.playing = None;
     puppet.tracks.clear();
-    let model = ActorModel::get(&content, puppet.model);
+    let model = ActorModel::get(&content, puppet.dressed.appearance.model);
     match layering::layered(model, body.joints()) {
         Some(layers) => commands.entity(ready.entity).insert(layers),
         None => commands
@@ -352,23 +392,38 @@ pub fn pose(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let delta = Seconds(world.resource::<Time>().delta_secs());
-    let shown: Vec<(Entity, RenderActor, RenderPosition, Actor, Option<Playing>)> = world
+    let shown: Vec<(
+        Entity,
+        RenderActor,
+        RenderPosition,
+        Actor,
+        ModelId,
+        Option<Playing>,
+    )> = world
         .query::<(
             Entity,
             &RenderActor,
             &RenderPosition,
             &Actor,
+            &Appearance,
             Option<&Playing>,
         )>()
         .iter(world)
-        .map(|(entity, shown, at, actor, playing)| {
-            (entity, *shown, *at, actor.clone(), playing.cloned())
+        .map(|(entity, shown, at, actor, appearance, playing)| {
+            (
+                entity,
+                *shown,
+                *at,
+                actor.clone(),
+                appearance.model,
+                playing.cloned(),
+            )
         })
         .collect();
     let mut sounds = Vec::new();
-    for (entity, shown, at, actor, playing) in shown {
-        let model = ActorModel::get(&content, actor.model);
-        let stance = wearing::stance_of(world, entity);
+    for (entity, shown, at, actor, model, playing) in shown {
+        let model = ActorModel::get(&content, model);
+        let stance = held::stance_of(world, entity);
         let ground = ground_height(world, at.0);
         let motion = playing
             .as_ref()
@@ -561,16 +616,14 @@ pub fn cue_sounds(
 pub fn hang(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let dressed: Vec<(Entity, ModelId, BTreeMap<HandIndex, ItemId>)> = world
-        .query::<(Entity, &Actor, &Body, Option<&Wearing>)>()
+        .query::<(Entity, &Appearance, &Body, Option<&Held>)>()
         .iter(world)
         .filter(|(_, _, body, _)| body.player().is_some())
-        .map(|(entity, actor, _, wearing)| {
+        .map(|(entity, appearance, _, held)| {
             (
                 entity,
-                actor.model,
-                wearing
-                    .map(|wearing| wearing.hands.clone())
-                    .unwrap_or_default(),
+                appearance.model,
+                held.map(|held| held.hands.clone()).unwrap_or_default(),
             )
         })
         .collect();
@@ -606,7 +659,7 @@ pub fn hang(world: &mut World) {
         }
         for (hand, item, joint) in new {
             let def = item.get(&content);
-            let Some(Wear::Hand { grip, .. }) = def.wear() else {
+            let Some(Wear::Held { grip, .. }) = def.wear() else {
                 continue;
             };
             let look = def.look.get(&content);

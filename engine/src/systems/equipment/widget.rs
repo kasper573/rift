@@ -10,10 +10,11 @@ use crate::core::assets::ImageRef;
 use crate::core::content::Content;
 use crate::core::gui::ImageSource;
 use crate::core::text::{StyledLine, TextPiece};
+use crate::systems::actor::held::{self, Held};
+use crate::systems::actor::skeleton::EquipmentSlot;
 use crate::systems::actor::stance::{self, HandIndex, HandRole, StanceDef};
-use crate::systems::actor::wearing::{self, Wearing};
-use crate::systems::actor::{Actor, ActorModel};
-use crate::systems::equipment::{EquipmentSlot, UnequipRequest};
+use crate::systems::actor::{Appearance, appearance};
+use crate::systems::equipment::{EquipmentPlace, UnequipRequest};
 use crate::systems::hud::{self, Carried, HudWindow};
 use crate::systems::input::map::{self, InputAction, input};
 use crate::systems::interface::InterfaceIcon;
@@ -71,9 +72,10 @@ impl HudWindow for EquipmentWindow {
     }
 }
 
-/// A place on the window: a hand of the body, two hands a two-hander spans, or the head.
+/// A place on the window: a hand of the body, two hands a two-hander spans, or a slot of its
+/// skeleton.
 struct Place {
-    slot: EquipmentSlot,
+    slot: EquipmentPlace,
     names: Vec<String>,
     item: Option<ItemId>,
     /// Whether the body cannot show what is worn here.
@@ -91,8 +93,8 @@ impl Place {
 
     /// Where the item is worn, in a sentence.
     fn where_held(&self) -> String {
-        match (self.slot, self.names.len()) {
-            (EquipmentSlot::Head, _) => "Worn on the head".to_owned(),
+        match (&self.slot, self.names.len()) {
+            (EquipmentPlace::Slot(slot), _) => format!("Worn on the {}", spoken(slot)),
             (_, 2) => "Held in both hands".to_owned(),
             _ => format!(
                 "Held in the {}",
@@ -106,12 +108,12 @@ impl Place {
 }
 
 /// Every hand of the player's body in its skeleton's order, a two-hander spanning the hands it
-/// takes, and the head.
+/// takes, and every slot of its skeleton.
 fn places(world: &World) -> Vec<Place> {
     let Some(me) = session::me(world) else {
         return Vec::new();
     };
-    let hands = wearing::hands_of(world, me);
+    let hands = held::hands_of(world, me);
     let names: Vec<String> = match hands.len() {
         0 => vec!["Hand".to_owned()],
         _ => hands.iter().map(|hand| capitalized(&hand.name)).collect(),
@@ -119,8 +121,8 @@ fn places(world: &World) -> Vec<Place> {
     let unseen = hands.is_empty();
     let mut places: Vec<Place> = Vec::new();
     for (index, name) in names.into_iter().enumerate() {
-        let slot = EquipmentSlot::Hand(HandIndex(index as u8));
-        let item = super::in_slot(world, me, slot);
+        let slot = EquipmentPlace::Hand(HandIndex(index as u8));
+        let item = super::in_slot(world, me, &slot);
         if let Some(last) = places.last_mut()
             && item.is_some()
             && last.item == item
@@ -135,23 +137,34 @@ fn places(world: &World) -> Vec<Place> {
             unseen,
         });
     }
-    places.push(Place {
-        slot: EquipmentSlot::Head,
-        names: vec!["Head".to_owned()],
-        item: super::in_slot(world, me, EquipmentSlot::Head),
-        unseen: false,
-    });
+    let content = world.resource::<Content>();
+    let model = world
+        .get::<Appearance>(me)
+        .map(|appearance| appearance.model);
+    for slot in super::body_slots(world, me) {
+        let place = EquipmentPlace::Slot(slot.clone());
+        let item = super::in_slot(world, me, &place);
+        let unseen = item
+            .zip(model)
+            .is_some_and(|(item, model)| appearance::worn_parts(content, item, model).is_empty());
+        places.push(Place {
+            slot: place,
+            names: vec![capitalized(&spoken(&slot))],
+            item,
+            unseen,
+        });
+    }
     places
 }
 
 fn empty_slot(ui: &mut Ui, world: &mut World, place: &Place) {
     let response = framed(ui, world, place, None, false, Sense::hover());
     let content = world.resource::<Content>().clone();
-    let line = match place.slot {
-        EquipmentSlot::Head => {
-            "Empty · a head item counts for its stats and is never drawn".to_owned()
+    let line = match &place.slot {
+        EquipmentPlace::Slot(slot) => {
+            format!("Empty · what is worn on the {} goes here", spoken(slot))
         }
-        EquipmentSlot::Hand(hand) => match landing(&content, hand) {
+        EquipmentPlace::Hand(hand) => match landing(&content, *hand) {
             Some(lands) => format!("Empty · {lands} land here"),
             None => "Empty".to_owned(),
         },
@@ -165,7 +178,7 @@ fn empty_slot(ui: &mut Ui, world: &mut World, place: &Place) {
 fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
     let content = world.resource::<Content>().clone();
     let def = item.get(&content);
-    let faded = drag::carried::<Carried>(ui.ctx()) == Some(Carried::Worn(place.slot));
+    let faded = drag::carried::<Carried>(ui.ctx()) == Some(Carried::Worn(place.slot.clone()));
     let response = framed(
         ui,
         world,
@@ -182,11 +195,13 @@ fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
         )
     });
     if map::clicked(world, InputAction::UseItem, &response) {
-        world.write_message(UnequipRequest { slot: place.slot });
+        world.write_message(UnequipRequest {
+            slot: place.slot.clone(),
+        });
     } else if map::clicked(world, InputAction::InspectItem, &response) {
         card::open(world, item, Some(response.rect));
     } else if map::drag_started(world, InputAction::CarryItem, &response) {
-        drag::carry(ui.ctx(), Carried::Worn(place.slot));
+        drag::carry(ui.ctx(), Carried::Worn(place.slot.clone()));
     }
     let hint = StyledLine::new(
         card::inspect_hint()
@@ -211,9 +226,12 @@ fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
             place.where_held(),
             stance.get(&content).name
         )),
-        None => lines.push("Stats only: nothing is drawn on a head".to_owned()),
+        None if place.unseen => {
+            lines.push(format!("{} · this body cannot show it", place.where_held()))
+        }
+        None => lines.push(place.where_held()),
     }
-    if matches!(place.slot, EquipmentSlot::Hand(_)) && fights_unarmed(world) {
+    if matches!(place.slot, EquipmentPlace::Hand(_)) && fights_unarmed(world) {
         lines.push("Its stance has no set here: you fight as unarmed".to_owned());
     }
     hud::tooltip(&response, world, &def.name, &lines, Some(&hint));
@@ -286,20 +304,18 @@ fn fights_unarmed(world: &World) -> bool {
     let Some(me) = session::me(world) else {
         return false;
     };
-    let Some(stance) = wearing::stance_of(world, me) else {
+    let Some(stance) = held::stance_of(world, me) else {
         return false;
     };
-    if world.get::<Wearing>(me).is_none() {
+    if world.get::<Held>(me).is_none() {
         return false;
     }
-    let content = world.resource::<Content>();
-    world.get::<Actor>(me).is_some_and(|actor| {
-        ActorModel::get(content, actor.model)
-            .skeleton()
-            .def
-            .set(stance)
-            .is_none()
-    })
+    appearance::model_of(world, me).is_some_and(|model| model.skeleton().def.set(stance).is_none())
+}
+
+/// A slot's name as words: `left_shoulder` as "left shoulder".
+fn spoken(slot: &EquipmentSlot) -> String {
+    slot.as_str().replace('_', " ")
 }
 
 fn capitalized(name: &str) -> String {

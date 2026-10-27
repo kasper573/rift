@@ -27,7 +27,8 @@ use crate::core::content::{
 use crate::core::math::{Offset, Pos};
 use crate::core::time::Seconds;
 use crate::core::units::{MeterPos, Meters};
-use crate::systems::actor::skeleton::{LocalOffset, LocalTurn};
+use crate::systems::actor::part::ModelPartId;
+use crate::systems::actor::skeleton::{EquipmentSlot, LocalOffset, LocalTurn, SkeletonId};
 use crate::systems::actor::stance::StanceId;
 use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
@@ -399,6 +400,56 @@ pub fn check_pictures(loading: &mut Loading) {
     }
 }
 
+/// Every look of a worn item is on a skeleton that has the item's slot, one look a skeleton, and
+/// lays parts made on that skeleton.
+pub fn check_looks(loading: &mut Loading) {
+    let content = loading.content();
+    for (id, item) in loading.rows::<ItemDef>(&content) {
+        let Some(Wear::Worn { slot, looks }) = item.wear() else {
+            continue;
+        };
+        let mut check = RowCheck::default();
+        let mut skeletons = std::collections::BTreeSet::new();
+        for (index, look) in looks.iter().enumerate() {
+            let at = format!("/kind/looks/{index}");
+            let skeleton_path = look.skeleton.path(&content);
+            if !skeletons.insert(look.skeleton) {
+                check.error(
+                    format!("{at}/skeleton"),
+                    "skeleton twice",
+                    skeleton_path,
+                    "one look a skeleton",
+                );
+            }
+            let slots = &look.skeleton.get(&content).slots;
+            if !slots.contains(slot) {
+                check.error(
+                    format!("{at}/skeleton"),
+                    "no such slot",
+                    format!("{skeleton_path} has no slot {slot}"),
+                    crate::systems::actor::model::expected_name("slots", slots, skeleton_path),
+                );
+            }
+            for (part_index, part) in look.parts.iter().enumerate() {
+                let made_on = part.get(&content).skeleton;
+                if made_on != look.skeleton {
+                    check.error(
+                        format!("{at}/parts/{part_index}"),
+                        "part of another skeleton",
+                        format!(
+                            "{} is made on {}",
+                            part.path(&content),
+                            made_on.path(&content)
+                        ),
+                        format!("a part made on {skeleton_path}"),
+                    );
+                }
+            }
+        }
+        loading.row_errors(id, check);
+    }
+}
+
 impl NamedContent for ItemDef {
     fn shown_name(&self) -> &str {
         &self.name
@@ -509,7 +560,7 @@ impl ItemDef {
     /// Where the item is worn, when it is equipment.
     pub fn wear(&self) -> Option<&Wear> {
         match &self.kind {
-            ItemKind::Equipment { slot, .. } => Some(slot),
+            ItemKind::Equipment { wear, .. } => Some(wear),
             _ => None,
         }
     }
@@ -531,7 +582,7 @@ impl ItemDef {
 pub enum ItemKind {
     Equipment {
         #[serde(flatten)]
-        slot: Wear,
+        wear: Wear,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         requires: Option<Condition>,
         #[schemars(extend("x-usage" = "known while worn"))]
@@ -542,17 +593,31 @@ pub enum ItemKind {
     Resource,
 }
 
-/// Where an item is worn: held in a hand, putting its wearer in a stance and hanging from the hand
-/// by its grip, or on the head, which counts for stats alone and is never drawn.
+/// How an item is worn: held in a hand, putting its wearer in a stance and hanging from the hand by
+/// its grip, or worn in one of the body's slots, laying the parts of its look on the wearer's
+/// skeleton over the body. A worn item with no look on the wearer's skeleton counts all the same,
+/// and is never drawn.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "slot", rename_all = "snake_case")]
+#[serde(tag = "wear", rename_all = "snake_case")]
 pub enum Wear {
-    Hand {
+    Held {
         stance: StanceId,
         #[serde(default, skip_serializing_if = "Grip::is_identity")]
         grip: Grip,
     },
-    Head,
+    Worn {
+        slot: EquipmentSlot,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        looks: Vec<WornLook>,
+    },
+}
+
+/// The parts a worn item lays over a body of `skeleton`.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WornLook {
+    pub skeleton: SkeletonId,
+    pub parts: Vec<ModelPartId>,
 }
 
 /// How a prop sits in the hand it hangs from, in the hand's frame: none for a prop whose handle is
@@ -567,10 +632,10 @@ pub struct Grip {
 }
 
 impl Wear {
-    pub fn label(&self) -> &'static str {
+    pub fn label(&self) -> &str {
         match self {
-            Wear::Hand { .. } => "held",
-            Wear::Head => "head",
+            Wear::Held { .. } => "held",
+            Wear::Worn { slot, .. } => slot.as_str(),
         }
     }
 }
@@ -597,11 +662,11 @@ pub fn use_item(world: &mut World) {
 }
 
 pub fn use_held(world: &mut World, actor: Entity, item: ItemId) -> Result<(), String> {
-    let slot = held_slot(world, actor, item)?;
+    let slot = bag_slot(world, actor, item)?;
     use_slot(world, actor, slot)
 }
 
-pub fn held_slot(world: &World, actor: Entity, item: ItemId) -> Result<usize, String> {
+pub fn bag_slot(world: &World, actor: Entity, item: ItemId) -> Result<usize, String> {
     world
         .get::<Inventory>(actor)
         .and_then(|inventory| inventory.slot_of(item))

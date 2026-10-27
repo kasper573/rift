@@ -7,6 +7,7 @@ use std::sync::Arc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::appearance::{self, BodyLook};
 use super::part::{ModelPartDef, ModelPartId};
 use super::playing::Motion;
 use super::skeleton::{
@@ -51,7 +52,7 @@ pub enum ModelModule {
 }
 
 // A character is downloaded by every client that sees it, and drawn many times a frame.
-pub const MAX_CHARACTER_TRIANGLES: usize = 4000;
+pub const MAX_CHARACTER_TRIANGLES: usize = 8000;
 /// The warning of a library carrying clips no set names, downloaded by every client for nothing.
 pub const UNNAMED_CLIPS: &str = "clips no set names";
 
@@ -156,10 +157,13 @@ pub fn build_all(loading: &mut Loading) {
             continue;
         };
         let problems = part_problems(part, &skeleton, part.skeleton.path(&content), infos);
-        if !problems.is_empty() {
+        let mut check = RowCheck::default();
+        check_regions(&content, part, &skeleton.def, &mut check);
+        if !problems.is_empty() || !check.is_empty() {
             for (file, problem) in problems {
                 loading.file_error(file, ErrorPlace::WholeFile, problem);
             }
+            loading.row_errors(id, check);
             loading.fail(id);
         }
     }
@@ -257,8 +261,29 @@ fn part_problems(
     problems
 }
 
+/// Every region a part covers or hides is one of its skeleton's.
+fn check_regions(
+    content: &Content,
+    part: &ModelPartDef,
+    skeleton: &SkeletonDef,
+    cx: &mut RowCheck,
+) {
+    for (field, regions) in [("covers", &part.covers), ("hides", &part.hides)] {
+        for (index, region) in regions.iter().enumerate() {
+            if !skeleton.regions.contains(region) {
+                cx.error(
+                    format!("/{field}/{index}"),
+                    "unknown region",
+                    region.as_str(),
+                    expected_name("regions", &skeleton.regions, part.skeleton.path(content)),
+                );
+            }
+        }
+    }
+}
+
 /// What a model must be to its skeleton and parts: every part made on its skeleton, a build of the
-/// skeleton when it declares any, and the meshes it draws within the triangle budget.
+/// skeleton when it declares any, and the meshes of the parts it draws within the triangle budget.
 fn check_model(
     content: &Content,
     def: &ModelDef,
@@ -283,7 +308,6 @@ fn check_model(
         ),
         _ => {}
     }
-    let mut triangles = 0;
     for (index, &part) in def.parts.iter().enumerate() {
         let part_def = part.get(content);
         if part_def.skeleton != def.skeleton {
@@ -298,19 +322,27 @@ fn check_model(
                 format!("a part made on {skeleton_path}"),
             );
         }
-        triangles += part_def
-            .mesh_for(def.build.as_ref())
-            .and_then(|mesh| infos.0.get(mesh.as_str()))
-            .map_or(0, |info| info.triangles);
     }
+    let triangles = appearance::laid(content, def.parts.iter().copied())
+        .parts
+        .iter()
+        .filter_map(|part| part.get(content).mesh_for(def.build.as_ref()))
+        .filter_map(|mesh| infos.0.get(mesh.as_str()))
+        .map(|info| info.triangles)
+        .sum();
     cx.range("/parts", triangles, 0, MAX_CHARACTER_TRIANGLES, "triangles");
 }
 
 fn expected_build(builds: &[BuildName], skeleton_path: &str) -> String {
-    if builds.is_empty() {
-        format!("no build: {skeleton_path} declares none")
+    expected_name("builds", builds, skeleton_path)
+}
+
+/// What a name must be to a list of its skeleton's.
+pub fn expected_name<N: AsRef<str>>(list: &str, names: &[N], skeleton_path: &str) -> String {
+    if names.is_empty() {
+        format!("none: {skeleton_path} declares no {list}")
     } else {
-        format!("one of the builds of {skeleton_path}: {}", listed(builds))
+        format!("one of the {list} of {skeleton_path}: {}", listed(names))
     }
 }
 
@@ -431,7 +463,8 @@ fn set_name(content: &Content, def: &SkeletonDef, pointer: &str) -> String {
 pub struct ActorModel {
     def: ModelDef,
     skeleton: Arc<BuiltSkeleton>,
-    /// The meshes the model draws: each part's as cut for its build, in the order of its parts.
+    /// The meshes the model draws bare: those of the parts left showing once its own are laid, each
+    /// as cut for its build.
     skins: Vec<ModelRef>,
 }
 
@@ -478,7 +511,7 @@ impl ActorModel {
     }
 
     fn new(content: &Content, def: &ModelDef, skeleton: Arc<BuiltSkeleton>) -> ActorModel {
-        let skins = def
+        let skins = appearance::laid(content, def.parts.iter().copied())
             .parts
             .iter()
             .filter_map(|part| part.get(content).mesh_for(def.build.as_ref()).cloned())
@@ -498,11 +531,25 @@ impl ActorModel {
         self.def.hitbox
     }
 
-    /// The files the model is drawn from: its skeleton's rig and the meshes of its parts.
+    /// The files the model is drawn from bare: its skeleton's rig and the meshes of its own parts.
     pub fn body(&self) -> BodyFiles {
         BodyFiles {
             rig: self.skeleton.def.rig.path(),
             skins: self.skins.iter().map(ModelRef::path).collect(),
+        }
+    }
+
+    /// The files a body of the model looking as `look` is drawn from: its skeleton's rig and the
+    /// meshes of the look's parts, as cut for the model's build.
+    pub fn dressed(&self, content: &Content, look: &BodyLook) -> BodyFiles {
+        BodyFiles {
+            rig: self.skeleton.def.rig.path(),
+            skins: look
+                .parts
+                .iter()
+                .filter_map(|part| part.get(content).mesh_for(self.def.build.as_ref()))
+                .map(ModelRef::path)
+                .collect(),
         }
     }
 

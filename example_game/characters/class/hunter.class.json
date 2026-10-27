@@ -2,6 +2,7 @@
   "name": "Hunter",
   "icon": "assets/icons/weapon_and_tool/bow.png",
   "flavour": "Patient, far-sighted and never where the claws land.",
+  "model": "characters/models/rogue.model.json",
   "levels": [
     {
       "xp": 0,

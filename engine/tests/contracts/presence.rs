@@ -21,6 +21,7 @@ use testkit::{Declared, Game, Map, Sim, hunting, path};
 fn a_monster_summoned_for_one_player_fights_only_that_player() {
     let mut sim = arena();
     let owner = sim.join(1);
+    sim.equip(owner, "sword");
     let bystander = sim.join(2);
     let hunter = sim.id::<NpcDef>("hunter");
     let hunter = npc::summon(
@@ -57,6 +58,7 @@ fn a_monster_summoned_for_one_player_fights_only_that_player() {
 fn a_friendly_npc_cannot_be_attacked() {
     let mut sim = arena();
     let player = sim.join(1);
+    sim.equip(player, "sword");
     let friend = spawn(&mut sim, "brute", player, Offset::new(1.0, 0.0));
     let full = stat::effective(&sim.world, friend, StatKind::Health);
 
@@ -72,6 +74,7 @@ fn a_friendly_npc_cannot_be_attacked() {
 fn a_resident_shown_by_condition_follows_the_players_memory() {
     let mut sim = arena();
     let player = sim.join(1);
+    sim.equip(player, "sword");
     npc::spawn_all(&mut sim.world);
     let ghost = sim.npc("ghost");
     assert!(visibility::present(&sim.world, ghost, player));
@@ -91,7 +94,7 @@ fn a_world_that_serves_no_area_judges_an_items_requirements() {
             json!({
                 "kind": {
                     "type": "equipment",
-                    "slot": "hand",
+                    "wear": "held",
                     "stance": "shield.stance.json",
                     "requires": { "type": "at_least", "a": { "type": "level" }, "b": 2 },
                 },
@@ -127,7 +130,6 @@ fn arena() -> Sim {
         )
         .hero("arena", 3.0, 3.0)
         .sword()
-        .equipped(&["sword"])
         .npc("brute", 25.0, json!([]))
         .npc("ghost", 25.0, json!([]))
         .npc(

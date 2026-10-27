@@ -1,6 +1,9 @@
 {
   "name": "Archer",
   "class": "characters/class/hunter.class.json",
+  "appearance": {
+    "model": "characters/models/rogue.model.json"
+  },
   "xp": 90,
   "skills": [
     {

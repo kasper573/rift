@@ -5,7 +5,7 @@ use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::AreaDef;
 use engine::systems::class::{self, NodeKey, SkillPoints};
 use engine::systems::combat::{self, AttackRequest, Attitude};
-use engine::systems::equipment::{self, Equipment, EquipmentSlot, UnequipRequest};
+use engine::systems::equipment::{self, Equipment, EquipmentPlace, UnequipRequest};
 use engine::systems::item::{self, ItemDef, UseItemRequest};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef, Pack};
@@ -87,7 +87,7 @@ fn a_slot_takes_only_what_you_have_and_keeps_it_when_it_goes() {
     request(
         &mut sim,
         UnequipRequest {
-            slot: EquipmentSlot::Hand(HandIndex::MAIN),
+            slot: EquipmentPlace::Hand(HandIndex::MAIN),
         },
     );
     assert_eq!(
@@ -156,7 +156,7 @@ fn a_weapon_put_in_the_basic_attack_slot_is_worn_and_lends_its_attack() {
         sim.world.get::<Equipment>(player).and_then(|equipment| {
             equipment
                 .slots
-                .get(&EquipmentSlot::Hand(HandIndex::MAIN))
+                .get(&EquipmentPlace::Hand(HandIndex::MAIN))
                 .copied()
         })
     };
@@ -164,7 +164,7 @@ fn a_weapon_put_in_the_basic_attack_slot_is_worn_and_lends_its_attack() {
     request(
         &mut sim,
         UnequipRequest {
-            slot: EquipmentSlot::Hand(HandIndex::MAIN),
+            slot: EquipmentPlace::Hand(HandIndex::MAIN),
         },
     );
     assert_eq!(basic_attack(&sim, player), None);
@@ -386,7 +386,6 @@ fn yard() -> (Sim, Entity) {
         .area("yard", &Map::open(15, 9), json!([]))
         .hero("yard", 4.0, 4.0)
         .sword()
-        .equipped(&["sword"])
         .edit("class", "hero", |hero| {
             hero["levels"] = json!([
                 { "xp": 0, "skill_points": 1 },
@@ -514,6 +513,7 @@ fn yard() -> (Sim, Entity) {
         ));
     script::spawn_stateless(&mut sim.world);
     let player = sim.join(1);
+    sim.equip(player, "sword");
     sim.run(0.5);
     (sim, player)
 }

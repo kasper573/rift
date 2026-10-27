@@ -1551,7 +1551,7 @@ fn classify_shape(message: &str, pointer: &str, list_kinds: &[ListKind]) -> Cont
         return ContentProblem::new(
             "missing field",
             format!("no field {field}"),
-            format!("a {field} field"),
+            format!("{} {field} field", article(field)),
         );
     }
     if let Some(rest) = message.strip_prefix("duplicate field `") {

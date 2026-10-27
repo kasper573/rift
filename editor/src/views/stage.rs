@@ -266,7 +266,7 @@ pub fn props(
     render::hung(content, model, shown)
         .into_iter()
         .filter_map(|(hand, item)| {
-            let Some(Wear::Hand { grip, .. }) = item.get(content).wear() else {
+            let Some(Wear::Held { grip, .. }) = item.get(content).wear() else {
                 return None;
             };
             prop_in_hand(content, model, hand, item, grip)

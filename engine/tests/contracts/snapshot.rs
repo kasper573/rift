@@ -4,12 +4,12 @@ use engine::core::content::{Content, ContentFile, ContentId};
 use engine::core::math::Pos;
 use engine::core::script::Value;
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
-use engine::systems::actor::Name;
 use engine::systems::actor::stance::HandIndex;
+use engine::systems::actor::{Appearance, Name};
 use engine::systems::area::AreaDef;
 use engine::systems::area::transition::Discovered;
 use engine::systems::class::{Class, ClassDef};
-use engine::systems::equipment::{Equipment, EquipmentSlot};
+use engine::systems::equipment::{Equipment, EquipmentPlace};
 use engine::systems::history::{History, HistoryEntry, HistoryTopic};
 use engine::systems::item::{Inventory, ItemDef, ItemStack};
 use engine::systems::memory::{self, MemoryDef};
@@ -78,7 +78,7 @@ fn a_character_joined_from_a_row_is_that_character() {
     assert_eq!(
         world.get::<Equipment>(player),
         Some(&Equipment {
-            slots: BTreeMap::from([(EquipmentSlot::Hand(HandIndex::OFF), id(&content, "shield"))])
+            slots: BTreeMap::from([(EquipmentPlace::Hand(HandIndex::OFF), id(&content, "shield"))])
         })
     );
     let known = world.get::<Discovered>(player).expect("known areas");
@@ -165,7 +165,7 @@ fn returning_to(area: &str) -> Sim {
         )
         .item("bone", json!({ "kind": { "type": "resource" } }))
         .stance("shield", 1, "off")
-        .item("shield", json!({ "kind": { "type": "equipment", "slot": "hand", "stance": "shield.stance.json" } }))
+        .item("shield", json!({ "kind": { "type": "equipment", "wear": "held", "stance": "shield.stance.json" } }))
         .npc("chief", 60.0, json!([]))
         .row(
             "quest",
@@ -230,6 +230,7 @@ fn tess(content: &Content, start: Place) -> CharacterSnapshot {
     CharacterSnapshot {
         name: "Tess".to_owned(),
         class: id(content, "hero"),
+        appearance: Appearance::of(id(content, "hero")),
         xp: 60,
         skills: Vec::new(),
         hotbar: Vec::new(),

@@ -161,7 +161,7 @@ pub fn request(world: &mut World) {
 }
 
 pub fn inflict(world: &mut World, target: Entity, attacker: Option<Entity>, damage: f32) {
-    if !stat::stands(world, target) || player::held(world, target) {
+    if !stat::stands(world, target) || player::arriving(world, target) {
         return;
     }
     let time = Seconds(world.resource::<Time>().elapsed_secs());

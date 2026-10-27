@@ -1,6 +1,9 @@
 {
   "name": "Arcanist",
   "class": "characters/class/mage.class.json",
+  "appearance": {
+    "model": "characters/models/mage.model.json"
+  },
   "xp": 350,
   "skills": [
     {

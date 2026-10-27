@@ -10,6 +10,7 @@
   },
   "kind": {
     "type": "equipment",
+    "wear": "worn",
     "slot": "head",
     "requires": {
       "type": "at_least",

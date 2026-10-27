@@ -227,7 +227,7 @@ impl EffectDef<RiftScripting> for Equip {
             let Some(actor) = effects::aimed_character(world, cx, &who) else {
                 return effects::refuse(world, cx, &refused, "Nobody to equip");
             };
-            let outcome = equipment::equip_held(world, actor, item);
+            let outcome = equipment::equip_from_bag(world, actor, item);
             effects::settle(world, cx, &refused, outcome)
         }))
     }

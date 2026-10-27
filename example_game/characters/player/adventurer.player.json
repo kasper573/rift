@@ -1,5 +1,4 @@
 {
-  "model": "characters/models/knight.model.json",
   "class": "characters/class/fighter.class.json",
   "stats": {
     "health": 30.0,
@@ -10,9 +9,6 @@
     "movement_speed": 4.0,
     "range": 1.5
   },
-  "equipped": [
-    "items-and-skills/item/iron_sword.item.json"
-  ],
   "modules": [
     {
       "type": "regen",

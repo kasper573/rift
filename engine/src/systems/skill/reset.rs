@@ -110,7 +110,7 @@ pub fn expire(world: &mut World) {
         .collect();
     for (player, flow) in pending {
         let gone = world.get_entity(player).is_err();
-        if gone || stat::is_dead(world, player) || player::held(world, player) {
+        if gone || stat::is_dead(world, player) || player::arriving(world, player) {
             world.resource_mut::<PendingResets>().0.remove(&player);
             if !gone {
                 world.entity_mut(player).remove::<ResetPrompt>();

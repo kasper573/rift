@@ -1,6 +1,9 @@
 {
   "name": "Well Off",
   "class": "characters/class/fighter.class.json",
+  "appearance": {
+    "model": "characters/models/knight.model.json"
+  },
   "xp": 40,
   "basic_attack": "items-and-skills/skill/slash.skill.json",
   "bag": [

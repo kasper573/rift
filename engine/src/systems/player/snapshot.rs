@@ -8,8 +8,7 @@ use crate::core::content::{
 use crate::core::script::{Value, ValueType};
 use crate::core::time::{Seconds, WallClock};
 use crate::systems::GameSettings;
-use crate::systems::actor::ActorModel;
-use crate::systems::actor::Name;
+use crate::systems::actor::{ActorModel, Appearance, Name, appearance};
 use crate::systems::area::{self, AreaId, transition::Discovered};
 use crate::systems::class::{Class, ClassId, NodeKey};
 use crate::systems::dialogue::Heard;
@@ -32,6 +31,7 @@ use crate::systems::stat::Stats;
 pub struct CharacterSnapshot {
     pub name: String,
     pub class: ClassId,
+    pub appearance: Appearance,
     #[serde(default, skip_serializing_if = "serial::is_zero")]
     pub xp: u32,
     #[schemars(extend("x-usage" = "learned ranks, by node of the class tree"))]
@@ -78,6 +78,7 @@ impl ContentFile for CharacterSnapshot {
         Ok(CharacterSnapshot {
             name: near.name(),
             class: near.file()?,
+            appearance: Appearance::of(near.file()?),
             xp: 0,
             skills: Vec::new(),
             hotbar: Vec::new(),
@@ -97,19 +98,20 @@ impl ContentFile for CharacterSnapshot {
 }
 
 impl CharacterSnapshot {
-    /// A character as the player row makes it: its class, and its gear already on.
+    /// A character as the player row makes it: of its class, looking as the class's model does,
+    /// with nothing on.
     pub fn of_player(content: &Content, name: &str, def: &PlayerDef) -> CharacterSnapshot {
-        let basic_attack = skill::first_flagged_grant(content, def.equipped.iter().copied());
         CharacterSnapshot {
             name: name.to_owned(),
             class: def.class,
+            appearance: Appearance::of(def.class.get(content).model),
             xp: 0,
             skills: Vec::new(),
             hotbar: Vec::new(),
-            basic_attack,
+            basic_attack: None,
             stats: Stats::default(),
             bag: Vec::new(),
-            equipped: def.equipped.clone(),
+            equipped: Vec::new(),
             known_areas: Vec::new(),
             quests: Vec::new(),
             memories: Vec::new(),
@@ -277,6 +279,7 @@ pub fn materialize(
         name: Name {
             name: snapshot.name.clone(),
         },
+        appearance: snapshot.appearance.clone(),
         spawn: SpawnPoint(start.at),
         discovered,
         stats,
@@ -288,7 +291,12 @@ pub fn materialize(
             amount: snapshot.xp,
         },
         equipment: Equipment {
-            slots: equipment::put_on(content, hand_slots(content), &snapshot.equipped).slots,
+            slots: equipment::put_on(
+                content,
+                ActorModel::get(content, snapshot.appearance.model),
+                &snapshot.equipped,
+            )
+            .slots,
         },
         class: Class {
             def: snapshot.class,
@@ -449,30 +457,11 @@ fn check_bag(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowChe
 }
 
 fn check_equipment(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowCheck) {
-    let player = content
-        .has_built::<GameSettings>()
-        .then(|| content.built::<GameSettings>().player);
-    let Some(model) = player
-        .and_then(|player| content.table::<PlayerDef>().get(player))
-        .and_then(|player| ActorModel::loaded(content, player.model))
-    else {
+    let Some(model) = ActorModel::loaded(content, snapshot.appearance.model) else {
         return;
     };
-    equipment::check_put_on(
-        content,
-        model.hands().len().max(1),
-        &snapshot.equipped,
-        "/equipped",
-        check,
-    );
-}
-
-/// The hand slots every character's body gives it: the player's model's skeleton's.
-fn hand_slots(content: &Content) -> usize {
-    ActorModel::get(content, def(content).model)
-        .hands()
-        .len()
-        .max(1)
+    appearance::check(content, &snapshot.appearance, "/appearance", check);
+    equipment::check_put_on(content, model, &snapshot.equipped, "/equipped", check);
 }
 
 fn check_skills(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowCheck) {

@@ -1,6 +1,8 @@
 {
   "name": "Bram",
-  "model": "characters/models/barbarian.model.json",
+  "appearance": {
+    "model": "characters/models/barbarian.model.json"
+  },
   "bust": "characters/busts/barbarian.bust",
   "stats": {
     "health": 40.0,

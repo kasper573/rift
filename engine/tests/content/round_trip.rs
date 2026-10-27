@@ -47,7 +47,6 @@ fn writing_a_written_folder_back_changes_no_bytes() {
 fn rich_game() -> Game {
     game()
         .sword()
-        .equipped(&["sword"])
         .bust("hero")
         .babble("brute")
         .npc(
@@ -55,6 +54,9 @@ fn rich_game() -> Game {
             30.0,
             json!([{ "type": "voice", "babble": testkit::path("babble", "brute") }]),
         )
+        .edit("npc", "brute", |brute| {
+            brute["held"] = json!([testkit::path("item", "sword")])
+        })
         .item(
             "bone",
             json!({ "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 20 }] }),

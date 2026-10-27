@@ -8,8 +8,10 @@ use engine::core::render::world::layers::Gait;
 use engine::core::time::{Millis, Seconds};
 use engine::core::units::{Meters, MetersPerSec};
 use engine::systems::actor::model::Skeletons;
+use engine::systems::actor::part::ModelPartDef;
 use engine::systems::actor::skeleton::{
-    CLIP_LIBRARIES, ClipName, ClipRef, Cue, GroupName, JointName, Layer, Leg, MoveName, SkeletonDef,
+    BodyRegion, BuildName, CLIP_LIBRARIES, ClipName, ClipRef, Cue, GroupName, JointName, Layer,
+    Leg, MoveName, SkeletonDef,
 };
 use engine::systems::actor::stance::StanceDef;
 use engine::systems::actor::{Action, Pose};
@@ -255,6 +257,89 @@ fn a_dropped_library_adds_only_the_clips_a_set_may_name_and_a_new_rig_must_fit_e
         "every model wearing the skeleton is refitted: {:?}",
         rig.refusals()
     );
+}
+
+#[test]
+fn a_folder_of_part_meshes_dropped_on_a_skeleton_becomes_its_parts_one_per_name_across_builds() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let game = game()
+        .edit("skeleton", BODY, |body| {
+            body["builds"] = json!(["male", "female"])
+        })
+        .edit("model", "hero_body", |hero| hero["build"] = json!("male"))
+        .edit("model", "hero", |hero| hero["build"] = json!("male"))
+        .edit("skeleton", BODY, |body| body["regions"] = json!(["hair"]));
+    let mut editor = support::open(game, &scratch);
+    let key = path("skeleton", BODY);
+    let dropped = scratch.path().join("Pack Parts");
+    std::fs::create_dir_all(dropped.join("heads")).expect("a folder");
+    let mesh = testkit::skin_glb(&testkit::rig(), &[]);
+    for file in [
+        "SK_Chr_Torso_Male_00.glb",
+        "SK_Chr_Torso_Female_00.glb",
+        "SK_Chr_Hair_01.glb",
+        "heads/SK_Chr_Eyebrow_Male_01.glb",
+        "SK_Chr_HeroBody.glb",
+    ] {
+        std::fs::write(dropped.join(file), &mesh).expect("a mesh");
+    }
+
+    let imported = skeleton::import::import(&mut editor, &key, &dropped).expect("imported");
+
+    support::settled(&mut editor);
+    let files = support::files(&mut editor);
+    let meshes = |part: &str| -> Vec<String> {
+        let bundle = path("model_part", part);
+        files
+            .files_of(&bundle)
+            .into_iter()
+            .filter_map(|file| file.strip_prefix(&format!("{bundle}/")).map(str::to_owned))
+            .filter(|file| file.ends_with(".glb"))
+            .collect()
+    };
+    assert_eq!(
+        imported.parts,
+        ["eyebrow-01", "hair-01", "hero-body", "torso-00"].map(|part| path("model_part", part)),
+        "the pack's prefix comes off and each part goes where the skeleton's parts sit"
+    );
+    assert_eq!(meshes("torso-00"), ["builds/female.glb", "builds/male.glb"]);
+    assert_eq!(meshes("hair-01"), ["mesh.glb"]);
+    assert_eq!(meshes("eyebrow-01"), ["builds/male.glb"]);
+    assert_eq!(imported.unpaired, ["SK_Chr_Eyebrow_Male_01.glb"]);
+    let torso = path("model_part", "torso-00");
+    let mut covering = part_of(&mut editor, &torso);
+    covering.covers = vec![BodyRegion::new("hair")];
+    assert!(editor.write_content("cover the hair", &torso, &covering));
+
+    let again = scratch.path().join("again");
+    std::fs::create_dir_all(&again).expect("a folder");
+    std::fs::write(again.join("SK_Chr_Torso_Male_00.glb"), &mesh).expect("a mesh");
+    skeleton::import::import(&mut editor, &key, &again).expect("imported again");
+
+    let torso = part_of(&mut editor, &torso);
+    assert_eq!(
+        torso.covers,
+        [BodyRegion::new("hair")],
+        "a part imported again keeps what it says"
+    );
+    assert_eq!(
+        torso
+            .meshes()
+            .map(|(build, _)| build.map(BuildName::to_string))
+            .collect::<Vec<_>>(),
+        [Some("male".to_owned())],
+        "and wears only the new meshes"
+    );
+}
+
+fn part_of(editor: &mut Editor, key: &str) -> ModelPartDef {
+    support::settled(editor);
+    editor
+        .read::<ModelPartDef>(key)
+        .expect("a project")
+        .expect("the part reads")
+        .as_ref()
+        .clone()
 }
 
 #[test]

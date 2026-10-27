@@ -29,7 +29,7 @@ pub mod viewport;
 
 pub use resize::ResizeDialog;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -46,8 +46,9 @@ use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::render::{facing_rotation, world_point};
 use engine::core::units::{MeterSize, Meters};
+use engine::systems::actor::appearance::look;
+use engine::systems::actor::held;
 use engine::systems::actor::stance;
-use engine::systems::actor::wearing;
 use engine::systems::actor::{Action, ActorModel, Motion};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
@@ -715,13 +716,13 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing>
         let npc = frame.reader.path_of(npc)?;
         let npc = content.by_path::<NpcDef>(npc)?;
         let def = npc.get(content);
-        let model = ActorModel::get(content, def.model);
-        let hands = wearing::listed(content, model.hands().len(), &def.wearing);
+        let model = ActorModel::get(content, def.appearance.model);
+        let hands = held::listed(content, model.hands().len(), &def.held);
         let stance = stance::of_hands(content, &hands);
         let clip = model.standing_clip(stance, &Motion::Action(Action::Idle), pose);
         let ground = area.heights.height_at(at);
         Some(Standing {
-            body: model.body(),
+            body: model.dressed(content, &look(content, &def.appearance, &BTreeMap::new())),
             clip,
             transform: Transform {
                 translation: world_point(at, ground),
@@ -1252,7 +1253,7 @@ fn standing_height(content: &Content, reader: &FolderReader, module: &AreaModule
             .path_of(resident.npc)
             .and_then(|npc| content.by_path::<NpcDef>(npc))
             .map_or(0.0, |npc| {
-                ActorModel::get(content, npc.get(content).model)
+                ActorModel::get(content, npc.get(content).appearance.model)
                     .hitbox()
                     .height
                     .0

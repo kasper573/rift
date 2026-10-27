@@ -10,7 +10,7 @@ use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::AreaDef;
 use engine::systems::class::NodeKey;
 use engine::systems::combat::{self, Attitude};
-use engine::systems::equipment::{self, EquipmentSlot, UnequipRequest};
+use engine::systems::equipment::{self, EquipmentPlace, UnequipRequest};
 use engine::systems::item::{self, Inventory, ItemDef, ItemStack, UseItemRequest};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef, Pack};
@@ -123,7 +123,7 @@ fn worn_gear_boosts_only_while_it_is_worn() {
 
     sim.give(player, "blade", 1);
     let blade = sim.id::<ItemDef>("blade");
-    equipment::equip_held(&mut sim.world, player, blade).expect("the blade is worn");
+    equipment::equip_from_bag(&mut sim.world, player, blade).expect("the blade is worn");
     sim.run(0.5);
     assert_eq!(
         stat::effective(&sim.world, player, StatKind::Damage),
@@ -134,7 +134,7 @@ fn worn_gear_boosts_only_while_it_is_worn() {
     sim.send(
         conn,
         UnequipRequest {
-            slot: EquipmentSlot::Hand(HandIndex::MAIN),
+            slot: EquipmentPlace::Hand(HandIndex::MAIN),
         },
     );
     sim.run(0.5);
@@ -333,7 +333,7 @@ fn clinic() -> (Sim, Entity) {
         .item(
             "blade",
             json!({
-                "kind": { "type": "equipment", "slot": "hand", "stance": "sword.stance.json" },
+                "kind": { "type": "equipment", "wear": "held", "stance": "sword.stance.json" },
                 "modules": [{ "type": "script", "script": "blade_boost.script.json" }],
             }),
         )

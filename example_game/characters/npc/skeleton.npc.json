@@ -1,6 +1,8 @@
 {
   "name": "Skeleton",
-  "model": "characters/models/skeleton.model.json",
+  "appearance": {
+    "model": "characters/models/skeleton.model.json"
+  },
   "bust": "characters/busts/skeleton.bust",
   "stats": {
     "health": 18.0,
@@ -12,7 +14,7 @@
     "range": 1.0
   },
   "basic_attack": "items-and-skills/skill/strike.skill.json",
-  "wearing": [
+  "held": [
     "items-and-skills/item/rusty_sword.item.json"
   ],
   "modules": [

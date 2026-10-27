@@ -1,6 +1,9 @@
 {
   "name": "Armed",
   "class": "characters/class/fighter.class.json",
+  "appearance": {
+    "model": "characters/models/knight.model.json"
+  },
   "bag": [
     {
       "item": "items-and-skills/item/bone_shield.item.json"

@@ -378,6 +378,7 @@ impl Arena {
     fn new() -> Arena {
         let mut sim = field();
         let player = sim.join(1);
+        sim.equip(player, "sword");
         let origin = at(&sim.world, player);
         let area = sim.id::<AreaDef>("field");
         Arena { sim, area, origin }
@@ -495,7 +496,6 @@ fn field() -> Sim {
         .area("field", &Map::open(25, 25), json!(residents))
         .hero("field", 12.0, 12.0)
         .sword()
-        .equipped(&["sword"])
         .npc("brute", 100_000.0, json!([]))
         .edit("npc", "brute", |brute| {
             brute["basic_attack"] = json!(path("skill", "strike"))

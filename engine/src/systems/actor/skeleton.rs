@@ -85,6 +85,16 @@ name_type!(
     BuildName,
     "x-build"
 );
+name_type!(
+    /// A place on a body a part goes: a part covers some, and may hide others.
+    BodyRegion,
+    "x-region"
+);
+name_type!(
+    /// A place on a body an item is worn besides its hands, such as its chest or its head.
+    EquipmentSlot,
+    "x-slot"
+);
 
 /// A rig and everything shared by the models that wear it: where an item is held, how the body is
 /// grouped, what plays for each action, pose and move in each stance, the cues on those clips and
@@ -104,6 +114,12 @@ pub struct SkeletonDef {
     pub groups: BTreeMap<GroupName, Vec<JointName>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub builds: Vec<BuildName>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<BodyRegion>,
+    /// The places items are worn besides the hands, in the order their parts are laid over the
+    /// body.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slots: Vec<EquipmentSlot>,
     pub base: ClipSet,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stances: Vec<StanceSet>,
@@ -650,6 +666,8 @@ impl ContentFile for SkeletonDef {
             hands: Vec::new(),
             groups: BTreeMap::new(),
             builds: Vec::new(),
+            regions: Vec::new(),
+            slots: Vec::new(),
             base: ClipSet {
                 clips: <Action as strum::VariantArray>::VARIANTS
                     .iter()
@@ -705,18 +723,9 @@ impl ContentFile for SkeletonDef {
                 );
             }
         }
-        let mut builds = BTreeSet::new();
-        for (index, build) in self.builds.iter().enumerate() {
-            cx.text(format!("/builds/{index}"), build.as_str(), 1, 32);
-            if !builds.insert(build) {
-                cx.error(
-                    format!("/builds/{index}"),
-                    "build twice",
-                    build.as_str(),
-                    "every build named once",
-                );
-            }
-        }
+        check_names(cx, "builds", "build twice", &self.builds);
+        check_names(cx, "regions", "region twice", &self.regions);
+        check_names(cx, "slots", "slot twice", &self.slots);
         for &action in <Action as strum::VariantArray>::VARIANTS {
             if action.required() && !self.base.clips.contains_key(&action) {
                 cx.error(
@@ -804,6 +813,26 @@ fn listed_actions() -> String {
 }
 
 /// What a clip's cues must be on their own: a few, none before the clip begins.
+fn check_names<N: AsRef<str> + Ord>(
+    cx: &mut RowCheck,
+    list: &str,
+    twice: &'static str,
+    names: &[N],
+) {
+    let mut seen = BTreeSet::new();
+    for (index, name) in names.iter().enumerate() {
+        cx.text(format!("/{list}/{index}"), name.as_ref(), 1, 32);
+        if !seen.insert(name) {
+            cx.error(
+                format!("/{list}/{index}"),
+                twice,
+                name.as_ref(),
+                "every name listed once",
+            );
+        }
+    }
+}
+
 pub fn check_cues(pointer: &str, cues: &[Cue], cx: &mut RowCheck) {
     cx.count(pointer, cues.len(), 0, MAX_CUES, "cues");
     for (index, cue) in cues.iter().enumerate() {

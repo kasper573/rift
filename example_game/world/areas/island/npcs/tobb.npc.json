@@ -1,6 +1,8 @@
 {
   "name": "Tobb",
-  "model": "characters/models/woodsman.model.json",
+  "appearance": {
+    "model": "characters/models/woodsman.model.json"
+  },
   "bust": "characters/busts/woodsman.bust",
   "stats": {
     "health": 40.0,
@@ -15,15 +17,6 @@
     {
       "type": "nameplate",
       "role": "Fisherman"
-    },
-    {
-      "type": "tint",
-      "rgba": [
-        190,
-        220,
-        255,
-        255
-      ]
     },
     {
       "type": "voice",

@@ -15,7 +15,7 @@ use crate::core::gui::{self, Band, ImageSource};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::systems::hud::{self, Carried};
 use crate::systems::input::map::{self, InputAction, input};
-use crate::systems::item::{Inventory, ItemDef, ItemId, ItemKind, ItemModuleKind};
+use crate::systems::item::{Inventory, ItemDef, ItemId, ItemKind, ItemModuleKind, Wear};
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::script::{Condition, condition};
@@ -87,8 +87,15 @@ pub fn tooltip(world: &World, response: &Response, item: ItemId) {
 pub fn overview(def: &ItemDef) -> String {
     let category = def.category().label();
     match &def.kind {
-        ItemKind::Equipment { slot, .. } => format!("{category} · {}", slot.label()),
+        ItemKind::Equipment { wear, .. } => format!("{category} · {}", wear.label()),
         _ => category.to_owned(),
+    }
+}
+
+fn worn_as(wear: &Wear) -> String {
+    match wear {
+        Wear::Held { .. } => "Held in the hand".to_owned(),
+        Wear::Worn { slot, .. } => format!("Worn on your {}", slot.as_str().replace('_', " ")),
     }
 }
 
@@ -318,8 +325,8 @@ fn facts(
 ) {
     let boosts = status::boosts_of(content, item);
     match &def.kind {
-        ItemKind::Equipment { slot, requires, .. } => {
-            card::fact(ui, &format!("Worn as your {}", slot.label().to_lowercase()));
+        ItemKind::Equipment { wear, requires, .. } => {
+            card::fact(ui, &worn_as(wear));
             for boost in &boosts {
                 card::fact(ui, &modifier(*boost));
             }

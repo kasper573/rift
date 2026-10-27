@@ -2,6 +2,7 @@
 //! together, its hitbox, and who wears it.
 
 use engine::core::content::media::GltfInfos;
+use engine::systems::actor::appearance;
 use engine::systems::actor::model::{MAX_CHARACTER_TRIANGLES, ModelDef, mesh_label};
 use ui::egui::Ui;
 use ui::{form, panel, theme};
@@ -16,9 +17,10 @@ type DrawnPart = (String, Option<(String, usize)>);
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
     let drawn: Option<Vec<DrawnPart>> = super::built(editor, key).map(|(content, _)| {
         let infos = content.built::<GltfInfos>();
-        row.parts
-            .iter()
-            .map(|&part| {
+        appearance::laid(content, row.parts.iter().copied())
+            .parts
+            .into_iter()
+            .map(|part| {
                 let mesh = part.get(content).mesh_for(row.build.as_ref()).map(|mesh| {
                     let triangles = infos.0.get(mesh.as_str()).map_or(0, |info| info.triangles);
                     (mesh_label(mesh), triangles)
