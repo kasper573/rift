@@ -144,6 +144,7 @@ pub enum Pose {
     #[default]
     Idle,
     Sit,
+    Sleep,
 }
 
 /// One live player or npc: where it faces, what it does, how it stands and how fast it moves. Its

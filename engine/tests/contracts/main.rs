@@ -15,6 +15,7 @@ mod launch;
 mod looks;
 mod memory;
 mod notification;
+mod poses;
 mod presence;
 mod quest;
 mod reach;

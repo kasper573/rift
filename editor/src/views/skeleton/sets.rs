@@ -22,6 +22,8 @@ use crate::app::Editor;
 pub enum SetRow {
     Action(Action),
     Pose(Pose),
+    Begin(Pose),
+    End(Pose),
     Move(MoveName),
 }
 
@@ -30,6 +32,8 @@ impl SetRow {
         match self {
             SetRow::Action(action) => action.as_ref().to_owned(),
             SetRow::Pose(pose) => format!("{} · pose", pose.as_ref()),
+            SetRow::Begin(pose) => format!("{} · taking it", pose.as_ref()),
+            SetRow::End(pose) => format!("{} · leaving it", pose.as_ref()),
             SetRow::Move(name) => name.0.clone(),
         }
     }
@@ -43,6 +47,8 @@ impl SetRow {
         match self {
             SetRow::Action(action) => (Motion::Action(*action), Pose::Idle),
             SetRow::Pose(pose) => (Motion::Action(Action::Idle), *pose),
+            SetRow::Begin(pose) => (Motion::Begin(*pose), Pose::Idle),
+            SetRow::End(pose) => (Motion::End(*pose), Pose::Idle),
             SetRow::Move(name) => (Motion::Move(name.clone()), Pose::Idle),
         }
     }
@@ -110,8 +116,24 @@ pub fn set_cell(
                 set.clips.remove(action);
                 Ok(())
             }
-            (SetRow::Pose(Pose::Idle), _) => {
+            (SetRow::Pose(Pose::Idle) | SetRow::Begin(Pose::Idle) | SetRow::End(Pose::Idle), _) => {
                 Err("idling plays the idle action's clip, not a pose's".to_owned())
+            }
+            (SetRow::Begin(pose), Some(clip)) => {
+                set.begins.insert(*pose, clip);
+                Ok(())
+            }
+            (SetRow::Begin(pose), None) => {
+                set.begins.remove(pose);
+                Ok(())
+            }
+            (SetRow::End(pose), Some(clip)) => {
+                set.ends.insert(*pose, clip);
+                Ok(())
+            }
+            (SetRow::End(pose), None) => {
+                set.ends.remove(pose);
+                Ok(())
             }
             (SetRow::Pose(pose), Some(clip)) => {
                 set.poses.insert(*pose, clip);
@@ -275,7 +297,13 @@ fn rows(editor: &Editor, key: &str, def: &SkeletonDef) -> Vec<SetRow> {
             Pose::VARIANTS
                 .iter()
                 .filter(|pose| **pose != Pose::Idle)
-                .map(|pose| SetRow::Pose(*pose)),
+                .flat_map(|pose| {
+                    [
+                        SetRow::Begin(*pose),
+                        SetRow::Pose(*pose),
+                        SetRow::End(*pose),
+                    ]
+                }),
         )
         .chain(moves.into_iter().map(SetRow::Move))
         .collect()
@@ -318,6 +346,8 @@ fn named_in(set: &engine::systems::actor::skeleton::ClipSet, row: &SetRow) -> bo
     match row {
         SetRow::Action(action) => set.clips.contains_key(action),
         SetRow::Pose(pose) => set.poses.contains_key(pose),
+        SetRow::Begin(pose) => set.begins.contains_key(pose),
+        SetRow::End(pose) => set.ends.contains_key(pose),
         SetRow::Move(name) => set.moves.contains_key(name),
     }
 }
@@ -342,6 +372,8 @@ fn picker(
     let current = set.and_then(|set| match row {
         SetRow::Action(action) => set.clips.get(action),
         SetRow::Pose(pose) => set.poses.get(pose),
+        SetRow::Begin(pose) => set.begins.get(pose),
+        SetRow::End(pose) => set.ends.get(pose),
         SetRow::Move(name) => set.moves.get(name),
     });
     let mut chosen: Option<Option<ClipCell>> = None;
@@ -506,6 +538,12 @@ fn forget(set: &mut engine::systems::actor::skeleton::ClipSet, row: &SetRow) {
         }
         SetRow::Pose(pose) => {
             set.poses.remove(pose);
+        }
+        SetRow::Begin(pose) => {
+            set.begins.remove(pose);
+        }
+        SetRow::End(pose) => {
+            set.ends.remove(pose);
         }
         SetRow::Move(name) => {
             set.moves.remove(name);

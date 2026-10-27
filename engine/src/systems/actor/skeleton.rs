@@ -237,6 +237,12 @@ pub struct ClipSet {
     pub clips: BTreeMap<Action, ClipCell>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub poses: BTreeMap<Pose, ClipCell>,
+    /// What plays once as a body takes a pose, before the pose's own clip: sitting down.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub begins: BTreeMap<Pose, ClipCell>,
+    /// What plays once as a body leaves a pose for idling: standing up.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub ends: BTreeMap<Pose, ClipCell>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub moves: BTreeMap<MoveName, ClipCell>,
 }
@@ -885,13 +891,19 @@ impl ContentFile for SkeletonDef {
             }
         }
         for (pointer, set) in self.sets() {
-            if set.poses.contains_key(&Pose::Idle) {
-                cx.error(
-                    format!("{pointer}/poses/idle"),
-                    "pose is an action",
-                    "a clip for the idle pose",
-                    "the idle action's clip, which idling plays already",
-                );
+            for (map, poses) in [
+                ("poses", &set.poses),
+                ("begins", &set.begins),
+                ("ends", &set.ends),
+            ] {
+                if poses.contains_key(&Pose::Idle) {
+                    cx.error(
+                        format!("{pointer}/{map}/idle"),
+                        "pose is an action",
+                        "a clip for the idle pose",
+                        "the idle action's clip, which idling plays already",
+                    );
+                }
             }
             for (entry, cell) in set.cells() {
                 if cell.variants().is_empty() {
@@ -1111,11 +1123,19 @@ impl ClipSet {
             .poses
             .iter()
             .map(|(pose, cell)| (format!("/poses/{}", pose.as_ref()), cell));
+        let begins = self
+            .begins
+            .iter()
+            .map(|(pose, cell)| (format!("/begins/{}", pose.as_ref()), cell));
+        let ends = self
+            .ends
+            .iter()
+            .map(|(pose, cell)| (format!("/ends/{}", pose.as_ref()), cell));
         let moves = self
             .moves
             .iter()
             .map(|(name, cell)| (format!("/moves/{}", name.0), cell));
-        clips.chain(poses).chain(moves)
+        clips.chain(poses).chain(begins).chain(ends).chain(moves)
     }
 
     /// Every clip the set names, each variant of a cell apart, with where in the set it names it.
@@ -1194,6 +1214,22 @@ impl SkeletonDef {
                 }
             }
             Motion::Action(acted) => action(*acted),
+            Motion::Begin(posed) => match (
+                set.and_then(|set| set.begins.get(posed)),
+                self.base.begins.get(posed),
+            ) {
+                (Some(clip), _) => (clip, Rung::Stance),
+                (None, Some(clip)) => (clip, Rung::Base),
+                (None, None) => self.named(stance, &Motion::Action(Action::Idle), *posed),
+            },
+            Motion::End(posed) => match (
+                set.and_then(|set| set.ends.get(posed)),
+                self.base.ends.get(posed),
+            ) {
+                (Some(clip), _) => (clip, Rung::Stance),
+                (None, Some(clip)) => (clip, Rung::Base),
+                (None, None) => action(Action::Idle),
+            },
             Motion::Move(name) => {
                 match (
                     set.and_then(|set| set.moves.get(name)),
@@ -1218,6 +1254,20 @@ impl SkeletonDef {
                 Some(Paced { gait, pace })
             })
             .collect()
+    }
+
+    /// Whether a set names the clip of a motion that takes or leaves a pose: a body takes or leaves
+    /// a pose without one at once. Any other motion always has a clip.
+    pub fn shifts(&self, stance: Option<StanceId>, motion: &Motion) -> bool {
+        let names = |set: &ClipSet| match motion {
+            Motion::Begin(pose) => set.begins.contains_key(pose),
+            Motion::End(pose) => set.ends.contains_key(pose),
+            Motion::Action(_) | Motion::Move(_) => true,
+        };
+        stance
+            .and_then(|stance| self.set(stance))
+            .is_some_and(names)
+            || names(&self.base)
     }
 
     /// Whether the stance's set or the base set names a clip for the action.

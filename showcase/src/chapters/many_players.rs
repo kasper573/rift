@@ -1,6 +1,6 @@
 use driver::{Player, holding, marked, nearest_npc, npc_is, told_by, townsperson};
 use engine::core::math::Offset;
-use engine::systems::actor::Action;
+use engine::systems::actor::{Action, Motion, Pose};
 use engine::systems::attention::AttentionMark;
 use engine::systems::input::map::InputAction;
 
@@ -81,6 +81,13 @@ fn at_the_stall(me: &mut Star, other: &mut Player, name: &str) {
     me.hover_choice("Then let's settle this.");
     me.hold();
     me.pick("Then let's settle this.");
+    me.caption(
+        "He gets up from the table first: sitting down and standing up play clips of their own",
+    );
+    me.wait_until("Pell standing up", |snapshot| {
+        townsperson(snapshot, "pell")
+            .is_some_and(|pell| pell.motion == Some(Motion::End(Pose::Sit)))
+    });
     me.conversation_over();
     me.caption(&format!(
         "His table is empty for you while his copy fights you. On {name}'s screen, Pell never left"

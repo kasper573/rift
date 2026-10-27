@@ -371,6 +371,10 @@ pub fn spawn_all(world: &mut World) {
                 let at = movement::place_beside(world, area_id, mesh, resident.at);
                 let entity = spawn(world, resident.npc, at, area_id, pack);
                 world.entity_mut(entity).insert(Home(resident.at));
+                if let Some(mut actor) = world.get_mut::<Actor>(entity) {
+                    actor.facing = resident.facing.radians();
+                    actor.pose = resident.pose;
+                }
                 if let Some(shown) = &resident.shown {
                     let shown = CompiledCondition::new(&content, shown);
                     world.entity_mut(entity).insert(Presence::When(shown));

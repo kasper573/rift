@@ -10,7 +10,7 @@ use crate::core::script::{
 };
 use crate::systems::actor::appearance::SetAppearance;
 use crate::systems::actor::held::SetHeld;
-use crate::systems::actor::playing::{Animate, SetStance};
+use crate::systems::actor::playing::{Animate, SetPose, SetStance};
 use crate::systems::area::warp::Warp;
 use crate::systems::chat::Say;
 use crate::systems::class::GrantXp;
@@ -107,6 +107,7 @@ effects! {
     Face(FaceToward),
     Animate(Animate),
     SetStance(SetStance),
+    SetPose(SetPose),
     SetAppearance(SetAppearance),
     SetHeld(SetHeld),
     UseSkill(UseSkill),

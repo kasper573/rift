@@ -35,7 +35,7 @@
           "label": [
             "Then let's settle this."
           ],
-          "to": "remember_fight"
+          "to": "stand_up"
         },
         {
           "label": [
@@ -114,7 +114,8 @@
       "npc": "world/areas/island/npcs/pell_hostile.npc.json",
       "count": 1,
       "near": "owner",
-      "shown": "subject"
+      "shown": "subject",
+      "next": "sit_back"
     },
     "interacted": {
       "type": "on",
@@ -193,6 +194,10 @@
         "wins"
       ]
     },
+    "sit_back": {
+      "type": "set_pose",
+      "pose": "sit"
+    },
     "stake": {
       "type": "items",
       "take": [
@@ -202,6 +207,12 @@
         }
       ],
       "done": "roll"
+    },
+    "stand_up": {
+      "type": "set_pose",
+      "pose": "idle",
+      "wait": true,
+      "next": "remember_fight"
     },
     "wins": {
       "type": "dialogue",

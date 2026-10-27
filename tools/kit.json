@@ -348,7 +348,13 @@
           "shield_block": "kaykit-animations:Rig_Medium_CombatMelee.glb#Melee_Block"
         },
         "town": {
-          "sit": "kaykit-animations:Rig_Medium_Simulation.glb#Sit_Chair_Idle"
+          "sit": "kaykit-animations:Rig_Medium_Simulation.glb#Sit_Chair_Idle",
+          "sit_down": "kaykit-animations:Rig_Medium_Simulation.glb#Sit_Chair_Down",
+          "stand_up": "kaykit-animations:Rig_Medium_Simulation.glb#Sit_Chair_StandUp",
+          "sleep": "kaykit-animations:Rig_Medium_Simulation.glb#Lie_Idle",
+          "lie_down": "kaykit-animations:Rig_Medium_Simulation.glb#Lie_Down",
+          "get_up": "kaykit-animations:Rig_Medium_Simulation.glb#Lie_StandUp",
+          "idle_b": "Idle_B"
         }
       }
     },

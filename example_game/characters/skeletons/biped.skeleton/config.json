@@ -29,7 +29,12 @@
   ],
   "base": {
     "clips": {
-      "idle": "idle",
+      "idle": {
+        "variants": [
+          "idle",
+          "idle_b"
+        ]
+      },
       "walk": "walk",
       "run": "run",
       "attack": "punch",
@@ -40,7 +45,16 @@
       }
     },
     "poses": {
-      "sit": "sit"
+      "sit": "sit",
+      "sleep": "sleep"
+    },
+    "begins": {
+      "sit": "sit_down",
+      "sleep": "lie_down"
+    },
+    "ends": {
+      "sit": "stand_up",
+      "sleep": "get_up"
     },
     "moves": {
       "cast": "spell_shoot",

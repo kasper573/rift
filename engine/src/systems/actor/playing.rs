@@ -7,13 +7,16 @@ use super::skeleton::{DeclaredMoves, MoveName};
 use super::stance::StanceId;
 use super::{Action, Actor, ActorModel, Appearance, Pose};
 use crate::core::audio::playback::SfxId;
-use crate::core::content::Content;
+use crate::core::content::{Content, serial};
 use crate::core::geometry::Radians;
 use crate::core::math::Rng;
 use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::core::time::{Millis, PlaybackRate, UnixMillis, WallClock};
 use crate::systems::script::effect::{self as effects, Audience};
-use crate::systems::script::{Condition, EffectCall, FlowKey, Reach, RiftInstances, RiftScripting};
+use crate::systems::script::event::NPC;
+use crate::systems::script::{
+    Condition, EffectCall, FlowKey, Reach, RiftInstances, RiftScripting, RunnerKind,
+};
 use crate::systems::stat::{self, StatKind};
 use crate::systems::{movement, notification};
 
@@ -24,14 +27,20 @@ use crate::systems::{movement, notification};
 pub enum Motion {
     Action(Action),
     Move(MoveName),
+    /// Taking a pose: sitting down, lying down.
+    Begin(Pose),
+    /// Leaving a pose for idling: standing up.
+    End(Pose),
 }
 
 impl Motion {
-    /// The action the actor shows while the motion plays: a move is an attack.
+    /// The action the actor shows while the motion plays: a move is an attack, taking or leaving
+    /// a pose is idling.
     pub fn action(&self) -> Action {
         match self {
             Motion::Action(action) => *action,
             Motion::Move(_) => Action::Attack,
+            Motion::Begin(_) | Motion::End(_) => Action::Idle,
         }
     }
 
@@ -41,9 +50,10 @@ impl Motion {
     }
 
     /// Whether the motion's clip plays through once and holds its last moment, rather than looping:
-    /// a hit lands once, a body falls once.
+    /// a hit lands once, a body falls once, sits down once.
     pub fn once(&self) -> bool {
-        matches!(self.action(), Action::Attack | Action::Dead)
+        matches!(self, Motion::Begin(_) | Motion::End(_))
+            || matches!(self.action(), Action::Attack | Action::Dead)
     }
 }
 
@@ -251,6 +261,75 @@ impl EffectDef<RiftScripting> for SetStance {
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
         vec![Reach::Animates]
     }
+}
+
+/// Puts the npc in a pose, or back to idling, through the clip its sets name for taking the new
+/// pose or leaving the old one, waiting for that clip to play through when asked. A pose whose sets
+/// name no such clip is taken or left at once.
+#[derive(JsonSchema, Clone, Serialize, Deserialize)]
+#[schemars(extend("x-system" = "actor"))]
+pub struct SetPose {
+    pub pose: Pose,
+    #[serde(default, skip_serializing_if = "serial::is_false")]
+    pub wait: bool,
+    #[serde(default, skip_serializing_if = "Arrow::is_none")]
+    pub next: Arrow,
+}
+
+impl EffectDef<RiftScripting> for SetPose {
+    fn owners(&self) -> &'static [RunnerKind] {
+        NPC
+    }
+    fn needs_subject(&self) -> bool {
+        false
+    }
+    crate::outputs!(NEXT => next);
+    fn pauses(&self) -> bool {
+        self.wait
+    }
+    fn compile<'c>(
+        &'c self,
+        _cx: &mut Compiler<'c, RiftScripting>,
+    ) -> Result<EffectCall, ScriptFault> {
+        let (pose, wait) = (self.pose, self.wait);
+        Ok(Box::new(move |world, flow, cx| {
+            let Some(actor) = cx.owner else {
+                return EffectStep::Done;
+            };
+            match pose_to(world, actor, pose) {
+                Some(_) if wait => {
+                    world.entity_mut(actor).insert(Awaited {
+                        flow,
+                        wait: Wait::End,
+                        apex_answered: false,
+                    });
+                    EffectStep::Pause
+                }
+                _ => EffectStep::Done,
+            }
+        }))
+    }
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+        vec![Reach::Animates]
+    }
+}
+
+/// Puts an actor in `pose`, playing the clip that takes it, or else the one that leaves the pose
+/// it was in, when its sets name one.
+pub fn pose_to(world: &mut World, actor: Entity, pose: Pose) -> Option<Playing> {
+    let content = world.resource::<Content>().clone();
+    let stance = held::stance_of(world, actor);
+    let model = ActorModel::get(&content, world.get::<Appearance>(actor)?.model);
+    let mut component = world.get_mut::<Actor>(actor)?;
+    let from = std::mem::replace(&mut component.pose, pose);
+    if from == pose {
+        return None;
+    }
+    let skeleton = &model.skeleton().def;
+    let shift = [Motion::Begin(pose), Motion::End(from)]
+        .into_iter()
+        .find(|motion| skeleton.shifts(stance, motion))?;
+    play(world, actor, shift, None)
 }
 
 pub fn playing(world: &World, actor: Entity) -> bool {

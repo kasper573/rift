@@ -29,6 +29,8 @@ impl Shown {
             }
             (Motion::Action(action), _) => action.as_ref().to_owned(),
             (Motion::Move(name), _) => format!("{name} · move"),
+            (Motion::Begin(pose), _) => format!("{} · taking it", pose.as_ref()),
+            (Motion::End(pose), _) => format!("{} · leaving it", pose.as_ref()),
         }
     }
 }
@@ -146,9 +148,21 @@ impl Scene {
             Pose::VARIANTS
                 .iter()
                 .filter(|pose| **pose != Pose::Idle)
-                .map(|pose| Shown {
-                    motion: Motion::Action(Action::Idle),
-                    pose: *pose,
+                .flat_map(|pose| {
+                    [
+                        Motion::Begin(*pose),
+                        Motion::Action(Action::Idle),
+                        Motion::End(*pose),
+                    ]
+                    .into_iter()
+                    .filter(|motion| skeleton.def.shifts(stance_id, motion))
+                    .map(|motion| Shown {
+                        pose: match motion {
+                            Motion::Action(_) => *pose,
+                            _ => Pose::Idle,
+                        },
+                        motion,
+                    })
                 }),
         );
         let mut moves: Vec<_> = skeleton.def.moves().cloned().collect();
