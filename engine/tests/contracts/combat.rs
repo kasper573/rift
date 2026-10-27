@@ -59,7 +59,7 @@ fn an_attacks_timing_comes_from_its_clip_at_the_attackers_speed() {
 }
 
 #[test]
-fn an_attacks_variants_take_turns_each_timed_by_its_own_clip() {
+fn an_attacks_clips_take_turns_each_timed_by_its_own_clip() {
     let long = Millis(CLIP.0 * 2.0);
     for (order, plays) in [("in_turn", vec![0, 1, 2, 0, 1]), ("random", Vec::new())] {
         let clips: Vec<(&str, Seconds)> = rig_clips()
@@ -72,7 +72,7 @@ fn an_attacks_variants_take_turns_each_timed_by_its_own_clip() {
             .collect();
         base.insert(
             "attack".to_owned(),
-            json!({ "variants": ["attack", "thrust", "lunge"], "order": order }),
+            json!({ "clips": ["attack", "thrust", "lunge"], "order": order }),
         );
         let apex = json!([{ "at": APEX.0, "apex": true }]);
         let content = Game::new()
@@ -105,28 +105,28 @@ fn an_attacks_variants_take_turns_each_timed_by_its_own_clip() {
                         .is_none()),
                     "the swing plays through"
                 );
-                (playing.variant, (playing.ends.0 - playing.started.0) as f32)
+                (playing.pick, (playing.ends.0 - playing.started.0) as f32)
             })
             .collect();
         let speed = stat::effective(&sim.world, player, StatKind::AttackSpeed);
-        for (variant, lasts) in &played {
-            let clip = if *variant == 2 { long } else { CLIP };
+        for (pick, lasts) in &played {
+            let clip = if *pick == 2 { long } else { CLIP };
             assert!(
                 (lasts - clip.0 / speed).abs() <= 1.0,
-                "{order}: variant {variant} lasts as its clip does: {played:?}"
+                "{order}: pick {pick} lasts as its clip does: {played:?}"
             );
         }
-        let variants: Vec<usize> = played.iter().map(|(variant, _)| *variant).collect();
+        let picks: Vec<usize> = played.iter().map(|(pick, _)| *pick).collect();
         if !plays.is_empty() {
-            assert_eq!(variants[..plays.len()], plays[..], "{order}");
+            assert_eq!(picks[..plays.len()], plays[..], "{order}");
         }
         assert!(
-            variants.windows(2).all(|pair| pair[0] != pair[1]),
-            "{order}: no variant plays twice running: {variants:?}"
+            picks.windows(2).all(|pair| pair[0] != pair[1]),
+            "{order}: no clip plays twice running: {picks:?}"
         );
         assert!(
-            (0..3).all(|variant| variants.contains(&variant)),
-            "{order}: every variant takes its turn: {variants:?}"
+            (0..3).all(|pick| picks.contains(&pick)),
+            "{order}: every clip takes its turn: {picks:?}"
         );
     }
 }

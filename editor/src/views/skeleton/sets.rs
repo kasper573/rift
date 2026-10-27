@@ -2,12 +2,12 @@
 //! names, and the gestures of a line's expressions and every other one a set names) against base
 //! and each stance it has a set for, each cell the clips the ladder finds.
 //! A cell a set names is plain, one found further down the ladder italic; picking a cell lists every
-//! library clip with its length and apex, to play alone or as one more variant of the cell.
+//! library clip with its length and apex, to play alone or as one more of the cell's clips.
 
 use engine::core::content::{Content, NamedContent};
 use engine::systems::actor::skeleton::{
-    BuiltSkeleton, ClipCell, ClipName, ClipRef, GestureName, GroupName, MoveName, Rung,
-    SkeletonDef, StanceSet, VariantOrder,
+    BuiltSkeleton, ClipCell, ClipName, ClipOrder, ClipRef, GestureName, GroupName, MoveName, Rung,
+    SkeletonDef, StanceSet,
 };
 use engine::systems::actor::stance::{StanceDef, StanceId};
 use engine::systems::actor::{Action, Motion, Pose};
@@ -68,7 +68,7 @@ pub struct SetsState {
     pub new_move: String,
     pub new_gesture: String,
     pub filter: String,
-    /// Whether a clip picked joins the open cell's variants rather than taking its place.
+    /// Whether a clip picked joins the open cell's clips rather than taking its place.
     pub adding: bool,
 }
 
@@ -374,9 +374,9 @@ fn cell(
         text = text.italics().color(theme::FAINT);
     }
     let unknown = clip
-        .variants()
+        .clips()
         .iter()
-        .any(|variant| !built.clips.contains_key(variant.clip()));
+        .any(|clip| !built.clips.contains_key(clip.clip()));
     if unknown {
         text = text.color(theme::DANGER);
     }
@@ -460,16 +460,16 @@ fn picker(
             chosen = Some(None);
         }
     }
-    let variants: Vec<ClipRef> = current.map_or(Vec::new(), |cell| cell.variants().to_vec());
-    let order = current.map_or(VariantOrder::Random, ClipCell::order);
-    if variants.len() > 1 {
-        let mut kept = variants.clone();
+    let clips: Vec<ClipRef> = current.map_or(Vec::new(), |cell| cell.clips().to_vec());
+    let order = current.map_or(ClipOrder::Random, ClipCell::order);
+    if clips.len() > 1 {
+        let mut kept = clips.clone();
         let mut removed = false;
-        for (index, variant) in variants.iter().enumerate() {
+        for (index, clip) in clips.iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.label(theme::faint(format!("{}.", index + 1)));
-                ui.label(theme::mono(clip_label(Some(variant))).size(12.5));
-                if controls::remove(ui, "variant").clicked() {
+                ui.label(theme::mono(clip_label(Some(clip))).size(12.5));
+                if controls::remove(ui, "clip").clicked() {
                     kept.remove(index);
                     removed = true;
                 }
@@ -481,7 +481,7 @@ fn picker(
             controls::combo(("set-order", key))
                 .selected_text(order_label(order))
                 .show_ui(ui, |ui| {
-                    for order in [VariantOrder::Random, VariantOrder::InTurn] {
+                    for order in [ClipOrder::Random, ClipOrder::InTurn] {
                         ui.selectable_value(&mut picked, order, order_label(order));
                     }
                 });
@@ -491,7 +491,7 @@ fn picker(
         }
     }
     let groups: Vec<GroupName> = def.groups.keys().cloned().collect();
-    let mut only = variants.first().and_then(ClipRef::only).cloned();
+    let mut only = clips.first().and_then(ClipRef::only).cloned();
     if !groups.is_empty() {
         ui.horizontal(|ui| {
             ui.label(theme::muted("kept to"));
@@ -507,21 +507,17 @@ fn picker(
                     }
                 });
         });
-        if !variants.is_empty()
-            && variants
+        if !clips.is_empty() && clips.iter().any(|clip| clip.only() != only.as_ref()) {
+            let regrouped = clips
                 .iter()
-                .any(|variant| variant.only() != only.as_ref())
-        {
-            let regrouped = variants
-                .iter()
-                .map(|variant| clip_ref(variant.clip().clone(), only.clone()))
+                .map(|clip| clip_ref(clip.clip().clone(), only.clone()))
                 .collect();
             chosen = Some(Some(cell_of(regrouped, order)));
         }
     }
     if current.is_some() {
         let adding = &mut editor.views.skeleton.view_mut(key).sets.adding;
-        ui.checkbox(adding, "a clip picked joins the variants");
+        ui.checkbox(adding, "a clip picked joins the cell's clips");
     }
     let adding = editor.views.skeleton.view(key).sets.adding && current.is_some();
     let filter = &mut editor.views.skeleton.view_mut(key).sets.filter;
@@ -544,7 +540,7 @@ fn picker(
                     .get(name)
                     .and_then(|cues| cues.iter().find(|cue| cue.apex));
                 let library = &def.libraries[found.library].key;
-                let lit = variants.iter().any(|variant| variant.clip() == name);
+                let lit = clips.iter().any(|clip| clip.clip() == name);
                 ui.horizontal(|ui| {
                     if ui
                         .add(egui::Button::selectable(lit, theme::mono(name.as_str())))
@@ -552,7 +548,7 @@ fn picker(
                     {
                         let picked = clip_ref(name.clone(), only.clone());
                         chosen = Some(Some(if adding {
-                            let mut grown = variants.clone();
+                            let mut grown = clips.clone();
                             grown.push(picked);
                             cell_of(grown, order)
                         } else {
@@ -612,11 +608,11 @@ fn clip_ref(clip: ClipName, only: Option<GroupName>) -> ClipRef {
     }
 }
 
-/// A cell of `variants` taking turns in `order`, or the one clip when there is only one.
-fn cell_of(mut variants: Vec<ClipRef>, order: VariantOrder) -> ClipCell {
-    match variants.len() {
-        1 => ClipCell::One(variants.remove(0)),
-        _ => ClipCell::Variants { variants, order },
+/// A cell of `clips` taking turns in `order`, or the one clip when there is only one.
+fn cell_of(mut clips: Vec<ClipRef>, order: ClipOrder) -> ClipCell {
+    match clips.len() {
+        1 => ClipCell::One(clips.remove(0)),
+        _ => ClipCell::Several { clips, order },
     }
 }
 
@@ -625,21 +621,21 @@ fn cell_label(cell: Option<&ClipCell>) -> String {
         return "nothing".to_owned();
     };
     let names: Vec<String> = cell
-        .variants()
+        .clips()
         .iter()
-        .map(|variant| clip_label(Some(variant)))
+        .map(|clip| clip_label(Some(clip)))
         .collect();
     match (names.len(), cell.order()) {
-        (0, _) => "no variants".to_owned(),
+        (0, _) => "no clips".to_owned(),
         (1, _) => names.concat(),
         (_, order) => format!("{} · {}", names.join(" / "), order_label(order)),
     }
 }
 
-fn order_label(order: VariantOrder) -> &'static str {
+fn order_label(order: ClipOrder) -> &'static str {
     match order {
-        VariantOrder::Random => "at random",
-        VariantOrder::InTurn => "in turn",
+        ClipOrder::Random => "at random",
+        ClipOrder::InTurn => "in turn",
     }
 }
 

@@ -30,7 +30,7 @@
   "base": {
     "clips": {
       "idle": {
-        "variants": [
+        "clips": [
           "idle",
           "idle_b"
         ]
@@ -39,14 +39,14 @@
       "run": "run",
       "sprint": "sprint",
       "attack": {
-        "variants": [
+        "clips": [
           "punch",
           "kick"
         ],
         "order": "in_turn"
       },
       "death": {
-        "variants": [
+        "clips": [
           "death",
           "death_b"
         ]
@@ -56,7 +56,7 @@
         "only": "upper"
       },
       "hurt": {
-        "variants": [
+        "clips": [
           "hit_a",
           "hit_b"
         ],
@@ -91,7 +91,7 @@
       "set": {
         "clips": {
           "attack": {
-            "variants": [
+            "clips": [
               "1h_slash",
               "1h_slice",
               "1h_chop"
@@ -103,7 +103,7 @@
           "chop": "1h_chop",
           "cleave": "1h_slice",
           "slash": {
-            "variants": [
+            "clips": [
               "1h_slash",
               "1h_slice",
               "1h_chop"
@@ -120,7 +120,7 @@
         "clips": {
           "idle": "2h_idle",
           "attack": {
-            "variants": [
+            "clips": [
               "2h_slice",
               "2h_chop",
               "2h_stab"
@@ -132,7 +132,7 @@
           "chop": "2h_chop",
           "cleave": "2h_spin",
           "slash": {
-            "variants": [
+            "clips": [
               "2h_slice",
               "2h_chop",
               "2h_stab"
@@ -175,7 +175,7 @@
       "set": {
         "clips": {
           "attack": {
-            "variants": [
+            "clips": [
               "dual_slash",
               "dual_chop",
               "dual_stab"
@@ -187,7 +187,7 @@
           "chop": "dual_chop",
           "cleave": "dual_slash",
           "slash": {
-            "variants": [
+            "clips": [
               "dual_slash",
               "dual_chop",
               "dual_stab"
@@ -254,7 +254,7 @@
         "clips": {
           "idle": "shield_idle",
           "attack": {
-            "variants": [
+            "clips": [
               "1h_slash",
               "1h_slice",
               "1h_chop"
@@ -269,7 +269,7 @@
           "chop": "1h_chop",
           "cleave": "1h_slice",
           "slash": {
-            "variants": [
+            "clips": [
               "1h_slash",
               "1h_slice",
               "1h_chop"

@@ -13,6 +13,7 @@ pub const CHAPTER: Chapter = Chapter {
 
 const BOG_WATER: &str = "bog_water";
 const ANTIDOTE: &str = "antidote";
+const WAND: &str = "ash_wand";
 
 fn play(shoot: &mut Shoot) {
     let player = shoot.join_as("arcanist", Some(resident_home("island", "grisha")));
@@ -37,10 +38,7 @@ fn play(shoot: &mut Shoot) {
         "Gear holds its boosts while it is worn, and lets go the moment it comes off: the wand's card lists them",
     );
     me.act(InputAction::ToggleEquipment);
-    me.act_on_ui(
-        InputAction::InspectItem,
-        UiTarget::starting("Worn as Weapon"),
-    );
+    me.act_on_ui(InputAction::InspectItem, UiTarget::item(WAND));
     me.find_ui(UiTarget::containing("+2 Damage"));
     me.hold();
     me.act(InputAction::Dismiss);

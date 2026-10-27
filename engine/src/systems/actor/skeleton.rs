@@ -276,17 +276,17 @@ pub struct ClipSet {
 #[serde(untagged)]
 pub enum ClipCell {
     One(ClipRef),
-    Variants {
-        variants: Vec<ClipRef>,
-        #[serde(default, skip_serializing_if = "VariantOrder::is_random")]
-        order: VariantOrder,
+    Several {
+        clips: Vec<ClipRef>,
+        #[serde(default, skip_serializing_if = "ClipOrder::is_random")]
+        order: ClipOrder,
     },
 }
 
-/// How a cell's variants take turns: any but the one just played, or each in the order listed.
+/// How a cell's clips take turns: any but the one just played, or each in the order listed.
 #[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum VariantOrder {
+pub enum ClipOrder {
     #[default]
     Random,
     InTurn,
@@ -310,35 +310,35 @@ pub enum ClipRef {
 }
 
 impl ClipCell {
-    pub fn variants(&self) -> &[ClipRef] {
+    pub fn clips(&self) -> &[ClipRef] {
         match self {
             ClipCell::One(clip) => std::slice::from_ref(clip),
-            ClipCell::Variants { variants, .. } => variants,
+            ClipCell::Several { clips, .. } => clips,
         }
     }
 
-    pub fn order(&self) -> VariantOrder {
+    pub fn order(&self) -> ClipOrder {
         match self {
-            ClipCell::One(_) => VariantOrder::Random,
-            ClipCell::Variants { order, .. } => *order,
+            ClipCell::One(_) => ClipOrder::Random,
+            ClipCell::Several { order, .. } => *order,
         }
     }
 
-    /// The variant `at`, or the first when there is none there.
-    pub fn variant(&self, at: usize) -> &ClipRef {
-        let variants = self.variants();
-        variants.get(at).unwrap_or(&variants[0])
+    /// The clip picked at `pick`, or the first when there is none there.
+    pub fn nth(&self, pick: usize) -> &ClipRef {
+        let clips = self.clips();
+        clips.get(pick).unwrap_or(&clips[0])
     }
 
-    /// The variant to play after `last`, the one played before it, if any.
+    /// The clip to pick after `last`, the one picked before it, if any.
     pub fn after(&self, last: Option<usize>, rng: &mut Rng) -> usize {
-        let count = self.variants().len() as u32;
+        let count = self.clips().len() as u32;
         match (self.order(), last) {
             _ if count <= 1 => 0,
-            (VariantOrder::InTurn, None) => 0,
-            (VariantOrder::InTurn, Some(last)) => (last + 1) % count as usize,
-            (VariantOrder::Random, None) => rng.rand_range(0..count) as usize,
-            (VariantOrder::Random, Some(last)) => {
+            (ClipOrder::InTurn, None) => 0,
+            (ClipOrder::InTurn, Some(last)) => (last + 1) % count as usize,
+            (ClipOrder::Random, None) => rng.rand_range(0..count) as usize,
+            (ClipOrder::Random, Some(last)) => {
                 let other = rng.rand_range(0..count - 1) as usize;
                 if other >= last { other + 1 } else { other }
             }
@@ -349,18 +349,18 @@ impl ClipCell {
     fn entries(&self, pointer: String) -> Vec<(String, &ClipRef)> {
         match self {
             ClipCell::One(clip) => vec![(pointer, clip)],
-            ClipCell::Variants { variants, .. } => variants
+            ClipCell::Several { clips, .. } => clips
                 .iter()
                 .enumerate()
-                .map(|(index, clip)| (format!("{pointer}/variants/{index}"), clip))
+                .map(|(index, clip)| (format!("{pointer}/clips/{index}"), clip))
                 .collect(),
         }
     }
 }
 
-impl VariantOrder {
+impl ClipOrder {
     fn is_random(&self) -> bool {
-        *self == VariantOrder::Random
+        *self == ClipOrder::Random
     }
 }
 
@@ -940,10 +940,10 @@ impl ContentFile for SkeletonDef {
                 }
             }
             for (entry, cell) in set.cells() {
-                if cell.variants().is_empty() {
+                if cell.clips().is_empty() {
                     cx.error(
-                        format!("{pointer}{entry}/variants"),
-                        "no variants",
+                        format!("{pointer}{entry}/clips"),
+                        "no clips",
                         "an empty list",
                         "at least one clip to play",
                     );
@@ -1181,13 +1181,13 @@ impl ClipSet {
             .chain(gestures)
     }
 
-    /// Every clip the set names, each variant of a cell apart, with where in the set it names it.
+    /// Every clip the set names, each of a cell's clips apart, with where in the set it names it.
     pub fn entries(&self) -> impl Iterator<Item = (String, &ClipRef)> {
         self.cells()
             .flat_map(|(pointer, cell)| cell.entries(pointer))
     }
 
-    /// The clips that play as a hit, each variant apart: the attack and every move.
+    /// The clips that play as a hit, each of a cell's clips apart: the attack and every move.
     pub fn attacks(&self) -> impl Iterator<Item = (String, &ClipRef)> {
         let attack = self
             .clips
@@ -1301,7 +1301,7 @@ impl SkeletonDef {
             .filter(|&gait| gait.required() || self.names(stance, gait))
             .filter_map(|gait| {
                 let (cell, _) = self.named(stance, &Motion::Action(gait), Pose::Idle);
-                let pace = *self.paces.get(cell.variant(0).clip())?;
+                let pace = *self.paces.get(cell.nth(0).clip())?;
                 Some(Paced { gait, pace })
             })
             .collect()

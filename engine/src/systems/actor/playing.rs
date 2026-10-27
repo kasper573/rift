@@ -68,23 +68,23 @@ impl Motion {
     }
 }
 
-/// A motion an actor was told to play, the variant of its cell that plays, and the moments its
+/// A motion an actor was told to play, which of its cell's clips plays, and the moments its
 /// clip lands and ends it. Replicated, so every client animates the same stroke from the same start.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Playing {
     pub motion: Motion,
-    pub variant: usize,
+    pub pick: usize,
     pub started: UnixMillis,
     pub apex: UnixMillis,
     pub ends: UnixMillis,
 }
 
-/// The motion an actor last played and the variant of its cell that played, which the next play
+/// The motion an actor last played and which of its cell's clips played, which the next play
 /// of the same motion takes its turn after.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct LastPlayed {
     pub motion: Motion,
-    pub variant: usize,
+    pub pick: usize,
 }
 
 /// When the actor's last played action ended, or began when nothing was played: the moment the
@@ -213,18 +213,18 @@ pub fn play(
     let last = world
         .get::<LastPlayed>(actor)
         .filter(|last| last.motion == motion)
-        .map(|last| last.variant);
-    let variant = model
+        .map(|last| last.pick);
+    let pick = model
         .cell(stance, &motion, Pose::Idle)
         .after(last, &mut world.resource_mut::<Rng>());
     let mut component = world.get_mut::<Actor>(actor)?;
     let facing = toward.unwrap_or(component.facing);
     super::set_facing(&mut component, facing, motion.action());
     component.attack_rate = speed;
-    let timing = model.timing(stance, &motion, variant, speed);
+    let timing = model.timing(stance, &motion, pick, speed);
     let playing = Playing {
         motion,
-        variant,
+        pick,
         started: now,
         apex: now.after(timing.apex),
         ends: now.after(timing.duration),
@@ -234,7 +234,7 @@ pub fn play(
         playing.clone(),
         LastPlayed {
             motion: playing.motion.clone(),
-            variant,
+            pick,
         },
     ));
     Some(playing)

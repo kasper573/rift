@@ -179,7 +179,7 @@ fn pace(editor: &mut Editor, ui: &mut Ui, key: &str, built: &BuiltSkeleton, chos
         Action::GAITS.iter().any(|gait| {
             set.clips
                 .get(gait)
-                .is_some_and(|cell| cell.variants().iter().any(|clip| clip.clip() == chosen))
+                .is_some_and(|cell| cell.clips().iter().any(|clip| clip.clip() == chosen))
         })
     });
     if held.is_none() && !gait {

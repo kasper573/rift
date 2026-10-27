@@ -54,8 +54,8 @@ fn play(shoot: &mut Shoot) {
     me.caption(
         "A shader on an area reads its geometry: Fireball's flames fill the circle exactly, and whoever stands in it burns bright inside the fire",
     );
-    let here = me.snapshot().me.expect("the player").at;
-    me.cast_at(InputAction::Hotbar1, here, |snapshot| {
+    let healthiest = me.wait_for("the pack close by", healthiest_close_prey);
+    me.cast_at(InputAction::Hotbar1, healthiest, |snapshot| {
         !played(snapshot, "fireball_blast").is_empty()
     });
     me.hold();
@@ -140,6 +140,19 @@ fn closing_pack(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
             .fold(Pos::zero(), |sum, at| sum + at.to_vector());
         Pos::new(sum.x / count, sum.y / count)
     })
+}
+
+// The healthiest of the pack close by, so a blast centred on it leaves someone burning instead of
+// felling everyone it holds.
+fn healthiest_close_prey(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
+    let me = snapshot.me.as_ref()?.at;
+    snapshot
+        .actors
+        .iter()
+        .filter(|actor| npc_is(actor, PREY) && actor.health > 0.0)
+        .filter(|actor| actor.at.distance_to(me) <= 4.0)
+        .max_by(|a, b| a.health.total_cmp(&b.health))
+        .map(|actor| actor.at)
 }
 
 // The friend arms Sunder and lands it on the nearest monster standing clear of the crowd on him,

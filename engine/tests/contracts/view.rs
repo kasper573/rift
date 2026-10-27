@@ -464,7 +464,7 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
 }
 
 #[test]
-fn a_looping_clips_variants_take_turns_each_as_the_one_before_plays_through() {
+fn a_looping_cells_clips_take_turns_each_as_the_one_before_plays_through() {
     let clips: Vec<(&str, engine::core::time::Seconds)> = testkit::rig_clips()
         .into_iter()
         .chain([("hum", CLIP.seconds()), ("tap", CLIP.seconds())])
@@ -476,7 +476,7 @@ fn a_looping_clips_variants_take_turns_each_as_the_one_before_plays_through() {
             .collect();
     base.insert(
         "idle".to_owned(),
-        json!({ "variants": ["hum", "tap"], "order": "in_turn" }),
+        json!({ "clips": ["hum", "tap"], "order": "in_turn" }),
     );
     let cue = |sound: &str| json!([{ "at": 100.0, "sound": path("sfx", sound) }]);
     let game = Game::new()

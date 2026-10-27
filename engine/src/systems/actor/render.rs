@@ -130,7 +130,7 @@ struct Play {
     started: Option<UnixMillis>,
     struck: Option<u32>,
     said: Option<Entity>,
-    variant: usize,
+    pick: usize,
 }
 
 /// The blows a body has seen land, and when it began to flinch at the newest. A blow that landed
@@ -179,12 +179,12 @@ impl Turn {
 }
 
 impl Puppet {
-    /// The variant of `motion`'s cell the body shows, while it shows that motion.
-    pub fn variant_of(&self, motion: &Motion) -> usize {
+    /// Which of `motion`'s cell's clips the body shows, while it shows that motion.
+    pub fn pick_of(&self, motion: &Motion) -> usize {
         self.playing
             .as_ref()
             .filter(|play| play.motion == *motion)
-            .map_or(0, |play| play.variant)
+            .map_or(0, |play| play.pick)
     }
 
     /// What the body shows playing.
@@ -466,15 +466,14 @@ pub fn pose(world: &mut World) {
         let blows = world.get::<Hurt>(entity).map_or(0, |hurt| hurt.0);
         let flinched = flinched(world, entity, blows, now);
         let flinch = Motion::Action(Action::Hurt);
-        let flinch_variant =
-            blows as usize % model.cell(stance, &flinch, actor.pose).variants().len();
+        let flinch_pick = blows as usize % model.cell(stance, &flinch, actor.pose).clips().len();
         let flinching = given.is_none()
             && matches!(shown.action, Action::Idle | Action::Talk)
             && model.skeleton().def.names(stance, Action::Hurt)
             && flinched.is_some_and(|since| {
                 now - since
                     < model
-                        .resolve(stance, &flinch, actor.pose, flinch_variant)
+                        .resolve(stance, &flinch, actor.pose, flinch_pick)
                         .length
             });
         let speech = saying.get(&entity);
@@ -484,11 +483,11 @@ pub fn pose(world: &mut World) {
             .filter(|_| matches!(shown.action, Action::Idle | Action::Talk))
             .and_then(|(line, gesture, since)| {
                 let gesture = Motion::Gesture(gesture.clone());
-                let variant = line.index_u32() as usize
-                    % model.cell(stance, &gesture, actor.pose).variants().len();
-                let length = model.resolve(stance, &gesture, actor.pose, variant).length;
+                let pick = line.index_u32() as usize
+                    % model.cell(stance, &gesture, actor.pose).clips().len();
+                let length = model.resolve(stance, &gesture, actor.pose, pick).length;
                 (model.skeleton().def.plays(stance, &gesture) && now - *since < length)
-                    .then_some((*line, gesture, variant))
+                    .then_some((*line, gesture, pick))
             });
         let talks = speech.is_some_and(|speech| speech.talking);
         let motion = match (given, &gesture) {
@@ -505,7 +504,7 @@ pub fn pose(world: &mut World) {
             started: given.map(|playing| playing.started),
             struck: flinching.then_some(blows),
             said: gesture.as_ref().map(|(line, ..)| *line),
-            variant: 0,
+            pick: 0,
         };
         let repeat = if motion.once() {
             RepeatAnimation::Never
@@ -518,25 +517,25 @@ pub fn pose(world: &mut World) {
             hasher.finish()
         };
         let cell = model.cell(stance, &motion, actor.pose);
-        let played_once = |variant| {
-            let resolved = model.resolve(stance, &motion, actor.pose, variant);
+        let played_once = |pick| {
+            let resolved = model.resolve(stance, &motion, actor.pose, pick);
             resolved.length / model.rate(&motion, &resolved, actor.attack_rate, actor.speed)
         };
         let mut next = |last, rng: &mut Rng| cell.after(last, rng);
-        let turns = (!motion.once() && cell.variants().len() > 1).then_some(Turns {
+        let turns = (!motion.once() && cell.clips().len() > 1).then_some(Turns {
             length: &played_once,
             next: &mut next,
         });
         let playhead = world
             .resource_mut::<Animator>()
             .advance(entity, state, now, turns);
-        play.variant = match (given, &gesture) {
-            _ if flinching => flinch_variant,
-            (Some(playing), _) => playing.variant,
-            (None, Some((_, _, variant))) => *variant,
+        play.pick = match (given, &gesture) {
+            _ if flinching => flinch_pick,
+            (Some(playing), _) => playing.pick,
+            (None, Some((_, _, pick))) => *pick,
             (None, None) => playhead.turn,
         };
-        let resolved = model.resolve(stance, &motion, actor.pose, play.variant);
+        let resolved = model.resolve(stance, &motion, actor.pose, play.pick);
         let rate = model.rate(&motion, &resolved, actor.attack_rate, actor.speed);
         let stepped = {
             let prev = match playhead.previous {

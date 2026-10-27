@@ -6,6 +6,8 @@ use engine::core::geometry::Shape;
 use engine::core::math::{Offset, Pos};
 use engine::core::units::Meters;
 use engine::core::vfx::VfxSite;
+use engine::systems::actor::skeleton::Rung;
+use engine::systems::actor::{Motion, Pose};
 use engine::systems::input::map::InputAction;
 use engine::systems::probe::{ProbeBody, ProbeSnapshot};
 use engine::systems::script::Place;
@@ -129,7 +131,8 @@ fn play(shoot: &mut Shoot) {
     friend.point_at_ground(foe);
     friend.click();
     me.wait_until("the cleave, swung as his sword's cleave", |snapshot| {
-        !played(snapshot, "cleave_swoosh").is_empty() && plays(snapshot, ARMSMAN, "1h_slice")
+        !played(snapshot, "cleave_swoosh").is_empty()
+            && player_named(snapshot, ARMSMAN).is_some_and(moves_as_its_stance_names)
     });
     me.hold();
     me.caption("A passive, Arcane Mind, is aimed at nobody: it holds for as long as it is known");
@@ -158,11 +161,7 @@ fn volley(me: &mut Star, hunter: &mut Player) {
     hunter.click();
     me.wait_until("the volley drawn from the bow, in sight", |snapshot| {
         player_named(snapshot, ARCHER).is_some_and(|archer| {
-            archer
-                .clip
-                .as_ref()
-                .is_some_and(|clip| clip.as_str() == "bow_shoot")
-                && clickable_point(snapshot, archer.at).is_some()
+            moves_as_its_stance_names(archer) && clickable_point(snapshot, archer.at).is_some()
         })
     });
     me.hold();
@@ -204,12 +203,6 @@ fn at(ground: Pos<Meters>) -> Place {
 }
 
 /// Whether the player named `name` plays the clip `clip`.
-fn plays(snapshot: &ProbeSnapshot, name: &str, clip: &str) -> bool {
-    player_named(snapshot, name)
-        .and_then(|body| body.clip.as_ref())
-        .is_some_and(|played| played.as_str() == clip)
-}
-
 /// Where the friend stands to be beside the caster, seen from the friend's screen.
 fn beside_me(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
     player_named(snapshot, ARCANIST).map(|caster| caster.at + Offset::new(2.0, 0.0))
@@ -227,13 +220,16 @@ fn aim_then_cast(
     me.cast(done);
 }
 
-/// The standing foe with the most other foes standing inside a circle of `radius` around it, once
-/// that makes three: the camp fights back after the fireball, runs at the caster and stands to
-/// swing, so the circle goes where the mob has come to a halt rather than where the pack roams.
+/// The foe in view with the most other foes in view within half of `radius` around it, once that
+/// makes three: a mob that fights back stands still, but a camp the fireball left unprovoked
+/// wanders on, and half the radius keeps a wandering three inside the circle for as long as the
+/// cast takes to land.
 fn crowd(snapshot: &ProbeSnapshot, radius: Meters) -> Option<Pos<Meters>> {
-    densest(snapshot, radius, |body| !body.friendly && still(body))
-        .filter(|(_, count)| *count >= 3)
-        .map(|(at, _)| at)
+    densest(snapshot, Meters(radius.0 / 2.0), |body| {
+        !body.friendly && clickable_point(snapshot, body.at).is_some()
+    })
+    .filter(|(_, count)| *count >= 3)
+    .map(|(at, _)| at)
 }
 
 /// Among living monsters for which `counts` holds, the one with the most of them inside a circle
@@ -298,4 +294,17 @@ fn chained_through_several(snapshot: &ProbeSnapshot) -> bool {
 fn foe_in_view(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
     let foe = nearest_npc(snapshot, PREY)?.at;
     clickable_point(snapshot, foe).map(|_| foe)
+}
+
+/// Whether `body` plays a move in the clip its stance's own set names for it: the hands, not the
+/// skill, deciding how the move looks.
+fn moves_as_its_stance_names(body: &ProbeBody) -> bool {
+    let (Some(motion @ Motion::Move(_)), Some(clip)) = (&body.motion, &body.clip) else {
+        return false;
+    };
+    let (cell, rung) = body
+        .skeleton
+        .get(content())
+        .named(body.stance, motion, Pose::Idle);
+    rung == Rung::Stance && cell.clips().iter().any(|named| named.clip() == clip)
 }

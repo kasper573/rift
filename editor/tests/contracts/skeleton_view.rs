@@ -10,8 +10,8 @@ use engine::core::units::{Meters, MetersPerSec};
 use engine::systems::actor::model::Skeletons;
 use engine::systems::actor::part::ModelPartDef;
 use engine::systems::actor::skeleton::{
-    BodyRegion, BuildName, CLIP_LIBRARIES, ClipCell, ClipName, ClipRef, Cue, GroupName, JointName,
-    Layer, Leg, MoveName, SkeletonDef, VariantOrder,
+    BodyRegion, BuildName, CLIP_LIBRARIES, ClipCell, ClipName, ClipOrder, ClipRef, Cue, GroupName,
+    JointName, Layer, Leg, MoveName, SkeletonDef,
 };
 use engine::systems::actor::stance::StanceDef;
 use engine::systems::actor::{Action, Pose};
@@ -77,11 +77,11 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
     let set = &row.stances[0];
     assert_eq!(stance_path(&editor, set.stance), sword);
     assert_eq!(set.set.moves[&MoveName::new("slash")], whole("slash"));
-    let combo = ClipCell::Variants {
-        variants: ["slash", "attack"]
+    let combo = ClipCell::Several {
+        clips: ["slash", "attack"]
             .map(|clip| ClipRef::Whole(ClipName::new(clip)))
             .to_vec(),
-        order: VariantOrder::InTurn,
+        order: ClipOrder::InTurn,
     };
     assert!(sets::set_cell(
         &mut editor,
@@ -93,7 +93,7 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
     assert_eq!(
         skeleton_of(&mut editor, &key).stances[0].set.moves[&MoveName::new("slash")],
         combo,
-        "a cell's variants land in order, with the order they take turns in"
+        "a cell's clips land in order, with the order they take turns in"
     );
     assert!(
         !sets::set_cell(

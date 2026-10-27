@@ -108,7 +108,7 @@ pub fn idle_clip(skeleton: &BuiltSkeleton) -> Option<RigClip> {
     let (clip, _) = skeleton
         .def
         .named(None, &Motion::Action(Action::Idle), Pose::Idle);
-    let found = skeleton.clips.get(clip.variant(0).clip())?;
+    let found = skeleton.clips.get(clip.nth(0).clip())?;
     Some(RigClip {
         file: skeleton.def.libraries[found.library].file.path(),
         index: found.index,

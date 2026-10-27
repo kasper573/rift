@@ -4,7 +4,7 @@ use driver::{
 };
 use engine::core::math::Offset;
 use engine::systems::actor::skeleton::GestureName;
-use engine::systems::actor::{Action, ModelDef, Motion};
+use engine::systems::actor::{Action, Motion};
 use engine::systems::input::gestures::ClickClaim;
 use engine::systems::input::map::InputAction;
 use engine::systems::item::ItemDef;
@@ -177,11 +177,15 @@ fn play(shoot: &mut Shoot) {
     me.zoom_camera(1);
     me.talk_to("bram");
     me.read_to_choices();
+    let carter = townsperson(&me.snapshot(), "bram")
+        .expect("Bram in view")
+        .appearance
+        .clone();
     me.pick("Were you ever a soldier?");
-    let (plate, sword) = (id::<ModelDef>("knight"), id::<ItemDef>("iron_sword"));
+    let sword = id::<ItemDef>("iron_sword");
     me.wait_until("Bram in his old plate, a sword in hand", |snapshot| {
         townsperson(snapshot, "bram").is_some_and(|bram| {
-            bram.model == plate && bram.held.iter().any(|held| held.item == sword)
+            bram.appearance != carter && bram.held.iter().any(|held| held.item == sword)
         })
     });
     me.caption("His script dressed him in another body and put a sword in his hand");

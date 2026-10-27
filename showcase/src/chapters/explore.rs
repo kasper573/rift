@@ -49,7 +49,7 @@ fn play(shoot: &mut Shoot) {
         me.walk_near(spawn + Offset::new(x, y));
     }
     me.caption(
-        "At your pace you break into a sprint, played as fast as the ground it covers, so feet keep to the grass instead of sliding",
+        "Your pace picks the gait whose clip covers ground nearest it, played as fast as the ground it covers, so feet keep to the grass instead of sliding",
     );
     me.zoom_camera(1);
     for _ in 0..2 {
@@ -57,13 +57,16 @@ fn play(shoot: &mut Shoot) {
     }
     me.point_at_ground(spawn + Offset::new(4.0, 1.0));
     me.click();
-    me.wait_for("a sprint sped up to the ground it covers", |snapshot| {
-        snapshot
-            .me
-            .as_ref()
-            .filter(|me| me.action == Action::Sprint && me.rate.0 > 1.0)
-            .map(|_| ())
-    });
+    me.wait_for(
+        "a gait played as fast as the ground it covers",
+        |snapshot| {
+            snapshot
+                .me
+                .as_ref()
+                .filter(|me| Action::GAITS.contains(&me.action) && me.rate.0 != 1.0)
+                .map(|_| ())
+        },
+    );
     me.come_to_rest();
     me.walk_near(spawn);
     me.camera_home();

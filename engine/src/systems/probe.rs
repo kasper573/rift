@@ -26,7 +26,6 @@ use crate::core::time::{self, PlaybackRate, Seconds};
 use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::held::{self, Held};
-use crate::systems::actor::model::ModelId;
 use crate::systems::actor::render::Puppet;
 use crate::systems::actor::skeleton::{ClipName, SkeletonId};
 use crate::systems::actor::stance::{HandIndex, StanceId};
@@ -202,7 +201,7 @@ impl ProbeTerrain {
 pub struct ProbeBody {
     pub id: Entity,
     pub name: String,
-    pub model: ModelId,
+    pub appearance: Appearance,
     pub flies: bool,
     pub player: bool,
     pub at: Pos<Meters>,
@@ -917,8 +916,8 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
                 .heights
                 .height_at(drawn)
         });
-    let model = entity.get::<Appearance>()?.model;
-    let built = ActorModel::get(world.resource::<Content>(), model);
+    let appearance = entity.get::<Appearance>()?.clone();
+    let built = ActorModel::get(world.resource::<Content>(), appearance.model);
     let flies = built.airborne();
     let stat = |kind| entity.get::<Stats>().map_or(0.0, |stats| stats.get(kind));
     let stance = held::stance_of(world, entity.id());
@@ -932,10 +931,10 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         .cloned()
         .or_else(|| motion.clone())
         .unwrap_or(Motion::Action(actor.action));
-    let variant = entity
+    let pick = entity
         .get::<Puppet>()
-        .map_or(0, |puppet| puppet.variant_of(&shown));
-    let resolved = built.resolve(stance, &shown, actor.pose, variant);
+        .map_or(0, |puppet| puppet.pick_of(&shown));
+    let resolved = built.resolve(stance, &shown, actor.pose, pick);
     let clip = resolved.source.is_some().then(|| resolved.clip.clone());
     let rate = built.rate(&shown, &resolved, actor.attack_rate, actor.speed);
     let held = entity
@@ -959,7 +958,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         name: entity
             .get::<actor::Name>()
             .map_or_else(String::new, |name| name.name.clone()),
-        model,
+        appearance,
         flies,
         player: entity.contains::<PlayedBy>(),
         at,
