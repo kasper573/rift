@@ -24,5 +24,8 @@
         "sound": "sound-and-voice/sfx/block01.sfx"
       }
     ]
+  },
+  "paces": {
+    "track": 1.0
   }
 }

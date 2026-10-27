@@ -239,7 +239,7 @@ pub fn passed_by(snapshot: &ProbeSnapshot, ground: Pos<Meters>) -> bool {
     snapshot
         .actors
         .iter()
-        .filter(|actor| Some(actor.id) != me && matches!(actor.action, Action::Walk | Action::Run))
+        .filter(|actor| Some(actor.id) != me && actor.action.moves())
         .any(|actor| stands_over(actor, ground, PASSING))
 }
 

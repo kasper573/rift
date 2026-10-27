@@ -20,7 +20,7 @@ use crate::core::content::{
 use crate::core::geometry::{Degrees, Radians};
 use crate::core::render::world::layers::Gait;
 use crate::core::time::{Hertz, Millis, Seconds};
-use crate::core::units::Meters;
+use crate::core::units::{Meters, MetersPerSec};
 
 pub type SkeletonId = ContentId<SkeletonDef>;
 
@@ -95,6 +95,12 @@ pub struct SkeletonDef {
     pub stances: Vec<StanceSet>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub cues: BTreeMap<ClipName, Vec<Cue>>,
+    /// How fast each clip a set plays to walk, run or sprint carries a body over the ground at scale
+    /// 1: the speed its planted feet slide back under it, or for a clip whose feet a layer plants, or
+    /// that has none, the speed it looks right at. A body plays the gait whose clip covers nearest its
+    /// speed, as fast as covers it exactly.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub paces: BTreeMap<ClipName, MetersPerSec>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<Layer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -318,7 +324,13 @@ impl Layer {
 /// The actions a layer runs during when its entry names none: all but a hit and a death, which a
 /// keyed clip always plays alone.
 fn calm() -> Vec<Action> {
-    vec![Action::Idle, Action::Walk, Action::Run, Action::Talk]
+    vec![
+        Action::Idle,
+        Action::Walk,
+        Action::Run,
+        Action::Sprint,
+        Action::Talk,
+    ]
 }
 
 fn is_zero(value: &f32) -> bool {
@@ -626,6 +638,7 @@ impl ContentFile for SkeletonDef {
             base: ClipSet {
                 clips: <Action as strum::VariantArray>::VARIANTS
                     .iter()
+                    .filter(|action| action.required())
                     .map(|&action| (action, ClipRef::Whole(ClipName::new(action.as_ref()))))
                     .collect(),
                 ..ClipSet::default()
@@ -640,6 +653,16 @@ impl ContentFile for SkeletonDef {
                     sound: None,
                 }],
             )]),
+            paces: BTreeMap::from([
+                (
+                    ClipName::new(Action::Walk.as_ref()),
+                    MetersPerSec(Meters(1.0)),
+                ),
+                (
+                    ClipName::new(Action::Run.as_ref()),
+                    MetersPerSec(Meters(3.0)),
+                ),
+            ]),
             layers: Vec::new(),
             modules: Vec::new(),
         })
@@ -668,7 +691,7 @@ impl ContentFile for SkeletonDef {
             }
         }
         for &action in <Action as strum::VariantArray>::VARIANTS {
-            if !self.base.clips.contains_key(&action) {
+            if action.required() && !self.base.clips.contains_key(&action) {
                 cx.error(
                     "/base/clips",
                     "missing clip",
@@ -713,6 +736,31 @@ impl ContentFile for SkeletonDef {
         }
         for (clip, cues) in &self.cues {
             check_cues(&format!("/cues/{}", clip.0), cues, cx);
+        }
+        for (pointer, set) in self.sets() {
+            for gait in Action::GAITS {
+                let Some(clip) = set.clips.get(&gait) else {
+                    continue;
+                };
+                if !self.paces.contains_key(clip.clip()) {
+                    cx.error(
+                        format!("{pointer}/clips/{}", gait.as_ref()),
+                        "no pace",
+                        format!("{} has no pace", clip.clip()),
+                        "a pace for every clip played to walk, run or sprint",
+                    );
+                }
+            }
+        }
+        for (clip, pace) in &self.paces {
+            if pace.0.0 <= 0.0 {
+                cx.error(
+                    format!("/paces/{}", clip.0),
+                    "no ground covered",
+                    format!("{} m/s", pace.0.0),
+                    "a speed above 0",
+                );
+            }
         }
         for (index, layer) in self.layers.iter().enumerate() {
             check_layer(&format!("/layers/{index}"), layer, cx);
@@ -891,11 +939,17 @@ pub enum Rung {
 impl SkeletonDef {
     /// The clip the sets name for `motion` in `stance`, holding `pose` while idle, and where it was
     /// named: the stance's set names it, else the base set; a move neither names plays the stance's
-    /// attack, else the base's. The base set names every action, as the loader holds it to.
+    /// attack, else the base's; a sprint neither names plays the run. The base set names every other
+    /// action, as the loader holds it to.
     pub fn named(&self, stance: Option<StanceId>, motion: &Motion, pose: Pose) -> (&ClipRef, Rung) {
         let base = &self.base;
         let set = stance.and_then(|stance| self.set(stance));
         let action = |action: Action| -> (&ClipRef, Rung) {
+            let action = if action.required() || self.names(stance, action) {
+                action
+            } else {
+                Action::Run
+            };
             match set.and_then(|set| set.clips.get(&action)) {
                 Some(clip) => (clip, Rung::Stance),
                 None => (&base.clips[&action], Rung::Base),
@@ -924,6 +978,27 @@ impl SkeletonDef {
                 }
             }
         }
+    }
+
+    /// The gaits a body in `stance` may cover ground in, each with its clip's pace.
+    fn gaits(&self, stance: Option<StanceId>) -> Vec<Paced> {
+        Action::GAITS
+            .into_iter()
+            .filter(|&gait| gait.required() || self.names(stance, gait))
+            .filter_map(|gait| {
+                let (clip, _) = self.named(stance, &Motion::Action(gait), Pose::Idle);
+                let pace = *self.paces.get(clip.clip())?;
+                Some(Paced { gait, pace })
+            })
+            .collect()
+    }
+
+    /// Whether the stance's set or the base set names a clip for the action.
+    pub fn names(&self, stance: Option<StanceId>, action: Action) -> bool {
+        stance
+            .and_then(|stance| self.set(stance))
+            .is_some_and(|set| set.clips.contains_key(&action))
+            || self.base.clips.contains_key(&action)
     }
 
     /// The base set and every stance's set, each with where it stands in the config.
@@ -983,6 +1058,14 @@ pub struct BuiltSkeleton {
     pub rig: NodeTree,
     /// Every clip of the libraries by name: which library carries it and how long it plays.
     pub clips: BTreeMap<ClipName, LibraryClip>,
+    gaits: BTreeMap<Option<StanceId>, Vec<Paced>>,
+}
+
+/// A gait a body may cover ground in, with the ground its clip covers at scale 1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Paced {
+    pub gait: Action,
+    pub pace: MetersPerSec,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1013,10 +1096,23 @@ impl BuiltSkeleton {
                 })
             })
             .collect();
+        let gaits = std::iter::once(None)
+            .chain(def.stances.iter().map(|set| Some(set.stance)))
+            .map(|stance| (stance, def.gaits(stance)))
+            .collect();
         BuiltSkeleton {
             def: def.clone(),
             rig: rig.tree.clone(),
             clips,
+            gaits,
         }
+    }
+
+    /// The gaits a body in `stance` may cover ground in.
+    pub fn gaits(&self, stance: Option<StanceId>) -> &[Paced] {
+        self.gaits
+            .get(&stance)
+            .or_else(|| self.gaits.get(&None))
+            .map_or(&[], Vec::as_slice)
     }
 }

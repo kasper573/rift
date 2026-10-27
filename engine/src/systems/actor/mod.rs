@@ -26,7 +26,7 @@ use crate::core::geometry::{Capsule, Radians};
 use crate::core::math::{Pos, Rgba};
 use crate::core::render::{Pointed, capsule_hit, ground_height, world_point};
 use crate::core::time::PlaybackRate;
-use crate::core::units::{MeterPos, Meters};
+use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::area::AreaObject;
 use crate::systems::dialogue;
 use crate::systems::movement::{self, Path, Position, RenderPosition};
@@ -79,6 +79,7 @@ pub enum Action {
     Idle,
     Walk,
     Run,
+    Sprint,
     Attack,
     #[serde(rename = "death")]
     #[strum(serialize = "death")]
@@ -87,9 +88,23 @@ pub enum Action {
 }
 
 impl Action {
+    /// The gaits a body may cover ground in, slowest first.
+    pub const GAITS: [Action; 3] = [Action::Walk, Action::Run, Action::Sprint];
+
     /// Whether the action's clip marks the moment its hit lands.
     pub fn takes_apex(self) -> bool {
         self == Action::Attack
+    }
+
+    /// Whether the action carries the body over the ground.
+    pub fn moves(self) -> bool {
+        Action::GAITS.contains(&self)
+    }
+
+    /// Whether every skeleton's base set must name a clip for the action: all but the sprint, which
+    /// a skeleton without one never breaks into.
+    pub fn required(self) -> bool {
+        self != Action::Sprint
     }
 }
 
@@ -133,6 +148,8 @@ pub struct Actor {
     pub pose: Pose,
     pub model: ModelId,
     pub attack_rate: PlaybackRate,
+    /// How fast the actor last walked, which its gait's clip plays to cover.
+    pub speed: MetersPerSec,
 }
 
 /// The capsule an actor is hit in, standing at its position.
@@ -235,9 +252,10 @@ pub fn settle(world: &mut World, actors: &mut Situations, sessions: &mut dialogu
         } else if let Some(playing) = playing {
             playing.motion.action()
         } else if walking {
-            match actor.action {
-                Action::Walk | Action::Run => actor.action,
-                _ => Action::Walk,
+            if actor.action.moves() {
+                actor.action
+            } else {
+                Action::Walk
             }
         } else if talking.contains(&entity) {
             Action::Talk

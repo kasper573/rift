@@ -16,7 +16,7 @@ use crate::core::content::{Content, ContentFile, ContentId, ModuleRule, ModuleSe
 use crate::core::geometry::Radians;
 use crate::core::math::{Pos, Rgba, Rng};
 use crate::core::time::{DayOrigin, PlaybackRate, Seconds, UnixMillis, WallClock};
-use crate::core::units::Meters;
+use crate::core::units::{Meters, MetersPerSec};
 use crate::systems::account::Identity;
 use crate::systems::actor::model::ModelId;
 use crate::systems::actor::{Action, Actor, ActorModel, Hitbox, Name, Pose, Tint};
@@ -451,6 +451,7 @@ pub(crate) fn place(
                     pose: Pose::Idle,
                     model,
                     attack_rate: PlaybackRate::default(),
+                    speed: MetersPerSec::default(),
                 },
                 Hitbox(ActorModel::get(&content, model).hitbox()),
                 AreaTag { area: zone },

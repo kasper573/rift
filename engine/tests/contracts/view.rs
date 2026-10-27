@@ -17,7 +17,7 @@ use engine::core::math::Rgba;
 use engine::core::render::camera::ground_hit;
 use engine::core::render::{Animator, CameraRig, capsule_hit, facing_rotation, world_point};
 use engine::core::time::PlaybackRate;
-use engine::core::units::{MeterPos, Meters};
+use engine::core::units::{MeterPos, Meters, MetersPerSec};
 use engine::systems::actor::render::{self, HeldProp, RenderActor};
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::wearing::Wearing;
@@ -26,7 +26,7 @@ use engine::systems::area::{self, AreaDef, AreaTag};
 use engine::systems::item::ItemDef;
 use engine::systems::movement::RenderPosition;
 use serde_json::json;
-use testkit::{APEX, BODY, Game, Map, path};
+use testkit::{APEX, BODY, Game, Map, WALK_PACE, path};
 
 const SIZE: GroundSize = GroundSize {
     width: 32,
@@ -169,6 +169,7 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
                 pose: Pose::Idle,
                 model: hero,
                 attack_rate: PlaybackRate(1.0),
+                speed: MetersPerSec::default(),
             },
             Wearing {
                 hands: BTreeMap::from([(HandIndex::MAIN, sword)]),
@@ -267,6 +268,7 @@ fn a_body_moves_by_the_clip_its_skeleton_plays_for_what_it_does() {
             pose: Pose::Idle,
             model: hero,
             attack_rate: PlaybackRate(1.0),
+            speed: MetersPerSec::default(),
         },
         RenderActor {
             facing: Radians(0.0),
@@ -329,8 +331,13 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
     let hero = testkit::Declared::declared::<ModelDef>(&content, "hero").expect("a hero");
     let field = testkit::Declared::declared::<AreaDef>(&content, "field").expect("a field");
     let walker = Pos::new(1.5, 1.5);
+    let hurrier = Pos::new(1.5, 3.5);
     let striker = Pos::new(3.5, 3.5);
-    for (at, action) in [(walker, Action::Walk), (striker, Action::Attack)] {
+    for (at, action, speed) in [
+        (walker, Action::Walk, WALK_PACE),
+        (hurrier, Action::Walk, WALK_PACE * 2.0),
+        (striker, Action::Attack, MetersPerSec::default()),
+    ] {
         app.world_mut().spawn((
             Actor {
                 color: Rgba(0xffffffff),
@@ -339,6 +346,7 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
                 pose: Pose::Idle,
                 model: hero,
                 attack_rate: PlaybackRate(1.0),
+                speed,
             },
             RenderActor {
                 facing: Radians(0.0),
@@ -384,6 +392,11 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
     assert!(
         of(walker).len() >= 2 && of(walker).iter().all(|id| *id == footstep),
         "a walker's feet come down once a loop, each sounding the ground under it: {heard:?}"
+    );
+    assert_eq!(
+        of(hurrier).len(),
+        2 * of(walker).len(),
+        "a walker covering twice the ground its walk covers puts its feet down twice as often"
     );
     assert_eq!(
         of(striker),

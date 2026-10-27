@@ -27,7 +27,13 @@ use crate::tabs::shown_path;
 use crate::views::stage;
 
 /// The actions a layer may run during: never a hit or a death, which play their clip alone.
-const CALM: [Action; 4] = [Action::Idle, Action::Walk, Action::Run, Action::Talk];
+const CALM: [Action; 5] = [
+    Action::Idle,
+    Action::Walk,
+    Action::Run,
+    Action::Sprint,
+    Action::Talk,
+];
 /// How far from the middle of the stage the body walks its loop.
 const LOOP: f32 = 1.2;
 
@@ -587,9 +593,8 @@ fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, built: &
     let crossed = scrub.crossed(resolved.cues, length);
     let stepped = crossed.iter().any(|cue| cue.step);
     let time = ui.input(|i| i.time) as f32;
-    let speed = match picked {
-        Action::Walk => 1.3,
-        Action::Run => 3.4,
+    let speed = match resolved.pace {
+        Some(pace) if picked.moves() => pace.0.0 * model.scale(),
         _ => 0.0,
     };
     let model_id = content

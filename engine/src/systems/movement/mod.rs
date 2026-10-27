@@ -22,7 +22,7 @@ use crate::core::interpolate::{Interpolate, InterpolatePlugin, Jumps, RenderValu
 use crate::core::math::{Offset, Pos};
 use crate::core::time::Seconds;
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
-use crate::systems::actor::{Action, Actor, ActorModel, set_facing};
+use crate::systems::actor::{Action, Actor, ActorModel, set_facing, wearing};
 use crate::systems::player::{may_command, sender_player};
 use crate::systems::stat::{self, StatKind};
 use crate::systems::{area, drain_requests, reach};
@@ -102,8 +102,6 @@ impl Interpolate for RenderPosition {
         position.jumps
     }
 }
-
-const RUN_SPEED: MetersPerSec = MetersPerSec(Meters(2.0));
 
 /// The corners left to walk, straight from one to the next, stored back-to-front: the next corner
 /// is `corners.last()`, so reaching it pops it off the end in O(1) instead of shifting the vec.
@@ -245,6 +243,7 @@ pub fn advance(world: &mut World, movers_query: &mut Movers, step_query: &mut St
         }
 
         let speed = speed_of(world, id);
+        let gait = gait_of(world, id, speed);
         let Ok((mut position, mut path, mut actor)) = step_query.get_mut(world, id) else {
             continue;
         };
@@ -255,7 +254,10 @@ pub fn advance(world: &mut World, movers_query: &mut Movers, step_query: &mut St
         if let Some(step) = heading
             && let Some(actor) = actor.as_mut()
         {
-            set_facing(actor, Radians::of(step), gait(speed));
+            set_facing(actor, Radians::of(step), gait);
+            if actor.speed != speed {
+                actor.speed = speed;
+            }
         }
         if arrived {
             world.entity_mut(id).remove::<(MoveTarget, Path)>();
@@ -282,12 +284,13 @@ fn mesh_in(world: &World, entity: Entity) -> Option<&NavMesh> {
     mesh_of(world.resource::<Content>(), world, entity)
 }
 
-fn gait(speed: MetersPerSec) -> Action {
-    if speed >= RUN_SPEED {
-        Action::Run
-    } else {
-        Action::Walk
-    }
+/// The gait the actor's model covers ground at `speed` in, in the stance it stands in.
+pub(super) fn gait_of(world: &World, entity: Entity, speed: MetersPerSec) -> Action {
+    let Some(actor) = world.get::<Actor>(entity) else {
+        return Action::Walk;
+    };
+    let content = world.resource::<Content>();
+    ActorModel::get(content, actor.model).gait(wearing::stance_of(world, entity), speed)
 }
 
 /// Walks `at` along `path` for `distance`, dropping each corner it reaches. Returns the heading of

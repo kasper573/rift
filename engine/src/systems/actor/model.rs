@@ -7,13 +7,13 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
 
-use super::Pose;
 use super::playing::Motion;
 use super::skeleton::{
     self, BuiltSkeleton, ClipName, Cue, DeclaredMoves, GroupName, Hand, LibraryClip, SkeletonDef,
     SkeletonId,
 };
 use super::stance::StanceId;
+use super::{Action, Pose};
 use crate::core::assets::{FileSize, ImageRef, ModelRef};
 use crate::core::content::gltf::{self, GltfInfo, NodeTree};
 use crate::core::content::media::{GltfInfos, VisiblePixelColumns, visible_columns};
@@ -24,7 +24,7 @@ use crate::core::content::{
 use crate::core::geometry::Capsule;
 use crate::core::render::world::mannequin::RigClip;
 use crate::core::time::{Millis, PlaybackRate, Seconds};
-use crate::core::units::Meters;
+use crate::core::units::{Meters, MetersPerSec};
 
 pub type ModelId = ContentId<ModelDef>;
 
@@ -759,6 +759,8 @@ pub struct Resolved<'a> {
     pub source: Option<ClipSource>,
     pub length: Seconds,
     pub cues: &'a [Cue],
+    /// The ground the clip covers at scale 1, when it is played to walk, run or sprint.
+    pub pace: Option<MetersPerSec>,
 }
 
 /// Where a clip is played from: the model's own glb, or a library of its skeleton, each by the
@@ -905,6 +907,38 @@ impl ActorModel {
             source,
             length,
             cues: cues.map_or(&[], Vec::as_slice),
+            pace: skeleton.paces.get(name).copied(),
+        }
+    }
+
+    /// The gait a body of this model covers ground at `speed` in, in `stance`: the one whose clip,
+    /// at the model's scale, covers nearest that speed.
+    pub fn gait(&self, stance: Option<StanceId>, speed: MetersPerSec) -> Action {
+        let mismatch =
+            |pace: MetersPerSec| (speed.0.0.max(1e-3) / (pace.0.0 * self.scale())).ln().abs();
+        self.skeleton
+            .gaits(stance)
+            .iter()
+            .map(|paced| (paced.gait, mismatch(paced.pace)))
+            .min_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map_or(Action::Walk, |(gait, _)| gait)
+    }
+
+    /// How fast `motion` plays on the clip `resolved` names: a hit at the attack speed, a gait as
+    /// fast as covers `speed` at the clip's pace and the model's scale, anything else as authored.
+    pub fn rate(
+        &self,
+        motion: &Motion,
+        resolved: &Resolved,
+        attack_speed: PlaybackRate,
+        speed: MetersPerSec,
+    ) -> PlaybackRate {
+        match resolved.pace {
+            _ if motion.strikes() => attack_speed.at_least(0.01),
+            Some(pace) if motion.action().moves() && speed.0.0 > 0.0 => {
+                PlaybackRate(speed.0.0 / (pace.0.0 * self.scale()))
+            }
+            _ => PlaybackRate(1.0),
         }
     }
 
@@ -917,7 +951,7 @@ impl ActorModel {
         attack_speed: PlaybackRate,
     ) -> Timing {
         let resolved = self.resolve(stance, motion, Pose::Idle);
-        let rate = rate(motion, attack_speed);
+        let rate = self.rate(motion, &resolved, attack_speed, MetersPerSec::default());
         let apex = resolved
             .cues
             .iter()
@@ -929,16 +963,15 @@ impl ActorModel {
         }
     }
 
-    /// The cues of `resolved`, playing `motion`, crossed between the previous sample and `now`.
-    /// `prev` is `None` when the motion just started, in which case every cue up to `now` is.
+    /// The cues of `resolved`, playing `motion` at `rate`, crossed between the previous sample and
+    /// `now`. `prev` is `None` when the motion just started, in which case every cue up to `now` is.
     pub fn cues<'a>(
         resolved: &Resolved<'a>,
         motion: &Motion,
         prev: Option<Seconds>,
         now: Seconds,
-        attack_speed: PlaybackRate,
+        rate: PlaybackRate,
     ) -> Vec<&'a Cue> {
-        let rate = rate(motion, attack_speed);
         let authored = |t: Seconds| t.millis() * rate;
         crossed_cues(
             resolved.cues,
@@ -954,15 +987,6 @@ impl ActorModel {
 pub struct Timing {
     pub duration: Seconds,
     pub apex: Seconds,
-}
-
-/// How fast a motion plays at an attack speed: a hit at the speed, anything else as authored.
-pub fn rate(motion: &Motion, attack_speed: PlaybackRate) -> PlaybackRate {
-    if motion.strikes() {
-        attack_speed.at_least(0.01)
-    } else {
-        PlaybackRate(1.0)
-    }
 }
 
 /// The `cues` of a clip `length` long that its playhead crossed going from `prev` to `now`, both

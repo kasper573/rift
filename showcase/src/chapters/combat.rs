@@ -231,7 +231,7 @@ fn chase_ends(me: &mut Player, chaser: &ProbeBody) {
                 .as_ref()
                 .map_or(f32::INFINITY, |me| it.at.distance_to(me.at));
             closest = closest.min(away);
-            let chasing = matches!(it.action, Action::Walk | Action::Run);
+            let chasing = it.action.moves();
             (clickable_point(snapshot, it.at).is_none() || !chasing || away > closest + 2.0)
                 .then_some(())
         },

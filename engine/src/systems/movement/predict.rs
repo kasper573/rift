@@ -10,7 +10,7 @@ use crate::core::units::Meters;
 use crate::systems::actor::render::RenderActor;
 use crate::systems::actor::{Action, Actor};
 use crate::systems::movement::{
-    HeardMove, MoveRequest, MoveSeq, MoveTarget, NavMesh, Path, Position, RenderPosition, gait,
+    HeardMove, MoveRequest, MoveSeq, MoveTarget, NavMesh, Path, Position, RenderPosition, gait_of,
     mesh_of, plan_on, speed_of, walk,
 };
 use crate::systems::player::{commands_locked, session};
@@ -73,6 +73,7 @@ pub(super) fn walk_ahead(world: &mut World) {
     let server_goal = world.get::<MoveTarget>(me).map(|target| target.pos);
     let alive = !stat::is_dead(world, me);
     let speed = speed_of(world, me);
+    let gait = gait_of(world, me, speed);
     let dt = Seconds(world.resource::<Time>().delta_secs());
     let shown = world
         .get::<Actor>(me)
@@ -90,7 +91,7 @@ pub(super) fn walk_ahead(world: &mut World) {
         stride.snap(server.pos);
         None
     };
-    let pose = stride.pose(heading, gait(speed), shown);
+    let pose = stride.pose(heading, gait, shown);
     let at = stride.at;
     if let Some(mut render) = world.get_mut::<RenderPosition>(me) {
         render.0 = at;

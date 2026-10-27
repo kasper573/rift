@@ -10,6 +10,7 @@ use engine::core::content::{
 };
 use engine::core::ground::{GroundSize, MIN_SIDE, Paint, SAMPLES_PER_METER};
 use engine::core::time::{Millis, Seconds};
+use engine::core::units::{Meters, MetersPerSec};
 use engine::core::vfx::shader::{SHADER_SOURCE, Stage};
 use engine::systems::actor::Action;
 use engine::systems::actor::model::{MODEL_BUSTS, MODEL_GLB};
@@ -53,6 +54,11 @@ pub const CLIP: Millis = Millis(300.0);
 
 /// When a declared model's attack lands.
 pub const APEX: Millis = Millis(100.0);
+
+/// The ground a declared skeleton's walk, run and sprint cover, at scale 1.
+pub const WALK_PACE: MetersPerSec = MetersPerSec(Meters(1.0));
+pub const RUN_PACE: MetersPerSec = MetersPerSec(Meters(3.0));
+pub const SPRINT_PACE: MetersPerSec = MetersPerSec(Meters(6.0));
 
 /// The skeleton every declared model wears unless the test names another.
 pub const BODY: &str = "body";
@@ -253,7 +259,8 @@ impl Game {
 
     /// A skeleton of the test rig, its library carrying `clips`, of `fields` over the plain
     /// skeleton's: a right and a left hand, a base set playing each action's clip of its name, the
-    /// attack landing at [`APEX`].
+    /// attack landing at [`APEX`], its walk, run and sprint covering [`WALK_PACE`], [`RUN_PACE`] and
+    /// [`SPRINT_PACE`].
     pub fn skeleton_of(self, name: &str, clips: &[(&str, Seconds)], fields: Value) -> Game {
         let base: serde_json::Map<String, Value> = Action::VARIANTS
             .iter()
@@ -267,6 +274,7 @@ impl Game {
             ],
             "base": { "clips": base },
             "cues": { "attack": [{ "at": APEX.0, "apex": true }] },
+            "paces": { "walk": WALK_PACE.0.0, "run": RUN_PACE.0.0, "sprint": SPRINT_PACE.0.0 },
         });
         for (field, value) in fields.as_object().expect("a skeleton's fields") {
             row[field] = value.clone();

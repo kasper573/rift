@@ -35,6 +35,9 @@
       }
     ]
   },
+  "paces": {
+    "fly": 1.25
+  },
   "layers": [
     {
       "type": "chain",

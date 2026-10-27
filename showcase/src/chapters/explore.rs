@@ -1,6 +1,7 @@
 use driver::{UiTarget, content, holding, marker_at, resident_home};
 use engine::core::math::{Offset, Pos};
 use engine::core::units::Meters;
+use engine::systems::actor::Action;
 use engine::systems::input::map::InputAction;
 
 use crate::chapters::Chapter;
@@ -47,6 +48,25 @@ fn play(shoot: &mut Shoot) {
         me.caption(says);
         me.walk_near(spawn + Offset::new(x, y));
     }
+    me.caption(
+        "A run plays as fast as the ground it covers, so feet keep to the grass instead of sliding",
+    );
+    me.zoom_camera(1);
+    for _ in 0..2 {
+        me.tilt_camera(InputAction::TiltUp);
+    }
+    me.point_at_ground(spawn + Offset::new(4.0, 1.0));
+    me.click();
+    me.wait_for("a run sped up to the ground it covers", |snapshot| {
+        snapshot
+            .me
+            .as_ref()
+            .filter(|me| me.action == Action::Run && me.rate.0 > 1.0)
+            .map(|_| ())
+    });
+    me.come_to_rest();
+    me.walk_near(spawn);
+    me.camera_home();
     me.caption("Things you drop lie on the ground as themselves");
     me.act(InputAction::ToggleInventory);
     me.act_on_ui(InputAction::DropItem, UiTarget::item(SWORD));

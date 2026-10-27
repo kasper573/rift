@@ -21,6 +21,7 @@ use engine::core::assets::FileSize;
 use engine::core::content::{Content, ContentFile, NamedContent};
 use engine::core::render::world::mannequin::RigClip;
 use engine::core::time::Millis;
+use engine::core::units::MetersPerSec;
 use engine::systems::actor::model::{ActorModel, Skeletons};
 use engine::systems::actor::skeleton::{
     BuiltSkeleton, ClipName, Cue, GroupName, Hand, JointName, Layer, LocalOffset, LocalTurn,
@@ -581,6 +582,15 @@ pub fn set_cues(editor: &mut Editor, key: &str, clip: &ClipName, mut cues: Vec<C
         } else {
             skeleton.cues.insert(clip.clone(), cues);
         }
+        Ok(())
+    })
+}
+
+/// Gives the clip `clip` the pace `pace`, merging with the pace set just before it as one drag does.
+pub fn set_pace(editor: &mut Editor, key: &str, clip: &ClipName, pace: MetersPerSec) -> bool {
+    let edit = ContentEdit::new(format!("Pace {clip} in {}", shown_path(key))).merging();
+    change_with(editor, key, edit, |skeleton| {
+        skeleton.paces.insert(clip.clone(), pace);
         Ok(())
     })
 }

@@ -6,7 +6,7 @@ use editor::views::skeleton::{self, SkeletonPage, library, sets};
 use engine::core::content::gltf::{Rest, TreeNode};
 use engine::core::render::world::layers::Gait;
 use engine::core::time::{Millis, Seconds};
-use engine::core::units::Meters;
+use engine::core::units::{Meters, MetersPerSec};
 use engine::systems::actor::model::Skeletons;
 use engine::systems::actor::skeleton::{
     CLIP_LIBRARIES, ClipName, ClipRef, Cue, GroupName, JointName, Layer, Leg, MoveName, SkeletonDef,
@@ -49,6 +49,19 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         skeleton_of(&mut editor, &key).cues[&slash_clip],
         vec![cue(120.0, true), cue(300.0, false)],
         "cues are kept in order of time"
+    );
+
+    let walk_clip = ClipName::new("walk");
+    assert!(skeleton::set_pace(
+        &mut editor,
+        &key,
+        &walk_clip,
+        MetersPerSec(Meters(1.4))
+    ));
+    assert_eq!(
+        skeleton_of(&mut editor, &key).paces[&walk_clip],
+        MetersPerSec(Meters(1.4)),
+        "a clip's pace lands in the skeleton's paces"
     );
 
     assert!(sets::set_cell(

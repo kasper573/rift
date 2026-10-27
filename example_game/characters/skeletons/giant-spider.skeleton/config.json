@@ -35,6 +35,9 @@
       }
     ]
   },
+  "paces": {
+    "walk": 1.4
+  },
   "layers": [
     {
       "type": "feet",

@@ -5,6 +5,8 @@
 
 use engine::core::content::Content;
 use engine::core::content::NamedContent;
+use engine::core::units::{Meters, MetersPerSec};
+use engine::systems::actor::Action;
 use engine::systems::actor::model::ActorModel;
 use engine::systems::actor::skeleton::{BuiltSkeleton, ClipName, SkeletonId};
 use ui::egui::{self, RichText, Ui, Vec2};
@@ -151,6 +153,7 @@ fn clip(
     if let Some(cues) = cues::timeline(ui, scrub, found.length.millis(), &held, true) {
         super::set_cues(editor, key, chosen, cues);
     }
+    pace(editor, ui, key, built, chosen);
     let uses = uses(built, chosen);
     let named = if uses.is_empty() {
         "no set names it: downloaded with its library and never played".to_owned()
@@ -183,6 +186,48 @@ fn clip(
             "overridden by {} (its own {chosen})",
             overriding.join(", ")
         )));
+    }
+}
+
+/// The ground the clip covers, for a clip some set plays to walk, run or sprint or that has a pace.
+fn pace(editor: &mut Editor, ui: &mut Ui, key: &str, built: &BuiltSkeleton, chosen: &ClipName) {
+    let def = &built.def;
+    let held = def.paces.get(chosen).copied();
+    let gait = def.sets().any(|(_, set)| {
+        Action::GAITS.iter().any(|gait| {
+            set.clips
+                .get(gait)
+                .is_some_and(|clip| clip.clip() == chosen)
+        })
+    });
+    if held.is_none() && !gait {
+        return;
+    }
+    let mut value = held.map_or(0.0, |pace| pace.0.0);
+    let dragged = ui
+        .horizontal(|ui| {
+            ui.label(theme::muted("pace · m/s"));
+            let dragged = ui
+                .add(
+                    egui::DragValue::new(&mut value)
+                        .speed(0.01)
+                        .range(0.01..=20.0)
+                        .fixed_decimals(2),
+                )
+                .changed();
+            if held.is_none() {
+                ui.label(theme::faint("none yet: a gait plays it"));
+            }
+            dragged
+        })
+        .inner;
+    form::hint(
+        ui,
+        "How fast the clip carries a body at scale 1: the speed its planted feet slide back under \
+         it. A body plays the gait nearest its speed, sped up or slowed to cover it exactly.",
+    );
+    if dragged {
+        super::set_pace(editor, key, chosen, MetersPerSec(Meters(value)));
     }
 }
 

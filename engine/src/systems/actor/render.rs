@@ -439,7 +439,7 @@ pub fn pose(world: &mut World) {
         } else {
             RepeatAnimation::Forever
         };
-        let rate = super::model::rate(&motion, actor.attack_rate).0;
+        let rate = model.rate(&motion, &resolved, actor.attack_rate, actor.speed);
         let state = {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             play.hash(&mut hasher);
@@ -451,13 +451,7 @@ pub fn pose(world: &mut World) {
                 Previous::Continued(played) => Some(played),
                 Previous::Unseen | Previous::Restarted => None,
             };
-            let crossed = ActorModel::cues(
-                &resolved,
-                &motion,
-                prev,
-                playhead.elapsed,
-                actor.attack_rate,
-            );
+            let crossed = ActorModel::cues(&resolved, &motion, prev, playhead.elapsed, rate);
             let (sfx, stepped) = cue_sounds(&crossed, area::of(world, entity), at.0);
             sounds.extend(sfx);
             stepped
@@ -531,7 +525,7 @@ pub fn pose(world: &mut World) {
                 for &node in &wanted {
                     let fresh = !tracks.iter().any(|track| track.node == node);
                     let active = animation.start(node);
-                    active.set_repeat(repeat).set_speed(rate);
+                    active.set_repeat(repeat).set_speed(rate.0);
                     if fresh {
                         active.set_weight(0.0);
                         tracks.push(Track {
@@ -561,7 +555,7 @@ pub fn pose(world: &mut World) {
                 if let Some(active) = animation.animation_mut(track.node) {
                     active.set_weight(track.weight);
                     if wanted.contains(&track.node) {
-                        active.set_speed(rate);
+                        active.set_speed(rate.0);
                     }
                 }
             }

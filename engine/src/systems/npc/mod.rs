@@ -19,7 +19,7 @@ use crate::core::content::{
 use crate::core::geometry::Radians;
 use crate::core::math::{Percent, Pos, Rect, Rgba, Rng};
 use crate::core::time::{PlaybackRate, Seconds};
-use crate::core::units::{MeterPos, Meters};
+use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::actor::model::ModelId;
 use crate::systems::actor::wearing::{self, Wearing};
 use crate::systems::actor::{self, Action, Actor, ActorModel, Hitbox, Pose, Tint};
@@ -592,6 +592,7 @@ fn actor_bundle(content: &Content, def: &NpcDef, at: Pos<Meters>, area: AreaId) 
             pose: Pose::Idle,
             model: def.model,
             attack_rate: PlaybackRate::default(),
+            speed: MetersPerSec::default(),
         },
         Hitbox(model.hitbox()),
         AreaTag { area },

@@ -31,6 +31,9 @@
       }
     ]
   },
+  "paces": {
+    "hop": 0.9
+  },
   "layers": [
     {
       "type": "squash",

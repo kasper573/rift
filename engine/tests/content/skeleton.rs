@@ -91,8 +91,18 @@ fn a_skeleton_is_held_to_the_clips_its_libraries_carry() {
         },
         Case {
             case: "a set naming a clip no library carries",
-            change: |skeleton| skeleton["base"]["clips"]["walk"] = json!("stroll"),
+            change: |skeleton| skeleton["base"]["clips"]["talk"] = json!("stroll"),
             found: "base set names stroll: no such clip in clips/*.glb or any model that wears this skeleton",
+        },
+        Case {
+            case: "a gait whose clip covers no stated ground",
+            change: |skeleton| skeleton["base"]["clips"]["run"] = json!("talk"),
+            found: "talk has no pace",
+        },
+        Case {
+            case: "a pace covering no ground",
+            change: |skeleton| skeleton["paces"]["walk"] = json!(0.0),
+            found: "0 m/s",
         },
         Case {
             case: "an attack landing nowhere",

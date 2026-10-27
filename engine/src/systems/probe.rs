@@ -22,7 +22,7 @@ use crate::core::platform::ClientPlatform;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::world::layers::Layered;
 use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
-use crate::core::time::{self, Seconds};
+use crate::core::time::{self, PlaybackRate, Seconds};
 use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::model::ModelId;
@@ -234,6 +234,8 @@ pub struct ProbeBody {
     /// play, if any.
     pub clip: Option<ClipName>,
     pub motion: Option<Motion>,
+    /// How fast that clip plays: a hit at its attack speed, a gait as fast as covers its speed.
+    pub rate: PlaybackRate,
     /// What each hand of its body shows, as the server says.
     pub wearing: Vec<(HandIndex, ItemId)>,
     /// The props its rig holds as drawn, each where it shows in the window.
@@ -924,6 +926,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
     let shown = motion.clone().unwrap_or(Motion::Action(actor.action));
     let resolved = built.resolve(stance, &shown, actor.pose);
     let clip = resolved.source.is_some().then(|| resolved.clip.clone());
+    let rate = built.rate(&shown, &resolved, actor.attack_rate, actor.speed);
     let held = entity
         .get::<Puppet>()
         .map(|puppet| {
@@ -954,7 +957,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         capsule,
         facing: actor.facing,
         action: actor.action,
-        resting: !matches!(actor.action, Action::Walk | Action::Run),
+        resting: !actor.action.moves(),
         feet: view.map(|view| view.window_point(drawn, ground)),
         head: view.map(|view| view.window_point(drawn, ground + capsule.height)),
         health: stat(StatKind::Health),
@@ -974,6 +977,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         stance,
         clip,
         motion,
+        rate,
         wearing: entity
             .get::<Wearing>()
             .map(|wearing| {

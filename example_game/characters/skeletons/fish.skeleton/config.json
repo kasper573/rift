@@ -25,6 +25,10 @@
       }
     ]
   },
+  "paces": {
+    "dart": 3.0,
+    "swim": 1.5
+  },
   "layers": [
     {
       "type": "wave",

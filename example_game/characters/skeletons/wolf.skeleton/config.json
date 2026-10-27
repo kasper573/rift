@@ -45,6 +45,10 @@
       }
     ]
   },
+  "paces": {
+    "gallop": 4.4,
+    "walk": 2.2
+  },
   "layers": [
     {
       "type": "feet",
