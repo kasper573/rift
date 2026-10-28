@@ -5,6 +5,7 @@
 //! refused with the joint named, as the loader refuses it.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use bevy::prelude::{Quat, Transform};
 use engine::core::content::gltf::NodeTree;
@@ -578,7 +579,7 @@ fn number(
 
 /// The stage: a body wearing the skeleton walking a loop round its middle in the chosen action,
 /// its layers running as the client runs them.
-fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &NodeTree) {
+fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &Arc<NodeTree>) {
     let Some(content) = editor.loaded() else {
         return;
     };
@@ -644,9 +645,15 @@ fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &No
         reduce_motion: calm,
     };
     let clip = StageClip::played(model.skeleton(), resolved.played);
-    stage_walking(
-        editor, ui, key, size, model, clip, playhead, crossed, placed, layered,
-    );
+    let walking = Walking {
+        model_path,
+        clip,
+        playhead,
+        crossed,
+        placed,
+        layered,
+    };
+    stage_walking(editor, ui, key, def, rig, size, model, walking);
     let refusals = refusals(rig, &def.layers);
     if def.layers.is_empty() {
         form::hint(ui, "No layers to run: the body plays its clip alone.");
@@ -658,21 +665,39 @@ fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &No
     }
 }
 
-/// The page's stage over `size` with `model` placed by `placed`, playing `clip` at `playhead` and
-/// sounding the cues it `crossed`, with its skeleton's layers running as `layered` tells them.
-#[allow(clippy::too_many_arguments)]
-fn stage_walking(
-    editor: &mut Editor,
-    ui: &mut Ui,
-    key: &str,
-    size: Vec2,
-    model: &ActorModel,
+/// A body walking the page's stage: the model at `model_path`, placed by `placed`, playing `clip`
+/// at `playhead` and sounding the cues it `crossed`, with its skeleton's layers running as
+/// `layered` tells them.
+struct Walking {
+    model_path: String,
     clip: StageClip,
     playhead: Millis,
     crossed: Vec<Cue>,
     placed: Transform,
     layered: StageLayers,
+}
+
+/// The page's stage over `size` with `model` on it walking as `walking` says, its hitbox round it
+/// and the grip frames on its rig, `rig`.
+#[allow(clippy::too_many_arguments)]
+fn stage_walking(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    key: &str,
+    def: &SkeletonDef,
+    rig: &Arc<NodeTree>,
+    size: Vec2,
+    model: &ActorModel,
+    walking: Walking,
 ) {
+    let Walking {
+        model_path,
+        clip,
+        playhead,
+        crossed,
+        placed,
+        layered,
+    } = walking;
     let mut state = std::mem::take(&mut editor.views.skeleton.view_mut(key).layers.stage);
     let turntable = stage::turntable(
         editor,
@@ -685,6 +710,18 @@ fn stage_walking(
     let Some(turntable) = turntable else {
         return;
     };
+    let pose = super::pose_of(editor, rig, &clip, playhead.seconds().0);
+    let mut staged = super::place(
+        turntable.rect,
+        turntable.response.clone(),
+        turntable.canvas.clone(),
+        rig,
+        pose.as_deref(),
+        placed.to_matrix(),
+    );
+    if super::handles(editor, ui, key, def, &mut staged, Some(&model_path)) {
+        editor.views.skeleton.view_mut(key).layers.stage.spinning = false;
+    }
     let mut standing = stage::standing(
         model.body(),
         Some(clip),

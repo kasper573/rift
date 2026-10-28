@@ -832,23 +832,6 @@ impl ContentFile for SkeletonDef {
                 );
             }
         }
-        for (pointer, set) in self.sets() {
-            for gait in Action::GAITS {
-                let Some(cell) = set.clips.get(&gait) else {
-                    continue;
-                };
-                for (entry, clip) in cell.entries(format!("{pointer}/clips/{}", gait.as_ref())) {
-                    if self.pace(clip.clip()).is_none() {
-                        cx.error(
-                            entry,
-                            "no pace",
-                            format!("{} has no pace", clip.clip()),
-                            "a pace for every clip played to walk, run or sprint",
-                        );
-                    }
-                }
-            }
-        }
         for (index, layer) in self.layers.iter().enumerate() {
             check_layer(&format!("/layers/{index}"), layer, cx);
         }
@@ -1297,6 +1280,38 @@ impl SkeletonDef {
             .iter()
             .find(|paced| paced.clip == *clip)
             .map(|paced| paced.pace)
+    }
+
+    /// What a body needs of the skeleton that it lacks yet, each said of the skeleton: a skeleton
+    /// is made up step by step, and only a finished one may be worn.
+    pub fn unfinished(&self) -> Vec<String> {
+        let mut lacking = Vec::new();
+        if self.rig.files.is_empty() {
+            lacking.push("has no rig".to_owned());
+        }
+        for &action in <Action as strum::VariantArray>::VARIANTS {
+            if action.required() && !self.base.clips.contains_key(&action) {
+                lacking.push(format!("has no {} clip in its base set", action.as_ref()));
+            }
+        }
+        let mut seen = BTreeSet::new();
+        for (_, set) in self.sets() {
+            for (_, clip) in set.attacks() {
+                let clip = clip.clip();
+                if seen.insert(("apex", clip)) && !self.cues_of(clip).iter().any(|cue| cue.apex) {
+                    lacking.push(format!("marks no apex on {clip}, which plays as a hit"));
+                }
+            }
+            for gait in Action::GAITS {
+                let gaits = set.clips.get(&gait).into_iter().flat_map(ClipCell::clips);
+                for clip in gaits.map(ClipRef::clip) {
+                    if seen.insert(("pace", clip)) && self.pace(clip).is_none() {
+                        lacking.push(format!("has no pace for {clip}, which plays as a gait"));
+                    }
+                }
+            }
+        }
+        lacking
     }
 
     pub fn airborne(&self) -> bool {

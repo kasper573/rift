@@ -11,6 +11,7 @@ use engine::core::audio::playback::SfxDef;
 use engine::core::content::serial::TypeTag;
 use engine::core::content::{ContentFile, MODULES, ModuleRule, fields_file, name_of};
 use engine::core::vfx::VfxShaderDef;
+use engine::systems::actor::ModelDef;
 use engine::systems::class::ClassDef;
 use engine::systems::item::ItemDef;
 use engine::systems::quest::{ObjectiveKind, QuestDef};
@@ -311,6 +312,7 @@ fn row_card(
             SkillDef::TABLE => &["modules", "levels"],
             VfxShaderDef::TABLE => &["modules", "params"],
             SfxDef::TABLE => &["modules", "volume", "pitch"],
+            ModelDef::TABLE => &["modules", "hitbox"],
             _ => &["modules"],
         };
         changed = forms::object_without(ui, cx, schema, value, "", hidden);

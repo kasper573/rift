@@ -7,6 +7,7 @@ use engine::core::babble::BABBLE_LETTERS;
 use engine::core::content::{ContentFile, fields_file};
 use engine::core::vfx::VfxDef;
 use engine::field;
+use engine::systems::actor::ModelDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::registry;
 use serde_json::{Value, json};
@@ -71,6 +72,42 @@ fn an_edit_writing_an_image_that_does_not_decode_is_refused() {
 
     let refused = editor.try_apply(edit).expect_err("refused");
     assert!(refused.contains("unreadable image"), "{refused}");
+}
+
+#[test]
+fn a_new_model_wears_the_nearest_finished_skeleton_in_its_first_build() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let game = support::game()
+        .skeleton_of(
+            "wilds/built",
+            &testkit::rig_clips(),
+            json!({ "builds": ["tall", "short"] }),
+        )
+        .model_part("wilds/cloak", "wilds/built")
+        .skeleton_of(
+            "wilds/kin/draft",
+            &testkit::rig_clips(),
+            json!({ "rig": { "files": [] } }),
+        );
+    let mut editor = support::open(game, &scratch);
+    let made = rows::new_file(&mut editor, "wilds/kin", ModelDef::TABLE).expect("a new model");
+    support::settled(&mut editor);
+    let project = editor.project.as_mut().expect("a project");
+    let taken_back = project.take_refused().map(|taken| taken.refusal.sentence());
+    assert!(taken_back.is_none(), "taken back: {taken_back:?}");
+    let model = editor
+        .read::<ModelDef>(&made)
+        .expect("a project")
+        .expect("the model reads");
+    let reader = editor.reader().expect("a reader");
+    assert_eq!(
+        (
+            reader.path_of(model.skeleton),
+            model.build.as_ref().map(|build| build.as_str())
+        ),
+        (Some(path("skeleton", "wilds/built").as_str()), Some("tall")),
+        "not the nearer skeleton that has no rig yet"
+    );
 }
 
 #[test]

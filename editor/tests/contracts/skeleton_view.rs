@@ -3,12 +3,13 @@ use std::collections::BTreeMap;
 use editor::app::Editor;
 use editor::views::skeleton::{self, SkeletonPage, rigs, sets};
 use engine::core::assets::ModelRef;
+use engine::core::geometry::Degrees;
 use engine::core::render::world::layers::Gait;
 use engine::core::time::{Millis, Seconds};
 use engine::core::units::{Meters, MetersPerSec};
 use engine::systems::actor::skeleton::{
-    BuildName, Clip, ClipCell, ClipOrder, ClipRef, Cue, Hand, JointName, Layer, Leg, MoveName,
-    SkeletonDef,
+    BuildName, Clip, ClipCell, ClipOrder, ClipRef, Cue, Hand, JointName, Layer, Leg, LocalOffset,
+    LocalTurn, MoveName, SkeletonDef,
 };
 use engine::systems::actor::stance::StanceDef;
 use engine::systems::actor::{Action, Pose};
@@ -95,16 +96,26 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         combo,
         "a cell's clips land in order, with the order they take turns in"
     );
+    sets::set_cell(
+        &mut editor,
+        &key,
+        None,
+        None,
+        &sets::SetRow::Action(Action::Attack),
+        None,
+    );
+    support::settled(&mut editor);
+    let taken_back = editor
+        .project
+        .as_mut()
+        .and_then(|project| project.take_refused());
     assert!(
-        !sets::set_cell(
-            &mut editor,
-            &key,
-            None,
-            None,
-            &sets::SetRow::Action(Action::Attack),
-            None
-        ),
-        "the base set keeps a clip for every engine action"
+        taken_back.is_some()
+            && skeleton_of(&mut editor, &key)
+                .base
+                .clips
+                .contains_key(&Action::Attack),
+        "a skeleton a model wears keeps a clip for every engine action"
     );
     assert!(
         !sets::add_stance_column(&mut editor, &key, &sword),
@@ -140,6 +151,15 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         hand_joints(&skeleton_of(&mut editor, &key)),
         vec!["body", "hand.l", "hand.r"],
         "the first hand listed is the main hand"
+    );
+    let mut gripped = skeleton_of(&mut editor, &key).hands[2].clone();
+    gripped.offset = LocalOffset([Meters(0.05), Meters(0.0), Meters(-0.02)]);
+    gripped.turn = LocalTurn([Degrees(0.0), Degrees(90.0), Degrees(-90.0)]);
+    assert!(skeleton::set_hand(&mut editor, &key, 2, gripped.clone()));
+    assert_eq!(
+        skeleton_of(&mut editor, &key).hands[2],
+        gripped,
+        "a grip frame set on the stage or in the inspector lands in its hand"
     );
 
     let feet = |joints: [&str; 2]| Layer::Feet {

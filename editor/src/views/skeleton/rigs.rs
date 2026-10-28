@@ -305,20 +305,41 @@ fn pairs(
                     chosen = Some((!lit).then(|| his.0.clone()));
                 }
                 let mut pair = changed.get(his).cloned();
+                let filter_id = ui.make_persistent_id(("pair-filter", key, index, his.as_str()));
                 controls::combo(("pair", key, index, his.as_str()))
                     .selected_text(
                         pair.as_ref()
                             .map_or("none".to_owned(), |joint| joint.0.clone()),
                     )
                     .width(150.0)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut pair, None, "none");
-                        for joint in &ours {
-                            ui.selectable_value(
-                                &mut pair,
-                                Some(JointName::new(joint.clone())),
-                                joint,
-                            );
+                        let mut filter: String = ui
+                            .data_mut(|data| data.get_temp(filter_id))
+                            .unwrap_or_default();
+                        ui.add(
+                            egui::TextEdit::singleline(&mut filter)
+                                .hint_text("filter")
+                                .desired_width(140.0),
+                        )
+                        .request_focus();
+                        ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
+                        let filter = filter.to_lowercase();
+                        let mut picked = ui.selectable_value(&mut pair, None, "none").clicked();
+                        for joint in ours
+                            .iter()
+                            .filter(|joint| joint.to_lowercase().contains(&filter))
+                        {
+                            picked |= ui
+                                .selectable_value(
+                                    &mut pair,
+                                    Some(JointName::new(joint.clone())),
+                                    joint,
+                                )
+                                .clicked();
+                        }
+                        if picked {
+                            ui.close();
                         }
                     });
                 match pair {

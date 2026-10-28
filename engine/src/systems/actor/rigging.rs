@@ -55,24 +55,15 @@ pub struct Paced {
 }
 
 impl BuiltSkeleton {
-    /// The skeleton `def` put together from the files `infos` holds, by their paths, or every
-    /// problem that keeps it from playing, at its place in the skeleton's file.
+    /// The skeleton `def` put together from the files `infos` holds, by their paths, none while it
+    /// has no rig to put together, or every problem that keeps it from playing, at its place in
+    /// the skeleton's file.
     pub fn build(
         def: &SkeletonDef,
         infos: &HashMap<String, GltfInfo>,
-    ) -> Result<BuiltSkeleton, RowCheck> {
+    ) -> Result<Option<BuiltSkeleton>, RowCheck> {
         let mut cx = RowCheck::default();
-        for &action in <Action as strum::VariantArray>::VARIANTS {
-            if action.required() && !def.base.clips.contains_key(&action) {
-                cx.error(
-                    "/base/clips",
-                    "missing clip",
-                    format!("base set has no {} clip", action.as_ref()),
-                    "a clip for every action a body must play: idle, walk, attack, hurt, dead and \
-                     talk",
-                );
-            }
-        }
+        check_apexes(def, &mut cx);
         let rig = read_rig(&def.rig, infos, &mut cx);
         if let Some(rig) = &rig {
             check_joints(def, rig, &mut cx);
@@ -81,8 +72,11 @@ impl BuiltSkeleton {
             .as_ref()
             .map(|rig| played_clips(def, rig, infos, &mut cx))
             .unwrap_or_default();
-        let (Some(rig), true) = (rig, cx.is_empty()) else {
+        if !cx.is_empty() {
             return Err(cx);
+        }
+        let Some(rig) = rig else {
+            return Ok(None);
         };
         let index: HashMap<Clip, usize> = clips
             .iter()
@@ -108,6 +102,7 @@ impl BuiltSkeleton {
             .collect();
         for (index, hand) in def.hands.iter().enumerate() {
             if let Some(clasp) = &hand.clasp
+                && !clasp.fingers.is_empty()
                 && built.clasps[index].is_empty()
             {
                 cx.error(
@@ -121,7 +116,6 @@ impl BuiltSkeleton {
                 );
             }
         }
-        check_apexes(def, &mut cx);
         if !cx.is_empty() {
             return Err(cx);
         }
@@ -139,7 +133,7 @@ impl BuiltSkeleton {
                 built.gaits.insert((build.clone(), stance), gaits);
             }
         }
-        Ok(built)
+        Ok(Some(built))
     }
 
     /// The gaits a body of `build` in `stance` may cover ground in.
@@ -256,12 +250,6 @@ pub fn read_joints(
     cx: &mut RowCheck,
 ) -> Option<NodeTree> {
     if rig.files.is_empty() {
-        cx.error(
-            "/rig/files",
-            "no rig",
-            "no files",
-            "the glTF files our rig's joints are read from",
-        );
         return None;
     }
     let mut nodes: Vec<TreeNode> = Vec::new();
@@ -661,18 +649,19 @@ pub fn plays_on<'m>(
     Err(stray)
 }
 
-/// Every clip that plays as a hit marks the one moment it lands.
+/// No clip that plays as a hit lands more than once; one that marks no apex yet leaves the skeleton
+/// unfinished.
 fn check_apexes(def: &SkeletonDef, cx: &mut RowCheck) {
     for (pointer, set) in def.sets() {
         for (entry, clip) in set.attacks() {
             let clip = clip.clip();
             let apexes = def.cues_of(clip).iter().filter(|cue| cue.apex).count();
-            if apexes != 1 {
+            if apexes > 1 {
                 cx.error(
                     format!("{pointer}{entry}"),
                     "apex out of place",
                     format!("{clip} plays as an attack but has {apexes} apex cues"),
-                    "exactly one, where the hit lands",
+                    "one, where the hit lands",
                 );
             }
         }

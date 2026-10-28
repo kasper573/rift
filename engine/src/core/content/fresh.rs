@@ -29,6 +29,35 @@ impl<'a> Nearby<'a> {
             })
     }
 
+    /// The file of `Row` nearest the one made among those `fits`, or why there is none, as `wanted`
+    /// names what fits.
+    pub fn file_where<Row: ContentFile>(
+        &self,
+        wanted: &str,
+        fits: impl Fn(&Row) -> bool,
+    ) -> Result<ContentId<Row>, String> {
+        let paths = self
+            .reader
+            .paths_of::<Row>()
+            .iter()
+            .map(String::as_str)
+            .filter(|path| self.reader.read::<Row>(path).is_ok_and(|row| fits(&row)));
+        self.nearest(paths)
+            .and_then(|path| self.reader.id_of(path))
+            .ok_or_else(|| format!("it needs {wanted}: make one first"))
+    }
+
+    /// The file `id` names, as it reads.
+    pub fn read<Row: ContentFile>(&self, id: ContentId<Row>) -> Result<Row, String> {
+        let path = self
+            .reader
+            .path_of(id)
+            .ok_or("it names a file the game lacks")?;
+        self.reader
+            .read(path)
+            .map_err(|_| format!("{path} doesn't read"))
+    }
+
     pub fn image(&self) -> Result<ImageRef, String> {
         self.media(AssetKind::Image).map(ImageRef::new)
     }

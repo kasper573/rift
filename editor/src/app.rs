@@ -9,6 +9,7 @@ use std::time::{Instant, SystemTime};
 use ui::egui;
 use ui::words;
 
+use bevy::app::MainScheduleOrder;
 use bevy::prelude::*;
 use bevy_egui::{
     EguiContext, EguiPlugin, EguiPreUpdateSet, EguiPrimaryContextPass, PrimaryEguiContext,
@@ -75,6 +76,10 @@ impl Plugin for EditorPlugin {
         if let Some(folder) = &self.launch.folder {
             editor.open_folder(folder);
         }
+        app.init_schedule(Background);
+        app.world_mut()
+            .resource_mut::<MainScheduleOrder>()
+            .insert_after(Update, Background);
         app.add_plugins((EguiPlugin::default(), FrameCountPlugin))
             .insert_resource(editor)
             .init_resource::<crate::thumbs::ReadThumbnails>()
@@ -85,11 +90,17 @@ impl Plugin for EditorPlugin {
                 theme_context.after(EguiPreUpdateSet::InitContexts),
             )
             .add_systems(EguiPrimaryContextPass, editor_ui)
-            .add_systems(Update, background);
+            .add_systems(Background, background);
     }
 }
 
 const FRAME_RATE_MARGIN: f32 = 8.0;
+
+/// Where the editor edits the world its views draw: a schedule of its own after `Update`, since
+/// an exclusive system sharing a schedule may despawn an entity between another system queueing a
+/// command on it and that command landing.
+#[derive(bevy::ecs::schedule::ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+struct Background;
 
 fn setup_camera(mut commands: Commands) {
     commands.spawn((Camera2d, PrimaryEguiContext, EditorCamera));

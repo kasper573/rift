@@ -1394,23 +1394,69 @@ fn array(ui: &mut Ui, cx: &mut FormCx, items: &Value, value: &mut Value, path: &
             changed = FormChange::at(path);
         }
         error_line(ui, cx, path);
-        if ui.button(format!("+ {singular}")).clicked() {
-            let first_allowed = match schema::kind(cx.root, item_schema) {
-                SchemaKind::Union(variants) if allowed.is_some() => {
-                    within(variants, allowed.as_deref())
-                        .first()
-                        .map(|variant| schema::variant_template(cx.root, variant, cx.nearby()))
+        let unlisted = unlisted_item(cx, item_schema, list, path);
+        let addable = unlisted.as_ref().is_none_or(Option::is_some);
+        if ui
+            .add_enabled(addable, egui::Button::new(format!("+ {singular}")))
+            .on_disabled_hover_text(format!("every {singular} there is is listed"))
+            .clicked()
+        {
+            let fresh = match unlisted {
+                Some(Some(item)) => Value::String(item),
+                _ => {
+                    let first_allowed = match schema::kind(cx.root, item_schema) {
+                        SchemaKind::Union(variants) if allowed.is_some() => {
+                            within(variants, allowed.as_deref()).first().map(|variant| {
+                                schema::variant_template(cx.root, variant, cx.nearby())
+                            })
+                        }
+                        _ => None,
+                    };
+                    let mut fresh = first_allowed
+                        .unwrap_or_else(|| schema::template(cx.root, items, cx.nearby()));
+                    name_newcomer(&mut fresh, list, &singular);
+                    fresh
                 }
-                _ => None,
             };
-            let mut fresh =
-                first_allowed.unwrap_or_else(|| schema::template(cx.root, items, cx.nearby()));
-            name_newcomer(&mut fresh, list, &singular);
             list.push(fresh);
             changed = FormChange::at(path);
         }
     });
     changed
+}
+
+/// What a new item of a list of names or files is so that it is valid as it lands: the first name
+/// the skeleton lists that the list doesn't hold yet, or none when it holds them all; or the
+/// nearest file it doesn't hold yet, else the nearest. None for a list of anything else.
+fn unlisted_item(
+    cx: &FormCx,
+    item_schema: &Value,
+    list: &[Value],
+    path: &str,
+) -> Option<Option<String>> {
+    let listed: Vec<&str> = list.iter().filter_map(Value::as_str).collect();
+    if let Some(table) = schema::table_of(item_schema) {
+        let nearby = cx.nearby();
+        return Some(
+            nearby
+                .content_besides(table, &listed)
+                .or_else(|| nearby.content(table)),
+        );
+    }
+    let kind = schema::marker(item_schema).and_then(NameKind::of_marker)?;
+    let row = cx.row_table.as_deref().zip(cx.row_key.as_deref());
+    let item_path = format!("{path}/{}", list.len());
+    let choices = cx
+        .content
+        .as_ref()
+        .and_then(|content| body_names::choices(content, kind, row, &item_path))
+        .unwrap_or_default();
+    Some(
+        choices
+            .into_iter()
+            .map(|choice| choice.name)
+            .find(|name| !listed.contains(&name.as_str())),
+    )
 }
 
 // A new list item with a blank name gets one of its own, so it is valid as it lands and can be

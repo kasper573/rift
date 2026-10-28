@@ -1,5 +1,5 @@
 //! The model view: the body its parts make on a stage, in any stance and clip its skeleton plays,
-//! and its hitbox sized by hand.
+//! with its hitbox round it to size by hand.
 
 pub mod hitbox;
 pub mod inspect;
@@ -13,13 +13,13 @@ use engine::core::time::Seconds;
 use engine::systems::actor::model::ActorModel;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::{Action, ModelDef, Motion, Pose};
-use serde::Deserialize;
 use ui::egui::{self, Ui, Vec2};
 use ui::{chip, form, theme};
 
 use super::area::viewport::StageClip;
 use super::stage;
 use crate::app::Editor;
+use crate::project::ContentEdit;
 use crate::shell::{row_form, sidebar};
 use crate::tabs::shown_path;
 
@@ -28,34 +28,16 @@ pub struct ModelViews {
     pub views: HashMap<String, ModelView>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelPage {
-    #[default]
-    Look,
-    Hitbox,
-}
-
-impl ModelPage {
-    const ALL: [ModelPage; 2] = [ModelPage::Look, ModelPage::Hitbox];
-
-    fn label(self) -> &'static str {
-        match self {
-            ModelPage::Look => "look",
-            ModelPage::Hitbox => "hitbox",
-        }
-    }
-}
-
 pub struct ModelView {
-    pub page: ModelPage,
     /// The stance the stage shows the model in, by its file's path.
     pub stance: Option<String>,
     pub motion: Motion,
     pub pose: Pose,
     pub scrub: super::cues::Scrub,
     pub stage: stage::StageState,
-    pub drag: Option<hitbox::Drag>,
+    pub hitbox: hitbox::HitboxHandles,
+    /// Whether the hitbox is picked, for the inspector to set by number.
+    pub hitbox_chosen: bool,
 }
 
 impl ModelViews {
@@ -77,7 +59,6 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         return;
     };
     ensure_view(editor, key);
-    let page = editor.views.model.view(key).page;
     sidebar::row(ui, "model", |ui| {
         row_form::show_row(editor, ui, ModelDef::TABLE, key)
     });
@@ -88,28 +69,23 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         .inner_margin(egui::Margin::symmetric(12, 8))
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
-            page_bar(editor, ui, key, page);
+            page_bar(editor, ui, key);
             ui.add_space(4.0);
-            match page {
-                ModelPage::Look => look::show(editor, ui, key),
-                ModelPage::Hitbox => hitbox::show(editor, ui, key, &row),
-            }
+            look::show(editor, ui, key, &row);
         });
 }
 
-fn page_bar(editor: &mut Editor, ui: &mut Ui, key: &str, page: ModelPage) {
+fn page_bar(editor: &mut Editor, ui: &mut Ui, key: &str) {
     ui.horizontal(|ui| {
         ui.label(theme::mono(shown_path(key)).color(theme::CODE));
-        ui.add_space(8.0);
-        for other in ModelPage::ALL {
-            if chip::mode(ui, other.label(), page == other).clicked() {
-                editor.views.model.view_mut(key).page = other;
-            }
-        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let stage = &mut editor.views.model.view_mut(key).stage;
-            if chip::toggle(ui, "turning", stage.spinning).clicked() {
-                stage.spinning = !stage.spinning;
+            let view = editor.views.model.view_mut(key);
+            if chip::toggle(ui, "turning", view.stage.spinning).clicked() {
+                view.stage.spinning = !view.stage.spinning;
+            }
+            if chip::toggle(ui, "hitbox", view.hitbox.shown).clicked() {
+                view.hitbox.shown = !view.hitbox.shown;
+                view.hitbox_chosen &= view.hitbox.shown;
             }
         });
     });
@@ -124,18 +100,19 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
     editor.views.model.views.insert(
         key.to_owned(),
         ModelView {
-            page: ModelPage::default(),
             stance: None,
             motion: Motion::Action(Action::Idle),
             pose: Pose::Idle,
             scrub: super::cues::Scrub::default(),
             stage: stage::StageState::framing(height.max(1.0) * 0.7, false),
-            drag: None,
+            hitbox: hitbox::HitboxHandles::default(),
+            hitbox_chosen: false,
         },
     );
 }
 
-/// Sizes the hitbox of the model at `key`.
+/// Sizes the hitbox of the model at `key`, merging with the size set just before it as one drag of
+/// a number field does.
 pub fn set_hitbox(editor: &mut Editor, key: &str, hitbox: Capsule) -> bool {
     let Some(Ok(row)) = editor.read::<ModelDef>(key) else {
         return false;
@@ -145,7 +122,8 @@ pub fn set_hitbox(editor: &mut Editor, key: &str, hitbox: Capsule) -> bool {
     }
     let mut model = (*row).clone();
     model.hitbox = hitbox;
-    editor.write_content(&format!("Size {}'s hitbox", shown_path(key)), key, &model)
+    let edit = ContentEdit::new(format!("Size {}'s hitbox", shown_path(key))).merging();
+    editor.write_content_as(edit, key, &model)
 }
 
 /// The model at `key` as the game built it from the files as they last loaded, when it loaded.

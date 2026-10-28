@@ -1,6 +1,7 @@
-//! The skeleton's inspector: its rig, the source rigs and clips that play on it, and who wears it,
-//! then what the page in front is about: the table's health and the moves no skeleton declares, the
-//! chosen hand or layer, the parts and materials made on it.
+//! The skeleton's inspector: what is picked on the stage, set by number; its rig, the source rigs
+//! and clips that play on it, and who wears it; then what the page in front is about: the table's
+//! health and the moves no skeleton declares, the chosen hand or layer, the parts and materials
+//! made on it.
 
 use std::collections::BTreeSet;
 
@@ -8,14 +9,15 @@ use engine::core::content::Content;
 use engine::core::script::node::Node;
 use engine::systems::actor::playing::Animate;
 use engine::systems::actor::skeleton::{GestureName, MAX_JOINTS, MoveName, SkeletonDef};
-use engine::systems::actor::{Action, MaterialDef, ModelPartDef, Motion};
+use engine::systems::actor::{Action, MaterialDef, ModelDef, ModelPartDef, Motion};
 use engine::systems::script::{RiftEffect, ScriptDef};
 use strum::VariantArray;
 use ui::egui::Ui;
 use ui::{form, panel, theme, words};
 
-use super::SkeletonPage;
+use super::super::model::{self, hitbox};
 use super::rigging::Rigging;
+use super::{Chosen, SkeletonPage};
 use crate::app::Editor;
 use crate::tabs::shown_path;
 
@@ -28,6 +30,9 @@ pub fn show(
     page: SkeletonPage,
 ) {
     let content = editor.loaded();
+    if let Some(content) = &content {
+        chosen(editor, ui, key, def, content);
+    }
     panel::card(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::header(ui, "Rig", "", |_| {});
@@ -47,6 +52,47 @@ pub fn show(
     });
 }
 
+/// What is picked on the stage, as number fields: the wearer's hitbox, or a hand's grip frame.
+fn chosen(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, content: &Content) {
+    match editor.views.skeleton.view(key).chosen {
+        Some(Chosen::Grip(index)) => {
+            let Some(hand) = def.hands.get(index) else {
+                return;
+            };
+            let mut edited = None;
+            panel::card(false).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                panel::header(ui, &format!("Grip · {}", hand.name), "", |_| {});
+                ui.add_space(4.0);
+                edited = super::grips::fields(ui, hand);
+            });
+            if let Some(hand) = edited {
+                super::set_hand(editor, key, index, hand);
+            }
+        }
+        Some(Chosen::Hitbox) => {
+            let Some((path, _)) = super::wearer(editor, key, content) else {
+                return;
+            };
+            let Some(Ok(model)) = editor.read::<ModelDef>(&path) else {
+                return;
+            };
+            let mut sized = None;
+            panel::card(false).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                panel::header(ui, &format!("Hitbox · {}", shown_path(&path)), "", |_| {});
+                ui.add_space(4.0);
+                sized = hitbox::fields(ui, model.hitbox);
+            });
+            if let Some(hitbox) = sized {
+                model::set_hitbox(editor, &path, hitbox);
+            }
+        }
+        None => return,
+    }
+    ui.add_space(8.0);
+}
+
 fn rig(ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging, content: Option<&Content>) {
     let joints = rigging.rig.as_ref().map_or(0, |rig| rig.joints().count());
     form::kv(ui, "joints", |ui| {
@@ -60,10 +106,10 @@ fn rig(ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging, content: Op
     form::kv_text(ui, "read from", words::counted(def.rig.files.len(), "file"));
     form::kv_text(ui, "source rigs", def.sources.len().to_string());
     form::kv_text(ui, "clips that play", rigging.clips.len().to_string());
-    if rigging.rig.is_none() {
+    if rigging.rig.is_none() && !def.rig.files.is_empty() {
         ui.colored_label(
             theme::DANGER,
-            "no rig stands: pick its files on the rigs page",
+            "no rig stands: its files hold no joints that agree",
         );
     }
     let Some(content) = content else {
@@ -72,7 +118,7 @@ fn rig(ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging, content: Op
     let loaded = content
         .by_path::<SkeletonDef>(key)
         .is_some_and(|id| engine::systems::actor::model::Skeletons::loaded(content, id).is_some());
-    if !loaded {
+    if !loaded && !def.rig.files.is_empty() {
         ui.colored_label(
             theme::DANGER,
             "the skeleton did not load: its problems are in the output panel",
@@ -97,6 +143,14 @@ fn rig(ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging, content: Op
             ),
         },
     );
+    let lacking = def.unfinished();
+    if !lacking.is_empty() {
+        ui.add_space(4.0);
+        ui.label(theme::muted("no body can wear it yet: it"));
+        for lacking in lacking {
+            ui.label(theme::faint(format!("· {lacking}")));
+        }
+    }
 }
 
 fn sources(ui: &mut Ui, def: &SkeletonDef, rigging: &Rigging) {

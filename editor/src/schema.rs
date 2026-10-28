@@ -777,12 +777,17 @@ impl<'a> Nearby<'a> {
 
     /// The file of `table` nearest the file written into, by how far up their paths meet.
     pub fn content(&self, table: &str) -> Option<String> {
+        self.content_besides(table, &[])
+    }
+
+    /// The file of `table` nearest the file written into but those `taken`.
+    pub fn content_besides(&self, table: &str, taken: &[&str]) -> Option<String> {
         let from = self.from.map(fields_file);
         self.nearest(
             self.files
                 .index()
                 .paths_of(table)
-                .filter(|path| Some(fields_file(path)) != from),
+                .filter(|path| Some(fields_file(path)) != from && !taken.contains(path)),
         )
     }
 

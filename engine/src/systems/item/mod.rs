@@ -445,6 +445,12 @@ pub fn check_looks(loading: &mut Loading) {
                     );
                 }
             }
+            crate::systems::actor::model::check_meshed(
+                &content,
+                &look.parts,
+                &format!("{at}/parts"),
+                &mut check,
+            );
             crate::systems::actor::material::check_colours(
                 &content,
                 look.skeleton,

@@ -23,7 +23,7 @@ use crate::views::bust;
 use crate::views::character::CharacterSection;
 use crate::views::class;
 use crate::views::item::{self, ItemPage};
-use crate::views::model::{self, ModelPage};
+use crate::views::model;
 use crate::views::script::{PendingScriptAction, ScriptRow};
 use crate::views::skeleton::{self, SkeletonPage};
 use crate::views::world::{
@@ -132,7 +132,6 @@ pub enum DialogName {
 #[serde(rename_all = "snake_case")]
 pub enum ModelStep {
     Open(String),
-    Page(ModelPage),
     Bottom(BottomTab),
 }
 
@@ -533,7 +532,6 @@ fn model_step(editor: &mut Editor, step: &ModelStep) {
     model::ensure_view(editor, &key);
     match step {
         ModelStep::Open(_) => {}
-        ModelStep::Page(page) => editor.views.model.view_mut(&key).page = *page,
         ModelStep::Bottom(tab) => editor.panels.bottom = *tab,
     }
 }

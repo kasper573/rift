@@ -1,5 +1,5 @@
-//! What the loader makes of the model: the parts it draws for its build, how heavy they draw
-//! together, its hitbox, and who wears it.
+//! What the loader makes of the model: its hitbox when it is picked on the stage, the parts it draws
+//! for its build, how heavy they draw together, and who wears it.
 
 use engine::core::content::media::GltfInfos;
 use engine::systems::actor::appearance;
@@ -30,6 +30,19 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
             })
             .collect()
     });
+    if editor.views.model.view(key).hitbox_chosen {
+        let mut sized = None;
+        panel::card(false).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            panel::header(ui, "Hitbox", "", |_| {});
+            ui.add_space(4.0);
+            sized = super::hitbox::fields(ui, row.hitbox);
+        });
+        if let Some(hitbox) = sized {
+            super::set_hitbox(editor, key, hitbox);
+        }
+        ui.add_space(8.0);
+    }
     panel::card(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::header(ui, "Body", "", |_| {});
@@ -72,15 +85,6 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
                 );
             }
         }
-        form::kv_text(
-            ui,
-            "hitbox",
-            format!(
-                "{:.2} m across · {:.2} m tall",
-                row.hitbox.radius.0 * 2.0,
-                row.hitbox.height.0
-            ),
-        );
     });
     ui.add_space(8.0);
     crate::shell::row_form::usages::show_usages_grouped(editor, ui, key, true);

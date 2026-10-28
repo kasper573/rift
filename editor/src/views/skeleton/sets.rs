@@ -125,8 +125,7 @@ pub struct SetsState {
 }
 
 /// Names `cell` for `row` in the set of `build` (none for the first) and `stance` (by path; none for
-/// base), or takes the entry away with none so the ladder finds it further down. The first build's
-/// base set keeps every engine action.
+/// base), or takes the entry away with none so the ladder finds it further down.
 pub fn set_cell(
     editor: &mut Editor,
     key: &str,
@@ -147,17 +146,8 @@ pub fn set_cell(
     };
     let label = format!("Set {} for {}", row.label(), cell_label(cell.as_ref()));
     super::change(editor, key, &label, |skeleton| {
-        let first = is_first(skeleton, build);
-        if first && stance.is_none() && cell.is_none() && matches!(row, SetRow::Action(_)) {
-            let SetRow::Action(action) = row else {
-                unreachable!("matched above")
-            };
-            return Err(format!(
-                "the base set keeps a clip for {}: every engine action needs one",
-                action.as_ref()
-            ));
-        }
-        if stance.is_some_and(|stance| skeleton.set(stance).is_none()) && !first {
+        if stance.is_some_and(|stance| skeleton.set(stance).is_none()) && !is_first(skeleton, build)
+        {
             return Err("a build's stance columns are the skeleton's".to_owned());
         }
         row.put(set_mut(skeleton, build, stance), cell)
@@ -386,7 +376,12 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
                 stance.as_deref(),
             );
         });
-        panel::body(ui, right, |ui| playing(editor, ui, key, def, rigging, &row));
+        panel::body(ui, right, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt(("set-playing", key))
+                .auto_shrink([false, false])
+                .show(ui, |ui| playing(editor, ui, key, def, rigging, &row));
+        });
     }
 }
 
@@ -487,6 +482,7 @@ fn toolbar(
     if let Some(build) = picked_build {
         sets.build = Some(build);
         sets.open = None;
+        sets.fill = None;
     }
     if filling {
         sets.fill = Some(vec![(String::new(), String::new()); 2]);
@@ -514,6 +510,8 @@ fn fill_window(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, r
     egui::Window::new(format!("Fill {build} from file names"))
         .id(egui::Id::new(("fill", key)))
         .collapsible(false)
+        .resizable(false)
+        .min_width(460.0)
         .open(&mut open)
         .show(ui.ctx(), |ui| {
             ui.label(theme::muted(format!(
@@ -521,30 +519,23 @@ fn fill_window(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, r
                  where {build} has none and every rewritten path is a clip that plays.",
                 def.builds[0]
             )));
-            egui::Grid::new(("fill-pairs", key))
-                .num_columns(3)
-                .show(ui, |ui| {
-                    let mut removed = None;
-                    for (index, (from, to)) in replace.iter_mut().enumerate() {
-                        ui.add(
-                            egui::TextEdit::singleline(from)
-                                .hint_text("find")
-                                .desired_width(180.0),
-                        );
-                        ui.add(
-                            egui::TextEdit::singleline(to)
-                                .hint_text("replace with")
-                                .desired_width(180.0),
-                        );
-                        if controls::remove(ui, "replacement").clicked() {
-                            removed = Some(index);
-                        }
-                        ui.end_row();
-                    }
-                    if let Some(index) = removed {
-                        replace.remove(index);
+            let mut removed = None;
+            for (index, (from, to)) in replace.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    let size = Vec2::new(180.0, ui.spacing().interact_size.y);
+                    ui.add_sized(size, egui::TextEdit::singleline(from).hint_text("find"));
+                    ui.add_sized(
+                        size,
+                        egui::TextEdit::singleline(to).hint_text("replace with"),
+                    );
+                    if controls::remove(ui, "replacement").clicked() {
+                        removed = Some(index);
                     }
                 });
+            }
+            if let Some(index) = removed {
+                replace.remove(index);
+            }
             if ui.button("+ another").clicked() {
                 replace.push((String::new(), String::new()));
             }
@@ -639,7 +630,9 @@ fn cell(
     }
     let response = ui.add(egui::Button::selectable(lit, text));
     match (found, unknown, missing) {
-        (_, _, true) => response.on_hover_text("every engine action needs a clip in base"),
+        (_, _, true) => response.on_hover_text(
+            "no body wears the skeleton until base has a clip for every engine action",
+        ),
         (_, true, _) => response.on_hover_text("a clip here doesn't play on this skeleton"),
         (Some((_, Rung::Fallback)), _, _) => response.on_hover_text(match row {
             SetRow::Gesture(_) => "no set names this gesture: the body makes none",
@@ -675,9 +668,7 @@ fn picker(
             editor.views.skeleton.view_mut(key).sets.open = None;
         }
     });
-    let first = is_first(def, build);
-    let removable = !first || column.is_some() || !matches!(row, SetRow::Action(_));
-    if removable && current.is_some() {
+    if current.is_some() {
         let below = {
             let mut without = def.clone();
             row.put(set_mut(&mut without, build, column), None).ok();
@@ -857,9 +848,11 @@ fn playing(
         }
         None => Vec::new(),
     };
+    let paced = row.gait() || def.pace(&clip).is_some();
+    let below = if paced { 270.0 } else { 150.0 };
     let size = Vec2::new(
         ui.available_width(),
-        (ui.available_height() - 150.0).max(140.0),
+        (ui.available_height() - below).max(140.0),
     );
     super::stage_rig(editor, ui, key, def, rigging, size, props);
     ui.label(RichText::new(format!("{clip} · {:.2} s", found.length.0)).strong());
@@ -881,7 +874,7 @@ fn playing(
             also.join(" · ")
         )));
     }
-    if row.gait() || def.pace(&clip).is_some() {
+    if paced {
         pace(editor, ui, key, def, &clip);
     }
     editor.status.left.push(cues::KEYS.to_owned());

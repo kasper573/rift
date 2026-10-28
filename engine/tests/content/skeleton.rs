@@ -5,7 +5,8 @@ use engine::core::time::Seconds;
 use engine::systems::actor::model::Skeletons;
 use serde_json::{Value, json};
 use testkit::{
-    BODY, CLIP, Declared, Game, clip, library_glb, rig, rig_clips, rig_file, rig_glb, skin_glb,
+    BODY, CLIP, Declared, Game, clip, library_glb, path, rig, rig_clips, rig_file, rig_glb,
+    skin_glb,
 };
 
 use crate::support::game;
@@ -21,24 +22,9 @@ fn a_skeleton_is_held_to_the_clips_it_names() {
     }
     let cases = [
         Case {
-            case: "a base set missing an engine action",
-            change: |skeleton| {
-                skeleton["base"]["clips"]
-                    .as_object_mut()
-                    .expect("clips")
-                    .remove("run");
-            },
-            found: "base set has no run clip".to_owned(),
-        },
-        Case {
             case: "a set naming a file the folder lacks",
             change: |skeleton| skeleton["base"]["clips"]["talk"] = json!(clip("stroll")),
             found: format!("{:?}", clip("stroll")),
-        },
-        Case {
-            case: "a gait whose clip covers no stated ground",
-            change: |skeleton| skeleton["base"]["clips"]["run"] = json!(clip("talk")),
-            found: format!("{} has no pace", clip("talk")),
         },
         Case {
             case: "a cell of no clips",
@@ -46,21 +32,9 @@ fn a_skeleton_is_held_to_the_clips_it_names() {
             found: "an empty list".to_owned(),
         },
         Case {
-            case: "a gait taking turns with a clip that covers no stated ground",
-            change: |skeleton| {
-                skeleton["base"]["clips"]["run"] = json!({ "clips": [clip("run"), clip("talk")] })
-            },
-            found: format!("{} has no pace", clip("talk")),
-        },
-        Case {
             case: "a pace covering no ground",
             change: |skeleton| skeleton["paces"][0]["pace"] = json!(0.0),
             found: "0 m/s".to_owned(),
-        },
-        Case {
-            case: "an attack landing nowhere",
-            change: |skeleton| skeleton["cues"][0]["cues"] = json!([]),
-            found: format!("{} plays as an attack but has 0 apex cues", clip("attack")),
         },
         Case {
             case: "an attack landing twice",
@@ -69,11 +43,6 @@ fn a_skeleton_is_held_to_the_clips_it_names() {
                     json!([{ "at": 0, "apex": true }, { "at": 50, "apex": true }])
             },
             found: format!("{} plays as an attack but has 2 apex cues", clip("attack")),
-        },
-        Case {
-            case: "a move landing nowhere",
-            change: |skeleton| skeleton["base"]["moves"] = json!({ "thrust": clip("talk") }),
-            found: format!("{} plays as an attack but has 0 apex cues", clip("talk")),
         },
         Case {
             case: "a cue after the clip ends",
@@ -128,6 +97,14 @@ fn a_skeleton_is_held_to_the_clips_it_names() {
             .collect();
         assert_eq!(found, [case.found], "{}", case.case);
     }
+    game()
+        .edit("skeleton", BODY, |skeleton| {
+            skeleton["hands"][0]["clasp"] = json!({ "clip": clip("idle"), "fingers": [] })
+        })
+        .try_load()
+        .unwrap_or_else(|report| {
+            panic!("a clasp whose fingers are yet to be named loads: {report}")
+        });
 
     let mut short = rig_clips();
     short[0].1 = Seconds(0.05);
@@ -143,6 +120,104 @@ fn a_skeleton_is_held_to_the_clips_it_names() {
             "100 ms to 60000 ms".to_owned()
         )]
     );
+}
+
+#[test]
+fn a_skeleton_and_its_parts_are_made_step_by_step_and_worn_once_finished() {
+    struct Case {
+        case: &'static str,
+        table: &'static str,
+        name: &'static str,
+        change: fn(&mut Value),
+        found: String,
+    }
+    let cases = [
+        Case {
+            case: "a skeleton with no rig yet",
+            table: "skeleton",
+            name: BODY,
+            change: |skeleton| skeleton["rig"]["files"] = json!([]),
+            found: format!("{SKELETON} has no rig"),
+        },
+        Case {
+            case: "a base set missing an engine action",
+            table: "skeleton",
+            name: BODY,
+            change: |skeleton| {
+                skeleton["base"]["clips"]
+                    .as_object_mut()
+                    .expect("clips")
+                    .remove("run");
+            },
+            found: format!("{SKELETON} has no run clip in its base set"),
+        },
+        Case {
+            case: "a gait whose clip covers no stated ground",
+            table: "skeleton",
+            name: BODY,
+            change: |skeleton| {
+                skeleton["base"]["clips"]["run"] = json!({ "clips": [clip("run"), clip("talk")] })
+            },
+            found: format!(
+                "{SKELETON} has no pace for {}, which plays as a gait",
+                clip("talk")
+            ),
+        },
+        Case {
+            case: "an attack landing nowhere yet",
+            table: "skeleton",
+            name: BODY,
+            change: |skeleton| skeleton["cues"][0]["cues"] = json!([]),
+            found: format!(
+                "{SKELETON} marks no apex on {}, which plays as a hit",
+                clip("attack")
+            ),
+        },
+        Case {
+            case: "a move landing nowhere yet",
+            table: "skeleton",
+            name: BODY,
+            change: |skeleton| skeleton["base"]["moves"] = json!({ "thrust": clip("talk") }),
+            found: format!(
+                "{SKELETON} marks no apex on {}, which plays as a hit",
+                clip("talk")
+            ),
+        },
+        Case {
+            case: "a part with no mesh yet",
+            table: "model_part",
+            name: "hero",
+            change: |part| {
+                part.as_object_mut().expect("fields").remove("mesh");
+            },
+            found: format!("{} has no mesh", path("model_part", "hero")),
+        },
+    ];
+    let model = path("model", "hero");
+    for case in cases {
+        let report = game()
+            .edit(case.table, case.name, case.change)
+            .try_load()
+            .err()
+            .unwrap_or_else(|| panic!("{}: worn, it loaded", case.case));
+        let refused: Vec<(&str, &str)> = report
+            .errors
+            .iter()
+            .map(|error| (error.file.as_str(), error.problem.found.as_str()))
+            .collect();
+        assert_eq!(
+            refused,
+            [(model.as_str(), case.found.as_str())],
+            "{}: the body wearing it is refused, not the file",
+            case.case
+        );
+        Game::new()
+            .skeleton(BODY)
+            .model_part("hero", BODY)
+            .edit(case.table, case.name, case.change)
+            .try_load()
+            .unwrap_or_else(|report| panic!("{}: worn by none, it loads: {report}", case.case));
+    }
 }
 
 #[test]

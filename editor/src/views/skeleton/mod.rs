@@ -4,6 +4,7 @@
 //! rig as a model wearing it, or while none loads as its joints, posed as the game poses them.
 
 pub mod body;
+pub mod grips;
 pub mod hands;
 pub mod inspect;
 pub mod layers;
@@ -17,6 +18,7 @@ use std::sync::Arc;
 use bevy::math::{Mat4, Vec3};
 use engine::core::content::gltf::{self, ClipKeys, NodeTree, Rest, TreeNode};
 use engine::core::content::{Content, NamedContent};
+use engine::core::math::Pos;
 use engine::core::render::camera::{ground_pos, world_point};
 use engine::core::render::world::rig_clip;
 use engine::core::units::{Meters, MetersPerSec};
@@ -36,6 +38,7 @@ use self::rigging::{GltfCache, Playable, RiggedFrom, Rigging};
 use super::area::camera::AreaCanvas;
 use super::area::viewport::{StageClip, StandingProp};
 use super::cues::Scrub;
+use super::model::{self, hitbox::HitboxHandles};
 use super::stage;
 use crate::app::Editor;
 use crate::project::{ContentEdit, ProjectFiles};
@@ -109,6 +112,31 @@ pub struct SkeletonView {
     pub hands: hands::HandsState,
     pub layers: layers::LayersState,
     pub stage: stage::StageState,
+    /// What is picked on the stage, for the inspector to set by number.
+    pub chosen: Option<Chosen>,
+    pub hitbox: HitboxHandles,
+    pub grips: grips::Grips,
+}
+
+impl SkeletonView {
+    /// Whether the page in front takes the next click on a joint of the stage.
+    fn picks_joints(&self) -> bool {
+        match self.page {
+            SkeletonPage::Rigs => self.rigs.pairing.is_some(),
+            SkeletonPage::Hands => self.hands.picking.is_some(),
+            SkeletonPage::Layers => self.layers.picking,
+            SkeletonPage::Sets | SkeletonPage::Body => false,
+        }
+    }
+}
+
+/// A thing on the stage the inspector sets by number once it is clicked.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Chosen {
+    /// The hitbox of the model wearing the rig.
+    Hitbox,
+    /// The grip frame of the hand at this place in the list.
+    Grip(usize),
 }
 
 impl SkeletonViews {
@@ -166,9 +194,23 @@ fn page_bar(editor: &mut Editor, ui: &mut Ui, key: &str, page: SkeletonPage) {
         }
         if page != SkeletonPage::Body {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let stage = &mut editor.views.skeleton.view_mut(key).stage;
-                if chip::toggle(ui, "turning", stage.spinning).clicked() {
-                    stage.spinning = !stage.spinning;
+                let view = editor.views.skeleton.view_mut(key);
+                if chip::toggle(ui, "turning", view.stage.spinning).clicked() {
+                    view.stage.spinning = !view.stage.spinning;
+                }
+                if chip::toggle(ui, "grips", view.grips.shown).clicked() {
+                    view.grips.shown = !view.grips.shown;
+                }
+                if chip::toggle(ui, "hitbox", view.hitbox.shown).clicked() {
+                    view.hitbox.shown = !view.hitbox.shown;
+                }
+                let shown = match view.chosen {
+                    Some(Chosen::Hitbox) => view.hitbox.shown,
+                    Some(Chosen::Grip(_)) => view.grips.shown,
+                    None => true,
+                };
+                if !shown {
+                    view.chosen = None;
                 }
             });
         }
@@ -194,6 +236,9 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
             hands: hands::HandsState::default(),
             layers: layers::LayersState::default(),
             stage: stage::StageState::framing(1.3, false),
+            chosen: None,
+            hitbox: HitboxHandles::default(),
+            grips: grips::Grips::default(),
         },
     );
 }
@@ -353,6 +398,7 @@ pub fn clip_picker(
                     }),
             )
             .width(260.0)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show_ui(ui, |ui| {
                 let mut filter: String = ui
                     .data_mut(|data| data.get_temp(filter_id))
@@ -361,17 +407,24 @@ pub fn clip_picker(
                     egui::TextEdit::singleline(&mut filter)
                         .hint_text("filter by path")
                         .desired_width(240.0),
-                );
+                )
+                .request_focus();
                 ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
+                let mut picked = false;
                 if let Some(none) = none {
-                    ui.selectable_value(clip, None, none);
+                    picked |= ui.selectable_value(clip, None, none).clicked();
                 }
                 for found in matching(rigging, &filter).take(MAX_LISTED) {
-                    ui.selectable_value(
-                        clip,
-                        Some(found.clip.clone()),
-                        format!("{} · {:.2} s", found.clip, found.length.0),
-                    );
+                    picked |= ui
+                        .selectable_value(
+                            clip,
+                            Some(found.clip.clone()),
+                            format!("{} · {:.2} s", found.clip, found.length.0),
+                        )
+                        .clicked();
+                }
+                if picked {
+                    ui.close();
                 }
             });
     });
@@ -447,8 +500,10 @@ pub struct Staged {
     lines: Vec<(Pos2, Pos2)>,
     /// Every node of the rig as it stands, in the rig's own frame.
     worlds: Vec<(String, Mat4)>,
-    middle: Vec3,
-    scale: f32,
+    /// How the rig's frame stands in the scene.
+    placed: Mat4,
+    /// Whether this frame's click picked the hitbox or a grip frame, so it picks no joint.
+    claimed: bool,
 }
 
 impl Staged {
@@ -474,7 +529,7 @@ impl Staged {
                 );
             }
         }
-        if self.response.clicked() {
+        if self.response.clicked() && !self.claimed {
             return self
                 .response
                 .interact_pointer_pos()
@@ -485,14 +540,15 @@ impl Staged {
 
     /// Another rig standing `pose` on the same stage, `scale` times its size and moved by `aside`.
     pub fn beside(&self, rig: &NodeTree, pose: Option<&[Rest]>, aside: Vec3, scale: f32) -> Staged {
+        let placed =
+            Mat4::from_translation(aside) * self.placed * Mat4::from_scale(Vec3::splat(scale));
         place(
             self.rect,
             self.response.clone(),
             self.canvas.clone(),
             rig,
             pose,
-            aside,
-            scale,
+            placed,
         )
     }
 
@@ -517,7 +573,12 @@ impl Staged {
 
     /// Where `at`, a point in the rig's frame, shows on the screen.
     pub fn project(&self, at: Vec3) -> Pos2 {
-        project(&self.canvas, self.middle, self.scale, at)
+        project(&self.canvas, self.placed.transform_point3(at))
+    }
+
+    /// The ground the rig stands on.
+    pub fn ground(&self) -> Pos<Meters> {
+        ground_pos(self.placed.w_axis.truncate())
     }
 
     fn nearest(&self, at: Pos2) -> Option<String> {
@@ -570,17 +631,23 @@ fn stage_rig(
     let turntable = stage::turntable(editor, ui, &format!("skeleton:{key}"), size, &mut state);
     editor.views.skeleton.view_mut(key).stage = state;
     let turntable = turntable?;
-    let staged = place(
+    let worn_by = content
+        .as_ref()
+        .and_then(|content| wearer(editor, key, content));
+    let mut staged = place(
         turntable.rect,
         turntable.response.clone(),
         turntable.canvas.clone(),
         &rig,
         pose.as_deref(),
-        Vec3::ZERO,
-        1.0,
+        Mat4::from_translation(world_point(stage::center(), Meters(0.0))),
     );
+    let worn_path = worn_by.as_ref().map(|(path, _)| path.clone());
+    if handles(editor, ui, key, def, &mut staged, worn_path.as_deref()) {
+        editor.views.skeleton.view_mut(key).stage.spinning = false;
+    }
     let worn = content.as_ref().and_then(|content| {
-        let (path, model) = wearer(editor, key, content)?;
+        let (path, model) = worn_by?;
         let dressed = content.by_path::<ModelDef>(&path)?;
         let body = model.dressed(
             content,
@@ -611,20 +678,80 @@ fn stage_rig(
     Some(staged)
 }
 
+/// The hitbox of the model at `wearer` round the rig on `staged`, and the hands' grip frames on
+/// it, as the view shows them: a click on either picks it for the inspector, and a click on neither
+/// lets go of what was picked, unless it lands on a joint the page is picking. Gives whether the
+/// pointer is dragging one, so the stage keeps still.
+fn handles(
+    editor: &mut Editor,
+    ui: &Ui,
+    key: &str,
+    def: &SkeletonDef,
+    staged: &mut Staged,
+    wearer: Option<&str>,
+) -> bool {
+    let view = editor.views.skeleton.view(key);
+    let chosen = view.chosen;
+    let on_joint = view.picks_joints()
+        && staged.response.clicked()
+        && staged
+            .response
+            .interact_pointer_pos()
+            .is_some_and(|at| staged.nearest(at).is_some());
+    let hitbox = wearer.and_then(|path| {
+        let model = editor.read::<ModelDef>(path)?.ok()?;
+        Some((path.to_owned(), model.hitbox))
+    });
+    let view = editor.views.skeleton.view_mut(key);
+    let touched = match &hitbox {
+        Some((_, capsule)) => model::hitbox::overlay(
+            ui,
+            &staged.canvas,
+            &staged.response,
+            staged.ground(),
+            *capsule,
+            chosen == Some(Chosen::Hitbox),
+            &mut view.hitbox,
+        ),
+        None => Default::default(),
+    };
+    let grip = match chosen {
+        Some(Chosen::Grip(index)) => Some(index),
+        _ => None,
+    };
+    let gripped = grips::overlay(editor, ui, key, staged, &def.hands, grip);
+    let view = editor.views.skeleton.view_mut(key);
+    view.chosen = match (gripped.picked, touched.picked) {
+        _ if on_joint => view.chosen,
+        (Some(index), _) => {
+            view.hand = index;
+            Some(Chosen::Grip(index))
+        }
+        (None, true) => Some(Chosen::Hitbox),
+        (None, false) if staged.response.clicked() && !gripped.claims_click => None,
+        (None, false) => view.chosen,
+    };
+    staged.claimed =
+        !on_joint && (gripped.picked.is_some() || touched.picked || gripped.claims_click);
+    let busy = view.hitbox.dragging();
+    if let (Some(sized), Some((path, _))) = (touched.sized, hitbox) {
+        model::set_hitbox(editor, &path, sized);
+    }
+    busy
+}
+
 /// Where each joint of `rig` shows on the stage's picture, standing `pose` (at rest without one)
-/// in the middle of the stage, `scale` times its size and moved by `aside`.
+/// as `placed` stands its frame in the scene.
 fn place(
     rect: Rect,
     response: Response,
     canvas: AreaCanvas,
     rig: &NodeTree,
     pose: Option<&[Rest]>,
-    aside: Vec3,
-    scale: f32,
+    placed: Mat4,
 ) -> Staged {
     let worlds = posed_worlds(rig, pose);
-    let middle = world_point(stage::center(), Meters(0.0)) + aside;
-    let screen = |world: &Mat4| project(&canvas, middle, scale, world.w_axis.truncate());
+    let screen = |world: &Mat4| project(&canvas, placed.transform_point3(world.w_axis.truncate()));
     let joints: Vec<(String, Pos2)> = rig
         .joints()
         .map(|joint| (rig.nodes[joint].name.clone(), screen(&worlds[joint])))
@@ -651,15 +778,13 @@ fn place(
         joints,
         lines,
         worlds,
-        middle,
-        scale,
+        placed,
+        claimed: false,
     }
 }
 
-/// Where `at`, a point in a rig's frame standing at `middle` at `scale` times its size, shows on
-/// `canvas`.
-fn project(canvas: &AreaCanvas, middle: Vec3, scale: f32, at: Vec3) -> Pos2 {
-    let at = middle + at * scale;
+/// Where `at`, a point in the scene, shows on `canvas`.
+fn project(canvas: &AreaCanvas, at: Vec3) -> Pos2 {
     let ground = ground_pos(at);
     let lift = at.y - canvas.area().heights.height_at(ground).0;
     canvas.lifted(ground, Meters(lift))
@@ -858,6 +983,21 @@ pub fn set_pace(editor: &mut Editor, key: &str, clip: &Clip, pace: MetersPerSec)
                 skeleton.paces.sort_by(|a, b| a.clip.cmp(&b.clip));
             }
         }
+        Ok(())
+    })
+}
+
+/// Changes the hand at `index` to `hand`, merging with the change made just before it as one drag
+/// does.
+pub fn set_hand(editor: &mut Editor, key: &str, index: usize, hand: Hand) -> bool {
+    let edit =
+        ContentEdit::new(format!("Change hand {} in {}", hand.name, shown_path(key))).merging();
+    change_with(editor, key, edit, |skeleton| {
+        let held = skeleton
+            .hands
+            .get_mut(index)
+            .ok_or_else(|| format!("it has no hand {}", index + 1))?;
+        *held = hand;
         Ok(())
     })
 }

@@ -1,7 +1,8 @@
 //! The look page: the model on the stage in a chosen stance, playing what its skeleton gives a
-//! chosen action, pose, move or gesture.
+//! chosen action, pose, move or gesture, its hitbox round it.
 
 use engine::core::time::Millis;
+use engine::systems::actor::model::ModelDef;
 use engine::systems::actor::skeleton::{Clip, Cue};
 use engine::systems::actor::stance::StanceDef;
 use engine::systems::actor::{Action, Motion, Pose};
@@ -9,10 +10,12 @@ use strum::VariantArray;
 use ui::egui::{self, Ui, Vec2};
 use ui::{controls, form, theme};
 
+use super::hitbox;
 use crate::app::Editor;
 use crate::tabs::shown_path;
 use crate::views::area::viewport::StageClip;
 use crate::views::cues;
+use crate::views::stage;
 
 /// What the stage plays: an engine action, a pose, a move or a gesture, as a stance resolves it.
 #[derive(Clone, Debug, PartialEq)]
@@ -45,7 +48,7 @@ pub struct Playing {
     pub cues: Vec<Cue>,
 }
 
-pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
+pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
     let Some(scene) = Scene::of(editor, key) else {
         super::nothing_to_stand(ui);
         return;
@@ -67,6 +70,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
             scrub.crossed(&playing.cues, playing.length)
         });
         let clip = scene.playing.as_ref().map(|playing| playing.clip.clone());
+        hitbox(editor, ui, key, row, &turntable);
         super::stand(
             turntable,
             editor,
@@ -106,6 +110,30 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         .left
         .push(format!("{} · {}", shown_path(key), scene.shown.label()));
     editor.status.left.push(cues::KEYS.to_owned());
+}
+
+/// The model's hitbox round it on the stage, picked by a click for the inspector and sized by its
+/// handles.
+fn hitbox(editor: &mut Editor, ui: &Ui, key: &str, row: &ModelDef, turntable: &stage::Turntable) {
+    let view = editor.views.model.view_mut(key);
+    let touched = hitbox::overlay(
+        ui,
+        &turntable.canvas,
+        &turntable.response,
+        stage::center(),
+        row.hitbox,
+        view.hitbox_chosen,
+        &mut view.hitbox,
+    );
+    if view.hitbox.dragging() {
+        view.stage.spinning = false;
+    }
+    if turntable.response.clicked() || touched.picked {
+        view.hitbox_chosen = touched.picked;
+    }
+    if let Some(sized) = touched.sized {
+        super::set_hitbox(editor, key, sized);
+    }
 }
 
 /// What the page shows of the model as the game built it.

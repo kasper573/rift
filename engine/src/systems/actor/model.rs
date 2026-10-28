@@ -2,6 +2,7 @@
 //! it is hit in. What it plays and how it times its hits are its skeleton's.
 
 use std::collections::HashSet;
+use std::ops::RangeInclusive;
 use std::sync::Arc;
 
 use schemars::JsonSchema;
@@ -58,26 +59,53 @@ pub enum ModelModule {
 // A character is downloaded by every client that sees it, and drawn many times a frame.
 pub const MAX_CHARACTER_TRIANGLES: usize = 8000;
 
+/// The radii a model's hitbox may take.
+pub const HITBOX_RADII: RangeInclusive<f32> = 0.1..=4.0;
+/// The heights a model's hitbox may take.
+pub const HITBOX_HEIGHTS: RangeInclusive<f32> = 0.2..=8.0;
+
 impl ContentFile for ModelDef {
     const TABLE: &'static str = "model";
 
     fn fresh(near: &Nearby) -> Result<ModelDef, String> {
+        let skeleton: SkeletonId = near
+            .file_where("a finished skeleton", |skeleton: &SkeletonDef| {
+                skeleton.unfinished().is_empty()
+            })?;
+        let part = near.file_where(
+            "a part with a mesh on that skeleton",
+            |part: &ModelPartDef| part.skeleton == skeleton && part.meshes().next().is_some(),
+        )?;
         Ok(ModelDef {
-            skeleton: near.file()?,
-            build: None,
+            skeleton,
+            build: near.read(skeleton)?.builds.first().cloned(),
             hitbox: Capsule {
                 radius: Meters(0.4),
                 height: Meters(1.8),
             },
-            parts: vec![near.file()?],
+            parts: vec![part],
             colours: Colours::default(),
             modules: Vec::new(),
         })
     }
 
     fn check(&self, cx: &mut RowCheck) {
-        cx.range("/hitbox/radius", self.hitbox.radius.0, 0.1, 4.0, "m");
-        cx.range("/hitbox/height", self.hitbox.height.0, 0.2, 8.0, "m");
+        let radius = &HITBOX_RADII;
+        let height = &HITBOX_HEIGHTS;
+        cx.range(
+            "/hitbox/radius",
+            self.hitbox.radius.0,
+            *radius.start(),
+            *radius.end(),
+            "m",
+        );
+        cx.range(
+            "/hitbox/height",
+            self.hitbox.height.0,
+            *height.start(),
+            *height.end(),
+            "m",
+        );
         cx.count("/parts", self.parts.len(), 1, 64, "parts");
         let mut seen = HashSet::new();
         for (index, part) in self.parts.iter().enumerate() {
@@ -163,15 +191,23 @@ pub fn build_all(loading: &mut Loading) {
     let infos = content.built::<GltfInfos>();
     let hashes = content.built::<FileHashes>();
     let skeletons = build_skeletons(loading, &content, infos);
+    let loaded_skeletons: HashSet<SkeletonId> = loading
+        .rows::<SkeletonDef>(&content)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
     for (id, part) in loading.rows::<ModelPartDef>(&content) {
-        let Some(skeleton) = skeletons.get(part.skeleton.index()).cloned().flatten() else {
+        if !loaded_skeletons.contains(&part.skeleton) {
             loading.fail(id);
             continue;
-        };
+        }
         let mut check = RowCheck::default();
-        let skeleton_path = part.skeleton.path(&content);
-        check_meshes(part, &skeleton, skeleton_path, infos, hashes, &mut check);
-        check_part(&content, part, &skeleton.def, &mut check);
+        let skeleton_def = part.skeleton.get(&content);
+        if let Some(skeleton) = skeletons.get(part.skeleton.index()).cloned().flatten() {
+            let skeleton_path = part.skeleton.path(&content);
+            check_meshes(part, &skeleton, skeleton_path, infos, hashes, &mut check);
+        }
+        check_part(&content, part, skeleton_def, &mut check);
         if !check.is_empty() {
             loading.row_errors(id, check);
             loading.fail(id);
@@ -184,22 +220,28 @@ pub fn build_all(loading: &mut Loading) {
         .collect();
     let mut models: Vec<Option<ActorModel>> = content.ids::<ModelDef>().map(|_| None).collect();
     for (id, def) in loading.rows::<ModelDef>(&content) {
-        let skeleton = skeletons.get(def.skeleton.index()).cloned().flatten();
         // A skeleton or part that did not load was refused at its own file already.
-        let (Some(skeleton), true) = (
-            skeleton,
-            def.parts.iter().all(|part| built_parts.contains(part)),
-        ) else {
+        if !loaded_skeletons.contains(&def.skeleton)
+            || !def.parts.iter().all(|part| built_parts.contains(part))
+        {
             loading.fail(id);
             continue;
-        };
+        }
         let mut check = RowCheck::default();
-        check_model(&content, def, &skeleton, infos, &mut check);
-        if check.is_empty() {
-            models[id.index()] = Some(ActorModel::new(&content, def, skeleton));
-        } else {
-            loading.row_errors(id, check);
-            loading.fail(id);
+        check_finished(&content, def.skeleton, &mut check);
+        check_meshed(&content, &def.parts, "/parts", &mut check);
+        let skeleton = skeletons.get(def.skeleton.index()).cloned().flatten();
+        if let Some(skeleton) = &skeleton {
+            check_model(&content, def, skeleton, infos, &mut check);
+        }
+        match skeleton {
+            Some(skeleton) if check.is_empty() => {
+                models[id.index()] = Some(ActorModel::new(&content, def, skeleton));
+            }
+            _ => {
+                loading.row_errors(id, check);
+                loading.fail(id);
+            }
         }
     }
     let skeleton_defs = loading.rows::<SkeletonDef>(&content);
@@ -226,7 +268,7 @@ fn build_skeletons(
         content.ids::<SkeletonDef>().map(|_| None).collect();
     for (id, def) in loading.rows::<SkeletonDef>(content) {
         match BuiltSkeleton::build(def, &infos.0) {
-            Ok(skeleton) => built[id.index()] = Some(Arc::new(skeleton)),
+            Ok(skeleton) => built[id.index()] = skeleton.map(Arc::new),
             Err(check) => {
                 loading.row_errors(id, check);
                 loading.fail(id);
@@ -236,9 +278,8 @@ fn build_skeletons(
     built
 }
 
-/// What a part's meshes must be to its skeleton: at least one, each cut for one of its builds,
-/// light enough to download, within the joint budget, and binding only joints of its rig where the
-/// rig rests them.
+/// What a part's meshes must be to its skeleton: each cut for one of its builds, light enough to
+/// download, within the joint budget, and binding only joints of its rig where the rig rests them.
 fn check_meshes(
     part: &ModelPartDef,
     skeleton: &BuiltSkeleton,
@@ -247,14 +288,6 @@ fn check_meshes(
     hashes: &FileHashes,
     cx: &mut RowCheck,
 ) {
-    if part.mesh.is_none() && part.builds.is_empty() {
-        cx.error(
-            "/mesh",
-            "missing mesh",
-            "no mesh",
-            "a mesh for every build, or one for each build the part is cut for",
-        );
-    }
     for (build, mesh) in part.meshes() {
         let pointer = match build {
             Some(build) => format!("/builds/{}", build.0),
@@ -293,6 +326,35 @@ fn check_meshes(
         }
         for problem in fit_report(skeleton, skeleton_path, mesh.as_str(), info).problems {
             cx.problem(pointer.clone(), problem);
+        }
+    }
+}
+
+/// What a body needs of the skeleton it is made on, which may be unfinished while it is made.
+fn check_finished(content: &Content, skeleton: SkeletonId, cx: &mut RowCheck) {
+    let skeleton_path = skeleton.path(content);
+    for lacking in skeleton.get(content).unfinished() {
+        cx.error(
+            "/skeleton",
+            "unfinished skeleton",
+            format!("{skeleton_path} {lacking}"),
+            "a skeleton a body can wear: a rig, a base clip for every action a body must play, an \
+             apex on every clip played as a hit, and a pace for every gait",
+        );
+    }
+}
+
+/// Every part laid on a body has a mesh, which a part may lack while it is made. `at` is where the
+/// parts are listed.
+pub fn check_meshed(content: &Content, parts: &[ModelPartId], at: &str, cx: &mut RowCheck) {
+    for (index, part) in parts.iter().enumerate() {
+        if part.get(content).meshes().next().is_none() {
+            cx.error(
+                format!("{at}/{index}"),
+                "unfinished part",
+                format!("{} has no mesh", part.path(content)),
+                "a part with a mesh for every build, or one for each build it is cut for",
+            );
         }
     }
 }

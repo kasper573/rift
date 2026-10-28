@@ -12,6 +12,7 @@ use engine::core::content::Fixture;
 use engine::core::math::Pos;
 use engine::core::units::{MeterPos, Meters};
 use engine::core::vfx::{ParamFill, ParamValue, VfxDef, VfxLayer};
+use engine::systems::actor::{ModelDef, ModelPartDef};
 use engine::systems::area::world_map::{WorldMap, WorldMapDef};
 use engine::systems::class::{AccessRequirement, ClassDef, NodeKey};
 use engine::systems::item::{ItemDef, ItemKind, ItemModule, Wear};
@@ -24,7 +25,7 @@ use engine::systems::script::{RunnerKind, ScriptDef, VarValue};
 use engine::systems::skill::{SkillDef, Targeting};
 use engine::systems::stat::StatKind;
 use serde_json::{Value, json};
-use testkit::{Game, Map, path};
+use testkit::{BODY, Game, Map, path};
 
 use crate::support::{self, Drawn, Frames, click, key};
 
@@ -1058,6 +1059,66 @@ fn world_map(editor: &Editor) -> Arc<WorldMapDef> {
 }
 
 /// The form of one row drawn frame after frame, as the editor draws it.
+#[test]
+fn an_item_added_to_a_list_of_names_or_files_is_the_next_one_not_listed() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let game = support::game()
+        .skeleton(BODY)
+        .edit("skeleton", BODY, |skeleton| {
+            skeleton["regions"] = json!(["head", "torso"])
+        })
+        .model_part("cloak", BODY);
+    let mut editor = support::open(game, &scratch);
+    let cloak = path("model_part", "cloak");
+    let mut form = RowFrames::new("model_part", &cloak);
+    form.run(&mut editor, Vec::new());
+    let covers = form.run(&mut editor, Vec::new()).at("+ covers");
+    for events in click(covers) {
+        form.run(&mut editor, events);
+    }
+    for _ in 0..3 {
+        let add = form.run(&mut editor, Vec::new()).at("+ cover");
+        for events in click(add) {
+            form.run(&mut editor, events);
+        }
+    }
+    let covered: Vec<String> = editor
+        .read::<ModelPartDef>(&cloak)
+        .expect("a project")
+        .expect("the part reads")
+        .covers
+        .iter()
+        .map(|region| region.as_str().to_owned())
+        .collect();
+    assert_eq!(
+        covered,
+        ["head", "torso"],
+        "each region added is the next the skeleton lists, until every one is"
+    );
+
+    let hero = path("model", "hero");
+    let mut form = RowFrames::new("model", &hero);
+    form.run(&mut editor, Vec::new());
+    let add = form.run(&mut editor, Vec::new()).at("+ part");
+    for events in click(add) {
+        form.run(&mut editor, events);
+    }
+    let reader = editor.reader().expect("a reader");
+    let worn: Vec<String> = editor
+        .read::<ModelDef>(&hero)
+        .expect("a project")
+        .expect("the model reads")
+        .parts
+        .iter()
+        .filter_map(|part| reader.path_of(*part).map(str::to_owned))
+        .collect();
+    assert_eq!(
+        worn,
+        [path("model_part", "hero"), cloak],
+        "a part added is the nearest the model doesn't wear yet"
+    );
+}
+
 struct RowFrames {
     frames: Frames,
     table: String,

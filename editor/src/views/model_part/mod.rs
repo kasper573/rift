@@ -190,7 +190,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
             });
         }
         if meshes.is_empty() {
-            ui.colored_label(theme::DANGER, "no mesh: the part draws on no build");
+            ui.label(theme::muted("no mesh yet: no body can wear the part"));
         }
         ui.add_space(4.0);
         form::hint(
