@@ -218,10 +218,12 @@ fn a_bust_missing_a_generic_face_is_refused_naming_it() {
 
 #[test]
 fn a_model_over_the_style_budget_is_refused_at_its_row() {
-    let hero = format!("{}/mesh.glb", path("model_part", "hero"));
     let rock = format!("{}/model.glb", path("prop", "rock"));
     let report = game()
-        .file(&hero, glb_of(MAX_CHARACTER_TRIANGLES + 1, &[]))
+        .file(
+            &testkit::part_file("hero"),
+            glb_of(MAX_CHARACTER_TRIANGLES + 1, &[]),
+        )
         .prop("rock", json!({ "type": "none" }))
         .file(&rock, glb_of(MAX_PROP_TRIANGLES + 1, &[]))
         .try_load()
@@ -248,12 +250,13 @@ fn a_model_over_the_style_budget_is_refused_at_its_row() {
 #[test]
 fn a_part_a_bundle_type_never_declares_is_refused() {
     let report = game()
-        .part("model_part", "hero", "notes.txt", "a stray file")
+        .prop("rock", json!({ "type": "none" }))
+        .part("prop", "rock", "notes.txt", "a stray file")
         .try_load()
         .err()
         .expect("refused");
 
-    let rules = rules_in(&report, "hero.model_part/notes.txt");
+    let rules = rules_in(&report, &format!("{}/notes.txt", path("prop", "rock")));
     assert_eq!(rules.len(), 1, "{report}");
     assert_eq!(rules[0].0, "unknown part");
 }

@@ -1,8 +1,9 @@
-//! A body drawn as skins over one rig: the rig's scene stands beneath the body, and every skinned
+//! A body drawn as skins over one rig: the rig's joints stand beneath the body, and every skinned
 //! mesh of each skin's scene is bound to the rig's joints of the same names, so a clip played on the
 //! rig moves every skin, however many files they come from.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::mesh::skinning::SkinnedMesh;
@@ -11,11 +12,13 @@ use bevy::world_serialization::WorldInstanceReady;
 
 use super::material::WorldMaterial;
 use super::paint::{Paint, Painter, Paints};
+use super::rig_clip::{GltfClips, GltfClipsLoader, PendingClips, make_pending};
+use crate::core::content::gltf::NodeTree;
 
-/// The glTF files a body is drawn from: the rig its joints stand in, and the skins bound to them.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct BodyFiles {
-    pub rig: String,
+/// What a body is drawn as: the joints of its rig at rest, and the skins bound to them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Figure {
+    pub rig: Arc<NodeTree>,
     pub skins: Vec<Skin>,
 }
 
@@ -26,14 +29,14 @@ pub struct Skin {
     pub paint: Option<Paint>,
 }
 
-/// A body standing under its entity: the scenes of its rig and skins, and once the rig stands, its
-/// joints by name and the player its clips play on.
+/// A body standing under its entity: its rig, the joints its clips play on, and the scenes of its
+/// skins.
 #[derive(Component)]
 pub struct Body {
-    files: BodyFiles,
-    scenes: Vec<Entity>,
+    figure: Figure,
+    rig: Entity,
+    skins: Vec<Entity>,
     joints: HashMap<String, Entity>,
-    player: Option<Entity>,
 }
 
 /// Triggered on a body once its rig stands, its joints known and its player ready to play.
@@ -41,9 +44,6 @@ pub struct Body {
 pub struct RigReady {
     pub entity: Entity,
 }
-
-#[derive(Component)]
-struct RigOf(Entity);
 
 /// A skin's scene, hidden until its meshes are bound to the rig and painted: at rest until then,
 /// it would stand apart from a rig already moving.
@@ -55,8 +55,8 @@ struct SkinOf {
 }
 
 impl Body {
-    pub fn files(&self) -> &BodyFiles {
-        &self.files
+    pub fn figure(&self) -> &Figure {
+        &self.figure
     }
 
     /// The joint of the rig named `name`, once the rig stands.
@@ -69,47 +69,71 @@ impl Body {
         &self.joints
     }
 
-    /// The entity the rig's clips play on, once the rig stands.
+    /// The entity the rig's clips play on.
     pub fn player(&self) -> Option<Entity> {
-        self.player
+        Some(self.rig)
     }
 }
 
-/// Stands the body `files` describe under `entity`, in place of any body it stood before.
-pub fn dress(world: &mut World, entity: Entity, files: &BodyFiles) {
+/// Stands the body `figure` describes under `entity`, in place of any body it stood before: its
+/// rig's joints at rest, ready to play, and its skins bound to them once they load.
+pub fn dress(world: &mut World, entity: Entity, figure: &Figure) {
     let old: Vec<Entity> = world
         .get::<Body>(entity)
-        .map(|body| body.scenes.clone())
+        .map(|body| {
+            std::iter::once(body.rig)
+                .chain(body.skins.iter().copied())
+                .collect()
+        })
         .unwrap_or_default();
     for scene in old {
         if let Ok(scene) = world.get_entity_mut(scene) {
             scene.despawn();
         }
     }
-    let assets = world.resource::<AssetServer>().clone();
-    let load = |path: &str| {
-        WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(path.to_owned())))
-    };
-    let mut scenes = vec![
-        world
+    let rig = world
+        .spawn((
+            Name::new("rig"),
+            Transform::default(),
+            Visibility::default(),
+            AnimationPlayer::default(),
+            ChildOf(entity),
+        ))
+        .id();
+    let tree = &figure.rig;
+    let mut placed = vec![Entity::PLACEHOLDER; tree.nodes.len()];
+    let mut joints = HashMap::new();
+    for node in tree.downward() {
+        let joint = &tree.nodes[node];
+        let parent = joint.parent.map_or(rig, |parent| placed[parent]);
+        placed[node] = world
             .spawn((
-                load(&files.rig),
-                Transform::default(),
+                Name::new(joint.name.clone()),
+                Transform {
+                    translation: joint.rest.translation,
+                    rotation: joint.rest.rotation,
+                    scale: joint.rest.scale,
+                },
                 Visibility::default(),
-                RigOf(entity),
-                ChildOf(entity),
+                AnimationTargetId::from_iter(tree.path(node)),
+                AnimatedBy(rig),
+                ChildOf(parent),
             ))
-            .id(),
-    ];
-    for skin in &files.skins {
-        scenes.push(spawn_skin(world, entity, skin));
+            .id();
+        joints.insert(joint.name.clone(), placed[node]);
     }
+    let skins = figure
+        .skins
+        .iter()
+        .map(|skin| spawn_skin(world, entity, skin))
+        .collect();
     world.entity_mut(entity).insert(Body {
-        files: files.clone(),
-        scenes,
-        joints: HashMap::new(),
-        player: None,
+        figure: figure.clone(),
+        rig,
+        skins,
+        joints,
     });
+    world.trigger(RigReady { entity });
 }
 
 /// Swaps the skins of the body standing under `entity` for `skins`, keeping its rig and what plays
@@ -118,18 +142,14 @@ pub fn reskin(world: &mut World, entity: Entity, skins: &[Skin]) {
     let Some(body) = world.get::<Body>(entity) else {
         return;
     };
-    let (rig, worn) = body
-        .scenes
-        .split_first()
-        .map_or((None, &[][..]), |(rig, worn)| (Some(*rig), worn));
     let kept: Vec<(Skin, Entity)> = body
-        .files
+        .figure
         .skins
         .iter()
         .cloned()
-        .zip(worn.iter().copied())
+        .zip(body.skins.iter().copied())
         .collect();
-    let mut scenes: Vec<Entity> = rig.into_iter().collect();
+    let mut scenes: Vec<Entity> = Vec::new();
     for (file, scene) in &kept {
         if !skins.contains(file)
             && let Ok(scene) = world.get_entity_mut(*scene)
@@ -144,8 +164,8 @@ pub fn reskin(world: &mut World, entity: Entity, skins: &[Skin]) {
         }
     }
     if let Some(mut body) = world.get_mut::<Body>(entity) {
-        body.files.skins = skins.to_vec();
-        body.scenes = scenes;
+        body.figure.skins = skins.to_vec();
+        body.skins = scenes;
     }
 }
 
@@ -173,41 +193,19 @@ pub struct BodyPlugin;
 impl Plugin for BodyPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Paints>()
+            .init_resource::<PendingClips>()
+            .init_asset::<GltfClips>()
+            .register_asset_loader(GltfClipsLoader)
             .add_observer(stand)
-            .add_systems(Update, bind);
+            .add_systems(Update, (bind, make_pending));
     }
 }
 
-/// A rig's scene, once spawned, is made playable and its body told so; a skin's is marked ready to
-/// bind.
-fn stand(
-    ready: On<WorldInstanceReady>,
-    rigs: Query<&RigOf>,
-    mut skins: Query<&mut SkinOf>,
-    children: Query<&Children>,
-    names: Query<&Name>,
-    mut bodies: Query<&mut Body>,
-    mut commands: Commands,
-) {
+/// A skin's scene, once spawned, is marked ready to bind.
+fn stand(ready: On<WorldInstanceReady>, mut skins: Query<&mut SkinOf>) {
     if let Ok(mut skin) = skins.get_mut(ready.entity) {
         skin.spawned = true;
-        return;
     }
-    let Ok(&RigOf(entity)) = rigs.get(ready.entity) else {
-        return;
-    };
-    let Ok(mut body) = bodies.get_mut(entity) else {
-        return;
-    };
-    let Some(player) = animate_rig(ready.entity, &children, &names, &mut commands) else {
-        return;
-    };
-    body.joints = children
-        .iter_descendants(ready.entity)
-        .filter_map(|node| Some((names.get(node).ok()?.as_str().to_owned(), node)))
-        .collect();
-    body.player = Some(player);
-    commands.trigger(RigReady { entity });
 }
 
 /// Binds the skinned meshes of every spawned skin to its body's rig once the rig stands, paints
@@ -261,44 +259,4 @@ fn bind(
         *visibility = Visibility::Inherited;
         commands.entity(scene).remove::<SkinOf>();
     }
-}
-
-/// Gives a spawned glTF scene a player and names every node under it the way a clip made on the
-/// same rig names its targets, then gives that player back. The loader names a clip's targets by
-/// the path from its file's top node down, below the entity it spawns for the scene itself, and
-/// names nodes only for the clips its own file holds, so a rig carrying none would otherwise play
-/// none made for it.
-fn animate_rig(
-    instance: Entity,
-    children: &Query<&Children>,
-    names: &Query<&Name>,
-    commands: &mut Commands,
-) -> Option<Entity> {
-    let size = |node: Entity| children.iter_descendants(node).count();
-    let scene = children
-        .get(instance)
-        .ok()?
-        .iter()
-        .max_by_key(|&node| size(node))?;
-    let mut stack: Vec<(Entity, Vec<Name>)> = children
-        .get(scene)
-        .ok()?
-        .iter()
-        .map(|top| (top, Vec::new()))
-        .collect();
-    while let Some((node, mut path)) = stack.pop() {
-        let Ok(name) = names.get(node) else {
-            continue;
-        };
-        path.push(name.clone());
-        commands.entity(node).insert((
-            AnimationTargetId::from_names(path.iter()),
-            AnimatedBy(scene),
-        ));
-        if let Ok(below) = children.get(node) {
-            stack.extend(below.iter().map(|child| (child, path.clone())));
-        }
-    }
-    commands.entity(scene).insert(AnimationPlayer::default());
-    Some(scene)
 }

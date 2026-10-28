@@ -2,7 +2,7 @@
 
 ## Models
 
-Every model in the game folder is a restyled pack model or a tree built to the style sheet (`STYLE.md`); `tools/kit.json` says which pack file each one comes from and `tools/restyle.py` builds them (packs that come as FBX are converted first by `tools/convert.py`). The packs are CC0 (Creative Commons Zero) unless noted otherwise below.
+Every model in the game folder is a pack model restyled to the style sheet (`STYLE.md`) or a model built to it by `tools/build.py`. The packs are CC0 (Creative Commons Zero) unless noted otherwise below.
 
 - KayKit Character Pack: Adventurers, by Kay Lousberg — https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0 — CC0
 - KayKit Character Pack: Skeletons, by Kay Lousberg — https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Skeletons-1.0 — CC0

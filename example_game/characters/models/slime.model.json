@@ -1,10 +1,10 @@
 {
-  "skeleton": "characters/skeletons/slime.skeleton",
+  "skeleton": "characters/skeletons/slime.skeleton.json",
   "hitbox": {
     "radius": 0.4,
     "height": 0.7
   },
   "parts": [
-    "characters/parts/slime.model_part"
+    "characters/parts/slime.model_part.json"
   ]
 }

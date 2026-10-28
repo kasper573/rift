@@ -19,7 +19,7 @@ use ui::{controls, form, panel, theme};
 use crate::app::Editor;
 use crate::project::ContentEdit;
 use crate::tabs::shown_path;
-use crate::views::area::viewport::StandingProp;
+use crate::views::area::viewport::{StageClip, StandingProp};
 use crate::views::cues::{self, Scrub};
 use crate::views::model::look::Shown;
 use crate::views::stage::{self, StageState};
@@ -274,9 +274,10 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
         .as_deref()
         .and_then(|path| content.by_path::<StanceDef>(path));
     let resolved = model.resolve(stance_id, &shown.motion, shown.pose, 0);
-    let clip = resolved
-        .source
-        .map(|source| (model.rig_clip(source), resolved.length.millis()));
+    let clip = Some((
+        StageClip::played(model.skeleton(), resolved.played),
+        resolved.length.millis(),
+    ));
     cues::advance(
         ui,
         &mut editor.views.item.view_mut(key).wield.scrub,

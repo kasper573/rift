@@ -7,6 +7,7 @@ mod model;
 mod pictures;
 mod reader;
 mod references;
+mod retarget;
 mod round_trip;
 mod shaders;
 mod skeleton;

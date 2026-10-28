@@ -5,7 +5,7 @@ use engine::systems::actor::{self, Actor, Motion, Pose};
 use engine::systems::{npc, script};
 use serde_json::{Value, json};
 use strum::VariantArray;
-use testkit::{BODY, Game, Map, Sim, path, rig_clips};
+use testkit::{BODY, Game, Map, Sim, clip, path, rig_clips};
 
 #[test]
 fn a_script_sits_a_body_down_and_stands_it_up_through_the_clips_its_skeleton_names() {
@@ -98,7 +98,7 @@ fn game(placed: &str, pose: &str) -> Game {
         .collect();
     let mut base: serde_json::Map<String, Value> = actor::Action::VARIANTS
         .iter()
-        .map(|action| (action.as_ref().to_owned(), json!(action.as_ref())))
+        .map(|action| (action.as_ref().to_owned(), json!(clip(action.as_ref()))))
         .collect();
     base.remove("sprint");
     Game::new()
@@ -114,9 +114,9 @@ fn game(placed: &str, pose: &str) -> Game {
             json!({
                 "base": {
                     "clips": base,
-                    "poses": { "sit": "sit" },
-                    "begins": { "sit": "sit_down" },
-                    "ends": { "sit": "stand_up" },
+                    "poses": { "sit": clip("sit") },
+                    "begins": { "sit": clip("sit_down") },
+                    "ends": { "sit": clip("stand_up") },
                 },
             }),
         )

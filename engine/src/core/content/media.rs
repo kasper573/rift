@@ -107,7 +107,7 @@ pub(super) fn image_size(path: &str, bytes: &[u8]) -> Option<(u32, u32)> {
 }
 
 /// What the model at `path` of `bytes` holds, when it reads.
-pub(super) fn gltf_info(path: &str, bytes: &[u8]) -> Option<GltfInfo> {
+pub fn gltf_info(path: &str, bytes: &[u8]) -> Option<GltfInfo> {
     match decoded(path, bytes)? {
         Decoded::Model(info) => Some(info),
         _ => None,
@@ -145,13 +145,6 @@ fn decode(path: &str, bytes: &[u8]) -> MediaCheck {
                 rule: "unreadable sound",
                 found: error.to_string(),
                 expected: "a WAV or FLAC file of one or two channels that decodes",
-            }),
-        Some(AssetKind::Font) => ttf_parser::Face::parse(bytes, 0)
-            .map(|_| Decoded::Plain)
-            .map_err(|error| MediaProblem {
-                rule: "unreadable font",
-                found: error.to_string(),
-                expected: "a TrueType or OpenType font",
             }),
         Some(AssetKind::Model) => {
             gltf::inspect(bytes)

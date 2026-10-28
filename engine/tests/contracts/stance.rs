@@ -268,13 +268,13 @@ fn a_players_body_shows_its_equipped_hands_and_never_its_head() {
 /// daggers pair. A sword and a dagger strike, a rapier lunges in the sword stance, a greatsword
 /// takes both hands, a shield the off hand and a helm the head. Every hand item sharpens its wearer.
 fn armoury() -> Game {
-    let clip = |(length, _): (Millis, Millis)| length.seconds();
-    let apex = |(_, apex): (Millis, Millis)| json!([{ "at": apex.0, "apex": true }]);
+    let length = |(length, _): (Millis, Millis)| length.seconds();
+    let apex = |name: &str, (_, apex): (Millis, Millis)| json!({ "clip": testkit::clip(name), "cues": [{ "at": apex.0, "apex": true }] });
     let mut clips: Vec<(&str, Seconds)> = rig_clips();
     clips.extend([
-        ("slash", clip(SLASH)),
-        ("thrust", clip(THRUST)),
-        ("stab", clip(STAB)),
+        ("slash", length(SLASH)),
+        ("thrust", length(THRUST)),
+        ("stab", length(STAB)),
     ]);
     let game = Game::new()
         .skeleton_of(
@@ -284,16 +284,22 @@ fn armoury() -> Game {
                 "stances": [
                     {
                         "stance": path("stance", "sword"),
-                        "set": { "clips": { "attack": "slash" }, "moves": { "thrust": "thrust" } },
+                        "set": {
+                            "clips": { "attack": testkit::clip("slash") },
+                            "moves": { "thrust": testkit::clip("thrust") },
+                        },
                     },
-                    { "stance": path("stance", "dagger"), "set": { "clips": { "attack": "stab" } } },
+                    {
+                        "stance": path("stance", "dagger"),
+                        "set": { "clips": { "attack": testkit::clip("stab") } },
+                    },
                 ],
-                "cues": {
-                    "attack": apex((CLIP, APEX)),
-                    "slash": apex(SLASH),
-                    "thrust": apex(THRUST),
-                    "stab": apex(STAB),
-                },
+                "cues": [
+                    apex("attack", (CLIP, APEX)),
+                    apex("slash", SLASH),
+                    apex("thrust", THRUST),
+                    apex("stab", STAB),
+                ],
             }),
         )
         .area("field", &Map::open(11, 11), json!([]))
@@ -321,7 +327,10 @@ fn armoury() -> Game {
         .stance("dual_daggers", 1, "either")
         .stance("greatsword", 2, "main")
         .stance("shield", 1, "off")
-        .item("helm", json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" } }))
+        .item(
+            "helm",
+            json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" } }),
+        )
         .slots(BODY, &["head"]);
     let game = skill(game, "strike", json!({ "action": "attack" }));
     let game = skill(game, "lunge", json!({ "move": "thrust" }));

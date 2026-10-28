@@ -1,22 +1,22 @@
-//! A rig and everything the models that wear it share: the joint tree at rest, the libraries of
-//! clips made on it, the hands an item hangs from, the groups a clip may be kept to, what plays for
-//! each action, pose and move in each stance, the cues on those clips, and the layers that move a
-//! body where keyframes are not enough.
+//! A rig and everything the models that wear it share: our rig, read from the joints of glTF files,
+//! the source rigs whose clips play on it through pairs of their joints and ours, the hands an item
+//! hangs from, the groups a clip may be kept to, what plays for each action, pose and move in each
+//! stance and build, the cues and paces of those clips, and the layers that move a body where
+//! keyframes are not enough.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use bevy::math::Quat;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::stance::StanceId;
 use super::{Action, Motion, Pose};
-use crate::core::assets::{FileSize, ModelRef};
+use crate::core::assets::ModelRef;
 use crate::core::audio::playback::SfxId;
-use crate::core::content::gltf::{Fit, GltfInfo, Misfit, NodeTree};
+use crate::core::content::gltf::{Fit, Misfit};
 use crate::core::content::{
-    Bundle, ContentFile, ContentId, ContentProblem, ErrorPlace, FileWriter, ModuleRule, ModuleSet,
-    NamedContent, Nearby, PartSpec, Parts, RowCheck, Shape, serial,
+    ContentFile, ContentId, ContentProblem, ModuleRule, ModuleSet, NamedContent, Nearby, RowCheck,
+    serial,
 };
 use crate::core::geometry::{Degrees, Radians};
 use crate::core::math::{Rgb, Rng};
@@ -28,13 +28,19 @@ pub type SkeletonId = ContentId<SkeletonDef>;
 
 macro_rules! name_type {
     ($(#[$doc:meta])* $name:ident, $marker:literal) => {
+        name_type!(@named [$(#[$doc])*] [#[schemars(extend($marker = true))]] $name);
+    };
+    ($(#[$doc:meta])* $name:ident) => {
+        name_type!(@named [$(#[$doc])*] [] $name);
+    };
+    (@named [$(#[$doc:meta])*] [$(#[$marked:meta])*] $name:ident) => {
         $(#[$doc])*
         #[derive(
             JsonSchema, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord,
             Hash,
         )]
         #[serde(transparent)]
-        #[schemars(extend($marker = true))]
+        $(#[$marked])*
         pub struct $name(pub String);
 
         impl $name {
@@ -62,9 +68,9 @@ macro_rules! name_type {
 }
 
 name_type!(
-    /// An animation of a skeleton's libraries or a model's own glTF, named as it is there.
-    ClipName,
-    "x-clip"
+    /// An animation of a glTF file, by its name there: what tells apart the clips of a file that
+    /// holds several.
+    TakeName
 );
 name_type!(
     /// A swing a skill asks for by name, which a skeleton's sets turn into a clip per stance.
@@ -83,13 +89,13 @@ name_type!(
     "x-group"
 );
 name_type!(
-    /// A node of a rig, by its name in the rig's glTF.
+    /// A joint of a rig, by its name.
     JointName,
     "x-joint"
 );
 name_type!(
     /// A body type a skeleton's models are cut for, such as male or female: a part may carry a
-    /// mesh for each.
+    /// mesh for each, and a build may play clips of its own.
     BuildName,
     "x-build"
 );
@@ -141,22 +147,24 @@ impl Colours {
     }
 }
 
-/// A rig and everything shared by the models that wear it: where an item is held, how the body is
-/// grouped, what plays for each action, pose and move in each stance, the cues on those clips and
-/// the layers that move it beyond its clips.
+/// A rig and everything shared by the models that wear it: the rigs its clips are made on, where an
+/// item is held, how the body is grouped, what plays for each action, pose and move in each stance
+/// and build, the cues and paces of those clips and the layers that move it beyond its clips.
 #[derive(JsonSchema, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkeletonDef {
     pub name: String,
-    #[serde(skip)]
-    pub rig: ModelRef,
-    #[serde(skip)]
-    pub libraries: Vec<Library>,
+    pub rig: Rig,
+    /// Rigs other than ours whose clips play on ours, each through pairs of its joints and ours.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<SourceRig>,
     /// The only places an item hangs; the first is the main hand, the second the off hand.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hands: Vec<Hand>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub groups: BTreeMap<GroupName, Vec<JointName>>,
+    /// The body types its models are cut for; the first is the one every other plays the clips of
+    /// where its own sets name none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub builds: Vec<BuildName>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -169,28 +177,135 @@ pub struct SkeletonDef {
     /// overlap.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tints: Vec<SkeletonTint>,
+    /// What every body plays, and with builds, what the first build plays.
+    #[serde(default)]
     pub base: ClipSet,
+    /// What a body plays in each stance over the base set: the columns every build has.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stances: Vec<StanceSet>,
+    /// What each build but the first plays over the first's, by the build.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub cues: BTreeMap<ClipName, Vec<Cue>>,
+    pub build_sets: BTreeMap<BuildName, BuildSets>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cues: Vec<ClipCues>,
     /// How fast each clip a set plays to walk, run or sprint carries a body over the ground at scale
     /// 1: the speed its planted feet slide back under it, or for a clip whose feet a layer plants, or
     /// that has none, the speed it looks right at. A body plays the gait whose clip covers nearest its
     /// speed, as fast as covers it exactly.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub paces: BTreeMap<ClipName, MetersPerSec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paces: Vec<ClipPace>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<Layer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<SkeletonModule>,
 }
 
-/// A glTF of clips made on the rig, kept in the bundle at `clips/<key>.glb`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Library {
-    pub key: String,
-    pub file: ModelRef,
+/// Our rig: every joint, every node that draws no mesh, of the glTF files it is read from, each
+/// with its parent and its rest as those files place it, where they must all agree. A joint with no
+/// parent there is a top: the body's top carries the body, and every other hangs on a joint of
+/// ours.
+#[derive(JsonSchema, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Rig {
+    pub files: Vec<ModelRef>,
+    /// The joint each top but the body's hangs on, by the top: it stands where that joint stands,
+    /// turned as its files rest it, and moves with it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub hangs: BTreeMap<JointName, JointName>,
+}
+
+/// A rig other than ours that clips are made on, such as a seller's: its joints, and the joint of
+/// ours each of them moves. A joint of his paired with none moves nothing of ours.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceRig {
+    pub name: String,
+    pub joints: Vec<JointName>,
+    /// The joint of ours each of his moves, by his joint.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub pairs: BTreeMap<JointName, JointName>,
+}
+
+impl SourceRig {
+    /// Each joint of ours one of his moves, with that joint of his, by name.
+    pub fn joint_pairs(&self) -> Vec<(String, String)> {
+        self.pairs
+            .iter()
+            .map(|(his, ours)| (ours.0.clone(), his.0.clone()))
+            .collect()
+    }
+}
+
+/// A clip: the one animation of a glTF file in the game folder, or one of the several a file holds,
+/// by its name there.
+#[derive(
+    JsonSchema, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(untagged)]
+pub enum Clip {
+    File(ModelRef),
+    Take { file: ModelRef, take: TakeName },
+}
+
+impl Clip {
+    pub fn file(&self) -> &ModelRef {
+        match self {
+            Clip::File(file) | Clip::Take { file, .. } => file,
+        }
+    }
+
+    pub fn take(&self) -> Option<&TakeName> {
+        match self {
+            Clip::File(_) => None,
+            Clip::Take { take, .. } => Some(take),
+        }
+    }
+
+    /// What a designer calls the clip: its file's name, and the take's after it when there is one.
+    pub fn shown(&self) -> String {
+        let file = self.file().as_str();
+        let name = file.rsplit('/').next().unwrap_or(file);
+        let name = name.rsplit_once('.').map_or(name, |(name, _)| name);
+        match self.take() {
+            Some(take) => format!("{name} · {take}"),
+            None => name.to_owned(),
+        }
+    }
+}
+
+impl std::fmt::Display for Clip {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self.take() {
+            Some(take) => write!(f, "{} ({take})", self.file().as_str()),
+            None => f.write_str(self.file().as_str()),
+        }
+    }
+}
+
+/// The moments that matter to the game on one clip, wherever it plays.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClipCues {
+    pub clip: Clip,
+    pub cues: Vec<Cue>,
+}
+
+/// The ground one clip covers at scale 1, wherever it plays to walk, run or sprint.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClipPace {
+    pub clip: Clip,
+    pub pace: MetersPerSec,
+}
+
+/// What a build plays where it plays its own: over its base and stance columns, the first build's.
+#[derive(JsonSchema, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildSets {
+    #[serde(default)]
+    pub base: ClipSet,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stances: Vec<StanceSet>,
 }
 
 /// A joint an item hangs from, turned and moved so +Y runs along its palm.
@@ -212,7 +327,7 @@ pub struct Hand {
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Clasp {
-    pub clip: ClipName,
+    pub clip: Clip,
     /// The joint at the root of each finger.
     pub fingers: Vec<JointName>,
 }
@@ -292,7 +407,7 @@ pub enum ClipOrder {
     InTurn,
 }
 
-/// The set a stance plays, over the base set.
+/// The cells a stance plays, over the base column.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StanceSet {
@@ -300,13 +415,12 @@ pub struct StanceSet {
     pub set: ClipSet,
 }
 
-/// A clip of the skeleton's libraries or the model's own glTF by name, or kept to one group, played
-/// over the body's resting clip.
+/// A clip played on the whole body, or kept to one group, played over the body's resting clip.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ClipRef {
-    Whole(ClipName),
-    Grouped { clip: ClipName, only: GroupName },
+    Whole(Clip),
+    Grouped { clip: Clip, only: GroupName },
 }
 
 impl ClipCell {
@@ -365,7 +479,7 @@ impl ClipOrder {
 }
 
 impl ClipRef {
-    pub fn clip(&self) -> &ClipName {
+    pub fn clip(&self) -> &Clip {
         match self {
             ClipRef::Whole(clip) | ClipRef::Grouped { clip, .. } => clip,
         }
@@ -515,153 +629,13 @@ fn is_zero(value: &f32) -> bool {
     *value == 0.0
 }
 
-pub const RIG_GLB: PartSpec = PartSpec::File {
-    name: "rig",
-    exts: &["glb"],
-};
-
-pub const CLIP_LIBRARIES: PartSpec = PartSpec::Keyed {
-    folder: "clips",
-    exts: &["glb"],
-};
-
-/// A rig is drawn, and every clip of its libraries posed, for every body on it.
+/// A rig is drawn, and every clip played on it posed, for every body on it.
 pub const MAX_JOINTS: usize = 64;
 pub const MAX_HANDS: usize = 9;
-/// Every client that sees one body on a skeleton downloads each of its libraries.
-pub const MAX_LIBRARY_BYTES: FileSize = FileSize::kib(4 * 1024);
-pub const MAX_LIBRARIES_BYTES: FileSize = FileSize::kib(8 * 1024);
+pub const MAX_SOURCES: usize = 8;
 pub const MIN_CLIP: Millis = Millis(100.0);
 pub const MAX_CLIP: Millis = Millis(60_000.0);
 pub const MAX_CUES: usize = 32;
-
-impl Bundle for SkeletonDef {
-    const PARTS: &'static [PartSpec] = &[RIG_GLB, CLIP_LIBRARIES];
-
-    fn read_parts(&mut self, parts: &mut Parts) {
-        let mut cx = RowCheck::default();
-        let rig = parts.required(RIG_GLB).and_then(|glb| {
-            self.rig = ModelRef::new(parts.path(glb));
-            parts.gltf_info(glb)
-        });
-        if let Some(rig) = &rig {
-            check_rig(self, rig, &mut cx);
-        }
-        let mut carried: BTreeMap<&str, &str> = BTreeMap::new();
-        let mut total = 0;
-        let keyed = parts.keyed(CLIP_LIBRARIES);
-        let mut infos = Vec::new();
-        for &(key, file) in &keyed {
-            self.libraries.push(Library {
-                key: key.to_owned(),
-                file: ModelRef::new(parts.path(file)),
-            });
-            infos.push((file, parts.weight(file), parts.gltf_info(file)));
-        }
-        for (file, weight, info) in &infos {
-            let weight = weight.unwrap_or(FileSize(0));
-            total += weight.0;
-            if weight > MAX_LIBRARY_BYTES {
-                parts.error(
-                    file,
-                    ErrorPlace::WholeFile,
-                    ContentProblem::new(
-                        "library too heavy",
-                        format!("{file} weighs {weight}"),
-                        format!("at most {MAX_LIBRARY_BYTES}"),
-                    ),
-                );
-            }
-            let Some(info) = info else {
-                continue;
-            };
-            if let Some(rig) = &rig {
-                for misfit in &crate::core::content::gltf::fit(&rig.tree, &info.tree).misfits {
-                    parts.error(
-                        file,
-                        ErrorPlace::WholeFile,
-                        misfit_problem(file, "rig.glb", misfit),
-                    );
-                }
-            }
-            for clip in &info.clips {
-                if clip.name.is_empty() {
-                    parts.error(
-                        file,
-                        ErrorPlace::WholeFile,
-                        ContentProblem::new(
-                            "unnamed clip",
-                            format!("{file} carries a clip without a name"),
-                            "every clip named, as sets name it",
-                        ),
-                    );
-                    continue;
-                }
-                let length = clip.length.millis();
-                if length < MIN_CLIP || length > MAX_CLIP {
-                    parts.error(
-                        file,
-                        ErrorPlace::WholeFile,
-                        ContentProblem::new(
-                            "clip length",
-                            format!("{} plays {} ms", clip.name, length.0),
-                            format!("{} ms to {} ms", MIN_CLIP.0, MAX_CLIP.0),
-                        ),
-                    );
-                }
-                if let Some(earlier) = carried.insert(&clip.name, file) {
-                    parts.error(
-                        file,
-                        ErrorPlace::WholeFile,
-                        ContentProblem::new(
-                            "clip twice",
-                            format!("clip {} is in {earlier} and {file}", clip.name),
-                            "one library per name",
-                        ),
-                    );
-                }
-            }
-        }
-        let lengths: BTreeMap<&str, Seconds> = infos
-            .iter()
-            .filter_map(|(_, _, info)| info.as_ref())
-            .flat_map(|info| {
-                info.clips
-                    .iter()
-                    .map(|clip| (clip.name.as_str(), clip.length))
-            })
-            .collect();
-        for (clip, cues) in &self.cues {
-            let pointer = format!("/cues/{}", clip.0);
-            match lengths.get(clip.as_str()) {
-                Some(&length) => check_cue_times(&pointer, cues, length, &mut cx),
-                None => cx.error(
-                    pointer,
-                    "unknown clip",
-                    format!("cues for {clip}, which no library carries"),
-                    "a clip of clips/*.glb",
-                ),
-            }
-        }
-        let total = FileSize(total);
-        if total > MAX_LIBRARIES_BYTES {
-            parts.error(
-                "",
-                ErrorPlace::WholeFile,
-                ContentProblem::new(
-                    "libraries too heavy",
-                    format!("libraries weigh {total}"),
-                    format!("at most {MAX_LIBRARIES_BYTES}"),
-                ),
-            );
-        }
-        parts.config_errors(cx);
-    }
-
-    fn write_parts(&self, _: &str, _: &mut FileWriter) -> std::io::Result<()> {
-        Ok(())
-    }
-}
 
 pub fn check_cue_times(pointer: &str, cues: &[Cue], length: Seconds, cx: &mut RowCheck) {
     let length = length.millis();
@@ -677,190 +651,39 @@ pub fn check_cue_times(pointer: &str, cues: &[Cue], length: Seconds, cx: &mut Ro
     }
 }
 
-/// What a skeleton's config must be to its rig: within the joint budget, every joint it names
-/// there, every leg a chain down the tree, and no joint in two groups.
-fn check_rig(def: &SkeletonDef, rig: &GltfInfo, cx: &mut RowCheck) {
-    let tree = &rig.tree;
-    let joints = rig.joints();
-    if joints > MAX_JOINTS {
-        cx.error(
-            "",
-            "too many joints",
-            format!("rig.glb has {joints} joints"),
-            format!("at most {MAX_JOINTS}"),
-        );
-    }
-    let joint = |name: &JointName| {
-        tree.joints()
-            .find(|&index| tree.nodes[index].name == name.0)
-    };
-    for (index, hand) in def.hands.iter().enumerate() {
-        if joint(&hand.joint).is_none() {
-            cx.error(
-                format!("/hands/{index}/joint"),
-                "unknown joint",
-                format!(
-                    "hand {:?} names joint {}, not in rig.glb",
-                    hand.name, hand.joint
-                ),
-                "a joint of rig.glb",
-            );
-        }
-        let fingers = hand.clasp.iter().flat_map(|clasp| &clasp.fingers);
-        for (at, finger) in fingers.enumerate() {
-            if joint(finger).is_none() {
-                cx.error(
-                    format!("/hands/{index}/clasp/fingers/{at}"),
-                    "unknown joint",
-                    format!("{finger} is not in rig.glb"),
-                    "a joint of rig.glb",
-                );
-            }
-        }
-    }
-    let mut grouped: BTreeMap<usize, &GroupName> = BTreeMap::new();
-    for (group, roots) in &def.groups {
-        for (at, root) in roots.iter().enumerate() {
-            let pointer = format!("/groups/{}/{at}", group.0);
-            let Some(root) = joint(root) else {
-                cx.error(
-                    pointer,
-                    "unknown joint",
-                    format!("group {group} names joint {root}, not in rig.glb"),
-                    "a joint of rig.glb",
-                );
-                continue;
-            };
-            for under in tree.joints().filter(|&node| tree.descends(node, root)) {
-                if let Some(other) = grouped.insert(under, group)
-                    && other != group
-                {
-                    cx.error(
-                        pointer.clone(),
-                        "groups overlap",
-                        format!(
-                            "joint {} is in groups {other} and {group}",
-                            tree.nodes[under].name
-                        ),
-                        "every joint in one group at most",
-                    );
-                    break;
-                }
-            }
-        }
-    }
-    for (index, layer) in def.layers.iter().enumerate() {
-        for (pointer, name) in layer.joints() {
-            if joint(name).is_none() {
-                cx.error(
-                    format!("/layers/{index}{pointer}"),
-                    "unknown joint",
-                    format!("{name} is not in rig.glb"),
-                    "a joint of rig.glb",
-                );
-            }
-        }
-        if let Layer::Feet { legs, .. } = layer {
-            for (at, leg) in legs.iter().enumerate() {
-                for pair in leg.joints.windows(2) {
-                    let (Some(upper), Some(lower)) = (joint(&pair[0]), joint(&pair[1])) else {
-                        continue;
-                    };
-                    if !tree.descends(lower, upper) || lower == upper {
-                        cx.error(
-                            format!("/layers/{index}/legs/{at}/joints"),
-                            "not a chain",
-                            format!(
-                                "leg {:?}: {} is not a descendant of {}",
-                                leg.name, pair[1], pair[0]
-                            ),
-                            "a leg's joints each beneath the one before",
-                        );
-                        break;
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// The problem a misfit is, in `file` against the rig of `rig`.
 pub fn misfit_problem(file: &str, rig: &str, misfit: &Misfit) -> ContentProblem {
-    match misfit {
-        Misfit::Missing { joint } => ContentProblem::new(
-            "joint missing",
-            format!("{file}: no joint {joint}"),
-            format!("every joint of {rig}, at its path"),
+    ContentProblem::new(
+        "joint rests off",
+        format!(
+            "{file} binds {} {:.1}° and {:.1} mm from where {rig} rests it",
+            misfit.joint,
+            misfit.turn.0,
+            misfit.shift.0 * 1000.0
         ),
-        Misfit::Misparented {
-            joint,
-            parent,
-            expected,
-        } => ContentProblem::new(
-            "joint misparented",
-            format!("{file}: joint {joint} has parent {parent}"),
-            format!("{rig} expects {expected}"),
-        ),
-        Misfit::RestsOff { joint, turn, shift } => ContentProblem::new(
-            "joint rests off",
-            format!(
-                "{file}: joint {joint} rests {:.1}° and {:.1} mm from {rig}",
-                turn.0,
-                shift.0 * 1000.0
-            ),
-            "at most 2° and 2 mm, so library clips play true",
-        ),
-    }
+        "at most 2° and 2 mm, so the skin moves with the rig",
+    )
 }
 
 impl ContentFile for SkeletonDef {
     const TABLE: &'static str = "skeleton";
-    const SHAPE: Shape = Shape::Bundle;
 
     fn fresh(near: &Nearby) -> Result<SkeletonDef, String> {
         Ok(SkeletonDef {
             name: near.name(),
-            rig: ModelRef::default(),
-            libraries: Vec::new(),
+            rig: Rig::default(),
+            sources: Vec::new(),
             hands: Vec::new(),
             groups: BTreeMap::new(),
             builds: Vec::new(),
             regions: Vec::new(),
             slots: Vec::new(),
             tints: Vec::new(),
-            base: ClipSet {
-                clips: <Action as strum::VariantArray>::VARIANTS
-                    .iter()
-                    .filter(|action| action.required())
-                    .map(|&action| {
-                        (
-                            action,
-                            ClipCell::One(ClipRef::Whole(ClipName::new(action.as_ref()))),
-                        )
-                    })
-                    .collect(),
-                ..ClipSet::default()
-            },
+            base: ClipSet::default(),
             stances: Vec::new(),
-            cues: BTreeMap::from([(
-                ClipName::new(Action::Attack.as_ref()),
-                vec![Cue {
-                    at: Millis(400.0),
-                    step: false,
-                    apex: true,
-                    sound: None,
-                }],
-            )]),
-            paces: BTreeMap::from([
-                (
-                    ClipName::new(Action::Walk.as_ref()),
-                    MetersPerSec(Meters(1.0)),
-                ),
-                (
-                    ClipName::new(Action::Run.as_ref()),
-                    MetersPerSec(Meters(3.0)),
-                ),
-            ]),
+            build_sets: BTreeMap::new(),
+            cues: Vec::new(),
+            paces: Vec::new(),
             layers: Vec::new(),
             modules: Vec::new(),
         })
@@ -888,6 +711,7 @@ impl ContentFile for SkeletonDef {
                 );
             }
         }
+        check_sources(&self.sources, cx);
         check_names(cx, "builds", "build twice", &self.builds);
         check_names(cx, "regions", "region twice", &self.regions);
         check_names(cx, "slots", "slot twice", &self.slots);
@@ -903,25 +727,38 @@ impl ContentFile for SkeletonDef {
                 );
             }
         }
-        for &action in <Action as strum::VariantArray>::VARIANTS {
-            if action.required() && !self.base.clips.contains_key(&action) {
+        check_stances("/stances", &self.stances, cx);
+        for (build, sets) in &self.build_sets {
+            let pointer = format!("/build_sets/{}", build.0);
+            if self.builds.first() == Some(build) {
                 cx.error(
-                    "/base/clips",
-                    "missing clip",
-                    format!("base set has no {} clip", action.as_ref()),
-                    format!("every engine action needs one: {}", listed_actions()),
+                    pointer.clone(),
+                    "first build's own sets",
+                    format!("sets for {build}, the first build"),
+                    "the first build's cells in base and stances, which every other plays over",
+                );
+            } else if !self.builds.contains(build) {
+                cx.error(
+                    pointer.clone(),
+                    "unknown build",
+                    build.as_str(),
+                    format!("one of the builds: {}", listed_names(&self.builds)),
                 );
             }
-        }
-        let mut stances = BTreeSet::new();
-        for (index, set) in self.stances.iter().enumerate() {
-            if !stances.insert(set.stance) {
-                cx.error(
-                    format!("/stances/{index}/stance"),
-                    "stance twice",
-                    format!("a second set for {}", set.stance.raw()),
-                    "one set per stance",
-                );
+            check_stances(&format!("{pointer}/stances"), &sets.stances, cx);
+            for (index, set) in sets.stances.iter().enumerate() {
+                if !self
+                    .stances
+                    .iter()
+                    .any(|column| column.stance == set.stance)
+                {
+                    cx.error(
+                        format!("{pointer}/stances/{index}/stance"),
+                        "stance with no column",
+                        format!("{build}'s cells for stance {}", set.stance.raw()),
+                        "a stance the skeleton has a column for in stances",
+                    );
+                }
             }
         }
         for (pointer, set) in self.sets() {
@@ -950,7 +787,6 @@ impl ContentFile for SkeletonDef {
                 }
             }
             for (entry, clip) in set.entries() {
-                cx.text(format!("{pointer}{entry}"), clip.clip().as_str(), 1, 64);
                 if let Some(group) = clip.only()
                     && !self.groups.contains_key(group)
                 {
@@ -963,8 +799,38 @@ impl ContentFile for SkeletonDef {
                 }
             }
         }
-        for (clip, cues) in &self.cues {
-            check_cues(&format!("/cues/{}", clip.0), cues, cx);
+        let mut cued = BTreeSet::new();
+        for (index, cues) in self.cues.iter().enumerate() {
+            let pointer = format!("/cues/{index}");
+            if !cued.insert(&cues.clip) {
+                cx.error(
+                    format!("{pointer}/clip"),
+                    "clip twice",
+                    cues.clip.to_string(),
+                    "every clip's cues listed once",
+                );
+            }
+            check_cues(&format!("{pointer}/cues"), &cues.cues, cx);
+        }
+        let mut paced = BTreeSet::new();
+        for (index, paced_clip) in self.paces.iter().enumerate() {
+            let pointer = format!("/paces/{index}");
+            if !paced.insert(&paced_clip.clip) {
+                cx.error(
+                    format!("{pointer}/clip"),
+                    "clip twice",
+                    paced_clip.clip.to_string(),
+                    "every clip's pace listed once",
+                );
+            }
+            if paced_clip.pace.0.0 <= 0.0 {
+                cx.error(
+                    format!("{pointer}/pace"),
+                    "no ground covered",
+                    format!("{} m/s", paced_clip.pace.0.0),
+                    "a speed above 0",
+                );
+            }
         }
         for (pointer, set) in self.sets() {
             for gait in Action::GAITS {
@@ -972,7 +838,7 @@ impl ContentFile for SkeletonDef {
                     continue;
                 };
                 for (entry, clip) in cell.entries(format!("{pointer}/clips/{}", gait.as_ref())) {
-                    if !self.paces.contains_key(clip.clip()) {
+                    if self.pace(clip.clip()).is_none() {
                         cx.error(
                             entry,
                             "no pace",
@@ -983,26 +849,74 @@ impl ContentFile for SkeletonDef {
                 }
             }
         }
-        for (clip, pace) in &self.paces {
-            if pace.0.0 <= 0.0 {
-                cx.error(
-                    format!("/paces/{}", clip.0),
-                    "no ground covered",
-                    format!("{} m/s", pace.0.0),
-                    "a speed above 0",
-                );
-            }
-        }
         for (index, layer) in self.layers.iter().enumerate() {
             check_layer(&format!("/layers/{index}"), layer, cx);
         }
     }
 }
 
-fn listed_actions() -> String {
-    <Action as strum::VariantArray>::VARIANTS
+/// Every source rig named once, within the budget, each of its joints its own, every pair from one
+/// of its joints.
+fn check_sources(sources: &[SourceRig], cx: &mut RowCheck) {
+    cx.count("/sources", sources.len(), 0, MAX_SOURCES, "source rigs");
+    let mut names = BTreeSet::new();
+    let mut owners: BTreeMap<&JointName, &str> = BTreeMap::new();
+    for (index, source) in sources.iter().enumerate() {
+        let pointer = format!("/sources/{index}");
+        cx.text(format!("{pointer}/name"), &source.name, 1, 64);
+        if !names.insert(source.name.as_str()) {
+            cx.error(
+                format!("{pointer}/name"),
+                "source rig twice",
+                format!("{:?}", source.name),
+                "every source rig named once",
+            );
+        }
+        for (at, joint) in source.joints.iter().enumerate() {
+            if let Some(owner) = owners.insert(joint, &source.name) {
+                cx.error(
+                    format!("{pointer}/joints/{at}"),
+                    "joint of two rigs",
+                    format!("{joint} is a joint of {owner:?} and {:?}", source.name),
+                    "every joint of a source rig its alone, so each clip plays on one rig",
+                );
+            }
+        }
+        for his in source.pairs.keys() {
+            if !source.joints.contains(his) {
+                cx.error(
+                    format!("{pointer}/pairs/{}", his.0),
+                    "unknown joint",
+                    format!("a pair for {his}, not a joint of {:?}", source.name),
+                    "a pair for each of the rig's own joints",
+                );
+            }
+        }
+    }
+}
+
+/// Every stance with one set of cells in `stances`.
+fn check_stances(pointer: &str, stances: &[StanceSet], cx: &mut RowCheck) {
+    let mut seen = BTreeSet::new();
+    for (index, set) in stances.iter().enumerate() {
+        if !seen.insert(set.stance) {
+            cx.error(
+                format!("{pointer}/{index}/stance"),
+                "stance twice",
+                format!("a second set for {}", set.stance.raw()),
+                "one set per stance",
+            );
+        }
+    }
+}
+
+fn listed_names<N: AsRef<str>>(names: &[N]) -> String {
+    if names.is_empty() {
+        return "none".to_owned();
+    }
+    names
         .iter()
-        .map(|action| action.as_ref())
+        .map(AsRef::as_ref)
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -1202,8 +1116,8 @@ impl ClipSet {
     }
 }
 
-/// Which rung of the ladder named a clip: the stance's set, the base set, or a fallback for what
-/// neither names: the attack for a move, idling for a gesture.
+/// Which rung of the ladder named a clip: a stance's column, the base column, or a fallback for
+/// what neither names: the attack for a move, idling for a gesture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rung {
     Stance,
@@ -1222,130 +1136,167 @@ impl SkeletonDef {
         )
     }
 
-    /// The clip the sets name for `motion` in `stance`, holding `pose` while idle, and where it was
-    /// named: the stance's set names it, else the base set; a move neither names plays the stance's
-    /// attack, else the base's; a sprint neither names plays the run. The base set names every other
-    /// action, as the loader holds it to.
+    /// The sets a body of `build` in `stance` looks through for a cell, in order, each with its
+    /// rung: the build's own stance cells, the first build's, the build's own base cells, the first
+    /// build's. A build without sets of its own, or none at all, plays the first build's.
+    fn ladder(&self, build: Option<&BuildName>, stance: Option<StanceId>) -> Vec<(&ClipSet, Rung)> {
+        let own = build
+            .filter(|build| self.builds.first() != Some(*build))
+            .and_then(|build| self.build_sets.get(build));
+        [
+            (
+                own.and_then(|own| column(&own.stances, stance)),
+                Rung::Stance,
+            ),
+            (column(&self.stances, stance), Rung::Stance),
+            (own.map(|own| &own.base), Rung::Base),
+            (Some(&self.base), Rung::Base),
+        ]
+        .into_iter()
+        .filter_map(|(set, rung)| Some((set?, rung)))
+        .collect()
+    }
+
+    /// The cell the sets name for `motion` in `stance` on a body of `build`, holding `pose` while
+    /// idle, and where it was named: the first set of the ladder that names it; a move none names
+    /// plays the attack, a sprint none names the run, a pose's beginning or end none names its
+    /// idle. Every other action the base column names, as the loader holds it to; until it does,
+    /// none is named.
     pub fn named(
         &self,
+        build: Option<&BuildName>,
         stance: Option<StanceId>,
         motion: &Motion,
         pose: Pose,
-    ) -> (&ClipCell, Rung) {
-        let base = &self.base;
-        let set = stance.and_then(|stance| self.set(stance));
-        let action = |action: Action| -> (&ClipCell, Rung) {
-            let action = if action.required() || self.names(stance, action) {
+    ) -> Option<(&ClipCell, Rung)> {
+        let ladder = self.ladder(build, stance);
+        let first = |cell: &dyn Fn(&ClipSet) -> Option<&ClipCell>| {
+            ladder
+                .iter()
+                .find_map(|(set, rung)| Some((cell(set)?, *rung)))
+        };
+        let action = |action: Action| {
+            let action = if action.required() || self.names(build, stance, action) {
                 action
             } else {
                 Action::Run
             };
-            match set.and_then(|set| set.clips.get(&action)) {
-                Some(clip) => (clip, Rung::Stance),
-                None => (&base.clips[&action], Rung::Base),
-            }
+            first(&|set| set.clips.get(&action))
         };
         match motion {
             Motion::Action(Action::Idle) => {
-                match (
-                    set.and_then(|set| set.poses.get(&pose)),
-                    base.poses.get(&pose),
-                ) {
-                    (Some(clip), _) => (clip, Rung::Stance),
-                    (None, Some(clip)) => (clip, Rung::Base),
-                    (None, None) => action(Action::Idle),
-                }
+                first(&|set| set.poses.get(&pose)).or_else(|| action(Action::Idle))
             }
             Motion::Action(acted) => action(*acted),
-            Motion::Begin(posed) => match (
-                set.and_then(|set| set.begins.get(posed)),
-                self.base.begins.get(posed),
-            ) {
-                (Some(clip), _) => (clip, Rung::Stance),
-                (None, Some(clip)) => (clip, Rung::Base),
-                (None, None) => self.named(stance, &Motion::Action(Action::Idle), *posed),
-            },
-            Motion::Gesture(name) => match (
-                set.and_then(|set| set.gestures.get(name)),
-                self.base.gestures.get(name),
-            ) {
-                (Some(clip), _) => (clip, Rung::Stance),
-                (None, Some(clip)) => (clip, Rung::Base),
-                (None, None) => (action(Action::Idle).0, Rung::Fallback),
-            },
-            Motion::End(posed) => match (
-                set.and_then(|set| set.ends.get(posed)),
-                self.base.ends.get(posed),
-            ) {
-                (Some(clip), _) => (clip, Rung::Stance),
-                (None, Some(clip)) => (clip, Rung::Base),
-                (None, None) => action(Action::Idle),
-            },
-            Motion::Move(name) => {
-                match (
-                    set.and_then(|set| set.moves.get(name)),
-                    base.moves.get(name),
-                ) {
-                    (Some(clip), _) => (clip, Rung::Stance),
-                    (None, Some(clip)) => (clip, Rung::Base),
-                    (None, None) => (action(Action::Attack).0, Rung::Fallback),
-                }
+            Motion::Begin(posed) => first(&|set| set.begins.get(posed))
+                .or_else(|| self.named(build, stance, &Motion::Action(Action::Idle), *posed)),
+            Motion::End(posed) => {
+                first(&|set| set.ends.get(posed)).or_else(|| action(Action::Idle))
             }
+            Motion::Gesture(name) => first(&|set| set.gestures.get(name))
+                .or_else(|| Some((action(Action::Idle)?.0, Rung::Fallback))),
+            Motion::Move(name) => first(&|set| set.moves.get(name))
+                .or_else(|| Some((action(Action::Attack)?.0, Rung::Fallback))),
         }
-    }
-
-    /// The gaits a body in `stance` may cover ground in, each with its clip's pace.
-    fn gaits(&self, stance: Option<StanceId>) -> Vec<Paced> {
-        Action::GAITS
-            .into_iter()
-            .filter(|&gait| gait.required() || self.names(stance, gait))
-            .filter_map(|gait| {
-                let (cell, _) = self.named(stance, &Motion::Action(gait), Pose::Idle);
-                let pace = *self.paces.get(cell.nth(0).clip())?;
-                Some(Paced { gait, pace })
-            })
-            .collect()
     }
 
     /// Whether a set names the clip of a motion that plays only where one is named: taking or
     /// leaving a pose, which a body without one does at once, and a gesture, which it never makes.
     /// Any other motion always has a clip.
-    pub fn plays(&self, stance: Option<StanceId>, motion: &Motion) -> bool {
+    pub fn plays(
+        &self,
+        build: Option<&BuildName>,
+        stance: Option<StanceId>,
+        motion: &Motion,
+    ) -> bool {
         let names = |set: &ClipSet| match motion {
             Motion::Begin(pose) => set.begins.contains_key(pose),
             Motion::End(pose) => set.ends.contains_key(pose),
             Motion::Gesture(name) => set.gestures.contains_key(name),
             Motion::Action(_) | Motion::Move(_) => true,
         };
-        stance
-            .and_then(|stance| self.set(stance))
-            .is_some_and(names)
-            || names(&self.base)
+        self.ladder(build, stance).iter().any(|(set, _)| names(set))
     }
 
-    /// Whether the stance's set or the base set names a clip for the action.
-    pub fn names(&self, stance: Option<StanceId>, action: Action) -> bool {
-        stance
-            .and_then(|stance| self.set(stance))
-            .is_some_and(|set| set.clips.contains_key(&action))
-            || self.base.clips.contains_key(&action)
+    /// Whether any set of the ladder names a clip for the action.
+    pub fn names(
+        &self,
+        build: Option<&BuildName>,
+        stance: Option<StanceId>,
+        action: Action,
+    ) -> bool {
+        self.ladder(build, stance)
+            .iter()
+            .any(|(set, _)| set.clips.contains_key(&action))
     }
 
-    /// The base set and every stance's set, each with where it stands in the config.
+    /// Every set of cells, each with where it stands in the file: the base column, every stance
+    /// column, and every build's own.
     pub fn sets(&self) -> impl Iterator<Item = (String, &ClipSet)> {
-        std::iter::once(("/base".to_owned(), &self.base)).chain(
+        let first = std::iter::once(("/base".to_owned(), &self.base)).chain(
             self.stances
                 .iter()
                 .enumerate()
                 .map(|(index, stance)| (format!("/stances/{index}/set"), &stance.set)),
-        )
+        );
+        let builds = self.build_sets.iter().flat_map(|(build, sets)| {
+            let pointer = format!("/build_sets/{}", build.0);
+            std::iter::once((format!("{pointer}/base"), &sets.base)).chain(
+                sets.stances.iter().enumerate().map(move |(index, stance)| {
+                    (format!("{pointer}/stances/{index}/set"), &stance.set)
+                }),
+            )
+        });
+        first.chain(builds)
     }
 
+    /// The first build's cells for `stance`, the column every build has.
     pub fn set(&self, stance: StanceId) -> Option<&ClipSet> {
-        self.stances
+        set_of(&self.stances, stance)
+    }
+
+    /// Every clip the skeleton names, with where it names it: in its sets, its hands' clasps, its
+    /// cues and its paces.
+    pub fn clips(&self) -> Vec<(String, &Clip)> {
+        let mut clips: Vec<(String, &Clip)> = self
+            .sets()
+            .flat_map(|(pointer, set)| {
+                set.entries().map(move |(entry, clip)| {
+                    (
+                        clip_pointer(&format!("{pointer}{entry}"), clip),
+                        clip.clip(),
+                    )
+                })
+            })
+            .collect();
+        for (index, hand) in self.hands.iter().enumerate() {
+            if let Some(clasp) = &hand.clasp {
+                clips.push((format!("/hands/{index}/clasp/clip"), &clasp.clip));
+            }
+        }
+        for (index, cues) in self.cues.iter().enumerate() {
+            clips.push((format!("/cues/{index}/clip"), &cues.clip));
+        }
+        for (index, paced) in self.paces.iter().enumerate() {
+            clips.push((format!("/paces/{index}/clip"), &paced.clip));
+        }
+        clips
+    }
+
+    /// The cues the skeleton marks on `clip`.
+    pub fn cues_of(&self, clip: &Clip) -> &[Cue] {
+        self.cues
             .iter()
-            .find(|set| set.stance == stance)
-            .map(|set| &set.set)
+            .find(|cues| cues.clip == *clip)
+            .map_or(&[], |cues| cues.cues.as_slice())
+    }
+
+    /// The ground `clip` covers at scale 1, when the skeleton says.
+    pub fn pace(&self, clip: &Clip) -> Option<MetersPerSec> {
+        self.paces
+            .iter()
+            .find(|paced| paced.clip == *clip)
+            .map(|paced| paced.pace)
     }
 
     pub fn airborne(&self) -> bool {
@@ -1375,7 +1326,27 @@ impl SkeletonDef {
     }
 }
 
-/// The fit of a candidate's tree to a skeleton's rig, as one line per joint that does not fit.
+fn column(stances: &[StanceSet], stance: Option<StanceId>) -> Option<&ClipSet> {
+    set_of(stances, stance?)
+}
+
+fn set_of(stances: &[StanceSet], stance: StanceId) -> Option<&ClipSet> {
+    stances
+        .iter()
+        .find(|set| set.stance == stance)
+        .map(|set| &set.set)
+}
+
+/// Where a cell's entry names its clip: the entry itself, or its `clip` when it keeps it to a
+/// group.
+fn clip_pointer(entry: &str, clip: &ClipRef) -> String {
+    match clip {
+        ClipRef::Whole(_) => entry.to_owned(),
+        ClipRef::Grouped { .. } => format!("{entry}/clip"),
+    }
+}
+
+/// The fit of a skin to a skeleton's rig, as one line per joint that does not fit.
 pub fn fit_problems(fit: &Fit, file: &str, skeleton: &str) -> Vec<ContentProblem> {
     fit.misfits
         .iter()
@@ -1387,120 +1358,4 @@ pub fn fit_problems(fit: &Fit, file: &str, skeleton: &str) -> Vec<ContentProblem
 pub struct Declared {
     pub moves: BTreeSet<MoveName>,
     pub gestures: BTreeSet<GestureName>,
-}
-
-/// The rig a skeleton's bodies are fitted against, and where each clip of its libraries is.
-pub struct BuiltSkeleton {
-    pub def: SkeletonDef,
-    pub rig: NodeTree,
-    /// Every clip of the libraries by name: which library carries it and how long it plays.
-    pub clips: BTreeMap<ClipName, LibraryClip>,
-    /// What each hand's clasp turns, by the hand's place among the hands: each joint of its fingers
-    /// the clasp's clip turns, by the joint's index in the rig, with the turn it opens on. Empty for
-    /// a hand without a clasp, or whose clasp turns none of its fingers.
-    pub clasps: Vec<Vec<(usize, Quat)>>,
-    gaits: BTreeMap<Option<StanceId>, Vec<Paced>>,
-}
-
-/// A gait a body may cover ground in, with the ground its clip covers at scale 1.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Paced {
-    pub gait: Action,
-    pub pace: MetersPerSec,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct LibraryClip {
-    /// The library's place among the skeleton's libraries.
-    pub library: usize,
-    /// The clip's place among the library's animations.
-    pub index: usize,
-    pub length: Seconds,
-}
-
-impl BuiltSkeleton {
-    pub fn new(def: &SkeletonDef, rig: &GltfInfo, libraries: &[Option<&GltfInfo>]) -> Self {
-        let clips = libraries
-            .iter()
-            .enumerate()
-            .filter_map(|(library, info)| Some((library, (*info)?)))
-            .flat_map(|(library, info)| {
-                info.clips.iter().enumerate().map(move |(index, clip)| {
-                    (
-                        ClipName::new(clip.name.clone()),
-                        LibraryClip {
-                            library,
-                            index,
-                            length: clip.length,
-                        },
-                    )
-                })
-            })
-            .collect();
-        let gaits = std::iter::once(None)
-            .chain(def.stances.iter().map(|set| Some(set.stance)))
-            .map(|stance| (stance, def.gaits(stance)))
-            .collect();
-        let clasps = def
-            .hands
-            .iter()
-            .map(|hand| {
-                hand.clasp
-                    .as_ref()
-                    .map_or_else(Vec::new, |clasp| clasped(&rig.tree, libraries, clasp))
-            })
-            .collect();
-        BuiltSkeleton {
-            def: def.clone(),
-            rig: rig.tree.clone(),
-            clips,
-            clasps,
-            gaits,
-        }
-    }
-
-    /// The gaits a body in `stance` may cover ground in.
-    pub fn gaits(&self, stance: Option<StanceId>) -> &[Paced] {
-        self.gaits
-            .get(&stance)
-            .or_else(|| self.gaits.get(&None))
-            .map_or(&[], Vec::as_slice)
-    }
-}
-
-/// Each joint of `rig` from the root of each of the clasp's fingers down that the clasp's clip
-/// turns, with the turn the clip opens on, found in whichever library carries the clip.
-fn clasped(rig: &NodeTree, libraries: &[Option<&GltfInfo>], clasp: &Clasp) -> Vec<(usize, Quat)> {
-    let Some((library, clip)) = libraries.iter().flatten().find_map(|library| {
-        Some((
-            *library,
-            library
-                .clips
-                .iter()
-                .find(|clip| clip.name == clasp.clip.0)?,
-        ))
-    }) else {
-        return Vec::new();
-    };
-    let roots: Vec<usize> = clasp
-        .fingers
-        .iter()
-        .filter_map(|finger| rig.named(&finger.0))
-        .collect();
-    rig.joints()
-        .filter(|&joint| roots.iter().any(|&root| rig.descends(joint, root)))
-        .filter_map(|joint| {
-            let name = &rig.nodes[joint].name;
-            clip.opening
-                .iter()
-                .find(|(node, _)| {
-                    library
-                        .tree
-                        .nodes
-                        .get(*node)
-                        .is_some_and(|node| node.name == *name)
-                })
-                .map(|(_, turn)| (joint, *turn))
-        })
-        .collect()
 }

@@ -1,0 +1,119 @@
+{
+  "name": "Bat",
+  "rig": {
+    "files": [
+      "characters/skeletons/bat/rig.glb"
+    ]
+  },
+  "base": {
+    "clips": {
+      "idle": {
+        "file": "characters/skeletons/bat/bat.glb",
+        "take": "hover"
+      },
+      "walk": {
+        "file": "characters/skeletons/bat/bat.glb",
+        "take": "fly"
+      },
+      "run": {
+        "file": "characters/skeletons/bat/bat.glb",
+        "take": "fly"
+      },
+      "attack": {
+        "file": "characters/skeletons/bat/bat.glb",
+        "take": "bite"
+      },
+      "death": {
+        "file": "characters/skeletons/bat/bat.glb",
+        "take": "death"
+      },
+      "talk": {
+        "file": "characters/skeletons/bat/bat.glb",
+        "take": "hover"
+      }
+    }
+  },
+  "cues": [
+    {
+      "clip": {
+        "file": "characters/skeletons/bat/bat.glb",
+        "take": "bite"
+      },
+      "cues": [
+        {
+          "at": 394.0,
+          "apex": true,
+          "sound": "sound-and-voice/sfx/bite01.sfx"
+        }
+      ]
+    },
+    {
+      "clip": {
+        "file": "characters/skeletons/bat/bat.glb",
+        "take": "death"
+      },
+      "cues": [
+        {
+          "at": 0.0,
+          "sound": "sound-and-voice/sfx/death01.sfx"
+        }
+      ]
+    },
+    {
+      "clip": {
+        "file": "characters/skeletons/bat/bat.glb",
+        "take": "fly"
+      },
+      "cues": [
+        {
+          "at": 312.0,
+          "step": true
+        },
+        {
+          "at": 938.0,
+          "step": true
+        }
+      ]
+    }
+  ],
+  "paces": [
+    {
+      "clip": {
+        "file": "characters/skeletons/bat/bat.glb",
+        "take": "fly"
+      },
+      "pace": 1.25
+    }
+  ],
+  "layers": [
+    {
+      "type": "chain",
+      "from": "Shoulder.L",
+      "stiffness": 0.5,
+      "drag": 0.4,
+      "during": [
+        "idle",
+        "walk",
+        "run",
+        "talk"
+      ]
+    },
+    {
+      "type": "chain",
+      "from": "Shoulder.R",
+      "stiffness": 0.5,
+      "drag": 0.4,
+      "during": [
+        "idle",
+        "walk",
+        "run",
+        "talk"
+      ]
+    }
+  ],
+  "modules": [
+    {
+      "type": "airborne"
+    }
+  ]
+}

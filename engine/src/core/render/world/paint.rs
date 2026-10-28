@@ -18,11 +18,12 @@ pub struct Paint {
 }
 
 /// `colour`, laid as thick as one channel of `mask` is bright: fully where it is white, not at all
-/// where it is black.
+/// where it is black; the other way round when `inverted`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PaintLayer {
     pub mask: String,
     pub channel: usize,
+    pub inverted: bool,
     pub colour: Rgb,
 }
 
@@ -159,7 +160,8 @@ pub fn bake(base: &Image, layers: &[(&Image, &PaintLayer)]) -> Option<Image> {
     for (index, pixel) in data.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let mut mixed = [pixel[0], pixel[1], pixel[2]].map(|byte| linear[byte as usize]);
         for (((_, layer), &mask), colour) in layers.iter().zip(&masks).zip(&colours) {
-            let amount = decoded[mask].1.as_raw()[index * 4 + layer.channel.min(3)] as f32 / 255.0;
+            let bright = decoded[mask].1.as_raw()[index * 4 + layer.channel.min(3)] as f32 / 255.0;
+            let amount = if layer.inverted { 1.0 - bright } else { bright };
             for (mixed, colour) in mixed.iter_mut().zip(colour) {
                 *mixed += (colour - *mixed) * amount;
             }

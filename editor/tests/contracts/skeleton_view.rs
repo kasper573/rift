@@ -1,22 +1,20 @@
 use std::collections::BTreeMap;
 
-use bevy::math::{Quat, Vec3};
 use editor::app::Editor;
-use editor::views::skeleton::{self, SkeletonPage, library, sets};
-use engine::core::content::gltf::{Rest, TreeNode};
+use editor::views::skeleton::{self, SkeletonPage, rigs, sets};
+use engine::core::assets::ModelRef;
 use engine::core::render::world::layers::Gait;
 use engine::core::time::{Millis, Seconds};
 use engine::core::units::{Meters, MetersPerSec};
-use engine::systems::actor::model::Skeletons;
-use engine::systems::actor::part::ModelPartDef;
 use engine::systems::actor::skeleton::{
-    BodyRegion, BuildName, CLIP_LIBRARIES, ClipCell, ClipName, ClipOrder, ClipRef, Cue, GroupName,
-    JointName, Layer, Leg, MoveName, SkeletonDef,
+    BuildName, Clip, ClipCell, ClipOrder, ClipRef, Cue, Hand, JointName, Layer, Leg, MoveName,
+    SkeletonDef,
 };
 use engine::systems::actor::stance::StanceDef;
 use engine::systems::actor::{Action, Pose};
 use serde_json::json;
-use testkit::{BODY, LIBRARY, path};
+use strum::VariantArray;
+use testkit::{BODY, clip, path};
 use ui::egui;
 
 use crate::support::{self, Frames, click};
@@ -40,7 +38,7 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
     let sword = path("stance", SWORD);
     let slash = sets::SetRow::Move(MoveName::new("slash"));
 
-    let slash_clip = ClipName::new("slash");
+    let slash_clip = file_clip(&clip("slash"));
     assert!(skeleton::set_cues(
         &mut editor,
         &key,
@@ -48,12 +46,12 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         vec![cue(300.0, false), cue(120.0, true)]
     ));
     assert_eq!(
-        skeleton_of(&mut editor, &key).cues[&slash_clip],
-        vec![cue(120.0, true), cue(300.0, false)],
+        skeleton_of(&mut editor, &key).cues_of(&slash_clip),
+        [cue(120.0, true), cue(300.0, false)],
         "cues are kept in order of time"
     );
 
-    let walk_clip = ClipName::new("walk");
+    let walk_clip = file_clip(&clip("walk"));
     assert!(skeleton::set_pace(
         &mut editor,
         &key,
@@ -61,14 +59,15 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         MetersPerSec(Meters(1.4))
     ));
     assert_eq!(
-        skeleton_of(&mut editor, &key).paces[&walk_clip],
-        MetersPerSec(Meters(1.4)),
+        skeleton_of(&mut editor, &key).pace(&walk_clip),
+        Some(MetersPerSec(Meters(1.4))),
         "a clip's pace lands in the skeleton's paces"
     );
 
     assert!(sets::set_cell(
         &mut editor,
         &key,
+        None,
         Some(&sword),
         &slash,
         Some(whole("slash"))
@@ -79,13 +78,14 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
     assert_eq!(set.set.moves[&MoveName::new("slash")], whole("slash"));
     let combo = ClipCell::Several {
         clips: ["slash", "attack"]
-            .map(|clip| ClipRef::Whole(ClipName::new(clip)))
+            .map(|name| ClipRef::Whole(file_clip(&clip(name))))
             .to_vec(),
         order: ClipOrder::InTurn,
     };
     assert!(sets::set_cell(
         &mut editor,
         &key,
+        None,
         Some(&sword),
         &slash,
         Some(combo.clone())
@@ -100,6 +100,7 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
             &mut editor,
             &key,
             None,
+            None,
             &sets::SetRow::Action(Action::Attack),
             None
         ),
@@ -112,6 +113,7 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
     assert!(sets::set_cell(
         &mut editor,
         &key,
+        None,
         Some(&sword),
         &slash,
         None
@@ -124,28 +126,20 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         "a cell taken away falls back down the ladder"
     );
 
-    assert!(skeleton::make_hand(&mut editor, &key, "body", "chest"));
-    assert!(
-        !skeleton::make_hand(&mut editor, &key, "body", "again"),
-        "a joint is one hand"
-    );
     let mut hands = skeleton_of(&mut editor, &key).hands;
+    hands.push(Hand {
+        name: "chest".to_owned(),
+        joint: JointName::new("body"),
+        offset: Default::default(),
+        turn: Default::default(),
+        clasp: None,
+    });
     hands.swap(0, 2);
     assert!(skeleton::set_hands(&mut editor, &key, hands));
     assert_eq!(
         hand_joints(&skeleton_of(&mut editor, &key)),
         vec!["body", "hand.l", "hand.r"],
         "the first hand listed is the main hand"
-    );
-
-    assert!(skeleton::group_at(&mut editor, &key, "hand.r", "arms"));
-    assert!(skeleton::group_at(&mut editor, &key, "hand.l", "arms"));
-    assert_eq!(
-        skeleton_of(&mut editor, &key).groups,
-        BTreeMap::from([(
-            GroupName::new("arms"),
-            vec![JointName::new("hand.r"), JointName::new("hand.l")]
-        )])
     );
 
     let feet = |joints: [&str; 2]| Layer::Feet {
@@ -175,193 +169,123 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
 }
 
 #[test]
-fn a_dropped_library_adds_only_the_clips_a_set_may_name_and_a_new_rig_must_fit_every_wearer() {
+fn a_source_rigs_clips_play_on_ours_once_its_joints_are_paired_with_ours() {
+    let mut his = testkit::rig();
+    for node in &mut his.nodes {
+        node.name = format!("his_{}", node.name);
+    }
+    let jab = "seller/jab.glb";
+    let game = game().asset(jab, testkit::library_glb(&his, &[("jab", Seconds(0.4))]));
     let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(game(), &scratch);
+    let mut editor = support::open(game, &scratch);
     let key = path("skeleton", BODY);
-    support::settled(&mut editor);
-
-    let dropped = testkit::library_glb(
-        &testkit::rig(),
-        &[
-            ("thrust", Seconds(0.6)),
-            ("idle", Seconds(0.9)),
-            ("T-Pose", Seconds(0.5)),
-        ],
-    );
-    let mut draft =
-        library::draft(&editor, &key, dropped, "spear.glb".to_owned(), "Spear").expect("a draft");
-    assert_eq!(
-        draft
-            .clips
-            .iter()
-            .map(|clip| (clip.name.as_str(), clip.kind.clone()))
-            .collect::<Vec<_>>(),
-        vec![
-            ("thrust", library::ClipKind::New),
-            ("idle", library::ClipKind::Present(LIBRARY.to_owned())),
-            (
-                "T-Pose",
-                library::ClipKind::Utility("a pose to rig against".to_owned())
-            ),
-        ]
-    );
-    assert_eq!(draft.name, "spear");
-    draft.taken.insert("idle".to_owned());
-    assert!(draft.refusals().is_empty(), "{:?}", draft.refusals());
-    assert!(library::apply(&mut editor, &key, &draft));
-    support::settled(&mut editor);
-    let content = support::content(&mut editor).clone();
-    let id = content.by_path::<SkeletonDef>(&key).expect("the skeleton");
-    let built = Skeletons::loaded(&content, id).expect("the skeleton loads");
-    let library_of = |clip: &str| {
-        let found = built.clips[&ClipName::new(clip)];
-        built.def.libraries[found.library].key.clone()
+    let jab = file_clip(jab);
+    let rigging = |editor: &mut Editor| {
+        let def = skeleton_of(editor, &key);
+        skeleton::rigging(editor, &key, &def).expect("the skeleton's rigging")
     };
-    assert_eq!(library_of("thrust"), "spear");
+    assert!(rigging(&mut editor).playable(&jab).is_none());
+
+    let joints: Vec<JointName> = his
+        .nodes
+        .iter()
+        .map(|node| JointName::new(&node.name))
+        .collect();
+    assert!(rigs::add_source(
+        &mut editor,
+        &key,
+        "seller".to_owned(),
+        joints
+    ));
+    let pairs: BTreeMap<JointName, JointName> = his
+        .nodes
+        .iter()
+        .map(|node| {
+            let ours = node.name.trim_start_matches("his_");
+            (JointName::new(&node.name), JointName::new(ours))
+        })
+        .collect();
+    assert!(rigs::set_pairs(&mut editor, &key, 0, pairs));
+    let paired = rigging(&mut editor);
     assert_eq!(
-        library_of("idle"),
-        "spear",
-        "the library took the clip over"
+        paired.playable(&jab).map(|found| found.source),
+        Some(Some(0)),
+        "the seller's clip plays on our rig through its pairs"
     );
-    assert_eq!(library_of("walk"), LIBRARY);
-    assert!(!built.clips.contains_key(&ClipName::new("T-Pose")));
     assert!(
-        support::files(&mut editor)
-            .contains(&format!("{key}/{}", CLIP_LIBRARIES.named("spear", "glb")))
-    );
-
-    let mut handless = testkit::rig();
-    handless.nodes.retain(|node| node.name != "hand.l");
-    let misfit = library::draft(
-        &editor,
-        &key,
-        testkit::library_glb(&handless, &[("jab", Seconds(0.4))]),
-        "jab.glb".to_owned(),
-        "jab",
-    )
-    .expect("a draft");
-    assert!(
-        misfit.refusals().join("\n").contains("no joint hand.l"),
-        "{:?}",
-        misfit.refusals()
-    );
-    assert!(!library::apply(&mut editor, &key, &misfit));
-
-    let mut tailed = testkit::rig();
-    tailed.nodes.push(TreeNode {
-        name: "tail".to_owned(),
-        parent: Some(1),
-        rest: Rest {
-            translation: Vec3::new(0.0, -0.5, 0.0),
-            rotation: Quat::IDENTITY,
-            scale: Vec3::ONE,
-        },
-        mesh: false,
-    });
-    let mut rig = library::draft(
-        &editor,
-        &key,
-        testkit::rig_glb(&tailed),
-        "tailed.glb".to_owned(),
-        "tailed",
-    )
-    .expect("a draft");
-    rig.as_rig = true;
-    assert!(
-        rig.refusals()
-            .iter()
-            .any(|refusal| refusal.contains("no joint tail")),
-        "every model wearing the skeleton is refitted: {:?}",
-        rig.refusals()
+        sets::set_cell(
+            &mut editor,
+            &key,
+            None,
+            None,
+            &sets::SetRow::Action(Action::Attack),
+            Some(ClipCell::One(ClipRef::Whole(jab.clone())))
+        ),
+        "a set names it like any clip of ours"
     );
 }
 
 #[test]
-fn a_folder_of_part_meshes_dropped_on_a_skeleton_becomes_its_parts_one_per_name_across_builds() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let game = game()
+fn a_build_fills_its_empty_cells_from_the_first_builds_by_rewriting_their_file_names() {
+    let female = |action: &str| format!("clips/female/{action}.glb");
+    let mut game = game()
         .edit("skeleton", BODY, |body| {
             body["builds"] = json!(["male", "female"])
         })
         .edit("model", "hero_body", |hero| hero["build"] = json!("male"))
-        .edit("model", "hero", |hero| hero["build"] = json!("male"))
-        .edit("skeleton", BODY, |body| body["regions"] = json!(["hair"]));
+        .edit("model", "hero", |hero| hero["build"] = json!("male"));
+    let reshaped: Vec<&str> = Action::VARIANTS
+        .iter()
+        .map(|action| action.as_ref())
+        .filter(|action| *action != "idle")
+        .collect();
+    for action in &reshaped {
+        game = game.asset(
+            &female(action),
+            testkit::library_glb(&testkit::rig(), &[(action, Seconds(0.3))]),
+        );
+    }
+    let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = support::open(game, &scratch);
     let key = path("skeleton", BODY);
-    let dropped = scratch.path().join("Pack Parts");
-    std::fs::create_dir_all(dropped.join("heads")).expect("a folder");
-    let mesh = testkit::skin_glb(&testkit::rig(), &[]);
-    for file in [
-        "SK_Chr_Torso_Male_00.glb",
-        "SK_Chr_Torso_Female_00.glb",
-        "SK_Chr_Hair_01.glb",
-        "heads/SK_Chr_Eyebrow_Male_01.glb",
-        "SK_Chr_HeroBody.glb",
-    ] {
-        std::fs::write(dropped.join(file), &mesh).expect("a mesh");
-    }
-
-    let imported = skeleton::import::import(&mut editor, &key, &dropped).expect("imported");
-
-    support::settled(&mut editor);
-    let files = support::files(&mut editor);
-    let meshes = |part: &str| -> Vec<String> {
-        let bundle = path("model_part", part);
-        files
-            .files_of(&bundle)
-            .into_iter()
-            .filter_map(|file| file.strip_prefix(&format!("{bundle}/")).map(str::to_owned))
-            .filter(|file| file.ends_with(".glb"))
-            .collect()
+    let build = BuildName::new("female");
+    let filled = |editor: &mut Editor| {
+        let def = skeleton_of(editor, &key);
+        let rigging = skeleton::rigging(editor, &key, &def).expect("the skeleton's rigging");
+        sets::fill(
+            editor,
+            &key,
+            &rigging,
+            &build,
+            &[("clips/body/".to_owned(), "clips/female/".to_owned())],
+        )
     };
     assert_eq!(
-        imported.parts,
-        ["eyebrow-01", "hair-01", "hero-body", "torso-00"].map(|part| path("model_part", part)),
-        "the pack's prefix comes off and each part goes where the skeleton's parts sit"
+        filled(&mut editor),
+        reshaped.len(),
+        "a cell whose rewritten file holds no clip stays empty"
     );
-    assert_eq!(meshes("torso-00"), ["builds/female.glb", "builds/male.glb"]);
-    assert_eq!(meshes("hair-01"), ["mesh.glb"]);
-    assert_eq!(meshes("eyebrow-01"), ["builds/male.glb"]);
-    assert_eq!(imported.unpaired, ["SK_Chr_Eyebrow_Male_01.glb"]);
-    let torso = path("model_part", "torso-00");
-    let mut covering = part_of(&mut editor, &torso);
-    covering.covers = vec![BodyRegion::new("hair")];
-    assert!(editor.write_content("cover the hair", &torso, &covering));
-
-    let again = scratch.path().join("again");
-    std::fs::create_dir_all(&again).expect("a folder");
-    std::fs::write(again.join("SK_Chr_Torso_Male_00.glb"), &mesh).expect("a mesh");
-    skeleton::import::import(&mut editor, &key, &again).expect("imported again");
-
-    let torso = part_of(&mut editor, &torso);
+    let row = skeleton_of(&mut editor, &key);
+    let base = &row.build_sets[&build].base;
     assert_eq!(
-        torso.covers,
-        [BodyRegion::new("hair")],
-        "a part imported again keeps what it says"
+        base.clips[&Action::Attack],
+        ClipCell::One(ClipRef::Whole(file_clip(&female("attack"))))
+    );
+    assert!(!base.clips.contains_key(&Action::Idle));
+    assert_eq!(
+        row.pace(&file_clip(&female("walk"))),
+        Some(testkit::WALK_PACE),
+        "a rewritten clip covers the ground its first build's does until told otherwise"
     );
     assert_eq!(
-        torso
-            .meshes()
-            .map(|(build, _)| build.map(BuildName::to_string))
-            .collect::<Vec<_>>(),
-        [Some("male".to_owned())],
-        "and wears only the new meshes"
+        filled(&mut editor),
+        0,
+        "a cell filled once is the build's own"
     );
-}
-
-fn part_of(editor: &mut Editor, key: &str) -> ModelPartDef {
-    support::settled(editor);
-    editor
-        .read::<ModelPartDef>(key)
-        .expect("a project")
-        .expect("the part reads")
-        .as_ref()
-        .clone()
 }
 
 #[test]
-fn the_skeleton_view_marks_its_rig_and_edits_its_sets_from_the_pointer_and_keys() {
+fn the_skeleton_view_draws_every_page_and_sets_a_cell_from_the_pointer() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = support::open(game(), &scratch);
     let key = path("skeleton", BODY);
@@ -373,23 +297,7 @@ fn the_skeleton_view_marks_its_rig_and_edits_its_sets_from_the_pointer_and_keys(
         frames.run(events, |ui| skeleton::show(editor, ui, &key))
     };
 
-    let joints = draw(&mut editor, Vec::new());
-    assert!(joints.any(|text| text == "hand right · main"), "{joints:?}");
-    let body = joints.at("body");
-    for events in click(body) {
-        draw(&mut editor, events);
-    }
-    draw(
-        &mut editor,
-        support::key(egui::Key::G, egui::Modifiers::NONE),
-    );
-    support::settled(&mut editor);
-    assert_eq!(
-        skeleton_of(&mut editor, &key).groups,
-        BTreeMap::from([(GroupName::new("body"), vec![JointName::new("body")])]),
-        "G starts a group at the chosen joint"
-    );
-
+    draw(&mut editor, Vec::new());
     editor.views.skeleton.view_mut(&key).page = SkeletonPage::Sets;
     draw(&mut editor, Vec::new());
     let sets_page = draw(&mut editor, Vec::new());
@@ -398,7 +306,7 @@ fn the_skeleton_view_marks_its_rig_and_edits_its_sets_from_the_pointer_and_keys(
         draw(&mut editor, events);
     }
     let picker = draw(&mut editor, Vec::new());
-    for events in click(picker.at("sit")) {
+    for events in click(picker.at(&clip("sit"))) {
         draw(&mut editor, events);
     }
     draw(&mut editor, Vec::new());
@@ -411,7 +319,8 @@ fn the_skeleton_view_marks_its_rig_and_edits_its_sets_from_the_pointer_and_keys(
     );
 
     for page in [
-        SkeletonPage::Clips,
+        SkeletonPage::Rigs,
+        SkeletonPage::Sets,
         SkeletonPage::Hands,
         SkeletonPage::Body,
         SkeletonPage::Layers,
@@ -419,7 +328,7 @@ fn the_skeleton_view_marks_its_rig_and_edits_its_sets_from_the_pointer_and_keys(
         editor.views.skeleton.view_mut(&key).page = page;
         let drawn = draw(&mut editor, Vec::new());
         assert!(
-            !drawn.any(|text| text.contains("did not load")),
+            !drawn.any(|text| text.contains("did not load") || text.contains("no rig stands")),
             "{page:?}: {drawn:?}"
         );
     }
@@ -434,7 +343,10 @@ fn a_clip_on_the_skeleton_view_plays_without_being_asked() {
     let mut draw =
         |editor: &mut Editor| frames.run(Vec::new(), |ui| skeleton::show(editor, ui, &key));
     draw(&mut editor);
-    editor.views.skeleton.view_mut(&key).page = SkeletonPage::Clips;
+    let view = editor.views.skeleton.view_mut(&key);
+    view.page = SkeletonPage::Sets;
+    view.sets.open = Some((sets::SetRow::Action(Action::Walk), None));
+    view.clip = Some(file_clip(&clip("walk")));
     let shown: Vec<String> = (0..4)
         .map(|_| {
             let drawn = draw(&mut editor);
@@ -451,8 +363,12 @@ fn a_clip_on_the_skeleton_view_plays_without_being_asked() {
     );
 }
 
-fn whole(clip: &str) -> ClipCell {
-    ClipCell::One(ClipRef::Whole(ClipName::new(clip)))
+fn file_clip(file: &str) -> Clip {
+    Clip::File(ModelRef::new(file))
+}
+
+fn whole(name: &str) -> ClipCell {
+    ClipCell::One(ClipRef::Whole(file_clip(&clip(name))))
 }
 
 fn cue(at: f32, apex: bool) -> Cue {

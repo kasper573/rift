@@ -237,6 +237,7 @@ pub enum ModalDialog {
     PickRow(PickRowDialog),
     RenameNode(RenameNodeDialog),
     LinkNode(LinkNodeDialog),
+    Import(crate::import::ImportDialog),
 }
 
 pub struct PickRowDialog {

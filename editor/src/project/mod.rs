@@ -739,10 +739,13 @@ impl Project {
         changes: &[FileChange],
     ) -> (Vec<LoadError>, Checked, Vec<ReadRow>) {
         let mut touched: BTreeSet<String> = changes.iter().map(|c| c.file.clone()).collect();
-        for removed in changes.iter().filter(|change| change.bytes.is_none()) {
-            let naming = match content_holding(&removed.file) {
-                Some(content) => self.usages.of_content(content),
-                None => self.usages.of_media(&removed.file),
+        // The game decodes only the media its content names, so a media file is checked through
+        // whatever names it, and whatever named a file removed must do without it.
+        for change in changes {
+            let naming = match content_holding(&change.file) {
+                Some(content) if change.bytes.is_none() => self.usages.of_content(content),
+                Some(_) => continue,
+                None => self.usages.of_media(&change.file),
             };
             touched.extend(naming.iter().map(|usage| usage.file.clone()));
         }

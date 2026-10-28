@@ -1,11 +1,12 @@
 use std::time::Duration;
 
-use driver::{WaitBudget, clickable_point, content, id, marker_at, nearest_npc, npc_is};
-use engine::core::math::Pos;
+use driver::{WaitBudget, clickable_point, content, id, marker_at, nearest_npc};
+use engine::core::math::{Pos, Rect};
 use engine::core::units::{MeterPos, Meters};
-use engine::systems::actor::Action;
+use engine::systems::actor::{Action, Pose};
+use engine::systems::area::{self, AreaDef, AreaModule};
 use engine::systems::input::map::InputAction;
-use engine::systems::npc::NpcDef;
+use engine::systems::npc::{NpcDef, NpcId};
 use engine::systems::probe::{ProbeBody, ProbeSnapshot};
 
 use crate::chapters::Chapter;
@@ -65,13 +66,66 @@ fn play(shoot: &mut Shoot) {
     close_up(
         &mut me,
         "By the stone hum a turret turns on its base and fires at whoever comes near",
-        ("turret", marker_at(AREA, "turret")),
+        (id("turret"), marker_at(AREA, "turret")),
         |turret| turret.action == Action::Attack,
     );
     for (npc, says, shows) in BODIES {
         let ground = me.look_out(npc, |snapshot| nearest_npc(snapshot, npc).is_some());
-        close_up(&mut me, says, (npc, ground), shows);
+        close_up(&mut me, says, (id(npc), ground), shows);
     }
+    let (npc, ground, build) = of_a_build_of_its_own();
+    close_up(
+        &mut me,
+        &format!(
+            "Bodies of one skeleton come in builds, and a build may be given clips of its own: \
+             this {} is a {build}, and moves in its build's clips rather than the first build's",
+            npc.get(content()).name
+        ),
+        (npc, ground),
+        plays_its_builds_own,
+    );
+}
+
+/// An npc of the area of a build its skeleton gives clips of its own, other than the first build,
+/// with where it keeps to and its build.
+fn of_a_build_of_its_own() -> (NpcId, Pos<Meters>, String) {
+    let content = content();
+    let area = id::<AreaDef>(AREA);
+    let whole = Rect::from_size(area::load(content, area).size);
+    area::modules(content, area)
+        .find_map(|module| {
+            let (npc, ground) = match module {
+                AreaModule::Population(population) => {
+                    (population.npc, population.roams.unwrap_or(whole).center())
+                }
+                AreaModule::Resident(resident) => (resident.npc, resident.at),
+                _ => return None,
+            };
+            let model = npc.get(content).appearance.model.get(content);
+            let build = model.build.as_ref()?;
+            let skeleton = model.skeleton.get(content);
+            (skeleton.builds.first() != Some(build) && skeleton.build_sets.contains_key(build))
+                .then(|| (npc, ground, build.to_string()))
+        })
+        .unwrap_or_else(|| panic!("nobody in {AREA} is of a build given clips of its own"))
+}
+
+/// Whether `body` shows what it does in a clip its build's own sets give it, where the first
+/// build's would play another.
+fn plays_its_builds_own(body: &ProbeBody) -> bool {
+    let skeleton = body.skeleton.get(content());
+    let Some(build) = body.appearance.model.get(content()).build.as_ref() else {
+        return false;
+    };
+    let named = |build| {
+        skeleton
+            .named(build, body.stance, &body.shown, Pose::Idle)
+            .map(|(cell, _)| cell)
+    };
+    named(Some(build)).is_some_and(|own| {
+        named(skeleton.builds.first()) != Some(own)
+            && own.clips().iter().any(|clip| *clip.clip() == body.clip)
+    })
 }
 
 const AREA: &str = "island";
@@ -82,7 +136,7 @@ const AREA: &str = "island";
 fn close_up(
     me: &mut Star,
     says: &str,
-    (npc, ground): (&'static str, Pos<Meters>),
+    (npc, ground): (NpcId, Pos<Meters>),
     shows: fn(&ProbeBody) -> bool,
 ) {
     me.zoom_camera(1);
@@ -90,10 +144,16 @@ fn close_up(
         me.tilt_camera(InputAction::TiltUp);
     }
     me.look_for(
-        &format!("a {npc} showing it close up"),
+        &format!("a {} showing it close up", npc.name(content())),
         ground,
         |snapshot| {
-            showing(snapshot, npc, shows).is_some_and(|at| clickable_point(snapshot, at).is_some())
+            showing(snapshot, npc, shows).is_some_and(|at| {
+                clickable_point(snapshot, at).is_some()
+                    && snapshot
+                        .me
+                        .as_ref()
+                        .is_some_and(|me| at.distance(me.at) <= CLOSE_UP_WITHIN)
+            })
         },
     );
     me.caption(says);
@@ -121,6 +181,7 @@ const BETWEEN_SWINGS: WaitBudget = WaitBudget {
 
 /// Within a bite or a swing of the player.
 const SET_UPON_WITHIN: Meters = Meters(3.0);
+const CLOSE_UP_WITHIN: Meters = Meters(5.0);
 
 fn set_upon(snapshot: &ProbeSnapshot) -> bool {
     snapshot
@@ -142,12 +203,12 @@ fn sets_on_me(snapshot: &ProbeSnapshot, body: &ProbeBody) -> bool {
 
 fn showing(
     snapshot: &ProbeSnapshot,
-    npc: &str,
+    npc: NpcId,
     shows: fn(&ProbeBody) -> bool,
 ) -> Option<Pos<Meters>> {
     snapshot
         .actors
         .iter()
-        .find(|body| body.health > 0.0 && npc_is(body, npc) && shows(body))
+        .find(|body| body.health > 0.0 && body.npc == Some(npc) && shows(body))
         .map(|body| body.at)
 }

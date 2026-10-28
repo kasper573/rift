@@ -9,6 +9,7 @@ pub mod part;
 pub mod plate;
 pub mod playing;
 pub mod render;
+pub mod rigging;
 pub mod skeleton;
 pub mod stance;
 
@@ -55,13 +56,13 @@ pub fn register(app: &mut App) {
 
 pub fn content(registry: &mut ContentRegistry) {
     registry
-        .bundle::<SkeletonDef>()
+        .file::<SkeletonDef>()
         .named::<SkeletonDef>()
         .modules::<SkeletonDef>()
         .file::<StanceDef>()
         .named::<StanceDef>()
-        .bundle::<MaterialDef>()
-        .bundle::<ModelPartDef>()
+        .file::<MaterialDef>()
+        .file::<ModelPartDef>()
         .file::<ModelDef>()
         .modules::<ModelDef>()
         .hook(LoadStep::Files, model::build_all)

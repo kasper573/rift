@@ -9,24 +9,24 @@ use serde::{Deserialize, Serialize};
 
 use super::appearance::{self, BodyLook, LaidPart};
 use super::material;
-use super::part::{ModelPartDef, ModelPartId};
+use super::part::{MAX_PART_BYTES, ModelPartDef, ModelPartId};
 use super::playing::Motion;
+use super::rigging::BuiltSkeleton;
 use super::skeleton::{
-    self, BuildName, BuiltSkeleton, ClipCell, ClipName, Colours, Cue, Declared, GroupName, Hand,
-    LibraryClip, SkeletonDef, SkeletonId,
+    self, BuildName, Clip, ClipCell, Colours, Cue, Declared, GroupName, Hand, SkeletonDef,
+    SkeletonId,
 };
 use super::stance::StanceId;
 use super::{Action, Pose};
-use crate::core::assets::ModelRef;
+use crate::core::assets::FileSize;
 use crate::core::content::gltf::{self, GltfInfo};
 use crate::core::content::media::GltfInfos;
 use crate::core::content::{
-    Content, ContentFile, ContentId, ContentProblem, ErrorPlace, Loading, ModuleRule, ModuleSet,
+    Content, ContentFile, ContentId, ContentProblem, FileHashes, Loading, ModuleRule, ModuleSet,
     Nearby, RowCheck,
 };
 use crate::core::geometry::Capsule;
-use crate::core::render::world::body::{BodyFiles, Skin};
-use crate::core::render::world::mannequin::RigClip;
+use crate::core::render::world::body::{Figure, Skin};
 use crate::core::time::{Millis, PlaybackRate, Seconds};
 use crate::core::units::{Meters, MetersPerSec};
 
@@ -57,8 +57,6 @@ pub enum ModelModule {
 
 // A character is downloaded by every client that sees it, and drawn many times a frame.
 pub const MAX_CHARACTER_TRIANGLES: usize = 8000;
-/// The warning of a library carrying clips no set names, downloaded by every client for nothing.
-pub const UNNAMED_CLIPS: &str = "clips no set names";
 
 impl ContentFile for ModelDef {
     const TABLE: &'static str = "model";
@@ -143,7 +141,7 @@ impl ModelDef {
 
 pub struct Models(pub Vec<Option<ActorModel>>);
 
-/// Every skeleton that loaded, by its id: its rig and where each clip of its libraries is.
+/// Every skeleton that loaded, by its id: its rig and every clip it plays.
 pub struct Skeletons(pub Vec<Option<Arc<BuiltSkeleton>>>);
 
 impl Skeletons {
@@ -163,19 +161,18 @@ impl Skeletons {
 pub fn build_all(loading: &mut Loading) {
     let content = loading.content();
     let infos = content.built::<GltfInfos>();
+    let hashes = content.built::<FileHashes>();
     let skeletons = build_skeletons(loading, &content, infos);
     for (id, part) in loading.rows::<ModelPartDef>(&content) {
         let Some(skeleton) = skeletons.get(part.skeleton.index()).cloned().flatten() else {
             loading.fail(id);
             continue;
         };
-        let problems = part_problems(part, &skeleton, part.skeleton.path(&content), infos);
         let mut check = RowCheck::default();
+        let skeleton_path = part.skeleton.path(&content);
+        check_meshes(part, &skeleton, skeleton_path, infos, hashes, &mut check);
         check_part(&content, part, &skeleton.def, &mut check);
-        if !problems.is_empty() || !check.is_empty() {
-            for (file, problem) in problems {
-                loading.file_error(file, ErrorPlace::WholeFile, problem);
-            }
+        if !check.is_empty() {
             loading.row_errors(id, check);
             loading.fail(id);
         }
@@ -205,7 +202,6 @@ pub fn build_all(loading: &mut Loading) {
             loading.fail(id);
         }
     }
-    check_sets(loading, &content, &skeletons);
     let skeleton_defs = loading.rows::<SkeletonDef>(&content);
     loading.built(Declared {
         moves: skeleton_defs
@@ -229,54 +225,76 @@ fn build_skeletons(
     let mut built: Vec<Option<Arc<BuiltSkeleton>>> =
         content.ids::<SkeletonDef>().map(|_| None).collect();
     for (id, def) in loading.rows::<SkeletonDef>(content) {
-        let Some(rig) = infos.0.get(def.rig.as_str()) else {
-            loading.fail(id);
-            continue;
-        };
-        let libraries: Vec<Option<&GltfInfo>> = def
-            .libraries
-            .iter()
-            .map(|library| infos.0.get(library.file.as_str()))
-            .collect();
-        let skeleton = BuiltSkeleton::new(def, rig, &libraries);
-        built[id.index()] = Some(Arc::new(skeleton));
+        match BuiltSkeleton::build(def, &infos.0) {
+            Ok(skeleton) => built[id.index()] = Some(Arc::new(skeleton)),
+            Err(check) => {
+                loading.row_errors(id, check);
+                loading.fail(id);
+            }
+        }
     }
     built
 }
 
-/// What a part's meshes must be to its skeleton: each cut for one of its builds, and skinned to
-/// joints of its rig at the rig's paths, resting as the rig rests them.
-fn part_problems(
+/// What a part's meshes must be to its skeleton: at least one, each cut for one of its builds,
+/// light enough to download, within the joint budget, and binding only joints of its rig where the
+/// rig rests them.
+fn check_meshes(
     part: &ModelPartDef,
     skeleton: &BuiltSkeleton,
     skeleton_path: &str,
     infos: &GltfInfos,
-) -> Vec<(String, ContentProblem)> {
-    let mut problems = Vec::new();
+    hashes: &FileHashes,
+    cx: &mut RowCheck,
+) {
+    if part.mesh.is_none() && part.builds.is_empty() {
+        cx.error(
+            "/mesh",
+            "missing mesh",
+            "no mesh",
+            "a mesh for every build, or one for each build the part is cut for",
+        );
+    }
     for (build, mesh) in part.meshes() {
+        let pointer = match build {
+            Some(build) => format!("/builds/{}", build.0),
+            None => "/mesh".to_owned(),
+        };
         if let Some(build) = build
             && !skeleton.def.builds.contains(build)
         {
-            problems.push((
-                mesh.path(),
-                ContentProblem::new(
-                    "unknown build",
-                    format!("a mesh for build {build}"),
-                    expected_build(&skeleton.def.builds, skeleton_path),
-                ),
-            ));
-        }
-        if let Some(info) = infos.0.get(mesh.as_str()) {
-            let report = fit_report(skeleton, skeleton_path, &mesh_label(mesh), info);
-            problems.extend(
-                report
-                    .problems
-                    .into_iter()
-                    .map(|problem| (mesh.path(), problem)),
+            cx.error(
+                pointer.clone(),
+                "unknown build",
+                format!("a mesh for build {build}"),
+                expected_build(&skeleton.def.builds, skeleton_path),
             );
         }
+        if let Some(hashed) = hashes.0.get(mesh.as_str())
+            && FileSize(hashed.size as usize) > MAX_PART_BYTES
+        {
+            cx.error(
+                pointer.clone(),
+                "mesh too heavy",
+                format!("{mesh:?} weighs {}", FileSize(hashed.size as usize)),
+                format!("at most {MAX_PART_BYTES}"),
+            );
+        }
+        let Some(info) = infos.0.get(mesh.as_str()) else {
+            continue;
+        };
+        if info.joints() > skeleton::MAX_JOINTS {
+            cx.error(
+                pointer.clone(),
+                "too many joints",
+                format!("{mesh:?} has {} joints", info.joints()),
+                format!("at most {}", skeleton::MAX_JOINTS),
+            );
+        }
+        for problem in fit_report(skeleton, skeleton_path, mesh.as_str(), info).problems {
+            cx.problem(pointer.clone(), problem);
+        }
     }
-    problems
 }
 
 /// Every region a part covers or hides is one of its skeleton's, and its material is made on its
@@ -391,131 +409,16 @@ pub fn fit_report(
     info: &GltfInfo,
 ) -> FitReport {
     let fit = gltf::fit_skin(&skeleton.rig, info);
-    let skeleton_file = format!("{}.skeleton", crate::core::content::name_of(skeleton_path));
+    let skeleton_file = format!(
+        "the rig of {}",
+        crate::core::content::name_of(skeleton_path)
+    );
     let problems = fit
         .misfits
         .iter()
         .map(|misfit| skeleton::misfit_problem(file, &skeleton_file, misfit))
         .collect();
     FitReport { fit, problems }
-}
-
-/// A part's mesh as its bundle names it: `mesh.glb`, `builds/<build>.glb`.
-pub fn mesh_label(mesh: &ModelRef) -> String {
-    let path = mesh.path();
-    match path.rsplit_once("/builds/") {
-        Some((_, build)) => format!("builds/{build}"),
-        None => path
-            .rsplit_once('/')
-            .map_or(path.clone(), |(_, file)| file.to_owned()),
-    }
-}
-
-/// Every clip a skeleton's sets name must be in its libraries, and every clip that plays as a hit
-/// marks the one moment it lands. What is downloaded and never played is named.
-fn check_sets(loading: &mut Loading, content: &Content, skeletons: &[Option<Arc<BuiltSkeleton>>]) {
-    for (id, def) in loading.rows::<SkeletonDef>(content) {
-        let Some(skeleton) = skeletons.get(id.index()).cloned().flatten() else {
-            continue;
-        };
-        let mut check = RowCheck::default();
-        let mut named: HashSet<&ClipName> = HashSet::new();
-        for (pointer, set) in def.sets() {
-            let set_name = set_name(content, def, &pointer);
-            let attacks: HashSet<String> = set.attacks().map(|(entry, _)| entry).collect();
-            for (entry, clip) in set.entries() {
-                let clip = clip.clip();
-                named.insert(clip);
-                let at = format!("{pointer}{entry}");
-                if !skeleton.clips.contains_key(clip) {
-                    check.error(
-                        at.clone(),
-                        "unknown clip",
-                        format!("{set_name} set names {clip}: no such clip in clips/*.glb"),
-                        "a clip of a library",
-                    );
-                    continue;
-                }
-                if !attacks.contains(&entry) {
-                    continue;
-                }
-                let apexes = def
-                    .cues
-                    .get(clip)
-                    .map_or(0, |cues| cues.iter().filter(|cue| cue.apex).count());
-                if apexes != 1 {
-                    check.error(
-                        at.clone(),
-                        "apex out of place",
-                        format!("{clip} plays as an attack but has {apexes} apex cues"),
-                        "exactly one, where the hit lands",
-                    );
-                }
-            }
-        }
-        for (index, hand) in def.hands.iter().enumerate() {
-            let Some(clasp) = &hand.clasp else {
-                continue;
-            };
-            named.insert(&clasp.clip);
-            let at = format!("/hands/{index}/clasp/clip");
-            if !skeleton.clips.contains_key(&clasp.clip) {
-                check.error(
-                    at,
-                    "unknown clip",
-                    format!(
-                        "hand {:?} clasps as {}: no such clip in clips/*.glb",
-                        hand.name, clasp.clip
-                    ),
-                    "a clip of a library",
-                );
-            } else if skeleton.clasps[index].is_empty() {
-                check.error(
-                    at,
-                    "clasp turns no fingers",
-                    format!(
-                        "{} turns none of hand {:?}'s fingers",
-                        clasp.clip, hand.name
-                    ),
-                    "a clip turning the joints of the clasp's fingers",
-                );
-            }
-        }
-        for (index, library) in def.libraries.iter().enumerate() {
-            let unnamed = skeleton
-                .clips
-                .iter()
-                .filter(|(name, clip)| clip.library == index && !named.contains(name))
-                .count();
-            if unnamed > 0 {
-                loading.row_warning(
-                    id,
-                    "",
-                    ContentProblem::new(
-                        UNNAMED_CLIPS,
-                        format!(
-                            "clips/{}.glb carries {} no set names",
-                            library.key,
-                            ui::words::counted(unnamed, "clip")
-                        ),
-                        "every clip downloaded played by some set",
-                    ),
-                );
-            }
-        }
-        loading.row_errors(id, check);
-    }
-}
-
-fn set_name(content: &Content, def: &SkeletonDef, pointer: &str) -> String {
-    def.stances
-        .iter()
-        .enumerate()
-        .find(|(index, _)| pointer == format!("/stances/{index}/set"))
-        .map_or_else(
-            || "base".to_owned(),
-            |(_, set)| set.stance.name(content).to_owned(),
-        )
 }
 
 pub struct ActorModel {
@@ -526,25 +429,17 @@ pub struct ActorModel {
     skins: Vec<Skin>,
 }
 
-/// What plays for a motion: the clip, the group it is kept to, where it is in the skeleton's
-/// libraries, how long it plays once, and its cues.
+/// What plays for a motion: the clip, the group it is kept to, its place among the skeleton's
+/// clips, how long it plays once, and its cues.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Resolved<'a> {
-    pub clip: &'a ClipName,
+    pub clip: &'a Clip,
     pub only: Option<&'a GroupName>,
-    pub source: Option<ClipSource>,
+    pub played: usize,
     pub length: Seconds,
     pub cues: &'a [Cue],
     /// The ground the clip covers at scale 1, when it is played to walk, run or sprint.
     pub pace: Option<MetersPerSec>,
-}
-
-/// Where a clip is played from: a library of the skeleton, and the clip's place among that file's
-/// animations.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ClipSource {
-    pub library: usize,
-    pub index: usize,
 }
 
 impl ActorModel {
@@ -586,19 +481,19 @@ impl ActorModel {
         self.def.hitbox
     }
 
-    /// The files the model is drawn from bare: its skeleton's rig and the skins of its own parts.
-    pub fn body(&self) -> BodyFiles {
-        BodyFiles {
-            rig: self.skeleton.def.rig.path(),
+    /// What the model is drawn as bare: its skeleton's rig and the skins of its own parts.
+    pub fn body(&self) -> Figure {
+        Figure {
+            rig: self.skeleton.rig.clone(),
             skins: self.skins.clone(),
         }
     }
 
-    /// The files a body of the model looking as `look` is drawn from: its skeleton's rig and the
-    /// meshes of the look's parts as cut for the model's build, each painted in its colours.
-    pub fn dressed(&self, content: &Content, look: &BodyLook) -> BodyFiles {
-        BodyFiles {
-            rig: self.skeleton.def.rig.path(),
+    /// What a body of the model looking as `look` is drawn as: its skeleton's rig and the meshes
+    /// of the look's parts as cut for the model's build, each painted in its colours.
+    pub fn dressed(&self, content: &Content, look: &BodyLook) -> Figure {
+        Figure {
+            rig: self.skeleton.rig.clone(),
             skins: skins(content, &self.def, &self.skeleton.def, look),
         }
     }
@@ -607,8 +502,12 @@ impl ActorModel {
         self.def.skeleton
     }
 
-    pub fn skeleton(&self) -> &BuiltSkeleton {
+    pub fn skeleton(&self) -> &Arc<BuiltSkeleton> {
         &self.skeleton
+    }
+
+    pub fn build(&self) -> Option<&BuildName> {
+        self.def.build.as_ref()
     }
 
     pub fn hands(&self) -> &[Hand] {
@@ -623,30 +522,30 @@ impl ActorModel {
         self.def.scale()
     }
 
-    /// The file and place among its animations of the clip at `source`.
-    pub fn rig_clip(&self, source: ClipSource) -> RigClip {
-        RigClip {
-            file: self.skeleton.def.libraries[source.library].file.path(),
-            index: source.index,
-        }
+    /// Where among its skeleton's clips is the clip a turntable stands the model in for `motion` in
+    /// `stance` and `pose`.
+    pub fn standing_clip(&self, stance: Option<StanceId>, motion: &Motion, pose: Pose) -> usize {
+        self.resolve(stance, motion, pose, 0).played
     }
 
-    /// The clip a turntable stands the model in for `motion` in `stance` and `pose`, when its
-    /// skeleton carries it.
-    pub fn standing_clip(
-        &self,
-        stance: Option<StanceId>,
-        motion: &Motion,
-        pose: Pose,
-    ) -> Option<RigClip> {
-        self.resolve(stance, motion, pose, 0)
-            .source
-            .map(|source| self.rig_clip(source))
+    /// Whether the model's sets name the clip of `motion` in `stance`, for a motion that plays only
+    /// where one is named.
+    pub fn plays(&self, stance: Option<StanceId>, motion: &Motion) -> bool {
+        self.skeleton.def.plays(self.build(), stance, motion)
+    }
+
+    /// Whether the model's sets name a clip for `action` in `stance`.
+    pub fn names(&self, stance: Option<StanceId>, action: Action) -> bool {
+        self.skeleton.def.names(self.build(), stance, action)
     }
 
     /// The cell that plays `motion` in `stance`, holding `pose` while idle.
     pub fn cell(&self, stance: Option<StanceId>, motion: &Motion, pose: Pose) -> &ClipCell {
-        self.skeleton.def.named(stance, motion, pose).0
+        self.skeleton
+            .def
+            .named(self.build(), stance, motion, pose)
+            .expect("a skeleton that built names every action in base")
+            .0
     }
 
     /// What plays as the clip picked at `pick` among `motion`'s in `stance`, holding `pose` while idle:
@@ -659,24 +558,19 @@ impl ActorModel {
         pose: Pose,
         pick: usize,
     ) -> Resolved<'_> {
-        let skeleton = &self.skeleton.def;
         let clip = self.cell(stance, motion, pose).nth(pick);
-        let name = clip.clip();
-        let (source, length) = match self.skeleton.clips.get(name) {
-            Some(&LibraryClip {
-                library,
-                index,
-                length,
-            }) => (Some(ClipSource { library, index }), length),
-            None => (None, Seconds(0.0)),
-        };
+        let played = self
+            .skeleton
+            .played(clip.clip())
+            .expect("a skeleton that built plays every clip it names");
+        let found = &self.skeleton.clips[played];
         Resolved {
-            clip: name,
+            clip: &found.clip,
             only: clip.only(),
-            source,
-            length,
-            cues: skeleton.cues.get(name).map_or(&[], Vec::as_slice),
-            pace: skeleton.paces.get(name).copied(),
+            played,
+            length: found.length,
+            cues: &found.cues,
+            pace: found.pace,
         }
     }
 
@@ -686,7 +580,7 @@ impl ActorModel {
         let mismatch =
             |pace: MetersPerSec| (speed.0.0.max(1e-3) / (pace.0.0 * self.scale())).ln().abs();
         self.skeleton
-            .gaits(stance)
+            .gaits(self.build(), stance)
             .iter()
             .map(|paced| (paced.gait, mismatch(paced.pace)))
             .min_by(|(_, a), (_, b)| a.total_cmp(b))

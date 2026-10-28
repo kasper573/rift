@@ -1,26 +1,28 @@
 //! The layers page: the skeleton's groups, and the layers that move its bodies beyond their clips,
 //! each with its fields; the stage walks a body wearing the skeleton round a loop with its layers
-//! running as the client runs them, Reduce motion to toggle. A leg that is not a chain down the
-//! tree is refused with the joint named, as the loader refuses it.
+//! running as the client runs them, Reduce motion to toggle, or stands the rig at rest for the
+//! joint new roots and layers start from to be clicked. A leg that is not a chain down the tree is
+//! refused with the joint named, as the loader refuses it.
 
 use std::collections::BTreeMap;
 
 use bevy::prelude::{Quat, Transform};
-use engine::core::content::Content;
 use engine::core::content::gltf::NodeTree;
 use engine::core::geometry::Radians;
 use engine::core::math::Pos;
 use engine::core::render::camera::world_point;
 use engine::core::render::world::layers::Gait;
-use engine::core::time::{Hertz, Seconds};
+use engine::core::time::{Hertz, Millis, Seconds};
 use engine::core::units::Meters;
-use engine::systems::actor::skeleton::{BuiltSkeleton, GroupName, JointName, Layer, Leg};
+use engine::systems::actor::model::ActorModel;
+use engine::systems::actor::skeleton::{Cue, GroupName, JointName, Layer, Leg, SkeletonDef};
 use engine::systems::actor::{Action, ModelDef, Motion, Pose};
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::{chip, controls, form, panel, theme};
 
-use super::super::area::viewport::StageLayers;
+use super::super::area::viewport::{StageClip, StageLayers};
+use super::rigging::Rigging;
 use crate::app::Editor;
 use crate::project::ContentEdit;
 use crate::tabs::shown_path;
@@ -44,6 +46,9 @@ pub struct LayersState {
     pub joint: Option<String>,
     pub action: Option<Action>,
     pub new_group: String,
+    /// Whether the stage stands the rig at rest for the joint to be clicked, rather than walking.
+    pub picking: bool,
+    pub reduce_motion: bool,
     pub stage: stage::StageState,
 }
 
@@ -54,6 +59,8 @@ impl Default for LayersState {
             joint: None,
             action: None,
             new_group: String::new(),
+            picking: false,
+            reduce_motion: false,
             stage: stage::StageState::framing(LOOP * 3.0, false),
         }
     }
@@ -65,7 +72,7 @@ pub fn refusals(rig: &NodeTree, layers: &[Layer]) -> Vec<String> {
     for layer in layers {
         for (_, joint) in layer.joints() {
             if rig.named(joint.as_str()).is_none() {
-                refusals.push(format!("{joint} is not in rig.glb"));
+                refusals.push(format!("{joint} is not a joint of our rig"));
             }
         }
         let Layer::Feet { legs, .. } = layer else {
@@ -91,7 +98,14 @@ pub fn refusals(rig: &NodeTree, layers: &[Layer]) -> Vec<String> {
     refusals
 }
 
-pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, built: &BuiltSkeleton) {
+pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging) {
+    let Some(rig) = rigging.rig.clone() else {
+        form::hint(
+            ui,
+            "Pick our rig's files on the rigs page to give it groups and layers.",
+        );
+        return;
+    };
     let width = ui.available_width();
     let list_width = (width * 0.4).clamp(260.0, 420.0);
     let [left, right] = panel::split(ui, list_width);
@@ -100,12 +114,37 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, buil
             .id_salt(("layers", key))
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                groups(editor, ui, key, built);
+                groups(editor, ui, key, def, &rig);
                 ui.add_space(10.0);
-                layers(editor, ui, key, built);
+                layers(editor, ui, key, def, &rig);
             });
     });
-    panel::body(ui, right, |ui| walk(editor, ui, key, content, built));
+    panel::body(ui, right, |ui| {
+        if editor.views.skeleton.view(key).layers.picking {
+            pick(editor, ui, key, def, rigging);
+        } else {
+            walk(editor, ui, key, def, &rig);
+        }
+    });
+}
+
+/// The rig at rest, its joints to click: the one clicked is where new roots and layers start.
+fn pick(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging) {
+    if ui.button("walk again").clicked() {
+        editor.views.skeleton.view_mut(key).layers.picking = false;
+        return;
+    }
+    editor.views.skeleton.view_mut(key).clip = None;
+    let size = Vec2::new(ui.available_width(), ui.available_height() - 24.0);
+    let Some(staged) = super::stage_rig(editor, ui, key, def, rigging, size, Vec::new()) else {
+        return;
+    };
+    let lit = editor.views.skeleton.view(key).layers.joint.clone();
+    let lit: Vec<&str> = lit.as_deref().into_iter().collect();
+    if let Some(clicked) = staged.pick(ui, &lit) {
+        editor.views.skeleton.view_mut(key).layers.joint = Some(clicked);
+    }
+    form::hint(ui, "Click a joint: new roots and layers start from it.");
 }
 
 fn joint_names(rig: &NodeTree) -> Vec<String> {
@@ -114,22 +153,17 @@ fn joint_names(rig: &NodeTree) -> Vec<String> {
         .collect()
 }
 
-/// The joint new roots, layers and legs start from.
-fn joint_picker(
-    editor: &mut Editor,
-    ui: &mut Ui,
-    key: &str,
-    built: &BuiltSkeleton,
-) -> Option<String> {
-    let names = joint_names(&built.rig);
+/// The joint new roots, layers and legs start from: picked here, or clicked on the stage.
+fn joint_picker(editor: &mut Editor, ui: &mut Ui, key: &str, rig: &NodeTree) -> Option<String> {
+    let names = joint_names(rig);
     let view = editor.views.skeleton.view_mut(key);
     let mut joint = view
         .layers
         .joint
         .clone()
-        .or_else(|| view.joint.clone())
         .filter(|joint| names.contains(joint))
         .or_else(|| names.first().cloned());
+    let mut picking = view.layers.picking;
     ui.horizontal(|ui| {
         ui.label(theme::muted("at joint"));
         controls::combo(("layers-joint", key))
@@ -140,13 +174,16 @@ fn joint_picker(
                     ui.selectable_value(&mut joint, Some(name.clone()), name);
                 }
             });
+        ui.toggle_value(&mut picking, "click it on the stage");
     });
-    editor.views.skeleton.view_mut(key).layers.joint = joint.clone();
+    let view = editor.views.skeleton.view_mut(key);
+    view.layers.joint = joint.clone();
+    view.layers.picking = picking;
     joint
 }
 
-fn groups(editor: &mut Editor, ui: &mut Ui, key: &str, built: &BuiltSkeleton) {
-    let groups = built.def.groups.clone();
+fn groups(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &NodeTree) {
+    let groups = def.groups.clone();
     form::section_count(ui, "Groups", groups.len());
     let mut changed: Option<BTreeMap<GroupName, Vec<JointName>>> = None;
     for (group, roots) in &groups {
@@ -166,7 +203,7 @@ fn groups(editor: &mut Editor, ui: &mut Ui, key: &str, built: &BuiltSkeleton) {
             }
         });
     }
-    let joint = joint_picker(editor, ui, key, built);
+    let joint = joint_picker(editor, ui, key, rig);
     let view = editor.views.skeleton.view_mut(key);
     ui.horizontal(|ui| {
         ui.add(
@@ -202,8 +239,8 @@ fn groups(editor: &mut Editor, ui: &mut Ui, key: &str, built: &BuiltSkeleton) {
     }
 }
 
-fn layers(editor: &mut Editor, ui: &mut Ui, key: &str, built: &BuiltSkeleton) {
-    let layers = built.def.layers.clone();
+fn layers(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &NodeTree) {
+    let layers = def.layers.clone();
     let chosen = editor
         .views
         .skeleton
@@ -234,11 +271,11 @@ fn layers(editor: &mut Editor, ui: &mut Ui, key: &str, built: &BuiltSkeleton) {
         .layers
         .joint
         .clone()
-        .or_else(|| joint_names(&built.rig).first().cloned());
+        .or_else(|| joint_names(rig).first().cloned());
     let mut added = None;
     if let Some(from) = &from {
         ui.menu_button(format!("+ Add layer at {from}"), |ui| {
-            for (label, layer) in fresh_layers(&built.rig, from) {
+            for (label, layer) in fresh_layers(rig, from) {
                 if ui.button(label).clicked() {
                     added = Some(layer);
                     ui.close();
@@ -249,12 +286,12 @@ fn layers(editor: &mut Editor, ui: &mut Ui, key: &str, built: &BuiltSkeleton) {
     if let Some(index) = removed {
         let mut fewer = layers.clone();
         fewer.remove(index);
-        set(editor, key, built, fewer, "Remove a layer", false);
+        set(editor, key, rig, fewer, "Remove a layer", false);
     }
     if let Some(layer) = added {
         let mut more = layers.clone();
         more.push(layer);
-        if set(editor, key, built, more, "Add a layer", false) {
+        if set(editor, key, rig, more, "Add a layer", false) {
             pick = Some(layers.len());
         }
     }
@@ -272,14 +309,14 @@ fn layers(editor: &mut Editor, ui: &mut Ui, key: &str, built: &BuiltSkeleton) {
     ui.add_space(8.0);
     form::rule(ui);
     let mut edited = layer.clone();
-    fields(ui, key, built, &from, &mut edited);
-    for refusal in refusals(&built.rig, std::slice::from_ref(&edited)) {
+    fields(ui, key, rig, &from, &mut edited);
+    for refusal in refusals(rig, std::slice::from_ref(&edited)) {
         ui.colored_label(theme::DANGER, refusal);
     }
     if edited != *layer {
         let mut changed = layers.clone();
         changed[chosen] = edited;
-        set(editor, key, built, changed, "Change a layer", true);
+        set(editor, key, rig, changed, "Change a layer", true);
     }
 }
 
@@ -287,12 +324,12 @@ fn layers(editor: &mut Editor, ui: &mut Ui, key: &str, built: &BuiltSkeleton) {
 fn set(
     editor: &mut Editor,
     key: &str,
-    built: &BuiltSkeleton,
+    rig: &NodeTree,
     layers: Vec<Layer>,
     label: &str,
     merging: bool,
 ) -> bool {
-    if let Some(refusal) = refusals(&built.rig, &layers).into_iter().next() {
+    if let Some(refusal) = refusals(rig, &layers).into_iter().next() {
         editor.toast(format!("{}: {refusal}", shown_path(key)));
         return false;
     }
@@ -389,9 +426,9 @@ fn leg_to(rig: &NodeTree, foot: &str, name: &str) -> Leg {
 }
 
 /// The chosen layer's fields, edited in place.
-fn fields(ui: &mut Ui, key: &str, built: &BuiltSkeleton, from: &Option<String>, layer: &mut Layer) {
+fn fields(ui: &mut Ui, key: &str, rig: &NodeTree, from: &Option<String>, layer: &mut Layer) {
     ui.label(RichText::new(summary(layer)).strong());
-    let names = joint_names(&built.rig);
+    let names = joint_names(rig);
     let joint_field = |ui: &mut Ui, id: &str, joint: &mut JointName| {
         controls::combo((id.to_owned(), key))
             .selected_text(joint.as_str())
@@ -449,7 +486,7 @@ fn fields(ui: &mut Ui, key: &str, built: &BuiltSkeleton, from: &Option<String>, 
                         && ui.button(format!("+ Leg ending at {foot}")).clicked()
                     {
                         let name = format!("leg {}", legs.len() + 1);
-                        legs.push(leg_to(&built.rig, foot, &name));
+                        legs.push(leg_to(rig, foot, &name));
                     }
                 });
                 ui.end_row();
@@ -541,8 +578,8 @@ fn number(
 
 /// The stage: a body wearing the skeleton walking a loop round its middle in the chosen action,
 /// its layers running as the client runs them.
-fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, built: &BuiltSkeleton) {
-    let Some(id) = content.by_path::<engine::systems::actor::skeleton::SkeletonDef>(key) else {
+fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &NodeTree) {
+    let Some(content) = editor.loaded() else {
         return;
     };
     let action = editor
@@ -553,8 +590,8 @@ fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, built: &
         .action
         .unwrap_or(Action::Walk);
     let mut picked = action;
-    let mut calm = editor.views.skeleton.view(key).reduce_motion;
-    super::wearer_picker(editor, ui, key, content, id);
+    let mut calm = editor.views.skeleton.view(key).layers.reduce_motion;
+    super::wearer_picker(editor, ui, key, &content);
     ui.horizontal(|ui| {
         ui.label(theme::muted("action"));
         for other in CALM {
@@ -568,23 +605,20 @@ fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, built: &
         }
     });
     let view = editor.views.skeleton.view_mut(key);
-    view.reduce_motion = calm;
+    view.layers.reduce_motion = calm;
     if picked != action {
         view.layers.action = Some(picked);
         view.scrub.restart();
     }
-    let Some((model_path, model)) = super::wearer(editor, key, content, id) else {
+    let Some((model_path, model)) = super::wearer(editor, key, &content) else {
         form::hint(
             ui,
-            "No model wearing the skeleton loaded, so nothing walks.",
+            "No model wearing the skeleton loaded, so nothing walks: the skeleton loads once every \
+             action has a clip on the sets page and a model wears it.",
         );
         return;
     };
     let resolved = model.resolve(None, &Motion::Action(picked), Pose::Idle, 0);
-    let Some(source) = resolved.source else {
-        form::hint(ui, "Nothing plays this action on the model.");
-        return;
-    };
     let length = resolved.length.millis();
     let scrub = &mut editor.views.skeleton.view_mut(key).scrub;
     scrub.playing = true;
@@ -609,20 +643,12 @@ fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, built: &
         stepped,
         reduce_motion: calm,
     };
-    super::stage_walking(
-        editor,
-        ui,
-        key,
-        size,
-        model,
-        model.rig_clip(source),
-        playhead,
-        crossed,
-        placed,
-        layered,
+    let clip = StageClip::played(model.skeleton(), resolved.played);
+    stage_walking(
+        editor, ui, key, size, model, clip, playhead, crossed, placed, layered,
     );
-    let refusals = refusals(&built.rig, &built.def.layers);
-    if built.def.layers.is_empty() {
+    let refusals = refusals(rig, &def.layers);
+    if def.layers.is_empty() {
         form::hint(ui, "No layers to run: the body plays its clip alone.");
     } else if refusals.is_empty() {
         form::hint(
@@ -630,6 +656,46 @@ fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, built: &
             "The body walks a loop on flat ground with its layers running as the client runs them.",
         );
     }
+}
+
+/// The page's stage over `size` with `model` placed by `placed`, playing `clip` at `playhead` and
+/// sounding the cues it `crossed`, with its skeleton's layers running as `layered` tells them.
+#[allow(clippy::too_many_arguments)]
+fn stage_walking(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    key: &str,
+    size: Vec2,
+    model: &ActorModel,
+    clip: StageClip,
+    playhead: Millis,
+    crossed: Vec<Cue>,
+    placed: Transform,
+    layered: StageLayers,
+) {
+    let mut state = std::mem::take(&mut editor.views.skeleton.view_mut(key).layers.stage);
+    let turntable = stage::turntable(
+        editor,
+        ui,
+        &format!("skeleton-walk:{key}"),
+        size,
+        &mut state,
+    );
+    editor.views.skeleton.view_mut(key).layers.stage = state;
+    let Some(turntable) = turntable else {
+        return;
+    };
+    let mut standing = stage::standing(
+        model.body(),
+        Some(clip),
+        Some(playhead.seconds()),
+        crossed,
+        Vec::new(),
+    );
+    standing.transform = placed;
+    standing.layers = Some(layered);
+    turntable.stand(editor, ui, vec![standing]);
+    ui.ctx().request_repaint();
 }
 
 /// Where a body stands `turned` radians round the loop, facing along it when it walks.

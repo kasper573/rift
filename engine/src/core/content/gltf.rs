@@ -23,6 +23,9 @@ pub struct GltfInfo {
     pub skinned: bool,
     /// The nodes the skins bind their meshes to, by index in the tree.
     pub skin_joints: Vec<usize>,
+    /// Each node a skin binds, by index in the tree, with the inverse of where the skin binds it:
+    /// the first skin's bind where several bind the same node.
+    pub binds: Vec<(usize, Mat4)>,
     pub tree: NodeTree,
     pub clips: Vec<GltfClip>,
 }
@@ -58,6 +61,10 @@ impl Rest {
         rotation: Quat::IDENTITY,
         scale: Vec3::ONE,
     };
+
+    pub fn matrix(&self) -> Mat4 {
+        Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
+    }
 }
 
 /// The box every mesh fits in, in the scene's metres, with every node's transform applied.
@@ -132,6 +139,47 @@ impl NodeTree {
         false
     }
 
+    /// Where every node rests in the scene, by its index: its rest under each of its parents'.
+    pub fn worlds(&self) -> Vec<Mat4> {
+        let mut worlds: Vec<Option<Mat4>> = vec![None; self.nodes.len()];
+        for index in 0..self.nodes.len() {
+            self.world_into(index, &mut worlds);
+        }
+        worlds.into_iter().map(Option::unwrap_or_default).collect()
+    }
+
+    fn world_into(&self, index: usize, worlds: &mut [Option<Mat4>]) -> Mat4 {
+        if let Some(world) = worlds[index] {
+            return world;
+        }
+        let node = &self.nodes[index];
+        let parent = node
+            .parent
+            .map_or(Mat4::IDENTITY, |parent| self.world_into(parent, worlds));
+        let world = parent * node.rest.matrix();
+        worlds[index] = Some(world);
+        world
+    }
+
+    /// Every node with each of its parents before it.
+    pub fn downward(&self) -> Vec<usize> {
+        let mut order = Vec::with_capacity(self.nodes.len());
+        let mut placed = vec![false; self.nodes.len()];
+        for index in 0..self.nodes.len() {
+            let mut chain = Vec::new();
+            let mut at = Some(index);
+            while let Some(node) = at.filter(|&node| !placed[node]) {
+                chain.push(node);
+                at = self.nodes[node].parent;
+            }
+            for node in chain.into_iter().rev() {
+                placed[node] = true;
+                order.push(node);
+            }
+        }
+        order
+    }
+
     pub fn parent_name(&self, index: usize) -> &str {
         self.nodes[index]
             .parent
@@ -139,37 +187,30 @@ impl NodeTree {
     }
 }
 
-/// How far a joint's rest may turn from the rig's and still play the rig's clips true.
+/// How far a skin may bind a joint turned from where the rig rests it and still be drawn true.
 pub const REST_TURN: Degrees = Degrees(2.0);
-/// How far a joint's rest may stand from the rig's and still play the rig's clips true.
+/// How far a skin may bind a joint from where the rig rests it and still be drawn true.
 pub const REST_SHIFT: Meters = Meters(0.002);
 
-/// How a candidate's tree fits a rig's: how many of the rig's joints it has at their path, resting
-/// as the rig rests them, and why each other one does not fit.
+/// How a skin fits a rig: how many of the joints its meshes bind are joints of the rig resting
+/// where the skin binds them, and why each other one does not fit.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fit {
     pub matched: usize,
+    /// How many of the joints the skin binds the rig has.
     pub joints: usize,
     pub misfits: Vec<Misfit>,
-    /// The matched joint resting furthest from the rig's, and how far it turns, fitting or not.
+    /// The bound joint of the rig resting furthest from where the skin binds it, and how far it turns, fitting
+    /// or not.
     pub worst_rest: Option<(String, Degrees)>,
 }
 
+/// A joint a skin binds away from where the rig rests it: how far it turns and stands apart.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Misfit {
-    Missing {
-        joint: String,
-    },
-    Misparented {
-        joint: String,
-        parent: String,
-        expected: String,
-    },
-    RestsOff {
-        joint: String,
-        turn: Degrees,
-        shift: Meters,
-    },
+pub struct Misfit {
+    pub joint: String,
+    pub turn: Degrees,
+    pub shift: Meters,
 }
 
 impl Fit {
@@ -178,75 +219,47 @@ impl Fit {
     }
 }
 
-impl Misfit {
-    pub fn joint(&self) -> &str {
-        match self {
-            Misfit::Missing { joint }
-            | Misfit::Misparented { joint, .. }
-            | Misfit::RestsOff { joint, .. } => joint,
-        }
-    }
-}
-
-/// How `candidate` fits `rig`: every joint of the rig must be in the candidate at the same path of
-/// names from the root, which is how a clip finds the joint it moves, resting within `REST_TURN` and
-/// `REST_SHIFT` of the rig's. The candidate may hold more; what is beneath a joint that does not fit
-/// is not reported again.
-pub fn fit(rig: &NodeTree, candidate: &NodeTree) -> Fit {
-    fit_joints(rig, candidate, rig.joints().collect())
-}
-
-/// How the skins of `skin` fit `rig`, on the joints of the rig they bind their meshes to: each at
-/// the rig's path and resting as the rig rests it, so the skin drawn over the rig's joints stands as
-/// it was made. A skin carries only the joints it needs, and may bind helpers the rig has no use
-/// for, which stay at rest.
+/// How the skins of `skin` fit `rig`: each joint they bind that the rig has, by its name, must rest
+/// within `REST_TURN` and `REST_SHIFT` of where the skin binds it, the binds placed where the rig
+/// rests the topmost of those joints. Exporters bind in frames of their own (an armature's, the
+/// scene's), and a renderer draws a skin from its binds alone, so what fits is the binds' layout
+/// against the rig's, wherever the skin's own file places its joints. A joint the rig lacks holds
+/// what it binds at rest.
 pub fn fit_skin(rig: &NodeTree, skin: &GltfInfo) -> Fit {
-    let bound: Vec<&str> = skin
-        .skin_joints
+    let worlds = rig.worlds();
+    let bound: Vec<(usize, usize, &Mat4)> = skin
+        .binds
         .iter()
-        .map(|&joint| skin.tree.nodes[joint].name.as_str())
+        .filter_map(|(node, inverse_bind)| {
+            let name = &skin.tree.nodes[*node].name;
+            let joint = rig.joints().find(|&joint| rig.nodes[joint].name == *name)?;
+            Some((*node, joint, inverse_bind))
+        })
         .collect();
-    let joints = rig
-        .joints()
-        .filter(|&joint| bound.contains(&rig.nodes[joint].name.as_str()))
-        .collect();
-    fit_joints(rig, &skin.tree, joints)
-}
-
-fn fit_joints(rig: &NodeTree, candidate: &NodeTree, joints: Vec<usize>) -> Fit {
+    let order = rig.downward();
+    let depth = |joint: usize| order.iter().position(|&at| at == joint);
+    let space = bound
+        .iter()
+        .min_by_key(|(_, joint, _)| depth(*joint))
+        .map_or(Mat4::IDENTITY, |(_, joint, inverse_bind)| {
+            worlds[*joint] * **inverse_bind
+        });
     let mut misfits = Vec::new();
     let mut matched = 0;
     let mut worst: Option<(String, Degrees)> = None;
-    let mut unfit: Vec<usize> = Vec::new();
-    for &joint in &joints {
-        let node = &rig.nodes[joint];
-        if node.parent.is_some_and(|parent| unfit.contains(&parent)) {
-            unfit.push(joint);
-            continue;
-        }
-        let Some(found) = candidate.at_path(&rig.path(joint)) else {
-            unfit.push(joint);
-            misfits.push(match candidate.named(&node.name) {
-                Some(elsewhere) => Misfit::Misparented {
-                    joint: node.name.clone(),
-                    parent: candidate.parent_name(elsewhere).to_owned(),
-                    expected: rig.parent_name(joint).to_owned(),
-                },
-                None => Misfit::Missing {
-                    joint: node.name.clone(),
-                },
-            });
-            continue;
-        };
-        let rest = candidate.nodes[found].rest;
-        let turn = Degrees(node.rest.rotation.angle_between(rest.rotation).to_degrees());
-        let shift = Meters(node.rest.translation.distance(rest.translation));
+    for (node, joint, inverse_bind) in bound {
+        let name = &skin.tree.nodes[node].name;
+        let (_, bound_turn, bound_at) =
+            (space * inverse_bind.inverse()).to_scale_rotation_translation();
+        let (_, rest_turn, rest_at) = worlds[joint].to_scale_rotation_translation();
+        let turn = Degrees(rest_turn.angle_between(bound_turn).to_degrees());
+        let shift = Meters(rest_at.distance(bound_at));
         if worst.as_ref().is_none_or(|(_, most)| turn > *most) {
-            worst = Some((node.name.clone(), turn));
+            worst = Some((name.clone(), turn));
         }
         if turn > REST_TURN || shift > REST_SHIFT {
-            misfits.push(Misfit::RestsOff {
-                joint: node.name.clone(),
+            misfits.push(Misfit {
+                joint: name.clone(),
                 turn,
                 shift,
             });
@@ -256,7 +269,7 @@ fn fit_joints(rig: &NodeTree, candidate: &NodeTree, joints: Vec<usize>) -> Fit {
     }
     Fit {
         matched,
-        joints: joints.len(),
+        joints: matched + misfits.len(),
         misfits,
         worst_rest: worst,
     }
@@ -343,9 +356,34 @@ pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
             joints.dedup();
             joints
         },
+        binds: binds_of(&document, blob),
         tree: tree_of(&document),
         clips,
     })
+}
+
+fn binds_of(document: &gltf::Document, blob: Option<&[u8]>) -> Vec<(usize, Mat4)> {
+    let mut binds: Vec<(usize, Mat4)> = Vec::new();
+    for skin in document.skins() {
+        let reader = skin.reader(|buffer| match buffer.source() {
+            gltf::buffer::Source::Bin => blob,
+            gltf::buffer::Source::Uri(_) => None,
+        });
+        let inverses: Vec<Mat4> = reader
+            .read_inverse_bind_matrices()
+            .map(|matrices| matrices.map(|m| Mat4::from_cols_array_2d(&m)).collect())
+            .unwrap_or_default();
+        for (at, joint) in skin.joints().enumerate() {
+            if binds.iter().any(|(node, _)| *node == joint.index()) {
+                continue;
+            }
+            binds.push((
+                joint.index(),
+                inverses.get(at).copied().unwrap_or(Mat4::IDENTITY),
+            ));
+        }
+    }
+    binds
 }
 
 fn tree_of(document: &gltf::Document) -> NodeTree {
@@ -371,6 +409,180 @@ fn tree_of(document: &gltf::Document) -> NodeTree {
         }
     }
     NodeTree { nodes }
+}
+
+/// A clip's keyframes read whole: what it does to each node it moves, by the node's index in the
+/// tree.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ClipKeys {
+    pub length: Seconds,
+    pub tracks: Vec<NodeKeys>,
+}
+
+/// How a clip moves one node, by the node's index in the tree: whatever it leaves unkeyed rests.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NodeKeys {
+    pub node: usize,
+    pub translation: Option<Keys<Vec3>>,
+    pub rotation: Option<Keys<Quat>>,
+    pub scale: Option<Keys<Vec3>>,
+}
+
+/// Values at moments, in seconds from the clip's start, each held until the next when `stepped`
+/// and blended toward it otherwise.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Keys<T> {
+    pub times: Vec<f32>,
+    pub values: Vec<T>,
+    pub stepped: bool,
+}
+
+/// A value keys blend between.
+pub trait Keyed: Copy {
+    fn blend(self, to: Self, t: f32) -> Self;
+}
+
+impl Keyed for Vec3 {
+    fn blend(self, to: Vec3, t: f32) -> Vec3 {
+        self.lerp(to, t)
+    }
+}
+
+impl Keyed for Quat {
+    fn blend(self, to: Quat, t: f32) -> Quat {
+        self.slerp(to, t)
+    }
+}
+
+impl<T: Keyed> Keys<T> {
+    /// The value at `time`: the first key's before it, the last key's after.
+    pub fn at(&self, time: f32) -> Option<T> {
+        let after = self.times.partition_point(|&key| key <= time);
+        match after {
+            0 => self.values.first().copied(),
+            _ if after >= self.times.len() => self.values.last().copied(),
+            _ => {
+                let (from, to) = (after - 1, after);
+                let span = self.times[to] - self.times[from];
+                let t = if self.stepped || span <= 0.0 {
+                    0.0
+                } else {
+                    (time - self.times[from]) / span
+                };
+                Some(self.values[from].blend(self.values[to], t))
+            }
+        }
+    }
+}
+
+impl ClipKeys {
+    /// Every moment any of the clip's keys stands at, in order, each once.
+    pub fn moments(&self) -> Vec<f32> {
+        let mut moments: Vec<f32> = self
+            .tracks
+            .iter()
+            .flat_map(|track| {
+                let translation = track.translation.iter().flat_map(|keys| &keys.times);
+                let rotation = track.rotation.iter().flat_map(|keys| &keys.times);
+                let scale = track.scale.iter().flat_map(|keys| &keys.times);
+                translation.chain(rotation).chain(scale).copied()
+            })
+            .collect();
+        moments.sort_by(f32::total_cmp);
+        moments.dedup_by(|a, b| (*a - *b).abs() < 1.0e-4);
+        if moments.is_empty() {
+            moments.push(0.0);
+        }
+        moments
+    }
+
+    /// Where the clip holds every node of `tree` at `time`, relative to its parent: as keyed, or at
+    /// rest where it keys nothing.
+    pub fn pose(&self, tree: &NodeTree, time: f32) -> Vec<Rest> {
+        let mut pose: Vec<Rest> = tree.nodes.iter().map(|node| node.rest).collect();
+        for track in &self.tracks {
+            let Some(rest) = pose.get_mut(track.node) else {
+                continue;
+            };
+            if let Some(at) = track.translation.as_ref().and_then(|keys| keys.at(time)) {
+                rest.translation = at;
+            }
+            if let Some(turn) = track.rotation.as_ref().and_then(|keys| keys.at(time)) {
+                rest.rotation = turn.normalize();
+            }
+            if let Some(scale) = track.scale.as_ref().and_then(|keys| keys.at(time)) {
+                rest.scale = scale;
+            }
+        }
+        pose
+    }
+}
+
+/// The keyframes of the animation at `index` among those of the glTF binary `bytes`. A cubic
+/// spline is read through its keys, as straight blends between them.
+pub fn clip_keys(bytes: &[u8], index: usize) -> Result<ClipKeys, String> {
+    let gltf = gltf::Gltf::from_slice(bytes).map_err(|error| error.to_string())?;
+    let blob = gltf.blob.as_deref();
+    let animation = gltf
+        .document
+        .animations()
+        .nth(index)
+        .ok_or_else(|| format!("no animation {index}"))?;
+    let mut tracks: BTreeMap<usize, NodeKeys> = BTreeMap::new();
+    let mut length: f32 = 0.0;
+    for channel in animation.channels() {
+        let reader = channel.reader(|buffer| match buffer.source() {
+            gltf::buffer::Source::Bin => blob,
+            gltf::buffer::Source::Uri(_) => None,
+        });
+        let Some(times) = reader.read_inputs() else {
+            continue;
+        };
+        let times: Vec<f32> = times.collect();
+        length = times.iter().copied().fold(length, f32::max);
+        let interpolation = channel.sampler().interpolation();
+        let stepped = interpolation == gltf::animation::Interpolation::Step;
+        let cubic = interpolation == gltf::animation::Interpolation::CubicSpline;
+        let node = channel.target().node().index();
+        let track = tracks.entry(node).or_insert_with(|| NodeKeys {
+            node,
+            ..NodeKeys::default()
+        });
+        match reader.read_outputs() {
+            Some(gltf::animation::util::ReadOutputs::Translations(values)) => {
+                track.translation = Some(keys_of(&times, values.map(Vec3::from), cubic, stepped));
+            }
+            Some(gltf::animation::util::ReadOutputs::Rotations(values)) => {
+                let values = values.into_f32().map(Quat::from_array);
+                track.rotation = Some(keys_of(&times, values, cubic, stepped));
+            }
+            Some(gltf::animation::util::ReadOutputs::Scales(values)) => {
+                track.scale = Some(keys_of(&times, values.map(Vec3::from), cubic, stepped));
+            }
+            Some(gltf::animation::util::ReadOutputs::MorphTargetWeights(_)) | None => {}
+        }
+    }
+    Ok(ClipKeys {
+        length: Seconds(length),
+        tracks: tracks.into_values().collect(),
+    })
+}
+
+fn keys_of<T>(
+    times: &[f32],
+    values: impl Iterator<Item = T>,
+    cubic: bool,
+    stepped: bool,
+) -> Keys<T> {
+    Keys {
+        times: times.to_vec(),
+        values: if cubic {
+            values.skip(1).step_by(3).collect()
+        } else {
+            values.collect()
+        },
+        stepped,
+    }
 }
 
 /// A triangle of a model as it stands in the scene, every node's transform applied: its corners,
@@ -506,7 +718,7 @@ pub fn placeholder_body(tree: &NodeTree, clips: &[(&str, Seconds)], triangles: u
     let held = lifted.map_or(Vec3::ZERO, |index| tree.nodes[index].rest.translation)
         + Vec3::Y * PLACEHOLDER_LIFT.0;
     if triangles > 0 {
-        let skinned = !joints.is_empty();
+        let skinned = tree.nodes.iter().any(|node| node.parent.is_some());
         let mesh = push_mesh(&mut root, &mut bin, triangles, skinned);
         let skin = skinned.then(|| push_skin(&mut root, &mut bin, tree, &joints));
         let node = root.push(json::Node {
@@ -818,6 +1030,8 @@ pub fn cut(bytes: &[u8], keep: &[&str]) -> Result<Vec<u8>, String> {
 }
 
 /// A skin binding `joints`, the nodes of `tree` in order, at their rest.
+/// A skin binding every node of `tree` that hangs under another, as an exporter binds the joints
+/// under an armature: each at its rest, in the frame of the top it hangs under.
 fn push_skin(
     root: &mut json::Root,
     bin: &mut Vec<u8>,
@@ -826,24 +1040,24 @@ fn push_skin(
 ) -> json::Index<json::Skin> {
     let mut placed: Vec<Mat4> = Vec::with_capacity(tree.nodes.len());
     for node in &tree.nodes {
-        let local = Mat4::from_scale_rotation_translation(
-            node.rest.scale,
-            node.rest.rotation,
-            node.rest.translation,
-        );
-        let parent = node.parent.map_or(Mat4::IDENTITY, |parent| placed[parent]);
-        placed.push(parent * local);
+        placed.push(match node.parent {
+            None => Mat4::IDENTITY,
+            Some(parent) => placed[parent] * node.rest.matrix(),
+        });
     }
-    let inverse: Vec<u8> = placed
+    let bound: Vec<usize> = (0..tree.nodes.len())
+        .filter(|&node| tree.nodes[node].parent.is_some())
+        .collect();
+    let inverse: Vec<u8> = bound
         .iter()
-        .flat_map(|at| at.inverse().to_cols_array())
+        .flat_map(|&node| placed[node].inverse().to_cols_array())
         .flat_map(|value| value.to_le_bytes())
         .collect();
     let inverse_bind_matrices = push_accessor(
         root,
         bin,
         &inverse,
-        joints.len(),
+        bound.len(),
         json::accessor::Type::Mat4,
         None,
     );
@@ -851,7 +1065,7 @@ fn push_skin(
         extensions: None,
         extras: Default::default(),
         inverse_bind_matrices: Some(inverse_bind_matrices),
-        joints: joints.to_vec(),
+        joints: bound.iter().map(|&node| joints[node]).collect(),
         name: None,
         skeleton: None,
     })
@@ -1033,7 +1247,8 @@ fn last_value(value: Option<serde_json::Value>) -> Option<f32> {
         .map(|value| value as f32)
 }
 
-fn push_accessor(
+/// An accessor of `count` floats of `kind`, `bytes` appended to `bin` as its view.
+pub fn push_accessor(
     root: &mut json::Root,
     bin: &mut Vec<u8>,
     bytes: &[u8],
@@ -1082,7 +1297,8 @@ fn push_accessor(
     })
 }
 
-fn glb(root: &json::Root, bin: Vec<u8>) -> Vec<u8> {
+/// The glTF binary of `root` over the buffer `bin`.
+pub fn glb(root: &json::Root, bin: Vec<u8>) -> Vec<u8> {
     let mut document = root.to_string().expect("a glTF document").into_bytes();
     while !document.len().is_multiple_of(4) {
         document.push(b' ');

@@ -1,6 +1,6 @@
 # Style sheet
 
-Every model, every ground colour and every render pass is held to this sheet. It is drawn from the concept board the game reproduces: chunky low-poly models in bright, saturated colours under soft light, blob trees and lush grass, clear bright water, seen from above. `tools/restyle.py` maps a pack's colours onto the palette below and `just lint` holds every model to the budget.
+Every model, every ground colour and every render pass is held to this sheet. It is drawn from the concept board the game reproduces: chunky low-poly models in bright, saturated colours under soft light, blob trees and lush grass, clear bright water, seen from above. Every pack model was restyled onto the palette below, and `just lint` holds every model to the budget.
 
 ## What a frame looks like
 

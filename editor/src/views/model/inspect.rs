@@ -3,7 +3,7 @@
 
 use engine::core::content::media::GltfInfos;
 use engine::systems::actor::appearance;
-use engine::systems::actor::model::{MAX_CHARACTER_TRIANGLES, ModelDef, mesh_label};
+use engine::systems::actor::model::{MAX_CHARACTER_TRIANGLES, ModelDef};
 use ui::egui::Ui;
 use ui::{form, panel, theme};
 
@@ -24,7 +24,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
                 let part = laid.part;
                 let mesh = part.get(content).mesh_for(row.build.as_ref()).map(|mesh| {
                     let triangles = infos.0.get(mesh.as_str()).map_or(0, |info| info.triangles);
-                    (mesh_label(mesh), triangles)
+                    (mesh.as_str().to_owned(), triangles)
                 });
                 (part.path(content).to_owned(), mesh)
             })

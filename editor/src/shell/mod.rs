@@ -671,9 +671,8 @@ fn toast(editor: &mut Editor, ctx: &Context) {
     float::toast(ctx, text, since);
 }
 
-/// Files dropped onto the window go to the tab in front when it takes them: a bust's faces, a model
-/// part's meshes, a prop's model, a skeleton's libraries and rig; anywhere else they have no place
-/// to land.
+/// Files dropped onto the window go to the bust's or prop's tab in front, as its faces or model;
+/// anywhere else they are imported into the folder chosen in the content tree.
 fn dropped_files(editor: &mut Editor, ctx: &Context) {
     let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
         i.raw
@@ -687,13 +686,10 @@ fn dropped_files(editor: &mut Editor, ctx: &Context) {
     }
     match active_tab(editor) {
         Some(EditorTab::Bust { .. }) => editor.views.bust.drops = dropped,
-        Some(EditorTab::ModelPart { .. }) => editor.views.model_part.drops = dropped,
         Some(EditorTab::Prop { .. }) => editor.views.prop.drops = dropped,
-        Some(EditorTab::Row { table, .. }) if table == SkeletonDef::TABLE => {
-            editor.views.skeleton.drops = dropped
+        _ => {
+            let folder = content_tree::current_folder(editor);
+            crate::import::begin(editor, folder, dropped);
         }
-        _ => editor.toast(
-            "Drop files onto a bust's, a model part's, a prop's or a skeleton's tab to add them to it",
-        ),
     }
 }

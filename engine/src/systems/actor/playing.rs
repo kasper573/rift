@@ -347,10 +347,9 @@ pub fn pose_to(world: &mut World, actor: Entity, pose: Pose) -> Option<Playing> 
     if from == pose {
         return None;
     }
-    let skeleton = &model.skeleton().def;
     let shift = [Motion::Begin(pose), Motion::End(from)]
         .into_iter()
-        .find(|motion| skeleton.plays(stance, motion))?;
+        .find(|motion| model.plays(stance, motion))?;
     play(world, actor, shift, None)
 }
 
@@ -358,10 +357,7 @@ pub fn pose_to(world: &mut World, actor: Entity, pose: Pose) -> Option<Playing> 
 pub fn plays(world: &World, actor: Entity, motion: &Motion) -> bool {
     let content = world.resource::<Content>();
     world.get::<Appearance>(actor).is_some_and(|appearance| {
-        ActorModel::get(content, appearance.model)
-            .skeleton()
-            .def
-            .plays(held::stance_of(world, actor), motion)
+        ActorModel::get(content, appearance.model).plays(held::stance_of(world, actor), motion)
     })
 }
 

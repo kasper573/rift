@@ -1,10 +1,10 @@
 {
-  "skeleton": "characters/skeletons/turret.skeleton",
+  "skeleton": "characters/skeletons/turret.skeleton.json",
   "hitbox": {
     "radius": 0.45,
     "height": 1.0
   },
   "parts": [
-    "characters/parts/turret.model_part"
+    "characters/parts/turret.model_part.json"
   ]
 }

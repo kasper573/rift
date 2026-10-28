@@ -9,7 +9,6 @@ use std::collections::HashMap;
 
 use engine::core::content::{Content, ContentFile};
 use engine::core::geometry::Capsule;
-use engine::core::render::world::mannequin::RigClip;
 use engine::core::time::Seconds;
 use engine::systems::actor::model::ActorModel;
 use engine::systems::actor::skeleton::Cue;
@@ -18,6 +17,7 @@ use serde::Deserialize;
 use ui::egui::{self, Ui, Vec2};
 use ui::{chip, form, theme};
 
+use super::area::viewport::StageClip;
 use super::stage;
 use crate::app::Editor;
 use crate::shell::{row_form, sidebar};
@@ -176,7 +176,7 @@ pub(super) fn stand(
     editor: &mut Editor,
     ui: &Ui,
     key: &str,
-    clip: Option<RigClip>,
+    clip: Option<StageClip>,
     held: Option<Seconds>,
     crossed: Vec<Cue>,
 ) {

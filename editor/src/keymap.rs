@@ -82,8 +82,11 @@ pub enum EditorKey {
     StepOn,
     ApexCue,
     StepCue,
-    MakeHand,
-    GroupRoot,
+    GripMove,
+    GripTurn,
+    AxisX,
+    AxisY,
+    AxisZ,
     RunScript,
     Palette,
     Outline,
@@ -241,9 +244,8 @@ impl EditorKey {
             FilterScene | OpenBlueprint | Group | Ungroup | NewFolder | Reorder | Cut | Hide
             | Lock | ShowOnly | ShowEverything | UnlockEverything => KeyScope::SceneGraph,
             Shrink | Grow | Pin | Route => KeyScope::WorldMap,
-            PlayPause | StepBack | StepOn | ApexCue | StepCue | MakeHand | GroupRoot => {
-                KeyScope::Model
-            }
+            PlayPause | StepBack | StepOn | ApexCue | StepCue | GripMove | GripTurn | AxisX
+            | AxisY | AxisZ => KeyScope::Model,
             RunScript | Palette | Outline | AddChoice | Link => KeyScope::Script,
             NextCell | FillDown => KeyScope::Spreadsheet,
         }
@@ -328,8 +330,11 @@ impl EditorKey {
             StepOn => "the playhead 10 ms on",
             ApexCue => "the attack's apex here",
             StepCue => "a step here · again to take it away",
-            MakeHand => "make the chosen joint a hand",
-            GroupRoot => "start a group at the chosen joint",
+            GripMove => "move the hand's grip frame with the pointer",
+            GripTurn => "turn the hand's grip frame with the pointer",
+            AxisX => "keep the grip's move or turn to its x axis",
+            AxisY => "keep the grip's move or turn to its y axis",
+            AxisZ => "keep the grip's move or turn to its z axis",
             RunScript => "run the script",
             Palette => "the palette: a node after the selection",
             Outline => "canvas · outline",
@@ -424,8 +429,11 @@ impl EditorKey {
             StepOn => press(plain, Key::Period),
             ApexCue => press(plain, Key::A),
             StepCue => press(plain, Key::S),
-            MakeHand => press(plain, Key::H),
-            GroupRoot => press(plain, Key::G),
+            GripMove => press(plain, Key::G),
+            GripTurn => press(plain, Key::R),
+            AxisX => press(plain, Key::X),
+            AxisY => press(plain, Key::Y),
+            AxisZ => press(plain, Key::Z),
             RunScript => press(plain, Key::F8),
             Palette | NextCell => press(plain, Key::Tab),
             Outline => press(plain, Key::O),

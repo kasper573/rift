@@ -1,7 +1,6 @@
 use driver::{
-    BUDGET, LONG, Player, aiming, beside_other_player, clickable_point, ground_near, id,
-    nearest_npc, npc_is, other_player_within, pack_ground, played, played_on, playing,
-    status_on_me,
+    BUDGET, LONG, Player, aiming, beside_other_player, clickable_point, ground_near, id, npc_is,
+    other_player_within, pack_ground, played, played_on, playing, status_on_me,
 };
 use engine::core::math::Pos;
 use engine::core::units::{MeterPos, Meters};
@@ -54,7 +53,7 @@ fn play(shoot: &mut Shoot) {
     me.caption(
         "A shader on an area reads its geometry: Fireball's flames fill the circle exactly, and whoever stands in it burns bright inside the fire",
     );
-    let healthiest = me.wait_for("the pack close by", healthiest_close_prey);
+    let healthiest = me.wait_for("a foe in view", healthiest_foe_in_view);
     me.cast_at(InputAction::Hotbar1, healthiest, |snapshot| {
         !played(snapshot, "fireball_blast").is_empty()
     });
@@ -88,7 +87,7 @@ fn play(shoot: &mut Shoot) {
     );
     friend.act(InputAction::Hotbar1);
     friend.wait_until("Cleave armed", aiming);
-    let foe = friend.wait_for("a rogue in the friend's view", foe_in_view);
+    let foe = friend.wait_for("a foe in the friend's view", foe_in_view);
     friend.point_at_ground(foe);
     friend.click();
     me.wait_until("the cleave", |snapshot| {
@@ -142,40 +141,36 @@ fn closing_pack(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
     })
 }
 
-// The healthiest of the pack close by, so a blast centred on it leaves someone burning instead of
-// felling everyone it holds.
-fn healthiest_close_prey(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
-    let me = snapshot.me.as_ref()?.at;
+// The healthiest foe in view, so a blast centred on it leaves someone burning instead of felling
+// everyone it holds: the chain and the friend's blows have worn the pack down.
+fn healthiest_foe_in_view(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
     snapshot
         .actors
         .iter()
-        .filter(|actor| npc_is(actor, PREY) && actor.health > 0.0)
-        .filter(|actor| actor.at.distance_to(me) <= 4.0)
+        .filter(|actor| foe(actor))
+        .filter(|actor| clickable_point(snapshot, actor.at).is_some())
         .max_by(|a, b| a.health.total_cmp(&b.health))
         .map(|actor| actor.at)
 }
 
-// The friend arms Sunder and lands it on the nearest monster standing clear of the crowd on him,
-// so the slash across its sprite is in the open.
+// The friend arms Sunder and lands it on a foe standing clear of the crowd on him, nearest
+// first, so the slash across its sprite is in the open; any other will do when none stands clear.
 fn sunder_nearest(friend: &mut Player) {
     friend.cast_on(
         InputAction::Hotbar3,
         |snapshot| {
-            let me = snapshot.me.as_ref()?.at;
-            let standing = || {
-                snapshot
-                    .actors
-                    .iter()
-                    .filter(|actor| npc_is(actor, PREY) && actor.health > 0.0)
+            let Some(me) = snapshot.me.as_ref().map(|me| me.at) else {
+                return Vec::new();
             };
-            let nearest = |mut among: Vec<&ProbeBody>| {
-                among.sort_by(|a, b| a.at.distance_to(me).total_cmp(&b.at.distance_to(me)));
-                among.first().map(|actor| actor.id)
-            };
-            let clear = standing()
-                .filter(|actor| (2.5..=5.0).contains(&actor.at.distance_to(me)))
-                .collect();
-            nearest(clear).or_else(|| nearest(standing().collect()))
+            let mut standing: Vec<&ProbeBody> =
+                snapshot.actors.iter().filter(|actor| foe(actor)).collect();
+            let clear = |actor: &ProbeBody| (2.5..=5.0).contains(&actor.at.distance_to(me));
+            standing.sort_by(|a, b| {
+                clear(b)
+                    .cmp(&clear(a))
+                    .then(a.at.distance_to(me).total_cmp(&b.at.distance_to(me)))
+            });
+            standing.into_iter().map(|actor| actor.id).collect()
         },
         |snapshot| !played(snapshot, "sunder_slash").is_empty(),
     );
@@ -185,9 +180,19 @@ fn place(at: Pos<Meters>) -> Place {
     Place { area: id(AREA), at }
 }
 
-/// The nearest living prey on the friend's screen: where the pack is now, which the cone sweeps
-/// at, rather than where it roams, which may lie out of the friend's view.
+/// The nearest living foe on the friend's screen: where the pack is now, which the cone sweeps at,
+/// rather than where it roams, which may lie out of the friend's view.
 fn foe_in_view(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
-    let foe = nearest_npc(snapshot, PREY)?.at;
-    clickable_point(snapshot, foe).map(|_| foe)
+    let me = snapshot.me.as_ref()?.at;
+    snapshot
+        .actors
+        .iter()
+        .filter(|actor| foe(actor))
+        .filter(|actor| clickable_point(snapshot, actor.at).is_some())
+        .min_by(|a, b| a.at.distance_to(me).total_cmp(&b.at.distance_to(me)))
+        .map(|actor| actor.at)
+}
+
+fn foe(body: &ProbeBody) -> bool {
+    body.npc.is_some() && !body.friendly && body.health > 0.0
 }

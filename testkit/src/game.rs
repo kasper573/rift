@@ -13,8 +13,6 @@ use engine::core::time::{Millis, Seconds};
 use engine::core::units::{Meters, MetersPerSec};
 use engine::core::vfx::shader::{SHADER_SOURCE, Stage};
 use engine::systems::actor::Action;
-use engine::systems::actor::part::PART_MESH;
-use engine::systems::actor::skeleton::{CLIP_LIBRARIES, RIG_GLB};
 use engine::systems::area;
 use engine::systems::area::prop::PROP_GLB;
 use engine::systems::area::scene::SCENE;
@@ -64,10 +62,28 @@ pub const SPRINT_PACE: MetersPerSec = MetersPerSec(Meters(6.0));
 /// The skeleton every declared model wears unless the test names another.
 pub const BODY: &str = "body";
 
-/// The library every declared skeleton keeps its clips in.
-pub const LIBRARY: &str = "moves";
+/// The glTF file a declared skeleton's rig is read from.
+pub fn rig_file(skeleton: &str) -> String {
+    format!("rigs/{skeleton}.glb")
+}
 
-/// The clips a declared skeleton's library carries: one per action, each `CLIP` long.
+/// The clip named `name` of the skeleton declared as `skeleton`: a file of its own, made on the
+/// test rig.
+pub fn clip_on(skeleton: &str, name: &str) -> String {
+    format!("clips/{skeleton}/{name}.glb")
+}
+
+/// The clip named `name` of the plain skeleton [`BODY`].
+pub fn clip(name: &str) -> String {
+    clip_on(BODY, name)
+}
+
+/// The glTF file of the mesh of a part declared as `name`.
+pub fn part_file(name: &str) -> String {
+    format!("parts/{name}.glb")
+}
+
+/// The clips a declared skeleton carries: one per action, each `CLIP` long.
 pub fn rig_clips() -> Vec<(&'static str, Seconds)> {
     Action::VARIANTS
         .iter()
@@ -251,44 +267,53 @@ impl Game {
         )
     }
 
-    /// A skeleton of the test rig, with a right and a left hand, its library carrying a clip named
-    /// after every action, each [`CLIP`] long, which its base set plays; its attack lands at
-    /// [`APEX`].
+    /// A skeleton of the test rig, with a right and a left hand, carrying a clip named after every
+    /// action, each [`CLIP`] long, which its base set plays; its attack lands at [`APEX`].
     pub fn skeleton(self, name: &str) -> Game {
         self.skeleton_of(name, &rig_clips(), json!({}))
     }
 
-    /// A skeleton of the test rig, its library carrying `clips`, of `fields` over the plain
-    /// skeleton's: a right and a left hand, a base set playing each action's clip of its name, the
-    /// attack landing at [`APEX`], its walk, run and sprint covering [`WALK_PACE`], [`RUN_PACE`] and
-    /// [`SPRINT_PACE`].
+    /// A skeleton of the test rig carrying `clips`, each a file of its own at [`clip_on`], of
+    /// `fields` over the plain skeleton's: a right and a left hand, a base set playing each
+    /// action's clip of its name, the attack landing at [`APEX`], its walk, run and sprint covering
+    /// [`WALK_PACE`], [`RUN_PACE`] and [`SPRINT_PACE`].
     pub fn skeleton_of(self, name: &str, clips: &[(&str, Seconds)], fields: Value) -> Game {
         let base: serde_json::Map<String, Value> = Action::VARIANTS
             .iter()
-            .map(|action| (action.as_ref().to_owned(), json!(action.as_ref())))
+            .map(|action| {
+                (
+                    action.as_ref().to_owned(),
+                    json!(clip_on(name, action.as_ref())),
+                )
+            })
             .collect();
+        let paced = |gait: &str, pace: MetersPerSec| json!({ "clip": clip_on(name, gait), "pace": pace.0.0 });
         let mut row = json!({
             "name": name,
+            "rig": { "files": [rig_file(name)] },
             "hands": [
                 { "name": "right", "joint": "hand.r" },
                 { "name": "left", "joint": "hand.l" },
             ],
             "base": { "clips": base },
-            "cues": { "attack": [{ "at": APEX.0, "apex": true }] },
-            "paces": { "walk": WALK_PACE.0.0, "run": RUN_PACE.0.0, "sprint": SPRINT_PACE.0.0 },
+            "cues": [{ "clip": clip_on(name, "attack"), "cues": [{ "at": APEX.0, "apex": true }] }],
+            "paces": [
+                paced("walk", WALK_PACE),
+                paced("run", RUN_PACE),
+                paced("sprint", SPRINT_PACE),
+            ],
         });
         for (field, value) in fields.as_object().expect("a skeleton's fields") {
             row[field] = value.clone();
         }
         let tree = rig();
-        self.row("skeleton", name, row)
-            .part("skeleton", name, &RIG_GLB.named("", "glb"), rig_glb(&tree))
-            .part(
-                "skeleton",
-                name,
-                &CLIP_LIBRARIES.named(LIBRARY, "glb"),
-                library_glb(&tree, clips),
-            )
+        let mut game = self
+            .row("skeleton", name, row)
+            .asset(&rig_file(name), rig_glb(&tree));
+        for &(clip, length) in clips {
+            game = game.asset(&clip_on(name, clip), library_glb(&tree, &[(clip, length)]));
+        }
+        game
     }
 
     /// Gives the skeleton declared as `skeleton` the equipment slots `slots`, in their draw order.
@@ -500,14 +525,9 @@ impl Game {
         self.row(
             "model_part",
             name,
-            json!({ "skeleton": path("skeleton", skeleton) }),
+            json!({ "skeleton": path("skeleton", skeleton), "mesh": part_file(name) }),
         )
-        .part(
-            "model_part",
-            name,
-            &PART_MESH.named("", "glb"),
-            skin_glb(&rig(), &[]),
-        )
+        .asset(&part_file(name), skin_glb(&rig(), &[]))
     }
 
     /// A prop of a model nobody would notice, taking up `footprint` of the ground.

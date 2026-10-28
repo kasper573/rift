@@ -1,73 +1,80 @@
-//! The skeleton view: the rig with its hands and groups marked, what plays for each action, pose
-//! and move in each stance, the clips of its libraries with their cues, the hands items hang from,
-//! what a body is put together and painted from, and the layers that move a body beyond its clips.
-//! The stage shows the rig as any model wearing it, playing any clip, holding any item, dressed in
-//! any worn items. A glb dropped on the view is offered as a new library, or as the rig in place of
-//! the one it has; a folder of part meshes, as the skeleton's parts.
+//! The skeleton view, on five pages: rigs, sets, hands, body and layers. Every page works from the
+//! skeleton's file as it stands, with our rig put together from the files it names and every clip
+//! of the game folder that plays on it, so a skeleton is set up from nothing. The stage shows the
+//! rig as a model wearing it, or while none loads as its joints, posed as the game poses them.
 
 pub mod body;
-pub mod clips;
 pub mod hands;
-pub mod import;
 pub mod inspect;
-pub mod joints;
 pub mod layers;
-pub mod library;
+pub mod rigging;
+pub mod rigs;
 pub mod sets;
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use bevy::prelude::Transform;
-use engine::core::assets::FileSize;
-use engine::core::content::{Content, ContentFile, NamedContent};
-use engine::core::render::world::mannequin::RigClip;
-use engine::core::time::Millis;
-use engine::core::units::MetersPerSec;
-use engine::systems::actor::model::{ActorModel, Skeletons};
+use bevy::math::{Mat4, Vec3};
+use engine::core::content::gltf::{self, ClipKeys, NodeTree, Rest, TreeNode};
+use engine::core::content::{Content, NamedContent};
+use engine::core::render::camera::{ground_pos, world_point};
+use engine::core::render::world::rig_clip;
+use engine::core::units::{Meters, MetersPerSec};
+use engine::systems::actor::model::ActorModel;
 use engine::systems::actor::skeleton::{
-    BuiltSkeleton, ClipName, Cue, EquipmentSlot, GroupName, Hand, JointName, Layer, LocalOffset,
-    LocalTurn, SkeletonDef, SkeletonId,
+    Clip, ClipCues, ClipPace, Cue, EquipmentSlot, GroupName, Hand, JointName, Layer, SkeletonDef,
+    SkeletonId,
 };
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::{Action, Appearance, ModelDef, Motion, Pose, appearance, held};
-use engine::systems::item::{Grip, ItemDef, Wear};
+use engine::systems::item::{Grip, ItemDef, ItemId, Wear};
 use serde::Deserialize;
-use ui::egui::{self, Rect, Ui, Vec2};
-use ui::{chip, controls, theme, words};
+use ui::egui::{self, Pos2, Rect, Response, Stroke, Ui, Vec2};
+use ui::{chip, controls, theme};
 
+use self::rigging::{GltfCache, Playable, RiggedFrom, Rigging};
 use super::area::camera::AreaCanvas;
-use super::area::viewport::{StageLayers, StandingProp};
+use super::area::viewport::{StageClip, StandingProp};
+use super::cues::Scrub;
 use super::stage;
 use crate::app::Editor;
-use crate::project::ContentEdit;
-use crate::shell::{row_form, sidebar};
+use crate::project::{ContentEdit, ProjectFiles};
+use crate::shell::sidebar;
 use crate::tabs::shown_path;
 
 #[derive(Default)]
 pub struct SkeletonViews {
     pub views: HashMap<String, SkeletonView>,
-    pub drops: Vec<PathBuf>,
+    pub gltfs: GltfCache,
+    rigged: HashMap<String, (RiggedFrom, Arc<Rigging>)>,
+    posed: HashMap<(usize, StageKey), Posed>,
 }
+
+/// The keys a clip plays on a rig, with the rig, which the entry holds so no other stands where it
+/// stood.
+struct Posed {
+    rig: Arc<NodeTree>,
+    keys: Option<Arc<ClipKeys>>,
+}
+
+/// A stage clip as a key: what it plays and through which pairs.
+type StageKey = (String, usize, Option<Vec<(String, String)>>);
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SkeletonPage {
     #[default]
-    Joints,
+    Rigs,
     Sets,
-    Clips,
     Hands,
     Body,
     Layers,
 }
 
 impl SkeletonPage {
-    const ALL: [SkeletonPage; 6] = [
-        SkeletonPage::Joints,
+    const ALL: [SkeletonPage; 5] = [
+        SkeletonPage::Rigs,
         SkeletonPage::Sets,
-        SkeletonPage::Clips,
         SkeletonPage::Hands,
         SkeletonPage::Body,
         SkeletonPage::Layers,
@@ -75,9 +82,8 @@ impl SkeletonPage {
 
     fn label(self) -> &'static str {
         match self {
-            SkeletonPage::Joints => "joints",
+            SkeletonPage::Rigs => "rigs",
             SkeletonPage::Sets => "sets",
-            SkeletonPage::Clips => "clips",
             SkeletonPage::Hands => "hands",
             SkeletonPage::Body => "body",
             SkeletonPage::Layers => "layers",
@@ -90,21 +96,18 @@ pub struct SkeletonView {
     /// The model the stage shows the rig as, by its file's path.
     pub wearer: Option<String>,
     /// The clip the stage plays; none stands the rig at rest.
-    pub clip: Option<ClipName>,
-    pub scrub: super::cues::Scrub,
-    /// The joint lit on the joints page.
-    pub joint: Option<String>,
+    pub clip: Option<Clip>,
+    pub scrub: Scrub,
     /// The hand the hands page edits, by its place in the list.
     pub hand: usize,
     /// The item the stage hangs from the model's hands, by its file's path.
     pub trying: Option<String>,
     /// The items the stage's model wears, by the slot each is worn in and its file's path.
     pub wearing: BTreeMap<EquipmentSlot, String>,
+    pub rigs: rigs::RigsState,
     pub sets: sets::SetsState,
+    pub hands: hands::HandsState,
     pub layers: layers::LayersState,
-    pub unused_only: bool,
-    pub library: Option<library::LibraryDraft>,
-    pub reduce_motion: bool,
     pub stage: stage::StageState,
 }
 
@@ -123,19 +126,16 @@ impl SkeletonViews {
 }
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
-    let Some(row) = super::read_shown::<SkeletonDef>(editor, ui, key) else {
+    let Some(def) = super::read_shown::<SkeletonDef>(editor, ui, key) else {
         return;
     };
     ensure_view(editor, key);
-    take_drops(editor, key);
-    let ctx = ui.ctx().clone();
-    library::dialog(editor, &ctx, key);
+    let Some(rigging) = rigging(editor, key, &def) else {
+        return;
+    };
     let page = editor.views.skeleton.view(key).page;
-    sidebar::row(ui, "skeleton", |ui| {
-        row_form::show_row(editor, ui, SkeletonDef::TABLE, key)
-    });
     sidebar::inspector(editor, ui, "skeleton", |editor, ui| {
-        inspect::show(editor, ui, key, &row, page);
+        inspect::show(editor, ui, key, &def, &rigging, page);
     });
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(12, 8))
@@ -143,19 +143,12 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
             ui.set_min_size(ui.available_size());
             page_bar(editor, ui, key, page);
             ui.add_space(4.0);
-            let Some((content, id, built)) = built(editor, key) else {
-                ui.label(theme::muted(
-                    "The skeleton did not load: the output panel says why.",
-                ));
-                return;
-            };
             match page {
-                SkeletonPage::Joints => joints::show(editor, ui, key, &content, &built),
-                SkeletonPage::Sets => sets::show(editor, ui, key, &content, &built),
-                SkeletonPage::Clips => clips::show(editor, ui, key, &content, id, &built),
-                SkeletonPage::Hands => hands::show(editor, ui, key, &content, &built),
-                SkeletonPage::Body => body::show(editor, ui, key, &content, &built),
-                SkeletonPage::Layers => layers::show(editor, ui, key, &content, &built),
+                SkeletonPage::Rigs => rigs::show(editor, ui, key, &def, &rigging),
+                SkeletonPage::Sets => sets::show(editor, ui, key, &def, &rigging),
+                SkeletonPage::Hands => hands::show(editor, ui, key, &def, &rigging),
+                SkeletonPage::Body => body::show(editor, ui, key, &def),
+                SkeletonPage::Layers => layers::show(editor, ui, key, &def, &rigging),
             }
         });
 }
@@ -171,7 +164,7 @@ fn page_bar(editor: &mut Editor, ui: &mut Ui, key: &str, page: SkeletonPage) {
                 view.scrub.restart();
             }
         }
-        if !matches!(page, SkeletonPage::Sets | SkeletonPage::Layers) {
+        if page != SkeletonPage::Body {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let stage = &mut editor.views.skeleton.view_mut(key).stage;
                 if chip::toggle(ui, "turning", stage.spinning).clicked() {
@@ -192,31 +185,51 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
             page: SkeletonPage::default(),
             wearer: None,
             clip: None,
-            scrub: super::cues::Scrub::default(),
-            joint: None,
+            scrub: Scrub::default(),
             hand: 0,
             trying: None,
             wearing: BTreeMap::new(),
+            rigs: rigs::RigsState::default(),
             sets: sets::SetsState::default(),
+            hands: hands::HandsState::default(),
             layers: layers::LayersState::default(),
-            unused_only: false,
-            library: None,
-            reduce_motion: false,
             stage: stage::StageState::framing(1.3, false),
         },
     );
 }
 
-/// The skeleton at `key` as the game built it from the files as they last loaded, when it loaded.
-pub fn built(editor: &Editor, key: &str) -> Option<(Content, SkeletonId, Arc<BuiltSkeleton>)> {
-    let content = editor.loaded()?;
-    let id = content.by_path::<SkeletonDef>(key)?;
-    let built = Skeletons::loaded(&content, id)?.clone();
-    Some((content, id, built))
+/// Our rig and the clips that play on it for the skeleton at `key` as its file reads `def`, worked
+/// out again only when the files or what it names of them change.
+pub fn rigging(editor: &mut Editor, key: &str, def: &SkeletonDef) -> Option<Arc<Rigging>> {
+    let Editor { project, views, .. } = editor;
+    let files = &project.as_ref()?.files;
+    let from = RiggedFrom {
+        revision: files.revision(),
+        rig: def.rig.clone(),
+        sources: def.sources.clone(),
+    };
+    let views = &mut views.skeleton;
+    if let Some((held, rigged)) = views.rigged.get(key)
+        && *held == from
+    {
+        return Some(rigged.clone());
+    }
+    let rigged = Arc::new(rigging::rig_up(def, files, &mut views.gltfs));
+    views.rigged.insert(key.to_owned(), (from, rigged.clone()));
+    Some(rigged)
 }
 
-/// The models that wear the skeleton `id`, by their paths, with how each was built if it loaded.
-pub fn wearers(content: &Content, id: SkeletonId) -> Vec<(String, Option<&ActorModel>)> {
+/// The skeleton at `key` as the game built it from the files as they last loaded, when it loaded.
+fn skeleton_id(content: &Content, key: &str) -> Option<SkeletonId> {
+    content.by_path::<SkeletonDef>(key)
+}
+
+/// The models that wear the skeleton at `key`, by their paths, with how each was built if it
+/// loaded.
+pub fn wearers<'c>(content: &'c Content, key: &str) -> Vec<(String, Option<&'c ActorModel>)> {
+    let Some(id) = skeleton_id(content, key) else {
+        return Vec::new();
+    };
     content
         .table::<ModelDef>()
         .iter()
@@ -240,31 +253,15 @@ pub fn hand_items(content: &Content) -> Vec<(String, String)> {
         .collect()
 }
 
-/// How much the file at `path` weighs as the editor holds it.
-pub fn weight(editor: &Editor, path: &str) -> Option<FileSize> {
-    let project = editor.project.as_ref()?;
-    Some(FileSize(project.files.get(path)?.len()))
-}
-
-/// The library clip `clip` as a stage plays it.
-pub fn rig_clip(built: &BuiltSkeleton, clip: &ClipName) -> Option<RigClip> {
-    let found = built.clips.get(clip)?;
-    Some(RigClip {
-        file: built.def.libraries[found.library].file.path(),
-        index: found.index,
-    })
-}
-
 /// The model the stage of the view at `key` shows the rig as: the one picked, else the first that
 /// loaded.
 fn wearer<'c>(
     editor: &Editor,
     key: &str,
     content: &'c Content,
-    id: SkeletonId,
 ) -> Option<(String, &'c ActorModel)> {
     let picked = editor.views.skeleton.view(key).wearer.clone();
-    let wearers = wearers(content, id);
+    let wearers = wearers(content, key);
     picked
         .and_then(|picked| {
             wearers
@@ -276,22 +273,24 @@ fn wearer<'c>(
 }
 
 /// Which model wears the rig on the stage.
-fn wearer_picker(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, id: SkeletonId) {
-    let wearers = wearers(content, id);
-    let mut picked = wearer(editor, key, content, id).map(|(path, _)| path);
+fn wearer_picker(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content) {
+    let wearers = wearers(content, key);
+    let mut picked = wearer(editor, key, content).map(|(path, _)| path);
     ui.horizontal(|ui| {
         ui.label(theme::muted("worn by"));
         controls::combo(("skeleton-wearer", key))
-            .selected_text(picked.as_deref().map_or("nothing fits".to_owned(), |path| {
-                shown_path(path).to_owned()
-            }))
+            .selected_text(
+                picked
+                    .as_deref()
+                    .map_or("its joints".to_owned(), |path| shown_path(path).to_owned()),
+            )
             .width(180.0)
             .show_ui(ui, |ui| {
                 for (path, model) in &wearers {
                     let label = if model.is_some() {
                         shown_path(path).to_owned()
                     } else {
-                        format!("{} · does not fit", shown_path(path))
+                        format!("{} · did not load", shown_path(path))
                     };
                     ui.add_enabled_ui(model.is_some(), |ui| {
                         ui.selectable_value(&mut picked, Some(path.clone()), label);
@@ -300,7 +299,7 @@ fn wearer_picker(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content,
             });
     });
     let view = editor.views.skeleton.view_mut(key);
-    if picked != view.wearer {
+    if picked.is_some() && picked != view.wearer {
         view.wearer = picked;
     }
 }
@@ -312,37 +311,19 @@ fn stage_pickers(
     ui: &mut Ui,
     key: &str,
     content: &Content,
-    built: &BuiltSkeleton,
+    rigging: &Rigging,
     rest: bool,
 ) {
-    let Some(id) = content.by_path::<SkeletonDef>(key) else {
-        return;
-    };
-    wearer_picker(editor, ui, key, content, id);
+    wearer_picker(editor, ui, key, content);
     let mut clip = editor.views.skeleton.view(key).clip.clone();
-    ui.horizontal(|ui| {
-        ui.label(theme::muted("clip"));
-        controls::combo(("skeleton-clip", key))
-            .selected_text(clip.as_ref().map_or("rest".to_owned(), |clip| {
-                format!(
-                    "{clip} · {:.2} s",
-                    built.clips.get(clip).map_or(0.0, |found| found.length.0)
-                )
-            }))
-            .width(220.0)
-            .show_ui(ui, |ui| {
-                if rest {
-                    ui.selectable_value(&mut clip, None, "rest");
-                }
-                for (name, found) in &built.clips {
-                    ui.selectable_value(
-                        &mut clip,
-                        Some(name.clone()),
-                        format!("{name} · {:.2} s", found.length.0),
-                    );
-                }
-            });
-    });
+    clip_picker(
+        ui,
+        "clip",
+        ("skeleton-clip", key),
+        rigging,
+        &mut clip,
+        rest.then_some("rest"),
+    );
     let view = editor.views.skeleton.view_mut(key);
     if clip != view.clip {
         view.clip = clip;
@@ -350,22 +331,82 @@ fn stage_pickers(
     }
 }
 
+/// A combo labelled `label` of every clip that plays on the rig, filtered by any part of its file's
+/// path as it is typed, offering no clip too as `none` names it.
+pub fn clip_picker(
+    ui: &mut Ui,
+    label: &str,
+    id: impl std::hash::Hash + std::fmt::Debug + Copy,
+    rigging: &Rigging,
+    clip: &mut Option<Clip>,
+    none: Option<&str>,
+) {
+    let filter_id = ui.make_persistent_id((&id, "filter"));
+    ui.horizontal(|ui| {
+        ui.label(theme::muted(label));
+        controls::combo(id)
+            .selected_text(
+                clip.as_ref()
+                    .map_or(none.unwrap_or("pick one").to_owned(), |clip| {
+                        let length = rigging.playable(clip).map_or(0.0, |found| found.length.0);
+                        format!("{} · {length:.2} s", clip.shown())
+                    }),
+            )
+            .width(260.0)
+            .show_ui(ui, |ui| {
+                let mut filter: String = ui
+                    .data_mut(|data| data.get_temp(filter_id))
+                    .unwrap_or_default();
+                ui.add(
+                    egui::TextEdit::singleline(&mut filter)
+                        .hint_text("filter by path")
+                        .desired_width(240.0),
+                );
+                ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
+                if let Some(none) = none {
+                    ui.selectable_value(clip, None, none);
+                }
+                for found in matching(rigging, &filter).take(MAX_LISTED) {
+                    ui.selectable_value(
+                        clip,
+                        Some(found.clip.clone()),
+                        format!("{} · {:.2} s", found.clip, found.length.0),
+                    );
+                }
+            });
+    });
+}
+
+/// The most clips a list offers at once; typing narrows it.
+pub const MAX_LISTED: usize = 200;
+
+/// The clips that play on the rig whose file's path holds `filter`, ignoring case.
+pub fn matching<'r>(rigging: &'r Rigging, filter: &str) -> impl Iterator<Item = &'r Playable> {
+    let filter = filter.trim().to_lowercase();
+    rigging.clips.iter().filter(move |found| {
+        filter.is_empty() || found.clip.to_string().to_lowercase().contains(&filter)
+    })
+}
+
 /// The clip a page that always plays stands the rig in: the one picked, else what the skeleton
-/// plays at idle, else its first.
-fn played_clip(editor: &mut Editor, key: &str, built: &BuiltSkeleton) -> Option<ClipName> {
-    let idle = built
-        .def
-        .named(None, &Motion::Action(Action::Idle), Pose::Idle)
-        .0
-        .nth(0)
-        .clip();
+/// plays at idle, else the first that plays.
+fn played_clip(
+    editor: &mut Editor,
+    key: &str,
+    def: &SkeletonDef,
+    rigging: &Rigging,
+) -> Option<Clip> {
+    let idle = def
+        .named(None, None, &Motion::Action(Action::Idle), Pose::Idle)
+        .map(|(cell, _)| cell.nth(0).clip().clone());
+    let plays = |clip: &Clip| rigging.playable(clip).is_some();
     let view = editor.views.skeleton.view_mut(key);
     let clip = view
         .clip
         .clone()
-        .filter(|clip| built.clips.contains_key(clip))
-        .or_else(|| built.clips.contains_key(idle).then(|| idle.clone()))
-        .or_else(|| built.clips.keys().next().cloned());
+        .filter(plays)
+        .or_else(|| idle.filter(plays))
+        .or_else(|| rigging.clips.first().map(|found| found.clip.clone()));
     if view.clip != clip {
         view.clip = clip.clone();
         view.scrub.restart();
@@ -396,112 +437,329 @@ fn item_picker(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, l
     editor.views.skeleton.view_mut(key).trying = trying;
 }
 
-/// The view's stage over `size`: the rig worn by the picked model, dressed in the items picked on
-/// the body page, in the picked clip at the playhead, holding `props`; gives back where it was drawn, to draw over.
-#[allow(clippy::too_many_arguments)]
+/// A stage drawn this frame: where, the canvas to draw over it through, and every joint of our rig
+/// where it shows on the screen.
+pub struct Staged {
+    pub rect: Rect,
+    pub response: Response,
+    pub canvas: AreaCanvas,
+    pub joints: Vec<(String, Pos2)>,
+    lines: Vec<(Pos2, Pos2)>,
+    /// Every node of the rig as it stands, in the rig's own frame.
+    worlds: Vec<(String, Mat4)>,
+    middle: Vec3,
+    scale: f32,
+}
+
+impl Staged {
+    /// Draws the rig's joints over the stage, `lit` ones marked, and gives the joint clicked.
+    pub fn pick(&self, ui: &Ui, lit: &[&str]) -> Option<String> {
+        let painter = ui.painter_at(self.rect);
+        for (from, to) in &self.lines {
+            painter.line_segment([*from, *to], Stroke::new(1.5, theme::FAINT));
+        }
+        let hovered = self.response.hover_pos().and_then(|at| self.nearest(at));
+        for (name, at) in &self.joints {
+            let lit = lit.contains(&name.as_str());
+            let colour = if lit { theme::ACCENT } else { theme::TEXT };
+            painter.circle_filled(*at, if lit { 4.5 } else { 3.0 }, colour);
+            if hovered.as_deref() == Some(name.as_str()) {
+                painter.circle_stroke(*at, 7.0, Stroke::new(1.5, theme::ACCENT));
+                painter.text(
+                    *at + Vec2::new(9.0, -9.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    name,
+                    egui::FontId::monospace(12.0),
+                    theme::TEXT,
+                );
+            }
+        }
+        if self.response.clicked() {
+            return self
+                .response
+                .interact_pointer_pos()
+                .and_then(|at| self.nearest(at));
+        }
+        None
+    }
+
+    /// Another rig standing `pose` on the same stage, `scale` times its size and moved by `aside`.
+    pub fn beside(&self, rig: &NodeTree, pose: Option<&[Rest]>, aside: Vec3, scale: f32) -> Staged {
+        place(
+            self.rect,
+            self.response.clone(),
+            self.canvas.clone(),
+            rig,
+            pose,
+            aside,
+            scale,
+        )
+    }
+
+    /// Draws the rig as its joints and the lines between them, in `colour`.
+    pub fn draw(&self, ui: &Ui, colour: egui::Color32) {
+        let painter = ui.painter_at(self.rect);
+        for (from, to) in &self.lines {
+            painter.line_segment([*from, *to], Stroke::new(2.0, colour));
+        }
+        for (_, at) in &self.joints {
+            painter.circle_filled(*at, 2.5, colour);
+        }
+    }
+
+    /// How the joint `name` stands, in the rig's frame.
+    pub fn joint(&self, name: &str) -> Option<Mat4> {
+        self.worlds
+            .iter()
+            .find(|(joint, _)| joint == name)
+            .map(|(_, world)| *world)
+    }
+
+    /// Where `at`, a point in the rig's frame, shows on the screen.
+    pub fn project(&self, at: Vec3) -> Pos2 {
+        project(&self.canvas, self.middle, self.scale, at)
+    }
+
+    fn nearest(&self, at: Pos2) -> Option<String> {
+        self.joints
+            .iter()
+            .map(|(name, joint)| (name, joint.distance(at)))
+            .filter(|(_, distance)| *distance < PICK_REACH)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(name, _)| name.clone())
+    }
+}
+
+/// How near the pointer, in points, takes a joint.
+const PICK_REACH: f32 = 10.0;
+
+/// The view's stage over `size`: the rig worn by the picked model and dressed in the items picked
+/// on the body page, or drawn as its joints while no model wears it, in the clip the view plays at
+/// the playhead, holding `props`.
 fn stage_rig(
     editor: &mut Editor,
     ui: &mut Ui,
     key: &str,
-    content: &Content,
-    built: &BuiltSkeleton,
+    def: &SkeletonDef,
+    rigging: &Rigging,
     size: Vec2,
     props: Vec<StandingProp>,
-) -> Option<(Rect, AreaCanvas)> {
-    let id = content.by_path::<SkeletonDef>(key)?;
-    let (path, model) = wearer(editor, key, content, id)?;
-    let body = match content.by_path::<ModelDef>(&path) {
-        Some(dressed) => model.dressed(
+) -> Option<Staged> {
+    let rig = rigging.rig.clone()?;
+    let content = editor.loaded();
+    let chosen = editor.views.skeleton.view(key).clip.clone();
+    let playable = chosen
+        .as_ref()
+        .and_then(|clip| rigging.playable(clip))
+        .cloned();
+    super::cues::advance(
+        ui,
+        &mut editor.views.skeleton.view_mut(key).scrub,
+        playable.as_ref().map(|found| found.length.millis()),
+    );
+    let scrub = &editor.views.skeleton.view(key).scrub;
+    let playhead = scrub.playhead;
+    let crossed = playable.as_ref().map_or_else(Vec::new, |found| {
+        scrub.crossed(def.cues_of(&found.clip), found.length.millis())
+    });
+    let clip = playable.as_ref().map(|found| found.stage_clip(def));
+    let pose = clip
+        .as_ref()
+        .and_then(|clip| pose_of(editor, &rig, clip, playhead.seconds().0));
+    let mut state = std::mem::take(&mut editor.views.skeleton.view_mut(key).stage);
+    let turntable = stage::turntable(editor, ui, &format!("skeleton:{key}"), size, &mut state);
+    editor.views.skeleton.view_mut(key).stage = state;
+    let turntable = turntable?;
+    let staged = place(
+        turntable.rect,
+        turntable.response.clone(),
+        turntable.canvas.clone(),
+        &rig,
+        pose.as_deref(),
+        Vec3::ZERO,
+        1.0,
+    );
+    let worn = content.as_ref().and_then(|content| {
+        let (path, model) = wearer(editor, key, content)?;
+        let dressed = content.by_path::<ModelDef>(&path)?;
+        let body = model.dressed(
             content,
             &appearance::look(
                 content,
                 &Appearance::of(dressed),
-                &body::wearing(editor, key, content),
+                &body::wearing_items(editor, key, content),
             ),
-        ),
-        None => model.body(),
-    };
-    let chosen = editor.views.skeleton.view(key).clip.clone();
-    let clip = chosen
-        .as_ref()
-        .and_then(|clip| Some((rig_clip(built, clip)?, built.clips[clip].length.millis())));
-    super::cues::advance(
-        ui,
-        &mut editor.views.skeleton.view_mut(key).scrub,
-        clip.as_ref().map(|(_, length)| *length),
-    );
-    let scrub = &editor.views.skeleton.view(key).scrub;
-    let playhead = scrub.playhead;
-    let crossed = match (&chosen, &clip) {
-        (Some(chosen), Some((_, length))) => scrub.crossed(
-            built.def.cues.get(chosen).map_or(&[], Vec::as_slice),
-            *length,
-        ),
-        _ => Vec::new(),
-    };
-    let turntable = turntable(editor, ui, key, size)?;
-    let drawn = (turntable.rect, turntable.canvas.clone());
-    let held = clip.as_ref().map(|_| playhead.seconds());
-    let holds = !props.is_empty();
-    let mut standing = stage::standing(body, clip.map(|(clip, _)| clip), held, crossed, props);
-    standing.layers = content
-        .by_path::<ModelDef>(&path)
-        .filter(|_| holds)
-        .map(stage::holding);
-    turntable.stand(editor, ui, vec![standing]);
-    Some(drawn)
+        );
+        Some((dressed, body))
+    });
+    let mut cast = Vec::new();
+    if let Some((model, body)) = worn {
+        let holds = !props.is_empty();
+        let mut standing = stage::standing(
+            body,
+            clip,
+            playable.as_ref().map(|_| playhead.seconds()),
+            crossed,
+            props,
+        );
+        standing.layers = holds.then(|| stage::holding(model));
+        cast.push(standing);
+    } else {
+        staged.draw(ui, theme::TEXT);
+    }
+    turntable.stand(editor, ui, cast);
+    Some(staged)
 }
 
-/// The view's stage over `size` with `model` placed by `placed`, playing `clip` at `playhead` and
-/// sounding the cues it `crossed`, with its skeleton's layers running as `layered` tells them.
-#[allow(clippy::too_many_arguments)]
-fn stage_walking(
+/// Where each joint of `rig` shows on the stage's picture, standing `pose` (at rest without one)
+/// in the middle of the stage, `scale` times its size and moved by `aside`.
+fn place(
+    rect: Rect,
+    response: Response,
+    canvas: AreaCanvas,
+    rig: &NodeTree,
+    pose: Option<&[Rest]>,
+    aside: Vec3,
+    scale: f32,
+) -> Staged {
+    let worlds = posed_worlds(rig, pose);
+    let middle = world_point(stage::center(), Meters(0.0)) + aside;
+    let screen = |world: &Mat4| project(&canvas, middle, scale, world.w_axis.truncate());
+    let joints: Vec<(String, Pos2)> = rig
+        .joints()
+        .map(|joint| (rig.nodes[joint].name.clone(), screen(&worlds[joint])))
+        .collect();
+    let lines = rig
+        .joints()
+        .filter_map(|joint| {
+            let parent = rig.nodes[joint]
+                .parent
+                .filter(|&parent| !rig.nodes[parent].mesh)?;
+            Some((screen(&worlds[parent]), screen(&worlds[joint])))
+        })
+        .collect();
+    let worlds = rig
+        .nodes
+        .iter()
+        .zip(worlds)
+        .map(|(node, world)| (node.name.clone(), world))
+        .collect();
+    Staged {
+        rect,
+        response,
+        canvas,
+        joints,
+        lines,
+        worlds,
+        middle,
+        scale,
+    }
+}
+
+/// Where `at`, a point in a rig's frame standing at `middle` at `scale` times its size, shows on
+/// `canvas`.
+fn project(canvas: &AreaCanvas, middle: Vec3, scale: f32, at: Vec3) -> Pos2 {
+    let at = middle + at * scale;
+    let ground = ground_pos(at);
+    let lift = at.y - canvas.area().heights.height_at(ground).0;
+    canvas.lifted(ground, Meters(lift))
+}
+
+/// Every node of `tree` in the scene, standing `pose`, or at rest without one.
+pub fn posed_worlds(tree: &NodeTree, pose: Option<&[Rest]>) -> Vec<Mat4> {
+    match pose {
+        None => tree.worlds(),
+        Some(pose) => NodeTree {
+            nodes: tree
+                .nodes
+                .iter()
+                .zip(pose)
+                .map(|(node, rest)| TreeNode {
+                    rest: *rest,
+                    ..node.clone()
+                })
+                .collect(),
+        }
+        .worlds(),
+    }
+}
+
+/// How `rig` stands `at` seconds into `clip`, as the game plays it there.
+fn pose_of(
     editor: &mut Editor,
-    ui: &mut Ui,
-    key: &str,
-    size: Vec2,
-    model: &ActorModel,
-    clip: RigClip,
-    playhead: Millis,
-    crossed: Vec<Cue>,
-    placed: Transform,
-    layered: StageLayers,
-) {
-    let mut state = std::mem::take(&mut editor.views.skeleton.view_mut(key).layers.stage);
-    let turntable = stage::turntable(
-        editor,
-        ui,
-        &format!("skeleton-walk:{key}"),
-        size,
-        &mut state,
-    );
-    editor.views.skeleton.view_mut(key).layers.stage = state;
-    let Some(turntable) = turntable else {
-        return;
-    };
-    let mut standing = stage::standing(
-        model.body(),
-        Some(clip),
-        Some(playhead.seconds()),
-        crossed,
-        Vec::new(),
-    );
-    standing.transform = placed;
-    standing.layers = Some(layered);
-    turntable.stand(editor, ui, vec![standing]);
-    ui.ctx().request_repaint();
+    rig: &Arc<NodeTree>,
+    clip: &StageClip,
+    at: f32,
+) -> Option<Vec<Rest>> {
+    let keys = rig_keys(editor, rig, clip)?;
+    Some(keys.pose(rig, at))
 }
 
-fn turntable(editor: &mut Editor, ui: &mut Ui, key: &str, size: Vec2) -> Option<stage::Turntable> {
-    let mut state = std::mem::take(&mut editor.views.skeleton.view_mut(key).stage);
-    let turntable = stage::turntable(editor, ui, &format!("skeleton:{key}"), size, &mut state);
-    editor.views.skeleton.view_mut(key).stage = state;
-    turntable
+/// The rig a source rig's clip is made on, as its file holds it, and how it stands there `at`
+/// seconds into the clip.
+fn his_pose(editor: &mut Editor, found: &Playable, at: f32) -> Option<(Arc<NodeTree>, Vec<Rest>)> {
+    let file = found.clip.file().as_str();
+    let tree = {
+        let Editor { project, views, .. } = &mut *editor;
+        views.skeleton.gltfs.tree(&project.as_ref()?.files, file)?
+    };
+    let clip = StageClip {
+        file: file.to_owned(),
+        animation: found.animation,
+        pairs: None,
+    };
+    let keys = rig_keys(editor, &tree, &clip)?;
+    let pose = keys.pose(&tree, at);
+    Some((tree, pose))
+}
+
+/// The keys `clip` plays on `rig`, made once and kept while the rig stands.
+fn rig_keys(editor: &mut Editor, rig: &Arc<NodeTree>, clip: &StageClip) -> Option<Arc<ClipKeys>> {
+    let Editor { project, views, .. } = editor;
+    let files = &project.as_ref()?.files;
+    let views = &mut views.skeleton;
+    let key = (
+        Arc::as_ptr(rig) as usize,
+        (clip.file.clone(), clip.animation, clip.pairs.clone()),
+    );
+    views
+        .posed
+        .retain(|_, posed| Arc::strong_count(&posed.rig) > 1);
+    if let Some(posed) = views.posed.get(&key) {
+        return posed.keys.clone();
+    }
+    if views.posed.len() > MAX_POSED {
+        views.posed.clear();
+    }
+    let keys = made_keys(files, &mut views.gltfs, rig, clip).map(Arc::new);
+    views.posed.insert(
+        key,
+        Posed {
+            rig: rig.clone(),
+            keys: keys.clone(),
+        },
+    );
+    keys
+}
+
+/// The most clips kept posed at once.
+const MAX_POSED: usize = 64;
+
+fn made_keys(
+    files: &ProjectFiles,
+    gltfs: &mut GltfCache,
+    rig: &Arc<NodeTree>,
+    clip: &StageClip,
+) -> Option<ClipKeys> {
+    let info = gltfs.info(files, &clip.file)?;
+    let keys = gltf::clip_keys(files.get(&clip.file)?, clip.animation).ok()?;
+    let make = rig_clip::maker(rig.clone(), clip.pairs.clone());
+    Some(make(&info.tree, &keys))
 }
 
 /// The props of the item on trial, held by the stage's model as the game would hang it.
-fn holding(editor: &Editor, key: &str, content: &Content, id: SkeletonId) -> Vec<StandingProp> {
-    let Some((_, model)) = wearer(editor, key, content, id) else {
+fn holding(editor: &Editor, key: &str, content: &Content) -> Vec<StandingProp> {
+    let Some((_, model)) = wearer(editor, key, content) else {
         return Vec::new();
     };
     let Some(item) = trying(editor, key, content) else {
@@ -513,10 +771,7 @@ fn holding(editor: &Editor, key: &str, content: &Content, id: SkeletonId) -> Vec
 
 /// The prop of the item on trial hung from hand `hand` of the stage's model by its own grip.
 fn tried_in_hand(editor: &Editor, key: &str, content: &Content, hand: usize) -> Vec<StandingProp> {
-    let Some(id) = content.by_path::<SkeletonDef>(key) else {
-        return Vec::new();
-    };
-    let Some((_, model)) = wearer(editor, key, content, id) else {
+    let Some((_, model)) = wearer(editor, key, content) else {
         return Vec::new();
     };
     let Some(item) = trying(editor, key, content) else {
@@ -531,58 +786,9 @@ fn tried_in_hand(editor: &Editor, key: &str, content: &Content, hand: usize) -> 
         .collect()
 }
 
-fn trying(editor: &Editor, key: &str, content: &Content) -> Option<engine::systems::item::ItemId> {
+fn trying(editor: &Editor, key: &str, content: &Content) -> Option<ItemId> {
     let trying = editor.views.skeleton.view(key).trying.as_deref()?;
     content.by_path::<ItemDef>(trying)
-}
-
-/// Takes the files dropped on the view: a folder's meshes become the skeleton's parts, a glTF
-/// binary is offered as a library or the rig.
-fn take_drops(editor: &mut Editor, key: &str) {
-    let drops = std::mem::take(&mut editor.views.skeleton.drops);
-    if let Some(folder) = drops.iter().find(|path| path.is_dir()) {
-        match import::import(editor, key, folder) {
-            Ok(imported) => {
-                if !imported.unpaired.is_empty() {
-                    editor.say(format!(
-                        "Unpaired, cut for some builds only: {}",
-                        imported.unpaired.join(", ")
-                    ));
-                }
-                editor.toast(format!(
-                    "Imported {}, {}",
-                    words::counted(imported.parts.len(), "part"),
-                    words::counted(imported.unpaired.len(), "unpaired file")
-                ));
-            }
-            Err(error) => editor.toast(error),
-        }
-        return;
-    }
-    let Some(path) = drops.iter().rev().find(|path| {
-        path.extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("glb"))
-    }) else {
-        if !drops.is_empty() {
-            editor.toast(
-                "Drop a .glb on a skeleton to add a library or replace its rig, or a folder of \
-                 part meshes to add its parts",
-            );
-        }
-        return;
-    };
-    match std::fs::read(path) {
-        Ok(bytes) => {
-            let name = path.file_stem().map_or("library".to_owned(), |stem| {
-                stem.to_string_lossy().into_owned()
-            });
-            match library::draft(editor, key, bytes, path.display().to_string(), &name) {
-                Ok(draft) => editor.views.skeleton.view_mut(key).library = Some(draft),
-                Err(error) => editor.toast(error),
-            }
-        }
-        Err(error) => editor.toast(format!("{}: {error}", path.display())),
-    }
 }
 
 /// Writes the skeleton at `key` as `change` leaves it, as one History step labelled `label`.
@@ -618,23 +824,40 @@ pub fn change_with(
 }
 
 /// Gives the clip `clip` the cues `cues`, in order of time: none takes its entry away.
-pub fn set_cues(editor: &mut Editor, key: &str, clip: &ClipName, mut cues: Vec<Cue>) -> bool {
+pub fn set_cues(editor: &mut Editor, key: &str, clip: &Clip, mut cues: Vec<Cue>) -> bool {
     cues.sort_by(|a, b| a.at.0.total_cmp(&b.at.0));
-    change(editor, key, &format!("Mark {clip}'s cues"), |skeleton| {
-        if cues.is_empty() {
-            skeleton.cues.remove(clip);
-        } else {
-            skeleton.cues.insert(clip.clone(), cues);
-        }
-        Ok(())
-    })
+    change(
+        editor,
+        key,
+        &format!("Mark {}'s cues", clip.shown()),
+        |skeleton| {
+            skeleton.cues.retain(|held| held.clip != *clip);
+            if !cues.is_empty() {
+                skeleton.cues.push(ClipCues {
+                    clip: clip.clone(),
+                    cues,
+                });
+                skeleton.cues.sort_by(|a, b| a.clip.cmp(&b.clip));
+            }
+            Ok(())
+        },
+    )
 }
 
 /// Gives the clip `clip` the pace `pace`, merging with the pace set just before it as one drag does.
-pub fn set_pace(editor: &mut Editor, key: &str, clip: &ClipName, pace: MetersPerSec) -> bool {
-    let edit = ContentEdit::new(format!("Pace {clip} in {}", shown_path(key))).merging();
+pub fn set_pace(editor: &mut Editor, key: &str, clip: &Clip, pace: MetersPerSec) -> bool {
+    let edit = ContentEdit::new(format!("Pace {} in {}", clip.shown(), shown_path(key))).merging();
     change_with(editor, key, edit, |skeleton| {
-        skeleton.paces.insert(clip.clone(), pace);
+        match skeleton.paces.iter_mut().find(|held| held.clip == *clip) {
+            Some(held) => held.pace = pace,
+            None => {
+                skeleton.paces.push(ClipPace {
+                    clip: clip.clone(),
+                    pace,
+                });
+                skeleton.paces.sort_by(|a, b| a.clip.cmp(&b.clip));
+            }
+        }
         Ok(())
     })
 }
@@ -645,40 +868,6 @@ pub fn set_hands(editor: &mut Editor, key: &str, hands: Vec<Hand>) -> bool {
         skeleton.hands = hands;
         Ok(())
     })
-}
-
-/// Makes the joint `joint` a hand named `name`, after the hands there are.
-pub fn make_hand(editor: &mut Editor, key: &str, joint: &str, name: &str) -> bool {
-    change(editor, key, &format!("Make {joint} a hand"), |skeleton| {
-        if skeleton.hands.iter().any(|hand| hand.joint.0 == joint) {
-            return Err(format!("{joint} is a hand already"));
-        }
-        skeleton.hands.push(Hand {
-            name: name.to_owned(),
-            joint: JointName::new(joint),
-            offset: LocalOffset::default(),
-            turn: LocalTurn::default(),
-            clasp: None,
-        });
-        Ok(())
-    })
-}
-
-/// Makes the joint `joint` a root of the group `group`, which it starts when there is none.
-pub fn group_at(editor: &mut Editor, key: &str, joint: &str, group: &str) -> bool {
-    change(
-        editor,
-        key,
-        &format!("Group {group} at {joint}"),
-        |skeleton| {
-            let roots = skeleton.groups.entry(GroupName::new(group)).or_default();
-            if roots.iter().any(|root| root.0 == joint) {
-                return Err(format!("{joint} roots {group} already"));
-            }
-            roots.push(JointName::new(joint));
-            Ok(())
-        },
-    )
 }
 
 /// Sets the skeleton's groups to `groups`.
@@ -695,8 +884,13 @@ pub fn set_groups(
 
 /// Sets the skeleton's layers to `layers`, refused while a leg is not a chain down the rig.
 pub fn set_layers(editor: &mut Editor, key: &str, layers: Vec<Layer>) -> bool {
-    if let Some((_, _, built)) = built(editor, key)
-        && let Some(refusal) = layers::refusals(&built.rig, &layers).into_iter().next()
+    let rig = editor
+        .read::<SkeletonDef>(key)
+        .and_then(Result::ok)
+        .and_then(|def| rigging(editor, key, &def))
+        .and_then(|rigging| rigging.rig.clone());
+    if let Some(rig) = rig
+        && let Some(refusal) = layers::refusals(&rig, &layers).into_iter().next()
     {
         editor.toast(format!("{}: {refusal}", shown_path(key)));
         return false;

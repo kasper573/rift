@@ -4,18 +4,23 @@ lumps shaded smooth on gnarled trunks, the woodsman's cottage, and the small bon
 
     build.py GAME
 
-Writes each model under the game folder, flat-shaded and coloured from the sheet's palette, as
-`restyle.py` does for pack models.
+Writes each model under the game folder, textureless, coloured per vertex from the sheet's
+palette and shaded flat, or smooth across the faces a part marks so.
 """
 
 import os
+import re
 import sys
 
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import glb  # noqa: E402
-import restyle  # noqa: E402
+
+FLOAT, UBYTE, USHORT, UINT = 5126, 5121, 5123, 5125
+ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER = 34962, 34963
+
+BUDGET = {"bytes": 2_000_000, "triangles": 2000}
 
 PHI = (1 + 5**0.5) / 2
 ICOSAHEDRON = (
@@ -61,7 +66,7 @@ def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     game = sys.argv[1]
-    palette = restyle.read_palette(os.path.join(game, "assets/STYLE.md"))
+    palette = read_palette(os.path.join(game, "assets/STYLE.md"))
     for name, build in MODELS.items():
         model = Model(palette)
         build(model, np.random.default_rng(sum(map(ord, name))))
@@ -72,7 +77,7 @@ def main():
 class Model:
     def __init__(self, palette):
         self.palette = palette
-        self.mesh = restyle.Mesh()
+        self.mesh = Mesh()
 
     def triangles(self, corners, swatch, glow=False, smooth=False):
         """Faces as an (n, 3, 3) array of corners, counter-clockwise seen from outside, in one
@@ -89,8 +94,6 @@ class Model:
             colors=colors,
             positions=corners,
             alphas=np.full(count, 0.0 if glow else 1.0),
-            joints=np.zeros((count, 4), np.uint8),
-            weights=np.zeros((count, 4), np.float32),
             smooth=smooth,
         )
 
@@ -166,12 +169,11 @@ class Model:
             "scene": 0,
             "scenes": [{"nodes": [0]}],
             "nodes": [{"name": "model", "mesh": 0}],
-            "meshes": [{"name": "model", "primitives": [mesh.primitive(writer, skinned=False)]}],
-            "materials": [restyle.MATERIAL],
+            "meshes": [{"name": "model", "primitives": [mesh.primitive(writer)]}],
+            "materials": [MATERIAL],
         }
         size = writer.write(path, document)
-        budget = restyle.BUDGET["prop"]
-        if mesh.triangles() > budget["triangles"] or size > budget["bytes"]:
+        if mesh.triangles() > BUDGET["triangles"] or size > BUDGET["bytes"]:
             sys.exit(f"{path}: {mesh.triangles()} tris, {size} bytes: over the prop budget")
         return f"{mesh.triangles()} tris, {size} bytes, size {np.round(high - low, 2).tolist()} m"
 
@@ -325,6 +327,153 @@ MODELS = {
     "tusk": tusk,
 }
 
+
+
+def read_palette(path):
+    """Every `| name | #hex |` row of the sheet, as name -> linear rgb."""
+    palette = {}
+    for line in open(path):
+        match = re.match(r"\|\s*([a-z][a-z0-9-]*)\s*\|\s*(#[0-9A-Fa-f]{6})\s*\|", line)
+        if match:
+            palette[match.group(1)] = glb.srgb_to_linear(glb.hex_color(match.group(2)))
+    if not palette:
+        sys.exit(f"{path} holds no palette rows")
+    return palette
+
+
+# Over this angle between two faces, in degrees, their shared edge is a corner that shades crisp;
+# under it, the faces shade smooth across the edge.
+SMOOTH_ANGLE = 48.0
+
+MATERIAL = {
+    "name": "style",
+    "doubleSided": True,
+    "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 1], "metallicFactor": 0, "roughnessFactor": 1},
+}
+
+
+class Mesh:
+    """Triangles gathered from every part of a model. Faces share their corners by position, and
+    each face carries one colour: a palette-coloured surface has no colour between its faces. A
+    face shaded `smooth` shares its corners' normals with the smooth faces around it and may colour
+    each corner on its own, so a colour runs across a rounded surface; any other has a normal and a
+    colour of its own."""
+
+    def __init__(self):
+        self.gathered = []
+
+    def add(self, positions, colors, alphas, smooth=False):
+        self.gathered.append((positions, colors, alphas, np.full(len(positions) // 3, smooth)))
+
+    def weld(self):
+        """Corners at one position are one vertex, so faces know their neighbours whatever their
+        colour; a face's colour is the one most of its corners carry."""
+        positions = np.concatenate([g[0] for g in self.gathered]).astype(np.float64)
+        colors = np.concatenate([g[1] for g in self.gathered]).astype(np.float32)
+        alphas = np.concatenate([g[2] for g in self.gathered]).astype(np.float32)
+        self.face_smooth = np.concatenate([g[3] for g in self.gathered])
+        _, first, inverse = np.unique(np.round(positions, 5), axis=0, return_index=True, return_inverse=True)
+        self.faces = inverse.reshape(-1, 3)
+        self.positions = positions[first]
+        corners = colors.reshape(-1, 3, 3)
+        second_agrees = np.all(np.isclose(corners[:, 1], corners[:, 2]), axis=1)
+        self.face_colors = np.where(second_agrees[:, None], corners[:, 1], corners[:, 0])
+        self.corner_colors = corners
+        self.face_alphas = alphas.reshape(-1, 3)[:, 0]
+        faces = self.faces
+        distinct = (faces[:, 0] != faces[:, 1]) & (faces[:, 1] != faces[:, 2]) & (faces[:, 0] != faces[:, 2])
+        spans = self.positions[faces]
+        area = np.linalg.norm(np.cross(spans[:, 1] - spans[:, 0], spans[:, 2] - spans[:, 0]), axis=1)
+        kept = distinct & (area > 1e-12)
+        self.faces = faces[kept]
+        self.face_colors = self.face_colors[kept]
+        self.corner_colors = self.corner_colors[kept]
+        self.face_alphas = self.face_alphas[kept]
+        self.face_smooth = self.face_smooth[kept]
+
+    def flatten(self, smooth_angle=SMOOTH_ANGLE):
+        """Every face gets its own three vertices, its normal and its colour; vertices that then
+        agree in everything are shared again. A corner's normal is the area-weighted mean of the
+        faces meeting there that turn no more than `smooth_angle` degrees from its own, so a
+        rounded surface shades smooth across its facets while a real corner stays crisp; a face
+        marked smooth shares with every smooth face at the corner whatever the angle. A flat face
+        carries its colour on all its corners; a smooth face carries each corner's own, so a colour
+        may run across a rounded surface."""
+        faces = self.faces
+        corners = self.positions[faces]
+        weighted = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+        face_normals = weighted / np.linalg.norm(weighted, axis=1, keepdims=True)
+        normals = corner_normals(faces, face_normals, weighted, self.face_smooth, smooth_angle)
+        smooth_corners = np.repeat(self.face_smooth, 3)
+        flat = faces.reshape(-1)
+        positions = self.positions[flat].astype(np.float32)
+        normals = normals.astype(np.float32)
+        colors = np.repeat(self.face_colors, 3, axis=0)
+        colors[smooth_corners] = self.corner_colors.reshape(-1, 3)[smooth_corners]
+        alphas = np.repeat(self.face_alphas, 3)
+        rows = np.concatenate(
+            [np.round(positions, 5), np.round(normals, 4), np.round(colors, 4), np.round(alphas[:, None], 3)],
+            axis=1,
+        )
+        _, first, inverse = np.unique(rows, axis=0, return_index=True, return_inverse=True)
+        self.indices = inverse.reshape(-1).astype(np.uint32)
+        self.positions = positions[first]
+        self.normals = normals[first]
+        self.colors = colors[first]
+        self.alphas = alphas[first]
+
+    def triangles(self):
+        return len(self.indices) // 3
+
+    def transform(self, matrix):
+        self.positions = (self.positions @ matrix[:3, :3].T + matrix[:3, 3]).astype(np.float32)
+        normals = self.normals @ np.linalg.inv(matrix[:3, :3])
+        self.normals = (normals / np.linalg.norm(normals, axis=1, keepdims=True)).astype(np.float32)
+
+    def bounds(self):
+        return self.positions.min(axis=0), self.positions.max(axis=0)
+
+    def primitive(self, writer):
+        attributes = {
+            "POSITION": writer.accessor(self.positions, FLOAT, "VEC3", target=ARRAY_BUFFER, bounds=True),
+            "NORMAL": writer.accessor(self.normals, FLOAT, "VEC3", target=ARRAY_BUFFER),
+            "COLOR_0": writer.accessor(
+                np.round(np.concatenate([glb.linear_to_srgb(self.colors), self.alphas[:, None]], axis=1) * 255),
+                UBYTE,
+                "VEC4",
+                normalized=True,
+                target=ARRAY_BUFFER,
+            ),
+        }
+        if len(self.positions) < 65536:
+            indices = writer.accessor(self.indices.astype(np.uint16), USHORT, "SCALAR", target=ELEMENT_ARRAY_BUFFER)
+        else:
+            indices = writer.accessor(self.indices, UINT, "SCALAR", target=ELEMENT_ARRAY_BUFFER)
+        return {"attributes": attributes, "indices": indices, "material": 0, "mode": 4}
+
+
+def corner_normals(faces, face_normals, weighted, face_smooth, smooth_angle):
+    """The normal at each corner of each face: the area-weighted mean of the faces meeting at
+    that corner's vertex that turn no more than `smooth_angle` from the face, or of every smooth
+    face there when both are marked smooth."""
+    count = len(faces)
+    corner_faces = np.repeat(np.arange(count), 3)
+    corner_vertices = faces.reshape(-1)
+    order = np.argsort(corner_vertices, kind="stable")
+    sorted_vertices = corner_vertices[order]
+    sorted_faces = corner_faces[order]
+    starts = np.searchsorted(sorted_vertices, corner_vertices, "left")
+    ends = np.searchsorted(sorted_vertices, corner_vertices, "right")
+    counts = ends - starts
+    pair_corner = np.repeat(np.arange(count * 3), counts)
+    within = np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)
+    pair_other = sorted_faces[np.repeat(starts, counts) + within]
+    pair_face = corner_faces[pair_corner]
+    facing = (face_normals[pair_face] * face_normals[pair_other]).sum(axis=1)
+    shares = (facing >= np.cos(np.radians(smooth_angle))) | (face_smooth[pair_face] & face_smooth[pair_other])
+    summed = np.zeros((count * 3, 3))
+    np.add.at(summed, pair_corner[shares], weighted[pair_other[shares]])
+    return summed / np.maximum(np.linalg.norm(summed, axis=1, keepdims=True), 1e-12)
 
 if __name__ == "__main__":
     main()

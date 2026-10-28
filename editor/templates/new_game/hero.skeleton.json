@@ -1,0 +1,76 @@
+{
+  "name": "Hero",
+  "rig": {
+    "files": [
+      "hero/rig.glb"
+    ]
+  },
+  "hands": [
+    {
+      "name": "right hand",
+      "joint": "hand.r"
+    },
+    {
+      "name": "left hand",
+      "joint": "hand.l"
+    }
+  ],
+  "base": {
+    "clips": {
+      "idle": {
+        "file": "hero/moves.glb",
+        "take": "idle"
+      },
+      "walk": {
+        "file": "hero/moves.glb",
+        "take": "walk"
+      },
+      "run": {
+        "file": "hero/moves.glb",
+        "take": "run"
+      },
+      "attack": {
+        "file": "hero/moves.glb",
+        "take": "attack"
+      },
+      "death": {
+        "file": "hero/moves.glb",
+        "take": "death"
+      },
+      "talk": {
+        "file": "hero/moves.glb",
+        "take": "talk"
+      }
+    }
+  },
+  "cues": [
+    {
+      "clip": {
+        "file": "hero/moves.glb",
+        "take": "attack"
+      },
+      "cues": [
+        {
+          "at": 400.0,
+          "apex": true
+        }
+      ]
+    }
+  ],
+  "paces": [
+    {
+      "clip": {
+        "file": "hero/moves.glb",
+        "take": "run"
+      },
+      "pace": 4.0
+    },
+    {
+      "clip": {
+        "file": "hero/moves.glb",
+        "take": "walk"
+      },
+      "pace": 1.5
+    }
+  ]
+}

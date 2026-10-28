@@ -4,7 +4,7 @@ use engine::systems::actor::skeleton::GestureName;
 use engine::systems::actor::{self, Appearance, ModelDef, Motion};
 use engine::systems::{npc, script};
 use serde_json::{Value, json};
-use testkit::{BODY, Game, Map, Sim, path, rig_clips};
+use testkit::{BODY, Game, Map, Sim, clip, path, rig_clips};
 
 #[test]
 fn a_script_makes_an_npc_gesture_where_its_body_names_the_gesture() {
@@ -107,7 +107,7 @@ fn game(nodes: Value) -> Game {
         .collect();
     let base: serde_json::Map<String, Value> = <actor::Action as strum::VariantArray>::VARIANTS
         .iter()
-        .map(|action| (action.as_ref().to_owned(), json!(action.as_ref())))
+        .map(|action| (action.as_ref().to_owned(), json!(clip(action.as_ref()))))
         .collect();
     Game::new()
         .area(
@@ -119,7 +119,7 @@ fn game(nodes: Value) -> Game {
         .skeleton_of(
             BODY,
             &clips,
-            json!({ "base": { "clips": base, "gestures": { "wave": "wave" } } }),
+            json!({ "base": { "clips": base, "gestures": { "wave": clip("wave") } } }),
         )
         .model("giant", 4.0, json!([]))
         .skeleton_of("blob", &rig_clips(), json!({ "hands": [] }))

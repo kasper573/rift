@@ -5,7 +5,6 @@ use ui::panel;
 use ui::theme;
 use ui::words;
 
-use engine::core::assets::AssetKind;
 use engine::core::content::files::NAME_RULE;
 use engine::core::content::serial::TypeTag;
 use engine::core::content::{
@@ -350,33 +349,6 @@ pub fn copy_into(
     crate::views::world::cards_beside(project, &mut edit, &copied)?;
     editor.try_apply(edit)?;
     Ok(copies)
-}
-
-/// Copies media files from anywhere on disk into `folder`, numbering a name taken there, as one
-/// step. Gives their paths.
-pub fn import_media(
-    editor: &mut Editor,
-    folder: &str,
-    sources: &[std::path::PathBuf],
-) -> Result<Vec<String>, String> {
-    let project = editor.project.as_ref().ok_or("no folder is open")?;
-    let mut edit = ContentEdit::new(match sources {
-        [one] => format!("Import {}", import_name(one)),
-        many => format!("Import {} files", many.len()),
-    });
-    let mut made: Vec<String> = Vec::new();
-    for source in sources {
-        let name = import_name(source);
-        if AssetKind::of(&name).is_none() {
-            return Err(format!("{name} is no kind of media a game holds"));
-        }
-        let bytes = std::fs::read(source).map_err(|error| format!("{name}: {error}"))?;
-        let path = free_path_among(&project.files, folder, &name, &[], &made);
-        edit.write(path.clone(), FileBytes::from(bytes));
-        made.push(path);
-    }
-    editor.try_apply(edit)?;
-    Ok(made)
 }
 
 /// Puts the bytes of `source` in place of the media file at `path`, which keeps its name.

@@ -1,0 +1,99 @@
+{
+  "name": "Fish",
+  "rig": {
+    "files": [
+      "characters/skeletons/fish/rig.glb"
+    ]
+  },
+  "base": {
+    "clips": {
+      "idle": {
+        "file": "characters/skeletons/fish/fish.glb",
+        "take": "swim"
+      },
+      "walk": {
+        "file": "characters/skeletons/fish/fish.glb",
+        "take": "swim"
+      },
+      "run": {
+        "file": "characters/skeletons/fish/fish.glb",
+        "take": "dart"
+      },
+      "attack": {
+        "file": "characters/skeletons/fish/fish.glb",
+        "take": "bite"
+      },
+      "death": {
+        "file": "characters/skeletons/fish/fish.glb",
+        "take": "death"
+      },
+      "talk": {
+        "file": "characters/skeletons/fish/fish.glb",
+        "take": "flick"
+      }
+    }
+  },
+  "cues": [
+    {
+      "clip": {
+        "file": "characters/skeletons/fish/fish.glb",
+        "take": "bite"
+      },
+      "cues": [
+        {
+          "at": 200.0,
+          "apex": true,
+          "sound": "sound-and-voice/sfx/bite01.sfx"
+        }
+      ]
+    },
+    {
+      "clip": {
+        "file": "characters/skeletons/fish/fish.glb",
+        "take": "death"
+      },
+      "cues": [
+        {
+          "at": 0.0,
+          "sound": "sound-and-voice/sfx/death01.sfx"
+        }
+      ]
+    }
+  ],
+  "paces": [
+    {
+      "clip": {
+        "file": "characters/skeletons/fish/fish.glb",
+        "take": "dart"
+      },
+      "pace": 3.0
+    },
+    {
+      "clip": {
+        "file": "characters/skeletons/fish/fish.glb",
+        "take": "swim"
+      },
+      "pace": 1.5
+    }
+  ],
+  "layers": [
+    {
+      "type": "wave",
+      "from": "Main3",
+      "amplitude": 0.2,
+      "hz": 2.0,
+      "lag": 0.5,
+      "during": [
+        "idle",
+        "walk",
+        "run",
+        "talk"
+      ]
+    }
+  ],
+  "modules": [
+    {
+      "type": "airborne"
+    }
+  ]
+}

@@ -122,7 +122,6 @@ blake3 = "1"
 schemars = "1"
 naga = { version = "30", features = ["wgsl-in"] }
 png = "0.18"
-ttf-parser = "0.25"
 tar = "0.4"
 flate2 = "1"
 postcard = { version = "1", features = ["alloc"] }

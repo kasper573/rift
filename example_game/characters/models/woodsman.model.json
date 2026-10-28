@@ -1,10 +1,11 @@
 {
-  "skeleton": "characters/skeletons/biped.skeleton",
+  "skeleton": "characters/skeletons/biped.skeleton.json",
+  "build": "adventurer",
   "hitbox": {
     "radius": 0.4,
     "height": 2.3
   },
   "parts": [
-    "characters/parts/woodsman.model_part"
+    "characters/parts/woodsman.model_part.json"
   ]
 }

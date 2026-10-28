@@ -248,13 +248,16 @@ fn a_hand_closes_its_fingers_as_its_clasp_poses_them_while_it_holds_an_item() {
         .area("field", &Map::open(5, 5), json!([]))
         .hero("field", 2.0, 2.0)
         .sword()
-        .edit("skeleton", BODY, |skeleton| {
-            skeleton["hands"][0]["clasp"] = json!({ "clip": "clasp", "fingers": ["finger.r"] })
-        })
-        .part(
+        .edit(
             "skeleton",
             BODY,
-            "clips/hands.glb",
+            |skeleton| {
+                skeleton["hands"][0]["clasp"] =
+                    json!({ "clip": testkit::clip("clasp"), "fingers": ["finger.r"] })
+            },
+        )
+        .asset(
+            &testkit::clip("clasp"),
             testkit::pose_glb(&testkit::rig(), "clasp", &[("finger.r", closed)]),
         );
     let folder = tempfile::tempdir().expect("a scratch folder");
@@ -372,10 +375,13 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
         .skeleton_of(
             BODY,
             &testkit::rig_clips(),
-            json!({ "cues": {
-                "walk": [{ "at": 100.0, "step": true }],
-                "attack": [{ "at": APEX.0, "apex": true, "sound": path("sfx", "whoosh") }],
-            } }),
+            json!({ "cues": [
+                { "clip": testkit::clip("walk"), "cues": [{ "at": 100.0, "step": true }] },
+                {
+                    "clip": testkit::clip("attack"),
+                    "cues": [{ "at": APEX.0, "apex": true, "sound": path("sfx", "whoosh") }],
+                },
+            ] }),
         )
         .hero("field", 2.0, 2.0);
     let content = game.load();
@@ -472,13 +478,18 @@ fn a_looping_cells_clips_take_turns_each_as_the_one_before_plays_through() {
     let mut base: serde_json::Map<String, serde_json::Value> =
         <Action as strum::VariantArray>::VARIANTS
             .iter()
-            .map(|action| (action.as_ref().to_owned(), json!(action.as_ref())))
+            .map(|action| {
+                (
+                    action.as_ref().to_owned(),
+                    json!(testkit::clip(action.as_ref())),
+                )
+            })
             .collect();
     base.insert(
         "idle".to_owned(),
-        json!({ "clips": ["hum", "tap"], "order": "in_turn" }),
+        json!({ "clips": [testkit::clip("hum"), testkit::clip("tap")], "order": "in_turn" }),
     );
-    let cue = |sound: &str| json!([{ "at": 100.0, "sound": path("sfx", sound) }]);
+    let cue = |sound: &str| json!({ "clip": testkit::clip(sound), "cues": [{ "at": 100.0, "sound": path("sfx", sound) }] });
     let game = Game::new()
         .area("field", &Map::open(5, 5), json!([]))
         .sfx("hum")
@@ -488,7 +499,7 @@ fn a_looping_cells_clips_take_turns_each_as_the_one_before_plays_through() {
             &clips,
             json!({
                 "base": { "clips": base },
-                "cues": { "attack": [{ "at": APEX.0, "apex": true }], "hum": cue("hum"), "tap": cue("tap") },
+                "cues": [attacked(), cue("hum"), cue("tap")],
             }),
         )
         .hero("field", 2.0, 2.0);
@@ -559,9 +570,14 @@ fn a_standing_body_flinches_once_at_each_new_blow() {
         <Action as strum::VariantArray>::VARIANTS
             .iter()
             .filter(|action| **action != Action::Hurt)
-            .map(|action| (action.as_ref().to_owned(), json!(action.as_ref())))
+            .map(|action| {
+                (
+                    action.as_ref().to_owned(),
+                    json!(testkit::clip(action.as_ref())),
+                )
+            })
             .collect();
-    base.insert("hurt".to_owned(), json!("flinch"));
+    base.insert("hurt".to_owned(), json!(testkit::clip("flinch")));
     let game = Game::new()
         .area("field", &Map::open(5, 5), json!([]))
         .sfx("ow")
@@ -570,10 +586,13 @@ fn a_standing_body_flinches_once_at_each_new_blow() {
             &clips,
             json!({
                 "base": { "clips": base },
-                "cues": {
-                    "attack": [{ "at": APEX.0, "apex": true }],
-                    "flinch": [{ "at": 50.0, "sound": path("sfx", "ow") }],
-                },
+                "cues": [
+                    attacked(),
+                    {
+                        "clip": testkit::clip("flinch"),
+                        "cues": [{ "at": 50.0, "sound": path("sfx", "ow") }],
+                    },
+                ],
             }),
         )
         .hero("field", 2.0, 2.0);
@@ -652,7 +671,12 @@ fn a_body_talks_only_while_its_line_types_and_makes_the_gesture_it_is_said_with(
     let base: serde_json::Map<String, serde_json::Value> =
         <Action as strum::VariantArray>::VARIANTS
             .iter()
-            .map(|action| (action.as_ref().to_owned(), json!(action.as_ref())))
+            .map(|action| {
+                (
+                    action.as_ref().to_owned(),
+                    json!(testkit::clip(action.as_ref())),
+                )
+            })
             .collect();
     let game = Game::new()
         .area("field", &Map::open(5, 5), json!([]))
@@ -662,12 +686,18 @@ fn a_body_talks_only_while_its_line_types_and_makes_the_gesture_it_is_said_with(
             BODY,
             &clips,
             json!({
-                "base": { "clips": base, "gestures": { "happy": "cheer" } },
-                "cues": {
-                    "attack": [{ "at": APEX.0, "apex": true }],
-                    "talk": [{ "at": 50.0, "sound": path("sfx", "chatter") }],
-                    "cheer": [{ "at": 50.0, "sound": path("sfx", "yay") }],
-                },
+                "base": { "clips": base, "gestures": { "happy": testkit::clip("cheer") } },
+                "cues": [
+                    attacked(),
+                    {
+                        "clip": testkit::clip("talk"),
+                        "cues": [{ "at": 50.0, "sound": path("sfx", "chatter") }],
+                    },
+                    {
+                        "clip": testkit::clip("cheer"),
+                        "cues": [{ "at": 50.0, "sound": path("sfx", "yay") }],
+                    },
+                ],
             }),
         )
         .hero("field", 2.0, 2.0);
@@ -785,4 +815,9 @@ fn props(app: &mut App) -> Vec<(Entity, engine::systems::item::ItemId)> {
             (joint, item)
         })
         .collect()
+}
+
+/// The cues of the plain skeleton's attack: its apex.
+fn attacked() -> serde_json::Value {
+    json!({ "clip": testkit::clip("attack"), "cues": [{ "at": APEX.0, "apex": true }] })
 }

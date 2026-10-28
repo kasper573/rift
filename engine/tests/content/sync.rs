@@ -43,6 +43,28 @@ fn a_first_visit_fetches_everything_keeping_only_it_and_a_later_visit_only_the_m
 }
 
 #[test]
+fn a_player_fetches_only_the_media_content_names() {
+    let server = FakeServer::new(served(
+        sounding()
+            .file("downloads/Unused Clip.glb", testkit::glb(&[]))
+            .file("downloads/manual.pdf", "a manual"),
+    ));
+    let synced = run(&server, &MemoryStore::default()).expect("it syncs");
+
+    let fetched: HashSet<&str> = synced
+        .index
+        .files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    assert!(fetched.contains(slash_clip().as_str()), "{fetched:?}");
+    assert!(
+        fetched.iter().all(|path| !path.starts_with("downloads/")),
+        "nothing names the downloads: {fetched:?}"
+    );
+}
+
+#[test]
 fn an_interrupted_sync_fetches_exactly_the_files_the_store_lacks() {
     let server = FakeServer::new(served(sounding()));
     let complete = MemoryStore::default();

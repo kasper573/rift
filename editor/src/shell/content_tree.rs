@@ -7,7 +7,6 @@ use ui::menu;
 use ui::theme;
 use ui::words;
 
-use engine::core::assets::AssetKind;
 use engine::core::content::ContentFile;
 use engine::core::content::{SETTINGS_FILE, name_of, parent_of, table_of};
 use engine::systems::area::blueprint::BlueprintDef;
@@ -21,6 +20,7 @@ use super::tree::{self, Narrowing, TreeDrop, TreeRow, TreeSource, TreeState};
 use super::widgets::{self, KindMark};
 use crate::app::{BottomTab, Editor, ModalDialog, PickRowDialog, PickRowThen};
 use crate::icons::{self, IconTone, Preview};
+use crate::import;
 use crate::keymap::EditorKey;
 use crate::moves::{file_name, fixed_place};
 use crate::picker::Dragged;
@@ -273,7 +273,8 @@ enum TreeAction {
     OtherType(String),
     NewFolder(String),
     NewNote(String),
-    ImportMedia(String),
+    ImportFiles(String),
+    ImportFolder(String),
     File(String, BrowserAction),
     ReplaceWith(String),
     MoveTo(Vec<String>),
@@ -302,27 +303,19 @@ fn act(editor: &mut Editor, action: TreeAction) {
             }
             Err(error) => editor.toast(error),
         },
-        TreeAction::ImportMedia(folder) => {
-            let Some(sources) = rows::picked_files(
-                rfd::FileDialog::new()
-                    .set_title("Import media")
-                    .add_filter("media", &media_extensions()),
-            ) else {
-                return;
-            };
-            match rows::import_media(editor, &folder, &sources) {
-                Ok(made) => {
-                    if let Some(first) = made.first() {
-                        reveal(editor, first);
-                    }
-                    editor.toast(format!(
-                        "Imported {} file{} into {}",
-                        made.len(),
-                        words::plural(made.len()),
-                        folder_title(&folder)
-                    ));
-                }
-                Err(error) => editor.toast(error),
+        TreeAction::ImportFiles(folder) => {
+            if let Some(sources) =
+                rows::picked_files(rfd::FileDialog::new().set_title("Import files"))
+            {
+                import::begin(editor, folder, sources);
+            }
+        }
+        TreeAction::ImportFolder(folder) => {
+            if let Some(source) = rfd::FileDialog::new()
+                .set_title("Import a folder")
+                .pick_folder()
+            {
+                import::begin(editor, folder, vec![source]);
             }
         }
         TreeAction::File(path, action) => {
@@ -571,12 +564,15 @@ fn first_file(source: &GameFolder, folder: &str) -> Option<String> {
 
 const MEDIA_KIND: &str = "media";
 const NOTES_KIND: &str = "notes";
+const OTHER_KIND: &str = "other files";
 
-/// Every kind of file Show ▾ offers: every type of content the game can hold, media and notes.
+/// Every kind of file Show ▾ offers: every type of content the game can hold, media, notes and
+/// files the game never reads.
 fn kind_mark(kind: &str) -> KindMark<'_> {
     KindMark::Icon(match kind {
         MEDIA_KIND => icons::IMAGE,
         NOTES_KIND => icons::NOTE,
+        OTHER_KIND => icons::FILE,
         table => icons::of_table(table),
     })
 }
@@ -589,19 +585,15 @@ fn kinds(editor: &Editor) -> Vec<String> {
         .iter()
         .filter(|table| !registry.closed(table))
         .cloned()
-        .chain([MEDIA_KIND.to_owned(), NOTES_KIND.to_owned()])
+        .chain([
+            MEDIA_KIND.to_owned(),
+            NOTES_KIND.to_owned(),
+            OTHER_KIND.to_owned(),
+        ])
         .collect()
 }
 
-fn media_extensions() -> Vec<&'static str> {
-    use strum::VariantArray;
-    AssetKind::VARIANTS
-        .iter()
-        .flat_map(|kind| kind.extensions().iter().copied())
-        .collect()
-}
-
-fn folder_title(folder: &str) -> &str {
+pub fn folder_title(folder: &str) -> &str {
     if folder.is_empty() {
         "the game folder"
     } else {
@@ -815,12 +807,14 @@ impl<'a> GameFolder<'a> {
             && !self.index.folders.contains(path)
     }
 
-    /// The kind Show ▾ lists a file under: its type, media or notes.
+    /// The kind Show ▾ lists a file under: its type, media, notes or other files.
     fn kind_of<'p>(&self, path: &'p str) -> &'p str {
         if self.index.media.contains(path) {
             MEDIA_KIND
         } else if self.index.notes.contains(path) {
             NOTES_KIND
+        } else if self.index.other.contains(path) {
+            OTHER_KIND
         } else {
             table_of(path).unwrap_or_default()
         }
@@ -903,8 +897,11 @@ impl<'a> GameFolder<'a> {
         if widgets::kind_button(ui, Mark::Folder.into(), "New folder", None).clicked() {
             picked = Some(TreeAction::NewFolder(folder.to_owned()));
         }
-        if widgets::kind_button(ui, icons::IMAGE, "Import media…", None).clicked() {
-            picked = Some(TreeAction::ImportMedia(folder.to_owned()));
+        if widgets::kind_button(ui, icons::FILE, "Import files…", None).clicked() {
+            picked = Some(TreeAction::ImportFiles(folder.to_owned()));
+        }
+        if widgets::kind_button(ui, Mark::Folder.into(), "Import a folder…", None).clicked() {
+            picked = Some(TreeAction::ImportFolder(folder.to_owned()));
         }
         if widgets::kind_button(ui, icons::NOTE, "New note", None).clicked() {
             picked = Some(TreeAction::NewNote(folder.to_owned()));
@@ -1098,6 +1095,10 @@ impl TreeSource for GameFolder<'_> {
         } else if self.index.notes.contains(id) {
             row.suffix = Some((after_name.to_owned(), theme::FAINT));
             row.spoken = Some(format!("{file}, note"));
+        } else if self.index.other.contains(id) {
+            row.name = file.to_owned();
+            row.dim = true;
+            row.spoken = Some(format!("{file}, a file the game never reads"));
         } else {
             row.icon = Some(Mark::Warning.into());
             row.name = file.to_owned();

@@ -5,9 +5,9 @@
 use std::collections::BTreeMap;
 
 use engine::core::content::{Content, NamedContent};
+use engine::systems::actor::ModelDef;
 use engine::systems::actor::appearance::{self, Appearance};
 use engine::systems::actor::model::ActorModel;
-use engine::systems::actor::{Action, ModelDef, Motion, Pose};
 use engine::systems::item::{ItemDef, Wear, WornLook};
 use ui::egui::{self, Ui, Vec2};
 use ui::{chip, controls, form, theme};
@@ -153,8 +153,13 @@ fn stand(
         content,
         &appearance::look(content, &Appearance::of(model), &worn),
     );
-    let clip = built.standing_clip(None, &Motion::Action(Action::Idle), Pose::Idle);
-    let standing = stage::standing(body, clip, None, Vec::new(), Vec::new());
+    let standing = stage::standing(
+        body,
+        Some(stage::idle_clip(built)),
+        None,
+        Vec::new(),
+        Vec::new(),
+    );
     turntable.stand(editor, ui, vec![standing]);
 }
 

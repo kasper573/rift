@@ -5,7 +5,6 @@ use engine::core::geometry::Capsule;
 use engine::core::math::Offset;
 use engine::core::units::Meters;
 use engine::systems::actor::model::ModelDef;
-use engine::systems::actor::{Action, Motion, Pose};
 use ui::egui::{self, Stroke, Ui, Vec2};
 use ui::{form, theme};
 
@@ -28,9 +27,7 @@ pub struct Drag {
 }
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
-    let idle = super::built(editor, key).and_then(|(_, model)| {
-        model.standing_clip(None, &Motion::Action(Action::Idle), Pose::Idle)
-    });
+    let idle = super::built(editor, key).map(|(_, model)| crate::views::stage::idle_clip(model));
     let height = ui.available_height();
     let Some(turntable) = super::turntable(
         editor,

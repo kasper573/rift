@@ -523,8 +523,7 @@ fn plain(
             "x-place" => return place(ui, cx, schema, value, path),
             "x-color" => return color(ui, schema, value, path),
             "x-face" => return face(ui, cx, value, path),
-            "x-move" | "x-joint" | "x-clip" | "x-group" | "x-build" | "x-region" | "x-slot"
-            | "x-tint" => {
+            "x-move" | "x-joint" | "x-group" | "x-build" | "x-region" | "x-slot" | "x-tint" => {
                 if let Some(kind) = NameKind::of_marker(marker) {
                     return named(ui, cx, kind, value, path);
                 }
@@ -2127,7 +2126,6 @@ fn named(
                     "no skeleton's set declares it: the script is refused"
                 }
                 NameKind::Joint => "not a joint of the rig",
-                NameKind::Clip => "no library of the skeleton carries it",
                 NameKind::Group => "not a group of the skeleton",
                 NameKind::Build => "not a build of the skeleton",
                 NameKind::Region => "not a region of the skeleton",

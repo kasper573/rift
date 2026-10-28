@@ -18,7 +18,6 @@ use strum::{EnumString, IntoStaticStr, VariantArray};
 pub enum AssetKind {
     Image,
     Audio,
-    Font,
     Model,
 }
 
@@ -27,7 +26,6 @@ impl AssetKind {
         match self {
             AssetKind::Image => &["png"],
             AssetKind::Audio => &["flac", "wav"],
-            AssetKind::Font => &["ttf", "otf"],
             AssetKind::Model => &["glb"],
         }
     }
@@ -44,7 +42,7 @@ impl AssetKind {
 
 macro_rules! asset_ref {
     ($name:ident, $kind:ident) => {
-        #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+        #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name(String);
 
         impl $name {
@@ -132,9 +130,14 @@ impl SyncedFiles {
         AssetSourceBuilder::new(move || Box::new(files.clone()) as Box<dyn ErasedAssetReader>)
     }
 
-    fn get(&self, path: &Path) -> Option<Arc<[u8]>> {
+    /// The bytes of the file at `path` from the game folder, when it is there.
+    pub fn bytes(&self, path: &str) -> Option<Arc<[u8]>> {
         let files = self.0.read().expect("synced files lock");
-        files.get(path.to_str()?).cloned()
+        files.get(path).cloned()
+    }
+
+    fn get(&self, path: &Path) -> Option<Arc<[u8]>> {
+        self.bytes(path.to_str()?)
     }
 }
 

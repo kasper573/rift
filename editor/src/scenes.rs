@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use engine::core::content::ContentFile;
 use engine::systems::actor::model::ModelDef;
-use engine::systems::actor::skeleton::{ClipName, SkeletonDef};
+use engine::systems::actor::skeleton::{BuildName, Clip, SkeletonDef};
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
@@ -29,7 +29,7 @@ use crate::views::skeleton::{self, SkeletonPage};
 use crate::views::world::{
     self, ColorBy, ColorField, MapLens, MapLook, MapPart, MapRoute, OpenWorldMap, arrange,
 };
-use crate::{rows, shell};
+use crate::{import, rows, shell};
 
 #[derive(Clone, Debug, Deserialize, VariantNames)]
 #[serde(rename_all = "snake_case")]
@@ -112,6 +112,11 @@ pub enum SceneStep {
     },
     Save,
     Dialog(DialogName),
+    /// Reads `sources` to import into `folder`, opening the list of what they hold.
+    Import {
+        folder: String,
+        sources: Vec<PathBuf>,
+    },
     Game,
     Asset(String),
 }
@@ -145,14 +150,14 @@ pub enum BustStep {
 pub enum SkeletonStep {
     Open(String),
     Page(SkeletonPage),
-    /// Lights the joint of this name on the joints page.
-    Joint(String),
-    /// Plays the library clip of this name on the stage, none standing the rig at rest.
-    Clip(Option<String>),
+    /// Plays this clip on the stage, none standing the rig at rest.
+    Clip(Option<Clip>),
     /// Shows the rig as the model at this path.
     Wearer(String),
     /// Hangs the item at this path from the stage's model.
     Trying(String),
+    /// Shows the sets page's cells of this build, none for the first.
+    Build(Option<BuildName>),
     /// Chooses the hand at this place in the list on the hands page.
     Hand(usize),
     /// Chooses the layer at this place in the list on the layers page.
@@ -164,7 +169,6 @@ pub enum SkeletonStep {
         #[serde(default)]
         stance: Option<String>,
     },
-    Drop(PathBuf),
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -420,6 +424,9 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         }
         SceneStep::Dialog(DialogName::Keys) => editor.dialogs.push(ModalDialog::Keys),
         SceneStep::Dialog(DialogName::Binaries) => editor.dialogs.push(ModalDialog::Binaries),
+        SceneStep::Import { folder, sources } => {
+            import::begin(editor, folder.clone(), sources.clone())
+        }
     }
 }
 
@@ -582,17 +589,16 @@ fn skeleton_step(editor: &mut Editor, step: &SkeletonStep) {
     match step {
         SkeletonStep::Open(_) => {}
         SkeletonStep::Page(page) => view.page = *page,
-        SkeletonStep::Joint(joint) => view.joint = Some(joint.clone()),
-        SkeletonStep::Clip(clip) => view.clip = clip.as_deref().map(ClipName::new),
+        SkeletonStep::Clip(clip) => view.clip = clip.clone(),
         SkeletonStep::Wearer(model) => view.wearer = Some(model.clone()),
         SkeletonStep::Trying(item) => view.trying = Some(item.clone()),
+        SkeletonStep::Build(build) => view.sets.build = build.clone(),
         SkeletonStep::Hand(hand) => view.hand = *hand,
         SkeletonStep::Layer(layer) => view.layers.layer = *layer,
         SkeletonStep::Cell { row, stance } => {
             view.page = SkeletonPage::Sets;
             view.sets.open = Some((row.clone(), stance.clone()));
         }
-        SkeletonStep::Drop(path) => editor.views.skeleton.drops.push(path.clone()),
     }
 }
 

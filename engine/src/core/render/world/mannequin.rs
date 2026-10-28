@@ -10,13 +10,6 @@ use bevy::prelude::*;
 use super::body::{Body, RigReady};
 use crate::core::time::Seconds;
 
-/// A clip by its number among the animations of the glTF at `file`, made on the rig.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct RigClip {
-    pub file: String,
-    pub index: usize,
-}
-
 /// The clip a body stands in, and the moment of it the body is held at when it is not left to loop.
 #[derive(Component, Clone, Debug)]
 pub struct Mannequin {
@@ -33,14 +26,9 @@ impl Mannequin {
 }
 
 /// A mannequin playing `clip` on a loop, to spawn on a body.
-pub fn mannequin(world: &mut World, clip: &RigClip) -> Mannequin {
-    let assets = world.resource::<AssetServer>().clone();
+pub fn mannequin(world: &mut World, clip: Handle<AnimationClip>) -> Mannequin {
     let mut graph = AnimationGraph::new();
-    let node = graph.add_clip(
-        assets.load(GltfAssetLabel::Animation(clip.index).from_asset(clip.file.clone())),
-        1.0,
-        graph.root,
-    );
+    let node = graph.add_clip(clip, 1.0, graph.root);
     Mannequin {
         graph: world.resource_mut::<Assets<AnimationGraph>>().add(graph),
         node,

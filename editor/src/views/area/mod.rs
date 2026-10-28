@@ -68,7 +68,7 @@ use self::overlays::{
     overlay_navmesh, overlay_soundscape_reach,
 };
 use self::status::status_bar;
-use self::viewport::{Request, Standing, StrokeTerrain, Viewports};
+use self::viewport::{Request, StageClip, Standing, StrokeTerrain, Viewports};
 use crate::app::{BottomTab, Editor};
 use crate::keymap::EditorKey;
 use crate::play;
@@ -719,11 +719,14 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing>
         let model = ActorModel::get(content, def.appearance.model);
         let hands = held::listed(content, model.hands().len(), &def.held);
         let stance = stance::of_hands(content, &hands);
-        let clip = model.standing_clip(stance, &Motion::Action(Action::Idle), pose);
+        let clip = StageClip::played(
+            model.skeleton(),
+            model.standing_clip(stance, &Motion::Action(Action::Idle), pose),
+        );
         let ground = area.heights.height_at(at);
         Some(Standing {
             body: model.dressed(content, &look(content, &def.appearance, &BTreeMap::new())),
-            clip,
+            clip: Some(clip),
             transform: Transform {
                 translation: world_point(at, ground),
                 rotation: facing_rotation(facing.radians()),

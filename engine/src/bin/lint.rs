@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use cargo_metadata::{Metadata, MetadataCommand};
 use engine::core::content::{Content, FilesystemFolder, LoadWarnings, write};
-use engine::systems::actor::model::{ActorModel, ModelDef, UNNAMED_CLIPS};
+use engine::systems::actor::model::{ActorModel, ModelDef};
 use engine::systems::actor::skeleton::{SkeletonDef, SkeletonId};
 use engine::systems::actor::stance;
 use engine::systems::item::ItemDef;
@@ -199,17 +199,12 @@ fn check_shipped_game(name: &str, folder: &Path, scratch: &Path, out: &mut Vec<S
     }
 }
 
-/// What a shipped game's bodies must be beyond what loads: every library clip named by a set, every
-/// skeleton worn by a model, and a set on the player's skeleton for every stance an item names, so
-/// no shipped weapon falls back to the base set. The loader's other warnings are printed, the
-/// designer's to accept.
+/// What a shipped game's bodies must be beyond what loads: every skeleton worn by a model, and a
+/// set on the player's skeleton for every stance an item names, so no shipped weapon falls back to
+/// the base set. The loader's warnings are printed, the designer's to accept.
 fn check_bodies(name: &str, content: &Content, out: &mut Vec<String>) {
     for warning in &content.built::<LoadWarnings>().0 {
-        if warning.problem.rule == UNNAMED_CLIPS {
-            out.push(format!("[{name}] {warning}"));
-        } else {
-            println!("[{name}] warning: {warning}");
-        }
+        println!("[{name}] warning: {warning}");
     }
     let worn: BTreeSet<SkeletonId> = content
         .table::<ModelDef>()

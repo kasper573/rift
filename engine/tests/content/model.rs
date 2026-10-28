@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use bevy::asset::RenderAssetUsages;
 use bevy::image::Image;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy_math::Quat;
+use bevy_math::{Quat, Vec3};
 use engine::core::content::{LoadReport, fields_file};
 use engine::core::math::Rgb;
 use engine::core::render::world::paint::{PaintLayer, bake};
@@ -12,7 +12,7 @@ use engine::systems::actor::skeleton::{Colours, EquipmentSlot, TintName};
 use engine::systems::actor::{ActorModel, Appearance, ModelDef};
 use engine::systems::item::ItemDef;
 use serde_json::{Value, json};
-use testkit::{Declared, Game, path, png, rig, rig_clips, skin_glb};
+use testkit::{Declared, Game, part_file, path, png, rig, rig_clips, skin_glb};
 
 use crate::support::game;
 
@@ -22,40 +22,42 @@ fn a_part_that_does_not_fit_its_skeleton_is_refused_naming_the_joint() {
         case: &'static str,
         change: fn(&mut engine::core::content::gltf::NodeTree),
         found: &'static str,
-        expected: &'static str,
     }
     let cases = [
         Case {
-            case: "a joint under another parent",
+            case: "a joint bound under another parent",
             change: |tree| tree.nodes[3].parent = Some(2),
-            found: "mesh.glb: joint hand.l has parent hand.r",
-            expected: "body.skeleton expects body",
+            found: "parts/hero.glb binds hand.l 0.0° and 360.6 mm from where the rig of body \
+                    rests it",
         },
         Case {
-            case: "a joint resting turned",
+            case: "a joint bound turned",
             change: |tree| tree.nodes[3].rest.rotation = Quat::from_rotation_z(10f32.to_radians()),
-            found: "mesh.glb: joint hand.l rests 10.0° and 0.0 mm from body.skeleton",
-            expected: "at most 2° and 2 mm, so library clips play true",
+            found: "parts/hero.glb binds hand.l 10.0° and 0.0 mm from where the rig of body \
+                    rests it",
         },
         Case {
-            case: "a joint resting moved",
-            change: |tree| tree.nodes[2].rest.translation.x += 0.01,
-            found: "mesh.glb: joint hand.r rests 0.0° and 10.0 mm from body.skeleton",
-            expected: "at most 2° and 2 mm, so library clips play true",
+            case: "a joint bound moved",
+            change: |tree| tree.nodes[4].rest.translation.x += 0.01,
+            found: "parts/hero.glb binds finger.r 0.0° and 10.0 mm from where the rig of body \
+                    rests it",
         },
     ];
-    let mesh = format!("{}/mesh.glb", path("model_part", "hero"));
+    let part = fields_file(&path("model_part", "hero"));
     for case in cases {
         let mut tree = rig();
         (case.change)(&mut tree);
         let report = game()
-            .file(&mesh, skin_glb(&tree, &[]))
+            .asset(&part_file("hero"), skin_glb(&tree, &[]))
             .try_load()
             .err()
             .unwrap_or_else(|| panic!("{}: refused", case.case));
         assert_eq!(
-            problems_in(&report, &mesh),
-            [(case.found.to_owned(), case.expected.to_owned())],
+            problems_in(&report, &part),
+            [(
+                case.found.to_owned(),
+                "at most 2° and 2 mm, so the skin moves with the rig".to_owned()
+            )],
             "{}",
             case.case
         );
@@ -69,12 +71,19 @@ fn a_part_that_does_not_fit_its_skeleton_is_refused_naming_the_joint() {
         parent: Some(1),
         ..rig().nodes[2].clone()
     });
+    let mut smaller = rig();
+    smaller.nodes[0].rest.scale = Vec3::splat(0.75);
+    smaller.nodes[0].rest.translation = Vec3::new(0.0, 0.5, 2.0);
     for (case, tree) in [
         ("a part skinned to only some of the rig's joints", fewer),
         ("a part skinned to a joint the rig lacks", extra),
+        (
+            "a part made under an armature placed and sized its own way",
+            smaller,
+        ),
     ] {
         game()
-            .file(&mesh, skin_glb(&tree, &[]))
+            .asset(&part_file("hero"), skin_glb(&tree, &[]))
             .try_load()
             .unwrap_or_else(|report| panic!("{case} loads: {report}"));
     }
@@ -88,20 +97,20 @@ fn a_model_draws_each_part_as_cut_for_its_build() {
         let skins = ActorModel::get(&content, model).body().skins;
         skins.into_iter().map(|skin| skin.mesh).collect::<Vec<_>>()
     };
-    let mesh = |part: &str, file: &str| format!("{}/{file}", path("model_part", part));
+    let mesh = |part: &str, file: &str| format!("parts/{part}/{file}.glb");
 
     assert_eq!(
         drawn("man"),
         [
-            mesh("torso", "builds/male.glb"),
-            mesh("cape", "mesh.glb"),
-            mesh("beard", "builds/male.glb"),
+            mesh("torso", "male"),
+            mesh("cape", "mesh"),
+            mesh("beard", "male"),
         ],
         "a part cut for the build, one for every build, and one only the build wears"
     );
     assert_eq!(
         drawn("woman"),
-        [mesh("torso", "builds/female.glb"), mesh("cape", "mesh.glb")],
+        [mesh("torso", "female"), mesh("cape", "mesh")],
         "a part with no mesh for the build is not drawn"
     );
 }
@@ -268,7 +277,7 @@ fn a_body_is_painted_in_its_skeletons_colours_under_its_models_its_own_and_what_
         let body = look(&content, &appearance, &worn);
         let files = ActorModel::get(&content, man).dressed(&content, &body);
         for (part, colours) in case.painted {
-            let mesh = format!("{}/mesh.glb", path("model_part", part));
+            let mesh = format!("parts/{part}/mesh.glb");
             let paint = files
                 .skins
                 .iter()
@@ -322,6 +331,7 @@ fn a_painted_texture_lays_each_colour_as_thick_as_its_mask_is_bright() {
     let layer = |channel: usize, colour: [u8; 3]| PaintLayer {
         mask: "mask.png".to_owned(),
         channel,
+        inverted: false,
         colour: Rgb(colour),
     };
     let red = layer(0, [255, 0, 0]);
@@ -395,14 +405,11 @@ fn a_model_is_held_to_its_skeletons_parts_and_builds() {
         Case {
             case: "a part's mesh for a build its skeleton lacks",
             change: |game| {
-                game.part(
-                    "model_part",
-                    "cape",
-                    "builds/giant.glb",
-                    skin_glb(&rig(), &[]),
-                )
+                game.edit("model_part", "cape", |cape| {
+                    cape["builds"] = json!({ "giant": "parts/cape/mesh.glb" })
+                })
             },
-            file: format!("{}/builds/giant.glb", path("model_part", "cape")),
+            file: fields_file(&path("model_part", "cape")),
             rule: "unknown build",
         },
         Case {
@@ -489,7 +496,7 @@ fn a_model_is_held_to_its_skeletons_parts_and_builds() {
             case: "a material painting a tint its skeleton lacks",
             change: |game| {
                 game.edit("material", "cloth", |cloth| {
-                    cloth["masks"]["paint"]["a"] = json!("fur")
+                    cloth["masks"][0]["a"] = json!("fur")
                 })
             },
             file: fields_file(&path("material", "cloth")),
@@ -499,32 +506,26 @@ fn a_model_is_held_to_its_skeletons_parts_and_builds() {
             case: "a material painting a tint twice",
             change: |game| {
                 game.edit("material", "cloth", |cloth| {
-                    cloth["masks"]["paint"]["a"] = json!("skin")
+                    cloth["masks"][0]["a"] = json!("skin")
                 })
             },
             file: fields_file(&path("material", "cloth")),
             rule: "tint twice",
         },
         Case {
-            case: "a material's mask with no image",
+            case: "a material's mask of an image the folder lacks",
             change: |game| {
                 game.edit("material", "cloth", |cloth| {
-                    cloth["masks"]["trim"] = json!({})
+                    cloth["masks"][0]["image"] = json!("materials/trim.png")
                 })
             },
             file: fields_file(&path("material", "cloth")),
             rule: "missing file",
         },
         Case {
-            case: "a material's image of a mask it names no channels for",
-            change: |game| game.part("material", "cloth", "masks/trim.png", png(4, 4)),
-            file: format!("{}/masks/trim.png", path("material", "cloth")),
-            rule: "unused mask",
-        },
-        Case {
             case: "a material's mask not the size of its base",
-            change: |game| game.part("material", "cloth", "masks/paint.png", png(8, 4)),
-            file: format!("{}/masks/paint.png", path("material", "cloth")),
+            change: |game| game.asset("materials/paint.png", png(8, 4)),
+            file: fields_file(&path("material", "cloth")),
             rule: "wrong size",
         },
     ];
@@ -556,23 +557,27 @@ fn built(game: Game) -> Game {
             "parts": parts,
         })
     };
-    let part = |game: Game, name: &str| -> Game {
-        game.row(
-            "model_part",
-            name,
-            json!({ "skeleton": path("skeleton", "frame") }),
-        )
+    let part = |game: Game, name: &str, builds: &[&str]| -> Game {
+        let file = |build: &str| format!("parts/{name}/{build}.glb");
+        let mut fields = json!({ "skeleton": path("skeleton", "frame") });
+        let mut game = game;
+        for &build in builds {
+            match build {
+                "mesh" => fields["mesh"] = json!(file(build)),
+                build => fields["builds"][build] = json!(file(build)),
+            }
+            game = game.asset(&file(build), mesh());
+        }
+        game.row("model_part", name, fields)
     };
     let game = game.skeleton_of(
         "frame",
         &rig_clips(),
         json!({ "builds": ["male", "female"] }),
     );
-    let game = part(game, "torso")
-        .part("model_part", "torso", "builds/male.glb", mesh())
-        .part("model_part", "torso", "builds/female.glb", mesh());
-    let game = part(game, "cape").part("model_part", "cape", "mesh.glb", mesh());
-    let game = part(game, "beard").part("model_part", "beard", "builds/male.glb", mesh());
+    let game = part(game, "torso", &["male", "female"]);
+    let game = part(game, "cape", &["mesh"]);
+    let game = part(game, "beard", &["male"]);
     game.row("model", "man", model("male"))
         .row("model", "woman", model("female"))
 }
@@ -599,12 +604,13 @@ fn dressed(game: Game) -> Game {
         let game = if ["torso", "cape", "beard"].contains(&name) {
             game
         } else {
+            let file = format!("parts/{name}/mesh.glb");
             game.row(
                 "model_part",
                 name,
-                json!({ "skeleton": path("skeleton", "frame") }),
+                json!({ "skeleton": path("skeleton", "frame"), "mesh": file }),
             )
-            .part("model_part", name, "mesh.glb", skin_glb(&rig(), &[]))
+            .asset(&file, skin_glb(&rig(), &[]))
         };
         game.edit("model_part", name, |part| {
             part["covers"] = covers;
@@ -636,11 +642,12 @@ fn painted(game: Game) -> Game {
             "cloth",
             json!({
                 "skeleton": path("skeleton", "frame"),
-                "masks": { "paint": { "r": "skin", "g": "hair", "b": "metal" } },
+                "base": "materials/base.png",
+                "masks": [{ "image": "materials/paint.png", "r": "skin", "g": "hair", "b": "metal" }],
             }),
         )
-        .part("material", "cloth", "base.png", png(4, 4))
-        .part("material", "cloth", "masks/paint.png", png(4, 4));
+        .asset("materials/base.png", png(4, 4))
+        .asset("materials/paint.png", png(4, 4));
     ["cape", "mail"].into_iter().fold(game, |game, part| {
         game.edit("model_part", part, |part| {
             part["material"] = json!(path("material", "cloth"))

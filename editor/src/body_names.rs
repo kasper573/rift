@@ -1,5 +1,5 @@
 //! The names a body's fields may hold: the moves and gestures any skeleton's sets declare, and the
-//! joints, clips, groups, builds, regions, slots and tints of the skeleton a form edits.
+//! joints, groups, builds, regions, slots and tints of the skeleton a form edits.
 
 use std::collections::BTreeMap;
 
@@ -19,7 +19,6 @@ pub enum NameKind {
     Move,
     Gesture,
     Joint,
-    Clip,
     Group,
     Build,
     Region,
@@ -49,7 +48,6 @@ impl NameKind {
             "x-move" => Some(NameKind::Move),
             "x-gesture" => Some(NameKind::Gesture),
             "x-joint" => Some(NameKind::Joint),
-            "x-clip" => Some(NameKind::Clip),
             "x-group" => Some(NameKind::Group),
             "x-build" => Some(NameKind::Build),
             "x-region" => Some(NameKind::Region),
@@ -121,20 +119,20 @@ pub fn coverage(content: &Content, name: &MoveName) -> Vec<MoveCoverage> {
             MoveCoverage {
                 skeleton: skeleton.shown_name().to_owned(),
                 cells: columns
-                    .map(|stance| {
-                        let (clip, rung) = skeleton.named(stance, &motion, Pose::Idle);
+                    .filter_map(|stance| {
+                        let (clip, rung) = skeleton.named(None, stance, &motion, Pose::Idle)?;
                         let set =
                             stance.map_or("base".to_owned(), |stance| content.name_of(stance));
                         let own = match stance {
                             Some(_) => rung == Rung::Stance,
                             None => rung == Rung::Base,
                         };
-                        let names: Vec<&str> = clip
+                        let names: Vec<String> = clip
                             .clips()
                             .iter()
-                            .map(|variant| variant.clip().as_str())
+                            .map(|variant| variant.clip().shown())
                             .collect();
-                        (set, names.join(" / "), own)
+                        Some((set, names.join(" / "), own))
                     })
                     .collect(),
             }
@@ -230,17 +228,6 @@ pub fn choices(
             .map(|joint| NameChoice {
                 name: built.rig.nodes[joint].name.clone(),
                 note: format!("under {}", built.rig.parent_name(joint)),
-            })
-            .collect(),
-        NameKind::Clip => built
-            .clips
-            .iter()
-            .map(|(name, clip)| NameChoice {
-                name: name.0.clone(),
-                note: format!(
-                    "clips/{}.glb · {:.2} s",
-                    built.def.libraries[clip.library].key, clip.length.0
-                ),
             })
             .collect(),
         NameKind::Group => built

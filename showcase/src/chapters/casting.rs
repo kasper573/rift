@@ -299,12 +299,14 @@ fn foe_in_view(snapshot: &ProbeSnapshot) -> Option<Pos<Meters>> {
 /// Whether `body` plays a move in the clip its stance's own set names for it: the hands, not the
 /// skill, deciding how the move looks.
 fn moves_as_its_stance_names(body: &ProbeBody) -> bool {
-    let (Some(motion @ Motion::Move(_)), Some(clip)) = (&body.motion, &body.clip) else {
+    let Some(motion @ Motion::Move(_)) = &body.motion else {
         return false;
     };
-    let (cell, rung) = body
-        .skeleton
+    let build = body.appearance.model.get(content()).build.as_ref();
+    body.skeleton
         .get(content())
-        .named(body.stance, motion, Pose::Idle);
-    rung == Rung::Stance && cell.clips().iter().any(|named| named.clip() == clip)
+        .named(build, body.stance, motion, Pose::Idle)
+        .is_some_and(|(cell, rung)| {
+            rung == Rung::Stance && cell.clips().iter().any(|named| *named.clip() == body.clip)
+        })
 }

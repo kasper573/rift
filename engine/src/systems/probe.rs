@@ -27,7 +27,7 @@ use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::render::Puppet;
-use crate::systems::actor::skeleton::{ClipName, SkeletonId};
+use crate::systems::actor::skeleton::{Clip, SkeletonId};
 use crate::systems::actor::stance::{HandIndex, StanceId};
 use crate::systems::actor::{self, Action, Actor, ActorModel, Appearance, Hitbox, Motion, Playing};
 use crate::systems::area::{self, AreaId, AreaObject, AreaTag};
@@ -234,7 +234,7 @@ pub struct ProbeBody {
     pub stance: Option<StanceId>,
     /// The clip it plays for the motion it shows, as its stance resolves it, and the motion it was
     /// told to play, if any.
-    pub clip: Option<ClipName>,
+    pub clip: Clip,
     pub motion: Option<Motion>,
     /// How fast that clip plays: a hit at its attack speed, a gait as fast as covers its speed.
     pub rate: PlaybackRate,
@@ -935,7 +935,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         .get::<Puppet>()
         .map_or(0, |puppet| puppet.pick_of(&shown));
     let resolved = built.resolve(stance, &shown, actor.pose, pick);
-    let clip = resolved.source.is_some().then(|| resolved.clip.clone());
+    let clip = resolved.clip.clone();
     let rate = built.rate(&shown, &resolved, actor.attack_rate, actor.speed);
     let held = entity
         .get::<Puppet>()

@@ -13,8 +13,8 @@ mod talk;
 
 pub use art::{glb, glb_of, library_glb, png, pose_glb, rig, rig_glb, skin_glb, wav, wav_of};
 pub use game::{
-    APEX, BODY, CLIP, Declared, Game, LIBRARY, Map, ROCK, RUN_PACE, SPRINT_PACE, TURF, WALK_PACE,
-    path, rig_clips, stats,
+    APEX, BODY, CLIP, Declared, Game, Map, ROCK, RUN_PACE, SPRINT_PACE, TURF, WALK_PACE, clip,
+    clip_on, part_file, path, rig_clips, rig_file, stats,
 };
 pub use script::{dialogue, hunting, said};
 pub use sim::{Sim, drawn_seed};

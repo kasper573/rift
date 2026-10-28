@@ -217,9 +217,12 @@ fn a_walker_covers_ground_in_the_gait_whose_clip_covers_nearest_its_speed() {
         "base": { "clips": Action::VARIANTS
             .iter()
             .filter(|&&action| action != Action::Sprint)
-            .map(|action| (action.as_ref(), action.as_ref()))
+            .map(|action| (action.as_ref(), testkit::clip(action.as_ref())))
             .collect::<BTreeMap<_, _>>() },
-        "paces": { "walk": WALK_PACE.0.0, "run": RUN_PACE.0.0 },
+        "paces": [
+            { "clip": testkit::clip("walk"), "pace": WALK_PACE.0.0 },
+            { "clip": testkit::clip("run"), "pace": RUN_PACE.0.0 },
+        ],
     });
     for (speed, sprints, gait) in [
         (WALK_PACE.0.0 * 0.8, true, Action::Walk),

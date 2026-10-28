@@ -6,7 +6,9 @@ use super::check::RowCheck;
 use super::files::{CONFIG_FILE, valid_name};
 use super::gltf::GltfInfo;
 use super::id::{ContentScope, with_content};
-use super::load::{ContentFolder, FileWriter, parse_json, reference_errors, shape_error};
+use super::load::{
+    ContentFolder, FileWriter, named_media, parse_json, reference_errors, shape_error,
+};
 use super::locate::JsonIndex;
 use super::report::{ContentProblem, ErrorPlace, LoadError};
 use super::table::ContentFile;
@@ -87,6 +89,7 @@ pub struct Parts<'a> {
     scope: &'a ContentScope,
     errors: Vec<LoadError>,
     indexes: Vec<(String, Arc<JsonIndex>)>,
+    media: Vec<String>,
 }
 
 impl<'a> Parts<'a> {
@@ -103,6 +106,7 @@ impl<'a> Parts<'a> {
             scope,
             errors: Vec::new(),
             indexes: Vec::new(),
+            media: Vec::new(),
         }
     }
 
@@ -232,6 +236,7 @@ impl<'a> Parts<'a> {
             Ok(value) => {
                 self.errors
                     .extend(reference_errors(&file, scope.leaves(), &index, |_| true));
+                self.media.extend(named_media(scope.leaves()));
                 Some(value)
             }
             Err(error) => {
@@ -277,7 +282,19 @@ impl<'a> Parts<'a> {
         &mut self.errors
     }
 
-    pub(super) fn finish(self) -> (Vec<LoadError>, Vec<(String, Arc<JsonIndex>)>) {
-        (self.errors, self.indexes)
+    pub(super) fn finish(self) -> PartsRead {
+        PartsRead {
+            errors: self.errors,
+            indexes: self.indexes,
+            media: self.media,
+        }
     }
+}
+
+/// What reading a bundle's parts found: its problems, the index of each JSON part, and the media
+/// the parts name.
+pub(super) struct PartsRead {
+    pub errors: Vec<LoadError>,
+    pub indexes: Vec<(String, Arc<JsonIndex>)>,
+    pub media: Vec<String>,
 }

@@ -579,6 +579,7 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                 None => Some(ModalDialog::Delete(dialog)),
             }
         }
+        ModalDialog::Import(dialog) => crate::import::dialog(editor, ctx, dialog),
         ModalDialog::FindUnused(dialog) => unused_dialog::find_unused_dialog(editor, ctx, dialog),
         ModalDialog::Binaries => {
             let mut open = true;

@@ -15,7 +15,7 @@ use bevy::prelude::*;
 use super::appearance::look;
 use super::held::{self, Held};
 use super::layering::{self, Layering};
-use super::model::ClipSource;
+use super::rigging::BuiltSkeleton;
 use super::skeleton::{Cue, GroupName, Hand, LocalOffset, LocalTurn, SkeletonId};
 use super::skeleton::{EquipmentSlot, GestureName};
 use super::stance::{self, HandIndex, PropHand};
@@ -29,6 +29,7 @@ use crate::core::math::{Pos, Rng};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::body::{self, Body, RigReady};
 use crate::core::render::world::layers::Layered;
+use crate::core::render::world::rig_clip;
 use crate::core::render::{Animator, Previous, Turns, facing_rotation, ground_height, world_point};
 use crate::core::text::Typewriter;
 use crate::core::time::{Seconds, UnixMillis};
@@ -89,13 +90,64 @@ impl Interpolate for RenderActor {
 #[derive(Resource, Default)]
 struct SkeletonGraphs(HashMap<SkeletonId, Arc<SkeletonGraph>>);
 
-/// One node per clip a body of the skeleton can play, whole, and kept to or kept off each group a
-/// set plays a clip on alone.
+/// One node per clip a body of the skeleton can play, by the clip's place among the skeleton's,
+/// whole, and kept to or kept off each group a set plays a clip on alone.
 pub struct SkeletonGraph {
     graph: Handle<AnimationGraph>,
-    whole: HashMap<ClipSource, AnimationNodeIndex>,
-    only: HashMap<(ClipSource, GroupName), AnimationNodeIndex>,
-    outside: HashMap<(ClipSource, GroupName), AnimationNodeIndex>,
+    whole: Vec<AnimationNodeIndex>,
+    only: HashMap<(usize, GroupName), AnimationNodeIndex>,
+    outside: HashMap<(usize, GroupName), AnimationNodeIndex>,
+}
+
+/// Every clip made for a skeleton's rig so far, each made once from its file's keyframes: by the
+/// skeleton, which the entry holds so no other is made where it was, and the clip's place among
+/// its clips.
+#[derive(Resource, Default)]
+struct RigClips(HashMap<usize, MadeClips>);
+
+/// The clips made for one skeleton's rig, by their place among its clips.
+struct MadeClips {
+    skeleton: Arc<BuiltSkeleton>,
+    clips: HashMap<usize, Handle<AnimationClip>>,
+}
+
+/// The clip at `played` among `skeleton`'s, made for its rig the first time it is asked for: its
+/// own keyframes on the joints of ours they name, or a source rig's played through its pairs.
+pub fn rig_clip(
+    world: &mut World,
+    skeleton: &Arc<BuiltSkeleton>,
+    played: usize,
+) -> Handle<AnimationClip> {
+    let key = Arc::as_ptr(skeleton) as usize;
+    let mut clips = world.get_resource_or_init::<RigClips>();
+    clips.0.retain(|_, made| {
+        Arc::strong_count(&made.skeleton) > 1 || Arc::ptr_eq(&made.skeleton, skeleton)
+    });
+    if let Some(handle) = clips.0.get(&key).and_then(|made| made.clips.get(&played)) {
+        return handle.clone();
+    }
+    let clip = &skeleton.clips[played];
+    let pairs = clip
+        .source
+        .map(|source| skeleton.def.sources[source].joint_pairs());
+    let handle = rig_clip::rig_clip(
+        world,
+        skeleton.rig.clone(),
+        clip.clip.file().as_str(),
+        clip.animation,
+        rig_clip::maker(skeleton.rig.clone(), pairs),
+    );
+    world
+        .resource_mut::<RigClips>()
+        .0
+        .entry(key)
+        .or_insert_with(|| MadeClips {
+            skeleton: skeleton.clone(),
+            clips: HashMap::new(),
+        })
+        .clips
+        .insert(played, handle.clone());
+    handle
 }
 
 /// The body an actor wears: the appearance and worn items it was dressed in, the graph of its
@@ -255,7 +307,6 @@ pub fn dress(world: &mut World) {
                 prop.despawn();
             }
         }
-        body::dress(world, entity, &files);
         world.entity_mut(entity).insert((
             Transform::default(),
             Visibility::default(),
@@ -283,6 +334,7 @@ pub fn dress(world: &mut World) {
                 held: BTreeMap::new(),
             },
         ));
+        body::dress(world, entity, &files);
     }
 }
 
@@ -302,7 +354,6 @@ fn skeleton_graph(
     let built = super::model::Skeletons::loaded(content, skeleton)
         .cloned()
         .unwrap_or_else(|| panic!("skeleton {} failed to load", skeleton.path(content)));
-    let assets = world.resource::<AssetServer>().clone();
     let mut graph = AnimationGraph::new();
     let groups: Vec<&GroupName> = built.def.groups.keys().collect();
     let rest_bit = groups.len() as u32;
@@ -310,30 +361,19 @@ fn skeleton_graph(
     for (bit, target) in mask_groups(&built.rig, &built.def.groups) {
         graph.add_target_to_mask_group(target, bit.unwrap_or(rest_bit));
     }
-    let sources: Vec<(ClipSource, Handle<AnimationClip>)> = built
-        .clips
-        .values()
-        .map(|clip| {
-            let file = built.def.libraries[clip.library].file.path();
-            (
-                ClipSource {
-                    library: clip.library,
-                    index: clip.index,
-                },
-                assets.load(GltfAssetLabel::Animation(clip.index).from_asset(file)),
-            )
-        })
+    let sources: Vec<(usize, Handle<AnimationClip>)> = (0..built.clips.len())
+        .map(|played| (played, rig_clip(world, &built, played)))
         .collect();
     let grouped: Vec<&GroupName> = built
         .def
         .sets()
         .flat_map(|(_, set)| set.entries().filter_map(|(_, clip)| clip.only()))
         .collect();
-    let mut whole = HashMap::new();
+    let mut whole = Vec::new();
     let mut only = HashMap::new();
     let mut outside = HashMap::new();
     for (source, clip) in sources {
-        whole.insert(source, graph.add_clip(clip.clone(), 1.0, graph.root));
+        whole.push(graph.add_clip(clip.clone(), 1.0, graph.root));
         for &group in &grouped {
             let Some(bit) = groups.iter().position(|known| *known == group) else {
                 continue;
@@ -469,7 +509,7 @@ pub fn pose(world: &mut World) {
         let flinch_pick = blows as usize % model.cell(stance, &flinch, actor.pose).clips().len();
         let flinching = given.is_none()
             && matches!(shown.action, Action::Idle | Action::Talk)
-            && model.skeleton().def.names(stance, Action::Hurt)
+            && model.names(stance, Action::Hurt)
             && flinched.is_some_and(|since| {
                 now - since
                     < model
@@ -486,7 +526,7 @@ pub fn pose(world: &mut World) {
                 let pick = line.index_u32() as usize
                     % model.cell(stance, &gesture, actor.pose).clips().len();
                 let length = model.resolve(stance, &gesture, actor.pose, pick).length;
-                (model.skeleton().def.plays(stance, &gesture) && now - *since < length)
+                (model.plays(stance, &gesture) && now - *since < length)
                     .then_some((*line, gesture, pick))
             });
         let talks = speech.is_some_and(|speech| speech.talking);
@@ -572,23 +612,20 @@ pub fn pose(world: &mut World) {
         let facing = puppet.turn.shown(now);
         let wanted: Vec<AnimationNodeIndex> = {
             let graph = &puppet.graph;
-            let node = |source: Option<ClipSource>, kept: Option<(&GroupName, bool)>| {
-                let source = source?;
-                match kept {
-                    None => graph.whole.get(&source).copied(),
-                    Some((group, true)) => graph.only.get(&(source, group.clone())).copied(),
-                    Some((group, false)) => graph.outside.get(&(source, group.clone())).copied(),
-                }
+            let node = |source: usize, kept: Option<(&GroupName, bool)>| match kept {
+                None => graph.whole.get(source).copied(),
+                Some((group, true)) => graph.only.get(&(source, group.clone())).copied(),
+                Some((group, false)) => graph.outside.get(&(source, group.clone())).copied(),
             };
             match (resolved.only, resting) {
                 (Some(group), Some(resting)) => [
-                    node(resting.source, Some((group, false))),
-                    node(resolved.source, Some((group, true))),
+                    node(resting.played, Some((group, false))),
+                    node(resolved.played, Some((group, true))),
                 ]
                 .into_iter()
                 .flatten()
                 .collect(),
-                _ => node(resolved.source, None).into_iter().collect(),
+                _ => node(resolved.played, None).into_iter().collect(),
             }
         };
         let restart = puppet.playing.as_ref() != Some(&play);

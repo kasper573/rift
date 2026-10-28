@@ -17,16 +17,18 @@ use engine::core::audio::playback::{self, PlaySfx, SfxPlace};
 use engine::core::content::Content;
 use engine::core::ground::{Heightfield, Paint};
 use engine::core::render::camera::{self, CameraPreferences};
-use engine::core::render::world::body::{self, Body, BodyFiles};
+use engine::core::render::world::body::{self, Body, Figure};
 use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::Mannequin;
-use engine::core::render::world::mannequin::{RigClip, mannequin};
+use engine::core::render::world::mannequin::mannequin;
+use engine::core::render::world::rig_clip;
 use engine::core::render::world::sky::{self, Daylight};
 use engine::core::time::Seconds;
 use engine::systems::actor::Action;
 use engine::systems::actor::layering::{self, Layering};
 use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::render;
+use engine::systems::actor::rigging::BuiltSkeleton;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::scenery::{self, Scenery};
@@ -73,8 +75,8 @@ pub struct Ghost {
 /// looping its clip, or a model held at one moment of a clip on a turntable.
 #[derive(Clone, PartialEq)]
 pub struct Standing {
-    pub body: BodyFiles,
-    pub clip: Option<RigClip>,
+    pub body: Figure,
+    pub clip: Option<StageClip>,
     pub transform: Transform,
     pub held: Option<Seconds>,
     /// The cues of its clip it crossed since the last frame, which it sounds where it stands as a
@@ -83,6 +85,29 @@ pub struct Standing {
     pub props: Vec<StandingProp>,
     /// The layers of its skeleton the rig runs over its clip, when a stage asks for them.
     pub layers: Option<StageLayers>,
+}
+
+/// A clip a stage plays on a rig: the animation at `animation` of the glTF file at `file`, played
+/// as a skeleton plays it, through `pairs` of our joints and his when it is made on a source rig.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StageClip {
+    pub file: String,
+    pub animation: usize,
+    pub pairs: Option<Vec<(String, String)>>,
+}
+
+impl StageClip {
+    /// The clip at `played` among `skeleton`'s, as the game plays it.
+    pub fn played(skeleton: &BuiltSkeleton, played: usize) -> StageClip {
+        let clip = &skeleton.clips[played];
+        StageClip {
+            file: clip.clip.file().as_str().to_owned(),
+            animation: clip.animation,
+            pairs: clip
+                .source
+                .map(|source| skeleton.def.sources[source].joint_pairs()),
+        }
+    }
 }
 
 /// What a stood rig's layers are told each frame, as the game tells a puppet's: the model whose
@@ -430,7 +455,15 @@ impl Viewport {
                         ))
                         .id();
                     if let Some(clip) = &standing.clip {
-                        let mut mannequin = mannequin(world, clip);
+                        let tree = standing.body.rig.clone();
+                        let made = rig_clip::rig_clip(
+                            world,
+                            tree.clone(),
+                            &clip.file,
+                            clip.animation,
+                            rig_clip::maker(tree, clip.pairs.clone()),
+                        );
+                        let mut mannequin = mannequin(world, made);
                         mannequin.hold(standing.held);
                         world.entity_mut(rig).insert(mannequin);
                     }

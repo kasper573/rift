@@ -605,13 +605,13 @@ impl Player {
         self.cast(done);
     }
 
-    /// Casts the skill in the slot on the actor `pick` names, clicking only once the pointer rests
-    /// on that actor, since it may wander while the pointer glides; a click that still misses arms
-    /// the skill again.
+    /// Casts the skill in the slot on one of the actors `pick` ranks, best first, clicking only once
+    /// the pointer rests on one of them, since they may wander while the pointer glides and one may
+    /// stand in front of another; a click that still misses arms the skill again.
     pub fn cast_on(
         &mut self,
         slot: InputAction,
-        pick: impl Fn(&ProbeSnapshot) -> Option<Entity>,
+        pick: impl Fn(&ProbeSnapshot) -> Vec<Entity>,
         done: impl Fn(&ProbeSnapshot) -> bool,
     ) {
         let deadline = Deadline::from(&self.desktop, LONG);
@@ -627,17 +627,15 @@ impl Player {
                 self.act(slot);
                 self.wait_until("the skill armed", aiming);
             }
-            let Some(target) = pick(&seen) else {
-                continue;
-            };
-            let Some(body) = seen.actors.iter().find(|actor| actor.id == target) else {
-                continue;
-            };
-            let Some(point) = clickable_point(&seen, body.aim) else {
+            let picked = pick(&seen);
+            let Some(point) = picked.iter().find_map(|target| {
+                let body = seen.actors.iter().find(|actor| actor.id == *target)?;
+                clickable_point(&seen, body.aim)
+            }) else {
                 continue;
             };
             let pointed = self.point_at(point);
-            if !matches!(pointed.claim, ClickClaim::Aim(aimed) if aimed == target) {
+            if !matches!(pointed.claim, ClickClaim::Aim(aimed) if picked.contains(&aimed)) {
                 continue;
             }
             self.click();

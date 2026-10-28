@@ -353,6 +353,16 @@ impl ContentRegistry {
         self
     }
 
+    /// The table of every type kept as a bundle.
+    pub fn bundle_tables(&self) -> Vec<&'static str> {
+        super::files::bundle_tables(&self.file_types())
+    }
+
+    /// The bundle `file` sits in, and its path inside the bundle, when it is a part of one.
+    pub fn bundle_of<'f>(&self, file: &'f str) -> Option<(&'f str, &'f str)> {
+        bundle_of(file, &self.bundle_tables())
+    }
+
     pub fn table_names(&self) -> Vec<&'static str> {
         self.rows.iter().map(|row| row.name()).collect()
     }
@@ -375,7 +385,7 @@ impl ContentRegistry {
         if file.ends_with(".json") || file.ends_with(".csv") {
             return true;
         }
-        let Some((bundle, part)) = bundle_of(file) else {
+        let Some((bundle, part)) = self.bundle_of(file) else {
             return false;
         };
         let Some(table) = table_of(bundle) else {
@@ -481,7 +491,7 @@ impl ContentRegistry {
     }
 
     fn json_part_of<'f>(&self, file: &'f str) -> Option<(&JsonPart, &'f str)> {
-        let (bundle, part) = bundle_of(file)?;
+        let (bundle, part) = self.bundle_of(file)?;
         let table = table_of(bundle)?;
         self.json_parts
             .iter()
@@ -491,7 +501,7 @@ impl ContentRegistry {
 
     /// The loader of the type whose fields `file` holds: a content file, or a bundle's config.
     fn loader_of_fields(&self, file: &str) -> Option<&dyn TableLoader> {
-        let path = match bundle_of(file) {
+        let path = match self.bundle_of(file) {
             Some((bundle, CONFIG_FILE)) => bundle,
             Some(_) => return None,
             None if file.ends_with(".json") => file,
@@ -696,6 +706,7 @@ pub fn load(
         warnings: Vec::new(),
         indexes: HashMap::new(),
         failed: HashSet::new(),
+        media: Vec::new(),
     };
     loading.parse(registry, None);
     loading.check_rows(registry);
@@ -752,10 +763,10 @@ pub(super) fn check_files(
         .iter()
         .filter_map(|file| content_of(&listing, file))
         .collect();
-    let media: Vec<String> = files
+    let parts: Vec<String> = files
         .iter()
         .filter(|file| super::is_media_file(file))
-        .filter(|file| listing.media.contains(file) || bundle_of(file).is_some())
+        .filter(|file| listing.bundle_holding(file).is_some())
         .cloned()
         .collect();
     let mut loading = Loading {
@@ -771,6 +782,7 @@ pub(super) fn check_files(
         warnings: Vec::new(),
         indexes: HashMap::new(),
         failed: HashSet::new(),
+        media: Vec::new(),
     };
     loading.parse(registry, Some(&contents));
     let misread: HashSet<String> = loading
@@ -779,7 +791,8 @@ pub(super) fn check_files(
         .map(|(_, path)| path.clone())
         .collect();
     loading.check_rows(registry);
-    for file in media {
+    let named = loading.media.clone();
+    for file in parts.into_iter().chain(named) {
         if let Ok(bytes) = loading.read(&file)
             && let Some(problem) = super::media::problem_of(&file, &bytes)
         {
@@ -812,10 +825,7 @@ fn content_of(listing: &Listing, file: &str) -> Option<String> {
     if file == SETTINGS_FILE {
         return Some(file.to_owned());
     }
-    let held = match bundle_of(file) {
-        Some((bundle, _)) => bundle,
-        None => file,
-    };
+    let held = listing.bundle_holding(file).unwrap_or(file);
     listing
         .content
         .values()
@@ -836,6 +846,8 @@ pub struct Loading {
     warnings: Vec<LoadError>,
     indexes: HashMap<String, Arc<JsonIndex>>,
     failed: HashSet<(&'static str, String)>,
+    /// Every media file outside the bundles that content names, sorted.
+    media: Vec<String>,
 }
 
 impl Loading {
@@ -963,9 +975,10 @@ impl Loading {
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "not UTF-8"))
     }
 
-    /// Every media file outside the bundles, by its path from the game folder.
+    /// Every media file outside the bundles that content names, by its path from the game folder:
+    /// the only ones the game reads.
     pub fn media(&self) -> &[String] {
-        &self.listing.media
+        &self.media
     }
 
     /// Every media file kept as a part of a bundle, by its path from the game folder.
@@ -1042,7 +1055,9 @@ impl Loading {
 
         let mut rows: Vec<Vec<(String, Box<dyn Any + Send + Sync>)>> =
             registry.row_loaders().iter().map(|_| Vec::new()).collect();
+        let mut media: BTreeSet<String> = BTreeSet::new();
         for (loader, path, parsed) in parsed {
+            media.extend(parsed.media);
             if let Some(index) = parsed.index {
                 self.indexes.insert(fields_file(&path), index);
             }
@@ -1066,9 +1081,12 @@ impl Loading {
         self.snapshot = None;
 
         if only.is_some_and(|only| !only.contains(SETTINGS_FILE)) {
+            self.media = media.into_iter().collect();
             return;
         }
         let settings = parse_settings(registry, root.as_ref(), &scope);
+        media.extend(settings.media);
+        self.media = media.into_iter().collect();
         self.errors.extend(settings.errors);
         if let Some(index) = settings.index {
             self.indexes.insert(SETTINGS_FILE.to_owned(), index);
@@ -1121,7 +1139,7 @@ impl Loading {
                 }
             }
         }
-        files.extend(self.listing.media.iter().cloned());
+        files.extend(self.media.iter().cloned());
         let root = self.folder.clone();
         let hashed: Vec<(String, io::Result<FileHash>)> = files
             .into_par_iter()
@@ -1202,6 +1220,8 @@ pub(super) struct ParsedFile {
     index: Option<Arc<JsonIndex>>,
     parts: Vec<(String, Arc<JsonIndex>)>,
     pub(super) errors: Vec<LoadError>,
+    /// Every media file the file names, as far as it names files there are.
+    media: Vec<String>,
 }
 
 pub struct ParseError {
@@ -1245,6 +1265,7 @@ pub(super) fn listing_scope(registry: &ContentRegistry, listing: &Listing) -> Co
         );
     }
     scope.media(listing.media.clone());
+    scope.bundles(registry.bundle_tables());
     scope
 }
 
@@ -1265,9 +1286,10 @@ pub(super) fn parse_file(
         let parts = listing.parts.get(path).map_or(&[][..], Vec::as_slice);
         let mut reader = Parts::new(path, parts, root, scope);
         loader.read_parts(row.as_mut(), &mut reader);
-        let (errors, indexes) = reader.finish();
-        parsed.errors.extend(errors);
-        parsed.parts.extend(indexes);
+        let read = reader.finish();
+        parsed.errors.extend(read.errors);
+        parsed.parts.extend(read.indexes);
+        parsed.media.extend(read.media);
     }
     parsed
 }
@@ -1342,6 +1364,7 @@ fn parse_read(
         index: read.index,
         parts: Vec::new(),
         errors: read.errors,
+        media: Vec::new(),
     };
     let (Some(value), Some(index)) = (read.value, parsed.index.clone()) else {
         return parsed;
@@ -1350,6 +1373,7 @@ fn parse_read(
     match result {
         Ok(row) => {
             parsed.row = Some(row);
+            parsed.media = named_media(read_scope.leaves());
             let probe = |pointer: &str| reads_reference(scope, &value, pointer, parse);
             parsed.errors.extend(reference_errors(
                 &read.file,
@@ -1363,6 +1387,15 @@ fn parse_read(
             .push(shape_error(&read.file, &error, &index, list_kinds)),
     }
     parsed
+}
+
+/// Every media file `leaves` name that is there.
+pub(super) fn named_media(leaves: &[Leaf]) -> Vec<String> {
+    leaves
+        .iter()
+        .filter(|leaf| leaf.kind == LeafKind::Asset && leaf.problem.is_none())
+        .map(|leaf| leaf.value.clone())
+        .collect()
 }
 
 fn whole_file(

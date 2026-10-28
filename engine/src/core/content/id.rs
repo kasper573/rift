@@ -225,6 +225,7 @@ pub(super) type ScopePaths = HashMap<TypeId, (&'static str, Vec<String>), NoOpHa
 pub struct ContentScope {
     paths: Arc<ScopePaths>,
     media: Option<Arc<Vec<String>>>,
+    bundles: Arc<[&'static str]>,
     renames: Option<Arc<BTreeMap<String, String>>>,
     leaves: Vec<Leaf>,
 }
@@ -234,6 +235,7 @@ impl ContentScope {
         ContentScope {
             paths: Arc::new(HashMap::default()),
             media: None,
+            bundles: Arc::new([]),
             renames: None,
             leaves: Vec::new(),
         }
@@ -243,6 +245,7 @@ impl ContentScope {
         ContentScope {
             paths: content.scope_paths(),
             media: None,
+            bundles: Arc::new([]),
             renames: None,
             leaves: Vec::new(),
         }
@@ -284,6 +287,11 @@ impl ContentScope {
         self.media = Some(Arc::new(files));
     }
 
+    /// Reads a media path inside a folder named as a bundle of one of `tables` as a part of it.
+    pub fn bundles(&mut self, tables: Vec<&'static str>) {
+        self.bundles = tables.into();
+    }
+
     pub fn leaves(&self) -> &[Leaf] {
         &self.leaves
     }
@@ -295,7 +303,7 @@ impl ContentScope {
             || path.chars().nth(1) == Some(':');
         let problem = if unsafe_path {
             Some(LeafProblem::Unsafe)
-        } else if let Some((bundle, _)) = bundle_of(path) {
+        } else if let Some((bundle, _)) = bundle_of(path, &self.bundles) {
             Some(LeafProblem::InBundle {
                 bundle: bundle.to_owned(),
             })

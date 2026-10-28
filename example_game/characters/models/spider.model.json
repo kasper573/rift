@@ -1,10 +1,10 @@
 {
-  "skeleton": "characters/skeletons/spider.skeleton",
+  "skeleton": "characters/skeletons/spider.skeleton.json",
   "hitbox": {
     "radius": 0.5,
     "height": 0.5
   },
   "parts": [
-    "characters/parts/spider.model_part"
+    "characters/parts/spider.model_part.json"
   ]
 }

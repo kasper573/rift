@@ -3,10 +3,10 @@ use std::io;
 use std::ops::Bound;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use engine::core::content::files::{self, GameFile};
-use engine::core::content::{MemoryFolder, SETTINGS_FILE, bundle_of, table_of};
+use engine::core::content::{MemoryFolder, SETTINGS_FILE, table_of};
 use engine::systems::registry;
 use walkdir::WalkDir;
 
@@ -76,7 +76,9 @@ pub struct FolderIndex {
     pub folders: BTreeSet<String>,
     pub media: BTreeSet<String>,
     pub notes: BTreeSet<String>,
-    /// Files and folders the loader takes for nothing it may hold.
+    /// Files the game never reads, such as a seller's readme or the archive a pack came in.
+    pub other: BTreeSet<String>,
+    /// Files and folders whose names say something the game can't hold.
     pub unknown: BTreeSet<String>,
     /// What each folder holds directly, its folders, files and bundles, by path; the game folder
     /// is "".
@@ -278,12 +280,24 @@ impl ProjectFiles {
     }
 }
 
+/// The bundle `file` is a part of, and its path inside the bundle, when it is one.
+pub fn bundle_of(file: &str) -> Option<(&str, &str)> {
+    static BUNDLES: LazyLock<Vec<&'static str>> = LazyLock::new(|| registry().bundle_tables());
+    files::bundle_of(file, &BUNDLES)
+}
+
 /// The path of the content file that `file` is, or is a part of; `None` for the settings.
 pub fn content_holding(file: &str) -> Option<&str> {
     match bundle_of(file) {
         Some((bundle, _)) => Some(bundle),
-        None => (file.ends_with(".json") && file != SETTINGS_FILE).then_some(file),
+        None => (file != SETTINGS_FILE && json_table(file)).then_some(file),
     }
+}
+
+/// Whether `file` is named as a file of a table the game keeps in a JSON file.
+fn json_table(file: &str) -> bool {
+    static TABLES: LazyLock<Vec<&'static str>> = LazyLock::new(|| registry().table_names());
+    file.ends_with(".json") && table_of(file).is_some_and(|table| TABLES.contains(&table))
 }
 
 /// The type and path of the content file that `file` is, or is a part of.
@@ -356,6 +370,9 @@ impl FolderIndex {
                 }
                 Ok(Some(GameFile::Note)) => {
                     index.notes.insert(path.to_owned());
+                }
+                Ok(Some(GameFile::Other)) => {
+                    index.other.insert(path.to_owned());
                 }
                 Ok(Some(GameFile::Settings)) => {}
                 Ok(None) => {}

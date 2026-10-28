@@ -253,6 +253,9 @@ pub fn of_file(index: &FolderIndex, path: &str) -> KindIcon {
     if index.media.contains(path) {
         return of_media(path);
     }
+    if index.other.contains(path) {
+        return FILE;
+    }
     table_of(path).map_or(FILE, of_table)
 }
 
@@ -261,13 +264,12 @@ pub fn of_media(path: &str) -> KindIcon {
     match AssetKind::of(path) {
         Some(AssetKind::Image) => IMAGE,
         Some(AssetKind::Audio) => KindIcon::plain(phosphor::FILE_AUDIO),
-        Some(AssetKind::Font) => KindIcon::plain(phosphor::TEXT_AA),
         Some(AssetKind::Model) => KindIcon::plain(phosphor::CUBE).unpictured(),
         None => FILE,
     }
 }
 
-const FILE: KindIcon = KindIcon::plain(phosphor::FILE);
+pub const FILE: KindIcon = KindIcon::plain(phosphor::FILE);
 pub const NOTE: KindIcon = KindIcon::plain(phosphor::NOTE);
 pub const IMAGE: KindIcon = KindIcon::plain(phosphor::IMAGE);
 pub const TABLE: KindIcon = KindIcon::plain(phosphor::TABLE);

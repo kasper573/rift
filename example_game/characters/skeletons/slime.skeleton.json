@@ -1,0 +1,99 @@
+{
+  "name": "Slime",
+  "rig": {
+    "files": [
+      "characters/skeletons/slime/rig.glb"
+    ]
+  },
+  "base": {
+    "clips": {
+      "idle": {
+        "file": "characters/skeletons/slime/slime.glb",
+        "take": "idle"
+      },
+      "walk": {
+        "file": "characters/skeletons/slime/slime.glb",
+        "take": "hop"
+      },
+      "run": {
+        "file": "characters/skeletons/slime/slime.glb",
+        "take": "hop"
+      },
+      "attack": {
+        "file": "characters/skeletons/slime/slime.glb",
+        "take": "bite"
+      },
+      "death": {
+        "file": "characters/skeletons/slime/slime.glb",
+        "take": "death"
+      },
+      "talk": {
+        "file": "characters/skeletons/slime/slime.glb",
+        "take": "nod"
+      }
+    }
+  },
+  "cues": [
+    {
+      "clip": {
+        "file": "characters/skeletons/slime/slime.glb",
+        "take": "bite"
+      },
+      "cues": [
+        {
+          "at": 200.0,
+          "apex": true,
+          "sound": "sound-and-voice/sfx/bite01.sfx"
+        }
+      ]
+    },
+    {
+      "clip": {
+        "file": "characters/skeletons/slime/slime.glb",
+        "take": "death"
+      },
+      "cues": [
+        {
+          "at": 0.0,
+          "sound": "sound-and-voice/sfx/death01.sfx"
+        }
+      ]
+    },
+    {
+      "clip": {
+        "file": "characters/skeletons/slime/slime.glb",
+        "take": "hop"
+      },
+      "cues": [
+        {
+          "at": 208.0,
+          "step": true
+        }
+      ]
+    }
+  ],
+  "paces": [
+    {
+      "clip": {
+        "file": "characters/skeletons/slime/slime.glb",
+        "take": "hop"
+      },
+      "pace": 0.9
+    }
+  ],
+  "layers": [
+    {
+      "type": "squash",
+      "joint": "Head",
+      "by_speed": 0.08,
+      "on_step": 0.25,
+      "ease": 0.15,
+      "during": [
+        "idle",
+        "walk",
+        "run",
+        "talk"
+      ]
+    }
+  ]
+}

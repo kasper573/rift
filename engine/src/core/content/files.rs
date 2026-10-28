@@ -42,9 +42,14 @@ pub enum Shape {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameFile {
     Settings,
-    Content { table: &'static str, shape: Shape },
+    Content {
+        table: &'static str,
+        shape: Shape,
+    },
     Media(AssetKind),
     Note,
+    /// A file the game never reads, such as a seller's readme or an archive it came in.
+    Other,
 }
 
 /// A type the folder may hold content of: its table, how its files are kept and, for a bundle, the
@@ -74,6 +79,7 @@ pub struct Listing {
     pub parts: HashMap<String, Vec<String>>,
     pub media: Vec<String>,
     pub notes: Vec<String>,
+    pub other: Vec<String>,
 }
 
 impl Listing {
@@ -87,9 +93,21 @@ impl Listing {
     pub fn paths_of(&self, table: &str) -> Vec<String> {
         self.content.get(table).cloned().unwrap_or_default()
     }
+
+    /// The bundle the listing holds that `file` is a part of, when it is one.
+    pub fn bundle_holding(&self, file: &str) -> Option<&str> {
+        file.match_indices('/')
+            .map(|(end, _)| &file[..end])
+            .find_map(|folder| {
+                self.parts
+                    .get_key_value(folder)
+                    .map(|(path, _)| path.as_str())
+            })
+    }
 }
 
-/// What `name`, the last part of `path`, says it is.
+/// What `name`, the last part of `path`, says it is. A name that says nothing the game reads is
+/// another file: it stays in the folder, and the game never looks at it.
 pub fn classify(
     path: &str,
     dir: bool,
@@ -102,35 +120,15 @@ pub fn classify(
     let (stem, rest) = name
         .split_once('.')
         .map_or((name, None), |(stem, rest)| (stem, Some(rest)));
-    // Nothing names a note or fetches it by URL, so its name is free, as README.md is.
-    if !dir && rest == Some(NOTE_EXTENSION) {
-        return Ok(Some(GameFile::Note));
-    }
-    if !valid_name(stem) {
-        return Err(ContentProblem::new(
-            "invalid name",
-            format!("{name:?}"),
-            NAME_RULE,
-        ));
-    }
     if dir {
-        let Some(table) = rest else {
-            return Ok(None);
-        };
-        return match types.iter().find(|ty| ty.table == table) {
-            Some(ty) if ty.shape == Shape::Bundle => Ok(Some(GameFile::Content {
-                table: ty.table,
-                shape: Shape::Bundle,
-            })),
-            Some(ty) => Err(ContentProblem::new(
-                "folder with a dot",
-                format!("folder {name}"),
-                format!(
-                    "{stem}.{}.json: {} files are single JSON files, and folders you make hold no dot",
-                    ty.table, ty.table
-                ),
-            )),
-            None => Err(unknown_type(name, table, types, Shape::Bundle)),
+        let bundle = rest.and_then(|table| {
+            types
+                .iter()
+                .find(|ty| ty.table == table && ty.shape == Shape::Bundle)
+        });
+        return match bundle {
+            Some(ty) => content_named(stem, name, ty, Shape::Bundle),
+            None => Ok(None),
         };
     }
     if path == SETTINGS_FILE {
@@ -139,30 +137,55 @@ pub fn classify(
     if Some(name) == SETTINGS_FILE.rsplit('/').next() {
         return Err(misplaced_settings(name));
     }
-    let Some(rest) = rest else {
-        return Err(unknown_file(name));
-    };
-    if let Some(kind) = AssetKind::of(name).filter(|_| !rest.contains('.')) {
-        return Ok(Some(GameFile::Media(kind)));
+    // Nothing names a note or fetches it by URL, so its name is free, as README.md is.
+    if rest == Some(NOTE_EXTENSION) {
+        return Ok(Some(GameFile::Note));
     }
-    let Some(table) = rest.strip_suffix(".json") else {
-        return Err(unknown_file(name));
-    };
-    match types.iter().find(|ty| ty.table == table) {
-        Some(ty) if ty.shape == Shape::Json => Ok(Some(GameFile::Content {
-            table: ty.table,
-            shape: Shape::Json,
-        })),
-        Some(ty) => Err(ContentProblem::new(
-            "bundle kept as one file",
-            format!("file {name}"),
-            format!(
-                "a folder {stem}.{}/ holding {CONFIG_FILE}: {} files are bundles",
-                ty.table, ty.table
-            ),
+    if let Some(table) = rest
+        .and_then(|rest| rest.strip_suffix(".json"))
+        .filter(|table| !table.is_empty() && !table.contains('.'))
+    {
+        return match types.iter().find(|ty| ty.table == table) {
+            Some(ty) if ty.shape == Shape::Json => content_named(stem, name, ty, Shape::Json),
+            Some(ty) => Err(ContentProblem::new(
+                "bundle kept as one file",
+                format!("file {name}"),
+                format!(
+                    "a folder {stem}.{}/ holding {CONFIG_FILE}: {} files are bundles",
+                    ty.table, ty.table
+                ),
+            )),
+            None => Err(unknown_type(name, table, types, Shape::Json)),
+        };
+    }
+    match AssetKind::of(name) {
+        Some(_) if name.contains('#') => Err(ContentProblem::new(
+            "invalid name",
+            format!("{name:?}"),
+            "a media file named without #, which a path to it reads as where its name ends",
         )),
-        None => Err(unknown_type(name, table, types, Shape::Json)),
+        Some(kind) => Ok(Some(GameFile::Media(kind))),
+        None => Ok(Some(GameFile::Other)),
     }
+}
+
+fn content_named(
+    stem: &str,
+    name: &str,
+    ty: &FileType,
+    shape: Shape,
+) -> Result<Option<GameFile>, ContentProblem> {
+    if !valid_name(stem) {
+        return Err(ContentProblem::new(
+            "invalid name",
+            format!("{name:?}"),
+            NAME_RULE,
+        ));
+    }
+    Ok(Some(GameFile::Content {
+        table: ty.table,
+        shape,
+    }))
 }
 
 fn misplaced_settings(name: &str) -> ContentProblem {
@@ -170,15 +193,6 @@ fn misplaced_settings(name: &str) -> ContentProblem {
         "unknown file",
         format!("file {name}"),
         format!("the game's settings at {SETTINGS_FILE}"),
-    )
-}
-
-fn unknown_file(name: &str) -> ContentProblem {
-    ContentProblem::new(
-        "unknown file",
-        format!("file {name}"),
-        "a content file <name>.<type>.json, a bundle folder <name>.<type>/, media (png, wav, \
-         flac, ttf or otf) or a note (.md)",
     )
 }
 
@@ -259,21 +273,33 @@ pub fn table_of(path: &str) -> Option<&str> {
     Some(rest.strip_suffix(".json").unwrap_or(rest))
 }
 
-/// The bundle `file` sits in, and its path inside the bundle, when it is a part of one: plain
-/// folders hold no dot, so the first dotted folder on its path is its bundle.
-pub fn bundle_of(file: &str) -> Option<(&str, &str)> {
+/// The bundle `file` sits in, and its path inside the bundle, when it is a part of one: the first
+/// folder on its path named as a bundle of a type among `bundles`, the bundle types' tables.
+pub fn bundle_of<'f>(file: &'f str, bundles: &[&str]) -> Option<(&'f str, &'f str)> {
     let mut at = 0;
     for segment in file.split('/') {
         let end = at + segment.len();
         if end == file.len() {
             return None;
         }
-        if segment.contains('.') {
+        if segment
+            .split_once('.')
+            .is_some_and(|(_, table)| bundles.contains(&table))
+        {
             return Some((&file[..end], &file[end + 1..]));
         }
         at = end + 1;
     }
     None
+}
+
+/// The table of every type among `types` kept as a bundle.
+pub fn bundle_tables(types: &[FileType]) -> Vec<&'static str> {
+    types
+        .iter()
+        .filter(|ty| ty.shape == Shape::Bundle)
+        .map(|ty| ty.table)
+        .collect()
 }
 
 /// Walks the whole folder, sorting every file by what its name says, and reports every file and
@@ -288,6 +314,7 @@ pub fn list(folder: &dyn ContentFolder, types: &[FileType]) -> (Listing, Vec<Loa
     }
     listing.media.sort_unstable();
     listing.notes.sort_unstable();
+    listing.other.sort_unstable();
     (listing, errors)
 }
 
@@ -307,6 +334,7 @@ fn walk(
             Ok(None) => {}
             Ok(Some(GameFile::Settings)) => listing.settings = true,
             Ok(Some(GameFile::Note)) => listing.notes.push(path),
+            Ok(Some(GameFile::Other)) => listing.other.push(path),
             Ok(Some(GameFile::Media(_))) => listing.media.push(path),
             Ok(Some(GameFile::Content { table, shape })) => {
                 if shape == Shape::Bundle {

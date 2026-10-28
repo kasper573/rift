@@ -69,7 +69,8 @@ impl FolderReader {
 
     /// The problems the files at `files` have on their own, as a load reports them: what their
     /// names say, the shape and references of the content each belongs to, that content's parts
-    /// and the rules of its type, and whether their media decodes. Only what the rest of the game
+    /// and the rules of its type, and whether the media they name and the bundle parts among them
+    /// decode. Only what the rest of the game
     /// says of them is left to a whole load, so whatever writes content can ask before it writes.
     pub fn check(&self, files: &[String]) -> CheckedFiles {
         check_files(

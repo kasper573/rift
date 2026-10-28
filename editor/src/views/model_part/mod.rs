@@ -1,25 +1,24 @@
-//! The model part view: each mesh of the part standing on its skeleton's rig, how it fits the rig
-//! joint by joint, and a glb dropped on it imported as the mesh for a build once it fits.
+//! The model part view: each mesh of the part standing on its skeleton's rig, and how it fits the
+//! rig joint by joint. Its meshes are glTF files of the game folder, picked by path in its form.
 
 pub mod fit;
-pub mod import;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use engine::core::assets::FileSize;
 use engine::core::content::media::GltfInfos;
 use engine::core::content::{Content, ContentFile};
-use engine::core::render::world::body::{BodyFiles, Skin};
-use engine::core::render::world::mannequin::RigClip;
-use engine::systems::actor::model::{Skeletons, mesh_label};
+use engine::core::render::world::body::{Figure, Skin};
+use engine::systems::actor::model::Skeletons;
 use engine::systems::actor::part::{MAX_PART_BYTES, ModelPartDef};
-use engine::systems::actor::skeleton::{BuildName, BuiltSkeleton};
+use engine::systems::actor::rigging::BuiltSkeleton;
+use engine::systems::actor::skeleton::BuildName;
 use engine::systems::actor::{Action, Motion, Pose};
 use ui::egui::{self, Ui, Vec2};
 use ui::{chip, form, panel, theme};
 
+use super::area::viewport::StageClip;
 use super::stage;
 use crate::app::Editor;
 use crate::shell::{row_form, sidebar};
@@ -28,14 +27,12 @@ use crate::tabs::shown_path;
 #[derive(Default)]
 pub struct ModelPartViews {
     pub views: HashMap<String, ModelPartView>,
-    pub drops: Vec<PathBuf>,
 }
 
 pub struct ModelPartView {
     /// The mesh shown: the one cut for this build, or with `None` the one every build wears.
     pub mesh: Option<BuildName>,
     pub stage: stage::StageState,
-    pub import: Option<import::ImportDraft>,
 }
 
 impl ModelPartViews {
@@ -57,9 +54,6 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         return;
     };
     ensure_view(editor, key, &row);
-    take_drops(editor, key);
-    let ctx = ui.ctx().clone();
-    import::dialog(editor, &ctx, key);
     sidebar::row(ui, "model_part", |ui| {
         row_form::show_row(editor, ui, ModelPartDef::TABLE, key)
     });
@@ -89,7 +83,6 @@ pub fn ensure_view(editor: &mut Editor, key: &str, row: &ModelPartDef) {
         ModelPartView {
             mesh,
             stage: stage::StageState::framing(1.3, false),
-            import: None,
         },
     );
 }
@@ -103,16 +96,13 @@ pub fn skeleton<'c>(
     Some((content, Skeletons::loaded(content, row.skeleton)?))
 }
 
-/// The clip `skeleton` stands a body in while idle, when its libraries carry it.
-pub fn idle_clip(skeleton: &BuiltSkeleton) -> Option<RigClip> {
-    let (clip, _) = skeleton
+/// The clip `skeleton` stands a body in while idle.
+pub fn idle_clip(skeleton: &BuiltSkeleton) -> Option<StageClip> {
+    let (cell, _) = skeleton
         .def
-        .named(None, &Motion::Action(Action::Idle), Pose::Idle);
-    let found = skeleton.clips.get(clip.nth(0).clip())?;
-    Some(RigClip {
-        file: skeleton.def.libraries[found.library].file.path(),
-        index: found.index,
-    })
+        .named(None, None, &Motion::Action(Action::Idle), Pose::Idle)?;
+    let played = skeleton.played(cell.nth(0).clip())?;
+    Some(StageClip::played(skeleton, played))
 }
 
 fn mesh_bar(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
@@ -150,8 +140,8 @@ pub(super) fn stand(
     let Some(turntable) = turntable else {
         return;
     };
-    let body = BodyFiles {
-        rig: skeleton.def.rig.path(),
+    let body = Figure {
+        rig: skeleton.rig.clone(),
         skins: vec![skin],
     };
     let standing = stage::standing(body, idle_clip(skeleton), None, Vec::new(), Vec::new());
@@ -177,7 +167,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
                 .as_ref()
                 .and_then(|project| project.files.get(&mesh.path()))
                 .map(|bytes| FileSize(bytes.len()));
-            (mesh_label(mesh), triangles, weight)
+            (mesh.as_str().to_owned(), triangles, weight)
         })
         .collect();
     panel::card(false).show(ui, |ui| {
@@ -205,28 +195,10 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
         ui.add_space(4.0);
         form::hint(
             ui,
-            "Drop a .glb on this tab to import it as the mesh of a build, fitted against the \
-             skeleton first.",
+            "Pick each mesh by its path in the form: one every build wears, and one for each build \
+             cut its own way.",
         );
     });
     ui.add_space(8.0);
     crate::shell::row_form::usages::show_usages_grouped(editor, ui, key, true);
-}
-
-/// Takes a glTF binary dropped on the view as a mesh to import.
-fn take_drops(editor: &mut Editor, key: &str) {
-    let drops = std::mem::take(&mut editor.views.model_part.drops);
-    let Some(path) = drops.iter().rev().find(|path| {
-        path.extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("glb"))
-    }) else {
-        return;
-    };
-    match std::fs::read(path) {
-        Ok(bytes) => match import::draft(editor, key, bytes, path.display().to_string()) {
-            Ok(draft) => editor.views.model_part.view_mut(key).import = Some(draft),
-            Err(error) => editor.toast(error),
-        },
-        Err(error) => editor.toast(format!("{}: {error}", path.display())),
-    }
 }

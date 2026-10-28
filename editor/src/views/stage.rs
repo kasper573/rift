@@ -15,17 +15,17 @@ use ui::theme;
 
 use std::collections::BTreeMap;
 
-use engine::systems::actor::Action;
 use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::render;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::HandIndex;
+use engine::systems::actor::{Action, Motion, Pose};
 use engine::systems::item::{Grip, ItemId, Wear};
 
 use ui::egui::{Response, Sense, Vec2};
 
 use super::area::camera::{self, AreaCanvas, OrbitCamera};
-use super::area::viewport::{Request, StageLayers, Standing, StandingProp};
+use super::area::viewport::{Request, StageClip, StageLayers, Standing, StandingProp};
 use crate::app::Editor;
 
 /// How fast a stage turns on its own.
@@ -156,8 +156,8 @@ impl Turntable {
 /// A rig standing in the middle of the stage, in `clip` held at `held`, sounding the cues it
 /// `crossed` this frame, holding `props`.
 pub fn standing(
-    body: engine::core::render::world::body::BodyFiles,
-    clip: Option<engine::core::render::world::mannequin::RigClip>,
+    body: engine::core::render::world::body::Figure,
+    clip: Option<StageClip>,
     held: Option<engine::core::time::Seconds>,
     crossed: Vec<Cue>,
     props: Vec<StandingProp>,
@@ -173,6 +173,12 @@ pub fn standing(
         props,
         layers: None,
     }
+}
+
+/// The clip `model` idles in, standing in no stance.
+pub fn idle_clip(model: &engine::systems::actor::model::ActorModel) -> StageClip {
+    let idle = model.standing_clip(None, &Motion::Action(Action::Idle), Pose::Idle);
+    StageClip::played(model.skeleton(), idle)
 }
 
 /// What the layers of a rig standing still and holding props are told: idling, so the clasps of

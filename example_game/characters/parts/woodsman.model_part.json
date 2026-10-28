@@ -1,0 +1,4 @@
+{
+  "skeleton": "characters/skeletons/biped.skeleton.json",
+  "mesh": "characters/parts/woodsman.glb"
+}

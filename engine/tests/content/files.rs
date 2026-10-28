@@ -28,9 +28,20 @@ fn a_file_of_no_known_type_is_refused_naming_the_nearest_type() {
     let error = only(&report, "orc.ncp.json");
     assert_eq!(error.0, "unknown type");
     assert_eq!(error.1.as_deref(), Some("\"npc\""));
+}
 
-    let report = refused(game().file("todo.txt", "later"));
-    assert_eq!(only(&report, "todo.txt").0, "unknown file");
+#[test]
+fn a_file_the_game_never_reads_stays_beside_its_content() {
+    game()
+        .file("todo.txt", "later")
+        .file("downloads/Human Basic Motions 2.5.pdf", "a manual")
+        .file(
+            "downloads/Human Basic Motions 2.5/HumanM@Walk01 - Forward.glb",
+            "not read",
+        )
+        .file("downloads/old.npc/config.json", "{ not content }")
+        .file("downloads/archive.zip", "packed")
+        .load();
 }
 
 #[test]
@@ -79,27 +90,9 @@ fn names_that_differ_only_by_case_clash() {
 }
 
 #[test]
-fn a_dotted_name_must_take_the_shape_its_type_does() {
-    for (game, file, rule) in [
-        (
-            game().file("old.stuff/a.md", "notes"),
-            "old.stuff",
-            "unknown type",
-        ),
-        (
-            game().file("lamp.model_part.json", "{}"),
-            "lamp.model_part.json",
-            "bundle kept as one file",
-        ),
-        (
-            game().file("orc.npc/config.json", "{}"),
-            "orc.npc",
-            "folder with a dot",
-        ),
-    ] {
-        let report = refused(game);
-        assert_eq!(only(&report, file).0, rule, "{file}");
-    }
+fn a_bundle_kept_as_one_json_file_is_refused() {
+    let report = refused(game().file("lamp.prop.json", "{}"));
+    assert_eq!(only(&report, "lamp.prop.json").0, "bundle kept as one file");
 }
 
 #[test]
@@ -112,9 +105,11 @@ fn hidden_files_are_left_alone() {
 
 #[test]
 fn a_bundles_part_is_never_named_from_outside_it() {
-    let report = refused(game().edit("class", "hero", |hero| {
-        hero["icon"] = json!(format!("{}/model.glb", path("model", "hero")));
-    }));
+    let report = refused(game().prop("rock", json!({ "type": "none" })).edit(
+        "class",
+        "hero",
+        |hero| hero["icon"] = json!(format!("{}/model.glb", path("prop", "rock"))),
+    ));
 
     assert_eq!(only(&report, "hero.class.json").0, "part of a bundle");
 }

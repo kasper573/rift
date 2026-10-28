@@ -18,16 +18,15 @@ fn reader(game: &Game) -> FolderReader {
 }
 
 #[test]
-fn a_bundle_reads_with_its_parts() {
+fn a_file_reads_with_the_parts_of_its_bundle_and_the_media_it_names() {
     let game = game().model("hero", 1.0, json!([])).bust("hero");
     let reader = reader(&game);
     let part: ModelPartDef = reader.read(&path("model_part", "hero")).expect("reads");
     let bust: BustDef = reader.read(&path("bust", "hero")).expect("reads");
 
-    let hero = path("model_part", "hero");
     assert_eq!(
         part.mesh.expect("a mesh for every build").as_str(),
-        format!("{hero}/mesh.glb")
+        testkit::part_file("hero")
     );
     assert_eq!(
         bust.generic.of(GenericExpression::Angry).as_str(),

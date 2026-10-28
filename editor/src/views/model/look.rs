@@ -1,9 +1,8 @@
 //! The look page: the model on the stage in a chosen stance, playing what its skeleton gives a
 //! chosen action, pose, move or gesture.
 
-use engine::core::render::world::mannequin::RigClip;
 use engine::core::time::Millis;
-use engine::systems::actor::skeleton::{ClipName, Cue};
+use engine::systems::actor::skeleton::{Clip, Cue};
 use engine::systems::actor::stance::StanceDef;
 use engine::systems::actor::{Action, Motion, Pose};
 use strum::VariantArray;
@@ -12,6 +11,7 @@ use ui::{controls, form, theme};
 
 use crate::app::Editor;
 use crate::tabs::shown_path;
+use crate::views::area::viewport::StageClip;
 use crate::views::cues;
 
 /// What the stage plays: an engine action, a pose, a move or a gesture, as a stance resolves it.
@@ -39,8 +39,8 @@ impl Shown {
 /// What the stage plays for the model at `key` as its view asks: the clip, how long it plays and
 /// its cues.
 pub struct Playing {
-    pub clip: RigClip,
-    pub name: ClipName,
+    pub clip: StageClip,
+    pub name: Clip,
     pub length: Millis,
     pub cues: Vec<Cue>,
 }
@@ -83,7 +83,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         ui.label(theme::muted(format!(
             "{} → {} · {:.2} s",
             scene.shown.label(),
-            playing.name,
+            playing.name.shown(),
             playing.length.0 / 1000.0
         )));
         let (rect, _) = ui.allocate_exact_size(
@@ -156,7 +156,7 @@ impl Scene {
                         Motion::End(*pose),
                     ]
                     .into_iter()
-                    .filter(|motion| skeleton.def.plays(stance_id, motion))
+                    .filter(|motion| model.plays(stance_id, motion))
                     .map(|motion| Shown {
                         pose: match motion {
                             Motion::Action(_) => *pose,
@@ -185,8 +185,8 @@ impl Scene {
             pose: view.pose,
         };
         let resolved = model.resolve(stance_id, &shown.motion, shown.pose, 0);
-        let playing = resolved.source.map(|source| Playing {
-            clip: model.rig_clip(source),
+        let playing = Some(Playing {
+            clip: StageClip::played(skeleton, resolved.played),
             name: resolved.clip.clone(),
             length: resolved.length.millis(),
             cues: resolved.cues.to_vec(),

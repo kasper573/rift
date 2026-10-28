@@ -1,0 +1,4 @@
+{
+  "skeleton": "characters/skeletons/giant-spider.skeleton.json",
+  "mesh": "characters/parts/giant-spider.glb"
+}

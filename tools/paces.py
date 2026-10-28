@@ -1,11 +1,11 @@
-"""Measures how fast each clip of a library carries a body over the ground: the speed a planted
+"""Measures how fast each clip of a glTF file carries a body over the ground: the speed a planted
 foot slides back under it, which is the `paces` entry a skeleton states for the clip.
 
-    python3 tools/paces.py LIBRARY.glb FOOT[,FOOT...] [CLIP...]
+    python3 tools/paces.py CLIPS.glb FOOT[,FOOT...] [CLIP...]
 
 FOOT names the joints that touch the ground. A foot counts as planted while it is within a fifth of
 its lift of the lowest it gets in the clip; the pace is how far the planted feet move along the
-ground over how long they stay planted, in metres a second at the library's own scale.
+ground over how long they stay planted, in metres a second at the file's own scale.
 """
 
 import sys
@@ -21,18 +21,18 @@ PLANTED = 0.2
 def main():
     path, feet = sys.argv[1], sys.argv[2].split(",")
     only = set(sys.argv[3:])
-    library = glb.Gltf(path)
-    nodes = library.json["nodes"]
+    gltf = glb.Gltf(path)
+    nodes = gltf.json["nodes"]
     parents = {child: index for index, node in enumerate(nodes) for child in node.get("children", [])}
     named = {node.get("name"): index for index, node in enumerate(nodes)}
     missing = [foot for foot in feet if foot not in named]
     if missing:
         sys.exit(f"no joint named {', '.join(missing)} in {path}")
-    for animation in library.json.get("animations", []):
+    for animation in gltf.json.get("animations", []):
         name = animation.get("name", "")
         if only and name not in only:
             continue
-        tracks, length = channels(library, animation)
+        tracks, length = channels(gltf, animation)
         times = np.arange(0.0, length, 1.0 / SAMPLES_PER_SECOND)
         speeds = []
         for foot in feet if len(times) > 1 else []:
@@ -42,13 +42,13 @@ def main():
         print(f"{name:24s} {pace:5.2f} m/s   ({length:.2f} s)")
 
 
-def channels(library, animation):
+def channels(gltf, animation):
     tracks = {}
     length = 0.0
     for channel in animation["channels"]:
         sampler = animation["samplers"][channel["sampler"]]
-        times = library.accessor(sampler["input"])[:, 0]
-        values = library.accessor(sampler["output"])
+        times = gltf.accessor(sampler["input"])[:, 0]
+        values = gltf.accessor(sampler["output"])
         tracks[(channel["target"]["node"], channel["target"]["path"])] = (times, values)
         length = max(length, float(times[-1]))
     return tracks, length

@@ -4,6 +4,7 @@ pub mod body_names;
 mod condition;
 mod forms;
 pub mod icons;
+pub mod import;
 pub mod keymap;
 pub mod make;
 pub mod moves;

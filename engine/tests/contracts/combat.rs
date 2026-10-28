@@ -10,7 +10,7 @@ use engine::systems::stat::{self, StatKind};
 use engine::systems::{actor, script, skill};
 use serde_json::json;
 use strum::VariantArray;
-use testkit::{APEX, BODY, CLIP, Game, Map, Sim, rig_clips};
+use testkit::{APEX, BODY, CLIP, Game, Map, Sim, clip, rig_clips};
 
 #[test]
 fn an_attack_walks_into_range_and_strikes() {
@@ -68,13 +68,14 @@ fn an_attacks_clips_take_turns_each_timed_by_its_own_clip() {
             .collect();
         let mut base: serde_json::Map<String, serde_json::Value> = actor::Action::VARIANTS
             .iter()
-            .map(|action| (action.as_ref().to_owned(), json!(action.as_ref())))
+            .map(|action| (action.as_ref().to_owned(), json!(clip(action.as_ref()))))
             .collect();
         base.insert(
             "attack".to_owned(),
-            json!({ "clips": ["attack", "thrust", "lunge"], "order": order }),
+            json!({ "clips": [clip("attack"), clip("thrust"), clip("lunge")], "order": order }),
         );
-        let apex = json!([{ "at": APEX.0, "apex": true }]);
+        let apex =
+            |name: &str| json!({ "clip": clip(name), "cues": [{ "at": APEX.0, "apex": true }] });
         let content = Game::new()
             .area("field", &Map::open(7, 7), json!([]))
             .skeleton_of(
@@ -82,7 +83,7 @@ fn an_attacks_clips_take_turns_each_timed_by_its_own_clip() {
                 &clips,
                 json!({
                     "base": { "clips": base },
-                    "cues": { "attack": apex, "thrust": apex, "lunge": apex },
+                    "cues": [apex("attack"), apex("thrust"), apex("lunge")],
                 }),
             )
             .hero("field", 3.0, 3.0)

@@ -172,7 +172,7 @@ fn strokes_in_turn(me: &mut Player) {
                 .me
                 .as_ref()
                 .filter(|me| me.action == Action::Attack)
-                .and_then(|me| me.clip.clone())
+                .map(|me| me.clip.clone())
             {
                 swung.borrow_mut().insert(clip);
             }

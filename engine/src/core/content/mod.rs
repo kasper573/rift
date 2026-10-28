@@ -11,6 +11,7 @@ pub mod locate;
 pub mod media;
 pub mod reader;
 pub mod report;
+pub mod retarget;
 pub mod serial;
 pub mod store;
 pub mod sync;
@@ -21,7 +22,8 @@ pub use bundle::{Bundle, PartSpec, Parts};
 pub use check::RowCheck;
 pub use files::{
     CONFIG_FILE, FIXTURES_DIR, GameFile, GameFiles, NOTE_EXTENSION, SETTINGS_FILE, Shape,
-    bundle_of, content_path, fields_file, name_of, numbered, parent_of, table_of, valid_name,
+    bundle_of, bundle_tables, content_path, fields_file, name_of, numbered, parent_of, table_of,
+    valid_name,
 };
 pub use fixture::Fixture;
 pub use fresh::Nearby;

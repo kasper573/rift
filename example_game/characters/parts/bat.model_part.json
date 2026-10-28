@@ -1,0 +1,4 @@
+{
+  "skeleton": "characters/skeletons/bat.skeleton.json",
+  "mesh": "characters/parts/bat.glb"
+}

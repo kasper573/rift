@@ -36,6 +36,7 @@ use crate::rows;
 use crate::stage::{self, Scenario, Scene};
 use crate::tabs::shown_path;
 use crate::thumbs::{FULL_UV, ProjectImages};
+use crate::views::area::viewport::StageClip;
 use crate::views::character;
 use crate::views::script::panel;
 use crate::views::sound::BabbleRequest;
@@ -329,21 +330,22 @@ fn show_material(editor: &mut Editor, ui: &mut Ui, key: &str) {
             .find(|known| known.name == *tint)
             .map_or(theme::DANGER, |known| known.colour.into())
     };
-    for (mask, channels) in &material.masks {
+    for mask in &material.masks {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            let thumb = material
-                .mask_files
-                .get(mask)
-                .and_then(|file| form.thumbnails.image(&ctx, files, file.as_str()));
+            let thumb = form.thumbnails.image(&ctx, files, mask.image.as_str());
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(56.0), egui::Sense::hover());
             if let Some(thumb) = thumb {
                 ui.painter()
                     .image(thumb.texture.id(), rect, FULL_UV, egui::Color32::WHITE);
             }
             ui.vertical(|ui| {
-                ui.label(theme::mono(mask.as_str()).size(13.0));
-                for (channel, tint) in channels.painting() {
+                let mut name = shown_path(mask.image.as_str()).to_owned();
+                if mask.inverted {
+                    name.push_str(" · inverted");
+                }
+                ui.label(theme::mono(name).size(13.0));
+                for (channel, tint) in mask.painting() {
                     chip::swatch(
                         ui,
                         theme::mono(format!("{} {tint}", ["r", "g", "b", "a"][channel])).size(12.0),
@@ -395,7 +397,10 @@ fn draw_preview(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, pose: 
         return;
     };
     let stance = stance::of_hands(&content, &dressed.hands);
-    let clip = model.standing_clip(stance, &Motion::Action(pose.action), BodyPose::Idle);
+    let clip = Some(StageClip::played(
+        model.skeleton(),
+        model.standing_clip(stance, &Motion::Action(pose.action), BodyPose::Idle),
+    ));
     let body = model.dressed(
         &content,
         &appearance::look(&content, &dressed.appearance, &dressed.worn),

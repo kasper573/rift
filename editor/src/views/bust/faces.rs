@@ -10,8 +10,8 @@ use ui::panel;
 use ui::sheet;
 use ui::theme;
 
+use engine::core::content::ContentFile;
 use engine::core::content::files::{NAME_RULE, valid_name};
-use engine::core::content::{ContentFile, bundle_of};
 use engine::core::script::Node;
 use engine::systems::dialogue::bust::{BUST_FACES, BustDef, Expression, GenericExpression};
 use engine::systems::npc::NpcDef;
@@ -40,7 +40,8 @@ pub struct BustFace {
 impl BustFace {
     /// What a selection holds while the face is picked: its part of the bundle.
     pub fn part(&self) -> String {
-        bundle_of(&self.file).map_or_else(|| self.file.clone(), |(_, part)| part.to_owned())
+        crate::project::files::bundle_of(&self.file)
+            .map_or_else(|| self.file.clone(), |(_, part)| part.to_owned())
     }
 }
 
