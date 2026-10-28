@@ -2,7 +2,7 @@
 
 ## Models
 
-Every model in the game folder is a pack model restyled to the style sheet (`STYLE.md`) or a model built to it by `tools/build.py`. The packs are CC0 (Creative Commons Zero) unless noted otherwise below.
+Every model in the game folder is a pack model restyled to the style sheet (`STYLE.md`) or a model built to it. The packs are CC0 (Creative Commons Zero) unless noted otherwise below.
 
 - KayKit Character Pack: Adventurers, by Kay Lousberg — https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0 — CC0
 - KayKit Character Pack: Skeletons, by Kay Lousberg — https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Skeletons-1.0 — CC0
@@ -15,7 +15,7 @@ Every model in the game folder is a pack model restyled to the style sheet (`STY
 - Cute Monsters (the bat), by Quaternius — https://quaternius.com/packs/cutemonsters.html — CC0
 - Wolf (Animated Animal Pack), Piranha (Animated Fish Bundle), Spider (Animated Enemies), Green Blob (Ultimate Monsters), Turret Gun (Cyberpunk Game Kit), Spear and Wooden Bow, by Quaternius, via Poly Pizza — https://poly.pizza/u/Quaternius — CC0
 - Spider - Low Poly - Animated (the giant spider), by Psionic Games — https://www.psionicgames.com — CC-BY 4.0, restyled to the style sheet
-- The trees are built by `tools/trees.py` to the style sheet.
+- The trees, the cottage and the bone-camp things are built to the style sheet.
 
 ## Pictures
 

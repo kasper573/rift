@@ -1,8 +1,8 @@
 //! The body page: what the skeleton's bodies are put together from, each list made row by row. The
 //! builds its models and parts are cut for, the first the one every other falls back to; the
 //! regions parts cover and hide; the slots worn items lay their parts in, in the order they lay,
-//! each with the items worn there to dress the other pages' stage in; and the tints a body is
-//! painted in, in the order they paint.
+//! each with the items worn there to dress the view's preview in; and the tints a body is painted
+//! in, in the order they paint.
 
 use std::collections::BTreeMap;
 
@@ -14,8 +14,10 @@ use engine::systems::actor::skeleton::{
 };
 use engine::systems::item::{ItemDef, ItemId, Wear};
 use ui::egui::{self, Ui};
-use ui::{controls, form, theme, words};
+use ui::{chip, controls, form, panel, theme, words};
 
+use super::preview;
+use super::rigging::Rigging;
 use crate::app::Editor;
 
 /// A list of names the page edits: its rows in order, each renamed, moved and taken away in place.
@@ -34,7 +36,21 @@ enum Edited {
     Added(String),
 }
 
-pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
+pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging) {
+    let width = ui.available_width();
+    let [left, right] = panel::split(ui, (width * 0.4).clamp(280.0, 460.0));
+    panel::body(ui, left, |ui| lists(editor, ui, key, def));
+    panel::body(ui, right, |ui| {
+        if rigging.rig.is_none() {
+            form::hint(ui, "Pick our rig's files on the rigs page to see it here.");
+            return;
+        }
+        preview::show(editor, ui, key, def, rigging, &[], 0.0);
+    });
+}
+
+/// The page's lists, one under another.
+fn lists(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
     let content = editor.loaded();
     let parts: Vec<&ModelPartDef> = content
         .as_ref()
@@ -52,85 +68,84 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
         .id_salt(("body", key))
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.columns(2, |columns| {
-                let builds = Names {
-                    title: "Builds",
-                    hint: "The body types its models and parts are cut for; the first is the one \
+            let builds = Names {
+                title: "Builds",
+                hint: "The body types its models and parts are cut for; the first is the one \
                            every other plays the clips of where its own cells name none.",
-                    names: def.builds.iter().map(|build| build.0.clone()).collect(),
-                    notes: def
-                        .builds
-                        .iter()
-                        .map(|build| {
-                            let cut = parts
-                                .iter()
-                                .filter(|part| part.builds.contains_key(build))
-                                .count();
-                            format!("{} cut for it", words::counted(cut, "part"))
-                        })
-                        .collect(),
-                };
-                if let Some(edit) = list(&mut columns[0], key, builds) {
-                    apply(
-                        editor,
-                        key,
-                        "builds",
-                        edit,
-                        |skeleton| &mut skeleton.builds,
-                        BuildName::new,
-                    );
-                }
-                columns[0].add_space(10.0);
-                let regions = Names {
-                    title: "Regions",
-                    hint: "The places of the body parts cover and hide: a part laid over another \
+                names: def.builds.iter().map(|build| build.0.clone()).collect(),
+                notes: def
+                    .builds
+                    .iter()
+                    .map(|build| {
+                        let cut = parts
+                            .iter()
+                            .filter(|part| part.builds.contains_key(build))
+                            .count();
+                        format!("{} cut for it", words::counted(cut, "part"))
+                    })
+                    .collect(),
+            };
+            if let Some(edit) = list(ui, key, builds) {
+                apply(
+                    editor,
+                    key,
+                    "builds",
+                    edit,
+                    |skeleton| &mut skeleton.builds,
+                    BuildName::new,
+                );
+            }
+            ui.add_space(10.0);
+            let regions = Names {
+                title: "Regions",
+                hint: "The places of the body parts cover and hide: a part laid over another \
                            that covers one of its regions replaces it.",
-                    names: def.regions.iter().map(|region| region.0.clone()).collect(),
-                    notes: def
-                        .regions
-                        .iter()
-                        .map(|region| {
-                            let covering = parts
-                                .iter()
-                                .filter(|part| part.covers.contains(region))
-                                .count();
-                            format!("covered by {}", words::counted(covering, "part"))
-                        })
-                        .collect(),
-                };
-                if let Some(edit) = list(&mut columns[0], key, regions) {
-                    apply(
-                        editor,
-                        key,
-                        "regions",
-                        edit,
-                        |skeleton| &mut skeleton.regions,
-                        BodyRegion::new,
-                    );
-                }
-                let slots = Names {
-                    title: "Slots · in the order they lay",
-                    hint: "The places items are worn besides the hands, in the order their parts \
+                names: def.regions.iter().map(|region| region.0.clone()).collect(),
+                notes: def
+                    .regions
+                    .iter()
+                    .map(|region| {
+                        let covering = parts
+                            .iter()
+                            .filter(|part| part.covers.contains(region))
+                            .count();
+                        format!("covered by {}", words::counted(covering, "part"))
+                    })
+                    .collect(),
+            };
+            if let Some(edit) = list(ui, key, regions) {
+                apply(
+                    editor,
+                    key,
+                    "regions",
+                    edit,
+                    |skeleton| &mut skeleton.regions,
+                    BodyRegion::new,
+                );
+            }
+            ui.add_space(10.0);
+            let slots = Names {
+                title: "Slots · in the order they lay",
+                hint: "The places items are worn besides the hands, in the order their parts \
                            are laid over the body.",
-                    names: def.slots.iter().map(|slot| slot.0.clone()).collect(),
-                    notes: vec![String::new(); def.slots.len()],
-                };
-                if let Some(edit) = list(&mut columns[1], key, slots) {
-                    apply(
-                        editor,
-                        key,
-                        "slots",
-                        edit,
-                        |skeleton| &mut skeleton.slots,
-                        EquipmentSlot::new,
-                    );
-                }
-                if let Some(content) = &content {
-                    wearing(editor, &mut columns[1], key, content, def);
-                }
-                columns[1].add_space(10.0);
-                tints(editor, &mut columns[1], key, def);
-            });
+                names: def.slots.iter().map(|slot| slot.0.clone()).collect(),
+                notes: vec![String::new(); def.slots.len()],
+            };
+            if let Some(edit) = list(ui, key, slots) {
+                apply(
+                    editor,
+                    key,
+                    "slots",
+                    edit,
+                    |skeleton| &mut skeleton.slots,
+                    EquipmentSlot::new,
+                );
+            }
+            if let Some(content) = &content {
+                wearing(editor, ui, key, content, def);
+            }
+            ui.add_space(10.0);
+            tints(editor, ui, key, def);
         });
 }
 
@@ -229,7 +244,7 @@ fn wearing(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, def: 
         return;
     }
     ui.label(theme::muted("dress the stage in"));
-    let mut dressed = editor.views.skeleton.view(key).wearing.clone();
+    let mut dressed = editor.views.skeleton.view(key).preview.wearing.clone();
     for slot in &def.slots {
         for (_, path, name) in worn.iter().filter(|(worn, _, _)| *worn == slot) {
             ui.horizontal(|ui| {
@@ -248,7 +263,7 @@ fn wearing(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, def: 
             });
         }
     }
-    editor.views.skeleton.view_mut(key).wearing = dressed;
+    editor.views.skeleton.view_mut(key).preview.wearing = dressed;
 }
 
 fn tints(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
@@ -266,6 +281,12 @@ fn tints(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
             let response = ui.add(egui::TextEdit::singleline(&mut name).desired_width(120.0));
             if response.lost_focus() && !name.trim().is_empty() {
                 tint.name = TintName::new(name.trim());
+            }
+            if chip::toggle(ui, "metal", tint.metal)
+                .on_hover_text("paints a metal's sheen where it lays its colour")
+                .clicked()
+            {
+                tint.metal = !tint.metal;
             }
             if index > 0 && ui.small_button("↑").on_hover_text("earlier").clicked() {
                 moved = Some((index, index - 1));
@@ -297,6 +318,7 @@ fn tints(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
             tints.push(SkeletonTint {
                 name: TintName::new(name),
                 colour: Rgb([200, 200, 200]),
+                metal: false,
             });
             fresh.clear();
         }
@@ -331,6 +353,7 @@ pub(super) fn wearing_items(
         .views
         .skeleton
         .view(key)
+        .preview
         .wearing
         .iter()
         .filter_map(|(slot, path)| Some((slot.clone(), content.by_path::<ItemDef>(path)?)))

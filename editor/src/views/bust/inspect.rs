@@ -69,12 +69,16 @@ fn face_card(editor: &mut Editor, ui: &mut Ui, key: &str, face: &BustFace, faces
     panel::card(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
         let kind = if face.own { "" } else { "generic" };
-        panel::header(ui, &face.name, kind, |ui| {
-            if face.own && ui.button("Remove this face…").clicked() {
-                remove_with = Some(String::new());
-                ui.close();
-            }
-        });
+        if face.own {
+            panel::header(ui, &face.name, kind, |ui| {
+                if ui.button("Remove this face…").clicked() {
+                    remove_with = Some(String::new());
+                    ui.close();
+                }
+            });
+        } else {
+            panel::subtitled(ui, &face.name, kind);
+        }
         ui.add_space(4.0);
         form::kv(ui, "name", |ui| {
             if face.own {

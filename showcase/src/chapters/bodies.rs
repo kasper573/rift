@@ -139,7 +139,6 @@ fn close_up(
     (npc, ground): (NpcId, Pos<Meters>),
     shows: fn(&ProbeBody) -> bool,
 ) {
-    me.zoom_camera(1);
     for _ in 0..2 {
         me.tilt_camera(InputAction::TiltUp);
     }
@@ -158,7 +157,7 @@ fn close_up(
     );
     me.caption(says);
     me.hold();
-    me.camera_home();
+    me.close_in();
     see_off(me);
 }
 

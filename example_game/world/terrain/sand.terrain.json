@@ -1,9 +1,9 @@
 {
   "name": "Sand",
   "color": [
-    230,
-    206,
-    150,
+    208,
+    182,
+    128,
     255
   ],
   "surface": "world/surface/sand.surface.json",

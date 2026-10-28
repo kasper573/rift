@@ -569,7 +569,6 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, theme::CANVAS);
     let bundle = snapshot.bundle.clone();
-    let generation = editor.project.as_ref().map_or(0, |p| p.generation);
     let shown = editor.views.area.viewports.shown(view_key);
     let camera = shown.map_or_else(
         || editor.views.area.view(view_key).camera,
@@ -652,20 +651,13 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
     if response.hovered() && !ui.ctx().text_edit_focused() {
         tools::keys(editor, ui, view_key, &frame);
     }
-    request_viewport(editor, ui, view_key, &frame, rect, generation);
+    request_viewport(editor, ui, view_key, &frame, rect);
     remember_camera(editor, view_key);
 }
 
 /// Asks the viewport for the picture of the next frame: the scene as it stands, the terrain as a
 /// stroke shapes it, the ghost under the pointer and the cast standing where they live.
-fn request_viewport(
-    editor: &mut Editor,
-    ui: &Ui,
-    view_key: &str,
-    frame: &AreaFrame,
-    rect: ERect,
-    generation: u64,
-) {
+fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFrame, rect: ERect) {
     let pixels_per_point = ui.ctx().pixels_per_point();
     let size = [
         (rect.width() * pixels_per_point).round().max(1.0) as u32,
@@ -688,7 +680,6 @@ fn request_viewport(
         picture: frame.picture.clone(),
         made: frame.made,
         content: frame.content.clone(),
-        generation,
         stroke,
         ghost,
         cast,
@@ -717,7 +708,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing>
         let npc = content.by_path::<NpcDef>(npc)?;
         let def = npc.get(content);
         let model = ActorModel::get(content, def.appearance.model);
-        let hands = held::listed(content, model.hands().len(), &def.held);
+        let hands = held::listed(content, model.hands().len(), &def.held).hands;
         let stance = stance::of_hands(content, &hands);
         let clip = StageClip::played(
             model.skeleton(),
@@ -734,7 +725,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing>
             },
             held: None,
             crossed: Vec::new(),
-            props: super::stage::props(content, model, &hands),
+            props: super::stage::props(content, model, model.hands(), &hands),
             layers: None,
         })
     };

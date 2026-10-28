@@ -130,14 +130,6 @@ fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
     });
     ui.add_space(8.0);
     sheet::section(ui, "Camera");
-    let mut reduce_motion = settings.camera.reduce_motion;
-    if ui
-        .checkbox(&mut reduce_motion, "Reduce motion")
-        .on_hover_text("The camera turns and zooms in one step instead of gliding")
-        .changed()
-    {
-        settings.camera.reduce_motion = reduce_motion;
-    }
     form(ui, "camera", |ui| {
         let label = ui.label("Turn speed");
         let mut turn_speed = settings.camera.turn_speed.0;
@@ -401,15 +393,12 @@ const TURN_SPEEDS: (f32, f32) = (45.0, 720.0);
 struct CameraSettings {
     #[serde(default = "default_turn_speed")]
     turn_speed: Degrees,
-    #[serde(default)]
-    reduce_motion: bool,
 }
 
 impl Default for CameraSettings {
     fn default() -> CameraSettings {
         CameraSettings {
             turn_speed: default_turn_speed(),
-            reduce_motion: false,
         }
     }
 }
@@ -454,5 +443,4 @@ fn apply(
             .0
             .clamp(TURN_SPEEDS.0, TURN_SPEEDS.1),
     );
-    camera.reduce_motion = settings.camera.reduce_motion;
 }

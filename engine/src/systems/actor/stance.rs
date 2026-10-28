@@ -33,7 +33,8 @@ pub struct StanceDef {
 #[schemars(extend("x-count" = true))]
 pub struct HandCount(pub u8);
 
-/// The hand a stance's clips were made for, where equipping puts its item.
+/// The hand a stance's clips were made for, where equipping puts its item unless the wearer
+/// holds it in another.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HandRole {
@@ -159,8 +160,8 @@ pub fn of_item(content: &Content, item: ItemId) -> Option<StanceId> {
 }
 
 /// The stance the hands put their wearer in: the main stance is the first hand's, in the body's
-/// order, showing an item with a stance; the off stance the next hand's past it; the main stance
-/// paired with the off stance when it lists it, else the main stance alone.
+/// order, showing an item with a stance; the off stance the next hand's past it; the two paired
+/// when either lists the other, whichever hand holds which, else the main stance alone.
 pub fn of_hands(content: &Content, hands: &BTreeMap<HandIndex, ItemId>) -> Option<StanceId> {
     let mut styled = hands
         .iter()
@@ -172,7 +173,11 @@ pub fn of_hands(content: &Content, hands: &BTreeMap<HandIndex, ItemId>) -> Optio
         .find(|(hand, _)| *hand >= past)
         .map(|(_, stance)| stance);
     Some(
-        off.and_then(|off| main.get(content).paired_with(off))
-            .unwrap_or(main),
+        off.and_then(|off| {
+            main.get(content)
+                .paired_with(off)
+                .or_else(|| off.get(content).paired_with(main))
+        })
+        .unwrap_or(main),
     )
 }

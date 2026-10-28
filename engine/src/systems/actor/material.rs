@@ -77,6 +77,7 @@ impl MaterialDef {
                         channel,
                         inverted: mask.inverted,
                         colour: colours.0.get(&tint.name).copied().unwrap_or(tint.colour),
+                        metal: tint.metal,
                     })
             })
             .collect();

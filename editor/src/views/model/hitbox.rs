@@ -17,9 +17,9 @@ use super::super::stage;
 /// How near the pointer, in points, takes a handle or the outline.
 const REACH: f32 = 8.0;
 
-/// Whether a stage shows the hitbox, and the handle being dragged.
+/// The handle of a stage's hitbox being dragged.
+#[derive(Default)]
 pub struct HitboxHandles {
-    pub shown: bool,
     drag: Option<Drag>,
 }
 
@@ -28,14 +28,10 @@ impl HitboxHandles {
     pub fn dragging(&self) -> bool {
         self.drag.is_some()
     }
-}
 
-impl Default for HitboxHandles {
-    fn default() -> HitboxHandles {
-        HitboxHandles {
-            shown: true,
-            drag: None,
-        }
+    /// Drops the drag under way, for a stage no longer showing the hitbox.
+    pub fn let_go(&mut self) {
+        self.drag = None;
     }
 }
 
@@ -69,10 +65,6 @@ pub fn overlay(
     chosen: bool,
     handles: &mut HitboxHandles,
 ) -> Touched {
-    if !handles.shown {
-        handles.drag = None;
-        return Touched::default();
-    }
     let working = handles.drag.as_ref().map_or(hitbox, |drag| drag.hitbox);
     let painter = ui.painter_at(canvas.screen);
     let ink = if chosen {

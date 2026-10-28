@@ -153,7 +153,6 @@ fn volley(me: &mut Star, hunter: &mut Player) {
             .map(|quarry| quarry.at)
             .filter(|at| at.distance_to(me) <= range.0 && clickable_point(snapshot, *at).is_some())
     };
-    me.zoom_camera(1);
     hunter.act(InputAction::Hotbar3);
     hunter.wait_until("Volley armed", aiming);
     let quarry = hunter.wait_for("a quarry in Volley's range", in_range);
@@ -165,7 +164,7 @@ fn volley(me: &mut Star, hunter: &mut Player) {
         })
     });
     me.hold();
-    me.camera_home();
+    me.close_in();
 }
 
 /// Where the caster, his friend and the archer start: beside the quarry's ground and far from the

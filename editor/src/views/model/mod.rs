@@ -14,7 +14,7 @@ use engine::systems::actor::model::ActorModel;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::{Action, ModelDef, Motion, Pose};
 use ui::egui::{self, Ui, Vec2};
-use ui::{chip, form, theme};
+use ui::{form, theme};
 
 use super::area::viewport::StageClip;
 use super::stage;
@@ -79,14 +79,9 @@ fn page_bar(editor: &mut Editor, ui: &mut Ui, key: &str) {
     ui.horizontal(|ui| {
         ui.label(theme::mono(shown_path(key)).color(theme::CODE));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let view = editor.views.model.view_mut(key);
-            if chip::toggle(ui, "turning", view.stage.spinning).clicked() {
-                view.stage.spinning = !view.stage.spinning;
-            }
-            if chip::toggle(ui, "hitbox", view.hitbox.shown).clicked() {
-                view.hitbox.shown = !view.hitbox.shown;
-                view.hitbox_chosen &= view.hitbox.shown;
-            }
+            let toggles = &mut editor.views.toggles;
+            stage::toggle(ui, "turning", &mut toggles.turning);
+            stage::toggle(ui, "hitbox", &mut toggles.hitbox);
         });
     });
 }
@@ -104,7 +99,7 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
             motion: Motion::Action(Action::Idle),
             pose: Pose::Idle,
             scrub: super::cues::Scrub::default(),
-            stage: stage::StageState::framing(height.max(1.0) * 0.7, false),
+            stage: stage::StageState::framing(height.max(1.0) * 0.7),
             hitbox: hitbox::HitboxHandles::default(),
             hitbox_chosen: false,
         },

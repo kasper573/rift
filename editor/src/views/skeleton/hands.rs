@@ -1,19 +1,19 @@
 //! The hands page: the joints an item hangs from, in order (the first the main hand, the second the
-//! off hand), each with a grip frame (set on the stage, see `grips`) and a clasp closing its fingers
+//! off hand), each with a grip frame (set on the stage, see `grips`), mirrored on a hand that mirrors
+//! the ones grips are fitted to, and a clasp closing its fingers
 //! as a clip's first moment poses them. A hand's joint and its clasp's fingers are clicked on the
-//! stage, which hangs a chosen item from the hand in a chosen clip, so the palm is judged with a
-//! real handle in it.
+//! view's preview, whose hands hold the items picked there, so the palm is judged with a real
+//! handle in it.
 
 use engine::systems::actor::skeleton::{
     Clasp, Clip, Hand, JointName, LocalOffset, LocalTurn, SkeletonDef,
 };
 use ui::egui::{self, RichText, Ui, Vec2};
-use ui::{controls, form, panel, theme};
+use ui::{chip, controls, form, panel, theme};
 
-use super::Staged;
+use super::preview;
 use super::rigging::Rigging;
 use crate::app::Editor;
-use crate::keymap::EditorKey;
 
 #[derive(Default)]
 pub struct HandsState {
@@ -28,9 +28,6 @@ pub enum Picking {
 }
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging) {
-    let Some(content) = editor.loaded() else {
-        return;
-    };
     let hands = def.hands.clone();
     let chosen = editor
         .views
@@ -38,7 +35,6 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
         .view(key)
         .hand
         .min(hands.len().saturating_sub(1));
-    try_by_digit(editor, ui, key, &content);
     let width = ui.available_width();
     let list_width = (width * 0.36).clamp(240.0, 400.0);
     let [left, right] = panel::split(ui, list_width);
@@ -60,45 +56,22 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
             form::hint(ui, "Pick our rig's files on the rigs page to see it here.");
             return;
         }
-        super::played_clip(editor, key, def, rigging);
-        super::stage_pickers(editor, ui, key, &content, rigging, true);
-        super::item_picker(editor, ui, key, &content, "try with");
-        let size = Vec2::new(ui.available_width(), ui.available_height() - 24.0);
-        let props = super::tried_in_hand(editor, key, &content, chosen);
-        let Some(staged) = super::stage_rig(editor, ui, key, def, rigging, size, props) else {
-            return;
-        };
-        if let Some(hand) = hands.get(chosen) {
-            pick(editor, ui, key, &staged, chosen, hand);
+        let hand = hands.get(chosen);
+        let mut lit: Vec<&str> = Vec::new();
+        if let Some(hand) = hand {
+            lit.push(hand.joint.as_str());
+            lit.extend(
+                hand.clasp
+                    .iter()
+                    .flat_map(|clasp| clasp.fingers.iter().map(JointName::as_str)),
+            );
         }
-        form::hint(
-            ui,
-            "Click a hand's grip frame to set it in the inspector. 1 to 9 try the item in that \
-             hand.",
-        );
+        let previewed = preview::show(editor, ui, key, def, rigging, &lit, 24.0);
+        if let (Some(hand), Some(clicked)) = (hand, previewed.and_then(|shown| shown.picked)) {
+            pick(editor, key, chosen, hand, clicked);
+        }
+        form::hint(ui, "Click a hand's grip frame to set it in the inspector.");
     });
-}
-
-/// Puts the item on trial in hand n as the digit key n asks.
-fn try_by_digit(
-    editor: &mut Editor,
-    ui: &mut Ui,
-    key: &str,
-    content: &engine::core::content::Content,
-) {
-    if ui.ctx().text_edit_focused() {
-        return;
-    }
-    let Some(index) = ui.input(|i| EditorKey::Pick.digit(i)) else {
-        return;
-    };
-    let view = editor.views.skeleton.view_mut(key);
-    view.hand = index;
-    if view.trying.is_none() {
-        view.trying = super::hand_items(content)
-            .first()
-            .map(|(path, _)| path.clone());
-    }
 }
 
 fn list(
@@ -158,6 +131,7 @@ fn list(
             joint: JointName::new(joint),
             offset: LocalOffset::default(),
             turn: LocalTurn::default(),
+            mirrored: hands.len() == 1,
             clasp: None,
         });
         if super::set_hands(editor, key, more) {
@@ -220,6 +194,16 @@ fn fields(
                 }
             });
             ui.end_row();
+            ui.label(theme::muted("side"));
+            if chip::toggle(ui, "mirrored", edited.mirrored)
+                .on_hover_text(
+                    "This hand mirrors the ones grips are fitted to, as a left mirrors a right.",
+                )
+                .clicked()
+            {
+                edited.mirrored = !edited.mirrored;
+            }
+            ui.end_row();
             let mut clip: Option<Clip> = edited.clasp.as_ref().map(|clasp| clasp.clip.clone());
             ui.label(theme::muted("clasp"));
             super::clip_picker(
@@ -266,20 +250,10 @@ fn fields(
     }
 }
 
-/// A joint clicked on the stage: the hand's joint, or a finger's root toggled in its clasp; either
-/// keeps the hand's grip frame picked for the inspector.
-fn pick(editor: &mut Editor, ui: &Ui, key: &str, staged: &Staged, chosen: usize, hand: &Hand) {
+/// The joint `clicked` on the stage: the hand's joint, or a finger's root toggled in its clasp;
+/// either keeps the hand's grip frame picked for the inspector.
+fn pick(editor: &mut Editor, key: &str, chosen: usize, hand: &Hand, clicked: String) {
     let picking = editor.views.skeleton.view(key).hands.picking;
-    let fingers: Vec<&str> = hand
-        .clasp
-        .iter()
-        .flat_map(|clasp| clasp.fingers.iter().map(JointName::as_str))
-        .collect();
-    let mut lit = vec![hand.joint.as_str()];
-    lit.extend(&fingers);
-    let Some(clicked) = staged.pick(ui, &lit) else {
-        return;
-    };
     let mut edited = hand.clone();
     match picking {
         Some(Picking::Joint) => {

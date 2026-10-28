@@ -70,12 +70,7 @@ pub(super) fn show_rows(editor: &mut Editor, ui: &mut Ui, selection: &RowSelecti
         let shared_card = |ui: &mut Ui, cx: &mut FormCx, edits: &mut Vec<(String, Value)>| {
             panel::card(false).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                panel::header(
-                    ui,
-                    &format!("{} {}s", values.len(), table),
-                    "shared fields",
-                    |_| {},
-                );
+                panel::subtitled(ui, &format!("{} {}s", values.len(), table), "shared fields");
                 ui.add_space(4.0);
                 let mut rows = RowSet {
                     values: &values,
@@ -144,7 +139,7 @@ pub(super) fn show_rows(editor: &mut Editor, ui: &mut Ui, selection: &RowSelecti
                 let agree = firsts.iter().all(|(_, _, module)| *module == firsts[0].2);
                 panel::card(false).show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    panel::header(ui, &tag.replace('_', " "), "", |_| {});
+                    panel::title(ui, &tag.replace('_', " "));
                     ui.add_space(4.0);
                     if agree {
                         let mut shared = firsts[0].2.clone();

@@ -117,12 +117,14 @@ name_type!(
 );
 
 /// A tint of a skeleton, and the colour a body is painted in unless its model, its appearance or
-/// what it wears says otherwise.
+/// what it wears says otherwise; a `metal` tint paints a metal's surface with its colour.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkeletonTint {
     pub name: TintName,
     pub colour: Rgb,
+    #[serde(default, skip_serializing_if = "serial::is_false")]
+    pub metal: bool,
 }
 
 /// Colours by the tint each paints.
@@ -308,7 +310,13 @@ pub struct BuildSets {
     pub stances: Vec<StanceSet>,
 }
 
-/// A joint an item hangs from, turned and moved so +Y runs along its palm.
+/// A joint an item hangs from, and the grip frame on it, `offset` and `turn` in the joint's own
+/// frame, which every hand of every skeleton lays out alike so an item's grip holds in any of them:
+/// the origin where a handle sits in the closed fist, +X toward the fingertips, +Y along the handle
+/// out of the thumb's side, and +Z out of the back of the hand. Grips are fitted to hands whose
+/// frame that lays out with a turn; a hand that mirrors them, as a left hand mirrors a right, is
+/// `mirrored`: its `offset` and `turn` lay out +X and +Y, its +Z is the mirror of the one they
+/// would give, and what it holds is turned over to fit it as the item's grip says.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Hand {
@@ -318,6 +326,8 @@ pub struct Hand {
     pub offset: LocalOffset,
     #[serde(default, skip_serializing_if = "LocalTurn::is_zero")]
     pub turn: LocalTurn,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mirrored: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clasp: Option<Clasp>,
 }

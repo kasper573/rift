@@ -1,9 +1,9 @@
 {
   "name": "Grass",
   "color": [
-    125,
-    184,
-    78,
+    92,
+    135,
+    56,
     255
   ],
   "surface": "world/surface/grass.surface.json",
@@ -12,9 +12,9 @@
     "shader": "world/terrain/grass.vfx_shader",
     "params": {
       "tip": [
-        201,
-        227,
-        107,
+        137,
+        154,
+        73,
         255
       ]
     },
@@ -33,15 +33,15 @@
         },
         "color": {
           "from": [
-            92,
-            160,
-            70,
+            63,
+            109,
+            48,
             255
           ],
           "to": [
-            140,
-            200,
-            90,
+            95,
+            136,
+            61,
             255
           ]
         }

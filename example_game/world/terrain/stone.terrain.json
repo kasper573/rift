@@ -1,9 +1,9 @@
 {
   "name": "Stone",
   "color": [
-    168,
-    158,
-    169,
+    142,
+    133,
+    144,
     255
   ],
   "surface": "world/surface/rock.surface.json",

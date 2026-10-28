@@ -1004,7 +1004,7 @@ fn bounds_card(ui: &mut Ui, doc: &ScriptDoc, name: &str, node: &Node) {
     };
     panel::card(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel::header(ui, "bounds", "compiler", |_| {});
+        panel::subtitled(ui, "bounds", "compiler");
         form::kv_text(ui, "steps", format!("at most {steps} between two waits"));
         form::kv_text(
             ui,
@@ -1081,13 +1081,18 @@ fn dialogue_form(
         let line_path = format!("{path}/lines/{index}");
         panel::card(false).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            panel::header(ui, &format!("line {}", index + 1), "", |ui| {
-                swap_line = menu::move_entries(ui, index, count).or(swap_line);
-                if count > 1 && ui.button("Remove the line").clicked() {
-                    remove_line = Some(index);
-                    ui.close();
-                }
-            });
+            let title = format!("line {}", index + 1);
+            if count > 1 {
+                panel::header(ui, &title, "", |ui| {
+                    swap_line = menu::move_entries(ui, index, count).or(swap_line);
+                    if ui.button("Remove the line").clicked() {
+                        remove_line = Some(index);
+                        ui.close();
+                    }
+                });
+            } else {
+                panel::title(ui, &title);
+            }
             changed |= speaker_rows(ui, cx, line, &format!("{line_path}/by"), doc);
             changed |= spans::line_field(ui, cx, &mut line.text, &format!("{line_path}/text"));
         });

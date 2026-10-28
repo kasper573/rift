@@ -15,7 +15,7 @@ use bevy_replicon::prelude::Replicated;
 use bevy_time::Time;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
-use strum::{EnumDiscriminants, IntoStaticStr};
+use strum::{EnumDiscriminants, IntoStaticStr, VariantArray};
 
 use crate::core::assets::ImageRef;
 use crate::core::audio::playback::SfxId;
@@ -636,8 +636,9 @@ pub struct WornLook {
     pub colours: Colours,
 }
 
-/// How a prop sits in the hand it hangs from, in the hand's frame: none for a prop whose handle is
-/// at its origin with its length along +Y.
+/// How a prop sits in the hand it hangs from, in the hand's grip frame (see `Hand`): none for a prop
+/// whose handle is at its origin with its length along +Y, its face, where it has one, toward +Z, and
+/// the edge that leads a blow toward +X.
 #[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Grip {
@@ -645,6 +646,33 @@ pub struct Grip {
     pub offset: LocalOffset,
     #[serde(default, skip_serializing_if = "LocalTurn::is_zero")]
     pub turn: LocalTurn,
+    /// The axis of its own frame the prop is its own mirror image across, so a mirrored hand holds
+    /// it turned over that way rather than inside out.
+    #[serde(default, skip_serializing_if = "PropAxis::is_z")]
+    pub symmetry: PropAxis,
+}
+
+/// An axis of a prop's own frame.
+#[derive(
+    JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    VariantArray,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum PropAxis {
+    X,
+    Y,
+    #[default]
+    Z,
 }
 
 impl Wear {
@@ -658,7 +686,13 @@ impl Wear {
 
 impl Grip {
     pub fn is_identity(&self) -> bool {
-        self.offset.is_zero() && self.turn.is_zero()
+        self.offset.is_zero() && self.turn.is_zero() && self.symmetry.is_z()
+    }
+}
+
+impl PropAxis {
+    pub fn is_z(&self) -> bool {
+        *self == PropAxis::Z
     }
 }
 
@@ -701,7 +735,7 @@ fn use_slot(world: &mut World, actor: Entity, slot: usize) -> Result<(), String>
         .and_then(|inventory| inventory.slots.get(slot).map(|slot| slot.item))
         .ok_or_else(|| "Nothing there".to_owned())?;
     match item.get(&content).kind {
-        ItemKind::Equipment { .. } => equipment::equip(world, actor, slot),
+        ItemKind::Equipment { .. } => equipment::equip(world, actor, slot, None),
         ItemKind::Usable => {
             announce_consumed(world, actor, item);
             raise(world, item, EventKind::Used, actor);

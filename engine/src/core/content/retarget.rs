@@ -28,7 +28,7 @@ pub fn own(ours: &NodeTree, file: &NodeTree, keys: &ClipKeys) -> ClipKeys {
                         .clone()
                         .or_else(|| still(node.rest.translation)),
                     rotation: track.rotation.clone().or_else(|| still(node.rest.rotation)),
-                    scale: None,
+                    scale: track.scale.clone().or_else(|| still(node.rest.scale)),
                 },
                 None => resting(joint, &node.rest),
             }
@@ -55,7 +55,7 @@ pub fn retarget(
             node: joint,
             translation: Some(empty()),
             rotation: Some(empty()),
-            scale: None,
+            scale: still(ours.nodes[joint].rest.scale),
         })
         .collect();
     for moment in keys.moments() {
@@ -246,7 +246,7 @@ fn resting(joint: usize, rest: &Rest) -> NodeKeys {
         node: joint,
         translation: still(rest.translation),
         rotation: still(rest.rotation),
-        scale: None,
+        scale: still(rest.scale),
     }
 }
 

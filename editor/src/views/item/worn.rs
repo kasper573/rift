@@ -142,7 +142,7 @@ fn stand(
         .worn
         .stage
         .take()
-        .unwrap_or_else(|| StageState::framing(built.hitbox().height.0.max(1.0) * 0.7, false));
+        .unwrap_or_else(|| StageState::framing(built.hitbox().height.0.max(1.0) * 0.7));
     let turntable = stage::turntable(editor, ui, &format!("worn:{key}"), size, &mut state);
     editor.views.item.view_mut(key).worn.stage = Some(state);
     let Some(turntable) = turntable else {

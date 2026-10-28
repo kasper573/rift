@@ -1,5 +1,6 @@
 //! Textures painted for a body: a base texture with colours laid over it wherever masks mark them,
-//! baked once for each way of painting it and shared by every mesh painted alike.
+//! and where a layer is metal, the surface it lays, baked once for each way of painting it and
+//! shared by every mesh painted alike.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
@@ -7,7 +8,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use super::material::WorldMaterial;
+use super::material::{METAL_ROUGHNESS, METALLIC, ROUGHNESS, WorldMaterial};
 use crate::core::math::Rgb;
 
 /// A texture painted from `base` and `layers`, laid in order.
@@ -18,13 +19,22 @@ pub struct Paint {
 }
 
 /// `colour`, laid as thick as one channel of `mask` is bright: fully where it is white, not at all
-/// where it is black; the other way round when `inverted`.
+/// where it is black; the other way round when `inverted`. A `metal` layer lays a metal's surface
+/// with its colour.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PaintLayer {
     pub mask: String,
     pub channel: usize,
     pub inverted: bool,
     pub colour: Rgb,
+    pub metal: bool,
+}
+
+/// A paint as baked: its colours, and the surface of its metal where any layer is metal.
+#[derive(Clone, Debug)]
+pub struct Painted {
+    pub colour: Handle<Image>,
+    pub surface: Option<Handle<Image>>,
 }
 
 /// Every paint asked for, baked once its images load, and the materials drawn with each.
@@ -39,7 +49,7 @@ enum Baking {
         base: Handle<Image>,
         masks: Vec<Handle<Image>>,
     },
-    Done(Handle<Image>),
+    Done(Painted),
     Failed,
 }
 
@@ -53,8 +63,8 @@ pub struct Painter<'w> {
 }
 
 impl Painter<'_> {
-    /// The texture `paint` makes, once its base and masks have loaded and it is baked.
-    pub fn texture(&mut self, paint: &Paint) -> Option<Handle<Image>> {
+    /// The textures `paint` makes, once its base and masks have loaded and it is baked.
+    pub fn texture(&mut self, paint: &Paint) -> Option<Painted> {
         let Painter {
             paints,
             assets,
@@ -87,9 +97,14 @@ impl Painter<'_> {
                 let baked = images
                     .get(base.id())
                     .zip(layers)
-                    .and_then(|(base, layers)| bake(base, &layers));
+                    .and_then(|(base, layers)| {
+                        Some((bake(base, &layers)?, surface(base, &layers)))
+                    });
                 *baking = match baked {
-                    Some(image) => Baking::Done(images.add(image)),
+                    Some((colour, surface)) => Baking::Done(Painted {
+                        colour: images.add(colour),
+                        surface: surface.map(|surface| images.add(surface)),
+                    }),
                     None => {
                         warn!("could not paint {}: its masks do not fit it", paint.base);
                         Baking::Failed
@@ -108,19 +123,25 @@ impl Painter<'_> {
         matches!(self.paints.baked.get(paint), Some(Baking::Failed))
     }
 
-    /// `material` drawing `texture` in place of its own colour, shared by every mesh painted alike.
+    /// `material` drawing `texture`'s colours in place of its own, and its surface where it has
+    /// one, shared by every mesh painted alike.
     pub fn painted(
         &mut self,
         material: &Handle<WorldMaterial>,
-        texture: &Handle<Image>,
+        texture: &Painted,
     ) -> Option<Handle<WorldMaterial>> {
-        let key = (material.id(), texture.id());
+        let key = (material.id(), texture.colour.id());
         if let Some(painted) = self.paints.materials.get(&key) {
             return Some(painted.clone());
         }
         let mut painted = self.materials.get(material)?.clone();
         painted.base.base_color = Color::WHITE;
-        painted.base.base_color_texture = Some(texture.clone());
+        painted.base.base_color_texture = Some(texture.colour.clone());
+        if let Some(surface) = &texture.surface {
+            painted.base.metallic = 1.0;
+            painted.base.perceptual_roughness = 1.0;
+            painted.base.metallic_roughness_texture = Some(surface.clone());
+        }
         let painted = self.materials.add(painted);
         self.paints.materials.insert(key, painted.clone());
         Some(painted)
@@ -179,6 +200,57 @@ pub fn bake(base: &Image, layers: &[(&Image, &PaintLayer)]) -> Option<Image> {
         TextureDimension::D2,
         data,
         TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    ))
+}
+
+/// The surface `layers` lay over a base the size of `base`, as glTF reads it, roughness in green
+/// and metalness in blue: the world's own surface, turned to metal as thick as each metal layer
+/// lies. None when no layer is metal, and the base keeps the world's surface.
+pub fn surface(base: &Image, layers: &[(&Image, &PaintLayer)]) -> Option<Image> {
+    if !layers.iter().any(|(_, layer)| layer.metal) {
+        return None;
+    }
+    let (width, height) = (base.width(), base.height());
+    let masks: Vec<Vec<u8>> = layers
+        .iter()
+        .map(|(mask, _)| {
+            Some(
+                (*mask)
+                    .clone()
+                    .try_into_dynamic()
+                    .ok()?
+                    .to_rgba8()
+                    .into_raw(),
+            )
+        })
+        .collect::<Option<_>>()?;
+    let mut data = vec![0u8; (width * height * 4) as usize];
+    for (index, pixel) in data.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let mut metal = 0.0f32;
+        for ((_, layer), mask) in layers.iter().zip(&masks) {
+            let bright = mask[index * 4 + layer.channel.min(3)] as f32 / 255.0;
+            let amount = if layer.inverted { 1.0 - bright } else { bright };
+            let target = if layer.metal { 1.0 } else { 0.0 };
+            metal += (target - metal) * amount;
+        }
+        let roughness = ROUGHNESS + (METAL_ROUGHNESS - ROUGHNESS) * metal;
+        *pixel = [
+            0,
+            (roughness * 255.0).round() as u8,
+            (METALLIC * metal * 255.0).round() as u8,
+            255,
+        ];
+    }
+    Some(Image::new(
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8Unorm,
         RenderAssetUsages::RENDER_WORLD,
     ))
 }

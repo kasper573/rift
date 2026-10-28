@@ -4,19 +4,22 @@ use serde::{Deserialize, Serialize};
 use crate::core::content::{RowCheck, serial};
 use crate::core::geometry::Degrees;
 use crate::core::math::{Pos, Rgb};
+use crate::core::render::world::sky::Sky;
 use crate::core::units::Meters;
 
 /// How many point lights an area holds at most: what a browser's forward renderer lights in one pass.
 pub const MAX_LIGHTS: usize = 8;
 
 /// The light an area stands in, fixed for the area: a sun, if it is outside, which also lights
-/// the sky above it, the ambient light everywhere, and the grade its picture is tinted by. There
-/// is no clock and no day-night cycle.
+/// the sky above it unless the sky is dark, the ambient light everywhere, and the grade its
+/// picture is tinted by. There is no clock and no day-night cycle.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Lighting {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sun: Option<Sun>,
+    #[serde(default, skip_serializing_if = "Sky::is_air")]
+    pub sky: Sky,
     pub ambient: Rgb,
     pub grade: Grade,
 }
@@ -38,42 +41,20 @@ pub struct Grade {
 }
 
 impl Lighting {
-    /// A warm afternoon outside.
+    /// Broad daylight outside.
     pub fn day() -> Lighting {
         Lighting {
             sun: Some(Sun {
                 elevation: Degrees(52.0),
                 azimuth: Degrees(215.0),
-                color: Rgb([255, 236, 190]),
+                color: Rgb([255, 248, 236]),
             }),
-            ambient: Rgb([98, 122, 160]),
+            sky: Sky::Air,
+            ambient: Rgb([80, 95, 125]),
             grade: Grade {
                 color: Rgb::WHITE,
                 strength: 0.0,
             },
-        }
-    }
-
-    /// Dusk outside: the sun low and the picture graded toward night.
-    pub fn night() -> Lighting {
-        Lighting {
-            sun: Some(Sun {
-                elevation: Degrees(18.0),
-                azimuth: Degrees(250.0),
-                color: Rgb([210, 190, 200]),
-            }),
-            ambient: Rgb([60, 70, 110]),
-            grade: Grade::NIGHT,
-        }
-    }
-
-    /// Indoors: no sun, a dim cool ambient and the night grade; what light there is comes from the
-    /// area's lights.
-    pub fn interior() -> Lighting {
-        Lighting {
-            sun: None,
-            ambient: Rgb([70, 80, 105]),
-            grade: Grade::NIGHT,
         }
     }
 
@@ -102,13 +83,6 @@ impl Lighting {
             "of the way toward the grade's colour,",
         );
     }
-}
-
-impl Grade {
-    pub const NIGHT: Grade = Grade {
-        color: Rgb([86, 128, 168]),
-        strength: 0.55,
-    };
 }
 
 /// A light standing in an area: a point `height` above the ground at `at`, reaching `radius`

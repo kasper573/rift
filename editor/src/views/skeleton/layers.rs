@@ -1,33 +1,26 @@
 //! The layers page: the skeleton's groups, and the layers that move its bodies beyond their clips,
-//! each with its fields; the stage walks a body wearing the skeleton round a loop with its layers
-//! running as the client runs them, Reduce motion to toggle, or stands the rig at rest for the
-//! joint new roots and layers start from to be clicked. A leg that is not a chain down the tree is
-//! refused with the joint named, as the loader refuses it.
+//! each with its fields; the view's preview runs them as the client runs them while it plays an
+//! action, and takes a click on the joint new roots and layers start from. A leg that is not a
+//! chain down the tree is refused with the joint named, as the loader refuses it.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
-use bevy::prelude::{Quat, Transform};
 use engine::core::content::gltf::NodeTree;
 use engine::core::geometry::Radians;
-use engine::core::math::Pos;
-use engine::core::render::camera::world_point;
 use engine::core::render::world::layers::Gait;
-use engine::core::time::{Hertz, Millis, Seconds};
+use engine::core::time::{Hertz, Seconds};
 use engine::core::units::Meters;
-use engine::systems::actor::model::ActorModel;
-use engine::systems::actor::skeleton::{Cue, GroupName, JointName, Layer, Leg, SkeletonDef};
-use engine::systems::actor::{Action, ModelDef, Motion, Pose};
+use engine::systems::actor::Action;
+use engine::systems::actor::skeleton::{GroupName, JointName, Layer, Leg, SkeletonDef};
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::{chip, controls, form, panel, theme};
 
-use super::super::area::viewport::{StageClip, StageLayers};
+use super::preview;
 use super::rigging::Rigging;
 use crate::app::Editor;
 use crate::project::ContentEdit;
 use crate::tabs::shown_path;
-use crate::views::stage;
 
 /// The actions a layer may run during: never a hit or a death, which play their clip alone.
 const CALM: [Action; 5] = [
@@ -37,34 +30,15 @@ const CALM: [Action; 5] = [
     Action::Sprint,
     Action::Talk,
 ];
-/// How far from the middle of the stage the body walks its loop.
-const LOOP: f32 = 1.2;
 
-/// What the layers page keeps: the chosen layer, the joint new entries start from, the action the
-/// stage shows, and the stage framing the whole loop.
+/// What the layers page keeps: the chosen layer, and the joint new entries start from.
+#[derive(Default)]
 pub struct LayersState {
     pub layer: usize,
     pub joint: Option<String>,
-    pub action: Option<Action>,
     pub new_group: String,
-    /// Whether the stage stands the rig at rest for the joint to be clicked, rather than walking.
+    /// Whether the next joint clicked on the stage is where new entries start.
     pub picking: bool,
-    pub reduce_motion: bool,
-    pub stage: stage::StageState,
-}
-
-impl Default for LayersState {
-    fn default() -> LayersState {
-        LayersState {
-            layer: 0,
-            joint: None,
-            action: None,
-            new_group: String::new(),
-            picking: false,
-            reduce_motion: false,
-            stage: stage::StageState::framing(LOOP * 3.0, false),
-        }
-    }
 }
 
 /// Every leg of `layers` that is not a chain down `rig`, as the loader words it.
@@ -120,32 +94,31 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
                 layers(editor, ui, key, def, &rig);
             });
     });
-    panel::body(ui, right, |ui| {
-        if editor.views.skeleton.view(key).layers.picking {
-            pick(editor, ui, key, def, rigging);
-        } else {
-            walk(editor, ui, key, def, &rig);
-        }
-    });
+    panel::body(ui, right, |ui| stage(editor, ui, key, def, rigging));
 }
 
-/// The rig at rest, its joints to click: the one clicked is where new roots and layers start.
-fn pick(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging) {
-    if ui.button("walk again").clicked() {
-        editor.views.skeleton.view_mut(key).layers.picking = false;
-        return;
-    }
-    editor.views.skeleton.view_mut(key).clip = None;
-    let size = Vec2::new(ui.available_width(), ui.available_height() - 24.0);
-    let Some(staged) = super::stage_rig(editor, ui, key, def, rigging, size, Vec::new()) else {
-        return;
-    };
+/// The view's preview, the skeleton's layers running there as the client runs them while it plays
+/// an action; while the joint new entries start from is being picked, the joint clicked there.
+fn stage(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging) {
     let lit = editor.views.skeleton.view(key).layers.joint.clone();
     let lit: Vec<&str> = lit.as_deref().into_iter().collect();
-    if let Some(clicked) = staged.pick(ui, &lit) {
-        editor.views.skeleton.view_mut(key).layers.joint = Some(clicked);
+    let Some(previewed) = preview::show(editor, ui, key, def, rigging, &lit, 24.0) else {
+        return;
+    };
+    let layers = &mut editor.views.skeleton.view_mut(key).layers;
+    if let Some(clicked) = previewed.picked {
+        layers.joint = Some(clicked);
+        layers.picking = false;
     }
-    form::hint(ui, "Click a joint: new roots and layers start from it.");
+    let hint = if layers.picking {
+        "Click a joint: new roots and layers start from it."
+    } else if def.layers.is_empty() {
+        "No layers to run: the body plays its clip alone."
+    } else {
+        "The layers run as the client runs them while the preview plays an action, and an action \
+         that covers ground walks a loop."
+    };
+    form::hint(ui, hint);
 }
 
 fn joint_names(rig: &NodeTree) -> Vec<String> {
@@ -575,185 +548,4 @@ fn number(
             .fixed_decimals(3),
     );
     ui.end_row();
-}
-
-/// The stage: a body wearing the skeleton walking a loop round its middle in the chosen action,
-/// its layers running as the client runs them.
-fn walk(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &Arc<NodeTree>) {
-    let Some(content) = editor.loaded() else {
-        return;
-    };
-    let action = editor
-        .views
-        .skeleton
-        .view(key)
-        .layers
-        .action
-        .unwrap_or(Action::Walk);
-    let mut picked = action;
-    let mut calm = editor.views.skeleton.view(key).layers.reduce_motion;
-    super::wearer_picker(editor, ui, key, &content);
-    ui.horizontal(|ui| {
-        ui.label(theme::muted("action"));
-        for other in CALM {
-            if chip::mode(ui, other.as_ref(), picked == other).clicked() {
-                picked = other;
-            }
-        }
-        ui.add_space(8.0);
-        if chip::toggle(ui, "Reduce motion", calm).clicked() {
-            calm = !calm;
-        }
-    });
-    let view = editor.views.skeleton.view_mut(key);
-    view.layers.reduce_motion = calm;
-    if picked != action {
-        view.layers.action = Some(picked);
-        view.scrub.restart();
-    }
-    let Some((model_path, model)) = super::wearer(editor, key, &content) else {
-        form::hint(
-            ui,
-            "No model wearing the skeleton loaded, so nothing walks: the skeleton loads once every \
-             action has a clip on the sets page and a model wears it.",
-        );
-        return;
-    };
-    let resolved = model.resolve(None, &Motion::Action(picked), Pose::Idle, 0);
-    let length = resolved.length.millis();
-    let scrub = &mut editor.views.skeleton.view_mut(key).scrub;
-    scrub.playing = true;
-    crate::views::cues::advance(ui, scrub, Some(length));
-    let playhead = scrub.playhead;
-    let crossed = scrub.crossed(resolved.cues, length);
-    let stepped = crossed.iter().any(|cue| cue.step);
-    let time = ui.input(|i| i.time) as f32;
-    let speed = match resolved.pace {
-        Some(pace) if picked.moves() => pace.0.0 * model.scale(),
-        _ => 0.0,
-    };
-    let model_id = content
-        .by_path::<ModelDef>(&model_path)
-        .expect("a wearer is a model of the game");
-    let placed = around(time * speed / LOOP, speed > 0.0);
-    let width = ui.available_width();
-    let size = Vec2::new(width, (ui.available_height() - 40.0).min(width));
-    let layered = StageLayers {
-        model: model_id,
-        action: picked,
-        stepped,
-        reduce_motion: calm,
-    };
-    let clip = StageClip::played(model.skeleton(), resolved.played);
-    let walking = Walking {
-        model_path,
-        clip,
-        playhead,
-        crossed,
-        placed,
-        layered,
-    };
-    stage_walking(editor, ui, key, def, rig, size, model, walking);
-    let refusals = refusals(rig, &def.layers);
-    if def.layers.is_empty() {
-        form::hint(ui, "No layers to run: the body plays its clip alone.");
-    } else if refusals.is_empty() {
-        form::hint(
-            ui,
-            "The body walks a loop on flat ground with its layers running as the client runs them.",
-        );
-    }
-}
-
-/// A body walking the page's stage: the model at `model_path`, placed by `placed`, playing `clip`
-/// at `playhead` and sounding the cues it `crossed`, with its skeleton's layers running as
-/// `layered` tells them.
-struct Walking {
-    model_path: String,
-    clip: StageClip,
-    playhead: Millis,
-    crossed: Vec<Cue>,
-    placed: Transform,
-    layered: StageLayers,
-}
-
-/// The page's stage over `size` with `model` on it walking as `walking` says, its hitbox round it
-/// and the grip frames on its rig, `rig`.
-#[allow(clippy::too_many_arguments)]
-fn stage_walking(
-    editor: &mut Editor,
-    ui: &mut Ui,
-    key: &str,
-    def: &SkeletonDef,
-    rig: &Arc<NodeTree>,
-    size: Vec2,
-    model: &ActorModel,
-    walking: Walking,
-) {
-    let Walking {
-        model_path,
-        clip,
-        playhead,
-        crossed,
-        placed,
-        layered,
-    } = walking;
-    let mut state = std::mem::take(&mut editor.views.skeleton.view_mut(key).layers.stage);
-    let turntable = stage::turntable(
-        editor,
-        ui,
-        &format!("skeleton-walk:{key}"),
-        size,
-        &mut state,
-    );
-    editor.views.skeleton.view_mut(key).layers.stage = state;
-    let Some(turntable) = turntable else {
-        return;
-    };
-    let pose = super::pose_of(editor, rig, &clip, playhead.seconds().0);
-    let mut staged = super::place(
-        turntable.rect,
-        turntable.response.clone(),
-        turntable.canvas.clone(),
-        rig,
-        pose.as_deref(),
-        placed.to_matrix(),
-    );
-    if super::handles(editor, ui, key, def, &mut staged, Some(&model_path)) {
-        editor.views.skeleton.view_mut(key).layers.stage.spinning = false;
-    }
-    let mut standing = stage::standing(
-        model.body(),
-        Some(clip),
-        Some(playhead.seconds()),
-        crossed,
-        Vec::new(),
-    );
-    standing.transform = placed;
-    standing.layers = Some(layered);
-    turntable.stand(editor, ui, vec![standing]);
-    ui.ctx().request_repaint();
-}
-
-/// Where a body stands `turned` radians round the loop, facing along it when it walks.
-fn around(turned: f32, walking: bool) -> Transform {
-    let center = stage::center();
-    let at = if walking {
-        Pos::new(
-            center.x + LOOP * turned.cos(),
-            center.y + LOOP * turned.sin(),
-        )
-    } else {
-        center
-    };
-    let heading = if walking {
-        Quat::from_rotation_y(-turned)
-    } else {
-        Quat::IDENTITY
-    };
-    Transform {
-        translation: world_point(at, Meters(0.0)),
-        rotation: heading,
-        ..Transform::default()
-    }
 }

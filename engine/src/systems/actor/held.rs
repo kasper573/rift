@@ -28,8 +28,8 @@ pub struct Held {
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct ScriptedStance(pub StanceId);
 
-/// Fills the hands of the npc whose script this is with items to show, in order, each taking as
-/// many hands as its stance says; what does not fit is left out.
+/// Fills the hands of the npc whose script this is with items to show, each placed in turn as
+/// equipping places it; what that puts back is left out.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(extend("x-system" = "npc body"))]
 pub struct SetHeld {
@@ -56,7 +56,7 @@ impl EffectDef<RiftScripting> for SetHeld {
             if let Some(npc) = cx.owner {
                 let content = world.resource::<Content>().clone();
                 let shown = Held {
-                    hands: listed(&content, hands_of(world, npc).len(), &items),
+                    hands: listed(&content, hands_of(world, npc).len(), &items).hands,
                 };
                 world.entity_mut(npc).insert(shown);
             }
@@ -94,18 +94,19 @@ pub struct Placement {
     pub returned: Vec<ItemId>,
 }
 
-/// Puts `item` where its stance's hand says among `slots` hands showing `held`: its main hand first,
-/// its off hand second, the first free hand for either, as many hands on from there as it takes.
-/// What was in those hands slides to the next free hand if its own stance allows it there, else
-/// comes back.
+/// Puts `item` among `slots` hands showing `held`, in `hand` when one is picked, any hand being
+/// fine for any item, else where its stance's hand says: its main hand first, its off hand second,
+/// the first free hand for either; it takes as many hands on from there as it needs, or the last
+/// ones when too few are left. What was in those hands slides to the next free hand if its own
+/// stance allows it there, else comes back.
 pub fn place(
     content: &Content,
     slots: usize,
     held: &BTreeMap<HandIndex, ItemId>,
     item: ItemId,
+    hand: Option<HandIndex>,
 ) -> Placement {
-    let slots = slots.max(1);
-    let Some(stance) = stance::of_item(content, item) else {
+    let Some(stance) = stance::of_item(content, item).filter(|_| slots > 0) else {
         return Placement {
             hands: held.clone(),
             returned: Vec::new(),
@@ -114,10 +115,11 @@ pub fn place(
     let stance = stance.get(content);
     let takes = (stance.hands.0 as usize).clamp(1, slots);
     let free = |start: usize| (start..start + takes).all(|hand| !held.contains_key(&hand_at(hand)));
-    let start = match stance.hand {
-        HandRole::Main => 0,
-        HandRole::Off => 1.min(slots - takes),
-        HandRole::Either => (0..=slots - takes).find(|&start| free(start)).unwrap_or(0),
+    let start = match (hand, stance.hand) {
+        (Some(hand), _) => hand.index().min(slots - takes),
+        (None, HandRole::Main) => 0,
+        (None, HandRole::Off) => 1.min(slots - takes),
+        (None, HandRole::Either) => (0..=slots - takes).find(|&start| free(start)).unwrap_or(0),
     };
     let taken: Vec<HandIndex> = (start..start + takes).map(hand_at).collect();
     let mut displaced: Vec<ItemId> = Vec::new();
@@ -162,33 +164,16 @@ pub fn place(
     Placement { hands, returned }
 }
 
-/// The hands a wear list shows, listed items filling the body's hands in order, each taking as many
-/// as its stance says; what does not fit is left out.
-pub fn listed(content: &Content, slots: usize, items: &[ItemId]) -> BTreeMap<HandIndex, ItemId> {
-    let mut hands = BTreeMap::new();
-    let mut next = 0;
-    for &item in items {
-        let takes =
-            stance::of_item(content, item).map_or(1, |stance| stance.get(content).hands.0 as usize);
-        if next + takes > slots {
-            break;
+/// The hands a wear list shows: each listed item placed in turn as equipping places it, so a list
+/// shows what equipping its items in that order would, and what that puts back is left out.
+pub fn listed(content: &Content, slots: usize, items: &[ItemId]) -> Placement {
+    items.iter().fold(Placement::default(), |shown, &item| {
+        let placed = place(content, slots, &shown.hands, item, None);
+        Placement {
+            hands: placed.hands,
+            returned: [shown.returned, placed.returned].concat(),
         }
-        for hand in next..next + takes {
-            hands.insert(hand_at(hand), item);
-        }
-        next += takes;
-    }
-    hands
-}
-
-/// How many hands a wear list asks of a body.
-pub fn asked(content: &Content, items: &[ItemId]) -> usize {
-    items
-        .iter()
-        .map(|&item| {
-            stance::of_item(content, item).map_or(1, |stance| stance.get(content).hands.0 as usize)
-        })
-        .sum()
+    })
 }
 
 fn hand_at(index: usize) -> HandIndex {

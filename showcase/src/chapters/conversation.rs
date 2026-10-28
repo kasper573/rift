@@ -31,7 +31,6 @@ fn play(shoot: &mut Shoot) {
     me.walk_toward(|snapshot| {
         townsperson(snapshot, "tobb").map(|tobb| tobb.at + Offset::new(1.3, 1.3))
     });
-    me.zoom_camera(2);
     me.tilt_camera(InputAction::TiltUp);
     me.talk_to("tobb");
     point_off_stage(&mut me);
@@ -94,7 +93,7 @@ fn play(shoot: &mut Shoot) {
     me.read_to_choices();
     me.act(InputAction::Choice1);
     me.conversation_over();
-    me.camera_home();
+    me.close_in();
 
     me.caption("While you talk, the map ignores the mouse: a plain pointer, and clicks do nothing");
     me.talk_to("grisha");
@@ -174,7 +173,6 @@ fn play(shoot: &mut Shoot) {
 
     me.caption("What is said can change who says it: ask Bram the carter about his past");
     point_off_stage(&mut me);
-    me.zoom_camera(1);
     me.talk_to("bram");
     me.read_to_choices();
     let carter = townsperson(&me.snapshot(), "bram")
@@ -193,7 +191,7 @@ fn play(shoot: &mut Shoot) {
     me.read_to_choices();
     me.pick("Good to know.");
     me.conversation_over();
-    me.camera_home();
+    me.close_in();
 }
 
 /// Points at open ground beside the conversation, found as the screen stands now: what covers the

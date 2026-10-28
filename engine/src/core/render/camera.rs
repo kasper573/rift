@@ -8,15 +8,13 @@ use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::anti_alias::taa::TemporalAntiAliasing;
 use bevy::camera::Hdr;
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
-use bevy::light::{AtmosphereEnvironmentMapLight, ShadowFilteringMethod, VolumetricFog};
-use bevy::pbr::{
-    AtmosphereSettings, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel,
-};
+use bevy::light::{ShadowFilteringMethod, VolumetricFog};
+use bevy::pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
 use bevy::render::settings::Backends;
-use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
+use bevy::render::view::{ColorGrading, ColorGradingGlobal};
 use bevy::window::PrimaryWindow;
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +23,7 @@ use crate::core::ground::{HIGHEST, Heightfield, LOWEST};
 use crate::core::gui;
 use crate::core::math::{Pos, Rect};
 use crate::core::time::Seconds;
-use crate::core::units::Meters;
+use crate::core::units::{Meters, Stops};
 
 pub const FOV: Degrees = Degrees(32.0);
 /// How far down the camera looks when brought home.
@@ -68,21 +66,15 @@ impl FullPicture {
     }
 }
 
-/// How much of the light over the screen's range blooms over its rim.
-const BLOOM: f32 = 0.12;
-/// How much the colours are saturated again after the tone mapping, which thins the strong greens
-/// and blues the board is painted in.
-const SATURATION: f32 = 1.05;
-/// How much the contrast is raised in every range of light, so the light side and the shaded side
-/// of a thing read apart under the soft light.
-const CONTRAST: f32 = 1.08;
-/// How far into the air the haze is worked out, in metres of the world.
-const HAZE_REACH: f32 = 600.0;
-/// How much the sky lights everything from above, of the atmosphere's own brightness.
-const SKY_LIGHT: f32 = 1.0;
-/// How many pixels across each face of the map of the sky's light is: the sky is a smooth
-/// gradient, and the light it sheds on a matte face smoother still.
-const SKY_MAP: u32 = 32;
+/// How much of the light blooms over its rim, so what the light catches glows softly into the
+/// shade around it.
+const BLOOM: f32 = 0.3;
+/// How saturated the colours stay after the tone mapping, a little under its own, which deepens
+/// colour as it lifts contrast, so a painted colour reads as painted.
+const SATURATION: f32 = 0.88;
+/// How far the picture is opened over the light the world's lights are measured in: a face square
+/// to the sun lit to just under white, and the shade still holding its colour.
+const EXPOSURE: Stops = Stops(1.85);
 /// How many steps the air is marched in along each pixel's ray for the sun's shafts.
 const AIR_STEPS: u32 = 32;
 /// How much the air itself glows, of the sky's light, where no sun shaft crosses it.
@@ -92,16 +84,12 @@ const AIR_COLOR: Color = Color::srgb(0.55, 0.72, 1.0);
 /// How every camera that draws the world finishes its picture: in a high range of light, the air
 /// lit by the sun's shafts, creases shaded by what stands around them, soft shadows, and where
 /// the GPU draws the full picture (`finish_pictures`) under the sky's own scattering and lighting
-/// and all of it settled over the frames by temporal anti-aliasing; then what glows blooms a
-/// little over its rim, the light is mapped softly to the screen's range, saturated and
-/// contrasted back up, dithered against banding, and smoothed once more by morphological
-/// anti-aliasing over the finished picture, which takes the clearings along with the geometry's
-/// edges.
+/// and all of it settled over the frames by temporal anti-aliasing; then what the light catches
+/// blooms over its rim, the light is opened up and mapped to the screen's range by a filmic
+/// curve, which deepens the shade and lifts the light, dithered
+/// against banding, and smoothed once more by morphological anti-aliasing over the finished
+/// picture, which takes the clearings along with the geometry's edges.
 pub fn picture() -> impl Bundle {
-    let section = ColorGradingSection {
-        contrast: CONTRAST,
-        ..default()
-    };
     (
         WorldPicture,
         Hdr,
@@ -114,15 +102,14 @@ pub fn picture() -> impl Bundle {
             intensity: BLOOM,
             ..Bloom::NATURAL
         },
-        Tonemapping::TonyMcMapface,
+        Tonemapping::AcesFitted,
         ColorGrading {
             global: ColorGradingGlobal {
+                exposure: EXPOSURE.0,
                 post_saturation: SATURATION,
                 ..default()
             },
-            shadows: section,
-            midtones: section,
-            highlights: section,
+            ..default()
         },
         DebandDither::Enabled,
         Smaa {
@@ -131,8 +118,9 @@ pub fn picture() -> impl Bundle {
     )
 }
 
-/// Every new picture gets the sky, the shafts and what settles it over the frames, where the GPU
-/// draws the full picture, and a gaussian shadow filter where it does not.
+/// Every new picture gets the shafts and what settles it over the frames, where the GPU draws the
+/// full picture, and a gaussian shadow filter where it does not; the sky it sees is the shown
+/// area's (`sky::show`).
 pub(super) fn finish_pictures(
     full: Res<FullPicture>,
     pictures: Query<Entity, Added<WorldPicture>>,
@@ -142,15 +130,6 @@ pub(super) fn finish_pictures(
         let mut picture = commands.entity(picture);
         if full.0 {
             picture.insert((
-                AtmosphereSettings {
-                    aerial_view_lut_max_distance: HAZE_REACH,
-                    ..default()
-                },
-                AtmosphereEnvironmentMapLight {
-                    intensity: SKY_LIGHT,
-                    size: UVec2::splat(SKY_MAP),
-                    ..default()
-                },
                 VolumetricFog {
                     ambient_color: AIR_COLOR,
                     ambient_intensity: AIR_GLOW,
@@ -168,8 +147,13 @@ pub(super) fn finish_pictures(
 
 /// The perspective every camera on the world draws with, over a viewport `width` by `height`.
 pub fn projection(width: u32, height: u32) -> Projection {
+    lens(FOV, width, height)
+}
+
+/// A perspective `fov` high over a viewport `width` by `height`.
+pub fn lens(fov: Degrees, width: u32, height: u32) -> Projection {
     Projection::Perspective(PerspectiveProjection {
-        fov: FOV.radians().0,
+        fov: fov.radians().0,
         near: NEAR,
         aspect_ratio: width as f32 / height.max(1) as f32,
         ..default()
@@ -253,15 +237,12 @@ impl Default for CameraRig {
 pub struct CameraPreferences {
     /// Degrees a second the camera turns at.
     pub turn_speed: Degrees,
-    /// Turns and zooms snap instead of easing, and nothing sways or fades over time.
-    pub reduce_motion: bool,
 }
 
 impl Default for CameraPreferences {
     fn default() -> CameraPreferences {
         CameraPreferences {
             turn_speed: Degrees(180.0),
-            reduce_motion: false,
         }
     }
 }
@@ -350,12 +331,6 @@ impl CameraRig {
 
     fn ease(&mut self, dt: Seconds, preferences: &CameraPreferences) {
         let wanted = self.zoom.distance();
-        if preferences.reduce_motion {
-            self.yaw = self.wanted_yaw;
-            self.pitch = self.wanted_pitch;
-            self.distance = wanted;
-            return;
-        }
         let turn = preferences.turn_speed.radians().0 * dt.0;
         let toward = |from: Radians, to: Radians| {
             let apart = to.0 - from.0;

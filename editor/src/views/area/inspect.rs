@@ -291,7 +291,7 @@ fn folder_card(editor: &mut Editor, ui: &mut Ui, snapshot: &super::AreaSnapshot,
     panel::card(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
         let state = if flags.hidden.on() { "hidden" } else { "" };
-        panel::header(ui, &format!("folder {label}"), state, |_| {});
+        panel::subtitled(ui, &format!("folder {label}"), state);
         ui.add_space(4.0);
         if counts.is_empty() {
             ui.label(theme::muted("Empty").size(12.5));

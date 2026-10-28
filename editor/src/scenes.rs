@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
 use engine::core::content::ContentFile;
+use engine::systems::actor::Action;
 use engine::systems::actor::model::ModelDef;
 use engine::systems::actor::skeleton::{BuildName, Clip, SkeletonDef};
+use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
@@ -25,6 +27,7 @@ use crate::views::class;
 use crate::views::item::{self, ItemPage};
 use crate::views::model;
 use crate::views::script::{PendingScriptAction, ScriptRow};
+use crate::views::skeleton::preview::PreviewPlays;
 use crate::views::skeleton::{self, SkeletonPage};
 use crate::views::world::{
     self, ColorBy, ColorField, MapLens, MapLook, MapPart, MapRoute, OpenWorldMap, arrange,
@@ -149,12 +152,17 @@ pub enum BustStep {
 pub enum SkeletonStep {
     Open(String),
     Page(SkeletonPage),
-    /// Plays this clip on the stage, none standing the rig at rest.
+    /// Plays this clip on the preview, none standing the rig at rest.
     Clip(Option<Clip>),
+    /// Plays this action on the preview, as the model's sets name its clip.
+    Action(Action),
     /// Shows the rig as the model at this path.
-    Wearer(String),
-    /// Hangs the item at this path from the stage's model.
-    Trying(String),
+    Model(String),
+    /// Puts the item at this path in the hand at this place in the list.
+    Held {
+        hand: usize,
+        item: String,
+    },
     /// Shows the sets page's cells of this build, none for the first.
     Build(Option<BuildName>),
     /// Chooses the hand at this place in the list on the hands page.
@@ -587,9 +595,20 @@ fn skeleton_step(editor: &mut Editor, step: &SkeletonStep) {
     match step {
         SkeletonStep::Open(_) => {}
         SkeletonStep::Page(page) => view.page = *page,
-        SkeletonStep::Clip(clip) => view.clip = clip.clone(),
-        SkeletonStep::Wearer(model) => view.wearer = Some(model.clone()),
-        SkeletonStep::Trying(item) => view.trying = Some(item.clone()),
+        SkeletonStep::Clip(clip) => {
+            view.preview.plays = PreviewPlays::Clip;
+            view.preview.clip = clip.clone();
+        }
+        SkeletonStep::Action(action) => {
+            view.preview.plays = PreviewPlays::Action;
+            view.preview.action = *action;
+        }
+        SkeletonStep::Model(model) => view.preview.model = Some(model.clone()),
+        SkeletonStep::Held { hand, item } => {
+            view.preview
+                .held
+                .insert(HandIndex(*hand as u8), item.clone());
+        }
         SkeletonStep::Build(build) => view.sets.build = build.clone(),
         SkeletonStep::Hand(hand) => view.hand = *hand,
         SkeletonStep::Layer(layer) => view.layers.layer = *layer,

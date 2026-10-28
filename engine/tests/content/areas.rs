@@ -3,6 +3,7 @@ use engine::core::ground::{self as ground, GroundSize, Heightfield, Paint};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::{GROUND_ORIGIN, Meters};
 use engine::core::vfx::shader::Stage;
+use engine::systems::area::scenery::Sources;
 use engine::systems::area::{self, AreaDef, AreaId};
 use serde_json::{Value, json};
 use testkit::{Game, Map, path};
@@ -362,5 +363,43 @@ fn a_grounds_cover_names_a_cover_stage_shader_fills_only_what_it_declares_and_gr
                 )
             })
             .load();
+    }
+}
+
+#[test]
+fn an_areas_scenery_stands_again_only_when_a_file_it_is_made_from_changes() {
+    let sources = |game: Game| {
+        let content = game.load();
+        let id = content
+            .by_path::<AreaDef>(&path("area", "start"))
+            .expect("the area loads");
+        let picture =
+            area::picture(&content, area::Pictured::Area(id), area::Kept::All).expect("pictured");
+        Sources::of(&content, &picture.area)
+    };
+    let as_it_was = sources(game());
+    let cases = [
+        (
+            "an item no area shows",
+            game().item("cap", json!({ "kind": { "type": "resource" } })),
+            false,
+        ),
+        (
+            "the colour of a terrain the area lays",
+            game().row(
+                "terrain",
+                testkit::TURF,
+                json!({
+                    "name": "Turf",
+                    "color": [120, 150, 60, 255],
+                    "surface": path("surface", testkit::TURF),
+                    "walk": "walkable",
+                }),
+            ),
+            true,
+        ),
+    ];
+    for (case, changed, stands_again) in cases {
+        assert_eq!(sources(changed) != as_it_was, stands_again, "{case}");
     }
 }

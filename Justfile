@@ -145,6 +145,11 @@ editor-showcase name scene seconds="8" input="" hook="":
     just record {{quote(showcase_dir / "editor-" + kebabcase(name) + ".webm")}} "Rift editor" {{seconds}} {{quote(input)}} {{quote(hook)}} \
       target/release/editor "$WORK/game" --scene {{quote(scene)}} --user-folder "$WORK/user"
 
+[doc("Draws SHOT, a JSON file naming an area of the game folder FOLDER, a lens and the bodies standing in it, off screen through the world's own camera as the picture OUT.")]
+shot folder shot out="target/shot.png":
+    cargo build --release -p engine --bin shot
+    target/release/shot {{quote(folder)}} {{quote(shot)}} {{quote(out)}}
+
 # Frames sampled evenly across VIDEO, tiled into one image beside it: a recording at a glance.
 contact-sheet video:
     ffmpeg -v error -y -i {{quote(video)}} -frames:v 1 \

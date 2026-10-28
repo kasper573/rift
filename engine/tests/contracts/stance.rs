@@ -11,8 +11,8 @@ use engine::systems::actor::stance::{HandIndex, StanceDef};
 use engine::systems::actor::{self, Action, Motion, Playing};
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest, Attitude};
-use engine::systems::equipment::{self, Equipment, EquipmentPlace};
-use engine::systems::item::{DroppedItem, Inventory, ItemDef, ItemId};
+use engine::systems::equipment::{self, Equipment, EquipmentPlace, HoldRequest};
+use engine::systems::item::{self, DroppedItem, Inventory, ItemDef, ItemId};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef, Pack};
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs};
@@ -103,6 +103,72 @@ fn the_hands_put_their_wearer_in_one_stance() {
 }
 
 #[test]
+fn a_player_holds_any_held_item_in_whichever_hand_they_drop_it_on() {
+    struct Case {
+        case: &'static str,
+        dropped: &'static [(&'static str, HandIndex)],
+        hands: [&'static str; 2],
+        stance: &'static str,
+    }
+    let cases = [
+        Case {
+            case: "a shield in the main hand",
+            dropped: &[("shield", HandIndex::MAIN)],
+            hands: ["shield", ""],
+            stance: "shield",
+        },
+        Case {
+            case: "a sword in the off hand beside a shield in the main, paired either way round",
+            dropped: &[("shield", HandIndex::MAIN), ("sword", HandIndex::OFF)],
+            hands: ["shield", "sword"],
+            stance: "sword_and_shield",
+        },
+        Case {
+            case: "a greatsword dropped on the off hand, taking both",
+            dropped: &[("greatsword", HandIndex::OFF)],
+            hands: ["greatsword", "greatsword"],
+            stance: "greatsword",
+        },
+    ];
+    for Case {
+        case,
+        dropped,
+        hands: [main, off],
+        stance,
+    } in cases
+    {
+        let (mut sim, player) = armed(armoury());
+        let conn = sim.conn(1);
+        for &(item, hand) in dropped {
+            sim.give(player, item, 1);
+            let slot =
+                item::bag_slot(&sim.world, player, sim.id::<ItemDef>(item)).expect("in the bag");
+            sim.send(
+                conn,
+                HoldRequest {
+                    slot: slot as u32,
+                    hand,
+                },
+            );
+            sim.tick();
+        }
+
+        let expected: BTreeMap<HandIndex, ItemId> =
+            [(HandIndex::MAIN, main), (HandIndex::OFF, off)]
+                .into_iter()
+                .filter(|(_, item)| !item.is_empty())
+                .map(|(hand, item)| (hand, sim.id::<ItemDef>(item)))
+                .collect();
+        assert_eq!(hands(&sim, player), expected, "{case}");
+        assert_eq!(
+            held::stance_of(&sim.world, player),
+            Some(sim.id::<StanceDef>(stance)),
+            "{case}"
+        );
+    }
+}
+
+#[test]
 fn a_two_hander_takes_both_hands_returning_what_they_held_or_is_refused_whole() {
     for full in [false, true] {
         let (mut sim, player) = armed(armoury());
@@ -176,44 +242,89 @@ fn a_move_the_stance_lacks_plays_its_attack_and_still_lands_at_the_apex() {
 
 #[test]
 fn an_npcs_held_list_puts_it_in_a_stance_and_grants_nothing() {
-    let game = armoury()
-        .resource("bone", 10)
-        .npc(
-            "guard",
-            25.0,
-            json!([{ "type": "loot", "xp": 0, "items": [{ "item": path("item", "bone") }] }]),
-        )
-        .edit("npc", "guard", |guard| {
-            guard["held"] = json!([path("item", "sword")])
+    for (case, listed, hand, stance) in [
+        ("a sword", "sword", HandIndex::MAIN, "sword"),
+        ("a shield alone", "shield", HandIndex::OFF, "shield"),
+    ] {
+        let game = armoury()
+            .resource("bone", 10)
+            .npc(
+                "guard",
+                25.0,
+                json!([{ "type": "loot", "xp": 0, "items": [{ "item": path("item", "bone") }] }]),
+            )
+            .edit("npc", "guard", |guard| {
+                guard["held"] = json!([path("item", listed)])
+            });
+        let (mut sim, player) = armed(game);
+        let guard = foe(&mut sim, player, "guard");
+        sim.tick();
+
+        assert_eq!(
+            sim.world.get::<Held>(guard).map(|held| held.hands.clone()),
+            Some(BTreeMap::from([(hand, sim.id::<ItemDef>(listed))])),
+            "{case} shows in the hand its stance was made for"
+        );
+        assert_eq!(
+            held::stance_of(&sim.world, guard),
+            Some(sim.id::<StanceDef>(stance)),
+            "{case}"
+        );
+        assert!(skill::known(&sim.world, guard).is_empty(), "{case}");
+        assert_eq!(
+            stat::effective(&sim.world, guard, StatKind::Damage),
+            6.0,
+            "{case}"
+        );
+
+        combat::inflict(&mut sim.world, guard, Some(player), 1_000_000.0);
+        sim.tick();
+        sim.tick();
+        let dropped: Vec<ItemId> = sim
+            .world
+            .query::<&DroppedItem>()
+            .iter(&sim.world)
+            .map(|dropped| dropped.item)
+            .collect();
+        assert_eq!(dropped, vec![sim.id::<ItemDef>("bone")], "{case}");
+    }
+}
+
+#[test]
+fn an_npcs_held_list_its_hands_cannot_show_together_is_refused() {
+    for (case, listed, rule) in [
+        ("a sword beside a shield", &["sword", "shield"][..], None),
+        (
+            "two swords, both made for the main hand",
+            &["sword", "sword"],
+            Some("left out"),
+        ),
+        (
+            "a greatsword and a shield",
+            &["greatsword", "shield"],
+            Some("left out"),
+        ),
+        ("a helm, which no hand holds", &["helm"], Some("not held")),
+    ] {
+        let game = armoury().edit("npc", "brute", |brute| {
+            brute["held"] = json!(
+                listed
+                    .iter()
+                    .map(|item| path("item", item))
+                    .collect::<Vec<_>>()
+            )
         });
-    let (mut sim, player) = armed(game);
-    let guard = foe(&mut sim, player, "guard");
-    sim.tick();
-
-    assert_eq!(
-        sim.world.get::<Held>(guard).map(|held| held.hands.clone()),
-        Some(BTreeMap::from([(
-            HandIndex::MAIN,
-            sim.id::<ItemDef>("sword")
-        )]))
-    );
-    assert_eq!(
-        held::stance_of(&sim.world, guard),
-        Some(sim.id::<StanceDef>("sword"))
-    );
-    assert!(skill::known(&sim.world, guard).is_empty());
-    assert_eq!(stat::effective(&sim.world, guard, StatKind::Damage), 6.0);
-
-    combat::inflict(&mut sim.world, guard, Some(player), 1_000_000.0);
-    sim.tick();
-    sim.tick();
-    let dropped: Vec<ItemId> = sim
-        .world
-        .query::<&DroppedItem>()
-        .iter(&sim.world)
-        .map(|dropped| dropped.item)
-        .collect();
-    assert_eq!(dropped, vec![sim.id::<ItemDef>("bone")]);
+        let rules: Vec<&str> = match game.try_load() {
+            Ok(_) => Vec::new(),
+            Err(report) => report
+                .errors
+                .iter()
+                .filter(|error| error.file == path("npc", "brute"))
+                .map(|error| error.problem.rule)
+                .collect(),
+        };
+        assert_eq!(rules, rule.into_iter().collect::<Vec<_>>(), "{case}");
+    }
 }
 
 #[test]
@@ -325,6 +436,13 @@ fn armoury() -> Game {
             }])
         })
         .stance("dual_daggers", 1, "either")
+        .edit("stance", "sword", |sword| {
+            sword["paired"] = json!([{
+                "with": path("stance", "shield"),
+                "becomes": path("stance", "sword_and_shield"),
+            }])
+        })
+        .stance("sword_and_shield", 1, "main")
         .stance("greatsword", 2, "main")
         .stance("shield", 1, "off")
         .item(
@@ -400,8 +518,10 @@ fn armed(game: Game) -> (Sim, Entity) {
     let mut sim = Sim::new(game.load());
     sim.serve("field")
         .accept::<AttackRequest>()
+        .accept::<HoldRequest>()
         .add((
             combat::request,
+            equipment::hold,
             actor::playing::progress,
             skill::casting::casts,
         ))

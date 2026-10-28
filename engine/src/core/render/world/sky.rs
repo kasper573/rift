@@ -1,19 +1,22 @@
 //! The sky over the world and the daylight it stands in: an atmosphere scattering the sun's light,
-//! which paints the sky, blues the distance and lights everything from above, the air the sun's
-//! shafts show in, and how an area's authored sun and ambient light turn with the hour of a day
-//! cycle and dim under cloud.
+//! which paints the sky, blues the distance and lights everything from above, or the dark of a
+//! cave or a stage; the air the sun's shafts show in, and how an area's authored sun and ambient
+//! light turn with the hour of a day cycle and dim under cloud.
 
 use std::f32::consts::PI;
 
 use bevy::color::Mix;
 use bevy::light::atmosphere::ScatteringMedium;
-use bevy::light::{Atmosphere, FogVolume};
-use bevy::pbr::{DistanceFog, FogFalloff};
+use bevy::light::{Atmosphere, AtmosphereEnvironmentMapLight, FogVolume};
+use bevy::pbr::{AtmosphereSettings, DistanceFog, FogFalloff};
 use bevy::prelude::*;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use super::lights::SUN_LUX;
 use crate::core::geometry::Degrees;
 use crate::core::math::Rect;
+use crate::core::render::camera::FullPicture;
 use crate::core::units::Meters;
 
 /// How many metres of air a metre of the world stands for: enough that the sky's horizon shows
@@ -28,11 +31,61 @@ const HAZE_THICK: f32 = 170.0;
 const DAY_HAZE: Color = Color::srgb(0.72, 0.83, 0.96);
 const DUSK_HAZE: Color = Color::srgb(0.95, 0.66, 0.42);
 const NIGHT_HAZE: Color = Color::srgb(0.16, 0.18, 0.30);
+/// How far into the air the haze is worked out, in metres of the world.
+const HAZE_REACH: f32 = 600.0;
+/// How much the sky lights everything from above, of the atmosphere's own brightness.
+const SKY_LIGHT: f32 = 0.3;
+/// How many pixels across each face of the map of the sky's light is: the sky is a smooth
+/// gradient, and the light it sheds on a matte face smoother still.
+const SKY_MAP: u32 = 32;
 /// How high the air the sun's shafts show in reaches over an area.
 const AIR_HEIGHT: f32 = 40.0;
 /// How thick that air is: thin, so it only shows where the light breaks through a canopy or a
 /// window, never as a fog over the ground.
 const AIR_DENSITY: f32 = 0.025;
+
+/// What stands over an area: the air its sun lights, blue by day, or the dark of a cave or a
+/// stage, which no sun lights however it shines below.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Sky {
+    #[default]
+    Air,
+    Dark,
+}
+
+impl Sky {
+    pub fn is_air(&self) -> bool {
+        *self == Sky::Air
+    }
+}
+
+/// Lets `camera` see `sky` and be lit by it: the air drawn behind the world, hazing the distance
+/// and shedding its light from above, where the GPU draws the full picture; nothing over the
+/// dark, which takes the air of any other sky standing in the world out of the camera's view.
+pub fn show(world: &mut World, camera: Entity, sky: Sky) {
+    let full = world.resource::<FullPicture>().0;
+    let Ok(mut camera) = world.get_entity_mut(camera) else {
+        return;
+    };
+    if sky.is_air() && full {
+        if !camera.contains::<AtmosphereEnvironmentMapLight>() {
+            camera.insert((
+                AtmosphereSettings {
+                    aerial_view_lut_max_distance: HAZE_REACH,
+                    ..default()
+                },
+                AtmosphereEnvironmentMapLight {
+                    intensity: SKY_LIGHT,
+                    size: UVec2::splat(SKY_MAP),
+                    ..default()
+                },
+            ));
+        }
+    } else {
+        camera.remove::<(AtmosphereSettings, AtmosphereEnvironmentMapLight)>();
+    }
+}
 
 /// Where the game stands in its day: at a fixed hour that never moves, so an area's light stands
 /// as authored, or at an hour of a cycle that turns through day and night.
@@ -104,13 +157,15 @@ pub fn air(ground: Rect<Meters>) -> impl Bundle {
     )
 }
 
-/// The haze the camera sees the world through under a `sun`: clear up close, thickening with the
-/// distance into the colour of the sky at the horizon, pale blue by day, glowing at dusk and dark
-/// by night, so what stands far off sinks into the sky.
-pub fn haze(sun: Option<SunLight>) -> DistanceFog {
-    let color = match sun {
-        None => NIGHT_HAZE,
-        Some(sun) => {
+/// The haze the camera sees the world through under a `sun` and a `sky`: clear up close,
+/// thickening with the distance into the colour of the sky at the horizon, pale blue by day,
+/// glowing at dusk and dark by night or under a dark sky, so what stands far off sinks into the
+/// sky.
+pub fn haze(sun: Option<SunLight>, sky: Sky) -> DistanceFog {
+    let color = match (sky, sun) {
+        (Sky::Dark, _) => Color::BLACK,
+        (Sky::Air, None) => NIGHT_HAZE,
+        (Sky::Air, Some(sun)) => {
             let lit = smoothstep(SUNRISE.0, SUNRISE.1, sun.elevation.0);
             let glow = (1.0 - sun.elevation.0.abs() / 15.0).clamp(0.0, 1.0);
             mix(mix(NIGHT_HAZE, DAY_HAZE, lit), DUSK_HAZE, glow)

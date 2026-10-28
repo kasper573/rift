@@ -2,6 +2,7 @@ use std::f32::consts::TAU;
 
 use driver::{Player, UiTarget, content, holding, input_name};
 use engine::core::math::{Offset, Pos, WindowPx};
+use engine::systems::actor::stance::HandIndex;
 use engine::systems::input::map::InputAction;
 use engine::systems::probe::ProbeSnapshot;
 
@@ -191,6 +192,24 @@ fn hands(me: &mut Star) {
     me.wait_until("the greatsword back in the bag", |snapshot| {
         holding(snapshot, GREATSWORD) == 1
     });
+    me.caption("Anything held goes in any hand: a shield dropped on the main hand is held there");
+    me.carry_onto(outside_card(SHIELD), UiTarget::starting("Empty: "));
+    me.wait_until("the shield in the main hand", |snapshot| {
+        holds_in(snapshot, SHIELD, HandIndex::MAIN)
+    });
+    me.hold();
+    me.act_on_ui(InputAction::UseItem, outside_card(SHIELD));
+    me.wait_until("the shield back in the bag", |snapshot| {
+        holding(snapshot, SHIELD) == 1
+    });
+}
+
+fn holds_in(snapshot: &ProbeSnapshot, item: &str, hand: HandIndex) -> bool {
+    snapshot.me.as_ref().is_some_and(|me| {
+        me.wearing
+            .iter()
+            .any(|(held, worn)| *held == hand && worn.name(content()) == item)
+    })
 }
 
 const DAGGER: &str = "dagger";

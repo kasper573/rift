@@ -43,9 +43,7 @@ fn play(shoot: &mut Shoot) {
     me.hold();
     me.turn_camera(InputAction::TurnLeft);
     me.hold();
-    me.caption("Zoom in close with the wheel, or out wide");
-    me.zoom_camera(1);
-    me.hold();
+    me.caption("Zoom out wide with the wheel, or back in close");
     me.zoom_camera(-2);
     me.hold();
     me.caption("Page Up tilts the camera toward the horizon, to see the land as a walker would");
@@ -61,6 +59,7 @@ fn play(shoot: &mut Shoot) {
     me.caption("Home brings the camera back to looking north and down from the middle distance");
     me.camera_home();
     me.hold();
+    me.close_in();
     me.caption("Whatever stands between you and the camera fades, so you are never out of sight");
     me.walk_near(under_the_oak());
     me.hold();
@@ -68,6 +67,6 @@ fn play(shoot: &mut Shoot) {
     me.turn_camera(InputAction::TurnRight);
     me.turn_camera(InputAction::TurnRight);
     me.hold();
-    me.camera_home();
+    me.close_in();
     me.hold();
 }

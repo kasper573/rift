@@ -60,6 +60,11 @@ pub fn title(ui: &mut Ui, title: &str) -> Response {
     heading(ui, |ui| titled(ui, title), "", |_| {})
 }
 
+/// A card's heading with a subtitle at its right and nothing behind it.
+pub fn subtitled(ui: &mut Ui, title: &str, subtitle: &str) -> Response {
+    heading(ui, |ui| titled(ui, title), subtitle, |_| {})
+}
+
 /// A box sunk into a panel, holding a list or text that is read rather than typed into.
 pub fn well() -> egui::Frame {
     crate::input::frame().inner_margin(8.0)

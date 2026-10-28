@@ -2,33 +2,33 @@
   "name": "Giant Spider",
   "rig": {
     "files": [
-      "characters/skeletons/giant-spider/rig.glb"
+      "characters/skeletons/giant-spider.glb"
     ]
   },
   "base": {
     "clips": {
       "idle": {
-        "file": "characters/skeletons/giant-spider/giant_spider.glb",
+        "file": "characters/skeletons/giant-spider.glb",
         "take": "idle"
       },
       "walk": {
-        "file": "characters/skeletons/giant-spider/giant_spider.glb",
+        "file": "characters/skeletons/giant-spider.glb",
         "take": "walk"
       },
       "run": {
-        "file": "characters/skeletons/giant-spider/giant_spider.glb",
+        "file": "characters/skeletons/giant-spider.glb",
         "take": "walk"
       },
       "attack": {
-        "file": "characters/skeletons/giant-spider/giant_spider.glb",
+        "file": "characters/skeletons/giant-spider.glb",
         "take": "bite"
       },
       "death": {
-        "file": "characters/skeletons/giant-spider/giant_spider.glb",
+        "file": "characters/skeletons/giant-spider.glb",
         "take": "death"
       },
       "talk": {
-        "file": "characters/skeletons/giant-spider/giant_spider.glb",
+        "file": "characters/skeletons/giant-spider.glb",
         "take": "rear"
       }
     }
@@ -36,7 +36,7 @@
   "cues": [
     {
       "clip": {
-        "file": "characters/skeletons/giant-spider/giant_spider.glb",
+        "file": "characters/skeletons/giant-spider.glb",
         "take": "bite"
       },
       "cues": [
@@ -49,7 +49,7 @@
     },
     {
       "clip": {
-        "file": "characters/skeletons/giant-spider/giant_spider.glb",
+        "file": "characters/skeletons/giant-spider.glb",
         "take": "death"
       },
       "cues": [
@@ -61,7 +61,7 @@
     },
     {
       "clip": {
-        "file": "characters/skeletons/giant-spider/giant_spider.glb",
+        "file": "characters/skeletons/giant-spider.glb",
         "take": "walk"
       },
       "cues": [
@@ -79,7 +79,7 @@
   "paces": [
     {
       "clip": {
-        "file": "characters/skeletons/giant-spider/giant_spider.glb",
+        "file": "characters/skeletons/giant-spider.glb",
         "take": "walk"
       },
       "pace": 1.4

@@ -1,15 +1,16 @@
 # Style sheet
 
-Every model, every ground colour and every render pass is held to this sheet. It is drawn from the concept board the game reproduces: chunky low-poly models in bright, saturated colours under soft light, blob trees and lush grass, clear bright water, seen from above. Every pack model was restyled onto the palette below, and `just lint` holds every model to the budget.
+Every model, every ground colour and every render pass is held to this sheet. It is drawn from the concept board the game reproduces: chunky low-poly models in saturated colours under warm light, deep shade beside faces lit nearly white, blob trees and lush grass, clear bright water, seen from above. Every pack model was restyled onto the palette below, and `just lint` holds every model to the budget.
 
 ## What a frame looks like
 
 | | |
 |---|---|
-| Shading | Smooth, soft light: a face takes the sun, the sky's light and the lamps near it, with no specular, and creases and feet darken where things stand close (ambient occlusion). Faceted things (rocks, walls, crates) keep flat faces; rounded things (canopies, bushes, bodies, barrels) are shaded smooth across their faces. No outline. |
-| Light | One warm sun with soft-edged shadows that blur as they fall further from what casts them, the sky itself as the ambient light, so shadows go blue rather than black, and the shadows of clouds drifting over the ground on the wind. Shafts of sunlight show in the air where it breaks through a canopy. What glows (lamps, gems, embers) blooms softly over its rim and pools light on the ground. |
+| Shading | A face takes the sun, the sky's light and the lamps near it, rough and matte but for metal, which catches a soft sheen, and creases and feet darken where things stand close (ambient occlusion). The light is mapped to the screen by a filmic curve that deepens the shade and lifts the light, the same for every area. Faceted things (rocks, walls, crates) keep flat faces; rounded things (canopies, bushes, bodies, barrels) are shaded smooth across their faces. No outline. |
+| Light | One warm sun with soft-edged shadows that blur as they fall further from what casts them, the sky's light filling the shade, so shadows stay deep and coloured rather than black, and the shadows of clouds drifting over the ground on the wind. Shafts of sunlight show in the air where it breaks through a canopy. What glows (lamps, gems, embers) blooms softly over its rim and pools light on the ground. |
 | Air | A real sky: the sun's light scattered through an atmosphere, blue overhead and pale at the horizon, reddening as the sun sets, and the far distance sinking into that blue haze. |
-| Ground | A smooth coloured surface, painted terrains blending into one another, under a carpet of grass blades and flowers. |
+| Ground | A smooth coloured surface, painted terrains blending into one another, under a carpet of grass blades and flowers, a shade deeper than the swatches of the same name so the wide sunlit ground stays under what stands on it. |
+| Indoors | No sun and no sky: black beyond the walls, a dim violet ambient, and warm lamps pooling light, a hearth lighting the room and torches the walls beside them. |
 | Rocks | Faceted low-poly slabs in cool grey-mauve, lit faces paler, 100 to 400 triangles. |
 | Trees | Rounded canopies of lumpy leaf clusters shaded smooth, a lit yellow-green on top deepening to a dark green beneath, on bent trunks with roots; three to four characters tall. Bushes the same, smaller. |
 | Water | Bright cyan, clear in the shallows and deep blue further out, its surface a drifting net of light cells, with bands and dashes of white foam along the shore and rings spreading now and then. |
@@ -20,7 +21,7 @@ Every model, every ground colour and every render pass is held to this sheet. It
 
 ## Measurements
 
-Day: sun elevation 52°, warm white, ambient a sky blue. Night: no sun, dim blue ambient, grade colour `#5680A8` at strength 0.55, warm point lights, ice-blue gem glow.
+Day: sun elevation 52°, warm white, ambient a cool blue under the sky's light, no grade. Indoors: no sun, a dark sky, ambient `#64547C`, no grade, a hearth `#FFC48C` and torches `#FFCE9C`, ice-blue gem glow.
 
 ## Palette
 

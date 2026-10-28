@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::time::SystemTime;
 
 use driver::{DeployEdit, Pace, Player, Playtest, PlaytestSetup};
+use engine::core::render::camera::Zoom;
 use engine::systems::script::Place;
 
 use crate::chapters::Chapter;
@@ -76,7 +77,7 @@ impl Shoot {
             film,
             out: self.out.clone(),
         };
-        star.camera_home();
+        star.close_in();
         star.hold();
         star
     }
@@ -91,6 +92,12 @@ pub struct Star {
 }
 
 impl Star {
+    /// Brings the camera home and in as close as it zooms, where every chapter films from.
+    pub fn close_in(&mut self) {
+        self.camera_home();
+        self.zoom_camera(i32::from(Zoom::default().step()));
+    }
+
     /// Each caption starts a beat of the chapter: it goes up at once and the chapter plays on
     /// beneath it, but the next one waits until this one could be read.
     pub fn caption(&mut self, text: &str) {

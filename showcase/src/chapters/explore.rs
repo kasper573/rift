@@ -51,7 +51,6 @@ fn play(shoot: &mut Shoot) {
     me.caption(
         "Your pace picks the gait whose clip covers ground nearest it, played as fast as the ground it covers, so feet keep to the grass instead of sliding",
     );
-    me.zoom_camera(1);
     for _ in 0..2 {
         me.tilt_camera(InputAction::TiltUp);
     }
@@ -69,7 +68,7 @@ fn play(shoot: &mut Shoot) {
     );
     me.come_to_rest();
     me.walk_near(spawn);
-    me.camera_home();
+    me.close_in();
     me.caption("Things you drop lie on the ground as themselves");
     me.act(InputAction::ToggleInventory);
     me.act_on_ui(InputAction::DropItem, UiTarget::item(SWORD));

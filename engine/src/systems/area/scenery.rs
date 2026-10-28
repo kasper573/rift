@@ -13,8 +13,8 @@ use bevy::prelude::*;
 use super::prop::PropId;
 use super::terrain::{CoverPiece, PieceShape};
 use super::{Area, Lighting, PointLightDef, PropPlacement};
-use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
+use crate::core::content::{Content, FileHash, FileHashes};
 use crate::core::geometry::Radians;
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::ground::{Heightfield, Paint};
@@ -65,9 +65,11 @@ pub fn spawn(world: &mut World, content: &Content, area: &Area, layers: RenderLa
             ))
             .id()
     });
-    let atmosphere = sky::atmosphere(&mut world.resource_mut::<Assets<ScatteringMedium>>());
-    world.spawn((atmosphere, ChildOf(root)));
-    world.spawn((sky::air(area.size.bounds()), ChildOf(root)));
+    if area.lighting.sky.is_air() {
+        let atmosphere = sky::atmosphere(&mut world.resource_mut::<Assets<ScatteringMedium>>());
+        world.spawn((atmosphere, ChildOf(root)));
+        world.spawn((sky::air(area.size.bounds()), ChildOf(root)));
+    }
     let terrain = spawn_terrain(world, content, area, root);
     spawn_covers(world, content, area, root);
     for placed in &area.props {
@@ -78,6 +80,47 @@ pub fn spawn(world: &mut World, content: &Content, area: &Area, layers: RenderLa
         spawn_light(world, &area.heights, light, &mut rng, root);
     }
     Scenery { root, terrain, sun }
+}
+
+/// The files the scenery of an area is made from beyond the area itself, each with what it held
+/// when read: its terrains, their covers' shaders, the props it stands and strews, and their
+/// models. Scenery stood from equal sources looks alike, so it need not stand again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Sources(Vec<(String, FileHash)>);
+
+impl Sources {
+    pub fn of(content: &Content, area: &Area) -> Sources {
+        let mut files: Vec<&str> = Vec::new();
+        let mut props: Vec<PropId> = area.props.iter().map(|placed| placed.prop).collect();
+        for terrain in &area.terrains {
+            files.push(terrain.path(content));
+            let Some(cover) = &terrain.get(content).cover else {
+                continue;
+            };
+            files.push(cover.shader.path(content));
+            props.extend(cover.pieces.iter().filter_map(|piece| match piece.shape {
+                PieceShape::Prop { prop } => Some(prop),
+                PieceShape::Blade { .. } => None,
+            }));
+        }
+        for prop in props {
+            files.push(prop.path(content));
+            files.push(prop.get(content).model.as_str());
+        }
+        let hashes = &content.built::<FileHashes>().0;
+        Sources(
+            hashes
+                .iter()
+                .filter(|(path, _)| {
+                    files.iter().any(|file| {
+                        path.strip_prefix(file)
+                            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+                    })
+                })
+                .map(|(path, hash)| (path.clone(), hash.clone()))
+                .collect(),
+        )
+    }
 }
 
 /// Whether every cover shader `area`'s terrains draw with is compiled, so the scenery can stand
@@ -99,15 +142,9 @@ pub fn despawn(world: &mut World, scenery: Scenery) {
 }
 
 /// Lights `area` for the hour under its weather: its sun turned and coloured, its clouds carried
-/// on by the wind, and the ambient light put on `camera`; cheap enough to do every frame. Gives
-/// the sun as it shines, for a camera that looks through the air to take the haze of.
-pub fn light(
-    world: &mut World,
-    area: &Area,
-    daylight: Daylight,
-    scenery: Scenery,
-    camera: Entity,
-) -> Option<SunLight> {
+/// on by the wind, and the ambient light, the haze of the sun as it shines and the area's sky put
+/// on `camera`; cheap enough to do every frame.
+pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scenery, camera: Entity) {
     let sun = sun_at(area, daylight);
     let elevation = sun.map(|sun| sun.elevation);
     let ambient = AmbientLight {
@@ -126,9 +163,9 @@ pub fn light(
         }
     }
     if let Ok(mut camera) = world.get_entity_mut(camera) {
-        camera.insert(ambient);
+        camera.insert((ambient, sky::haze(sun, area.lighting.sky)));
     }
-    sun
+    sky::show(world, camera, area.lighting.sky);
 }
 
 fn sun_at(area: &Area, daylight: Daylight) -> Option<SunLight> {

@@ -18,17 +18,14 @@ pub use wave::Wave;
 
 use bevy::camera::primitives::{Frustum, Sphere};
 use bevy::prelude::*;
-use bevy_skeleton_modifiers::core::{BonePose, SkeletonView, apply_influence};
+use bevy_skeleton_modifiers::core::{BonePose, SkeletonView};
 
-use super::super::camera::{CameraPreferences, GroundHeights, WorldCamera, ground_pos};
+use super::super::camera::{GroundHeights, WorldCamera, ground_pos};
 
 /// Within this distance of the camera a body's layers run every frame, and up to `FAR` every other
 /// frame; beyond it the body plays its clips alone.
 const NEAR: f32 = 15.0;
 const FAR: f32 = 30.0;
-/// How much of a spring, a sway or a squash Reduce motion keeps. Planted feet keep planting and a
-/// held pose is held: they move less than a clip's, not more.
-const CALM: f32 = 0.5;
 /// How far around its place a body is looked for in the camera's view.
 const BODY_RADIUS: f32 = 2.0;
 
@@ -80,10 +77,6 @@ pub enum JointLayer {
 }
 
 impl JointLayer {
-    fn calms(&self) -> bool {
-        !matches!(self, JointLayer::Feet(_) | JointLayer::HeldPose(_))
-    }
-
     fn run(&mut self, frame: &mut Frame) {
         match self {
             JointLayer::Feet(feet) => feet.run(frame),
@@ -155,13 +148,11 @@ pub(super) struct Frame<'a> {
 fn run(
     time: Res<Time>,
     ground: Option<Res<GroundHeights>>,
-    preferences: Option<Res<CameraPreferences>>,
     cameras: Query<(&GlobalTransform, &Frustum), With<WorldCamera>>,
     mut bodies: Query<&mut Layered>,
     mut transforms: Query<(&mut Transform, Option<&ChildOf>)>,
 ) {
     let now = time.elapsed_secs();
-    let calm = preferences.is_some_and(|preferences| preferences.reduce_motion);
     let camera = cameras.iter().next();
     let height = |at: glam::Vec3| {
         ground.as_ref().map_or(0.0, |ground| {
@@ -245,7 +236,6 @@ fn run(
                 layer.reset();
                 continue;
             }
-            let before = local.clone();
             let mut frame = Frame {
                 view: SkeletonView {
                     parents: &body.rig.parents,
@@ -260,9 +250,6 @@ fn run(
                 stepped,
             };
             layer.run(&mut frame);
-            if calm && layer.calms() {
-                apply_influence(&before, &mut local, CALM);
-            }
         }
         write(
             &mut transforms,

@@ -9,10 +9,11 @@
     "world/terrain/floor.terrain.json"
   ],
   "lighting": {
+    "sky": "dark",
     "ambient": [
-      170,
-      185,
-      230
+      100,
+      84,
+      124
     ],
     "grade": {
       "color": [
@@ -20,7 +21,7 @@
         128,
         168
       ],
-      "strength": 0.3
+      "strength": 0.0
     }
   }
 }

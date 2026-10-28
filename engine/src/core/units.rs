@@ -23,6 +23,13 @@ use crate::core::time::Seconds;
 #[schemars(extend("x-unit" = "m"))]
 pub struct Meters(pub f32);
 
+/// Stops of light: each one doubles it.
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
+)]
+#[schemars(extend("x-unit" = "EV"))]
+pub struct Stops(pub f32);
+
 pub type CellPos = euclid::default::Point2D<i32>;
 pub type GridSize = euclid::default::Size2D<u32>;
 

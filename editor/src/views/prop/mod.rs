@@ -42,7 +42,6 @@ pub struct PropViews {
 pub struct PropView {
     pub turntable: OrbitCamera,
     pub top: OrbitCamera,
-    pub spinning: bool,
     pub drag: Option<footprint::Drag>,
     picture: StagePicture,
     geometry: Option<Arc<Geometry>>,
@@ -122,7 +121,6 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
         PropView {
             turntable,
             top,
-            spinning: true,
             drag: None,
             picture: StagePicture::default(),
             geometry: None,
@@ -299,10 +297,7 @@ fn header(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
             fit_to_mesh(editor, key);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let view = editor.views.prop.view_mut(key);
-            if chip::toggle(ui, "turning", view.spinning).clicked() {
-                view.spinning = !view.spinning;
-            }
+            stage::toggle(ui, "turning", &mut editor.views.toggles.turning);
         });
     });
 }

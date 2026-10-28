@@ -143,6 +143,7 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         joint: JointName::new("body"),
         offset: Default::default(),
         turn: Default::default(),
+        mirrored: false,
         clasp: None,
     });
     hands.swap(0, 2);
@@ -155,6 +156,7 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
     let mut gripped = skeleton_of(&mut editor, &key).hands[2].clone();
     gripped.offset = LocalOffset([Meters(0.05), Meters(0.0), Meters(-0.02)]);
     gripped.turn = LocalTurn([Degrees(0.0), Degrees(90.0), Degrees(-90.0)]);
+    gripped.mirrored = !gripped.mirrored;
     assert!(skeleton::set_hand(&mut editor, &key, 2, gripped.clone()));
     assert_eq!(
         skeleton_of(&mut editor, &key).hands[2],
@@ -351,6 +353,12 @@ fn the_skeleton_view_draws_every_page_and_sets_a_cell_from_the_pointer() {
             !drawn.any(|text| text.contains("did not load") || text.contains("no rig stands")),
             "{page:?}: {drawn:?}"
         );
+        for picker in ["model", "preview", "item"] {
+            assert!(
+                drawn.any(|text| text == picker),
+                "every page previews the rig with its {picker} picked: {page:?}: {drawn:?}"
+            );
+        }
     }
 }
 
@@ -366,7 +374,7 @@ fn a_clip_on_the_skeleton_view_plays_without_being_asked() {
     let view = editor.views.skeleton.view_mut(&key);
     view.page = SkeletonPage::Sets;
     view.sets.open = Some((sets::SetRow::Action(Action::Walk), None));
-    view.clip = Some(file_clip(&clip("walk")));
+    view.preview.play(file_clip(&clip("walk")));
     let shown: Vec<String> = (0..4)
         .map(|_| {
             let drawn = draw(&mut editor);

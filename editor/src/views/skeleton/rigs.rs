@@ -1,12 +1,11 @@
 //! The rigs page: our rig, read from the glTF files that hold its joints, each top but the body's
 //! hung on a joint of ours; the source rigs whose clips play on ours, each read from a file made on
 //! it, with the joint of ours each of his moves; and the clips of the game folder that play. The
-//! stage plays any of them on ours, and a source rig's on his beside it, so a wrong pair shows as a
-//! limb moving wrong; while a joint of his is chosen, clicking a joint of ours pairs them.
+//! view's preview plays any of them on ours, so a wrong pair shows as a limb moving wrong; while a
+//! joint of his is chosen, clicking a joint of ours pairs them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use bevy::math::Vec3;
 use engine::core::assets::ModelRef;
 use engine::core::content::gltf::NodeTree;
 use engine::systems::actor::skeleton::{JointName, SkeletonDef, SourceRig};
@@ -421,72 +420,39 @@ fn clips(ui: &mut Ui, def: &SkeletonDef, rigging: &Rigging) {
     }
 }
 
-/// The clip picked playing on our rig, and a source rig's clip on his beside it.
+/// The view's preview, where clicking a joint of ours pairs it with the joint of his chosen.
 fn stage(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging) {
-    let Some(content) = editor.loaded() else {
-        return;
-    };
     if rigging.rig.is_none() {
         form::hint(ui, "Pick our rig's files to see it here.");
         return;
     }
-    super::stage_pickers(editor, ui, key, &content, rigging, true);
-    let size = Vec2::new(ui.available_width(), ui.available_height() - 24.0);
-    let Some(staged) = super::stage_rig(editor, ui, key, def, rigging, size, Vec::new()) else {
-        return;
-    };
-    let chosen = editor.views.skeleton.view(key).clip.clone();
-    let his = chosen
-        .as_ref()
-        .and_then(|clip| rigging.playable(clip))
-        .filter(|found| found.source.is_some())
-        .cloned();
-    if let (Some(found), Some(ours)) = (his, rigging.rig.as_ref()) {
-        let playhead = editor.views.skeleton.view(key).scrub.playhead;
-        if let Some((tree, pose)) = super::his_pose(editor, &found, playhead.seconds().0) {
-            let scale = height_of(ours) / height_of(&tree).max(1.0e-3);
-            let beside = staged.beside(&tree, Some(&pose), Vec3::new(1.2, 0.0, 0.0), scale);
-            beside.draw(ui, theme::ACCENT);
-        }
-    }
     let pairing = editor.views.skeleton.view(key).rigs.pairing.clone();
+    let source = editor.views.skeleton.view(key).rigs.source;
     let lit: Vec<&str> = pairing
         .as_deref()
         .and_then(|his| {
-            let source = def
-                .sources
-                .get(editor.views.skeleton.view(key).rigs.source)?;
-            source
+            def.sources
+                .get(source)?
                 .pairs
                 .get(&JointName::new(his))
                 .map(|ours| ours.as_str())
         })
         .into_iter()
         .collect();
-    if let Some(clicked) = staged.pick(ui, &lit)
-        && let Some(his) = pairing
+    let Some(previewed) = super::preview::show(editor, ui, key, def, rigging, &lit, 24.0) else {
+        return;
+    };
+    if let (Some(clicked), Some(his)) = (previewed.picked, pairing)
+        && let Some(held) = def.sources.get(source)
     {
-        let index = editor.views.skeleton.view(key).rigs.source;
-        if let Some(source) = def.sources.get(index) {
-            let mut pairs = source.pairs.clone();
-            pairs.insert(JointName::new(his), JointName::new(clicked));
-            set_pairs(editor, key, index, pairs);
-        }
+        let mut pairs = held.pairs.clone();
+        pairs.insert(JointName::new(his), JointName::new(clicked));
+        set_pairs(editor, key, source, pairs);
     }
     form::hint(
         ui,
-        "A source rig's clip plays on his rig beside ours. Both must rest in the same pose.",
+        "A source rig's clip plays on ours through the pairs. Both rigs must rest in the same pose.",
     );
-}
-
-/// How tall `tree` stands at rest, from its lowest joint to its highest.
-fn height_of(tree: &NodeTree) -> f32 {
-    let worlds = tree.worlds();
-    let heights = tree.joints().map(|joint| worlds[joint].w_axis.y);
-    let (low, high) = heights.fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), y| {
-        (low.min(y), high.max(y))
-    });
-    (high - low).max(0.0)
 }
 
 /// The window listing the files to read joints from, while one is open.

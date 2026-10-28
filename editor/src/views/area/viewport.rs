@@ -16,13 +16,13 @@ use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::audio::playback::{self, PlaySfx, SfxPlace};
 use engine::core::content::Content;
 use engine::core::ground::{Heightfield, Paint};
-use engine::core::render::camera::{self, CameraPreferences};
+use engine::core::render::camera;
 use engine::core::render::world::body::{self, Body, Figure};
 use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::Mannequin;
 use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::rig_clip;
-use engine::core::render::world::sky::{self, Daylight};
+use engine::core::render::world::sky::Daylight;
 use engine::core::time::Seconds;
 use engine::systems::actor::Action;
 use engine::systems::actor::layering::{self, Layering};
@@ -49,7 +49,6 @@ pub struct Request {
     /// The number of the snapshot the picture came from: a new one stands the scenery again.
     pub made: u64,
     pub content: Content,
-    pub generation: u64,
     /// The terrain as a brush stroke is shaping it, shown in place of the picture's.
     pub stroke: Option<StrokeTerrain>,
     pub ghost: Option<Ghost>,
@@ -111,13 +110,12 @@ impl StageClip {
 }
 
 /// What a stood rig's layers are told each frame, as the game tells a puppet's: the model whose
-/// skeleton lists them, the action shown, whether a foot came down, and whether Reduce motion is on.
+/// skeleton lists them, the action shown, and whether a foot came down.
 #[derive(Clone, Copy, PartialEq)]
 pub struct StageLayers {
     pub model: ModelId,
     pub action: Action,
     pub stepped: bool,
-    pub reduce_motion: bool,
 }
 
 /// The layers a stood rig was asked to run, and whether they have been put on its joints.
@@ -186,7 +184,6 @@ struct Viewport {
 struct Stood {
     scenery: Scenery,
     made: u64,
-    generation: u64,
     area: Arc<Area>,
 }
 
@@ -309,26 +306,25 @@ impl Viewport {
             }
         }
         let area = request.picture.area.clone();
-        let stale = self.stood.as_ref().is_none_or(|stood| {
-            stood.made != request.made || stood.generation != request.generation
-        });
+        let stale = self
+            .stood
+            .as_ref()
+            .is_none_or(|stood| stood.made != request.made);
         if stale && scenery::shaders_ready(world, &request.content, &area) {
-            if let Some(stood) = self.stood.take() {
-                scenery::despawn(world, stood.scenery);
-            }
             let stood = scenery::spawn(
                 world,
                 &request.content,
                 &area,
                 RenderLayers::from_layers(&[self.layer]),
             );
+            if let Some(old) = self.stood.take() {
+                scenery::despawn(world, old.scenery);
+            }
             world.entity_mut(stood.root).insert(ChildOf(self.root));
-            let sun = scenery::light(world, &area, Daylight::Fixed, stood, self.camera);
-            world.entity_mut(self.camera).insert(sky::haze(sun));
+            scenery::light(world, &area, Daylight::Fixed, stood, self.camera);
             self.stood = Some(Stood {
                 scenery: stood,
                 made: request.made,
-                generation: request.generation,
                 area: area.clone(),
             });
             self.stroke = None;
@@ -411,7 +407,6 @@ impl Viewport {
         }
     }
 
-    /// Stands the cast where the view puts them, anew when it changes.
     /// Stands the cast: a rig already standing in its clip is moved and held where it is asked
     /// to, the rest are spawned anew.
     fn people(&mut self, world: &mut World, cast: Vec<Standing>) {
@@ -646,7 +641,6 @@ fn run_layers(world: &mut World) {
             layering.put = true;
         }
     }
-    let mut calm = None;
     for (mut layered, layering, stage, props) in world
         .query::<(&mut Layered, &Layering, &StageLayering, Option<&StageProps>)>()
         .iter_mut(world)
@@ -663,17 +657,6 @@ fn run_layers(world: &mut World) {
             &holding,
             stage.asked.stepped,
         );
-        calm = Some(calm.unwrap_or(false) || stage.asked.reduce_motion);
-    }
-    if let Some(calm) = calm
-        && world
-            .get_resource::<CameraPreferences>()
-            .is_none_or(|preferences| preferences.reduce_motion != calm)
-    {
-        world.insert_resource(CameraPreferences {
-            reduce_motion: calm,
-            ..CameraPreferences::default()
-        });
     }
 }
 

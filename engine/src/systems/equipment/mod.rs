@@ -18,7 +18,8 @@ use crate::systems::script::condition;
 pub fn register(app: &mut App) {
     use bevy_replicon::prelude::*;
     app.replicate::<Equipment>()
-        .add_client_message::<UnequipRequest>(Channel::Ordered);
+        .add_client_message::<UnequipRequest>(Channel::Ordered)
+        .add_client_message::<HoldRequest>(Channel::Ordered);
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -29,6 +30,14 @@ pub struct Equipment {
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UnequipRequest {
     pub slot: EquipmentPlace,
+}
+
+/// Holds the item in the bag's slot `slot` in `hand`, whichever hand its stance's clips were made
+/// for.
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct HoldRequest {
+    pub slot: u32,
+    pub hand: HandIndex,
 }
 
 /// A place a player wears an item: one of its body's hands, in the skeleton's order, or one of the
@@ -72,13 +81,18 @@ pub fn hand_slots(world: &World, player: Entity) -> usize {
 
 pub fn equip_from_bag(world: &mut World, player: Entity, item: ItemId) -> Result<(), String> {
     let slot = item::bag_slot(world, player, item)?;
-    equip(world, player, slot)
+    equip(world, player, slot, None)
 }
 
 /// Wears the item in the bag's slot `inv_slot` where it goes: a worn item in its slot, when the
-/// body has it, a held item where its stance's hand says, in the same exchange returning to the bag
-/// what it displaces.
-pub fn equip(world: &mut World, player: Entity, inv_slot: usize) -> Result<(), String> {
+/// body has it, a held item in `hand` or else where its stance's hand says, in the same exchange
+/// returning to the bag what it displaces.
+pub fn equip(
+    world: &mut World,
+    player: Entity,
+    inv_slot: usize,
+    hand: Option<HandIndex>,
+) -> Result<(), String> {
     let content = world.resource::<Content>().clone();
     let item = world
         .get::<Inventory>(player)
@@ -105,7 +119,7 @@ pub fn equip(world: &mut World, player: Entity, inv_slot: usize) -> Result<(), S
         }
         Wear::Held { .. } => {
             let held = hands(&worn);
-            let placement = held::place(&content, hand_slots(world, player), &held, item);
+            let placement = held::place(&content, hand_slots(world, player), &held, item, hand);
             let mut slots: BTreeMap<EquipmentPlace, ItemId> = worn
                 .slots
                 .iter()
@@ -167,7 +181,7 @@ pub fn put_on(content: &Content, body: &ActorModel, items: &[ItemId]) -> PutOn {
                 let held = hands(&Equipment {
                     slots: put.slots.clone(),
                 });
-                let placement = held::place(content, hand_slots, &held, item);
+                let placement = held::place(content, hand_slots, &held, item, None);
                 put.slots
                     .retain(|slot, _| !matches!(slot, EquipmentPlace::Hand(_)));
                 put.slots.extend(
@@ -313,6 +327,12 @@ pub fn hands(equipment: &Equipment) -> BTreeMap<HandIndex, ItemId> {
             EquipmentPlace::Slot(_) => None,
         })
         .collect()
+}
+
+pub fn hold(world: &mut World) {
+    player_requests::<HoldRequest>(world, true, |world, player, request| {
+        equip(world, player, request.slot as usize, Some(request.hand))
+    });
 }
 
 pub fn unequip(world: &mut World) {

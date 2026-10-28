@@ -82,7 +82,7 @@ pub fn ensure_view(editor: &mut Editor, key: &str, row: &ModelPartDef) {
         key.to_owned(),
         ModelPartView {
             mesh,
-            stage: stage::StageState::framing(1.3, false),
+            stage: stage::StageState::framing(1.3),
         },
     );
 }
@@ -117,10 +117,7 @@ fn mesh_bar(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
             }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let stage = &mut editor.views.model_part.view_mut(key).stage;
-            if chip::toggle(ui, "turning", stage.spinning).clicked() {
-                stage.spinning = !stage.spinning;
-            }
+            stage::toggle(ui, "turning", &mut editor.views.toggles.turning);
         });
     });
 }
@@ -172,7 +169,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
         .collect();
     panel::card(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel::header(ui, "Meshes", "", |_| {});
+        panel::title(ui, "Meshes");
         ui.add_space(4.0);
         for (file, triangles, weight) in &meshes {
             form::kv(ui, file, |ui| {

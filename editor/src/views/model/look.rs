@@ -115,7 +115,13 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
 /// The model's hitbox round it on the stage, picked by a click for the inspector and sized by its
 /// handles.
 fn hitbox(editor: &mut Editor, ui: &Ui, key: &str, row: &ModelDef, turntable: &stage::Turntable) {
+    let shown = editor.views.toggles.hitbox;
     let view = editor.views.model.view_mut(key);
+    if !shown {
+        view.hitbox.let_go();
+        view.hitbox_chosen = false;
+        return;
+    }
     let touched = hitbox::overlay(
         ui,
         &turntable.canvas,
@@ -126,7 +132,7 @@ fn hitbox(editor: &mut Editor, ui: &Ui, key: &str, row: &ModelDef, turntable: &s
         &mut view.hitbox,
     );
     if view.hitbox.dragging() {
-        view.stage.spinning = false;
+        editor.views.toggles.turning = false;
     }
     if turntable.response.clicked() || touched.picked {
         view.hitbox_chosen = touched.picked;

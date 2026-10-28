@@ -65,6 +65,7 @@ pub struct EditorViews {
     pub vfx: vfx::VfxViews,
     pub preview: RowPreviewState,
     pub stage: Stages,
+    pub toggles: stage::StageToggles,
     pub areas: crate::thumbs::areas::AreaThumbnails,
 }
 

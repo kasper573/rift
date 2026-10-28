@@ -74,8 +74,8 @@ pub fn check_all(loading: &mut Loading) {
     }
 }
 
-/// What an npc holds is what hands show, asking no more hands than the body has; a list the body
-/// cannot show at all loads, and says so.
+/// What an npc holds is what hands show, all of it shown together as equipping would place it; a
+/// list the body cannot show at all loads, and says so.
 fn check_held(
     content: &Content,
     loading: &mut Loading,
@@ -116,20 +116,27 @@ fn check_held(
         }
         return;
     }
-    let asked = held::asked(content, &def.held);
-    if asked > hands {
-        let names: Vec<&str> = def.held.iter().map(|item| item.name(content)).collect();
+    let left_out = held::listed(content, hands, &def.held).returned;
+    if !left_out.is_empty() {
+        let names = |items: &[ItemId]| {
+            ui::words::join_and(
+                &items
+                    .iter()
+                    .map(|item| item.name(content).to_owned())
+                    .collect::<Vec<_>>(),
+            )
+        };
         check.error(
             "/held",
-            "too many hands",
+            "left out",
             format!(
-                "held asks {asked} hands ({}) of a body with {hands}",
-                names.join(", ")
+                "held lists {}, but placed as equipping places them in the {hands} hands of {}, {} \
+                 is put back",
+                names(&def.held),
+                skeleton.name(content),
+                names(&left_out),
             ),
-            format!(
-                "at most {hands} hands, as {}.skeleton has",
-                skeleton.name(content)
-            ),
+            "items the hands show together, each where its stance puts it",
         );
     }
 }
@@ -172,7 +179,8 @@ pub struct NpcDef {
     #[schemars(extend("x-usage" = "known at these ranks, for the scripts that will cast them"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<NpcSkill>,
-    /// What its hands show, in their order: looks alone, granting no skill, stat or drop.
+    /// What its hands show, each placed in turn as equipping places it: looks alone, granting no
+    /// skill, stat or drop.
     #[schemars(extend("x-usage" = "shown in its hands"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub held: Vec<ItemId>,
@@ -584,7 +592,7 @@ pub fn approach(world: &mut World) {
 fn actor_bundle(content: &Content, def: &NpcDef, at: Pos<Meters>, area: AreaId) -> impl Bundle {
     let model = ActorModel::get(content, def.appearance.model);
     let shown = Held {
-        hands: held::listed(content, model.hands().len(), &def.held),
+        hands: held::listed(content, model.hands().len(), &def.held).hands,
     };
     (
         Replicated,

@@ -1,9 +1,9 @@
 {
   "name": "Plank floor",
   "color": [
-    217,
-    145,
-    90,
+    122,
+    82,
+    54,
     255
   ],
   "surface": "world/surface/wood.surface.json",

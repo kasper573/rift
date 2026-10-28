@@ -2,8 +2,9 @@
 //! names, and the gestures of a line's expressions and every other one a set names) against base
 //! and each stance it has a set for, for the build picked. A cell a set of the build names is
 //! plain, one the ladder finds further down italic. A cell clicked opens below the table: its clips,
-//! picked from every clip that plays by any part of its file's path, and the clip chosen there on
-//! the stage, its cues timed on its timeline and, for a gait, its pace. Every build but the first
+//! picked from every clip that plays by any part of its file's path, a clip clicked there playing
+//! on the view's preview beside the table, where the clip playing has its cues timed on its
+//! timeline and, for a gait, its pace. Every build but the first
 //! fills its empty cells from the first's by rewriting their files' paths.
 
 use engine::core::content::{Content, NamedContent};
@@ -19,6 +20,7 @@ use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::{chip, controls, form, panel, theme, words};
 
+use super::preview::{self, PreviewPlays};
 use super::rigging::Rigging;
 use crate::app::Editor;
 use crate::views::cues;
@@ -314,6 +316,53 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
     toolbar(editor, ui, key, &content, def, build.as_ref());
     fill_window(editor, ui, key, def, rigging);
     ui.add_space(6.0);
+    let width = ui.available_width();
+    let [left, right] = panel::split(ui, (width * 0.55).clamp(360.0, 900.0));
+    panel::body(ui, left, |ui| {
+        table(
+            editor,
+            ui,
+            key,
+            &content,
+            def,
+            rigging,
+            build.as_ref(),
+            &columns,
+            &rows,
+        );
+    });
+    let open = editor.views.skeleton.view(key).sets.open.clone();
+    panel::body(ui, right, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt(("set-playing", key))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                playing(
+                    editor,
+                    ui,
+                    key,
+                    def,
+                    rigging,
+                    open.as_ref().map(|(row, _)| row),
+                );
+            });
+    });
+}
+
+/// The table of cells, and below it the cell clicked open: its clips, to pick from every clip that
+/// plays.
+#[allow(clippy::too_many_arguments)]
+fn table(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    key: &str,
+    content: &Content,
+    def: &SkeletonDef,
+    rigging: &Rigging,
+    build: Option<&BuildName>,
+    columns: &[Option<StanceId>],
+    rows: &[SetRow],
+) {
     let open = editor.views.skeleton.view(key).sets.open.clone();
     let mut picked: Option<(SetRow, Option<String>)> = None;
     let height = ui.available_height();
@@ -332,18 +381,18 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
                 .striped(true)
                 .show(ui, |ui| {
                     ui.label("");
-                    for column in &columns {
-                        ui.label(RichText::new(column_name(&content, *column)).strong());
+                    for column in columns {
+                        ui.label(RichText::new(column_name(content, *column)).strong());
                     }
                     ui.end_row();
-                    for row in &rows {
+                    for row in rows {
                         ui.label(theme::mono(row.label()));
-                        for column in &columns {
-                            let path = column.map(|stance| stance.path(&content).to_owned());
+                        for column in columns {
+                            let path = column.map(|stance| stance.path(content).to_owned());
                             let lit = open
                                 .as_ref()
                                 .is_some_and(|(at, on)| at == row && *on == path);
-                            if cell(ui, def, rigging, build.as_ref(), *column, row, lit).clicked() {
+                            if cell(ui, def, rigging, build, *column, row, lit).clicked() {
                                 picked = Some((row.clone(), path));
                             }
                         }
@@ -356,32 +405,21 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
         let sets = &mut view.sets;
         sets.open = (sets.open.as_ref() != Some(&picked)).then_some(picked);
         sets.filter.clear();
-        view.clip = None;
     }
     if let Some((row, stance)) = editor.views.skeleton.view(key).sets.open.clone() {
         ui.add_space(6.0);
         form::rule(ui);
-        let width = ui.available_width();
-        let [left, right] = panel::split(ui, (width * 0.5).clamp(320.0, 640.0));
-        panel::body(ui, left, |ui| {
-            picker(
-                editor,
-                ui,
-                key,
-                &content,
-                def,
-                rigging,
-                build.as_ref(),
-                &row,
-                stance.as_deref(),
-            );
-        });
-        panel::body(ui, right, |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt(("set-playing", key))
-                .auto_shrink([false, false])
-                .show(ui, |ui| playing(editor, ui, key, def, rigging, &row));
-        });
+        picker(
+            editor,
+            ui,
+            key,
+            content,
+            def,
+            rigging,
+            build,
+            &row,
+            stance.as_deref(),
+        );
     }
 }
 
@@ -688,7 +726,11 @@ fn picker(
     }
     let clips: Vec<ClipRef> = current.map_or(Vec::new(), |cell| cell.clips().to_vec());
     let order = current.map_or(ClipOrder::Random, ClipCell::order);
-    let playing = editor.views.skeleton.view(key).clip.clone();
+    let preview = &editor.views.skeleton.view(key).preview;
+    let playing = preview
+        .clip
+        .clone()
+        .filter(|_| preview.plays == PreviewPlays::Clip);
     let mut play: Option<Clip> = None;
     if !clips.is_empty() {
         let mut kept = clips.clone();
@@ -811,57 +853,38 @@ fn picker(
         set_cell(editor, key, build, stance, row, cell);
     }
     if let Some(clip) = play {
-        let view = editor.views.skeleton.view_mut(key);
-        view.clip = Some(clip);
-        view.scrub.restart();
+        editor.views.skeleton.view_mut(key).preview.play(clip);
     }
 }
 
-/// The clip chosen in the open cell on the stage, its timeline to mark its cues on, where else it
-/// plays and, for a gait, its pace.
+/// The view's preview, and below it the clip playing there: its timeline to mark its cues on,
+/// where else it plays and, for a gait, its pace; `row` is the open cell's, when one is.
 fn playing(
     editor: &mut Editor,
     ui: &mut Ui,
     key: &str,
     def: &SkeletonDef,
     rigging: &Rigging,
-    row: &SetRow,
+    row: Option<&SetRow>,
 ) {
-    let Some(clip) = editor.views.skeleton.view(key).clip.clone() else {
+    let Some(previewed) = preview::show(editor, ui, key, def, rigging, &[], 270.0) else {
+        return;
+    };
+    let Some(found) = previewed.playing else {
         form::hint(
             ui,
-            "Click a clip of the cell to play it here and mark its cues.",
+            "Click a clip of a cell to play it here and mark its cues.",
         );
         return;
     };
-    let Some(found) = rigging.playable(&clip).cloned() else {
-        ui.colored_label(
-            theme::DANGER,
-            format!("{clip} doesn't play on this skeleton"),
-        );
-        return;
-    };
-    let props = match editor.loaded() {
-        Some(content) => {
-            super::item_picker(editor, ui, key, &content, "holding");
-            super::holding(editor, key, &content)
-        }
-        None => Vec::new(),
-    };
-    let paced = row.gait() || def.pace(&clip).is_some();
-    let below = if paced { 270.0 } else { 150.0 };
-    let size = Vec2::new(
-        ui.available_width(),
-        (ui.available_height() - below).max(140.0),
-    );
-    super::stage_rig(editor, ui, key, def, rigging, size, props);
+    let clip = found.clip.clone();
     ui.label(RichText::new(format!("{clip} · {:.2} s", found.length.0)).strong());
     let held = def.cues_of(&clip).to_vec();
-    let scrub = &mut editor.views.skeleton.view_mut(key).scrub;
+    let scrub = &mut editor.views.skeleton.view_mut(key).preview.scrub;
     if let Some(cues) = cues::timeline(ui, scrub, found.length.millis(), &held, true) {
         super::set_cues(editor, key, &clip, cues);
     }
-    if row.strikes() && !held.iter().any(|cue| cue.apex) {
+    if row.is_some_and(SetRow::strikes) && !held.iter().any(|cue| cue.apex) {
         ui.colored_label(
             theme::DANGER,
             "a hit lands at its apex: pause where it lands and press A",
@@ -874,7 +897,7 @@ fn playing(
             also.join(" · ")
         )));
     }
-    if paced {
+    if row.is_some_and(SetRow::gait) || def.pace(&clip).is_some() {
         pace(editor, ui, key, def, &clip);
     }
     editor.status.left.push(cues::KEYS.to_owned());

@@ -35,7 +35,7 @@ pub fn show(
     }
     panel::card(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel::header(ui, "Rig", "", |_| {});
+        panel::title(ui, "Rig");
         ui.add_space(4.0);
         rig(ui, key, def, rigging, content.as_ref());
     });
@@ -62,16 +62,16 @@ fn chosen(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, conten
             let mut edited = None;
             panel::card(false).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                panel::header(ui, &format!("Grip · {}", hand.name), "", |_| {});
+                panel::title(ui, &format!("Grip · {}", hand.name));
                 ui.add_space(4.0);
-                edited = super::grips::fields(ui, hand);
+                edited = super::grips::fields(editor, ui, key, index, &def.hands);
             });
             if let Some(hand) = edited {
                 super::set_hand(editor, key, index, hand);
             }
         }
         Some(Chosen::Hitbox) => {
-            let Some((path, _)) = super::wearer(editor, key, content) else {
+            let Some((path, _)) = super::preview::wearer(editor, key, content) else {
                 return;
             };
             let Some(Ok(model)) = editor.read::<ModelDef>(&path) else {
@@ -80,7 +80,7 @@ fn chosen(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, conten
             let mut sized = None;
             panel::card(false).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                panel::header(ui, &format!("Hitbox · {}", shown_path(&path)), "", |_| {});
+                panel::title(ui, &format!("Hitbox · {}", shown_path(&path)));
                 ui.add_space(4.0);
                 sized = hitbox::fields(ui, model.hitbox);
             });
@@ -154,7 +154,7 @@ fn rig(ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging, content: Op
 }
 
 fn sources(ui: &mut Ui, def: &SkeletonDef, rigging: &Rigging) {
-    panel::header(ui, "Source rigs", "", |_| {});
+    panel::title(ui, "Source rigs");
     if def.sources.is_empty() {
         form::hint(ui, "None: only clips made on our rig play.");
     }
@@ -180,7 +180,7 @@ fn sources(ui: &mut Ui, def: &SkeletonDef, rigging: &Rigging) {
 /// What the skeleton's bodies are made of: its parts, and the materials made on it with the tints
 /// each paints.
 fn body(ui: &mut Ui, key: &str, content: Option<&Content>, def: &SkeletonDef) {
-    panel::header(ui, "Body", "", |_| {});
+    panel::title(ui, "Body");
     let Some((content, id)) =
         content.and_then(|content| Some((content, content.by_path::<SkeletonDef>(key)?)))
     else {
@@ -222,7 +222,7 @@ fn sets(
     def: &SkeletonDef,
     rigging: &Rigging,
 ) {
-    panel::header(ui, "Sets", "", |_| {});
+    panel::title(ui, "Sets");
     let moves: BTreeSet<&MoveName> = def.moves().collect();
     form::kv_text(ui, "stances", def.stances.len().to_string());
     form::kv_text(ui, "builds", def.builds.len().max(1).to_string());
@@ -306,11 +306,11 @@ pub fn asked_moves(editor: &Editor, content: &Content) -> Vec<(String, MoveName)
 fn hand(editor: &Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
     let index = editor.views.skeleton.view(key).hand;
     let Some(hand) = def.hands.get(index) else {
-        panel::header(ui, "Hand", "", |_| {});
+        panel::title(ui, "Hand");
         form::hint(ui, "No hands: nothing this skeleton holds is ever shown.");
         return;
     };
-    panel::header(ui, &format!("Hand · {}", hand.name), "", |_| {});
+    panel::title(ui, &format!("Hand · {}", hand.name));
     form::kv_code(ui, "joint", hand.joint.as_str());
     form::kv_text(
         ui,
@@ -328,7 +328,7 @@ fn hand(editor: &Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
 }
 
 fn layer(editor: &Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging) {
-    panel::header(ui, "Layer", "", |_| {});
+    panel::title(ui, "Layer");
     let index = editor.views.skeleton.view(key).layers.layer;
     let Some(layer) = def.layers.get(index) else {
         form::hint(ui, "No layers.");

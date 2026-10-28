@@ -33,7 +33,6 @@ pub struct ItemViews {
 pub struct ItemView {
     pub page: ItemPage,
     pub camera: camera::OrbitCamera,
-    pub spinning: bool,
     picture: StagePicture,
     pub wield: wield::WieldView,
     pub worn: worn::WornView,
@@ -99,12 +98,12 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             let view = editor.views.item.view_mut(key);
-            let spinning = match page {
-                ItemPage::Card => None,
-                ItemPage::Wield => Some(&mut view.wield.stage.spinning),
-                ItemPage::Worn => view.worn.stage.as_mut().map(|stage| &mut stage.spinning),
-                ItemPage::Look => Some(&mut view.spinning),
+            let staged = match page {
+                ItemPage::Card => false,
+                ItemPage::Worn => view.worn.stage.is_some(),
+                ItemPage::Wield | ItemPage::Look => true,
             };
+            let toggles = &mut editor.views.toggles;
             let (picked, ()) = egui::containers::Sides::new()
                 .shrink_left()
                 .truncate()
@@ -124,10 +123,8 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                         picked
                     },
                     |ui| {
-                        if let Some(spinning) = spinning
-                            && chip::toggle(ui, "turning", *spinning).clicked()
-                        {
-                            *spinning = !*spinning;
+                        if staged {
+                            stage::toggle(ui, "turning", &mut toggles.turning);
                         }
                     },
                 );
@@ -220,9 +217,9 @@ fn drop_strip(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef, size: 
     let view = editor.views.item.view_mut(key);
     let busy = camera::navigate(ui, &response, &mut view.camera, rect.height());
     if busy && response.dragged_by(egui::PointerButton::Secondary) {
-        view.spinning = false;
+        editor.views.toggles.turning = false;
     }
-    if view.spinning {
+    if editor.views.toggles.turning {
         stage::spin(&mut view.camera, dt);
         ui.ctx().request_repaint();
     }
@@ -241,7 +238,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
     let checks = pictures(editor, key);
     panel::card(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel::header(ui, "Pictures", "", |_| {});
+        panel::title(ui, "Pictures");
         ui.add_space(4.0);
         for check in &checks {
             let thumb = editor.thumb(&ctx, &check.path);
@@ -278,7 +275,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
     ui.add_space(8.0);
     panel::card(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel::header(ui, "Look", "", |_| {});
+        panel::title(ui, "Look");
         ui.add_space(4.0);
         match look_path(editor, row) {
             Some(look) => {
@@ -355,7 +352,6 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
         ItemView {
             page: ItemPage::default(),
             camera: stage::framing(radius.max(0.4)),
-            spinning: true,
             picture: StagePicture::default(),
             wield: wield::WieldView::default(),
             worn: worn::WornView::default(),

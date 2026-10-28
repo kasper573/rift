@@ -14,7 +14,7 @@ use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::skeleton::EquipmentSlot;
 use crate::systems::actor::stance::{self, HandIndex, HandRole, StanceDef};
 use crate::systems::actor::{Appearance, appearance};
-use crate::systems::equipment::{EquipmentPlace, UnequipRequest};
+use crate::systems::equipment::{EquipmentPlace, HoldRequest, UnequipRequest};
 use crate::systems::hud::{self, Carried, HudWindow};
 use crate::systems::input::map::{self, InputAction, input};
 use crate::systems::interface::InterfaceIcon;
@@ -159,14 +159,26 @@ fn places(world: &World) -> Vec<Place> {
 
 fn empty_slot(ui: &mut Ui, world: &mut World, place: &Place) {
     let response = framed(ui, world, place, None, false, Sense::hover());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Other,
+            true,
+            format!("Empty: {}", place.label()),
+        )
+    });
+    held_where_dropped(world, place, &response);
     let content = world.resource::<Content>().clone();
     let line = match &place.slot {
         EquipmentPlace::Slot(slot) => {
             format!("Empty · what is worn on the {} goes here", spoken(slot))
         }
         EquipmentPlace::Hand(hand) => match landing(&content, *hand) {
-            Some(lands) => format!("Empty · {lands} land here"),
-            None => "Empty".to_owned(),
+            Some(lands) => {
+                format!(
+                    "Empty · {lands} land here · drop anything held here to hold it in this hand"
+                )
+            }
+            None => "Empty · drop anything held here to hold it in this hand".to_owned(),
         },
     };
     float::tooltip(&response, |ui| {
@@ -187,6 +199,7 @@ fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
         faded,
         Sense::click_and_drag(),
     );
+    held_where_dropped(world, place, &response);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
             egui::WidgetType::Button,
@@ -235,6 +248,15 @@ fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
         lines.push("Its stance has no set here: you fight as unarmed".to_owned());
     }
     hud::tooltip(&response, world, &def.name, &lines, Some(&hint));
+}
+
+/// Holds a bag's item dropped on a hand in that hand.
+fn held_where_dropped(world: &mut World, place: &Place, response: &egui::Response) {
+    if let EquipmentPlace::Hand(hand) = place.slot
+        && let Some(Carried::BagSlot(slot)) = drag::dropped::<Carried>(response)
+    {
+        world.write_message(HoldRequest { slot, hand });
+    }
 }
 
 /// A slot as wide as the hands it spans, hatched when the body cannot show what it holds.

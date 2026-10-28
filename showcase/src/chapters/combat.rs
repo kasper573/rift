@@ -181,31 +181,36 @@ fn strokes_in_turn(me: &mut Player) {
     );
 }
 
-// Fights until a monster falls, and returns what it dropped.
+// Fights until a monster falls leaving loot, and returns what it dropped: a kill may drop nothing.
 fn slay(me: &mut Player) -> Vec<ProbeGroundItem> {
-    let fallen = fallen(&me.snapshot());
-    let fell = Cell::new(None);
-    me.fight(
-        |_, actor| is_prey(actor),
-        |snapshot| {
-            let felled = snapshot
-                .actors
+    let mut fallen = fallen(&me.snapshot());
+    loop {
+        let fell = Cell::new(None);
+        me.fight(
+            |_, actor| is_prey(actor),
+            |snapshot| {
+                let felled = snapshot.actors.iter().find(|actor| {
+                    actor.health <= 0.0 && !actor.player && !fallen.contains(&actor.id)
+                });
+                fell.set(felled.map(|it| (it.id, it.at)));
+                felled.is_some()
+            },
+        );
+        let (felled, at) = fell.get().expect("a monster fell");
+        let dropped = me.try_wait_for(DROPPING, |snapshot| {
+            let near: Vec<ProbeGroundItem> = snapshot
+                .items
                 .iter()
-                .find(|actor| actor.health <= 0.0 && !actor.player && !fallen.contains(&actor.id));
-            fell.set(felled.map(|it| it.at));
-            felled.is_some()
-        },
-    );
-    let fell = fell.get().expect("a monster fell");
-    me.wait_within("what it dropped", DROPPING, |snapshot| {
-        let near: Vec<ProbeGroundItem> = snapshot
-            .items
-            .iter()
-            .filter(|item| item.at.distance(fell) < Meters(2.5))
-            .cloned()
-            .collect();
-        (!near.is_empty()).then_some(near)
-    })
+                .filter(|item| item.at.distance(at) < Meters(2.5))
+                .cloned()
+                .collect();
+            (!near.is_empty()).then_some(near)
+        });
+        if let Some(dropped) = dropped {
+            return dropped;
+        }
+        fallen.insert(felled);
+    }
 }
 
 // Swings at the nearest monster once, so it gives chase, and returns the one that does.

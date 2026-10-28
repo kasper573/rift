@@ -3,16 +3,20 @@ use std::collections::BTreeMap;
 use bevy::asset::RenderAssetUsages;
 use bevy::image::Image;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy_math::{Quat, Vec3};
+use bevy_math::{Mat4, Quat, Vec3};
 use engine::core::content::{LoadReport, fields_file};
+use engine::core::geometry::Degrees;
 use engine::core::math::Rgb;
-use engine::core::render::world::paint::{PaintLayer, bake};
+use engine::core::render::world::paint::{PaintLayer, bake, surface};
+use engine::core::units::Meters;
 use engine::systems::actor::appearance::look;
-use engine::systems::actor::skeleton::{Colours, EquipmentSlot, TintName};
+use engine::systems::actor::render;
+use engine::systems::actor::skeleton::{Colours, EquipmentSlot, LocalOffset, LocalTurn, TintName};
 use engine::systems::actor::{ActorModel, Appearance, ModelDef};
-use engine::systems::item::ItemDef;
+use engine::systems::item::{Grip, ItemDef, PropAxis};
 use serde_json::{Value, json};
-use testkit::{Declared, Game, part_file, path, png, rig, rig_clips, skin_glb};
+use strum::VariantArray;
+use testkit::{BODY, Declared, Game, part_file, path, png, rig, rig_clips, skin_glb};
 
 use crate::support::game;
 
@@ -86,6 +90,62 @@ fn a_part_that_does_not_fit_its_skeleton_is_refused_naming_the_joint() {
             .asset(&part_file("hero"), skin_glb(&tree, &[]))
             .try_load()
             .unwrap_or_else(|report| panic!("{case} loads: {report}"));
+    }
+}
+
+#[test]
+fn a_mirrored_hand_holds_a_prop_as_the_mirror_image_of_the_hand_it_mirrors_turned_over_its_symmetry()
+ {
+    let content = Game::new()
+        .skeleton_of(
+            BODY,
+            &rig_clips(),
+            json!({ "hands": [
+                { "name": "right", "joint": "hand.r" },
+                { "name": "left", "joint": "hand.l", "turn": [0.0, 180.0, 0.0], "mirrored": true },
+            ] }),
+        )
+        .model("hero", 1.8, json!([]))
+        .load();
+    let model = ActorModel::get(
+        &content,
+        content.declared::<ModelDef>("hero").expect("declared"),
+    );
+    let tree = rig();
+    let rest = |joint: &str| {
+        let mut at = tree.named(joint);
+        let mut world = Mat4::IDENTITY;
+        while let Some(node) = at {
+            world = Mat4::from_translation(tree.nodes[node].rest.translation) * world;
+            at = tree.nodes[node].parent;
+        }
+        world
+    };
+    let across_the_body = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+    for &symmetry in PropAxis::VARIANTS {
+        let grip = Grip {
+            offset: LocalOffset([Meters(0.02), Meters(-0.1), Meters(0.05)]),
+            turn: LocalTurn([Degrees(20.0), Degrees(-35.0), Degrees(50.0)]),
+            symmetry,
+        };
+        let held = |hand: usize, joint: &str| {
+            let placed = render::held_at(model, &model.hands()[hand], &grip);
+            assert!(
+                placed.scale.min_element() > 0.0,
+                "{symmetry:?}: hand {hand} holds the prop turned, never inside out"
+            );
+            rest(joint) * placed.to_matrix()
+        };
+        let across_itself = Mat4::from_scale(match symmetry {
+            PropAxis::X => Vec3::new(-1.0, 1.0, 1.0),
+            PropAxis::Y => Vec3::new(1.0, -1.0, 1.0),
+            PropAxis::Z => Vec3::new(1.0, 1.0, -1.0),
+        });
+        let mirrored = across_the_body * held(0, "hand.r") * across_itself;
+        assert!(
+            held(1, "hand.l").abs_diff_eq(mirrored, 1.0e-5),
+            "{symmetry:?}: the left hand holds the prop where the right's mirror image would"
+        );
     }
 }
 
@@ -333,6 +393,7 @@ fn a_painted_texture_lays_each_colour_as_thick_as_its_mask_is_bright() {
         channel,
         inverted: false,
         colour: Rgb(colour),
+        metal: false,
     };
     let red = layer(0, [255, 0, 0]);
     let blue = layer(1, [0, 0, 255]);
@@ -363,6 +424,33 @@ fn a_painted_texture_lays_each_colour_as_thick_as_its_mask_is_bright() {
     assert!(
         bake(&wide, &[(&black, &red)]).is_none(),
         "a mask of another size paints nothing"
+    );
+
+    assert!(
+        surface(&base, &[(&mask, &red), (&mask, &blue)]).is_none(),
+        "no metal layer leaves the surface as it is"
+    );
+    let steel = PaintLayer {
+        metal: true,
+        ..layer(0, [200, 200, 200])
+    };
+    let surface = surface(&base, &[(&mask, &steel), (&mask, &blue)]).expect("a metal surface");
+    let pixels: Vec<_> = surface
+        .data
+        .expect("pixels")
+        .chunks(4)
+        .map(<[u8]>::to_vec)
+        .collect();
+    let (rough, metal) = (|pixel: &[u8]| pixel[1], |pixel: &[u8]| pixel[2]);
+    assert_eq!(metal(&pixels[0]), 0, "bare where no mask marks the metal");
+    assert!(
+        metal(&pixels[1]) > 0 && rough(&pixels[1]) < rough(&pixels[0]),
+        "metal, and smoother, where the metal layer lies"
+    );
+    assert_eq!(
+        (metal(&pixels[2]), metal(&pixels[3])),
+        (0, 0),
+        "bare again where a later plain layer covers it"
     );
 }
 

@@ -66,6 +66,27 @@ fn the_body_travels_as_his_hips_do_but_not_as_his_whole_rig_does() {
     }
 }
 
+#[test]
+fn a_clip_made_on_our_own_rig_plays_as_it_is_its_scale_too() {
+    let ours = his(0.01);
+    let keys = clip(vec![
+        NodeKeys {
+            node: 0,
+            scale: Some(keys(Vec3::ONE, Vec3::ONE)),
+            ..NodeKeys::default()
+        },
+        moved(1, Vec3::new(0.0, 2.0, 0.0)),
+    ]);
+    let pose = retarget::own(&ours, &his(1.0), &keys).pose(&ours, keys.length.0);
+    assert_eq!(
+        pose[0].scale,
+        Vec3::ONE,
+        "a rig resting at a hundredth of its size plays at the size its clip keys"
+    );
+    assert_eq!(pose[1].translation, Vec3::new(0.0, 2.0, 0.0));
+    assert_eq!(pose[2].scale, Vec3::ONE, "a joint the clip leaves rests");
+}
+
 fn at_end(ours: &NodeTree, his: &NodeTree, keys: &ClipKeys) -> Vec<Rest> {
     let played = retarget::retarget(ours, his, &pairs(), keys);
     played.pose(ours, keys.length.0)

@@ -16,8 +16,8 @@ use bevy::render::render_resource::{
 use bevy::shader::Shader;
 
 use super::render::{ParamsUniform, SiteUniform, VfxShaderKey};
+use crate::core::render::CameraRig;
 use crate::core::render::world::sky::Daylight;
-use crate::core::render::{CameraPreferences, CameraRig};
 
 pub type CoverMaterial = ExtendedMaterial<StandardMaterial, CoverVfx>;
 
@@ -178,20 +178,18 @@ pub fn material(
     }
 }
 
-/// What the weather is made of: the moment, the player's wishes about motion, the shown area's
-/// climate and daylight, where the camera looks and who treads the ground.
+/// What the weather is made of: the moment, the shown area's climate and daylight, where the camera
+/// looks and who treads the ground.
 #[derive(SystemParam)]
 pub(super) struct Sky<'w, 's> {
     time: Res<'w, Time>,
-    preferences: Option<Res<'w, CameraPreferences>>,
     climate: Option<Res<'w, Climate>>,
     daylight: Option<Res<'w, Daylight>>,
     rig: Option<Res<'w, CameraRig>>,
     treading: Query<'w, 's, (&'static GlobalTransform, &'static Treads)>,
 }
 
-/// Every frame the covers learn the wind, the moment and who treads through them. With motion
-/// reduced the wind drops and time stands still, while treading bodies still part the blades.
+/// Every frame the covers learn the wind, the moment and who treads through them.
 pub(super) fn blow(
     sky: Sky,
     picture: Res<WeatherImage>,
@@ -200,13 +198,11 @@ pub(super) fn blow(
 ) {
     let Sky {
         time,
-        preferences,
         climate,
         daylight,
         rig,
         treading,
     } = sky;
-    let reduce_motion = preferences.is_some_and(|preferences| preferences.reduce_motion);
     let subject = rig.map_or(Vec3::ZERO, |rig| rig.target());
     let mut treads: Vec<(f32, Vec4)> = treading
         .iter()
@@ -230,13 +226,9 @@ pub(super) fn blow(
     }
     if let Some(climate) = climate {
         weather.overcast = climate.overcast;
-        if !reduce_motion {
-            weather.wind = climate.wind;
-        }
+        weather.wind = climate.wind;
     }
-    if !reduce_motion {
-        weather.time = time.elapsed_secs();
-    }
+    weather.time = time.elapsed_secs();
     if *last == weather {
         return;
     }

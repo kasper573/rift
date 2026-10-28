@@ -1,5 +1,5 @@
 //! The material every mesh of the world is drawn with: bevy's standard lighting over the model's
-//! own vertex colours, matte, a face marked as glowing shining unlit, and dithered away where the
+//! own colours, a rough dielectric with a faint sheen, a face marked as glowing shining unlit, and dithered away where the
 //! mesh stands between the camera and its subject, in every pass alike, so what fades keeps its
 //! depth, its shadow and its lighting and never shows its inside.
 
@@ -95,16 +95,26 @@ fn embedded(shader: &str) -> ShaderRef {
     ShaderRef::Path(AssetPath::from_path_buf(embedded_path!(shader)).with_source("embedded"))
 }
 
-/// The world material a mesh gets for the standard material it was loaded with: matte, lit by
-/// its vertex colours alone. It is masked at a cutoff of zero, which drops nothing by itself:
+/// How rough every surface of the world is, and how much light it reflects head-on: the rough
+/// dielectric low-poly art is painted for, which keeps a faint sheen where a face turns toward the
+/// light or away from the eye.
+pub(super) const ROUGHNESS: f32 = 0.8;
+const REFLECTANCE: f32 = 0.5;
+/// How smooth and how metallic a painted metal is: smooth enough that a facet turned to the light
+/// flashes and its neighbours darken, so plate reads as metal beside cloth and skin.
+pub(super) const METAL_ROUGHNESS: f32 = 0.45;
+pub(super) const METALLIC: f32 = 0.7;
+
+/// The world material a mesh gets for the standard material it was loaded with, every surface
+/// alike a rough dielectric over the model's own colours. It is masked at a cutoff of zero, which drops nothing by itself:
 /// bevy lets a material's shaders drop pixels only when its alpha mode says they may, and the
 /// fade drops them in every pass.
 pub fn world_material(base: StandardMaterial, full: FullPicture) -> WorldMaterial {
     ExtendedMaterial {
         base: StandardMaterial {
-            perceptual_roughness: 1.0,
+            perceptual_roughness: ROUGHNESS,
             metallic: 0.0,
-            reflectance: 0.0,
+            reflectance: REFLECTANCE,
             alpha_mode: AlphaMode::Mask(0.0),
             ..base
         },

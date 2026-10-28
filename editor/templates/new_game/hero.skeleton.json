@@ -12,7 +12,13 @@
     },
     {
       "name": "left hand",
-      "joint": "hand.l"
+      "joint": "hand.l",
+      "turn": [
+        0.0,
+        180.0,
+        0.0
+      ],
+      "mirrored": true
     }
   ],
   "base": {

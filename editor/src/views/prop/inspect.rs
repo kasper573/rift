@@ -121,7 +121,7 @@ fn footprint_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
     let mut refit = false;
     panel::card(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel::header(ui, "Footprint", Kind::of(&row.footprint).label(), |_| {});
+        panel::subtitled(ui, "Footprint", Kind::of(&row.footprint).label());
         ui.add_space(4.0);
         if let Footprint::Polygon { points, fitted_to } = &row.footprint {
             form::kv_text(ui, "corners", points.len().to_string());

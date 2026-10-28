@@ -34,7 +34,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
         let mut sized = None;
         panel::card(false).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            panel::header(ui, "Hitbox", "", |_| {});
+            panel::title(ui, "Hitbox");
             ui.add_space(4.0);
             sized = super::hitbox::fields(ui, row.hitbox);
         });
@@ -45,7 +45,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
     }
     panel::card(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel::header(ui, "Body", "", |_| {});
+        panel::title(ui, "Body");
         ui.add_space(4.0);
         form::kv_text(
             ui,

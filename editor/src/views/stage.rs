@@ -6,18 +6,19 @@ use std::sync::Arc;
 
 use engine::core::content::Content;
 use engine::core::geometry::{Degrees, Radians};
-use engine::core::math::Pos;
+use engine::core::math::{Offset, Pos};
 use engine::core::render::camera::{FOV, PITCH};
 use engine::core::units::Meters;
+use engine::systems::area::scenery::Sources;
 use engine::systems::area::{self, Kept, PROP_STAGE, Picture, Pictured};
 use ui::egui::{self, Color32, Pos2, Rect, Stroke, Ui};
-use ui::theme;
+use ui::{chip, theme};
 
 use std::collections::BTreeMap;
 
 use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::render;
-use engine::systems::actor::skeleton::Cue;
+use engine::systems::actor::skeleton::{Cue, Hand};
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::{Action, Motion, Pose};
 use engine::systems::item::{Grip, ItemId, Wear};
@@ -32,46 +33,92 @@ use crate::app::Editor;
 const TURN: Degrees = Degrees(24.0);
 const YAW: Degrees = Degrees(30.0);
 
-/// A picture of the stage, made again when the project's content moves.
+/// A picture of the stage, made again when the project's content moves, and numbered anew only
+/// when the files its scenery is made from change, so the stage stands again only then.
 #[derive(Default)]
 pub struct StagePicture {
-    made: Option<(u64, Arc<Picture>)>,
+    made: Option<Made>,
+}
+
+struct Made {
+    generation: u64,
+    number: u64,
+    sources: Sources,
+    picture: Arc<Picture>,
 }
 
 impl StagePicture {
-    /// The picture of `pictured` as `content` stands at `generation`.
+    /// The picture of `pictured` as `content` stands at `generation`, with its number.
     pub fn of(
         &mut self,
         content: &Content,
         generation: u64,
         pictured: Pictured,
     ) -> Option<(u64, Arc<Picture>)> {
-        if let Some((made, picture)) = &self.made
-            && *made == generation
+        if let Some(made) = &self.made
+            && made.generation == generation
         {
-            return Some((generation, picture.clone()));
+            return Some((made.number, made.picture.clone()));
         }
         let picture = Arc::new(area::picture(content, pictured, Kept::All)?);
-        self.made = Some((generation, picture.clone()));
-        Some((generation, picture))
+        let sources = Sources::of(content, &picture.area);
+        let number = match &self.made {
+            Some(made) if made.sources == sources => made.number,
+            _ => generation,
+        };
+        self.made = Some(Made {
+            generation,
+            number,
+            sources,
+            picture: picture.clone(),
+        });
+        Some((number, picture))
     }
 }
 
-/// What a view's stage keeps from frame to frame: where its camera looks from, whether it turns on
-/// its own, and the picture it stands things on.
+/// What every stage of the editor shows, the same in every tab for as long as the editor runs.
+pub struct StageToggles {
+    /// Whether stages turn on their own until the pointer takes them.
+    pub turning: bool,
+    pub hitbox: bool,
+    pub grips: bool,
+    /// Whether a rig's joints and the lines between them are drawn over its body.
+    pub skeleton: bool,
+}
+
+impl Default for StageToggles {
+    fn default() -> StageToggles {
+        StageToggles {
+            turning: false,
+            hitbox: true,
+            grips: true,
+            skeleton: true,
+        }
+    }
+}
+
+/// A chip labelled `label` flipping `on`.
+pub fn toggle(ui: &mut Ui, label: &str, on: &mut bool) {
+    if chip::toggle(ui, label, *on).clicked() {
+        *on = !*on;
+    }
+}
+
+/// What a view's stage keeps from frame to frame: where its camera looks from, how far from there
+/// it looks this frame to follow what walks on it, and the picture it stands things on.
 #[derive(Default)]
 pub struct StageState {
     pub camera: OrbitCamera,
-    pub spinning: bool,
+    pub following: Offset<Meters>,
     picture: StagePicture,
 }
 
 impl StageState {
-    /// A stage framing a thing `radius` metres big, turning on its own when `spinning`.
-    pub fn framing(radius: f32, spinning: bool) -> StageState {
+    /// A stage framing a thing `radius` metres big.
+    pub fn framing(radius: f32) -> StageState {
         StageState {
             camera: framing(radius),
-            spinning,
+            following: Offset::zero(),
             picture: StagePicture::default(),
         }
     }
@@ -118,17 +165,20 @@ pub fn turntable(
     show_picture(editor, ui, &painter, rect, view_key);
     let dt = ui.input(|i| i.stable_dt).min(0.1);
     let busy = camera::navigate(ui, &response, &mut state.camera, rect.height());
+    let toggles = &mut editor.views.toggles;
     if busy && response.dragged_by(egui::PointerButton::Secondary) {
-        state.spinning = false;
+        toggles.turning = false;
     }
     if response.double_clicked() {
         state.camera.target = center();
     }
-    if state.spinning {
+    if toggles.turning {
         spin(&mut state.camera, dt);
         ui.ctx().request_repaint();
     }
-    let canvas = AreaCanvas::new(rect, state.camera, picture.1.area.clone());
+    let mut camera = state.camera;
+    camera.target += state.following;
+    let canvas = AreaCanvas::new(rect, camera, picture.1.area.clone());
     Some(Turntable {
         rect,
         response,
@@ -188,7 +238,6 @@ pub fn holding(model: ModelId) -> StageLayers {
         model,
         action: Action::Idle,
         stepped: false,
-        reduce_motion: false,
     }
 }
 
@@ -249,7 +298,6 @@ pub fn request(
     let Some(content) = project.content.clone() else {
         return;
     };
-    let generation = project.generation;
     let pixels_per_point = ui.ctx().pixels_per_point();
     let size = [
         (rect.width() * pixels_per_point).round().max(1.0) as u32,
@@ -262,7 +310,6 @@ pub fn request(
         picture,
         made,
         content,
-        generation,
         stroke: None,
         ghost: None,
         cast,
@@ -275,37 +322,46 @@ pub fn handle(painter: &egui::Painter, at: Pos2, hot: bool, color: Color32) {
     painter.circle_stroke(at, 5.0, Stroke::new(1.5, color));
 }
 
-/// The props `model` holds showing `shown` in its hands, hung as the game hangs them.
+/// The props `model` holds showing `shown` in its hands, hung as the game hangs them from `hands`,
+/// which are the model's own unless a view is editing them.
 pub fn props(
     content: &Content,
     model: &ActorModel,
+    hands: &[Hand],
     shown: &BTreeMap<HandIndex, ItemId>,
 ) -> Vec<StandingProp> {
     render::hung(content, model, shown)
         .into_iter()
-        .filter_map(|(hand, item)| {
+        .filter_map(|(at, item)| {
             let Some(Wear::Held { grip, .. }) = item.get(content).wear() else {
                 return None;
             };
-            prop_in_hand(content, model, hand, item, grip)
+            Some(prop_in_hand(
+                content,
+                model,
+                at,
+                hands.get(at.index())?,
+                item,
+                grip,
+            ))
         })
         .collect()
 }
 
-/// The prop of `item` hanging from `hand` of `model` by `grip`, which may be a grip being edited.
+/// The prop of `item` hanging from `hand`, the hand at `at` of `model`, by `grip`, either of which
+/// may be being edited.
 pub fn prop_in_hand(
     content: &Content,
     model: &ActorModel,
-    hand: HandIndex,
+    at: HandIndex,
+    hand: &Hand,
     item: ItemId,
     grip: &Grip,
-) -> Option<StandingProp> {
-    let held_by = hand;
-    let hand = model.hands().get(hand.index())?;
-    Some(StandingProp {
-        hand: held_by,
+) -> StandingProp {
+    StandingProp {
+        hand: at,
         joint: hand.joint.0.clone(),
         model: item.get(content).look.get(content).model.path(),
         transform: render::held_at(model, hand, grip),
-    })
+    }
 }

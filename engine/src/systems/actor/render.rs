@@ -38,7 +38,7 @@ use crate::core::vfx::cover::Treads;
 use crate::core::vfx::render::SiteExtent;
 use crate::systems::area::{self, Area};
 use crate::systems::equipment::{self, Equipment};
-use crate::systems::item::{Grip, ItemId, Wear};
+use crate::systems::item::{Grip, ItemId, PropAxis, Wear};
 use crate::systems::movement::RenderPosition;
 use crate::systems::screen::ClientScreen;
 
@@ -892,23 +892,40 @@ fn hangs_from(
 }
 
 /// Where a prop held by `grip` sits under the joint of `hand` on `model`: moved and turned as the
-/// hand and the grip say, and as big as it lies on the ground.
+/// hand and the grip say, and as big as it lies on the ground. A mirrored hand holds it as the
+/// mirror image of the way the hands grips are fitted to hold it, mirrored again across the axis
+/// it is its own mirror image across, which leaves it turned over, never inside out.
 pub fn held_at(model: &ActorModel, hand: &Hand, grip: &Grip) -> Transform {
     let rest = rest_scale(model, hand);
-    Transform::from_scale(Vec3::splat(1.0 / rest))
-        * hold(&hand.offset, &hand.turn)
-        * hold(&grip.offset, &grip.turn)
+    let mut held = grip_frame(hand) * placed(&grip.offset, &grip.turn);
+    if hand.mirrored {
+        held *= Mat4::from_scale(match grip.symmetry {
+            PropAxis::X => Vec3::new(-1.0, 1.0, 1.0),
+            PropAxis::Y => Vec3::new(1.0, -1.0, 1.0),
+            PropAxis::Z => Vec3::new(1.0, 1.0, -1.0),
+        });
+    }
+    Transform::from_scale(Vec3::splat(1.0 / rest)) * Transform::from_matrix(held)
+}
+
+/// The grip frame of `hand` in its joint's frame, its +Z out of the back of the hand whether or
+/// not the hand is mirrored.
+pub fn grip_frame(hand: &Hand) -> Mat4 {
+    let frame = placed(&hand.offset, &hand.turn);
+    if hand.mirrored {
+        frame * Mat4::from_scale(Vec3::new(1.0, 1.0, -1.0))
+    } else {
+        frame
+    }
 }
 
 /// A move and turn in a joint's frame: the turn's degrees about x, y and z in that order.
-fn hold(offset: &LocalOffset, turn: &LocalTurn) -> Transform {
+fn placed(offset: &LocalOffset, turn: &LocalTurn) -> Mat4 {
     let [x, y, z] = turn.array().map(f32::to_radians);
-    Transform::from_translation(Vec3::from(offset.array())).with_rotation(Quat::from_euler(
-        EulerRot::XYZ,
-        x,
-        y,
-        z,
-    ))
+    Mat4::from_rotation_translation(
+        Quat::from_euler(EulerRot::XYZ, x, y, z),
+        Vec3::from(offset.array()),
+    )
 }
 
 /// How much the rig scales the hand's joint at rest, which a prop held there undoes so it keeps the

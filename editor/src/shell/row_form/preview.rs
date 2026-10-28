@@ -405,14 +405,14 @@ fn draw_preview(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, pose: 
         &content,
         &appearance::look(&content, &dressed.appearance, &dressed.worn),
     );
-    let props = view_stage::props(&content, model, &dressed.hands);
+    let props = view_stage::props(&content, model, model.hands(), &dressed.hands);
     let view_key = format!("preview:{table}/{key}");
     let mut state = editor
         .views
         .preview
         .stages
         .remove(&view_key)
-        .unwrap_or_else(|| StageState::framing(model.hitbox().height.0 * 1.1, true));
+        .unwrap_or_else(|| StageState::framing(model.hitbox().height.0 * 1.1));
     let width = ui.available_width();
     let turntable = view_stage::turntable(
         editor,
@@ -468,7 +468,7 @@ fn dressed(content: &Content, table: &str, key: &str) -> Option<Dressed> {
             Some(Dressed {
                 appearance: npc.appearance.clone(),
                 worn: BTreeMap::new(),
-                hands: held::listed(content, model.hands().len(), &npc.held),
+                hands: held::listed(content, model.hands().len(), &npc.held).hands,
                 plate: npc
                     .nameplate()
                     .map(|role| PlateLabel::npc(&npc.name, role, hostile)),

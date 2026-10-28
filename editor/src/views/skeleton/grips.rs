@@ -1,12 +1,13 @@
 //! The hands' grip frames on the skeleton view's stage, whatever its page: each a point and axes on
-//! its hand's joint with +Y along the palm, in the joint's own axes so items need no correction of
-//! their own beyond their grip. A click on a frame picks its hand for the inspector to set by
+//! its hand's joint, laid out as every skeleton's are (see `Hand`) so an item's grip holds in any
+//! hand. A click on a frame picks its hand for the inspector to set by
 //! number; the picked one is moved with G and turned with R, kept to one of its axes with X, Y or Z,
 //! kept by a click and undone by Esc.
 
 use bevy::math::{EulerRot, Mat4, Quat, Vec3};
 use engine::core::geometry::Degrees;
 use engine::core::units::Meters;
+use engine::systems::actor::render;
 use engine::systems::actor::skeleton::{Hand, LocalOffset, LocalTurn};
 use ui::egui::{self, Pos2, Stroke, Ui, Vec2};
 use ui::{form, theme};
@@ -15,23 +16,34 @@ use super::Staged;
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 
-/// Whether the stage shows the grip frames, and the one being moved or turned.
+/// The grip frame being moved or turned on a stage, or set by a number field being dragged, held
+/// here until it is kept so the file is written once rather than on every frame of the move.
+#[derive(Default)]
 pub struct Grips {
-    pub shown: bool,
     grab: Option<Grab>,
+    dragged: Option<(usize, Hand)>,
 }
 
-impl Default for Grips {
-    fn default() -> Grips {
-        Grips {
-            shown: true,
-            grab: None,
+impl Grips {
+    /// `hands` with the one being moved, turned or dragged as it stands so far.
+    pub fn working(&self, hands: &[Hand]) -> Vec<Hand> {
+        let mut working = hands.to_vec();
+        let edited = match (&self.grab, &self.dragged) {
+            (Some(grab), _) => Some((grab.index, &grab.edited)),
+            (None, Some((index, hand))) => Some((*index, hand)),
+            (None, None) => None,
+        };
+        if let Some((index, hand)) = edited
+            && let Some(at) = working.get_mut(index)
+        {
+            *at = hand.clone();
         }
+        working
     }
 }
 
-/// A grip frame being moved or turned: how, kept to which of its axes, and the hand and pointer as
-/// they were when it began.
+/// A grip frame being moved or turned: how, kept to which of its axes, the hand and pointer as they
+/// were when it began, and the hand as the pointer has moved it since.
 #[derive(Clone, Debug)]
 struct Grab {
     turning: bool,
@@ -39,6 +51,13 @@ struct Grab {
     from: Option<Pos2>,
     index: usize,
     hand: Hand,
+    edited: Hand,
+}
+
+/// A hand's grip frame as its number fields leave it: still being dragged, or settled.
+enum Edited {
+    Dragging(Hand),
+    Settled(Hand),
 }
 
 /// What the pointer did to the grip frames this frame: picked a hand's, or took the click to keep a
@@ -56,8 +75,8 @@ const TURN_PER_POINT: f32 = 0.5;
 /// How long the drawn axes of a grip frame are, in metres.
 const AXIS_LENGTH: f32 = 0.15;
 
-/// Draws every hand's grip frame over `staged`, the `chosen` hand's moved or turned as the keys and
-/// pointer ask, and gives what the pointer did to them.
+/// Draws every hand's grip frame over `staged` as `hands` stand, the `chosen` hand's moved or
+/// turned as the keys and pointer ask, and gives what the pointer did to them.
 pub(super) fn overlay(
     editor: &mut Editor,
     ui: &Ui,
@@ -67,9 +86,11 @@ pub(super) fn overlay(
     chosen: Option<usize>,
 ) -> Touched {
     let mut touched = Touched::default();
+    let shown = editor.views.toggles.grips;
     let grips = &mut editor.views.skeleton.view_mut(key).grips;
-    if !grips.shown {
+    if !shown {
         grips.grab = None;
+        grips.dragged = None;
         return touched;
     }
     if grips
@@ -110,34 +131,69 @@ pub(super) fn overlay(
     touched
 }
 
-/// The hand's grip frame as number fields, giving the hand as they leave it when one changed.
-pub fn fields(ui: &mut Ui, hand: &Hand) -> Option<Hand> {
+/// The grip frame of the hand at `index` among `hands` as number fields, as the view's stage shows
+/// it, holding what a drag on one leaves until the drag lets go; gives the hand once it is settled.
+pub fn fields(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    key: &str,
+    index: usize,
+    hands: &[Hand],
+) -> Option<Hand> {
+    let working = editor.views.skeleton.view(key).grips.working(hands);
+    let edited = drag_fields(ui, working.get(index)?);
+    let grips = &mut editor.views.skeleton.view_mut(key).grips;
+    match edited? {
+        Edited::Dragging(hand) => {
+            grips.dragged = Some((index, hand));
+            None
+        }
+        Edited::Settled(hand) => {
+            grips.dragged = None;
+            Some(hand)
+        }
+    }
+}
+
+fn drag_fields(ui: &mut Ui, hand: &Hand) -> Option<Edited> {
     let mut edited = hand.clone();
+    let mut responses = Vec::new();
     form::kv(ui, "offset · m", |ui| {
         for axis in &mut edited.offset.0 {
-            ui.add(
-                egui::DragValue::new(&mut axis.0)
-                    .speed(0.002)
-                    .fixed_decimals(3),
+            responses.push(
+                ui.add(
+                    egui::DragValue::new(&mut axis.0)
+                        .speed(0.002)
+                        .fixed_decimals(3),
+                ),
             );
         }
     });
     form::kv(ui, "turn · °", |ui| {
         for axis in &mut edited.turn.0 {
-            ui.add(
-                egui::DragValue::new(&mut axis.0)
-                    .speed(0.5)
-                    .range(-180.0..=180.0)
-                    .fixed_decimals(1),
+            responses.push(
+                ui.add(
+                    egui::DragValue::new(&mut axis.0)
+                        .speed(0.5)
+                        .range(-180.0..=180.0)
+                        .fixed_decimals(1),
+                ),
             );
         }
     });
     form::hint(
         ui,
-        "+Y runs along the palm, in the joint's own axes. G moves the grip frame on the stage, R \
+        "In the closed fist, +Y runs along the handle out of the thumb's side and +Z out of the back \
+         of the hand. G moves the grip frame on the stage, R \
          turns it, X, Y or Z keep it to one axis; click to keep, Esc to undo.",
     );
-    (edited != *hand).then_some(edited)
+    if responses.iter().any(egui::Response::drag_stopped) {
+        Some(Edited::Settled(edited))
+    } else if responses.iter().any(egui::Response::dragged) {
+        Some(Edited::Dragging(edited))
+    } else {
+        (edited != *hand).then_some(Edited::Settled(edited))
+    }
 }
 
 /// The chosen hand's grip frame drawn on its joint, moved or turned with the pointer once G or R
@@ -178,6 +234,7 @@ fn grab(
             from: pointer,
             index,
             hand: hand.clone(),
+            edited: hand.clone(),
         });
     }
     if let (Some(axis), Some(grab)) = (axis, grips.grab.as_mut()) {
@@ -203,16 +260,16 @@ fn grab(
         edited.offset = shifted(staged, joint, &grab, moved);
     }
     let origin = draw_frame(ui, staged, joint, &edited, grab.axis, true);
+    let grips = &mut editor.views.skeleton.view_mut(key).grips;
     if cancel {
-        editor.views.skeleton.view_mut(key).grips.grab = None;
-        super::set_hand(editor, key, index, grab.hand);
+        grips.grab = None;
         return (origin, false);
     }
     if keep {
-        editor.views.skeleton.view_mut(key).grips.grab = None;
-    }
-    if edited != *hand {
+        grips.grab = None;
         super::set_hand(editor, key, index, edited);
+    } else if let Some(grab) = &mut grips.grab {
+        grab.edited = edited;
     }
     ui.ctx().request_repaint();
     (origin, keep)
@@ -228,7 +285,7 @@ fn draw_frame(
     axis: Option<usize>,
     chosen: bool,
 ) -> Pos2 {
-    let frame = joint * held(hand);
+    let frame = joint * render::grip_frame(hand);
     let at = frame.w_axis.truncate();
     let painter = ui.painter_at(staged.rect);
     let origin = staged.project(at);
@@ -255,20 +312,11 @@ fn draw_frame(
     origin
 }
 
-/// The move and turn a hand's grip frame makes in its joint's frame.
-fn held(hand: &Hand) -> Mat4 {
-    let [x, y, z] = hand.turn.array().map(f32::to_radians);
-    Mat4::from_rotation_translation(
-        Quat::from_euler(EulerRot::XYZ, x, y, z),
-        Vec3::from(hand.offset.array()),
-    )
-}
-
 /// The grip's offset once the pointer has moved `moved` since the grab began: along its kept axis,
 /// or across the screen's plane, in the joint's own units.
 fn shifted(staged: &Staged, joint: Mat4, grab: &Grab, moved: Vec2) -> LocalOffset {
     let start = Vec3::from(grab.hand.offset.array());
-    let at = (joint * held(&grab.hand)).w_axis.truncate();
+    let at = (joint * render::grip_frame(&grab.hand)).w_axis.truncate();
     let origin = staged.project(at);
     let along = |axis: usize| {
         let step = joint.col(axis).truncate() * 0.1;
@@ -316,7 +364,7 @@ fn least_move(screen: &[Vec2], moved: Vec2) -> Vec<f32> {
 /// The grip's turn once the pointer has moved `moved` since the grab began: about its kept axis, or
 /// about the one facing the camera most.
 fn turned(staged: &Staged, joint: Mat4, grab: &Grab, moved: Vec2) -> LocalTurn {
-    let at = (joint * held(&grab.hand)).w_axis.truncate();
+    let at = (joint * render::grip_frame(&grab.hand)).w_axis.truncate();
     let origin = staged.project(at);
     let axis = grab.axis.unwrap_or_else(|| {
         (0..3)

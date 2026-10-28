@@ -9,7 +9,7 @@ use super::{AreaId, AreaObject, AreaTag};
 use crate::core::content::Content;
 use crate::core::math::{Pos, Rect};
 use crate::core::render::transition::WorldViewSystems;
-use crate::core::render::world::sky::{self, Daylight};
+use crate::core::render::world::sky::Daylight;
 use crate::core::render::world::terrain;
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
 use crate::core::units::{MeterSize, Meters};
@@ -118,8 +118,7 @@ fn light_area(world: &mut World, area: &super::Area) {
     else {
         return;
     };
-    let sun = scenery::light(world, area, daylight, stood, camera);
-    world.entity_mut(camera).insert(sky::haze(sun));
+    scenery::light(world, area, daylight, stood, camera);
     if let Some(standing) = world.resource_mut::<ShownArea>().0.as_mut() {
         standing.shone = Some(daylight);
     }

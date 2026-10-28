@@ -278,7 +278,7 @@ pub fn change(world: &mut World, actor: Entity, appearance: Appearance) {
             }
         }
         let shown = Held {
-            hands: held::listed(&content, model.hands().len(), &items),
+            hands: held::listed(&content, model.hands().len(), &items).hands,
         };
         world.entity_mut(actor).insert(shown);
     }

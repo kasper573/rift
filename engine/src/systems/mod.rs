@@ -242,6 +242,7 @@ pub fn server_app(
                     dialogue::requests,
                     shop::requests,
                     quest::requests,
+                    equipment::hold,
                     equipment::unequip,
                     skill::reset::expire,
                     actor::playing::progress,

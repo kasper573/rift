@@ -33,12 +33,12 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Ve
     let view = editor.views.prop.view_mut(key);
     let busy = camera::navigate(ui, &response, &mut view.turntable, rect.height());
     if busy && response.dragged_by(egui::PointerButton::Secondary) {
-        view.spinning = false;
+        editor.views.toggles.turning = false;
     }
     if response.double_clicked() {
         view.turntable.target = stage::center();
     }
-    if view.spinning {
+    if editor.views.toggles.turning {
         stage::spin(&mut view.turntable, dt);
         ui.ctx().request_repaint();
     }

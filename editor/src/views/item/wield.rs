@@ -11,7 +11,7 @@ use engine::systems::actor::render;
 use engine::systems::actor::skeleton::SkeletonDef;
 use engine::systems::actor::stance::{HandRole, PropHand, StanceDef};
 use engine::systems::actor::{Action, ModelDef, Motion, Pose, held};
-use engine::systems::item::{Grip, ItemDef, ItemKind, Wear};
+use engine::systems::item::{Grip, ItemDef, ItemKind, PropAxis, Wear};
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::{controls, form, panel, theme};
@@ -44,7 +44,7 @@ impl Default for WieldView {
                 pose: Pose::Idle,
             },
             scrub: Scrub::default(),
-            stage: StageState::framing(1.1, false),
+            stage: StageState::framing(1.1),
         }
     }
 }
@@ -146,11 +146,24 @@ fn fields(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, grip: 
                 }
             });
             ui.end_row();
+            ui.label(theme::muted("alike across"));
+            controls::combo(("wield-symmetry", key))
+                .selected_text(<&str>::from(edited.symmetry))
+                .width(180.0)
+                .show_ui(ui, |ui| {
+                    for &axis in PropAxis::VARIANTS {
+                        ui.selectable_value(&mut edited.symmetry, axis, <&str>::from(axis));
+                    }
+                });
+            ui.end_row();
         });
     form::hint(
         ui,
-        "The grip moves and turns the prop in the hand's frame, where +Y runs along the palm, until \
-         its handle sits in it.",
+        "The grip moves and turns the prop in the hand's grip frame, where +Y runs along the handle \
+         out of the thumb's side and +Z out of the back of the hand, until its handle sits in the \
+         fist and its face, if it has one, looks out of the back of the hand. A mirrored hand \
+         holds it turned over the axis of its own it is alike across, so it is never held inside \
+         out.",
     );
     if picked != stance_path || edited != grip {
         let label = if picked != stance_path {
@@ -289,10 +302,13 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
     let props: Vec<StandingProp> = content
         .by_path::<ItemDef>(key)
         .map(|item| {
-            let shown = held::listed(&content, model.hands().len(), &[item]);
+            let shown = held::listed(&content, model.hands().len(), &[item]).hands;
             render::hung(&content, model, &shown)
                 .into_keys()
-                .filter_map(|hand| stage::prop_in_hand(&content, model, hand, item, &grip))
+                .filter_map(|at| {
+                    let hand = model.hands().get(at.index())?;
+                    Some(stage::prop_in_hand(&content, model, at, hand, item, &grip))
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -334,7 +350,7 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let def = stance.get(&content);
     panel::card(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel::header(ui, "Wield", "", |_| {});
+        panel::title(ui, "Wield");
         ui.add_space(4.0);
         form::kv_text(
             ui,
