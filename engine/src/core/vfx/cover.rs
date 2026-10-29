@@ -10,13 +10,14 @@ use bevy::pbr::{
 };
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AsBindGroup, Extent3d, RenderPipelineDescriptor, SpecializedMeshPipelineError,
+    AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
     TextureDimension, TextureFormat,
 };
 use bevy::shader::Shader;
 
 use super::render::{ParamsUniform, SiteUniform, VfxShaderKey};
 use crate::core::render::CameraRig;
+use crate::core::render::world::cover::Spread;
 use crate::core::render::world::sky::Daylight;
 
 pub type CoverMaterial = ExtendedMaterial<StandardMaterial, CoverVfx>;
@@ -33,7 +34,19 @@ pub struct CoverVfx {
     pub params: ParamsUniform,
     #[texture(102, sample_type = "float", filterable = false)]
     pub weather: Handle<Image>,
+    #[uniform(103)]
+    pub strewn: StrewnUniform,
     pub shader: Handle<Shader>,
+}
+
+/// What every strewn copy a material draws shares: which piece of its cover it is and the colours
+/// its tint lies between. Off on a sheet's or blades' material, whose vertices carry their own.
+#[derive(ShaderType, Clone, Copy, Debug, Default)]
+pub struct StrewnUniform {
+    pub color_from: Vec4,
+    pub color_to: Vec4,
+    pub piece: u32,
+    pub on: u32,
 }
 
 /// The weather as every cover reads it: a picture a texel per value, painted over in place each
@@ -151,16 +164,27 @@ impl MaterialExtension for CoverVfx {
 }
 
 /// A cover's material, coloured by its vertices: blended, for a sheet or blades that write no
-/// depth and take no ink, or masked, for strewn props that stand solid like any other. Both of a
-/// face's sides are drawn and lit alike by the normal its piece carries, never turned over on the
-/// far side, since foliage points its normals where its light should fall rather than off its faces.
+/// depth and take no ink, or masked, for the copies of a prop `strewn` as it spreads, which stand
+/// solid like any other. Both of a face's sides are drawn and lit alike by the normal its piece
+/// carries, never turned over on the far side, since foliage points its normals where its light
+/// should fall rather than off its faces.
 pub fn material(
     site: SiteUniform,
     params: ParamsUniform,
     shader: Handle<Shader>,
     weather: Handle<Image>,
-    alpha_mode: AlphaMode,
+    strewn: Option<&Spread>,
 ) -> CoverMaterial {
+    let alpha_mode = match strewn {
+        Some(_) => AlphaMode::Mask(0.5),
+        None => AlphaMode::Blend,
+    };
+    let strewn = strewn.map_or_else(StrewnUniform::default, |spread| StrewnUniform {
+        color_from: spread.color.0.to_vec4(),
+        color_to: spread.color.1.to_vec4(),
+        piece: spread.piece,
+        on: 1,
+    });
     ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::WHITE,
@@ -176,6 +200,7 @@ pub fn material(
             site,
             params,
             weather,
+            strewn,
             shader,
         },
     }

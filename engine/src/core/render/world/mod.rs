@@ -53,6 +53,7 @@ impl Plugin for WorldScenePlugin {
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
         .init_resource::<material::MaterialCache>()
         .init_resource::<cover::TexturedCovers>()
+        .init_resource::<cover::CopyMeshes>()
         .init_resource::<clouds::CloudSheet>()
         .init_resource::<decal::DecalMesh>()
         .init_resource::<super::GroundHeights>()

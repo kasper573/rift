@@ -1,13 +1,15 @@
 //! The geometry a ground's cover is laid out as, from the paint: a sheet over the painted cells,
 //! blades standing up from the terrain, or copies of a prop strewn over it. Every vertex carries,
 //! in its second uv, how far up the geometry it stands (0 at the root, 1 at the top) and how
-//! heavily the material is painted there, for the shader that moves and paints it.
+//! heavily the material is painted there, for the shader that moves and paints it. A strewn
+//! copy is an instance of its prop's own mesh, which carries only how far up the prop a vertex
+//! stands; the rest of its marks and its tint ride on its tag.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::color::Mix;
 use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode};
 use bevy::light::NotShadowCaster;
-use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
+use bevy::mesh::{Indices, MeshTag, PrimitiveTopology, VertexAttributeValues};
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 
@@ -56,22 +58,23 @@ pub struct Piece {
     pub material: Option<Handle<GltfMaterial>>,
 }
 
-/// Where a strewn copy of a prop stands, the colour it is tinted, how heavily its cell is painted
-/// and the piece and seed it carries.
+/// Where a strewn copy of a prop stands, how far its tint lies from its spread's first colour to
+/// its second (0 to 1), how heavily its cell is painted and the seed it carries.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Place {
     pub transform: Transform,
-    pub tint: LinearRgba,
+    pub tint: f32,
     pub weight: f32,
-    pub piece: u32,
     pub seed: f32,
 }
 
-/// A chunk waiting for the prop it strews to load: where every copy stands.
+/// A piece of a cover waiting for the prop it strews to load: where every copy stands, chunk by
+/// chunk, and the material that draws them.
 #[derive(Component)]
 pub struct Strewing {
     pub gltf: Handle<Gltf>,
-    pub places: Vec<Place>,
+    pub chunks: Vec<Vec<Place>>,
+    pub material: Handle<CoverMaterial>,
 }
 
 /// What a cover's vertex tells its shader beside its place and colour: `measure`, how far up its
@@ -105,16 +108,30 @@ impl Mark {
 
     fn pack(self) -> [f32; 2] {
         let weight = self.weight.clamp(0.0, 1.0 - 1.0 / (SEEDS + 1.0));
-        let steps = (self.seed.clamp(0.0, 1.0) * SEEDS).floor() + self.piece as f32 * PIECE_STEP;
+        let steps = seed_steps(self.seed) + self.piece as f32 * PIECE_STEP;
         [self.measure, weight + steps]
     }
 }
 
-/// A copy's own draw from its spread: its scale and colour.
-fn draw(spread: &Spread, rng: &mut Rng) -> (f32, LinearRgba) {
+impl Place {
+    /// The copy's tag: its weight, its seed and its tint, a byte each from the lowest, which the
+    /// cover header turns into the marks and the colour a sheet's or a blade's vertices carry.
+    pub fn tag(&self) -> MeshTag {
+        let byte = |share: f32| (share.clamp(0.0, 1.0) * 255.0).round() as u32;
+        MeshTag::new(
+            byte(self.weight) | (seed_steps(self.seed) as u32) << 8 | byte(self.tint) << 16,
+        )
+    }
+}
+
+fn seed_steps(seed: f32) -> f32 {
+    (seed.clamp(0.0, 1.0) * SEEDS).floor()
+}
+
+/// A copy's own draw from its spread: its scale, and how far its colour lies between the spread's.
+fn draw(spread: &Spread, rng: &mut Rng) -> (f32, f32) {
     let size = spread.size.0 + (spread.size.1 - spread.size.0) * rng.rand_float();
-    let color = spread.color.0.mix(&spread.color.1, rng.rand_float());
-    (size, color)
+    (size, rng.rand_float())
 }
 
 /// A sheet over the patch's painted cells: a quad per cell, each vertex weighted by how heavily
@@ -218,7 +235,8 @@ pub fn blades(patch: &Patch, shape: &BladeShape, spread: &Spread, seed: u64) -> 
     for (at, weight) in places(patch, spread.per_square_meter, &mut rng) {
         let ground = patch.heights.height_at(at).0;
         let yaw = rng.rand_float() * std::f32::consts::TAU;
-        let (size, color) = draw(spread, &mut rng);
+        let (size, tint) = draw(spread, &mut rng);
+        let color = spread.color.0.mix(&spread.color.1, tint);
         let height = shape.height * size;
         let half = shape.width / 2.0 * size;
         let (sin, cos) = yaw.sin_cos();
@@ -275,25 +293,21 @@ pub fn strew_places(patch: &Patch, spread: &Spread, seed: u64) -> Vec<Place> {
                 },
                 tint,
                 weight,
-                piece: spread.piece,
                 seed: rng.rand_float(),
             }
         })
         .collect()
 }
 
-/// The `pieces` of a prop copied to every place, a mesh for each material the model draws them
-/// with: positions and normals carried through the piece's and the copy's transforms, the
-/// piece's uv kept, its colours (white where it has none) tinted by the place's, and every vertex
-/// marked how far up the whole prop it stands. Empty when there is nothing to copy.
-pub fn strewn(pieces: &[Piece], places: &[Place]) -> Vec<(Option<Handle<GltfMaterial>>, Mesh)> {
+/// The meshes a strewn copy of a prop is drawn with, one for each material the model draws its
+/// `pieces` with: positions and normals carried through the piece's transform, the piece's uv and
+/// colours kept (white where it has none, so a copy's tint has colours to fall on), and every
+/// vertex marked how far up the whole prop it stands. Empty when there is nothing to copy.
+pub fn copy_meshes(pieces: &[Piece]) -> Vec<(Option<Handle<GltfMaterial>>, Mesh)> {
     let placed: Vec<(&Piece, PieceVertices)> = pieces
         .iter()
         .filter_map(|piece| Some((piece, piece_vertices(piece)?)))
         .collect();
-    if placed.is_empty() || places.is_empty() {
-        return Vec::new();
-    }
     let height = placed
         .iter()
         .flat_map(|(_, piece)| piece.positions.iter().map(|position| position.y))
@@ -307,87 +321,80 @@ pub fn strewn(pieces: &[Piece], places: &[Place]) -> Vec<(Option<Handle<GltfMate
     }
     materials
         .into_iter()
-        .filter_map(|material| {
+        .map(|material| {
             let drawn: Vec<&PieceVertices> = placed
                 .iter()
                 .filter(|(piece, _)| piece.material == material)
                 .map(|(_, vertices)| vertices)
                 .collect();
-            Some((material, copied(&drawn, places, height)?))
+            (material, merged(&drawn, height))
         })
         .collect()
 }
 
-/// The pieces copied to every place, each vertex marked how far up `height` it stands.
-fn copied(placed: &[&PieceVertices], places: &[Place], height: f32) -> Option<Mesh> {
-    if placed.is_empty() {
-        return None;
-    }
+/// The pieces as one mesh, each vertex marked how far up `height` it stands.
+fn merged(pieces: &[&PieceVertices], height: f32) -> Mesh {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
     let mut tips = Vec::new();
     let mut colors = Vec::new();
     let mut indices = Vec::new();
-    for place in places {
-        for piece in placed {
-            let base = positions.len() as u32;
-            for (position, normal) in piece.positions.iter().zip(&piece.normals) {
-                positions.push(place.transform.transform_point(*position).to_array());
-                normals.push(
-                    (place.transform.rotation * *normal)
-                        .normalize_or_zero()
-                        .to_array(),
-                );
-                tips.push(
-                    Mark {
-                        measure: (position.y / height).clamp(0.0, 1.0),
-                        weight: place.weight,
-                        piece: place.piece,
-                        seed: place.seed,
-                    }
-                    .pack(),
-                );
+    for piece in pieces {
+        let base = positions.len() as u32;
+        positions.extend(piece.positions.iter().map(|position| position.to_array()));
+        normals.extend(piece.normals.iter().map(|normal| normal.to_array()));
+        tips.extend(piece.positions.iter().map(|position| {
+            Mark {
+                measure: (position.y / height).clamp(0.0, 1.0),
+                weight: 0.0,
+                piece: 0,
+                seed: 0.0,
             }
-            uvs.extend(piece.uvs.iter().copied());
-            let tint = place.tint.to_f32_array();
-            match &piece.colors {
-                Some(piece_colors) => colors.extend(
-                    piece_colors
-                        .iter()
-                        .map(|color| std::array::from_fn(|channel| color[channel] * tint[channel])),
-                ),
-                None => colors.extend(std::iter::repeat_n(tint, piece.positions.len())),
-            }
-            indices.extend(piece.indices.iter().map(|index| base + index));
+            .pack()
+        }));
+        uvs.extend(piece.uvs.iter().copied());
+        match &piece.colors {
+            Some(piece_colors) => colors.extend(piece_colors.iter().copied()),
+            None => colors.extend(std::iter::repeat_n([1.0; 4], piece.positions.len())),
         }
+        indices.extend(piece.indices.iter().map(|index| base + index));
     }
-    Some(assemble(
-        positions,
-        normals,
-        uvs,
-        tips,
-        Some(colors),
-        indices,
-    ))
+    assemble(positions, normals, uvs, tips, Some(colors), indices)
 }
 
-/// The cover materials standing in for a chunk's own under each texture a prop's material
-/// draws with, shared by every chunk alike.
+/// The cover materials standing in for a piece's own under each texture a prop's material draws
+/// with, shared by every piece alike.
 #[derive(Resource, Default)]
 pub(super) struct TexturedCovers(
     HashMap<(AssetId<CoverMaterial>, AssetId<Image>), Handle<CoverMaterial>>,
 );
 
-/// Forgets the textured cover materials made for chunk materials that are gone, so the pictures
-/// they draw with go with them.
+/// The meshes each loaded prop's copies are drawn with, made once however many covers strew it.
+#[derive(Resource, Default)]
+pub(super) struct CopyMeshes(HashMap<AssetId<Gltf>, Vec<CopyMesh>>);
+
+/// A mesh a prop's copies are drawn with, and the material of the prop's it is drawn in.
+#[derive(Clone)]
+struct CopyMesh {
+    material: Option<Handle<GltfMaterial>>,
+    mesh: Handle<Mesh>,
+}
+
+/// Forgets the textured cover materials made for cover materials that are gone, so the pictures
+/// they draw with go with them, and the meshes made from props that are gone.
 pub(super) fn forget_dropped(
-    mut events: MessageReader<AssetEvent<CoverMaterial>>,
+    mut covers: MessageReader<AssetEvent<CoverMaterial>>,
+    mut props: MessageReader<AssetEvent<Gltf>>,
     mut textured: ResMut<TexturedCovers>,
+    mut copies: ResMut<CopyMeshes>,
 ) {
-    let gone = super::dropped(&mut events);
+    let gone = super::dropped(&mut covers);
     if !gone.is_empty() {
         textured.0.retain(|(cover, _), _| !gone.contains(cover));
+    }
+    for prop in super::dropped(&mut props) {
+        copies.0.remove(&prop);
     }
 }
 
@@ -401,25 +408,23 @@ pub(super) struct StrewnAssets<'w> {
     gltf_materials: Res<'w, Assets<GltfMaterial>>,
     covers: ResMut<'w, Assets<CoverMaterial>>,
     textured: ResMut<'w, TexturedCovers>,
+    copies: ResMut<'w, CopyMeshes>,
 }
 
-/// A chunk whose prop has loaded gets a mesh for each of the prop's materials, drawn with the
-/// chunk's material in that material's texture, so a copy keeps the shapes its texture cuts out.
+/// A piece whose prop has loaded gets a copy of the prop at every place, an instance of each of
+/// the prop's meshes drawn with the piece's material in that mesh's texture, so a copy keeps the
+/// shapes its texture cuts out.
 pub(super) fn strew_loaded(
     mut assets: StrewnAssets,
-    waiting: Query<(Entity, &Strewing, &MeshMaterial3d<CoverMaterial>)>,
+    waiting: Query<(Entity, &Strewing)>,
     mut commands: Commands,
 ) {
-    for (entity, strewing, cover) in &waiting {
-        let Some(gltf) = assets.gltfs.get(&strewing.gltf) else {
-            continue;
-        };
-        let Some(pieces) = pieces_of(gltf, &assets.nodes, &assets.gltf_meshes, &assets.meshes)
-        else {
+    for (entity, strewing) in &waiting {
+        let Some(meshes) = assets.copy_meshes(&strewing.gltf) else {
             continue;
         };
         commands.entity(entity).remove::<Strewing>();
-        for (index, (material, mesh)) in strewn(&pieces, &strewing.places).into_iter().enumerate() {
+        for CopyMesh { material, mesh } in meshes {
             let texture = material.and_then(|material| {
                 assets
                     .gltf_materials
@@ -428,29 +433,58 @@ pub(super) fn strew_loaded(
                     .clone()
             });
             let drawn = match texture {
-                Some(texture) => assets.textured_cover(&cover.0, texture),
-                None => cover.0.clone(),
+                Some(texture) => assets.textured_cover(&strewing.material, texture),
+                None => strewing.material.clone(),
             };
-            let mesh = Mesh3d(assets.meshes.add(mesh));
-            if index == 0 {
-                commands
-                    .entity(entity)
-                    .insert((mesh, MeshMaterial3d(drawn)));
-            } else {
-                commands.spawn((
-                    mesh,
-                    MeshMaterial3d(drawn),
-                    Transform::default(),
-                    Visibility::default(),
-                    NotShadowCaster,
-                    ChildOf(entity),
-                ));
+            // Copies hang under a node per chunk rather than straight under the piece: a node
+            // whose transform is set has all its children visited, and the area's root is set
+            // whenever anything under it moves, so a piece's thousands of copies would otherwise
+            // be walked every frame.
+            for places in &strewing.chunks {
+                let chunk = commands
+                    .spawn((Transform::default(), Visibility::default(), ChildOf(entity)))
+                    .id();
+                let copies: Vec<_> = places
+                    .iter()
+                    .map(|place| {
+                        (
+                            Mesh3d(mesh.clone()),
+                            MeshMaterial3d(drawn.clone()),
+                            place.transform,
+                            place.tag(),
+                            NotShadowCaster,
+                            ChildOf(chunk),
+                        )
+                    })
+                    .collect();
+                commands.spawn_batch(copies);
             }
         }
     }
 }
 
 impl StrewnAssets<'_> {
+    fn copy_meshes(&mut self, gltf: &Handle<Gltf>) -> Option<Vec<CopyMesh>> {
+        if let Some(made) = self.copies.0.get(&gltf.id()) {
+            return Some(made.clone());
+        }
+        let pieces = pieces_of(
+            self.gltfs.get(gltf)?,
+            &self.nodes,
+            &self.gltf_meshes,
+            &self.meshes,
+        )?;
+        let made: Vec<CopyMesh> = copy_meshes(&pieces)
+            .into_iter()
+            .map(|(material, mesh)| CopyMesh {
+                material,
+                mesh: self.meshes.add(mesh),
+            })
+            .collect();
+        self.copies.0.insert(gltf.id(), made.clone());
+        Some(made)
+    }
+
     fn textured_cover(
         &mut self,
         cover: &Handle<CoverMaterial>,

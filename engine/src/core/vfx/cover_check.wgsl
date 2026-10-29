@@ -10,6 +10,14 @@ struct VertexOutput {
 
 @group(3) @binding(100) var<uniform> site: Site;
 @group(3) @binding(101) var<uniform> params: Params;
+@group(3) @binding(103) var<uniform> strewn: Strewn;
+
+struct Strewn {
+    color_from: vec4<f32>,
+    color_to: vec4<f32>,
+    piece: u32,
+    on: u32,
+}
 
 var<private> lit: vec4<f32>;
 var<private> shine: vec3<f32>;

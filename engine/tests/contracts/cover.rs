@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::render::world::cover::{
-    BladeShape, Mark, Patch, Piece, Spread, blades, sheet, strew_places, strewn,
+    BladeShape, Mark, Patch, Piece, Spread, blades, copy_meshes, sheet, strew_places,
 };
 use engine::core::units::Meters;
 
@@ -240,48 +240,35 @@ fn strewn_copies_of_a_prop_stand_where_the_paint_puts_them_marked_how_far_up_the
         transform: Transform::from_scale(Vec3::splat(0.5)),
         material: None,
     };
-    let (_, mesh) = strewn(&[stem], &places).pop().expect("copies");
-    assert_eq!(mesh.count_vertices(), places.len() * 3);
-    for (copy_colors, place) in colors(&mesh).chunks(3).zip(&places) {
-        let tint = place.tint.to_f32_array();
-        assert!(
-            copy_colors
-                .iter()
-                .all(|color| (color[1] - 0.5 * tint[1]).abs() < 1e-5 && color[0] == tint[0]),
-            "a copy's colours are its prop's tinted by its place: {copy_colors:?} by {tint:?}"
-        );
-        assert!(between(tint, DARK, LIGHT));
-    }
-    for ((copy, copy_marks), place) in positions(&mesh)
-        .chunks(3)
-        .zip(marks(&mesh).chunks(3))
-        .zip(&places)
-    {
+    let (_, mesh) = copy_meshes(&[stem]).pop().expect("a mesh to copy");
+    assert!(
+        colors(&mesh)
+            .iter()
+            .all(|color| *color == [1.0, 0.5, 1.0, 1.0]),
+        "a copy keeps its prop's colours, for its tint to fall on"
+    );
+    for place in &places {
         let root = place.transform.translation;
         assert!(
-            (Vec3::from_array(copy[2]) - root).length() < 0.6,
-            "a copy's top at {:?} is far from its root at {root:?}",
-            copy[2]
+            (root.y - heights.height_at(Pos::new(root.x, root.z)).0).abs() < 1e-4,
+            "a copy at {root:?} stands on the ground"
         );
         assert_eq!(place.weight, 1.0);
-        assert!(
-            copy_marks
-                .iter()
-                .all(|mark| (mark.seed - place.seed).abs() < 0.004
-                    && mark.weight > 0.99
-                    && mark.piece == 1),
-            "a copy carries its place's seed and weight: {copy_marks:?} for {place:?}"
-        );
+        assert!((0.0..=1.0).contains(&place.tint) && (0.0..=1.0).contains(&place.seed));
+        for (mark, position) in marks(&mesh).iter().zip(positions(&mesh)) {
+            let point = place.transform.transform_point(Vec3::from_array(position));
+            assert!(
+                (mark.measure - (point.y - root.y) / 0.5).abs() < 1e-4,
+                "a point {} m up its copy is marked {} of the way",
+                point.y - root.y,
+                mark.measure
+            );
+        }
     }
-    for (mark, position) in marks(&mesh).iter().zip(positions(&mesh)) {
-        assert!(
-            (mark.measure
-                - (position[1] - heights.height_at(Pos::new(position[0], position[2])).0) / 0.5)
-                .abs()
-                < 0.3,
-            "a point {} m up is marked {} of the way",
-            position[1],
-            mark.measure
-        );
-    }
+    let seeds: std::collections::HashSet<u32> =
+        places.iter().map(|place| place.seed.to_bits()).collect();
+    assert!(
+        seeds.len() > places.len() / 2,
+        "each copy has a seed of its own"
+    );
 }

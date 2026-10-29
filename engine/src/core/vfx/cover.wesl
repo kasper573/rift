@@ -22,6 +22,14 @@ import bevy_pbr::render::{pbr_fragment::pbr_input_from_standard_material, pbr_fu
 
 @group(3) @binding(100) var<uniform> site: Site;
 @group(3) @binding(101) var<uniform> params: Params;
+@group(3) @binding(103) var<uniform> strewn: Strewn;
+
+struct Strewn {
+    color_from: vec4<f32>,
+    color_to: vec4<f32>,
+    piece: u32,
+    on: u32,
+}
 
 var<private> lit: vec4<f32>;
 var<private> shine: vec3<f32>;
@@ -76,6 +84,14 @@ fn mark(uv_b: vec2<f32>) {
     salt = (steps - f32(part) * 256.0) / 255.0;
 }
 
+// A strewn copy's marks as a sheet's or a blade's vertices carry them: how far up its prop it
+// stands from its mesh, its weight and seed from its tag, and its piece from its material.
+fn copy_marks(measure: f32, tag: u32) -> vec2<f32> {
+    let weight = min(f32(tag & 255u) / 255.0, 255.0 / 256.0);
+    let seed = f32((tag >> 8u) & 255u);
+    return vec2<f32>(measure, weight + seed + f32(strewn.piece) * 256.0);
+}
+
 @vertex
 fn vertex(vertex_in: Vertex) -> VertexOutput {
     var out: VertexOutput;
@@ -89,9 +105,16 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     @if(VERTEX_UVS_A) {
         out.uv = vertex.uv;
     }
+    var tint = vec4<f32>(1.0);
     @if(VERTEX_UVS_B) {
-        mark(vertex.uv_b);
-        out.uv_b = vertex.uv_b;
+        var marks = vertex.uv_b;
+        if strewn.on != 0u {
+            let tag = mesh_functions::get_tag(vertex_in.instance_index);
+            marks = copy_marks(vertex.uv_b.x, tag);
+            tint = mix(strewn.color_from, strewn.color_to, f32((tag >> 16u) & 255u) / 255.0);
+        }
+        mark(marks);
+        out.uv_b = marks;
     }
     spot = placed.xyz;
     read_weather();
@@ -116,7 +139,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
         }
     }
     @if(VERTEX_COLORS) {
-        out.color = vertex.color;
+        out.color = vertex.color * tint;
     }
     @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
         out.instance_index = vertex_in.instance_index;
