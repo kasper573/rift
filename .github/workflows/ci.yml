@@ -5,22 +5,21 @@ on:
     branches: ['**']
   workflow_dispatch:
 
-# Branch runs cancel superseded runs; main runs queue so deploys never overlap or cancel mid-flight.
+# Branch runs cancel superseded runs; main runs queue so releases never overlap or cancel mid-flight.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
-  packages: write
 
 env:
   # rust-cache restores compiled dependencies; workspace crates rebuild every run, so their
   # incremental artifacts would only bloat the cache.
   CARGO_INCREMENTAL: "0"
 
-# Every push runs lint, test, e2e and the per-platform archive side by side, each on a runner of its
-# own; main deploys once lint, test and e2e pass, and releases the downloads once the archive does too.
+# Every push runs lint, test and every platform's binaries side by side, each on a runner of its own;
+# main releases the binaries once all of them pass.
 jobs:
   lint:
     runs-on: ubuntu-24.04
@@ -52,220 +51,11 @@ jobs:
       - name: Test
         run: just test
 
-  e2e:
-    # Not the newest image: ubuntu-26.04 ships GStreamer 1.28, whose device monitor starts its
-    # providers on a thread (gstdevicemonitor.c, since 1.28.0) and, when stopped while a provider is
-    # still failing to start, frees the provider list the stopping side is about to walk. A runner has
-    # no audio devices, so providers fail every time, and WebKit stops its capture device monitor from
-    # within that very start, so Playwright's WebKit web process dies with "double free or corruption"
-    # on any page that touches audio. Back to the newest image once Ubuntu ships a GStreamer with the
-    # fix; https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12396 tracks that code.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      # main e2es the build it deploys, so it ships exactly what the e2e ran on; branches the one
-      # quicker to build.
-      FLAVOR: ${{ github.ref == 'refs/heads/main' && 'deploy' || 'fast' }}
-      DOCKER_REGISTRY: ghcr.io
-      DOCKER_USERNAME: ${{ github.repository_owner }}
-      DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-      DOCKER_REGISTRY_URL: ghcr.io/${{ github.repository_owner }}
-      DOCKER_IMAGE_VERSION: ${{ github.sha }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The stack's images that don't package the build need minutes of a compiler of their own
-      # (Caddy's), so they're made from the start, while the rest sets up and compiles.
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-      - name: Make the stack's images
-        run: |
-          {
-            status=0
-            just e2e-stack-images || status=$?
-            echo "$status" > "$RUNNER_TEMP/images.status"
-          } > "$RUNNER_TEMP/images.log" 2>&1 &
-      - uses: ./.github/actions/setup
-        with:
-          deps: e2e
-          cache: e2e-${{ env.FLAVOR }}
-          recipes: build wasm e2e-server e2e-client
-      - name: Build
-        # While the client compiles, the browsers download and, once the server is built, the services
-        # the website waits on start. Starting them ahead is only a head start: the next step starts
-        # the stack for real.
-        run: |
-          (cd e2e && npm ci && npx playwright install --with-deps chrome firefox webkit ffmpeg) > "$RUNNER_TEMP/browsers.log" 2>&1 &
-          browsers=$!
-          just e2e-server "$FLAVOR"
-          {
-            until [ -s "$RUNNER_TEMP/images.status" ]; do sleep 1; done
-            just e2e-stack-ahead
-          } > "$RUNNER_TEMP/ahead.log" 2>&1 &
-          ahead=$!
-          just e2e-client "$FLAVOR"
-          status=0
-          wait "$browsers" || status=$?
-          wait "$ahead" || echo "::warning::the stack's head start failed; starting it is up to the next step"
-          for log in images browsers ahead; do
-            echo "::group::$log"
-            cat "$RUNNER_TEMP/$log.log"
-            echo "::endgroup::"
-          done
-          exit "$status"
-      - name: Start the stack
-        # rift.lan only resolves on a LAN; map it to loopback for the browsers that take no
-        # host-resolver flag (Firefox/WebKit).
-        run: |
-          echo "127.0.0.1 rift.lan auth.rift.lan game-server.rift.lan grafana.rift.lan" | sudo tee -a /etc/hosts
-          # Docker Hub rate-limits anonymous CI pulls intermittently; retry past a transient failure.
-          for attempt in 1 2 3; do
-            just e2e-stack-up && break
-            [ "$attempt" = 3 ] && { echo "::error::stack failed to start after $attempt attempts"; exit 1; }
-            echo "::warning::stack-up attempt $attempt failed (likely a transient Docker Hub pull); retrying"
-            sleep 20
-          done
-      # Its own step so the duration reflects the tests, not the stack build.
-      - name: End-to-end test
-        env:
-          E2E_ALL_BROWSERS: "1"
-        run: just e2e-run
-      - name: Save e2e artifacts
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: e2e-artifacts
-          path: |
-            e2e/playwright-report/
-            e2e/test-results/
-      - name: Save stack logs
-        if: failure()
-        run: just logs > /tmp/stack.log 2>&1 || true
-      - name: Upload stack logs
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: stack-logs
-          path: /tmp/stack.log
-      - name: Build and push the stack images
-        if: ${{ github.ref == 'refs/heads/main' }}
-        # The website image bakes in the wasm bundle; the game-server image its server binary — both the
-        # exact artifacts the e2e just ran against, repackaged for the prod registry (a docker cache hit).
-        run: |
-          echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
-          just push-images
-
-  # Branches e2e the fast build, whose cache, like every other, only main writes, while main e2es the
-  # deploy build, so main builds the fast one here for them.
-  fast-build:
-    if: ${{ github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup
-        with:
-          deps: e2e
-          cache: e2e-fast
-          recipes: build wasm e2e-server e2e-client
-      - name: Build
-        run: |
-          just e2e-server fast
-          just e2e-client fast
-
-  deploy:
-    needs: [lint, test, e2e]
-    if: ${{ github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      DOCKER_REGISTRY: ghcr.io
-      DOCKER_USERNAME: ${{ github.repository_owner }}
-      DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-      DOCKER_REGISTRY_URL: ghcr.io/${{ github.repository_owner }}
-      DOCKER_IMAGE_VERSION: ${{ github.sha }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Upload docker runtime dependencies
-        uses: burnett01/rsync-deployments@155b6d6c1219ab2224c20c58d423a3f1b850395f # v9
-        with:
-          switches: -avz --delete --exclude content/
-          path: docker/
-          remote_path: ~/docker
-          remote_host: ${{ secrets.PROD_SSH_HOST }}
-          remote_user: ${{ secrets.PROD_SSH_USERNAME }}
-          remote_key: ${{ secrets.PROD_SSH_KEY }}
-      # Synced in place with its symlinks followed, so the running game server keeps the folder it
-      # mounted until the stack restarts on the new files.
-      - name: Upload the game
-        uses: burnett01/rsync-deployments@155b6d6c1219ab2224c20c58d423a3f1b850395f # v9
-        with:
-          switches: -avzL --delete
-          path: example_game/
-          remote_path: ~/docker/content
-          remote_host: ${{ secrets.PROD_SSH_HOST }}
-          remote_user: ${{ secrets.PROD_SSH_USERNAME }}
-          remote_key: ${{ secrets.PROD_SSH_KEY }}
-      - name: Deploy via SSH action
-        id: deploy
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
-        continue-on-error: true
-        with:
-          host: ${{ secrets.PROD_SSH_HOST }}
-          username: ${{ secrets.PROD_SSH_USERNAME }}
-          key: ${{ secrets.PROD_SSH_KEY }}
-          script: |
-            set -euo pipefail
-            cd ~/docker
-
-            echo "COMPOSE_ENV=prod" > .env
-            echo "DOCKER_REGISTRY_URL=\"${{ env.DOCKER_REGISTRY_URL }}\"" >> .env
-            echo "DOCKER_IMAGE_VERSION=\"${{ env.DOCKER_IMAGE_VERSION }}\"" >> .env
-            echo "RIFT_DOMAIN=\"${{ vars.RIFT_DOMAIN }}\"" >> .env
-
-            echo ${{ env.DOCKER_PASSWORD }} | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ env.DOCKER_USERNAME }} --password-stdin
-            docker network inspect rift >/dev/null 2>&1 || docker network create rift
-            compose="docker compose -f docker-compose.yaml -f docker-compose.prod.yaml --profile prod"
-            $compose pull
-            $compose down
-            if ! $compose up -d --remove-orphans --no-build; then
-              echo "🚨 docker-compose up failed — gathering all container logs"
-              mkdir -p logs
-              for id in $(docker ps -aq); do
-                name=$(docker inspect --format='{{.Name}}' "$id" | sed 's#^/##')
-                docker logs "$id" &> "logs/${name}.log" || true
-              done
-              tar czf deploy-failure-logs.tar.gz logs/
-              exit 1
-            fi
-            docker image prune -f
-      - name: Download deployment logs from server
-        if: ${{ steps.deploy.outcome == 'failure' }}
-        uses: nicklasfrahm/scp-action@ff9723c16c864e37adf7ef4111362b86905bfb04 # v1.0.1
-        with:
-          direction: download
-          host: ${{ secrets.PROD_SSH_HOST }}
-          username: ${{ secrets.PROD_SSH_USERNAME }}
-          key: ${{ secrets.PROD_SSH_KEY }}
-          source: ~/docker/deploy-failure-logs.tar.gz
-          target: ./deploy-failure-logs.tar.gz
-          insecure_ignore_fingerprint: true
-      - name: Save deployment logs
-        if: ${{ steps.deploy.outcome == 'failure' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: deploy-failure-logs
-          path: ./deploy-failure-logs.tar.gz
-      - name: Fail workflow on deploy error
-        if: ${{ steps.deploy.outcome == 'failure' }}
-        run: |
-          echo "🚨 Deployment failed — see deploy-failure-logs artifact for details."
-          exit 1
-
-  # The downloads a release ships, per platform from the same commit: editor, game-server,
-  # desktop-client, the example content and the rift.env that plays on production, each its own file
-  # (`just release-files`). Every push builds them, so a change that breaks a platform fails on its
+  # Every push builds every platform's binaries, so a change that breaks a platform fails on its
   # branch; main's runs hand them on to the release. Linux builds on the oldest supported runner, as
-  # a binary needs at least the glibc it was linked against.
-  archive:
+  # a binary needs at least the glibc it was linked against, and it alone builds what only runs on
+  # Linux: the web-server, game-server-profiling and the browser client.
+  binaries:
     strategy:
       fail-fast: false
       matrix:
@@ -282,24 +72,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
         with:
-          cache: archive-${{ matrix.platform }}
-          recipes: archive
-      - name: Build the downloads
+          deps: dist
+          cache: dist-${{ matrix.platform }}
+          recipes: dist wasm archives
+      - name: Build the binaries
         shell: bash
-        run: just release-files "${{ vars.RIFT_DOMAIN }}" target/release-files
+        run: |
+          just dist target/dist
+          just archives "${{ matrix.platform }}" target/dist target/archives
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ github.ref == 'refs/heads/main' }}
         with:
-          name: release-files-${{ matrix.platform }}
-          path: target/release-files/
+          name: archives-${{ matrix.platform }}
+          path: target/archives/
           compression-level: 0
 
-  # main's downloads, one release per platform, tagged with the platform's name, which the website's
-  # downloads page links to by file name. Each is drafted with every file before it replaces the last,
-  # so a release is always a whole set from one commit, and each editor finds the binaries of its own
-  # build beside it.
+  # One release per push to main, tagged by its day and commit, holding every platform's archives.
+  # Releases are never replaced or deleted, so a game pinned to any of them keeps working.
   release:
-    needs: [lint, test, e2e, archive]
+    needs: [lint, test, binaries]
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -311,21 +102,12 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: release-files-*
-          path: release-files
-      - name: Publish the releases
+          pattern: archives-*
+          path: archives
+          merge-multiple: true
+      - name: Publish the release
         run: |
-          for files in release-files/release-files-*; do
-            platform=${files#release-files/release-files-}
-            draft="$platform-${GITHUB_SHA::8}"
-            gh release list --limit 100 --json tagName,isDraft \
-              --jq ".[] | select(.isDraft and (.tagName | startswith(\"$platform-\"))) | .tagName" \
-              | xargs -r -n1 gh release delete --yes
-            gh release create "$draft" "$files"/* --draft --target "$GITHUB_SHA" \
-              --title "Rift for $platform" \
-              --notes "The editor, game server, desktop client, example game and rift.env for $platform, built from $GITHUB_SHA."
-            if gh release view "$platform" > /dev/null 2>&1; then
-              gh release delete "$platform" --cleanup-tag --yes
-            fi
-            gh release edit "$draft" --tag "$platform" --draft=false --latest=false
-          done
+          tag="$(date -u +%Y.%m.%d)-${GITHUB_SHA::8}"
+          gh release create "$tag" archives/* --target "$GITHUB_SHA" \
+            --title "rift $tag" \
+            --notes "Every binary of rift, built from $GITHUB_SHA: an archive per binary and platform, and the browser client's wasm-client.tar.gz. Extract any of them into one folder to use them together."

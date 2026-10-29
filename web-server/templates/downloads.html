@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page">
+  <div class="guide">
+    <nav class="contents" aria-label="On this page">
+      <h2>On this page</h2>
+      <ol>
+        <li><a href="#download">Download</a></li>
+        <li><a href="#play">Play on {{ domain }}</a></li>
+        <li><a href="#rift-env">rift.env</a></li>
+      </ol>
+    </nav>
+
+    <article class="downloads">
+      <h1 id="download">Download {{ nav.game }}</h1>
+      <p class="lead">Play {{ nav.game }} on your computer.</p>
+
+      <div class="tabs" role="tablist" aria-label="Platform" hidden>
+        {% for download in platforms %}
+        <button
+          type="button"
+          role="tab"
+          id="tab-{{ download.platform.id }}"
+          aria-controls="panel-{{ download.platform.id }}"
+          aria-selected="false"
+          tabindex="-1"
+          data-platform="{{ download.platform.id }}"
+        >{{ download.platform.name }}</button>
+        {% endfor %}
+      </div>
+
+      {% for download in platforms %}
+      <section
+        class="platform"
+        role="tabpanel"
+        id="panel-{{ download.platform.id }}"
+        aria-labelledby="tab-{{ download.platform.id }}"
+        data-platform="{{ download.platform.id }}"
+      >
+        <h2>{{ download.platform.name }} <span class="detail">{{ download.platform.detail }}</span></h2>
+
+        <table class="files">
+          <tbody>
+          <tr>
+            <td><a href="{{ download.client }}"><code>{{ download.archive }}</code></a></td>
+            <td>The game, as the program <code>desktop-client</code>.</td>
+          </tr>
+          <tr>
+            <td><a href="/rift.env"><code>rift.env</code></a></td>
+            <td>Tells <code>desktop-client</code> where to connect. Keep it next to it.</td>
+          </tr>
+          </tbody>
+        </table>
+
+        <h3>Before the first start</h3>
+        {% if download.platform.id == "windows-x86_64" %}
+        <p>
+          Extract <code>{{ download.archive }}</code>, then double-click <code>desktop-client</code> to start it.
+          The program isn't signed, so Windows may say it protected your PC: click <em>More info</em>, then
+          <em>Run anyway</em>.
+        </p>
+        {% else %}
+        <p>Open a terminal in your download folder, and extract <code>{{ download.archive }}</code>:</p>
+        <pre><code>tar -xzf {{ download.archive }}</code></pre>
+        {% if download.platform.id == "macos-arm64" %}
+        <p>The program isn't signed, so macOS blocks it. Unblock it:</p>
+        <pre><code>xattr -d com.apple.quarantine desktop-client</code></pre>
+        {% endif %}
+        <p>Then start it from the terminal: <code>./desktop-client</code>.</p>
+        {% endif %}
+      </section>
+      {% endfor %}
+
+      <section id="play">
+        <h2>Play on {{ domain }}</h2>
+        <ol class="steps">
+          <li>Download the archive and <code>rift.env</code> into the same folder, and extract the archive
+            there, so <code>desktop-client</code> lands next to <code>rift.env</code>.</li>
+          <li>Start <code>desktop-client</code>. The first start downloads the game, which takes a while.
+            Later starts only download what changed.</li>
+          <li>Click <em>Sign in</em>, or <em>Create account</em> if you have no {{ domain }} account yet. Your
+            browser opens the sign-in page. Sign in there, then switch back to the game.</li>
+        </ol>
+        <p>It's the same account you <a href="/play">play in the browser</a> with.</p>
+      </section>
+
+      <section id="rift-env">
+        <h2>rift.env</h2>
+        <p>
+          <code>desktop-client</code> reads <code>rift.env</code> from its own folder. Each line sets one value, as
+          <code>NAME=value</code>. Every value is required, unless it says optional. A relative path counts from
+          the folder <code>rift.env</code> is in. An environment variable with the same name wins over the line
+          in <code>rift.env</code>.
+        </p>
+        <dl class="values">
+          <dt><code>RIFT_CLIENT_GAME_SERVER_URL</code></dt>
+          <dd>The HTTP address of the game server to play on.</dd>
+          <dt><code>RIFT_CLIENT_GAME_SERVER_WS_URL</code></dt>
+          <dd>The WebSocket address of the same game server.</dd>
+          <dt><code>RIFT_CLIENT_AUTH</code></dt>
+          <dd><code>oidc</code>: sign in with a {{ domain }} account, in your browser. <code>fake</code>: sign
+            in with any name, on a server that lets anyone play as anyone.</dd>
+          <dt><code>RIFT_CLIENT_PROFILE_DIR</code></dt>
+          <dd>The folder where <code>desktop-client</code> keeps your preferences and the downloaded game.</dd>
+          <dt><code>RIFT_CLIENT_EXIT_ON_STDIN_EOF</code></dt>
+          <dd><code>true</code> quits <code>desktop-client</code> when the program that started it closes its
+            input. Otherwise <code>false</code>.</dd>
+          <dt><code>RIFT_CLIENT_ACCESS_TOKEN</code> <span class="optional">optional</span></dt>
+          <dd>Signs in with this token and skips the sign-in screen.</dd>
+          <dt><code>RIFT_CLIENT_PROBE</code> <span class="optional">optional</span></dt>
+          <dd>Only for automated tests.</dd>
+        </dl>
+
+        <h3>For {{ domain }} accounts</h3>
+        <p>
+          Read only when <code>RIFT_CLIENT_AUTH</code> is <code>oidc</code>. They point at the sign-in service
+          of {{ domain }}, so keep them as downloaded.
+        </p>
+        <dl class="values">
+          <dt><code>RIFT_AUTH_CLIENT_ID</code></dt>
+          <dd>The name the sign-in service knows the game by.</dd>
+          <dt><code>RIFT_AUTH_AUTHORIZATION_URI</code></dt>
+          <dd>The page your browser opens to sign in.</dd>
+          <dt><code>RIFT_AUTH_SIGN_UP_URI</code></dt>
+          <dd>The page your browser opens to create an account.</dd>
+          <dt><code>RIFT_AUTH_TOKEN_URI</code></dt>
+          <dd>Where <code>desktop-client</code> finishes a sign-in.</dd>
+        </dl>
+      </section>
+    </article>
+  </div>
+</div>
+<script>
+  // Without script every platform's section shows; with it, one at a time behind tabs, starting on
+  // the visitor's own platform.
+  (function () {
+    const tablist = document.querySelector(".tabs");
+    const tabs = Array.from(tablist.querySelectorAll('[role="tab"]'));
+    const panels = Array.from(document.querySelectorAll('[role="tabpanel"]'));
+    const choose = (platform, focus) => {
+      for (const tab of tabs) {
+        const chosen = tab.dataset.platform === platform;
+        tab.setAttribute("aria-selected", String(chosen));
+        tab.tabIndex = chosen ? 0 : -1;
+        if (chosen && focus) tab.focus();
+      }
+      for (const panel of panels) panel.hidden = panel.dataset.platform !== platform;
+    };
+    const system = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.userAgent;
+    const own = /win/i.test(system) ? "windows" : /mac/i.test(system) ? "macos" : "linux";
+    const start = tabs.find((tab) => tab.dataset.platform.startsWith(own)) || tabs[0];
+    tablist.hidden = false;
+    choose(start.dataset.platform, false);
+    tablist.addEventListener("click", (event) => {
+      const tab = event.target.closest('[role="tab"]');
+      if (tab) choose(tab.dataset.platform, false);
+    });
+    tablist.addEventListener("keydown", (event) => {
+      const at = tabs.indexOf(document.activeElement);
+      const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+      if (at < 0 || !step) return;
+      event.preventDefault();
+      choose(tabs[(at + step + tabs.length) % tabs.length].dataset.platform, true);
+    });
+  })();
+</script>
+{% endblock %}

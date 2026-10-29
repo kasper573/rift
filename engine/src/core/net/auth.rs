@@ -22,12 +22,21 @@ pub struct TokenClaims {
     #[serde(default)]
     pub sub: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub azp: Option<String>,
-    #[serde(default)]
     pub preferred_username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 impl TokenClaims {
+    /// What the game calls the account: OIDC guarantees only `sub`, so the friendlier claims come
+    /// first where the provider sets them.
+    pub fn display_name(&self) -> String {
+        self.preferred_username
+            .clone()
+            .or_else(|| self.name.clone())
+            .unwrap_or_else(|| self.sub.clone())
+    }
+
     // Without verifying the signature: the server verifies the token independently on every
     // session request.
     pub fn read_unverified(token: &str) -> Option<TokenClaims> {

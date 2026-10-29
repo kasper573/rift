@@ -120,12 +120,12 @@ pub fn coverage(content: &Content, name: &MoveName) -> Vec<MoveCoverage> {
                 skeleton: skeleton.shown_name().to_owned(),
                 cells: columns
                     .filter_map(|stance| {
-                        let (clip, rung) = skeleton.named(None, stance, &motion, Pose::Idle)?;
+                        let (clip, naming) = skeleton.named(None, stance, &motion, Pose::Idle)?;
                         let set =
                             stance.map_or("base".to_owned(), |stance| content.name_of(stance));
                         let own = match stance {
-                            Some(_) => rung == Rung::Stance,
-                            None => rung == Rung::Base,
+                            Some(_) => naming.rung == Rung::Stance,
+                            None => naming.rung == Rung::Base,
                         };
                         let names: Vec<String> = clip
                             .clips()

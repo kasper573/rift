@@ -1,9 +1,0 @@
-{
-  "footprint": {
-    "type": "circle",
-    "radius": 0.6
-  },
-  "materials": {
-    "style": "world/props/materials/leaves.prop_material.json"
-  }
-}

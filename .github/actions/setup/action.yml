@@ -2,7 +2,7 @@ name: Set up the build environment
 description: Pinned toolchain, just, the Linux system libraries cargo can't provide, and the build cache.
 inputs:
   deps:
-    description: "What the job runs, which decides the Linux system packages it gets: build | e2e."
+    description: "What the job builds, which decides the tools it gets: build | dist."
     default: build
   cache:
     description: "The build cache entry the job restores, one per kind of build."
@@ -22,7 +22,7 @@ runs:
         echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
         RUSTUP_HOME="$RUNNER_TEMP/rustup" rustup toolchain install --no-self-update
     - name: Install wasm-bindgen-cli matching the lockfile
-      if: runner.os == 'Linux' && inputs.deps == 'e2e'
+      if: runner.os == 'Linux' && inputs.deps == 'dist'
       shell: bash
       # `just wasm` post-processes the client with `wasm-bindgen`, whose version must match the
       # `wasm-bindgen` crate exactly; grab that prebuilt release rather than compiling the CLI.
@@ -37,26 +37,12 @@ runs:
       # The one system C library a `-sys` crate links that cargo can't supply (the one platform-specific
       # place, per the repo's platform rule): alsa, for kira's cpal backend (the client audio code
       # compiles natively too), found through pkg-config; the windowing and graphics libraries load at
-      # runtime. xvfb + the Mesa DRI driver are for the e2e's headed browsers (software WebGL). Drop the
-      # runner's microsoft/azure apt sources first — unused, and they 403 intermittently.
-      env:
-        BUILD_PACKAGES: pkg-config libasound2-dev
-        E2E_PACKAGES: xvfb libgl1-mesa-dri
-        DEPS: ${{ inputs.deps }}
+      # runtime. Drop the runner's microsoft/azure apt sources first — unused, and they 403
+      # intermittently.
       run: |
-        case "$DEPS" in
-          build) packages="$BUILD_PACKAGES" ;;
-          e2e) packages="$BUILD_PACKAGES $E2E_PACKAGES" ;;
-          *) echo "::error::unknown deps '$DEPS'"; exit 1 ;;
-        esac
         sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
         sudo apt-get update
-        sudo apt-get install -y $packages
-    - name: Set up Node for the e2e
-      if: inputs.deps == 'e2e'
-      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-      with:
-        node-version: lts/*
+        sudo apt-get install -y pkg-config libasound2-dev
     - name: Key the build cache by the recipes
       id: recipes
       shell: bash

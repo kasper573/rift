@@ -12,6 +12,7 @@ pub use shader::{
 
 use std::collections::BTreeMap;
 
+use crate::core::math::PosSchema;
 use bevy_ecs::entity::MapEntities;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
@@ -172,17 +173,25 @@ pub struct VfxInstance {
 
 /// Where a vfx plays: always one thing. A screen or widget site is the screen of whoever the
 /// instance is shown to.
-#[derive(Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, JsonSchema, MapEntities, Clone, Debug, PartialEq)]
 pub enum VfxSite {
-    Actor(#[entities] Entity),
-    Object(#[entities] Entity),
+    Actor(
+        #[entities]
+        #[schemars(with = "u64")]
+        Entity,
+    ),
+    Object(
+        #[entities]
+        #[schemars(with = "u64")]
+        Entity,
+    ),
     Area(PlacedShape),
-    Path(Vec<Pos<Meters>>),
+    Path(#[schemars(with = "Vec<PosSchema>")] Vec<Pos<Meters>>),
     Screen,
     Widget(WidgetName),
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WidgetName(pub String);
 
 impl ParamValue {

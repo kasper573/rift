@@ -1,6 +1,0 @@
-{
-  "shader": "world/props/shaders/sway.vfx_shader",
-  "params": {
-    "suppleness": 0.12
-  }
-}

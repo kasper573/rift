@@ -24,7 +24,9 @@ use crate::core::time::Seconds;
 pub struct Meters(pub f32);
 
 /// An amount of memory.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord,
+)]
 pub struct Bytes(pub u64);
 
 impl Bytes {

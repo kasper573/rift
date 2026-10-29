@@ -6,11 +6,13 @@ mod locked;
 mod pickup;
 mod walk;
 
+use crate::core::math::PosSchema;
 use bevy::prelude::*;
 use bevy::window::{
     CursorIcon, CursorOptions, CustomCursor, CustomCursorImage, PrimaryWindow, SystemCursorIcon,
 };
 use bevy_egui::EguiPrimaryContextPass;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 use ui::egui;
@@ -30,16 +32,16 @@ use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::skill::aim::AimGesture;
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, PartialEq, Debug)]
 pub enum ClickClaim {
     Interface,
     Locked,
-    Attack(Entity),
-    Aim(Entity),
-    AimAt(Pos<Meters>),
-    Pickup(Entity),
-    Interact(Entity),
-    Walk(Pos<Meters>),
+    Attack(#[schemars(with = "u64")] Entity),
+    Aim(#[schemars(with = "u64")] Entity),
+    AimAt(#[schemars(with = "PosSchema")] Pos<Meters>),
+    Pickup(#[schemars(with = "u64")] Entity),
+    Interact(#[schemars(with = "u64")] Entity),
+    Walk(#[schemars(with = "PosSchema")] Pos<Meters>),
     Nothing,
 }
 

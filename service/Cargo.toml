@@ -11,11 +11,10 @@ tower-http = { workspace = true, features = ["normalize-path"] }
 ctrlc.workspace = true
 metrics-process.workspace = true
 serde.workspace = true
-envy.workspace = true
 tokio.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-pyroscope.workspace = true
+pprof = { version = "0.15", features = ["prost-codec"] }
 tikv-jemallocator.workspace = true
 jemalloc_pprof.workspace = true
 

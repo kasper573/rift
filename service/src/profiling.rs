@@ -1,44 +1,13 @@
 pub use tikv_jemallocator::Jemalloc as ServiceAllocator;
 
+use std::time::Duration;
+
+use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use pyroscope::backend::{BackendConfig, PprofConfig, pprof_backend};
-use pyroscope::pyroscope::{PyroscopeAgent, PyroscopeAgentBuilder, PyroscopeAgentRunning};
+use pprof::protos::Message;
 
-pub struct CpuProfiler {
-    _agent: PyroscopeAgent<PyroscopeAgentRunning>,
-}
-
-pub fn profiler(application: &str, enabled: bool, sample_hz: u32) -> Option<CpuProfiler> {
-    if !enabled {
-        return None;
-    }
-    #[derive(serde::Deserialize)]
-    struct Profiling {
-        base: String,
-    }
-    let profiling: Profiling = envy::prefixed("PYROSCOPE_")
-        .from_env()
-        .expect("PYROSCOPE_* environment");
-    let agent = PyroscopeAgentBuilder::new(
-        profiling.base,
-        application,
-        sample_hz,
-        "pyroscope-rs",
-        env!("CARGO_PKG_VERSION"),
-        pprof_backend(
-            PprofConfig {
-                sample_rate: sample_hz,
-            },
-            BackendConfig::default(),
-        ),
-    )
-    .build()
-    .expect("build pyroscope agent")
-    .start()
-    .expect("start pyroscope agent");
-    Some(CpuProfiler { _agent: agent })
-}
+use crate::CpuProfileQuery;
 
 pub async fn heap_profile() -> Response {
     let Some(controller) = jemalloc_pprof::PROF_CTL.as_ref() else {
@@ -49,3 +18,33 @@ pub async fn heap_profile() -> Response {
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
 }
+
+pub async fn cpu_profile(Query(query): Query<CpuProfileQuery>) -> Response {
+    let sampled = tokio::task::spawn_blocking(move || sample(Duration::from_secs(query.seconds)))
+        .await
+        .expect("the sampling thread finishes");
+    match sampled {
+        Ok(pprof) => pprof.into_response(),
+        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+    }
+}
+
+// Unwinding through these from the sampling signal can deadlock or read bad unwind tables.
+const UNWIND_BLOCKLIST: [&str; 4] = ["libc", "libgcc", "pthread", "vdso"];
+
+fn sample(lasting: Duration) -> Result<Vec<u8>, String> {
+    let guard = pprof::ProfilerGuardBuilder::default()
+        .frequency(SAMPLE_HZ)
+        .blocklist(&UNWIND_BLOCKLIST)
+        .build()
+        .map_err(|error| format!("cannot start sampling: {error}"))?;
+    std::thread::sleep(lasting);
+    let profile = guard
+        .report()
+        .build()
+        .and_then(|report| report.pprof())
+        .map_err(|error| format!("cannot build the profile: {error}"))?;
+    Ok(profile.encode_to_vec())
+}
+
+const SAMPLE_HZ: i32 = 100;

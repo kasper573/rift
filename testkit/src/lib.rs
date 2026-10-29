@@ -1,8 +1,10 @@
 //! What the engine's tests stand on: a game of only the rows a test declares, loaded the way the
-//! engine loads any game, and a bare world running only the systems a test names.
+//! engine loads any game, and a bare world running only the systems a test names. The server bench
+//! stands on one such game too, the crowd.
 
 mod art;
 mod bag;
+mod crowd;
 mod fixtures;
 mod game;
 mod notices;
@@ -12,6 +14,7 @@ mod sim;
 mod talk;
 
 pub use art::{glb, glb_of, library_glb, png, pose_glb, rig, rig_glb, skin_glb, wav, wav_of};
+pub use crowd::{CROWD_AREA, crowd};
 pub use game::{
     APEX, BODY, CLIP, Declared, Game, Map, ROCK, RUN_PACE, SPRINT_PACE, TURF, WALK_PACE, clip,
     clip_on, part_file, path, rig_clips, rig_file, stats,

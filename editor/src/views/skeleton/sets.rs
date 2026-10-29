@@ -672,10 +672,12 @@ fn cell(
             "no body wears the skeleton until base has a clip for every engine action",
         ),
         (_, true, _) => response.on_hover_text("a clip here doesn't play on this skeleton"),
-        (Some((_, Rung::Fallback)), _, _) => response.on_hover_text(match row {
-            SetRow::Gesture(_) => "no set names this gesture: the body makes none",
-            _ => "no set names this move: the attack plays",
-        }),
+        (Some((_, naming)), _, _) if naming.rung == Rung::Fallback => {
+            response.on_hover_text(match row {
+                SetRow::Gesture(_) => "no set names this gesture: the body makes none",
+                _ => "no set names this move: the attack plays",
+            })
+        }
         _ => response,
     }
 }

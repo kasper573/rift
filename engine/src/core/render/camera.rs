@@ -345,6 +345,14 @@ impl CameraRig {
             && self.distance == self.zoom.distance()
     }
 
+    /// Whether the camera rests where going home puts it.
+    pub fn at_home(&self) -> bool {
+        self.settled()
+            && self.yaw == Radians(0.0)
+            && self.pitch == PITCH.radians()
+            && self.zoom == Zoom::default()
+    }
+
     pub fn eye(&self) -> Vec3 {
         let (sin, cos) = self.pitch.0.sin_cos();
         let back = Vec3::new(0.0, self.distance.0 * sin, self.distance.0 * cos);

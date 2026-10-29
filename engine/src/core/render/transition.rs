@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
 
@@ -56,7 +57,7 @@ impl ScreenTransition {
 #[derive(Resource, Default, Clone, Copy)]
 pub struct ScreenTransitionPreference(pub ScreenTransition);
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ScreenTransitionPhase {
     Idle,

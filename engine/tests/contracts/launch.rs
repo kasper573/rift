@@ -22,8 +22,6 @@ fn server_config(rng_seed: Option<u64>) -> ServerConfig {
         auth: AuthMode::Fake,
         test_characters: true,
         exit_on_stdin_eof: true,
-        pyroscope_enabled: false,
-        pyroscope_sample_hz: 100,
     }
 }
 

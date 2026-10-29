@@ -1,5 +1,4 @@
 mod platform;
-mod sign_in;
 mod store;
 
 use std::num::NonZeroU32;
@@ -8,8 +7,7 @@ use std::sync::Arc;
 use bevy::window::{PresentMode, Window};
 use engine::core::platform::{SignIn, StartParams, exit_when_stdin_closes};
 use engine::systems::launch::{
-    AuthMode, BUILD_INFO_FLAG, CLIENT_ENV_PREFIX, ClientConfig, LaunchSettings, OIDC_ENV_PREFIX,
-    build_info_line,
+    AuthMode, BUILD_INFO_FLAG, CLIENT_ENV_PREFIX, ClientConfig, LaunchSettings, build_info_line,
 };
 use engine::systems::{client_app, probe};
 
@@ -26,9 +24,8 @@ fn main() {
     let sign_in = match (config.access_token, config.auth) {
         (Some(token), _) => SignIn::Token(token),
         (None, AuthMode::Fake) => SignIn::AnyAccount,
-        (None, AuthMode::Oidc) => SignIn::Provider(Arc::new(sign_in::BrowserSignIn::new(
-            settings.get(OIDC_ENV_PREFIX),
-            agent.clone(),
+        (None, AuthMode::Oidc) => SignIn::Provider(Arc::new(platform::BrowserIdentity(
+            oidc::BrowserSignIn::new(settings.get(oidc::ENV_PREFIX), agent.clone()),
         ))),
     };
     let params = StartParams {

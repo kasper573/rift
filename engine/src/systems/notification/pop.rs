@@ -4,6 +4,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::face::Face;
 use ui::raster::raster;
@@ -112,8 +113,9 @@ pub fn show(world: &mut World, sent: NotificationSent) {
 }
 
 /// A pop in the air: the actor it bursts out of and its words.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct ShownPop {
+    #[schemars(with = "u64")]
     pub actor: Entity,
     pub text: String,
 }

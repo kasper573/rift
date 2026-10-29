@@ -4,6 +4,7 @@ use ui::egui;
 use ui::menu;
 
 use bevy::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 use ui::egui::{Align2, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
@@ -116,14 +117,14 @@ pub struct BarState {
 
 /// How a press on a slot went: what it held was used, or the press was refused, by the slot's own
 /// state or by what the use ran into.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HotbarPress {
     Used,
     Denied,
 }
 
 /// What each shown slot holds and how it is drawn, for whoever probes the client.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct SlotReport {
     pub entry: HotbarEntry,
     pub key: Option<String>,

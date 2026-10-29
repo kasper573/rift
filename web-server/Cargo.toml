@@ -1,0 +1,26 @@
+[package]
+name = "web-server"
+version.workspace = true
+edition.workspace = true
+description = "The website of a game: its pages, the browser client, sign-in, and the desktop client's downloads"
+
+[dependencies]
+askama.workspace = true
+axum.workspace = true
+axum-extra = { version = "0.12", features = ["cookie"] }
+envy.workspace = true
+oidc = { path = "../oidc" }
+openidconnect = "4"
+serde.workspace = true
+serde_json.workspace = true
+serde_urlencoded = "0.7"
+service = { path = "../service" }
+tokio.workspace = true
+tower-http.workspace = true
+
+[dev-dependencies]
+oauth2-test-server = "0.2.3"
+tower = { version = "0.5", features = ["util"] }
+
+[lints]
+workspace = true

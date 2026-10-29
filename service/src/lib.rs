@@ -1,5 +1,5 @@
 pub use axum_prometheus::metrics_exporter_prometheus::PrometheusHandle;
-pub use profiling::{CpuProfiler, ServiceAllocator, profiler};
+pub use profiling::ServiceAllocator;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -9,6 +9,7 @@ use axum::routing::get;
 use axum::{Router, ServiceExt};
 use axum_prometheus::PrometheusMetricLayerBuilder;
 use axum_prometheus::metrics_exporter_prometheus::PrometheusBuilder;
+use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tower_http::normalize_path::NormalizePath;
@@ -48,7 +49,7 @@ macro_rules! heap_profiling {
     };
 }
 
-// jemalloc doesn't build for MSVC and pyroscope samples only Linux and macOS, so elsewhere the
+// jemalloc doesn't build for MSVC and pprof-rs samples only Linux and macOS, so elsewhere the
 // services run on the system allocator, unprofiled.
 #[cfg_attr(
     not(any(target_os = "linux", target_os = "macos")),
@@ -97,4 +98,24 @@ pub fn track(router: Router, handle: PrometheusHandle) -> Router {
             }),
         )
         .route("/debug/pprof/heap", get(profiling::heap_profile))
+        .route("/debug/pprof/profile", get(profiling::cpu_profile))
+}
+
+/// What a game server publishes about the game it runs, at [`GAME_INFO_ROUTE`].
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct GameInfo {
+    pub name: String,
+}
+
+pub const GAME_INFO_ROUTE: &str = "/game";
+
+/// How long a CPU profile samples, as pprof's HTTP endpoint is asked.
+#[derive(Deserialize)]
+pub struct CpuProfileQuery {
+    #[serde(default = "pprof_default_seconds")]
+    pub seconds: u64,
+}
+
+fn pprof_default_seconds() -> u64 {
+    30
 }

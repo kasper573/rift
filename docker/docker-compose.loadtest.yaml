@@ -1,8 +1,0 @@
-services:
-  rift-game-server:
-    ports:
-      - "9998:9998"
-      - "9999:9999"
-    environment:
-      RIFT_GAME_SERVER_AUTH: fake
-      RIFT_GAME_SERVER_PLAYER_SPAWN_POLICY: dist

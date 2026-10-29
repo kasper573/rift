@@ -4,6 +4,7 @@ use std::time::Duration;
 use ui::egui;
 
 use bevy::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::dusk;
 use ui::egui::emath::{TSTransform, easing};
@@ -88,13 +89,13 @@ impl RowPlace for Milestones {
     const REPLACE_AFTER: Seconds = Seconds(2.0);
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct NotificationRows {
     pub rows: Vec<NotificationRow>,
     pub more: u32,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct NotificationRow {
     pub label: String,
     pub text: String,

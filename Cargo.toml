@@ -4,12 +4,12 @@ members = [
     "ui",
     "bevy/terminal",
     "engine",
-    "driver",
     "testkit",
-    "showcase",
     "editor",
+    "cli",
+    "oidc",
     "service",
-    "website",
+    "web-server",
 ]
 
 [workspace.package]
@@ -21,9 +21,9 @@ match_bool = "warn"
 
 [workspace.dependencies]
 askama = "0.16"
+clap = { version = "4.6.7", features = ["derive"] }
 axum-prometheus = "0.10"
 ctrlc = { version = "3", features = ["termination"] }
-pyroscope = { version = "2", features = ["backend-pprof-rs"] }
 tikv-jemallocator = { version = "0.7", features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
 jemalloc_pprof = { version = "0.9", features = ["symbolize"] }
 bevy_app = { version = "0.20.0", default-features = false }
@@ -61,10 +61,11 @@ ureq = { version = "3", default-features = false }
 lto = false
 incremental = true
 
-# Release with debug symbols, for sampling profilers (e.g. the engine's `profile` binary).
+# Release with the symbols and line tables a sampling profiler reads; full debug info would make
+# the binary too large to publish.
 [profile.profiling]
 inherits = "release"
-debug = true
+debug = "line-tables-only"
 
 [profile.dev]
 opt-level = 1

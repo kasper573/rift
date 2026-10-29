@@ -114,7 +114,7 @@ pub fn show(world: &mut World, camera: Entity, sky: Sky) {
 
 /// Where the game stands in its day: at a fixed hour that never moves, so an area's light stands
 /// as authored, or at an hour of a cycle that turns through day and night.
-#[derive(Resource, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Resource, Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, Default, PartialEq)]
 pub enum Daylight {
     #[default]
     Fixed,

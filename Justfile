@@ -1,235 +1,83 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-compose := "docker compose -f docker/docker-compose.yaml -f docker/docker-compose.test.yaml --profile test"
-showcase_dir := "target/showcase"
+exe := if os_family() == "windows" { ".exe" } else { "" }
 
 lint:
     cargo fmt --check
     cargo run --release --quiet -p engine --bin lint
     cargo clippy --release --all-targets -- -D warnings
-    cargo clippy --release -p engine --lib --bin client --target wasm32-unknown-unknown -- -D warnings
+    cargo clippy --release -p engine --lib --bin wasm-client --target wasm32-unknown-unknown -- -D warnings
+    cargo run --release --quiet -p cli --bin rift -- check editor/templates/new_game
 
 # Every test lives in a tests/ folder; the libs' and bins' own test harnesses would build for nothing.
+[doc("The unit and integration tests.")]
 test:
     cargo test --release --workspace --test '*'
 
-# The website and game server binaries, and the roles the auth stack syncs from.
-build:
-    cargo build --release -p website -p engine --bin website --bin game-server
+[doc("Builds the editor and the two game binaries it plays with, then opens it, on FOLDER if given.")]
+editor *folder:
+    cargo build --release -p editor -p engine --bin editor --bin game-server --bin desktop-client
+    target/release/editor {{folder}}
 
-# The browser client bundle the website serves; content syncs from the game server at boot.
+# Shrunk with z + LTO + strip for mobile Safari's per-tab memory. wasm-bindgen's version must match
+# the `wasm-bindgen` crate's.
+[doc("The browser client as a release ships it, into target/wasm.")]
 wasm:
-    cargo build --release -p engine --bin client --target wasm32-unknown-unknown
-    wasm-bindgen --target web --no-typescript --out-name rift --out-dir target/wasm target/wasm32-unknown-unknown/release/client.wasm
+    CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_PROFILE_RELEASE_LTO=true \
+      cargo build --release -p engine --bin wasm-client --target wasm32-unknown-unknown
+    rm -rf target/wasm
+    wasm-bindgen --target web --no-typescript --out-name rift --out-dir target/wasm target/wasm32-unknown-unknown/release/wasm-client.wasm
 
-# Builds the editor and the two game binaries it starts, then opens the editor on FOLDER.
-editor folder="example_game":
-    cargo build --release -p editor -p engine --bin editor --bin game-server --bin desktop-client
-    target/release/editor {{quote(folder)}}
-
-# The archive a release ships: the three binaries and the example content, for the running platform.
-archive out="target/archive":
-    cargo build --release -p editor -p engine --bin editor --bin game-server --bin desktop-client
-    rm -rf {{quote(out)}} && mkdir -p {{quote(out)}}
-    cp target/release/{editor,game-server,desktop-client}{{ if os_family() == "windows" { ".exe" } else { "" } }} {{quote(out)}}
-    cp -rL example_game {{quote(out / "content")}}
-
-# The archive's pieces as separate downloads: the editor, game server and desktop client, stripped of
-# the symbol tables a profiler reads, the example game's content folder as rift-example-game.zip, and
-# the rift.env that sets the server and client up to play on DOMAIN.
-release-files domain out="target/release-files": (archive "target/archive")
+# Frame pointers give perf whole call stacks without copying each sampled stack; the profiling
+# build keeps the symbols the release binaries are stripped of.
+[doc("The running platform's binaries as a release lays them out, into OUT: a binaries folder.")]
+dist out="target/dist":
     #!/usr/bin/env bash
     set -euo pipefail
-    [ -n {{quote(domain)}} ] || { echo "release-files: no domain" >&2; exit 1; }
+    out={{quote(out)}}
+    cargo build --release -p editor -p engine -p cli --bin editor --bin game-server --bin desktop-client --bin rift
+    rm -rf "$out" && mkdir -p "$out"
+    for binary in editor game-server desktop-client rift; do
+      cp "target/release/$binary{{exe}}" "$out/"
+    done
+    if [ {{quote(os())}} = linux ]; then
+      cargo build --release -p web-server
+      cp target/release/web-server "$out/"
+      RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling --features profiling -p engine --bin game-server
+      cp target/profiling/game-server "$out/game-server-profiling"
+      just wasm
+      tar -czf "$out/wasm-client.tar.gz" -C target/wasm .
+    fi
+    if [ {{quote(os_family())}} != windows ]; then
+      for binary in editor game-server desktop-client rift web-server; do
+        [ ! -f "$out/$binary" ] || strip "$out/$binary"
+      done
+    fi
+
+[doc("Each binary of BINARIES as a release asset of its own: <binary>-PLATFORM.tar.gz, or .zip on Windows, holding the bare binary.")]
+archives platform binaries="target/dist" out="target/archives":
+    #!/usr/bin/env bash
+    set -euo pipefail
     rm -rf {{quote(out)}} && mkdir -p {{quote(out)}}
     out=$(cd {{quote(out)}} && pwd)
-    cd target/archive
-    cp editor* game-server* desktop-client* "$out"
-    {{ if os_family() == "windows" { "" } else { 'strip "$out/editor" "$out/game-server" "$out/desktop-client"' } }}
-    {{ if os_family() == "windows" { '7z a -tzip -bso0 -bsp0 "$(cygpath -w "$out/rift-example-game.zip")" content' } else { 'zip -qr "$out/rift-example-game.zip" content' } }}
-    cat > "$out/rift.env" <<'EOF'
-    # Read by desktop-client and game-server in this folder, set up to play on {{domain}}.
-    # Every line is explained at https://{{domain}}/downloads#rift-env
+    cd {{quote(binaries)}}
+    for file in *; do
+      case "$file" in
+        wasm-client.tar.gz) cp "$file" "$out/" ;;
+        *.exe) 7z a -tzip -bso0 -bsp0 "$(cygpath -w "$out/${file%.exe}-{{platform}}.zip")" "$file" ;;
+        *) tar -czf "$out/$file-{{platform}}.tar.gz" "$file" ;;
+      esac
+    done
 
-    RIFT_CLIENT_GAME_SERVER_URL=https://game-server.{{domain}}
-    RIFT_CLIENT_GAME_SERVER_WS_URL=wss://game-server.{{domain}}
-    RIFT_CLIENT_AUTH=oidc
-    RIFT_CLIENT_PROFILE_DIR=profile
-    RIFT_CLIENT_EXIT_ON_STDIN_EOF=false
+# Players are congested (all on the spawn tile, one shared view) by default; `--spread` spreads them.
+[doc("The server's capacity on a generated game, or on GAME followed by the client's frame rate and memory.")]
+bench *args: dist
+    target/dist/rift bench {{args}}
 
-    RIFT_AUTH_ISSUER=https://auth.{{domain}}/realms/rift
-    RIFT_AUTH_AUDIENCE=rift
-    RIFT_AUTH_JWKS_URI=https://auth.{{domain}}/realms/rift/protocol/openid-connect/certs
-    RIFT_AUTH_TOKEN_URI=https://auth.{{domain}}/realms/rift/protocol/openid-connect/token
+[doc("game-server-profiling on a generated game under load, sampled by perf into target/profile.")]
+profile *args: dist
+    target/dist/rift profile --out target/profile {{args}}
 
-    RIFT_GAME_SERVER_BIND=0.0.0.0
-    RIFT_GAME_SERVER_PORT=9998
-    RIFT_GAME_SERVER_WS_PORT=9999
-    RIFT_GAME_SERVER_MAX_CLIENTS=8192
-    RIFT_GAME_SERVER_CONTENT_DIR=content
-    RIFT_GAME_SERVER_PLAYER_SPAWN_POLICY=map
-    RIFT_GAME_SERVER_PLAYER_IMMORTAL=false
-    RIFT_GAME_SERVER_DAILY_RESET_UTC_HOUR=4
-    RIFT_GAME_SERVER_AUTH=oidc
-    RIFT_GAME_SERVER_TEST_CHARACTERS=false
-    RIFT_GAME_SERVER_EXIT_ON_STDIN_EOF=false
-    RIFT_GAME_SERVER_PYROSCOPE_ENABLED=false
-    RIFT_GAME_SERVER_PYROSCOPE_SAMPLE_HZ=99
-    EOF
-
-# The local stack, with its observability services.
-stack: build wasm (up "--profile dev")
-
-# The stack, rebuilding the wasm and the website on every change: reload the page to pick one up.
-dev: stack
-    source docker/.env.test && echo "sign in and play at https://$RIFT_DOMAIN/play"
-    cargo watch -w engine -w ui -w bevy -s 'just wasm && {{compose}} up -d --build --wait rift-website'
-
-# Tears the stack down and wipes its data, so keycloak imports its realm again on the next start.
-reset:
-    {{compose}} down -v
-
-logs:
-    {{compose}} logs --no-color
-
-# No service names: compose's build sections are the single source of truth for what we publish.
-[doc("Builds and pushes the production images.")]
-push-images:
-    docker compose -f docker/docker-compose.yaml --profile prod build
-    docker compose -f docker/docker-compose.yaml --profile prod push
-
-# Builds, brings up the stack and runs the Playwright suite (e2e/). FILTER limits which tests run.
-e2e filter="": build wasm e2e-stack-up (e2e-run filter)
-
-# The stack without its observability services, which the e2e doesn't exercise and which start slowest.
-e2e-stack-up: (up "")
-
-# The e2e stack but the website, which packages the wasm: all it waits on can start while that compiles.
-e2e-stack-ahead: (up "" "rift-game-server reverse-proxy")
-
-# The e2e builds two ways. deploy: what production ships, the server at the release default and the
-# wasm shrunk with z + LTO + strip for mobile Safari's per-tab memory. fast: the server unoptimized
-# and the wasm without LTO, which takes minutes even with every dependency built.
-e2e-server flavor:
-    {{ if flavor == "deploy" { "" } else if flavor == "fast" { "CARGO_PROFILE_RELEASE_OPT_LEVEL=0" } else { error("flavor: deploy or fast") } }} just build
-
-e2e-client flavor:
-    CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_STRIP=symbols {{ if flavor == "deploy" { "CARGO_PROFILE_RELEASE_LTO=true" } else if flavor == "fast" { "" } else { error("flavor: deploy or fast") } }} just wasm
-
-# The e2e stack's images that don't package the build, so they can be made while it compiles.
-e2e-stack-images:
-    {{compose}} build keycloak reverse-proxy
-    {{compose}} pull postgres
-
-# LP_NUM_THREADS bounds each headed browser's Mesa threads so parallel workers don't thrash.
-[doc("The Playwright suite against a running stack, on a virtual display.")]
-e2e-run filter="":
-    LP_NUM_THREADS=2 xvfb-run -a just playwright {{filter}}
-
-# Records showcase chapters, all at once as far as the cores go, to target/showcase/NN-<chapter>.mp4:
-# `just showcase combat travel`. Naming none records every chapter and stitches them into
-# target/showcase/showcase.mp4.
-showcase *chapters:
-    cargo build --release -p showcase -p engine --bin showcase --bin game-server --bin desktop-client
-    RIFT_SHOWCASE_CONTENT_DIR=$PWD/example_game RIFT_SHOWCASE_OUT_DIR=$PWD/{{showcase_dir}} RIFT_SHOWCASE_CORES_PER_CHAPTER=5 \
-      target/release/showcase {{chapters}}
-
-[doc("Records the editor on a copy of the example content at SCENE, a JSON array of steps, as editor-NAME.webm; HOOK runs with WORK naming the copy's parent.")]
-editor-showcase name scene seconds="8" input="" hook="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cargo build --release -p editor
-    export WORK=$(mktemp -d)
-    trap 'rm -rf "$WORK"' EXIT
-    cp -rL example_game "$WORK/game"
-    just record {{quote(showcase_dir / "editor-" + kebabcase(name) + ".webm")}} "Rift editor" {{seconds}} {{quote(input)}} {{quote(hook)}} \
-      target/release/editor "$WORK/game" --scene {{quote(scene)}} --user-folder "$WORK/user"
-
-[doc("Draws SHOT, a JSON file naming an area of the game folder FOLDER, a lens and the bodies standing in it, off screen through the world's own camera as the picture OUT.")]
-shot folder shot out="target/shot.png":
-    cargo build --release -p engine --bin shot
-    target/release/shot {{quote(folder)}} {{quote(shot)}} {{quote(out)}}
-
-# Frames sampled evenly across VIDEO, tiled into one image beside it: a recording at a glance.
-contact-sheet video:
-    ffmpeg -v error -y -i {{quote(video)}} -frames:v 1 \
-      -vf "fps=16/$(ffprobe -v error -show_entries format=duration -of csv=p=0 {{quote(video)}}),scale=640:-1,tile=4x4:padding=4" \
-      {{quote(without_extension(video) + ".png")}}
-
-# Players are congested (all on the spawn tile, one shared view) by default; `dist` spreads them for distinct views.
-[doc("The server's highest area count sustained within the tick budget, then the client's frame rate through a playthrough, then whether the client's and the server's memory hold level as a player crosses between areas.")]
-bench mode="":
-    RIFT_BENCH_CONTENT_DIR=example_game cargo run --release -p engine --bin bench -- {{mode}}
-    cargo bench -p engine --bench client
-    cargo bench -p engine --bench memory
-
-# Frame pointers give perf whole call stacks without copying each sampled stack.
-[doc("The server's ticks near the bench's budget, sampled by perf into target/profile/perf.data: CPU by function, then by system, then allocations.")]
-profile mode="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling --features profiling -p engine --bin profile
-    out=target/profile
-    mkdir -p "$out"
-    rm -f "$out/control" "$out/ack"
-    mkfifo "$out/control" "$out/ack"
-    RIFT_BENCH_CONTENT_DIR=example_game RIFT_BENCH_PERF_CONTROL="$out/control" RIFT_BENCH_PERF_ACK="$out/ack" \
-      perf record --quiet -F 999 --call-graph fp --delay=-1 --control="fifo:$out/control,$out/ack" -o "$out/perf.data" \
-      -- target/profiling/profile {{mode}}
-    perf report -i "$out/perf.data" --no-children --sort symbol --stdio --percent-limit 1 -g none 2>/dev/null | grep -E '^ +[0-9]' | sed 's/ *$//' | cut -c1-160
-    perf report -i "$out/perf.data" --children --sort symbol --stdio --percent-limit 2 -g none 2>/dev/null | grep -E '^ +[0-9].*engine::(systems|core)::' | sed 's/ *$//' | cut -c1-160
-
-loadtest count="dyn":
-    RIFT_LOADTEST_HTTP_URL=http://127.0.0.1:9998 RIFT_LOADTEST_WS_URL=ws://127.0.0.1:9999 \
-      cargo run --release -p engine --bin loadtest -- {{count}}
-
-loadtest-stack-up: (up "-f docker/docker-compose.loadtest.yaml")
-
-# The content copy is synced in place, never replaced, so a running game server keeps the folder it mounted.
-[private]
-up flags services="":
-    mkdir -p target/stack/content && rsync -aL --delete example_game/ target/stack/content/
-    docker network inspect rift >/dev/null 2>&1 || docker network create rift
-    {{compose}} {{flags}} up -d --build --wait {{services}}
-
-# Films COMMAND's window titled TITLE on a private virtual display to OUT, playing INPUT (an xdotool
-# command chain in window pixels) and running HOOK (a shell line) while it records. The app plays
-# into a sink of its own, whose monitor is the recording's sound track.
-[private]
-[positional-arguments]
-record out title seconds input hook +command:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export out=$1 title=$2 seconds=$3 input=$4 hook=$5
-    shift 5
-    mkdir -p "$(dirname "$out")"
-    export sink="rift-record-$$"
-    module=$(pactl load-module module-null-sink "sink_name=$sink")
-    trap 'pactl unload-module "$module"' EXIT
-    xvfb-run -a -s "-screen 0 2560x1440x24" bash -euo pipefail -c '
-      PULSE_SINK="$sink" PIPEWIRE_NODE="$sink" "$@" & app=$!
-      window=$(xdotool search --sync --name "$title" | head -1)
-      xdotool windowmove --sync "$window" 0 0
-      xdotool windowfocus --sync "$window"
-      eval "$(xdotool getwindowgeometry --shell "$window")"
-      # The window maps before bevy has rendered into it.
-      sleep 2
-      { parecord --raw --format=s16le --channels=2 --rate=48000 --latency-msec=10 "--device=$sink.monitor" || true; } \
-        | ffmpeg -v error -y \
-            -use_wallclock_as_timestamps 1 -f x11grab -framerate 30 -video_size "${WIDTH}x${HEIGHT}" -i "$DISPLAY+$X,$Y" \
-            -use_wallclock_as_timestamps 1 -probesize 32 -analyzeduration 0 -f s16le -ar 48000 -ac 2 -i pipe:0 \
-            -t "$seconds" -c:v libvpx -b:v 4M -deadline realtime -cpu-used 8 -c:a libopus -b:a 128k "$out" & recording=$!
-      [ -z "$hook" ] || bash -c "$hook" &
-      [ -z "$input" ] || xdotool $input
-      wait $recording
-      kill $app' _ "$@"
-    echo "$out"
-
-[private]
-playwright *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    set -a; source docker/.env.test; set +a
-    cd e2e
-    [ -d node_modules ] || npm ci
-    npx playwright test {{args}}
+[doc("The rift CLI, run from a binaries folder of this build.")]
+rift *args: dist
+    target/dist/rift {{args}}

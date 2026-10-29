@@ -1111,11 +1111,20 @@ impl ClipSet {
 
 /// Which rung of the ladder named a clip: a stance's column, the base column, or a fallback for
 /// what neither names: the attack for a move, idling for a gesture.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum Rung {
     Stance,
     Base,
     Fallback,
+}
+
+/// Where a clip was named: the rung of the ladder, and whether the sets of the body's own build
+/// named it rather than the skeleton's.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Naming {
+    pub rung: Rung,
+    pub builds_own: bool,
 }
 
 impl SkeletonDef {
@@ -1132,21 +1141,35 @@ impl SkeletonDef {
     /// The sets a body of `build` in `stance` looks through for a cell, in order, each with its
     /// rung: the build's own stance cells, the first build's, the build's own base cells, the first
     /// build's. A build without sets of its own, or none at all, plays the first build's.
-    fn ladder(&self, build: Option<&BuildName>, stance: Option<StanceId>) -> Vec<(&ClipSet, Rung)> {
-        let own = build
-            .filter(|build| self.builds.first() != Some(*build))
-            .and_then(|build| self.build_sets.get(build));
+    /// Whether bodies of `build` are given clips of their own, over those of the first build.
+    pub fn build_has_clips(&self, build: &BuildName) -> bool {
+        self.own_sets(build).is_some()
+    }
+
+    fn own_sets(&self, build: &BuildName) -> Option<&BuildSets> {
+        (self.builds.first() != Some(build))
+            .then(|| self.build_sets.get(build))
+            .flatten()
+    }
+
+    fn ladder(
+        &self,
+        build: Option<&BuildName>,
+        stance: Option<StanceId>,
+    ) -> Vec<(&ClipSet, Naming)> {
+        let own = build.and_then(|build| self.own_sets(build));
+        let naming = |rung, builds_own| Naming { rung, builds_own };
         [
             (
                 own.and_then(|own| column(&own.stances, stance)),
-                Rung::Stance,
+                naming(Rung::Stance, true),
             ),
-            (column(&self.stances, stance), Rung::Stance),
-            (own.map(|own| &own.base), Rung::Base),
-            (Some(&self.base), Rung::Base),
+            (column(&self.stances, stance), naming(Rung::Stance, false)),
+            (own.map(|own| &own.base), naming(Rung::Base, true)),
+            (Some(&self.base), naming(Rung::Base, false)),
         ]
         .into_iter()
-        .filter_map(|(set, rung)| Some((set?, rung)))
+        .filter_map(|(set, naming)| Some((set?, naming)))
         .collect()
     }
 
@@ -1161,13 +1184,14 @@ impl SkeletonDef {
         stance: Option<StanceId>,
         motion: &Motion,
         pose: Pose,
-    ) -> Option<(&ClipCell, Rung)> {
+    ) -> Option<(&ClipCell, Naming)> {
         let ladder = self.ladder(build, stance);
         let first = |cell: &dyn Fn(&ClipSet) -> Option<&ClipCell>| {
             ladder
                 .iter()
-                .find_map(|(set, rung)| Some((cell(set)?, *rung)))
+                .find_map(|(set, naming)| Some((cell(set)?, *naming)))
         };
+
         let action = |action: Action| {
             let action = if action.required() || self.names(build, stance, action) {
                 action
@@ -1187,9 +1211,9 @@ impl SkeletonDef {
                 first(&|set| set.ends.get(posed)).or_else(|| action(Action::Idle))
             }
             Motion::Gesture(name) => first(&|set| set.gestures.get(name))
-                .or_else(|| Some((action(Action::Idle)?.0, Rung::Fallback))),
+                .or_else(|| Some(fallen_back(action(Action::Idle)?))),
             Motion::Move(name) => first(&|set| set.moves.get(name))
-                .or_else(|| Some((action(Action::Attack)?.0, Rung::Fallback))),
+                .or_else(|| Some(fallen_back(action(Action::Attack)?))),
         }
     }
 
@@ -1383,4 +1407,14 @@ pub fn fit_problems(fit: &Fit, file: &str, skeleton: &str) -> Vec<ContentProblem
 pub struct Declared {
     pub moves: BTreeSet<MoveName>,
     pub gestures: BTreeSet<GestureName>,
+}
+
+fn fallen_back((cell, naming): (&ClipCell, Naming)) -> (&ClipCell, Naming) {
+    (
+        cell,
+        Naming {
+            rung: Rung::Fallback,
+            ..naming
+        },
+    )
 }

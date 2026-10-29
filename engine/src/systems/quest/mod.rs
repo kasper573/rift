@@ -617,7 +617,7 @@ pub struct FinishedQuest {
     pub offered_again: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum QuestResult {
     Completed,
     Failed,

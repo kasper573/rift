@@ -1,15 +1,8 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
 
 use cargo_metadata::{Metadata, MetadataCommand};
-use engine::core::content::{Content, FilesystemFolder, LoadWarnings, write};
-use engine::systems::actor::model::{ActorModel, ModelDef};
-use engine::systems::actor::skeleton::{SkeletonDef, SkeletonId};
-use engine::systems::actor::stance;
-use engine::systems::item::ItemDef;
-use engine::systems::{GameSettings, load_content, registry};
 use syn::UseTree;
 use syn::visit::{self, Visit};
 use walkdir::{DirEntry, WalkDir};
@@ -46,15 +39,10 @@ fn main() {
             .join("src");
         check_json_keys(&package.name, &src, &mut violations);
     }
-    let root = metadata.workspace_root.as_std_path();
     check_standalone(&metadata, &mut violations);
-    let scratch = metadata.target_directory.as_std_path().join("lint");
-    for game in SHIPPED_GAMES {
-        check_shipped_game(game, &root.join(game), &scratch.join(game), &mut violations);
-    }
 
     if violations.is_empty() {
-        println!("lint: layering, standalone crates, content keys, JSON keys and shipped games OK");
+        println!("lint: layering, standalone crates, content keys and JSON keys OK");
         return;
     }
     for violation in &violations {
@@ -123,17 +111,13 @@ fn check_json_keys(name: &str, src: &Path, out: &mut Vec<String>) {
 /// The packages whose code reads and writes game content. Tests and the testkit declare their games
 /// as JSON literals, as the files hold them: the loader reads every one and refuses fields its
 /// types don't have, so a stale literal fails its test loudly.
-const CONTENT_CODE: &[&str] = &["engine", "editor", "showcase", "driver"];
+const CONTENT_CODE: &[&str] = &["engine", "editor", "cli"];
 
 /// The files that walk a JSON Schema, keyed by the package they are in.
 const SCHEMA_WALKERS: &[(&str, &str)] = &[("editor", "schema.rs"), ("editor", "forms.rs")];
 
 /// The folders of the crates that know nothing of rift, so any game or tool could use them.
 const STANDALONE: &[&str] = &["ui", "bevy"];
-
-/// The game folders the repo ships: the example game, and the template the editor starts new games
-/// from.
-const SHIPPED_GAMES: &[&str] = &["example_game", "editor/templates/new_game"];
 
 fn check_standalone(metadata: &Metadata, out: &mut Vec<String>) {
     let root = metadata.workspace_root.as_std_path();
@@ -165,89 +149,6 @@ fn check_standalone(metadata: &Metadata, out: &mut Vec<String>) {
             ));
         }
     }
-}
-
-/// A shipped game loads as a whole game, and every file of a kind the editor writes reads exactly
-/// as the editor writes it, so saving it in the editor changes only what was edited.
-fn check_shipped_game(name: &str, folder: &Path, scratch: &Path, out: &mut Vec<String>) {
-    let content = match load_content(Arc::new(FilesystemFolder(folder.to_path_buf())), "lint") {
-        Ok(content) => content,
-        Err(report) => {
-            out.push(format!("[{name}] does not load:\n{report}"));
-            return;
-        }
-    };
-    check_bodies(name, &content, out);
-    if scratch.exists() {
-        fs::remove_dir_all(scratch).expect("clear the lint's scratch folder");
-    }
-    let writer = write(registry(), content, scratch).expect("write the game to the scratch folder");
-    let written: BTreeSet<String> = writer.written().iter().cloned().collect();
-    let shipped = written_kinds(folder);
-    for file in shipped.difference(&written) {
-        out.push(format!("[{name}] {file}: a file the editor never writes"));
-    }
-    for file in written.intersection(&shipped) {
-        let ours = fs::read(folder.join(file)).expect("a shipped file");
-        let editors = fs::read(scratch.join(file)).expect("a written file");
-        if ours != editors {
-            out.push(format!(
-                "[{name}] {file}: not as the editor writes it; see {}",
-                scratch.join(file).display()
-            ));
-        }
-    }
-}
-
-/// What a shipped game's bodies must be beyond what loads: every skeleton worn by a model, and a
-/// set on the player's skeleton for every stance an item names, so no shipped weapon falls back to
-/// the base set. The loader's warnings are printed, the designer's to accept.
-fn check_bodies(name: &str, content: &Content, out: &mut Vec<String>) {
-    for warning in &content.built::<LoadWarnings>().0 {
-        println!("[{name}] warning: {warning}");
-    }
-    let worn: BTreeSet<SkeletonId> = content
-        .table::<ModelDef>()
-        .rows()
-        .map(|model| model.skeleton)
-        .collect();
-    for skeleton in content.table::<SkeletonDef>().ids() {
-        if !worn.contains(&skeleton) {
-            out.push(format!(
-                "[{name}] {}: no model wears this skeleton",
-                skeleton.path(content)
-            ));
-        }
-    }
-    let player = content.built::<GameSettings>().player.get(content);
-    let body = ActorModel::get(content, player.class.get(content).model).skeleton();
-    for item in content.table::<ItemDef>().ids() {
-        let Some(stance) = stance::of_item(content, item) else {
-            continue;
-        };
-        if body.def.set(stance).is_none() {
-            out.push(format!(
-                "[{name}] {}: its stance {} has no set on the player's skeleton",
-                item.path(content),
-                stance.path(content)
-            ));
-        }
-    }
-}
-
-/// Every file of the kinds the editor writes.
-fn written_kinds(folder: &Path) -> BTreeSet<String> {
-    WalkDir::new(folder)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_file())
-        .map(|entry| {
-            let relative = entry.path().strip_prefix(folder).unwrap_or(entry.path());
-            relative.to_string_lossy().replace('\\', "/")
-        })
-        .filter(|file| registry().writes(file))
-        .collect()
 }
 
 fn core_to_systems(file: &Path) -> BTreeSet<String> {

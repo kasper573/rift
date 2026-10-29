@@ -2,7 +2,7 @@
 name = "testkit"
 version.workspace = true
 edition.workspace = true
-description = "What the engine's tests stand on: a game of only the rows a test declares, and a bare world running only the systems it names"
+description = "What the engine's tests and its server bench stand on: a game of only the rows declared, and a bare world running only the systems named"
 
 [dependencies]
 engine = { path = "../engine" }

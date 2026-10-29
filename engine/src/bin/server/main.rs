@@ -1,8 +1,8 @@
-mod auth;
 mod transport;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -26,12 +26,13 @@ use engine::core::time::{UtcHour, WallClock};
 use engine::systems::account::{AccountId, Identity};
 use engine::systems::area::{self, AreaDef, AreaId, transition};
 use engine::systems::launch::{
-    AuthMode, BUILD_INFO_FLAG, BuildInfo, LaunchSettings, OIDC_ENV_PREFIX, OidcConfig, ReadyLine,
-    SERVER_ENV_PREFIX, ServerConfig, ServerReady, TEST_CHARACTER_ROUTE, TICK_METRIC,
-    TestCharacterRequest, build_info_line,
+    AuthMode, BUILD_INFO_FLAG, BuildInfo, LaunchSettings, ReadyLine, SERVER_ENV_PREFIX,
+    ServerConfig, ServerReady, TEST_CHARACTER_ROUTE, TICK_METRIC, TestCharacterRequest,
+    build_info_line,
 };
 use engine::systems::player::snapshot::{self, CharacterSnapshot, JoinAs};
 use engine::systems::player::{ClientId, SpawnPolicy, SpawnRules};
+use engine::systems::staging::{self, STAGING_ROUTE, Staging};
 use engine::systems::{
     GameSettings, REPLICATION_INTERVAL, TICK_HZ, load_content, server_app, start_server, step_areas,
 };
@@ -51,11 +52,6 @@ fn main() {
     let launch = LaunchSettings::of_this_binary();
     let mut config: ServerConfig = launch.get(SERVER_ENV_PREFIX);
     config.content_dir = launch.path(&config.content_dir);
-    let _profiler = service::profiler(
-        "rift-game-server",
-        config.pyroscope_enabled,
-        config.pyroscope_sample_hz,
-    );
     let stdin = config.exit_on_stdin_eof.then(StdinClosed::watch);
     let http_bind = SocketAddr::new(config.bind, config.port);
     let ws_bind = SocketAddr::new(config.bind, config.ws_port);
@@ -87,18 +83,23 @@ fn main() {
     let metrics = service::recorder();
     let sessions = Sessions::default();
     let online = Online::default();
+    let (stage_sender, stages) = channel();
     let http = Http {
         sessions: sessions.clone(),
         auth: match config.auth {
-            AuthMode::Oidc => Auth::Oidc(verifier(launch.get(OIDC_ENV_PREFIX))),
+            AuthMode::Oidc => Auth::Oidc(verifier(launch.get(oidc::ENV_PREFIX))),
             AuthMode::Fake => Auth::Fake,
         },
         test_characters: config.test_characters.then(|| TestCharacters {
             content: content.clone(),
             pending: Arc::default(),
             online: online.clone(),
+            stages: Arc::new(Mutex::new(stage_sender)),
         }),
         served: Arc::new(served),
+        game: service::GameInfo {
+            name: settings.name.clone(),
+        },
     };
     let listener = runtime
         .block_on(tokio::net::TcpListener::bind(http_bind))
@@ -151,7 +152,7 @@ fn main() {
         build: BuildInfo::current(),
     };
     println!("{}", serde_json::to_string(&ready).expect("a ready line"));
-    simulate(worlds, transport, lobby, reset, stdin);
+    simulate(worlds, transport, lobby, stages, reset, stdin);
     runtime.shutdown_background();
 }
 
@@ -217,6 +218,7 @@ fn simulate(
     mut worlds: Vec<App>,
     mut transport: WsTransport,
     mut lobby: Lobby,
+    stages: Receiver<StageAsked>,
     reset: UtcHour,
     stdin: Option<StdinClosed>,
 ) {
@@ -290,6 +292,11 @@ fn simulate(
             }
         }
 
+        for asked in stages.try_iter() {
+            let staged = stage(&mut worlds, &conns, &lobby.online, &asked);
+            let _ = asked.answer.send(staged);
+        }
+
         step_areas(&mut worlds, wall_clock(reset));
 
         begin_transfers(&mut worlds, &mut transfers, tick);
@@ -322,6 +329,33 @@ fn simulate(
             std::thread::sleep(remaining);
         }
     }
+}
+
+/// A scene asked for the character of `account`, and where to tell how it went.
+struct StageAsked {
+    account: AccountId,
+    staging: Staging,
+    answer: tokio::sync::oneshot::Sender<Result<(), String>>,
+}
+
+fn stage(
+    worlds: &mut [App],
+    conns: &HashMap<u64, Conn>,
+    online: &Online,
+    asked: &StageAsked,
+) -> Result<(), String> {
+    let client = online
+        .0
+        .lock()
+        .expect("online lock")
+        .get(&asked.account)
+        .copied()
+        .ok_or("the account is in no world")?;
+    let conn = conns
+        .values()
+        .find(|conn| conn.client == client)
+        .ok_or("the account's character is between areas")?;
+    staging::stage(worlds[conn.area].world_mut(), conn.entity, asked.staging)
 }
 
 fn wall_clock(reset: UtcHour) -> WallClock {
@@ -548,6 +582,7 @@ struct TestCharacters {
     content: Content,
     pending: Arc<Mutex<HashMap<AccountId, JoinAs>>>,
     online: Online,
+    stages: Arc<Mutex<Sender<StageAsked>>>,
 }
 
 impl TestCharacters {
@@ -558,7 +593,7 @@ impl TestCharacters {
 
 #[derive(Clone)]
 enum Auth {
-    Oidc(Arc<Mutex<auth::Verifier>>),
+    Oidc(Arc<Mutex<oidc::TokenVerifier>>),
     Fake,
 }
 
@@ -568,6 +603,7 @@ struct Http {
     auth: Auth,
     test_characters: Option<TestCharacters>,
     served: Arc<ServedContent>,
+    game: service::GameInfo,
 }
 
 async fn serve_http(
@@ -578,14 +614,28 @@ async fn serve_http(
     let mut router = axum::Router::new()
         .route("/session", post(session))
         .route("/health", get(health))
+        .route(service::GAME_INFO_ROUTE, get(game))
         .route("/content/manifest", get(manifest))
         .route("/content/files/{hash}", get(content_file));
     if http.test_characters.is_some() {
-        router = router.route(TEST_CHARACTER_ROUTE, post(test_character));
+        router = router
+            .route(TEST_CHARACTER_ROUTE, post(test_character))
+            .route(STAGING_ROUTE, post(stage_scene));
     }
     let router = service::track(router.with_state(http), metrics);
     ctrlc::set_handler(|| std::process::exit(0)).expect("install stop handler");
     axum::serve(listener, router).await.expect("axum serves");
+}
+
+async fn game(State(http): State<Http>) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        serde_json::to_string(&http.game).expect("the game's info serializes"),
+    )
+        .into_response()
 }
 
 async fn manifest(State(http): State<Http>) -> Response {
@@ -708,20 +758,66 @@ async fn test_character(State(http): State<Http>, headers: HeaderMap, body: Stri
     StatusCode::NO_CONTENT.into_response()
 }
 
+async fn stage_scene(State(http): State<Http>, headers: HeaderMap, body: String) -> Response {
+    let Some(characters) = http.test_characters.as_ref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let authorization = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    let identity = match resolve(&http, authorization) {
+        Ok(identity) => identity,
+        Err(status) => return status.into_response(),
+    };
+    let (staging, scope) = with_content(ContentScope::of(&characters.content), || {
+        serde_json::from_str::<Staging>(&body)
+    });
+    let staging = match staging {
+        Ok(staging) => staging,
+        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    };
+    if let Some(problem) = scope.leaves().iter().find_map(Leaf::reported) {
+        return (StatusCode::BAD_REQUEST, problem.to_string()).into_response();
+    }
+    let (answer, staged) = tokio::sync::oneshot::channel();
+    let asked = StageAsked {
+        account: identity.id,
+        staging,
+        answer,
+    };
+    if characters
+        .stages
+        .lock()
+        .expect("stages lock")
+        .send(asked)
+        .is_err()
+    {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    match staged.await {
+        Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Err(problem)) => (StatusCode::CONFLICT, problem).into_response(),
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
 fn resolve(http: &Http, authorization: &str) -> Result<Identity, StatusCode> {
     let token = authorization
         .strip_prefix("Bearer ")
         .unwrap_or(authorization);
     let claims = match &http.auth {
-        Auth::Oidc(verifier) => verifier.lock().expect("verifier lock").verify(token).ok(),
+        Auth::Oidc(verifier) => verifier
+            .lock()
+            .expect("verifier lock")
+            .verify::<TokenClaims>(token)
+            .ok(),
         Auth::Fake => TokenClaims::read_unverified(token),
     }
     .filter(|claims| !claims.sub.is_empty())
     .ok_or(StatusCode::UNAUTHORIZED)?;
     Ok(Identity {
-        name: claims
-            .preferred_username
-            .unwrap_or_else(|| claims.sub.clone()),
+        name: claims.display_name(),
         id: AccountId(claims.sub),
     })
 }
@@ -738,13 +834,13 @@ async fn health(State(http): State<Http>) -> Response {
     }
 }
 
-fn verifier(config: OidcConfig) -> Arc<Mutex<auth::Verifier>> {
-    let mut verifier = auth::Verifier::new(&config.issuer, &config.audience, &config.jwks_uri);
+fn verifier(settings: oidc::TokenCheckSettings) -> Arc<Mutex<oidc::TokenVerifier>> {
+    let mut verifier = oidc::TokenVerifier::new(settings);
     match verifier.warm() {
-        Ok(()) => println!("auth enabled, issuer {}", config.issuer),
+        Ok(()) => println!("auth enabled, issuer {}", verifier.issuer()),
         Err(error) => println!(
             "auth enabled, issuer {} (jwks warm-up failed: {error})",
-            config.issuer
+            verifier.issuer()
         ),
     }
     Arc::new(Mutex::new(verifier))

@@ -1,19 +1,22 @@
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime};
 
 use bevy::app::PluginGroupBuilder;
 use bevy::render::pipelined_rendering::PipelinedRenderingPlugin;
 use bevy::window::Window;
+use engine::core::content::Content;
 use engine::core::content::store::ContentStore;
-use engine::core::platform::{FetchFailure, LocalFuture, Platform, ServerSocket, SocketState};
+use engine::core::platform::{
+    FetchFailure, IdentityProvider, LocalFuture, Platform, ProviderPage, ServerSocket, SocketState,
+};
 use engine::core::time::{LocalClock, Seconds};
-use engine::systems::probe::ProbeChannel;
+use engine::systems::probe::{self, ProbeChannel};
 use tungstenite::Message;
 use tungstenite::stream::MaybeTlsStream;
 
@@ -131,6 +134,27 @@ impl Platform for DesktopPlatform {
 
 // TLS against the OS trust store, so a locally trusted CA works like any public one; a refused status
 // is a reply to read, not a transport failure.
+/// Signs in through the provider's pages in the system browser.
+pub struct BrowserIdentity(pub oidc::BrowserSignIn);
+
+impl IdentityProvider for BrowserIdentity {
+    fn sign_in(&self, page: ProviderPage) -> LocalFuture<Result<String, String>> {
+        let page = match page {
+            ProviderPage::SignIn => oidc::AuthorizationPage::SignIn,
+            ProviderPage::CreateAccount => oidc::AuthorizationPage::SignUp,
+        };
+        let pending = self.0.begin(page, |url| {
+            opener::open_browser(url)
+                .map_err(|error| format!("Couldn't open your browser: {error}"))
+        });
+        Box::pin(async move {
+            let pending = pending?;
+            let _hang_up = pending.hang_up();
+            blocking::unblock(move || pending.finish()).await
+        })
+    }
+}
+
 pub fn agent() -> ureq::Agent {
     let config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(30)))
@@ -144,24 +168,40 @@ pub fn agent() -> ureq::Agent {
     ureq::Agent::new_with_config(config)
 }
 
-// The driver asks with a line, and each line asked is answered with the snapshot of a frame after it.
+// The driver asks with a line and waits for its answer: a snapshot of a frame after it, or what the
+// game says, answered on the socket's own thread once the game is loaded.
 pub struct SocketProbe {
     asked: Receiver<()>,
     pending: Cell<usize>,
-    answers: RefCell<TcpStream>,
+    answers: Arc<Mutex<TcpStream>>,
+    game: Arc<(Mutex<Option<Content>>, Condvar)>,
 }
 
 impl SocketProbe {
     pub fn connect(driver: SocketAddr) -> SocketProbe {
-        let answers = TcpStream::connect(driver)
+        let stream = TcpStream::connect(driver)
             .unwrap_or_else(|error| panic!("the probe's driver at {driver}: {error}"));
-        let questions = answers
+        let questions = stream
             .try_clone()
             .expect("a second handle on the probe socket");
+        let answers = Arc::new(Mutex::new(stream));
+        let game: Arc<(Mutex<Option<Content>>, Condvar)> = Arc::default();
         let (ask, asked) = channel();
+        let (thread_answers, thread_game) = (answers.clone(), game.clone());
         std::thread::spawn(move || {
-            for _ in BufReader::new(questions).lines().map_while(Result::ok) {
-                if ask.send(()).is_err() {
+            for line in BufReader::new(questions).lines().map_while(Result::ok) {
+                if probe::asks_for_snapshot(&line) {
+                    if ask.send(()).is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                let content = loaded(&thread_game);
+                let question = probe::read_question(&content, &line)
+                    .unwrap_or_else(|error| panic!("the probe's driver asked {line}: {error}"));
+                let answer = probe::answer(&content, &question).expect("a question about the game");
+                let mut answers = thread_answers.lock().expect("the probe's answers");
+                if writeln!(answers, "{answer}").is_err() {
                     return;
                 }
             }
@@ -169,9 +209,20 @@ impl SocketProbe {
         SocketProbe {
             asked,
             pending: Cell::new(0),
-            answers: RefCell::new(answers),
+            answers,
+            game,
         }
     }
+}
+
+fn loaded(game: &(Mutex<Option<Content>>, Condvar)) -> Content {
+    let (content, known) = game;
+    let content = known
+        .wait_while(content.lock().expect("the probe's game"), |content| {
+            content.is_none()
+        })
+        .expect("the probe's game");
+    content.clone().expect("a loaded game")
 }
 
 impl ProbeChannel for SocketProbe {
@@ -183,10 +234,16 @@ impl ProbeChannel for SocketProbe {
 
     // A driver that hung up wants no more answers.
     fn deliver(&self, snapshot: &str) {
-        let mut answers = self.answers.borrow_mut();
+        let mut answers = self.answers.lock().expect("the probe's answers");
         for _ in 0..self.pending.replace(0) {
             let _ = writeln!(answers, "{snapshot}");
         }
+    }
+
+    fn know(&self, content: &Content) {
+        let (game, known) = &*self.game;
+        *game.lock().expect("the probe's game") = Some(content.clone());
+        known.notify_all();
     }
 }
 

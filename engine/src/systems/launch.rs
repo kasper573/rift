@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,11 +12,11 @@ use crate::core::net::auth::TokenClaims;
 use crate::core::time::UtcHour;
 use crate::systems::player::SpawnPolicy;
 use crate::systems::script::Place;
+use crate::systems::staging::Staging;
 
 pub const BUILD_INFO_FLAG: &str = "--build-info";
 pub const SERVER_ENV_PREFIX: &str = "RIFT_GAME_SERVER_";
 pub const CLIENT_ENV_PREFIX: &str = "RIFT_CLIENT_";
-pub const OIDC_ENV_PREFIX: &str = "RIFT_AUTH_";
 pub const SETTINGS_FILE: &str = "rift.env";
 pub const TEST_CHARACTER_ROUTE: &str = "/test/character";
 /// The histogram of how long the server takes to step every world one tick.
@@ -25,10 +26,25 @@ pub const TICK_METRIC: &str = "rift_tick_duration_seconds";
 pub fn fake_token(account: &str) -> String {
     TokenClaims {
         sub: account.to_owned(),
-        azp: None,
         preferred_username: Some(account.to_owned()),
+        name: None,
     }
     .unsigned()
+}
+
+/// The JSON Schema of what a game server speaks to whoever runs it: the line it prints once
+/// ready, and what its test routes take.
+pub fn server_schema() -> String {
+    let schema = schemars::schema_for!(ServerProtocol);
+    serde_json::to_string_pretty(&schema).expect("a serializable schema")
+}
+
+#[derive(JsonSchema)]
+#[allow(dead_code)]
+struct ServerProtocol {
+    ready: ReadyLine,
+    test_character: TestCharacterRequest,
+    stage: Staging,
 }
 
 /// What a binary starts with: its environment, over the [`SETTINGS_FILE`] beside it.
@@ -85,7 +101,7 @@ impl LaunchSettings {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BuildInfo {
     pub build: String,
     pub content_version: String,
@@ -100,20 +116,23 @@ impl BuildInfo {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+/// What a started server prints on stdout, once players can connect.
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ReadyLine {
     pub ready: ServerReady,
     pub build: BuildInfo,
 }
 
 /// The ports a started server listens on, announced once players can connect.
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize, JsonSchema)]
 pub struct ServerReady {
     pub http: u16,
     pub ws: u16,
 }
 
-#[derive(Serialize, Deserialize)]
+/// What a server that hands out test characters takes at [`TEST_CHARACTER_ROUTE`], from the
+/// account whose next sign-in plays the character.
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct TestCharacterRequest {
     pub test_character: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -134,8 +153,6 @@ pub struct ServerConfig {
     pub auth: AuthMode,
     pub test_characters: bool,
     pub exit_on_stdin_eof: bool,
-    pub pyroscope_enabled: bool,
-    pub pyroscope_sample_hz: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,15 +160,6 @@ pub struct ServerConfig {
 pub enum AuthMode {
     Oidc,
     Fake,
-}
-
-/// Where an identity provider is, for the server to verify its tokens and a client to sign in on it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OidcConfig {
-    pub issuer: String,
-    pub audience: String,
-    pub jwks_uri: String,
-    pub token_uri: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]

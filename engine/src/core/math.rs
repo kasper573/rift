@@ -146,3 +146,34 @@ pub struct FrameSize {
     #[schemars(extend("minimum" = 1))]
     pub height: u32,
 }
+
+// The shapes the math types take in JSON, for the schemas of the types holding them: euclid's and
+// glam's types know no JSON Schema of their own.
+
+/// A point as it is written: `[x, y]`.
+#[derive(JsonSchema)]
+#[schemars(rename = "Pos")]
+pub struct PosSchema(pub [f32; 2]);
+
+/// An offset as it is written: `[x, y]`.
+#[derive(JsonSchema)]
+#[schemars(rename = "Offset")]
+pub struct OffsetSchema(pub [f32; 2]);
+
+/// A size as it is written: `[width, height]`.
+#[derive(JsonSchema)]
+#[schemars(rename = "Size")]
+pub struct SizeSchema(pub [f32; 2]);
+
+/// A rect as it is written: its corner nearest the origin, and its size.
+#[derive(JsonSchema)]
+#[schemars(rename = "Rect")]
+pub struct RectSchema {
+    pub origin: PosSchema,
+    pub size: SizeSchema,
+}
+
+/// A 4x4 matrix as it is written: its columns one after another.
+#[derive(JsonSchema)]
+#[schemars(rename = "Matrix")]
+pub struct MatrixSchema(pub [f32; 16]);

@@ -30,6 +30,7 @@ pub mod script;
 pub mod settings;
 pub mod shop;
 pub mod skill;
+pub mod staging;
 pub mod stat;
 pub mod status;
 pub mod terminal;

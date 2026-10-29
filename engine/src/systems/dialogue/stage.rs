@@ -117,6 +117,7 @@ pub struct StageView {
 
 pub struct StageChoice {
     pub label: String,
+    pub gets: Vec<ItemId>,
     pub locked: bool,
     pub selected: bool,
 }
@@ -164,6 +165,14 @@ pub fn view(world: &World) -> Option<StageView> {
             .enumerate()
             .map(|(index, choice)| StageChoice {
                 label: choice.label.words(world.resource::<InputMap>()),
+                gets: choice
+                    .chips
+                    .iter()
+                    .filter_map(|chip| match chip {
+                        ChoiceChip::Gets { item, .. } => Some(*item),
+                        _ => None,
+                    })
+                    .collect(),
                 locked: choice.locked,
                 selected: index == shown.selected,
             })

@@ -897,8 +897,6 @@ fn spawn_server(binaries: &Path, folder: &Path, sender: Sender<OutputLine>) -> i
         auth: launch::AuthMode::Fake,
         test_characters: true,
         exit_on_stdin_eof: true,
-        pyroscope_enabled: false,
-        pyroscope_sample_hz: 100,
     };
     let mut command = Command::new(binaries.join(SERVER));
     command.envs(launch::env_of(SERVER_ENV_PREFIX, &config));

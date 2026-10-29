@@ -1,8 +1,0 @@
-{
-  "footprint": {
-    "type": "none"
-  },
-  "materials": {
-    "style": "world/props/materials/leaves.prop_material.json"
-  }
-}

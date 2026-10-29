@@ -177,6 +177,16 @@ pub struct PlacedShape {
     pub shape: Shape,
 }
 
+impl JsonSchema for PlacedShape {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        WirePlacedShape::schema_name()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        WirePlacedShape::json_schema(generator)
+    }
+}
+
 impl PlacedShape {
     /// Where a cast from `from` toward `point` lays a shape down: a circle or a rectangle sits on
     /// the point, a cone or a line reaches out from the caster toward it.
@@ -278,14 +288,17 @@ pub fn facing_from(from: Pos<Meters>, toward: Pos<Meters>) -> Radians {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy)]
+#[schemars(rename = "PlacedShape")]
 struct WirePlacedShape {
+    #[schemars(with = "crate::core::math::PosSchema")]
     at: Pos<Meters>,
     facing: Radians,
     shape: WireShape,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy)]
+#[schemars(rename = "WireShape")]
 enum WireShape {
     Circle { radius: Meters },
     Rect { width: Meters, height: Meters },

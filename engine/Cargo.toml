@@ -2,35 +2,20 @@
 name = "engine"
 version.workspace = true
 edition.workspace = true
-description = "The engine: the isomorphic simulation library and its server, browser and desktop clients, bench, load test and lint binaries"
+description = "The engine: the isomorphic simulation library and its server, browser and desktop clients"
 
+# Built with `--profile profiling --features profiling`, it is game-server-profiling.
 [[bin]]
 name = "game-server"
 path = "src/bin/server/main.rs"
-
-# Load generator: connects N headless replicon clients to an already-running real game server over
-# real websocket sockets. Server-only (no in-process server); see `just loadtest`.
-[[bin]]
-name = "loadtest"
-path = "src/bin/bench/loadtest.rs"
 
 [[bin]]
 name = "desktop-client"
 path = "src/bin/desktop_client/main.rs"
 
-# Build with `--profile profiling --features profiling` for debug symbols.
 [[bin]]
-name = "profile"
-path = "src/bin/bench/profile.rs"
-required-features = ["profiling"]
-
-[[bench]]
-name = "client"
-harness = false
-
-[[bench]]
-name = "memory"
-harness = false
+name = "wasm-client"
+path = "src/bin/wasm_client/main.rs"
 
 [features]
 profiling = ["bevy/debug", "bevy/trace_chrome"]
@@ -155,18 +140,16 @@ bevy_skeleton_modifiers = { version = "0.1.1", default-features = false }
 image = { version = "0.25", default-features = false }
 wgpu = { workspace = true, features = ["counters"] }
 
-# Native-only: crates the server/bench/lint binaries need that have no wasm build (tokio, axum, …),
+# Native-only: crates the server, desktop and lint binaries need that have no wasm build (tokio, axum, …),
 # plus the desktop windowing features the client code needs to compile natively.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bevy = { workspace = true, features = ["x11", "multi_threaded"] }
 axum.workspace = true
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 ctrlc.workspace = true
-oauth2 = { version = "5", default-features = false }
 opener = "0.9"
-tiny_http = "0.12"
-jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 metrics = "0.24"
+oidc = { path = "../oidc" }
 service = { path = "../service" }
 tokio.workspace = true
 ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
@@ -179,9 +162,7 @@ cargo_metadata = "0.23"
 syn = { workspace = true, features = ["visit"] }
 proc-macro2 = { workspace = true, features = ["span-locations"] }
 
-# The client bench plays through the same driver as the showcase.
 [dev-dependencies]
-driver = { path = "../driver" }
 testkit = { path = "../testkit" }
 tempfile = "3"
 

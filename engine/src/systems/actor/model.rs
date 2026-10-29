@@ -14,7 +14,7 @@ use super::part::{MAX_PART_BYTES, ModelPartDef, ModelPartId};
 use super::playing::Motion;
 use super::rigging::BuiltSkeleton;
 use super::skeleton::{
-    self, BuildName, Clip, ClipCell, Colours, Cue, Declared, GroupName, Hand, SkeletonDef,
+    self, BuildName, Clip, ClipCell, Colours, Cue, Declared, GroupName, Hand, Naming, SkeletonDef,
     SkeletonId,
 };
 use super::stance::StanceId;
@@ -572,6 +572,12 @@ impl ActorModel {
         self.def.build.as_ref()
     }
 
+    /// Whether its build is given clips of its own, over those of its skeleton's first build.
+    pub fn build_has_clips(&self) -> bool {
+        self.build()
+            .is_some_and(|build| self.skeleton.def.build_has_clips(build))
+    }
+
     pub fn hands(&self) -> &[Hand] {
         &self.skeleton.def.hands
     }
@@ -603,11 +609,12 @@ impl ActorModel {
 
     /// The cell that plays `motion` in `stance`, holding `pose` while idle.
     pub fn cell(&self, stance: Option<StanceId>, motion: &Motion, pose: Pose) -> &ClipCell {
-        self.skeleton
-            .def
-            .named(self.build(), stance, motion, pose)
-            .expect("a skeleton that built names every action in base")
-            .0
+        self.named(stance, motion, pose).0
+    }
+
+    /// Where the sets named the cell that plays `motion` in `stance`, holding `pose` while idle.
+    pub fn naming(&self, stance: Option<StanceId>, motion: &Motion, pose: Pose) -> Naming {
+        self.named(stance, motion, pose).1
     }
 
     /// What plays as the clip picked at `pick` among `motion`'s in `stance`, holding `pose` while idle:
@@ -763,4 +770,13 @@ fn skins(content: &Content, def: &ModelDef, skeleton: &SkeletonDef, look: &BodyL
 
 fn listed<T: AsRef<str>>(all: &[T]) -> String {
     all.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(", ")
+}
+
+impl ActorModel {
+    fn named(&self, stance: Option<StanceId>, motion: &Motion, pose: Pose) -> (&ClipCell, Naming) {
+        self.skeleton
+            .def
+            .named(self.build(), stance, motion, pose)
+            .expect("a skeleton that built names every action in base")
+    }
 }
