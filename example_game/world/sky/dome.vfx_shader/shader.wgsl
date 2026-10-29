@@ -2,8 +2,9 @@
 // as `day_light` times the light the world is lit by, covering the air by `day` while the light
 // stands high, so the air's own colours show as it sets. By night, a sky shading from `night_horizon` up to `night_zenith`, as
 // bright as `night_light`, glowing `dusk` low toward the sun as it sets and rises by `dusk_glow`; stars as bright as `stars`, `star_count` of the sky's cells holding
-// one, thickest along a band of the Milky Way glowing by `milky_way`; and the full moon, `moon_size`
-// degrees across in `moon`, its glow spreading round it by `moon_glow`.
+// one, thickest along a band of the Milky Way glowing by `milky_way`; the sun, `sun_size` degrees
+// across and `sun_glare` times as bright as the light it sheds, its glare spreading round it; and
+// the full moon, `moon_size` degrees across in `moon`, its glow spreading round it by `moon_glow`.
 // The weather's clouds as heaps standing on the field of cloud at the clouds' height, each rising
 // about `height` over it where the field lies deepest, flat underneath and curling up toward its
 // edge, its face heaped with lumps `billow` metres across and `fringe` of that high, dissolving
@@ -31,6 +32,7 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
         sky = vec4<f32>(sky.rgb + (starlight(way) + milky_way(way)) * shown, sky.a);
         sky = vec4<f32>(sky.rgb + twilight(way, dark), sky.a);
     }
+    sky = sun(sky, way);
     sky = moon(sky, way, dark);
     let streak = streaks(way) * params.streaks * (1.0 - dark);
     sky = laid(sky, params.streak.rgb * (light_color() * 0.7 + sky_light(vec3<f32>(0.0, 1.0, 0.0)) * 2.0), streak);
@@ -104,6 +106,19 @@ fn milky_way(way: vec3<f32>) -> vec3<f32> {
     let dust = smoothstep(0.35, 0.75, fbm(vec2<f32>(way.x + way.z, way.y - way.x) * 14.0));
     let glow = band * mottle * (1.0 - 0.6 * dust);
     return vec3<f32>(0.55, 0.62, 0.85) * glow * params.milky_way * 0.12;
+}
+
+// The sun where it stands, always opposite the moon: a disc as bright as `sun_glare` times the light
+// it sheds and its glare round it, both sunk behind the horizon as it sets.
+fn sun(behind: vec4<f32>, way: vec3<f32>) -> vec4<f32> {
+    let toward = -moon_way();
+    let off = acos(clamp(dot(way, toward), -1.0, 1.0));
+    let radius = radians(params.sun_size) * 0.5;
+    let above = smoothstep(-0.004, 0.004, way.y);
+    let light = light_color() * params.sun_glare;
+    let glare = (exp(-off / (radius * 2.0)) * 0.3 + exp(-off / (radius * 10.0)) * 0.08) * above;
+    let disc = (1.0 - smoothstep(radius * 0.9, radius, off)) * above;
+    return laid(laid(behind, light, glare), light, disc);
 }
 
 // The full moon, always opposite the sun: a disc of `moon`, its seas darker, and a glow round it

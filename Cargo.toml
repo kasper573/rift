@@ -35,6 +35,8 @@ bevy_input = { version = "0.20.0", default-features = false }
 bevy_math = { version = "0.20.0", default-features = false }
 bevy_time = { version = "0.20.0", default-features = false }
 bevy = { version = "0.20.0", default-features = false }
+# Only to enable what bevy leaves off; the version must be the one bevy renders with.
+wgpu = { version = "30.0.1", default-features = false }
 syn = { version = "3", features = ["full"] }
 proc-macro2 = "1"
 bevy_replicon = { version = "0.45", default-features = false }

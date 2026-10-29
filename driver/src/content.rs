@@ -191,6 +191,17 @@ pub fn props_near(spot: Place, which: impl Fn(&PropDef) -> bool) -> Vec<Pos<Mete
     props
 }
 
+/// Where the lamps of the spot's area stand, nearest the spot first.
+pub fn lamps_near(spot: Place) -> Vec<Pos<Meters>> {
+    let mut lamps: Vec<Pos<Meters>> = area::load(content(), spot.area)
+        .lights
+        .iter()
+        .map(|light| light.at)
+        .collect();
+    lamps.sort_by(|a, b| a.distance_to(spot.at).total_cmp(&b.distance_to(spot.at)));
+    lamps
+}
+
 /// Where the game starts a new player.
 pub fn initial_spawn() -> Place {
     content().built::<GameSettings>().initial_spawn

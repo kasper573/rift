@@ -1,7 +1,9 @@
 //! The lights of the world: one sun with soft shadows, cloud shadows and shafts of light, an
 //! ambient glow, and up to a few point lights, some of which flicker.
 
-use bevy::light::{CascadeShadowConfigBuilder, DirectionalLight, PointLight, VolumetricLight};
+use bevy::light::{
+    CascadeShadowConfigBuilder, DirectionalLight, PointLight, SunDisk, VolumetricLight,
+};
 use bevy::prelude::*;
 
 use super::clouds::{LOWEST_LIGHT, SHADOW_SPAN};
@@ -45,6 +47,9 @@ pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees)
         }
         .build(),
         VolumetricLight,
+        // The light stands a little over the horizon when its sun or moon has sunk to it, so the
+        // sky draws them where they truly stand rather than leaving it to the light.
+        SunDisk::OFF,
         sun_transform(elevation, azimuth, Vec2::ZERO),
     )
 }

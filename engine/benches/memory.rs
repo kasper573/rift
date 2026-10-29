@@ -1,12 +1,15 @@
-// The memory the game's processes hold as the system sees it, while a player crosses back and forth
-// between two areas and then stands still: an area's footprint must go when the player leaves it,
-// so once a few crossings have grown the caches and pools that are sized to the busiest moment,
-// each visit to an area holds about what the first did, and standing still costs nothing.
+// The memory the game's processes hold as the system sees it, and what the client holds on the GPU,
+// while a player crosses back and forth between two areas and then stands still: an area's
+// footprint must go when the player leaves it, so once a few crossings have grown the caches and
+// pools that are sized to the busiest moment, each visit to an area holds what the first did, and
+// standing still costs nothing. Standing still may still grow the GPU's mesh buffers once, to fit
+// a mesh first seen there.
 
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use driver::{Bytes, Pace, Player, Playtest, PlaytestSetup};
+use driver::{Pace, Player, Playtest, PlaytestSetup};
+use engine::core::units::Bytes;
 use engine::systems::area::AreaId;
 
 // Runs play out alike, so they compare.
@@ -17,9 +20,13 @@ const ROUND_TRIPS: usize = 4;
 // churned through.
 const SETTLE: Duration = Duration::from_secs(12);
 const STILL: Duration = Duration::from_secs(20);
-// What an allocator may keep beyond what the game holds; an area's leak is far larger.
+// What the process may keep beyond what the game holds: what its allocator holds on to, and the
+// command memory the graphics driver keeps for each of wgpu's pooled command encoders at the most
+// it ever recorded, which only fills up over dozens of crossings.
 const SLACK_SHARE: f64 = 0.05;
 const SLACK_LEAST: Bytes = Bytes(64 * 1024 * 1024);
+// What the GPU's buffers and textures may differ by from visit to visit, as a frame's draws differ.
+const GPU_SLACK: Bytes = Bytes(256 * 1024);
 
 fn main() {
     let mut playtest = Playtest::start(PlaytestSetup {
@@ -56,7 +63,7 @@ fn main() {
     let still = {
         let before = settle(&mut me, &playtest);
         me.linger_until(SystemTime::now() + STILL);
-        (before, read(&me, &playtest))
+        (before, read(&mut me, &playtest))
     };
     let mut broken = Vec::new();
     for area in [home, away] {
@@ -70,6 +77,7 @@ fn main() {
         report(&format!("{name}, visit by visit"), &held);
         broken.extend(grown(&format!("{name}: client"), first.client, last.client));
         broken.extend(grown(&format!("{name}: server"), first.server, last.server));
+        broken.extend(gpu_grown(&format!("{name}: gpu"), first.gpu, last.gpu));
     }
     report(
         &format!("standing still for {STILL:?}"),
@@ -93,6 +101,7 @@ fn main() {
 struct Reading {
     client: Bytes,
     server: Bytes,
+    gpu: Bytes,
 }
 
 fn settle(me: &mut Player, playtest: &Playtest) -> Reading {
@@ -100,8 +109,9 @@ fn settle(me: &mut Player, playtest: &Playtest) -> Reading {
     read(me, playtest)
 }
 
-fn read(me: &Player, playtest: &Playtest) -> Reading {
+fn read(me: &mut Player, playtest: &Playtest) -> Reading {
     Reading {
+        gpu: me.snapshot().gpu_memory,
         client: me.client_memory(),
         server: playtest.server_memory(),
     }
@@ -119,6 +129,15 @@ fn grown(what: &str, first: Bytes, last: Bytes) -> Option<String> {
     })
 }
 
+fn gpu_grown(what: &str, first: Bytes, last: Bytes) -> Option<String> {
+    (last.0 > first.0 + GPU_SLACK.0).then(|| {
+        format!(
+            "{what}: {} bytes, from {} bytes (at most {} more)",
+            last.0, first.0, GPU_SLACK.0
+        )
+    })
+}
+
 fn report(what: &str, held: &[Reading]) {
     let column = |of: fn(&Reading) -> Bytes| {
         held.iter()
@@ -127,9 +146,10 @@ fn report(what: &str, held: &[Reading]) {
             .join(" ")
     };
     println!(
-        "[memory-bench] {what}: client {} MB, server {} MB",
+        "[memory-bench] {what}: client {} MB, server {} MB, gpu {} MB",
         column(|reading| reading.client),
-        column(|reading| reading.server)
+        column(|reading| reading.server),
+        column(|reading| reading.gpu)
     );
 }
 

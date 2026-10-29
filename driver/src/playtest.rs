@@ -12,10 +12,10 @@ use walkdir::WalkDir;
 
 use crate::content;
 use crate::desktop::{Desktop, WaitBudget};
-use crate::memory::Bytes;
 use crate::player::{Pace, Player};
 use crate::seen::in_world;
 use crate::server::Server;
+use engine::core::units::Bytes;
 
 pub struct PlaytestSetup {
     pub server_binary: PathBuf,

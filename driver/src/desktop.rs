@@ -14,10 +14,10 @@ use engine::systems::launch::{self, AuthMode, CLIENT_ENV_PREFIX, ClientConfig};
 use engine::systems::probe::{ProbeInputSeen, ProbeSnapshot, ProbeTerrain};
 
 use crate::content::{from_json, to_json};
-use crate::memory::Bytes;
 use crate::recording::{Footage, Recording};
 use crate::seen::area_name;
 use crate::server::Server;
+use engine::core::units::Bytes;
 
 /// The machine a desktop client plays on: a screen and speakers of its own, recorded, and a probe
 /// to ask the client what it shows. Input goes in through the X server, as a player's would, and

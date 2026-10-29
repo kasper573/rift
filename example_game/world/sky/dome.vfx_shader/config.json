@@ -175,6 +175,20 @@
       "max": 4.0
     },
     {
+      "name": "sun_size",
+      "kind": "number",
+      "default": 1.5,
+      "min": 0.2,
+      "max": 20.0
+    },
+    {
+      "name": "sun_glare",
+      "kind": "number",
+      "default": 30.0,
+      "min": 0.0,
+      "max": 200.0
+    },
+    {
       "name": "moon",
       "kind": "color",
       "default": [

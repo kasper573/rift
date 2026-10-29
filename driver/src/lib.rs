@@ -13,11 +13,10 @@ mod server;
 
 pub use content::{
     area_named, content, east_of, ground_near, held_in_stance, hunting_ground, id, initial_spawn,
-    input_name, input_names, marker_at, open_ground_beside, pack_ground, pictured_ground,
-    props_near, resident_home,
+    input_name, input_names, lamps_near, marker_at, open_ground_beside, pack_ground,
+    pictured_ground, props_near, resident_home,
 };
 pub use desktop::{BUDGET, WaitBudget};
-pub use memory::Bytes;
 pub use player::{LONG, Pace, Player, reading};
 pub use playtest::{DeployEdit, Playtest, PlaytestSetup};
 pub use recording::{Footage, FootageOverlay, InsetCut, seconds};

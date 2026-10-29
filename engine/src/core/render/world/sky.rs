@@ -8,14 +8,16 @@ use std::f32::consts::PI;
 
 use bevy::color::Mix;
 use bevy::light::atmosphere::{PhaseFunction, ScatteringMedium};
-use bevy::light::{Atmosphere, AtmosphereEnvironmentMapLight, FogVolume};
+use bevy::light::{
+    Atmosphere, AtmosphereEnvironmentMapLight, FogVolume, GeneratedEnvironmentMapLight,
+};
 use bevy::pbr::{AtmosphereSettings, DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::clouds;
-use super::lights::SUN_LUX;
+use super::lights::{self, SUN_LUX};
 use crate::core::geometry::Degrees;
 use crate::core::math::Rect;
 use crate::core::render::camera::FullPicture;
@@ -26,13 +28,20 @@ use crate::core::units::{Meters, Stops};
 /// its own colour. The world is a diorama a few hundred metres across, and the haze that blues its
 /// far side is laid on separately, clear up close.
 const AIR_PER_METRE: f32 = 10.0;
-/// How far from the camera the air stays clear, and how far until the haze hides everything in
-/// the sky's colour.
+/// How far from the camera the air stays clear, and how far until the haze lies as thick as it
+/// gets: never so thick that what stands in it loses its shape.
 const HAZE_CLEAR: f32 = 50.0;
 const HAZE_THICK: f32 = 170.0;
+const THICKEST_HAZE: f32 = 0.85;
+/// The haze's colours under the noon light: pale blue by day, glowing toward dusk, and the blue of
+/// the night, which the dark of the night dims as it dims everything else.
 const DAY_HAZE: Color = Color::srgb(0.72, 0.83, 0.96);
 const DUSK_HAZE: Color = Color::srgb(0.95, 0.66, 0.42);
-const NIGHT_HAZE: Color = Color::srgb(0.16, 0.18, 0.30);
+const NIGHT_HAZE: Color = Color::srgb(0.45, 0.5, 0.85);
+/// The haze of an air no sun ever lights.
+const SUNLESS_HAZE: Color = Color::srgb(0.16, 0.18, 0.30);
+/// How much of the light a face under a clear sky gets comes from the sky rather than the sun.
+const SKY_SHARE: f32 = 0.25;
 /// The haze of saturated air by day, whiter than dry air's, and how much nearer it closes in.
 const MOIST_HAZE: Color = Color::srgb(0.86, 0.9, 0.93);
 const MOIST_CLOSER: f32 = 0.5;
@@ -71,30 +80,35 @@ impl Sky {
     }
 }
 
-/// Lets `camera` see `sky` and be lit by it: the air drawn behind the world, hazing the distance
-/// and shedding its light from above, where the GPU draws the full picture; nothing over the
-/// dark, which takes the air of any other sky standing in the world out of the camera's view.
+/// Lets `camera` see `sky` and be lit by it, where the GPU draws the full picture: the air drawn
+/// behind the world, hazing the distance and shedding its light from above, or none from the dark.
+/// The camera keeps the means to draw the air for as long as it lives and only their strength
+/// changes from sky to sky, since making them anew fills the GPU's command memory with the work
+/// of making them, which it keeps for good.
 pub fn show(world: &mut World, camera: Entity, sky: Sky) {
-    let full = world.resource::<FullPicture>().0;
+    if !world.resource::<FullPicture>().0 {
+        return;
+    }
     let Ok(mut camera) = world.get_entity_mut(camera) else {
         return;
     };
-    if sky.is_air() && full {
-        if !camera.contains::<AtmosphereEnvironmentMapLight>() {
-            camera.insert((
-                AtmosphereSettings {
-                    aerial_view_lut_max_distance: HAZE_REACH,
-                    ..default()
-                },
-                AtmosphereEnvironmentMapLight {
-                    intensity: SKY_LIGHT,
-                    size: UVec2::splat(SKY_MAP),
-                    ..default()
-                },
-            ));
-        }
-    } else {
-        camera.remove::<(AtmosphereSettings, AtmosphereEnvironmentMapLight)>();
+    if !camera.contains::<AtmosphereEnvironmentMapLight>() {
+        camera.insert((
+            AtmosphereSettings {
+                aerial_view_lut_max_distance: HAZE_REACH,
+                ..default()
+            },
+            AtmosphereEnvironmentMapLight {
+                size: UVec2::splat(SKY_MAP),
+                ..default()
+            },
+        ));
+    }
+    if let Some(mut light) = camera.get_mut::<GeneratedEnvironmentMapLight>() {
+        light.intensity = match sky {
+            Sky::Air => SKY_LIGHT,
+            Sky::Dark => 0.0,
+        };
     }
 }
 
@@ -138,19 +152,28 @@ const DUSK: (f32, f32) = (6.0, -10.0);
 /// The sun's elevation below which its light is gone and above which it is full.
 const SUNRISE: (f32, f32) = (-3.0, 8.0);
 
-/// The sky over the world: an Earth's atmosphere as moist as `humidity`, the water in the air
-/// scattering the light white and hazing the horizon the more it holds, scaled down so the
+/// The air over the world under `sky`: an Earth's atmosphere as moist as `humidity`, the water in
+/// the air scattering the light white and hazing the horizon the more it holds, scaled down so the
 /// world's few hundred metres stretch over enough air to haze, over a ground the colour of the
-/// haze, so that past the world's edge the eye meets the same haze the far distance sinks into.
-pub fn atmosphere(media: &mut Assets<ScatteringMedium>, humidity: f32) -> impl Bundle {
+/// haze, so that past the world's edge the eye meets the same haze the far distance sinks into;
+/// or over the dark, an air that scatters nothing over a black ground.
+pub fn atmosphere(media: &mut Assets<ScatteringMedium>, sky: Sky, humidity: f32) -> impl Bundle {
     let mut medium = ScatteringMedium::default();
-    for term in &mut medium.terms {
-        if matches!(term.phase, PhaseFunction::Mie { .. }) {
-            term.scattering *= 1.0 + MOIST_MIE * humidity;
+    match sky {
+        Sky::Air => {
+            for term in &mut medium.terms {
+                if matches!(term.phase, PhaseFunction::Mie { .. }) {
+                    term.scattering *= 1.0 + MOIST_MIE * humidity;
+                }
+            }
         }
+        Sky::Dark => medium.terms.clear(),
     }
     let mut atmosphere = Atmosphere::earth(media.add(medium));
-    atmosphere.ground_albedo = DAY_HAZE.to_linear().to_vec3();
+    atmosphere.ground_albedo = match sky {
+        Sky::Air => DAY_HAZE.to_linear().to_vec3(),
+        Sky::Dark => Vec3::ZERO,
+    };
     let scale = 1.0 / AIR_PER_METRE;
     (
         Transform {
@@ -183,22 +206,23 @@ pub fn air(ground: Rect<Meters>, humidity: f32) -> impl Bundle {
 
 /// The haze the camera sees the world through under a `sun` and a `sky`: clear up close,
 /// thickening with the distance into the colour of the sky at the horizon, pale blue by day,
-/// glowing at dusk and dark by night or under a dark sky, so what stands far off sinks into the
-/// sky.
-pub fn haze(sun: Option<SunLight>, sky: Sky, humidity: f32) -> DistanceFog {
+/// glowing at dusk and blue by night, as bright as the world is `lit` of its noon light, or black
+/// under a dark sky, so what stands far off sinks toward the sky.
+pub fn haze(sun: Option<SunLight>, lit: f32, sky: Sky, humidity: f32) -> DistanceFog {
     let color = match (sky, sun) {
         (Sky::Dark, _) => Color::BLACK,
-        (Sky::Air, None) => NIGHT_HAZE,
+        (Sky::Air, None) => SUNLESS_HAZE,
         (Sky::Air, Some(sun)) => {
-            let lit = smoothstep(SUNRISE.0, SUNRISE.1, sun.elevation.0);
+            let day = smoothstep(SUNRISE.0, SUNRISE.1, sun.elevation.0);
             let glow = (1.0 - sun.elevation.0.abs() / 15.0).clamp(0.0, 1.0);
-            let day = mix(DAY_HAZE, MOIST_HAZE, humidity);
-            mix(mix(NIGHT_HAZE, day, lit), DUSK_HAZE, glow)
+            let clear = mix(DAY_HAZE, MOIST_HAZE, humidity);
+            let hue = mix(mix(NIGHT_HAZE, clear, day), DUSK_HAZE, glow).to_linear();
+            Color::LinearRgba(hue * lit)
         }
     };
     let closer = 1.0 - MOIST_CLOSER * humidity;
     DistanceFog {
-        color,
+        color: color.with_alpha(THICKEST_HAZE),
         directional_light_color: Color::NONE,
         directional_light_exponent: 8.0,
         falloff: FogFalloff::Linear {
@@ -235,17 +259,33 @@ pub fn sun_at(
             illuminance: SUN_LUX * clouded,
         },
         Daylight::Hour(hour) => {
-            let arc = ((hour - 6.0) / 12.0 * PI).sin();
-            let elevation = Degrees(noon_elevation.0 * arc);
+            let (elevation, azimuth) = orbit(noon_elevation, noon_azimuth, hour);
             let warmth = 1.0 - smoothstep(0.0, 25.0, elevation.0);
             SunLight {
                 elevation,
-                azimuth: Degrees(noon_azimuth.0 + (hour - 12.0) * 15.0),
+                azimuth,
                 color: mix(color, SETTING_SUN, warmth * 0.8),
                 illuminance: SUN_LUX * smoothstep(SUNRISE.0, SUNRISE.1, elevation.0) * clouded,
             }
         }
     }
+}
+
+/// Where a sun standing `noon_elevation` high at `noon_azimuth` at noon stands at `hour`: on the
+/// great circle through its noon place that rises due a quarter turn before its noon bearing and
+/// sets a quarter turn after it, turned a twenty-fourth of the way round it each hour, as a sky
+/// turns round the world.
+fn orbit(noon_elevation: Degrees, noon_azimuth: Degrees, hour: f32) -> (Degrees, Degrees) {
+    let noon = lights::toward(noon_elevation, noon_azimuth);
+    let setting = lights::toward(Degrees(0.0), Degrees(noon_azimuth.0 + 90.0));
+    let (along, across) = ((hour - 12.0) / 12.0 * PI).sin_cos();
+    let way = noon * across + setting * along;
+    let elevation = way.y.clamp(-1.0, 1.0).asin();
+    let azimuth = way.x.atan2(-way.z);
+    (
+        Degrees(elevation.to_degrees()),
+        Degrees(azimuth.to_degrees().rem_euclid(360.0)),
+    )
 }
 
 /// The light the world is lit by under `sun`, with `clouds` holding `water`: the sun's until its
@@ -294,6 +334,16 @@ pub fn adaptation(daylight: Daylight, shining: SunLight) -> Stops {
 /// How much of the sun's light reaches the ground through `clouds` holding `water`.
 pub fn clouded(clouds: f32, water: f32) -> f32 {
     1.0 - clouds::shade(water) * clouds
+}
+
+/// How brightly the world shows lit by `shining` and by `ambient` of its sky's full light, through
+/// an eye opened `opened`, of how it shows lit by its `noon` sun and its full sky light.
+pub fn lit(shining: SunLight, ambient: f32, opened: Stops, noon: SunLight) -> f32 {
+    let shown = |light: SunLight, ambient: f32| {
+        let sun = light.illuminance / SUN_LUX * light.elevation.radians().0.sin().max(0.0);
+        (1.0 - SKY_SHARE) * sun + SKY_SHARE * ambient
+    };
+    shown(shining, ambient) * 2f32.powf(opened.0) / shown(noon, 1.0).max(1e-3)
 }
 
 /// How much of its authored brightness an area's ambient light keeps with its sun at

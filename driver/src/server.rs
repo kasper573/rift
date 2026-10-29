@@ -15,7 +15,7 @@ use engine::systems::player::SpawnPolicy;
 use engine::systems::script::Place;
 
 use crate::content::to_json;
-use crate::memory::Bytes;
+use engine::core::units::Bytes;
 
 /// The game server binary, run natively on fake auth, where an unsigned token names the account
 /// that signs in.

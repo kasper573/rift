@@ -17,7 +17,7 @@ use engine::core::content::media::GltfInfos;
 use engine::core::geometry::Degrees;
 use engine::core::render::camera::{self as world_camera, FOV};
 use engine::core::render::world::lights::{self, AMBIENT_NITS, SUN_LUX};
-use engine::core::render::world::sky;
+use engine::core::render::world::sky::{self, Sky};
 use engine::systems::area::prop::PropDef;
 use ui::egui;
 
@@ -212,8 +212,11 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             layers.clone(),
             ChildOf(root),
         ));
-        let atmosphere =
-            sky::atmosphere(&mut world.resource_mut::<Assets<ScatteringMedium>>(), 0.0);
+        let atmosphere = sky::atmosphere(
+            &mut world.resource_mut::<Assets<ScatteringMedium>>(),
+            Sky::Air,
+            0.0,
+        );
         world.spawn((atmosphere, layers.clone(), ChildOf(root)));
         let distance = radius / (FOV.radians().0 / 2.0).sin() * 1.1;
         let (sin_p, cos_p) = PITCH.radians().0.sin_cos();

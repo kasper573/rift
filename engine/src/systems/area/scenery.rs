@@ -70,14 +70,15 @@ pub fn spawn(world: &mut World, content: &Content, area: &Area, layers: RenderLa
             ))
             .id()
     });
+    let humidity = humidity(area);
+    let atmosphere = sky::atmosphere(
+        &mut world.resource_mut::<Assets<ScatteringMedium>>(),
+        area.lighting.sky,
+        humidity,
+    );
+    world.spawn((atmosphere, ChildOf(root)));
     let mut dome = None;
     if area.lighting.sky.is_air() {
-        let humidity = humidity(area);
-        let atmosphere = sky::atmosphere(
-            &mut world.resource_mut::<Assets<ScatteringMedium>>(),
-            humidity,
-        );
-        world.spawn((atmosphere, ChildOf(root)));
         world.spawn((sky::air(area.size.bounds(), humidity), ChildOf(root)));
         dome = area
             .lighting
@@ -234,13 +235,24 @@ pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scener
         }
     }
     let mut tone = area.lighting.grade.tone();
-    if let Some(shining) = shining {
-        tone.exposure.0 += sky::adaptation(daylight, shining).0;
+    let mut lit = 1.0;
+    if let (Some(shining), Some(noon)) = (shining, sun_at(area, Daylight::Fixed)) {
+        let opened = sky::adaptation(daylight, shining);
+        tone.exposure.0 += opened.0;
+        let sky_light =
+            sky::ambient_at(daylight, elevation, area.weather.clouds, area.weather.water)
+                / sky::ambient_at(
+                    Daylight::Fixed,
+                    None,
+                    area.weather.clouds,
+                    area.weather.water,
+                );
+        lit = sky::lit(shining, sky_light, opened, noon);
     }
     if let Ok(mut camera) = world.get_entity_mut(camera) {
         camera.insert((
             ambient,
-            sky::haze(sun, area.lighting.sky, humidity(area)),
+            sky::haze(sun, lit, area.lighting.sky, humidity(area)),
             camera::grading(tone),
         ));
     }

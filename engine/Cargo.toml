@@ -153,6 +153,7 @@ polyanya = "0.17"
 glam = "0.32"
 bevy_skeleton_modifiers = { version = "0.1.1", default-features = false }
 image = { version = "0.25", default-features = false }
+wgpu = { workspace = true, features = ["counters"] }
 
 # Native-only: crates the server/bench/lint binaries need that have no wasm build (tokio, axum, …),
 # plus the desktop windowing features the client code needs to compile natively.

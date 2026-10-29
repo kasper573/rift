@@ -1,10 +1,11 @@
 use std::time::Duration;
 
-use driver::{DeployEdit, Player, WaitBudget};
+use driver::{DeployEdit, Player, WaitBudget, lamps_near};
 use engine::core::render::world::sky::Daylight;
 use engine::core::time::Seconds;
 use engine::systems::area::DayCycle;
 use engine::systems::input::map::InputAction;
+use engine::systems::script::Place;
 
 use crate::chapters::Chapter;
 use crate::shoot::Shoot;
@@ -50,10 +51,18 @@ fn play(shoot: &mut Shoot) {
     me.turn_camera(InputAction::TurnRight);
     me.turn_camera(InputAction::TurnRight);
     wait_for_hours(&mut me, "midnight", 23.0..24.0);
-    me.caption(
-        "An area's lamps pool their light on the ground around them, and shine out best by night",
-    );
-    me.hold();
+    let seen = me.snapshot();
+    let here = Place {
+        area: seen.area.expect("the player is in an area"),
+        at: seen.me.as_ref().expect("the player").at,
+    };
+    if let Some(lamp) = lamps_near(here).first() {
+        me.walk_near(*lamp);
+        me.caption(
+            "An area's lamps pool their light on the ground around them, and shine out best by night",
+        );
+        me.hold();
+    }
     wait_for_hours(&mut me, "the small hours", 4.5..12.0);
     me.turn_camera(InputAction::TurnRight);
     me.turn_camera(InputAction::TurnRight);

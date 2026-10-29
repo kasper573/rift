@@ -23,6 +23,16 @@ use crate::core::time::Seconds;
 #[schemars(extend("x-unit" = "m"))]
 pub struct Meters(pub f32);
 
+/// An amount of memory.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Bytes(pub u64);
+
+impl Bytes {
+    pub fn megabytes(self) -> f64 {
+        self.0 as f64 / (1024.0 * 1024.0)
+    }
+}
+
 /// Stops of light: each one doubles it.
 #[derive(
     JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,

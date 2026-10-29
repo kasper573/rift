@@ -7,6 +7,7 @@ use bevy::input::ButtonState;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{MouseButtonInput, MouseWheel};
 use bevy::prelude::*;
+use bevy::render::renderer::RenderDevice;
 use bevy::window::{CursorOptions, PrimaryWindow};
 use bevy_egui::{EguiOutput, EguiPostUpdateSet, PrimaryEguiContext};
 use serde::{Deserialize, Serialize};
@@ -24,7 +25,7 @@ use crate::core::render::world::layers::Layered;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
 use crate::core::time::{self, PlaybackRate, Seconds};
-use crate::core::units::{GROUND_ORIGIN, Meters};
+use crate::core::units::{Bytes, GROUND_ORIGIN, Meters};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::render::Puppet;
@@ -115,6 +116,8 @@ pub struct ProbeSnapshot {
     pub soundscape: ProbeSoundscape,
     pub transition: ScreenTransitionPhase,
     pub daylight: Daylight,
+    /// What the GPU holds in buffers and textures for the client.
+    pub gpu_memory: Bytes,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -761,9 +764,18 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             .get_resource::<Daylight>()
             .copied()
             .unwrap_or_default(),
+        gpu_memory: gpu_memory(world),
         view,
         area,
     }
+}
+
+fn gpu_memory(world: &World) -> Bytes {
+    let Some(device) = world.get_resource::<RenderDevice>() else {
+        return Bytes::default();
+    };
+    let held = device.wgpu_device().get_internal_counters().hal;
+    Bytes(u64::try_from(held.buffer_memory.read() + held.texture_memory.read()).unwrap_or(0))
 }
 
 fn record_line(record: &HistoryRecord, inputs: &InputMap) -> ProbeRecord {
