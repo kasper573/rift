@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use driver::{WaitBudget, clickable_point, content, id, marker_at, nearest_npc};
+use driver::{
+    WaitBudget, clickable_point, content, id, marker_at, nearest_npc, set_upon, sets_on_me,
+};
 use engine::core::math::{Pos, Rect};
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::actor::{Action, Pose};
@@ -178,27 +180,7 @@ const BETWEEN_SWINGS: WaitBudget = WaitBudget {
     frames: 120,
 };
 
-/// Within a bite or a swing of the player.
-const SET_UPON_WITHIN: Meters = Meters(3.0);
 const CLOSE_UP_WITHIN: Meters = Meters(5.0);
-
-fn set_upon(snapshot: &ProbeSnapshot) -> bool {
-    snapshot
-        .actors
-        .iter()
-        .any(|body| sets_on_me(snapshot, body))
-}
-
-fn sets_on_me(snapshot: &ProbeSnapshot, body: &ProbeBody) -> bool {
-    body.health > 0.0
-        && body.npc.is_some()
-        && !body.friendly
-        && body.action == Action::Attack
-        && snapshot
-            .me
-            .as_ref()
-            .is_some_and(|me| body.at.distance(me.at) <= SET_UPON_WITHIN)
-}
 
 fn showing(
     snapshot: &ProbeSnapshot,

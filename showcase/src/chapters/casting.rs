@@ -99,15 +99,15 @@ fn play(shoot: &mut Shoot) {
     me.caption(
         "Chain Lightning's circle picks out everything hostile inside it, and the bolt runs through each one",
     );
-    let crowd = me.wait_for("skeletons close enough to chain", |snapshot| {
-        crowd(snapshot, chain_radius())
-    });
-    aim_then_cast(
-        &mut me,
-        InputAction::Hotbar3,
-        crowd,
-        chained_through_several,
-    );
+    let crowded = |snapshot: &ProbeSnapshot| crowd(snapshot, chain_radius());
+    let crowd = me.wait_for("skeletons close enough to chain", crowded);
+    me.aim_skill(InputAction::Hotbar3, crowd);
+    me.hold();
+    // A provoked camp charges on while the viewer takes in the circle, so the bolt goes where the
+    // crowd stands at the click.
+    let crowd = me.wait_for("skeletons still close enough to chain", crowded);
+    me.point_at_ground(crowd);
+    me.cast(chained_through_several);
     me.hold();
     me.caption(
         "An area of allies, a rectangle: Sanctuary blesses everyone standing in it, the caster included",

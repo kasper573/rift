@@ -47,6 +47,7 @@ use crate::systems::notification::{self, NotificationRows, bubble, error, feed, 
 use crate::systems::npc::{Npc, NpcId};
 use crate::systems::player::{PlayedBy, commands_locked, session};
 use crate::systems::quest::{Parties, QuestId, QuestLog, QuestResult};
+use crate::systems::reach::Engaged;
 use crate::systems::script::{OwnerRow, Reach, RiftScripts};
 use crate::systems::shop::{self, ShopId};
 use crate::systems::skill::{self, Rank, SkillId, bar::SlotReport};
@@ -241,6 +242,8 @@ pub struct ProbeBody {
     pub capsule: Capsule,
     pub facing: Radians,
     pub action: Action,
+    /// The actor it is casting at, a blow or a bolt alike.
+    pub engaged: Option<Entity>,
     /// Whether it stands still rather than walks.
     pub resting: bool,
     /// The motion its body shows: what it does, or a move, a gesture, a flinch at a blow that
@@ -996,6 +999,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         .unwrap_or_default();
     Some(ProbeBody {
         id: entity.id(),
+        engaged: entity.get::<Engaged>().map(|engaged| engaged.0),
         name: entity
             .get::<actor::Name>()
             .map_or_else(String::new, |name| name.name.clone()),

@@ -17,7 +17,7 @@ use crate::desktop::{BUDGET, Button, Deadline, Desktop, WaitBudget};
 use crate::recording::Footage;
 use crate::seen::{
     UiTarget, aiming, at_rest, beside_anyone, clickable_point, in_warp, in_world, me_at_rest,
-    object_named, open, passed_by, taken, townsperson, warp_named,
+    object_named, open, passed_by, set_upon, sets_on_me, taken, townsperson, warp_named,
 };
 use engine::core::units::Bytes;
 
@@ -557,6 +557,10 @@ impl Player {
         done: impl Fn(&ProbeSnapshot) -> Option<T>,
     ) -> T {
         self.approach(marker);
+        // Nothing opens to a player under attack, so whatever has set on them is fought off first.
+        while set_upon(&self.snapshot()) {
+            self.fight(sets_on_me, |snapshot| !set_upon(snapshot));
+        }
         let found = self.reach(
             what,
             LONG,

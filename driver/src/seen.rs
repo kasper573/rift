@@ -531,3 +531,22 @@ pub fn other_player(snapshot: &ProbeSnapshot) -> Option<&ProbeBody> {
         .iter()
         .find(|actor| actor.player && actor.id != me)
 }
+
+/// Whether anything hostile is attacking the player, from up close or afar.
+pub fn set_upon(snapshot: &ProbeSnapshot) -> bool {
+    snapshot
+        .actors
+        .iter()
+        .any(|body| sets_on_me(snapshot, body))
+}
+
+/// Whether `body` is a living hostile attacking the player, from up close or afar.
+pub fn sets_on_me(snapshot: &ProbeSnapshot, body: &ProbeBody) -> bool {
+    body.health > 0.0
+        && body.npc.is_some()
+        && !body.friendly
+        && snapshot
+            .me
+            .as_ref()
+            .is_some_and(|me| body.engaged == Some(me.id))
+}
