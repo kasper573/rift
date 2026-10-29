@@ -7,16 +7,18 @@ use engine::core::content::{
 };
 use engine::core::math::{Offset, Pos, Rect};
 use engine::core::units::{MeterPos, Meters};
-use engine::systems::area::{self, Area, AreaDef, AreaModule};
+use engine::systems::area::{self, Area, AreaDef, AreaId, AreaModule, PropDef};
 use engine::systems::input::map::{InputAction, InputMap};
-use engine::systems::load_content;
+use engine::systems::item::{ItemId, Wear};
 use engine::systems::movement::NavMesh;
+use engine::systems::npc::NpcId;
 use engine::systems::probe::ProbeSnapshot;
 use engine::systems::script::Place;
+use engine::systems::{GameSettings, load_content};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::seen::{area_name, clickable_point};
+use crate::seen::clickable_point;
 
 /// The content the driver reads names and places from: the one the server it drives plays.
 pub fn content() -> &'static Content {
@@ -97,52 +99,101 @@ pub fn area_named(name: &str) -> &'static Area {
     area::load(content(), id::<AreaDef>(name))
 }
 
+/// Whether the item is held in a hand, putting its wearer in the stance named `stance`.
+pub fn held_in_stance(item: ItemId, stance: &str) -> bool {
+    let content = content();
+    matches!(
+        item.get(content).wear(),
+        Some(Wear::Held { stance: held, .. }) if held.name(content) == stance
+    )
+}
+
 /// Where the townsperson lives: standing there puts a player at their feet.
-pub fn resident_home(area: &str, npc: &str) -> Place {
+pub fn resident_home(npc: &str) -> Place {
     area::residence(content(), id(npc))
-        .filter(|home| home.area == id(area))
-        .unwrap_or_else(|| panic!("nobody named {npc:?} lives in {area}"))
+        .unwrap_or_else(|| panic!("nobody named {npc:?} lives anywhere"))
 }
 
 /// The middle of the ground where the monster roams: its own corner of the area, or all of it.
-pub fn hunting_ground(area: &str, npc: &str) -> Pos<Meters> {
-    let npc = id(npc);
-    let whole = Rect::from_size(area_named(area).size);
-    area::modules(content(), id(area))
-        .find_map(|module| match module {
-            AreaModule::Population(population) if population.npc == npc => {
-                Some(population.roams.unwrap_or(whole).center())
-            }
-            _ => None,
+pub fn hunting_ground(npc: &str) -> Place {
+    roaming(npc)
+        .next()
+        .map(|(area, roams)| Place {
+            area,
+            at: roams
+                .unwrap_or_else(|| Rect::from_size(area::load(content(), area).size))
+                .center(),
         })
-        .unwrap_or_else(|| panic!("no {npc:?} roams {area}"))
+        .unwrap_or_else(|| panic!("no {npc} roams anywhere"))
 }
 
 /// The middle of the tightest ground a pack of the monster keeps to: where several of them stand
 /// close enough together for one cast to reach them all.
-pub fn pack_ground(area: &str, npc: &str) -> Pos<Meters> {
-    let npc = id(npc);
-    area::modules(content(), id(area))
-        .filter_map(|module| match module {
-            AreaModule::Population(population) if population.npc == npc => population.roams,
-            _ => None,
+pub fn pack_ground(npc: &str) -> Place {
+    roaming(npc)
+        .filter_map(|(area, roams)| Some((area, roams?)))
+        .min_by(|(_, a), (_, b)| {
+            (a.size.width * a.size.height).total_cmp(&(b.size.width * b.size.height))
         })
-        .min_by(|a, b| (a.size.width * a.size.height).total_cmp(&(b.size.width * b.size.height)))
-        .map(|roams| roams.center())
-        .unwrap_or_else(|| panic!("no {npc:?} keeps to a ground in {area}"))
+        .map(|(area, roams)| Place {
+            area,
+            at: roams.center(),
+        })
+        .unwrap_or_else(|| panic!("no {npc} keeps to a ground of its own anywhere"))
 }
 
 /// A place `by` metres east of a spot and a metre down from its row, clear of whoever stands there.
-pub fn east_of(area: &str, spot: Pos<Meters>, by: f32) -> Place {
+pub fn east_of(spot: Place, by: f32) -> Place {
     Place {
-        area: id(area),
-        at: spot + Offset::new(by, 1.0),
+        area: spot.area,
+        at: spot.at + Offset::new(by, 1.0),
     }
 }
 
-/// A marked spot: a named object, or where a townsperson lives.
-pub fn marker_at(area: &str, name: &str) -> Pos<Meters> {
-    placed_object(area, name).unwrap_or_else(|| resident_home(area, name).at)
+/// A marked spot: the one object of the name in the game, or where the townsperson of the name
+/// lives.
+pub fn marker_at(name: &str) -> Place {
+    let mut marked = content()
+        .ids::<AreaDef>()
+        .filter_map(|area| placed_object(area, name).map(|at| Place { area, at }));
+    match (marked.next(), marked.next()) {
+        (Some(place), None) => place,
+        (None, _) => resident_home(name),
+        (Some(_), Some(_)) => panic!("more than one object named {name}"),
+    }
+}
+
+/// The walkable ground nearest `spot` that its terrain lays a picture of its own over.
+pub fn pictured_ground(spot: Place) -> Pos<Meters> {
+    let content = content();
+    let area = area::load(content, spot.area);
+    let pictured = |at: Pos<Meters>| {
+        area.terrains
+            .get(usize::from(area.paint.at(at)))
+            .is_some_and(|terrain| terrain.get(content).picture.is_some())
+    };
+    ground_near(spot, Meters(0.0)..=Meters(f32::INFINITY))
+        .into_iter()
+        .find(|at| pictured(*at))
+        .unwrap_or_else(|| panic!("no ground with a picture of its own near {spot:?}"))
+}
+
+/// Where the props of `spot`'s area that `which` picks stand, nearest `spot` first.
+pub fn props_near(spot: Place, which: impl Fn(&PropDef) -> bool) -> Vec<Pos<Meters>> {
+    let content = content();
+    let mut props: Vec<Pos<Meters>> = area::load(content, spot.area)
+        .props
+        .iter()
+        .filter(|placement| which(placement.prop.get(content)))
+        .map(|placement| placement.at)
+        .collect();
+    props.sort_by(|a, b| a.distance_to(spot.at).total_cmp(&b.distance_to(spot.at)));
+    props
+}
+
+/// Where the game starts a new player.
+pub fn initial_spawn() -> Place {
+    content().built::<GameSettings>().initial_spawn
 }
 
 /// Ground in view beside the player, farthest from anyone first, so nobody strolls under the
@@ -157,8 +208,10 @@ pub fn open_ground_beside(snapshot: &ProbeSnapshot) -> Vec<Pos<Meters>> {
             .fold(f32::INFINITY, f32::min)
     };
     let mut ground: Vec<Pos<Meters>> = ground_near(
-        area_name(snapshot).expect("an area"),
-        me,
+        Place {
+            area: snapshot.area.expect("an area"),
+            at: me,
+        },
         Meters(2.0)..=Meters(4.0),
     )
     .into_iter()
@@ -169,12 +222,9 @@ pub fn open_ground_beside(snapshot: &ProbeSnapshot) -> Vec<Pos<Meters>> {
 }
 
 /// Nearest first, and only what can be walked to from the spot.
-pub fn ground_near(
-    area: &str,
-    at: Pos<Meters>,
-    within: RangeInclusive<Meters>,
-) -> Vec<Pos<Meters>> {
-    let mesh = &area_named(area).mesh;
+pub fn ground_near(spot: Place, within: RangeInclusive<Meters>) -> Vec<Pos<Meters>> {
+    let at = spot.at;
+    let mesh = &area::load(content(), spot.area).mesh;
     let from = mesh.nearest(at).expect("walkable ground near");
     let mut ground: Vec<Pos<Meters>> = lattice(mesh)
         .filter(|ground| mesh.connects(from, *ground) && within.contains(&ground.distance(at)))
@@ -183,8 +233,8 @@ pub fn ground_near(
     ground
 }
 
-pub(crate) fn placed_object(area: &str, object: &str) -> Option<Pos<Meters>> {
-    area::objects(area::placed(content(), id(area)))
+pub(crate) fn placed_object(area: AreaId, object: &str) -> Option<Pos<Meters>> {
+    area::objects(area::placed(content(), area))
         .find(|(_, def)| def.name.as_deref() == Some(object))
         .map(|(_, def)| def.shape.center())
 }
@@ -197,4 +247,16 @@ pub fn lattice(mesh: &NavMesh) -> impl Iterator<Item = Pos<Meters>> + '_ {
     let ys = (min.y.ceil() as i32)..=(max.y.floor() as i32);
     ys.flat_map(move |y| xs.clone().map(move |x| Pos::new(x as f32, y as f32)))
         .filter(move |point| mesh.walkable(*point))
+}
+
+fn roaming(npc: &str) -> impl Iterator<Item = (AreaId, Option<Rect<Meters>>)> {
+    let npc: NpcId = id(npc);
+    content().ids::<AreaDef>().flat_map(move |area| {
+        area::modules(content(), area).filter_map(move |module| match module {
+            AreaModule::Population(population) if population.npc == npc => {
+                Some((area, population.roams))
+            }
+            _ => None,
+        })
+    })
 }

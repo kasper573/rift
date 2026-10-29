@@ -227,6 +227,18 @@ pub(super) struct MaterialCache(
     HashMap<(AssetId<StandardMaterial>, Option<LookKey>), Handle<WorldMaterial>>,
 );
 
+/// Forgets the world materials made for standard materials that are gone, so the pictures they
+/// draw with go with them rather than piling up each time an area's scenes load anew.
+pub(super) fn forget_dropped(
+    mut events: MessageReader<AssetEvent<StandardMaterial>>,
+    mut cache: ResMut<MaterialCache>,
+) {
+    let gone = super::dropped(&mut events);
+    if !gone.is_empty() {
+        cache.0.retain(|(standard, _), _| !gone.contains(standard));
+    }
+}
+
 /// The materials a scene's meshes are dressed from.
 #[derive(SystemParam)]
 pub(super) struct Wardrobe<'w> {

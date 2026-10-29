@@ -1,6 +1,6 @@
 use std::f32::consts::TAU;
 
-use driver::{Player, UiTarget, content, holding, input_name};
+use driver::{Player, UiTarget, content, held_in_stance, holding, input_name};
 use engine::core::math::{Offset, Pos, WindowPx};
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::input::map::InputAction;
@@ -25,11 +25,18 @@ const LAYOUT: [(InputAction, &str, (f32, f32)); 4] = [
 ];
 
 const SWORD: &str = "rusty_sword";
-const SHIELD: &str = "bone_shield";
 
 fn play(shoot: &mut Shoot) {
     let player = shoot.join_as("armed", None);
     let mut me = shoot.roll(player);
+    let shield = me
+        .wait_for("a shield in the bag", |seen| {
+            seen.bag
+                .iter()
+                .map(|stack| stack.item)
+                .find(|&item| held_in_stance(item, "shield"))
+        })
+        .name(content());
     me.caption(&format!(
         "Every window has a hotkey: {}. A window drops onto the table as it opens",
         [
@@ -52,13 +59,13 @@ fn play(shoot: &mut Shoot) {
         me.drag_ui(title, Offset::new(x, y));
     }
     me.caption("Rest the pointer on an item to see what it is");
-    me.hover_ui(outside_card(SHIELD));
+    me.hover_ui(outside_card(shield));
     me.hold();
     me.caption(&format!(
         "{} an item and its card is dealt from the slot: what it does, and a line of lore",
         input_name(InputAction::InspectItem)
     ));
-    inspect(&mut me, SHIELD);
+    inspect(&mut me, shield);
     me.caption("One card at a time: the next is dealt on top, and the old one drops away under it");
     inspect(&mut me, SWORD);
     me.caption(&format!(
@@ -70,7 +77,7 @@ fn play(shoot: &mut Shoot) {
         holding(snapshot, "rusty_sword") == 0
     });
     me.caption("Worn gear has a card too…");
-    inspect(&mut me, SHIELD);
+    inspect(&mut me, shield);
     inspect(&mut me, SWORD);
     me.caption(&format!(
         "…and {} takes it off",
@@ -80,13 +87,13 @@ fn play(shoot: &mut Shoot) {
     me.wait_until("the sword to be taken off", |snapshot| {
         holding(snapshot, "rusty_sword") == 1
     });
-    hands(&mut me);
+    hands(&mut me, shield);
     me.caption(&format!(
         "{} brings the card in front, and {} flicks away what's in front",
         input_name(InputAction::InspectItem),
         input_name(InputAction::Dismiss)
     ));
-    inspect(&mut me, SHIELD);
+    inspect(&mut me, shield);
     me.wait_until("the card in front", card_in_front);
     me.hold();
     me.act(InputAction::Dismiss);
@@ -123,9 +130,9 @@ fn play(shoot: &mut Shoot) {
     me.scroll_until("Audio", "Voice");
     me.caption("Halfway is the mix as balanced, with room to turn any of them up or down");
     me.show_mixer();
-    me.caption("Music is the soundscape's first channel: turned down, the harbour theme fades out");
+    me.caption("Music is the soundscape's first channel: turned down, the theme fades out");
     set_fader(&mut me, "Music", 0.0);
-    me.caption("Ambience is every other channel: down goes the surf, and the island falls silent");
+    me.caption("Ambience is every other channel: turned down, the world falls silent");
     set_fader(&mut me, "Ambience", 0.0);
     me.caption("Effects are the game's sounds: in the quiet, your footsteps…");
     let home = me.come_to_rest();
@@ -165,7 +172,7 @@ fn play(shoot: &mut Shoot) {
 
 /// Gear in hand: what the equipment window's hands show as a sword, a dagger beside it, and a
 /// greatsword that takes both are worn in turn.
-fn hands(me: &mut Star) {
+fn hands(me: &mut Star, shield: &str) {
     me.caption("The equipment window shows your hands: a sword takes the main hand");
     me.act_on_ui(InputAction::UseItem, outside_card(SWORD));
     me.wait_until("the sword in hand", |snapshot| wears(snapshot, SWORD));
@@ -193,14 +200,14 @@ fn hands(me: &mut Star) {
         holding(snapshot, GREATSWORD) == 1
     });
     me.caption("Anything held goes in any hand: a shield dropped on the main hand is held there");
-    me.carry_onto(outside_card(SHIELD), UiTarget::starting("Empty: "));
+    me.carry_onto(outside_card(shield), UiTarget::starting("Empty: "));
     me.wait_until("the shield in the main hand", |snapshot| {
-        holds_in(snapshot, SHIELD, HandIndex::MAIN)
+        holds_in(snapshot, shield, HandIndex::MAIN)
     });
     me.hold();
-    me.act_on_ui(InputAction::UseItem, outside_card(SHIELD));
+    me.act_on_ui(InputAction::UseItem, outside_card(shield));
     me.wait_until("the shield back in the bag", |snapshot| {
-        holding(snapshot, SHIELD) == 1
+        holding(snapshot, shield) == 1
     });
 }
 

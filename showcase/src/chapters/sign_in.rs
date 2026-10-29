@@ -33,5 +33,6 @@ fn play(shoot: &mut Shoot) {
     me.wait_until("the player in the world", |snapshot| {
         snapshot.me.as_ref().is_some_and(|me| me.name == NAME)
     });
+    me.close_in();
     me.walk_by(Offset::new(3.0, 1.0));
 }

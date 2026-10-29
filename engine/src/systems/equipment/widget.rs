@@ -161,7 +161,7 @@ fn empty_slot(ui: &mut Ui, world: &mut World, place: &Place) {
     let response = framed(ui, world, place, None, false, Sense::hover());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
-            egui::WidgetType::Other,
+            egui::WidgetType::Label,
             true,
             format!("Empty: {}", place.label()),
         )

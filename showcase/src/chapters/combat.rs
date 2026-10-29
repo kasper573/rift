@@ -25,7 +25,7 @@ pub const CHAPTER: Chapter = Chapter {
 };
 
 fn play(shoot: &mut Shoot) {
-    let player = shoot.join_as("swordsman", Some(resident_home("island", "bram")));
+    let player = shoot.join_as("swordsman", Some(resident_home("bram")));
     let mut me = shoot.roll(player);
     me.caption("Town is a safe zone: monsters roam the wilds beyond it");
     // Read in town: out there, monsters don't wait for the viewer.

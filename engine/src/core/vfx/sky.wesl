@@ -110,11 +110,13 @@ fn sky_light(way: vec3<f32>) -> vec3<f32> {
 }
 
 // The field of cloud at a point of the world: how cloudy the sky is there, 0 clear to 1 thick, in
-// x, and the noise the field is drawn from in y. The field lies at the clouds' height
+// x, and how far inside the cloud's edge the point lies in y, in the noise's own measure that
+// the field is drawn from, negative outside it. The field lies at the clouds' height
 // (`cloud_base`), drifting on the wind, and the sun casts its shadows where its rays carry them.
 fn cloud_at(point: vec3<f32>) -> vec2<f32> {
     let at = (point.xz - heavens.drift) / heavens.cloud_tile;
-    return textureSampleLevel(cloud_picture, cloud_sampler, at, 0.0).rg;
+    let field = textureSampleLevel(cloud_picture, cloud_sampler, at, 0.0).rg;
+    return vec2<f32>(field.x, field.y * 2.0 - 1.0);
 }
 
 // The clouds lie at the far end of every ray, behind whatever the world draws.

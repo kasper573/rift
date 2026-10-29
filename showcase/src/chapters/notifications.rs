@@ -1,10 +1,11 @@
 use std::time::{Duration, Instant};
 
 use driver::{
-    Player, UiTarget, arrived_in, content, erred, holding, input_name, marker_at, nearest_npc,
+    Player, UiTarget, arrived_in, content, erred, holding, id, input_name, marker_at, nearest_npc,
     noticed, npc_is, told_by,
 };
 use engine::core::math::Offset;
+use engine::systems::area::AreaDef;
 use engine::systems::history::HistoryTopic;
 use engine::systems::input::map::InputAction;
 use engine::systems::interface::InterfaceIcon;
@@ -27,7 +28,7 @@ fn play(shoot: &mut Shoot) {
     let player = shoot.join_as("forest_bound", None);
     let mut me = shoot.roll(player);
     me.caption("Some places start a conversation on their own: Ilsa watches the north road");
-    let road = marker_at("island", "forest-road");
+    let road = marker_at("forest-road").at;
     me.travel_to(|_| Some(road), |snapshot| snapshot.stage.is_some());
     me.on_stage("halt");
     me.caption("Without a pass the road is just ground. Standing on it, she stops you and your commands lock");
@@ -66,7 +67,7 @@ fn play(shoot: &mut Shoot) {
     // up, the walk onto the pier finishing under the pointer.
     let squabble = || UiTarget::containing("squabble");
     me.travel_to(
-        |_| Some(marker_at("island", "ferry-pier")),
+        |_| Some(marker_at("ferry-pier").at),
         |snapshot| squabble().find(snapshot).is_some(),
     );
     me.hover_ui(squabble());
@@ -122,11 +123,12 @@ fn play(shoot: &mut Shoot) {
     me.wait_until("the history to close", |snapshot| !snapshot.history.open);
     me.act(InputAction::ToggleInventory);
 
-    me.caption("The woodsman's cottage is up the hill: its door is a warp");
+    me.caption("The woodsman's cottage has a door that is a warp");
     me.cross("front-door");
     // Intros stay up only a while: each is waited for before a caption holds the chapter.
     me.wait_until("the cottage's intro", |snapshot| {
-        arrived_in(snapshot, "cottage") && told_by(snapshot, "The woodsman's cottage")
+        arrived_in(snapshot, id::<AreaDef>("cottage"))
+            && told_by(snapshot, "The woodsman's cottage")
     });
     me.caption("A first visit opens on the area's own title, to its own drums");
     me.walk_by(Offset::new(-2.0, -1.0));

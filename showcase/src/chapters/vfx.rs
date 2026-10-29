@@ -1,5 +1,5 @@
 use driver::{
-    BUDGET, LONG, Player, aiming, beside_other_player, clickable_point, ground_near, id, npc_is,
+    BUDGET, LONG, Player, aiming, beside_other_player, clickable_point, ground_near, npc_is,
     other_player_within, pack_ground, played, played_on, playing, status_on_me,
 };
 use engine::core::math::Pos;
@@ -19,21 +19,24 @@ pub const CHAPTER: Chapter = Chapter {
     play,
 };
 
-const AREA: &str = "island";
 const PREY: &str = "skeleton_rogue";
 
 fn play(shoot: &mut Shoot) {
-    let ring = pack_ground(AREA, PREY);
+    let ring = pack_ground(PREY);
     // Beside the pack rather than above or below it, so the pack stays in the wider half of the view.
-    let ground: Vec<_> = ground_near(AREA, ring, Meters(4.0)..=Meters(6.5))
+    let ground: Vec<_> = ground_near(ring, Meters(4.0)..=Meters(6.5))
         .into_iter()
-        .filter(|ground| (ground.y - ring.y).abs() <= 1.5)
+        .filter(|ground| (ground.y - ring.at.y).abs() <= 1.5)
         .collect();
     let mine = *ground.first().expect("ground beside the pack");
     let theirs = *ground
         .iter()
         .find(|ground| ground.distance(mine) >= Meters(1.0))
         .expect("room for two beside the pack");
+    let place = |at| Place {
+        area: ring.area,
+        at,
+    };
     let player = shoot.join_as("arcanist", Some(place(mine)));
     let mut friend = shoot.join_as("armsman", Some(place(theirs)));
     friend.in_world();
@@ -174,10 +177,6 @@ fn sunder_nearest(friend: &mut Player) {
         },
         |snapshot| !played(snapshot, "sunder_slash").is_empty(),
     );
-}
-
-fn place(at: Pos<Meters>) -> Place {
-    Place { area: id(AREA), at }
 }
 
 /// The nearest living foe on the friend's screen: where the pack is now, which the cone sweeps at,

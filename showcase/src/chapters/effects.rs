@@ -16,7 +16,7 @@ const ANTIDOTE: &str = "antidote";
 const WAND: &str = "ash_wand";
 
 fn play(shoot: &mut Shoot) {
-    let player = shoot.join_as("arcanist", Some(resident_home("island", "grisha")));
+    let player = shoot.join_as("arcanist", Some(resident_home("grisha")));
     let mut me = shoot.roll(player);
     me.caption(
         "Buffs and debuffs are status effects. Bog water is a bad idea: Poisoned bites every two seconds",

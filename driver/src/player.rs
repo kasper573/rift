@@ -12,12 +12,12 @@ use engine::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifi
 use engine::systems::movement::{NavMesh, SPACING};
 use engine::systems::probe::{ProbeBody, ProbeShop, ProbeSnapshot, ProbeStage, ProbeUiElement};
 
-use crate::content::{content, hunting_ground, lattice, marker_at, placed_object};
+use crate::content::{content, hunting_ground, lattice, placed_object, resident_home};
 use crate::desktop::{BUDGET, Button, Deadline, Desktop, WaitBudget};
 use crate::recording::Footage;
 use crate::seen::{
-    UiTarget, aiming, area_name, at_rest, beside_anyone, clickable_point, in_warp, in_world,
-    me_at_rest, object_named, open, passed_by, taken, townsperson, warp_named,
+    UiTarget, aiming, at_rest, beside_anyone, clickable_point, in_warp, in_world, me_at_rest,
+    object_named, open, passed_by, taken, townsperson, warp_named,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -184,9 +184,12 @@ impl Player {
         });
     }
 
-    /// Zooms the camera `steps` in with the wheel, out when negative, and waits for the zoom.
+    /// Zooms the camera `steps` in with the wheel, out when negative, and waits for the zoom. The
+    /// wheel turns over the ground the player stands on, so the world rather than the interface
+    /// takes it.
     pub fn zoom_camera(&mut self, steps: i32) {
-        let before = self.snapshot().view.map(|view| view.zoom);
+        let here = self.snapshot().me.expect("the player").at;
+        let before = self.point_at_ground(here).view.map(|view| view.zoom);
         self.desktop.wheel(-steps);
         self.wait_for("the camera to zoom", |seen| {
             (seen.view.map(|view| view.zoom) != before).then_some(())
@@ -366,8 +369,7 @@ impl Player {
     /// Into a marked spot of the area: a named object, or a townsperson's home.
     pub fn walk_into(&mut self, marker: &str, reach: Meters) -> Pos<Meters> {
         let seen = self.in_world();
-        let area = area_name(&seen).expect("the player is in an area");
-        let at = marker_at(area, marker);
+        let at = marked_here(&seen, marker);
         let inside = |me: Pos<Meters>| (me.x - at.x).abs().max((me.y - at.y).abs()) <= reach.0;
         self.travel_to(
             |_| Some(at),
@@ -428,11 +430,13 @@ impl Player {
             let Some(path) = mesh.route(me.at, target) else {
                 continue;
             };
+            // Only as far as the path stays in view: a corner past where it leaves the screen
+            // may lie near in a straight line yet at the end of a long way round.
             let hop = path
                 .iter()
-                .rev()
                 .copied()
-                .find(|ground| {
+                .take_while(|ground| clickable_point(&seen, *ground).is_some())
+                .filter(|ground| {
                     open(&seen, *ground)
                         && if *ground == target {
                             !passed_by(&seen, *ground)
@@ -441,7 +445,8 @@ impl Player {
                         }
                         && (!in_warp(&seen, *ground) || *ground == target)
                 })
-                .or_else(|| detour(&seen, mesh, target, length(me.at, &path)));
+                .last()
+                .or_else(|| detour(&seen, mesh, me.at, target, length(me.at, &path)));
             // Those standing in the way move on, or `arrived` says how close is close enough.
             let Some(hop) = hop else {
                 continue;
@@ -478,8 +483,7 @@ impl Player {
 
     /// Heads for where `npc` roams, and ends once `done` holds.
     pub fn look_out(&mut self, npc: &str, done: impl Fn(&ProbeSnapshot) -> bool) -> Pos<Meters> {
-        let area = area_name(&self.snapshot()).expect("an area");
-        let ground = hunting_ground(area, npc);
+        let ground = hunting_ground(npc).at;
         self.look_for(&format!("{npc} in sight"), ground, done);
         ground
     }
@@ -518,7 +522,7 @@ impl Player {
     /// toward where the content puts it, until the client sees it.
     pub fn approach(&mut self, marker: &str) {
         let seen = self.in_world();
-        let area = area_name(&seen).expect("the player is in an area");
+        let area = seen.area.expect("the player is in an area");
         let shows: Box<dyn Fn(&ProbeSnapshot) -> bool> = if placed_object(area, marker).is_some() {
             Box::new(move |snapshot| object_named(snapshot, marker).is_some())
         } else {
@@ -527,7 +531,7 @@ impl Player {
         if shows(&seen) {
             return;
         }
-        let at = marker_at(area, marker);
+        let at = marked_here(&seen, marker);
         self.travel_to(|_| Some(at), |snapshot| shows(snapshot));
     }
 
@@ -1033,25 +1037,42 @@ fn hemmed_in(snapshot: &ProbeSnapshot, goal: Pos<Meters>) -> bool {
         .is_some_and(|path| path.iter().all(|corner| taken(snapshot, *corner)))
 }
 
-// With everything in view along the way taken by those standing on it, the open ground in view with
-// the least of the way left, should it leave less than `left`: a walk around them.
+// With nothing in view along the way open, the open ground in view that leaves less of the way than
+// `left` and makes the shortest walk to the target through it: a walk around those standing in the
+// way, or around what hides the way from view, never toward ground that lies near the target
+// only across what the walk must go the long way round.
 fn detour(
     snapshot: &ProbeSnapshot,
     mesh: &NavMesh,
+    from: Pos<Meters>,
     target: Pos<Meters>,
     left: Meters,
 ) -> Option<Pos<Meters>> {
-    lattice(mesh)
+    let walks = lattice(mesh)
         .filter(|ground| {
             open(snapshot, *ground)
                 && !beside_anyone(snapshot, *ground)
                 && !in_warp(snapshot, *ground)
         })
-        .filter_map(|ground| Some((ground, length(ground, &mesh.route(ground, target)?))))
-        .filter(|(_, way)| *way < left)
-        .min_by(|a, b| a.1.0.total_cmp(&b.1.0))
-        .map(|(ground, _)| ground)
+        .filter_map(|ground| {
+            let on = length(ground, &mesh.route(ground, target)?);
+            let there = length(from, &mesh.route(from, ground)?);
+            (on < left).then_some((ground, there + on, on))
+        })
+        .collect::<Vec<_>>();
+    let shortest = walks
+        .iter()
+        .map(|walk| walk.1)
+        .min_by(|a, b| a.0.total_cmp(&b.0))?;
+    walks
+        .into_iter()
+        .filter(|walk| walk.1.0 <= shortest.0 + DETOUR_SLACK.0)
+        .min_by(|a, b| a.2.0.total_cmp(&b.2.0))
+        .map(|(ground, _, _)| ground)
 }
+
+/// How much longer than the shortest a walk through ground further along it may be.
+const DETOUR_SLACK: Meters = Meters(2.0);
 
 // An enemy in front of the target takes the click, as it would take a player's: the way to the
 // target leads through it.
@@ -1123,4 +1144,10 @@ fn carry_binding() -> (MouseButton, KeyModifiers) {
             _ => None,
         })
         .expect("a drag is bound to carrying items")
+}
+
+/// A marked spot of the area the player stands in: a named object, or a townsperson's home.
+fn marked_here(seen: &ProbeSnapshot, marker: &str) -> Pos<Meters> {
+    let area = seen.area.expect("the player is in an area");
+    placed_object(area, marker).unwrap_or_else(|| resident_home(marker).at)
 }

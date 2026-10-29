@@ -21,7 +21,7 @@ const POTION: &str = "health_potion";
 const SWORD: &str = "iron_sword";
 
 fn play(shoot: &mut Shoot) {
-    let player = shoot.join_as("armsman", Some(resident_home("island", "grisha")));
+    let player = shoot.join_as("armsman", Some(resident_home("grisha")));
     let mut me = shoot.roll(player);
     me.caption(&format!(
         "The hotbar: nine slots on the keys {} to {}, holding skills and items alike",

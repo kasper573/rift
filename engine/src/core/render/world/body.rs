@@ -197,7 +197,7 @@ impl Plugin for BodyPlugin {
             .init_asset::<GltfClips>()
             .register_asset_loader(GltfClipsLoader)
             .add_observer(stand)
-            .add_systems(Update, (bind, make_pending));
+            .add_systems(Update, (bind, make_pending, super::paint::forget_dropped));
     }
 }
 

@@ -5,7 +5,7 @@ use engine::core::render::transition::ScreenTransitionPhase;
 use engine::core::units::{MeterPos, Meters};
 use engine::core::vfx::{VfxDef, VfxSite};
 use engine::systems::actor::Action;
-use engine::systems::area::AreaDef;
+use engine::systems::area::AreaId;
 use engine::systems::attention::AttentionMark;
 use engine::systems::history::HistoryTopic;
 use engine::systems::interface::InterfaceIcon;
@@ -34,8 +34,8 @@ pub fn in_world(snapshot: &ProbeSnapshot) -> bool {
 
 /// The probe names the new area as soon as the character is there; the crossing's transition is
 /// still uncovering it until the screen settles.
-pub fn arrived_in(snapshot: &ProbeSnapshot, area: &str) -> bool {
-    snapshot.area == Some(id::<AreaDef>(area)) && in_world(snapshot)
+pub fn arrived_in(snapshot: &ProbeSnapshot, area: AreaId) -> bool {
+    snapshot.area == Some(area) && in_world(snapshot)
 }
 
 pub fn area_name(snapshot: &ProbeSnapshot) -> Option<&'static str> {

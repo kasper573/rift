@@ -12,7 +12,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use crate::core::units::Meters;
 
 /// How much ground one tile of the field covers, the field repeating past it.
-pub const CLOUD_TILE: Meters = Meters(260.0);
+pub const CLOUD_TILE: Meters = Meters(640.0);
 /// The height the field of cloud lies at.
 pub const CLOUD_BASE: Meters = Meters(150.0);
 /// How much ground the field's shadows reach over round where they are laid, repeating past it.
@@ -32,7 +32,9 @@ const SHADOWS: u32 = 256;
 const RELAID_AFTER: Meters = Meters(32.0);
 /// Cloud cells across a tile at the coarsest; each octave doubles.
 const CELLS: u32 = 4;
-const OCTAVES: u32 = 5;
+const OCTAVES: u32 = 3;
+/// How far, in tiles, the field's noise is pushed about where it is read.
+const WARP: f32 = 0.12;
 /// Where, in the noise's range, cloud begins under a clear sky and under a full cover, and how
 /// far past that it is thick.
 const CLEAR_SKY: f32 = 0.8;
@@ -40,8 +42,8 @@ const FULL_COVER: f32 = 0.2;
 const SOFTNESS: f32 = 0.16;
 
 /// The one field of cloud every sky paints and every sun casts: `field`, in each texel how cloudy
-/// the sky is there in red and the noise the field is drawn from in green, at the cover it was
-/// last drawn for; and `shadows`, how much of the light reaches the ground through it, laid along
+/// the sky is there in red and how far inside the cloud's edge it lies in green, at the cover it
+/// was last drawn for; and `shadows`, how much of the light reaches the ground through it, laid along
 /// the light's rays as the light and the drift last stood.
 #[derive(Resource)]
 pub struct CloudSheet {
@@ -63,7 +65,7 @@ impl FromWorld for CloudSheet {
         let weather = (0.0, 0.0);
         let cloud = cloudiness(&noise, weather.0);
         let mut images = world.resource_mut::<Assets<Image>>();
-        let field = images.add(field(&noise, &cloud));
+        let field = images.add(field(&noise, &cloud, weather.0));
         let shadows = images.add(picture(
             SHADOWS,
             vec![255; (SHADOWS * SHADOWS * 4) as usize],
@@ -103,7 +105,7 @@ impl CloudSheet {
         self.cloud = cloudiness(&self.noise, clouds);
         self.laid = None;
         if let Some(mut image) = images.get_mut(&self.field) {
-            *image = field(&self.noise, &self.cloud);
+            *image = field(&self.noise, &self.cloud, clouds);
         }
     }
 
@@ -184,19 +186,28 @@ fn lean(light: Transform) -> Vec2 {
 
 /// How cloudy the sky is at each texel of the noise under `clouds`.
 fn cloudiness(noise: &[f32], clouds: f32) -> Vec<f32> {
-    let clear = CLEAR_SKY + (FULL_COVER - CLEAR_SKY) * clouds.clamp(0.0, 1.0);
+    let edge = edge(clouds);
     noise
         .iter()
-        .map(|&noise| smoothstep(clear, clear + SOFTNESS, noise))
+        .map(|&noise| smoothstep(edge, edge + SOFTNESS, noise))
         .collect()
 }
 
-/// The field as the sky reads it: how cloudy the sky is, and the noise it is drawn from.
-fn field(noise: &[f32], cloud: &[f32]) -> Image {
+/// Where, in the noise's range, cloud begins under `clouds`.
+fn edge(clouds: f32) -> f32 {
+    CLEAR_SKY + (FULL_COVER - CLEAR_SKY) * clouds.clamp(0.0, 1.0)
+}
+
+/// The field as the sky reads it: how cloudy the sky is, and how far past the cloud's edge the
+/// noise lies under `clouds`, negative outside it, halved and raised by a half to fit the texel.
+fn field(noise: &[f32], cloud: &[f32], clouds: f32) -> Image {
+    let edge = edge(clouds);
     let data = cloud
         .iter()
         .zip(noise)
-        .flat_map(|(&cloud, &noise)| [cloud, noise, 0.0, 1.0].map(|value| (value * 255.0) as u8))
+        .flat_map(|(&cloud, &noise)| {
+            [cloud, (noise - edge) * 0.5 + 0.5, 0.0, 1.0].map(|value| (value * 255.0) as u8)
+        })
         .collect();
     picture(SHEET, data)
 }
@@ -239,14 +250,23 @@ fn picture(size: u32, data: Vec<u8>) -> Image {
     image
 }
 
-/// Octaves of value noise over the unit square, each wrapping at its edges, in 0..1.
+/// The noise the field is drawn from over the unit square, wrapping at its edges, in 0..1: octaves
+/// of value noise read at a point pushed about by two more, so the outlines it draws stretch and
+/// curl as clouds do rather than ringing round each peak.
 fn noise(at: Vec2) -> f32 {
+    let push = Vec2::new(octaves(at, 1), octaves(at, 2)) - 0.5;
+    octaves((at + push * WARP).rem_euclid(Vec2::ONE), 0)
+}
+
+/// Octaves of value noise over the unit square, each wrapping at its edges, in 0..1; each `salt`
+/// draws a noise of its own.
+fn octaves(at: Vec2, salt: u32) -> f32 {
     let mut sum = 0.0;
     let mut weight = 0.5;
     let mut total = 0.0;
     for octave in 0..OCTAVES {
         let cells = CELLS << octave;
-        sum += weight * value_noise(at * cells as f32, cells, octave);
+        sum += weight * value_noise(at * cells as f32, cells, salt * OCTAVES + octave);
         total += weight;
         weight *= 0.5;
     }

@@ -1,8 +1,9 @@
-use driver::{UiTarget, content, holding, marker_at, resident_home};
+use driver::{UiTarget, content, holding, marker_at, pictured_ground, props_near, resident_home};
 use engine::core::math::{Offset, Pos};
 use engine::core::units::Meters;
 use engine::systems::actor::Action;
 use engine::systems::input::map::InputAction;
+use engine::systems::script::Place;
 
 use crate::chapters::Chapter;
 use crate::shoot::Shoot;
@@ -10,7 +11,7 @@ use crate::shoot::Shoot;
 pub const CHAPTER: Chapter = Chapter {
     name: "explore",
     title: "Explore",
-    summary: "Point and click to roam the island",
+    summary: "Point and click to roam the world",
     play,
 };
 
@@ -19,14 +20,8 @@ const ROUTE: [((f32, f32), &str); 4] = [
         (4.0, 1.0),
         "Click the ground to walk there — the camera follows, and the grass parts underfoot",
     ),
-    (
-        (5.0, -2.0),
-        "Paths route around the well, the stalls and anything in the way",
-    ),
-    (
-        (-3.0, -4.0),
-        "A harbour, a cottage on the rise, dead trees, a bone camp and bat rocks — the island is open to explore",
-    ),
+    ((5.0, -2.0), "Paths route around anything in the way"),
+    ((-3.0, -4.0), "Beyond town the world is open to explore"),
     (
         (0.0, 0.0),
         "Town is safe ground: monsters roam the wilds beyond it, and fight back",
@@ -35,9 +30,10 @@ const ROUTE: [((f32, f32), &str); 4] = [
 
 const SWORD: &str = "rusty_sword";
 
-/// Round the cottage's west gable: the way behind it that keeps off its front door.
+/// Round the cottage's west gable from where the woodsman stands: the way behind it that keeps
+/// off its front door.
 fn north_of_the_cottage() -> Pos<Meters> {
-    Pos::new(82.0, 34.0)
+    resident_home("grisha").at + Offset::new(-1.0, -7.5)
 }
 
 fn play(shoot: &mut Shoot) {
@@ -86,20 +82,37 @@ fn play(shoot: &mut Shoot) {
     me.walk_near(sword.at + Offset::new(0.0, 2.0));
     me.hold();
 
-    me.caption("The path north-east climbs the rise to the woodsman's cottage");
+    let here = Place {
+        area: me.snapshot().area.expect("an area"),
+        at: spawn,
+    };
+    me.caption(
+        "Each ground can lay a picture of its own over the land, repeating under its colour",
+    );
+    me.travel_to(|_| Some(pictured_ground(here)), |_| false);
+    me.hold();
+    me.caption("Plants sway in the wind, and the sun glows through leaves that let it in");
+    let leafy = props_near(here, |prop| {
+        prop.materials
+            .values()
+            .any(|material| material.get(content()).translucency > 0.0)
+    });
+    let plant = *leafy
+        .first()
+        .expect("a plant whose leaves let the light in");
+    me.travel_to(|_| Some(plant + Offset::new(0.0, 3.0)), |_| false);
+    me.hold();
+
+    me.caption("A path leads to the woodsman's cottage");
     me.travel_to(
-        |_| Some(resident_home("island", "grisha").at + Offset::new(2.0, 2.0)),
+        |_| Some(resident_home("grisha").at + Offset::new(2.0, 2.0)),
         |_| false,
     );
-    me.caption(
-        "Each ground lays a picture of its own over the land, as the path does its packed dirt",
-    );
-    me.caption("The bushes sway in the wind, and the sun glows through their leaves");
     me.hold();
-    me.caption("Behind the cottage a standing stone looks out over the sea");
+    me.caption("Behind the cottage rises a standing stone");
     me.walk_near(north_of_the_cottage());
     me.travel_to(
-        |_| Some(marker_at("island", "standing-stone") + Offset::new(0.0, 3.0)),
+        |_| Some(marker_at("standing-stone").at + Offset::new(0.0, 3.0)),
         |_| false,
     );
     me.hold();

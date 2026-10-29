@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::SystemTime;
 
-use driver::{DeployEdit, Pace, Player, Playtest, PlaytestSetup};
+use driver::{DeployEdit, Pace, Player, Playtest, PlaytestSetup, in_world};
 use engine::core::render::camera::Zoom;
 use engine::systems::script::Place;
 
@@ -67,7 +67,8 @@ impl Shoot {
         self.playtest.deploy(edits, while_down)
     }
 
-    /// Puts the player's screen on camera: the chapter opens on a card with its title and summary.
+    /// Puts the player's screen on camera: the chapter opens on a card with its title and summary,
+    /// a player in the world seen from the closest zoom.
     pub fn roll(&mut self, mut player: Player) -> Star {
         let film = Rc::new(RefCell::new(Film::roll(self.title, self.summary)));
         let watching = film.clone();
@@ -77,7 +78,9 @@ impl Shoot {
             film,
             out: self.out.clone(),
         };
-        star.close_in();
+        if in_world(&star.snapshot()) {
+            star.close_in();
+        }
         star.hold();
         star
     }

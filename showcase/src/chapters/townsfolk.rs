@@ -13,14 +13,14 @@ use crate::shoot::Shoot;
 pub const CHAPTER: Chapter = Chapter {
     name: "townsfolk",
     title: "Townsfolk",
-    summary: "Who lives on the island, and what they have for you",
+    summary: "Who lives in town, and what they have for you",
     play,
 };
 
 const SWORD: &str = "rusty_sword";
 
 fn play(shoot: &mut Shoot) {
-    let player = shoot.join_as("swordsman", Some(resident_home("island", "mara")));
+    let player = shoot.join_as("swordsman", Some(resident_home("mara")));
     let mut me = shoot.roll(player);
     me.caption(&format!(
         "Loot at a townsperson's feet? {} picks it up before it talks",
@@ -59,12 +59,12 @@ fn play(shoot: &mut Shoot) {
         |snapshot| holding(snapshot, "rusty_sword") == 1 && snapshot.stage.is_none(),
     );
 
-    me.caption("Eight townsfolk live on the island — name plates show who they are");
+    me.caption("Townsfolk wear name plates that show who they are");
     walk_below(&mut me, |snapshot| {
         townsperson(snapshot, "mara").map(|mara| mara.at)
     });
     me.caption("An icon over a head is the most important thing they have for you");
-    me.caption("Things on the map can be used too: a notice board, a chest by the tide");
+    me.caption("Things on the map can be used too: a notice board, a chest");
     me.approach("tide-chest");
     walk_below(&mut me, |snapshot| {
         object_named(snapshot, "tide-chest").map(|chest| chest.at)

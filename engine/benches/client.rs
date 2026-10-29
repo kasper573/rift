@@ -6,14 +6,16 @@ use std::time::{Duration, Instant, SystemTime};
 
 use driver::{
     Pace, Player, Playtest, PlaytestSetup, aiming, area_name, area_named, arrived_in,
-    clickable_point, ground_near, hunting_ground, open, warp_named,
+    clickable_point, ground_near, hunting_ground, id, initial_spawn, open, warp_named,
 };
 use engine::core::render::transition::ScreenTransitionPhase;
 use engine::core::units::MeterPos;
 use engine::core::units::Meters;
 use engine::systems::actor::Action;
+use engine::systems::area::AreaDef;
 use engine::systems::input::map::InputAction;
 use engine::systems::probe::{ProbeBody, ProbeSnapshot};
+use engine::systems::script::Place;
 
 // Runs play out alike, so they compare.
 const SEED: u64 = 1931;
@@ -62,19 +64,22 @@ fn main() {
         {
             step_into(&mut me, "front-door");
             let scene = watch(&mut me, "crossing", Duration::from_millis(2500));
-            me.wait_until("the cottage", |snapshot| arrived_in(snapshot, "cottage"));
+            me.wait_until("the cottage", |snapshot| {
+                arrived_in(snapshot, id::<AreaDef>("cottage"))
+            });
             scene
         },
         watch(&mut me, "cottage", Duration::from_secs(4)),
         {
             step_into(&mut me, "front-door");
-            me.wait_until("the island", |snapshot| arrived_in(snapshot, "island"));
+            let outside = initial_spawn().area;
+            me.wait_until("back outside", |snapshot| arrived_in(snapshot, outside));
             watch(&mut me, "rise", Duration::from_secs(2))
         },
         {
             me.look_for(
                 "a foe in sight",
-                hunting_ground("island", "skeleton"),
+                hunting_ground("skeleton").at,
                 |snapshot| {
                     snapshot.actors.iter().any(|actor| {
                         foe(snapshot, actor) && clickable_point(snapshot, actor.aim).is_some()
@@ -143,9 +148,11 @@ fn report(scenes: &[Scene]) {
 
 fn set_off(me: &mut Player) {
     let seen = me.snapshot();
-    let area = area_name(&seen).expect("the player is in an area");
-    let at = seen.me.as_ref().expect("the player").at;
-    let far = ground_near(area, at, Meters(5.0)..=Meters(8.0))
+    let here = Place {
+        area: seen.area.expect("the player is in an area"),
+        at: seen.me.as_ref().expect("the player").at,
+    };
+    let far = ground_near(here, Meters(5.0)..=Meters(8.0))
         .into_iter()
         .rev()
         .find(|ground| open(&seen, *ground))

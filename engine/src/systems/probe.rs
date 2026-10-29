@@ -141,13 +141,17 @@ pub struct ProbeInputSeen {
 }
 
 impl ProbeSnapshot {
-    /// Where a point on the ground shows in the window, at the terrain's height there.
+    /// Where a point on the ground shows in the window, at the terrain's height there: nowhere
+    /// while the ground rises between it and the camera.
     pub fn ground_point(&self, at: Pos<Meters>) -> Option<Pos<WindowPx>> {
-        let height = self
-            .terrain
-            .as_ref()
-            .map_or(Meters(0.0), |terrain| terrain.height_at(at));
-        Some(self.view?.window_point(at, height))
+        let view = self.view?;
+        let Some(terrain) = &self.terrain else {
+            return Some(view.window_point(at, Meters(0.0)));
+        };
+        let height = terrain.height_at(at);
+        let ground = Vec3::new(at.x, height.0, at.y);
+        (!terrain.rises_between(view.near_point(ground), ground))
+            .then(|| view.window_point(at, height))
     }
 }
 
@@ -163,6 +167,14 @@ pub struct ProbeView {
 }
 
 impl ProbeView {
+    /// Where the camera's ray to a world point sets out: on the near plane, in front of it.
+    fn near_point(&self, point: Vec3) -> Vec3 {
+        let clip = self.view_proj * point.extend(1.0);
+        let ndc = clip.truncate() / clip.w;
+        let near = self.view_proj.inverse() * Vec4::new(ndc.x, ndc.y, 1.0, 1.0);
+        near.truncate() / near.w
+    }
+
     pub fn window_point(&self, at: Pos<Meters>, height: Meters) -> Pos<WindowPx> {
         let clip = self.view_proj * Vec4::new(at.x, height.0, at.y, 1.0);
         let ndc = clip.truncate() / clip.w;
@@ -182,6 +194,17 @@ pub struct ProbeTerrain {
 }
 
 impl ProbeTerrain {
+    /// Whether the ground stands over the straight line from `from` to the ground point `to`
+    /// anywhere short of it.
+    fn rises_between(&self, from: Vec3, to: Vec3) -> bool {
+        let run = Vec2::new(to.x - from.x, to.z - from.z).length();
+        let steps = (run / SIGHT_STEP.0).ceil() as usize;
+        (1..steps)
+            .map(|step| from.lerp(to, step as f32 / steps as f32))
+            .take_while(|point| Vec2::new(to.x - point.x, to.z - point.z).length() > SIGHT_STEP.0)
+            .any(|point| self.height_at(Pos::new(point.x, point.z)).0 > point.y + SIGHT_SLACK.0)
+    }
+
     pub fn height_at(&self, at: Pos<Meters>) -> Meters {
         let columns = self.size.width as usize + 1;
         let rows = self.size.height as usize + 1;
@@ -1325,6 +1348,11 @@ fn covered(world: &mut World) -> Vec<Rect<WindowPx>> {
 }
 
 const VFX_MEMORY: Seconds = Seconds(3.0);
+/// How finely the line of sight to a ground point is walked, and how far the ground may stand over
+/// it before it hides the point: the probe's heights lie a metre apart, coarser than the ground
+/// the GPU draws.
+const SIGHT_STEP: Meters = Meters(0.5);
+const SIGHT_SLACK: Meters = Meters(0.3);
 
 #[derive(Resource, Default)]
 struct VfxSeen(Vec<VfxInstance>);

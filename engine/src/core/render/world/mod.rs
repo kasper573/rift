@@ -21,6 +21,7 @@ use bevy::app::HierarchyPropagatePlugin;
 use bevy::camera::visibility::RenderLayers;
 use bevy::light::DirectionalLightShadowMap;
 use bevy::pbr::MaterialPlugin;
+use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
 
@@ -66,6 +67,8 @@ impl Plugin for WorldScenePlugin {
                 fade::fade_occluders.run_if(resource_exists::<CameraRig>),
                 cover::strew_loaded,
                 terrain::stack_pictures,
+                material::forget_dropped,
+                cover::forget_dropped,
             ),
         )
         .add_systems(
@@ -81,4 +84,15 @@ impl Plugin for WorldScenePlugin {
         let full = FullPicture::on(app.world().get_resource::<RenderAdapterInfo>());
         app.insert_resource(full);
     }
+}
+
+/// The assets of a kind dropped since last asked, so what a cache made from them can go too.
+fn dropped<A: Asset>(events: &mut MessageReader<AssetEvent<A>>) -> HashSet<AssetId<A>> {
+    events
+        .read()
+        .filter_map(|event| match *event {
+            AssetEvent::Removed { id } => Some(id),
+            _ => None,
+        })
+        .collect()
 }

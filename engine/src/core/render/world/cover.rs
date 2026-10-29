@@ -379,6 +379,18 @@ pub(super) struct TexturedCovers(
     HashMap<(AssetId<CoverMaterial>, AssetId<Image>), Handle<CoverMaterial>>,
 );
 
+/// Forgets the textured cover materials made for chunk materials that are gone, so the pictures
+/// they draw with go with them.
+pub(super) fn forget_dropped(
+    mut events: MessageReader<AssetEvent<CoverMaterial>>,
+    mut textured: ResMut<TexturedCovers>,
+) {
+    let gone = super::dropped(&mut events);
+    if !gone.is_empty() {
+        textured.0.retain(|(cover, _), _| !gone.contains(cover));
+    }
+}
+
 /// The assets a strewn prop is drawn from.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct StrewnAssets<'w> {

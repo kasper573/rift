@@ -25,7 +25,7 @@
     {
       "name": "height",
       "kind": "number",
-      "default": 70.0,
+      "default": 45.0,
       "min": 5.0,
       "max": 1000.0
     },
@@ -39,14 +39,14 @@
     {
       "name": "billow",
       "kind": "number",
-      "default": 55.0,
+      "default": 14.0,
       "min": 4.0,
       "max": 400.0
     },
     {
       "name": "fringe",
       "kind": "number",
-      "default": 0.6,
+      "default": 0.35,
       "min": 0.0,
       "max": 1.0
     },

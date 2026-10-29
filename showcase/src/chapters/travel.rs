@@ -1,4 +1,4 @@
-use driver::{Player, UiTarget, id};
+use driver::{Player, UiTarget, id, initial_spawn};
 use engine::core::math::Offset;
 use engine::systems::area::{AreaDef, AreaId};
 use engine::systems::input::map::InputAction;
@@ -41,14 +41,12 @@ fn play(shoot: &mut Shoot) {
     let player = shoot.join_as("traveler", None);
     let mut me = shoot.roll(player);
     me.caption("Warps lead to other areas — step onto one to cross");
-    let home = id::<AreaDef>("island");
+    let home = initial_spawn().area;
     let cottage = id::<AreaDef>("cottage");
-    me.caption(
-        "The woodsman's cottage stands on the rise north-east of town: its front door is a warp",
-    );
+    me.caption("The woodsman's cottage has a front door that is a warp");
     me.show_mixer();
     me.cross("front-door");
-    me.caption("The island crumbles away, and the cottage rises around you: its own fire and ambience crossfade in over the town's");
+    me.caption("The area outside crumbles away, and the cottage rises around you: its own fire and ambience crossfade in over what played outside");
     me.walk_by(Offset::new(-2.0, -1.0));
     me.walk_by(Offset::new(2.0, 0.0));
     me.hold();

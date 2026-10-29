@@ -4,7 +4,7 @@ use driver::{WaitBudget, clickable_point, content, id, marker_at, nearest_npc};
 use engine::core::math::{Pos, Rect};
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::actor::{Action, Pose};
-use engine::systems::area::{self, AreaDef, AreaModule};
+use engine::systems::area::{self, AreaId, AreaModule};
 use engine::systems::input::map::InputAction;
 use engine::systems::npc::{NpcDef, NpcId};
 use engine::systems::probe::{ProbeBody, ProbeSnapshot};
@@ -22,16 +22,18 @@ pub const CHAPTER: Chapter = Chapter {
 /// A body in the wilds: its npc, what is said of it and what must show for it to be seen doing so.
 type Body = (&'static str, &'static str, fn(&ProbeBody) -> bool);
 
-/// In the order a walk round the island takes them.
+/// In the order a walk round the area takes them.
 const BODIES: [Body; 6] = [
     (
         "wolf",
         "A wolf trots on planted paws: each foot stays where it touched the ground until it steps",
         |wolf| wolf.layered && !wolf.resting,
     ),
-    ("piranha", "Piranhas wave through the shallows", |piranha| {
-        piranha.layered
-    }),
+    (
+        "piranha",
+        "A piranha waves its body from head to tail",
+        |piranha| piranha.layered,
+    ),
     (
         "slime",
         "A slime squashes as it hops, keeping its volume",
@@ -65,15 +67,16 @@ fn play(shoot: &mut Shoot) {
 
     close_up(
         &mut me,
-        "By the stone hum a turret turns on its base and fires at whoever comes near",
-        (id("turret"), marker_at(AREA, "turret")),
+        "A turret turns on its base and fires at whoever comes near",
+        (id("turret"), marker_at("turret").at),
         |turret| turret.action == Action::Attack,
     );
     for (npc, says, shows) in BODIES {
         let ground = me.look_out(npc, |snapshot| nearest_npc(snapshot, npc).is_some());
         close_up(&mut me, says, (id(npc), ground), shows);
     }
-    let (npc, ground, build) = of_a_build_of_its_own();
+    let here = me.snapshot().area.expect("an area");
+    let (npc, ground, build) = of_a_build_of_its_own(here);
     close_up(
         &mut me,
         &format!(
@@ -88,9 +91,8 @@ fn play(shoot: &mut Shoot) {
 
 /// An npc of the area of a build its skeleton gives clips of its own, other than the first build,
 /// with where it keeps to and its build.
-fn of_a_build_of_its_own() -> (NpcId, Pos<Meters>, String) {
+fn of_a_build_of_its_own(area: AreaId) -> (NpcId, Pos<Meters>, String) {
     let content = content();
-    let area = id::<AreaDef>(AREA);
     let whole = Rect::from_size(area::load(content, area).size);
     area::modules(content, area)
         .find_map(|module| {
@@ -107,7 +109,7 @@ fn of_a_build_of_its_own() -> (NpcId, Pos<Meters>, String) {
             (skeleton.builds.first() != Some(build) && skeleton.build_sets.contains_key(build))
                 .then(|| (npc, ground, build.to_string()))
         })
-        .unwrap_or_else(|| panic!("nobody in {AREA} is of a build given clips of its own"))
+        .unwrap_or_else(|| panic!("nobody in {area:?} is of a build given clips of its own"))
 }
 
 /// Whether `body` shows what it does in a clip its build's own sets give it, where the first
@@ -127,8 +129,6 @@ fn plays_its_builds_own(body: &ProbeBody) -> bool {
             && own.clips().iter().any(|clip| *clip.clip() == body.clip)
     })
 }
-
-const AREA: &str = "island";
 
 /// Close and low, as a walker would see it, since what a body's layers move is its feet, arms and
 /// tail: heads on toward `ground` until one of the `npc`s on screen shows what `shows` asks. It

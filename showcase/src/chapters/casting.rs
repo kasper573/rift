@@ -23,7 +23,6 @@ pub const CHAPTER: Chapter = Chapter {
     play,
 };
 
-const AREA: &str = "island";
 const PREY: &str = "skeleton";
 const ARCANIST: &str = "Arcanist";
 const ARMSMAN: &str = "Armsman";
@@ -37,12 +36,12 @@ const PROVOKED_WITHIN: Meters = Meters(4.0);
 const QUARRY: &str = "slime";
 
 fn play(shoot: &mut Shoot) {
-    let ring = pack_ground(AREA, PREY);
+    let ring = pack_ground(PREY);
     let (caster_at, friend_at, hunter_at) = quiet_ground();
-    let player = shoot.join_as("arcanist", Some(at(caster_at)));
-    let mut friend = shoot.join_as("armsman", Some(at(friend_at)));
+    let player = shoot.join_as("arcanist", Some(caster_at));
+    let mut friend = shoot.join_as("armsman", Some(friend_at));
     friend.in_world();
-    let mut hunter = shoot.join_as("archer", Some(at(hunter_at)));
+    let mut hunter = shoot.join_as("archer", Some(hunter_at));
     hunter.in_world();
     let mut me = shoot.roll(player);
     friend.walk_toward(beside_me);
@@ -70,9 +69,9 @@ fn play(shoot: &mut Shoot) {
     me.hold();
     me.caption("A skill asks for a move, and the hands decide how it looks: the archer's Volley draws her bow");
     volley(&mut me, &mut hunter);
-    me.walk_near(east_of(AREA, ring, 5.0).at);
+    me.walk_near(east_of(ring, 5.0).at);
     me.come_to_rest();
-    friend.walk_near(east_of(AREA, ring, 6.0).at);
+    friend.walk_near(east_of(ring, 6.0).at);
     me.caption(&format!(
         "One enemy: {} on a monster uses the basic attack, Spark; any other single-target skill is aimed the same way",
         input_name(InputAction::Interact)
@@ -172,11 +171,13 @@ fn volley(me: &mut Star, hunter: &mut Player) {
 /// comes at them. The archer stands about Volley's range from the middle of the quarry's ground,
 /// the caster a step east or west of her, never between her and the camera looking north, and the
 /// friend a little further off.
-fn quiet_ground() -> (Pos<Meters>, Pos<Meters>, Pos<Meters>) {
-    let quarry = hunting_ground(AREA, QUARRY);
+fn quiet_ground() -> (Place, Place, Place) {
+    let quarry = hunting_ground(QUARRY);
     let ground = ground_near(
-        AREA,
-        quarry + Offset::new(0.0, -volley_range().0),
+        Place {
+            area: quarry.area,
+            at: quarry.at + Offset::new(0.0, -volley_range().0),
+        },
         Meters(0.0)..=Meters(5.0),
     );
     let hunter = *ground.first().expect("open ground by the quarry");
@@ -191,14 +192,11 @@ fn quiet_ground() -> (Pos<Meters>, Pos<Meters>, Pos<Meters>) {
         .iter()
         .find(|at| (3.0..=4.5).contains(&at.distance_to(caster)) && at.distance_to(hunter) >= 3.0)
         .expect("open ground for the friend");
-    (caster, friend, hunter)
-}
-
-fn at(ground: Pos<Meters>) -> Place {
-    Place {
-        area: id(AREA),
+    let at = |ground| Place {
+        area: quarry.area,
         at: ground,
-    }
+    };
+    (at(caster), at(friend), at(hunter))
 }
 
 /// Whether the player named `name` plays the clip `clip`.

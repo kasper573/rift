@@ -33,7 +33,7 @@ impl Server {
             port: 0,
             ws_port: 0,
             max_clients: 8,
-            content_dir: content.to_path_buf(),
+            content_dir: absolute(content),
             player_spawn_policy: SpawnPolicy::Map,
             // A playtest plays its story through: monsters met on the way wear players down, never
             // out.
@@ -82,7 +82,7 @@ impl Server {
     pub fn restart_on(&mut self, folder: &Path, while_down: impl FnOnce()) {
         self.stop();
         while_down();
-        self.config.content_dir = folder.to_path_buf();
+        self.config.content_dir = absolute(folder);
         self.config.port = self.ready.http;
         self.config.ws_port = self.ready.ws;
         (self.process, self.ready) = run(&self.binary, &self.config, &self.log);
@@ -98,6 +98,11 @@ impl Drop for Server {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// The server reads a relative path against its own binary's folder, not the playtest's.
+fn absolute(path: &Path) -> PathBuf {
+    std::path::absolute(path).expect("a path the server can find")
 }
 
 const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);

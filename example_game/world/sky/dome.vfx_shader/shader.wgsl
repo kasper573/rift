@@ -4,10 +4,10 @@
 // bright as `night_light`, glowing `dusk` low toward the sun as it sets and rises by `dusk_glow`; stars as bright as `stars`, `star_count` of the sky's cells holding
 // one, thickest along a band of the Milky Way glowing by `milky_way`; and the full moon, `moon_size`
 // degrees across in `moon`, its glow spreading round it by `moon_glow`.
-// The weather's clouds as heaps of round billows drifting at the clouds' height and rising at most
-// `height` over it: big billows `billow` metres apart, each as large as the field is cloudy under
-// it, smaller ones heaped on their tops by `fringe`, all melted into one another and cut flat
-// underneath, dissolving into the air as they lie toward `reach` metres off. Light through a heap
+// The weather's clouds as heaps standing on the field of cloud at the clouds' height, each rising
+// about `height` over it where the field lies deepest, flat underneath and curling up toward its
+// edge, its face heaped with lumps `billow` metres across and `fringe` of that high, dissolving
+// into the air as they lie toward `reach` metres off. Light through a heap
 // falls off with the water it crosses, `thickness` of it at the weather's driest and more as the
 // cloud holds more, scatters forward round the sun or moon into a bright rim, and the sky lights
 // the rest, by `sun` and `sky`; the light is laid on in flat bands by `bands`, the shade tinted
@@ -147,53 +147,21 @@ fn scatter(cell: vec3<i32>) -> vec4<f32> {
     return vec4<f32>(vec4<u32>(v, w) >> vec4<u32>(8u)) / 16777216.0;
 }
 
-// How far a point of the world lies outside the clouds, in metres, negative within.
+// How far a point of the world lies outside the clouds, in metres, negative within. A cloud stands
+// where the field is cloudy, as tall as it lies deep inside the field's edge: its top domed over
+// the field's heart, its base flat under the heart and curling up toward the edge, and its face
+// heaped with lumps `billow` metres across, `fringe` of them high.
 fn heap(point: vec3<f32>) -> f32 {
-    let big = smooth_min(
-        billows(point, params.billow, 0.0, 0.0),
-        billows(point, params.billow * 0.7, 0.0, 19.0),
-        params.billow * 0.3
-    );
-    let near_big = big - params.billow * 0.22;
-    let resting = -smooth_min(-billows(point, params.billow * 0.45, 1.0, 37.0), -near_big, params.billow * 0.2);
-    let melted = smooth_min(big, resting, params.billow * 0.2);
+    let inside = cloud_at(point).y;
+    let rise = point.y - cloud_base();
     let carried = point.xz - cloud_drift();
-    let lumps = fbm(vec2<f32>(carried.x + point.y * 0.7, carried.y - point.y * 0.4) / (params.billow * 0.22)) - 0.5;
-    let base = cloud_base() + (fbm(carried / (params.billow * 0.6)) - 0.5) * params.billow * 0.12;
-    return -smooth_min(-(melted - lumps * params.billow * 0.14), point.y - base, params.billow * 0.12);
-}
-
-// The nearest of the round billows on a lattice of cells `size` across drifting with the field,
-// melted together: each sits in its own cell at its own place, growing as the field turns cloudy
-// under it and slowly swelling and shrinking as clouds do. `riding` 0 sits a billow low on the
-// clouds' base, 1 lifts it onto the top of the big billows there; `salt` sets the lattice apart
-// from another's.
-fn billows(point: vec3<f32>, size: f32, riding: f32, salt: f32) -> f32 {
-    let drift = cloud_drift();
-    let at = (point.xz - drift) / size;
-    let cell = floor(at);
-    var nearest = 1e6;
-    for (var dy = -1; dy <= 1; dy++) {
-        for (var dx = -1; dx <= 1; dx++) {
-            let near = cell + vec2<f32>(f32(dx), f32(dy)) + vec2<f32>(salt);
-            let spot = (near - vec2<f32>(salt) + 0.3 + 0.4 * vec2<f32>(hash2(near), hash2(near + vec2<f32>(7.1, 3.9)))) * size + drift;
-            let cloudy = cloud_at(vec3<f32>(spot.x, cloud_base(), spot.y)).x;
-            let growing = smoothstep(0.12 + 0.2 * riding, 0.32 + 0.2 * riding, cloudy);
-            if growing <= 0.0 {
-                continue;
-            }
-            let breathing = 1.0 + 0.12 * sin(weather.time * 0.05 + hash2(near + vec2<f32>(5.7, 1.3)) * 6.2832);
-            let grown = (0.35 + 0.35 * cloudy) * (0.85 + 0.3 * hash2(near + vec2<f32>(2.3, 9.4))) * growing * breathing;
-            let radius = size * grown * mix(1.0, params.fringe, riding);
-            if radius < 0.5 {
-                continue;
-            }
-            let lift = cloud_base() + mix(radius * 0.5, params.billow * (0.2 + 0.45 * cloudy) * params.height / 45.0, riding);
-            let gap = distance(point, vec3<f32>(spot.x, lift, spot.y)) - radius;
-            nearest = smooth_min(nearest, gap, size * 0.25);
-        }
-    }
-    return nearest;
+    let lumps = fbm(vec2<f32>(carried.x + rise * 0.6, carried.y - rise * 0.5) / params.billow) - 0.5;
+    let swell = clamp(inside / 0.15, 0.0, 1.0);
+    let top = params.height * swell * (0.75 + 0.5 * fbm(carried / (params.billow * 2.5)));
+    let base = params.height * (0.1 * pow(1.0 - clamp(inside / 0.08, 0.0, 1.0), 2.0) + 0.06 * (fbm(carried / (params.billow * 5.0)) - 0.5));
+    let across = -inside * 150.0;
+    let up = max(base - rise, rise - top) * 0.4;
+    return max(across, up) - lumps * params.billow * params.fringe;
 }
 
 // Where a ray from the eye the given way first meets the clouds, and how much of the pixel they
@@ -208,7 +176,7 @@ fn trace(way: vec3<f32>) -> vec4<f32> {
     if enter > far {
         return vec4<f32>(0.0);
     }
-    let leave = min((cloud_base() + params.height + params.billow - origin.y) / way.y, far);
+    let leave = min((cloud_base() + params.height * 1.25 + params.billow - origin.y) / way.y, far);
     var t = enter;
     var before = enter;
     for (var step = 0; step < 72; step++) {
@@ -251,7 +219,7 @@ fn lit(point: vec3<f32>, way: vec3<f32>) -> vec3<f32> {
     let face = facing(point);
     var water = 0.0;
     for (var i = 1; i <= 5; i++) {
-        let along = f32(i) * params.billow * 0.25;
+        let along = f32(i) * params.height * 0.08;
         water += max(-heap(point + face * 0.5 + light_way() * along), 0.0);
     }
     let wet = 1.0 + 5.0 * weather.water;
@@ -280,11 +248,6 @@ fn facing(point: vec3<f32>) -> vec3<f32> {
     return normalize(
         a * heap(point + a * e) + b * heap(point + b * e) + c * heap(point + c * e) + d * heap(point + d * e)
     );
-}
-
-fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
-    let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-    return mix(b, a, h) - k * h * (1.0 - h);
 }
 
 // Long thin strokes of high cloud on a plane far overhead, so they run together toward a point on

@@ -37,13 +37,22 @@ fn play(shoot: &mut Shoot) {
         "The chosen ware lies on the page as its own card, the trade button under it; a price you can't cover turns rubric in the list",
     );
     me.click_ui("Greater Health Potion");
+    let last_one = me.wait_for("a ware with one left", |seen| {
+        seen.shop.as_ref().and_then(|shop| {
+            shop.offers
+                .iter()
+                .find(|offer| offer.left == Some(1))
+                .map(|offer| offer.item)
+        })
+    });
+    let last_one_name = last_one.get(content()).name.as_str();
     me.caption("The list stays as narrow as its wares, and browsing never shifts it");
-    let listed = row_x(&mut me, "Bone Shield");
-    for ware in ["Bone Shield", "Health Potion", "Greater Health Potion"] {
+    let listed = row_x(&mut me, last_one_name);
+    for ware in [last_one_name, "Health Potion", "Greater Health Potion"] {
         me.click_ui(UiTarget::button(ware));
         me.settled();
         assert_eq!(
-            row_x(&mut me, "Bone Shield"),
+            row_x(&mut me, last_one_name),
             listed,
             "the ware list holds still"
         );
@@ -60,13 +69,13 @@ fn play(shoot: &mut Shoot) {
     });
 
     me.caption("Limited stock is yours alone, and restocks on a timer");
-    me.click_ui("Bone Shield");
+    me.click_ui(last_one_name);
     me.click_ui("Buy");
-    me.wait_until("the shield to sell out", |snapshot| {
+    me.wait_until("the last one to sell out", |snapshot| {
         snapshot.shop.as_ref().is_some_and(|shop| {
             shop.offers
                 .iter()
-                .any(|offer| offer.item.name(content()) == "bone_shield" && offer.left == Some(0))
+                .any(|offer| offer.item == last_one && offer.left == Some(0))
         })
     });
 

@@ -10,7 +10,7 @@ use crate::shoot::{Shoot, Star};
 pub const CHAPTER: Chapter = Chapter {
     name: "many-players",
     title: "Many players",
-    summary: "One island, a world each: what you see of a townsperson is yours alone",
+    summary: "One area, a world each: what you see of a townsperson is yours alone",
     play,
 };
 

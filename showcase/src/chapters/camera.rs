@@ -1,7 +1,6 @@
-use driver::id;
-use engine::core::math::Pos;
-use engine::core::units::Meters;
-use engine::systems::area::AreaDef;
+use driver::{content, initial_spawn, props_near};
+use engine::core::math::Offset;
+use engine::systems::area;
 use engine::systems::input::map::InputAction;
 use engine::systems::script::Place;
 
@@ -15,24 +14,9 @@ pub const CHAPTER: Chapter = Chapter {
     play,
 };
 
-/// On the cottage path, a few steps north of the oak.
-fn above_the_oak() -> Pos<Meters> {
-    Pos::new(80.0, 39.0)
-}
-
-/// Where a walker stands with the oak between them and a camera looking north.
-fn under_the_oak() -> Pos<Meters> {
-    Pos::new(80.0, 42.0)
-}
-
 fn play(shoot: &mut Shoot) {
-    let player = shoot.join_as(
-        "swordsman",
-        Some(Place {
-            area: id::<AreaDef>("island"),
-            at: above_the_oak(),
-        }),
-    );
+    let (above, under) = by_something_in_the_way();
+    let player = shoot.join_as("swordsman", Some(above));
     let mut me = shoot.roll(player);
     me.come_to_rest();
     me.caption("The camera looks down on you from the south, pitched like a tabletop; the compass in the corner points north");
@@ -61,12 +45,31 @@ fn play(shoot: &mut Shoot) {
     me.hold();
     me.close_in();
     me.caption("Whatever stands between you and the camera fades, so you are never out of sight");
-    me.walk_near(under_the_oak());
+    me.walk_near(under.at);
     me.hold();
-    me.caption("Turn the camera and the tree is no longer in the way, so it comes back");
+    me.caption("Turn the camera and it is no longer in the way, so it comes back");
     me.turn_camera(InputAction::TurnRight);
     me.turn_camera(InputAction::TurnRight);
     me.hold();
     me.close_in();
     me.hold();
+}
+
+/// By the prop nearest where players start that fades out of the way: a few steps north of it,
+/// and right behind it, where it stands between a walker and a camera looking north.
+fn by_something_in_the_way() -> (Place, Place) {
+    let start = initial_spawn();
+    let mesh = &area::load(content(), start.area).mesh;
+    let place = |at| Place {
+        area: start.area,
+        at,
+    };
+    props_near(start, |prop| prop.fade)
+        .into_iter()
+        .map(|at| (at + Offset::new(0.0, -6.0), at + Offset::new(0.0, -3.0)))
+        .find(|(above, under)| {
+            mesh.walkable(*above) && mesh.walkable(*under) && mesh.connects(*above, *under)
+        })
+        .map(|(above, under)| (place(above), place(under)))
+        .expect("something that fades out of the way, with open ground north of it")
 }

@@ -1,12 +1,12 @@
 use std::time::Duration;
 
 use driver::{
-    Player, UiTarget, WaitBudget, content, erred, finished, holding, input_name, marked, noticed,
-    on_quest, told_by,
+    Player, UiTarget, WaitBudget, content, erred, finished, held_in_stance, holding, id,
+    input_name, marked, noticed, on_quest, told_by,
 };
 use engine::systems::attention::AttentionMark;
 use engine::systems::input::map::InputAction;
-use engine::systems::quest::QuestResult;
+use engine::systems::quest::{QuestDef, QuestResult, pick_label};
 
 use crate::chapters::Chapter;
 use crate::shoot::Shoot;
@@ -176,22 +176,26 @@ fn play(shoot: &mut Shoot) {
     me.talk_to("ilsa");
     me.read_to_choices();
     me.pick("Bones for the Warden");
+    let shield = *id::<QuestDef>("bones_for_the_warden")
+        .get(content())
+        .pick_one()
+        .iter()
+        .find(|pick| held_in_stance(pick.item, "shield"))
+        .expect("a shield among the bone quest's picks");
+    let take_shield = pick_label(content(), shield);
     me.caption("Rewards can include a pick, chosen when you hand in");
     me.caption("Rest the pointer on a reward to see what it is");
-    me.hover_ui(reward_on("I'll take the Bone Shield."));
+    me.hover_ui(reward_on(&take_shield));
     me.hold();
     me.caption(&format!(
         "{} it for its card",
         input_name(InputAction::InspectItem)
     ));
-    me.act_on_ui(
-        InputAction::InspectItem,
-        reward_on("I'll take the Bone Shield."),
-    );
+    me.act_on_ui(InputAction::InspectItem, reward_on(&take_shield));
     me.wait_until("the shield's card", |snapshot| {
         snapshot
             .item_card
-            .is_some_and(|card| card.item.name(content()) == "bone_shield")
+            .is_some_and(|card| card.item == shield.item)
     });
     me.hold();
     me.act(InputAction::Dismiss);
@@ -199,7 +203,7 @@ fn play(shoot: &mut Shoot) {
     me.caption(
         "With a full bag the pick is refused with an error — space is counted after the bones are handed in",
     );
-    me.pick("I'll take the Bone Shield.");
+    me.pick(&take_shield);
     me.wait_until("the full bag to refuse the pick", |snapshot| {
         erred(snapshot, "free slot")
     });
@@ -225,7 +229,7 @@ fn play(shoot: &mut Shoot) {
     me.read_to_choices();
     me.pick("Bones for the Warden");
     me.caption("Now there's room for the pick");
-    me.pick("I'll take the Bone Shield.");
+    me.pick(&take_shield);
     me.on_stage("bones_thanks");
     me.wait_until("the bones handed in", |snapshot| {
         finished(snapshot, "bones_for_the_warden") == Some(QuestResult::Completed)

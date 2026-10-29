@@ -53,6 +53,19 @@ enum Baking {
     Failed,
 }
 
+/// Forgets the painted materials made from world materials that are gone.
+pub(super) fn forget_dropped(
+    mut events: MessageReader<AssetEvent<WorldMaterial>>,
+    mut paints: ResMut<Paints>,
+) {
+    let gone = super::dropped(&mut events);
+    if !gone.is_empty() {
+        paints
+            .materials
+            .retain(|(material, _), _| !gone.contains(material));
+    }
+}
+
 /// What paints a mesh: the paints baked so far, and the images and materials they are made of.
 #[derive(SystemParam)]
 pub struct Painter<'w> {
