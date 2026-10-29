@@ -6,6 +6,7 @@
 //! stands; the rest of its marks and its tint ride on its tag.
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::primitives::{Aabb, MeshAabb};
 use bevy::color::Mix;
 use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode};
 use bevy::light::NotShadowCaster;
@@ -374,11 +375,13 @@ pub(super) struct TexturedCovers(
 #[derive(Resource, Default)]
 pub(super) struct CopyMeshes(HashMap<AssetId<Gltf>, Vec<CopyMesh>>);
 
-/// A mesh a prop's copies are drawn with, and the material of the prop's it is drawn in.
+/// A mesh a prop's copies are drawn with, the material of the prop's it is drawn in, and its
+/// bounds, measured as it is made since the mesh leaves the main world once it is drawn.
 #[derive(Clone)]
 struct CopyMesh {
     material: Option<Handle<GltfMaterial>>,
     mesh: Handle<Mesh>,
+    bounds: Aabb,
 }
 
 /// Forgets the textured cover materials made for cover materials that are gone, so the pictures
@@ -424,7 +427,12 @@ pub(super) fn strew_loaded(
             continue;
         };
         commands.entity(entity).remove::<Strewing>();
-        for CopyMesh { material, mesh } in meshes {
+        for CopyMesh {
+            material,
+            mesh,
+            bounds,
+        } in meshes
+        {
             let texture = material.and_then(|material| {
                 assets
                     .gltf_materials
@@ -452,6 +460,7 @@ pub(super) fn strew_loaded(
                             MeshMaterial3d(drawn.clone()),
                             place.transform,
                             place.tag(),
+                            bounds,
                             NotShadowCaster,
                             ChildOf(chunk),
                         )
@@ -476,9 +485,12 @@ impl StrewnAssets<'_> {
         )?;
         let made: Vec<CopyMesh> = copy_meshes(&pieces)
             .into_iter()
-            .map(|(material, mesh)| CopyMesh {
-                material,
-                mesh: self.meshes.add(mesh),
+            .filter_map(|(material, mesh)| {
+                Some(CopyMesh {
+                    material,
+                    bounds: mesh.get_aabb()?,
+                    mesh: self.meshes.add(mesh),
+                })
             })
             .collect();
         self.copies.0.insert(gltf.id(), made.clone());
@@ -621,9 +633,10 @@ fn assemble(
     colors: Option<Vec<[f32; 4]>>,
     indices: Vec<u32>,
 ) -> Mesh {
+    // Only the GPU reads a cover's mesh, which would otherwise be held twice.
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
+        RenderAssetUsages::RENDER_WORLD,
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)

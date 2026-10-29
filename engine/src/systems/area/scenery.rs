@@ -5,6 +5,7 @@
 //! the hour.
 
 use bevy::app::Propagate;
+use bevy::camera::primitives::MeshAabb;
 use bevy::camera::visibility::RenderLayers;
 use bevy::light::NotShadowCaster;
 use bevy::light::atmosphere::ScatteringMedium;
@@ -527,11 +528,14 @@ fn spawn_covers(world: &mut World, content: &Content, area: &Area, root: Entity)
                             None
                         }
                     };
-                    if let Some(mesh) = mesh {
+                    if let Some((bounds, mesh)) =
+                        mesh.and_then(|mesh| Some((mesh.get_aabb()?, mesh)))
+                    {
                         let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
                         world.spawn((
                             Mesh3d(mesh),
                             MeshMaterial3d(blended.clone()),
+                            bounds,
                             NotShadowCaster,
                             ChildOf(root),
                         ));
