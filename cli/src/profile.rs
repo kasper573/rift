@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use engine::core::time::UtcHour;
-use engine::systems::launch::{AuthMode, ServerConfig};
+use engine::systems::launch::{AuthMode, ServerConfig, ServerDaylight};
 use engine::systems::player::SpawnPolicy;
 
 use crate::binaries::{self, GAME_SERVER_PROFILING};
@@ -39,6 +39,7 @@ pub fn run(game: Option<&Path>, out: &Path) {
             content_dir: absolute(&game),
             player_spawn_policy: SpawnPolicy::Dist,
             player_immortal: true,
+            daylight: ServerDaylight::Turning,
             rng_seed: Some(SEED),
             daily_reset_utc_hour: UtcHour::MIDNIGHT,
             auth: AuthMode::Fake,

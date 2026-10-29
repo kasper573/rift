@@ -62,7 +62,7 @@ use crate::core::net::transport::SocketClientPlugin;
 use crate::core::platform::{ClientPlatform, Platform, SignIn, StartParams};
 use crate::core::render::WorldRenderPlugin;
 use crate::core::text::StyledTextPlugin;
-use crate::core::time::{DayOrigin, Hertz, Seconds, WallClock};
+use crate::core::time::{DayClock, Hertz, Seconds, WallClock};
 use crate::core::vfx::render::VfxRenderPlugin;
 use crate::systems::area::AreaId;
 use crate::systems::player::PlayerDefId;
@@ -166,6 +166,7 @@ pub fn server_app(
     ordinal: u64,
     rng_seed: u64,
     clock: WallClock,
+    daylight: launch::ServerDaylight,
     content: &Content,
 ) -> App {
     use bevy_app::{First, PostUpdate, Startup, Update};
@@ -179,8 +180,10 @@ pub fn server_app(
     app.insert_resource(WorldArea(area));
     app.insert_resource(settings.clone());
     app.insert_resource(clock);
-    app.insert_resource(DayOrigin(
-        settings.daylight.map(|cycle| cycle.origin(clock.now)),
+    app.insert_resource(DayClock(
+        settings
+            .daylight
+            .map(|cycle| cycle.course(daylight, clock.now)),
     ));
     app.insert_resource(input::map::InputMap::new(content));
     app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));

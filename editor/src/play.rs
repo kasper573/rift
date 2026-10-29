@@ -892,6 +892,7 @@ fn spawn_server(binaries: &Path, folder: &Path, sender: Sender<OutputLine>) -> i
         content_dir: folder.to_path_buf(),
         player_spawn_policy: SpawnPolicy::Map,
         player_immortal: false,
+        daylight: launch::ServerDaylight::Turning,
         rng_seed: None,
         daily_reset_utc_hour: UtcHour::MIDNIGHT,
         auth: launch::AuthMode::Fake,

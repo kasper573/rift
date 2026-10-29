@@ -148,11 +148,21 @@ pub struct ServerConfig {
     pub content_dir: PathBuf,
     pub player_spawn_policy: SpawnPolicy,
     pub player_immortal: bool,
+    pub daylight: ServerDaylight,
     pub rng_seed: Option<u64>,
     pub daily_reset_utc_hour: UtcHour,
     pub auth: AuthMode,
     pub test_characters: bool,
     pub exit_on_stdin_eof: bool,
+}
+
+/// Whether a game's day turns on the server, or holds at its start hour, as tests that compare how
+/// the world looks need it to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServerDaylight {
+    Turning,
+    Still,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

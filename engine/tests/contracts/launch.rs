@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use engine::core::time::UtcHour;
 use engine::systems::launch::{
     AuthMode, CLIENT_ENV_PREFIX, ClientConfig, LaunchSettings, SERVER_ENV_PREFIX, SETTINGS_FILE,
-    ServerConfig, env_of,
+    ServerConfig, ServerDaylight, env_of,
 };
 use engine::systems::player::SpawnPolicy;
 
@@ -17,6 +17,7 @@ fn server_config(rng_seed: Option<u64>) -> ServerConfig {
         content_dir: PathBuf::from("/games/example"),
         player_spawn_policy: SpawnPolicy::Dist,
         player_immortal: true,
+        daylight: ServerDaylight::Still,
         rng_seed,
         daily_reset_utc_hour: UtcHour::try_from(5).expect("an hour of the day"),
         auth: AuthMode::Fake,

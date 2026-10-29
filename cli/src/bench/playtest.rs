@@ -10,8 +10,8 @@ use engine::core::time::UtcHour;
 use engine::core::units::Bytes;
 use engine::systems::GameSettings;
 use engine::systems::launch::{
-    self, AuthMode, CLIENT_ENV_PREFIX, ClientConfig, ServerConfig, TEST_CHARACTER_ROUTE,
-    TestCharacterRequest,
+    self, AuthMode, CLIENT_ENV_PREFIX, ClientConfig, ServerConfig, ServerDaylight,
+    TEST_CHARACTER_ROUTE, TestCharacterRequest,
 };
 use engine::systems::player::SpawnPolicy;
 use engine::systems::player::snapshot::CharacterSnapshot;
@@ -53,6 +53,7 @@ impl Playtest {
                 content_dir: absolute(game),
                 player_spawn_policy: SpawnPolicy::Map,
                 player_immortal: true,
+                daylight: ServerDaylight::Turning,
                 rng_seed: Some(SEED),
                 daily_reset_utc_hour: UtcHour::MIDNIGHT,
                 auth: AuthMode::Fake,

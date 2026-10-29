@@ -10,6 +10,7 @@ use bevy_replicon::shared::backend::server_messages::ServerMessages;
 use engine::core::content::{Content, FilesystemFolder};
 use engine::core::net::MAX_MESSAGE_BYTES;
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
+use engine::systems::launch::ServerDaylight;
 use engine::systems::player::{ClientId, JoinRequest, SpawnPolicy, SpawnRules};
 use engine::systems::{GameSettings, TICK_HZ, from_client, load_content, server_app, start_server};
 use strum::AsRefStr;
@@ -146,6 +147,7 @@ fn build_world(layout: Layout, content: &Content, ordinal: u64) -> (App, Vec<Ent
         ordinal,
         SEED,
         CLOCK,
+        ServerDaylight::Turning,
         content,
     );
     app.insert_resource(SpawnRules {

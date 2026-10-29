@@ -27,8 +27,8 @@ use engine::systems::account::{AccountId, Identity};
 use engine::systems::area::{self, AreaDef, AreaId, transition};
 use engine::systems::launch::{
     AuthMode, BUILD_INFO_FLAG, BuildInfo, LaunchSettings, ReadyLine, SERVER_ENV_PREFIX,
-    ServerConfig, ServerReady, TEST_CHARACTER_ROUTE, TICK_METRIC, TestCharacterRequest,
-    build_info_line,
+    ServerConfig, ServerDaylight, ServerReady, TEST_CHARACTER_ROUTE, TICK_METRIC,
+    TestCharacterRequest, build_info_line,
 };
 use engine::systems::player::snapshot::{self, CharacterSnapshot, JoinAs};
 use engine::systems::player::{ClientId, SpawnPolicy, SpawnRules};
@@ -132,6 +132,7 @@ fn main() {
                 rng_seed,
                 ordinal as u64,
                 wall_clock(reset),
+                config.daylight,
             )
         })
         .collect();
@@ -439,8 +440,9 @@ fn build_world(
     rng_seed: u64,
     ordinal: u64,
     clock: WallClock,
+    daylight: ServerDaylight,
 ) -> App {
-    let mut app = server_app(area, ordinal, rng_seed, clock, content);
+    let mut app = server_app(area, ordinal, rng_seed, clock, daylight, content);
     app.insert_resource(rules);
     start_server(&mut app);
     app

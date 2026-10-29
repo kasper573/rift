@@ -6,8 +6,9 @@ use bevy::prelude::*;
 use crate::core::content::{Content, RowCheck, serial};
 use crate::core::geometry::Degrees;
 use crate::core::render::world::sky::Daylight;
-use crate::core::time::{DayOrigin, Seconds, UnixMillis, server_now};
+use crate::core::time::{DayClock, DayCourse, Seconds, UnixMillis, server_now};
 use crate::systems::GameSettings;
+use crate::systems::launch::ServerDaylight;
 
 /// The weather an area stands in, fixed for the area: its wind, how much cloud covers its sky
 /// and how much water the cloud holds. What grows and hangs in the area sways with the wind, the
@@ -36,14 +37,24 @@ pub struct DayCycle {
 }
 
 impl DayCycle {
-    /// When the day began for a world starting `now`.
-    pub fn origin(&self, now: UnixMillis) -> UnixMillis {
-        now.before(Seconds(self.start / 24.0 * self.day_length.0))
+    /// How the day runs for a world starting `now` on a server whose daylight is `daylight`.
+    pub fn course(&self, daylight: ServerDaylight, now: UnixMillis) -> DayCourse {
+        match daylight {
+            ServerDaylight::Turning => {
+                DayCourse::Since(now.before(Seconds(self.start / 24.0 * self.day_length.0)))
+            }
+            ServerDaylight::Still => DayCourse::Still,
+        }
     }
 
-    /// The hour of the day, 0 to 24, `since` the day began.
-    pub fn hour_at(&self, since: Seconds) -> f32 {
-        since.0.rem_euclid(self.day_length.0) / self.day_length.0 * 24.0
+    /// The hour of the day, 0 to 24, at `now` on a day running its `course`.
+    pub fn hour(&self, course: DayCourse, now: UnixMillis) -> f32 {
+        match course {
+            DayCourse::Since(origin) => {
+                now.since(origin).0.rem_euclid(self.day_length.0) / self.day_length.0 * 24.0
+            }
+            DayCourse::Still => self.start,
+        }
     }
 
     pub fn check(&self, pointer: &str, cx: &mut RowCheck) {
@@ -66,8 +77,8 @@ pub fn tell_time(world: &mut World) {
             .resource::<Content>()
             .built::<GameSettings>()
             .daylight?;
-        let origin = world.resource::<DayOrigin>().0?;
-        Some(cycle.hour_at(server_now(world)?.since(origin)))
+        let course = world.resource::<DayClock>().0?;
+        Some(cycle.hour(course, server_now(world)?))
     };
     let now = hour().map_or(Daylight::Fixed, Daylight::Hour);
     world.resource_mut::<Daylight>().set_if_neq(now);

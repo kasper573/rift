@@ -8,7 +8,7 @@ use bevy_time::Time;
 
 use super::{ClientId, PlayedBy, Welcome};
 use crate::core::render::transition::WorldViewSystems;
-use crate::core::time::{DayOrigin, Seconds, ServerClock};
+use crate::core::time::{DayClock, Seconds, ServerClock};
 use crate::systems::stat;
 
 pub struct ClientSessionPlugin;
@@ -23,7 +23,7 @@ impl Plugin for ClientSessionPlugin {
         crate::systems::protocol(app);
         app.init_resource::<MyClient>()
             .init_resource::<ServerClock>()
-            .init_resource::<DayOrigin>()
+            .init_resource::<DayClock>()
             .init_resource::<MyCharacter>();
         app.add_systems(Update, record_welcome);
         app.add_systems(
@@ -76,12 +76,12 @@ fn record_welcome(
     time: Res<Time>,
     mut me: ResMut<MyClient>,
     mut clock: ResMut<ServerClock>,
-    mut day: ResMut<DayOrigin>,
+    mut day: ResMut<DayClock>,
 ) {
     for welcome in welcomes.read() {
         me.0 = Some(welcome.id);
         clock.record(welcome.now, Seconds(time.elapsed_secs()));
-        day.0 = welcome.day_origin;
+        day.0 = welcome.day;
     }
 }
 
