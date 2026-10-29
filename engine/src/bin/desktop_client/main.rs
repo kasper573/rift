@@ -13,6 +13,8 @@ use engine::systems::launch::{
 };
 use engine::systems::{client_app, probe};
 
+service::allocator!();
+
 fn main() {
     if std::env::args().any(|arg| arg == BUILD_INFO_FLAG) {
         println!("{}", build_info_line());

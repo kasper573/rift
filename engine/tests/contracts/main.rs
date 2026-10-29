@@ -22,6 +22,7 @@ mod presence;
 mod quest;
 mod reach;
 mod safe_zone;
+mod scenery;
 mod shop;
 mod skills;
 mod snapshot;

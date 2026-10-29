@@ -12,6 +12,7 @@ use walkdir::WalkDir;
 
 use crate::content;
 use crate::desktop::{Desktop, WaitBudget};
+use crate::memory::Bytes;
 use crate::player::{Pace, Player};
 use crate::seen::in_world;
 use crate::server::Server;
@@ -77,6 +78,11 @@ pub struct Playtest {
 }
 
 impl Playtest {
+    /// The memory the game server holds.
+    pub fn server_memory(&self) -> Bytes {
+        self.server.memory()
+    }
+
     pub fn start(setup: PlaytestSetup) -> Playtest {
         content::load(&setup.content);
         // What an earlier playtest left behind there, its players' profiles among it, plays no

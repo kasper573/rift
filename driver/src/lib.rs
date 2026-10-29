@@ -4,6 +4,7 @@
 
 mod content;
 mod desktop;
+mod memory;
 mod player;
 mod playtest;
 mod recording;
@@ -16,6 +17,7 @@ pub use content::{
     props_near, resident_home,
 };
 pub use desktop::{BUDGET, WaitBudget};
+pub use memory::Bytes;
 pub use player::{LONG, Pace, Player, reading};
 pub use playtest::{DeployEdit, Playtest, PlaytestSetup};
 pub use recording::{Footage, FootageOverlay, InsetCut, seconds};

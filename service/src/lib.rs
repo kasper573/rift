@@ -13,19 +13,38 @@ use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tower_http::normalize_path::NormalizePath;
 
+/// jemalloc as the binary's allocator. It hands what is freed back to the system, as the system
+/// allocator does only reluctantly, so a process that loads and drops a lot keeps no more than it
+/// holds; and it does so on threads of its own, so no allocation waits for it.
 #[macro_export]
-macro_rules! heap_profiling {
+macro_rules! allocator {
     () => {
-        $crate::heap_profiling!($crate::ServiceAllocator, $crate::ServiceAllocator);
+        $crate::allocator!($crate::ServiceAllocator, $crate::ServiceAllocator, "");
     };
-    ($allocator:ty, $init:expr) => {
+    ($allocator:ty, $init:expr, $options:literal) => {
         #[global_allocator]
         static GLOBAL_ALLOCATOR: $allocator = $init;
 
         // SAFETY: jemalloc reads its options from this one symbol at startup, and nothing else
         // exports it.
         #[unsafe(export_name = "malloc_conf")]
-        pub static MALLOC_CONF: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
+        pub static MALLOC_CONF: &[u8] =
+            concat!("background_thread:true", $options, "\0").as_bytes();
+    };
+}
+
+/// The binary's allocator, as [`allocator!`] sets it, sampling what is allocated for heap profiles.
+#[macro_export]
+macro_rules! heap_profiling {
+    () => {
+        $crate::heap_profiling!($crate::ServiceAllocator, $crate::ServiceAllocator);
+    };
+    ($allocator:ty, $init:expr) => {
+        $crate::allocator!(
+            $allocator,
+            $init,
+            ",prof:true,prof_active:true,lg_prof_sample:19"
+        );
     };
 }
 

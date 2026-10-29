@@ -22,7 +22,6 @@ match_bool = "warn"
 [workspace.dependencies]
 askama = "0.16"
 axum-prometheus = "0.10"
-typetag = "0.2"
 ctrlc = { version = "3", features = ["termination"] }
 pyroscope = { version = "2", features = ["backend-pprof-rs"] }
 tikv-jemallocator = { version = "0.7", features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
@@ -33,13 +32,8 @@ bevy_platform = { version = "0.20.0", default-features = false, features = ["std
 slotmap = "1.1"
 smallvec = "1.16"
 bevy_input = { version = "0.20.0", default-features = false }
-bevy_asset = { version = "0.20.0", default-features = false }
-bevy_color = { version = "0.20.0", default-features = false }
-bevy_text = { version = "0.20.0", default-features = false }
-bevy_window = { version = "0.20.0", default-features = false }
 bevy_math = { version = "0.20.0", default-features = false }
 bevy_time = { version = "0.20.0", default-features = false }
-bevy_camera = "0.20.0"
 bevy = { version = "0.20.0", default-features = false }
 syn = { version = "3", features = ["full"] }
 proc-macro2 = "1"

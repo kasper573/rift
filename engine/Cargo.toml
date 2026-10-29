@@ -28,6 +28,10 @@ required-features = ["profiling"]
 name = "client"
 harness = false
 
+[[bench]]
+name = "memory"
+harness = false
+
 [features]
 profiling = ["bevy/debug", "bevy/trace_chrome"]
 

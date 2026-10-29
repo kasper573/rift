@@ -14,6 +14,7 @@ use engine::systems::launch::{self, AuthMode, CLIENT_ENV_PREFIX, ClientConfig};
 use engine::systems::probe::{ProbeInputSeen, ProbeSnapshot, ProbeTerrain};
 
 use crate::content::{from_json, to_json};
+use crate::memory::Bytes;
 use crate::recording::{Footage, Recording};
 use crate::seen::area_name;
 use crate::server::Server;
@@ -63,6 +64,10 @@ pub enum Button {
 }
 
 impl Desktop {
+    pub fn memory(&self) -> Bytes {
+        crate::memory::resident(self.client.id())
+    }
+
     pub fn start(
         server: &Server,
         binary: &Path,

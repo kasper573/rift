@@ -14,6 +14,7 @@ use engine::systems::probe::{ProbeBody, ProbeShop, ProbeSnapshot, ProbeStage, Pr
 
 use crate::content::{content, hunting_ground, lattice, placed_object, resident_home};
 use crate::desktop::{BUDGET, Button, Deadline, Desktop, WaitBudget};
+use crate::memory::Bytes;
 use crate::recording::Footage;
 use crate::seen::{
     UiTarget, aiming, at_rest, beside_anyone, clickable_point, in_warp, in_world, me_at_rest,
@@ -53,6 +54,11 @@ impl Player {
 
     pub fn snapshot(&mut self) -> ProbeSnapshot {
         self.desktop.snapshot()
+    }
+
+    /// The memory the player's client holds.
+    pub fn client_memory(&self) -> Bytes {
+        self.desktop.memory()
     }
 
     pub fn wait_for<T>(&mut self, what: &str, found: impl FnMut(&ProbeSnapshot) -> Option<T>) -> T {

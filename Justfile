@@ -157,10 +157,11 @@ contact-sheet video:
       {{quote(without_extension(video) + ".png")}}
 
 # Players are congested (all on the spawn tile, one shared view) by default; `dist` spreads them for distinct views.
-[doc("The server's highest area count sustained within the tick budget, then the client's frame rate through a playthrough.")]
+[doc("The server's highest area count sustained within the tick budget, then the client's frame rate through a playthrough, then whether the client's and the server's memory hold level as a player crosses between areas.")]
 bench mode="":
     RIFT_BENCH_CONTENT_DIR=example_game cargo run --release -p engine --bin bench -- {{mode}}
     cargo bench -p engine --bench client
+    cargo bench -p engine --bench memory
 
 # Frame pointers give perf whole call stacks without copying each sampled stack.
 [doc("The server's ticks near the bench's budget, sampled by perf into target/profile/perf.data: CPU by function, then by system, then allocations.")]

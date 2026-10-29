@@ -15,6 +15,7 @@ use engine::systems::player::SpawnPolicy;
 use engine::systems::script::Place;
 
 use crate::content::to_json;
+use crate::memory::Bytes;
 
 /// The game server binary, run natively on fake auth, where an unsigned token names the account
 /// that signs in.
@@ -27,6 +28,10 @@ pub struct Server {
 }
 
 impl Server {
+    pub fn memory(&self) -> Bytes {
+        crate::memory::resident(self.process.id())
+    }
+
     pub fn start(binary: &Path, content: &Path, seed: Option<u64>, log: &Path) -> Server {
         let config = ServerConfig {
             bind: LOCALHOST,
